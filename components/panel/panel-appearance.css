@@ -1,0 +1,60 @@
+/**
+ * MyChatCRM — tema do painel (/dashboard e /admin).
+ *
+ * Referência de marca:
+ *   --brand-orange       #F24400  (primário / CTAs)
+ *   --brand-orange-dark  #B22A00  (hover, profundidade)
+ *   --brand-charcoal     #0E1D2F  (base escura institucional)
+ *   --brand-light        #F2F2F2  (base clara neutra)
+ *   --brand-white        #FFFFFF
+ *
+ * Design System: paleta zinc para dark mode, DS light tokens para light mode.
+ * Variáveis `--color-*` = componentes R G B (espaço) para `rgb(var(--color-*) / <alpha>)` no Tailwind.
+ */
+
+.panel-app[data-panel-theme="light"] {
+  --color-surface-base:     242 242 242;   /* #F2F2F2 — DS brand-bg light */
+  --color-surface-deep:     255 255 255;   /* #FFFFFF — DS surface */
+  --color-surface-sidebar:  242 242 242;   /* #F2F2F2 — DS sidebar-bg */
+  --color-surface-card:     255 255 255;   /* #FFFFFF */
+  --color-surface-elevated: 236 238 242;
+  --color-surface-brown:    255 248 242;
+  --color-line:             226 232 240;   /* #e2e8f0 — DS brand-border */
+  --color-content:            9   9  11;   /* #09090b — DS brand-text */
+  --color-content-secondary:  40  55  75;
+  --color-content-muted:     113 113 122;  /* #71717a — DS brand-text-muted */
+  --color-content-faint:     130 140 155;
+  color-scheme: light;
+}
+
+/* Modo escuro: paleta zinc pura (Design System) */
+.panel-app[data-panel="dashboard"][data-panel-theme="dark"],
+.panel-app[data-panel="admin"][data-panel-theme="dark"] {
+  --color-surface-base:       0   0   0;   /* #000000 — DS .dark brand-bg */
+  --color-surface-deep:      10  10  10;   /* #0a0a0a — DS .dark surface */
+  --color-surface-sidebar:    0   0   0;   /* #000000 — DS .dark sidebar-bg */
+  --color-surface-card:       9   9  11;   /* #09090b — zinc-950 */
+  --color-surface-elevated:  24  24  27;   /* #18181b — zinc-900 */
+  --color-surface-brown:      9   9  11;   /* zinc-950 */
+  --color-line:              24  24  27;   /* #18181b — zinc-900 (DS .dark brand-border) */
+  --color-content:           255 255 255;  /* #ffffff — DS .dark brand-text */
+  --color-content-secondary: 212 212 216;  /* #d4d4d8 — DS .dark brand-text-muted / zinc-300 */
+  --color-content-muted:     113 113 122;  /* #71717a — zinc-500 */
+  --color-content-faint:      63  63  70;  /* #3f3f46 — zinc-700 */
+}
+
+.panel-app[data-panel-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* Cor e fundo do painel: sem isto, o color inline do body herdava e o tema claro parecia "igual". */
+.panel-app {
+  isolation: isolate;
+  background-color: rgb(var(--color-surface-base) / 1);
+  color: rgb(var(--color-content) / 1);
+}
+
+/* Só repõe tokens no portal: o fundo fica transparente para não tapar o overlay */
+.panel-app.panel-app--portal-root {
+  background-color: transparent;
+}

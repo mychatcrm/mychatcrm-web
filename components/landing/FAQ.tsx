@@ -1,0 +1,70 @@
+"use client";
+
+import { AnimatePresence, motion } from "framer-motion";
+import { useState } from "react";
+import { FAQ_ITEMS } from "@/lib/constants";
+import { cn } from "@/lib/utils";
+
+export function FAQ() {
+  const [open, setOpen] = useState<number | null>(0);
+
+  return (
+    <section
+      id="faq"
+      className="relative isolate mx-auto max-w-3xl scroll-mt-24 px-4 py-24 sm:px-6 lg:px-8"
+    >
+      <div
+        className="pointer-events-none absolute inset-0 z-0 rounded-[2.5rem] bg-[radial-gradient(ellipse_90%_70%_at_20%_20%,rgba(242,68,0,0.12),transparent_50%),radial-gradient(ellipse_80%_60%_at_85%_80%,rgba(255,106,0,0.1),transparent_55%),linear-gradient(180deg,rgb(var(--color-surface-deep)_/_0.9),rgb(var(--color-surface-base)_/_0.95))] opacity-95 motion-reduce:opacity-60"
+        aria-hidden
+      />
+      <div className="relative z-10 text-center">
+        <h2 className="font-display text-3xl font-bold text-content sm:text-4xl">Perguntas frequentes</h2>
+        <div className="title-accent-line" aria-hidden />
+        <p className="mt-4 text-content-secondary">
+          Respostas diretas sobre o MyChatCRM e a operação no WhatsApp.
+        </p>
+      </div>
+      <div className="relative z-10 mt-10 divide-y divide-line/80 overflow-hidden rounded-2xl border border-line/80 bg-surface-card/40 shadow-elevation-2 backdrop-blur-md">
+        {FAQ_ITEMS.map((item, i) => {
+          const isOpen = open === i;
+          return (
+            <div
+              key={item.q}
+              className={cn(isOpen && "border-l-[3px] border-l-primary bg-primary/5 pl-[calc(1.25rem-3px)]")}
+            >
+              <button
+                type="button"
+                className="flex w-full min-h-[44px] items-center justify-between gap-4 px-5 py-4 text-left text-sm font-medium text-content sm:text-base"
+                aria-expanded={isOpen}
+                aria-controls={`faq-panel-${i}`}
+                id={`faq-header-${i}`}
+                onClick={() => setOpen(isOpen ? null : i)}
+              >
+                <span>{item.q}</span>
+                <span className="text-primary" aria-hidden>
+                  {isOpen ? "−" : "+"}
+                </span>
+              </button>
+              <AnimatePresence initial={false}>
+                {isOpen ? (
+                  <motion.div
+                    id={`faq-panel-${i}`}
+                    role="region"
+                    aria-labelledby={`faq-header-${i}`}
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.25 }}
+                    className="overflow-hidden"
+                  >
+                    <p className="px-5 pb-4 text-sm leading-relaxed text-content-secondary">{item.a}</p>
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}

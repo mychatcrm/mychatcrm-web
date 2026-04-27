@@ -1,0 +1,41 @@
+[
+  {
+    "id": "emp-clinica-director",
+    "nome": "Elena Duarte",
+    "email": "diretor.clinica@gmail.com",
+    "funcao": "Direção clínica",
+    "initialPassword": "admin",
+    "ativo": true,
+    "hierarchyRole": "director"
+  },
+  {
+    "id": "emp-clinica-manager",
+    "nome": "Filipe Moura",
+    "email": "gerente.clinica@gmail.com",
+    "funcao": "Receção e agendamentos",
+    "initialPassword": "admin",
+    "ativo": true,
+    "hierarchyRole": "manager",
+    "reportsToId": "emp-clinica-director"
+  },
+  {
+    "id": "emp-clinica-seller-1",
+    "nome": "Graça Infante",
+    "email": "vendedor1.clinica@gmail.com",
+    "funcao": "Comercial",
+    "initialPassword": "admin",
+    "ativo": true,
+    "hierarchyRole": "seller",
+    "reportsToId": "emp-clinica-manager"
+  },
+  {
+    "id": "emp-clinica-seller-2",
+    "nome": "Hugo Teixeira",
+    "email": "vendedor2.clinica@gmail.com",
+    "funcao": "Comercial",
+    "initialPassword": "admin",
+    "ativo": true,
+    "hierarchyRole": "seller",
+    "reportsToId": "emp-clinica-manager"
+  }
+]

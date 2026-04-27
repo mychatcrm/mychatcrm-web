@@ -1,0 +1,347 @@
+"use client";
+
+import { Handshake, Kanban, RadioTower, Timer } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import Link from "next/link";
+import { useCrmFunnels } from "@/components/dashboard/CrmFunnelsContext";
+import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
+import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
+import { Modal } from "@/components/ui/Modal";
+import type { Agent } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import {
+  createPromptFromBusiness,
+  defaultWizardDraft,
+  draftFromAgent,
+  type AgentWizardDraft,
+  validateCompactAgentDraft,
+} from "@/lib/agents";
+import { WizardStep1Identidade } from "./WizardStep1Identidade";
+import { WizardStep2Treinamento } from "./WizardStep2Treinamento";
+import { WizardStep3Ativacao } from "./WizardStep3Ativacao";
+import { WizardStep4Fluxo } from "./WizardStep4Fluxo";
+import { WizardStep5Funil } from "./WizardStep5Funil";
+import { WizardStepFollowUpInteligente } from "./WizardStepFollowUpInteligente";
+import { WizardStepWhatsappLinha } from "./WizardStepWhatsappLinha";
+
+const DELETE_AGENT_CONFIRM_TEXT = "QUERO APAGAR";
+
+function AdvancedSection({
+  title,
+  description,
+  titleIcon,
+  children,
+}: {
+  title: string;
+  description?: string;
+  /** Ícone Lucide monocromático (mesma linha visual da barra lateral). */
+  titleIcon?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <details className="group min-w-0 rounded-xl border border-line bg-surface-card">
+      <summary
+        className={cn(
+          "flex min-w-0 cursor-pointer list-none items-start justify-between gap-3 px-3 py-3.5 text-left text-sm font-semibold text-content sm:px-4",
+          "[&::-webkit-details-marker]:hidden",
+        )}
+      >
+        <span className="flex min-w-0 flex-1 items-start gap-2.5">
+          {titleIcon ? (
+            <span
+              className="mt-0.5 flex shrink-0 text-content-muted transition-colors group-hover:text-content-secondary [&_svg]:h-[18px] [&_svg]:w-[18px] [&_svg]:shrink-0"
+              aria-hidden
+            >
+              {titleIcon}
+            </span>
+          ) : null}
+          <span className="min-w-0 break-words">
+            {title}
+            {description ? (
+              <span className="mt-0.5 block text-xs font-normal text-content-muted">{description}</span>
+            ) : null}
+          </span>
+        </span>
+        <span className="shrink-0 text-xs text-content-faint transition group-open:rotate-180" aria-hidden>
+          ▼
+        </span>
+      </summary>
+      <div className="min-w-0 border-t border-line px-3 py-4 sm:px-4">{children}</div>
+    </details>
+  );
+}
+
+export function AgentFormCompact({
+  initialAgent,
+  mode,
+  onSubmit,
+  embedded,
+  onRequestClose,
+  onDeleteAgent,
+  tenantId,
+}: {
+  initialAgent?: Agent;
+  mode: "create" | "edit";
+  onSubmit?: (draft: AgentWizardDraft) => void;
+  /** Formulário dentro de overlay (sem link «Voltar»; Cancelar chama `onRequestClose`). */
+  embedded?: boolean;
+  onRequestClose?: () => void;
+  /** Só em edição no overlay: após confirmação com frase, remove o agente. */
+  onDeleteAgent?: () => void;
+  /** Para validar e listar linhas WhatsApp (Integrações + plano). */
+  tenantId?: string;
+}) {
+  const { funnels } = useCrmFunnels();
+  const [draft, setDraft] = useState<AgentWizardDraft>(() => {
+    if (!initialAgent) return defaultWizardDraft;
+    try {
+      return draftFromAgent(initialAgent);
+    } catch {
+      return defaultWizardDraft;
+    }
+  });
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [openPromptModal, setOpenPromptModal] = useState(false);
+  const [promptContext, setPromptContext] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deletePhrase, setDeletePhrase] = useState("");
+
+  const submit = () => {
+    const message = validateCompactAgentDraft(draft, funnels, tenantId);
+    if (message) {
+      setError(message);
+      return;
+    }
+    setError("");
+    if (onSubmit) {
+      onSubmit(draft);
+      return;
+    }
+    setSuccess(mode === "create" ? "Agente criado com sucesso (mock)." : "Agente atualizado com sucesso (mock).");
+  };
+
+  const closeDeleteModal = () => {
+    setDeleteOpen(false);
+    setDeletePhrase("");
+  };
+
+  const canConfirmDelete = deletePhrase.trim() === DELETE_AGENT_CONFIRM_TEXT;
+
+  return (
+    <div
+      className={cn(
+        "mx-auto w-full min-w-0 space-y-4 sm:space-y-6",
+        embedded ? "max-w-none" : "max-w-3xl",
+      )}
+    >
+      {!embedded ? (
+        <Link
+          href="/dashboard/agentes"
+          className="inline-flex max-w-full break-words text-sm font-medium text-primary hover:underline"
+        >
+          ← Voltar para Meus Agentes
+        </Link>
+      ) : null}
+
+      <div
+        className={cn(
+          "min-w-0 overflow-x-hidden rounded-xl border border-line bg-surface-deep/50 p-4 sm:p-6",
+          embedded && "rounded-xl sm:rounded-xl sm:border-line/80",
+        )}
+      >
+        {!embedded ? (
+          <div className="mb-5 sm:mb-6">
+            <h2 className="text-xl font-semibold text-content sm:text-2xl">
+              {mode === "create" ? "Criar novo agente" : "Editar agente"}
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-content-muted">
+              Tudo numa tela: o nome, o objetivo e as instruções definem o comportamento principal. Origens, fluxo e funil ficam em secções
+              avançadas — abra só se precisar ajustar.
+            </p>
+          </div>
+        ) : null}
+
+        <div className="space-y-6 sm:space-y-8">
+          <section className="space-y-3">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Nome, objetivo e aparência</h3>
+            <WizardStep1Identidade draft={draft} onChange={setDraft} />
+          </section>
+
+          {tenantId ? (
+            <section className="space-y-3">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">WhatsApp</h3>
+              <WizardStepWhatsappLinha tenantId={tenantId} draft={draft} onChange={setDraft} />
+            </section>
+          ) : null}
+
+          <section className="space-y-3">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Instruções e treinamento</h3>
+            <WizardStep2Treinamento draft={draft} onChange={setDraft} onGeneratePrompt={() => setOpenPromptModal(true)} />
+          </section>
+
+          <div className="space-y-3">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Avançado</h3>
+            <div className="space-y-2">
+              <AdvancedSection
+                title="Ativação e origens"
+                description="Onde o agente entra em ação (Lead Ads, keyword, orgânico, etc.)."
+                titleIcon={<RadioTower strokeWidth={1.75} />}
+              >
+                <WizardStep3Ativacao draft={draft} onChange={setDraft} />
+              </AdvancedSection>
+              <AdvancedSection
+                title="CTA e handoff"
+                description="Opcional: ative o interruptor dentro da secção para preencher CTA, número e mensagem de transição."
+                titleIcon={<Handshake strokeWidth={1.75} />}
+              >
+                <WizardStep4Fluxo draft={draft} onChange={setDraft} />
+              </AdvancedSection>
+              <AdvancedSection
+                title="Funil no CRM Kanban"
+                description="Escolha o funil e a coluna onde entram os novos leads."
+                titleIcon={<Kanban strokeWidth={1.75} />}
+              >
+                <WizardStep5Funil draft={draft} onChange={setDraft} />
+              </AdvancedSection>
+              <AdvancedSection
+                title="Configurações de Follow-up"
+                description="Retomada contextual a partir do histórico completo — sem templates fixos."
+                titleIcon={<Timer strokeWidth={1.75} />}
+              >
+                <WizardStepFollowUpInteligente draft={draft} onChange={setDraft} />
+              </AdvancedSection>
+            </div>
+          </div>
+        </div>
+
+        {error ? <p className="mt-6 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</p> : null}
+        {success ? <p className="mt-6 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">{success}</p> : null}
+
+        <div className="mt-8 flex flex-col-reverse gap-3 border-t border-line pt-6 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+          {embedded && onRequestClose ? (
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full min-h-[44px] sm:w-auto"
+              onClick={onRequestClose}
+            >
+              Cancelar
+            </Button>
+          ) : (
+            <Link
+              href="/dashboard/agentes"
+              className={cn(
+                "inline-flex min-h-[44px] w-full items-center justify-center rounded-xl border border-primary/35 bg-surface-elevated/20 px-5 text-sm font-medium text-primary transition hover:border-primary/55 hover:bg-primary/10 sm:w-auto",
+              )}
+            >
+              Cancelar
+            </Link>
+          )}
+          <Button className="w-full min-h-[44px] sm:w-auto" onClick={submit}>
+            {mode === "create" ? "Criar agente" : "Salvar alterações"}
+          </Button>
+        </div>
+
+        {mode === "edit" && embedded && onDeleteAgent ? (
+          <div className="mt-10 rounded-xl border border-rose-500/20 bg-rose-500/[0.06] px-4 py-5 sm:px-5">
+            <p className="text-xs font-semibold uppercase tracking-wide text-rose-200/90">Excluir agente</p>
+            <p className="mt-1.5 text-sm leading-relaxed text-content-muted">
+              Remove o agente da lista nesta demonstração. Não há como desfazer aqui.
+            </p>
+            <Button
+              type="button"
+              variant="danger"
+              className="mt-4 w-full min-h-[44px] sm:w-auto"
+              onClick={() => setDeleteOpen(true)}
+            >
+              Excluir agente
+            </Button>
+          </div>
+        ) : null}
+      </div>
+
+      <Modal
+        open={deleteOpen}
+        onClose={closeDeleteModal}
+        title="Excluir agente"
+        className="max-w-md"
+        footer={
+          <>
+            <Button variant="secondary" type="button" onClick={closeDeleteModal}>
+              Cancelar
+            </Button>
+            <Button
+              variant="danger"
+              type="button"
+              disabled={!canConfirmDelete}
+              onClick={() => {
+                onDeleteAgent?.();
+                closeDeleteModal();
+              }}
+            >
+              Confirmar exclusão
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4 text-sm text-content-secondary">
+          <p>
+            Para confirmar, digite exatamente{" "}
+            <span className="rounded-md bg-surface-deep px-1.5 py-0.5 font-mono text-xs font-semibold text-content">
+              {DELETE_AGENT_CONFIRM_TEXT}
+            </span>{" "}
+            no campo abaixo.
+          </p>
+          <div>
+            <label className="text-xs font-medium text-content-faint" htmlFor={`agent-form-delete-phrase-${initialAgent?.id ?? "x"}`}>
+              Frase de confirmação
+            </label>
+            <Input
+              id={`agent-form-delete-phrase-${initialAgent?.id ?? "x"}`}
+              className="mt-1.5 font-mono text-sm"
+              value={deletePhrase}
+              onChange={(e) => setDeletePhrase(e.target.value)}
+              placeholder={DELETE_AGENT_CONFIRM_TEXT}
+              autoComplete="off"
+              aria-invalid={deletePhrase.length > 0 && !canConfirmDelete}
+            />
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={openPromptModal}
+        onClose={() => setOpenPromptModal(false)}
+        title="Gerar prompt com IA"
+        footer={
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+            <Button variant="secondary" className="w-full sm:w-auto" onClick={() => setOpenPromptModal(false)}>
+              Cancelar
+            </Button>
+            <Button
+              className="w-full sm:w-auto"
+              onClick={() => {
+                setDraft({ ...draft, systemPrompt: createPromptFromBusiness(promptContext, draft) });
+                setOpenPromptModal(false);
+                setPromptContext("");
+              }}
+            >
+              Gerar prompt
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-sm text-content-secondary">
+          Descreva o negócio em linguagem simples e geramos um prompt inicial completo para o agente.
+        </p>
+        <textarea
+          value={promptContext}
+          onChange={(event) => setPromptContext(event.target.value)}
+          className="mt-3 min-h-[140px] w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-3 text-sm text-content outline-none"
+          placeholder="Ex: Somos uma imobiliária focada em apartamentos de médio padrão na Zona Sul de Goiânia..."
+        />
+      </Modal>
+    </div>
+  );
+}

@@ -1,0 +1,45 @@
+[
+  {
+    "id": "emp-mychat-director",
+    "nome": "Ana Ribeiro",
+    "email": "diretor@gmail.com",
+    "funcao": "Direção comercial",
+    "initialPassword": "admin",
+    "ativo": true,
+    "hierarchyRole": "director",
+    "accountSuspended": false
+  },
+  {
+    "id": "emp-mychat-manager",
+    "nome": "Bruno Carvalho",
+    "email": "gerente@gmail.com",
+    "funcao": "Gestão de equipa",
+    "initialPassword": "admin",
+    "ativo": true,
+    "hierarchyRole": "manager",
+    "reportsToId": "emp-mychat-director",
+    "accountSuspended": false
+  },
+  {
+    "id": "emp-mychat-seller-1",
+    "nome": "Carla Nunes",
+    "email": "vendedor1@gmail.com",
+    "funcao": "Vendas",
+    "initialPassword": "admin",
+    "ativo": true,
+    "hierarchyRole": "seller",
+    "reportsToId": "emp-mychat-manager",
+    "accountSuspended": false
+  },
+  {
+    "id": "emp-mychat-seller-2",
+    "nome": "Diogo Azevedo",
+    "email": "vendedor2@gmail.com",
+    "funcao": "Vendas",
+    "initialPassword": "admin",
+    "ativo": true,
+    "hierarchyRole": "seller",
+    "reportsToId": "emp-mychat-manager",
+    "accountSuspended": false
+  }
+]

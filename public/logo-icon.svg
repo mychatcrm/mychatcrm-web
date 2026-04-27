@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none" role="img" aria-labelledby="t">
+  <title id="t">MyChatCRM</title>
+  <rect x="10" y="10" width="44" height="44" rx="12" fill="#F24400" stroke="#0f0f0f" stroke-opacity="0.08" stroke-width="1" />
+  <path d="M22 28h20M22 36h16" stroke="#FFFCF9" stroke-width="5" stroke-linecap="round" />
+</svg>

@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "partners": [
+    {
+      "id": "prt_f142794b",
+      "name": "Parceiro Demo Premium",
+      "code": "PDEMO",
+      "email": "parceiros@mychatcrm.com.br",
+      "socialNotes": "LinkedIn: /company/mychatcrm · Instagram: @mychatcrm",
+      "status": "active",
+      "observations": "Campanha interna de homologação — não usar em produção sem revisão jurídica.",
+      "startedAt": "2026-01-01",
+      "commissionType": "percent",
+      "commissionValue": 12,
+      "commissionTiming": "once",
+      "commissionRecurrenceMonths": null,
+      "campaignActive": true,
+      "linkedCouponIds": [
+        "cpn_5cf7e557"
+      ],
+      "createdAt": "2026-04-23T01:33:39.146Z",
+      "updatedAt": "2026-04-23T01:33:39.146Z"
+    }
+  ],
+  "coupons": [
+    {
+      "id": "cpn_fb07a1d5",
+      "code": "SOLO15",
+      "internalName": "Desconto Solo 15%",
+      "description": "15% no primeiro mês — plano Solo.",
+      "discountType": "percent",
+      "discountValue": 15,
+      "validFrom": null,
+      "validUntil": null,
+      "maxRedemptionsTotal": null,
+      "maxRedemptionsPerUser": 1,
+      "allowedPlanSlugs": [
+        "solo"
+      ],
+      "discountRecurrence": "first_cycle",
+      "recurringCyclesLimit": null,
+      "active": true,
+      "partnerId": null,
+      "createdAt": "2026-04-23T01:33:39.146Z",
+      "updatedAt": "2026-04-23T01:33:39.146Z"
+    },
+    {
+      "id": "cpn_5cf7e557",
+      "code": "EQUIPAFRETE",
+      "internalName": "Campanha Equipa + parceiro",
+      "description": "R$ 50,00 no primeiro ciclo — Equipa, rastreado com comissão.",
+      "discountType": "fixed",
+      "discountValue": 5000,
+      "validFrom": null,
+      "validUntil": null,
+      "maxRedemptionsTotal": 500,
+      "maxRedemptionsPerUser": 2,
+      "allowedPlanSlugs": [
+        "equipa"
+      ],
+      "discountRecurrence": "first_cycle",
+      "recurringCyclesLimit": null,
+      "active": true,
+      "partnerId": "prt_f142794b",
+      "createdAt": "2026-04-23T01:33:39.146Z",
+      "updatedAt": "2026-04-23T01:33:39.146Z"
+    }
+  ],
+  "redemptions": [],
+  "auditLog": []
+}

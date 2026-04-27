@@ -1,0 +1,19 @@
+import type { ClientPlan } from "@/lib/client-auth";
+
+/** Metadados de plano/nome por tenant quando o login vem só do registo de colaborador (ficheiro). */
+export function tenantPlanDefaults(tenantId: string): {
+  plan: ClientPlan;
+  planLabel: "Solo" | "Equipa" | "Escala" | "Enterprise";
+  companyName: string;
+} {
+  switch (tenantId) {
+    case "tenant-mychatcrm-demo":
+      return { plan: "escala", planLabel: "Escala", companyName: "MyChatCRM Demo" };
+    case "tenant-clinica-oral-prime":
+      return { plan: "equipa", planLabel: "Equipa", companyName: "Clínica Oral Prime" };
+    case "tenant-operacao-cliente":
+      return { plan: "equipa", planLabel: "Equipa", companyName: "Operação Cliente" };
+    default:
+      return { plan: "equipa", planLabel: "Equipa", companyName: "Organização" };
+  }
+}

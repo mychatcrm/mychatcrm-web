@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="280" height="56" viewBox="0 0 280 56" fill="none" role="img" aria-labelledby="t">
+  <title id="t">MyChatCRM  horizontal (fundo claro)</title>
+  <g transform="translate(6 8) scale(0.55)">
+    <rect x="26" y="26" width="68" height="68" rx="18" fill="#F24400" />
+    <path d="M42 52h36M42 68h28" stroke="#FFFCF9" stroke-width="7" stroke-linecap="round" />
+  </g>
+  <text x="58" y="37" font-family="ui-sans-serif, system-ui, sans-serif" font-size="21" font-weight="700" letter-spacing="-0.03em">
+    <tspan fill="#F24400">My</tspan><tspan fill="#0f0f0f">Chat</tspan><tspan fill="#525252">CRM</tspan>
+  </text>
+</svg>

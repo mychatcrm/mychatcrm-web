@@ -1,0 +1,99 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  
+  --color-brand-primary: #F24400;
+  --color-brand-secondary: #0E1D29;
+  --color-brand-secondary-orange: #B22A00;
+  --color-brand-success: #00A650;
+  --color-brand-dark: #000000;
+  --color-brand-bg: #F2F2F2;
+  --color-brand-border: #e2e8f0;
+  --color-brand-text: #09090b;
+  --color-brand-text-muted: #71717a;
+  --color-sidebar-bg: #F2F2F2;
+  --color-surface: #FFFFFF;
+
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-xs--letter-spacing: 0;
+  --text-xs--font-weight: 400;
+
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.25rem;
+  --text-sm--letter-spacing: 0;
+  --text-sm--font-weight: 400;
+
+  --text-base: 1rem;
+  --text-base--line-height: 1.5rem;
+  --text-base--letter-spacing: 0;
+  --text-base--font-weight: 400;
+
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.75rem;
+  --text-lg--letter-spacing: -0.01em;
+  --text-lg--font-weight: 400;
+
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --text-xl--letter-spacing: -0.01em;
+  --text-xl--font-weight: 500;
+
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 2rem;
+  --text-2xl--letter-spacing: -0.015em;
+  --text-2xl--font-weight: 600;
+
+  --text-3xl: 1.875rem;
+  --text-3xl--line-height: 2.25rem;
+  --text-3xl--letter-spacing: -0.02em;
+  --text-3xl--font-weight: 600;
+
+  --text-4xl: 2.25rem;
+  --text-4xl--line-height: 2.5rem;
+  --text-4xl--letter-spacing: -0.025em;
+  --text-4xl--font-weight: 700;
+
+  --text-5xl: 3rem;
+  --text-5xl--line-height: 1.05;
+  --text-5xl--letter-spacing: -0.03em;
+  --text-5xl--font-weight: 700;
+
+  /* Border Radius reduced by 40% */
+  --radius-3xl: 0.9rem;
+  --radius-2xl: 0.6rem;
+  --radius-xl: 0.45rem;
+  --radius-lg: 0.3rem;
+  --radius-md: 0.225rem;
+}
+
+@variant dark (&:where(.dark, .dark *));
+
+.dark {
+  --color-brand-bg: #000000;
+  --color-surface: #0a0a0a;
+  --color-brand-text: #ffffff;
+  --color-brand-text-muted: #d4d4d8;
+  --color-brand-border: #18181b;
+  --color-sidebar-bg: #000000;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-brand-bg);
+  color: var(--color-brand-text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.sidebar-item-active {
+  background-color: rgba(242, 68, 0, 0.1);
+  color: var(--color-brand-primary);
+  font-weight: 500;
+}
+
+/* Shadows are prohibited for minimalist UI integrity */

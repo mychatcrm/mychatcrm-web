@@ -1,0 +1,50 @@
+/** Papel na conta: dono (pleno), direção, gestão ou vendedor (acesso restrito). */
+export type OrganizationRole = "owner" | "director" | "manager" | "seller";
+
+const SELLER_ROUTE_KEYS = new Set(["crm", "agenda", "lembretes", "suporte"]);
+
+const MANAGER_OR_DIRECTOR_ROUTE_KEYS = new Set([
+  "overview",
+  "crm",
+  "agentes",
+  "conversas",
+  "integracoes-leads",
+  "colaboradores",
+  "disparos",
+  "agenda",
+  "lembretes",
+  "integracoes",
+  "suporte",
+]);
+
+export function resolveOrganizationRole(session: {
+  organizationRole?: OrganizationRole;
+  /** Colaborador com sessão live: nunca assumir «dono» por omissão. */
+  employeeId?: string;
+}): OrganizationRole {
+  if (session.organizationRole) return session.organizationRole;
+  if (session.employeeId) return "seller";
+  return "owner";
+}
+
+/** Rotas sob `/dashboard/:segment` (segmento vazio = relatório / overview). */
+export function organizationRoleCanAccessDashboardRoute(role: OrganizationRole, routeKey: string): boolean {
+  if (role === "owner") return true;
+  if (role === "seller") return SELLER_ROUTE_KEYS.has(routeKey);
+  if (role === "director" || role === "manager") return MANAGER_OR_DIRECTOR_ROUTE_KEYS.has(routeKey);
+  return false;
+}
+
+export function organizationRoleCanAccessPersonalSettings(role: OrganizationRole): boolean {
+  return role === "owner";
+}
+
+/** Diretor, gerente e vendedor: ajustes pessoais rápidos na sidebar (sem rota de configurações completas do dono). */
+export function organizationRoleCanUseSidebarProfilePopover(role: OrganizationRole): boolean {
+  return role === "director" || role === "manager" || role === "seller";
+}
+
+export function defaultDashboardPathForOrganizationRole(role: OrganizationRole): string {
+  if (role === "seller") return "/dashboard/crm";
+  return "/dashboard";
+}

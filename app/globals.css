@@ -1,0 +1,232 @@
+/* Tem de vir antes de @tailwind (regra CSS: @import só no topo da folha). */
+@import "../components/panel/panel-appearance.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+
+  /* Tokens usados pelo Tailwind fora do `.panel-app` (landing, login marketing, etc.) */
+  --color-surface-base: 0 0 0;
+  --color-surface-deep: 10 10 10;
+  --color-surface-sidebar: 0 0 0;
+  --color-surface-card: 9 9 11;
+  --color-surface-elevated: 24 24 27;
+  --color-surface-brown: 9 9 11;
+  --color-line: 39 39 42;
+  --color-content: 255 255 255;
+  --color-content-secondary: 224 224 224;
+  --color-content-muted: 136 136 136;
+  --color-content-faint: 85 85 85;
+
+  --primary: #f24400;
+  --primary-hover: #ff6a00;
+  --primary-light: rgba(242, 68, 0, 0.15);
+  --primary-glow: rgba(242, 68, 0, 0.35);
+
+  --bg-base: #000000;
+  --bg-surface: #0a0a0a;
+  --bg-card: #09090b;
+  --bg-elevated: #18181b;
+
+  --border: #27272a;
+  --border-hover: #f24400;
+
+  --text-primary: #ffffff;
+  --text-secondary: #e0e0e0;
+  --text-muted: #888888;
+  --text-disabled: #555555;
+
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --error: #ef4444;
+  --info: #3b82f6;
+
+  --gradient-primary: linear-gradient(135deg, #f24400, #ff6a00);
+  --gradient-dark: linear-gradient(135deg, #0a0a0a, #1a1a1a);
+  --gradient-glow: radial-gradient(circle, rgba(242, 68, 0, 0.2), transparent 70%);
+}
+
+html {
+  scroll-behavior: smooth;
+  overflow-x: clip;
+}
+
+body {
+  @apply min-w-0 bg-surface-base text-content antialiased;
+  overflow-x: clip;
+}
+
+::selection {
+  background: rgba(242, 68, 0, 0.28);
+  color: #ffffff;
+}
+
+/* Focus visible — WCAG. Ring usa token de superfície para funcionar em dark/light do painel. */
+:focus-visible {
+  @apply outline-none ring-2 ring-primary/70 ring-offset-2 ring-offset-surface-base;
+}
+
+/**
+ * Scrollbar (webkit) — mais fina e neutra. Cor do polegar segue o token `--color-line`
+ * para se adaptar automaticamente aos temas do `.panel-app` (dashboard/admin, dark/light).
+ * Em hover, clareia/escurece o polegar em vez do salto laranja, que era demasiado ruidoso.
+ */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgb(var(--color-line) / 0.75);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--color-content-muted) / 0.55);
+  background-clip: padding-box;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--color-line) / 0.75) transparent;
+}
+
+/* Título — linha decorativa (opcional via classe) */
+@layer utilities {
+  .title-accent-line {
+    @apply mx-auto mt-3 h-[3px] w-16 rounded-sm bg-gradient-primary;
+  }
+
+  /** Respeita barra inicial do iOS e gestos na base do ecrã */
+  .pb-safe {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+  }
+  .pt-safe {
+    padding-top: max(0.75rem, env(safe-area-inset-top, 0px));
+  }
+  .mb-safe {
+    margin-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /** Cartão de superfície reutilizável (marketing / páginas públicas) */
+  .ds-public-card {
+    @apply rounded-2xl border border-line/70 bg-surface-card/50 shadow-elevation-1 backdrop-blur-sm;
+  }
+}
+
+/* Reduce motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* —— Landing (homepage): tipografia Syne + DM Sans via variáveis injectadas em `app/page.tsx` —— */
+.landing-typography {
+  font-family: var(--font-landing-sans), var(--font-inter), ui-sans-serif, sans-serif;
+}
+
+.landing-typography .font-display,
+.landing-typography h1,
+.landing-typography h2,
+.landing-typography h3 {
+  font-family: var(--font-landing-display), var(--font-space-grotesk), ui-sans-serif, sans-serif;
+}
+
+@media (pointer: fine) {
+  .landing-hide-cursor,
+  .landing-hide-cursor * {
+    cursor: none !important;
+  }
+}
+
+/** Cursor landing: posição só via transform (JS) — nunca transition em transform. */
+.landing-cursor-ring {
+  width: 2rem;
+  height: 2rem;
+  opacity: 0.5;
+  transition: width 0.15s ease, height 0.15s ease, opacity 0.15s ease;
+}
+
+.landing-cursor-ring.landing-cursor-ring--hover {
+  width: 2.75rem;
+  height: 2.75rem;
+  opacity: 0.9;
+}
+
+/** Ruído SVG sutil (overlay hero) — opacidade baixa, mix-blend */
+.landing-hero-noise {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
+}
+
+/** Shimmer no CTA gradiente (hero) */
+.landing-cta-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.landing-cta-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 38%,
+    rgba(255, 255, 255, 0.22) 50%,
+    transparent 62%
+  );
+  animation: landing-shimmer 2.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-cta-shimmer::after {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+/** Ghost CTA: borda animada ao hover */
+.landing-ghost-cta {
+  position: relative;
+  background: linear-gradient(rgb(var(--color-surface-card) / 0.45), rgb(var(--color-surface-card) / 0.45))
+      padding-box,
+    linear-gradient(135deg, rgba(242, 68, 0, 0.35), rgba(255, 106, 0, 0.15), rgba(242, 68, 0, 0.4)) border-box;
+  border: 1px solid transparent;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.landing-ghost-cta:hover {
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 0 0 0 1px rgba(242, 68, 0, 0.35), 0 12px 28px rgba(0, 0, 0, 0.2);
+}
+
+/** Links navegação / rodapé — sublinhado animado */
+.landing-link-grow {
+  background-image: linear-gradient(currentColor, currentColor);
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+  background-size: 0% 1px;
+  transition: background-size 0.25s ease;
+}
+
+.landing-link-grow:hover {
+  background-size: 100% 1px;
+}
+
+/** Separador com gradiente da marca */
+.landing-footer-sep {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(242, 68, 0, 0.55), rgba(255, 106, 0, 0.35), transparent);
+}
