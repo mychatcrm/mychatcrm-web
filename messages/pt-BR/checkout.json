@@ -1,0 +1,82 @@
+{
+  "page": {
+    "breadcrumbHome": "Início",
+    "breadcrumbPlans": "Planos",
+    "breadcrumbCheckout": "Checkout · {planName}",
+    "heading": "Checkout seguro",
+    "subheadingBase": "Você está assinando o plano",
+    "subheadingAnnual": "no <strong>ciclo anual</strong> — total de 12 meses (bruto, desconto e valor a pagar no resumo ao lado).",
+    "subheadingEnd": ". Revise os dados e conclua o pagamento simulado abaixo."
+  },
+  "form": {
+    "heading": "Dados de pagamento",
+    "demoDisclaimer": "Ambiente de demonstração — nenhum dado real é enviado ou armazenado.",
+    "fullName": "Nome completo",
+    "fullNamePlaceholder": "Seu nome",
+    "email": "E-mail corporativo",
+    "emailPlaceholder": "voce@empresa.com.br",
+    "company": "Empresa (opcional)",
+    "companyPlaceholder": "Razão social ou nome fantasia",
+    "doc": "CPF / CNPJ",
+    "docPlaceholder": "000.000.000-00",
+    "phone": "WhatsApp",
+    "phonePlaceholder": "(11) 99999-9999",
+    "cardSection": "Cartão (simulado)",
+    "cardNumber": "Número do cartão",
+    "cardPlaceholder": "4242 4242 4242 4242",
+    "expiry": "Validade",
+    "expiryPlaceholder": "MM/AA",
+    "cvv": "CVV",
+    "cvvPlaceholder": "123",
+    "terms": "Li e aceito os",
+    "termsLink": "Termos de Uso",
+    "termsAnd": "e a",
+    "privacyLink": "Política de Privacidade",
+    "submitMonthly": "Pagar {price} e ativar",
+    "submitAnnual": "Pagar {price} (total anual) e ativar",
+    "annualNote": "Um único pagamento pelos 12 meses · média de {monthly}/mês no ciclo promocional."
+  },
+  "coupon": {
+    "label": "Cupom de desconto",
+    "optional": "(opcional)",
+    "description": "Pode concluir a compra sem cupom. Se tiver um código, valide aqui — o resumo atualiza após aplicar (e-mail do formulário necessário só para cupons com limite por conta).",
+    "remove": "Remover",
+    "placeholder": "Opcional — ex.: SOLO15",
+    "apply": "Aplicar cupom",
+    "ariaLabel": "Código do cupom (opcional)",
+    "invalidResponse": "Resposta inválida do servidor.",
+    "networkError": "Falha de rede. Tente novamente."
+  },
+  "summary": {
+    "label": "Resumo",
+    "originalValue": "Valor original",
+    "discount": "Desconto",
+    "totalToPay": "Total a pagar",
+    "firstCycleDiscount": "Desconto válido no primeiro ciclo; renovações pelo valor cheio até novo acordo.",
+    "recurringDiscount": "Desconto recorrente conforme regras do cupom e contrato.",
+    "grossAnnual": "Total bruto (12× mensal de lista)",
+    "annualDiscount": "Desconto no anual ({percent}%)",
+    "totalAnnual": "Total a pagar (anual)",
+    "perMonth": "Equivale a por mês",
+    "annualNote": "Cobrança em <strong>um único pagamento</strong> pelo período de 12 meses. Se optar por parcelar no cartão, juros e encargos seguem as regras do seu banco e do processador de pagamentos (adquirente) usado na finalização — não estão incluídos neste total.",
+    "monthlyCharge": "Cobrança mensal",
+    "noteMonthly": "Cobrança mensal recorrente. Cancele quando quiser (conforme termos).",
+    "noteAnnual": "Ciclo anual: o valor total do resumo contempla 12 meses à vista com desconto sobre a lista. Cancele quando quiser (conforme termos).",
+    "apiMeta": "API oficial Meta (WhatsApp Business) — 1 número incluído; cada número extra +{extra}/mês",
+    "tls": "Ambiente seguro com criptografia em trânsito (TLS)",
+    "invoice": "Nota fiscal e suporte comercial MyChatCRM"
+  },
+  "success": {
+    "heading": "Assinatura registrada (demo)",
+    "body": "Em produção, aqui você veria a confirmação do gateway de pagamento e o e-mail com o acesso ao painel.",
+    "couponLabel": "Cupom:",
+    "discountLabel": "Desconto (1º ciclo):",
+    "totalLabel": "Total pago (referência):",
+    "goToLogin": "Ir para o login",
+    "backToPlans": "Voltar aos planos"
+  },
+  "errors": {
+    "commitError": "Não foi possível confirmar o cupom no servidor.",
+    "unexpectedError": "Erro inesperado. Tente novamente."
+  }
+}

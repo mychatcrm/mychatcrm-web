@@ -6,6 +6,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { linkButtonClass } from "@/components/ui/LinkButton";
+import { useTranslations } from "next-intl";
 import {
   EXTRA_AGENT_MONTHLY_BRL,
   getPlanIncludedAgentLimit,
@@ -170,6 +171,8 @@ const PRESETS = [
 ] as const;
 
 export function SavingsCalculator() {
+  const t = useTranslations("landing.savings");
+  const tCommon = useTranslations("common.buttons");
   const [team, setTeam] = useState(1);
   const [lostLeads, setLostLeads] = useState(MIN_LOST_LEADS);
 
@@ -220,36 +223,34 @@ export function SavingsCalculator() {
       />
       <div className="relative mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-3xl text-center">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">Simulador inteligente</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">{t("eyebrow")}</p>
           <h2
             id="economia-titulo"
             className="mt-2 font-display text-3xl font-bold tracking-tight text-content sm:text-4xl"
           >
-            O plano certo — e quanto você deixa de gastar
+            {t("heading")}
           </h2>
           <div className="title-accent-line mx-auto" aria-hidden />
           <p className="mt-4 text-sm leading-relaxed text-content-secondary sm:text-base">
-            Ajuste <strong className="font-semibold text-content">atendentes</strong> e{" "}
-            <strong className="font-semibold text-content">leads perdidos por mês</strong>. Estimamos um{" "}
-            <strong className="font-semibold text-content">perfil de uso</strong> (funis, novas conversas e agentes de
-            IA) a partir do tamanho da equipa e comparamos com os limites reais em{" "}
+            {t("subheadingPart1")} <strong className="font-semibold text-content">{t("subheadingAttendants")}</strong> {t("subheadingAnd")}{" "}
+            <strong className="font-semibold text-content">{t("subheadingLostLeads")}</strong>{t("subheadingPart2")}{" "}
+            <strong className="font-semibold text-content">{t("subheadingUsageProfile")}</strong> {t("subheadingPart3")}{" "}
             <Link href="/planos" className="font-semibold text-primary underline-offset-2 hover:underline">
-              Planos
+              {t("subheadingPlans")}
             </Link>
-            . O sistema sugere o <strong className="font-semibold text-content">plano com preço fixo mais barato</strong>{" "}
-            que cumpre esses limites (mensalidade + agentes extras, quando aplicável). Leads no CRM Kanban são{" "}
-            <strong className="font-semibold text-content">ilimitados</strong> em todos os planos.
+            {t("subheadingPart4")} <strong className="font-semibold text-content">{t("subheadingCheapest")}</strong>{" "}
+            {t("subheadingPart5")}{" "}
+            <strong className="font-semibold text-content">{t("subheadingUnlimited")}</strong> {t("subheadingPart6")}
           </p>
         </div>
 
         <div className="mt-8 rounded-2xl border border-line/70 bg-surface-card/50 p-4 shadow-sm ring-1 ring-black/[0.03] dark:ring-white/[0.04] sm:p-5">
           <div className="mx-auto max-w-xl text-center">
             <p id="economia-cenarios" className="text-sm font-semibold text-content">
-              Atalho: tamanho de equipa por plano
+              {t("shortcutHeading")}
             </p>
             <p className="mt-1 text-xs leading-snug text-content-muted">
-              <strong className="font-medium text-content-secondary">Um clique</strong> define um exemplo típico de
-              equipa; depois refine com o slider de atendentes.
+              <strong className="font-medium text-content-secondary">{t("oneClick")}</strong> {t("shortcutSubContinue")}
             </p>
           </div>
           <div
@@ -265,7 +266,7 @@ export function SavingsCalculator() {
                   type="button"
                   role="radio"
                   aria-checked={selected}
-                  aria-label={`Aplicar exemplo de equipa do plano ${p.planName}: ${p.team} atendentes`}
+                  aria-label={t("applyExampleAriaLabel", { planName: p.planName, team: p.team })}
                   onClick={() => setTeam(p.team)}
                   className={cn(
                     "flex min-h-[44px] flex-col gap-0.5 rounded-xl border px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-deep",
@@ -279,10 +280,10 @@ export function SavingsCalculator() {
                     <span className="font-display text-base font-bold tracking-tight text-content">{p.planName}</span>
                   </span>
                   <span className="text-[11px] text-content-muted">
-                    {p.team} {p.team === 1 ? "atendente" : "atendentes"} · exemplo
+                    {p.team} {p.team === 1 ? t("attendant") : t("attendants")} · {t("example")}
                   </span>
                   <span className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-primary">
-                    {selected ? "Ativo" : "Clique para aplicar"}
+                    {selected ? t("active") : t("clickToApply")}
                   </span>
                 </button>
               );
@@ -299,17 +300,14 @@ export function SavingsCalculator() {
               className="lg:col-span-7 flex h-full min-h-0 flex-col rounded-2xl border border-line/80 bg-surface-card p-4 shadow-elevation-1 ring-1 ring-inset ring-white/[0.03] dark:ring-white/[0.04] sm:p-5"
             >
               <div className="border-b border-line/45 pb-2.5">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-content-muted">Parâmetros da operação</p>
-                <p className="mt-0.5 text-xs leading-snug text-content-secondary">
-                  Ajuste os dois sliders. O perfil técnico e o plano sugerido atualizam em tempo real.
-                </p>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-content-muted">{t("paramsTitle")}</p>
+                <p className="mt-0.5 text-xs leading-snug text-content-secondary">{t("paramsSub")}</p>
               </div>
 
               <div className="mt-3 flex flex-wrap gap-2 rounded-xl border border-line/50 bg-surface-deep/40 px-3 py-2.5">
                 <span className="inline-flex items-center gap-1 rounded-md bg-surface-elevated/50 px-2 py-1 text-[10px] font-medium text-content-secondary">
                   <Info className="size-3 shrink-0 text-primary" aria-hidden />
-                  Perfil estimado: {profile.funnels} funis · {formatCompactNumber(profile.conversations)} conv./mês ·{" "}
-                  {profile.aiAgents} agentes IA
+                  {t("estimatedProfile", { funnels: profile.funnels, conversations: formatCompactNumber(profile.conversations), aiAgents: profile.aiAgents })}
                 </span>
               </div>
 
@@ -317,10 +315,10 @@ export function SavingsCalculator() {
                 <div className="rounded-xl border border-line/50 bg-surface-elevated/[0.1] p-3 sm:p-3.5">
                   <div className="flex items-center justify-between gap-2">
                     <label htmlFor="calc-attendants" className="text-[13px] font-medium leading-tight text-content">
-                      Quantidade de atendentes
+                      {t("attendantsLabel")}
                     </label>
                     <span className="shrink-0 rounded-md bg-primary/12 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-primary">
-                      {team} {team === 1 ? "atendente" : "atendentes"}
+                      {team} {team === 1 ? t("attendant") : t("attendants")}
                     </span>
                   </div>
                   <input
@@ -338,7 +336,7 @@ export function SavingsCalculator() {
                     aria-valuemin={1}
                     aria-valuemax={MAX_TEAM_SLIDER}
                     aria-valuenow={team}
-                    aria-valuetext={`${team} atendentes`}
+                    aria-valuetext={t("attendantValueText", { count: team })}
                   />
                   <RefCallout>
                     <p className="text-[11px] leading-snug text-content-muted">
@@ -351,10 +349,10 @@ export function SavingsCalculator() {
                 <div className="rounded-xl border border-line/50 bg-surface-elevated/[0.1] p-3 sm:p-3.5">
                   <div className="flex items-center justify-between gap-2">
                     <label htmlFor="calc-lost" className="text-[13px] font-medium leading-tight text-content">
-                      Leads perdidos por mês
+                      {t("lostLeadsLabel")}
                     </label>
                     <span className="shrink-0 rounded-md bg-primary/12 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-primary">
-                      {lostLeads} {lostLeads === 1 ? "lead" : "leads"}
+                      {lostLeads} {lostLeads === 1 ? t("lead") : t("leads")}
                     </span>
                   </div>
                   <input
@@ -376,7 +374,7 @@ export function SavingsCalculator() {
                     aria-valuemin={MIN_LOST_LEADS}
                     aria-valuemax={MAX_LOST_LEADS}
                     aria-valuenow={lostLeads}
-                    aria-valuetext={`${lostLeads} leads perdidos por mês`}
+                    aria-valuetext={t("lostLeadsValueText", { count: lostLeads })}
                   />
                   <RefCallout>
                     <p className="text-[11px] leading-snug text-content-muted">
@@ -400,38 +398,36 @@ export function SavingsCalculator() {
                   <Wallet className="size-5" aria-hidden />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-content-muted">Recomendação</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-content-muted">{t("recommendation")}</p>
                   <p className="mt-1 font-display text-2xl font-bold tracking-tight text-content">
                     {fit.plan?.name ?? "Enterprise"}
                   </p>
                   <p className="mt-1 text-xs leading-relaxed text-content-secondary">
-                    {fit.slug === "enterprise"
-                      ? "Preço sob consulta — enviamos proposta alinhada ao volume."
-                      : "Menor custo mensal entre os planos com preço fixo que cobrem o perfil estimado."}
+                    {fit.slug === "enterprise" ? t("enterprisePrice") : t("cheapestFixed")}
                   </p>
                 </div>
               </div>
 
               {caps && (
                 <ul className="mt-5 space-y-2 rounded-2xl border border-line/60 bg-surface-elevated/35 p-4 text-xs text-content-secondary">
-                  <FitRow ok={team <= caps.team} label="Lugares" value={`${team} / ${caps.team}`} />
+                  <FitRow ok={team <= caps.team} label={t("slots")} value={`${team} / ${caps.team}`} />
                   <FitRow
                     ok={profile.funnels <= caps.funnelsMax}
-                    label="Funis (est.)"
+                    label={t("funnelsEst")}
                     value={`${profile.funnels} / ${caps.funnelsMax}`}
                   />
                   <FitRow
                     ok={profile.conversations <= caps.conv}
-                    label="Novas conversas/mês (est.)"
+                    label={t("conversationsEst")}
                     value={`${formatCompactNumber(profile.conversations)} / ${formatCompactNumber(caps.conv)}`}
                   />
                   <FitRow
                     ok={fit.extraAgents === 0}
-                    label="Agentes IA (est.)"
+                    label={t("aiAgentsEst")}
                     value={
                       fit.extraAgents > 0
-                        ? `${profile.aiAgents} (${caps.agentsIncl} incl. + ${fit.extraAgents} extra)`
-                        : `${profile.aiAgents} (até ${caps.agentsIncl} incl.)`
+                        ? `${profile.aiAgents} (${caps.agentsIncl} ${t("incl")} + ${fit.extraAgents} ${t("extra")})`
+                        : `${profile.aiAgents} (${t("incl")} ${caps.agentsIncl})`
                     }
                   />
                 </ul>
@@ -443,7 +439,7 @@ export function SavingsCalculator() {
 
               {hasFixedMychat && (
                 <div className="mt-5">
-                  <p className="text-xs font-medium text-content-muted">Investimento MyChatCRM estimado</p>
+                  <p className="text-xs font-medium text-content-muted">{t("mychatInvestment")}</p>
                   <p className="mt-1 font-display text-3xl font-bold text-content">{formatBRLDec(mychatMonthly)}/mês</p>
                   {fit.slug !== "enterprise" && (
                     <p className="mt-1 text-[11px] text-content-muted">
@@ -453,7 +449,7 @@ export function SavingsCalculator() {
                           {fit.extraAgents} × {formatBRLDec(EXTRA_AGENT_MONTHLY_BRL)} (extras).
                         </>
                       ) : (
-                        <>Mensalidade base do plano, sem agentes IA extras neste perfil.</>
+                        <>{t("baseNoExtras")}</>
                       )}
                     </p>
                   )}
@@ -462,35 +458,33 @@ export function SavingsCalculator() {
 
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 <div className="rounded-2xl border border-line/70 bg-surface-elevated/30 px-4 py-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-content-muted">Stack atual (est.)</p>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-content-muted">{t("currentStack")}</p>
                   <p className="mt-0.5 text-lg font-bold text-content">{formatBRL(Math.round(currentStackMonthly))}</p>
                 </div>
                 <div className="rounded-2xl border border-primary/25 bg-primary/[0.07] px-4 py-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-content-muted">Economia / mês</p>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-content-muted">{t("savingsPerMonth")}</p>
                   <p className="mt-0.5 text-lg font-bold text-primary">
                     {hasPositiveSavings ? formatBRL(Math.round(monthlySavings!)) : "—"}
                   </p>
                   {hasFixedMychat && !hasPositiveSavings && (
-                    <p className="mt-1 text-[10px] leading-snug text-content-muted">
-                      Custo estimado abaixo da mensalidade: use o múltiplo só como referência ou aumente os sliders.
-                    </p>
+                    <p className="mt-1 text-[10px] leading-snug text-content-muted">{t("belowMonthly")}</p>
                   )}
                 </div>
               </div>
 
               <div className="mt-5 text-center">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-content-muted">Economize até</p>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-content-muted">{t("saveUpTo")}</p>
                 <p className="mt-1 font-display text-4xl font-bold text-primary sm:text-5xl">
                   {ratio != null && ratio >= 1.05 ? `${ratio.toFixed(1)}×` : "—"}
                 </p>
                 <p className="mx-auto mt-1 max-w-xs text-[11px] text-content-muted">
                   {ratio != null && ratio >= 1.05
-                    ? "Razão entre o custo atual estimado e o MyChat no plano sugerido."
+                    ? t("ratioExplain")
                     : hasFixedMychat && ratio != null && ratio < 1.05
-                      ? "Mensalidade acima do custo estimado neste cenário — o múltiplo não aplica."
+                      ? t("ratioBelow")
                       : hasFixedMychat
-                        ? "Aumente atendentes ou leads perdidos para ver um múltiplo ≥ 1,05×."
-                        : "Com Enterprise, o múltiplo depende da proposta fechada."}
+                        ? t("ratioIncrease")
+                        : t("ratioEnterprise")}
                 </p>
               </div>
 
@@ -499,7 +493,7 @@ export function SavingsCalculator() {
                   href={fit.slug === "enterprise" ? "/planos#especialista" : "/planos"}
                   className={linkButtonClass("gradient", "lg", "w-full justify-center gap-2")}
                 >
-                  {fit.slug === "enterprise" ? "Falar com comercial" : "Ver planos e checkout"}
+                  {fit.slug === "enterprise" ? t("talkCommercial") : t("viewPlansCheckout")}
                   <ArrowRight className="size-4" aria-hidden />
                 </Link>
                 <a
@@ -508,22 +502,24 @@ export function SavingsCalculator() {
                   rel="noopener noreferrer"
                   className={linkButtonClass("outline", "md", "w-full justify-center border-line/90")}
                 >
-                  WhatsApp com especialista
+                  {tCommon("whatsappExpert")}
                 </a>
               </div>
             </motion.div>
         </div>
 
         <p className="mx-auto mt-8 max-w-3xl text-center text-[11px] leading-relaxed text-content-faint sm:text-xs">
-          Simulação ilustrativa: médias de {formatBRL(REFERENCE_COST_PER_ATTENDANT_MONTH)}/atendente e{" "}
-          {formatBRL(REFERENCE_COST_PER_LOST_LEAD)}/lead perdido são referências fixas; só os quantitativos dos sliders
-          mudam. Funis, novas conversas e agentes de IA seguem uma estimativa ligada ao tamanho da equipa e são cruzados
-          com {solo.name}, {equipa.name} e {escala.name} em{" "}
+          {t("disclaimer", {
+            costPerAttendant: formatBRL(REFERENCE_COST_PER_ATTENDANT_MONTH),
+            costPerLead: formatBRL(REFERENCE_COST_PER_LOST_LEAD),
+            solo: solo.name,
+            equipa: equipa.name,
+            escala: escala.name,
+          })}{" "}
           <Link href="/planos" className="font-medium text-primary underline-offset-2 hover:underline">
-            Planos
+            {t("disclaimerPlans")}
           </Link>
-          . Leads no CRM Kanban não entram no teto por plano. Cada agente IA além do incluído soma{" "}
-          {formatBRL(EXTRA_AGENT_MONTHLY_BRL)}/mês.
+          {t("disclaimerEnd", { extraAgentCost: formatBRL(EXTRA_AGENT_MONTHLY_BRL) })}
         </p>
       </div>
     </section>

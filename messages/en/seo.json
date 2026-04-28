@@ -1,0 +1,59 @@
+{
+  "home": {
+    "title": "MyChatCRM — AI Chatbot for WhatsApp | Kanban CRM",
+    "description": "MyChatCRM: AI chatbot for WhatsApp, Kanban CRM, Google Calendar and automatic follow-up. Official Meta API, expert training and integrations. Automate sales and 24h service.",
+    "ogImageAlt": "MyChatCRM — AI Chatbot for WhatsApp",
+    "keywords": [
+      "MyChatCRM",
+      "WhatsApp chatbot",
+      "AI WhatsApp",
+      "WhatsApp CRM",
+      "Kanban CRM sales",
+      "Official WhatsApp API",
+      "customer service automation",
+      "Google Calendar"
+    ]
+  },
+  "plans": {
+    "title": "Plans and subscriptions | MyChatCRM",
+    "description": "Compare MyChatCRM plans: AI on WhatsApp, Kanban CRM, calendar and integrations. Choose a plan and complete your subscription securely.",
+    "ogTitle": "MyChatCRM Plans — AI on WhatsApp + Kanban CRM",
+    "ogDescription": "Solo, Team, Scale plans and Enterprise option (on request). Pricing and checkout for the first three; detailed comparison without Enterprise.",
+    "ogImageAlt": "MyChatCRM — Plans and pricing"
+  },
+  "login": {
+    "title": "Sign in | MyChatCRM",
+    "description": "Access your MyChatCRM account to manage chatbot, Kanban CRM, calendar, integrations and support."
+  },
+  "terms": {
+    "title": "Terms of Use | MyChatCRM",
+    "description": "MyChatCRM Terms of Use — conditions for using the platform."
+  },
+  "privacy": {
+    "title": "Privacy Policy | MyChatCRM",
+    "description": "MyChatCRM Privacy Policy — how we handle your personal data."
+  },
+  "maintenance": {
+    "title": "Maintenance | MyChatCRM",
+    "description": "MyChatCRM is temporarily unavailable."
+  },
+  "blog": {
+    "title": "Blog | MyChatCRM",
+    "description": "Strategies, tutorials and updates on AI, Kanban CRM and WhatsApp service."
+  },
+  "checkout": {
+    "title": "Checkout {planName} | MyChatCRM",
+    "description": "Complete your MyChatCRM {planName} plan subscription."
+  },
+  "schemas": {
+    "organizationDescription": "Brazilian SaaS platform with AI chatbot for WhatsApp with integrated Kanban CRM and Calendar.",
+    "softwareDescription": "Automate customer service and sales on WhatsApp with AI, Kanban CRM, funnel and Google Calendar integration.",
+    "productName": "MyChatCRM — Scale Plan",
+    "productDescription": "Scale plan with full Kanban CRM, event scheduling, mass broadcasts and expanded monthly lead limit.",
+    "breadcrumb": {
+      "home": "Home",
+      "plans": "Plans",
+      "blog": "Blog"
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "page": {
+    "eyebrow": "Blog",
+    "heading": "Conteúdo para escalar vendas no WhatsApp",
+    "subheading": "Estratégias, tutoriais e atualizações sobre IA, CRM e atendimento comercial.",
+    "noResults": "Nenhum artigo encontrado.",
+    "readMore": "Ler artigo",
+    "readMinutes": "min de leitura"
+  },
+  "article": {
+    "notFound": "Artigo não encontrado | Blog MyChatCRM",
+    "backToBlog": "← Voltar ao blog",
+    "readingTime": "min de leitura",
+    "publishedAt": "Publicado em",
+    "updatedAt": "Atualizado em"
+  }
+}

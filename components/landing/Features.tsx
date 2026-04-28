@@ -1,12 +1,18 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { FEATURES } from "@/lib/constants";
 import { FeatureIcon } from "./FeatureIcon";
 import { MagneticParticleField } from "./MagneticParticleField";
 import { cn } from "@/lib/utils";
+import { useTranslations } from "next-intl";
+
+type IconName = "clock" | "mic" | "spark" | "plug" | "funnel" | "grid";
+type FeatureItem = { title: string; description: string; icon: IconName };
 
 export function Features() {
+  const t = useTranslations("landing.features");
+  const items = t.raw("items") as FeatureItem[];
+
   return (
     <section id="recursos" className="relative isolate overflow-hidden py-20 sm:py-24">
       <MagneticParticleField />
@@ -14,16 +20,13 @@ export function Features() {
       <div className="relative z-10 mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="font-display text-3xl font-extrabold tracking-[-0.03em] text-content sm:text-4xl">
-            Recursos que aceleram vendas no WhatsApp
+            {t("heading")}
           </h2>
           <div className="title-accent-line" aria-hidden />
-          <p className="mt-4 text-content-secondary/95">
-            Tudo o que sua operação precisa para atender melhor, converter mais e manter o time
-            alinhado — em um só lugar.
-          </p>
+          <p className="mt-4 text-content-secondary/95">{t("subheading")}</p>
         </div>
         <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {FEATURES.map((f, i) => (
+          {items.map((f, i) => (
             <motion.article
               key={f.title}
               initial={{ opacity: 0, y: 16 }}

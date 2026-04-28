@@ -1,0 +1,110 @@
+{
+  "page": {
+    "eyebrow": "Sales · Subscriptions",
+    "heading": "Plans designed for every stage of your growth",
+    "subheading": "Transparent pricing. Choose your plan, review at checkout and activate MyChatCRM with the official WhatsApp API.",
+    "refundBannerCheckout": "online checkout",
+    "refundBannerDays": "7 days",
+    "refundBannerEnterprise": "Enterprise: per signed proposal.",
+    "faqLink": "Frequently asked questions",
+    "alreadyClient": "Already a client — sign in",
+    "compareHeading": "Compare and select",
+    "compareSub": "Clicking a plan will take you to the secure checkout to complete the subscription (demo).",
+    "expertHeading": "Talk to an expert",
+    "expertSub": "Ask about lead limits, integrations, additional WhatsApp numbers (R$ {whatsappExtra}/month each) or migrating your current service.",
+    "talkWhatsapp": "Chat on WhatsApp",
+    "backToSite": "Back to site",
+    "loadingFooter": "Loading footer…"
+  },
+  "plans": {
+    "solo": {
+      "name": "Solo",
+      "tagline": "Freelancer professional: all tools, with tight limits and the lowest price.",
+      "badge": "Get started",
+      "monthlyLeadsLabel": "500 leads served/month",
+      "features": [
+        "Kanban CRM, funnels, AI agents, real-time conversations, lead integrations, collaborators (hierarchy), mass broadcasts, Google Calendar, reminders, integrations (API, webhooks, Zapier/Make/n8n, etc.), support and reports — with plan limits.",
+        "No directors, managers or salespeople — just your account (solo work).",
+        "Up to 2 AI agents included (+ additional agents separately).",
+        "Unlimited Kanban CRM leads (registration and integrations).",
+        "Up to 5 sales funnels in Kanban CRM.",
+        "Up to 500 leads served per month (billing count).",
+        "Upgrade package on the plans page or with sales."
+      ],
+      "highlights": [
+        "AI on WhatsApp with text and audio responses",
+        "Solo mode — one account, no team hierarchy",
+        "Up to 2 AI agents included (+ extras on the agents page)",
+        "Kanban CRM, funnels and conversations with clear monthly limits",
+        "Integrations, desktop and support per plan"
+      ],
+      "editorial": "For freelance professionals who want the same platform, with usage caps suited to one person."
+    },
+    "equipa": {
+      "name": "Team",
+      "tagline": "Small teams with commercial hierarchy and higher volume.",
+      "badge": "SMBs",
+      "monthlyLeadsLabel": "5,000 leads served/month",
+      "features": [
+        "Kanban CRM, funnels, AI agents, real-time conversations, lead integrations, collaborators (hierarchy), mass broadcasts, Google Calendar, reminders, integrations (API, webhooks, Zapier/Make/n8n, etc.), support and reports — with plan limits.",
+        "Up to 1 director, 3 managers and 30 salespeople.",
+        "Up to 5 AI agents included.",
+        "Unlimited Kanban CRM leads (registration and integrations).",
+        "Up to 12 sales funnels in Kanban CRM.",
+        "Up to 5,000 leads served per month (billing count)."
+      ],
+      "highlights": [
+        "AI-powered WhatsApp service, available all the time",
+        "AI training supervised by experts",
+        "Text and audio responses",
+        "Forms and client context capture",
+        "Integrations with APIs and external systems",
+        "Desktop application for your team"
+      ],
+      "editorial": "The MyChatCRM core: trainable AI, voice, integrations and desktop for teams that want fast, consistent responses."
+    },
+    "escala": {
+      "name": "Scale",
+      "tagline": "Operation with multiple levels and higher service volume.",
+      "badge": "Most chosen",
+      "monthlyLeadsLabel": "15,000 leads served/month",
+      "features": [
+        "Kanban CRM, funnels, AI agents, real-time conversations, lead integrations, collaborators (hierarchy), mass broadcasts, Google Calendar, reminders, integrations (API, webhooks, Zapier/Make/n8n, etc.), support and reports — with plan limits.",
+        "Up to 5 directors, 25 managers and 30 salespeople.",
+        "Up to 30 AI agents included.",
+        "Unlimited Kanban CRM leads (registration and integrations).",
+        "Up to 25 sales funnels in Kanban CRM.",
+        "Up to 15,000 leads served per month (billing count)."
+      ],
+      "highlights": [
+        "Everything the Team plan offers",
+        "Full and customizable Kanban CRM for sales",
+        "Calendar, events and automatic reminders",
+        "Mass broadcasts and segmented campaigns",
+        "Team hierarchy (management, leadership and sales)",
+        "Extended capacity for higher volume operations"
+      ],
+      "editorial": "Designed for operations that need Kanban CRM, commercial rhythm and heavy automation — without giving up the same powerful AI on WhatsApp."
+    },
+    "enterprise": {
+      "name": "Enterprise",
+      "tagline": "Dedicated account under contract — package and limits defined with sales, tailored to the client.",
+      "badge": "On request",
+      "monthlyLeadsLabel": "Under contract",
+      "features": [],
+      "highlights": [
+        "Dedicated account with negotiated contract package",
+        "Limits and deliverables aligned to the client's profile — no fixed catalog",
+        "Commercial conversation to design scope, pricing and timeline"
+      ],
+      "editorial": "For operations that close volume, integrations and conditions directly with sales — each proposal is unique and does not follow the public list of other plans."
+    }
+  },
+  "billing": {
+    "monthly": "monthly",
+    "annual": "annual",
+    "annualDiscount": "17",
+    "whatsappIncluded": "1 WhatsApp number (official API)",
+    "whatsappExtra": "+R$ 75/month per additional number"
+  }
+}

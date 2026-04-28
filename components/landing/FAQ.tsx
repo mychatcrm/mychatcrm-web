@@ -2,11 +2,15 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
-import { FAQ_ITEMS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { useTranslations } from "next-intl";
+
+type FaqItem = { q: string; a: string };
 
 export function FAQ() {
   const [open, setOpen] = useState<number | null>(0);
+  const t = useTranslations("landing.faq");
+  const items = t.raw("items") as FaqItem[];
 
   return (
     <section
@@ -18,14 +22,12 @@ export function FAQ() {
         aria-hidden
       />
       <div className="relative z-10 text-center">
-        <h2 className="font-display text-3xl font-bold text-content sm:text-4xl">Perguntas frequentes</h2>
+        <h2 className="font-display text-3xl font-bold text-content sm:text-4xl">{t("heading")}</h2>
         <div className="title-accent-line" aria-hidden />
-        <p className="mt-4 text-content-secondary">
-          Respostas diretas sobre o MyChatCRM e a operação no WhatsApp.
-        </p>
+        <p className="mt-4 text-content-secondary">{t("subheading")}</p>
       </div>
       <div className="relative z-10 mt-10 divide-y divide-line/80 overflow-hidden rounded-2xl border border-line/80 bg-surface-card/40 shadow-elevation-2 backdrop-blur-md">
-        {FAQ_ITEMS.map((item, i) => {
+        {items.map((item, i) => {
           const isOpen = open === i;
           return (
             <div

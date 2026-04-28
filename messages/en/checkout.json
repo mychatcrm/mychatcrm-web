@@ -1,0 +1,82 @@
+{
+  "page": {
+    "breadcrumbHome": "Home",
+    "breadcrumbPlans": "Plans",
+    "breadcrumbCheckout": "Checkout · {planName}",
+    "heading": "Secure checkout",
+    "subheadingBase": "You are subscribing to the",
+    "subheadingAnnual": "plan in the <strong>annual cycle</strong> — total of 12 months (gross, discount and amount to pay in the side summary).",
+    "subheadingEnd": "plan. Review your details and complete the simulated payment below."
+  },
+  "form": {
+    "heading": "Payment details",
+    "demoDisclaimer": "Demo environment — no real data is sent or stored.",
+    "fullName": "Full name",
+    "fullNamePlaceholder": "Your name",
+    "email": "Business email",
+    "emailPlaceholder": "you@company.com",
+    "company": "Company (optional)",
+    "companyPlaceholder": "Legal or trading name",
+    "doc": "Tax ID",
+    "docPlaceholder": "000.000.000-00",
+    "phone": "WhatsApp",
+    "phonePlaceholder": "+1 (555) 000-0000",
+    "cardSection": "Card (simulated)",
+    "cardNumber": "Card number",
+    "cardPlaceholder": "4242 4242 4242 4242",
+    "expiry": "Expiry",
+    "expiryPlaceholder": "MM/YY",
+    "cvv": "CVV",
+    "cvvPlaceholder": "123",
+    "terms": "I have read and accept the",
+    "termsLink": "Terms of Use",
+    "termsAnd": "and the",
+    "privacyLink": "Privacy Policy",
+    "submitMonthly": "Pay {price} and activate",
+    "submitAnnual": "Pay {price} (annual total) and activate",
+    "annualNote": "Single payment for 12 months · average of {monthly}/month in the promotional cycle."
+  },
+  "coupon": {
+    "label": "Discount coupon",
+    "optional": "(optional)",
+    "description": "You can complete the purchase without a coupon. If you have a code, validate it here — the summary updates after applying (form email needed only for coupons with per-account limit).",
+    "remove": "Remove",
+    "placeholder": "Optional — e.g.: SOLO15",
+    "apply": "Apply coupon",
+    "ariaLabel": "Coupon code (optional)",
+    "invalidResponse": "Invalid server response.",
+    "networkError": "Network failure. Please try again."
+  },
+  "summary": {
+    "label": "Summary",
+    "originalValue": "Original value",
+    "discount": "Discount",
+    "totalToPay": "Total to pay",
+    "firstCycleDiscount": "Discount valid on first cycle; renewals at full price until new agreement.",
+    "recurringDiscount": "Recurring discount per coupon rules and contract.",
+    "grossAnnual": "Gross total (12× list monthly)",
+    "annualDiscount": "Annual discount ({percent}%)",
+    "totalAnnual": "Total to pay (annual)",
+    "perMonth": "Equivalent per month",
+    "annualNote": "Billed as a <strong>single payment</strong> for the 12-month period. If you choose to pay in installments, interest and fees follow your bank and payment processor rules — not included in this total.",
+    "monthlyCharge": "Monthly charge",
+    "noteMonthly": "Recurring monthly charge. Cancel anytime (per terms).",
+    "noteAnnual": "Annual cycle: the total summary covers 12 months upfront with a discount from list price. Cancel anytime (per terms).",
+    "apiMeta": "Official Meta API (WhatsApp Business) — 1 number included; each extra number +{extra}/month",
+    "tls": "Secure environment with in-transit encryption (TLS)",
+    "invoice": "Invoice and MyChatCRM commercial support"
+  },
+  "success": {
+    "heading": "Subscription registered (demo)",
+    "body": "In production, here you would see the payment gateway confirmation and the email with access to the panel.",
+    "couponLabel": "Coupon:",
+    "discountLabel": "Discount (1st cycle):",
+    "totalLabel": "Total paid (reference):",
+    "goToLogin": "Go to login",
+    "backToPlans": "Back to plans"
+  },
+  "errors": {
+    "commitError": "Could not confirm the coupon on the server.",
+    "unexpectedError": "Unexpected error. Please try again."
+  }
+}

@@ -2,6 +2,7 @@
 
 import { useInView } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 
 function useAnimatedNumber(target: number, decimals: number, duration = 1400) {
   const ref = useRef<HTMLDivElement>(null);
@@ -26,6 +27,7 @@ function useAnimatedNumber(target: number, decimals: number, duration = 1400) {
 }
 
 export function SocialProofBar() {
+  const t = useTranslations("landing.socialProof");
   const a = useAnimatedNumber(800, 0);
   const b = useAnimatedNumber(4.9, 1);
   const c = useAnimatedNumber(5, 1);
@@ -34,7 +36,7 @@ export function SocialProofBar() {
   return (
     <section
       className="relative border-y border-line/80 bg-surface-deep/60 py-12 motion-reduce:bg-surface-deep/50"
-      aria-label="Indicadores de confiança"
+      aria-label={t("ariaLabel")}
     >
       <div
         className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,transparent,rgba(242,68,0,0.04)_50%,transparent)] opacity-90 motion-reduce:opacity-50"
@@ -44,31 +46,30 @@ export function SocialProofBar() {
         <div ref={a.ref} className="text-center">
           <p className="font-display text-lg font-semibold leading-snug sm:text-xl">
             <span className="block text-3xl font-bold text-primary sm:text-4xl">+{a.val}</span>
-            <span className="text-sm text-content-muted">empresas ativas</span>
+            <span className="text-sm text-content-muted">{t("companies")}</span>
           </p>
         </div>
         <div ref={b.ref} className="text-center">
           <p className="font-display text-lg font-semibold leading-snug sm:text-xl">
             <span className="block text-3xl font-bold text-primary sm:text-4xl">{b.val}★</span>
-            <span className="text-sm text-content-muted">avaliação média</span>
+            <span className="text-sm text-content-muted">{t("rating")}</span>
           </p>
         </div>
         <div ref={c.ref} className="text-center">
           <p className="font-display text-lg font-semibold leading-snug sm:text-xl">
             <span className="block text-3xl font-bold text-primary sm:text-4xl">+R$ {c.val}M</span>
-            <span className="text-sm text-content-muted">em vendas geradas pelos clientes</span>
+            <span className="text-sm text-content-muted">{t("sales")}</span>
           </p>
         </div>
         <div ref={d.ref} className="text-center">
           <p className="font-display text-lg font-semibold leading-snug sm:text-xl">
             <span className="block text-3xl font-bold text-primary sm:text-4xl">{d.val}%</span>
-            <span className="text-sm text-content-muted">uptime</span>
+            <span className="text-sm text-content-muted">{t("uptime")}</span>
           </p>
         </div>
       </div>
       <p className="mx-auto mt-6 max-w-3xl px-4 text-center text-xs text-content-muted sm:text-sm">
-        Números ilustrativos para demonstração do produto. Resultados reais variam por operação e
-        segmento.
+        {t("disclaimer")}
       </p>
     </section>
   );

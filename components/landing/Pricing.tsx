@@ -24,6 +24,7 @@ import { Badge } from "@/components/ui/Badge";
 import { LinkButton } from "@/components/ui/LinkButton";
 import { SALES_PLANS, type SalesPlan } from "@/lib/plans";
 import { cn } from "@/lib/utils";
+import { useTranslations } from "next-intl";
 
 type PlanHighlight = { text: string; icon: typeof Bot };
 
@@ -75,26 +76,27 @@ function toneForSlug(slug: SalesPlan["slug"]): CardTone {
 }
 
 function PlanBadges({ plan }: { plan: SalesPlan }) {
+  const t = useTranslations("landing.pricingSection");
   if (plan.slug === "escala") {
     return (
       <div className="mb-3 flex flex-wrap gap-2">
-        <Badge className="border-transparent bg-primary text-white">Suite completa</Badge>
-        <Badge className="border-primary/40 bg-primary/10 text-primary">Mais escolhido</Badge>
+        <Badge className="border-transparent bg-primary text-white">{t("badgeSuiteFull")}</Badge>
+        <Badge className="border-primary/40 bg-primary/10 text-primary">{t("badgeMostChosen")}</Badge>
       </div>
     );
   }
   if (plan.slug === "enterprise") {
     return (
       <div className="mb-3 flex flex-wrap gap-2">
-        <Badge className="border-line/80 bg-surface-deep/80 text-content-secondary">Enterprise</Badge>
-        <Badge className="border-primary/35 bg-primary/10 text-primary">{plan.badge ?? "Sob consulta"}</Badge>
+        <Badge className="border-line/80 bg-surface-deep/80 text-content-secondary">{t("badgeEnterprise")}</Badge>
+        <Badge className="border-primary/35 bg-primary/10 text-primary">{plan.badge ?? t("badgeMostChosen")}</Badge>
       </div>
     );
   }
   if (plan.slug === "solo") {
     return (
       <div className="mb-3 flex flex-wrap gap-2">
-        <Badge className="border-line/80 bg-surface-deep/60 text-content-secondary">Plano entrada</Badge>
+        <Badge className="border-line/80 bg-surface-deep/60 text-content-secondary">{t("badgeStarter")}</Badge>
         {plan.badge ? (
           <Badge className="border-primary/35 bg-primary/10 text-primary">{plan.badge}</Badge>
         ) : null}
@@ -103,7 +105,7 @@ function PlanBadges({ plan }: { plan: SalesPlan }) {
   }
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-content-faint">Entrada</p>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-content-faint">{t("badgeEntry")}</p>
       {plan.badge ? (
         <Badge className="border-primary/35 bg-primary/10 text-primary">{plan.badge}</Badge>
       ) : null}
@@ -112,11 +114,14 @@ function PlanBadges({ plan }: { plan: SalesPlan }) {
 }
 
 function PlanCard({ plan, delay = 0 }: { plan: SalesPlan; delay?: number }) {
+  const t = useTranslations("landing.pricingSection");
+  const tCommon = useTranslations("common.buttons");
+  const tPlans = useTranslations("plans.plans");
   const tone = toneForSlug(plan.slug);
   const isFeatured = tone === "featured";
   const isEnterprise = tone === "enterprise";
-  const highlights = LANDING_HIGHLIGHTS[plan.slug];
-  const editorial = EDITORIAL[plan.slug];
+  const highlights = (tPlans.raw(`${plan.slug}.highlights`) as string[]) ?? LANDING_HIGHLIGHTS[plan.slug].map(h => h.text);
+  const editorial = tPlans(`${plan.slug}.editorial`);
   const hrefPlans = `/planos?destaque=${plan.slug}`;
   const hrefExpert = "/planos#especialista";
 
@@ -184,7 +189,9 @@ function PlanCard({ plan, delay = 0 }: { plan: SalesPlan; delay?: number }) {
         </p>
 
         <ul className="relative mt-6 flex flex-1 flex-col gap-3">
-          {highlights.map(({ text, icon: Icon }) => (
+          {highlights.map((text: string, idx: number) => {
+            const Icon = LANDING_HIGHLIGHTS[plan.slug]?.[idx]?.icon ?? Bot;
+            return (
             <li key={text} className="flex gap-3 text-sm leading-snug text-content-secondary">
               <span
                 className={cn(
@@ -201,7 +208,8 @@ function PlanCard({ plan, delay = 0 }: { plan: SalesPlan; delay?: number }) {
               </span>
               <span className="min-w-0 pt-1">{text}</span>
             </li>
-          ))}
+            );
+          })}
         </ul>
 
         <p className="relative mt-6 flex gap-3 rounded-xl border border-primary/20 bg-primary/[0.06] px-3.5 py-2.5 text-xs leading-snug text-content-secondary sm:text-[13px]">
@@ -211,8 +219,7 @@ function PlanCard({ plan, delay = 0 }: { plan: SalesPlan; delay?: number }) {
             aria-hidden
           />
           <span>
-            <span className="font-semibold text-content">Todos os planos incluem 7 dias</span> para pedir reembolso se
-            não gostar do MyChatCRM — sem complicações.
+            <span className="font-semibold text-content">{t("planCardRefundBold")}</span> {t("planCardRefundContinue")}
           </span>
         </p>
 
@@ -224,18 +231,18 @@ function PlanCard({ plan, delay = 0 }: { plan: SalesPlan; delay?: number }) {
                 variant="gradient"
                 size="lg"
                 className="w-full sm:flex-1"
-                aria-label="Agendar conversa comercial para o plano Enterprise"
+                aria-label={t("scheduleCommercialAriaLabel")}
               >
-                Agendar conversa comercial
+                {t("scheduleCommercial")}
               </LinkButton>
               <LinkButton
                 href={hrefPlans}
                 variant="outline"
                 size="lg"
                 className="w-full border-line/80 bg-transparent sm:flex-1 sm:max-w-[11rem]"
-                aria-label="Ver detalhes do plano Enterprise na página de planos"
+                aria-label={t("viewDetailsAriaLabel")}
               >
-                Ver detalhes
+                {t("viewDetails")}
               </LinkButton>
             </>
           ) : (
@@ -245,18 +252,18 @@ function PlanCard({ plan, delay = 0 }: { plan: SalesPlan; delay?: number }) {
                 variant="gradient"
                 size="lg"
                 className="w-full sm:flex-1"
-                aria-label={`Explorar plano ${plan.name} na página de planos`}
+                aria-label={t("explorePlanAriaLabel", { planName: plan.name })}
               >
-                Explorar na página de planos
+                {t("exploreInPlans")}
               </LinkButton>
               <LinkButton
                 href={hrefExpert}
                 variant="outline"
                 size="lg"
                 className="w-full border-line/80 bg-transparent sm:flex-1 sm:max-w-[11rem]"
-                aria-label="Falar com especialista — página de planos"
+                aria-label={t("talkExpertAriaLabel")}
               >
-                Falar com especialista
+                {tCommon("talkExpert")}
               </LinkButton>
             </>
           )}
@@ -267,6 +274,8 @@ function PlanCard({ plan, delay = 0 }: { plan: SalesPlan; delay?: number }) {
 }
 
 export function Pricing() {
+  const t = useTranslations("landing.pricingSection");
+
   return (
     <section
       id="planos"
@@ -279,22 +288,20 @@ export function Pricing() {
 
       <div className="relative mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-3xl text-center">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">Planos</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">{t("eyebrow")}</p>
           <h2 className="mt-2 font-display text-3xl font-bold tracking-tight text-content sm:text-4xl md:text-[2.35rem] md:leading-tight">
-            Os quatro desenhos de operação — valores só na página de planos
+            {t("heading")}
           </h2>
           <div className="title-accent-line mx-auto" aria-hidden />
           <p className="mt-5 text-base leading-relaxed text-content-secondary sm:text-lg">
-            Solo, Equipa, Escala e a opção Enterprise (sob consulta): aqui vê-se o posicionamento; preços, checkout e add-ons
-            estão em <span className="font-medium text-content">/planos</span>. O comparativo detalhado na vitrine não inclui
-            coluna Enterprise — cada proposta é negociada à parte.
+            {t("subheading")} <span className="font-medium text-content">{t("subheadingPlansLink")}</span>{t("subheadingEnd")}
           </p>
           <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-            <LinkButton href="/planos" variant="gradient" size="md" aria-label="Abrir página completa de planos e preços">
-              Ver preços e opções completas
+            <LinkButton href="/planos" variant="gradient" size="md" aria-label={t("viewPricesAriaLabel")}>
+              {t("viewPrices")}
             </LinkButton>
             <LinkButton href="/planos#especialista" variant="ghost" size="md" className="text-content-muted hover:text-primary">
-              Agendar conversa comercial
+              {t("scheduleCommercial")}
             </LinkButton>
           </div>
         </div>
@@ -312,7 +319,7 @@ export function Pricing() {
           transition={{ delay: 0.15, duration: 0.4 }}
           className="mx-auto mt-14 max-w-2xl text-center text-xs leading-relaxed text-content-faint sm:text-sm"
         >
-          Os valores e condições comerciais podem variar por campanha ou região. A listagem oficial com preços em destaque está em{" "}
+          {t("disclaimer")}{" "}
           <LinkButton href="/planos" variant="ghost" size="sm" className="inline px-1 font-semibold text-primary">
             /planos
           </LinkButton>

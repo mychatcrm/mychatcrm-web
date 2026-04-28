@@ -40,3 +40,8 @@ public/robots.txt
 # cleanup engine reports
 scripts/cleanup-engine/.cache/
 logs/cleanup-*.log
+
+# dados sensíveis (colaboradores com senhas em texto claro) — não versionar tenants reais
+# os arquivos de demo (tenant-mychatcrm-demo.json, tenant-clinica-oral-prime.json) podem
+# ser mantidos em git pois são dados fictícios de exemplo. Tenants reais não devem ser commitados.
+data/team-employees/tenant-[^m][^y]*.json

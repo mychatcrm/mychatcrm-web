@@ -5,6 +5,14 @@
 @tailwind components;
 @tailwind utilities;
 
+@font-face {
+  font-family: "BrandManropeDisplay";
+  src: url("/fonts/Manrope-SemiBold.otf") format("opentype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   color-scheme: dark;
 
@@ -131,16 +139,63 @@ body {
   }
 }
 
-/* —— Landing (homepage): tipografia Syne + DM Sans via variáveis injectadas em `app/page.tsx` —— */
+/* Landing wrapper keeps custom cursor/visual effects; typography now comes from .brand-marketing. */
 .landing-typography {
-  font-family: var(--font-landing-sans), var(--font-inter), ui-sans-serif, sans-serif;
+  font-family: inherit;
 }
 
 .landing-typography .font-display,
 .landing-typography h1,
 .landing-typography h2,
 .landing-typography h3 {
-  font-family: var(--font-landing-display), var(--font-space-grotesk), ui-sans-serif, sans-serif;
+  font-family: var(--font-brand-display), "BrandManropeDisplay", var(--font-brand-body), sans-serif;
+}
+
+/* Branding system for public pages only ([locale] routes). */
+.brand-marketing {
+  /* Balanced responsive scale for Manrope across landing/plans/blog/login. */
+  --brand-title-size: clamp(2rem, 4.8vw, 3.75rem); /* 32px..60px */
+  --brand-title-line: clamp(2.35rem, 5.4vw, 4.25rem); /* 38px..68px */
+  --brand-subtitle-size: clamp(1.35rem, 2.5vw, 2rem); /* 22px..32px */
+  --brand-subtitle-line: clamp(1.75rem, 3vw, 2.5rem); /* 28px..40px */
+  --brand-body-size: clamp(0.98rem, 1.15vw, 1.12rem); /* 15.7px..18px */
+  --brand-body-line: clamp(1.45rem, 1.7vw, 1.8rem); /* 23px..29px */
+  --brand-footer-size: clamp(0.84rem, 0.95vw, 0.95rem); /* 13.4px..15.2px */
+  --brand-footer-line: clamp(1.12rem, 1.25vw, 1.3rem); /* 18px..21px */
+  font-family: var(--font-brand-body), var(--font-inter), ui-sans-serif, sans-serif;
+}
+
+.brand-marketing .font-display {
+  font-family: var(--font-brand-display), "BrandManropeDisplay", var(--font-brand-body), sans-serif;
+  font-weight: 600;
+}
+
+.brand-marketing main h1 {
+  font-family: var(--font-brand-display), "BrandManropeDisplay", var(--font-brand-body), sans-serif;
+  font-size: var(--brand-title-size);
+  line-height: var(--brand-title-line);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.brand-marketing main h2,
+.brand-marketing main h3 {
+  font-size: var(--brand-subtitle-size);
+  line-height: var(--brand-subtitle-line);
+  font-weight: 500;
+}
+
+.brand-marketing main p,
+.brand-marketing main li {
+  font-size: var(--brand-body-size);
+  line-height: var(--brand-body-line);
+}
+
+.brand-marketing footer,
+.brand-marketing footer p,
+.brand-marketing footer a {
+  font-size: var(--brand-footer-size);
+  line-height: var(--brand-footer-line);
 }
 
 @media (pointer: fine) {

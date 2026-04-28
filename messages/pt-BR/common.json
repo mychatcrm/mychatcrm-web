@@ -1,0 +1,53 @@
+{
+  "nav": {
+    "home": "Início",
+    "resources": "Recursos",
+    "plans": "Planos",
+    "blog": "Blog",
+    "video": "Vídeo",
+    "faq": "Dúvidas",
+    "login": "Login",
+    "talkToExpert": "Fale com especialista",
+    "openMenu": "Abrir menu",
+    "closeMenu": "Fechar menu",
+    "logoAlt": "Logotipo MyChatCRM",
+    "logoAriaLabel": "MyChatCRM — início",
+    "navAriaLabel": "Principal",
+    "loginAriaLabel": "Login do cliente",
+    "expertAriaLabel": "Fale com especialista no WhatsApp",
+    "languageLabel": "Idioma",
+    "switchLanguageAria": "Mudar idioma para {language}",
+    "languages": {
+      "pt-BR": "Português (Brasil)",
+      "en": "Inglês",
+      "es": "Espanhol"
+    }
+  },
+  "footer": {
+    "tagline": "Atenda, venda e organize com IA no WhatsApp",
+    "links": {
+      "resources": "Recursos",
+      "plans": "Planos",
+      "blog": "Blog",
+      "terms": "Termos de Uso",
+      "privacy": "Política de Privacidade"
+    },
+    "social": {
+      "heading": "Redes",
+      "instagram": "Instagram",
+      "youtube": "YouTube",
+      "linkedin": "LinkedIn",
+      "whatsapp": "WhatsApp"
+    },
+    "copyright": "© 2026 MyChatCRM. Todos os direitos reservados.",
+    "logoAriaLabel": "MyChatCRM — início",
+    "navAriaLabel": "Rodapé"
+  },
+  "buttons": {
+    "back": "Voltar",
+    "viewPlans": "Ver planos e preços",
+    "talkCommercial": "Falar com comercial",
+    "talkExpert": "Falar com especialista",
+    "whatsappExpert": "WhatsApp com especialista"
+  }
+}

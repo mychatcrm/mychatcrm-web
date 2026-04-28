@@ -1,0 +1,59 @@
+{
+  "home": {
+    "title": "MyChatCRM — Chatbot com IA para WhatsApp | CRM Kanban",
+    "description": "MyChatCRM: chatbot com IA para WhatsApp, CRM Kanban, Google Agenda e follow-up automático. API oficial Meta, treinamento por especialistas e integrações. Automatize vendas e atendimento 24h.",
+    "ogImageAlt": "MyChatCRM — Chatbot com IA para WhatsApp",
+    "keywords": [
+      "MyChatCRM",
+      "chatbot WhatsApp",
+      "IA WhatsApp",
+      "CRM WhatsApp",
+      "CRM Kanban vendas",
+      "API oficial WhatsApp",
+      "automação atendimento",
+      "Google Agenda"
+    ]
+  },
+  "plans": {
+    "title": "Planos e assinaturas | MyChatCRM",
+    "description": "Compare os planos MyChatCRM: IA no WhatsApp, CRM Kanban, agenda e integrações. Escolha o plano e finalize a assinatura com segurança.",
+    "ogTitle": "Planos MyChatCRM — IA no WhatsApp + CRM Kanban",
+    "ogDescription": "Planos Solo, Equipa, Escala e opção Enterprise (sob consulta). Preços e checkout para os três primeiros; comparativo detalhado sem Enterprise.",
+    "ogImageAlt": "MyChatCRM — Planos e preços"
+  },
+  "login": {
+    "title": "Entrar | MyChatCRM",
+    "description": "Acesse sua conta MyChatCRM para gerenciar chatbot, CRM Kanban, agenda, integrações e suporte."
+  },
+  "terms": {
+    "title": "Termos de Uso | MyChatCRM",
+    "description": "Termos de Uso do MyChatCRM — condições para utilização da plataforma."
+  },
+  "privacy": {
+    "title": "Política de Privacidade | MyChatCRM",
+    "description": "Política de Privacidade do MyChatCRM — como tratamos seus dados pessoais (LGPD)."
+  },
+  "maintenance": {
+    "title": "Manutenção | MyChatCRM",
+    "description": "O MyChatCRM está temporariamente indisponível."
+  },
+  "blog": {
+    "title": "Blog | MyChatCRM",
+    "description": "Estratégias, tutoriais e atualizações sobre IA, CRM Kanban e atendimento no WhatsApp."
+  },
+  "checkout": {
+    "title": "Checkout {planName} | MyChatCRM",
+    "description": "Finalize sua assinatura do plano {planName} do MyChatCRM."
+  },
+  "schemas": {
+    "organizationDescription": "Plataforma SaaS brasileira de chatbot com IA para WhatsApp com CRM Kanban e Agenda integrados.",
+    "softwareDescription": "Automatize atendimento e vendas no WhatsApp com IA, CRM Kanban, funil e integração com Google Agenda.",
+    "productName": "MyChatCRM — Plano Escala",
+    "productDescription": "Plano Escala com CRM Kanban completo, agenda de eventos, disparos em massa e limite ampliado de leads atendidos por mês.",
+    "breadcrumb": {
+      "home": "Início",
+      "plans": "Planos",
+      "blog": "Blog"
+    }
+  }
+}

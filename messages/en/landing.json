@@ -1,0 +1,263 @@
+{
+  "hero": {
+    "badge": "Leader in Commercial Intelligence",
+    "title": "Serve, sell and organize with <primary>AI</primary> on WhatsApp.",
+    "description": "MyChatCRM automates 24h customer service, qualifies leads and delivers Kanban CRM, Google Calendar, follow-up and integrations — with expert training.",
+    "ctaTry": "Try it now",
+    "ctaTryAriaLabel": "Try it now on WhatsApp",
+    "ctaTest": "Create a test account",
+    "ctaTestAriaLabel": "Create a test account",
+    "ctaPlans": "View plans and pricing",
+    "ctaPlansAriaLabel": "View plans and pricing",
+    "pills": [
+      "✓ 100% cloud",
+      "✓ ChatGPT on WhatsApp",
+      "✓ Official API (Meta)",
+      "✓ Kanban CRM + Calendar"
+    ]
+  },
+  "features": {
+    "heading": "Features that accelerate WhatsApp sales",
+    "subheading": "Everything your operation needs to serve better, convert more and keep the team aligned — in one place.",
+    "items": [
+      {
+        "title": "24h Service",
+        "description": "Fast, standardized responses, reducing lead loss outside business hours.",
+        "icon": "clock"
+      },
+      {
+        "title": "Responds in Audio",
+        "description": "Understands audio messages and replies in text and audio, with multiple voices to match your brand.",
+        "icon": "mic"
+      },
+      {
+        "title": "Expert Training",
+        "description": "Configuration and fine-tuning done by us for maximum performance in your segment.",
+        "icon": "spark"
+      },
+      {
+        "title": "Advanced Integrations",
+        "description": "API sends and queries, automations and connections with external systems in your ecosystem.",
+        "icon": "plug"
+      },
+      {
+        "title": "Funnel + Follow-up",
+        "description": "Forms, pipeline and automatic follow-up to increase conversion at each stage.",
+        "icon": "funnel"
+      },
+      {
+        "title": "Kanban CRM + Calendar",
+        "description": "Full management with labels, Kanban CRM and Google Calendar integration.",
+        "icon": "grid"
+      }
+    ]
+  },
+  "howItWorks": {
+    "heading": "How it works",
+    "subheading": "Three steps to put AI to work for you.",
+    "steps": [
+      {
+        "title": "Connect your WhatsApp",
+        "description": "Integration via Meta's Official API, with security and compliance."
+      },
+      {
+        "title": "Train the AI with our experts",
+        "description": "We feed the assistant with your business information and segment specifics."
+      },
+      {
+        "title": "Sell on autopilot",
+        "description": "Serve and close deals 24 hours a day with intelligent qualification."
+      }
+    ]
+  },
+  "testimonials": {
+    "heading": "Those who use it, recommend it",
+    "subheading": "Testimonials from clients who transformed their service and sales with MyChatCRM.",
+    "ariaLabel": "Testimonials",
+    "starsAriaLabel": "5 out of 5 stars",
+    "items": [
+      {
+        "name": "Mariana Souza",
+        "role": "Commercial Director",
+        "company": "Clínica Vida Plena",
+        "quote": "We tripled lead returns in 60 days. MyChatCRM understands our protocol and routes correctly to the Kanban CRM.",
+        "image": "/testimonials/mariana.jpg"
+      },
+      {
+        "name": "Ricardo Almeida",
+        "role": "CEO",
+        "company": "TechParts Distribuidora",
+        "quote": "Kanban CRM + automatic follow-up changed the game. Now we know exactly where each opportunity is.",
+        "image": "/testimonials/ricardo.jpg"
+      },
+      {
+        "name": "Fernanda Lima",
+        "role": "Head of CX",
+        "company": "Solar Brasil Energia",
+        "quote": "The AI responds to audio and sends calendar reminders. Our team focuses only on what really needs a human.",
+        "image": "/testimonials/fernanda.jpg"
+      },
+      {
+        "name": "Paulo Henrique",
+        "role": "Founder",
+        "company": "Imobiliária Horizonte",
+        "quote": "Professional, fast and with support that understands sales. I recommend it for any commercial team.",
+        "image": "/testimonials/paulo.jpg"
+      },
+      {
+        "name": "Camila Rocha",
+        "role": "COO",
+        "company": "Educa+ Cursos",
+        "quote": "Qualification forms filter tire-kickers. Only those with real fit enter the funnel.",
+        "image": "/testimonials/camila.jpg"
+      },
+      {
+        "name": "Diego Martins",
+        "role": "Sales Manager",
+        "company": "AutoPrime Peças",
+        "quote": "External API integration synced inventory and orders. Less errors, more speed.",
+        "image": "/testimonials/diego.jpg"
+      }
+    ]
+  },
+  "video": {
+    "heading": "See MyChatCRM inside out",
+    "subheading": "A quick demo so you can understand how it works in practice.",
+    "placeholderLabel": "YouTube video placeholder",
+    "whatYouWillSee": "What you'll see",
+    "items": ["Kanban CRM", "Funnel & follow-up", "Integrations", "Google Calendar"],
+    "videoPlaceholder": "Paste the YouTube embed here when the institutional video is ready.",
+    "disclaimerPlaceholder": "Video placeholder for layout. Replace with your channel ID when you publish the official demo."
+  },
+  "socialProof": {
+    "ariaLabel": "Trust indicators",
+    "companies": "active companies",
+    "rating": "average rating",
+    "sales": "in sales generated by clients",
+    "uptime": "uptime",
+    "disclaimer": "Illustrative numbers for product demonstration. Actual results vary by operation and segment."
+  },
+  "faq": {
+    "heading": "Frequently asked questions",
+    "subheading": "Straight answers about MyChatCRM and WhatsApp operations.",
+    "items": [
+      {
+        "q": "Does MyChatCRM use the official WhatsApp API?",
+        "a": "Yes. We work with Meta's official API (WhatsApp Business), ensuring deliverability, security and compliance with platform policies."
+      },
+      {
+        "q": "Do I need technical knowledge to use it?",
+        "a": "No. The panel is intuitive and our team handles initial setup, integrations and AI training for your segment."
+      },
+      {
+        "q": "How does expert training work?",
+        "a": "We collect your business information, materials and common objections. Then we adjust prompts, tone of voice and flows until the AI performs to your standard."
+      },
+      {
+        "q": "Can I cancel anytime?",
+        "a": "Yes. Plans are monthly and you can request cancellation according to the contract terms, no fine print."
+      },
+      {
+        "q": "Does the bot respond to customer audio messages?",
+        "a": "Yes. The assistant interprets received audio and can reply in text or audio, with configurable voices."
+      },
+      {
+        "q": "Does it work for any type of business?",
+        "a": "We serve various segments. Performance depends on conversation volume and the quality of information provided in training — and we help you with that."
+      },
+      {
+        "q": "How many WhatsApp numbers can I connect?",
+        "a": "All plans include 1 number on Meta's official API. You can add more numbers: each extra costs R$ 75/month, added to the subscription."
+      },
+      {
+        "q": "How does Google Calendar integration work?",
+        "a": "We connect via OAuth, sync events and can send WhatsApp reminders according to rules you define."
+      }
+    ]
+  },
+  "savings": {
+    "eyebrow": "Smart simulator",
+    "heading": "The right plan — and how much you stop spending",
+    "subheadingPart1": "Adjust",
+    "subheadingAttendants": "agents",
+    "subheadingAnd": "and",
+    "subheadingLostLeads": "lost leads per month",
+    "subheadingPart2": ". We estimate a",
+    "subheadingUsageProfile": "usage profile",
+    "subheadingPart3": "(funnels, new conversations and AI agents) based on team size and compare with the real limits in",
+    "subheadingPlans": "Plans",
+    "subheadingPart4": ". The system suggests the",
+    "subheadingCheapest": "cheapest fixed-price plan",
+    "subheadingPart5": "that meets those limits (monthly fee + AI agent extras, when applicable). Leads in Kanban CRM are",
+    "subheadingUnlimited": "unlimited",
+    "subheadingPart6": "in all plans.",
+    "shortcutHeading": "Shortcut: team size by plan",
+    "shortcutSub": "One click sets a typical team example; then refine with the agents slider.",
+    "oneClick": "One click",
+    "shortcutSubContinue": "sets a typical team example; then refine with the agents slider.",
+    "active": "Active",
+    "clickToApply": "Click to apply",
+    "attendant": "agent",
+    "attendants": "agents",
+    "example": "example",
+    "applyExampleAriaLabel": "Apply {planName} plan team example: {team} agents",
+    "paramsTitle": "Operation parameters",
+    "paramsSub": "Adjust both sliders. The technical profile and suggested plan update in real time.",
+    "estimatedProfile": "Estimated profile: {funnels} funnels · {conversations} conv./month · {aiAgents} AI agents",
+    "attendantsLabel": "Number of agents",
+    "lostLeadsLabel": "Lost leads per month",
+    "lead": "lead",
+    "leads": "leads",
+    "attendantValueText": "{count} agents",
+    "lostLeadsValueText": "{count} lost leads per month",
+    "recommendation": "Recommendation",
+    "enterprisePrice": "Price on request — we send a proposal aligned to your volume.",
+    "cheapestFixed": "Lowest monthly cost among fixed-price plans that cover the estimated profile.",
+    "slots": "Seats",
+    "funnelsEst": "Funnels (est.)",
+    "conversationsEst": "New conversations/month (est.)",
+    "aiAgentsEst": "AI agents (est.)",
+    "incl": "incl.",
+    "extra": "extra",
+    "mychatInvestment": "Estimated MyChatCRM investment",
+    "baseNoExtras": "Base plan fee, no extra AI agents in this profile.",
+    "currentStack": "Current stack (est.)",
+    "savingsPerMonth": "Savings / month",
+    "belowMonthly": "Estimated cost below monthly fee: use the multiple only as reference or increase the sliders.",
+    "saveUpTo": "Save up to",
+    "ratioExplain": "Ratio between estimated current cost and MyChatCRM on the suggested plan.",
+    "ratioBelow": "Monthly fee above estimated cost in this scenario — multiple doesn't apply.",
+    "ratioIncrease": "Increase agents or lost leads to see a multiple ≥ 1.05×.",
+    "ratioEnterprise": "With Enterprise, the multiple depends on the agreed proposal.",
+    "talkCommercial": "Talk to sales",
+    "viewPlansCheckout": "View plans and checkout",
+    "disclaimer": "Illustrative simulation: averages of {costPerAttendant}/agent and {costPerLead}/lost lead are fixed references; only slider quantities change. Funnels, new conversations and AI agents follow an estimate tied to team size and are crossed with {solo}, {equipa} and {escala} in",
+    "disclaimerPlans": "Plans",
+    "disclaimerEnd": ". Leads in Kanban CRM don't count toward the plan cap. Each AI agent beyond the included limit adds {extraAgentCost}/month."
+  },
+  "pricingSection": {
+    "eyebrow": "Plans",
+    "heading": "Four operation designs — pricing only on the plans page",
+    "subheading": "Solo, Team, Scale and the Enterprise option (on request): here you see the positioning; pricing, checkout and add-ons are at",
+    "subheadingPlansLink": "/en/plans",
+    "subheadingEnd": ". The detailed comparison on the showcase does not include an Enterprise column — each proposal is negotiated separately.",
+    "viewPrices": "View full pricing and options",
+    "viewPricesAriaLabel": "Open full plans and pricing page",
+    "scheduleCommercial": "Schedule a commercial call",
+    "disclaimer": "Prices and commercial conditions may vary by campaign or region. The official listing with highlighted prices is at",
+    "planCardRefund": "All plans include 7 days to request a refund if you don't like MyChatCRM — no hassle.",
+    "planCardRefundBold": "All plans include 7 days",
+    "planCardRefundContinue": "to request a refund if you don't like MyChatCRM — no hassle.",
+    "scheduleCommercialAriaLabel": "Schedule a commercial call for the Enterprise plan",
+    "viewDetailsAriaLabel": "View Enterprise plan details on the plans page",
+    "explorePlanAriaLabel": "Explore {planName} plan on the plans page",
+    "talkExpertAriaLabel": "Talk to an expert — plans page",
+    "exploreInPlans": "Explore on plans page",
+    "viewDetails": "View details",
+    "badgeSuiteFull": "Full suite",
+    "badgeMostChosen": "Most chosen",
+    "badgeEnterprise": "Enterprise",
+    "badgeStarter": "Starter plan",
+    "badgeEntry": "Entry"
+  }
+}

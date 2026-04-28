@@ -10,7 +10,10 @@ export function isMaintenanceStatusApiPath(pathname: string): boolean {
  * Inclui toda a árvore `/admin/*` para o middleware de autenticação admin redirecionar para login quando necessário.
  */
 export function isMaintenanceAnonymousAllowPath(pathname: string): boolean {
+  // Accept all localized variants of the maintenance page
   if (pathname === "/manutencao") return true;
+  if (pathname === "/en/maintenance") return true;
+  if (pathname === "/es/mantenimiento") return true;
   if (pathname === "/admin" || pathname.startsWith("/admin/")) return true;
   if (pathname.startsWith("/api/auth/admin/")) return true;
   if (pathname === "/api/health") return true;

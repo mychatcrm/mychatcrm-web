@@ -1,9 +1,14 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { HOW_STEPS } from "@/lib/constants";
+import { useTranslations } from "next-intl";
+
+type StepItem = { title: string; description: string };
 
 export function HowItWorks() {
+  const t = useTranslations("landing.howItWorks");
+  const steps = t.raw("steps") as StepItem[];
+
   return (
     <section className="relative border-y border-line/80 bg-surface-deep/50 py-20">
       <div
@@ -12,14 +17,12 @@ export function HowItWorks() {
       />
       <div className="relative mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-2xl text-center">
-          <h2 className="font-display text-3xl font-bold text-content sm:text-4xl">Como funciona</h2>
+          <h2 className="font-display text-3xl font-bold text-content sm:text-4xl">{t("heading")}</h2>
           <div className="title-accent-line" aria-hidden />
-          <p className="mt-4 text-content-secondary">
-            Três passos para colocar a IA para trabalhar a seu favor.
-          </p>
+          <p className="mt-4 text-content-secondary">{t("subheading")}</p>
         </div>
         <ol className="mt-14 grid gap-8 md:grid-cols-3">
-          {HOW_STEPS.map((s, i) => (
+          {steps.map((s, i) => (
             <motion.li
               key={s.title}
               initial={{ opacity: 0, y: 14 }}

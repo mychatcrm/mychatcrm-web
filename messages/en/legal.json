@@ -1,0 +1,14 @@
+{
+  "terms": {
+    "title": "Terms of Use | MyChatCRM",
+    "description": "MyChatCRM Terms of Use — conditions for using the platform.",
+    "heading": "Terms of Use",
+    "placeholder": "Legal text placeholder. Replace with the official document before publishing."
+  },
+  "privacy": {
+    "title": "Privacy Policy | MyChatCRM",
+    "description": "MyChatCRM Privacy Policy — how we handle your personal data (GDPR/LGPD).",
+    "heading": "Privacy Policy",
+    "placeholder": "Legal text placeholder. Replace with the official document before publishing."
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "nav": {
+    "home": "Home",
+    "resources": "Features",
+    "plans": "Plans",
+    "blog": "Blog",
+    "video": "Video",
+    "faq": "FAQ",
+    "login": "Login",
+    "talkToExpert": "Talk to an expert",
+    "openMenu": "Open menu",
+    "closeMenu": "Close menu",
+    "logoAlt": "MyChatCRM logo",
+    "logoAriaLabel": "MyChatCRM — home",
+    "navAriaLabel": "Main",
+    "loginAriaLabel": "Client login",
+    "expertAriaLabel": "Talk to an expert on WhatsApp",
+    "languageLabel": "Language",
+    "switchLanguageAria": "Switch language to {language}",
+    "languages": {
+      "pt-BR": "Portuguese (Brazil)",
+      "en": "English",
+      "es": "Spanish"
+    }
+  },
+  "footer": {
+    "tagline": "Serve, sell and organize with AI on WhatsApp",
+    "links": {
+      "resources": "Features",
+      "plans": "Plans",
+      "blog": "Blog",
+      "terms": "Terms of Use",
+      "privacy": "Privacy Policy"
+    },
+    "social": {
+      "heading": "Social",
+      "instagram": "Instagram",
+      "youtube": "YouTube",
+      "linkedin": "LinkedIn",
+      "whatsapp": "WhatsApp"
+    },
+    "copyright": "© 2026 MyChatCRM. All rights reserved.",
+    "logoAriaLabel": "MyChatCRM — home",
+    "navAriaLabel": "Footer"
+  },
+  "buttons": {
+    "back": "Back",
+    "viewPlans": "View plans and pricing",
+    "talkCommercial": "Talk to sales",
+    "talkExpert": "Talk to an expert",
+    "whatsappExpert": "WhatsApp an expert"
+  }
+}

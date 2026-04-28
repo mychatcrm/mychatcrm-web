@@ -3,18 +3,22 @@
 import Image from "next/image";
 import { motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
-import { TESTIMONIALS } from "@/lib/constants";
+import { useTranslations } from "next-intl";
+
+type TestimonialItem = { name: string; role: string; company: string; quote: string; image: string };
 
 export function Testimonials() {
   const scroller = useRef<HTMLDivElement>(null);
+  const t = useTranslations("landing.testimonials");
+  const items = t.raw("items") as TestimonialItem[];
   const [idx, setIdx] = useState(0);
 
   useEffect(() => {
     const id = window.setInterval(() => {
-      setIdx((i) => (i + 1) % TESTIMONIALS.length);
+      setIdx((i) => (i + 1) % items.length);
     }, 4500);
     return () => window.clearInterval(id);
-  }, []);
+  }, [items.length]);
 
   useEffect(() => {
     const el = scroller.current;
@@ -27,7 +31,7 @@ export function Testimonials() {
   return (
     <section
       className="relative border-y border-line/80 bg-surface-deep/90 py-20 motion-reduce:bg-surface-deep/70"
-      aria-label="Depoimentos"
+      aria-label={t("ariaLabel")}
     >
       <div
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_100%_60%_at_50%_0%,rgba(242,68,0,0.06),transparent_55%),linear-gradient(180deg,rgb(var(--color-surface-base)_/_0.35),transparent_40%)]"
@@ -36,51 +40,49 @@ export function Testimonials() {
       <div className="relative mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="font-display text-3xl font-bold text-content sm:text-4xl">
-            Quem usa, recomenda
+            {t("heading")}
           </h2>
           <div className="title-accent-line" aria-hidden />
-          <p className="mt-4 text-content-secondary">
-            Depoimentos de clientes que transformaram atendimento e vendas com o MyChatCRM.
-          </p>
+          <p className="mt-4 text-content-secondary">{t("subheading")}</p>
         </div>
 
         <div
           ref={scroller}
           className="mt-12 flex min-w-0 gap-4 overflow-x-auto pb-2 [-webkit-overflow-scrolling:touch] touch-pan-x md:hidden snap-x snap-mandatory"
         >
-          {TESTIMONIALS.map((t, i) => (
+          {items.map((item, i) => (
             <article
-              key={t.name + i}
+              key={item.name + i}
               data-card="true"
               className="min-w-[85vw] snap-center rounded-2xl border border-line/80 bg-surface-card/95 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-sm"
             >
               <div className="flex items-center gap-3">
                 <Image
-                  src={t.image}
-                  alt={`Foto de ${t.name}`}
+                  src={item.image}
+                  alt={`Foto de ${item.name}`}
                   width={48}
                   height={48}
                   className="h-12 w-12 rounded-full object-cover"
                 />
                 <div>
-                  <p className="font-semibold text-content">{t.name}</p>
+                  <p className="font-semibold text-content">{item.name}</p>
                   <p className="text-xs text-content-muted">
-                    {t.role} · {t.company}
+                    {item.role} · {item.company}
                   </p>
                 </div>
               </div>
-              <p className="mt-1 text-primary" aria-label="5 de 5 estrelas">
+              <p className="mt-1 text-primary" aria-label={t("starsAriaLabel")}>
                 ★★★★★
               </p>
-              <p className="mt-3 text-sm leading-relaxed text-content-secondary">“{t.quote}”</p>
+              <p className="mt-3 text-sm leading-relaxed text-content-secondary">&ldquo;{item.quote}&rdquo;</p>
             </article>
           ))}
         </div>
 
         <div className="mt-12 hidden gap-6 md:grid md:grid-cols-2 lg:grid-cols-3">
-          {TESTIMONIALS.map((t, i) => (
+          {items.map((item, i) => (
             <motion.article
-              key={t.name + i}
+              key={item.name + i}
               initial={{ opacity: 0, y: 10 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, amount: 0.15 }}
@@ -89,23 +91,23 @@ export function Testimonials() {
             >
               <div className="flex items-center gap-3">
                 <Image
-                  src={t.image}
-                  alt={`Foto de ${t.name}`}
+                  src={item.image}
+                  alt={`Foto de ${item.name}`}
                   width={48}
                   height={48}
                   className="h-12 w-12 rounded-full object-cover"
                 />
                 <div>
-                  <p className="font-semibold text-content">{t.name}</p>
+                  <p className="font-semibold text-content">{item.name}</p>
                   <p className="text-xs text-content-muted">
-                    {t.role} · {t.company}
+                    {item.role} · {item.company}
                   </p>
                 </div>
               </div>
-              <p className="mt-1 text-primary" aria-label="5 de 5 estrelas">
+              <p className="mt-1 text-primary" aria-label={t("starsAriaLabel")}>
                 ★★★★★
               </p>
-              <p className="mt-3 text-sm leading-relaxed text-content-secondary">“{t.quote}”</p>
+              <p className="mt-3 text-sm leading-relaxed text-content-secondary">&ldquo;{item.quote}&rdquo;</p>
             </motion.article>
           ))}
         </div>

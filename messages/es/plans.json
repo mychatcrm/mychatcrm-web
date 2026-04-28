@@ -1,0 +1,110 @@
+{
+  "page": {
+    "eyebrow": "Ventas · Suscripciones",
+    "heading": "Planes pensados para cada etapa de tu crecimiento",
+    "subheading": "Precios transparentes, sin sorpresas. Elige tu plan, revisa en el checkout y activa MyChatCRM con la API oficial de WhatsApp.",
+    "refundBannerCheckout": "checkout online",
+    "refundBannerDays": "7 días",
+    "refundBannerEnterprise": "Enterprise: según propuesta firmada.",
+    "faqLink": "Preguntas frecuentes",
+    "alreadyClient": "Ya soy cliente — iniciar sesión",
+    "compareHeading": "Compara y selecciona",
+    "compareSub": "Al hacer clic en un plan serás dirigido al checkout seguro para completar la suscripción (demo).",
+    "expertHeading": "Habla con un experto",
+    "expertSub": "Consulta sobre límites de leads, integraciones, números WhatsApp adicionales (R$ {whatsappExtra}/mes cada uno) o migración de tu atención actual.",
+    "talkWhatsapp": "Chatear en WhatsApp",
+    "backToSite": "Volver al sitio",
+    "loadingFooter": "Cargando pie de página…"
+  },
+  "plans": {
+    "solo": {
+      "name": "Solo",
+      "tagline": "Profesional autónomo: todas las herramientas, con límites ajustados y el precio más bajo.",
+      "badge": "Empezar ahora",
+      "monthlyLeadsLabel": "500 leads atendidos/mes",
+      "features": [
+        "CRM Kanban, embudos, agentes IA, conversaciones en tiempo real, integraciones de leads, colaboradores (jerarquía), envíos masivos, Google Agenda, recordatorios, integraciones (API, webhooks, Zapier/Make/n8n, etc.), soporte e informes — con los límites del plan.",
+        "Sin directores, gerentes ni vendedores — solo tu cuenta (trabajo solo).",
+        "Hasta 2 agentes de IA incluidos (+ agentes adicionales por separado).",
+        "Leads en CRM Kanban ilimitados (registro e integraciones).",
+        "Hasta 5 embudos de ventas en CRM Kanban.",
+        "Hasta 500 leads atendidos por mes (conteo de facturación).",
+        "Actualización de paquete en la página de planes o con el equipo comercial."
+      ],
+      "highlights": [
+        "IA en WhatsApp con respuestas en texto y audio",
+        "Modo solo — una cuenta, sin jerarquía de equipo",
+        "Hasta 2 agentes de IA incluidos (+ extras en la página de agentes)",
+        "CRM Kanban, embudos y conversaciones con límites mensuales claros",
+        "Integraciones, escritorio y soporte según el plan"
+      ],
+      "editorial": "Para profesionales autónomos que quieren la misma plataforma, con techos de uso adecuados a una persona."
+    },
+    "equipa": {
+      "name": "Equipo",
+      "tagline": "Pequeños equipos con jerarquía comercial y mayor volumen.",
+      "badge": "PYMEs",
+      "monthlyLeadsLabel": "5.000 leads atendidos/mes",
+      "features": [
+        "CRM Kanban, embudos, agentes IA, conversaciones en tiempo real, integraciones de leads, colaboradores (jerarquía), envíos masivos, Google Agenda, recordatorios, integraciones (API, webhooks, Zapier/Make/n8n, etc.), soporte e informes — con los límites del plan.",
+        "Hasta 1 director, 3 gerentes y 30 vendedores.",
+        "Hasta 5 agentes de IA incluidos.",
+        "Leads en CRM Kanban ilimitados (registro e integraciones).",
+        "Hasta 12 embudos de ventas en CRM Kanban.",
+        "Hasta 5.000 leads atendidos por mes (conteo de facturación)."
+      ],
+      "highlights": [
+        "Atención con IA en WhatsApp, disponible todo el tiempo",
+        "Entrenamiento de la IA supervisado por expertos",
+        "Respuestas en texto y en audio",
+        "Formularios y captura de contexto del cliente",
+        "Integraciones con APIs y sistemas externos",
+        "Aplicación de escritorio para tu equipo"
+      ],
+      "editorial": "El núcleo MyChatCRM: IA entrenable, voz, integraciones y escritorio para equipos que quieren respuesta rápida y consistente."
+    },
+    "escala": {
+      "name": "Escala",
+      "tagline": "Operación con varios niveles directivos y mayor volumen de atención.",
+      "badge": "Más elegido",
+      "monthlyLeadsLabel": "15.000 leads atendidos/mes",
+      "features": [
+        "CRM Kanban, embudos, agentes IA, conversaciones en tiempo real, integraciones de leads, colaboradores (jerarquía), envíos masivos, Google Agenda, recordatorios, integraciones (API, webhooks, Zapier/Make/n8n, etc.), soporte e informes — con los límites del plan.",
+        "Hasta 5 directores, 25 gerentes y 30 vendedores.",
+        "Hasta 30 agentes de IA incluidos.",
+        "Leads en CRM Kanban ilimitados (registro e integraciones).",
+        "Hasta 25 embudos de ventas en CRM Kanban.",
+        "Hasta 15.000 leads atendidos por mes (conteo de facturación)."
+      ],
+      "highlights": [
+        "Todo lo que ofrece el plan Equipo",
+        "CRM Kanban completo y personalizable para ventas",
+        "Agenda, eventos y recordatorios automáticos",
+        "Envíos masivos y campañas segmentadas",
+        "Jerarquía de equipo (dirección, gestión y ventas)",
+        "Capacidad ampliada para operaciones de mayor volumen"
+      ],
+      "editorial": "Pensado para operaciones que necesitan CRM Kanban, ritmo comercial y automatización pesada — sin renunciar a la misma IA potente en WhatsApp."
+    },
+    "enterprise": {
+      "name": "Enterprise",
+      "tagline": "Cuenta dedicada bajo contrato — paquete y límites definidos con el equipo comercial, a medida del cliente.",
+      "badge": "Bajo consulta",
+      "monthlyLeadsLabel": "Bajo contrato",
+      "features": [],
+      "highlights": [
+        "Cuenta dedicada con paquete negociado en contrato",
+        "Límites y entregas alineados al perfil del cliente — sin catálogo fijo",
+        "Conversación comercial para definir alcance, valores y cronograma"
+      ],
+      "editorial": "Para operaciones que cierran volumen, integraciones y condiciones directamente con el equipo comercial — cada propuesta es única y no sigue el listado público de los otros planes."
+    }
+  },
+  "billing": {
+    "monthly": "mensual",
+    "annual": "anual",
+    "annualDiscount": "17",
+    "whatsappIncluded": "1 número WhatsApp (API oficial)",
+    "whatsappExtra": "+R$ 75/mes por número adicional"
+  }
+}

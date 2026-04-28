@@ -1,0 +1,17 @@
+{
+  "page": {
+    "eyebrow": "Blog",
+    "heading": "Content to scale WhatsApp sales",
+    "subheading": "Strategies, tutorials and updates on AI, CRM and commercial service.",
+    "noResults": "No articles found.",
+    "readMore": "Read article",
+    "readMinutes": "min read"
+  },
+  "article": {
+    "notFound": "Article not found | MyChatCRM Blog",
+    "backToBlog": "← Back to blog",
+    "readingTime": "min read",
+    "publishedAt": "Published on",
+    "updatedAt": "Updated on"
+  }
+}
