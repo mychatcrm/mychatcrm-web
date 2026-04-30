@@ -7,12 +7,6 @@ export function tenantPlanDefaults(tenantId: string): {
   companyName: string;
 } {
   switch (tenantId) {
-    case "tenant-mychatcrm-demo":
-      return { plan: "escala", planLabel: "Escala", companyName: "MyChatCRM Demo" };
-    case "tenant-clinica-oral-prime":
-      return { plan: "equipa", planLabel: "Equipa", companyName: "Clínica Oral Prime" };
-    case "tenant-operacao-cliente":
-      return { plan: "equipa", planLabel: "Equipa", companyName: "Operação Cliente" };
     case "tenant-mychatcrm-owner":
       return { plan: "enterprise", planLabel: "Enterprise", companyName: "MyChatCRM — Conta titular" };
     default:

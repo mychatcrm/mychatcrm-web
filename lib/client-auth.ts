@@ -1,5 +1,6 @@
 import { cookieSecureFlag } from "@/lib/cookie-security";
 import { allowDemoPasswordLogin } from "@/lib/demo-password-auth";
+// authenticateClient removido — autenticação real via team-employees JSON (lib/server/team-employees-fs.ts)
 import { signClientSessionCookie, verifyClientSessionCookie } from "@/lib/client-session-signing";
 import type { OrganizationRole } from "@/lib/organization-role";
 import { normalizeToPlan, type PlanLimits } from "@/lib/plan-policy";
@@ -69,106 +70,7 @@ export function deleteLiveClientSession(token: string) {
 
 const WEEK_IN_SECONDS = 60 * 60 * 24 * 7;
 
-/** Nome apresentável a partir do e-mail (parte local), para não mostrar personas fictícias na conta. */
-export function accountDisplayNameFromEmail(emailRaw: string): string {
-  const email = emailRaw.trim().toLowerCase();
-  const local = (email.split("@")[0] ?? "").replace(/[.+_-]+/g, " ").trim();
-  if (!local) return "Cliente";
-  return local
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(" ");
-}
-
-const CLIENT_SESSIONS: Record<string, ClientSession> = {
-  "client-profissional-demo": {
-    token: "client-profissional-demo",
-    tenantId: "tenant-clinica-oral-prime",
-    email: "cliente@empresa.com.br",
-    displayName: accountDisplayNameFromEmail("cliente@empresa.com.br"),
-    companyName: "Clínica Oral Prime",
-    plan: "equipa",
-    planLabel: "Equipa",
-    initials: makeInitials(accountDisplayNameFromEmail("cliente@empresa.com.br")),
-    status: "ativa",
-    organizationRole: "owner",
-  },
-  "client-master-demo": {
-    token: "client-master-demo",
-    tenantId: "tenant-mychatcrm-demo",
-    email: "lagaresone@gmail.com",
-    displayName: "Renato Lagares",
-    companyName: "MyChatCRM Demo",
-    plan: "escala",
-    planLabel: "Escala",
-    initials: "RL",
-    status: "ativa",
-    organizationRole: "owner",
-  },
-  "client-cancelado-demo": {
-    token: "client-cancelado-demo",
-    tenantId: "tenant-operacao-encerrada",
-    email: "cancelado@empresa.com.br",
-    displayName: "Conta Cancelada",
-    companyName: "Operação Encerrada",
-    plan: "equipa",
-    planLabel: "Equipa",
-    initials: "CC",
-    status: "cancelada",
-    organizationRole: "owner",
-  },
-  /** Demo: mesmo tenant que o dono Master, papel diretor. */
-  "client-director-demo": {
-    token: "client-director-demo",
-    tenantId: "tenant-mychatcrm-demo",
-    email: "diretor.demo@mychatcrm.local",
-    displayName: "Diretor Demo",
-    companyName: "MyChatCRM Demo",
-    plan: "escala",
-    planLabel: "Escala",
-    initials: "DD",
-    status: "ativa",
-    organizationRole: "director",
-  },
-  "client-manager-demo": {
-    token: "client-manager-demo",
-    tenantId: "tenant-mychatcrm-demo",
-    email: "gerente.demo@mychatcrm.local",
-    displayName: "Gerente Demo",
-    companyName: "MyChatCRM Demo",
-    plan: "escala",
-    planLabel: "Escala",
-    initials: "GD",
-    status: "ativa",
-    organizationRole: "manager",
-  },
-  "client-seller-demo": {
-    token: "client-seller-demo",
-    tenantId: "tenant-mychatcrm-demo",
-    email: "vendedor.demo@mychatcrm.local",
-    displayName: "Vendedor Demo",
-    companyName: "MyChatCRM Demo",
-    plan: "escala",
-    planLabel: "Escala",
-    initials: "VD",
-    status: "ativa",
-    organizationRole: "seller",
-  },
-  /** Demo: plano Solo (sem colaboradores hierárquicos). */
-  "client-solo-demo": {
-    token: "client-solo-demo",
-    tenantId: "tenant-solo-demo",
-    email: "solo.demo@mychatcrm.local",
-    displayName: "Solo Demo",
-    companyName: "Consultório Solo",
-    plan: "solo",
-    planLabel: "Solo",
-    initials: "SD",
-    status: "ativa",
-    organizationRole: "owner",
-  },
-};
+const CLIENT_SESSIONS: Record<string, ClientSession> = {};
 
 function getSecureCookieFlag() {
   return cookieSecureFlag();
@@ -182,50 +84,6 @@ export function makeInitials(value: string) {
   return (parts[0] ?? "CL").slice(0, 2).toUpperCase();
 }
 
-export function authenticateClient(emailRaw: string, password: string): ClientSession | null {
-  if (!allowDemoPasswordLogin()) return null;
-  const email = emailRaw.trim().toLowerCase();
-  const normalizedPassword = password.trim();
-
-  if (!email || !normalizedPassword) {
-    return null;
-  }
-
-  const demoPass = process.env.DEMO_CLIENT_PASSWORD?.trim() || "admin";
-
-  if (email === "cancelado@empresa.com.br" && normalizedPassword === demoPass) {
-    return CLIENT_SESSIONS["client-cancelado-demo"];
-  }
-
-  if (email === "lagaresone@gmail.com" && normalizedPassword === demoPass) {
-    return CLIENT_SESSIONS["client-master-demo"];
-  }
-
-  if (email === "diretor.demo@mychatcrm.local" && normalizedPassword === demoPass) {
-    return CLIENT_SESSIONS["client-director-demo"];
-  }
-
-  if (email === "gerente.demo@mychatcrm.local" && normalizedPassword === demoPass) {
-    return CLIENT_SESSIONS["client-manager-demo"];
-  }
-
-  if (email === "vendedor.demo@mychatcrm.local" && normalizedPassword === demoPass) {
-    return CLIENT_SESSIONS["client-seller-demo"];
-  }
-
-  if (email === "solo.demo@mychatcrm.local" && normalizedPassword === demoPass) {
-    return CLIENT_SESSIONS["client-solo-demo"];
-  }
-
-  /** Dono demo plano Equipa (não confundir com colaboradores do mesmo e-mail no ficheiro de equipa). */
-  if (email === "cliente@empresa.com.br" && normalizedPassword === demoPass) {
-    const base = CLIENT_SESSIONS["client-profissional-demo"];
-    const label = accountDisplayNameFromEmail(email);
-    return { ...base, displayName: label, initials: makeInitials(label) };
-  }
-
-  return null;
-}
 
 /**
  * Resolve sessão a partir do valor do cookie.

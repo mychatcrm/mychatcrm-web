@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import {
-  authenticateClient,
   clientSessionCookieOptions,
   encodeClientSessionCookieValue,
   makeInitials,
@@ -8,17 +7,14 @@ import {
   type ClientPlan,
   type ClientSession,
 } from "@/lib/client-auth";
-import { allowDemoPasswordLogin, isVercelProduction } from "@/lib/demo-password-auth";
+import { isVercelProduction } from "@/lib/demo-password-auth";
 import { getClientIpFromRequest } from "@/lib/get-client-ip";
 import { hierarchyRoleToOrganizationRole } from "@/lib/organization-hierarchy";
 import { defaultDashboardPathForOrganizationRole, resolveOrganizationRole } from "@/lib/organization-role";
 import { checkInMemoryRateLimit } from "@/lib/rate-limit-in-memory";
 import { enterpriseLimitsToPlanLimits } from "@/lib/enterprise-provision-limits";
 import { getEnterpriseProvisionByTenantId } from "@/lib/server/enterprise-provisions-fs";
-import {
-  findTeamMemberCredentialsAcrossTenants,
-  teamMemberEmailExistsAcrossTenants,
-} from "@/lib/server/team-employees-fs";
+import { findTeamMemberCredentialsAcrossTenants } from "@/lib/server/team-employees-fs";
 import { tenantPlanDefaults } from "@/lib/tenant-session-defaults";
 
 function logClientLoginDiskError(err: unknown) {
@@ -87,41 +83,6 @@ export async function POST(request: Request) {
     }
   } catch (err) {
     logClientLoginDiskError(err);
-  }
-
-  if (!session) {
-    session = authenticateClient(email, password);
-  }
-
-  const demoPass = process.env.DEMO_CLIENT_PASSWORD?.trim() || "admin";
-
-  /**
-   * Demo: senha demo + e-mail que não está registado como colaborador → sessão dono (plano Profissional).
-   * Só com `ALLOW_DEMO_PASSWORD_AUTH` ou ambiente não produtivo (ver `lib/demo-password-auth.ts`).
-   */
-  if (
-    allowDemoPasswordLogin() &&
-    !session &&
-    passwordTrim === demoPass &&
-    !teamMemberEmailExistsAcrossTenants(emailLc)
-  ) {
-    const nameSeed = emailLc.split("@")[0] ?? "cliente";
-    const displayName = nameSeed
-      .split(/[._-]+/)
-      .filter(Boolean)
-      .map((item) => item.charAt(0).toUpperCase() + item.slice(1))
-      .join(" ");
-    session = registerLiveClientSession({
-      tenantId: "tenant-operacao-cliente",
-      email: email.trim(),
-      displayName: displayName || "Cliente",
-      companyName: "Operação Cliente",
-      plan: "equipa",
-      planLabel: "Equipa",
-      initials: makeInitials(displayName || "Cliente"),
-      status: "ativa",
-      organizationRole: "owner",
-    });
   }
 
   if (!session) {

@@ -25,32 +25,14 @@ export type AdminSession = {
 const WEEK_IN_SECONDS = 60 * 60 * 24 * 7;
 
 const ADMIN_SESSIONS: Record<string, AdminSession> = {
-  "admin-super-demo": {
-    token: "admin-super-demo",
+  "admin-super": {
+    token: "admin-super",
     adminId: "admin-renato-lagares",
     email: "renatolagares@live.com",
     displayName: "Renato Lagares",
     initials: "RL",
     role: "super_admin",
     roleLabel: "Super Admin",
-  },
-  "admin-suporte-demo": {
-    token: "admin-suporte-demo",
-    adminId: "admin-ana-suporte",
-    email: "suporte@mychatcrm.com.br",
-    displayName: "Ana Suporte",
-    initials: "AS",
-    role: "suporte",
-    roleLabel: "Suporte",
-  },
-  "admin-financeiro-demo": {
-    token: "admin-financeiro-demo",
-    adminId: "admin-bruno-financeiro",
-    email: "financeiro@mychatcrm.com.br",
-    displayName: "Bruno Financeiro",
-    initials: "BF",
-    role: "financeiro",
-    roleLabel: "Financeiro",
   },
 };
 
@@ -104,15 +86,7 @@ export function authenticateAdmin(emailRaw: string, password: string): AdminSess
   const demoPass = demoAdminPassword();
 
   if (email === "renatolagares@live.com" && pass === demoPass) {
-    return ADMIN_SESSIONS["admin-super-demo"];
-  }
-
-  if (email === "suporte@mychatcrm.com.br" && pass === demoPass) {
-    return ADMIN_SESSIONS["admin-suporte-demo"];
-  }
-
-  if (email === "financeiro@mychatcrm.com.br" && pass === demoPass) {
-    return ADMIN_SESSIONS["admin-financeiro-demo"];
+    return ADMIN_SESSIONS["admin-super"];
   }
 
   return null;

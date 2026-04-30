@@ -7,7 +7,6 @@ import { AuthSplitLayout } from "@/components/auth/AuthSplitLayout";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { cn } from "@/lib/utils";
-import { CLIENT_DEMO_EMAIL } from "@/lib/client-credentials";
 import { safeAppInternalPath } from "@/lib/safe-redirect";
 
 function EyeIcon({ off }: { off?: boolean }) {
@@ -113,7 +112,7 @@ export default function LoginForm() {
               type="email"
               required
               autoComplete="email"
-              defaultValue={CLIENT_DEMO_EMAIL}
+              defaultValue=""
               placeholder="voce@empresa.com.br"
               className="pr-11"
             />
@@ -180,27 +179,6 @@ export default function LoginForm() {
           Entrar
         </Button>
       </form>
-
-      {process.env.NEXT_PUBLIC_SHOW_DEMO_LOGIN_HELP === "1" ? (
-        <>
-          <p className="mt-6 rounded-xl border border-line bg-surface-deep/80 px-4 py-3 text-left text-xs leading-relaxed text-content-muted">
-            <span className="font-medium text-content-secondary">Conta de demonstração (plano Enterprise):</span>{" "}
-            e-mail <span className="text-content">{CLIENT_DEMO_EMAIL}</span>
-            {" · "}
-            <span className="text-content-faint">
-              senha: valor de <code className="text-content-secondary">DEMO_CLIENT_PASSWORD</code> no servidor (por
-              defeito «admin» só em desenvolvimento).
-            </span>
-          </p>
-          <p className="mt-3 rounded-xl border border-line bg-surface-deep/80 px-4 py-3 text-left text-xs leading-relaxed text-content-muted">
-            <span className="font-medium text-content-secondary">Hierarquia (tenant demo):</span>{" "}
-            <span className="text-content">diretor.demo@mychatcrm.local</span> (diretor),{" "}
-            <span className="text-content">gerente.demo@mychatcrm.local</span> (gerente),{" "}
-            <span className="text-content">vendedor.demo@mychatcrm.local</span> (vendedor — só CRM Kanban, Agenda, Lembretes e
-            Suporte).
-          </p>
-        </>
-      ) : null}
 
       <p className="mt-4 text-center text-sm text-content-muted">
         Quer conhecer antes?{" "}

@@ -5,7 +5,6 @@ import { useId, useState } from "react";
 import { AuthSplitLayout } from "@/components/auth/AuthSplitLayout";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { ADMIN_DEMO_EMAIL_PLACEHOLDER } from "@/lib/admin-credentials";
 import { safeAdminPostLoginPath, safeAppInternalPath } from "@/lib/safe-redirect";
 import { cn } from "@/lib/utils";
 
@@ -100,7 +99,7 @@ export default function AdminLoginForm() {
               type="email"
               required
               autoComplete="username"
-              defaultValue={ADMIN_DEMO_EMAIL_PLACEHOLDER}
+              defaultValue=""
               placeholder="admin@empresa.com.br"
               className="pr-11"
             />
