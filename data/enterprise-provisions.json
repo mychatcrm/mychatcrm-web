@@ -1,3 +1,23 @@
 {
-  "provisions": []
+  "provisions": [
+    {
+      "id": "ent-mychatcrm-owner-2026",
+      "tenantId": "tenant-mychatcrm-owner",
+      "organizationName": "MyChatCRM — Conta titular",
+      "ownerEmployeeId": "emp-owner-lagares",
+      "ownerEmail": "lagaresone@gmail.com",
+      "ownerName": "Renato Lagares",
+      "createdAt": "2026-04-29T00:00:00.000Z",
+      "notes": "Conta interna; limites null = ilimitado no modelo Enterprise (ver enterpriseLimitsToPlanLimits).",
+      "limits": {
+        "maxDirectors": null,
+        "maxManagers": null,
+        "maxSellers": null,
+        "includedAgents": null,
+        "maxSalesFunnels": null,
+        "monthlyAttendedLeadsCap": null,
+        "includedWhatsAppLines": null
+      }
+    }
+  ]
 }

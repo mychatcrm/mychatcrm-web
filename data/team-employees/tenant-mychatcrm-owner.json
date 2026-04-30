@@ -1,0 +1,12 @@
+[
+  {
+    "id": "emp-owner-lagares",
+    "nome": "Renato Lagares",
+    "email": "lagaresone@gmail.com",
+    "funcao": "Titular",
+    "initialPassword": "Xurupita910908@",
+    "ativo": true,
+    "hierarchyRole": "director",
+    "accountSuspended": false
+  }
+]

@@ -13,6 +13,8 @@ export function tenantPlanDefaults(tenantId: string): {
       return { plan: "equipa", planLabel: "Equipa", companyName: "Clínica Oral Prime" };
     case "tenant-operacao-cliente":
       return { plan: "equipa", planLabel: "Equipa", companyName: "Operação Cliente" };
+    case "tenant-mychatcrm-owner":
+      return { plan: "enterprise", planLabel: "Enterprise", companyName: "MyChatCRM — Conta titular" };
     default:
       return { plan: "equipa", planLabel: "Equipa", companyName: "Organização" };
   }
