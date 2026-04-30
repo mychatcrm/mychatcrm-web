@@ -24,6 +24,10 @@ const hstsValue = hstsPreload
   : "max-age=63072000; includeSubDomains";
 
 const nextConfig = {
+  /** Expõe no cliente só o facto de o build ter corrido na Vercel (sem segredos). */
+  env: {
+    NEXT_PUBLIC_VERCEL_BUILT: process.env.VERCEL === "1" ? "1" : "",
+  },
   poweredByHeader: false,
   compress: true,
   experimental: {

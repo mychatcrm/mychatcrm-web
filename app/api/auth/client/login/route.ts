@@ -37,7 +37,13 @@ export async function POST(request: Request) {
   }
 
   if (isVercelProduction() && !process.env.CLIENT_SESSION_COOKIE_SECRET?.trim()) {
-    return NextResponse.json({ error: "Serviço de sessão indisponível." }, { status: 503 });
+    return NextResponse.json(
+      {
+        error:
+          "Sessão indisponível: defina CLIENT_SESSION_COOKIE_SECRET em Vercel → Settings → Environment Variables (Production) e faça redeploy.",
+      },
+      { status: 503 },
+    );
   }
 
   const body = await request.json().catch(() => null);

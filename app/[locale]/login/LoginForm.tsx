@@ -101,6 +101,13 @@ export default function LoginForm() {
       }
       headerAction={{ href: "/", label: "Ver site" }}
     >
+      {process.env.NEXT_PUBLIC_VERCEL_BUILT === "1" ? (
+        <p className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-left text-xs leading-relaxed text-content-secondary">
+          <span className="font-medium text-amber-200">Hospedagem Vercel:</span> o login do painel cliente exige{" "}
+          <code className="rounded bg-surface-deep px-1 py-0.5 text-content">CLIENT_SESSION_COOKIE_SECRET</code> nas
+          variáveis de ambiente (Production). Sem isso aparece erro ao entrar ou a sessão não grava.
+        </p>
+      ) : null}
       <form className="space-y-5" onSubmit={onSubmit} noValidate>
         <div>
           <label htmlFor={emailId} className="text-sm font-medium text-content-secondary">

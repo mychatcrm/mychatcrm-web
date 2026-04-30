@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { adminSessionCookieOptions, authenticateAdmin } from "@/lib/admin-auth";
+import { allowDemoPasswordLogin, isVercelProduction } from "@/lib/demo-password-auth";
 import { getClientIpFromRequest } from "@/lib/get-client-ip";
 import { checkInMemoryRateLimit } from "@/lib/rate-limit-in-memory";
 
@@ -19,6 +20,15 @@ export async function POST(request: Request) {
 
   const session = authenticateAdmin(email, password);
   if (!session) {
+    if (isVercelProduction() && !allowDemoPasswordLogin()) {
+      return NextResponse.json(
+        {
+          error:
+            "Login admin desativado em produção: na Vercel defina ALLOW_DEMO_PASSWORD_AUTH=1 e DEMO_ADMIN_PASSWORD (Production), depois redeploy.",
+        },
+        { status: 401 },
+      );
+    }
     return NextResponse.json({ error: "E-mail ou senha incorretos." }, { status: 401 });
   }
 
