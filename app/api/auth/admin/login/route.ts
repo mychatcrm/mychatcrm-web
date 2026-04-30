@@ -21,10 +21,11 @@ export async function POST(request: Request) {
   const session = authenticateAdmin(email, password);
   if (!session) {
     if (isVercelProduction() && !allowDemoPasswordLogin()) {
+      console.error("[admin-login] produção sem autenticação demo/admin configurada (ALLOW_DEMO_PASSWORD_AUTH)");
       return NextResponse.json(
         {
           error:
-            "Login admin desativado em produção: na Vercel defina ALLOW_DEMO_PASSWORD_AUTH=1 e DEMO_ADMIN_PASSWORD (Production), depois redeploy.",
+            "O acesso administrativo ainda não está disponível neste servidor. Contacte o suporte técnico.",
         },
         { status: 401 },
       );

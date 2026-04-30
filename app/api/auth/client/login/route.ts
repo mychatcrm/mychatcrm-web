@@ -37,10 +37,11 @@ export async function POST(request: Request) {
   }
 
   if (isVercelProduction() && !process.env.CLIENT_SESSION_COOKIE_SECRET?.trim()) {
+    console.error("[client-login] produção sem CLIENT_SESSION_COOKIE_SECRET");
     return NextResponse.json(
       {
         error:
-          "Sessão indisponível: defina CLIENT_SESSION_COOKIE_SECRET em Vercel → Settings → Environment Variables (Production) e faça redeploy.",
+          "Não foi possível iniciar sessão neste ambiente. Se o problema persistir, contacte o suporte técnico.",
       },
       { status: 503 },
     );
@@ -141,8 +142,15 @@ export async function POST(request: Request) {
   let cookieValue: string;
   try {
     cookieValue = await encodeClientSessionCookieValue(session);
-  } catch {
-    return NextResponse.json({ error: "Serviço de sessão indisponível." }, { status: 503 });
+  } catch (err) {
+    console.error("[client-login] falha ao assinar cookie de sessão:", err);
+    return NextResponse.json(
+      {
+        error:
+          "Não foi possível iniciar sessão neste ambiente. Se o problema persistir, contacte o suporte técnico.",
+      },
+      { status: 503 },
+    );
   }
   response.cookies.set({
     ...clientSessionCookieOptions(),

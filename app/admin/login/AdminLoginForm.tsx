@@ -88,15 +88,6 @@ export default function AdminLoginForm() {
       subtitle="Somente contas autorizadas da equipe MyChatCRM. Nesta demonstração, as credenciais abaixo entram como Super Admin."
       headerAction={{ href: "/", label: "Site institucional" }}
     >
-      {process.env.NEXT_PUBLIC_VERCEL_BUILT === "1" ? (
-        <p className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-left text-xs leading-relaxed text-content-secondary">
-          <span className="font-medium text-amber-200">Hospedagem Vercel:</span> o admin usa senha demo controlada por
-          env. Defina{" "}
-          <code className="rounded bg-surface-deep px-1 py-0.5 text-content">ALLOW_DEMO_PASSWORD_AUTH=1</code> e{" "}
-          <code className="rounded bg-surface-deep px-1 py-0.5 text-content">DEMO_ADMIN_PASSWORD</code> (Production) e
-          faça redeploy.
-        </p>
-      ) : null}
       <form className="space-y-5" onSubmit={onSubmit} noValidate>
         <div>
           <label htmlFor={emailId} className="text-sm font-medium text-content-secondary">
@@ -151,7 +142,10 @@ export default function AdminLoginForm() {
         </div>
 
         {error ? (
-          <p className="text-sm text-error" role="alert">
+          <p
+            className="rounded-lg border border-line bg-surface-deep/90 px-3 py-2.5 text-sm leading-snug text-content-secondary"
+            role="alert"
+          >
             {error}
           </p>
         ) : null}
