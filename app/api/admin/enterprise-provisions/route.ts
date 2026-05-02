@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
 import type { EnterpriseProvisionLimits, EnterpriseProvisionRecord } from "@/lib/enterprise-provision-types";
-import { appendEnterpriseProvision, readEnterpriseProvisionsFile } from "@/lib/server/enterprise-provisions-fs";
-import { teamMemberEmailExistsAcrossTenants, writeTeamEmployeesToDisk } from "@/lib/server/team-employees-fs";
+import {
+  readAllEnterpriseProvisions,
+  upsertTenantForProvision,
+  writeEnterpriseProvision,
+} from "@/lib/server/enterprise-provisions-db";
+import { teamMemberEmailExistsInDb, writeTeamMemberToDb } from "@/lib/server/team-employees-db";
 import type { TeamEmployee } from "@/lib/team-employees-types";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -39,7 +43,7 @@ export async function GET() {
     return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
   }
 
-  const { provisions } = readEnterpriseProvisionsFile();
+  const provisions = await readAllEnterpriseProvisions();
   const rows = provisions.map((p) => ({
     id: p.id,
     tenantId: p.tenantId,
@@ -81,7 +85,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "A senha inicial deve ter pelo menos 8 caracteres." }, { status: 400 });
   }
 
-  if (teamMemberEmailExistsAcrossTenants(ownerEmail)) {
+  if (await teamMemberEmailExistsInDb(ownerEmail)) {
     return NextResponse.json(
       { error: "Este e-mail já está registado como colaborador noutro tenant." },
       { status: 409 },
@@ -93,16 +97,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Indique os limites (objeto limits) ou use sem limite (null)." }, { status: 400 });
   }
 
-  const tenantId = `tenant-enterprise-${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID().slice(0, 8) : Date.now().toString(36)}`;
-  const ownerEmployeeId = `emp-ent-${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID().slice(0, 8) : Date.now().toString(36)}`;
-  const provisionId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `ent-${Date.now()}`;
+  const tenantId = `tenant-enterprise-${crypto.randomUUID().slice(0, 8)}`;
+  const ownerEmployeeId = `emp-ent-${crypto.randomUUID().slice(0, 8)}`;
+  const provisionId = crypto.randomUUID();
 
   const owner: TeamEmployee = {
     id: ownerEmployeeId,
     nome: ownerName,
     email: ownerEmail,
     funcao: "Titular da conta",
-    initialPassword,
+    initialPassword: "",
     ativo: true,
     hierarchyRole: "director",
     accountSuspended: false,
@@ -121,8 +125,9 @@ export async function POST(request: Request) {
   };
 
   try {
-    writeTeamEmployeesToDisk(tenantId, [owner]);
-    appendEnterpriseProvision(record);
+    await upsertTenantForProvision(tenantId, organizationName);
+    await writeTeamMemberToDb(tenantId, { ...owner, plainPassword: initialPassword });
+    await writeEnterpriseProvision(record);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "write_error";
     return NextResponse.json({ error: `Falha ao gravar: ${msg}` }, { status: 500 });

@@ -2,7 +2,15 @@ import { NextResponse } from "next/server";
 import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
 import { parsePartnerUpsert } from "@/lib/commercial/admin-payloads";
 import { applyPartnerCouponLinks } from "@/lib/commercial/sync-links";
-import { appendAudit, readCommercialStore, writeCommercialStore } from "@/lib/server/commercial-store-fs";
+import {
+  appendAuditEntry,
+  buildCommercialStoreFromDb,
+  listCoupons,
+  listPartners,
+  persistModifiedCoupons,
+  upsertPartner,
+} from "@/lib/server/commercial-store-db";
+import { randomUUID } from "crypto";
 
 export async function GET() {
   const session = await getAdminSessionFromCookies();
@@ -11,8 +19,8 @@ export async function GET() {
     return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
   }
 
-  const store = readCommercialStore();
-  return NextResponse.json({ partners: store.partners, coupons: store.coupons });
+  const [partners, coupons] = await Promise.all([listPartners(), listCoupons()]);
+  return NextResponse.json({ partners, coupons });
 }
 
 export async function POST(request: Request) {
@@ -23,7 +31,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => null);
-  const store = readCommercialStore();
+  const store = await buildCommercialStoreFromDb();
   const existing = typeof body?.id === "string" ? store.partners.find((p) => p.id === body.id) : undefined;
   const parsed = parsePartnerUpsert(body, existing);
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
@@ -37,21 +45,24 @@ export async function POST(request: Request) {
     if (!c) return NextResponse.json({ error: `Cupom vinculado inválido: ${cid}` }, { status: 400 });
   }
 
-  let next: typeof store = {
-    ...store,
-    partners: store.partners.some((p) => p.id === parsed.partner.id)
-      ? store.partners.map((p) => (p.id === parsed.partner.id ? parsed.partner : p))
-      : [...store.partners, parsed.partner],
-  };
+  await upsertPartner(parsed.partner);
 
-  next = applyPartnerCouponLinks(next, parsed.partner);
-  next = appendAudit(next, {
+  const updated = applyPartnerCouponLinks(store, parsed.partner);
+  const changedCoupons = updated.coupons.filter(
+    (c, i) => JSON.stringify(c) !== JSON.stringify(store.coupons[i]),
+  );
+  if (changedCoupons.length > 0) {
+    await persistModifiedCoupons(changedCoupons);
+  }
+
+  await appendAuditEntry({
+    id: `aud_${randomUUID()}`,
+    createdAt: new Date().toISOString(),
     adminId: session.adminId,
     adminEmail: session.email,
     action: existing ? "partner_upsert" : "partner_create",
     detail: parsed.partner.code,
   });
 
-  writeCommercialStore(next);
   return NextResponse.json({ ok: true, partner: parsed.partner });
 }

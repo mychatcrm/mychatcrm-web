@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { readMaintenanceState } from "@/lib/server/maintenance-store-fs";
+import { readMaintenanceStatePublic } from "@/lib/server/maintenance-store-db";
 
 /** Estado público (sem dados internos além da mensagem configurada). */
 export async function GET() {
-  const s = readMaintenanceState();
+  const s = await readMaintenanceStatePublic();
   return NextResponse.json(
     {
       enabled: s.enabled,

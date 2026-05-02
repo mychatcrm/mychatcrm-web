@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
-import { countCommittedRedemptionsForCoupon } from "@/lib/commercial/engine";
 import { applyCouponPartnerLink } from "@/lib/commercial/sync-links";
-import { appendAudit, readCommercialStore, writeCommercialStore } from "@/lib/server/commercial-store-fs";
+import {
+  appendAuditEntry,
+  buildCommercialStoreFromDb,
+  countRedemptionsByCoupon,
+  deleteCoupon,
+  persistModifiedPartners,
+} from "@/lib/server/commercial-store-db";
+import { randomUUID } from "crypto";
 
 export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
   const session = await getAdminSessionFromCookies();
@@ -12,11 +18,12 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
   }
 
   const { id } = await context.params;
-  const store = readCommercialStore();
+  const store = await buildCommercialStoreFromDb();
   const coupon = store.coupons.find((c) => c.id === id);
   if (!coupon) return NextResponse.json({ error: "Cupom não encontrado." }, { status: 404 });
 
-  if (countCommittedRedemptionsForCoupon(store, coupon.id) > 0) {
+  const redemptionCount = await countRedemptionsByCoupon(id);
+  if (redemptionCount > 0) {
     return NextResponse.json(
       { error: "Não é possível excluir: já existem resgates confirmados. Desative o cupom." },
       { status: 409 },
@@ -24,17 +31,26 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
   }
 
   const ghost = { ...coupon, partnerId: null as string | null };
-  let next: typeof store = {
-    ...store,
-    coupons: store.coupons.filter((c) => c.id !== id),
-  };
-  next = applyCouponPartnerLink(next, { ...ghost, id: ghost.id });
-  next = appendAudit(next, {
+  const updated = applyCouponPartnerLink(
+    { ...store, coupons: store.coupons.filter((c) => c.id !== id) },
+    ghost,
+  );
+  const changedPartners = updated.partners.filter(
+    (p, i) => JSON.stringify(p) !== JSON.stringify(store.partners[i]),
+  );
+  if (changedPartners.length > 0) {
+    await persistModifiedPartners(changedPartners);
+  }
+
+  await deleteCoupon(id);
+  await appendAuditEntry({
+    id: `aud_${randomUUID()}`,
+    createdAt: new Date().toISOString(),
     adminId: session.adminId,
     adminEmail: session.email,
     action: "coupon_delete",
     detail: coupon.code,
   });
-  writeCommercialStore(next);
+
   return NextResponse.json({ ok: true });
 }

@@ -3,7 +3,16 @@ import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
 import { parseCouponUpsert } from "@/lib/commercial/admin-payloads";
 import { countCommittedRedemptionsForCoupon, normalizeCouponCode } from "@/lib/commercial/engine";
 import { applyCouponPartnerLink } from "@/lib/commercial/sync-links";
-import { appendAudit, readCommercialStore, writeCommercialStore } from "@/lib/server/commercial-store-fs";
+import {
+  appendAuditEntry,
+  buildCommercialStoreFromDb,
+  countRedemptionsByCoupon,
+  listCoupons,
+  listRedemptions,
+  persistModifiedPartners,
+  upsertCoupon,
+} from "@/lib/server/commercial-store-db";
+import { randomUUID } from "crypto";
 
 export async function GET() {
   const session = await getAdminSessionFromCookies();
@@ -12,18 +21,19 @@ export async function GET() {
     return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
   }
 
-  const store = readCommercialStore();
-  const stats = store.coupons.map((c) => ({
+  const [coupons, redemptions] = await Promise.all([listCoupons(), listRedemptions()]);
+
+  const store = { version: 1 as const, coupons, partners: [], redemptions, auditLog: [] };
+  const stats = coupons.map((c) => ({
     couponId: c.id,
     code: c.code,
     committedRedemptions: countCommittedRedemptionsForCoupon(store, c.id),
   }));
 
   return NextResponse.json({
-    coupons: store.coupons,
-    partners: store.partners,
+    coupons,
     redemptionStats: stats,
-    redemptions: store.redemptions.filter((r) => r.status === "committed").slice(-200).reverse(),
+    redemptions: redemptions.filter((r) => r.status === "committed").slice(-200).reverse(),
   });
 }
 
@@ -35,39 +45,42 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => null);
-  const existingStore = readCommercialStore();
-  const existing = typeof body?.id === "string" ? existingStore.coupons.find((c) => c.id === body.id) : undefined;
+  const store = await buildCommercialStoreFromDb();
+  const existing = typeof body?.id === "string" ? store.coupons.find((c) => c.id === body.id) : undefined;
   const parsed = parseCouponUpsert(body, existing);
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
   const codeNorm = normalizeCouponCode(parsed.coupon.code);
-  const duplicate = existingStore.coupons.some((c) => c.code === codeNorm && c.id !== parsed.coupon.id);
+  const duplicate = store.coupons.some((c) => c.code === codeNorm && c.id !== parsed.coupon.id);
   if (duplicate) {
     return NextResponse.json({ error: "Já existe um cupom com este código." }, { status: 409 });
   }
 
   if (parsed.coupon.partnerId) {
-    const partner = existingStore.partners.find((p) => p.id === parsed.coupon.partnerId);
+    const partner = store.partners.find((p) => p.id === parsed.coupon.partnerId);
     if (!partner) {
       return NextResponse.json({ error: "Parceiro vinculado não encontrado." }, { status: 400 });
     }
   }
 
-  let next: typeof existingStore = {
-    ...existingStore,
-    coupons: existingStore.coupons.some((c) => c.id === parsed.coupon.id)
-      ? existingStore.coupons.map((c) => (c.id === parsed.coupon.id ? parsed.coupon : c))
-      : [...existingStore.coupons, parsed.coupon],
-  };
+  await upsertCoupon(parsed.coupon);
 
-  next = applyCouponPartnerLink(next, parsed.coupon);
-  next = appendAudit(next, {
+  const updated = applyCouponPartnerLink(store, parsed.coupon);
+  const changedPartners = updated.partners.filter(
+    (p, i) => JSON.stringify(p) !== JSON.stringify(store.partners[i]),
+  );
+  if (changedPartners.length > 0) {
+    await persistModifiedPartners(changedPartners);
+  }
+
+  await appendAuditEntry({
+    id: `aud_${randomUUID()}`,
+    createdAt: new Date().toISOString(),
     adminId: session.adminId,
     adminEmail: session.email,
     action: existing ? "coupon_upsert" : "coupon_create",
     detail: parsed.coupon.code,
   });
 
-  writeCommercialStore(next);
   return NextResponse.json({ ok: true, coupon: parsed.coupon });
 }

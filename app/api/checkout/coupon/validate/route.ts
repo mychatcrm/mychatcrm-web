@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { brlToCents, validateCouponForCheckout } from "@/lib/commercial/engine";
-import { readCommercialStore } from "@/lib/server/commercial-store-fs";
+import { buildCommercialStoreFromDb } from "@/lib/server/commercial-store-db";
 import { parsePlanBillingCycle, planCheckoutChargeBaseBRL, SALES_PLANS } from "@/lib/plans";
 
 export async function POST(request: Request) {
@@ -26,12 +26,11 @@ export async function POST(request: Request) {
   }
 
   const billingCycle = parsePlanBillingCycle(body?.ciclo ?? body?.billingCycle);
-  const store = readCommercialStore();
+  const store = await buildCommercialStoreFromDb();
   const originalCents = brlToCents(planCheckoutChargeBaseBRL(plan.priceMonthly, billingCycle));
   const result = validateCouponForCheckout({ store, codeRaw: code, planSlug, originalCents, emailRaw: email });
 
   if (!result.ok) {
-    /** Campo vazio = fluxo opcional, não é erro HTTP de validação. */
     if (result.code === "COUPON_EMPTY") {
       return NextResponse.json(result, { status: 200 });
     }

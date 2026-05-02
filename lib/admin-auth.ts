@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { cookieSecureFlag } from "@/lib/cookie-security";
-import { allowDemoPasswordLogin } from "@/lib/demo-password-auth";
+import { getAdminSessionByIdFromDb } from "@/lib/server/admin-auth-db";
 
 export const ADMIN_SESSION_COOKIE = "mychatcrm_admin_session";
 
@@ -23,18 +23,6 @@ export type AdminSession = {
 };
 
 const WEEK_IN_SECONDS = 60 * 60 * 24 * 7;
-
-const ADMIN_SESSIONS: Record<string, AdminSession> = {
-  "admin-super": {
-    token: "admin-super",
-    adminId: "admin-renato-lagares",
-    email: "renatolagares@live.com",
-    displayName: "Renato Lagares",
-    initials: "RL",
-    role: "super_admin",
-    roleLabel: "Super Admin",
-  },
-};
 
 const ROLE_PERMISSION_MAP: Record<AdminRole, string[]> = {
   super_admin: ["*"],
@@ -72,32 +60,28 @@ function getSecureCookieFlag() {
   return cookieSecureFlag();
 }
 
-function demoAdminPassword(): string {
-  return process.env.DEMO_ADMIN_PASSWORD?.trim() || "admin";
-}
-
-export function authenticateAdmin(emailRaw: string, password: string): AdminSession | null {
-  if (!allowDemoPasswordLogin()) return null;
-  const email = emailRaw.trim().toLowerCase();
-  const pass = password.trim();
-
-  if (!email || !pass) return null;
-
-  const demoPass = demoAdminPassword();
-
-  if (email === "renatolagares@live.com" && pass === demoPass) {
-    return ADMIN_SESSIONS["admin-super"];
-  }
-
-  return null;
-}
-
-export function getAdminSessionByToken(token?: string | null) {
-  if (!token) return null;
-  const row = ADMIN_SESSIONS[token];
-  if (!row) return null;
-  if (!allowDemoPasswordLogin()) return null;
-  return row;
+/**
+ * Verificação leve no middleware (Edge-safe, sem DB).
+ * O cookie contém o adminId no formato "adminId:role" após o login.
+ * Retorna uma sessão mínima para o middleware — a verificação completa
+ * acontece nas páginas e rotas via getAdminSessionFromCookies().
+ */
+export function getAdminSessionByToken(value: string | undefined): AdminSession | null {
+  if (!value) return null;
+  const [adminId, role] = value.split(":");
+  if (!adminId) return null;
+  const validRole = role as AdminRole;
+  const validRoles: AdminRole[] = ["super_admin", "admin", "financeiro", "suporte", "marketing", "desenvolvedor"];
+  const resolvedRole: AdminRole = validRoles.includes(validRole) ? validRole : "admin";
+  return {
+    token: value,
+    adminId,
+    email: "",
+    displayName: "",
+    initials: "",
+    role: resolvedRole,
+    roleLabel: resolvedRole,
+  };
 }
 
 export function hasAdminAccess(session: AdminSession, routeKey: string) {
@@ -125,7 +109,11 @@ export function adminSessionCookieOptions() {
   };
 }
 
-export async function getAdminSessionFromCookies() {
+export async function getAdminSessionFromCookies(): Promise<AdminSession | null> {
   const store = await cookies();
-  return getAdminSessionByToken(store.get(ADMIN_SESSION_COOKIE)?.value);
+  const raw = store.get(ADMIN_SESSION_COOKIE)?.value;
+  if (!raw) return null;
+  const adminId = raw.includes(":") ? raw.split(":")[0] : raw;
+  if (!adminId) return null;
+  return getAdminSessionByIdFromDb(adminId);
 }

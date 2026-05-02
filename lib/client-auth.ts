@@ -1,6 +1,4 @@
 import { cookieSecureFlag } from "@/lib/cookie-security";
-import { allowDemoPasswordLogin } from "@/lib/demo-password-auth";
-// authenticateClient removido — autenticação real via team-employees JSON (lib/server/team-employees-fs.ts)
 import { signClientSessionCookie, verifyClientSessionCookie } from "@/lib/client-session-signing";
 import type { OrganizationRole } from "@/lib/organization-role";
 import { normalizeToPlan, type PlanLimits } from "@/lib/plan-policy";
@@ -98,7 +96,6 @@ export async function getClientSessionByToken(cookieValue?: string | null): Prom
   }
   const staticSession = CLIENT_SESSIONS[cookieValue];
   if (staticSession) {
-    if (!allowDemoPasswordLogin()) return null;
     return migrateClientSessionFromLegacyCookie(staticSession);
   }
   const live = liveClientSessions.get(cookieValue);

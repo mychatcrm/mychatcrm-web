@@ -13,14 +13,9 @@ import { hierarchyRoleToOrganizationRole } from "@/lib/organization-hierarchy";
 import { defaultDashboardPathForOrganizationRole, resolveOrganizationRole } from "@/lib/organization-role";
 import { checkInMemoryRateLimit } from "@/lib/rate-limit-in-memory";
 import { enterpriseLimitsToPlanLimits } from "@/lib/enterprise-provision-limits";
-import { getEnterpriseProvisionByTenantId } from "@/lib/server/enterprise-provisions-fs";
-import { findTeamMemberCredentialsAcrossTenants } from "@/lib/server/team-employees-fs";
+import { readEnterpriseProvisionByTenant } from "@/lib/server/enterprise-provisions-db";
+import { findTeamMemberCredentials } from "@/lib/server/team-employees-db";
 import { tenantPlanDefaults } from "@/lib/tenant-session-defaults";
-
-function logClientLoginDiskError(err: unknown) {
-  const msg = err instanceof Error ? err.message : "unknown_error";
-  console.error("[client-login] falha ao ler colaboradores no disco:", msg);
-}
 
 export async function POST(request: Request) {
   const ip = getClientIpFromRequest(request) || "unknown";
@@ -52,15 +47,16 @@ export async function POST(request: Request) {
 
   let session: ClientSession | null = null;
   try {
-    const teamHit = findTeamMemberCredentialsAcrossTenants(emailLc, passwordTrim);
+    const teamHit = await findTeamMemberCredentials(emailLc, passwordTrim);
     if (teamHit && !teamHit.employee.accountSuspended) {
       const meta = tenantPlanDefaults(teamHit.tenantId);
-      const ent = getEnterpriseProvisionByTenantId(teamHit.tenantId);
+      const ent = await readEnterpriseProvisionByTenant(teamHit.tenantId);
       const isEnterpriseTenant = Boolean(ent);
       const plan = isEnterpriseTenant ? ("enterprise" as const) : meta.plan;
       const planLabel = isEnterpriseTenant ? ("Enterprise" as const) : meta.planLabel;
       const companyName = isEnterpriseTenant && ent ? ent.organizationName : meta.companyName;
-      const operationalLimits = isEnterpriseTenant && ent ? enterpriseLimitsToPlanLimits(ent.limits) : undefined;
+      const operationalLimits =
+        isEnterpriseTenant && ent ? enterpriseLimitsToPlanLimits(ent.limits) : undefined;
       const organizationRole =
         isEnterpriseTenant && ent && teamHit.employee.id === ent.ownerEmployeeId
           ? ("owner" as const)
@@ -82,7 +78,8 @@ export async function POST(request: Request) {
       });
     }
   } catch (err) {
-    logClientLoginDiskError(err);
+    const msg = err instanceof Error ? err.message : "unknown";
+    console.error("[client-login] falha ao autenticar via Supabase:", msg);
   }
 
   if (!session) {
@@ -96,7 +93,9 @@ export async function POST(request: Request) {
   const response = NextResponse.json({
     ok: true,
     redirectedTo:
-      session.status === "cancelada" ? "/planos?erro=plano-cancelado" : defaultDashboardPathForOrganizationRole(orgRole),
+      session.status === "cancelada"
+        ? "/planos?erro=plano-cancelado"
+        : defaultDashboardPathForOrganizationRole(orgRole),
     status: session.status,
   });
 

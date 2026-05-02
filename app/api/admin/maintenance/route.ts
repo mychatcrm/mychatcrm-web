@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
-import { defaultMaintenanceState, type MaintenanceState } from "@/lib/maintenance-types";
-import { readMaintenanceState, writeMaintenanceState } from "@/lib/server/maintenance-store-fs";
+import { readMaintenanceState, writeMaintenanceState } from "@/lib/server/maintenance-store-db";
 
 function forbidden() {
   return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
@@ -16,13 +15,13 @@ export async function GET() {
   if (!session) return unauthorized();
   if (!hasAdminAccess(session, "seguranca")) return forbidden();
 
-  const s = readMaintenanceState();
+  const s = await readMaintenanceState();
   return NextResponse.json({
     enabled: s.enabled,
     message: s.message,
-    estimatedReturnAt: s.estimatedReturnAt,
+    estimatedReturnAt: s.estimatedReturnAt ?? "",
     updatedAt: s.updatedAt,
-    updatedByAdminEmail: s.updatedByAdminEmail,
+    updatedByAdminEmail: s.updatedByAdminId ?? "",
   });
 }
 
@@ -41,26 +40,27 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "Campo «enabled» (boolean) obrigatório." }, { status: 400 });
   }
 
-  const prev = readMaintenanceState();
-  const next: MaintenanceState = {
-    ...defaultMaintenanceState(),
-    enabled: body.enabled,
-    message: typeof body.message === "string" ? body.message.trim().slice(0, 2000) : prev.message,
-    estimatedReturnAt:
-      typeof body.estimatedReturnAt === "string"
-        ? body.estimatedReturnAt.trim().slice(0, 80)
-        : prev.estimatedReturnAt,
-    updatedAt: new Date().toISOString(),
-    updatedByAdminEmail: session.email,
-  };
+  const prev = await readMaintenanceState();
+  const message =
+    typeof body.message === "string" ? body.message.trim().slice(0, 2000) : prev.message;
+  const estimatedReturnAt =
+    typeof body.estimatedReturnAt === "string"
+      ? body.estimatedReturnAt.trim().slice(0, 80)
+      : (prev.estimatedReturnAt ?? "");
 
-  writeMaintenanceState(next);
+  await writeMaintenanceState({
+    enabled: body.enabled,
+    message,
+    estimatedReturnAt: estimatedReturnAt || undefined,
+    updatedByAdminId: session.email,
+  });
+
   return NextResponse.json({
     ok: true,
-    enabled: next.enabled,
-    message: next.message,
-    estimatedReturnAt: next.estimatedReturnAt,
-    updatedAt: next.updatedAt,
-    updatedByAdminEmail: next.updatedByAdminEmail,
+    enabled: body.enabled,
+    message,
+    estimatedReturnAt,
+    updatedAt: new Date().toISOString(),
+    updatedByAdminEmail: session.email,
   });
 }

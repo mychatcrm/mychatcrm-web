@@ -8,7 +8,11 @@ import {
   normalizeCouponCode,
   validateCouponForCheckout,
 } from "@/lib/commercial/engine";
-import { appendAudit, readCommercialStore, writeCommercialStore } from "@/lib/server/commercial-store-fs";
+import {
+  appendAuditEntry,
+  buildCommercialStoreFromDb,
+  insertRedemption,
+} from "@/lib/server/commercial-store-db";
 import { parsePlanBillingCycle, planCheckoutChargeBaseBRL, SALES_PLANS } from "@/lib/plans";
 
 export async function POST(request: Request) {
@@ -52,7 +56,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, code: "PLAN_NOT_CHECKOUT", message: "Plano sem checkout." }, { status: 400 });
   }
 
-  let store = readCommercialStore();
+  const store = await buildCommercialStoreFromDb();
   const existing = findRedemptionByIdempotencyKey(store, idempotencyKey);
   if (existing && existing.status === "committed") {
     return NextResponse.json({
@@ -96,19 +100,15 @@ export async function POST(request: Request) {
     commissionCents,
   };
 
-  store = {
-    ...store,
-    redemptions: [...store.redemptions, redemption],
-  };
-
-  store = appendAudit(store, {
-    adminId: "checkout-demo",
+  await insertRedemption(redemption);
+  await appendAuditEntry({
+    id: `aud_${randomUUID()}`,
+    createdAt: new Date().toISOString(),
+    adminId: "checkout-system",
     adminEmail: "checkout@system",
     action: "coupon_commit",
     detail: JSON.stringify({ couponId: coupon.id, planSlug, email: redemption.emailNormalized }),
   });
-
-  writeCommercialStore(store);
 
   return NextResponse.json({
     ok: true,

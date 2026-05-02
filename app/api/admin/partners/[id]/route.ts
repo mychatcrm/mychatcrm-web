@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
 import { applyPartnerCouponLinks } from "@/lib/commercial/sync-links";
-import { appendAudit, readCommercialStore, writeCommercialStore } from "@/lib/server/commercial-store-fs";
+import {
+  appendAuditEntry,
+  buildCommercialStoreFromDb,
+  deletePartner,
+  persistModifiedCoupons,
+} from "@/lib/server/commercial-store-db";
+import { randomUUID } from "crypto";
 
 export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
   const session = await getAdminSessionFromCookies();
@@ -11,7 +17,7 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
   }
 
   const { id } = await context.params;
-  const store = readCommercialStore();
+  const store = await buildCommercialStoreFromDb();
   const partner = store.partners.find((p) => p.id === id);
   if (!partner) return NextResponse.json({ error: "Parceiro não encontrado." }, { status: 404 });
 
@@ -24,14 +30,26 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
   }
 
   const cleared = { ...partner, linkedCouponIds: [] as string[] };
-  let next = { ...store, partners: store.partners.filter((p) => p.id !== id) };
-  next = applyPartnerCouponLinks(next, cleared);
-  next = appendAudit(next, {
+  const updated = applyPartnerCouponLinks(
+    { ...store, partners: store.partners.filter((p) => p.id !== id) },
+    cleared,
+  );
+  const changedCoupons = updated.coupons.filter(
+    (c, i) => JSON.stringify(c) !== JSON.stringify(store.coupons[i]),
+  );
+  if (changedCoupons.length > 0) {
+    await persistModifiedCoupons(changedCoupons);
+  }
+
+  await deletePartner(id);
+  await appendAuditEntry({
+    id: `aud_${randomUUID()}`,
+    createdAt: new Date().toISOString(),
     adminId: session.adminId,
     adminEmail: session.email,
     action: "partner_delete",
     detail: partner.code,
   });
-  writeCommercialStore(next);
+
   return NextResponse.json({ ok: true });
 }
