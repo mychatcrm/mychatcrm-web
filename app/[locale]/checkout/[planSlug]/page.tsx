@@ -109,7 +109,7 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
                 e valor a pagar no resumo ao lado).
               </>
             ) : null}
-            . Revise os dados e conclua o pagamento simulado abaixo.
+            . Preencha seus dados e você será encaminhado para o pagamento seguro.
           </p>
           <div className="mt-10">
             <CheckoutView plan={summary} />

@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useCallback, useState } from "react";
 import { Button } from "@/components/ui/Button";
-import { LinkButton } from "@/components/ui/LinkButton";
 import { Input } from "@/components/ui/Input";
 import { normalizeCouponCode } from "@/lib/commercial/engine";
 import type { CouponRejectCode, CouponValidateResult } from "@/lib/commercial/types";
@@ -33,7 +32,6 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
   const annualTotals =
     plan.billingCycle === "annual" ? planAnnualCheckoutTotalsBRL(plan.priceMonthly) : null;
 
-  const [step, setStep] = useState<"form" | "success">("form");
   const [loading, setLoading] = useState(false);
   const [couponInput, setCouponInput] = useState("");
   const [couponLoading, setCouponLoading] = useState(false);
@@ -98,13 +96,17 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
     e.preventDefault();
     setSubmitError(null);
     setLoading(true);
+
     const form = e.currentTarget;
     const fd = new FormData(form);
     const email = String(fd.get("email") ?? "").trim();
+    const name = String(fd.get("fullName") ?? "").trim();
+    const company = String(fd.get("company") ?? "").trim();
 
     try {
+      // Commit coupon first (if applied) — this is a pre-checkout record
       if (applied) {
-        const res = await fetch("/api/checkout/coupon/commit", {
+        const couponRes = await fetch("/api/checkout/coupon/commit", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -113,18 +115,40 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
             email,
             ciclo: plan.billingCycle === "annual" ? "anual" : "mensal",
             idempotencyKey:
-              typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `idem-${Date.now()}`,
+              typeof crypto !== "undefined" && "randomUUID" in crypto
+                ? crypto.randomUUID()
+                : `idem-${Date.now()}`,
           }),
         });
-        const data = await res.json().catch(() => null);
-        if (!res.ok) {
-          setSubmitError(data?.message ?? "Não foi possível confirmar o cupom no servidor.");
+        if (!couponRes.ok) {
+          const data = await couponRes.json().catch(() => null);
+          setSubmitError((data as { message?: string } | null)?.message ?? "Não foi possível confirmar o cupom.");
           return;
         }
       }
 
-      await new Promise((r) => setTimeout(r, 800));
-      setStep("success");
+      // Create Stripe Checkout Session
+      const res = await fetch("/api/stripe/create-checkout-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          planSlug: plan.slug,
+          ciclo: plan.billingCycle,
+          email,
+          name,
+          company,
+        }),
+      });
+
+      const data = (await res.json()) as { url?: string; message?: string };
+
+      if (!res.ok || !data.url) {
+        setSubmitError(data.message ?? "Não foi possível iniciar o pagamento.");
+        return;
+      }
+
+      // Redirect to Stripe Checkout
+      window.location.href = data.url;
     } catch {
       setSubmitError("Erro inesperado. Tente novamente.");
     } finally {
@@ -138,52 +162,12 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
       ? formatBRL(annualTotals.netAnnual)
       : formatBRL(baseMonthlyBrl);
 
-  if (step === "success") {
-    return (
-      <div className="mx-auto w-full min-w-0 max-w-lg rounded-3xl border border-line bg-surface-card px-5 py-10 text-center shadow-card-hover-glow sm:px-8 sm:py-12">
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-success/15 text-3xl text-success">
-          ✓
-        </div>
-        <h2 className="mt-6 font-display text-2xl font-bold text-content">Assinatura registrada (demo)</h2>
-        <p className="mt-3 text-sm text-content-muted">
-          Em produção, aqui você veria a confirmação do gateway de pagamento e o e-mail com o acesso ao painel.
-        </p>
-        {applied ? (
-          <div className="mt-4 space-y-1 rounded-xl border border-line bg-surface-deep px-4 py-3 text-left text-sm text-content-secondary">
-            <p>
-              <span className="text-content-muted">Cupom:</span>{" "}
-              <span className="font-mono font-semibold text-primary">{applied.code}</span>
-            </p>
-            <p>
-              <span className="text-content-muted">Desconto (1º ciclo):</span> {centsToBRL(applied.discountCents)}
-            </p>
-            <p>
-              <span className="text-content-muted">Total pago (referência):</span>{" "}
-              <span className="font-semibold text-content">{centsToBRL(applied.finalCents)}</span>
-            </p>
-          </div>
-        ) : null}
-        <p className="mt-4 rounded-xl border border-line bg-surface-deep px-4 py-3 font-mono text-xs text-content-secondary">
-          Pedido #{plan.slug.toUpperCase()}-{Date.now().toString(36).slice(-6).toUpperCase()}
-        </p>
-        <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
-          <LinkButton href="/login" size="lg" variant="gradient" className="w-full sm:w-auto">
-            Ir para o login
-          </LinkButton>
-          <LinkButton href="/planos" size="lg" variant="secondary" className="w-full sm:w-auto">
-            Voltar aos planos
-          </LinkButton>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="mx-auto grid min-w-0 max-w-5xl gap-10 px-1 sm:px-0 lg:grid-cols-[1fr_340px] lg:items-start">
       <div className="order-2 min-w-0 rounded-3xl border border-line bg-surface-card p-6 sm:p-8 lg:order-1">
-        <h2 className="font-display text-xl font-bold text-content">Dados de pagamento</h2>
+        <h2 className="font-display text-xl font-bold text-content">Seus dados</h2>
         <p className="mt-1 text-sm text-content-muted">
-          Ambiente de demonstração — nenhum dado real é enviado ou armazenado.
+          Preencha abaixo e você será encaminhado para o pagamento seguro via Stripe.
         </p>
         <form className="mt-8 space-y-5" onSubmit={(e) => void onSubmit(e)}>
           <div className="grid gap-5 sm:grid-cols-2">
@@ -191,11 +175,18 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
               <label htmlFor="fullName" className="text-sm font-medium text-content-secondary">
                 Nome completo
               </label>
-              <Input id="fullName" name="fullName" required autoComplete="name" className="mt-1.5" placeholder="Seu nome" />
+              <Input
+                id="fullName"
+                name="fullName"
+                required
+                autoComplete="name"
+                className="mt-1.5"
+                placeholder="Seu nome"
+              />
             </div>
             <div className="sm:col-span-2">
               <label htmlFor="email" className="text-sm font-medium text-content-secondary">
-                E-mail corporativo
+                E-mail
               </label>
               <Input
                 id="email"
@@ -209,50 +200,24 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
             </div>
             <div className="sm:col-span-2">
               <label htmlFor="company" className="text-sm font-medium text-content-secondary">
-                Empresa (opcional)
+                Empresa <span className="font-normal text-content-faint">(opcional)</span>
               </label>
-              <Input id="company" name="company" autoComplete="organization" className="mt-1.5" placeholder="Razão social ou nome fantasia" />
-            </div>
-            <div>
-              <label htmlFor="doc" className="text-sm font-medium text-content-secondary">
-                CPF / CNPJ
-              </label>
-              <Input id="doc" name="doc" required className="mt-1.5" placeholder="000.000.000-00" />
-            </div>
-            <div>
-              <label htmlFor="phone" className="text-sm font-medium text-content-secondary">
-                WhatsApp
-              </label>
-              <Input id="phone" name="phone" type="tel" required className="mt-1.5" placeholder="(11) 99999-9999" />
-            </div>
-          </div>
-
-          <div className="border-t border-line pt-6">
-            <p className="text-sm font-semibold text-content-secondary">Cartão (simulado)</p>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <div className="sm:col-span-2">
-                <label htmlFor="card" className="text-sm font-medium text-content-secondary">
-                  Número do cartão
-                </label>
-                <Input id="card" name="card" inputMode="numeric" required className="mt-1.5" placeholder="4242 4242 4242 4242" />
-              </div>
-              <div>
-                <label htmlFor="exp" className="text-sm font-medium text-content-secondary">
-                  Validade
-                </label>
-                <Input id="exp" name="exp" required className="mt-1.5" placeholder="MM/AA" />
-              </div>
-              <div>
-                <label htmlFor="cvv" className="text-sm font-medium text-content-secondary">
-                  CVV
-                </label>
-                <Input id="cvv" name="cvv" required className="mt-1.5" placeholder="123" maxLength={4} />
-              </div>
+              <Input
+                id="company"
+                name="company"
+                autoComplete="organization"
+                className="mt-1.5"
+                placeholder="Razão social ou nome fantasia"
+              />
             </div>
           </div>
 
           <label className="flex cursor-pointer items-start gap-3 text-sm text-content-muted">
-            <input type="checkbox" required className="mt-1 h-4 w-4 shrink-0 rounded border-line accent-primary" />
+            <input
+              type="checkbox"
+              required
+              className="mt-1 h-4 w-4 shrink-0 rounded border-line accent-primary"
+            />
             <span>
               Li e aceito os{" "}
               <Link href="/termos" className="text-primary underline-offset-2 hover:underline">
@@ -269,8 +234,29 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
           {submitError ? <p className="text-sm text-rose-500">{submitError}</p> : null}
 
           <Button type="submit" size="lg" variant="gradient" className="w-full" isLoading={loading}>
-            {plan.billingCycle === "annual" && !applied ? `Pagar ${displayPay} (total anual) e ativar` : `Pagar ${displayPay} e ativar`}
+            {loading
+              ? "Redirecionando…"
+              : plan.billingCycle === "annual" && !applied
+                ? `Ir para o pagamento · ${displayPay} (anual)`
+                : `Ir para o pagamento · ${displayPay}`}
           </Button>
+
+          <p className="flex items-center justify-center gap-1.5 text-center text-xs text-content-faint">
+            <svg
+              className="h-3.5 w-3.5 shrink-0"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              aria-hidden
+            >
+              <path
+                fillRule="evenodd"
+                d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z"
+                clipRule="evenodd"
+              />
+            </svg>
+            Pagamento 100% seguro — processado pelo Stripe
+          </p>
+
           {plan.billingCycle === "annual" && !applied && annualTotals ? (
             <p className="text-center text-[11px] leading-snug text-content-muted">
               Um único pagamento pelos 12 meses · média de {formatBRL(annualTotals.effectiveMonthly)}/mês no ciclo
@@ -289,12 +275,16 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
                   Cupom de desconto <span className="font-normal text-content-muted">(opcional)</span>
                 </p>
                 <p className="text-xs text-content-muted">
-                  Pode concluir a compra sem cupom. Se tiver um código, valide aqui — o resumo atualiza após aplicar (e-mail do
-                  formulário necessário só para cupons com limite por conta).
+                  Pode concluir a compra sem cupom. Se tiver um código, valide aqui — o resumo
+                  atualiza após aplicar.
                 </p>
               </div>
               {applied ? (
-                <button type="button" onClick={clearCoupon} className="shrink-0 text-xs font-medium text-primary underline-offset-2 hover:underline">
+                <button
+                  type="button"
+                  onClick={clearCoupon}
+                  className="shrink-0 text-xs font-medium text-primary underline-offset-2 hover:underline"
+                >
                   Remover
                 </button>
               ) : null}
@@ -310,7 +300,13 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
                 spellCheck={false}
                 aria-label="Código do cupom (opcional)"
               />
-              <Button type="button" variant="secondary" className="w-full" isLoading={couponLoading} onClick={() => void applyCoupon()}>
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full"
+                isLoading={couponLoading}
+                onClick={() => void applyCoupon()}
+              >
                 Aplicar cupom
               </Button>
             </div>
@@ -344,7 +340,9 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
                 </div>
                 <div className="flex items-baseline justify-between gap-4 border-t border-line/60 pt-3">
                   <span className="text-sm font-semibold text-content-secondary">Total a pagar</span>
-                  <span className="font-display text-2xl font-bold text-primary">{centsToBRL(applied.finalCents)}</span>
+                  <span className="font-display text-2xl font-bold text-primary">
+                    {centsToBRL(applied.finalCents)}
+                  </span>
                 </div>
                 <p className="text-xs text-content-faint">
                   {applied.discountRecurrence === "first_cycle"
@@ -364,7 +362,9 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
                     </div>
                     <div className="flex items-baseline justify-between gap-4 text-success">
                       <span className="text-sm">Desconto no anual ({PLAN_ANNUAL_DISCOUNT_PERCENT}%)</span>
-                      <span className="text-sm font-semibold tabular-nums">−{formatBRL(annualTotals.discountAnnual)}</span>
+                      <span className="text-sm font-semibold tabular-nums">
+                        −{formatBRL(annualTotals.discountAnnual)}
+                      </span>
                     </div>
                     <div className="flex items-baseline justify-between gap-4 border-t border-line/60 pt-3">
                       <span className="text-sm font-semibold text-content-secondary">Total a pagar (anual)</span>
@@ -379,16 +379,19 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
                       </span>
                     </div>
                     <p className="text-xs leading-relaxed text-content-muted">
-                      Cobrança em <span className="font-medium text-content-secondary">um único pagamento</span> pelo
-                      período de 12 meses. Se optar por parcelar no cartão, juros e encargos seguem as regras do seu banco
-                      e do processador de pagamentos (adquirente) usado na finalização — não estão incluídos neste
-                      total.
+                      Cobrança em{" "}
+                      <span className="font-medium text-content-secondary">
+                        um único pagamento
+                      </span>{" "}
+                      pelo período de 12 meses.
                     </p>
                   </>
                 ) : (
                   <div className="flex items-baseline justify-between gap-4">
                     <span className="text-sm text-content-muted">Cobrança mensal</span>
-                    <span className="font-display text-2xl font-bold text-content">{formatBRL(baseMonthlyBrl)}</span>
+                    <span className="font-display text-2xl font-bold text-content">
+                      {formatBRL(baseMonthlyBrl)}
+                    </span>
                   </div>
                 )}
               </div>
@@ -397,14 +400,14 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
           <p className="mt-4 text-xs text-content-faint">
             {plan.billingCycle === "monthly"
               ? "Cobrança mensal recorrente. Cancele quando quiser (conforme termos)."
-              : "Ciclo anual: o valor total do resumo contempla 12 meses à vista com desconto sobre a lista. Cancele quando quiser (conforme termos)."}
+              : "Ciclo anual: valor total dos 12 meses à vista com desconto. Cancele quando quiser (conforme termos)."}
           </p>
           <ul className="mt-6 space-y-2 text-xs text-content-muted">
             <li className="flex gap-2">
               <span className="text-success" aria-hidden>
                 ✓
               </span>
-              API oficial Meta (WhatsApp Business) — 1 número incluído; cada número extra +{formatBRL(WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL)}/mês
+              API oficial Meta (WhatsApp Business) — 1 número incluído; cada extra +{formatBRL(WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL)}/mês
             </li>
             <li className="flex gap-2">
               <span className="text-success" aria-hidden>
