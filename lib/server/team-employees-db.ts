@@ -51,25 +51,26 @@ export async function findTeamMemberCredentials(
   password: string,
 ): Promise<{ tenantId: string; employee: TeamEmployee } | null> {
   const sb = createSupabaseServiceClient();
-  const { data, error } = await sb
-    .from("tenant_members")
-    .select("*")
-    .eq("email", emailLc)
-    .eq("ativo", true)
-    .eq("account_suspended", false)
-    .single();
 
-  if (error || !data) return null;
+  // Uses SECURITY DEFINER RPC — bypasses RLS regardless of API key format.
+  const { data: rows, error } = await sb.rpc("get_member_by_email", { p_email: emailLc });
 
-  const row = data as DbMember & { tenant_id: string };
+  if (error) {
+    console.error("[team-employees-db] get_member_by_email:", error.message);
+    return null;
+  }
+  const data = Array.isArray(rows) ? (rows[0] as (DbMember & { tenant_id: string }) | undefined) : null;
+  if (!data) return null;
 
-  // Verificar senha com pgcrypto (crypt)
   const { data: check, error: checkErr } = await sb
-    .rpc("verify_member_password", { member_id: row.id, plain_password: password });
+    .rpc("verify_member_password", { member_id: data.id, plain_password: password });
 
+  if (checkErr) {
+    console.error("[team-employees-db] verify_member_password:", checkErr.message);
+  }
   if (checkErr || !check) return null;
 
-  return { tenantId: row.tenant_id, employee: toTeamEmployee(row) };
+  return { tenantId: data.tenant_id, employee: toTeamEmployee(data) };
 }
 
 export async function teamMemberEmailExistsInDb(emailLc: string): Promise<boolean> {

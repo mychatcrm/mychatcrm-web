@@ -42,35 +42,41 @@ export async function authenticateAdminFromDb(
   if (!email || !password.trim()) return null;
 
   const sb = createSupabaseServiceClient();
-  const { data: admin, error } = await sb
-    .from("admin_users")
-    .select("id, email, display_name, initials, role, active")
-    .eq("email", email)
-    .eq("active", true)
-    .single();
 
-  if (error || !admin) return null;
+  // Uses SECURITY DEFINER RPC — bypasses RLS regardless of API key format.
+  const { data: rows, error } = await sb.rpc("get_admin_by_email", { p_email: email });
 
-  const row = admin as DbAdmin;
+  if (error) {
+    console.error("[admin-auth-db] get_admin_by_email:", error.message);
+    return null;
+  }
+  const admin = Array.isArray(rows) ? (rows[0] as DbAdmin | undefined) : null;
+  if (!admin) return null;
+
   const { data: ok, error: verifyErr } = await sb.rpc("verify_admin_password", {
-    admin_id: row.id,
+    admin_id: admin.id,
     plain_password: password.trim(),
   });
 
+  if (verifyErr) {
+    console.error("[admin-auth-db] verify_admin_password:", verifyErr.message);
+  }
   if (verifyErr || !ok) return null;
 
-  return dbToSession(row);
+  return dbToSession(admin);
 }
 
 export async function getAdminSessionByIdFromDb(adminId: string): Promise<AdminSession | null> {
   if (!adminId) return null;
   const sb = createSupabaseServiceClient();
-  const { data, error } = await sb
-    .from("admin_users")
-    .select("id, email, display_name, initials, role, active")
-    .eq("id", adminId)
-    .eq("active", true)
-    .single();
-  if (error || !data) return null;
-  return dbToSession(data as DbAdmin);
+
+  // Uses SECURITY DEFINER RPC — bypasses RLS regardless of API key format.
+  const { data: rows, error } = await sb.rpc("get_admin_by_id", { p_id: adminId });
+  if (error) {
+    console.error("[admin-auth-db] get_admin_by_id:", error.message);
+    return null;
+  }
+  const data = Array.isArray(rows) ? (rows[0] as DbAdmin | undefined) : null;
+  if (!data) return null;
+  return dbToSession(data);
 }

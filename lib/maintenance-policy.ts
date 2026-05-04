@@ -20,10 +20,14 @@ export function isMaintenanceAnonymousAllowPath(pathname: string): boolean {
   if (pathname === "/es/forgot-password") return true;
   if (pathname === "/admin" || pathname.startsWith("/admin/")) return true;
   if (pathname.startsWith("/api/auth/admin/")) return true;
+  if (pathname.startsWith("/api/auth/client/")) return true;
   if (pathname.startsWith("/api/auth/forgot-password")) return true;
   if (pathname.startsWith("/api/auth/reset-password")) return true;
   if (pathname === "/api/health") return true;
   if (pathname.startsWith("/api/admin/")) return true;
+  // Login pages (localized) must be reachable during maintenance
+  if (pathname === "/login") return true;
+  if (pathname.endsWith("/login")) return true;
   /* Futuros webhooks: validar assinatura nas rotas; não bloquear aqui. */
   if (pathname.startsWith("/api/webhooks/")) return true;
   return false;

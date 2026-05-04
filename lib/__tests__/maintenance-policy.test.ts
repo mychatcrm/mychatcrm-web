@@ -23,4 +23,12 @@ describe("maintenance-policy", () => {
     expect(isMaintenanceAnonymousAllowPath("/api/auth/forgot-password")).toBe(true);
     expect(isMaintenanceAnonymousAllowPath("/api/auth/reset-password")).toBe(true);
   });
+
+  it("permite login de cliente (API e páginas) durante manutenção", () => {
+    expect(isMaintenanceAnonymousAllowPath("/api/auth/client/login")).toBe(true);
+    expect(isMaintenanceAnonymousAllowPath("/api/auth/client/logout")).toBe(true);
+    expect(isMaintenanceAnonymousAllowPath("/login")).toBe(true);
+    expect(isMaintenanceAnonymousAllowPath("/en/login")).toBe(true);
+    expect(isMaintenanceAnonymousAllowPath("/es/login")).toBe(true);
+  });
 });
