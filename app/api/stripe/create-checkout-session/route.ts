@@ -3,7 +3,7 @@ import { getStripe } from "@/lib/stripe";
 import { getStripePriceId } from "@/lib/stripe-prices";
 import { getPlanBySlug, parsePlanBillingCycle, PLAN_CHECKOUT_SLUGS } from "@/lib/plans";
 import { SITE_URL } from "@/lib/constants";
-import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { checkEmailAvailability } from "@/lib/server/email-availability";
 
 export async function POST(req: NextRequest) {
   try {
@@ -21,39 +21,46 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: "Plano inválido." }, { status: 400 });
     }
 
-    // Verificar se o e-mail já tem conta ativa
-    const emailNorm = (email ?? "").trim().toLowerCase();
-    if (!emailNorm) {
-      return NextResponse.json({ message: "E-mail é obrigatório." }, { status: 400 });
-    }
-
-    try {
-      const sb = createSupabaseServiceClient();
-      const { data: existing, error } = await sb
-        .from("tenant_members")
-        .select("id")
-        .eq("email", emailNorm)
-        .maybeSingle();
-
-      if (!error && existing) {
-        return NextResponse.json(
-          {
-            message:
-              "Este e-mail já possui uma conta ativa. Faça login em /login ou entre em contato com o suporte.",
-            code: "EMAIL_ALREADY_EXISTS",
-          },
-          { status: 409 },
-        );
-      }
-    } catch (checkErr) {
-      console.warn("[stripe/create-checkout-session] email check falhou (fail-open):", checkErr);
-    }
-
     const plan = getPlanBySlug(planSlug);
     if (!plan || plan.contactOnly || plan.priceMonthly == null) {
       return NextResponse.json(
         { message: "Este plano não está disponível para checkout online." },
         { status: 400 },
+      );
+    }
+
+    // Verificar disponibilidade do e-mail — fail-CLOSED
+    const emailRaw = (email ?? "").trim();
+    if (!emailRaw) {
+      return NextResponse.json({ message: "E-mail é obrigatório." }, { status: 400 });
+    }
+
+    const availability = await checkEmailAvailability(emailRaw);
+
+    if (!availability.ok) {
+      if (availability.reason === "invalid_format") {
+        return NextResponse.json({ message: "E-mail inválido." }, { status: 400 });
+      }
+      // Supabase falhou — fail-closed: bloquear o checkout
+      console.error("[create-checkout-session] email check falhou:", availability.message);
+      return NextResponse.json(
+        {
+          message:
+            "Não foi possível validar o e-mail. Aguarde alguns segundos e tente novamente.",
+          code: "EMAIL_CHECK_FAILED",
+        },
+        { status: 503 },
+      );
+    }
+
+    if (!availability.available) {
+      return NextResponse.json(
+        {
+          message:
+            "Este e-mail já possui uma conta ativa. Faça login em /login ou entre em contato com o suporte.",
+          code: "EMAIL_ALREADY_EXISTS",
+        },
+        { status: 409 },
       );
     }
 
@@ -75,7 +82,7 @@ export async function POST(req: NextRequest) {
       mode: "subscription",
       payment_method_types: ["card"],
       line_items: [{ price: priceId, quantity: 1 }],
-      customer_email: email?.trim() || undefined,
+      customer_email: emailRaw,
       metadata: {
         planSlug,
         billingCycle: cycle,

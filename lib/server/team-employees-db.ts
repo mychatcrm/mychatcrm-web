@@ -73,13 +73,13 @@ export async function findTeamMemberCredentials(
 }
 
 export async function teamMemberEmailExistsInDb(emailLc: string): Promise<boolean> {
-  const sb = createSupabaseServiceClient();
-  const { count, error } = await sb
-    .from("tenant_members")
-    .select("id", { count: "exact", head: true })
-    .eq("email", emailLc);
-  if (error) return false;
-  return (count ?? 0) > 0;
+  // Delega na função central que é fail-closed.
+  // Retorna true tanto quando o e-mail existe quanto quando o Supabase falha
+  // (conservador: evita criar duplicatas em caso de erro).
+  const { checkEmailAvailability } = await import("@/lib/server/email-availability");
+  const result = await checkEmailAvailability(emailLc);
+  if (!result.ok) return true; // fail-closed: tratar erro como "já existe"
+  return !result.available;
 }
 
 export async function writeTeamMemberToDb(

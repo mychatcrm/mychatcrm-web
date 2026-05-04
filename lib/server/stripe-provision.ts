@@ -45,13 +45,20 @@ export async function provisionFromStripeSession(
 
   if (!email) throw new Error("[stripe-provision] Session sem e-mail do cliente.");
 
-  // --- Verificar se tenant já existe para este e-mail (idempotência) ---
-  const { data: existingMember } = await sb
+  // --- Idempotência: verificar se o e-mail já tem conta (normalizado pelo trigger no DB) ---
+  // Usa count+head para não depender de maybeSingle() que pode retornar error com data:null.
+  const { data: existingRows, error: existingErr } = await sb
     .from("tenant_members")
     .select("id, tenant_id")
-    .eq("email", email)
-    .limit(1)
-    .maybeSingle();
+    .eq("email", email) // email já normalizado acima
+    .limit(1);
+
+  if (existingErr) {
+    // Não conseguimos verificar: lançar erro para o webhook reprocessar depois.
+    throw new Error(`[stripe-provision] Falha ao verificar membro existente: ${existingErr.message}`);
+  }
+
+  const existingMember = existingRows?.[0] ?? null;
 
   if (existingMember) {
     // Tenant já provisionado — devolver (ou criar) token de ativação
@@ -94,7 +101,23 @@ export async function provisionFromStripeSession(
     p_ativo: true,
     p_account_suspended: false,
   });
-  if (memberErr) throw new Error(`[stripe-provision] upsert_tenant_member: ${memberErr.message}`);
+  if (memberErr) {
+    // Se for violação de unicidade de e-mail (23505), buscar o membro já existente
+    if (memberErr.code === "23505") {
+      console.warn("[stripe-provision] Duplicata de e-mail detectada na constraint do DB, buscando membro existente.");
+      const { data: dupRows } = await sb
+        .from("tenant_members")
+        .select("id, tenant_id")
+        .eq("email", email)
+        .limit(1);
+      const dup = dupRows?.[0];
+      if (dup) {
+        const token = await ensureActivationToken(sb, dup.tenant_id as string, dup.id as string, email);
+        return { tenantId: dup.tenant_id as string, memberId: dup.id as string, email, activationToken: token };
+      }
+    }
+    throw new Error(`[stripe-provision] upsert_tenant_member: ${memberErr.message}`);
+  }
 
   // --- Provisionar limites do plano ---
   const limits = getPlanPolicy(planSlug);

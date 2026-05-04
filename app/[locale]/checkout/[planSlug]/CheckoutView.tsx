@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { normalizeCouponCode } from "@/lib/commercial/engine";
@@ -27,6 +27,11 @@ function centsToBRL(cents: number) {
   return formatBRL(cents / 100);
 }
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const DEBOUNCE_MS = 400;
+
+type EmailStatus = "idle" | "checking" | "available" | "taken" | "error";
+
 export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
   const baseMonthlyBrl = planEffectiveMonthlyBRL(plan.priceMonthly, plan.billingCycle);
   const annualTotals =
@@ -38,7 +43,85 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
   const [couponMessage, setCouponMessage] = useState<string | null>(null);
   const [applied, setApplied] = useState<Extract<CouponValidateResult, { ok: true }> | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [emailExists, setEmailExists] = useState(false);
+
+  // --- Estado de verificação de e-mail ---
+  const [emailValue, setEmailValue] = useState("");
+  const [emailStatus, setEmailStatus] = useState<EmailStatus>("idle");
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastCheckedRef = useRef<string>("");
+
+  const checkEmail = useCallback(async (email: string) => {
+    const normalized = email.trim().toLowerCase();
+    if (lastCheckedRef.current === normalized) return;
+    if (!EMAIL_REGEX.test(normalized)) {
+      setEmailStatus("idle");
+      return;
+    }
+
+    lastCheckedRef.current = normalized;
+    setEmailStatus("checking");
+
+    try {
+      const res = await fetch("/api/checkout/email-availability", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: normalized }),
+      });
+      const data = (await res.json()) as { available: boolean | null; code?: string };
+
+      if (res.status === 429) {
+        setEmailStatus("idle");
+        return;
+      }
+      if (!res.ok || data.available === null) {
+        setEmailStatus("error");
+        return;
+      }
+      setEmailStatus(data.available ? "available" : "taken");
+    } catch {
+      setEmailStatus("error");
+    }
+  }, []);
+
+  // Debounce ao digitar
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    const trimmed = emailValue.trim();
+    if (!trimmed || !EMAIL_REGEX.test(trimmed.toLowerCase())) {
+      if (emailStatus !== "idle") setEmailStatus("idle");
+      lastCheckedRef.current = "";
+      return;
+    }
+
+    debounceRef.current = setTimeout(() => {
+      void checkEmail(trimmed);
+    }, DEBOUNCE_MS);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [emailValue, checkEmail, emailStatus]);
+
+  const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setEmailValue(val);
+    setSubmitError(null);
+    // Resetar estado se o e-mail mudou desde o último check
+    if (lastCheckedRef.current && val.trim().toLowerCase() !== lastCheckedRef.current) {
+      setEmailStatus("idle");
+      lastCheckedRef.current = "";
+    }
+  };
+
+  const handleEmailBlur = () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    void checkEmail(emailValue);
+  };
+
+  // Botão desativado quando e-mail está inválido ou bloqueado
+  const emailBlocked = emailStatus === "taken" || emailStatus === "error";
+  const canSubmit = !loading && !emailBlocked && emailValue.trim() !== "";
 
   const applyCoupon = useCallback(async () => {
     if (!normalizeCouponCode(couponInput)) {
@@ -49,15 +132,13 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
     setCouponLoading(true);
     setCouponMessage(null);
     try {
-      const emailEl = document.getElementById("email") as HTMLInputElement | null;
-      const email = emailEl?.value?.trim() ?? "";
       const res = await fetch("/api/checkout/coupon/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           code: couponInput,
           planSlug: plan.slug,
-          email: email || undefined,
+          email: emailValue.trim() || undefined,
           ciclo: plan.billingCycle === "annual" ? "anual" : "mensal",
         }),
       });
@@ -85,7 +166,7 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
     } finally {
       setCouponLoading(false);
     }
-  }, [couponInput, plan.slug, plan.billingCycle]);
+  }, [couponInput, plan.slug, plan.billingCycle, emailValue]);
 
   const clearCoupon = () => {
     setApplied(null);
@@ -96,6 +177,9 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSubmitError(null);
+
+    if (emailBlocked) return;
+
     setLoading(true);
 
     const form = e.currentTarget;
@@ -105,7 +189,6 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
     const company = String(fd.get("company") ?? "").trim();
 
     try {
-      // Commit coupon first (if applied) — this is a pre-checkout record
       if (applied) {
         const couponRes = await fetch("/api/checkout/coupon/commit", {
           method: "POST",
@@ -128,30 +211,22 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
         }
       }
 
-      // Create Stripe Checkout Session
       const res = await fetch("/api/stripe/create-checkout-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          planSlug: plan.slug,
-          ciclo: plan.billingCycle,
-          email,
-          name,
-          company,
-        }),
+        body: JSON.stringify({ planSlug: plan.slug, ciclo: plan.billingCycle, email, name, company }),
       });
 
       const data = (await res.json()) as { url?: string; message?: string; code?: string };
 
       if (!res.ok || !data.url) {
         if (data.code === "EMAIL_ALREADY_EXISTS") {
-          setEmailExists(true);
+          setEmailStatus("taken");
         }
         setSubmitError(data.message ?? "Não foi possível iniciar o pagamento.");
         return;
       }
 
-      // Redirect to Stripe Checkout
       window.location.href = data.url;
     } catch {
       setSubmitError("Erro inesperado. Tente novamente.");
@@ -188,26 +263,64 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
                 placeholder="Seu nome"
               />
             </div>
+
+            {/* Campo de e-mail com verificação em tempo real */}
             <div className="sm:col-span-2">
               <label htmlFor="email" className="text-sm font-medium text-content-secondary">
                 E-mail
               </label>
-              <Input
-                id="email"
-                name="email"
-                type="email"
-                required
-                autoComplete="email"
-                className="mt-1.5"
-                placeholder="voce@empresa.com.br"
-                onChange={() => {
-                  if (emailExists) {
-                    setEmailExists(false);
-                    setSubmitError(null);
+              <div className="relative mt-1.5">
+                <Input
+                  id="email"
+                  name="email"
+                  type="email"
+                  required
+                  autoComplete="email"
+                  value={emailValue}
+                  onChange={handleEmailChange}
+                  onBlur={handleEmailBlur}
+                  placeholder="voce@empresa.com.br"
+                  className={
+                    emailStatus === "taken" || emailStatus === "error"
+                      ? "border-rose-500 ring-1 ring-rose-500 focus:border-rose-500 focus:ring-rose-500"
+                      : emailStatus === "available"
+                        ? "border-success/60"
+                        : ""
                   }
-                }}
-              />
+                  aria-invalid={emailStatus === "taken" || emailStatus === "error"}
+                  aria-describedby="email-status-msg"
+                />
+                {/* Indicador de loading ao verificar */}
+                {emailStatus === "checking" && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
+                  </div>
+                )}
+                {emailStatus === "available" && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-success">
+                    ✓
+                  </div>
+                )}
+              </div>
+
+              {/* Mensagens de feedback do e-mail */}
+              <div id="email-status-msg" aria-live="polite">
+                {emailStatus === "taken" && (
+                  <p className="mt-1.5 text-sm text-rose-500">
+                    Este e-mail já está em uso.{" "}
+                    <Link href="/login" className="font-medium underline underline-offset-2">
+                      Faça login aqui →
+                    </Link>
+                  </p>
+                )}
+                {emailStatus === "error" && (
+                  <p className="mt-1.5 text-sm text-amber-500">
+                    Não foi possível verificar o e-mail. Tente novamente ou prossiga mesmo assim.
+                  </p>
+                )}
+              </div>
             </div>
+
             <div className="sm:col-span-2">
               <label htmlFor="company" className="text-sm font-medium text-content-secondary">
                 Empresa <span className="font-normal text-content-faint">(opcional)</span>
@@ -244,18 +357,25 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
           {submitError ? (
             <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3">
               <p className="text-sm text-rose-500">{submitError}</p>
-              {emailExists ? (
-                <a
+              {emailStatus === "taken" ? (
+                <Link
                   href="/login"
                   className="mt-1 inline-block text-sm font-medium text-primary underline-offset-2 hover:underline"
                 >
                   Ir para o login →
-                </a>
+                </Link>
               ) : null}
             </div>
           ) : null}
 
-          <Button type="submit" size="lg" variant="gradient" className="w-full" isLoading={loading}>
+          <Button
+            type="submit"
+            size="lg"
+            variant="gradient"
+            className="w-full"
+            isLoading={loading}
+            disabled={!canSubmit}
+          >
             {loading
               ? "Redirecionando…"
               : plan.billingCycle === "annual" && !applied
@@ -264,12 +384,7 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
           </Button>
 
           <p className="flex items-center justify-center gap-1.5 text-center text-xs text-content-faint">
-            <svg
-              className="h-3.5 w-3.5 shrink-0"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              aria-hidden
-            >
+            <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
               <path
                 fillRule="evenodd"
                 d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z"
@@ -402,9 +517,7 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
                     </div>
                     <p className="text-xs leading-relaxed text-content-muted">
                       Cobrança em{" "}
-                      <span className="font-medium text-content-secondary">
-                        um único pagamento
-                      </span>{" "}
+                      <span className="font-medium text-content-secondary">um único pagamento</span>{" "}
                       pelo período de 12 meses.
                     </p>
                   </>
@@ -426,21 +539,15 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
           </p>
           <ul className="mt-6 space-y-2 text-xs text-content-muted">
             <li className="flex gap-2">
-              <span className="text-success" aria-hidden>
-                ✓
-              </span>
+              <span className="text-success" aria-hidden>✓</span>
               API oficial Meta (WhatsApp Business) — 1 número incluído; cada extra +{formatBRL(WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL)}/mês
             </li>
             <li className="flex gap-2">
-              <span className="text-success" aria-hidden>
-                ✓
-              </span>
+              <span className="text-success" aria-hidden>✓</span>
               Ambiente seguro com criptografia em trânsito (TLS)
             </li>
             <li className="flex gap-2">
-              <span className="text-success" aria-hidden>
-                ✓
-              </span>
+              <span className="text-success" aria-hidden>✓</span>
               Nota fiscal e suporte comercial MyChatCRM
             </li>
           </ul>
