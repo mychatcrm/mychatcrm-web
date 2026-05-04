@@ -14,8 +14,14 @@ export function isMaintenanceAnonymousAllowPath(pathname: string): boolean {
   if (pathname === "/manutencao") return true;
   if (pathname === "/en/maintenance") return true;
   if (pathname === "/es/mantenimiento") return true;
+  if (pathname === "/reset-password") return true;
+  if (pathname === "/forgot-password") return true;
+  if (pathname === "/en/forgot-password") return true;
+  if (pathname === "/es/forgot-password") return true;
   if (pathname === "/admin" || pathname.startsWith("/admin/")) return true;
   if (pathname.startsWith("/api/auth/admin/")) return true;
+  if (pathname.startsWith("/api/auth/forgot-password")) return true;
+  if (pathname.startsWith("/api/auth/reset-password")) return true;
   if (pathname === "/api/health") return true;
   if (pathname.startsWith("/api/admin/")) return true;
   /* Futuros webhooks: validar assinatura nas rotas; não bloquear aqui. */

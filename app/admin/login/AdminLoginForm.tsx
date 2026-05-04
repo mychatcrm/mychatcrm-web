@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useId, useState } from "react";
 import { AuthSplitLayout } from "@/components/auth/AuthSplitLayout";
@@ -62,6 +63,13 @@ export default function AdminLoginForm() {
         | null;
 
       if (!response.ok) {
+        if (response.status === 503) {
+          setError(
+            payload?.error ??
+              "Serviço de autenticação indisponível. Confirme a configuração do servidor ou tente novamente em instantes.",
+          );
+          return;
+        }
         setError(payload?.error ?? "E-mail ou senha incorretos.");
         return;
       }
@@ -138,6 +146,11 @@ export default function AdminLoginForm() {
               <EyeIcon off={showPassword} />
             </button>
           </div>
+          <p className="mt-2 text-right text-sm">
+            <Link href="/admin/forgot-password" className="font-medium text-primary transition hover:text-primary-hover">
+              Esqueci a palavra-passe
+            </Link>
+          </p>
         </div>
 
         {error ? (

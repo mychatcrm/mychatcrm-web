@@ -18,7 +18,27 @@ export async function POST(request: Request) {
   const email = String(body?.email ?? "");
   const password = String(body?.password ?? "");
 
-  const session = await authenticateAdminFromDb(email, password);
+  let session;
+  try {
+    session = await authenticateAdminFromDb(email, password);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[admin-login]", msg);
+    if (msg.includes("não definida") || msg.includes("SUPABASE_SERVICE_ROLE_KEY")) {
+      return NextResponse.json(
+        {
+          error:
+            "Serviço de autenticação indisponível. Confirme a configuração do servidor ou tente novamente em instantes.",
+        },
+        { status: 503 },
+      );
+    }
+    return NextResponse.json(
+      { error: "Não foi possível validar as credenciais. Tente novamente dentro de momentos." },
+      { status: 503 },
+    );
+  }
+
   if (!session) {
     return NextResponse.json({ error: "E-mail ou senha incorretos." }, { status: 401 });
   }

@@ -80,6 +80,15 @@ export async function POST(request: Request) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown";
     console.error("[client-login] falha ao autenticar via Supabase:", msg);
+    if (msg.includes("não definida") || msg.includes("SUPABASE_SERVICE_ROLE_KEY")) {
+      return NextResponse.json(
+        {
+          error:
+            "Serviço de autenticação indisponível. Confirme a configuração do servidor ou tente novamente em instantes.",
+        },
+        { status: 503 },
+      );
+    }
   }
 
   if (!session) {

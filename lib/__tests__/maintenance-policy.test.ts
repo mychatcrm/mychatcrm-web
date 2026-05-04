@@ -18,5 +18,9 @@ describe("maintenance-policy", () => {
     expect(isMaintenanceAnonymousAllowPath("/planos")).toBe(false);
     expect(isMaintenanceAnonymousAllowPath("/api/chat")).toBe(false);
     expect(isMaintenanceAnonymousAllowPath("/api/webhooks/stripe")).toBe(true);
+    expect(isMaintenanceAnonymousAllowPath("/reset-password")).toBe(true);
+    expect(isMaintenanceAnonymousAllowPath("/forgot-password")).toBe(true);
+    expect(isMaintenanceAnonymousAllowPath("/api/auth/forgot-password")).toBe(true);
+    expect(isMaintenanceAnonymousAllowPath("/api/auth/reset-password")).toBe(true);
   });
 });

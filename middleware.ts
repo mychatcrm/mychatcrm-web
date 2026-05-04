@@ -69,6 +69,8 @@ export async function middleware(request: NextRequest) {
   const isDashboard = pathname === "/dashboard" || pathname.startsWith("/dashboard/");
   const isAdminArea = pathname === "/admin" || pathname.startsWith("/admin/");
   const isAdminLogin = pathname === "/admin/login";
+  const isAdminForgotPassword = pathname === "/admin/forgot-password";
+  const isAdminPublicAuth = isAdminLogin || isAdminForgotPassword;
   const isApiRoute = pathname.startsWith("/api/");
 
   if (isDashboard || isAdminArea || isApiRoute) {
@@ -145,7 +147,7 @@ export async function middleware(request: NextRequest) {
     }
 
     // ── Admin auth ───────────────────────────────────────────────────────────
-    if (isAdminArea && !isAdminLogin) {
+    if (isAdminArea && !isAdminPublicAuth) {
       const token = request.cookies.get(ADMIN_SESSION_COOKIE)?.value;
       const session = getAdminSessionByToken(token);
 

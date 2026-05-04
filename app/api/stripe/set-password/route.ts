@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
 
     // Atualiza a senha via RPC (hash feito no banco)
     const { error: pwErr } = await sb.rpc("update_member_password", {
-      p_member_id: tokenRow.member_id,
+      p_id: tokenRow.member_id,
       p_new_password: password,
     });
 

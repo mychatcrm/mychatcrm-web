@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useId, useState } from "react";
+import { useLocale } from "next-intl";
 import { AuthSplitLayout } from "@/components/auth/AuthSplitLayout";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { cn } from "@/lib/utils";
 import { safeAppInternalPath } from "@/lib/safe-redirect";
+import { defaultLocale } from "@/i18n/routing";
 
 function EyeIcon({ off }: { off?: boolean }) {
   if (off) {
@@ -37,6 +39,8 @@ function EyeIcon({ off }: { off?: boolean }) {
 export default function LoginForm() {
   const router = useRouter();
   const search = useSearchParams();
+  const locale = useLocale();
+  const forgotHref = locale === defaultLocale ? "/forgot-password" : `/${locale}/forgot-password`;
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +70,13 @@ export default function LoginForm() {
         | null;
 
       if (!response.ok) {
+        if (response.status === 503) {
+          setError(
+            payload?.error ??
+              "Serviço de autenticação indisponível. Confirme a configuração do servidor ou tente novamente em instantes.",
+          );
+          return;
+        }
         setError(payload?.error ?? "Não foi possível entrar agora.");
         return;
       }
@@ -152,6 +163,11 @@ export default function LoginForm() {
               <EyeIcon off={showPassword} />
             </button>
           </div>
+          <p className="mt-2 text-right text-sm">
+            <Link href={forgotHref} className="font-medium text-primary transition hover:text-primary-hover">
+              Esqueci a palavra-passe
+            </Link>
+          </p>
         </div>
 
         <div className="flex items-center gap-2 pt-0.5">
