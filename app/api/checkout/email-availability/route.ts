@@ -65,15 +65,16 @@ export async function POST(req: NextRequest) {
     if (result.reason === "invalid_format") {
       return NextResponse.json({ available: null, code: "INVALID_FORMAT" }, { status: 400 });
     }
-    // Supabase falhou — não revelar estado (retornar null para UX mostrar mensagem neutra)
+    // UX fail-open: não bloquear o botão. A rota Stripe mantém fail-closed.
+    console.error("[email-availability route] check falhou (UX fail-open):", result.message);
     return NextResponse.json(
-      { available: null, code: "CHECK_FAILED" },
-      { status: 503, headers: { "Cache-Control": "no-store" } },
+      { available: true, uncertain: true, code: "CHECK_SKIPPED" },
+      { status: 200, headers: { "Cache-Control": "no-store" } },
     );
   }
 
   return NextResponse.json(
-    { available: result.available, code: result.available ? "FREE" : "TAKEN" },
+    { available: result.available, uncertain: false, code: result.available ? "FREE" : "TAKEN" },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

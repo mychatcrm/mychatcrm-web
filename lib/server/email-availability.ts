@@ -34,7 +34,7 @@ export async function checkEmailAvailability(
 
     const { count, error } = await sb
       .from("tenant_members")
-      .select("id", { count: "exact", head: true })
+      .select("*", { count: "exact", head: true })
       .eq("email", email);
 
     if (error) {

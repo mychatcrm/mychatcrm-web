@@ -30,7 +30,7 @@ function centsToBRL(cents: number) {
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEBOUNCE_MS = 400;
 
-type EmailStatus = "idle" | "checking" | "available" | "taken" | "error";
+type EmailStatus = "idle" | "checking" | "available" | "taken" | "uncertain";
 
 export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
   const baseMonthlyBrl = planEffectiveMonthlyBRL(plan.priceMonthly, plan.billingCycle);
@@ -48,17 +48,20 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
   const [emailValue, setEmailValue] = useState("");
   const [emailStatus, setEmailStatus] = useState<EmailStatus>("idle");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastCheckedRef = useRef<string>("");
+  /** Evita dois pedidos em voo com o mesmo e-mail (corrida debounce + blur). */
+  const inFlightRef = useRef<string | null>(null);
+  /** Último e-mail com resposta definitiva do servidor (para resetar UI ao editar). */
+  const lastCompletedRef = useRef<string>("");
 
   const checkEmail = useCallback(async (email: string) => {
     const normalized = email.trim().toLowerCase();
-    if (lastCheckedRef.current === normalized) return;
     if (!EMAIL_REGEX.test(normalized)) {
       setEmailStatus("idle");
       return;
     }
+    if (inFlightRef.current === normalized) return;
 
-    lastCheckedRef.current = normalized;
+    inFlightRef.current = normalized;
     setEmailStatus("checking");
 
     try {
@@ -67,30 +70,53 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: normalized }),
       });
-      const data = (await res.json()) as { available: boolean | null; code?: string };
+      const data = (await res.json()) as {
+        available?: boolean;
+        uncertain?: boolean;
+        code?: string;
+      };
 
       if (res.status === 429) {
         setEmailStatus("idle");
+        inFlightRef.current = null;
         return;
       }
-      if (!res.ok || data.available === null) {
-        setEmailStatus("error");
+
+      if (!res.ok) {
+        setEmailStatus("uncertain");
+        inFlightRef.current = null;
         return;
       }
-      setEmailStatus(data.available ? "available" : "taken");
+
+      if (data.uncertain && data.available === true) {
+        setEmailStatus("uncertain");
+        lastCompletedRef.current = normalized;
+      } else if (data.available === false) {
+        setEmailStatus("taken");
+        lastCompletedRef.current = normalized;
+      } else if (data.available === true) {
+        setEmailStatus("available");
+        lastCompletedRef.current = normalized;
+      } else {
+        setEmailStatus("uncertain");
+        lastCompletedRef.current = normalized;
+      }
     } catch {
-      setEmailStatus("error");
+      setEmailStatus("uncertain");
+    } finally {
+      inFlightRef.current = null;
     }
   }, []);
 
-  // Debounce ao digitar
+  // Debounce ao digitar (sem depender de emailStatus — evita re-agendar ao mudar checking/error)
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
     const trimmed = emailValue.trim();
-    if (!trimmed || !EMAIL_REGEX.test(trimmed.toLowerCase())) {
-      if (emailStatus !== "idle") setEmailStatus("idle");
-      lastCheckedRef.current = "";
+    const lower = trimmed.toLowerCase();
+    if (!trimmed || !EMAIL_REGEX.test(lower)) {
+      setEmailStatus("idle");
+      lastCompletedRef.current = "";
       return;
     }
 
@@ -101,16 +127,16 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [emailValue, checkEmail, emailStatus]);
+  }, [emailValue, checkEmail]);
 
   const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setEmailValue(val);
     setSubmitError(null);
-    // Resetar estado se o e-mail mudou desde o último check
-    if (lastCheckedRef.current && val.trim().toLowerCase() !== lastCheckedRef.current) {
+    const norm = val.trim().toLowerCase();
+    if (lastCompletedRef.current && norm !== lastCompletedRef.current) {
       setEmailStatus("idle");
-      lastCheckedRef.current = "";
+      lastCompletedRef.current = "";
     }
   };
 
@@ -119,9 +145,11 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
     void checkEmail(emailValue);
   };
 
-  // Botão desativado quando e-mail está inválido ou bloqueado
-  const emailBlocked = emailStatus === "taken" || emailStatus === "error";
-  const canSubmit = !loading && !emailBlocked && emailValue.trim() !== "";
+  // Só bloqueia pagamento quando o servidor confirmou que o e-mail já existe.
+  // "uncertain" / "available" / "idle" / "checking" permitem tentar (validação final na rota Stripe).
+  const emailBlocked = emailStatus === "taken";
+  const emailNorm = emailValue.trim().toLowerCase();
+  const canSubmit = !loading && !emailBlocked && EMAIL_REGEX.test(emailNorm);
 
   const applyCoupon = useCallback(async () => {
     if (!normalizeCouponCode(couponInput)) {
@@ -281,13 +309,15 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
                   onBlur={handleEmailBlur}
                   placeholder="voce@empresa.com.br"
                   className={
-                    emailStatus === "taken" || emailStatus === "error"
+                    emailStatus === "taken"
                       ? "border-rose-500 ring-1 ring-rose-500 focus:border-rose-500 focus:ring-rose-500"
-                      : emailStatus === "available"
-                        ? "border-success/60"
-                        : ""
+                      : emailStatus === "uncertain"
+                        ? "border-amber-500/60 ring-1 ring-amber-500/40"
+                        : emailStatus === "available"
+                          ? "border-success/60"
+                          : ""
                   }
-                  aria-invalid={emailStatus === "taken" || emailStatus === "error"}
+                  aria-invalid={emailStatus === "taken"}
                   aria-describedby="email-status-msg"
                 />
                 {/* Indicador de loading ao verificar */}
@@ -307,15 +337,16 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
               <div id="email-status-msg" aria-live="polite">
                 {emailStatus === "taken" && (
                   <p className="mt-1.5 text-sm text-rose-500">
-                    Este e-mail já está em uso.{" "}
+                    Este e-mail já está cadastrado. Tente outro e-mail ou{" "}
                     <Link href="/login" className="font-medium underline underline-offset-2">
-                      Faça login aqui →
+                      faça login aqui →
                     </Link>
                   </p>
                 )}
-                {emailStatus === "error" && (
-                  <p className="mt-1.5 text-sm text-amber-500">
-                    Não foi possível verificar o e-mail. Tente novamente ou prossiga mesmo assim.
+                {emailStatus === "uncertain" && (
+                  <p className="mt-1.5 text-sm text-amber-600 dark:text-amber-400">
+                    Não foi possível confirmar automaticamente. Pode continuar — se o e-mail já tiver conta, o
+                    pagamento será bloqueado.
                   </p>
                 )}
               </div>
