@@ -139,8 +139,7 @@ export async function provisionFromStripeSession(
 }
 
 async function ensureActivationToken(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  sb: any,
+  sb: ReturnType<typeof createSupabaseServiceClient>,
   tenantId: string,
   memberId: string,
   email: string,
