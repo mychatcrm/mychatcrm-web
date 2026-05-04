@@ -42,7 +42,13 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ message: "E-mail inválido." }, { status: 400 });
       }
       // Supabase falhou — fail-closed: bloquear o checkout
-      console.error("[create-checkout-session] email check falhou:", availability.message);
+      if (availability.envMissing) {
+        console.error(
+          "[create-checkout-session] SUPABASE_SERVICE_ROLE_KEY ausente em produção — configure a variável na Vercel.",
+        );
+      } else {
+        console.error("[create-checkout-session] Falha ao consultar banco de dados:", availability.message);
+      }
       return NextResponse.json(
         {
           message:
