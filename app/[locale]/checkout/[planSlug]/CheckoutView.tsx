@@ -38,6 +38,7 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
   const [couponMessage, setCouponMessage] = useState<string | null>(null);
   const [applied, setApplied] = useState<Extract<CouponValidateResult, { ok: true }> | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [emailExists, setEmailExists] = useState(false);
 
   const applyCoupon = useCallback(async () => {
     if (!normalizeCouponCode(couponInput)) {
@@ -140,9 +141,12 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
         }),
       });
 
-      const data = (await res.json()) as { url?: string; message?: string };
+      const data = (await res.json()) as { url?: string; message?: string; code?: string };
 
       if (!res.ok || !data.url) {
+        if (data.code === "EMAIL_ALREADY_EXISTS") {
+          setEmailExists(true);
+        }
         setSubmitError(data.message ?? "Não foi possível iniciar o pagamento.");
         return;
       }
@@ -196,6 +200,12 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
                 autoComplete="email"
                 className="mt-1.5"
                 placeholder="voce@empresa.com.br"
+                onChange={() => {
+                  if (emailExists) {
+                    setEmailExists(false);
+                    setSubmitError(null);
+                  }
+                }}
               />
             </div>
             <div className="sm:col-span-2">
@@ -231,7 +241,19 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
             </span>
           </label>
 
-          {submitError ? <p className="text-sm text-rose-500">{submitError}</p> : null}
+          {submitError ? (
+            <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3">
+              <p className="text-sm text-rose-500">{submitError}</p>
+              {emailExists ? (
+                <a
+                  href="/login"
+                  className="mt-1 inline-block text-sm font-medium text-primary underline-offset-2 hover:underline"
+                >
+                  Ir para o login →
+                </a>
+              ) : null}
+            </div>
+          ) : null}
 
           <Button type="submit" size="lg" variant="gradient" className="w-full" isLoading={loading}>
             {loading

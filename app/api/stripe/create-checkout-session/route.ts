@@ -3,6 +3,7 @@ import { getStripe } from "@/lib/stripe";
 import { getStripePriceId } from "@/lib/stripe-prices";
 import { getPlanBySlug, parsePlanBillingCycle, PLAN_CHECKOUT_SLUGS } from "@/lib/plans";
 import { SITE_URL } from "@/lib/constants";
+import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export async function POST(req: NextRequest) {
   try {
@@ -18,6 +19,30 @@ export async function POST(req: NextRequest) {
 
     if (!planSlug || !PLAN_CHECKOUT_SLUGS.includes(planSlug)) {
       return NextResponse.json({ message: "Plano inválido." }, { status: 400 });
+    }
+
+    // Verificar se o e-mail já tem conta ativa
+    const emailNorm = (email ?? "").trim().toLowerCase();
+    if (!emailNorm) {
+      return NextResponse.json({ message: "E-mail é obrigatório." }, { status: 400 });
+    }
+
+    const sb = createSupabaseServiceClient();
+    const { data: existing } = await sb
+      .from("tenant_members")
+      .select("id")
+      .eq("email", emailNorm)
+      .maybeSingle();
+
+    if (existing) {
+      return NextResponse.json(
+        {
+          message:
+            "Este e-mail já possui uma conta ativa. Faça login em /login ou entre em contato com o suporte.",
+          code: "EMAIL_ALREADY_EXISTS",
+        },
+        { status: 409 },
+      );
     }
 
     const plan = getPlanBySlug(planSlug);
