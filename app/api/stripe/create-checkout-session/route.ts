@@ -27,22 +27,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: "E-mail é obrigatório." }, { status: 400 });
     }
 
-    const sb = createSupabaseServiceClient();
-    const { data: existing } = await sb
-      .from("tenant_members")
-      .select("id")
-      .eq("email", emailNorm)
-      .maybeSingle();
+    try {
+      const sb = createSupabaseServiceClient();
+      const { data: existing, error } = await sb
+        .from("tenant_members")
+        .select("id")
+        .eq("email", emailNorm)
+        .maybeSingle();
 
-    if (existing) {
-      return NextResponse.json(
-        {
-          message:
-            "Este e-mail já possui uma conta ativa. Faça login em /login ou entre em contato com o suporte.",
-          code: "EMAIL_ALREADY_EXISTS",
-        },
-        { status: 409 },
-      );
+      if (!error && existing) {
+        return NextResponse.json(
+          {
+            message:
+              "Este e-mail já possui uma conta ativa. Faça login em /login ou entre em contato com o suporte.",
+            code: "EMAIL_ALREADY_EXISTS",
+          },
+          { status: 409 },
+        );
+      }
+    } catch (checkErr) {
+      console.warn("[stripe/create-checkout-session] email check falhou (fail-open):", checkErr);
     }
 
     const plan = getPlanBySlug(planSlug);
