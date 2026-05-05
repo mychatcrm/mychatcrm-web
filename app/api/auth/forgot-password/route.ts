@@ -45,7 +45,9 @@ export async function POST(request: Request) {
 
     if (!result.mailConfigured) {
       console.error(
-        "[forgot-password] RESEND_API_KEY ausente — e-mail indisponível; scope:", scope,
+        "[forgot-password] RESEND_API_KEY ausente ou vazia — e-mail indisponível. " +
+          "Configure em Vercel → Settings → Environment Variables → Production (nome exato: RESEND_API_KEY, valor re_… do Resend) e faça redeploy. scope:",
+        scope,
       );
       return NextResponse.json(
         {

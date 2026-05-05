@@ -1,6 +1,10 @@
 /**
  * Envio transacional via [Resend](https://resend.com) (HTTP, sem SDK extra).
  * Requer RESEND_API_KEY no servidor.
+ *
+ * Produção: verificar domínio do remetente em Resend → Domains (SPF/DKIM).
+ * `RESEND_FROM_EMAIL` deve usar um endereço desse domínio ou, em testes,
+ * `MyChatCRM <onboarding@resend.dev>`.
  */
 
 export type SendMailResult = { ok: true } | { ok: false; code: "missing_key" | "http_error"; detail?: string };
@@ -37,7 +41,17 @@ export async function sendTransactionalEmail(params: {
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    console.error("[resend-mail] Resend HTTP", res.status, body.slice(0, 500));
+    console.error(
+      "[resend-mail] Resend API error",
+      JSON.stringify({
+        httpStatus: res.status,
+        snippet: body.slice(0, 500),
+        hint:
+          res.status === 403 || res.status === 422
+            ? "Verifique RESEND_FROM_EMAIL e domínio verificado no painel Resend."
+            : undefined,
+      }),
+    );
     return { ok: false, code: "http_error", detail: `${res.status}` };
   }
 
