@@ -7,6 +7,21 @@ function isoNow() {
   return new Date().toISOString();
 }
 
+function normalizeIsoDateInput(raw: unknown): string | null | "invalid" {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const s = raw.trim();
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return "invalid";
+  return d.toISOString();
+}
+
+function parseOptionalInt(raw: unknown): number | null | "invalid" {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const n = typeof raw === "number" ? raw : parseInt(String(raw), 10);
+  if (!Number.isFinite(n)) return "invalid";
+  return n;
+}
+
 export function parseCouponUpsert(
   body: unknown,
   existing: CommercialCoupon | undefined,
@@ -30,26 +45,25 @@ export function parseCouponUpsert(
     return { ok: false, error: "Percentual não pode exceder 100." };
   }
 
-  const validFrom = typeof r.validFrom === "string" && r.validFrom.trim() ? r.validFrom.trim() : null;
-  const validUntil = typeof r.validUntil === "string" && r.validUntil.trim() ? r.validUntil.trim() : null;
+  const validFrom = normalizeIsoDateInput(r.validFrom);
+  if (validFrom === "invalid") {
+    return { ok: false, error: "Data inicial inválida." };
+  }
+  const validUntil = normalizeIsoDateInput(r.validUntil);
+  if (validUntil === "invalid") {
+    return { ok: false, error: "Data final inválida." };
+  }
+  if (validFrom && validUntil && new Date(validFrom).getTime() > new Date(validUntil).getTime()) {
+    return { ok: false, error: "A data final deve ser igual ou posterior à data inicial." };
+  }
 
-  const maxRedemptionsTotal =
-    r.maxRedemptionsTotal === null || r.maxRedemptionsTotal === ""
-      ? null
-      : typeof r.maxRedemptionsTotal === "number"
-        ? r.maxRedemptionsTotal
-        : parseInt(String(r.maxRedemptionsTotal), 10);
-  if (maxRedemptionsTotal !== null && (!Number.isFinite(maxRedemptionsTotal) || maxRedemptionsTotal < 0)) {
+  const maxRedemptionsTotal = parseOptionalInt(r.maxRedemptionsTotal);
+  if (maxRedemptionsTotal === "invalid" || (maxRedemptionsTotal !== null && maxRedemptionsTotal < 0)) {
     return { ok: false, error: "Limite total inválido." };
   }
 
-  const maxRedemptionsPerUser =
-    r.maxRedemptionsPerUser === null || r.maxRedemptionsPerUser === ""
-      ? null
-      : typeof r.maxRedemptionsPerUser === "number"
-        ? r.maxRedemptionsPerUser
-        : parseInt(String(r.maxRedemptionsPerUser), 10);
-  if (maxRedemptionsPerUser !== null && (!Number.isFinite(maxRedemptionsPerUser) || maxRedemptionsPerUser < 0)) {
+  const maxRedemptionsPerUser = parseOptionalInt(r.maxRedemptionsPerUser);
+  if (maxRedemptionsPerUser === "invalid" || (maxRedemptionsPerUser !== null && maxRedemptionsPerUser < 0)) {
     return { ok: false, error: "Limite por usuário inválido." };
   }
 
@@ -58,13 +72,8 @@ export function parseCouponUpsert(
     allowedPlanSlugs = r.allowedPlanSlugs.filter((s): s is string => typeof s === "string" && isCheckoutPlanSlug(s));
   }
   const discountRecurrence = r.discountRecurrence === "all_cycles" ? "all_cycles" : "first_cycle";
-  const recurringCyclesLimit =
-    r.recurringCyclesLimit === null || r.recurringCyclesLimit === ""
-      ? null
-      : typeof r.recurringCyclesLimit === "number"
-        ? r.recurringCyclesLimit
-        : parseInt(String(r.recurringCyclesLimit), 10);
-  if (recurringCyclesLimit !== null && (!Number.isFinite(recurringCyclesLimit) || recurringCyclesLimit < 1)) {
+  const recurringCyclesLimit = parseOptionalInt(r.recurringCyclesLimit);
+  if (recurringCyclesLimit === "invalid" || (recurringCyclesLimit !== null && recurringCyclesLimit < 1)) {
     return { ok: false, error: "Limite de ciclos inválido." };
   }
 

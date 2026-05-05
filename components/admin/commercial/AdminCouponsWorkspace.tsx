@@ -70,6 +70,12 @@ export function AdminCouponsWorkspace() {
   const [modalOpen, setModalOpen] = useState(false);
   const [draft, setDraft] = useState<Partial<CommercialCoupon>>(emptyCoupon);
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
+
+  const clearFlashSoon = useCallback(() => {
+    window.setTimeout(() => setFlash(null), 3000);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -114,6 +120,7 @@ export function AdminCouponsWorkspace() {
 
   const openCreate = () => {
     setDraft(emptyCoupon());
+    setFormError(null);
     setModalOpen(true);
   };
 
@@ -123,10 +130,46 @@ export function AdminCouponsWorkspace() {
       validFrom: c.validFrom ?? "",
       validUntil: c.validUntil ?? "",
     });
+    setFormError(null);
     setModalOpen(true);
   };
 
+  const validateDraft = useCallback((d: Partial<CommercialCoupon>): string | null => {
+    const code = String(d.code ?? "").trim();
+    if (!code) return "Código do cupom é obrigatório.";
+    const internalName = String(d.internalName ?? "").trim();
+    if (!internalName) return "Nome interno é obrigatório.";
+
+    const discountRaw = Number(d.discountValue);
+    if (!Number.isFinite(discountRaw) || discountRaw < 0) return "Valor de desconto inválido.";
+    if ((d.discountType ?? "percent") === "percent" && discountRaw > 100) {
+      return "Percentual não pode exceder 100.";
+    }
+
+    const from = String(d.validFrom ?? "").trim();
+    const until = String(d.validUntil ?? "").trim();
+    if (from && until) {
+      const fromTs = new Date(from).getTime();
+      const untilTs = new Date(until).getTime();
+      if (Number.isNaN(fromTs) || Number.isNaN(untilTs)) {
+        return "Datas inválidas.";
+      }
+      if (fromTs > untilTs) {
+        return "A data final deve ser igual ou posterior à data inicial.";
+      }
+    }
+
+    return null;
+  }, []);
+
   const save = async () => {
+    setFormError(null);
+    const v = validateDraft(draft);
+    if (v) {
+      setFormError(v);
+      return;
+    }
+
     setSaving(true);
     try {
       const res = await fetch("/api/admin/coupons", {
@@ -141,9 +184,11 @@ export function AdminCouponsWorkspace() {
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error ?? "Não foi possível salvar.");
       setModalOpen(false);
+      setFlash(draft.id ? "Cupom atualizado com sucesso." : "Cupom criado com sucesso.");
+      clearFlashSoon();
       await load();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Erro ao salvar.");
+      setFormError(e instanceof Error ? e.message : "Erro ao salvar.");
     } finally {
       setSaving(false);
     }
@@ -155,9 +200,11 @@ export function AdminCouponsWorkspace() {
       const res = await fetch(`/api/admin/coupons/${encodeURIComponent(c.id)}`, { method: "DELETE" });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error ?? "Exclusão negada.");
+      setFlash(`Cupom ${c.code} excluído.`);
+      clearFlashSoon();
       await load();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Erro ao excluir.");
+      setLoadError(e instanceof Error ? e.message : "Erro ao excluir.");
     }
   };
 
@@ -235,6 +282,7 @@ export function AdminCouponsWorkspace() {
         {loadError ? (
           <p className="text-sm text-rose-400">{loadError}</p>
         ) : null}
+        {flash ? <p className="text-sm text-emerald-400">{flash}</p> : null}
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
           <div className="min-w-[200px] flex-1">
             <label className="text-xs font-semibold uppercase tracking-wider text-content-muted">Buscar</label>
@@ -292,6 +340,7 @@ export function AdminCouponsWorkspace() {
           </div>
         }
       >
+        {formError ? <p className="mb-3 text-sm text-rose-400">{formError}</p> : null}
         <div className="grid max-h-[70vh] gap-4 overflow-y-auto pr-1 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <label className="text-xs font-semibold text-content-muted">Código público</label>

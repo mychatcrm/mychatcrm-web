@@ -8,6 +8,7 @@ import {
   buildCommercialStoreFromDb,
   countRedemptionsByCoupon,
   listCoupons,
+  listPartners,
   listRedemptions,
   persistModifiedPartners,
   upsertCoupon,
@@ -21,9 +22,13 @@ export async function GET() {
     return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
   }
 
-  const [coupons, redemptions] = await Promise.all([listCoupons(), listRedemptions()]);
+  const [coupons, partners, redemptions] = await Promise.all([
+    listCoupons(),
+    listPartners(),
+    listRedemptions(),
+  ]);
 
-  const store = { version: 1 as const, coupons, partners: [], redemptions, auditLog: [] };
+  const store = { version: 1 as const, coupons, partners, redemptions, auditLog: [] };
   const stats = coupons.map((c) => ({
     couponId: c.id,
     code: c.code,
@@ -32,6 +37,7 @@ export async function GET() {
 
   return NextResponse.json({
     coupons,
+    partners,
     redemptionStats: stats,
     redemptions: redemptions.filter((r) => r.status === "committed").slice(-200).reverse(),
   });
