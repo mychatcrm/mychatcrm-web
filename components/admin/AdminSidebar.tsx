@@ -5,7 +5,8 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { typography } from "@/lib/typography";
 import { PanelNavIcon } from "@/components/nav/panel-nav-icons";
-import { hasAdminAccess, type AdminSession } from "@/lib/admin-auth";
+import type { AdminSession } from "@/lib/admin-auth";
+import { hasAdminAccessByRole } from "@/lib/admin-permissions";
 import { adminNavGroups } from "./navigation";
 import { PanelThemeToggle, usePanelAppearance } from "@/components/panel/PanelAppearance";
 import { PanelBrandMark } from "@/components/panel/PanelBrandMark";
@@ -55,7 +56,7 @@ export function AdminSidebar({
             <p className={cn(typography.ui.overline, "mb-1.5 px-2 text-content-faint")}>{group.title}</p>
             <div className="space-y-0.5">
               {group.items
-                .filter((it) => hasAdminAccess(session, it.routeKey))
+                .filter((it) => hasAdminAccessByRole(session.role, it.routeKey))
                 .map((it) => {
                 const active = pathname === it.href;
                 return (

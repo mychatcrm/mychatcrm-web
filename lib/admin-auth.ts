@@ -1,16 +1,9 @@
 import { cookies } from "next/headers";
 import { cookieSecureFlag } from "@/lib/cookie-security";
 import { getAdminSessionByIdFromDb } from "@/lib/server/admin-auth-db";
+import { hasAdminAccessByRole, type AdminRole } from "@/lib/admin-permissions";
 
 export const ADMIN_SESSION_COOKIE = "mychatcrm_admin_session";
-
-export type AdminRole =
-  | "super_admin"
-  | "admin"
-  | "financeiro"
-  | "suporte"
-  | "marketing"
-  | "desenvolvedor";
 
 export type AdminSession = {
   token: string;
@@ -23,38 +16,6 @@ export type AdminSession = {
 };
 
 const WEEK_IN_SECONDS = 60 * 60 * 24 * 7;
-
-const ROLE_PERMISSION_MAP: Record<AdminRole, string[]> = {
-  super_admin: ["*"],
-  admin: [
-    "dashboard",
-    "analytics",
-    "clientes",
-    "leads",
-    "inadimplentes",
-    "cancelamentos",
-    "planos",
-    "enterprise",
-    "cupons",
-    "parcerias",
-    "features",
-    "financeiro",
-    "faturas",
-    "pagamentos",
-    "churn",
-    "suporte",
-    "comunicados",
-    "notificacoes",
-    "configuracoes",
-    "apis",
-    "logs",
-    "seguranca",
-  ],
-  financeiro: ["dashboard", "financeiro", "faturas", "pagamentos", "churn", "clientes", "inadimplentes", "parcerias"],
-  suporte: ["dashboard", "clientes", "leads", "suporte", "comunicados"],
-  marketing: ["dashboard", "analytics", "cupons", "parcerias", "comunicados", "notificacoes", "leads"],
-  desenvolvedor: ["dashboard", "configuracoes", "apis", "logs", "seguranca"],
-};
 
 function getSecureCookieFlag() {
   return cookieSecureFlag();
@@ -88,8 +49,7 @@ export function getAdminSessionByToken(value: string | undefined): AdminSession 
 }
 
 export function hasAdminAccess(session: AdminSession, routeKey: string) {
-  const allowed = ROLE_PERMISSION_MAP[session.role] ?? [];
-  return allowed.includes("*") || allowed.includes(routeKey);
+  return hasAdminAccessByRole(session.role, routeKey);
 }
 
 export function parseAdminWhitelist() {
