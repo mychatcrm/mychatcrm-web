@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
@@ -52,6 +52,24 @@ type LogRow = {
   error_code: string | null;
 };
 
+type OpenAiAccountPayload = {
+  configured: boolean;
+  credits: {
+    totalGrantedUsd: number | null;
+    totalUsedUsd: number | null;
+    totalAvailableUsd: number | null;
+  } | null;
+  subscription: {
+    hardLimitUsd: number | null;
+    softLimitUsd: number | null;
+    plan: string | null;
+  } | null;
+  usagePeriodUsd: number | null;
+  usagePeriodLabel: string | null;
+  hints: string[];
+  fetchError: string | null;
+};
+
 function formatUsd(v: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(v || 0);
 }
@@ -66,6 +84,9 @@ export function AdminAiControlCenter() {
   const [from, setFrom] = useState(dateInput(initialFrom));
   const [to, setTo] = useState(dateInput(today));
   const [status, setStatus] = useState("all");
+  const [openAi, setOpenAi] = useState<OpenAiAccountPayload | null>(null);
+  const [openAiLoading, setOpenAiLoading] = useState(false);
+  const [openAiErr, setOpenAiErr] = useState<string | null>(null);
   const [overview, setOverview] = useState<OverviewPayload["kpis"] | null>(null);
   const [tenants, setTenants] = useState<TenantRow[]>([]);
   const [agents, setAgents] = useState<AgentRow[]>([]);
@@ -81,6 +102,28 @@ export function AdminAiControlCenter() {
     if (status !== "all") p.set("status", status);
     return p.toString();
   }, [from, to, status]);
+
+  const loadOpenAiAccount = useCallback(async () => {
+    setOpenAiLoading(true);
+    setOpenAiErr(null);
+    try {
+      const res = await fetch("/api/admin/ai/openai-account", { credentials: "include", cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) {
+        setOpenAiErr(typeof data?.error === "string" ? data.error : "Falha ao consultar conta OpenAI.");
+        return;
+      }
+      setOpenAi(data as OpenAiAccountPayload);
+    } catch {
+      setOpenAiErr("Erro de rede ao consultar OpenAI.");
+    } finally {
+      setOpenAiLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadOpenAiAccount();
+  }, [loadOpenAiAccount]);
 
   useEffect(() => {
     let cancelled = false;
@@ -156,6 +199,83 @@ export function AdminAiControlCenter() {
 
   return (
     <div className="space-y-6">
+      <section className="rounded-xl border border-line bg-surface-card p-5 sm:p-6">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-content">Conta OpenAI (saldo e limites)</h2>
+            <p className="mt-1 text-[13px] text-content-muted">
+              Dados diretos da API de billing da OpenAI. Os gráficos abaixo mostram consumo registrado no seu sistema (Supabase).
+            </p>
+          </div>
+          <Button variant="secondary" type="button" disabled={openAiLoading} onClick={() => void loadOpenAiAccount()}>
+            {openAiLoading ? "A consultar…" : "Atualizar saldo OpenAI"}
+          </Button>
+        </div>
+        {openAiErr ? (
+          <p className="mb-3 text-sm text-rose-400">{openAiErr}</p>
+        ) : null}
+        {!openAi && openAiLoading ? (
+          <div className="h-24 animate-pulse rounded-lg bg-surface-elevated/40" />
+        ) : openAi && !openAi.configured ? (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+            <p className="font-medium">OPENAI_API_KEY não configurada no servidor</p>
+            <p className="mt-1 text-content-secondary">
+              Adicione a variável em Vercel → Settings → Environment Variables (Production) e faça redeploy. Não commite a chave no Git.
+            </p>
+          </div>
+        ) : openAi ? (
+          <>
+            {openAi.fetchError ? (
+              <p className="mb-3 text-sm text-amber-400">{openAi.fetchError}</p>
+            ) : null}
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-lg border border-line p-3">
+                <p className="text-xs text-content-muted">Crédito disponível (OpenAI)</p>
+                <p className="text-lg font-semibold text-content">
+                  {openAi.credits?.totalAvailableUsd != null
+                    ? formatUsd(openAi.credits.totalAvailableUsd)
+                    : "—"}
+                </p>
+                <p className="mt-1 text-[11px] text-content-faint">Pré-pago / grants na conta</p>
+              </div>
+              <div className="rounded-lg border border-line p-3">
+                <p className="text-xs text-content-muted">Crédito usado / concedido</p>
+                <p className="text-lg font-semibold text-content">
+                  {openAi.credits?.totalUsedUsd != null && openAi.credits?.totalGrantedUsd != null
+                    ? `${formatUsd(openAi.credits.totalUsedUsd)} / ${formatUsd(openAi.credits.totalGrantedUsd)}`
+                    : "—"}
+                </p>
+              </div>
+              <div className="rounded-lg border border-line p-3">
+                <p className="text-xs text-content-muted">Limite mensal (hard / soft)</p>
+                <p className="text-lg font-semibold text-content">
+                  {openAi.subscription?.hardLimitUsd != null || openAi.subscription?.softLimitUsd != null
+                    ? `${openAi.subscription.hardLimitUsd != null ? formatUsd(openAi.subscription.hardLimitUsd) : "—"} / ${openAi.subscription.softLimitUsd != null ? formatUsd(openAi.subscription.softLimitUsd) : "—"}`
+                    : "—"}
+                </p>
+                {openAi.subscription?.plan ? (
+                  <p className="mt-1 text-[11px] text-content-faint">Plano: {openAi.subscription.plan}</p>
+                ) : null}
+              </div>
+              <div className="rounded-lg border border-line p-3">
+                <p className="text-xs text-content-muted">{openAi.usagePeriodLabel ?? "Uso no período"}</p>
+                <p className="text-lg font-semibold text-content">
+                  {openAi.usagePeriodUsd != null ? formatUsd(openAi.usagePeriodUsd) : "—"}
+                </p>
+                <p className="mt-1 text-[11px] text-content-faint">Faturação OpenAI (UTC)</p>
+              </div>
+            </div>
+            {openAi.hints.length ? (
+              <ul className="mt-4 list-inside list-disc space-y-1 text-[12px] text-content-faint">
+                {openAi.hints.map((h) => (
+                  <li key={h}>{h}</li>
+                ))}
+              </ul>
+            ) : null}
+          </>
+        ) : null}
+      </section>
+
       {loadError ? (
         <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-400">
           {loadError}
