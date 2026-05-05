@@ -3,6 +3,8 @@ import { cookieSecureFlag } from "@/lib/cookie-security";
 import { getAdminSessionByIdFromDb } from "@/lib/server/admin-auth-db";
 import { hasAdminAccessByRole, type AdminRole } from "@/lib/admin-permissions";
 
+export type { AdminRole } from "@/lib/admin-permissions";
+
 export const ADMIN_SESSION_COOKIE = "mychatcrm_admin_session";
 
 export type AdminSession = {
