@@ -435,37 +435,47 @@ export function AdminAiControlCenter() {
           <code className="text-[12px]">OPENAI_API_KEY</code> na Vercel, ela tem prioridade sobre a chave guardada aqui.
         </p>
         <p className="mt-2 text-[12px] text-content-faint">
-          Para gravar no painel é obrigatório definir <code className="text-[11px]">PLATFORM_OPENAI_KEY_SECRET</code>{" "}
-          no servidor (mín. 8 caracteres). A chave nunca é mostrada por completo após guardar.
+          Para cifrar no Supabase usa-se <code className="text-[11px]">PLATFORM_OPENAI_KEY_SECRET</code> (recomendado)
+          ou, se não existir, <code className="text-[11px]">CLIENT_SESSION_COOKIE_SECRET</code> (mín. 8 caracteres). A
+          chave nunca é mostrada por completo após guardar.
         </p>
         {credErr ? <p className="mt-3 text-sm text-rose-400">{credErr}</p> : null}
         {credLoading && !credentials ? (
           <div className="mt-4 h-16 animate-pulse rounded-lg bg-surface-elevated/40" />
-        ) : credentials ? (
+        ) : (
           <div className="mt-4 space-y-3">
-            <ul className="list-inside list-disc space-y-1 text-[13px] text-content-secondary">
-              <li>
-                Variável no servidor:{" "}
-                <strong className={credentials.envConfigured ? "text-emerald-400" : "text-content-muted"}>
-                  {credentials.envConfigured ? "definida" : "não definida"}
-                </strong>
-              </li>
-              <li>
-                Chave cifrada no Supabase:{" "}
-                <strong className={credentials.databaseConfigured ? "text-emerald-400" : "text-content-muted"}>
-                  {credentials.databaseConfigured ? "sim" : "não"}
-                </strong>
-              </li>
-              <li>
-                Origem em uso agora: <strong className="text-content">{keySourceLabel(credentials.effectiveSource)}</strong>
-                {credentials.maskedSuffix ? (
-                  <span className="text-content-muted">
-                    {" "}
-                    (máscara <code className="text-[11px]">{credentials.maskedSuffix}</code>)
-                  </span>
-                ) : null}
-              </li>
-            </ul>
+            {credentials ? (
+              <ul className="list-inside list-disc space-y-1 text-[13px] text-content-secondary">
+                <li>
+                  Variável no servidor:{" "}
+                  <strong className={credentials.envConfigured ? "text-emerald-400" : "text-content-muted"}>
+                    {credentials.envConfigured ? "definida" : "não definida"}
+                  </strong>
+                </li>
+                <li>
+                  Chave cifrada no Supabase:{" "}
+                  <strong className={credentials.databaseConfigured ? "text-emerald-400" : "text-content-muted"}>
+                    {credentials.databaseConfigured ? "sim" : "não"}
+                  </strong>
+                </li>
+                <li>
+                  Origem em uso agora:{" "}
+                  <strong className="text-content">{keySourceLabel(credentials.effectiveSource)}</strong>
+                  {credentials.maskedSuffix ? (
+                    <span className="text-content-muted">
+                      {" "}
+                      (máscara <code className="text-[11px]">{credentials.maskedSuffix}</code>)
+                    </span>
+                  ) : null}
+                </li>
+              </ul>
+            ) : (
+              <p className="text-[13px] text-content-muted">
+                Não foi possível carregar o estado (ver mensagem acima). Ainda podes colar a chave e guardar — confirma
+                migração <code className="text-[11px]">admin_platform_openai</code> no Supabase e permissão &quot;ia&quot; na
+                sessão admin.
+              </p>
+            )}
             <div className="flex max-w-xl flex-col gap-2 sm:flex-row sm:items-end">
               <div className="min-w-0 flex-1">
                 <label className="mb-1 block text-xs text-content-muted" htmlFor="admin-openai-key">
@@ -483,7 +493,7 @@ export function AdminAiControlCenter() {
               <Button type="button" disabled={credSaving} onClick={() => void saveOpenAiKey()}>
                 {credSaving ? "A guardar…" : "Guardar no painel"}
               </Button>
-              {credentials.databaseConfigured ? (
+              {credentials?.databaseConfigured ? (
                 <Button
                   variant="secondary"
                   type="button"
@@ -495,7 +505,7 @@ export function AdminAiControlCenter() {
               ) : null}
             </div>
           </div>
-        ) : null}
+        )}
       </section>
 
       <section className="rounded-xl border border-line bg-surface-card p-5 sm:p-6">

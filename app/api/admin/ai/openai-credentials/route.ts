@@ -2,15 +2,11 @@ import { NextResponse } from "next/server";
 import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
 import { getAdminOpenAiCredentialStatus, invalidateOpenAiApiKeyCache } from "@/lib/ai/openai-api-key";
 import { encryptOpenAiKeyForStorage } from "@/lib/server/platform-openai-key-crypto";
+import { getPlatformOpenAiEncryptionSecret } from "@/lib/server/platform-openai-encryption-secret";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { isUsableApiSecret } from "@/lib/integrations/server-secrets";
 
 export const dynamic = "force-dynamic";
-
-function platformSecret(): string | null {
-  const s = process.env.PLATFORM_OPENAI_KEY_SECRET?.trim();
-  return s && s.length >= 8 ? s : null;
-}
 
 function isValidOpenAiKeyFormat(key: string): boolean {
   const t = key.trim();
@@ -42,12 +38,12 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
   }
 
-  const secret = platformSecret();
+  const secret = getPlatformOpenAiEncryptionSecret();
   if (!secret) {
     return NextResponse.json(
       {
         error:
-          "Defina PLATFORM_OPENAI_KEY_SECRET no servidor (mín. 8 caracteres) para guardar a chave cifrada no Supabase.",
+          "Defina PLATFORM_OPENAI_KEY_SECRET ou CLIENT_SESSION_COOKIE_SECRET no servidor (mín. 8 caracteres) para cifrar a chave no Supabase.",
       },
       { status: 400 },
     );

@@ -1,4 +1,5 @@
 import { decryptOpenAiKeyFromStorage } from "@/lib/server/platform-openai-key-crypto";
+import { getPlatformOpenAiEncryptionSecret } from "@/lib/server/platform-openai-encryption-secret";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { isUsableApiSecret } from "@/lib/integrations/server-secrets";
 
@@ -26,8 +27,7 @@ export function peekOpenAiApiKeyFromEnv(): string | null {
 }
 
 function platformSecret(): string | null {
-  const s = process.env.PLATFORM_OPENAI_KEY_SECRET?.trim();
-  return s && s.length >= 8 ? s : null;
+  return getPlatformOpenAiEncryptionSecret();
 }
 
 async function loadDecryptedKeyFromDatabase(): Promise<string | null> {
