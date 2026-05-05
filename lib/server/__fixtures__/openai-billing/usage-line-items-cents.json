@@ -1,0 +1,7 @@
+{
+  "daily_costs": [
+    {
+      "line_items": [{ "cost": 1000 }, { "cost": 500 }]
+    }
+  ]
+}

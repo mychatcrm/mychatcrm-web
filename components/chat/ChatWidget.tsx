@@ -245,11 +245,20 @@ export default function ChatWidget() {
     setTyping(true);
     setErrorText(null);
     try {
+      const tenantId =
+        (typeof process !== "undefined" && process.env.NEXT_PUBLIC_CHAT_TENANT_ID?.trim()) || "public";
+      const agentId =
+        (typeof process !== "undefined" && process.env.NEXT_PUBLIC_CHAT_AGENT_ID?.trim()) ||
+        "marketing_site_assistant";
+
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sessionId,
+          tenantId,
+          agentId,
+          conversationId: sessionId,
           messages: nextMessages.map((message) => ({
             role: message.role,
             content: message.content,

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { generateAIResponse, resolveOpenAiApiKey } from "@/lib/ai/gateway";
+import { isChatWidgetTenantAgentAllowed } from "@/lib/ai/chat-widget-allowlist";
+import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
+import { resolveOpenAiApiKey } from "@/lib/ai/gateway";
 import type { AiMessage } from "@/lib/ai/types";
 
 type ChatRequestBody = {
@@ -7,6 +9,7 @@ type ChatRequestBody = {
   sessionId?: string;
   tenantId?: string;
   agentId?: string;
+  conversationId?: string;
   test?: boolean;
 };
 
@@ -118,15 +121,25 @@ export async function POST(request: Request) {
     });
   }
 
-  const result = await generateAIResponse({
-    tenantId: body.tenantId?.trim() || "public",
+  const tenantId = body.tenantId?.trim() || "public";
+  const agentId = body.agentId?.trim() || "marketing_site_assistant";
+  if (!isChatWidgetTenantAgentAllowed(tenantId, agentId)) {
+    return NextResponse.json({ error: "Combinação tenant/agente não permitida neste endpoint." }, { status: 403 });
+  }
+
+  const result = await generateAgentResponse({
+    tenantId,
+    agentId,
+    conversationId: body.conversationId?.trim() || sessionId,
     customerId: sessionId,
-    agentId: body.agentId?.trim() || "marketing_site_assistant",
     feature: "site_chat_widget",
     messages: messages!,
   });
 
   if (!result.ok) {
+    if (result.code === "INVALID_INPUT" && result.detail === "AGENT_NOT_FOUND") {
+      return NextResponse.json({ error: "Agente não encontrado para este tenant." }, { status: 404 });
+    }
     if (result.code === "UNCONFIGURED") {
       return NextResponse.json(
         { error: "Chat temporariamente indisponível. Entre em contato pelo WhatsApp." },

@@ -1,0 +1,81 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+export type WhatsAppInboundText = {
+  fromWaId: string;
+  phoneNumberId: string;
+  text: string;
+  messageId: string;
+};
+
+/** Extrai primeira mensagem de texto do payload Cloud API (formato típico webhook). */
+export function parseWhatsAppCloudPayload(body: unknown): WhatsAppInboundText | null {
+  const root = body as { entry?: Array<{ changes?: Array<{ value?: unknown }> }> };
+  const entries = root.entry;
+  if (!Array.isArray(entries)) return null;
+  for (const ent of entries) {
+    const changes = ent.changes;
+    if (!Array.isArray(changes)) continue;
+    for (const ch of changes) {
+      const value = ch.value as Record<string, unknown> | undefined;
+      if (!value || typeof value !== "object") continue;
+      const metadata = value.metadata as { phone_number_id?: string } | undefined;
+      const messages = value.messages as unknown[] | undefined;
+      if (!Array.isArray(messages) || !metadata?.phone_number_id) continue;
+      const m = messages[0] as Record<string, unknown> | undefined;
+      if (!m || m.type !== "text") continue;
+      const textObj = m.text as { body?: string } | undefined;
+      const from = m.from;
+      const id = m.id;
+      if (typeof from !== "string" || typeof textObj?.body !== "string") continue;
+      return {
+        fromWaId: from,
+        phoneNumberId: String(metadata.phone_number_id),
+        text: textObj.body,
+        messageId: typeof id === "string" ? id : "",
+      };
+    }
+  }
+  return null;
+}
+
+export function verifyMetaSignature256(rawBody: string, signatureHeader: string | null, appSecret: string): boolean {
+  if (!signatureHeader || !signatureHeader.startsWith("sha256=")) return false;
+  const expected =
+    "sha256=" + createHmac("sha256", appSecret).update(rawBody, "utf8").digest("hex");
+  try {
+    const a = Buffer.from(signatureHeader, "utf8");
+    const b = Buffer.from(expected, "utf8");
+    return a.length === b.length && timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+const GRAPH_API = "https://graph.facebook.com/v21.0";
+
+export async function sendWhatsAppTextMessage(params: {
+  toWaId: string;
+  text: string;
+  phoneNumberId: string;
+  accessToken: string;
+}): Promise<{ ok: boolean; status: number; error?: string }> {
+  const url = `${GRAPH_API}/${encodeURIComponent(params.phoneNumberId)}/messages`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${params.accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to: params.toWaId,
+      type: "text",
+      text: { preview_url: false, body: params.text.slice(0, 4096) },
+    }),
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    return { ok: false, status: res.status, error: t.slice(0, 500) };
+  }
+  return { ok: true, status: res.status };
+}

@@ -36,8 +36,21 @@ function applyCommonFilters<T extends { eq: Function; gte: Function; lte: Functi
   return q as T;
 }
 
+export type AiOverviewHealth = {
+  /** A tabela existe e a query base não falhou (ex.: migração aplicada, service role válido). */
+  aiUsageLogsReachable: boolean;
+  /** Mensagem curta do Postgres/Supabase (sem segredos). */
+  aiUsageLogsError: string | null;
+};
+
 export async function getAiOverview(range: AiRangeQuery) {
   const sb = createSupabaseServiceClient();
+  const probe = await sb.from("ai_usage_logs").select("id").limit(1);
+  const health: AiOverviewHealth = {
+    aiUsageLogsReachable: !probe.error,
+    aiUsageLogsError: probe.error?.message ?? null,
+  };
+
   const q = applyCommonFilters(
     sb.from("ai_usage_logs").select(
       "tenant_id,agent_id,input_tokens,output_tokens,total_tokens,estimated_cost_usd,status,latency_ms,created_at",
@@ -73,6 +86,7 @@ export async function getAiOverview(range: AiRangeQuery) {
       uniqueTenants: new Set(rows.map((r) => r.tenant_id)).size,
       uniqueAgents: new Set(rows.map((r) => r.agent_id)).size,
     },
+    health,
   };
 }
 

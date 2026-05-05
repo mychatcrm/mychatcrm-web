@@ -5,7 +5,7 @@ import {
   logAiUsage,
   upsertDailyAggregate,
 } from "@/lib/ai/tracking-store";
-import type { AiGenerateInput, AiGenerateResult, AiGenerateSuccess, AiMessage } from "@/lib/ai/types";
+import type { AiGenerateInput, AiGenerateResult, AiGenerateSuccess, AiMessage, AiRole } from "@/lib/ai/types";
 import { integrationLog } from "@/lib/integrations/logger";
 import { isUsableApiSecret } from "@/lib/integrations/server-secrets";
 
@@ -22,13 +22,19 @@ export function resolveOpenAiApiKey(): string | null {
 }
 
 function sanitizeMessages(messages: AiMessage[]): AiMessage[] {
-  return messages
-    .slice(-MAX_MESSAGES)
-    .map((m) => ({
-      role: m.role,
-      content: (m.content ?? "").slice(0, MAX_MESSAGE_CONTENT).trim(),
-    }))
-    .filter((m) => m.content.length > 0);
+  const validRoles = new Set<AiRole>(["system", "user", "assistant"]);
+  const normalized: AiMessage[] = [];
+  for (const m of messages) {
+    if (!validRoles.has(m.role)) continue;
+    const content = (m.content ?? "").slice(0, MAX_MESSAGE_CONTENT).trim();
+    if (!content) continue;
+    normalized.push({ role: m.role, content });
+  }
+  const firstSystem = normalized.find((x) => x.role === "system") ?? null;
+  const nonSystem = normalized.filter((x) => x.role !== "system");
+  const maxRest = firstSystem ? MAX_MESSAGES - 1 : MAX_MESSAGES;
+  const rest = nonSystem.slice(-maxRest);
+  return firstSystem ? [firstSystem, ...rest] : rest;
 }
 
 function extractProviderMessage(data: unknown): string {
