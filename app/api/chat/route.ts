@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { isChatWidgetTenantAgentAllowed } from "@/lib/ai/chat-widget-allowlist";
 import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
-import { resolveOpenAiApiKey } from "@/lib/ai/gateway";
+import { resolveOpenAiApiKey } from "@/lib/ai/openai-api-key";
 import type { AiMessage } from "@/lib/ai/types";
 
 type ChatRequestBody = {
@@ -107,7 +107,7 @@ export async function POST(request: Request) {
   }
 
   if (body.test) {
-    const key = resolveOpenAiApiKey();
+    const key = await resolveOpenAiApiKey();
     if (!key) {
       return NextResponse.json(
         { ok: false, error: "OpenAI não configurada no servidor." },

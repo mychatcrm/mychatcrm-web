@@ -1,3 +1,4 @@
+import { resolveOpenAiApiKey } from "@/lib/ai/openai-api-key";
 import { integrationLog } from "./logger";
 import { SITE_MARKETING_CHAT_SYSTEM_PROMPT } from "./chat-prompts";
 import { isUsableApiSecret } from "./server-secrets";
@@ -16,6 +17,7 @@ export type ChatAiConfig = {
 
 const DEFAULT_TIMEOUT_MS = 25_000;
 
+/** Só variáveis de ambiente (OpenAI não inclui chave guardada no painel). */
 export function resolveChatAiConfigFromEnv(): ChatAiConfig | null {
   const providerRaw = process.env.CHAT_AI_PROVIDER?.toLowerCase();
   const provider: ChatAiProvider = providerRaw === "anthropic" ? "anthropic" : "openai";
@@ -23,6 +25,20 @@ export function resolveChatAiConfigFromEnv(): ChatAiConfig | null {
     provider === "anthropic" ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY;
   if (!isUsableApiSecret(apiKey)) return null;
   return { provider, apiKey: apiKey!.trim() };
+}
+
+/** OpenAI: `OPENAI_API_KEY` ou chave cifrada no Supabase; Anthropic: só env. */
+export async function resolveChatAiConfig(): Promise<ChatAiConfig | null> {
+  const providerRaw = process.env.CHAT_AI_PROVIDER?.toLowerCase();
+  const provider: ChatAiProvider = providerRaw === "anthropic" ? "anthropic" : "openai";
+  if (provider === "anthropic") {
+    const raw = process.env.ANTHROPIC_API_KEY;
+    if (!isUsableApiSecret(raw)) return null;
+    return { provider: "anthropic", apiKey: raw!.trim() };
+  }
+  const apiKey = await resolveOpenAiApiKey();
+  if (!apiKey) return null;
+  return { provider: "openai", apiKey };
 }
 
 function mapProviderHttpStatus(provider: ChatAiProvider, status: number): string {
@@ -116,7 +132,7 @@ export async function completeMarketingChat(
   messages: ChatTurn[],
   options?: { timeoutMs?: number; systemPrompt?: string },
 ): Promise<ChatAiCompleteOk | ChatAiCompleteErr> {
-  const config = resolveChatAiConfigFromEnv();
+  const config = await resolveChatAiConfig();
   if (!config) {
     integrationLog("chat-ai", "warn", "Provedor de IA não configurado ou secret inválido");
     return { ok: false, code: "UNCONFIGURED" };

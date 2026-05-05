@@ -2,7 +2,7 @@
  * Consulta endpoints de billing da OpenAI (mesma API key que o chat).
  * Documentação pública limitada — respostas podem variar por tipo de conta.
  */
-import { resolveOpenAiApiKey } from "@/lib/ai/gateway";
+import { resolveOpenAiApiKey } from "@/lib/ai/openai-api-key";
 import { isUsableApiSecret } from "@/lib/integrations/server-secrets";
 import {
   parseBillingUsageData,
@@ -132,7 +132,7 @@ function statusEntry(res: JsonFetchResult): OpenAiEndpointStatus {
 }
 
 export async function fetchOpenAiAccountSnapshot(): Promise<OpenAiAccountSnapshot> {
-  const apiKey = resolveOpenAiApiKey();
+  const apiKey = await resolveOpenAiApiKey();
   if (!apiKey) {
     return {
       configured: false,
@@ -148,7 +148,7 @@ export async function fetchOpenAiAccountSnapshot(): Promise<OpenAiAccountSnapsho
       usagePeriodLabel: null,
       accountBillingMode: "unknown",
       hints: [
-        "Defina OPENAI_API_KEY no servidor (ex.: Vercel → Environment Variables) para ver saldo e para os agentes responderem.",
+        "Configure a chave OpenAI: variável OPENAI_API_KEY na Vercel (tem prioridade) ou em /admin/ia → Chave OpenAI da plataforma (cifrada no Supabase; requer PLATFORM_OPENAI_KEY_SECRET no servidor).",
       ],
       fetchError: null,
       rateLimited: false,

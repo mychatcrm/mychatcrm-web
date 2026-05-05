@@ -41,7 +41,7 @@ export type ChatSessionRecord = {
   lastIntent: ChatIntent;
 };
 
-/** Preferências do widget — a IA usa apenas variáveis de ambiente no servidor (`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`). */
+/** Preferências do widget — no servidor a chave OpenAI vem de `OPENAI_API_KEY` ou da chave cifrada em /admin/ia (Supabase). */
 export type ChatbotSettings = {
   enabled: boolean;
   whatsappNumber: string;

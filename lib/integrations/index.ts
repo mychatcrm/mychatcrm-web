@@ -8,6 +8,7 @@ export { isUsableApiSecret } from "./server-secrets";
 export { SITE_MARKETING_CHAT_SYSTEM_PROMPT } from "./chat-prompts";
 export {
   completeMarketingChat,
+  resolveChatAiConfig,
   resolveChatAiConfigFromEnv,
   type ChatAiProvider,
   type ChatTurn,

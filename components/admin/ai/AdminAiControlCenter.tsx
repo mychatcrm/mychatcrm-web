@@ -73,12 +73,23 @@ type OpenAiEndpointStatus = {
 
 type OpenAiBillingApiAccess = "ok" | "forbidden_project_key" | "billing_unreachable" | "unknown";
 
+type OpenAiKeyEffectiveSource = "env" | "database" | "none";
+
 type IntegrationStatusPayload = {
   hasOpenAiKey: boolean;
+  openAiKeySource: OpenAiKeyEffectiveSource;
+  envOpenAiKeyConfigured: boolean;
   aiUsageLogsReachable: boolean;
   aiUsageLogsError: string | null;
   requestsLast24h: number | null;
   lastSuccess: { createdAt: string; tenantId: string; agentId: string } | null;
+};
+
+type OpenAiCredentialsPayload = {
+  envConfigured: boolean;
+  databaseConfigured: boolean;
+  effectiveSource: OpenAiKeyEffectiveSource;
+  maskedSuffix: string | null;
 };
 
 type OpenAiAccountPayload = {
@@ -156,6 +167,12 @@ export function AdminAiControlCenter() {
   const [alerts, setAlerts] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [credentials, setCredentials] = useState<OpenAiCredentialsPayload | null>(null);
+  const [credLoading, setCredLoading] = useState(false);
+  const [credErr, setCredErr] = useState<string | null>(null);
+  const [openAiKeyInput, setOpenAiKeyInput] = useState("");
+  const [credSaving, setCredSaving] = useState(false);
 
   const query = useMemo(() => {
     const p = new URLSearchParams();
@@ -241,9 +258,97 @@ export function AdminAiControlCenter() {
     }
   }, []);
 
+  const loadOpenAiCredentials = useCallback(async () => {
+    setCredLoading(true);
+    setCredErr(null);
+    try {
+      const res = await fetch("/api/admin/ai/openai-credentials", { credentials: "include", cache: "no-store" });
+      const data = (await res.json()) as OpenAiCredentialsPayload & { error?: string };
+      if (!res.ok) {
+        setCredErr(typeof data?.error === "string" ? data.error : "Falha ao carregar credenciais.");
+        setCredentials(null);
+        return;
+      }
+      setCredentials(data);
+    } catch {
+      setCredErr("Erro de rede ao carregar credenciais.");
+      setCredentials(null);
+    } finally {
+      setCredLoading(false);
+    }
+  }, []);
+
+  const saveOpenAiKey = useCallback(async () => {
+    const key = openAiKeyInput.trim();
+    if (!key) {
+      setCredErr("Cole a chave OpenAI (sk-…).");
+      return;
+    }
+    setCredSaving(true);
+    setCredErr(null);
+    try {
+      const res = await fetch("/api/admin/ai/openai-credentials", {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ openaiApiKey: key }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string } & Partial<OpenAiCredentialsPayload>;
+      if (!res.ok) {
+        setCredErr(typeof data?.error === "string" ? data.error : "Falha ao guardar.");
+        return;
+      }
+      setOpenAiKeyInput("");
+      setCredentials({
+        envConfigured: Boolean(data.envConfigured),
+        databaseConfigured: Boolean(data.databaseConfigured),
+        effectiveSource: (data.effectiveSource ?? "none") as OpenAiKeyEffectiveSource,
+        maskedSuffix: data.maskedSuffix ?? null,
+      });
+      void loadOpenAiAccount({ force: true });
+      void loadInternalBundle();
+    } catch {
+      setCredErr("Erro de rede ao guardar.");
+    } finally {
+      setCredSaving(false);
+    }
+  }, [openAiKeyInput, loadOpenAiAccount, loadInternalBundle]);
+
+  const removeOpenAiKeyFromPanel = useCallback(async () => {
+    setCredSaving(true);
+    setCredErr(null);
+    try {
+      const res = await fetch("/api/admin/ai/openai-credentials", {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string } & Partial<OpenAiCredentialsPayload>;
+      if (!res.ok) {
+        setCredErr(typeof data?.error === "string" ? data.error : "Falha ao remover.");
+        return;
+      }
+      setCredentials({
+        envConfigured: Boolean(data.envConfigured),
+        databaseConfigured: Boolean(data.databaseConfigured),
+        effectiveSource: (data.effectiveSource ?? "none") as OpenAiKeyEffectiveSource,
+        maskedSuffix: data.maskedSuffix ?? null,
+      });
+      void loadOpenAiAccount({ force: true });
+      void loadInternalBundle();
+    } catch {
+      setCredErr("Erro de rede ao remover.");
+    } finally {
+      setCredSaving(false);
+    }
+  }, [loadOpenAiAccount, loadInternalBundle]);
+
   useEffect(() => {
     void loadOpenAiAccount();
   }, [loadOpenAiAccount]);
+
+  useEffect(() => {
+    void loadOpenAiCredentials();
+  }, [loadOpenAiCredentials]);
 
   useEffect(() => {
     void loadInternalBundle();
@@ -307,8 +412,92 @@ export function AdminAiControlCenter() {
     openAi.connectivityOk === true &&
     openAi.billingApiAccess === "forbidden_project_key";
 
+  const keySourceLabel = (src: OpenAiKeyEffectiveSource) => {
+    switch (src) {
+      case "env":
+        return "variável OPENAI_API_KEY no servidor (prioridade)";
+      case "database":
+        return "chave guardada neste painel (Supabase, cifrada)";
+      default:
+        return "nenhuma configurada";
+    }
+  };
+
   return (
     <div className="space-y-6">
+      <section className="rounded-xl border border-line bg-surface-card p-5 sm:p-6">
+        <h2 className="text-base font-semibold text-content">Chave OpenAI da plataforma</h2>
+        <p className="mt-1 text-[13px] text-content-muted">
+          A mesma credencial alimenta o gateway usado por todos os agentes: prompts em{" "}
+          <code className="text-[12px]">tenant_agents</code> (ou templates), chamadas a{" "}
+          <code className="text-[12px]">/api/chat</code>, webhook WhatsApp e restantes fluxos{" "}
+          <code className="text-[12px]">generateAgentResponse</code>. Se existir{" "}
+          <code className="text-[12px]">OPENAI_API_KEY</code> na Vercel, ela tem prioridade sobre a chave guardada aqui.
+        </p>
+        <p className="mt-2 text-[12px] text-content-faint">
+          Para gravar no painel é obrigatório definir <code className="text-[11px]">PLATFORM_OPENAI_KEY_SECRET</code>{" "}
+          no servidor (mín. 8 caracteres). A chave nunca é mostrada por completo após guardar.
+        </p>
+        {credErr ? <p className="mt-3 text-sm text-rose-400">{credErr}</p> : null}
+        {credLoading && !credentials ? (
+          <div className="mt-4 h-16 animate-pulse rounded-lg bg-surface-elevated/40" />
+        ) : credentials ? (
+          <div className="mt-4 space-y-3">
+            <ul className="list-inside list-disc space-y-1 text-[13px] text-content-secondary">
+              <li>
+                Variável no servidor:{" "}
+                <strong className={credentials.envConfigured ? "text-emerald-400" : "text-content-muted"}>
+                  {credentials.envConfigured ? "definida" : "não definida"}
+                </strong>
+              </li>
+              <li>
+                Chave cifrada no Supabase:{" "}
+                <strong className={credentials.databaseConfigured ? "text-emerald-400" : "text-content-muted"}>
+                  {credentials.databaseConfigured ? "sim" : "não"}
+                </strong>
+              </li>
+              <li>
+                Origem em uso agora: <strong className="text-content">{keySourceLabel(credentials.effectiveSource)}</strong>
+                {credentials.maskedSuffix ? (
+                  <span className="text-content-muted">
+                    {" "}
+                    (máscara <code className="text-[11px]">{credentials.maskedSuffix}</code>)
+                  </span>
+                ) : null}
+              </li>
+            </ul>
+            <div className="flex max-w-xl flex-col gap-2 sm:flex-row sm:items-end">
+              <div className="min-w-0 flex-1">
+                <label className="mb-1 block text-xs text-content-muted" htmlFor="admin-openai-key">
+                  Nova chave (sk-…)
+                </label>
+                <Input
+                  id="admin-openai-key"
+                  type="password"
+                  autoComplete="off"
+                  value={openAiKeyInput}
+                  onChange={(e) => setOpenAiKeyInput(e.target.value)}
+                  placeholder="sk-…"
+                />
+              </div>
+              <Button type="button" disabled={credSaving} onClick={() => void saveOpenAiKey()}>
+                {credSaving ? "A guardar…" : "Guardar no painel"}
+              </Button>
+              {credentials.databaseConfigured ? (
+                <Button
+                  variant="secondary"
+                  type="button"
+                  disabled={credSaving}
+                  onClick={() => void removeOpenAiKeyFromPanel()}
+                >
+                  Remover do painel
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+      </section>
+
       <section className="rounded-xl border border-line bg-surface-card p-5 sm:p-6">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -350,10 +539,16 @@ export function AdminAiControlCenter() {
             <p className="font-medium text-content">Estado da integração (runtime)</p>
             <ul className="mt-2 list-inside list-disc space-y-1">
               <li>
-                OPENAI_API_KEY no servidor:{" "}
+                Chave OpenAI (runtime):{" "}
                 <strong className={integration.hasOpenAiKey ? "text-emerald-400" : "text-rose-400"}>
                   {integration.hasOpenAiKey ? "configurada" : "ausente"}
                 </strong>
+                {integration.hasOpenAiKey ? (
+                  <span className="text-content-muted">
+                    {" "}
+                    — origem: {keySourceLabel(integration.openAiKeySource ?? "none")}
+                  </span>
+                ) : null}
               </li>
               <li>
                 Tabela ai_usage_logs:{" "}
@@ -397,10 +592,11 @@ export function AdminAiControlCenter() {
           <div className="h-24 animate-pulse rounded-lg bg-surface-elevated/40" />
         ) : openAi && !openAi.configured ? (
           <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
-            <p className="font-medium">OPENAI_API_KEY não configurada no servidor</p>
+            <p className="font-medium">Nenhuma chave OpenAI disponível para o painel consultar a API</p>
             <p className="mt-1 text-content-secondary">
-              Adicione a variável em Vercel → Settings → Environment Variables (Production) e faça redeploy. Não commite a
-              chave no Git.
+              Defina <code className="text-[11px]">OPENAI_API_KEY</code> na Vercel (prioridade) ou guarde a chave na
+              secção <strong>Chave OpenAI da plataforma</strong> acima (com <code className="text-[11px]">PLATFORM_OPENAI_KEY_SECRET</code>{" "}
+              e migração <code className="text-[11px]">admin_platform_openai</code> no Supabase). Não commite chaves no Git.
             </p>
           </div>
         ) : openAi ? (

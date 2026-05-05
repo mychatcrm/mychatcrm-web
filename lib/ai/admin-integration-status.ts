@@ -1,8 +1,16 @@
-import { resolveOpenAiApiKey } from "@/lib/ai/gateway";
+import {
+  type OpenAiKeyEffectiveSource,
+  peekOpenAiApiKeyFromEnv,
+  resolveOpenAiApiKey,
+} from "@/lib/ai/openai-api-key";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export type AiIntegrationStatusPayload = {
   hasOpenAiKey: boolean;
+  /** Origem da chave efetiva em runtime: env, base de dados cifrada, ou nenhuma. */
+  openAiKeySource: OpenAiKeyEffectiveSource;
+  /** Há valor em OPENAI_API_KEY (pode sobrepor a chave do painel). */
+  envOpenAiKeyConfigured: boolean;
   aiUsageLogsReachable: boolean;
   aiUsageLogsError: string | null;
   requestsLast24h: number | null;
@@ -14,7 +22,14 @@ export type AiIntegrationStatusPayload = {
 };
 
 export async function getAiIntegrationStatus(): Promise<AiIntegrationStatusPayload> {
-  const hasOpenAiKey = Boolean(resolveOpenAiApiKey());
+  const envOpenAiKeyConfigured = Boolean(peekOpenAiApiKeyFromEnv());
+  const effective = await resolveOpenAiApiKey();
+  const hasOpenAiKey = Boolean(effective);
+  const openAiKeySource: OpenAiKeyEffectiveSource = envOpenAiKeyConfigured
+    ? "env"
+    : hasOpenAiKey
+      ? "database"
+      : "none";
   const sb = createSupabaseServiceClient();
 
   const probe = await sb.from("ai_usage_logs").select("id").limit(1);
@@ -51,6 +66,8 @@ export async function getAiIntegrationStatus(): Promise<AiIntegrationStatusPaylo
 
   return {
     hasOpenAiKey,
+    openAiKeySource,
+    envOpenAiKeyConfigured,
     aiUsageLogsReachable,
     aiUsageLogsError,
     requestsLast24h,

@@ -6,20 +6,14 @@ import {
   upsertDailyAggregate,
 } from "@/lib/ai/tracking-store";
 import type { AiGenerateInput, AiGenerateResult, AiGenerateSuccess, AiMessage, AiRole } from "@/lib/ai/types";
+import { resolveOpenAiApiKey } from "@/lib/ai/openai-api-key";
 import { integrationLog } from "@/lib/integrations/logger";
-import { isUsableApiSecret } from "@/lib/integrations/server-secrets";
 
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_MODEL = "gpt-4o-mini";
 const DEFAULT_TIMEOUT_MS = 25_000;
 const MAX_MESSAGES = 32;
 const MAX_MESSAGE_CONTENT = 8_000;
-
-export function resolveOpenAiApiKey(): string | null {
-  const raw = process.env.OPENAI_API_KEY;
-  if (!isUsableApiSecret(raw)) return null;
-  return raw!.trim();
-}
 
 function sanitizeMessages(messages: AiMessage[]): AiMessage[] {
   const validRoles = new Set<AiRole>(["system", "user", "assistant"]);
@@ -120,7 +114,7 @@ async function persistTracking(params: {
 }
 
 export async function generateAIResponse(input: AiGenerateInput): Promise<AiGenerateResult> {
-  const apiKey = resolveOpenAiApiKey();
+  const apiKey = await resolveOpenAiApiKey();
   const model = input.model?.trim() || process.env.OPENAI_CHAT_MODEL?.trim() || DEFAULT_MODEL;
   const started = Date.now();
   const safeMessages = sanitizeMessages(input.messages);
@@ -137,7 +131,7 @@ export async function generateAIResponse(input: AiGenerateInput): Promise<AiGene
       estimatedCostUsd: 0,
       latencyMs: 0,
       errorCode: "UNCONFIGURED",
-      errorMessage: "OPENAI_API_KEY ausente",
+      errorMessage: "OpenAI API key ausente",
     });
     return { ok: false, code: "UNCONFIGURED", provider: "openai", model };
   }
