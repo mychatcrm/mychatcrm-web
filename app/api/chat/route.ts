@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
-import { completeMarketingChat, resolveChatAiConfigFromEnv, type ChatTurn } from "@/lib/integrations";
+import { generateAIResponse, resolveOpenAiApiKey } from "@/lib/ai/gateway";
+import type { AiMessage } from "@/lib/ai/types";
 
 type ChatRequestBody = {
-  messages?: ChatTurn[];
+  messages?: AiMessage[];
   sessionId?: string;
+  tenantId?: string;
+  agentId?: string;
   test?: boolean;
 };
 
@@ -57,9 +60,9 @@ function checkRateLimit(sessionId: string) {
   return { ok: true };
 }
 
-function sanitizeMessages(raw: unknown): ChatTurn[] | null {
+function sanitizeMessages(raw: unknown): AiMessage[] | null {
   if (!Array.isArray(raw)) return null;
-  const out: ChatTurn[] = [];
+  const out: AiMessage[] = [];
   for (const item of raw.slice(-MAX_MESSAGES)) {
     if (!item || typeof item !== "object") continue;
     const o = item as Record<string, unknown>;
@@ -101,21 +104,27 @@ export async function POST(request: Request) {
   }
 
   if (body.test) {
-    const cfg = resolveChatAiConfigFromEnv();
-    if (!cfg) {
+    const key = resolveOpenAiApiKey();
+    if (!key) {
       return NextResponse.json(
-        { ok: false, error: "Provedor de IA não configurado no servidor." },
+        { ok: false, error: "OpenAI não configurada no servidor." },
         { status: 503 },
       );
     }
     return NextResponse.json({
       ok: true,
-      provider: cfg.provider,
-      message: "Conexão com o provedor disponível no ambiente.",
+      provider: "openai",
+      message: "Conexão com OpenAI disponível no ambiente.",
     });
   }
 
-  const result = await completeMarketingChat(messages!);
+  const result = await generateAIResponse({
+    tenantId: body.tenantId?.trim() || "public",
+    customerId: sessionId,
+    agentId: body.agentId?.trim() || "marketing_site_assistant",
+    feature: "site_chat_widget",
+    messages: messages!,
+  });
 
   if (!result.ok) {
     if (result.code === "UNCONFIGURED") {
@@ -127,15 +136,21 @@ export async function POST(request: Request) {
     if (result.code === "EMPTY_REPLY") {
       return NextResponse.json({ error: "Serviço indisponível no momento." }, { status: 502 });
     }
+    if (result.code === "LIMIT_EXCEEDED") {
+      return NextResponse.json({ error: "Limite de uso de IA atingido para este tenant." }, { status: 429 });
+    }
     const detail = result.detail ?? "";
-    if (detail.includes("401") || detail.includes("403")) {
+    if (result.code === "UPSTREAM_AUTH" || detail.includes("401") || detail.includes("403")) {
       return NextResponse.json({ error: "Serviço indisponível no momento." }, { status: 401 });
     }
-    if (detail.includes("429")) {
+    if (result.code === "UPSTREAM_RATE_LIMIT" || detail.includes("429")) {
       return NextResponse.json(
         { error: "Muitas mensagens. Aguarde um momento." },
         { status: 429 },
       );
+    }
+    if (result.code === "INVALID_INPUT") {
+      return NextResponse.json({ error: "Dados inválidos para inferência." }, { status: 400 });
     }
     return NextResponse.json(
       { error: "Demorei para responder. Tente novamente." },

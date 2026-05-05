@@ -68,6 +68,7 @@ const adminNavIcons: Record<string, LucideIcon> = {
   comunicados: Megaphone,
   notificacoes: Bell,
   configuracoes: Settings,
+  ia: Bot,
   equipe: UserCog,
   apis: Key,
   logs: ScrollText,

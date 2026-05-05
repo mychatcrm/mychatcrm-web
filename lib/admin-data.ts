@@ -21,6 +21,7 @@ export type AdminRouteKey =
   | "notificacoes"
   | "configuracoes"
   | "equipe"
+  | "ia"
   | "apis"
   | "logs"
   | "seguranca";

@@ -21,6 +21,7 @@ const ADMIN_FIRST_SEGMENT: Record<string, AdminRouteKey> = {
   notificacoes: "notificacoes",
   configuracoes: "configuracoes",
   equipe: "equipe",
+  ia: "ia",
   apis: "apis",
   logs: "logs",
   seguranca: "seguranca",
