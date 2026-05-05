@@ -62,13 +62,16 @@ function getSecureCookieFlag() {
 
 /**
  * Verificação leve no middleware (Edge-safe, sem DB).
- * O cookie contém o adminId no formato "adminId:role" após o login.
+ * Cookie format: adminId:role:issuedAtMs (issuedAt optional — backward compat).
  * Retorna uma sessão mínima para o middleware — a verificação completa
- * acontece nas páginas e rotas via getAdminSessionFromCookies().
+ * (incluindo invalidação pós-reset via passwordChangedAt) acontece nas
+ * páginas e rotas via getAdminSessionFromCookies().
  */
 export function getAdminSessionByToken(value: string | undefined): AdminSession | null {
   if (!value) return null;
-  const [adminId, role] = value.split(":");
+  const parts = value.split(":");
+  const adminId = parts[0];
+  const role = parts[1];
   if (!adminId) return null;
   const validRole = role as AdminRole;
   const validRoles: AdminRole[] = ["super_admin", "admin", "financeiro", "suporte", "marketing", "desenvolvedor"];
@@ -113,7 +116,19 @@ export async function getAdminSessionFromCookies(): Promise<AdminSession | null>
   const store = await cookies();
   const raw = store.get(ADMIN_SESSION_COOKIE)?.value;
   if (!raw) return null;
-  const adminId = raw.includes(":") ? raw.split(":")[0] : raw;
+  const parts = raw.split(":");
+  const adminId = parts[0];
+  const issuedAt = parts[2] ? parseInt(parts[2], 10) : null;
   if (!adminId) return null;
-  return getAdminSessionByIdFromDb(adminId);
+
+  const session = await getAdminSessionByIdFromDb(adminId);
+  if (!session) return null;
+
+  // If the cookie carries issuedAt and the password was changed after it was issued,
+  // the session is stale — force re-login.
+  if (issuedAt && session.passwordChangedAt && issuedAt < session.passwordChangedAt) {
+    return null;
+  }
+
+  return session;
 }

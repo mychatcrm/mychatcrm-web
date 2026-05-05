@@ -44,9 +44,10 @@ export async function POST(request: Request) {
   }
 
   const response = NextResponse.json({ ok: true, redirectedTo: "/admin" });
+  // Cookie format: adminId:role:issuedAtMs — the issuedAt is compared post-reset.
   response.cookies.set({
     ...adminSessionCookieOptions(),
-    value: `${session.adminId}:${session.role}`,
+    value: `${session.adminId}:${session.role}:${Date.now()}`,
   });
   return response;
 }

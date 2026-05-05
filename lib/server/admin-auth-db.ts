@@ -11,6 +11,7 @@ type DbAdmin = {
   initials: string;
   role: AdminRole;
   active: boolean;
+  password_changed_at?: string | null;
 };
 
 const ROLE_LABEL: Record<AdminRole, string> = {
@@ -22,7 +23,7 @@ const ROLE_LABEL: Record<AdminRole, string> = {
   desenvolvedor: "Desenvolvedor",
 };
 
-function dbToSession(row: DbAdmin): AdminSession {
+function dbToSession(row: DbAdmin): AdminSession & { passwordChangedAt: number } {
   return {
     token: row.id,
     adminId: row.id,
@@ -31,6 +32,9 @@ function dbToSession(row: DbAdmin): AdminSession {
     initials: row.initials,
     role: row.role,
     roleLabel: ROLE_LABEL[row.role] ?? row.role,
+    passwordChangedAt: row.password_changed_at
+      ? new Date(row.password_changed_at).getTime()
+      : 0,
   };
 }
 
@@ -66,7 +70,9 @@ export async function authenticateAdminFromDb(
   return dbToSession(admin);
 }
 
-export async function getAdminSessionByIdFromDb(adminId: string): Promise<AdminSession | null> {
+export async function getAdminSessionByIdFromDb(
+  adminId: string,
+): Promise<(AdminSession & { passwordChangedAt: number }) | null> {
   if (!adminId) return null;
   const sb = createSupabaseServiceClient();
 

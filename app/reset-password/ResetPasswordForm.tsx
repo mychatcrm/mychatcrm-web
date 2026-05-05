@@ -7,6 +7,7 @@ import { AuthSplitLayout } from "@/components/auth/AuthSplitLayout";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { cn } from "@/lib/utils";
+import { validatePassword, STRENGTH_COLOR, STRENGTH_LABEL } from "@/lib/password-policy";
 
 function EyeIcon({ off }: { off?: boolean }) {
   if (off) {
@@ -47,7 +48,7 @@ export default function ResetPasswordForm() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
 
-  const weak = password.length > 0 && password.length < 8;
+  const pwValidation = password.length > 0 ? validatePassword(password) : null;
   const mismatch = password2.length > 0 && password !== password2;
 
   const onSubmit = async (e: React.FormEvent) => {
@@ -57,8 +58,9 @@ export default function ResetPasswordForm() {
       setError("Link inválido. Solicite uma nova recuperação de palavra-passe.");
       return;
     }
-    if (password.length < 8) {
-      setError("A palavra-passe deve ter pelo menos 8 caracteres.");
+    const pwCheck = validatePassword(password);
+    if (!pwCheck.valid) {
+      setError(pwCheck.reason ?? "A palavra-passe não cumpre os requisitos mínimos.");
       return;
     }
     if (password !== password2) {
@@ -98,9 +100,9 @@ export default function ResetPasswordForm() {
       >
         <p className="text-sm text-content-muted">
           <Link href="/forgot-password" className="font-medium text-primary hover:text-primary-hover">
-            Pedir novo link
-          </Link>{" "}
-          ·{" "}
+            Pedir novo link (cliente)
+          </Link>
+          {" · "}
           <Link href="/admin/forgot-password" className="font-medium text-primary hover:text-primary-hover">
             Recuperação admin
           </Link>
@@ -142,7 +144,7 @@ export default function ResetPasswordForm() {
                 autoComplete="new-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className={cn("pr-12", weak && "border-red-500/60")}
+                className={cn("pr-12", pwValidation && !pwValidation.valid && "border-red-500/60")}
               />
               <button
                 type="button"
@@ -153,7 +155,13 @@ export default function ResetPasswordForm() {
                 <EyeIcon off={showPassword} />
               </button>
             </div>
-            {weak ? <p className="mt-1 text-xs text-red-600">Mínimo de 8 caracteres.</p> : null}
+            {pwValidation ? (
+              <p className={cn("mt-1 text-xs", STRENGTH_COLOR[pwValidation.strength])}>
+                {pwValidation.valid
+                  ? `Segurança: ${STRENGTH_LABEL[pwValidation.strength]}`
+                  : pwValidation.reason}
+              </p>
+            ) : null}
           </div>
 
           <div>
@@ -168,11 +176,17 @@ export default function ResetPasswordForm() {
               onChange={(e) => setPassword2(e.target.value)}
               className={cn("mt-1.5", mismatch && "border-red-500/60")}
             />
-            {mismatch ? <p className="mt-1 text-xs text-red-600">As palavras-passe não coincidem.</p> : null}
+            {mismatch ? (
+              <p className="mt-1 text-xs text-red-600">As palavras-passe não coincidem.</p>
+            ) : null}
           </div>
 
           {error ? (
-            <p className="rounded-lg border border-line bg-surface-deep/90 px-3 py-2.5 text-sm text-content-secondary" role="alert">
+            <p
+              className="rounded-lg border border-line bg-surface-deep/90 px-3 py-2.5 text-sm text-content-secondary"
+              role="alert"
+              aria-live="assertive"
+            >
               {error}
             </p>
           ) : null}

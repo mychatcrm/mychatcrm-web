@@ -1,15 +1,21 @@
 /**
- * Recuperação de senha — tokens de uso único, hash SHA-256 no Postgres.
- * Escopos: admin (admin_users) | member (tenant_members).
+ * Password recovery service — tokens de uso único, hash SHA-256 no Postgres.
+ *
+ * Toda a lógica de banco é delegada a dois RPCs SECURITY DEFINER:
+ *   • request_password_reset_token — lookup do utilizador + gestão do token (atómico)
+ *   • consume_password_reset_token — validação + update de senha + mark used (atómico, FOR UPDATE)
+ *
+ * Isso elimina (1) dependência de bypass RLS via chave legada, e (2) a janela de
+ * replay entre validação e marcação de used_at que existia na implementação anterior.
  */
 import { createHash, randomBytes } from "crypto";
 import { SITE_URL } from "@/lib/constants";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { sendTransactionalEmail } from "@/lib/server/resend-mail";
+import { validatePassword } from "@/lib/password-policy";
 
 const TOKEN_BYTES = 32;
-/** Janela curta para reduzir risco se o link vazar. */
-const EXPIRY_MINUTES = 45;
+const EXPIRY_MINUTES = 30;
 
 export type PasswordResetScope = "admin" | "member";
 
@@ -22,69 +28,54 @@ function resetLink(rawToken: string): string {
   return `${base}/reset-password?token=${encodeURIComponent(rawToken)}`;
 }
 
+/** Masks email for safe logging: ana@empresa.com → a**@e*****.com */
+function maskEmail(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!domain) return "***";
+  const maskedLocal = local[0] + "**";
+  const [domainName, ...ext] = domain.split(".");
+  const maskedDomain = domainName[0] + "*".repeat(Math.max(0, domainName.length - 1));
+  return `${maskedLocal}@${maskedDomain}.${ext.join(".")}`;
+}
+
 export async function requestPasswordReset(params: {
   emailRaw: string;
   scope: PasswordResetScope;
 }): Promise<{ sent: boolean; mailConfigured: boolean }> {
   const email = params.emailRaw.trim().toLowerCase();
+  const mailConfigured = Boolean(process.env.RESEND_API_KEY?.trim());
+
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return { sent: false, mailConfigured: Boolean(process.env.RESEND_API_KEY?.trim()) };
+    return { sent: false, mailConfigured };
   }
-
-  const sb = createSupabaseServiceClient();
-
-  let subjectId: string | null = null;
-  if (params.scope === "admin") {
-    const { data } = await sb
-      .from("admin_users")
-      .select("id")
-      .eq("email", email)
-      .eq("active", true)
-      .maybeSingle();
-    subjectId = data?.id ?? null;
-  } else {
-    const { data } = await sb
-      .from("tenant_members")
-      .select("id")
-      .eq("email", email)
-      .eq("ativo", true)
-      .eq("account_suspended", false)
-      .maybeSingle();
-    subjectId = data?.id ?? null;
-  }
-
-  if (!subjectId) {
-    return { sent: false, mailConfigured: Boolean(process.env.RESEND_API_KEY?.trim()) };
-  }
-
-  await sb
-    .from("password_reset_tokens")
-    .delete()
-    .eq("email", email)
-    .eq("scope", params.scope)
-    .is("used_at", null);
 
   const rawToken = randomBytes(TOKEN_BYTES).toString("hex");
   const tokenHash = hashPasswordResetToken(rawToken);
   const expiresAt = new Date(Date.now() + EXPIRY_MINUTES * 60 * 1000).toISOString();
 
-  const { data: inserted, error: insErr } = await sb
-    .from("password_reset_tokens")
-    .insert({
-      token_hash: tokenHash,
-      scope: params.scope,
-      subject_id: subjectId,
-      email,
-      expires_at: expiresAt,
-    })
-    .select("id")
-    .single();
+  const sb = createSupabaseServiceClient();
 
-  if (insErr || !inserted?.id) {
-    console.error("[password-reset] insert token:", insErr?.message);
-    return { sent: false, mailConfigured: Boolean(process.env.RESEND_API_KEY?.trim()) };
+  // Single atomic RPC: resolves user, deletes old tokens, inserts new token.
+  // Returns {found: false} for unknown/inactive accounts — we treat both paths identically.
+  const { data: rpcResult, error: rpcErr } = await sb.rpc("request_password_reset_token", {
+    p_email: email,
+    p_scope: params.scope,
+    p_token_hash: tokenHash,
+    p_expires_at: expiresAt,
+  });
+
+  if (rpcErr) {
+    console.error("[password-reset] request_password_reset_token RPC:", rpcErr.message);
+    return { sent: false, mailConfigured };
   }
 
+  const result = rpcResult as { found: boolean } | null;
+  if (!result?.found) {
+    // Account not found — return silently to avoid enumeration; caller sends generic message.
+    return { sent: false, mailConfigured };
+  }
+
+  // Token inserted; send email.
   const link = resetLink(rawToken);
   const subject =
     params.scope === "admin"
@@ -92,23 +83,36 @@ export async function requestPasswordReset(params: {
       : "Redefinição de senha — MyChatCRM";
 
   const html = `
-<p>Recebemos um pedido para redefinir a palavra-passe associada a esta conta.</p>
-<p><a href="${link}" style="display:inline-block;padding:10px 16px;background:#111827;color:#fff;text-decoration:none;border-radius:8px;">Redefinir palavra-passe</a></p>
-<p>Ou copie e cole no navegador:</p>
-<p style="word-break:break-all;font-size:13px;color:#374151">${link}</p>
-<p>Este link expira em ${EXPIRY_MINUTES} minutos e só pode ser usado uma vez.</p>
-<p>Se não foi você, ignore este e-mail.</p>
+<div style="font-family:sans-serif;max-width:480px;margin:0 auto;color:#111827">
+  <h2 style="font-size:20px;font-weight:600;margin-bottom:16px">Redefinição de palavra-passe</h2>
+  <p>Recebemos um pedido para redefinir a palavra-passe associada a esta conta.</p>
+  <p style="margin:24px 0">
+    <a href="${link}" style="display:inline-block;padding:12px 20px;background:#111827;color:#fff;text-decoration:none;border-radius:8px;font-weight:500">
+      Redefinir palavra-passe
+    </a>
+  </p>
+  <p style="font-size:13px;color:#6b7280">Ou copie e cole no navegador:</p>
+  <p style="word-break:break-all;font-size:12px;color:#374151;background:#f3f4f6;padding:8px 12px;border-radius:6px">${link}</p>
+  <p style="font-size:13px;color:#6b7280;margin-top:24px">
+    Este link expira em ${EXPIRY_MINUTES} minutos e só pode ser usado uma vez.<br>
+    Se não foi você, ignore este e-mail — a sua palavra-passe não foi alterada.
+  </p>
+</div>
 `.trim();
 
-  const text = `Redefinição de palavra-passe MyChatCRM\n\nAbra o link (válido ${EXPIRY_MINUTES} minutos, uso único):\n${link}\n`;
+  const text = `Redefinição de palavra-passe MyChatCRM\n\nAbra o link (válido ${EXPIRY_MINUTES} minutos, uso único):\n${link}\n\nSe não foi você, ignore este e-mail.`;
 
   const mail = await sendTransactionalEmail({ to: email, subject, html, text });
   if (!mail.ok) {
-    await sb.from("password_reset_tokens").delete().eq("id", inserted.id as string);
-    return {
-      sent: false,
-      mailConfigured: Boolean(process.env.RESEND_API_KEY?.trim()),
-    };
+    console.error(
+      "[password-reset] Resend failed for",
+      maskEmail(email),
+      "scope:", params.scope,
+      "code:", "detail" in mail ? mail.detail : mail.code,
+    );
+    // Roll back: remove the token so the window doesn't linger without email delivered.
+    await sb.from("password_reset_tokens").delete().eq("token_hash", tokenHash);
+    return { sent: false, mailConfigured };
   }
 
   return { sent: true, mailConfigured: true };
@@ -121,65 +125,37 @@ export async function completePasswordReset(params: {
   | { ok: true }
   | { ok: false; code: "invalid_token" | "expired" | "weak_password" | "db_error" | "already_used" }
 > {
-  const pwd = params.newPassword.trim();
-  if (pwd.length < 8) {
-    return { ok: false, code: "weak_password" };
-  }
-
   const raw = params.rawToken.trim();
   if (!raw || raw.length < 16) {
     return { ok: false, code: "invalid_token" };
   }
 
+  // Delegate client-visible validation to shared policy.
+  const pwCheck = validatePassword(params.newPassword);
+  if (!pwCheck.valid) {
+    return { ok: false, code: "weak_password" };
+  }
+
   const tokenHash = hashPasswordResetToken(raw);
   const sb = createSupabaseServiceClient();
 
-  const { data: row, error } = await sb
-    .from("password_reset_tokens")
-    .select("id, scope, subject_id, expires_at, used_at")
-    .eq("token_hash", tokenHash)
-    .maybeSingle();
+  // Single atomic RPC: FOR UPDATE lock, validation, password update, mark used.
+  const { data: rpcResult, error: rpcErr } = await sb.rpc("consume_password_reset_token", {
+    p_token_hash: tokenHash,
+    p_new_password: params.newPassword.trim(),
+  });
 
-  if (error || !row) {
-    return { ok: false, code: "invalid_token" };
+  if (rpcErr) {
+    console.error("[password-reset] consume_password_reset_token RPC:", rpcErr.message);
+    return { ok: false, code: "db_error" };
   }
 
-  if (row.used_at) {
-    return { ok: false, code: "already_used" };
-  }
+  const res = rpcResult as { code: string } | null;
+  const code = res?.code ?? "invalid_token";
 
-  if (new Date(row.expires_at as string).getTime() <= Date.now()) {
-    return { ok: false, code: "expired" };
-  }
-
-  if (row.scope === "admin") {
-    const { error: pwErr } = await sb.rpc("update_admin_password", {
-      p_id: row.subject_id,
-      p_new_password: pwd,
-    });
-    if (pwErr) {
-      console.error("[password-reset] update_admin_password:", pwErr.message);
-      return { ok: false, code: "db_error" };
-    }
-  } else {
-    const { error: pwErr } = await sb.rpc("update_member_password", {
-      p_id: row.subject_id,
-      p_new_password: pwd,
-    });
-    if (pwErr) {
-      console.error("[password-reset] update_member_password:", pwErr.message);
-      return { ok: false, code: "db_error" };
-    }
-  }
-
-  const { error: upErr } = await sb
-    .from("password_reset_tokens")
-    .update({ used_at: new Date().toISOString() })
-    .eq("id", row.id);
-
-  if (upErr) {
-    console.error("[password-reset] mark used:", upErr.message);
-  }
-
-  return { ok: true };
+  if (code === "ok") return { ok: true };
+  if (code === "expired") return { ok: false, code: "expired" };
+  if (code === "already_used") return { ok: false, code: "already_used" };
+  if (code === "weak_password") return { ok: false, code: "weak_password" };
+  return { ok: false, code: "invalid_token" };
 }

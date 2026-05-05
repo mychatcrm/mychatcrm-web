@@ -8,11 +8,13 @@ const GENERIC_MESSAGE =
 
 export async function POST(request: Request) {
   const ip = getClientIpFromRequest(request) || "unknown";
-  const rl = checkInMemoryRateLimit(`forgot-password:${ip}`, 5, 15 * 60 * 1000);
-  if (!rl.ok) {
+
+  // Rate limit by IP (broad protection against flooding)
+  const rlIp = checkInMemoryRateLimit(`forgot-password:ip:${ip}`, 10, 15 * 60 * 1000);
+  if (!rlIp.ok) {
     return NextResponse.json(
       { message: "Demasiados pedidos. Aguarde alguns minutos e tente novamente." },
-      { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+      { status: 429, headers: { "Retry-After": String(rlIp.retryAfterSec) } },
     );
   }
 
@@ -21,15 +23,30 @@ export async function POST(request: Request) {
     scope?: string;
   } | null;
 
-  const emailRaw = String(body?.email ?? "");
+  const emailRaw = String(body?.email ?? "").trim().toLowerCase();
   const scopeRaw = String(body?.scope ?? "member").toLowerCase();
   const scope: PasswordResetScope = scopeRaw === "admin" ? "admin" : "member";
+
+  // Rate limit by normalised email (prevents targeted abuse against a single account)
+  if (emailRaw) {
+    const rlEmail = checkInMemoryRateLimit(
+      `forgot-password:email:${emailRaw}`,
+      3,
+      15 * 60 * 1000,
+    );
+    if (!rlEmail.ok) {
+      // Return generic message — do not confirm the email exists or is throttled
+      return NextResponse.json({ ok: true, message: GENERIC_MESSAGE });
+    }
+  }
 
   try {
     const result = await requestPasswordReset({ emailRaw, scope });
 
     if (!result.mailConfigured) {
-      console.error("[forgot-password] RESEND_API_KEY ausente — recuperação por e-mail indisponível.");
+      console.error(
+        "[forgot-password] RESEND_API_KEY ausente — e-mail indisponível; scope:", scope,
+      );
       return NextResponse.json(
         {
           message:
@@ -42,7 +59,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, message: GENERIC_MESSAGE });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("[forgot-password]", msg);
+    console.error("[forgot-password] unexpected:", msg, "scope:", scope);
     if (msg.includes("não definida") || msg.includes("SUPABASE_SERVICE_ROLE_KEY")) {
       return NextResponse.json(
         {
@@ -52,6 +69,7 @@ export async function POST(request: Request) {
         { status: 503 },
       );
     }
+    // Generic success — avoid leaking internal errors
     return NextResponse.json({ ok: true, message: GENERIC_MESSAGE });
   }
 }

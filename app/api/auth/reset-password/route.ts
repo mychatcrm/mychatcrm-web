@@ -5,7 +5,7 @@ import { completePasswordReset } from "@/lib/server/password-reset";
 
 export async function POST(request: Request) {
   const ip = getClientIpFromRequest(request) || "unknown";
-  const rl = checkInMemoryRateLimit(`reset-password:${ip}`, 10, 15 * 60 * 1000);
+  const rl = checkInMemoryRateLimit(`reset-password:ip:${ip}`, 10, 15 * 60 * 1000);
   if (!rl.ok) {
     return NextResponse.json(
       { message: "Demasiadas tentativas. Aguarde e tente novamente." },
@@ -55,13 +55,16 @@ export async function POST(request: Request) {
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("[reset-password]", msg);
+    console.error("[reset-password] unexpected:", msg);
     if (msg.includes("não definida") || msg.includes("SUPABASE_SERVICE_ROLE_KEY")) {
       return NextResponse.json(
         { message: "Serviço temporariamente indisponível. Tente novamente mais tarde." },
         { status: 503 },
       );
     }
-    return NextResponse.json({ message: "Não foi possível redefinir a palavra-passe. Tente novamente." }, { status: 500 });
+    return NextResponse.json(
+      { message: "Não foi possível redefinir a palavra-passe. Tente novamente." },
+      { status: 500 },
+    );
   }
 }
