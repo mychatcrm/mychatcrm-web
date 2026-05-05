@@ -7,6 +7,8 @@
  * `MyChatCRM <onboarding@resend.dev>`.
  */
 
+import { getResendApiKey } from "@/lib/server/resend-config";
+
 export type SendMailResult = { ok: true } | { ok: false; code: "missing_key" | "http_error"; detail?: string };
 
 export async function sendTransactionalEmail(params: {
@@ -15,7 +17,7 @@ export async function sendTransactionalEmail(params: {
   html: string;
   text: string;
 }): Promise<SendMailResult> {
-  const apiKey = process.env.RESEND_API_KEY?.trim();
+  const apiKey = getResendApiKey();
   if (!apiKey) {
     console.error("[resend-mail] RESEND_API_KEY não definida — e-mail não enviado.");
     return { ok: false, code: "missing_key" };
