@@ -20,6 +20,12 @@ import { AdminPartnersHub } from "@/components/admin/commercial/AdminPartnersHub
 import { MaintenanceModePanel } from "@/components/admin/MaintenanceModePanel";
 import { AdminEnterpriseWorkspace } from "@/components/admin/enterprise/AdminEnterpriseWorkspace";
 import { AdminAiControlCenter } from "@/components/admin/ai/AdminAiControlCenter";
+import {
+  StripeChurnPage,
+  StripeFinanceiroPage,
+  StripeFaturasPage,
+  StripePagamentosPage,
+} from "@/components/admin/stripe/AdminStripeFinancePages";
 
 const PlatformIntelligenceDashboard = dynamic(
   () =>
@@ -615,16 +621,6 @@ function ComingSoonPage({ title, description, nextStep }: { title: string; descr
   );
 }
 
-function FinancePage() {
-  return (
-    <ComingSoonPage
-      title="Financeiro"
-      description="Receita bruta, MRR, projeções e churn de receita. Requer integração com Stripe."
-      nextStep="Conectar Stripe Billing para exibir dados reais de receita."
-    />
-  );
-}
-
 function ConfigPage() {
   return (
     <div className="space-y-6">
@@ -886,31 +882,13 @@ export function AdminWorkspace({
           />
         );
       case "financeiro":
-        return <FinancePage />;
+        return <StripeFinanceiroPage />;
       case "faturas":
-        return (
-          <ComingSoonPage
-            title="Faturas"
-            description="Todas as cobranças geradas, status e emissão de nota fiscal. Requer integração com Stripe Invoices."
-            nextStep="Conectar Stripe Invoices API para listar faturas reais."
-          />
-        );
+        return <StripeFaturasPage />;
       case "pagamentos":
-        return (
-          <ComingSoonPage
-            title="Eventos de pagamento"
-            description="Feed em tempo real de pagamentos, falhas, disputas e reembolsos. Requer Stripe webhooks."
-            nextStep="Criar tabela de payment_events populada por webhooks do Stripe."
-          />
-        );
+        return <StripePagamentosPage />;
       case "churn":
-        return (
-          <ComingSoonPage
-            title="Análise de churn"
-            description="Churn mensal, clientes em risco e motivos mais comuns. Requer integração com Stripe e análise de comportamento."
-            nextStep="Conectar eventos de cancelamento do Stripe para calcular churn real."
-          />
-        );
+        return <StripeChurnPage />;
       case "suporte":
         return (
           <ComingSoonPage

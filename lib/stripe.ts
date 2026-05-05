@@ -1,5 +1,9 @@
 import Stripe from "stripe";
 
+export function isStripeSecretConfigured(): boolean {
+  return Boolean(process.env.STRIPE_SECRET_KEY?.trim());
+}
+
 function getStripeKey(): string {
   const key = process.env.STRIPE_SECRET_KEY?.trim();
   if (!key) throw new Error("[stripe] STRIPE_SECRET_KEY não definida.");

@@ -43,3 +43,22 @@ export function stripePricesConfigured(): boolean {
     Object.values(cycles).every((key) => !!process.env[key]?.trim()),
   );
 }
+
+/** IDs de preço configurados para um plano de checkout (solo/equipa/escala). Para filtro admin. */
+export function listConfiguredStripePriceIdsForSlug(planSlug: string): string[] {
+  const cycles = ENV_KEYS[planSlug.trim().toLowerCase()];
+  if (!cycles) return [];
+  const ids: string[] = [];
+  for (const envKey of Object.values(cycles)) {
+    const id = process.env[envKey]?.trim();
+    if (id) ids.push(id);
+  }
+  return ids;
+}
+
+/** `null` = sem filtro de plano; `[]` = plano desconhecido (nada casa). */
+export function resolveAdminPlanPriceFilter(planSlug: string | null): string[] | null {
+  if (!planSlug || planSlug === "all") return null;
+  const ids = listConfiguredStripePriceIdsForSlug(planSlug);
+  return ids;
+}
