@@ -12,6 +12,7 @@ import { createHash, randomBytes } from "crypto";
 import { SITE_URL } from "@/lib/constants";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { sendTransactionalEmail } from "@/lib/server/resend-mail";
+import { isResendConfigured } from "@/lib/server/resend-config";
 import { validatePassword } from "@/lib/password-policy";
 
 const TOKEN_BYTES = 32;
@@ -23,8 +24,16 @@ export function hashPasswordResetToken(rawToken: string): string {
   return createHash("sha256").update(rawToken, "utf8").digest("hex");
 }
 
-function resetLink(rawToken: string): string {
-  const base = SITE_URL.replace(/\/$/, "");
+function resetLink(rawToken: string, baseOverride?: string): string {
+  let base = (baseOverride?.trim() || SITE_URL).replace(/\/$/, "");
+  try {
+    const u = new URL(base);
+    if (u.protocol !== "http:" && u.protocol !== "https:") {
+      base = SITE_URL.replace(/\/$/, "");
+    }
+  } catch {
+    base = SITE_URL.replace(/\/$/, "");
+  }
   return `${base}/reset-password?token=${encodeURIComponent(rawToken)}`;
 }
 
@@ -41,11 +50,14 @@ function maskEmail(email: string): string {
 export async function requestPasswordReset(params: {
   emailRaw: string;
   scope: PasswordResetScope;
+  /** Ex.: origem do POST (https://…vercel.app ou domínio próprio). Opcional: cai em SITE_URL. */
+  linkBaseUrl?: string;
 }): Promise<{ sent: boolean; mailConfigured: boolean }> {
   const email = params.emailRaw.trim().toLowerCase();
-  const mailConfigured = Boolean(process.env.RESEND_API_KEY?.trim());
+  const mailConfigured = isResendConfigured();
 
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    // Invalid format: still report whether Resend is configured (avoids misleading 503 when key is set).
     return { sent: false, mailConfigured };
   }
 
@@ -76,7 +88,7 @@ export async function requestPasswordReset(params: {
   }
 
   // Token inserted; send email.
-  const link = resetLink(rawToken);
+  const link = resetLink(rawToken, params.linkBaseUrl);
   const subject =
     params.scope === "admin"
       ? "Redefinição de senha — painel administrativo MyChatCRM"

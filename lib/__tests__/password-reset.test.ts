@@ -70,6 +70,20 @@ describe("requestPasswordReset", () => {
     expect(call.html).toContain("/reset-password?token=");
   });
 
+  it("uses linkBaseUrl in the reset link when provided", async () => {
+    mockRpc.mockResolvedValueOnce({ data: { found: true }, error: null });
+    vi.mocked(sendTransactionalEmail).mockResolvedValueOnce({ ok: true });
+
+    await requestPasswordReset({
+      emailRaw: "user@example.com",
+      scope: "member",
+      linkBaseUrl: "https://mychatcrm.vercel.app",
+    });
+
+    const call = vi.mocked(sendTransactionalEmail).mock.calls[0][0];
+    expect(call.html).toContain("https://mychatcrm.vercel.app/reset-password?token=");
+  });
+
   it("rolls back token and returns sent=false when Resend fails", async () => {
     mockRpc.mockResolvedValueOnce({ data: { found: true }, error: null });
     vi.mocked(sendTransactionalEmail).mockResolvedValueOnce({
