@@ -1,3 +1,4 @@
+import { buildAiUsageLogsAccessHint } from "@/lib/ai/supabase-ai-usage-logs-diagnostics";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export type AiRangeQuery = {
@@ -41,14 +42,18 @@ export type AiOverviewHealth = {
   aiUsageLogsReachable: boolean;
   /** Mensagem curta do Postgres/Supabase (sem segredos). */
   aiUsageLogsError: string | null;
+  /** Dica accionável quando há erro (ex.: permission denied, tabela em falta). */
+  aiUsageLogsHint: string | null;
 };
 
 export async function getAiOverview(range: AiRangeQuery) {
   const sb = createSupabaseServiceClient();
   const probe = await sb.from("ai_usage_logs").select("id").limit(1);
+  const errMsg = probe.error?.message ?? null;
   const health: AiOverviewHealth = {
     aiUsageLogsReachable: !probe.error,
-    aiUsageLogsError: probe.error?.message ?? null,
+    aiUsageLogsError: errMsg,
+    aiUsageLogsHint: buildAiUsageLogsAccessHint(errMsg),
   };
 
   const q = applyCommonFilters(

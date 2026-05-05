@@ -3,6 +3,7 @@ import {
   peekOpenAiApiKeyFromEnv,
   resolveOpenAiApiKey,
 } from "@/lib/ai/openai-api-key";
+import { buildAiUsageLogsAccessHint } from "@/lib/ai/supabase-ai-usage-logs-diagnostics";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export type AiIntegrationStatusPayload = {
@@ -13,6 +14,7 @@ export type AiIntegrationStatusPayload = {
   envOpenAiKeyConfigured: boolean;
   aiUsageLogsReachable: boolean;
   aiUsageLogsError: string | null;
+  aiUsageLogsHint: string | null;
   requestsLast24h: number | null;
   lastSuccess: {
     createdAt: string;
@@ -35,6 +37,7 @@ export async function getAiIntegrationStatus(): Promise<AiIntegrationStatusPaylo
   const probe = await sb.from("ai_usage_logs").select("id").limit(1);
   const aiUsageLogsReachable = !probe.error;
   const aiUsageLogsError = probe.error?.message ?? null;
+  const aiUsageLogsHint = buildAiUsageLogsAccessHint(aiUsageLogsError);
 
   let requestsLast24h: number | null = null;
   let lastSuccess: AiIntegrationStatusPayload["lastSuccess"] = null;
@@ -70,6 +73,7 @@ export async function getAiIntegrationStatus(): Promise<AiIntegrationStatusPaylo
     envOpenAiKeyConfigured,
     aiUsageLogsReachable,
     aiUsageLogsError,
+    aiUsageLogsHint,
     requestsLast24h,
     lastSuccess,
   };

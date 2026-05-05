@@ -23,6 +23,7 @@ type OverviewPayload = {
   health?: {
     aiUsageLogsReachable: boolean;
     aiUsageLogsError: string | null;
+    aiUsageLogsHint?: string | null;
   };
 };
 
@@ -81,6 +82,7 @@ type IntegrationStatusPayload = {
   envOpenAiKeyConfigured: boolean;
   aiUsageLogsReachable: boolean;
   aiUsageLogsError: string | null;
+  aiUsageLogsHint?: string | null;
   requestsLast24h: number | null;
   lastSuccess: { createdAt: string; tenantId: string; agentId: string } | null;
 };
@@ -567,6 +569,11 @@ export function AdminAiControlCenter() {
                 </strong>
                 {integration.aiUsageLogsError ? ` (${integration.aiUsageLogsError})` : ""}
               </li>
+              {integration.aiUsageLogsHint && !integration.aiUsageLogsReachable ? (
+                <li className="list-none pl-0 text-[12px] text-amber-200/95">
+                  {integration.aiUsageLogsHint}
+                </li>
+              ) : null}
               <li>
                 Pedidos registados (últimas 24h):{" "}
                 <strong className="text-content">{integration.requestsLast24h ?? "—"}</strong>
@@ -743,10 +750,13 @@ export function AdminAiControlCenter() {
           <div className="mb-3 rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-200">
             <p className="font-medium">Não foi possível ler a tabela ai_usage_logs</p>
             <p className="mt-1 text-[13px] text-rose-200/90">
-              {overviewHealth.aiUsageLogsError ?? "Erro desconhecido."} Aplique a migração{" "}
-              <code className="text-[11px]">20260505_ai_gateway_usage_tracking.sql</code> no Supabase do projeto e
-              confirme <code className="text-[11px]">SUPABASE_SERVICE_ROLE_KEY</code> em Production na Vercel.
+              {overviewHealth.aiUsageLogsError ?? "Erro desconhecido."} Migração base:{" "}
+              <code className="text-[11px]">20260505_ai_gateway_usage_tracking.sql</code>; políticas RLS (se aplicável):{" "}
+              <code className="text-[11px]">20260508_ai_usage_rls_service_role_policies.sql</code>.
             </p>
+            {overviewHealth.aiUsageLogsHint ? (
+              <p className="mt-2 text-[12px] text-amber-100/95">{overviewHealth.aiUsageLogsHint}</p>
+            ) : null}
           </div>
         ) : null}
         {overviewHealth?.aiUsageLogsReachable &&
