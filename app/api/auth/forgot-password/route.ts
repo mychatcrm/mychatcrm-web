@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getClientIpFromRequest } from "@/lib/get-client-ip";
 import { checkInMemoryRateLimit } from "@/lib/rate-limit-in-memory";
+import {
+  forgotPasswordForensicPayload,
+  isForgotPasswordForensicEnabled,
+} from "@/lib/server/forgot-password-forensics";
 import { isResendConfigured } from "@/lib/server/resend-config";
 import { passwordResetPublicOrigin } from "@/lib/server/password-reset-origin";
 import { requestPasswordReset, type PasswordResetScope } from "@/lib/server/password-reset";
@@ -38,9 +42,34 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Indique um endereço de e-mail válido." }, { status: 400 });
   }
 
-  if (!isResendConfigured()) {
+  if (isForgotPasswordForensicEnabled()) {
+    const base = forgotPasswordForensicPayload(request);
+    console.warn(
+      "[forgot-password] preGate",
+      JSON.stringify({
+        ...base,
+        scope,
+        isResendConfigured_pre: isResendConfigured(),
+      }),
+    );
+  }
+
+  const resendGate = isResendConfigured();
+  if (isForgotPasswordForensicEnabled()) {
+    const base = forgotPasswordForensicPayload(request);
+    console.warn(
+      "[forgot-password] postGate",
+      JSON.stringify({
+        ...base,
+        scope,
+        isResendConfigured_post: resendGate,
+      }),
+    );
+  }
+
+  if (!resendGate) {
     console.error(
-      "[forgot-password] RESEND_API_KEY ausente — Vercel → Integrations → Resend (cria a chave automaticamente) ou: npm run resend:push-vercel -- '<re_…>'",
+      "[forgot-password] Z503a_RESEND_GATE RESEND_API_KEY ausente — Vercel → Integrations → Resend ou: npm run resend:push-vercel -- '<re_…>'",
       "scope:",
       scope,
     );
@@ -74,7 +103,10 @@ export async function POST(request: Request) {
     });
 
     if (!result.mailConfigured) {
-      console.error("[forgot-password] mailConfigured=false inesperado após verificação prévia; scope:", scope);
+      console.error(
+        "[forgot-password] Z503b_MAIL_CONFIGURED_FALSE mailConfigured=false após verificação prévia; scope:",
+        scope,
+      );
       return NextResponse.json(
         {
           message:

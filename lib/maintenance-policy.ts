@@ -22,6 +22,7 @@ export function isMaintenanceAnonymousAllowPath(pathname: string): boolean {
   if (pathname.startsWith("/api/auth/admin/")) return true;
   if (pathname.startsWith("/api/auth/client/")) return true;
   if (pathname.startsWith("/api/auth/forgot-password")) return true;
+  if (pathname === "/api/debug/resend-ping") return true;
   if (pathname.startsWith("/api/auth/reset-password")) return true;
   if (pathname === "/api/health") return true;
   if (pathname.startsWith("/api/admin/")) return true;

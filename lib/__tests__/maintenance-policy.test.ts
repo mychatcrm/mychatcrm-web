@@ -22,6 +22,7 @@ describe("maintenance-policy", () => {
     expect(isMaintenanceAnonymousAllowPath("/forgot-password")).toBe(true);
     expect(isMaintenanceAnonymousAllowPath("/api/auth/forgot-password")).toBe(true);
     expect(isMaintenanceAnonymousAllowPath("/api/auth/reset-password")).toBe(true);
+    expect(isMaintenanceAnonymousAllowPath("/api/debug/resend-ping")).toBe(true);
   });
 
   it("permite login de cliente (API e páginas) durante manutenção", () => {

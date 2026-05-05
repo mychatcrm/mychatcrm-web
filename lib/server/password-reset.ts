@@ -11,6 +11,7 @@
 import { createHash, randomBytes } from "crypto";
 import { SITE_URL } from "@/lib/constants";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { isForgotPasswordForensicEnabled } from "@/lib/server/forgot-password-forensics";
 import { sendTransactionalEmail } from "@/lib/server/resend-mail";
 import { isResendConfigured } from "@/lib/server/resend-config";
 import { validatePassword } from "@/lib/password-policy";
@@ -78,13 +79,23 @@ export async function requestPasswordReset(params: {
 
   if (rpcErr) {
     console.error("[password-reset] request_password_reset_token RPC:", rpcErr.message);
+    if (isForgotPasswordForensicEnabled()) {
+      console.warn("[password-reset] stage", JSON.stringify({ stage: "rpc_error", scope: params.scope }));
+    }
     return { sent: false, mailConfigured };
   }
 
   const result = rpcResult as { found: boolean } | null;
   if (!result?.found) {
+    if (isForgotPasswordForensicEnabled()) {
+      console.warn("[password-reset] stage", JSON.stringify({ stage: "account_not_found", scope: params.scope }));
+    }
     // Account not found — return silently to avoid enumeration; caller sends generic message.
     return { sent: false, mailConfigured };
+  }
+
+  if (isForgotPasswordForensicEnabled()) {
+    console.warn("[password-reset] stage", JSON.stringify({ stage: "before_resend_send", scope: params.scope }));
   }
 
   // Token inserted; send email.
@@ -122,9 +133,24 @@ export async function requestPasswordReset(params: {
       "scope:", params.scope,
       "code:", "detail" in mail ? mail.detail : mail.code,
     );
+    if (isForgotPasswordForensicEnabled()) {
+      console.warn(
+        "[password-reset] stage",
+        JSON.stringify({
+          stage: "resend_http_failed",
+          scope: params.scope,
+          resendCode: mail.code,
+          resendDetail: "detail" in mail ? mail.detail : undefined,
+        }),
+      );
+    }
     // Roll back: remove the token so the window doesn't linger without email delivered.
     await sb.from("password_reset_tokens").delete().eq("token_hash", tokenHash);
     return { sent: false, mailConfigured };
+  }
+
+  if (isForgotPasswordForensicEnabled()) {
+    console.warn("[password-reset] stage", JSON.stringify({ stage: "resend_ok", scope: params.scope }));
   }
 
   return { sent: true, mailConfigured: true };
