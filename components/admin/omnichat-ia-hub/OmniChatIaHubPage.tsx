@@ -209,9 +209,19 @@ export function OmniChatIaHubPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ openaiApiKey: key }),
       });
-      const data = (await res.json()) as { ok?: boolean; error?: string } & Partial<OpenAiCredentialsPayload>;
+      const data = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        details?: string;
+        code?: string | null;
+      } & Partial<OpenAiCredentialsPayload>;
       if (!res.ok) {
-        setCredErr(typeof data?.error === "string" ? data.error : "Falha ao guardar.");
+        const base = typeof data?.error === "string" ? data.error : "Falha ao guardar.";
+        const extra =
+          typeof data?.details === "string" && data.details.trim()
+            ? ` ${data.details.trim()}${data.code ? ` (código: ${data.code})` : ""}`
+            : "";
+        setCredErr(base + extra);
         return;
       }
       setOpenAiKeyInput("");
@@ -235,9 +245,19 @@ export function OmniChatIaHubPage() {
     setCredErr(null);
     try {
       const res = await fetch("/api/admin/ai/openai-credentials", { method: "DELETE", credentials: "include" });
-      const data = (await res.json()) as { ok?: boolean; error?: string } & Partial<OpenAiCredentialsPayload>;
+      const data = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        details?: string;
+        code?: string | null;
+      } & Partial<OpenAiCredentialsPayload>;
       if (!res.ok) {
-        setCredErr(typeof data?.error === "string" ? data.error : "Falha ao remover.");
+        const base = typeof data?.error === "string" ? data.error : "Falha ao remover.";
+        const extra =
+          typeof data?.details === "string" && data.details.trim()
+            ? ` ${data.details.trim()}${data.code ? ` (código: ${data.code})` : ""}`
+            : "";
+        setCredErr(base + extra);
         return;
       }
       setCredentials({
@@ -350,9 +370,19 @@ export function OmniChatIaHubPage() {
             <h2 className="text-sm font-semibold text-zinc-100">API Key · ligação</h2>
             <p className="mt-1 text-xs text-zinc-500">Valor nunca exposto completo. Cifra no servidor.</p>
             {credErr ? (
-              <p className="mt-2 text-sm text-rose-400" role="alert">
-                {credErr}
-              </p>
+              <div className="mt-2 space-y-2" role="alert">
+                <p className="text-sm text-rose-400">{credErr}</p>
+                {credErr.includes("Supabase") || credErr.includes("permission") || credErr.includes("does not exist") ? (
+                  <p className="text-[11px] leading-relaxed text-zinc-500">
+                    Confirme no <code className="text-zinc-400">.env.local</code>:{" "}
+                    <code className="text-zinc-400">NEXT_PUBLIC_SUPABASE_URL</code> e{" "}
+                    <code className="text-zinc-400">SUPABASE_SERVICE_ROLE_KEY</code> (secret <strong>service_role</strong> do mesmo
+                    projecto — não use a chave <em>anon</em>). No Supabase remoto, aplique a migração{" "}
+                    <code className="text-zinc-400">20260507_admin_platform_openai.sql</code> se a tabela{" "}
+                    <code className="text-zinc-400">admin_platform_openai</code> não existir.
+                  </p>
+                ) : null}
+              </div>
             ) : null}
             {credLoading && !credentials ? <div className="mt-4 h-16 animate-pulse rounded-xl bg-white/5" /> : null}
             {credentials ? (

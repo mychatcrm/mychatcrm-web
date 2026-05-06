@@ -98,8 +98,15 @@ export async function PATCH(request: Request) {
       { onConflict: "id" },
     );
     if (error) {
-      console.error("[admin/ai/openai-credentials] upsert", error.message);
-      return NextResponse.json({ error: "Falha ao gravar no Supabase." }, { status: 500 });
+      console.error("[admin/ai/openai-credentials] upsert", error.message, error.code);
+      return NextResponse.json(
+        {
+          error: "Falha ao gravar no Supabase.",
+          details: error.message,
+          code: error.code ?? null,
+        },
+        { status: 500 },
+      );
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Supabase indisponível.";
@@ -135,8 +142,11 @@ export async function DELETE() {
       .update({ openai_api_key_ciphertext: null, updated_at: new Date().toISOString() })
       .eq("id", "global");
     if (error) {
-      console.error("[admin/ai/openai-credentials] DELETE", error.message);
-      return NextResponse.json({ error: "Falha ao remover chave." }, { status: 500 });
+      console.error("[admin/ai/openai-credentials] DELETE", error.message, error.code);
+      return NextResponse.json(
+        { error: "Falha ao remover chave.", details: error.message, code: error.code ?? null },
+        { status: 500 },
+      );
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Supabase indisponível.";
