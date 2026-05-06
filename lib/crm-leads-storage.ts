@@ -2,8 +2,9 @@ import type { ClientLead } from "@/lib/dashboard-data";
 
 export const CRM_LEADS_UPDATED_EVENT = "mychatcrm-crm-leads-updated";
 
+/** v2: ignora snapshots antigos com leads de demonstração. */
 export function crmLeadsStorageKey(tenantId: string) {
-  return `mychatcrm.crm.leads.${tenantId}`;
+  return `mychatcrm.crm.leads.v2.${tenantId}`;
 }
 
 function isLeadArray(v: unknown): v is ClientLead[] {

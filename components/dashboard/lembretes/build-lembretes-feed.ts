@@ -109,7 +109,7 @@ export function buildLembretesFeed(input: {
       });
     }
 
-    const tl = getLeadTimelineResolved(extras, lead, funnel);
+    const tl = getLeadTimelineResolved(extras, lead);
     const rows = tl.filter((row) => {
       if (row.tipo !== "followup" && row.tipo !== "pipeline") return false;
       const at = new Date(row.at);

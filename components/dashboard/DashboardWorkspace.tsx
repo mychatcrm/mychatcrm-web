@@ -1261,7 +1261,7 @@ function CrmPage({
     const map: Record<string, LeadTemperatureResult> = {};
     for (const l of pipelineLeads) {
       const fd = funnels.find((f) => f.id === l.funilId) ?? activeFunnel;
-      map[l.id] = computeLeadTemperature(l, getLeadTimelineResolved(store, l, fd), fd);
+      map[l.id] = computeLeadTemperature(l, getLeadTimelineResolved(store, l), fd);
     }
     return map;
   }, [pipelineLeads, funnels, activeFunnel, leadTempTick]);

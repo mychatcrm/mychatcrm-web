@@ -3,7 +3,8 @@ import { loadCrmLeadsSnapshot } from "@/lib/crm-leads-storage";
 
 export const OPERACAO_INBOX_UPDATED_EVENT = "mychatcrm-operacao-inbox-updated";
 
-const STORAGE_PREFIX = "mychatcrm.operacao.inbox.";
+/** v2: ignora inbox antiga com mensagens seed de demonstração. */
+const STORAGE_PREFIX = "mychatcrm.operacao.inbox.v2.";
 
 /** Alinhado ao treino de agentes (`WizardStep2Treinamento`). */
 export const OPERACAO_CHAT_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
@@ -112,17 +113,7 @@ function stableSeedTimestampIso(lead: ClientLead): string {
   return "2020-01-01T12:00:00.000Z";
 }
 
-function seedMessage(lead: ClientLead): OperacaoMessage {
-  return {
-    id: `m-seed-${lead.id}`,
-    conversationId: conversationIdForLead(lead.id),
-    direction: "in",
-    kind: "text",
-    text: `Histórico de demonstração — ${lead.nome} entrou por ${lead.origem || "WhatsApp"}. Último contato no CRM: ${lead.ultimoContato}.`,
-    status: "sent",
-    createdAt: stableSeedTimestampIso(lead),
-  };
-}
+const EMPTY_THREAD_PREVIEW = "Sem mensagens ainda";
 
 function previewFromMessage(msg: OperacaoMessage | undefined): string {
   if (!msg) return "";
@@ -181,18 +172,17 @@ export function buildOperacaoInboxView(
   const conversations: OperacaoConversation[] = leads.map((lead) => {
     const id = conversationIdForLead(lead.id);
     const thread = persisted.threads[id];
-    const messages = thread?.messages?.length ? thread.messages.map((m) => ({ ...m })) : [seedMessage(lead)];
-    const last = messages[messages.length - 1];
-    /** Primeira vez sem histórico persistido: simula não lidas até o operador abrir a conversa. */
-    const unread = thread !== undefined ? thread.unread : 1;
+    const messages = thread?.messages?.length ? thread.messages.map((m) => ({ ...m })) : [];
+    const last = messages.length ? messages[messages.length - 1] : undefined;
+    const unread = thread !== undefined ? thread.unread : 0;
     return {
       id,
       leadId: lead.id,
       contactName: lead.nome,
       phoneLabel: lead.telefone,
       attendant: deriveAttendantFromLead(lead),
-      lastPreview: previewFromMessage(last),
-      lastAt: last.createdAt,
+      lastPreview: last ? previewFromMessage(last) : EMPTY_THREAD_PREVIEW,
+      lastAt: last?.createdAt ?? stableSeedTimestampIso(lead),
       unread,
       messages,
     };

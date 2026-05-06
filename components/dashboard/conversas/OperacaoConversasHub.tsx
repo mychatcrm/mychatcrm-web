@@ -203,13 +203,13 @@ export function OperacaoConversasHub({ session, leads }: { session: ClientSessio
         <div className="min-w-0">
           <h2 className="text-xl font-semibold text-content sm:text-2xl">Conversas em tempo real</h2>
           <p className="mt-1 max-w-3xl text-sm leading-relaxed text-content-muted">
-            Visão operacional das conversas ligadas ao CRM Kanban deste painel. As mensagens e anexos ficam neste navegador
-            até existir integração com o WhatsApp Cloud API no backend — o painel atualiza quando o CRM Kanban ou outra aba
-            alteram dados (evento + armazenamento local + sondagem leve).
+            Visão operacional das conversas ligadas aos leads do CRM Kanban. As mensagens e anexos ficam neste navegador até
+            existir integração com o WhatsApp Cloud API no servidor. O painel sincroniza quando o CRM ou outras abas
+            alteram dados (eventos locais e atualização periódica).
           </p>
         </div>
         <Badge className="w-fit border-line/60 bg-surface-elevated/50 text-[11px] font-medium text-content-secondary">
-          Demo local · sem WebSocket dedicado
+          Armazenamento local · sem WebSocket
         </Badge>
       </div>
 
@@ -218,7 +218,7 @@ export function OperacaoConversasHub({ session, leads }: { session: ClientSessio
           <p>
             Limite de referência do plano: até <strong className="text-content">{formatIntegerPtBr(conversationCap)}</strong>{" "}
             <strong className="text-content">novas conversas</strong> de clientes por mês (contatos / threads distintos — não
-            conta cada mensagem ao mesmo cliente). Nesta demo:{" "}
+            conta cada mensagem ao mesmo cliente). Neste painel:{" "}
             <strong className="text-content">{formatIntegerPtBr(conversationCount)}</strong> conversas na caixa.
           </p>
           <Link
@@ -375,6 +375,12 @@ export function OperacaoConversasHub({ session, leads }: { session: ClientSessio
                   aria-hidden
                 />
                 <div className="relative z-[1] mx-auto flex max-w-3xl flex-col gap-2">
+                  {active.messages.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-line/70 bg-surface-card/60 px-4 py-10 text-center text-sm text-content-muted">
+                      Ainda não há mensagens nesta conversa. Escreva abaixo para registar a primeira, ou aguarde integração
+                      com o WhatsApp Cloud API para mensagens automáticas.
+                    </div>
+                  ) : null}
                   {active.messages.map((m) => {
                     const out = m.direction === "out";
                     return (
@@ -409,7 +415,8 @@ export function OperacaoConversasHub({ session, leads }: { session: ClientSessio
                                 </div>
                               ) : (
                                 <div className="rounded-lg border border-dashed border-line/60 bg-surface-elevated/30 px-3 py-6 text-center text-xs text-content-muted">
-                                  Pré-visualização indisponível (arquivo guardado só com metadados nesta demo).
+                                  Pré-visualização indisponível — só os metadados do ficheiro foram guardados neste
+                                  navegador.
                                 </div>
                               )}
                             </div>

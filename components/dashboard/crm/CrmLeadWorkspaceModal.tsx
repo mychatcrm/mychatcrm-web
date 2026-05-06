@@ -30,7 +30,6 @@ import {
   LEAD_EXTRAS_UPDATED_EVENT,
   loadLeadExtras,
   saveLeadExtras,
-  seedTimelineIfEmpty,
   type CrmLeadExtrasStore,
   type CrmLeadTask,
 } from "@/lib/crm-lead-extras";
@@ -210,11 +209,7 @@ export function CrmLeadWorkspaceModal({
 
   const origemView = useMemo(() => mergeOrigemDisplay(lead), [lead]);
 
-  const timeline = useMemo(() => {
-    const custom = store.timeline[lead.id];
-    if (custom?.length) return custom;
-    return seedTimelineIfEmpty(lead, funnelDoLead);
-  }, [lead, funnelDoLead, store.timeline]);
+  const timeline = useMemo(() => store.timeline[lead.id] ?? [], [lead.id, store.timeline]);
 
   const temperatura = useMemo(
     () => computeLeadTemperature(lead, timeline, funnelDoLead),
@@ -487,48 +482,60 @@ export function CrmLeadWorkspaceModal({
               </Button>
             </div>
             <div className="relative min-w-0 pr-1">
-            <div className="absolute bottom-2 left-[15px] top-2 w-px bg-gradient-to-b from-line via-line to-transparent" aria-hidden />
-            <ul className="relative space-y-3">
-              {timeline.map((item) => (
-                <li key={item.id} className="relative flex gap-3 pl-1">
-                  <span className="relative z-[1] mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-line bg-surface-card text-content-secondary">
-                    {item.tipo === "whatsapp" ? (
-                      <MessageCircle className="h-4 w-4" />
-                    ) : item.tipo === "email" ? (
-                      <Mail className="h-4 w-4" />
-                    ) : item.tipo === "nota" ? (
-                      <StickyNote className="h-4 w-4" />
-                    ) : item.tipo === "entrada" ? (
-                      <UserPlus className="h-4 w-4" />
-                    ) : item.tipo === "pipeline" ? (
-                      <ArrowLeftRight className="h-4 w-4" />
-                    ) : item.tipo === "followup" ? (
-                      <ClipboardList className="h-4 w-4" />
-                    ) : (
-                      <Bot className="h-4 w-4" />
-                    )}
-                  </span>
+              {timeline.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-line/80 bg-surface-deep/25 px-4 py-10 text-center text-sm text-content-muted">
+                  Ainda não há eventos no histórico. Movimentações no funil, follow-ups e notas passam a aparecer aqui
+                  quando os registar no painel ou quando existir integração com canais externos.
+                </div>
+              ) : (
+                <>
                   <div
-                    className={cn(
-                      "min-w-0 flex-1 rounded-xl border bg-surface-card/90 p-3",
-                      item.tipo === "entrada"
-                        ? "border-primary/35 ring-1 ring-primary/10"
-                        : item.tipo === "followup"
-                          ? "border-primary/25 ring-1 ring-primary/5"
-                          : "border-line/90",
-                    )}
-                  >
-                    <p className={typography.ui.overline}>{item.at}</p>
-                    {item.titulo ? (
-                      <p className="mt-1 text-sm font-semibold text-content">{item.titulo}</p>
-                    ) : null}
-                    <p className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-content-secondary">
-                      {item.texto}
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                    className="absolute bottom-2 left-[15px] top-2 w-px bg-gradient-to-b from-line via-line to-transparent"
+                    aria-hidden
+                  />
+                  <ul className="relative space-y-3">
+                    {timeline.map((item) => (
+                      <li key={item.id} className="relative flex gap-3 pl-1">
+                        <span className="relative z-[1] mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-line bg-surface-card text-content-secondary">
+                          {item.tipo === "whatsapp" ? (
+                            <MessageCircle className="h-4 w-4" />
+                          ) : item.tipo === "email" ? (
+                            <Mail className="h-4 w-4" />
+                          ) : item.tipo === "nota" ? (
+                            <StickyNote className="h-4 w-4" />
+                          ) : item.tipo === "entrada" ? (
+                            <UserPlus className="h-4 w-4" />
+                          ) : item.tipo === "pipeline" ? (
+                            <ArrowLeftRight className="h-4 w-4" />
+                          ) : item.tipo === "followup" ? (
+                            <ClipboardList className="h-4 w-4" />
+                          ) : (
+                            <Bot className="h-4 w-4" />
+                          )}
+                        </span>
+                        <div
+                          className={cn(
+                            "min-w-0 flex-1 rounded-xl border bg-surface-card/90 p-3",
+                            item.tipo === "entrada"
+                              ? "border-primary/35 ring-1 ring-primary/10"
+                              : item.tipo === "followup"
+                                ? "border-primary/25 ring-1 ring-primary/5"
+                                : "border-line/90",
+                          )}
+                        >
+                          <p className={typography.ui.overline}>{item.at}</p>
+                          {item.titulo ? (
+                            <p className="mt-1 text-sm font-semibold text-content">{item.titulo}</p>
+                          ) : null}
+                          <p className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-content-secondary">
+                            {item.texto}
+                          </p>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
             </div>
           </div>
         ) : null}
