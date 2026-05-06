@@ -10,6 +10,17 @@ import { isUsableApiSecret } from "@/lib/integrations/server-secrets";
 
 export const dynamic = "force-dynamic";
 
+function supabaseTablePermissionHint(message: string, code: string | null | undefined): string | undefined {
+  const m = message.toLowerCase();
+  if (code === "42501" || m.includes("permission denied")) {
+    return (
+      "Confirme SUPABASE_SERVICE_ROLE_KEY: tem de ser o secret service_role (Dashboard → Settings → API), " +
+      "não NEXT_PUBLIC_SUPABASE_ANON_KEY. O URL NEXT_PUBLIC_SUPABASE_URL tem de ser do mesmo projeto."
+    );
+  }
+  return undefined;
+}
+
 function isValidOpenAiKeyFormat(key: string): boolean {
   const t = key.trim();
   if (t.length < 20) return false;
@@ -99,11 +110,13 @@ export async function PATCH(request: Request) {
     );
     if (error) {
       console.error("[admin/ai/openai-credentials] upsert", error.message, error.code);
+      const code = error.code ?? null;
       return NextResponse.json(
         {
           error: "Falha ao gravar no Supabase.",
           details: error.message,
-          code: error.code ?? null,
+          code,
+          hint: supabaseTablePermissionHint(error.message, code),
         },
         { status: 500 },
       );
@@ -143,8 +156,14 @@ export async function DELETE() {
       .eq("id", "global");
     if (error) {
       console.error("[admin/ai/openai-credentials] DELETE", error.message, error.code);
+      const code = error.code ?? null;
       return NextResponse.json(
-        { error: "Falha ao remover chave.", details: error.message, code: error.code ?? null },
+        {
+          error: "Falha ao remover chave.",
+          details: error.message,
+          code,
+          hint: supabaseTablePermissionHint(error.message, code),
+        },
         { status: 500 },
       );
     }

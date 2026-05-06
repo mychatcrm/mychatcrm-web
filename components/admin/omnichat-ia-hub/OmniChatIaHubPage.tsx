@@ -214,6 +214,7 @@ export function OmniChatIaHubPage() {
         error?: string;
         details?: string;
         code?: string | null;
+        hint?: string;
       } & Partial<OpenAiCredentialsPayload>;
       if (!res.ok) {
         const base = typeof data?.error === "string" ? data.error : "Falha ao guardar.";
@@ -221,7 +222,8 @@ export function OmniChatIaHubPage() {
           typeof data?.details === "string" && data.details.trim()
             ? ` ${data.details.trim()}${data.code ? ` (código: ${data.code})` : ""}`
             : "";
-        setCredErr(base + extra);
+        const hint = typeof data?.hint === "string" && data.hint.trim() ? ` ${data.hint.trim()}` : "";
+        setCredErr(base + extra + hint);
         return;
       }
       setOpenAiKeyInput("");
@@ -250,6 +252,7 @@ export function OmniChatIaHubPage() {
         error?: string;
         details?: string;
         code?: string | null;
+        hint?: string;
       } & Partial<OpenAiCredentialsPayload>;
       if (!res.ok) {
         const base = typeof data?.error === "string" ? data.error : "Falha ao remover.";
@@ -257,7 +260,8 @@ export function OmniChatIaHubPage() {
           typeof data?.details === "string" && data.details.trim()
             ? ` ${data.details.trim()}${data.code ? ` (código: ${data.code})` : ""}`
             : "";
-        setCredErr(base + extra);
+        const hint = typeof data?.hint === "string" && data.hint.trim() ? ` ${data.hint.trim()}` : "";
+        setCredErr(base + extra + hint);
         return;
       }
       setCredentials({
