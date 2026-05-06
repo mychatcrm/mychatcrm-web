@@ -45,7 +45,7 @@ export function HubOpenAiPanel({
           <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">OpenAI Platform</p>
           <h2 className="mt-1 text-lg font-semibold text-zinc-100">Conta oficial · billing</h2>
           <p className="mt-1 max-w-2xl text-xs text-zinc-400">
-            Dados da API de billing OpenAI. Distinto dos registos OmniChat em <code className="text-[10px] text-sky-300/90">ai_usage_logs</code>.
+            Dados da API de billing OpenAI. Distinto da telemetria interna de consumo do OmniChat.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

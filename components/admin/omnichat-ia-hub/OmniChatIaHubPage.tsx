@@ -212,18 +212,12 @@ export function OmniChatIaHubPage() {
       const data = (await res.json()) as {
         ok?: boolean;
         error?: string;
-        details?: string;
-        code?: string | null;
         hint?: string;
       } & Partial<OpenAiCredentialsPayload>;
       if (!res.ok) {
         const base = typeof data?.error === "string" ? data.error : "Falha ao guardar.";
-        const extra =
-          typeof data?.details === "string" && data.details.trim()
-            ? ` ${data.details.trim()}${data.code ? ` (código: ${data.code})` : ""}`
-            : "";
         const hint = typeof data?.hint === "string" && data.hint.trim() ? ` ${data.hint.trim()}` : "";
-        setCredErr(base + extra + hint);
+        setCredErr(base + hint);
         return;
       }
       setOpenAiKeyInput("");
@@ -250,18 +244,12 @@ export function OmniChatIaHubPage() {
       const data = (await res.json()) as {
         ok?: boolean;
         error?: string;
-        details?: string;
-        code?: string | null;
         hint?: string;
       } & Partial<OpenAiCredentialsPayload>;
       if (!res.ok) {
         const base = typeof data?.error === "string" ? data.error : "Falha ao remover.";
-        const extra =
-          typeof data?.details === "string" && data.details.trim()
-            ? ` ${data.details.trim()}${data.code ? ` (código: ${data.code})` : ""}`
-            : "";
         const hint = typeof data?.hint === "string" && data.hint.trim() ? ` ${data.hint.trim()}` : "";
-        setCredErr(base + extra + hint);
+        setCredErr(base + hint);
         return;
       }
       setCredentials({
@@ -378,27 +366,19 @@ export function OmniChatIaHubPage() {
               <p className="mt-1.5 text-zinc-400">
                 <strong className="text-zinc-200">Testar conexão</strong> só chama a API da OpenAI (<code className="rounded bg-black/30 px-1 text-[10px] text-zinc-300">/v1/models</code>) com a
                 chave já resolvida no servidor (muitas vezes <code className="text-[10px] text-sky-300/90">OPENAI_API_KEY</code> na Vercel).{" "}
-                <strong className="text-zinc-200">Conectar / guardar</strong> grava no Postgres do Supabase (tabela{" "}
-                <code className="text-[10px] text-zinc-400">admin_platform_openai</code>) — precisa de{" "}
+                <strong className="text-zinc-200">Conectar / guardar</strong> persiste a chave cifrada no armazenamento da plataforma (Supabase). Requer{" "}
                 <code className="text-[10px] text-zinc-400">SUPABASE_SERVICE_ROLE_KEY</code> como secret <em>service_role</em> (nunca a chave{" "}
-                <em>anon</em>) do <strong className="text-zinc-200">mesmo</strong> projecto que <code className="text-[10px] text-zinc-400">NEXT_PUBLIC_SUPABASE_URL</code>, migrações{" "}
-                <code className="text-[10px] text-zinc-500">20260507</code>, <code className="text-[10px] text-zinc-500">20260508</code>,{" "}
-                <code className="text-[10px] text-zinc-500">20260510–20260511</code> no Supabase, e redeploy na Vercel após alterar envs.
+                <em>anon</em>) do <strong className="text-zinc-200">mesmo</strong> projecto que <code className="text-[10px] text-zinc-400">NEXT_PUBLIC_SUPABASE_URL</code>, migrações de IA
+                aplicadas no Supabase (ordem em <code className="text-[10px] text-zinc-500">.env.example</code>) e redeploy na Vercel após alterar envs.
               </p>
             </div>
             {credErr ? (
               <div className="mt-2 space-y-2" role="alert">
                 <p className="text-sm text-rose-400">{credErr}</p>
-                {credErr.includes("Supabase") || credErr.includes("permission") || credErr.includes("does not exist") ? (
-                  <p className="text-[11px] leading-relaxed text-zinc-500">
-                    Em <strong className="text-zinc-400">produção</strong>: Vercel → Project → Settings → Environment Variables →{" "}
-                    <strong className="text-zinc-400">Production</strong> — confirme <code className="text-zinc-400">NEXT_PUBLIC_SUPABASE_URL</code> e{" "}
-                    <code className="text-zinc-400">SUPABASE_SERVICE_ROLE_KEY</code> (secret <strong>service_role</strong>, não <em>anon</em>). Local:{" "}
-                    <code className="text-zinc-400">.env.local</code>. No Supabase (SQL), aplique{" "}
-                    <code className="text-zinc-400">20260507</code> se a tabela não existir, e <code className="text-zinc-400">20260508 + 20260510 + 20260511</code> para
-                    políticas/GRANTs em <code className="text-zinc-400">admin_platform_openai</code> e <code className="text-zinc-400">ai_*</code>.
-                  </p>
-                ) : null}
+                <p className="text-[11px] leading-relaxed text-zinc-500">
+                  Em <strong className="text-zinc-400">produção</strong>: Vercel → Settings → Environment Variables → <strong className="text-zinc-400">Production</strong>.
+                  Local: <code className="text-zinc-400">.env.local</code>. Migrações listadas em <code className="text-zinc-400">.env.example</code> (bloco Supabase / IA).
+                </p>
               </div>
             ) : null}
             {credLoading && !credentials ? <div className="mt-4 h-16 animate-pulse rounded-xl bg-white/5" /> : null}
@@ -476,7 +456,7 @@ export function OmniChatIaHubPage() {
             <h2 className="text-sm font-semibold text-zinc-100">Estado em tempo real</h2>
             <div className="grid gap-3 sm:grid-cols-2">
               <StatusPill ok={Boolean(runtimeOk)} label="Chave resolvida" detail={integration ? keySourceLabel(integration.openAiKeySource) : "—"} />
-              <StatusPill ok={Boolean(logsOk)} label="ai_usage_logs" detail={integration?.aiUsageLogsError ?? "OK"} />
+              <StatusPill ok={Boolean(logsOk)} label="Telemetria" detail={integration?.aiUsageLogsError ?? "OK"} />
               <StatusPill ok={(integration?.requestsLast24h ?? 0) > 0} label="Pedidos 24h" detail={String(integration?.requestsLast24h ?? "0")} />
               <StatusPill ok={Boolean(integration?.lastSuccess)} label="Último sucesso" detail={integration?.lastSuccess ? `${integration.lastSuccess.tenantId} · ${integration.lastSuccess.agentId}` : "—"} />
             </div>
@@ -506,7 +486,7 @@ export function OmniChatIaHubPage() {
 
         <section className={cn(hubGlass, "p-5 sm:p-6")}>
           <h2 className="text-sm font-semibold text-zinc-100">Consumo OmniChat (interno)</h2>
-          <p className="mt-1 text-xs text-zinc-500">Fonte: ai_usage_logs no intervalo.</p>
+          <p className="mt-1 text-xs text-zinc-500">Fonte: registos de consumo da plataforma no intervalo seleccionado.</p>
           <div className="mt-4 flex flex-wrap gap-3">
             <Input type="date" className="border-white/10 bg-black/30 text-zinc-100" value={from} onChange={(e) => setFrom(e.target.value)} />
             <Input type="date" className="border-white/10 bg-black/30 text-zinc-100" value={to} onChange={(e) => setTo(e.target.value)} />
@@ -521,8 +501,8 @@ export function OmniChatIaHubPage() {
           </div>
           {overviewHealth && !overviewHealth.aiUsageLogsReachable ? (
             <div className="mt-4 rounded-xl border border-rose-500/35 bg-rose-500/10 p-4 text-xs text-rose-100">
-              <p className="font-medium">ai_usage_logs inacessível</p>
-              <p className="mt-1">{overviewHealth.aiUsageLogsError}</p>
+              <p className="font-medium">Consumo da plataforma indisponível</p>
+              <p className="mt-1 text-rose-50/95">{overviewHealth.aiUsageLogsError}</p>
               {overviewHealth.aiUsageLogsHint ? <p className="mt-2 text-amber-100/90">{overviewHealth.aiUsageLogsHint}</p> : null}
             </div>
           ) : null}
@@ -537,7 +517,7 @@ export function OmniChatIaHubPage() {
 
         <section className={cn(hubGlass, "p-5 sm:p-6")}>
           <h2 className="text-sm font-semibold text-zinc-100">Quotas · limites (preparação billing)</h2>
-          <p className="mt-1 text-xs text-zinc-500">Leitura de ai_usage_limits. Política no gateway pode ser ligada numa fase seguinte.</p>
+          <p className="mt-1 text-xs text-zinc-500">Limites por tenant (preparação para políticas no gateway).</p>
           {limitsHint ? <p className="mt-2 text-xs text-amber-200/90">{limitsHint}</p> : null}
           {limits.length === 0 ? (
             <p className="mt-4 text-sm text-zinc-500">Sem linhas activas.</p>

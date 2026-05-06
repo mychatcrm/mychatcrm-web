@@ -1,4 +1,4 @@
-import { buildAiUsageLogsAccessHint } from "@/lib/ai/supabase-ai-usage-logs-diagnostics";
+import { logAdminIaDataPlaneIssue, surfacePostgrestForAdminUi } from "@/lib/server/admin-ia-data-plane-errors";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export type AiRangeQuery = {
@@ -40,21 +40,30 @@ function applyCommonFilters<T extends { eq: Function; gte: Function; lte: Functi
 export type AiOverviewHealth = {
   /** A tabela existe e a query base não falhou (ex.: migração aplicada, service role válido). */
   aiUsageLogsReachable: boolean;
-  /** Mensagem curta do Postgres/Supabase (sem segredos). */
+  /** Mensagem segura para o painel (sem SQL nem nomes de tabelas). */
   aiUsageLogsError: string | null;
-  /** Dica accionável quando há erro (ex.: permission denied, tabela em falta). */
+  /** Orientação operacional genérica. */
   aiUsageLogsHint: string | null;
 };
 
 export async function getAiOverview(range: AiRangeQuery) {
   const sb = createSupabaseServiceClient();
   const probe = await sb.from("ai_usage_logs").select("id").limit(1);
-  const errMsg = probe.error?.message ?? null;
-  const health: AiOverviewHealth = {
-    aiUsageLogsReachable: !probe.error,
-    aiUsageLogsError: errMsg,
-    aiUsageLogsHint: buildAiUsageLogsAccessHint(errMsg),
-  };
+  let health: AiOverviewHealth;
+  if (probe.error) {
+    logAdminIaDataPlaneIssue("overview health probe", {
+      message: probe.error.message,
+      code: probe.error.code,
+    });
+    const surf = surfacePostgrestForAdminUi(probe.error.message, probe.error.code ?? null);
+    health = {
+      aiUsageLogsReachable: false,
+      aiUsageLogsError: surf.headline,
+      aiUsageLogsHint: surf.guidance,
+    };
+  } else {
+    health = { aiUsageLogsReachable: true, aiUsageLogsError: null, aiUsageLogsHint: null };
+  }
 
   const q = applyCommonFilters(
     sb.from("ai_usage_logs").select(
@@ -270,7 +279,9 @@ export async function getAiUsageLimitsSnapshot(): Promise<
     .order("updated_at", { ascending: false })
     .limit(200);
   if (error) {
-    return { rows: [], error: error.message };
+    logAdminIaDataPlaneIssue("usage-limits snapshot", { message: error.message, code: error.code });
+    const surf = surfacePostgrestForAdminUi(error.message, error.code ?? null);
+    return { rows: [], error: surf.headline + (surf.guidance ? ` ${surf.guidance}` : "") };
   }
   return { rows: (data ?? []) as AiUsageLimitRow[], error: null };
 }

@@ -5,21 +5,11 @@ import { getAdminOpenAiCredentialStatus, invalidateOpenAiApiKeyCache } from "@/l
 import { logAdminIaAudit } from "@/lib/server/admin-ia-audit";
 import { encryptOpenAiKeyForStorage } from "@/lib/server/platform-openai-key-crypto";
 import { getPlatformOpenAiEncryptionSecret } from "@/lib/server/platform-openai-encryption-secret";
+import { logAdminIaDataPlaneIssue, surfacePostgrestForAdminUi } from "@/lib/server/admin-ia-data-plane-errors";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { isUsableApiSecret } from "@/lib/integrations/server-secrets";
 
 export const dynamic = "force-dynamic";
-
-function supabaseTablePermissionHint(message: string, code: string | null | undefined): string | undefined {
-  const m = message.toLowerCase();
-  if (code === "42501" || m.includes("permission denied")) {
-    return (
-      "Confirme SUPABASE_SERVICE_ROLE_KEY: tem de ser o secret service_role (Dashboard → Settings → API), " +
-      "não NEXT_PUBLIC_SUPABASE_ANON_KEY. O URL NEXT_PUBLIC_SUPABASE_URL tem de ser do mesmo projeto."
-    );
-  }
-  return undefined;
-}
 
 function isValidOpenAiKeyFormat(key: string): boolean {
   const t = key.trim();
@@ -42,9 +32,10 @@ export async function GET() {
     const status = await getAdminOpenAiCredentialStatus();
     return NextResponse.json(status, { headers: { "Cache-Control": "no-store" } });
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "Erro ao ler credenciais.";
-    console.error("[admin/ai/openai-credentials] GET", msg);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const raw = e instanceof Error ? e.message : "Erro ao ler credenciais.";
+    logAdminIaDataPlaneIssue("openai-credentials GET catch", { message: raw, code: null });
+    const surf = surfacePostgrestForAdminUi(raw, null);
+    return NextResponse.json({ error: surf.headline, hint: surf.guidance }, { status: 500 });
   }
 }
 
@@ -109,22 +100,18 @@ export async function PATCH(request: Request) {
       { onConflict: "id" },
     );
     if (error) {
-      console.error("[admin/ai/openai-credentials] upsert", error.message, error.code);
-      const code = error.code ?? null;
+      logAdminIaDataPlaneIssue("openai-credentials upsert", { message: error.message, code: error.code });
+      const surf = surfacePostgrestForAdminUi(error.message, error.code ?? null);
       return NextResponse.json(
-        {
-          error: "Falha ao gravar no Supabase.",
-          details: error.message,
-          code,
-          hint: supabaseTablePermissionHint(error.message, code),
-        },
+        { error: "Não foi possível gravar a chave no armazenamento da plataforma.", hint: surf.guidance ?? surf.headline },
         { status: 500 },
       );
     }
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "Supabase indisponível.";
-    console.error("[admin/ai/openai-credentials] PATCH", msg);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const raw = e instanceof Error ? e.message : "Supabase indisponível.";
+    logAdminIaDataPlaneIssue("openai-credentials PATCH catch", { message: raw, code: null });
+    const surf = surfacePostgrestForAdminUi(raw, null);
+    return NextResponse.json({ error: surf.headline, hint: surf.guidance }, { status: 500 });
   }
 
   invalidateOpenAiApiKeyCache();
@@ -155,21 +142,18 @@ export async function DELETE() {
       .update({ openai_api_key_ciphertext: null, updated_at: new Date().toISOString() })
       .eq("id", "global");
     if (error) {
-      console.error("[admin/ai/openai-credentials] DELETE", error.message, error.code);
-      const code = error.code ?? null;
+      logAdminIaDataPlaneIssue("openai-credentials DELETE", { message: error.message, code: error.code });
+      const surf = surfacePostgrestForAdminUi(error.message, error.code ?? null);
       return NextResponse.json(
-        {
-          error: "Falha ao remover chave.",
-          details: error.message,
-          code,
-          hint: supabaseTablePermissionHint(error.message, code),
-        },
+        { error: "Não foi possível remover a chave do armazenamento da plataforma.", hint: surf.guidance ?? surf.headline },
         { status: 500 },
       );
     }
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "Supabase indisponível.";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const raw = e instanceof Error ? e.message : "Supabase indisponível.";
+    logAdminIaDataPlaneIssue("openai-credentials DELETE catch", { message: raw, code: null });
+    const surf = surfacePostgrestForAdminUi(raw, null);
+    return NextResponse.json({ error: surf.headline, hint: surf.guidance }, { status: 500 });
   }
 
   invalidateOpenAiApiKeyCache();
