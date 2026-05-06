@@ -93,6 +93,8 @@ if (!anon) {
   if (anon.startsWith("sb_secret_")) {
     issues.push("NEXT_PUBLIC_SUPABASE_ANON_KEY não pode ser sb_secret_* — use a chave anon/publishable.");
     ok = false;
+  } else if (anon.startsWith("sb_publishable_")) {
+    notes.push("NEXT_PUBLIC_SUPABASE_ANON_KEY: formato sb_publishable_* (Supabase novo) — OK.");
   } else {
     const adec = decodeJwtRole(anon);
     if (adec.kind === "jwt" && adec.role === "service_role") {

@@ -93,4 +93,11 @@ describe("createSupabaseAnonClient public key validation", () => {
     const { createSupabaseAnonClient } = await import("@/lib/supabase/server");
     expect(() => createSupabaseAnonClient()).not.toThrow();
   });
+
+  it("accepts sb_publishable_* public key without JWT parsing", async () => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "sb_publishable_abcdefghijklmnopqrst";
+    const { createSupabaseAnonClient } = await import("@/lib/supabase/server");
+    expect(() => createSupabaseAnonClient()).not.toThrow();
+  });
 });

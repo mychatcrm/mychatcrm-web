@@ -1,17 +1,26 @@
 /**
  * Validação de credenciais Supabase no servidor.
- * Suporta JWT legacy `service_role` e novas secret keys opacas `sb_secret_*`.
+ * Suporta JWT legacy `service_role` / `anon` e chaves opacas `sb_secret_*` (servidor) e `sb_publishable_*` (público).
  * Nunca regista nem expõe valores de chaves.
  */
 import { Buffer } from "node:buffer";
 
 let opaqueBackendCredentialLogged = false;
+let publishableAnonCredentialLogged = false;
 
 function logOpaqueBackendCredentialOnce(): void {
   if (opaqueBackendCredentialLogged) return;
   opaqueBackendCredentialLogged = true;
   console.info(
     "[supabase/server] SUPABASE_SERVICE_ROLE_KEY: formato secret Supabase (sb_secret_*). Validação local de JWT omitida; permissões efectivas vêm da API Supabase.",
+  );
+}
+
+function logPublishableAnonCredentialOnce(): void {
+  if (publishableAnonCredentialLogged) return;
+  publishableAnonCredentialLogged = true;
+  console.info(
+    "[supabase/server] NEXT_PUBLIC_SUPABASE_ANON_KEY: formato publishable (sb_publishable_*). Validação local de JWT omitida.",
   );
 }
 
@@ -86,6 +95,11 @@ export function assertSupabaseAnonPublicKeyForBrowser(apiKey: string): void {
     throw new Error(
       "[supabase/server] NEXT_PUBLIC_SUPABASE_ANON_KEY não pode ser sb_secret_* (secret de serviço). Use a chave anon / publishable do separador API.",
     );
+  }
+
+  if (k.startsWith("sb_publishable_")) {
+    logPublishableAnonCredentialOnce();
+    return;
   }
 
   const parts = k.split(".");
