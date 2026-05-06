@@ -107,18 +107,51 @@ export async function evolutionCreateInstance(params: {
   });
 }
 
-export type EvolutionConnectResponse = {
-  pairingCode?: string;
-  code?: string;
-  count?: number;
-};
+/** Resposta de `GET /instance/connect/{instance}` — formato varia entre 2.1.x e 2.3.x (ver `evolution-connect-qr.ts`). */
+export type EvolutionConnectResponse = Record<string, unknown>;
 
-/** Obtém QR (campo `code` costuma ser base64 da imagem ou payload de emparelhamento). */
+/** Obtém dados de emparelhamento / QR (normalizar com `normalizeInstanceConnectToQrDataUrl`). */
 export async function evolutionInstanceConnect(
   instanceName: string,
 ): Promise<EvolutionFetchResult<EvolutionConnectResponse>> {
   const enc = encodeURIComponent(instanceName);
   return evolutionFetchJson<EvolutionConnectResponse>(`/instance/connect/${enc}`, { method: "GET" });
+}
+
+const PING_TIMEOUT_MS = 6000;
+
+/**
+ * Verifica se a Evolution responde na rede (sem expor segredos na resposta ao cliente).
+ * Usa `GET /instance/fetchInstances` quando existir; caso contrário `GET /` na base.
+ */
+export async function evolutionPing(): Promise<{ reachable: true } | { reachable: false; error: string }> {
+  const { baseUrl, apiKey } = evolutionConfig();
+  if (!baseUrl || !apiKey) {
+    return { reachable: false, error: "not_configured" };
+  }
+  const paths = ["/instance/fetchInstances", "/"];
+  let lastErr = "unreachable";
+  for (const path of paths) {
+    const url = `${baseUrl}${path}`;
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), PING_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        signal: ac.signal,
+        headers: { apikey: apiKey, Accept: "application/json" },
+      });
+      if (res.status >= 200 && res.status < 600) {
+        return { reachable: true };
+      }
+      lastErr = `http_${res.status}`;
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : "fetch_failed";
+    } finally {
+      clearTimeout(t);
+    }
+  }
+  return { reachable: false, error: lastErr };
 }
 
 export type EvolutionConnectionStateResponse = {

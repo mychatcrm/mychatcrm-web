@@ -122,6 +122,19 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
 
   const bump = useCallback(() => setRevision((r) => r + 1), []);
 
+  const prefetchEvolutionSessionForSlot = useCallback(async (slotIndex: number) => {
+    try {
+      await fetch("/api/client/whatsapp/evolution/session", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slotIndex }),
+      });
+    } catch {
+      /* ignorar — EvolutionQrSlotPanel faz GET/POST de seguida */
+    }
+  }, []);
+
   useEffect(() => {
     bump();
   }, [bump, tenantId]);
@@ -566,8 +579,9 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
             </div>
           ) : null}
           <p className="text-sm text-content-secondary">
-            <strong className="text-content">QR Code</strong> e ideal para testar rapido no telemovel. <strong className="text-content">API oficial da Meta</strong> e o caminho certo para
-            empresas com numero verificado e templates aprovados. So aparecem as linhas que o seu plano cobre — nao e possivel ligar mais numeros sem contratar.
+            <strong className="text-content">QR Code</strong> neste painel liga-se <strong className="text-content">directamente à tua Evolution API na VPS</strong>: o servidor MyChatCRM cria a
+            instância, pede o QR e mostra-o aqui (sem gerar QR no browser). A <strong className="text-content">API oficial da Meta</strong> continua a ser o caminho certo para empresas com
+            número verificado e templates aprovados. Só aparecem as linhas que o plano cobre.
           </p>
           <div className="space-y-5">
             {waSlots.map((method, slotIndex) => {
@@ -604,7 +618,10 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                       <div className="grid gap-3 sm:grid-cols-2">
                         <button
                           type="button"
-                          onClick={() => setWhatsAppSlotMethod(tenantId, slotIndex, "qr")}
+                          onClick={async () => {
+                            await prefetchEvolutionSessionForSlot(slotIndex);
+                            setWhatsAppSlotMethod(tenantId, slotIndex, "qr");
+                          }}
                           className={cn(
                             "flex min-h-[44px] flex-col items-start gap-2 rounded-xl border p-4 text-left transition",
                             "border-line bg-surface-elevated/40 hover:border-line/80 hover:bg-surface-elevated/60",
@@ -634,7 +651,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                     ) : null}
                     {method === "qr" ? (
                       <div className="space-y-3">
-                        <EvolutionQrSlotPanel slotIndex={slotIndex} />
+                        <EvolutionQrSlotPanel key={`evo-qr-${tenantId}-${slotIndex}`} slotIndex={slotIndex} />
                         <div className="flex flex-wrap gap-2">
                           <Button
                             type="button"

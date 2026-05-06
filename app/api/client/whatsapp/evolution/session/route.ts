@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
+import { normalizeInstanceConnectToQrDataUrl } from "@/lib/integrations/evolution-connect-qr";
 import { buildEvolutionWebhookUrl, getPublicBaseUrlFromRequest } from "@/lib/integrations/evolution-webhook-url";
 import {
   buildEvolutionInstanceName,
@@ -18,12 +19,6 @@ import {
 import { assertSlotIndexAllowed } from "@/lib/server/whatsapp-slot-server";
 
 export const dynamic = "force-dynamic";
-
-function qrCodeToDataUrl(code: string): string {
-  const trimmed = code.trim();
-  if (trimmed.startsWith("data:image")) return trimmed;
-  return `data:image/png;base64,${trimmed}`;
-}
 
 /**
  * POST — cria/reaproveita instância Evolution, configura webhook e devolve QR + estado.
@@ -117,8 +112,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const code = connectRes.data.code;
-  const qrDataUrl = typeof code === "string" && code.length > 0 ? qrCodeToDataUrl(code) : null;
+  const qrDataUrl = normalizeInstanceConnectToQrDataUrl(connectRes.data as unknown);
 
   return NextResponse.json({
     instanceName,
@@ -172,8 +166,8 @@ export async function GET(request: Request) {
   }
 
   const connectRes = await evolutionInstanceConnect(row.instance_name);
-  const code = connectRes.ok && typeof connectRes.data.code === "string" ? connectRes.data.code : null;
-  const qrDataUrl = code && code.length > 0 ? qrCodeToDataUrl(code) : null;
+  const qrDataUrl =
+    connectRes.ok ? normalizeInstanceConnectToQrDataUrl(connectRes.data as unknown) : null;
 
   return NextResponse.json({
     instanceName: row.instance_name,
