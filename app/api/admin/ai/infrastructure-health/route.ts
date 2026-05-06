@@ -67,6 +67,7 @@ export async function GET() {
 
   let connectivity: AdminIaInfrastructureHealthPayload["connectivity"];
 
+  // opaque_secret e service_role: tentar cliente admin (validação completa em supabase-backend-secret.ts).
   if (tier === "missing") connectivity = "missing_backend_key";
   else if (tier === "non_jwt") connectivity = "malformed_backend_key";
   else if (tier === "non_service_role") connectivity = "wrong_backend_key";

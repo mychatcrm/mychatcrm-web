@@ -42,6 +42,14 @@ export function surfacePostgrestForAdminUi(
   const m = norm(rawMessage);
   const code = rawCode?.trim() ?? "";
 
+  if (m.includes("[supabase/server]") || (m.includes("supabase") && m.includes("não definida"))) {
+    return {
+      headline: "Configuração da ligação à base de dados no servidor está incorrecta.",
+      guidance:
+        "No alojamento, confirme que NEXT_PUBLIC_SUPABASE_ANON_KEY é só a chave pública e SUPABASE_SERVICE_ROLE_KEY é a secret de serviço (JWT com privilégio service_role ou a nova secret sb_secret_*) do mesmo projecto. Não inverta nem reutilize a mesma string nas duas variáveis.",
+    };
+  }
+
   if (code === "42501" || m.includes("permission denied")) {
     return {
       headline: "Sem permissão para aceder aos dados da plataforma no servidor.",

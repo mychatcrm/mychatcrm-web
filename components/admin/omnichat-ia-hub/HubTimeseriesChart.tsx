@@ -16,15 +16,19 @@ import { cn } from "@/lib/utils";
 type Props = {
   series: AiTimeseriesPoint[];
   className?: string;
+  /** true = telemetria legível; false = bloqueada; undefined = ainda sem sinal (mostra texto neutro). */
+  telemetryReachable?: boolean;
 };
 
-export function HubTimeseriesChart({ series, className }: Props) {
+export function HubTimeseriesChart({ series, className, telemetryReachable }: Props) {
   const data = series.map((p) => ({
     ...p,
     label: p.day.slice(5),
   }));
 
   if (data.length === 0) {
+    const blocked = telemetryReachable === false;
+    const ok = telemetryReachable === true;
     return (
       <div
         className={cn(
@@ -38,8 +42,23 @@ export function HubTimeseriesChart({ series, className }: Props) {
           <div className="mx-auto h-12 w-12 rounded-2xl border border-white/10 bg-white/[0.04] shadow-inner" />
           <p className="text-sm font-medium text-zinc-200">Sem actividade no período</p>
           <p className="max-w-sm text-xs leading-relaxed text-zinc-500">
-            Quando existir tráfego nos agentes (ex. <span className="font-mono text-[10px] text-zinc-400">/api/chat</span>), o consumo diário aparece aqui. Se a telemetria estiver
-            bloqueada, execute o diagnóstico de ligação acima.
+            {blocked ? (
+              <>
+                A telemetria interna não está acessível no servidor (permissões ou configuração). Use{" "}
+                <span className="text-zinc-300">Diagnóstico de ligação</span> acima e confirme a chave privilegiada da base no ambiente de alojamento.
+              </>
+            ) : ok ? (
+              <>
+                A leitura da telemetria está OK; não há pedidos registados neste intervalo de datas. Gere tráfego real (ex.{" "}
+                <span className="font-mono text-[10px] text-zinc-400">POST /api/chat</span>) ou alargue as datas. Se esperava dados e continua vazio, confira o filtro de
+                estado e volte a revalidar a integração.
+              </>
+            ) : (
+              <>
+                Quando existir tráfego nos agentes (ex. <span className="font-mono text-[10px] text-zinc-400">/api/chat</span>), o consumo diário aparece aqui. Se a telemetria
+                estiver bloqueada, execute o <span className="text-zinc-300">Diagnóstico de ligação</span> acima após carregar o painel.
+              </>
+            )}
           </p>
         </div>
       </div>

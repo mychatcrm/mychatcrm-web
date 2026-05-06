@@ -1,9 +1,14 @@
 /**
  * Supabase client para uso em Server Components, API Routes e Server Actions.
- * Usa a service_role key — nunca exposta ao browser.
+ * Usa `SUPABASE_SERVICE_ROLE_KEY` — nunca exposta ao browser.
  */
-import { Buffer } from "node:buffer";
 import { createClient } from "@supabase/supabase-js";
+import {
+  assertSupabaseAnonPublicKeyForBrowser,
+  assertSupabaseBackendSecretKeyForServiceClient,
+  assertSupabaseKeysNotSwapped,
+  assertSupabaseProjectUrl,
+} from "@/lib/server/supabase-backend-secret";
 
 function getEnv(name: string): string {
   const v = process.env[name]?.trim();
@@ -11,46 +16,26 @@ function getEnv(name: string): string {
   return v;
 }
 
-/**
- * Chaves do Supabase são JWTs. Se `SUPABASE_SERVICE_ROLE_KEY` for a chave **anon**,
- * o PostgREST usa role `anon` e devolve 42501 em tabelas só para service_role.
- */
-function assertServiceRoleSupabaseJwt(apiKey: string): void {
-  const parts = apiKey.split(".");
-  if (parts.length !== 3) return;
-  let role: string | undefined;
-  try {
-    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const pad = "=".repeat((4 - (b64.length % 4)) % 4);
-    const json = Buffer.from(b64 + pad, "base64").toString("utf8");
-    role = (JSON.parse(json) as { role?: string }).role;
-  } catch {
-    return;
-  }
-  if (!role || role === "service_role") return;
-  throw new Error(
-    `[supabase/server] SUPABASE_SERVICE_ROLE_KEY tem JWT com role "${role}" (precisa "service_role"). ` +
-      "No Supabase: Settings → API → copie o secret **service_role** (não use **anon** / NEXT_PUBLIC_SUPABASE_ANON_KEY). " +
-      "O URL tem de ser o mesmo projecto que NEXT_PUBLIC_SUPABASE_URL.",
-  );
-}
-
 /** Client com privilégio total (bypass RLS) — usar apenas em código servidor. */
 export function createSupabaseServiceClient() {
+  const url = getEnv("NEXT_PUBLIC_SUPABASE_URL");
+  assertSupabaseProjectUrl(url);
+  assertSupabaseKeysNotSwapped();
   const serviceKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
-  assertServiceRoleSupabaseJwt(serviceKey);
-  return createClient(getEnv("NEXT_PUBLIC_SUPABASE_URL"), serviceKey, {
+  assertSupabaseBackendSecretKeyForServiceClient(serviceKey);
+  return createClient(url, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
 
 /** Client com a chave pública (anon) — para leituras permitidas via RLS. */
 export function createSupabaseAnonClient() {
-  return createClient(
-    getEnv("NEXT_PUBLIC_SUPABASE_URL"),
-    getEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
-    {
-      auth: { persistSession: false, autoRefreshToken: false },
-    },
-  );
+  const url = getEnv("NEXT_PUBLIC_SUPABASE_URL");
+  assertSupabaseProjectUrl(url);
+  const anon = getEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  assertSupabaseAnonPublicKeyForBrowser(anon);
+  assertSupabaseKeysNotSwapped();
+  return createClient(url, anon, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
 }

@@ -1,6 +1,8 @@
 /**
  * Inspecção da configuração do backend Supabase **sem** criar cliente nem logar segredos.
  * Usado pelo diagnóstico admin (`/api/admin/ai/infrastructure-health`).
+ *
+ * `opaque_secret` (prefixo `sb_secret_*`) é formato administrativo válido em paralelo ao JWT legacy `service_role`.
  */
 import { Buffer } from "node:buffer";
 

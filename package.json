@@ -21,7 +21,8 @@
     "clean:report": "tsx scripts/cleanup-engine/executeCleanup.ts report",
     "clean:safe": "tsx scripts/cleanup-engine/executeCleanup.ts safe",
     "clean:deep": "tsx scripts/cleanup-engine/executeCleanup.ts deep",
-    "resend:push-vercel": "node scripts/push-resend-to-vercel.mjs"
+    "resend:push-vercel": "node scripts/push-resend-to-vercel.mjs",
+    "verify:ia-env": "node scripts/verify-ia-hub-env.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

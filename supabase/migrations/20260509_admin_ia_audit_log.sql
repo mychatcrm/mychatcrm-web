@@ -20,3 +20,5 @@ alter table public.admin_ia_audit_log enable row level security;
 drop policy if exists "service_role_full_access" on public.admin_ia_audit_log;
 create policy "service_role_full_access" on public.admin_ia_audit_log
   for all to service_role using (true) with check (true);
+
+grant all on table public.admin_ia_audit_log to service_role;

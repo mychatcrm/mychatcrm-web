@@ -15,4 +15,15 @@ describe("surfacePostgrestForAdminUi", () => {
     expect(s.headline.toLowerCase()).not.toContain("ai_usage");
     expect(s.guidance!.toLowerCase()).toContain("migrações");
   });
+
+  it("maps supabase server config errors without echoing env names in headline", () => {
+    const s = surfacePostgrestForAdminUi(
+      '[supabase/server] SUPABASE_SERVICE_ROLE_KEY tem role JWT "anon"',
+      null,
+    );
+    expect(s.headline.toLowerCase()).not.toContain("anon");
+    expect(s.headline.toLowerCase()).not.toContain("jwt");
+    expect(s.guidance!.toLowerCase()).toContain("anon");
+    expect(s.guidance!.toLowerCase()).toContain("sb_secret");
+  });
 });

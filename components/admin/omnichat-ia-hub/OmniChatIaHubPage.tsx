@@ -111,6 +111,16 @@ export function OmniChatIaHubPage() {
     return p.toString();
   }, [from, to, status]);
 
+  const telemetryReachableForChart = useMemo((): boolean | undefined => {
+    if (integration?.aiUsageLogsReachable === false) return false;
+    if (overviewHealth?.aiUsageLogsReachable === false) return false;
+    if (infraHealth?.dataPlane.consumptionReadable === false) return false;
+    if (infraHealth?.connectivity === "healthy" && infraHealth.dataPlane.consumptionReadable) return true;
+    if (integration?.aiUsageLogsReachable === true) return true;
+    if (overviewHealth?.aiUsageLogsReachable === true) return true;
+    return undefined;
+  }, [integration, overviewHealth, infraHealth]);
+
   const loadTimeseries = useCallback(async () => {
     try {
       const res = await fetch(`/api/admin/ai/timeseries?${query}`, { credentials: "include", cache: "no-store" });
@@ -474,7 +484,7 @@ export function OmniChatIaHubPage() {
           ) : null}
         </motion.section>
 
-        <HubTimeseriesChart series={timeseries} />
+        <HubTimeseriesChart series={timeseries} telemetryReachable={telemetryReachableForChart} />
 
         <HubOpenAiPanel
           openAi={openAi}
