@@ -373,17 +373,30 @@ export function OmniChatIaHubPage() {
           >
             <h2 className="text-sm font-semibold text-zinc-100">API Key · ligação</h2>
             <p className="mt-1 text-xs text-zinc-500">Valor nunca exposto completo. Cifra no servidor.</p>
+            <div className="mt-3 rounded-xl border border-sky-500/25 bg-sky-500/[0.07] p-3 text-[11px] leading-relaxed text-zinc-300">
+              <p className="font-semibold text-sky-200/95">Porque o teste pode dar certo e guardar falhar</p>
+              <p className="mt-1.5 text-zinc-400">
+                <strong className="text-zinc-200">Testar conexão</strong> só chama a API da OpenAI (<code className="rounded bg-black/30 px-1 text-[10px] text-zinc-300">/v1/models</code>) com a
+                chave já resolvida no servidor (muitas vezes <code className="text-[10px] text-sky-300/90">OPENAI_API_KEY</code> na Vercel).{" "}
+                <strong className="text-zinc-200">Conectar / guardar</strong> grava no Postgres do Supabase (tabela{" "}
+                <code className="text-[10px] text-zinc-400">admin_platform_openai</code>) — precisa de{" "}
+                <code className="text-[10px] text-zinc-400">SUPABASE_SERVICE_ROLE_KEY</code> como secret <em>service_role</em> (nunca a chave{" "}
+                <em>anon</em>) do <strong className="text-zinc-200">mesmo</strong> projecto que <code className="text-[10px] text-zinc-400">NEXT_PUBLIC_SUPABASE_URL</code>, migrações{" "}
+                <code className="text-[10px] text-zinc-500">20260507</code>, <code className="text-[10px] text-zinc-500">20260508</code>,{" "}
+                <code className="text-[10px] text-zinc-500">20260510–20260511</code> no Supabase, e redeploy na Vercel após alterar envs.
+              </p>
+            </div>
             {credErr ? (
               <div className="mt-2 space-y-2" role="alert">
                 <p className="text-sm text-rose-400">{credErr}</p>
                 {credErr.includes("Supabase") || credErr.includes("permission") || credErr.includes("does not exist") ? (
                   <p className="text-[11px] leading-relaxed text-zinc-500">
-                    Confirme no <code className="text-zinc-400">.env.local</code>:{" "}
-                    <code className="text-zinc-400">NEXT_PUBLIC_SUPABASE_URL</code> e{" "}
-                    <code className="text-zinc-400">SUPABASE_SERVICE_ROLE_KEY</code> (secret <strong>service_role</strong> do mesmo
-                    projecto — não use a chave <em>anon</em>). No Supabase remoto, aplique a migração{" "}
-                    <code className="text-zinc-400">20260507_admin_platform_openai.sql</code> se a tabela{" "}
-                    <code className="text-zinc-400">admin_platform_openai</code> não existir.
+                    Em <strong className="text-zinc-400">produção</strong>: Vercel → Project → Settings → Environment Variables →{" "}
+                    <strong className="text-zinc-400">Production</strong> — confirme <code className="text-zinc-400">NEXT_PUBLIC_SUPABASE_URL</code> e{" "}
+                    <code className="text-zinc-400">SUPABASE_SERVICE_ROLE_KEY</code> (secret <strong>service_role</strong>, não <em>anon</em>). Local:{" "}
+                    <code className="text-zinc-400">.env.local</code>. No Supabase (SQL), aplique{" "}
+                    <code className="text-zinc-400">20260507</code> se a tabela não existir, e <code className="text-zinc-400">20260508 + 20260510 + 20260511</code> para
+                    políticas/GRANTs em <code className="text-zinc-400">admin_platform_openai</code> e <code className="text-zinc-400">ai_*</code>.
                   </p>
                 ) : null}
               </div>
