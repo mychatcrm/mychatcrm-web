@@ -200,3 +200,77 @@ export async function getAiAlerts(range: AiRangeQuery) {
     .limit(200);
   return data ?? [];
 }
+
+export type AiTimeseriesPoint = {
+  day: string;
+  requests: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  successCount: number;
+  errorCount: number;
+};
+
+/**
+ * Agregação diária a partir de `ai_usage_logs` no intervalo (para gráficos do hub OmniChat).
+ */
+export async function getAiTimeseries(range: AiRangeQuery): Promise<AiTimeseriesPoint[]> {
+  const sb = createSupabaseServiceClient();
+  const q = applyCommonFilters(
+    sb.from("ai_usage_logs").select("created_at,total_tokens,estimated_cost_usd,status"),
+    range,
+  );
+  const { data, error } = await q;
+  if (error || !data || data.length === 0) {
+    return [];
+  }
+  const byDay = new Map<string, { requests: number; tokens: number; cost: number; ok: number; err: number }>();
+  for (const row of data) {
+    const created = String(row.created_at ?? "");
+    const day = created.length >= 10 ? created.slice(0, 10) : "unknown";
+    const cur = byDay.get(day) ?? { requests: 0, tokens: 0, cost: 0, ok: 0, err: 0 };
+    cur.requests += 1;
+    cur.tokens += Number(row.total_tokens ?? 0);
+    cur.cost += Number(row.estimated_cost_usd ?? 0);
+    if (String(row.status) === "success") cur.ok += 1;
+    else cur.err += 1;
+    byDay.set(day, cur);
+  }
+  return Array.from(byDay.entries())
+    .map(([day, v]) => ({
+      day,
+      requests: v.requests,
+      totalTokens: v.tokens,
+      estimatedCostUsd: Math.round(v.cost * 1_000_000) / 1_000_000,
+      successCount: v.ok,
+      errorCount: v.err,
+    }))
+    .sort((a, b) => a.day.localeCompare(b.day));
+}
+
+export type AiUsageLimitRow = {
+  id: number;
+  tenant_id: string;
+  agent_id: string | null;
+  daily_tokens_hard: number | null;
+  monthly_tokens_hard: number | null;
+  daily_cost_usd_hard: number | null;
+  monthly_cost_usd_hard: number | null;
+  active: boolean;
+  updated_at: string;
+};
+
+export async function getAiUsageLimitsSnapshot(): Promise<
+  { rows: AiUsageLimitRow[]; error: null } | { rows: []; error: string }
+> {
+  const sb = createSupabaseServiceClient();
+  const { data, error } = await sb
+    .from("ai_usage_limits")
+    .select("id,tenant_id,agent_id,daily_tokens_hard,monthly_tokens_hard,daily_cost_usd_hard,monthly_cost_usd_hard,active,updated_at")
+    .eq("active", true)
+    .order("updated_at", { ascending: false })
+    .limit(200);
+  if (error) {
+    return { rows: [], error: error.message };
+  }
+  return { rows: (data ?? []) as AiUsageLimitRow[], error: null };
+}

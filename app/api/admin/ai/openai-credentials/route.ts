@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
+import { checkAdminIaRateLimit } from "@/lib/admin-ai-rate-limit";
 import { getAdminOpenAiCredentialStatus, invalidateOpenAiApiKeyCache } from "@/lib/ai/openai-api-key";
+import { logAdminIaAudit } from "@/lib/server/admin-ia-audit";
 import { encryptOpenAiKeyForStorage } from "@/lib/server/platform-openai-key-crypto";
 import { getPlatformOpenAiEncryptionSecret } from "@/lib/server/platform-openai-encryption-secret";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
@@ -20,6 +22,10 @@ export async function GET() {
   if (!hasAdminAccess(session, "ia")) {
     return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
   }
+  const rl = checkAdminIaRateLimit(session, "openai-credentials-get", 120, 60_000);
+  if (!rl.ok) {
+    return NextResponse.json({ error: rl.message }, { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } });
+  }
 
   try {
     const status = await getAdminOpenAiCredentialStatus();
@@ -36,6 +42,10 @@ export async function PATCH(request: Request) {
   if (!session) return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
   if (!hasAdminAccess(session, "ia")) {
     return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
+  }
+  const rl = checkAdminIaRateLimit(session, "openai-credentials-patch", 10, 60_000);
+  if (!rl.ok) {
+    return NextResponse.json({ error: rl.message }, { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } });
   }
 
   const secret = getPlatformOpenAiEncryptionSecret();
@@ -99,6 +109,11 @@ export async function PATCH(request: Request) {
 
   invalidateOpenAiApiKeyCache();
   const status = await getAdminOpenAiCredentialStatus();
+  void logAdminIaAudit({
+    adminId: session.adminId,
+    action: "openai_credentials_patch",
+    detail: { effectiveSource: status.effectiveSource, databaseConfigured: status.databaseConfigured },
+  });
   return NextResponse.json({ ok: true, ...status });
 }
 
@@ -107,6 +122,10 @@ export async function DELETE() {
   if (!session) return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
   if (!hasAdminAccess(session, "ia")) {
     return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
+  }
+  const rl = checkAdminIaRateLimit(session, "openai-credentials-delete", 10, 60_000);
+  if (!rl.ok) {
+    return NextResponse.json({ error: rl.message }, { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } });
   }
 
   try {
@@ -126,5 +145,10 @@ export async function DELETE() {
 
   invalidateOpenAiApiKeyCache();
   const status = await getAdminOpenAiCredentialStatus();
+  void logAdminIaAudit({
+    adminId: session.adminId,
+    action: "openai_credentials_delete",
+    detail: { effectiveSource: status.effectiveSource, databaseConfigured: status.databaseConfigured },
+  });
   return NextResponse.json({ ok: true, ...status });
 }

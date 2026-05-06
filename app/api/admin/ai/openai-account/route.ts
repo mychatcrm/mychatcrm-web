@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
+import { checkAdminIaRateLimit } from "@/lib/admin-ai-rate-limit";
 import { withOpenAiAccountCache } from "@/lib/server/openai-account-cache";
 import { fetchOpenAiAccountSnapshot } from "@/lib/server/openai-billing";
 
@@ -12,6 +13,10 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
   if (!hasAdminAccess(session, "ia")) {
     return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
+  }
+  const rl = checkAdminIaRateLimit(session, "openai-account-get", 24, 60_000);
+  if (!rl.ok) {
+    return NextResponse.json({ error: rl.message }, { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } });
   }
 
   try {
