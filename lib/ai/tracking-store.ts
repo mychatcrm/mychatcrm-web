@@ -1,4 +1,4 @@
-import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export type AiUsageLogInsert = {
   tenantId: string;
@@ -27,7 +27,7 @@ function isoDay(date = new Date()): string {
 }
 
 export async function logAiUsage(row: AiUsageLogInsert): Promise<void> {
-  const sb = createSupabaseServiceClient();
+  const sb = createSupabaseAdminClient();
   const { error } = await sb.from("ai_usage_logs").insert({
     tenant_id: row.tenantId,
     customer_id: row.customerId,
@@ -68,7 +68,7 @@ export async function upsertDailyAggregate(params: {
   totalTokens: number;
   estimatedCostUsd: number;
 }): Promise<void> {
-  const sb = createSupabaseServiceClient();
+  const sb = createSupabaseAdminClient();
   const day = params.dayISO ?? isoDay();
 
   const { data: current } = await sb
@@ -108,7 +108,7 @@ export async function getUsageLimitForTenant(tenantId: string): Promise<{
   dailyCostUsdHard: number | null;
   monthlyCostUsdHard: number | null;
 } | null> {
-  const sb = createSupabaseServiceClient();
+  const sb = createSupabaseAdminClient();
   const { data, error } = await sb
     .from("ai_usage_limits")
     .select("daily_cost_usd_hard,monthly_cost_usd_hard,active")
@@ -129,7 +129,7 @@ export async function getTenantSpend(params: {
   dayISO?: string;
   monthPrefix?: string;
 }): Promise<{ dailyUsd: number; monthlyUsd: number }> {
-  const sb = createSupabaseServiceClient();
+  const sb = createSupabaseAdminClient();
   const day = params.dayISO ?? isoDay();
   const month = params.monthPrefix ?? day.slice(0, 7);
 

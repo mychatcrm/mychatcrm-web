@@ -6,7 +6,7 @@ import { logAdminIaAudit } from "@/lib/server/admin-ia-audit";
 import { encryptOpenAiKeyForStorage } from "@/lib/server/platform-openai-key-crypto";
 import { getPlatformOpenAiEncryptionSecret } from "@/lib/server/platform-openai-encryption-secret";
 import { logAdminIaDataPlaneIssue, surfacePostgrestForAdminUi } from "@/lib/server/admin-ia-data-plane-errors";
-import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isUsableApiSecret } from "@/lib/integrations/server-secrets";
 
 export const dynamic = "force-dynamic";
@@ -90,7 +90,7 @@ export async function PATCH(request: Request) {
   }
 
   try {
-    const sb = createSupabaseServiceClient();
+    const sb = createSupabaseAdminClient();
     const { error } = await sb.from("admin_platform_openai").upsert(
       {
         id: "global",
@@ -136,7 +136,7 @@ export async function DELETE() {
   }
 
   try {
-    const sb = createSupabaseServiceClient();
+    const sb = createSupabaseAdminClient();
     const { error } = await sb
       .from("admin_platform_openai")
       .update({ openai_api_key_ciphertext: null, updated_at: new Date().toISOString() })

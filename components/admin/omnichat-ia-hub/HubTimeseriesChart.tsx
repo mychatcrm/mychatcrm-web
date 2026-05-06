@@ -26,8 +26,22 @@ export function HubTimeseriesChart({ series, className }: Props) {
 
   if (data.length === 0) {
     return (
-      <div className={cn(hubGlass, "flex min-h-[220px] items-center justify-center p-8 text-sm text-zinc-400", className)}>
-        Sem dados no período para o gráfico.
+      <div
+        className={cn(
+          hubGlass,
+          "relative flex min-h-[260px] flex-col items-center justify-center overflow-hidden p-8 text-center",
+          className,
+        )}
+      >
+        <div className="pointer-events-none absolute inset-0 animate-pulse bg-[radial-gradient(400px_120px_at_50%_0%,rgba(120,119,198,0.08),transparent_65%)]" />
+        <div className="relative space-y-3">
+          <div className="mx-auto h-12 w-12 rounded-2xl border border-white/10 bg-white/[0.04] shadow-inner" />
+          <p className="text-sm font-medium text-zinc-200">Sem actividade no período</p>
+          <p className="max-w-sm text-xs leading-relaxed text-zinc-500">
+            Quando existir tráfego nos agentes (ex. <span className="font-mono text-[10px] text-zinc-400">/api/chat</span>), o consumo diário aparece aqui. Se a telemetria estiver
+            bloqueada, execute o diagnóstico de ligação acima.
+          </p>
+        </div>
       </div>
     );
   }

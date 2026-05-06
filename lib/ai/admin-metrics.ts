@@ -1,5 +1,5 @@
 import { logAdminIaDataPlaneIssue, surfacePostgrestForAdminUi } from "@/lib/server/admin-ia-data-plane-errors";
-import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export type AiRangeQuery = {
   fromISO: string;
@@ -47,7 +47,7 @@ export type AiOverviewHealth = {
 };
 
 export async function getAiOverview(range: AiRangeQuery) {
-  const sb = createSupabaseServiceClient();
+  const sb = createSupabaseAdminClient();
   const probe = await sb.from("ai_usage_logs").select("id").limit(1);
   let health: AiOverviewHealth;
   if (probe.error) {
@@ -105,7 +105,7 @@ export async function getAiOverview(range: AiRangeQuery) {
 }
 
 export async function getAiTopTenants(range: AiRangeQuery) {
-  const sb = createSupabaseServiceClient();
+  const sb = createSupabaseAdminClient();
   const q = applyCommonFilters(
     sb.from("ai_usage_logs").select("tenant_id,total_tokens,estimated_cost_usd,status"),
     range,
@@ -134,7 +134,7 @@ export async function getAiTopTenants(range: AiRangeQuery) {
 }
 
 export async function getAiTopAgents(range: AiRangeQuery) {
-  const sb = createSupabaseServiceClient();
+  const sb = createSupabaseAdminClient();
   const q = applyCommonFilters(
     sb.from("ai_usage_logs").select("tenant_id,agent_id,total_tokens,estimated_cost_usd,status,latency_ms"),
     range,
@@ -175,7 +175,7 @@ export async function getAiTopAgents(range: AiRangeQuery) {
 }
 
 export async function getAiLogs(range: AiRangeQuery, page = 1, pageSize = 50) {
-  const sb = createSupabaseServiceClient();
+  const sb = createSupabaseAdminClient();
   const from = Math.max(0, (page - 1) * pageSize);
   const to = from + pageSize - 1;
   const q = applyCommonFilters(
@@ -199,7 +199,7 @@ export async function getAiLogs(range: AiRangeQuery, page = 1, pageSize = 50) {
 }
 
 export async function getAiAlerts(range: AiRangeQuery) {
-  const sb = createSupabaseServiceClient();
+  const sb = createSupabaseAdminClient();
   const { data } = await sb
     .from("ai_usage_alerts")
     .select("*")
@@ -223,7 +223,7 @@ export type AiTimeseriesPoint = {
  * Agregação diária a partir de `ai_usage_logs` no intervalo (para gráficos do hub OmniChat).
  */
 export async function getAiTimeseries(range: AiRangeQuery): Promise<AiTimeseriesPoint[]> {
-  const sb = createSupabaseServiceClient();
+  const sb = createSupabaseAdminClient();
   const q = applyCommonFilters(
     sb.from("ai_usage_logs").select("created_at,total_tokens,estimated_cost_usd,status"),
     range,
@@ -271,7 +271,7 @@ export type AiUsageLimitRow = {
 export async function getAiUsageLimitsSnapshot(): Promise<
   { rows: AiUsageLimitRow[]; error: null } | { rows: []; error: string }
 > {
-  const sb = createSupabaseServiceClient();
+  const sb = createSupabaseAdminClient();
   const { data, error } = await sb
     .from("ai_usage_limits")
     .select("id,tenant_id,agent_id,daily_tokens_hard,monthly_tokens_hard,daily_cost_usd_hard,monthly_cost_usd_hard,active,updated_at")

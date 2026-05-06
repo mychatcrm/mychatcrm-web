@@ -46,7 +46,7 @@ export function surfacePostgrestForAdminUi(
     return {
       headline: "Sem permissão para aceder aos dados da plataforma no servidor.",
       guidance:
-        "Na Vercel (Production), confirme a variável de chave de serviço do Supabase (secret **service_role** do mesmo projecto que o URL público). Não use a chave pública (anon). Guarde e faça redeploy. Se já estiver correcto, aplique no Supabase as migrações de IA do repositório (ver `.env.example`).",
+        "Peça à equipa de infraestrutura para rever a configuração do ambiente de produção e as permissões na base de dados. No painel de administração, use «Diagnóstico de ligação» para um resumo seguro do estado.",
     };
   }
 
@@ -59,23 +59,21 @@ export function surfacePostgrestForAdminUi(
     return {
       headline: "Os dados de consumo ainda não estão disponíveis neste ambiente.",
       guidance:
-        "No Supabase do projecto ligado ao site, execute as migrações da pasta `supabase/migrations` indicadas no `.env.example` (bloco IA / gateway). Depois redeploy na Vercel.",
+        "A base de dados precisa das migrações de IA previstas no repositório. A equipa de infraestrutura deve aplicá-las no projecto correcto e voltar a publicar a aplicação.",
     };
   }
 
   if (m.includes("jwt") && (m.includes("invalid") || m.includes("expired"))) {
     return {
       headline: "Configuração de ligação à base de dados inválida ou expirada.",
-      guidance:
-        "Actualize na Vercel as variáveis do Supabase (URL e chaves) com valores actuais do dashboard do projecto e redeploy.",
+      guidance: "Actualize as credenciais do projecto no ambiente de alojamento e publique novamente.",
     };
   }
 
   if (m.includes("service_role") && m.includes("role")) {
     return {
       headline: "Chave de serviço da base de dados incorrecta.",
-      guidance:
-        "Use na Vercel apenas o secret **service_role** do Supabase (Settings → API), nunca a chave anon.",
+      guidance: "A chave privilegiada do servidor não corresponde ao tipo esperado. Use o diagnóstico de ligação no painel para confirmar.",
     };
   }
 
@@ -88,6 +86,6 @@ export function surfacePostgrestForAdminUi(
 
   return {
     headline: "Não foi possível carregar ou gravar dados da plataforma neste momento.",
-    guidance: "Tente mais tarde. Se persistir, verifique os logs do servidor e a configuração do Supabase na Vercel.",
+    guidance: "Tente mais tarde. Se o problema continuar, consulte os registos internos do servidor.",
   };
 }

@@ -1,6 +1,6 @@
 import { decryptOpenAiKeyFromStorage } from "@/lib/server/platform-openai-key-crypto";
 import { getPlatformOpenAiEncryptionSecret } from "@/lib/server/platform-openai-encryption-secret";
-import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isUsableApiSecret } from "@/lib/integrations/server-secrets";
 
 const CACHE_TTL_MS = 90_000;
@@ -34,9 +34,9 @@ async function loadDecryptedKeyFromDatabase(): Promise<string | null> {
   const secret = platformSecret();
   if (!secret) return null;
 
-  let sb: ReturnType<typeof createSupabaseServiceClient>;
+  let sb: ReturnType<typeof createSupabaseAdminClient>;
   try {
-    sb = createSupabaseServiceClient();
+    sb = createSupabaseAdminClient();
   } catch {
     return null;
   }
@@ -96,7 +96,7 @@ export async function getAdminOpenAiCredentialStatus(): Promise<AdminOpenAiCrede
   let databaseConfigured = false;
 
   try {
-    const sb = createSupabaseServiceClient();
+    const sb = createSupabaseAdminClient();
     const { data } = await sb
       .from("admin_platform_openai")
       .select("openai_api_key_ciphertext")

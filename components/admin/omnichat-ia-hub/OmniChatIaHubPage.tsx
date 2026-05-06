@@ -27,6 +27,36 @@ import type {
 } from "@/components/admin/ai/ia-admin-types";
 import { dateInput, formatUsd, keySourceLabel } from "@/components/admin/ai/ia-admin-types";
 
+type InfrastructureHealthPayload = {
+  requestId: string;
+  publicUrlConfigured: boolean;
+  backendKeyConfigured: boolean;
+  connectivity: "healthy" | "wrong_backend_key" | "missing_backend_key" | "malformed_backend_key" | "degraded_data_plane";
+  dataPlane: {
+    consumptionReadable: boolean;
+    limitsReadable: boolean;
+    platformKeyStoreReadable: boolean;
+  };
+  summary: string;
+};
+
+function connectivityLabelPt(c: InfrastructureHealthPayload["connectivity"]): string {
+  switch (c) {
+    case "healthy":
+      return "Operacional";
+    case "wrong_backend_key":
+      return "Chave de servidor incorrecta";
+    case "missing_backend_key":
+      return "Chave de servidor em falta";
+    case "malformed_backend_key":
+      return "Chave de servidor inválida";
+    case "degraded_data_plane":
+      return "Permissões ou migrações em falta";
+    default:
+      return "Desconhecido";
+  }
+}
+
 const HubTimeseriesChart = dynamic(
   () => import("@/components/admin/omnichat-ia-hub/HubTimeseriesChart").then((m) => ({ default: m.HubTimeseriesChart })),
   {
@@ -70,6 +100,9 @@ export function OmniChatIaHubPage() {
   const [credSaving, setCredSaving] = useState(false);
   const [testBusy, setTestBusy] = useState(false);
   const [testResult, setTestResult] = useState<OpenAiTestConnectionPayload | null>(null);
+  const [infraHealth, setInfraHealth] = useState<InfrastructureHealthPayload | null>(null);
+  const [infraBusy, setInfraBusy] = useState(false);
+  const [infraErr, setInfraErr] = useState<string | null>(null);
 
   const query = useMemo(() => {
     const p = new URLSearchParams();
@@ -98,6 +131,26 @@ export function OmniChatIaHubPage() {
       setLimitsHint(typeof j.hint === "string" ? j.hint : null);
     } catch {
       setLimits([]);
+    }
+  }, []);
+
+  const loadInfrastructureHealth = useCallback(async () => {
+    setInfraBusy(true);
+    setInfraErr(null);
+    try {
+      const res = await fetch("/api/admin/ai/infrastructure-health", { credentials: "include", cache: "no-store" });
+      const j = (await res.json()) as InfrastructureHealthPayload & { error?: string };
+      if (!res.ok) {
+        setInfraHealth(null);
+        setInfraErr(typeof j?.error === "string" ? j.error : "Diagnóstico indisponível.");
+        return;
+      }
+      setInfraHealth(j);
+    } catch {
+      setInfraHealth(null);
+      setInfraErr("Erro de rede ao obter diagnóstico.");
+    } finally {
+      setInfraBusy(false);
     }
   }, []);
 
@@ -364,20 +417,16 @@ export function OmniChatIaHubPage() {
             <div className="mt-3 rounded-xl border border-sky-500/25 bg-sky-500/[0.07] p-3 text-[11px] leading-relaxed text-zinc-300">
               <p className="font-semibold text-sky-200/95">Porque o teste pode dar certo e guardar falhar</p>
               <p className="mt-1.5 text-zinc-400">
-                <strong className="text-zinc-200">Testar conexão</strong> só chama a API da OpenAI (<code className="rounded bg-black/30 px-1 text-[10px] text-zinc-300">/v1/models</code>) com a
-                chave já resolvida no servidor (muitas vezes <code className="text-[10px] text-sky-300/90">OPENAI_API_KEY</code> na Vercel).{" "}
-                <strong className="text-zinc-200">Conectar / guardar</strong> persiste a chave cifrada no armazenamento da plataforma (Supabase). Requer{" "}
-                <code className="text-[10px] text-zinc-400">SUPABASE_SERVICE_ROLE_KEY</code> como secret <em>service_role</em> (nunca a chave{" "}
-                <em>anon</em>) do <strong className="text-zinc-200">mesmo</strong> projecto que <code className="text-[10px] text-zinc-400">NEXT_PUBLIC_SUPABASE_URL</code>, migrações de IA
-                aplicadas no Supabase (ordem em <code className="text-[10px] text-zinc-500">.env.example</code>) e redeploy na Vercel após alterar envs.
+                <strong className="text-zinc-200">Testar conexão</strong> só valida a chave OpenAI na API pública. <strong className="text-zinc-200">Conectar / guardar</strong> grava no
+                armazenamento interno da plataforma — caminho diferente, com requisitos próprios. Use <strong className="text-zinc-200">Diagnóstico de ligação</strong> abaixo para ver o estado
+                seguro da infraestrutura (sem expor segredos).
               </p>
             </div>
             {credErr ? (
               <div className="mt-2 space-y-2" role="alert">
                 <p className="text-sm text-rose-400">{credErr}</p>
                 <p className="text-[11px] leading-relaxed text-zinc-500">
-                  Em <strong className="text-zinc-400">produção</strong>: Vercel → Settings → Environment Variables → <strong className="text-zinc-400">Production</strong>.
-                  Local: <code className="text-zinc-400">.env.local</code>. Migrações listadas em <code className="text-zinc-400">.env.example</code> (bloco Supabase / IA).
+                  Peça à equipa de infraestrutura para rever o ambiente de alojamento e a base de dados. Documentação interna do repositório descreve os passos.
                 </p>
               </div>
             ) : null}
@@ -465,6 +514,57 @@ export function OmniChatIaHubPage() {
             </Button>
           </motion.section>
         </div>
+
+        <motion.section
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.12 }}
+          className={cn(hubGlass, "space-y-3 p-5 sm:p-6")}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-zinc-100">Diagnóstico de ligação</h2>
+              <p className="mt-1 max-w-2xl text-xs text-zinc-500">
+                Verificação só no servidor: URL público, chave privilegiada e leitura de consumo / limites / cofre de credenciais. Não mostra segredos.
+              </p>
+            </div>
+            <Button type="button" variant="secondary" className="border-white/10 bg-white/5 text-zinc-200" disabled={infraBusy} onClick={() => void loadInfrastructureHealth()}>
+              {infraBusy ? "A analisar…" : "Executar diagnóstico"}
+            </Button>
+          </div>
+          {infraErr ? <p className="text-xs text-rose-400">{infraErr}</p> : null}
+          {infraHealth ? (
+            <div className="space-y-3 rounded-xl border border-white/[0.07] bg-black/25 p-4 text-xs text-zinc-300">
+              <p className="text-sm font-medium text-zinc-100">{infraHealth.summary}</p>
+              <p className="text-zinc-500">
+                Estado agregado: <span className="text-zinc-200">{connectivityLabelPt(infraHealth.connectivity)}</span>
+              </p>
+              <ul className="grid gap-2 sm:grid-cols-3">
+                <li className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
+                  Consumo interno:{" "}
+                  <strong className={infraHealth.dataPlane.consumptionReadable ? "text-emerald-400" : "text-amber-400"}>
+                    {infraHealth.dataPlane.consumptionReadable ? "legível" : "bloqueado"}
+                  </strong>
+                </li>
+                <li className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
+                  Limites:{" "}
+                  <strong className={infraHealth.dataPlane.limitsReadable ? "text-emerald-400" : "text-amber-400"}>
+                    {infraHealth.dataPlane.limitsReadable ? "legível" : "bloqueado"}
+                  </strong>
+                </li>
+                <li className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
+                  Cofre de chaves:{" "}
+                  <strong className={infraHealth.dataPlane.platformKeyStoreReadable ? "text-emerald-400" : "text-amber-400"}>
+                    {infraHealth.dataPlane.platformKeyStoreReadable ? "legível" : "bloqueado"}
+                  </strong>
+                </li>
+              </ul>
+              <p className="text-[10px] text-zinc-600">
+                Referência para suporte interno: <code className="text-zinc-500">{infraHealth.requestId}</code>
+              </p>
+            </div>
+          ) : null}
+        </motion.section>
 
         <HubTimeseriesChart series={timeseries} />
 

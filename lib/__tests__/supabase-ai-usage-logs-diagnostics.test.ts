@@ -5,7 +5,7 @@ describe("buildAiUsageLogsAccessHint", () => {
   it("returns guidance for permission denied", () => {
     const h = buildAiUsageLogsAccessHint('permission denied for table "ai_usage_logs"', "42501");
     expect(h).toBeTruthy();
-    expect(h).toContain("service_role");
+    expect(h!.toLowerCase()).toContain("infraestrutura");
     expect(h!.toLowerCase()).not.toContain("ai_usage_logs");
   });
 
@@ -16,7 +16,7 @@ describe("buildAiUsageLogsAccessHint", () => {
     );
     expect(h).toBeTruthy();
     expect(h!.toLowerCase()).not.toContain("ai_usage_logs");
-    expect(h).toContain(".env.example");
+    expect(h!.toLowerCase()).toContain("migrações");
   });
 
   it("returns null when no error", () => {

@@ -4,7 +4,7 @@ import {
   resolveOpenAiApiKey,
 } from "@/lib/ai/openai-api-key";
 import { logAdminIaDataPlaneIssue, surfacePostgrestForAdminUi } from "@/lib/server/admin-ia-data-plane-errors";
-import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export type AiIntegrationStatusPayload = {
   hasOpenAiKey: boolean;
@@ -32,7 +32,7 @@ export async function getAiIntegrationStatus(): Promise<AiIntegrationStatusPaylo
     : hasOpenAiKey
       ? "database"
       : "none";
-  const sb = createSupabaseServiceClient();
+  const sb = createSupabaseAdminClient();
 
   const probe = await sb.from("ai_usage_logs").select("id").limit(1);
   const aiUsageLogsReachable = !probe.error;

@@ -1,4 +1,4 @@
-import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export type AdminIaAuditAction =
   | "openai_credentials_patch"
@@ -14,7 +14,7 @@ export async function logAdminIaAudit(params: {
   detail: Record<string, unknown>;
 }): Promise<void> {
   try {
-    const sb = createSupabaseServiceClient();
+    const sb = createSupabaseAdminClient();
     const { error } = await sb.from("admin_ia_audit_log").insert({
       admin_id: params.adminId,
       action: params.action,
