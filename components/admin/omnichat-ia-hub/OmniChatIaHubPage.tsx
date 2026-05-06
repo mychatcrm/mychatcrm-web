@@ -96,8 +96,6 @@ export function OmniChatIaHubPage() {
   const [credentials, setCredentials] = useState<OpenAiCredentialsPayload | null>(null);
   const [credLoading, setCredLoading] = useState(false);
   const [credErr, setCredErr] = useState<string | null>(null);
-  const [openAiKeyInput, setOpenAiKeyInput] = useState("");
-  const [credSaving, setCredSaving] = useState(false);
   const [testBusy, setTestBusy] = useState(false);
   const [testResult, setTestResult] = useState<OpenAiTestConnectionPayload | null>(null);
   const [infraHealth, setInfraHealth] = useState<InfrastructureHealthPayload | null>(null);
@@ -247,79 +245,6 @@ export function OmniChatIaHubPage() {
     }
   }, []);
 
-  const saveOpenAiKey = useCallback(async () => {
-    const key = openAiKeyInput.trim();
-    if (!key) {
-      setCredErr("Cole a chave OpenAI (sk-…).");
-      return;
-    }
-    setCredSaving(true);
-    setCredErr(null);
-    try {
-      const res = await fetch("/api/admin/ai/openai-credentials", {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ openaiApiKey: key }),
-      });
-      const data = (await res.json()) as {
-        ok?: boolean;
-        error?: string;
-        hint?: string;
-      } & Partial<OpenAiCredentialsPayload>;
-      if (!res.ok) {
-        const base = typeof data?.error === "string" ? data.error : "Falha ao guardar.";
-        const hint = typeof data?.hint === "string" && data.hint.trim() ? ` ${data.hint.trim()}` : "";
-        setCredErr(base + hint);
-        return;
-      }
-      setOpenAiKeyInput("");
-      setCredentials({
-        envConfigured: Boolean(data.envConfigured),
-        databaseConfigured: Boolean(data.databaseConfigured),
-        effectiveSource: (data.effectiveSource ?? "none") as OpenAiKeyEffectiveSource,
-        maskedSuffix: data.maskedSuffix ?? null,
-      });
-      setTestResult(null);
-      await runSequentialVerification();
-    } catch {
-      setCredErr("Erro de rede ao guardar.");
-    } finally {
-      setCredSaving(false);
-    }
-  }, [openAiKeyInput, runSequentialVerification]);
-
-  const removeOpenAiKeyFromPanel = useCallback(async () => {
-    setCredSaving(true);
-    setCredErr(null);
-    try {
-      const res = await fetch("/api/admin/ai/openai-credentials", { method: "DELETE", credentials: "include" });
-      const data = (await res.json()) as {
-        ok?: boolean;
-        error?: string;
-        hint?: string;
-      } & Partial<OpenAiCredentialsPayload>;
-      if (!res.ok) {
-        const base = typeof data?.error === "string" ? data.error : "Falha ao remover.";
-        const hint = typeof data?.hint === "string" && data.hint.trim() ? ` ${data.hint.trim()}` : "";
-        setCredErr(base + hint);
-        return;
-      }
-      setCredentials({
-        envConfigured: Boolean(data.envConfigured),
-        databaseConfigured: Boolean(data.databaseConfigured),
-        effectiveSource: (data.effectiveSource ?? "none") as OpenAiKeyEffectiveSource,
-        maskedSuffix: data.maskedSuffix ?? null,
-      });
-      setTestResult(null);
-      await runSequentialVerification();
-    } catch {
-      setCredErr("Erro de rede ao remover.");
-    } finally {
-      setCredSaving(false);
-    }
-  }, [runSequentialVerification]);
-
   const runTestConnection = useCallback(async () => {
     setTestBusy(true);
     setTestResult(null);
@@ -451,22 +376,7 @@ export function OmniChatIaHubPage() {
                 </li>
               </ul>
             ) : null}
-            <label className="mt-4 block text-[10px] font-medium uppercase tracking-wide text-zinc-500" htmlFor="omni-api-key">
-              Colar nova chave
-            </label>
-            <Input
-              id="omni-api-key"
-              className="mt-1 border-white/10 bg-black/30 text-zinc-100"
-              type="password"
-              autoComplete="off"
-              value={openAiKeyInput}
-              onChange={(e) => setOpenAiKeyInput(e.target.value)}
-              placeholder="sk-…"
-            />
             <div className="mt-4 flex flex-wrap gap-2">
-              <Button type="button" disabled={credSaving} onClick={() => void saveOpenAiKey()}>
-                {credSaving ? "A guardar…" : "Conectar / guardar"}
-              </Button>
               <Button
                 variant="secondary"
                 type="button"
@@ -476,11 +386,6 @@ export function OmniChatIaHubPage() {
               >
                 {testBusy ? "A testar…" : "Testar conexão"}
               </Button>
-              {credentials?.databaseConfigured ? (
-                <Button variant="secondary" type="button" className="border-white/10 bg-white/5" disabled={credSaving} onClick={() => void removeOpenAiKeyFromPanel()}>
-                  Revogar do painel
-                </Button>
-              ) : null}
             </div>
             {testResult ? (
               <div
@@ -509,7 +414,7 @@ export function OmniChatIaHubPage() {
               <StatusPill ok={(integration?.requestsLast24h ?? 0) > 0} label="Pedidos 24h" detail={String(integration?.requestsLast24h ?? "0")} />
               <StatusPill ok={Boolean(integration?.lastSuccess)} label="Último sucesso" detail={integration?.lastSuccess ? `${integration.lastSuccess.tenantId} · ${integration.lastSuccess.agentId}` : "—"} />
             </div>
-            <Button variant="secondary" type="button" className="w-full border-white/10 bg-white/5 text-zinc-200" disabled={verificationBusy || credSaving} onClick={() => void runSequentialVerification()}>
+            <Button variant="secondary" type="button" className="w-full border-white/10 bg-white/5 text-zinc-200" disabled={verificationBusy} onClick={() => void runSequentialVerification()}>
               {verificationBusy ? "A sincronizar…" : "Revalidar integração"}
             </Button>
           </motion.section>
