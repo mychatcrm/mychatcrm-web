@@ -41,6 +41,7 @@ import {
   type FacebookPagesConnectionState,
 } from "@/lib/facebook-pages-connection-storage";
 import { typography } from "@/lib/typography";
+import { EvolutionQrSlotPanel } from "@/components/dashboard/integrations/EvolutionQrSlotPanel";
 
 const MAX_HINT = 120;
 
@@ -632,17 +633,24 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                       </div>
                     ) : null}
                     {method === "qr" ? (
-                      <div className="space-y-3 rounded-xl border border-line bg-surface-deep/30 p-4 text-sm text-content-secondary">
-                        <p className={typography.ui.overline}>Fluxo QR Code (demo) — linha {slotIndex + 1}</p>
-                        <p>
-                          Numero de exemplo: <span className="font-medium text-content">+55 62 99999-{String(1000 + slotIndex).slice(-4)}</span>
-                        </p>
-                        <p>Status simulado: conectado e a receber mensagens.</p>
+                      <div className="space-y-3">
+                        <EvolutionQrSlotPanel slotIndex={slotIndex} />
                         <div className="flex flex-wrap gap-2">
-                          <Button type="button" variant="secondary">
-                            Gerar novo QR
-                          </Button>
-                          <Button type="button" variant="outline" onClick={() => setWhatsAppSlotMethod(tenantId, slotIndex, null)}>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={async () => {
+                              try {
+                                await fetch(`/api/client/whatsapp/evolution/session?slotIndex=${slotIndex}`, {
+                                  method: "DELETE",
+                                  credentials: "same-origin",
+                                });
+                              } catch {
+                                /* ignore */
+                              }
+                              setWhatsAppSlotMethod(tenantId, slotIndex, null);
+                            }}
+                          >
                             Desligar esta linha
                           </Button>
                         </div>
@@ -690,7 +698,8 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
           <Link href="/dashboard/agenda" className="font-semibold text-primary underline-offset-2 hover:underline">
             Agenda
           </Link>
-          . As outras integracoes e as ligacoes WhatsApp por linha (QR ou Meta) guardam preferencias neste navegador ate existir OAuth e API no servidor.
+          . O fluxo <strong className="text-content">WhatsApp por QR (Evolution)</strong> usa sessão e webhook no servidor (Supabase + rotas API). A escolha QR/Meta por linha continua
+          sincronizada neste navegador; a Meta oficial segue em preparação.
         </p>
       </div>
 
