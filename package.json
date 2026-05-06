@@ -4,9 +4,9 @@
   "private": true,
   "scripts": {
     "dev:free-port": "for p in 3000 3022 3030; do lsof -ti:$p | xargs kill -9 2>/dev/null || true; done",
-    "dev": "npm run dev:free-port && WATCHPACK_POLLING=true next dev --hostname 127.0.0.1 --port 3030",
-    "dev:turbo": "npm run dev:free-port && WATCHPACK_POLLING=true next dev --hostname 127.0.0.1 --port 3030 --turbo",
-    "dev:lan": "npm run dev:free-port && WATCHPACK_POLLING=true next dev --hostname 0.0.0.0 --port 3030",
+    "dev": "npm run dev:free-port && node scripts/dev.mjs",
+    "dev:turbo": "npm run dev:free-port && node scripts/dev.mjs --turbo",
+    "dev:lan": "npm run dev:free-port && NEXT_DEV_HOSTNAME=0.0.0.0 node scripts/dev.mjs",
     "clean": "rm -rf .next node_modules/.cache",
     "dev:clean": "npm run clean && npm run dev",
     "build": "next build",

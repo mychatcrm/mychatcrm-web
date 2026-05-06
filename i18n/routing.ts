@@ -8,7 +8,7 @@ export const defaultLocale = "pt-BR" satisfies Locale;
 export const routing = defineRouting({
   locales,
   defaultLocale,
-  localePrefix: "as-needed",
+  localePrefix: "always",
   pathnames: {
     "/": "/",
     "/planos": {

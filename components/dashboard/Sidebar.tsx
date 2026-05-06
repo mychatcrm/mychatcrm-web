@@ -96,7 +96,7 @@ export function Sidebar({
     setCycleEndLabel(end.toLocaleDateString("pt-BR", { day: "numeric", month: "long", year: "numeric" }));
   }, []);
 
-  /** Hidratação: 1.º paint = snapshot servidor; `useLayoutEffect` + subscribe aplicam `localStorage`. */
+  /** Hidratação: 1.º paint = zeros; depois GET `/api/client/lead-usage` (Supabase). */
   const leadSnap = useLeadUsageSnapshot(session.tenantId, session.plan, session.operationalLimits);
 
   const planLeadsBase = planMonthlyLeadAllowance(session.plan, session.operationalLimits);

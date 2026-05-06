@@ -16,9 +16,9 @@ function storageKey(tenantId: string) {
 }
 
 export type LeadUsageSnapshot = {
-  /** Leads atendidos contados no ciclo de faturação (demo). */
+  /** Leads atendidos contados no ciclo de faturação (persistido no servidor via `/api/client/lead-usage`). */
   used: number;
-  /** Limite extra comprado ou concedido além do pacote do plano (demo). */
+  /** Limite extra comprado ou concedido além do pacote do plano. */
   bonus: number;
 };
 
@@ -31,33 +31,28 @@ export function planMonthlyLeadAllowance(
   return getPlanMonthlyConversationCap(p, operationalLimits);
 }
 
-function defaultUsedForAllowance(cap: number) {
-  const ratio = 0.28 + (cap % 47) / 200;
-  return Math.min(Math.floor(cap * ratio), Math.max(0, cap - 1));
-}
-
 function normalizeSnapshot(
   raw: unknown,
-  plan: ClientPlan | "profissional" | "master",
-  operationalLimits?: PlanLimits | null,
+  _plan: ClientPlan | "profissional" | "master",
+  _operationalLimits?: PlanLimits | null,
 ): LeadUsageSnapshot {
-  const cap = planMonthlyLeadAllowance(plan, operationalLimits);
   if (!raw || typeof raw !== "object") {
-    return { used: defaultUsedForAllowance(cap), bonus: 0 };
+    return { used: 0, bonus: 0 };
   }
   const o = raw as Record<string, unknown>;
   const used =
-    typeof o.used === "number" && Number.isFinite(o.used) && o.used >= 0 ? Math.floor(o.used) : defaultUsedForAllowance(cap);
-  const bonus = typeof o.bonus === "number" && Number.isFinite(o.bonus) && o.bonus >= 0 ? Math.floor(o.bonus) : 0;
+    typeof o.used === "number" && Number.isFinite(o.used) && o.used >= 0 ? Math.floor(o.used) : 0;
+  const bonus =
+    typeof o.bonus === "number" && Number.isFinite(o.bonus) && o.bonus >= 0 ? Math.floor(o.bonus) : 0;
   return { used, bonus };
 }
 
-/** Snapshot determinístico para SSR e `getServerSnapshot` na hidratação. */
+/** Primeiro paint / SSR: zeros até a API hidratar no cliente. */
 export function getServerLeadUsageSnapshot(
-  plan: ClientPlan | "profissional" | "master",
-  operationalLimits?: PlanLimits | null,
+  _plan: ClientPlan | "profissional" | "master",
+  _operationalLimits?: PlanLimits | null,
 ): LeadUsageSnapshot {
-  return normalizeSnapshot(null, plan, operationalLimits);
+  return { used: 0, bonus: 0 };
 }
 
 export function subscribeLeadUsageSnapshot(onStoreChange: () => void): () => void {
@@ -71,6 +66,7 @@ export function subscribeLeadUsageSnapshot(onStoreChange: () => void): () => voi
   };
 }
 
+/** Legado: leitura local; preferir dados do servidor. Mantido para testes e migrações pontuais. */
 export function readLeadUsageSnapshot(
   tenantId: string,
   plan: ClientPlan | "profissional" | "master",
@@ -88,20 +84,12 @@ export function readLeadUsageSnapshot(
   }
 }
 
+/** Não grava mais valores por defeito fictícios; a fonte de verdade é a API + Supabase. */
 export function seedLeadUsageSnapshotIfEmpty(
-  tenantId: string,
-  plan: ClientPlan | "profissional" | "master",
-  operationalLimits?: PlanLimits | null,
-): void {
-  if (typeof window === "undefined") return;
-  try {
-    const key = storageKey(tenantId);
-    if (window.localStorage.getItem(key) !== null) return;
-    window.localStorage.setItem(key, JSON.stringify(getServerLeadUsageSnapshot(plan, operationalLimits)));
-  } catch {
-    /* ignore */
-  }
-}
+  _tenantId: string,
+  _plan: ClientPlan | "profissional" | "master",
+  _operationalLimits?: PlanLimits | null,
+): void {}
 
 export function persistLeadUsageSnapshot(tenantId: string, snap: LeadUsageSnapshot) {
   if (typeof window === "undefined") return;

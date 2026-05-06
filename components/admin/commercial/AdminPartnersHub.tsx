@@ -252,7 +252,7 @@ export function AdminPartnersHub() {
         <div className="space-y-6">
           <Panel
             title="Métricas comerciais"
-            description="Baseada em resgates confirmados no checkout (demo). Em produção, sincronize com webhooks do gateway."
+            description="Baseada em resgates confirmados no checkout. Sincronize com webhooks do gateway quando disponível."
             actions={
               <Button type="button" variant="secondary" onClick={() => void loadMetrics()}>
                 Atualizar

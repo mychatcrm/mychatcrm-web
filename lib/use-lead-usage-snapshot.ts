@@ -1,22 +1,31 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import type { ClientPlan } from "@/lib/client-auth";
 import type { PlanLimits } from "@/lib/plan-policy";
 import {
   getServerLeadUsageSnapshot,
-  readLeadUsageSnapshot,
-  seedLeadUsageSnapshotIfEmpty,
   subscribeLeadUsageSnapshot,
   type LeadUsageSnapshot,
 } from "@/lib/dashboard-lead-usage";
 
+async function fetchLeadUsageFromApi(): Promise<LeadUsageSnapshot | null> {
+  try {
+    const res = await fetch("/api/client/lead-usage", { credentials: "include", cache: "no-store" });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { used?: unknown; bonus?: unknown };
+    const used =
+      typeof data.used === "number" && Number.isFinite(data.used) ? Math.max(0, Math.floor(data.used)) : 0;
+    const bonus =
+      typeof data.bonus === "number" && Number.isFinite(data.bonus) ? Math.max(0, Math.floor(data.bonus)) : 0;
+    return { used, bonus };
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Snapshot de uso de leads atendidos no ciclo (demo).
- *
- * **Hidratação:** o primeiro paint do cliente deve coincidir com o SSR.
- * Não usar `useSyncExternalStore` com `getSnapshot` lendo `localStorage` — isso quebra a regra
- * de que `getServerSnapshot` === primeiro `getSnapshot` na hidratação quando há dados gravados.
+ * Uso de leads no ciclo mensal: hidratação inicial 0/0 (SSR), depois GET `/api/client/lead-usage`.
  */
 export function useLeadUsageSnapshot(
   tenantId: string,
@@ -25,19 +34,21 @@ export function useLeadUsageSnapshot(
 ): LeadUsageSnapshot {
   const [snap, setSnap] = useState<LeadUsageSnapshot>(() => getServerLeadUsageSnapshot(plan, operationalLimits));
 
-  useLayoutEffect(() => {
-    setSnap(readLeadUsageSnapshot(tenantId, plan, operationalLimits));
-  }, [tenantId, plan, operationalLimits]);
+  const refresh = useCallback(async () => {
+    const next = await fetchLeadUsageFromApi();
+    if (next) setSnap(next);
+  }, []);
 
-  useEffect(() => {
-    seedLeadUsageSnapshotIfEmpty(tenantId, plan, operationalLimits);
-  }, [tenantId, plan, operationalLimits]);
+  useLayoutEffect(() => {
+    setSnap(getServerLeadUsageSnapshot(plan, operationalLimits));
+    void refresh();
+  }, [tenantId, plan, operationalLimits, refresh]);
 
   useEffect(() => {
     return subscribeLeadUsageSnapshot(() => {
-      setSnap(readLeadUsageSnapshot(tenantId, plan, operationalLimits));
+      void refresh();
     });
-  }, [tenantId, plan, operationalLimits]);
+  }, [refresh]);
 
   return snap;
 }

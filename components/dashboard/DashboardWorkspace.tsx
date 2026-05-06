@@ -182,101 +182,48 @@ function ProgressBar({ value }: { value: number }) {
   const pct = Math.min(Math.max(value, 0), 100);
   return (
     <div
-      className="relative h-2 overflow-hidden rounded-full bg-surface-elevated/80 ring-1 ring-inset ring-line/40"
+      className="relative h-2.5 overflow-hidden rounded-full bg-content-muted/20 ring-2 ring-inset ring-line/60"
       role="progressbar"
       aria-valuenow={Math.round(pct)}
       aria-valuemin={0}
       aria-valuemax={100}
     >
       <div
-        className="relative h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
+        className="relative h-full rounded-full bg-gradient-to-r from-primary to-primary-hover shadow-sm shadow-primary/25 transition-[width] duration-500 ease-out"
         style={{ width: `${pct}%` }}
       />
     </div>
   );
 }
 
-function Heatmap() {
+function HeatmapEmptyState() {
   const { isLight } = usePanelAppearance();
-  const hourBuckets = Array.from({ length: 12 }, (_, bucket) => {
-    const start = bucket * 2;
-    const end = start + 2;
-    return `${String(start).padStart(2, "0")}-${String(end).padStart(2, "0")}h`;
-  });
-
-  const dayLabels = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
-  const rows = dayLabels.map((dayLabel, rowIndex) => {
-    const cells = Array.from({ length: 12 }, (_, colIndex) => {
-      const seed = (rowIndex * 13 + colIndex * 17) % 100;
-      return seed + 1;
-    });
-    return { dayLabel, cells };
-  });
-
   return (
-    <div className="space-y-2">
-      <div className="grid grid-cols-[44px_repeat(12,minmax(0,1fr))] items-end gap-x-2 gap-y-1">
-        <div className={typography.ui.overline}>Dia / Hora</div>
-        {hourBuckets.map((label) => (
-          <div
-            key={label}
-            className={cn(
-              "text-center text-[10px] font-semibold leading-tight text-content-faint",
-              isLight ? "text-slate-600" : null,
-            )}
-          >
-            {label}
-          </div>
-        ))}
-      </div>
-
-      <div className="space-y-2">
-        {rows.map((row) => (
-          <div key={row.dayLabel} className="grid grid-cols-[44px_repeat(12,minmax(0,1fr))] items-center gap-x-2">
-            <div
-              className={cn(
-                "text-xs font-semibold text-content-secondary",
-                isLight ? "text-slate-700" : null,
-              )}
-            >
-              {row.dayLabel}
-            </div>
-            {row.cells.map((value, index) => (
-              <div
-                key={`${row.dayLabel}-${index}`}
-                className={cn(
-                  "h-8 rounded-md border border-transparent ring-1 ring-inset ring-line/30 transition-colors duration-200 hover:border-primary/40 hover:ring-primary/35",
-                  value > 85
-                    ? "bg-primary ring-primary/40"
-                    : value > 70
-                      ? "bg-primary/75 ring-primary/30"
-                      : value > 55
-                        ? "bg-primary/50 ring-primary/20"
-                        : value > 35
-                          ? isLight
-                            ? "bg-slate-200 ring-slate-200"
-                            : "bg-surface-elevated/80 ring-white/[0.03]"
-                          : isLight
-                            ? "bg-slate-100 ring-slate-100"
-                            : "bg-surface-elevated/40 ring-white/[0.02]",
-                )}
-                title={`${row.dayLabel} · ${hourBuckets[index] ?? ""} · intensidade ${value}`}
-                aria-hidden
-              />
-            ))}
-          </div>
-        ))}
-      </div>
-
-      <p className={cn("text-[11px] leading-relaxed", isLight ? "text-slate-600" : "text-content-faint")}>
-        Cada coluna representa uma janela de <span className="font-medium text-content-secondary">2 horas</span> (ex.: 00-02h, 02-04h).
-        As cores indicam intensidade relativa (simulado).
-      </p>
+    <div
+      className={cn(
+        "rounded-xl border border-dashed border-line/80 bg-surface-deep/30 px-4 py-8 text-center text-[13px] leading-relaxed text-content-muted",
+        isLight ? "bg-slate-50 text-slate-600" : null,
+      )}
+    >
+      Sem dados de horários de pico para este período. Quando houver telemetria de conversas por dia e hora, o mapa aparece aqui.
     </div>
   );
 }
 
 function SimulatedBars({ items }: { items: { label: string; value: number; secondary?: number }[] }) {
+  const { isLight } = usePanelAppearance();
+  if (!items.length) {
+    return (
+      <div
+        className={cn(
+          "rounded-xl border border-dashed border-line/80 bg-surface-deep/30 px-4 py-8 text-center text-[13px] leading-relaxed text-content-muted",
+          isLight ? "bg-slate-50 text-slate-600" : null,
+        )}
+      >
+        Sem dados para o período selecionado.
+      </div>
+    );
+  }
   return (
     <div className="space-y-3.5">
       {items.map((item) => (
@@ -606,7 +553,7 @@ function OverviewPage({
   rangeLabel: string;
 }) {
   const [exportOpen, setExportOpen] = useState(false);
-  const leadSnap = useLeadUsageSnapshot(session.tenantId, session.plan);
+  const leadSnap = useLeadUsageSnapshot(session.tenantId, session.plan, session.operationalLimits);
   const baseLeads = planMonthlyLeadAllowance(session.plan, session.operationalLimits);
   const totalLeadCap = baseLeads + leadSnap.bonus;
   const usedLeads = Math.min(leadSnap.used, totalLeadCap);
@@ -712,22 +659,31 @@ function OverviewPage({
       </div>
 
       <div className="grid gap-6 xl:grid-cols-3">
-        <Panel title="Conversas por dia" className="xl:col-span-2" description={`Distribuicao diaria (simulado) para ${rangeLabel}.`}>
+        <Panel
+          title="Conversas por dia"
+          className="xl:col-span-2"
+          description={`Distribuição diária no intervalo ${rangeLabel}.`}
+        >
           <SimulatedBars
             items={dataset.conversationBars}
           />
         </Panel>
-        <Panel title="Leads por status no funil" description={`Composicao do funil (simulado) para ${rangeLabel}.`}>
+        <Panel title="Leads por status no funil" description={`Composição do funil no intervalo ${rangeLabel}.`}>
           <SimulatedBars items={dataset.funnelBars} />
         </Panel>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.2fr_0.9fr_0.9fr]">
-        <Panel title="Horarios de pico" description={`Mapa de calor simulado por dia e horario (${rangeLabel}).`}>
-          <Heatmap />
+        <Panel title="Horários de pico" description={`Volume por dia e faixa de 2 horas (${rangeLabel}).`}>
+          <HeatmapEmptyState />
         </Panel>
         <Panel title="Conversas recentes">
           <ul className="space-y-2">
+            {dataset.recentConversations.length === 0 ? (
+              <li className="rounded-xl border border-dashed border-line/80 bg-surface-deep/30 px-4 py-6 text-center text-[13px] text-content-muted">
+                Nenhuma conversa recente neste período.
+              </li>
+            ) : null}
             {dataset.recentConversations.map(([name, status]) => {
               const initials = name
                 .split(" ")
@@ -763,6 +719,11 @@ function OverviewPage({
             <div>
               <p className={typography.ui.overline}>Próximos 3 agendamentos</p>
               <ul className="mt-2 space-y-1.5">
+                {dataset.agendaItems.length === 0 ? (
+                  <li className="rounded-lg border border-dashed border-line/70 px-3 py-3 text-[12.5px] text-content-muted">
+                    Nenhum agendamento listado para este período.
+                  </li>
+                ) : null}
                 {dataset.agendaItems.map((item) => (
                   <li
                     key={item}
@@ -777,6 +738,11 @@ function OverviewPage({
             <div>
               <p className={typography.ui.overline}>Alertas</p>
               <ul className="mt-2 space-y-1.5">
+                {dataset.alerts.length === 0 ? (
+                  <li className="rounded-lg border border-dashed border-line/70 px-3 py-3 text-[12.5px] text-content-muted">
+                    Sem alertas ativos.
+                  </li>
+                ) : null}
                 {dataset.alerts.map((item) => (
                   <li
                     key={item}
@@ -2644,10 +2610,9 @@ function PlanLeadsBilling({ session }: { session: ClientSession }) {
   const plansOfferTriggerRef = useRef<HTMLButtonElement>(null);
   const extraLeadsOfferTriggerRef = useRef<HTMLButtonElement>(null);
 
-  /** Mesmo contrato da sidebar: snapshot estável no SSR/hidratação, depois `localStorage`. */
-  const leadSnap = useLeadUsageSnapshot(session.tenantId, session.plan);
+  const leadSnap = useLeadUsageSnapshot(session.tenantId, session.plan, session.operationalLimits);
 
-  const planLeadsBase = planMonthlyLeadAllowance(session.plan);
+  const planLeadsBase = planMonthlyLeadAllowance(session.plan, session.operationalLimits);
   const totalLeadCap = planLeadsBase + leadSnap.bonus;
   const usedClamped = Math.min(leadSnap.used, totalLeadCap);
   const remainingLeads = Math.max(0, totalLeadCap - usedClamped);
@@ -2656,9 +2621,7 @@ function PlanLeadsBilling({ session }: { session: ClientSession }) {
   return (
     <div className="rounded-xl border border-line bg-surface-card p-4 md:p-5">
       <h3 className="text-sm font-semibold text-content">Leads atendidos neste ciclo</h3>
-      <p className="mt-1 text-xs text-content-muted">
-        Mesmo contador da barra na lateral — demonstracao com armazenamento local.
-      </p>
+      <p className="mt-1 text-xs text-content-muted">Mesmo contador da barra na lateral e do resumo operacional.</p>
       <dl className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
         <div className="rounded-xl border border-line bg-surface-deep/30 px-3 py-2">
           <dt className={typography.ui.overline}>Restantes</dt>
@@ -3243,7 +3206,7 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                     <div className="min-w-0 flex-1">
                       <p className={typography.ui.overline}>Senha</p>
                       <p className="mt-1 text-sm text-content-muted">••••••••</p>
-                      <p className="mt-1 text-[11px] text-content-faint">Ultima alteracao simulada: ha 30 dias</p>
+                      <p className="mt-1 text-[11px] text-content-faint">A última alteração não está disponível neste painel.</p>
                     </div>
                     <div className="relative shrink-0" ref={passwordPopRef}>
                       <Button type="button" variant="secondary" className="min-h-[44px] gap-2" onClick={openPasswordPopover}>
