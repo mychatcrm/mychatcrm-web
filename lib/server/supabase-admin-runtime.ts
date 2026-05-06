@@ -6,6 +6,7 @@ import { Buffer } from "node:buffer";
 
 export type BackendSupabaseCredentialTier =
   | "service_role"
+  | "opaque_secret"
   | "non_service_role"
   | "missing"
   | "non_jwt";
@@ -13,6 +14,7 @@ export type BackendSupabaseCredentialTier =
 export function classifyBackendSupabaseCredential(): BackendSupabaseCredentialTier {
   const k = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   if (!k) return "missing";
+  if (k.startsWith("sb_secret_")) return "opaque_secret";
   const parts = k.split(".");
   if (parts.length !== 3) return "non_jwt";
   try {

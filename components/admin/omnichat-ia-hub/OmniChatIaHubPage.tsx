@@ -79,6 +79,7 @@ export function OmniChatIaHubPage() {
   const rateLimitUntilRef = useRef(0);
   const verificationRunRef = useRef(0);
   const [verificationBusy, setVerificationBusy] = useState(false);
+  const [lastVerificationAt, setLastVerificationAt] = useState<string | null>(null);
 
   const [overview, setOverview] = useState<OverviewPayload["kpis"] | null>(null);
   const [overviewHealth, setOverviewHealth] = useState<OverviewPayload["health"] | null>(null);
@@ -220,6 +221,7 @@ export function OmniChatIaHubPage() {
     try {
       await loadOpenAiAccount({ force: true });
       await loadInternalBundle();
+      setLastVerificationAt(new Date().toLocaleString("pt-BR"));
     } finally {
       if (verificationRunRef.current === runId) setVerificationBusy(false);
     }
@@ -417,6 +419,7 @@ export function OmniChatIaHubPage() {
             <Button variant="secondary" type="button" className="w-full border-white/10 bg-white/5 text-zinc-200" disabled={verificationBusy} onClick={() => void runSequentialVerification()}>
               {verificationBusy ? "A sincronizar…" : "Revalidar integração"}
             </Button>
+            {lastVerificationAt ? <p className="text-[10px] text-zinc-500">Última revalidação: {lastVerificationAt}</p> : null}
           </motion.section>
         </div>
 

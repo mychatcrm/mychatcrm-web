@@ -11,7 +11,12 @@ describe("classifyBackendSupabaseCredential", () => {
     expect(classifyBackendSupabaseCredential()).toBe("missing");
   });
 
-  it("returns non_jwt when not three-part jwt", () => {
+  it("returns opaque_secret for sb_secret keys", () => {
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "sb_secret_123456");
+    expect(classifyBackendSupabaseCredential()).toBe("opaque_secret");
+  });
+
+  it("returns non_jwt for unknown non-jwt format", () => {
     vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "not-a-jwt");
     expect(classifyBackendSupabaseCredential()).toBe("non_jwt");
   });
