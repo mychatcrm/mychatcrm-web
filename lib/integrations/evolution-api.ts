@@ -8,6 +8,29 @@ import { createHash } from "node:crypto";
 
 const DEFAULT_TIMEOUT_MS = 25_000;
 
+/** Mensagem legível a partir do JSON típico da Evolution (`response.message[]`, `error`, string). */
+export function formatEvolutionHttpErrorBody(data: unknown, statusText: string): string {
+  if (typeof data === "string") return data.slice(0, 800).trim() || statusText;
+  if (!data || typeof data !== "object") return statusText;
+  const o = data as Record<string, unknown>;
+  const parts: string[] = [];
+  if (typeof o.error === "string" && o.error.trim()) parts.push(o.error.trim());
+  const resp = o.response;
+  if (resp && typeof resp === "object") {
+    const r = resp as Record<string, unknown>;
+    const msg = r.message;
+    if (Array.isArray(msg)) {
+      const lines = msg.filter((x): x is string => typeof x === "string").map((x) => x.trim()).filter(Boolean);
+      if (lines.length) parts.push(lines.join(" · "));
+    } else if (typeof msg === "string" && msg.trim()) {
+      parts.push(msg.trim());
+    }
+  }
+  if (typeof o.message === "string" && o.message.trim()) parts.push(o.message.trim());
+  const out = parts.join(" — ").slice(0, 800);
+  return out || JSON.stringify(data).slice(0, 500);
+}
+
 export type EvolutionFetchResult<T> =
   | { ok: true; status: number; data: T }
   | { ok: false; status: number; error: string };
@@ -83,12 +106,7 @@ async function evolutionFetchJson<T>(
       }
     }
     if (!res.ok) {
-      const errMsg =
-        typeof data === "object" && data !== null && "response" in data
-          ? JSON.stringify((data as { response?: unknown }).response ?? data)
-          : typeof data === "string"
-            ? data.slice(0, 500)
-            : res.statusText;
+      const errMsg = formatEvolutionHttpErrorBody(data, res.statusText);
       return { ok: false, status: res.status, error: errMsg || res.statusText };
     }
     return { ok: true, status: res.status, data: data as T };
@@ -119,7 +137,7 @@ export async function evolutionCreateInstance(params: {
       url: params.webhookUrl,
       byEvents: false,
       base64: true,
-      events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE"],
+      events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
     };
   }
   return evolutionFetchJson<EvolutionCreateInstanceResponse>("/instance/create", {
@@ -137,7 +155,18 @@ export async function evolutionInstanceConnect(
   instanceName: string,
 ): Promise<EvolutionFetchResult<EvolutionConnectResponse>> {
   const enc = encodeURIComponent(instanceName);
-  return evolutionFetchJson<EvolutionConnectResponse>(`/instance/connect/${enc}`, { method: "GET" });
+  const path = `/instance/connect/${enc}`;
+  const getRes = await evolutionFetchJson<EvolutionConnectResponse>(path, { method: "GET" });
+  if (getRes.ok) return getRes;
+  if (getRes.status === 404 || getRes.status === 405) {
+    const postRes = await evolutionFetchJson<EvolutionConnectResponse>(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    if (postRes.ok) return postRes;
+  }
+  return getRes;
 }
 
 const PING_TIMEOUT_MS = 6000;
@@ -178,8 +207,30 @@ export async function evolutionPing(): Promise<{ reachable: true } | { reachable
 }
 
 export type EvolutionConnectionStateResponse = {
-  instance?: { instanceName?: string; state?: string };
+  instance?: { instanceName?: string; state?: string; connectionStatus?: string; status?: string };
+  state?: string;
+  connectionState?: string;
+  connectionStatus?: string;
 };
+
+/** Lê o estado da instância em respostas que variam entre versões da Evolution. */
+export function parseEvolutionConnectionStatePayload(data: unknown): string | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const o = data as Record<string, unknown>;
+  const inst = o.instance;
+  if (inst && typeof inst === "object") {
+    const io = inst as Record<string, unknown>;
+    for (const k of ["state", "connectionStatus", "status"]) {
+      const v = io[k];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  }
+  for (const k of ["state", "connectionState", "connectionStatus"]) {
+    const v = o[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return undefined;
+}
 
 export async function evolutionConnectionState(
   instanceName: string,
@@ -204,7 +255,7 @@ export async function evolutionSetWebhook(params: {
       url: params.url,
       webhookByEvents: false,
       webhookBase64: true,
-      events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE"],
+      events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
     }),
   });
 }

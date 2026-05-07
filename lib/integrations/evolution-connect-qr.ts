@@ -42,6 +42,43 @@ function pickString(...vals: unknown[]): string | null {
   return null;
 }
 
+/** Código de 8 caracteres para emparelhamento (WhatsApp → aparelhos ligados → código). */
+const PAIRING_CODE_RE = /^[A-Z0-9]{6,10}$/i;
+
+/**
+ * Extrai `pairingCode` da resposta `/instance/connect/...` quando a imagem QR não vem no JSON.
+ */
+export function extractPairingCodeFromConnectPayload(payload: unknown): string | null {
+  if (payload == null) return null;
+  if (typeof payload !== "object") return null;
+  const o = payload as Record<string, unknown>;
+
+  const tryVal = (s: string | null): string | null => {
+    if (!s) return null;
+    const t = s.trim();
+    if (PAIRING_CODE_RE.test(t)) return t.toUpperCase();
+    return null;
+  };
+
+  const direct = tryVal(pickString(o.pairingCode, o.pairing_code));
+  if (direct) return direct;
+
+  const wrapped = o.data;
+  if (wrapped !== undefined && wrapped !== null && wrapped !== o) {
+    const inner = extractPairingCodeFromConnectPayload(wrapped);
+    if (inner) return inner;
+  }
+
+  const nestedQr = o.qrcode;
+  if (nestedQr && typeof nestedQr === "object" && !Array.isArray(nestedQr)) {
+    const q = nestedQr as Record<string, unknown>;
+    const p = tryVal(pickString(q.pairingCode, q.pairing_code));
+    if (p) return p;
+  }
+
+  return null;
+}
+
 /**
  * Extrai um URL de imagem QR a partir do JSON devolvido por `/instance/connect/...`.
  * @param depth limite de profundidade para objectos `data` aninhados.
@@ -56,6 +93,11 @@ export function normalizeInstanceConnectToQrDataUrl(payload: unknown, depth = 0)
 
   if (typeof payload !== "object") return null;
   const o = payload as Record<string, unknown>;
+
+  if (typeof o.qrcode === "string") {
+    const fromStr = rawQrPayloadToDataUrl(o.qrcode);
+    if (fromStr) return fromStr;
+  }
 
   const wrapped = o.data;
   if (wrapped !== undefined && wrapped !== null && wrapped !== o) {
@@ -75,10 +117,14 @@ export function normalizeInstanceConnectToQrDataUrl(payload: unknown, depth = 0)
     pickString(o.base64),
     pickString(nestedQrRecord?.base64),
     pickString(nestedQrRecord?.code),
+    pickString(nestedQrRecord?.inBase64),
+    pickString(nestedQrRecord?.img),
     pickString(nestedPairRecord?.base64),
     pickString(o.qr),
     pickString(typeof o.qrcode === "string" ? o.qrcode : null),
     pickString(o.code),
+    pickString(o.qrCode),
+    pickString(o.QRCode),
   ];
 
   for (const c of candidates) {

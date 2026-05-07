@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  extractPairingCodeFromConnectPayload,
   normalizeInstanceConnectToQrDataUrl,
   rawQrPayloadToDataUrl,
 } from "@/lib/integrations/evolution-connect-qr";
@@ -20,6 +21,20 @@ describe("rawQrPayloadToDataUrl", () => {
 
   it("returns null for Baileys pairing token without image", () => {
     expect(rawQrPayloadToDataUrl("2@short-not-image")).toBeNull();
+  });
+});
+
+describe("extractPairingCodeFromConnectPayload", () => {
+  it("reads top-level pairingCode", () => {
+    expect(extractPairingCodeFromConnectPayload({ pairingCode: "abcd1234" })).toBe("ABCD1234");
+  });
+
+  it("reads nested data.pairingCode", () => {
+    expect(extractPairingCodeFromConnectPayload({ data: { pairingCode: "wzyeh1yy" } })).toBe("WZYEH1YY");
+  });
+
+  it("returns null when only Baileys code present", () => {
+    expect(extractPairingCodeFromConnectPayload({ code: "2@abc" })).toBeNull();
   });
 });
 

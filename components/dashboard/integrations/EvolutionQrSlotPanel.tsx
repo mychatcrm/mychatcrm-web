@@ -10,6 +10,7 @@ type SessionJson = {
   instanceName?: string | null;
   connectionState?: string;
   qrDataUrl?: string | null;
+  pairingCode?: string | null;
   error?: string;
   detail?: string;
 };
@@ -94,6 +95,7 @@ export function EvolutionQrSlotPanel({ slotIndex }: { slotIndex: number }) {
 
   const [connectionState, setConnectionState] = useState<string>("");
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [pairingCode, setPairingCode] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [infraHint, setInfraHint] = useState<string | null>(null);
@@ -107,13 +109,21 @@ export function EvolutionQrSlotPanel({ slotIndex }: { slotIndex: number }) {
 
   const applySessionPayload = useCallback((res: Response, j: SessionJson) => {
     if (!res.ok) {
+      setPairingCode(null);
       setError(friendlyHttpError(res.status, j));
       return;
     }
     setError(null);
-    const st = j.connectionState ?? "";
+    const rawSt = j.connectionState;
+    const st =
+      typeof rawSt === "string" && rawSt.trim()
+        ? rawSt.trim()
+        : res.ok
+          ? "close"
+          : "";
     setConnectionState(st);
     setQrDataUrl(typeof j.qrDataUrl === "string" ? j.qrDataUrl : null);
+    setPairingCode(typeof j.pairingCode === "string" && j.pairingCode.trim() ? j.pairingCode.trim().toUpperCase() : null);
     if (j.detail && !j.qrDataUrl && res.ok) {
       setError((prev) => prev ?? `Evolution (VPS): ${j.detail}`);
     }
@@ -235,16 +245,33 @@ export function EvolutionQrSlotPanel({ slotIndex }: { slotIndex: number }) {
             "rounded-lg border px-3 py-2 text-xs",
             unifiedAlert.tone === "danger"
               ? "border-rose-500/35 bg-rose-500/10 text-rose-950 dark:text-rose-100"
-              : "border-amber-500/35 bg-amber-500/10 text-amber-900 dark:text-amber-100",
+              : "border-amber-500/40 bg-amber-500/15 text-amber-950 dark:text-amber-50",
           )}
         >
           <p className="font-medium leading-snug">{unifiedAlert.primary}</p>
           {unifiedAlert.secondary ? (
-            <p className="mt-1.5 text-[11px] leading-snug opacity-95">{unifiedAlert.secondary}</p>
+            <p className="mt-1.5 text-[11px] font-medium leading-snug text-amber-950/90 dark:text-amber-50/95">
+              {unifiedAlert.secondary}
+            </p>
           ) : null}
         </div>
       ) : null}
       <p className="text-xs text-content-muted">{statusLabel}</p>
+      {pairingCode && connectionState !== "open" && !qrDataUrl ? (
+        <div className="rounded-lg border border-sky-500/35 bg-sky-500/10 px-3 py-3 text-sm text-sky-950 dark:text-sky-50">
+          <p className="font-semibold text-content">Código de emparelhamento</p>
+          <p className="mt-1 text-xs leading-relaxed text-content-secondary">
+            No WhatsApp no telemóvel: <strong className="text-content">Definições</strong> → <strong className="text-content">Aparelhos ligados</strong> →{" "}
+            <strong className="text-content">Ligar um aparelho</strong> → escolha <strong className="text-content">ligar com número</strong> (ou equivalente) e introduza:
+          </p>
+          <p className="mt-3 text-center font-mono text-2xl font-bold tracking-[0.35em] text-content" translate="no">
+            {pairingCode}
+          </p>
+          <p className="mt-2 text-[11px] text-content-muted">
+            Se a Evolution só devolver o token interno sem imagem, este código é a forma suportada de ligar o aparelho.
+          </p>
+        </div>
+      ) : null}
       {qrDataUrl && connectionState !== "open" ? (
         <div className="flex flex-col items-center gap-2">
           {/* Data URL dinâmico da Evolution — next/image não aplica aqui. */}

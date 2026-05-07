@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
-import { normalizeInstanceConnectToQrDataUrl } from "@/lib/integrations/evolution-connect-qr";
+import {
+  extractPairingCodeFromConnectPayload,
+  normalizeInstanceConnectToQrDataUrl,
+} from "@/lib/integrations/evolution-connect-qr";
 import { buildEvolutionWebhookUrl, getPublicBaseUrlFromRequest } from "@/lib/integrations/evolution-webhook-url";
 import {
   buildEvolutionInstanceName,
@@ -11,6 +14,7 @@ import {
   evolutionSetWebhook,
   isEvolutionApiConfigured,
   normalizeEvolutionConnectionState,
+  parseEvolutionConnectionStatePayload,
 } from "@/lib/integrations/evolution-api";
 import {
   deleteTenantEvolutionInstanceRow,
@@ -83,7 +87,7 @@ export async function POST(request: Request) {
 
   const stateRes = await evolutionConnectionState(instanceName);
   const remoteState = normalizeEvolutionConnectionState(
-    stateRes.ok ? stateRes.data.instance?.state : undefined,
+    stateRes.ok ? parseEvolutionConnectionStatePayload(stateRes.data) : undefined,
     "close",
   );
 
@@ -113,6 +117,7 @@ export async function POST(request: Request) {
       instanceName,
       connectionState: remoteState,
       qrDataUrl: null as string | null,
+      pairingCode: null as string | null,
     });
   }
 
@@ -123,6 +128,7 @@ export async function POST(request: Request) {
         instanceName,
         connectionState: remoteState,
         qrDataUrl: null as string | null,
+        pairingCode: null as string | null,
         detail: connectRes.error,
       },
       { status: 200 },
@@ -130,11 +136,13 @@ export async function POST(request: Request) {
   }
 
   const qrDataUrl = normalizeInstanceConnectToQrDataUrl(connectRes.data as unknown);
+  const pairingCode = extractPairingCodeFromConnectPayload(connectRes.data as unknown);
 
   return NextResponse.json({
     instanceName,
     connectionState: remoteState,
     qrDataUrl,
+    pairingCode,
   });
 }
 
@@ -159,12 +167,13 @@ export async function GET(request: Request) {
       instanceName: null,
       connectionState: "none",
       qrDataUrl: null as string | null,
+      pairingCode: null as string | null,
     });
   }
 
   const stateRes = await evolutionConnectionState(row.instance_name);
   const remoteState = normalizeEvolutionConnectionState(
-    stateRes.ok ? stateRes.data.instance?.state : row.connection_state,
+    stateRes.ok ? parseEvolutionConnectionStatePayload(stateRes.data) : row.connection_state,
     normalizeEvolutionConnectionState(row.connection_state, "close"),
   );
 
@@ -187,6 +196,7 @@ export async function GET(request: Request) {
         instanceName: row.instance_name,
         connectionState: remoteState,
         qrDataUrl: null as string | null,
+        pairingCode: null as string | null,
       },
       { status: 503 },
     );
@@ -197,17 +207,20 @@ export async function GET(request: Request) {
       instanceName: row.instance_name,
       connectionState: remoteState,
       qrDataUrl: null as string | null,
+      pairingCode: null as string | null,
     });
   }
 
   const connectRes = await evolutionInstanceConnect(row.instance_name);
   const qrDataUrl =
     connectRes.ok ? normalizeInstanceConnectToQrDataUrl(connectRes.data as unknown) : null;
+  const pairingCode = connectRes.ok ? extractPairingCodeFromConnectPayload(connectRes.data as unknown) : null;
 
   return NextResponse.json({
     instanceName: row.instance_name,
     connectionState: remoteState,
     qrDataUrl,
+    pairingCode,
   });
 }
 
