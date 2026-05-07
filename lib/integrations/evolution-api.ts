@@ -1,6 +1,6 @@
 /**
  * Cliente HTTP Evolution API v2 (OpenAPI 2.1.x).
- * Auth: header `apikey` (global EVOLUTION_API_KEY).
+ * Auth: header `apikey` — ver `evolutionApiKey()` para nomes de env suportados.
  * @see https://doc.evolution-api.com/v2/
  */
 
@@ -12,15 +12,32 @@ export type EvolutionFetchResult<T> =
   | { ok: true; status: number; data: T }
   | { ok: false; status: number; error: string };
 
+/** Chave global: prioridade MyChatCRM → nomes usados na stack oficial Evolution (Docker). */
+export function evolutionApiKey(): string {
+  return (
+    process.env.EVOLUTION_API_KEY?.trim() ||
+    process.env.AUTHENTICATION_API_KEY?.trim() ||
+    process.env.EVOLUTION_AUTHENTICATION_API_KEY?.trim() ||
+    ""
+  );
+}
+
 function evolutionConfig() {
   const baseUrl = process.env.EVOLUTION_API_BASE_URL?.trim().replace(/\/+$/, "") ?? "";
-  const apiKey = process.env.EVOLUTION_API_KEY?.trim() ?? "";
+  const apiKey = evolutionApiKey();
   return { baseUrl, apiKey };
 }
 
 export function isEvolutionApiConfigured(): boolean {
   const { baseUrl, apiKey } = evolutionConfig();
   return Boolean(baseUrl && apiKey);
+}
+
+/** Garante string não vazia para o cliente (evita UI presa em «sincronizar»). */
+export function normalizeEvolutionConnectionState(raw: unknown, fallback = "close"): string {
+  if (typeof raw !== "string") return fallback;
+  const t = raw.trim();
+  return t.length ? t : fallback;
 }
 
 /** Nome de instância estável, curto e seguro para URL/path (único por tenant + slot). */
@@ -35,7 +52,12 @@ async function evolutionFetchJson<T>(
 ): Promise<EvolutionFetchResult<T>> {
   const { baseUrl, apiKey } = evolutionConfig();
   if (!baseUrl || !apiKey) {
-    return { ok: false, status: 503, error: "Evolution API não configurada (EVOLUTION_API_BASE_URL / EVOLUTION_API_KEY)." };
+    return {
+      ok: false,
+      status: 503,
+      error:
+        "Evolution API não configurada: defina EVOLUTION_API_BASE_URL e EVOLUTION_API_KEY (ou AUTHENTICATION_API_KEY / EVOLUTION_AUTHENTICATION_API_KEY).",
+    };
   }
   const url = `${baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
   const { timeoutMs = DEFAULT_TIMEOUT_MS, ...rest } = init;
@@ -129,7 +151,8 @@ export async function evolutionPing(): Promise<{ reachable: true } | { reachable
   if (!baseUrl || !apiKey) {
     return { reachable: false, error: "not_configured" };
   }
-  const paths = ["/instance/fetchInstances", "/"];
+  /** Rotas leves; qualquer HTTP < 600 indica TCP + servidor a responder. */
+  const paths = ["/instance/fetchInstances", "/", "/manager"];
   let lastErr = "unreachable";
   for (const path of paths) {
     const url = `${baseUrl}${path}`;

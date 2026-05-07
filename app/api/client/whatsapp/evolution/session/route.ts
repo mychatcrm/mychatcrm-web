@@ -10,6 +10,7 @@ import {
   evolutionInstanceConnect,
   evolutionSetWebhook,
   isEvolutionApiConfigured,
+  normalizeEvolutionConnectionState,
 } from "@/lib/integrations/evolution-api";
 import {
   deleteTenantEvolutionInstanceRow,
@@ -81,15 +82,31 @@ export async function POST(request: Request) {
   }
 
   const stateRes = await evolutionConnectionState(instanceName);
-  const remoteState = stateRes.ok ? (stateRes.data.instance?.state ?? "close") : "close";
+  const remoteState = normalizeEvolutionConnectionState(
+    stateRes.ok ? stateRes.data.instance?.state : undefined,
+    "close",
+  );
 
-  await upsertTenantEvolutionInstance({
-    tenantId: session.tenantId,
-    slotIndex,
-    instanceName,
-    connectionState: remoteState,
-    defaultAgentId,
-  });
+  try {
+    await upsertTenantEvolutionInstance({
+      tenantId: session.tenantId,
+      slotIndex,
+      instanceName,
+      connectionState: remoteState,
+      defaultAgentId,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[evolution/session] POST upsert", msg);
+    return NextResponse.json(
+      {
+        error:
+          "Não foi possível gravar a sessão no Supabase. Aplique a migração 20260513_tenant_evolution_instances.sql no projecto ligado a NEXT_PUBLIC_SUPABASE_URL.",
+        detail: msg.slice(0, 400),
+      },
+      { status: 503 },
+    );
+  }
 
   if (remoteState === "open") {
     return NextResponse.json({
@@ -146,16 +163,34 @@ export async function GET(request: Request) {
   }
 
   const stateRes = await evolutionConnectionState(row.instance_name);
-  const remoteState = stateRes.ok ? (stateRes.data.instance?.state ?? row.connection_state) : row.connection_state;
+  const remoteState = normalizeEvolutionConnectionState(
+    stateRes.ok ? stateRes.data.instance?.state : row.connection_state,
+    normalizeEvolutionConnectionState(row.connection_state, "close"),
+  );
 
-  await upsertTenantEvolutionInstance({
-    tenantId: session.tenantId,
-    slotIndex,
-    instanceName: row.instance_name,
-    connectionState: remoteState,
-    waJid: row.wa_jid,
-    defaultAgentId: row.default_agent_id,
-  });
+  try {
+    await upsertTenantEvolutionInstance({
+      tenantId: session.tenantId,
+      slotIndex,
+      instanceName: row.instance_name,
+      connectionState: remoteState,
+      waJid: row.wa_jid,
+      defaultAgentId: row.default_agent_id,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[evolution/session] GET upsert", msg);
+    return NextResponse.json(
+      {
+        error: "Supabase indisponível ou migração em falta (tenant_evolution_instances).",
+        detail: msg.slice(0, 400),
+        instanceName: row.instance_name,
+        connectionState: remoteState,
+        qrDataUrl: null as string | null,
+      },
+      { status: 503 },
+    );
+  }
 
   if (remoteState === "open") {
     return NextResponse.json({
@@ -197,7 +232,11 @@ export async function DELETE(request: Request) {
     if (!del.ok && del.status !== 404) {
       console.warn("[evolution/session] delete instance", del.status, del.error);
     }
-    await deleteTenantEvolutionInstanceRow(session.tenantId, slotIndex);
+    try {
+      await deleteTenantEvolutionInstanceRow(session.tenantId, slotIndex);
+    } catch (e) {
+      console.warn("[evolution/session] delete row", e);
+    }
   }
 
   return NextResponse.json({ ok: true });

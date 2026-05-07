@@ -33,7 +33,7 @@ function friendlyHttpError(status: number, j: SessionJson): string {
   if (status === 503) {
     return (
       j.error ??
-      "Servidor sem Evolution configurada (EVOLUTION_API_BASE_URL, EVOLUTION_API_KEY ou EVOLUTION_WEBHOOK_SECRET). O QR é sempre gerado na tua Evolution na VPS — defina as variáveis no deploy."
+      "Servidor sem Evolution configurada (EVOLUTION_API_BASE_URL, EVOLUTION_API_KEY ou AUTHENTICATION_API_KEY, e EVOLUTION_WEBHOOK_SECRET). O QR vem da Evolution na VPS — defina as variáveis no .env.local / Vercel."
     );
   }
   if (status === 502) {
