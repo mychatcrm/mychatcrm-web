@@ -143,7 +143,7 @@ function Panel({
   className?: string;
 }) {
   return (
-    <section className={cn("min-w-0 rounded-xl border border-line bg-surface-card p-5 sm:p-6", className)}>
+    <section className={cn("panel-surface-card min-w-0 rounded-xl border border-line bg-surface-card p-5 sm:p-6", className)}>
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <h2 className={cn(typography.heading.h4, "text-[17px] sm:text-xl")}>{title}</h2>
@@ -170,7 +170,7 @@ function MetricCard({
   accent?: string;
 }) {
   return (
-    <div className="rounded-xl border border-line bg-surface-card p-4 transition-colors duration-200 hover:border-line">
+    <div className="panel-surface-card panel-kpi-card rounded-xl border border-line bg-surface-card p-4 transition-colors duration-200 hover:border-line">
       <p className={typography.ui.overline}>{label}</p>
       <p className={cn(typography.ui.kpi, "mt-2 text-2xl sm:text-3xl", accent)}>{value}</p>
       <p className={cn(typography.ui.caption, "mt-2 leading-snug")}>{helper}</p>

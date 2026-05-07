@@ -150,7 +150,7 @@ export function SidebarCollaboratorProfilePopover({
       id={panelId}
       role="dialog"
       aria-labelledby={titleId}
-      className="fixed z-[120] max-h-[min(72vh,520px)] overflow-y-auto overscroll-contain rounded-xl border border-line bg-surface-card p-3 text-content"
+      className="panel-floating-card fixed z-[120] max-h-[min(72vh,520px)] overflow-y-auto overscroll-contain rounded-xl border border-line bg-surface-card p-3 text-content"
       style={{
         left,
         top: anchor.top - 8,

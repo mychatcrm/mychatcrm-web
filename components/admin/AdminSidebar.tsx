@@ -27,7 +27,7 @@ export function AdminSidebar({
   };
 
   return (
-    <div className="flex h-full flex-col border-r border-line bg-surface-sidebar">
+    <div className="flex h-full flex-col bg-transparent">
       <div className="flex h-16 items-center justify-between gap-2 border-b border-line px-4">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <PanelBrandMark size={36} />
@@ -53,7 +53,7 @@ export function AdminSidebar({
       <nav className="flex-1 overflow-y-auto px-2 py-3" aria-label="Menu administrativo">
         {adminNavGroups.map((group) => (
           <div key={group.title} className="mb-4">
-            <p className={cn(typography.ui.overline, "mb-1.5 px-2 text-content-faint")}>{group.title}</p>
+            <p className={cn(typography.ui.overline, "panel-nav-section-label mb-1.5 px-2 text-content-faint")}>{group.title}</p>
             <div className="space-y-0.5">
               {group.items
                 .filter((it) => hasAdminAccessByRole(session.role, it.routeKey))
@@ -65,7 +65,8 @@ export function AdminSidebar({
                     href={it.href}
                     onClick={onNavigate}
                     className={cn(
-                      "group flex h-8 items-center gap-2 rounded-xl border px-2 text-sm font-medium transition duration-200",
+                      "panel-nav-item group flex h-8 items-center gap-2 rounded-xl border px-2 text-sm font-medium transition duration-200",
+                      active && "panel-nav-item--active",
                       active
                         ? isLight
                           ? "border-line bg-surface-deep text-primary"
@@ -92,7 +93,7 @@ export function AdminSidebar({
         ))}
       </nav>
       <div className="border-t border-line p-2">
-        <div className="flex items-center gap-2.5 rounded-xl border border-line bg-surface-elevated/50 p-2.5">
+        <div className="panel-profile-card flex items-center gap-2.5 rounded-xl border border-line bg-surface-elevated/50 p-2.5">
           <div
             className={cn(
               "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white",
@@ -109,7 +110,7 @@ export function AdminSidebar({
         <button
           type="button"
           onClick={logout}
-          className="mt-2 w-full rounded-xl border border-line bg-surface-elevated/50 py-2 text-[13px] text-content-secondary transition duration-200 hover:bg-surface-elevated hover:text-content"
+          className="panel-topbar-control mt-2 w-full rounded-xl border border-line bg-surface-elevated/50 py-2 text-[13px] text-content-secondary transition duration-200 hover:bg-surface-elevated hover:text-content"
           aria-label="Sair do painel admin"
         >
           Sair

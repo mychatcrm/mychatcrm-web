@@ -295,7 +295,7 @@ export function Sidebar({
             type="button"
             onClick={() => setUpgradeOpen(true)}
             className={cn(
-              "group relative flex h-9 w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-medium transition duration-200 ease-out",
+              "panel-nav-item group relative flex h-9 w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-medium transition duration-200 ease-out",
               "text-content-secondary hover:bg-surface-elevated/45 hover:text-content",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25",
               collapsed && "justify-center px-0",
@@ -313,7 +313,8 @@ export function Sidebar({
           href={it.href}
           onClick={onNavigate}
           className={cn(
-            "group relative flex h-9 items-center rounded-xl px-2.5 text-[13px] font-medium transition duration-200 ease-out",
+            "panel-nav-item group relative flex h-9 items-center rounded-xl px-2.5 text-[13px] font-medium transition duration-200 ease-out",
+            active && "panel-nav-item--active",
             active
               ? "bg-surface-elevated border border-line text-primary"
               : "border border-transparent text-content-secondary hover:bg-surface-elevated/40 hover:text-content",
@@ -334,7 +335,7 @@ export function Sidebar({
 
   return (
     <>
-      <div className="flex h-full flex-col border-r border-line bg-surface-sidebar">
+      <div className="flex h-full flex-col bg-transparent">
         <div className="flex h-auto min-h-16 flex-col justify-center gap-2 border-b border-line/80 px-4 py-3">
           <div className="flex items-center justify-between gap-2">
             <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -353,7 +354,7 @@ export function Sidebar({
               type="button"
               onClick={() => setMode(isLight ? "dark" : "light")}
               className={cn(
-                "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line/80 text-content-muted transition",
+                "panel-topbar-control flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line/80 text-content-muted transition",
                 "hover:bg-surface-elevated/40 hover:text-content",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-sidebar",
               )}
@@ -369,7 +370,7 @@ export function Sidebar({
           </div>
           {!collapsed ? (
             isSellerNav ? (
-              <div className="relative mt-1 rounded-xl border border-line/80 bg-surface-deep/60 px-3 py-2 text-left text-[12px] font-medium text-content">
+              <div className="panel-profile-card relative mt-1 rounded-xl border border-line/80 bg-surface-deep/60 px-3 py-2 text-left text-[12px] font-medium text-content">
                 <p className={cn("truncate", typography.label.default)}>{session.displayName}</p>
                 <p className="truncate text-xs text-content-muted">{session.companyName}</p>
               </div>
@@ -382,7 +383,7 @@ export function Sidebar({
                   aria-expanded={workspaceMenuOpen}
                   aria-controls={workspacePanelId}
                   onClick={() => setWorkspaceMenuOpen((open) => !open)}
-                  className="flex w-full min-h-[40px] items-center justify-between gap-2 rounded-xl border border-line/80 bg-surface-deep/60 px-3 py-2 text-left text-[12px] font-medium text-content transition hover:border-line hover:bg-surface-elevated/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                  className="panel-profile-card flex w-full min-h-[40px] items-center justify-between gap-2 rounded-xl border border-line/80 bg-surface-deep/60 px-3 py-2 text-left text-[12px] font-medium text-content transition hover:border-line hover:bg-surface-elevated/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
                 >
                   <span className="min-w-0 truncate">{workspaceLabel}</span>
                   <span className="shrink-0 text-content-muted" aria-hidden>
@@ -398,7 +399,7 @@ export function Sidebar({
                     id={workspacePanelId}
                     role="dialog"
                     aria-labelledby={workspacePanelTitleId}
-                    className="absolute left-0 right-0 top-[calc(100%+6px)] z-40 rounded-xl border border-line bg-surface-card p-3"
+                    className="panel-floating-card absolute left-0 right-0 top-[calc(100%+6px)] z-40 rounded-xl border border-line bg-surface-card p-3"
                   >
                     <div className="mb-1.5 flex items-center gap-1.5">
                       <div className="h-1 w-1 shrink-0 rounded-full bg-primary" aria-hidden />
@@ -472,7 +473,7 @@ export function Sidebar({
           {!collapsed ? (
             <>
               {!isSellerNav && canManageAccountPlan ? (
-                <div className="mb-3 rounded-xl border border-primary/25 bg-primary/[0.06] px-3 py-2.5">
+                <div className="panel-surface-card panel-kpi-card mb-3 rounded-xl border border-primary/25 bg-primary/[0.06] px-3 py-2.5">
                   <div className="flex min-w-0 items-center justify-between gap-2">
                     <div className="flex shrink-0 items-center gap-1.5">
                       <div className="h-1 w-1 shrink-0 rounded-full bg-primary" aria-hidden />
@@ -497,7 +498,7 @@ export function Sidebar({
                 title={`${formatLeadCount(remainingLeads)} leads restantes (${Math.round(pctRemaining)}% do ciclo)`}
                 aria-label={`Leads atendidos: ${formatLeadCount(remainingLeads)} restantes neste ciclo, ${Math.round(pctRemaining)} por cento disponível. Abrir detalhes.`}
                 className={cn(
-                  "rounded-xl border border-line bg-surface-elevated/40 text-left transition hover:border-primary/35 hover:bg-surface-elevated/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+                  "panel-surface-card rounded-xl border border-line bg-surface-elevated/40 text-left transition hover:border-primary/35 hover:bg-surface-elevated/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
                   collapsed
                     ? "flex h-10 w-10 flex-col items-center justify-center gap-0.5 p-0"
                     : "w-full px-2 py-1.5",
@@ -539,7 +540,7 @@ export function Sidebar({
               href="/dashboard/configuracoes"
               onClick={() => onNavigate?.()}
               className={cn(
-                "group flex min-w-0 items-center gap-3 rounded-xl border px-2 py-2 transition hover:border-line/80 hover:bg-surface-elevated/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+                "panel-profile-card group flex min-w-0 items-center gap-3 rounded-xl border px-2 py-2 transition hover:border-line/80 hover:bg-surface-elevated/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
                 settingsActive ? "border-primary/30 bg-primary/[0.08]" : "border-transparent",
                 collapsed ? "flex-col gap-2" : "",
               )}
@@ -583,7 +584,7 @@ export function Sidebar({
               aria-label="Abrir dados do perfil: avatar, e-mail e palavra-passe"
               title={collapsed ? `${session.displayName} — perfil` : undefined}
               className={cn(
-                "group flex w-full min-w-0 items-center gap-3 rounded-xl border px-2 py-2 text-left transition hover:border-line/80 hover:bg-surface-elevated/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+                "panel-profile-card group flex w-full min-w-0 items-center gap-3 rounded-xl border px-2 py-2 text-left transition hover:border-line/80 hover:bg-surface-elevated/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
                 profilePopoverOpen ? "border-primary/30 bg-primary/[0.08]" : "border-transparent",
                 collapsed ? "flex-col gap-2" : "",
               )}
@@ -618,7 +619,7 @@ export function Sidebar({
           ) : (
             <div
               className={cn(
-                "flex min-w-0 items-center gap-3 rounded-xl border border-transparent px-2 py-2",
+                "panel-profile-card flex min-w-0 items-center gap-3 rounded-xl border border-transparent px-2 py-2",
                 collapsed ? "flex-col gap-2" : "",
               )}
             >
@@ -636,7 +637,7 @@ export function Sidebar({
           <button
             type="button"
             onClick={logout}
-            className="mt-3 w-full min-h-[40px] rounded-xl border border-line/70 bg-surface-elevated/40 text-[13px] font-medium text-content-secondary transition duration-200 ease-out hover:border-line hover:bg-surface-elevated hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+            className="panel-topbar-control mt-3 w-full min-h-[40px] rounded-xl border border-line/70 bg-surface-elevated/40 text-[13px] font-medium text-content-secondary transition duration-200 ease-out hover:border-line hover:bg-surface-elevated hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
             aria-label="Sair da conta"
           >
             {!collapsed ? "Sair" : "×"}
@@ -649,7 +650,7 @@ export function Sidebar({
               id={leadsPanelId}
               role="dialog"
               aria-labelledby={leadsTitleId}
-              className="fixed z-[120] rounded-xl border border-line bg-surface-card p-3 text-content"
+              className="panel-floating-card fixed z-[120] rounded-xl border border-line bg-surface-card p-3 text-content"
               style={(() => {
                 const vw = window.innerWidth;
                 const popW = Math.min(280, vw - 24);

@@ -7,13 +7,10 @@ import { Drawer } from "@/components/ui/Drawer";
 import Link from "next/link";
 import type { AdminSession } from "@/lib/admin-auth";
 import { adminNavGroups } from "./navigation";
-import { cn } from "@/lib/utils";
-import { typography } from "@/lib/typography";
 import { Menu } from "lucide-react";
 import {
   PanelAppearanceProvider,
   type PanelAppearanceMode,
-  usePanelAppearance,
 } from "@/components/panel/PanelAppearance";
 
 function AdminShellInner({
@@ -23,7 +20,6 @@ function AdminShellInner({
   children: ReactNode;
   session: AdminSession;
 }) {
-  const { isLight } = usePanelAppearance();
   const [drawer, setDrawer] = useState(false);
   const pathname = usePathname();
 
@@ -36,9 +32,9 @@ function AdminShellInner({
   }, [pathname]);
 
   return (
-    <div className="flex h-full min-h-0 w-full overflow-hidden bg-surface-base">
+    <div className="panel-shell flex h-full min-h-0 w-full overflow-hidden bg-surface-base">
       <aside
-        className="hidden w-[260px] shrink-0 border-r border-line bg-surface-sidebar md:block"
+        className="panel-sidebar hidden w-[260px] shrink-0 border-r border-line bg-surface-sidebar md:block"
         aria-label="Navegação admin"
       >
         <AdminSidebar session={session} />
@@ -49,11 +45,11 @@ function AdminShellInner({
       </Drawer>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center justify-between gap-x-3 border-b border-line bg-surface-base/80 px-4 backdrop-blur-md supports-[backdrop-filter]:bg-surface-base/65 sm:px-6 xl:px-8">
+        <header className="panel-topbar flex h-12 shrink-0 items-center justify-between gap-x-3 border-b border-line bg-surface-base/80 px-4 backdrop-blur-md supports-[backdrop-filter]:bg-surface-base/65 sm:px-6 xl:px-8">
           <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-line/70 bg-surface-card/70 text-content-secondary transition duration-200 hover:border-line hover:bg-surface-elevated/60 hover:text-content md:hidden"
+              className="panel-topbar-control inline-flex h-8 w-8 items-center justify-center rounded-xl border border-line/70 bg-surface-card/70 text-content-secondary transition duration-200 hover:border-line hover:bg-surface-elevated/60 hover:text-content md:hidden"
               onClick={() => setDrawer(true)}
               aria-label="Abrir menu"
             >
@@ -70,7 +66,7 @@ function AdminShellInner({
           <div className="flex shrink-0 items-center gap-2">
             <Link
               href="/"
-              className="hidden h-8 items-center rounded-xl border border-line/70 bg-surface-card/70 px-3 text-[13px] text-content-secondary transition duration-200 hover:border-line hover:bg-surface-elevated/60 hover:text-content sm:inline-flex"
+              className="panel-topbar-control hidden h-8 items-center rounded-xl border border-line/70 bg-surface-card/70 px-3 text-[13px] text-content-secondary transition duration-200 hover:border-line hover:bg-surface-elevated/60 hover:text-content sm:inline-flex"
             >
               Site público
             </Link>
@@ -79,7 +75,9 @@ function AdminShellInner({
 
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface-base">
           <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-surface-base p-4 sm:p-6 lg:p-8">
-            {children}
+            <div className="panel-content-frame panel-content-frame--narrow min-h-0 min-w-0">
+              {children}
+            </div>
           </div>
         </main>
       </div>

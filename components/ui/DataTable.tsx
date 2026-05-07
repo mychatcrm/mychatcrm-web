@@ -25,14 +25,14 @@ export function DataTable<T>({
 }: DataTableProps<T>) {
   if (!data.length) {
     return (
-      <div className="rounded-2xl border border-dashed border-line/70 bg-surface-deep/60 p-10 text-center text-sm text-content-muted">
+      <div className="panel-surface-card rounded-2xl border border-dashed border-line/70 bg-surface-deep/60 p-10 text-center text-sm text-content-muted">
         {emptyLabel}
       </div>
     );
   }
 
   return (
-    <div className="min-w-0 overflow-hidden rounded-2xl border border-line/80 bg-surface-card">
+    <div className="panel-data-table min-w-0 overflow-hidden rounded-2xl border border-line/80 bg-surface-card">
       <div className="min-w-0 overflow-x-auto [-webkit-overflow-scrolling:touch] touch-pan-x">
         <table className="min-w-full divide-y divide-line/60 text-left text-sm">
           <thead className="bg-surface-elevated/60">

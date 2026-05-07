@@ -51,7 +51,7 @@ export function Modal({ open, onClose, title, titleContent, children, footer, cl
           aria-modal="true"
           aria-labelledby={titleId}
           className={cn(
-            "relative z-[101] mx-auto grid w-full min-h-0 min-w-0 overflow-hidden rounded-2xl border border-line/80 bg-surface-card shadow-elevation-3 sm:rounded-3xl",
+            "panel-modal-surface relative z-[101] mx-auto grid w-full min-h-0 min-w-0 overflow-hidden rounded-2xl border border-line/80 bg-surface-card shadow-elevation-3 sm:rounded-3xl",
             "max-h-[min(calc(100dvh-1rem),calc(100svh-1rem))]",
             footer ? "grid-rows-[auto_minmax(0,1fr)_auto]" : "grid-rows-[auto_minmax(0,1fr)]",
             "p-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] sm:p-6 sm:pb-[max(1.5rem,env(safe-area-inset-bottom,0px))]",

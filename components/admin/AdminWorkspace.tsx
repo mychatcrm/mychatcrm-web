@@ -59,7 +59,7 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <section className="min-w-0 rounded-xl border border-line bg-surface-card p-5 sm:p-6">
+    <section className="panel-surface-card min-w-0 rounded-xl border border-line bg-surface-card p-5 sm:p-6">
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <h2 className="text-[17px] font-semibold text-content sm:text-xl">{title}</h2>
@@ -84,7 +84,7 @@ function Stat({
   helper: string;
 }) {
   return (
-    <div className="rounded-xl border border-line bg-surface-card p-4">
+    <div className="panel-surface-card panel-kpi-card rounded-xl border border-line bg-surface-card p-4">
       <p className="text-sm text-content-muted">{label}</p>
       <p className="mt-2 text-2xl font-semibold text-content">{value}</p>
       <p className="mt-2 text-xs text-content-faint">{helper}</p>
