@@ -198,27 +198,6 @@ body {
   line-height: var(--brand-footer-line);
 }
 
-@media (pointer: fine) {
-  .landing-hide-cursor,
-  .landing-hide-cursor * {
-    cursor: none !important;
-  }
-}
-
-/** Cursor landing: posição só via transform (JS) — nunca transition em transform. */
-.landing-cursor-ring {
-  width: 2rem;
-  height: 2rem;
-  opacity: 0.5;
-  transition: width 0.15s ease, height 0.15s ease, opacity 0.15s ease;
-}
-
-.landing-cursor-ring.landing-cursor-ring--hover {
-  width: 2.75rem;
-  height: 2.75rem;
-  opacity: 0.9;
-}
-
 /** Ruído SVG sutil (overlay hero) — opacidade baixa, mix-blend */
 .landing-hero-noise {
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
