@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 import { cn } from "@/lib/utils";
@@ -43,6 +43,48 @@ function friendlyHttpError(status: number, j: SessionJson): string {
     return "Sessão expirada. Volte a iniciar sessão.";
   }
   return j.error ?? j.detail ?? `Erro ${status}`;
+}
+
+/** Evita dois blocos de alerta quando falha de rede e sessão reportam o mesmo problema. */
+function sessionErrorOverlapsInfra(infra: string, err: string | null): boolean {
+  if (!err) return false;
+  const i = infra.toLowerCase();
+  const e = err.toLowerCase();
+  if (!i || !e) return false;
+  if (i.includes("não conseguiu contactar") || i.includes("nao conseguiu contactar")) {
+    if (e.includes("502") || e.includes("vps") || e.includes("evolution") || e.includes("ligar a inst")) return true;
+  }
+  if (e.includes("502") && (i.includes("vps") || i.includes("contactar"))) return true;
+  return false;
+}
+
+type UnifiedAlert = { tone: "danger" | "warning"; primary: string; secondary?: string };
+
+function deriveUnifiedAlert(infraHint: string | null, error: string | null): UnifiedAlert | null {
+  if (!infraHint && !error) return null;
+
+  const errSession = error?.toLowerCase().includes("sessão") || error?.toLowerCase().includes("sessao");
+  const errConfig = error?.toLowerCase().includes("sem evolution") || error?.toLowerCase().includes("evolution_api") || error?.toLowerCase().includes("webhook");
+
+  if (infraHint && error && (errSession || errConfig)) {
+    return { tone: "warning", primary: error!, secondary: infraHint };
+  }
+
+  if (infraHint && error && sessionErrorOverlapsInfra(infraHint, error)) {
+    return {
+      tone: "danger",
+      primary:
+        "Não conseguimos ligar ao servidor WhatsApp (Evolution). Confirme que o serviço na sua VPS está a correr e que o endereço nas definições do MyChatCRM está correto.",
+      secondary: undefined,
+    };
+  }
+
+  if (infraHint && error) {
+    return { tone: "danger", primary: infraHint, secondary: error };
+  }
+
+  if (infraHint) return { tone: "danger", primary: infraHint };
+  return { tone: "warning", primary: error! };
 }
 
 export function EvolutionQrSlotPanel({ slotIndex }: { slotIndex: number }) {
@@ -161,30 +203,46 @@ export function EvolutionQrSlotPanel({ slotIndex }: { slotIndex: number }) {
 
   const statusLabel =
     connectionState === "open"
-      ? "Ligado ao WhatsApp (QR gerado pela Evolution na VPS)"
+      ? "Ligado — o WhatsApp nesta linha está ativo."
       : connectionState === "none"
-        ? "Sem sessão no servidor — a criar na Evolution…"
+        ? "A preparar a sessão no servidor…"
         : connectionState
-          ? `Estado Evolution: ${connectionState}`
-          : "A sincronizar com a Evolution…";
+          ? `Estado: ${connectionState}`
+          : "A sincronizar…";
+
+  const unifiedAlert = useMemo(() => deriveUnifiedAlert(infraHint, error), [infraHint, error]);
 
   return (
     <div className="space-y-3 rounded-xl border border-line bg-surface-deep/30 p-4 text-sm text-content-secondary">
-      <p className={typography.ui.overline}>WhatsApp por QR — Evolution API (VPS)</p>
+      <p className={typography.ui.overline}>WhatsApp por código QR</p>
       <p className="text-content">
-        O código QR é <strong className="text-content">sempre obtido da tua Evolution</strong> via API (<code className="text-xs">/instance/connect</code>
-        ). O MyChatCRM só orquestra instância por linha e grava o mapeamento no servidor.
+        O código aparece aqui depois de o <strong className="text-content">servidor WhatsApp</strong> (Evolution) o gerar. O MyChatCRM pede o código por si e associa esta linha.
       </p>
-      <p className="text-xs text-content-muted">
-        Canal não oficial (Baileys): adequado para testes; produção com número verificado deve preferir a API Meta.
-      </p>
-      {infraHint ? (
-        <p className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-950 dark:text-rose-100">{infraHint}</p>
-      ) : null}
-      {error ? (
-        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
-          {error}
-        </p>
+      <p className="text-xs text-content-muted">Indicado para testes; empresas com número verificado costumam usar a API Meta nesta mesma página.</p>
+      <details className="rounded-lg border border-line/60 bg-surface-deep/40 text-xs [&_summary::-webkit-details-marker]:hidden">
+        <summary className="cursor-pointer px-3 py-2 font-medium text-content-muted">Detalhes para administrador</summary>
+        <div className="space-y-2 border-t border-line/50 px-3 py-2 text-content-muted">
+          <p>
+            Ligação à API Evolution (<code className="rounded bg-surface-elevated/50 px-1 font-mono text-[10px]">/instance/connect</code>), instância por linha e registo no
+            servidor MyChatCRM. Canal não oficial (Baileys): uso típico em testes.
+          </p>
+        </div>
+      </details>
+      {unifiedAlert ? (
+        <div
+          role="alert"
+          className={cn(
+            "rounded-lg border px-3 py-2 text-xs",
+            unifiedAlert.tone === "danger"
+              ? "border-rose-500/35 bg-rose-500/10 text-rose-950 dark:text-rose-100"
+              : "border-amber-500/35 bg-amber-500/10 text-amber-900 dark:text-amber-100",
+          )}
+        >
+          <p className="font-medium leading-snug">{unifiedAlert.primary}</p>
+          {unifiedAlert.secondary ? (
+            <p className="mt-1.5 text-[11px] leading-snug opacity-95">{unifiedAlert.secondary}</p>
+          ) : null}
+        </div>
       ) : null}
       <p className="text-xs text-content-muted">{statusLabel}</p>
       {qrDataUrl && connectionState !== "open" ? (
@@ -203,15 +261,24 @@ export function EvolutionQrSlotPanel({ slotIndex }: { slotIndex: number }) {
             Abra o WhatsApp no telemóvel → Definições → Aparelhos ligados → Ligar um aparelho → escaneie este código.
           </p>
         </div>
-      ) : (connectionState === "close" || connectionState === "connecting") && !qrDataUrl && !error && !busy ? (
-        <p className="text-xs text-content-faint">
-          A aguardar imagem QR da Evolution na VPS. Se continuar vazio, veja os logs do container e confirme o formato da resposta (
-          <code className="text-[10px]">base64</code> / <code className="text-[10px]">qrcode</code> / <code className="text-[10px]">code</code>).
-        </p>
+      ) : (connectionState === "close" || connectionState === "connecting") &&
+        !qrDataUrl &&
+        !busy &&
+        (!error || Boolean(infraHint && sessionErrorOverlapsInfra(infraHint, error))) ? (
+        <div className="space-y-2">
+          <p className="text-xs text-content-faint">A aguardar o código QR do servidor. Pode demorar alguns segundos.</p>
+          <details className="text-xs text-content-faint [&_summary::-webkit-details-marker]:hidden">
+            <summary className="cursor-pointer font-medium text-content-muted">Ainda vazio?</summary>
+            <p className="mt-1 pl-0 text-[11px] leading-relaxed">
+              Veja os logs do container Evolution e confirme que a resposta inclui imagem em <code className="font-mono text-[10px]">base64</code>,{" "}
+              <code className="font-mono text-[10px]">qrcode</code> ou <code className="font-mono text-[10px]">code</code>.
+            </p>
+          </details>
+        </div>
       ) : null}
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="secondary" disabled={busy} onClick={() => void startOrRefreshSession()}>
-          {busy ? "A aguardar…" : "Gerar / atualizar QR (Evolution)"}
+          {busy ? "A aguardar…" : "Gerar ou atualizar código QR"}
         </Button>
         <Button
           type="button"

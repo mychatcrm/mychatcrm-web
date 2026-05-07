@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
-import { AlertTriangle, BadgeCheck, Check, ChevronRight, ExternalLink, Plug, QrCode, Share2, Sparkles } from "lucide-react";
+import { AlertTriangle, BadgeCheck, Check, Plug, QrCode, Share2, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
@@ -12,21 +12,6 @@ import { cn, formatBRL } from "@/lib/utils";
 import { WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL } from "@/lib/plans";
 import { readExtraSlotsSummary, whatsappExtraSlotsStorageKey, WHATSAPP_EXTRAS_UPDATED_EVENT } from "@/lib/whatsapp-extra-numbers-storage";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
-import {
-  GOOGLE_AGENDA_LS_KEY,
-  GOOGLE_AGENDA_UPDATED_EVENT,
-  loadGoogleAgendaState,
-  persistGoogleAgendaState,
-  type GoogleAgendaLinkState,
-} from "@/components/dashboard/agenda/agenda-storage";
-import type { IntegrationDefinition, IntegrationSlug } from "@/lib/integrations-catalog";
-import { integrationsGrouped } from "@/lib/integrations-catalog";
-import {
-  clientIntegrationsStorageKey,
-  INTEGRATIONS_CLIENT_UPDATED_EVENT,
-  loadClientIntegrations,
-  patchClientIntegration,
-} from "@/lib/integrations-client-storage";
 import {
   readWhatsAppSlotMethods,
   setWhatsAppSlotMethod,
@@ -111,10 +96,6 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const { isLight } = usePanelAppearance();
   const [revision, setRevision] = useState(0);
   const [banner, setBanner] = useState<string | null>(null);
-  const [modalSlug, setModalSlug] = useState<IntegrationSlug | null>(null);
-  const [modalHint, setModalHint] = useState("");
-  const [modalConnected, setModalConnected] = useState(false);
-  const [modalSaving, setModalSaving] = useState(false);
   const [fbModalOpen, setFbModalOpen] = useState(false);
   const [fbHint, setFbHint] = useState("");
   const [fbConnected, setFbConnected] = useState(false);
@@ -164,15 +145,9 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   }, [bump]);
 
   useEffect(() => {
-    const onGoogle = () => bump();
-    const onClient = () => bump();
-    window.addEventListener(GOOGLE_AGENDA_UPDATED_EVENT, onGoogle);
-    window.addEventListener(INTEGRATIONS_CLIENT_UPDATED_EVENT, onClient);
     const onStorage = (e: StorageEvent) => {
       if (!e.key) return;
       if (
-        e.key === GOOGLE_AGENDA_LS_KEY ||
-        e.key === clientIntegrationsStorageKey(tenantId) ||
         e.key === facebookPagesStorageKey(tenantId) ||
         e.key === whatsappExtraSlotsStorageKey(tenantId) ||
         whatsappConnectionWatchableStorageKeys(tenantId).includes(e.key)
@@ -182,24 +157,9 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     };
     window.addEventListener("storage", onStorage);
     return () => {
-      window.removeEventListener(GOOGLE_AGENDA_UPDATED_EVENT, onGoogle);
-      window.removeEventListener(INTEGRATIONS_CLIENT_UPDATED_EVENT, onClient);
       window.removeEventListener("storage", onStorage);
     };
   }, [bump, tenantId]);
-
-  const googleState = useMemo(() => {
-    void revision;
-    void tenantId;
-    return safeRun(() => loadGoogleAgendaState(), { connected: false } satisfies GoogleAgendaLinkState);
-  }, [revision, tenantId]);
-
-  const clientStore = useMemo(() => {
-    void revision;
-    return safeRun(() => loadClientIntegrations(tenantId), { v: 1, bySlug: {} });
-  }, [revision, tenantId]);
-
-  const groups = useMemo(() => integrationsGrouped(), []);
 
   const facebookState = useMemo(() => {
     void revision;
@@ -262,113 +222,20 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     }
   }, [bump, tenantId]);
 
-  const openModal = useCallback(
-    (def: IntegrationDefinition) => {
-      setBanner(null);
-      setModalSlug(def.slug);
-      if (def.backend === "google_agenda") {
-        const g = safeRun(() => loadGoogleAgendaState(), { connected: false });
-        setModalConnected(g.connected);
-        setModalHint(g.accountLabel ?? "");
-        return;
-      }
-      const row = safeRun(() => loadClientIntegrations(tenantId).bySlug[def.slug], undefined);
-      setModalConnected(row?.connected ?? false);
-      setModalHint(row?.accountHint ?? "");
-    },
-    [tenantId],
-  );
-
-  const closeModal = useCallback(() => {
-    setModalSlug(null);
-    setModalHint("");
-    setModalSaving(false);
-  }, []);
-
-  const activeDef = useMemo(
-    () => (modalSlug ? groups.flatMap((g) => g.items).find((d) => d.slug === modalSlug) ?? null : null),
-    [groups, modalSlug],
-  );
-
-  const saveModal = useCallback(() => {
-    if (!activeDef || !modalSlug) return;
-    const trimmed = modalHint.trim().slice(0, MAX_HINT);
-    if (modalHint.length > MAX_HINT) {
-      setBanner(`Use no maximo ${MAX_HINT} caracteres na descricao da conta.`);
-      return;
-    }
-    setModalSaving(true);
-    setBanner(null);
-    try {
-      if (activeDef.backend === "google_agenda") {
-        const next: GoogleAgendaLinkState = {
-          connected: modalConnected,
-          accountLabel: modalConnected ? trimmed || "Conta Google" : undefined,
-          lastSyncISO: modalConnected ? new Date().toISOString() : undefined,
-        };
-        persistGoogleAgendaState(next);
-      } else {
-        patchClientIntegration(tenantId, modalSlug, {
-          connected: modalConnected,
-          accountHint: trimmed || undefined,
-        });
-      }
-      bump();
-      closeModal();
-    } catch {
-      setBanner("Nao foi possivel guardar. Verifique o armazenamento do navegador ou tente de novo.");
-    } finally {
-      setModalSaving(false);
-    }
-  }, [activeDef, bump, closeModal, modalConnected, modalHint, modalSlug, tenantId]);
-
-  const quickDisconnect = useCallback(
-    (def: IntegrationDefinition) => {
-      setBanner(null);
-      try {
-        if (def.backend === "google_agenda") {
-          persistGoogleAgendaState({ connected: false });
-        } else {
-          patchClientIntegration(tenantId, def.slug, { connected: false, accountHint: "" });
-        }
-        bump();
-      } catch {
-        setBanner("Falha ao desligar a integracao.");
-      }
-    },
-    [bump, tenantId],
-  );
-
-  const statusFor = useCallback(
-    (def: IntegrationDefinition): { connected: boolean; hint?: string } => {
-      if (def.backend === "google_agenda") {
-        return { connected: googleState.connected, hint: googleState.accountLabel };
-      }
-      const row = clientStore.bySlug[def.slug];
-      return { connected: Boolean(row?.connected), hint: row?.accountHint };
-    },
-    [clientStore.bySlug, googleState.accountLabel, googleState.connected],
-  );
-
   const health = useMemo(() => {
     void revision;
-    const items = groups.flatMap((g) => g.items);
-    let catalogConnected = 0;
-    for (const def of items) {
-      if (statusFor(def).connected) catalogConnected++;
-    }
     const waLinesReady = waSlots.filter(Boolean).length;
     const waOn = waLinesReady > 0;
     const fbOn = Boolean(facebookState.connected);
+    const channelTotal = 2;
+    const channelActive = (waOn ? 1 : 0) + (fbOn ? 1 : 0);
     return {
-      donutActive: catalogConnected + (waOn ? 1 : 0) + (fbOn ? 1 : 0),
-      donutTotal: items.length + 2,
-      catalogConnected,
-      catalogTotal: items.length,
+      donutActive: channelActive,
+      donutTotal: channelTotal,
       waLinesReady,
       waLineCount: waSlots.length,
     };
-  }, [facebookState.connected, groups, revision, statusFor, waSlots]);
+  }, [facebookState.connected, revision, waSlots]);
 
   return (
     <div className="space-y-8">
@@ -390,131 +257,6 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
       ) : null}
 
       <section
-        className={cn(
-          "overflow-hidden rounded-xl border",
-          isLight
-            ? "border-slate-200/90 bg-gradient-to-br from-white via-slate-50/80 to-primary/[0.06]"
-            : "border-line bg-gradient-to-br from-surface-card via-surface-deep/50 to-primary/[0.07]",
-        )}
-      >
-        <div className="grid gap-6 p-5 sm:p-7 lg:grid-cols-[minmax(0,1fr)_min(100%,280px)] lg:items-center">
-          <div>
-            <div className={cn("inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-primary", typography.ui.overline)}>
-              <Sparkles className="size-3.5" aria-hidden />
-              Guia rapido
-            </div>
-            <h2 className={cn("mt-3", typography.heading.h3)}>
-              Integre as suas ferramentas sem ser tecnico
-            </h2>
-            <p className="mt-2 max-w-xl text-sm leading-relaxed text-content-secondary">
-              Cada cartao abaixo e um app que pode conversar com o MyChatCRM. Escolha, toque em <span className="font-medium text-content">Ligar agora</span> e siga o
-              mini assistente — nada de codigo nem linha de comandos.
-            </p>
-            <ol className="mt-5 space-y-3 text-sm text-content-secondary">
-              <li className="flex gap-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-sm font-bold text-primary">1</span>
-                <div>
-                  <p className="font-medium text-content">Escolha o que precisa</p>
-                  <p className="text-xs text-content-muted">CRM Kanban, e-mail, automacao ou o WhatsApp aqui em cima.</p>
-                </div>
-              </li>
-              <li className="flex gap-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-sm font-bold text-primary">2</span>
-                <div>
-                  <p className="font-medium text-content">Ligue com um clique</p>
-                  <p className="text-xs text-content-muted">Confirme o nome da conta (opcional) e ative o interruptor.</p>
-                </div>
-              </li>
-              <li className="flex gap-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-sm font-bold text-primary">3</span>
-                <div>
-                  <p className="font-medium text-content">Use no dia a dia</p>
-                  <p className="text-xs text-content-muted">Dados sincronizam com CRM Kanban, agenda e lembretes quando o backend estiver ligado.</p>
-                </div>
-              </li>
-            </ol>
-          </div>
-          <div
-            className={cn(
-              "flex flex-col items-center justify-center rounded-xl border p-5",
-              isLight ? "border-slate-200/80 bg-surface-deep/80" : "border-line/80 bg-surface-deep/35",
-            )}
-          >
-            <div className="mb-0.5 flex items-center justify-center gap-1.5">
-              <div className="h-1 w-1 shrink-0 rounded-full bg-primary" aria-hidden />
-              <p className={cn(typography.ui.overline, "text-primary")}>Visao geral</p>
-            </div>
-            <IntegrationsHealthRing
-              gradId={ringGradId}
-              active={health.donutActive}
-              total={health.donutTotal}
-              caption="Apps + Facebook + WhatsApp"
-            />
-            <p className="mt-1 text-center text-[11px] text-content-muted">
-              {health.catalogConnected} apps na lista · Facebook {facebookState.connected ? "ligado" : "nao ligado"} · WhatsApp{" "}
-              {health.waLinesReady}/{health.waLineCount} linha(s) com metodo (QR ou Meta)
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <section
-        id="canal-facebook"
-        className={cn(
-          "overflow-hidden rounded-xl border",
-          isLight ? "border-blue-200/70 bg-surface-card" : "border-blue-500/25 bg-surface-card/40",
-        )}
-      >
-        <div
-          className={cn(
-            "flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4 sm:px-6",
-            isLight ? "border-blue-100 bg-blue-50/50" : "border-blue-500/15 bg-blue-500/[0.06]",
-          )}
-        >
-          <div className="flex items-center gap-3">
-            <span className={cn("flex h-11 w-11 items-center justify-center rounded-xl bg-blue-500/15", isLight ? "text-blue-600" : "text-blue-300")}>
-              <Share2 className="size-5" strokeWidth={2} aria-hidden />
-            </span>
-            <div>
-              <h3 className="font-display text-lg font-bold text-content">Páginas Facebook da empresa</h3>
-              <p className="text-xs text-content-secondary">Ligação às páginas Meta da empresa — leads e mensagens (demo local).</p>
-            </div>
-          </div>
-          <Badge
-            className={cn(
-              "shrink-0 text-[10px]",
-              facebookState.connected
-                ? cn("border-emerald-500/40 bg-emerald-500/15", isLight ? "text-emerald-700" : "text-emerald-300")
-                : "border-line bg-surface-elevated/50 text-content-secondary",
-            )}
-          >
-            {facebookState.connected ? "Ligado" : "Nao ligado"}
-          </Badge>
-        </div>
-        <div className="space-y-4 p-5 sm:p-6">
-          <p className="text-sm text-content-secondary">
-            Conecte as <strong className="text-content">páginas Facebook</strong> da empresa para alinhar campanhas e formulários com o MyChatCRM. Neste ambiente o
-            estado fica no navegador até existir OAuth com a Meta.
-          </p>
-          {facebookState.accountHint ? (
-            <p className="truncate text-xs text-content-secondary" title={facebookState.accountHint}>
-              Conta ou página: <span className="font-medium text-content">{facebookState.accountHint}</span>
-            </p>
-          ) : null}
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant={facebookState.connected ? "secondary" : "gradient"} size="sm" className="min-h-[44px]" onClick={openFbModal}>
-              {facebookState.connected ? "Ajustar ligacao" : "Ligar agora"}
-            </Button>
-            {facebookState.connected ? (
-              <Button type="button" variant="outline" size="sm" className="min-h-[44px]" onClick={quickDisconnectFacebook}>
-                Desligar
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      </section>
-
-      <section
         id="canal-whatsapp"
         className={cn(
           "overflow-hidden rounded-xl border",
@@ -532,10 +274,12 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
               <Plug className="size-5" strokeWidth={2} aria-hidden />
             </span>
             <div>
+              <p className={cn(typography.ui.overline, "text-emerald-700 dark:text-emerald-300/90")}>Canal principal</p>
               <h3 className="font-display text-lg font-bold text-content">WhatsApp Business</h3>
               <p className="text-xs text-content-secondary">
-                {waSlots.length} linha(s) contratada(s) (1 do plano + {waExtraSlots.purchased} extra). Por linha: <strong className="text-content">QR</strong> ou{" "}
-                <strong className="text-content">API Meta</strong> — uma opcao por numero, nunca as duas na mesma linha.
+                Tem <strong className="text-content">{waSlots.length}</strong>{" "}
+                {waSlots.length === 1 ? "linha" : "linhas"} (plano + extras). Em cada linha escolha <strong className="text-content">QR</strong> ou{" "}
+                <strong className="text-content">API Meta</strong> — só uma opção por número.
               </p>
             </div>
           </div>
@@ -579,10 +323,22 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
             </div>
           ) : null}
           <p className="text-sm text-content-secondary">
-            <strong className="text-content">QR Code</strong> neste painel liga-se <strong className="text-content">directamente à tua Evolution API na VPS</strong>: o servidor MyChatCRM cria a
-            instância, pede o QR e mostra-o aqui (sem gerar QR no browser). A <strong className="text-content">API oficial da Meta</strong> continua a ser o caminho certo para empresas com
-            número verificado e templates aprovados. Só aparecem as linhas que o plano cobre.
+            Com <strong className="text-content">QR</strong>, o código é gerado no seu servidor WhatsApp (Evolution) e aparece aqui. Com <strong className="text-content">API Meta</strong>, o
+            caminho oficial para número verificado e envios em massa. Só vê as linhas incluídas no plano.
           </p>
+          <details
+            className={cn(
+              "rounded-lg border text-sm",
+              isLight ? "border-slate-200 bg-surface-deep/50" : "border-line bg-surface-deep/20",
+            )}
+          >
+            <summary className="cursor-pointer select-none px-3 py-2 font-medium text-content [&::-webkit-details-marker]:hidden">
+              Detalhes para equipa técnica (Evolution / Meta)
+            </summary>
+            <p className="border-t border-line/60 px-3 py-2 text-xs leading-relaxed text-content-muted">
+              O QR liga à Evolution na VPS: o MyChatCRM cria a instância e mostra o código. A API Meta é a opção certa para empresas com templates aprovados.
+            </p>
+          </details>
           <div className="space-y-5">
             {waSlots.map((method, slotIndex) => {
               const isBase = slotIndex === 0;
@@ -615,42 +371,46 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                   </div>
                   <div className="mt-4 space-y-4">
                     {!method ? (
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            await prefetchEvolutionSessionForSlot(slotIndex);
-                            setWhatsAppSlotMethod(tenantId, slotIndex, "qr");
-                          }}
-                          className={cn(
-                            "flex min-h-[44px] flex-col items-start gap-2 rounded-xl border p-4 text-left transition",
-                            "border-line bg-surface-elevated/40 hover:border-line/80 hover:bg-surface-elevated/60",
-                          )}
-                        >
-                          <span className="flex items-center gap-2 font-semibold text-content">
-                            <QrCode className="h-5 w-5 shrink-0 text-primary" strokeWidth={1.75} aria-hidden />
-                            Usar QR Code nesta linha
-                          </span>
-                          <span className="text-xs leading-relaxed text-content-muted">Um numero por sessao QR nesta linha contratada.</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setWhatsAppSlotMethod(tenantId, slotIndex, "meta")}
-                          className={cn(
-                            "flex min-h-[44px] flex-col items-start gap-2 rounded-xl border p-4 text-left transition",
-                            "border-line bg-surface-elevated/40 hover:border-line/80 hover:bg-surface-elevated/60",
-                          )}
-                        >
-                          <span className="flex items-center gap-2 font-semibold text-content">
-                            <BadgeCheck className="h-5 w-5 shrink-0 text-primary" strokeWidth={1.75} aria-hidden />
-                            Usar API Meta nesta linha
-                          </span>
-                          <span className="text-xs leading-relaxed text-content-muted">Cloud API / WABA nesta linha contratada.</span>
-                        </button>
+                      <div className="space-y-3">
+                        <p className="text-xs font-semibold text-content">Passo 1 — Como quer ligar este número?</p>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await prefetchEvolutionSessionForSlot(slotIndex);
+                              setWhatsAppSlotMethod(tenantId, slotIndex, "qr");
+                            }}
+                            className={cn(
+                              "flex min-h-[44px] flex-col items-start gap-2 rounded-xl border p-4 text-left transition",
+                              "border-line bg-surface-elevated/40 hover:border-line/80 hover:bg-surface-elevated/60",
+                            )}
+                          >
+                            <span className="flex items-center gap-2 font-semibold text-content">
+                              <QrCode className="h-5 w-5 shrink-0 text-primary" strokeWidth={1.75} aria-hidden />
+                              QR Code (telemóvel)
+                            </span>
+                            <span className="text-xs leading-relaxed text-content-muted">Ideal para testar rápido. Um número por sessão nesta linha.</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setWhatsAppSlotMethod(tenantId, slotIndex, "meta")}
+                            className={cn(
+                              "flex min-h-[44px] flex-col items-start gap-2 rounded-xl border p-4 text-left transition",
+                              "border-line bg-surface-elevated/40 hover:border-line/80 hover:bg-surface-elevated/60",
+                            )}
+                          >
+                            <span className="flex items-center gap-2 font-semibold text-content">
+                              <BadgeCheck className="h-5 w-5 shrink-0 text-primary" strokeWidth={1.75} aria-hidden />
+                              API Meta (empresa)
+                            </span>
+                            <span className="text-xs leading-relaxed text-content-muted">Número verificado e envios oficiais (configuração avançada).</span>
+                          </button>
+                        </div>
                       </div>
                     ) : null}
                     {method === "qr" ? (
                       <div className="space-y-3">
+                        <p className="text-xs font-semibold text-content">Passo 2 — Confirme o código no telemóvel</p>
                         <EvolutionQrSlotPanel key={`evo-qr-${tenantId}-${slotIndex}`} slotIndex={slotIndex} />
                         <div className="flex flex-wrap gap-2">
                           <Button
@@ -703,95 +463,161 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
         </div>
       </section>
 
-      <div
+      <section
+        id="canal-facebook"
         className={cn(
-          "rounded-xl border p-4 text-sm sm:rounded-xl sm:p-5",
+          "overflow-hidden rounded-xl border",
+          isLight ? "border-blue-200/70 bg-surface-card" : "border-blue-500/25 bg-surface-card/40",
+        )}
+      >
+        <div
+          className={cn(
+            "flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4 sm:px-6",
+            isLight ? "border-blue-100 bg-blue-50/50" : "border-blue-500/15 bg-blue-500/[0.06]",
+          )}
+        >
+          <div className="flex items-center gap-3">
+            <span className={cn("flex h-11 w-11 items-center justify-center rounded-xl bg-blue-500/15", isLight ? "text-blue-600" : "text-blue-300")}>
+              <Share2 className="size-5" strokeWidth={2} aria-hidden />
+            </span>
+            <div>
+              <p className={cn(typography.ui.overline, "text-blue-700 dark:text-blue-300/90")}>Outro canal</p>
+              <h3 className="font-display text-lg font-bold text-content">Páginas Facebook da empresa</h3>
+              <p className="text-xs text-content-secondary">Ligue páginas Meta para campanhas e mensagens. Nesta versão de demonstração o estado fica no navegador.</p>
+            </div>
+          </div>
+          <Badge
+            className={cn(
+              "shrink-0 text-[10px]",
+              facebookState.connected
+                ? cn("border-emerald-500/40 bg-emerald-500/15", isLight ? "text-emerald-700" : "text-emerald-300")
+                : "border-line bg-surface-elevated/50 text-content-secondary",
+            )}
+          >
+            {facebookState.connected ? "Ligado" : "Nao ligado"}
+          </Badge>
+        </div>
+        <div className="space-y-4 p-5 sm:p-6">
+          <p className="text-sm text-content-secondary">
+            Indique se as <strong className="text-content">páginas Facebook</strong> da empresa estão associadas ao MyChatCRM. A ligação completa com a Meta (OAuth) virá numa
+            próxima versão.
+          </p>
+          {facebookState.accountHint ? (
+            <p className="truncate text-xs text-content-secondary" title={facebookState.accountHint}>
+              Conta ou página: <span className="font-medium text-content">{facebookState.accountHint}</span>
+            </p>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant={facebookState.connected ? "secondary" : "gradient"} size="sm" className="min-h-[44px]" onClick={openFbModal}>
+              {facebookState.connected ? "Ajustar ligacao" : "Ligar agora"}
+            </Button>
+            {facebookState.connected ? (
+              <Button type="button" variant="outline" size="sm" className="min-h-[44px]" onClick={quickDisconnectFacebook}>
+                Desligar
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      </section>
+
+      <details
+        className={cn(
+          "overflow-hidden rounded-xl border [&_summary::-webkit-details-marker]:hidden",
+          isLight
+            ? "border-slate-200/90 bg-gradient-to-br from-white via-slate-50/80 to-primary/[0.06]"
+            : "border-line bg-gradient-to-br from-surface-card via-surface-deep/50 to-primary/[0.07]",
+        )}
+      >
+        <summary className="cursor-pointer list-none px-5 py-4 text-sm font-semibold text-content sm:px-7 sm:py-5">
+          <span className="inline-flex items-center gap-2">
+            <Sparkles className="size-4 shrink-0 text-primary" aria-hidden />
+            Guia rápido e resumo das ligações
+          </span>
+        </summary>
+        <div className="border-t border-line/40 px-5 pb-6 pt-2 sm:px-7">
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_min(100%,260px)] lg:items-center">
+            <div>
+              <h2 className={cn(typography.heading.h3, "text-content")}>Três ideias simples</h2>
+              <p className="mt-2 max-w-xl text-sm leading-relaxed text-content-secondary">
+                Use os botões <span className="font-medium text-content">Ligar agora</span> ou <span className="font-medium text-content">QR / Meta</span> nos canais acima — sem
+                comandos.
+              </p>
+              <ol className="mt-5 space-y-3 text-sm text-content-secondary">
+                <li className="flex gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-sm font-bold text-primary">1</span>
+                  <div>
+                    <p className="font-medium text-content">Escolha o canal</p>
+                    <p className="text-xs text-content-muted">WhatsApp em primeiro lugar; Facebook quando fizer sentido para a empresa.</p>
+                  </div>
+                </li>
+                <li className="flex gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-sm font-bold text-primary">2</span>
+                  <div>
+                    <p className="font-medium text-content">Ligue com um clique</p>
+                    <p className="text-xs text-content-muted">Nome da conta opcional e interruptor para ativar.</p>
+                  </div>
+                </li>
+                <li className="flex gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-sm font-bold text-primary">3</span>
+                  <div>
+                    <p className="font-medium text-content">Use no dia a dia</p>
+                    <p className="text-xs text-content-muted">Quando o backend estiver ativo, dados sincronizam com CRM, agenda e lembretes.</p>
+                  </div>
+                </li>
+              </ol>
+            </div>
+            <div
+              className={cn(
+                "flex flex-col items-center justify-center rounded-xl border p-4",
+                isLight ? "border-slate-200/80 bg-surface-deep/80" : "border-line/80 bg-surface-deep/35",
+              )}
+            >
+              <div className="mb-0.5 flex items-center justify-center gap-1.5">
+                <div className="h-1 w-1 shrink-0 rounded-full bg-primary" aria-hidden />
+                <p className={cn(typography.ui.overline, "text-primary")}>Resumo</p>
+              </div>
+              <IntegrationsHealthRing
+                gradId={ringGradId}
+                active={health.donutActive}
+                total={health.donutTotal}
+                caption="WhatsApp + Facebook"
+              />
+              <p className="mt-1 text-center text-[11px] text-content-muted">
+                WhatsApp {health.waLinesReady}/{health.waLineCount} linha(s) com método · Facebook {facebookState.connected ? "ligado" : "nao ligado"}
+              </p>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <details
+        className={cn(
+          "rounded-xl border text-sm",
           isLight ? "border-primary/20 bg-primary/[0.06] text-content" : "border-primary/25 bg-primary/[0.08] text-content",
         )}
       >
-        <p className="font-medium text-content">Sobre este ecra (modo demonstracao)</p>
-        <p className="mt-2 text-content-secondary">
-          <strong className="text-content">Google Agenda</strong> partilha o mesmo estado da pagina{" "}
-          <Link href="/dashboard/agenda" className="font-semibold text-primary underline-offset-2 hover:underline">
-            Agenda
-          </Link>
-          . O fluxo <strong className="text-content">WhatsApp por QR (Evolution)</strong> usa sessão e webhook no servidor (Supabase + rotas API). A escolha QR/Meta por linha continua
-          sincronizada neste navegador; a Meta oficial segue em preparação.
-        </p>
-      </div>
-
-      {groups.map(({ group, items }) => (
-        <section key={group}>
-          <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">{group}</h3>
-            <p className="text-[11px] text-content-faint">Toque em Ligar agora para ver o passo a passo</p>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {items.map((def) => {
-              const st = statusFor(def);
-              return (
-                <div
-                  key={def.slug}
-                  className={cn(
-                    "flex flex-col rounded-xl border p-4",
-                    isLight ? "border-slate-200/90 bg-surface-deep" : "border-line bg-surface-card/50",
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm font-semibold text-content">{def.title}</p>
-                    <Badge
-                      className={cn(
-                        "shrink-0 text-[10px]",
-                        st.connected
-                          ? cn("border-emerald-500/40 bg-emerald-500/15", isLight ? "text-emerald-700" : "text-emerald-300")
-                          : "border-line bg-surface-elevated/50 text-content-secondary",
-                      )}
-                    >
-                      {st.connected ? "Ligado" : "Nao ligado"}
-                    </Badge>
-                  </div>
-                  <p className="mt-2 flex-1 text-xs leading-relaxed text-content-secondary">{def.description}</p>
-                  {st.hint ? (
-                    <p className="mt-2 truncate text-[11px] text-content-secondary" title={st.hint}>
-                      Conta: {st.hint}
-                    </p>
-                  ) : null}
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      variant={st.connected ? "secondary" : "gradient"}
-                      size="sm"
-                      className="min-h-[44px] flex-1 min-w-[120px]"
-                      onClick={() => openModal(def)}
-                    >
-                      {st.connected ? "Ajustar ligacao" : "Ligar agora"}
-                    </Button>
-                    {st.connected ? (
-                      <Button type="button" variant="outline" size="sm" className="min-h-[44px]" onClick={() => quickDisconnect(def)}>
-                        Desligar
-                      </Button>
-                    ) : null}
-                    {def.slug === "google_agenda" ? (
-                      <Link
-                        href="/dashboard/agenda"
-                        className={cn(
-                          "inline-flex min-h-[44px] flex-1 items-center justify-center gap-1 rounded-xl border px-3 text-xs font-semibold",
-                          isLight
-                            ? "border-slate-200 text-content-secondary hover:bg-slate-50"
-                            : "border-line text-content-secondary hover:bg-surface-elevated/30",
-                        )}
-                      >
-                        Abrir agenda
-                        <ChevronRight className="size-4" aria-hidden />
-                      </Link>
-                    ) : null}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ))}
+        <summary className="cursor-pointer list-none px-4 py-3 font-semibold text-content sm:px-5 [&::-webkit-details-marker]:hidden">
+          Nota sobre esta demonstração
+        </summary>
+        <div className="space-y-3 border-t border-line/30 px-4 py-3 text-content-secondary sm:px-5">
+          <p>
+            <strong className="text-content">Google Agenda</strong> e outras ligações futuras usam a mesma área de{" "}
+            <Link href="/dashboard/agenda" className="font-semibold text-primary underline-offset-2 hover:underline">
+              Agenda
+            </Link>{" "}
+            e restantes menus do painel quando estiverem disponíveis. Nesta página focamo-nos em WhatsApp e Facebook.
+          </p>
+          <details className="rounded-lg border border-line/50 bg-surface-deep/20">
+            <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-content [&::-webkit-details-marker]:hidden">
+              Para equipa técnica
+            </summary>
+            <p className="border-t border-line/40 px-3 py-2 text-xs leading-relaxed text-content-muted">
+              O WhatsApp por QR (Evolution) usa sessão e webhook nas rotas do servidor e base de dados; a escolha QR/Meta por linha sincroniza neste navegador. A integração Meta
+              oficial segue em preparação.
+            </p>
+          </details>
+        </div>
+      </details>
 
       {fbModalOpen ? (
         <Modal
@@ -831,56 +657,6 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
             <p className="text-[11px] text-content-secondary">
               O mesmo estado aparece em <strong className="text-content">Integrações de Leads</strong> na aba Canais.
             </p>
-          </div>
-        </Modal>
-      ) : null}
-
-      {activeDef ? (
-        <Modal
-          open={true}
-          onClose={closeModal}
-          title={activeDef.title}
-          footer={
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={closeModal} disabled={modalSaving}>
-                Cancelar
-              </Button>
-              <Button type="button" variant="gradient" onClick={saveModal} isLoading={modalSaving}>
-                <Check className="size-4" aria-hidden />
-                Guardar
-              </Button>
-            </div>
-          }
-        >
-          <p className="text-sm text-content-secondary">{activeDef.description}</p>
-          <div className="mt-4 space-y-4">
-            <div>
-              <label className="text-xs font-medium text-content-secondary" htmlFor="int-hint">
-                Nome da conta ou nota (opcional, ate {MAX_HINT} caracteres)
-              </label>
-              <Input
-                id="int-hint"
-                value={modalHint}
-                onChange={(e) => setModalHint(e.target.value.slice(0, MAX_HINT))}
-                placeholder="Ex.: comercial@empresa.com"
-                className="mt-1"
-                maxLength={MAX_HINT}
-              />
-              <p className="mt-1 text-[11px] text-content-secondary">
-                Nao cole passwords nem chaves secretas completas — em producao isso fica no servidor.
-              </p>
-            </div>
-            <Toggle id="int-connected" checked={modalConnected} onChange={setModalConnected} label="Ligacao ativa" />
-            {activeDef.backend === "google_agenda" ? (
-              <p className="text-[11px] text-content-secondary">
-                Esta opcao sincroniza com a barra lateral da Agenda. OAuth real vira numa versao com backend.
-              </p>
-            ) : (
-              <p className="flex items-center gap-1 text-[11px] text-content-secondary">
-                <ExternalLink className="size-3.5 shrink-0" aria-hidden />
-                Estado guardado por tenant neste navegador ate existir API.
-              </p>
-            )}
           </div>
         </Modal>
       ) : null}

@@ -3528,8 +3528,8 @@ export function DashboardWorkspace({
       case "integracoes":
         return (
           <Panel
-            title="Integracoes"
-            description="Ligue o WhatsApp e as ferramentas externas em poucos passos — tudo guardado neste navegador ate existir API com OAuth."
+            title="Integrações"
+            description="Ligue WhatsApp, Facebook e outras ferramentas ao seu fluxo de trabalho — passo a passo simples, sem comandos."
           >
             <IntegracoesHub tenantId={session.tenantId} />
           </Panel>
