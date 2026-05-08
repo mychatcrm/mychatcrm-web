@@ -10,7 +10,7 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import { SortableContext, arrayMove, rectSortingStrategy, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Plus } from "lucide-react";
@@ -26,6 +26,10 @@ import type { ClientSession } from "@/lib/client-auth";
 import { EXTRA_AGENT_MONTHLY_BRL, getPlanIncludedAgentLimitForSession } from "@/lib/plan-limits";
 import { formatBRL } from "@/lib/utils";
 import { typography } from "@/lib/typography";
+
+// ---------------------------------------------------------------------------
+// Order persistence (localStorage — apenas ordenação visual)
+// ---------------------------------------------------------------------------
 
 function agentOrderStorageKey(tenantId: string) {
   return `mychatcrm:agent-order:${tenantId}`;
@@ -64,15 +68,62 @@ function persistAgentOrder(agents: Agent[], tenantId: string) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// API helpers
+// ---------------------------------------------------------------------------
+
+async function apiLoadAgents(): Promise<Agent[]> {
+  const res = await fetch("/api/client/agentes", { cache: "no-store" });
+  if (!res.ok) throw new Error(`GET /api/client/agentes ${res.status}`);
+  const data = (await res.json()) as { agents: Agent[] };
+  return data.agents ?? [];
+}
+
+async function apiCreateAgent(agent: Agent): Promise<Agent> {
+  const res = await fetch("/api/client/agentes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(agent),
+  });
+  if (!res.ok) throw new Error(`POST /api/client/agentes ${res.status}`);
+  const data = (await res.json()) as { agent: Agent };
+  return data.agent;
+}
+
+async function apiUpdateAgent(agent: Agent): Promise<void> {
+  const res = await fetch(`/api/client/agentes/${encodeURIComponent(agent.id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(agent),
+  });
+  if (!res.ok) throw new Error(`PUT /api/client/agentes/${agent.id} ${res.status}`);
+}
+
+async function apiDeleteAgent(agentId: string): Promise<void> {
+  const res = await fetch(`/api/client/agentes/${encodeURIComponent(agentId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`DELETE /api/client/agentes/${agentId} ${res.status}`);
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
 function AgentsListSectionInner({ session }: { session: ClientSession }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tenantId = session.tenantId;
+
+  // Start with template agents as placeholder while loading from DB
   const [agents, setAgents] = useState<Agent[]>(() => listAgentsForTenant(tenantId));
+  const [loadedFromDb, setLoadedFromDb] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [createFormKey, setCreateFormKey] = useState(0);
   const [manageAgent, setManageAgent] = useState<Agent | null>(null);
   const [manageFormKey, setManageFormKey] = useState(0);
+  const loadedRef = useRef(false);
+
   const limit = getPlanIncludedAgentLimitForSession(session);
   const activeCount = agents.filter((agent) => agent.status === "ativo").length;
   const atAgentCap = activeCount >= limit;
@@ -82,8 +133,27 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  // Load from Supabase on mount
   useEffect(() => {
-    setAgents((prev) => applySavedAgentOrder(prev, tenantId));
+    if (loadedRef.current) return;
+    loadedRef.current = true;
+
+    apiLoadAgents()
+      .then((dbAgents) => {
+        if (dbAgents.length > 0) {
+          // Use DB agents (real data), apply saved order
+          setAgents(applySavedAgentOrder(dbAgents, tenantId));
+        } else {
+          // No DB agents yet — keep templates as suggestions, apply saved order
+          setAgents((prev) => applySavedAgentOrder(prev, tenantId));
+        }
+        setLoadedFromDb(true);
+      })
+      .catch(() => {
+        // On error, fall back to templates with saved order
+        setAgents((prev) => applySavedAgentOrder(prev, tenantId));
+        setLoadedFromDb(true);
+      });
   }, [tenantId]);
 
   const handleAgentsDragEnd = useCallback(
@@ -130,6 +200,75 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
     }
   }, [criarParam, openCreateOverlay]);
 
+  // Create: optimistic update + persist to DB
+  const handleAgentCreated = useCallback(
+    async (agent: Agent) => {
+      setAgents((current) => [agent, ...current]);
+      try {
+        const saved = await apiCreateAgent(agent);
+        setAgents((current) => current.map((a) => (a.id === agent.id ? saved : a)));
+      } catch (e) {
+        console.warn("[agentes] falha ao criar no DB:", e);
+      }
+    },
+    [],
+  );
+
+  // Update: optimistic update + persist to DB
+  const handleAgentUpdated = useCallback(async (updated: Agent) => {
+    setAgents((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+    try {
+      await apiUpdateAgent(updated);
+    } catch (e) {
+      console.warn("[agentes] falha ao atualizar no DB:", e);
+    }
+  }, []);
+
+  // Delete: optimistic update + persist to DB
+  const handleAgentDeleted = useCallback(
+    (agentId: string) => {
+      setAgents((current) => {
+        const next = current.filter((item) => item.id !== agentId);
+        persistAgentOrder(next, tenantId);
+        return next;
+      });
+      apiDeleteAgent(agentId).catch((e) => console.warn("[agentes] falha ao apagar no DB:", e));
+    },
+    [tenantId],
+  );
+
+  // Toggle status: optimistic + persist
+  const handleToggleStatus = useCallback(async (agentId: string) => {
+    setAgents((current) => {
+      const next = current.map((item) =>
+        item.id === agentId
+          ? { ...item, status: item.status === "ativo" ? ("pausado" as const) : ("ativo" as const) }
+          : item,
+      );
+      const toggled = next.find((a) => a.id === agentId);
+      if (toggled) {
+        apiUpdateAgent(toggled).catch((e) => console.warn("[agentes] falha ao atualizar status:", e));
+      }
+      return next;
+    });
+  }, []);
+
+  // Duplicate: optimistic + persist
+  const handleDuplicate = useCallback(async (agentId: string) => {
+    setAgents((current) => {
+      const target = current.find((item) => item.id === agentId);
+      if (!target) return current;
+      const copy: Agent = {
+        ...target,
+        id: `${target.id}-copy-${Date.now()}`,
+        nome: `${target.nome} (Cópia)`,
+        status: "inativo",
+      };
+      apiCreateAgent(copy).catch((e) => console.warn("[agentes] falha ao duplicar no DB:", e));
+      return [...current, copy];
+    });
+  }, []);
+
   return (
     <div className="space-y-6">
       <AgentCreateOverlay
@@ -137,29 +276,24 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
         onClose={closeCreateOverlay}
         session={session}
         formKey={createFormKey}
-        onCreated={(agent) => setAgents((current) => [agent, ...current])}
+        onCreated={handleAgentCreated}
       />
 
       <AgentManageOverlay
         agent={manageAgent}
         onClose={closeManageAgent}
         formKey={manageFormKey}
-        onUpdated={(updated) => setAgents((current) => current.map((item) => (item.id === updated.id ? updated : item)))}
-        onDeleted={(agentId) =>
-          setAgents((current) => {
-            const next = current.filter((item) => item.id !== agentId);
-            persistAgentOrder(next, tenantId);
-            return next;
-          })
-        }
+        onUpdated={handleAgentUpdated}
+        onDeleted={handleAgentDeleted}
       />
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
         <div className="min-w-0">
           <h2 className="text-xl font-semibold text-content sm:text-2xl">Meus Agentes</h2>
           <p className="mt-1 max-w-2xl text-sm leading-relaxed text-content-muted">
-            Cada cartão mostra créditos utilizados e leads em atendimento. Arraste pela alça à esquerda do cartão para
-            ordenar os agentes; a ordem fica salva neste navegador.
+            {loadedFromDb
+              ? "Cada cartão mostra créditos utilizados e leads em atendimento. Arraste pela alça à esquerda do cartão para ordenar os agentes; a ordem fica salva neste navegador."
+              : "A carregar agentes…"}
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end">
@@ -195,30 +329,8 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
                 key={agent.id}
                 agent={agent}
                 onManage={() => openManageAgent(agent)}
-                onToggleStatus={(agentId) =>
-                  setAgents((current) =>
-                    current.map((item) =>
-                      item.id === agentId
-                        ? { ...item, status: item.status === "ativo" ? "pausado" : "ativo" }
-                        : item,
-                    ),
-                  )
-                }
-                onDuplicate={(agentId) =>
-                  setAgents((current) => {
-                    const target = current.find((item) => item.id === agentId);
-                    if (!target) return current;
-                    return [
-                      ...current,
-                      {
-                        ...target,
-                        id: `${target.id}-copy-${Date.now()}`,
-                        nome: `${target.nome} (Cópia)`,
-                        status: "inativo",
-                      },
-                    ];
-                  })
-                }
+                onToggleStatus={handleToggleStatus}
+                onDuplicate={handleDuplicate}
               />
             ))}
           </div>
