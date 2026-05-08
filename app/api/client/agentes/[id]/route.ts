@@ -16,7 +16,9 @@ function assembleSystemPrompt(agent: Agent): string {
 }
 
 // ---------------------------------------------------------------------------
-// PUT — atualiza agente existente
+// PUT — upsert agente (cria se não existir, atualiza se já existir)
+// Usa upsert em vez de update para garantir que templates editados pela
+// primeira vez sejam persistidos mesmo sem row prévia no banco.
 // ---------------------------------------------------------------------------
 
 export async function PUT(
@@ -42,15 +44,19 @@ export async function PUT(
 
   const { error } = await sb
     .from("tenant_agents")
-    .update({
-      display_name: agent.nome.trim(),
-      system_prompt: systemPrompt || agent.systemPrompt || "",
-      active: agent.status === "ativo",
-      metadata: agent,
-      updated_at: now,
-    })
-    .eq("tenant_id", session.tenantId)
-    .eq("agent_id", agentId);
+    .upsert(
+      {
+        tenant_id: session.tenantId,
+        agent_id: agentId,
+        display_name: agent.nome.trim(),
+        system_prompt: systemPrompt || agent.systemPrompt || "",
+        model: null,
+        active: agent.status === "ativo",
+        metadata: agent,
+        updated_at: now,
+      },
+      { onConflict: "tenant_id,agent_id" },
+    );
 
   if (error) {
     console.error("[api/client/agentes] PUT", error.code, error.message);
