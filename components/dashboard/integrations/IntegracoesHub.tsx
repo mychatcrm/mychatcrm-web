@@ -409,13 +409,16 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                       </div>
                     ) : null}
                     {method === "qr" ? (
-                      <div className="space-y-3">
-                        <p className="text-xs font-semibold text-content">Passo 2 — Confirme o código no telemóvel</p>
+                      <div className="space-y-4">
                         <EvolutionQrSlotPanel key={`evo-qr-${tenantId}-${slotIndex}`} slotIndex={slotIndex} />
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap items-center gap-3 border-t border-line/40 pt-3">
+                          <p className="flex-1 text-[11px] text-content-muted">
+                            Para trocar de método ou desligar permanentemente esta linha:
+                          </p>
                           <Button
                             type="button"
                             variant="outline"
+                            className="shrink-0 border-rose-500/30 text-rose-600 hover:border-rose-500/50 hover:bg-rose-500/5 dark:text-rose-400"
                             onClick={async () => {
                               try {
                                 await fetch(`/api/client/whatsapp/evolution/session?slotIndex=${slotIndex}`, {

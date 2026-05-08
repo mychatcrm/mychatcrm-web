@@ -118,6 +118,7 @@ export async function POST(request: Request) {
       connectionState: remoteState,
       qrDataUrl: null as string | null,
       pairingCode: null as string | null,
+      waJid: null as string | null,
     });
   }
 
@@ -129,6 +130,7 @@ export async function POST(request: Request) {
         connectionState: remoteState,
         qrDataUrl: null as string | null,
         pairingCode: null as string | null,
+        waJid: null as string | null,
         detail: connectRes.error,
       },
       { status: 200 },
@@ -143,6 +145,7 @@ export async function POST(request: Request) {
     connectionState: remoteState,
     qrDataUrl,
     pairingCode,
+    waJid: null as string | null,
   });
 }
 
@@ -175,6 +178,7 @@ export async function GET(request: Request) {
       connectionState: "none",
       qrDataUrl: null as string | null,
       pairingCode: null as string | null,
+      waJid: null as string | null,
     });
   }
 
@@ -204,6 +208,7 @@ export async function GET(request: Request) {
         connectionState: remoteState,
         qrDataUrl: null as string | null,
         pairingCode: null as string | null,
+        waJid: row.wa_jid ?? null,
       },
       { status: 503 },
     );
@@ -215,6 +220,7 @@ export async function GET(request: Request) {
       connectionState: remoteState,
       qrDataUrl: null as string | null,
       pairingCode: null as string | null,
+      waJid: row.wa_jid ?? null,
     });
   }
 
@@ -228,6 +234,7 @@ export async function GET(request: Request) {
     connectionState: remoteState,
     qrDataUrl,
     pairingCode,
+    waJid: row.wa_jid ?? null,
   });
 }
 
