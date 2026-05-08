@@ -161,7 +161,14 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "slotIndex inválido" }, { status: 400 });
   }
 
-  const row = await getEvolutionInstanceByTenantSlot(session.tenantId, slotIndex);
+  let row: Awaited<ReturnType<typeof getEvolutionInstanceByTenantSlot>>;
+  try {
+    row = await getEvolutionInstanceByTenantSlot(session.tenantId, slotIndex);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[evolution/session] GET select slot", msg);
+    return NextResponse.json({ error: "Erro interno ao consultar instância." }, { status: 503 });
+  }
   if (!row) {
     return NextResponse.json({
       instanceName: null,
@@ -239,7 +246,14 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "slotIndex inválido" }, { status: 400 });
   }
 
-  const row = await getEvolutionInstanceByTenantSlot(session.tenantId, slotIndex);
+  let row: Awaited<ReturnType<typeof getEvolutionInstanceByTenantSlot>>;
+  try {
+    row = await getEvolutionInstanceByTenantSlot(session.tenantId, slotIndex);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[evolution/session] DELETE select slot", msg);
+    return NextResponse.json({ error: "Erro interno ao consultar instância." }, { status: 503 });
+  }
   if (row) {
     const del = await evolutionDeleteInstance(row.instance_name);
     if (!del.ok && del.status !== 404) {
