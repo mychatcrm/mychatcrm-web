@@ -11,29 +11,51 @@ const EVOLUTION_BASE = process.env.EVOLUTION_API_BASE_URL?.replace(/\/$/, "") ??
 const EVOLUTION_KEY = process.env.EVOLUTION_API_KEY ?? "";
 
 // ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/** Campos do `key` da mensagem WhatsApp — necessários para o payload correcto da Evolution API v2. */
+type MsgKey = { remoteJid?: string; fromMe?: boolean; messageId?: string };
+
+// ---------------------------------------------------------------------------
 // Download media from Evolution API
 // ---------------------------------------------------------------------------
 
 /**
  * Chama `POST /chat/getBase64FromMediaMessage/{instanceName}`.
  * Retorna a string base64 pura (sem prefixo `data:...;base64,`), ou null em caso de falha.
+ *
+ * A Evolution API v2 exige o payload no formato:
+ *   { message: { key: { remoteJid, fromMe, id }, message: { audioMessage: { ... } } } }
+ * O formato anterior (sem `key`) retornava 400 "Cannot read properties of undefined (reading 'ephemeralMessage')".
  */
 async function downloadMediaBase64(
   content: EvolutionAudioContent | EvolutionImageContent,
   instanceName: string,
+  msgKey: MsgKey = {},
 ): Promise<{ base64: string; mimeType: string } | null> {
   if (!EVOLUTION_BASE || !EVOLUTION_KEY) return null;
 
   const url = `${EVOLUTION_BASE}/chat/getBase64FromMediaMessage/${encodeURIComponent(instanceName)}`;
 
-  // Build the message payload the Evolution API expects
+  // Build the message payload the Evolution API v2 expects.
+  // The outer `message` mirrors the Baileys message object:
+  //   message.key  → identifies the message (remoteJid, fromMe, id)
+  //   message.message → the actual content (audioMessage / imageMessage)
   const messageField = content.type === "audio" ? "audioMessage" : "imageMessage";
   const body = {
     message: {
-      [messageField]: {
-        url: content.url,
-        mediaKey: content.mediaKey,
-        mimetype: content.mimetype,
+      key: {
+        remoteJid: msgKey.remoteJid ?? "",
+        fromMe: msgKey.fromMe ?? false,
+        id: msgKey.messageId ?? "",
+      },
+      message: {
+        [messageField]: {
+          url: content.url,
+          mediaKey: content.mediaKey,
+          mimetype: content.mimetype,
+        },
       },
     },
   };
@@ -99,11 +121,12 @@ async function downloadMediaBase64(
 export async function transcribeAudio(
   content: EvolutionAudioContent,
   instanceName: string,
+  msgKey: MsgKey = {},
 ): Promise<string | null> {
   const apiKey = await resolveOpenAiApiKey();
   if (!apiKey) return null;
 
-  const media = await downloadMediaBase64(content, instanceName);
+  const media = await downloadMediaBase64(content, instanceName, msgKey);
   if (!media) return null;
 
   // Convert base64 → Buffer → Blob
@@ -162,11 +185,12 @@ export async function transcribeAudio(
 export async function describeImage(
   content: EvolutionImageContent,
   instanceName: string,
+  msgKey: MsgKey = {},
 ): Promise<string | null> {
   const apiKey = await resolveOpenAiApiKey();
   if (!apiKey) return null;
 
-  const media = await downloadMediaBase64(content, instanceName);
+  const media = await downloadMediaBase64(content, instanceName, msgKey);
   if (!media) return null;
 
   const dataUrl = `data:${media.mimeType};base64,${media.base64}`;

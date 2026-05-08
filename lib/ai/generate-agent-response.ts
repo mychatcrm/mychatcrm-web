@@ -53,8 +53,17 @@ export async function generateAgentResponse(params: {
   let mediaUserMessage: AiMessage | null = null;
 
   if (params.mediaContent && params.instanceName) {
+    // Extract the Baileys message key fields — present at runtime when called from the
+    // Evolution webhook (msg is EvolutionInboundMessage which includes remoteJid/fromMe/messageId).
+    const mc = params.mediaContent as EvolutionAudioContent & {
+      remoteJid?: string;
+      fromMe?: boolean;
+      messageId?: string;
+    };
+    const msgKey = { remoteJid: mc.remoteJid, fromMe: mc.fromMe, messageId: mc.messageId };
+
     if (params.mediaContent.type === "audio") {
-      const transcript = await transcribeAudio(params.mediaContent, params.instanceName);
+      const transcript = await transcribeAudio(params.mediaContent, params.instanceName, msgKey);
       if (!transcript) {
         return {
           ok: false,
@@ -66,7 +75,7 @@ export async function generateAgentResponse(params: {
       }
       mediaUserMessage = { role: "user", content: `[Áudio transcrito]: ${transcript}` };
     } else if (params.mediaContent.type === "image") {
-      const description = await describeImage(params.mediaContent, params.instanceName);
+      const description = await describeImage(params.mediaContent, params.instanceName, msgKey);
       if (!description) {
         return {
           ok: false,
