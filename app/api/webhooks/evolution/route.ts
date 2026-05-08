@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
 import {
   extractConnectionState,
-  extractInboundTextsFromEvolutionPayload,
+  extractInboundMessagesFromEvolutionPayload,
   extractInstanceName,
   normalizeEvolutionEventName,
 } from "@/lib/integrations/evolution-webhook-parse";
@@ -28,6 +28,7 @@ function asRecord(v: unknown): Record<string, unknown> | null {
 
 /**
  * Evolution API v2 → eventos `MESSAGES_UPSERT`, `CONNECTION_UPDATE`.
+ * Suporta mensagens de texto, áudio (Whisper) e imagem (GPT-4o vision).
  * URL: `/api/webhooks/evolution?token=EVOLUTION_WEBHOOK_SECRET`
  */
 export async function POST(request: Request) {
@@ -88,21 +89,32 @@ export async function POST(request: Request) {
       continue;
     }
 
-    const inbound = extractInboundTextsFromEvolutionPayload(payload);
+    const inbound = extractInboundMessagesFromEvolutionPayload(payload);
+
     for (const msg of inbound) {
       const agentId = await resolveEvolutionAgentId(row.tenant_id, row.default_agent_id);
+
       const result = await generateAgentResponse({
         tenantId: row.tenant_id,
         agentId,
         conversationId: msg.remoteJid,
         customerId: msg.remoteJid,
         feature: "agent_chat",
-        messages: [{ role: "user", content: msg.text }],
+        // Text messages go in `messages`; media messages use mediaContent + instanceName
+        messages: msg.type === "text" ? [{ role: "user", content: msg.text }] : [],
+        mediaContent: msg.type !== "text" ? msg : undefined,
+        instanceName: msg.type !== "text" ? instanceName : undefined,
       });
 
-      const replyText = result.ok
-        ? result.text
-        : "Não consegui gerar uma resposta agora. Por favor tente de novo em instantes.";
+      let replyText: string;
+      if (result.ok) {
+        replyText = result.text;
+      } else if (result.code === "MEDIA_DOWNLOAD_FAILED") {
+        const mediaLabel = msg.type === "audio" ? "áudio" : "imagem";
+        replyText = `Recebi seu ${mediaLabel} mas não consegui processar. Pode enviar em texto?`;
+      } else {
+        replyText = "Não consegui gerar uma resposta agora. Por favor tente de novo em instantes.";
+      }
 
       const number = remoteJidToEvoNumber(msg.remoteJid);
       if (!number) continue;

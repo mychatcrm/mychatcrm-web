@@ -50,7 +50,8 @@ export type AiErrorCode =
   | "UPSTREAM_ERROR"
   | "TIMEOUT"
   | "NETWORK"
-  | "EMPTY_REPLY";
+  | "EMPTY_REPLY"
+  | "MEDIA_DOWNLOAD_FAILED";
 
 export type AiGenerateFailure = {
   ok: false;
