@@ -234,6 +234,16 @@ export async function POST(request: Request) {
 
     if (event !== "MESSAGES_UPSERT") continue;
 
+    // [DEBUG TEMPORÁRIO] Loga payload completo quando contém áudio/imagem para
+    // confirmarmos onde a Evolution (webhookBase64: true) coloca o campo base64.
+    // REMOVER após investigação concluída.
+    {
+      const rawJson = JSON.stringify(payload);
+      if (rawJson.includes('"audioMessage"') || rawJson.includes('"imageMessage"')) {
+        console.log("RAW PAYLOAD AUDIO/IMAGE:", JSON.stringify(payload, null, 2));
+      }
+    }
+
     let row: Awaited<ReturnType<typeof getEvolutionInstanceByName>> = null;
     try {
       row = await getEvolutionInstanceByName(instanceName);
