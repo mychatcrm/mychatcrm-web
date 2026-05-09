@@ -70,8 +70,28 @@ async function downloadAndStoreMedia(
 
   let buffer: Buffer | null = null;
 
+  // 0. Prioridade máxima: base64 pré-decodificado que vem no rawNode do webhook
+  //    (Evolution API configurada com webhookBase64: true já inclui os bytes no payload)
+  const rawBase64 = typeof rawNode.base64 === "string" && rawNode.base64.length > 0
+    ? rawNode.base64
+    : null;
+
+  if (rawBase64) {
+    let b64 = rawBase64;
+    if (b64.startsWith("data:")) {
+      const commaIdx = b64.indexOf(",");
+      if (commaIdx !== -1) b64 = b64.slice(commaIdx + 1);
+    }
+    try {
+      buffer = Buffer.from(b64, "base64");
+      console.log("[webhooks/evolution] media base64 do rawNode ok", buffer.byteLength, "bytes");
+    } catch {
+      buffer = null;
+    }
+  }
+
   // 1. Fetch directo na URL CDN da Meta
-  try {
+  if (!buffer) try {
     const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
     if (res.ok) {
       buffer = Buffer.from(await res.arrayBuffer());

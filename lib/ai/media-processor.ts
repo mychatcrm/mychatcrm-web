@@ -133,8 +133,35 @@ async function downloadMediaBuffer(
   let buffer: Buffer | null = null;
   let mimeType = content.mimetype;
 
-  // 1. Tentativa directa na URL CDN da Meta
-  buffer = await fetchFromCDN(content.url);
+  // 0. Prioridade máxima: base64 que vem directamente no rawNode do webhook
+  //    (quando Evolution API está configurada com webhookBase64: true)
+  const rawBase64 = typeof content.rawNode.base64 === "string" && content.rawNode.base64.length > 0
+    ? content.rawNode.base64
+    : null;
+
+  if (rawBase64) {
+    let b64 = rawBase64;
+    // Suporta formato data URL: "data:audio/ogg;base64,..."
+    if (b64.startsWith("data:")) {
+      const commaIdx = b64.indexOf(",");
+      if (commaIdx !== -1) {
+        const header = b64.slice(5, commaIdx);
+        const mime = header.split(";")[0];
+        if (mime) mimeType = mime;
+        b64 = b64.slice(commaIdx + 1);
+      }
+    }
+    try {
+      buffer = Buffer.from(b64, "base64");
+      console.log("[media-processor] base64 do rawNode ok", buffer.byteLength, "bytes");
+    } catch (e) {
+      console.warn("[media-processor] base64 decode error", e);
+      buffer = null;
+    }
+  }
+
+  // 1. Tentativa directa na URL CDN da Meta (pode ser encriptado)
+  if (!buffer) buffer = await fetchFromCDN(content.url);
 
   // 2. Fallback: Evolution API (rawNode completo para Baileys descriptografar)
   if (!buffer) {

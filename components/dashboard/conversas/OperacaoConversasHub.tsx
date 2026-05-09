@@ -380,8 +380,8 @@ function MessageBubble({ msg }: { msg: WaMessage }) {
   return (
     <div style={{ display: "flex", width: "100%", justifyContent: out ? "flex-end" : "flex-start" }}>
       <div
+        className="max-w-[85%] lg:max-w-[65%]"
         style={{
-          maxWidth: "min(100%, 28rem)",
           background: out ? W.bubbleOut : W.bubbleIn,
           borderRadius: out ? "8px 8px 0 8px" : "8px 8px 8px 0",
           padding: msg.kind === "image" && msg.media_url ? "4px 4px 0 4px" : "7px 10px 4px 10px",
@@ -576,6 +576,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
           filter: `tenant_id=eq.${tenantId}`,
         },
         (payload) => {
+          console.log("[realtime] INSERT recebido", payload.new);
           const row = payload.new as WaMessage & { remote_jid: string };
           const msg: WaMessage = {
             id: row.id,
@@ -623,10 +624,50 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
           });
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log("[realtime] status do canal:", status);
+      });
 
     return () => { void supa.removeChannel(channel); };
   }, [tenantId, selectedJid]);
+
+  // ── Polling de fallback (garante sincronização mesmo sem Realtime) ─────────
+  // Atualiza a lista de conversas a cada 10s e as mensagens da conversa ativa a cada 5s
+  useEffect(() => {
+    const refreshConvs = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      try {
+        const convs = await apiLoadConversations();
+        setConversations((prev) =>
+          convs.map((c) => {
+            const existing = prev.find((p) => p.remoteJid === c.remoteJid);
+            return existing
+              ? { ...c, messages: existing.messages, messagesLoaded: existing.messagesLoaded }
+              : c;
+          }),
+        );
+      } catch { /* silencioso */ }
+    };
+    const convInterval = setInterval(() => void refreshConvs(), 10_000);
+    return () => clearInterval(convInterval);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedJid) return;
+    const refreshMsgs = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      try {
+        const msgs = await apiLoadMessages(selectedJid);
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.remoteJid === selectedJid ? { ...c, messages: msgs, messagesLoaded: true } : c,
+          ),
+        );
+      } catch { /* silencioso */ }
+    };
+    const msgInterval = setInterval(() => void refreshMsgs(), 5_000);
+    return () => clearInterval(msgInterval);
+  }, [selectedJid]);
 
   // ── Select conversation ───────────────────────────────────────────────────
   const handleSelect = useCallback(
@@ -727,9 +768,9 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div
+      className="h-[min(780px,calc(100dvh-80px))] md:h-[min(780px,calc(100dvh-96px))]"
       style={{
         display: "flex",
-        height: "min(780px, calc(100dvh - 80px))",
         background: W.bgApp,
         borderRadius: 8,
         overflow: "hidden",
@@ -739,11 +780,12 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     >
       {/* ─────────────── LEFT SIDEBAR ─────────────── */}
       <div
-        className={cn(mobileThread ? "hidden md:flex" : "flex")}
+        className={cn(
+          mobileThread ? "hidden md:flex" : "flex",
+          // Responsive widths: md=240px, lg=320px, xl=360px
+          "md:w-[240px] lg:w-[320px] xl:w-[360px]",
+        )}
         style={{
-          width: 360,
-          minWidth: 260,
-          maxWidth: 380,
           flexDirection: "column",
           background: W.bgSidebar,
           borderRight: `1px solid ${W.bgBorder}`,

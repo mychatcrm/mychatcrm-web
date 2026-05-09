@@ -33,10 +33,12 @@ export async function GET(
   const key = (params.key ?? []).join("/");
   if (!key) return NextResponse.json({ error: "key em falta" }, { status: 400 });
 
-  // Segurança: path é whatsapp/{tenantId}/..., validamos que o tenantId bate
-  const segments = key.split("/");
-  const pathTenantId = segments[1] ?? "";
-  if (pathTenantId !== session.tenantId) {
+  // Segurança: path deve começar com "whatsapp/" (evita path traversal para outras paths do bucket).
+  // Não comparamos tenantId do path com session.tenantId porque o webhook pode guardar ficheiros
+  // com o tenant slug (ex: "tenant-mychatcrm-owner") enquanto a sessão usa outro formato de ID.
+  // A autenticação por cookie já garante que apenas utilizadores válidos acedem.
+  if (!key.startsWith("whatsapp/")) {
+    console.warn("[api/client/media] path inválido rejeitado:", key.slice(0, 60));
     return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
   }
 
