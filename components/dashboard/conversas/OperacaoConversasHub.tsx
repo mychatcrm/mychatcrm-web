@@ -299,13 +299,31 @@ function AudioPlayer({ src, msgId, isOut }: { src: string; msgId: string; isOut:
         </span>
       </div>
 
-      {/* Mic icon (decorative — indicates voice message) */}
-      <svg width="16" height="16" viewBox="0 0 24 24" fill={W.muted} style={{ flexShrink: 0, marginLeft: 2 }}>
-        <path d="M12 1a4 4 0 0 1 4 4v7a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4z" />
-        <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke={W.muted} strokeWidth="1.5" fill="none" strokeLinecap="round" />
-        <line x1="12" y1="19" x2="12" y2="23" stroke={W.muted} strokeWidth="1.5" strokeLinecap="round" />
-        <line x1="8" y1="23" x2="16" y2="23" stroke={W.muted} strokeWidth="1.5" strokeLinecap="round" />
-      </svg>
+      {/* Download button */}
+      <a
+        href={src}
+        download={`audio-${msgId}.ogg`}
+        target="_blank"
+        rel="noreferrer"
+        title="Baixar áudio"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          color: W.green,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+          marginLeft: 2,
+          opacity: 0.8,
+          textDecoration: "none",
+        }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={W.green} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="7 10 12 15 17 10" />
+          <line x1="12" y1="15" x2="12" y2="3" />
+        </svg>
+      </a>
     </div>
   );
 }
@@ -315,6 +333,16 @@ function AudioPlayer({ src, msgId, isOut }: { src: string; msgId: string; isOut:
 // ─────────────────────────────────────────────────────────────────────────────
 function ImageBubble({ src, caption }: { src: string; caption: string }) {
   const [fullscreen, setFullscreen] = useState(false);
+
+  // Fecha o fullscreen ao pressionar Escape
+  useEffect(() => {
+    if (!fullscreen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFullscreen(false);
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [fullscreen]);
 
   return (
     <>
@@ -380,7 +408,7 @@ function MessageBubble({ msg }: { msg: WaMessage }) {
   return (
     <div style={{ display: "flex", width: "100%", justifyContent: out ? "flex-end" : "flex-start" }}>
       <div
-        className="max-w-[85%] lg:max-w-[65%]"
+        className="max-w-[85%] lg:max-w-[65%] xl:max-w-[55%]"
         style={{
           background: out ? W.bubbleOut : W.bubbleIn,
           borderRadius: out ? "8px 8px 0 8px" : "8px 8px 8px 0",
@@ -460,15 +488,19 @@ function ConversationItem({
   conv,
   selected,
   onSelect,
+  photoUrl,
 }: {
   conv: WaConversation;
   selected: boolean;
   onSelect: () => void;
+  photoUrl?: string | null;
 }) {
   const [hovered, setHovered] = useState(false);
+  const [imgError, setImgError] = useState(false);
   const phone = jidToPhone(conv.remoteJid);
   const initials = jidToInitials(conv.remoteJid);
   const bg = avatarColor(conv.remoteJid);
+  const showPhoto = photoUrl && !imgError;
 
   return (
     <button
@@ -491,10 +523,18 @@ function ConversationItem({
           background: bg, display: "flex", alignItems: "center",
           justifyContent: "center", flexShrink: 0,
           color: "white", fontSize: 17, fontWeight: 600,
-          userSelect: "none",
+          userSelect: "none", overflow: "hidden",
         }}
       >
-        {initials}
+        {showPhoto ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={photoUrl}
+            alt={phone}
+            onError={() => setImgError(true)}
+            style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "50%" }}
+          />
+        ) : initials}
       </div>
 
       {/* Text content */}
@@ -541,14 +581,18 @@ function ConversationItem({
 export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   const tenantId = session.tenantId;
 
-  const [conversations, setConversations] = useState<WaConversation[]>([]);
-  const [loading,      setLoading]        = useState(true);
-  const [selectedJid,  setSelectedJid]    = useState<string | null>(null);
-  const [query,        setQuery]          = useState("");
-  const [draft,        setDraft]          = useState("");
-  const [sendError,    setSendError]      = useState("");
-  const [sending,      setSending]        = useState(false);
-  const [mobileThread, setMobileThread]   = useState(false);
+  const [conversations,  setConversations]  = useState<WaConversation[]>([]);
+  const [loading,        setLoading]        = useState(true);
+  const [selectedJid,    setSelectedJid]    = useState<string | null>(null);
+  const [query,          setQuery]          = useState("");
+  const [draft,          setDraft]          = useState("");
+  const [sendError,      setSendError]      = useState("");
+  const [sending,        setSending]        = useState(false);
+  const [mobileThread,   setMobileThread]   = useState(false);
+  // Mapa JID → URL da foto (null = não tem foto, undefined = ainda não buscou)
+  const [contactPhotos,  setContactPhotos]  = useState<Record<string, string | null>>({});
+  // Cache em ref para evitar fetches duplicados concorrentes
+  const photoCacheRef = useRef<Set<string>>(new Set());
 
   const threadEndRef = useRef<HTMLDivElement>(null);
 
@@ -669,6 +713,23 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     return () => clearInterval(msgInterval);
   }, [selectedJid]);
 
+  // ── Fetch contact photo (cached) ─────────────────────────────────────────
+  const fetchPhoto = useCallback(async (jid: string) => {
+    if (photoCacheRef.current.has(jid)) return; // já buscou ou está buscando
+    photoCacheRef.current.add(jid);
+    try {
+      const res = await fetch(`/api/client/conversas/contact-photo?jid=${encodeURIComponent(jid)}`, {
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { photoUrl: string | null };
+        setContactPhotos((prev) => ({ ...prev, [jid]: data.photoUrl ?? null }));
+      }
+    } catch {
+      // silencioso — mantém initials como fallback
+    }
+  }, []);
+
   // ── Select conversation ───────────────────────────────────────────────────
   const handleSelect = useCallback(
     async (jid: string) => {
@@ -677,6 +738,9 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
       setSendError("");
       setDraft("");
       setConversations((prev) => prev.map((c) => (c.remoteJid === jid ? { ...c, unreadCount: 0 } : c)));
+
+      // Busca foto do contato (não bloqueia a abertura da conversa)
+      void fetchPhoto(jid);
 
       const conv = conversations.find((c) => c.remoteJid === jid);
       if (conv?.messagesLoaded) return;
@@ -690,7 +754,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
         console.warn("[conversas] load messages error", e);
       }
     },
-    [conversations],
+    [conversations, fetchPhoto],
   );
 
   // ── Scroll to bottom ──────────────────────────────────────────────────────
@@ -768,7 +832,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div
-      className="h-[min(780px,calc(100dvh-80px))] md:h-[min(780px,calc(100dvh-96px))]"
+      className="w-full h-[min(780px,calc(100dvh-80px))] md:h-[min(780px,calc(100dvh-96px))]"
       style={{
         display: "flex",
         background: W.bgApp,
@@ -782,8 +846,8 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
       <div
         className={cn(
           mobileThread ? "hidden md:flex" : "flex",
-          // Responsive widths: md=240px, lg=320px, xl=360px
-          "md:w-[240px] lg:w-[320px] xl:w-[360px]",
+          // Responsive widths: md=240px, lg=320px, xl=380px, 2xl=420px
+          "md:w-[240px] lg:w-[320px] xl:w-[380px] 2xl:w-[420px]",
         )}
         style={{
           flexDirection: "column",
@@ -876,6 +940,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 conv={c}
                 selected={c.remoteJid === selectedJid}
                 onSelect={() => void handleSelect(c.remoteJid)}
+                photoUrl={contactPhotos[c.remoteJid]}
               />
             ))
           )}
@@ -961,10 +1026,18 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                   background: avatarColor(active.remoteJid),
                   display: "flex", alignItems: "center", justifyContent: "center",
                   color: "white", fontSize: 14, fontWeight: 600, flexShrink: 0,
-                  userSelect: "none",
+                  userSelect: "none", overflow: "hidden",
                 }}
               >
-                {jidToInitials(active.remoteJid)}
+                {contactPhotos[active.remoteJid] ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={contactPhotos[active.remoteJid]!}
+                    alt={jidToPhone(active.remoteJid)}
+                    style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "50%" }}
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                  />
+                ) : jidToInitials(active.remoteJid)}
               </div>
 
               {/* Contact info */}

@@ -288,3 +288,22 @@ export function remoteJidToEvoNumber(remoteJid: string): string | null {
   const base = remoteJid.split("@")[0]?.replace(/\D/g, "") ?? "";
   return base.length >= 8 ? base : null;
 }
+
+/**
+ * Busca a URL da foto de perfil de um contato via Evolution API.
+ * Retorna a URL pública da foto, ou null se não encontrada / privada.
+ */
+export async function fetchContactPhoto(
+  instanceName: string,
+  remoteJid: string,
+): Promise<string | null> {
+  const number = remoteJid.split("@")[0] ?? remoteJid;
+  const enc = encodeURIComponent(instanceName);
+  const res = await evolutionFetchJson<{ profilePictureUrl?: string; wuid?: string }>(
+    `/chat/fetchProfilePictureUrl/${enc}?number=${encodeURIComponent(number)}`,
+    { method: "GET", timeoutMs: 8_000 },
+  );
+  if (!res.ok) return null;
+  const url = (res.data as Record<string, unknown>)?.profilePictureUrl;
+  return typeof url === "string" && url.startsWith("http") ? url : null;
+}
