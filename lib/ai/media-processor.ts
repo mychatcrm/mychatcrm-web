@@ -4,10 +4,17 @@
  *  - Áudio → Whisper (whisper-1) → transcrição em texto
  *  - Imagem → GPT-4o vision → descrição em texto
  *
- * Fluxo de download (com fallback em cascata):
- *  1. Fetch directo na URL CDN da Meta que chega no webhook (content.url)
- *  2. Fallback: endpoint Evolution API /chat/getBase64FromMediaMessage (rawNode completo)
- *  Buffer obtido é salvo no Cloudflare R2 para archiving, depois enviado à IA.
+ * Fluxo de download:
+ *  0. rawNode.base64 — quando Evolution API tem webhookBase64: true, os bytes
+ *     já chegam decodificados no payload (mais rápido, sem rede adicional).
+ *  1. Evolution API /chat/getBase64FromMediaMessage — Baileys descriptografa
+ *     a mídia com a mediaKey e devolve base64 válido.
+ *
+ * IMPORTANTE: CDN da Meta serve dados ENCRIPTADOS (sem a mediaKey são inúteis).
+ * Nunca fazemos fetch directo do CDN URL — apenas rawNode.base64 ou Evolution API
+ * produzem bytes válidos para Whisper/Vision.
+ *
+ * Buffer obtido é salvo no Cloudflare R2 para archiving.
  */
 import type { EvolutionAudioContent, EvolutionImageContent } from "@/lib/integrations/evolution-webhook-parse";
 import { uploadMediaToR2 } from "@/lib/integrations/r2-storage";
@@ -34,28 +41,10 @@ function mimeToExt(mimetype: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Strategy 1: fetch directo na URL CDN da Meta
-// ---------------------------------------------------------------------------
-
-async function fetchFromCDN(url: string): Promise<Buffer | null> {
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-    if (!res.ok) {
-      console.warn("[media-processor] CDN non-ok", res.status, url.slice(0, 80));
-      return null;
-    }
-    const arr = await res.arrayBuffer();
-    const buf = Buffer.from(arr);
-    console.log("[media-processor] CDN ok", buf.byteLength, "bytes");
-    return buf;
-  } catch (e) {
-    console.warn("[media-processor] CDN fetch error", e);
-    return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Strategy 2: Evolution API /chat/getBase64FromMediaMessage (fallback)
+// Strategy 1: Evolution API /chat/getBase64FromMediaMessage
+// Baileys descriptografa a mídia com a mediaKey — única forma segura de obter
+// bytes válidos quando rawNode.base64 não está disponível.
+// NOTA: CDN da Meta serve dados ENCRIPTADOS → fetch directo é inútil.
 // ---------------------------------------------------------------------------
 
 async function fetchFromEvolution(
@@ -122,7 +111,11 @@ async function fetchFromEvolution(
 }
 
 // ---------------------------------------------------------------------------
-// Core: download com cascata CDN → Evolution + archiving R2
+// Core: download com cascata rawNode.base64 → Evolution API + archiving R2
+// NOTA: CDN da Meta serve dados ENCRIPTADOS — nunca usamos fetch directo CDN
+//       pois o buffer resultante é inútil sem a mediaKey. Apenas rawNode.base64
+//       (Evolution com webhookBase64: true) ou Evolution API (Baileys decripta)
+//       produzem bytes válidos.
 // ---------------------------------------------------------------------------
 
 async function downloadMediaBuffer(
@@ -160,11 +153,10 @@ async function downloadMediaBuffer(
     }
   }
 
-  // 1. Tentativa directa na URL CDN da Meta (pode ser encriptado)
-  if (!buffer) buffer = await fetchFromCDN(content.url);
-
-  // 2. Fallback: Evolution API (rawNode completo para Baileys descriptografar)
+  // 1. Fallback: Evolution API — Baileys descriptografa a mídia com a mediaKey
+  //    (CDN da Meta serve dados encriptados, por isso saltamos fetch directo CDN)
   if (!buffer) {
+    console.log("[media-processor] rawNode.base64 ausente — tentando Evolution API para decriptar");
     const evo = await fetchFromEvolution(content, instanceName, msgKey);
     if (evo) {
       buffer = evo.buffer;

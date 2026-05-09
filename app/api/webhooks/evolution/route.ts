@@ -63,7 +63,7 @@ async function downloadAndStoreMedia(
 ): Promise<string | null> {
   if (msg.type !== "audio" && msg.type !== "image") return null;
 
-  const { url, mimetype, rawNode } = msg;
+  const { mimetype, rawNode } = msg;
   const ext = mimeToExt(mimetype);
   const safeId = (msg.messageId || String(Date.now())).replace(/[^a-zA-Z0-9_-]/g, "");
   const filename = `whatsapp/${tenantId}/${safeId}.${ext}`;
@@ -90,21 +90,11 @@ async function downloadAndStoreMedia(
     }
   }
 
-  // 1. Fetch directo na URL CDN da Meta
-  if (!buffer) try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-    if (res.ok) {
-      buffer = Buffer.from(await res.arrayBuffer());
-      console.log("[webhooks/evolution] media CDN ok", buffer.byteLength, "bytes");
-    } else {
-      console.warn("[webhooks/evolution] media CDN non-ok", res.status);
-    }
-  } catch (e) {
-    console.warn("[webhooks/evolution] media CDN error", e instanceof Error ? e.message : e);
-  }
-
-  // 2. Fallback: Evolution API /chat/getBase64FromMediaMessage
+  // 1. Fallback: Evolution API /chat/getBase64FromMediaMessage (Baileys descriptografa)
+  //    NOTA: CDN da Meta serve dados ENCRIPTADOS — fetch directo CDN é inútil sem
+  //    a mediaKey. Saltamos para Evolution API que usa Baileys para decriptar.
   if (!buffer) {
+    console.log("[webhooks/evolution] rawNode.base64 ausente — tentando Evolution API");
     const evoBase = process.env.EVOLUTION_API_BASE_URL?.replace(/\/+$/, "") ?? "";
     const evoKey =
       process.env.EVOLUTION_API_KEY?.trim() ||
@@ -136,11 +126,14 @@ async function downloadAndStoreMedia(
             console.log("[webhooks/evolution] media Evolution ok", buffer.byteLength, "bytes");
           }
         } else {
-          console.warn("[webhooks/evolution] media Evolution non-ok", res.status);
+          const errBody = await res.text().catch(() => "");
+          console.warn("[webhooks/evolution] media Evolution non-ok", res.status, errBody.slice(0, 200));
         }
       } catch (e) {
         console.warn("[webhooks/evolution] media Evolution error", e instanceof Error ? e.message : e);
       }
+    } else {
+      console.warn("[webhooks/evolution] EVOLUTION_API_BASE_URL ou EVOLUTION_API_KEY não configurados");
     }
   }
 
