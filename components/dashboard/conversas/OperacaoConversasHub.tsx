@@ -1,37 +1,98 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
-import { AlertCircle, ArrowLeft, Loader2, Paperclip, Search, Send } from "lucide-react";
+import { AlertCircle, ArrowLeft, Loader2, Search, Send } from "lucide-react";
+import { createClient } from "@supabase/supabase-js";
 import { Badge } from "@/components/ui/Badge";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { ProfileAvatar } from "@/components/dashboard/ProfileAvatar";
 import type { ClientSession } from "@/lib/client-auth";
-import { formatIntegerPtBr } from "@/lib/format-number";
 import { getPlanMonthlyConversationCapForSession, normalizeClientPlan } from "@/lib/plan-limits";
-import type { ClientLead } from "@/lib/dashboard-data";
-import { CRM_LEADS_UPDATED_EVENT } from "@/lib/crm-leads-storage";
-import {
-  OPERACAO_INBOX_UPDATED_EVENT,
-  appendOperacaoOutboundFile,
-  appendOperacaoOutboundText,
-  attendantTagLabel,
-  buildOperacaoInboxView,
-  markOperacaoConversationRead,
-  readFilePayloadForOperacaoChat,
-  refreshOperacaoInboxView,
-  validateOperacaoAttachment,
-  type OperacaoConversation,
-} from "@/lib/operacao-inbox";
+import { formatIntegerPtBr } from "@/lib/format-number";
 import { cn } from "@/lib/utils";
 import { phoneToWhatsAppWebHref, WhatsAppGlyph } from "@/components/dashboard/crm/crm-phone";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 
-function contactInitials(name: string) {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
-  return (parts[0]?.slice(0, 2) || "??").toUpperCase();
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type WaMessage = {
+  id: string;
+  direction: "inbound" | "outbound";
+  kind: "text" | "audio" | "image" | "document";
+  content: string;
+  media_url: string | null;
+  agent_id: string | null;
+  created_at: string;
+};
+
+type WaConversation = {
+  remoteJid: string;
+  lastContent: string;
+  lastKind: string;
+  lastDirection: string;
+  lastAt: string;
+  unreadCount: number;
+  messages: WaMessage[];
+  messagesLoaded: boolean;
+};
+
+// ---------------------------------------------------------------------------
+// Supabase browser client (singleton)
+// ---------------------------------------------------------------------------
+
+let _supa: ReturnType<typeof createClient> | null = null;
+function getSupaBrowser() {
+  if (!_supa) {
+    _supa = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    );
+  }
+  return _supa;
+}
+
+// ---------------------------------------------------------------------------
+// API helpers
+// ---------------------------------------------------------------------------
+
+async function apiLoadConversations(): Promise<WaConversation[]> {
+  const res = await fetch("/api/client/conversas", { cache: "no-store" });
+  if (!res.ok) throw new Error(`GET /api/client/conversas ${res.status}`);
+  const data = (await res.json()) as { conversations: Omit<WaConversation, "messages" | "messagesLoaded">[] };
+  return (data.conversations ?? []).map((c) => ({ ...c, messages: [], messagesLoaded: false }));
+}
+
+async function apiLoadMessages(remoteJid: string): Promise<WaMessage[]> {
+  const enc = encodeURIComponent(remoteJid);
+  const res = await fetch(`/api/client/conversas/${enc}/messages`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`GET messages ${res.status}`);
+  const data = (await res.json()) as { messages: WaMessage[] };
+  return data.messages ?? [];
+}
+
+async function apiSendMessage(remoteJid: string, text: string): Promise<WaMessage | null> {
+  const res = await fetch("/api/client/conversas/send", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ remoteJid, text }),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? `Erro ${res.status} ao enviar`);
+  }
+  const data = (await res.json()) as { message?: WaMessage };
+  return data.message ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers de formatação
+// ---------------------------------------------------------------------------
+
+function jidToPhone(jid: string): string {
+  return "+" + (jid.split("@")[0] ?? jid).replace(/\D/g, "");
 }
 
 function formatShortTime(iso: string) {
@@ -39,7 +100,9 @@ function formatShortTime(iso: string) {
     const d = new Date(iso);
     const now = new Date();
     const sameDay =
-      d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
     if (sameDay) return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
     return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
   } catch {
@@ -47,155 +110,277 @@ function formatShortTime(iso: string) {
   }
 }
 
-function AttendantTag({ conv }: { conv: OperacaoConversation }) {
-  const human = conv.attendant.mode === "humano";
+function previewFromConv(conv: WaConversation): string {
+  if (conv.lastKind === "audio") return "🎵 Áudio";
+  if (conv.lastKind === "image") return "🖼️ Imagem";
+  return conv.lastContent.slice(0, 80);
+}
+
+function MessageBubble({ msg, isLight }: { msg: WaMessage; isLight: boolean }) {
+  const out = msg.direction === "outbound";
   return (
-    <span
-      className={cn(
-        "inline-flex max-w-full items-center truncate rounded-md border px-1.5 py-0.5 text-[10px] font-semibold leading-tight",
-        human
-          ? "border-indigo-500/35 bg-indigo-500/10 text-indigo-200"
-          : "border-primary/30 bg-primary/10 text-primary",
-      )}
-      title={attendantTagLabel(conv.attendant)}
-    >
-      {attendantTagLabel(conv.attendant)}
-    </span>
+    <div className={cn("flex w-full", out ? "justify-end" : "justify-start")}>
+      <div
+        className={cn(
+          "max-w-[min(100%,28rem)] rounded-xl px-3 py-2 text-sm",
+          out
+            ? isLight
+              ? "rounded-br-md bg-[#d9fdd3] text-[#111b21]"
+              : "rounded-br-md bg-emerald-900/55 text-emerald-50"
+            : "rounded-bl-md border border-line/60 bg-surface-card text-content",
+        )}
+      >
+        {msg.kind === "audio" ? (
+          <p className="flex items-center gap-1.5 text-sm opacity-80">
+            <span>🎵</span>
+            <span>Áudio</span>
+          </p>
+        ) : msg.kind === "image" ? (
+          <p className="flex items-center gap-1.5 text-sm opacity-80">
+            <span>🖼️</span>
+            <span>{msg.content.replace("[Imagem]", "").trim() || "Imagem"}</span>
+          </p>
+        ) : (
+          <p className="whitespace-pre-wrap break-words leading-relaxed">{msg.content}</p>
+        )}
+        <p className={cn("mt-1 text-[10px] opacity-60", out ? "text-right" : "text-left")}>
+          {formatShortTime(msg.created_at)}
+          {out && msg.agent_id && msg.agent_id !== "human" && (
+            <span className="ml-1 opacity-70">· IA</span>
+          )}
+        </p>
+      </div>
+    </div>
   );
 }
 
-export function OperacaoConversasHub({ session, leads }: { session: ClientSession; leads: ClientLead[] }) {
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
+export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   const { isLight } = usePanelAppearance();
   const tenantId = session.tenantId;
-  const fallbackLeads = useMemo(() => leads.map((l) => ({ ...l })), [leads]);
-  const [inbox, setInbox] = useState(() =>
-    buildOperacaoInboxView(tenantId, fallbackLeads, { ignorePersisted: true }),
-  );
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const [conversations, setConversations] = useState<WaConversation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedJid, setSelectedJid] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState("");
-  const [attachError, setAttachError] = useState("");
   const [sendError, setSendError] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const listEndRef = useRef<HTMLDivElement>(null);
+  const [sending, setSending] = useState(false);
+
   const threadEndRef = useRef<HTMLDivElement>(null);
-  const didInitialPickRef = useRef(false);
 
-  const bump = useCallback(() => {
-    setInbox(refreshOperacaoInboxView(tenantId, fallbackLeads));
-  }, [tenantId, fallbackLeads]);
-
-  useLayoutEffect(() => {
-    bump();
-  }, [bump]);
+  // ---------------------------------------------------------------------------
+  // Carga inicial
+  // ---------------------------------------------------------------------------
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const on = () => bump();
-    window.addEventListener(OPERACAO_INBOX_UPDATED_EVENT, on);
-    window.addEventListener(CRM_LEADS_UPDATED_EVENT, on);
-    window.addEventListener("storage", on);
-    const t = window.setInterval(on, 5000);
-    const onVis = () => {
-      if (document.visibilityState === "visible") bump();
-    };
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      window.removeEventListener(OPERACAO_INBOX_UPDATED_EVENT, on);
-      window.removeEventListener(CRM_LEADS_UPDATED_EVENT, on);
-      window.removeEventListener("storage", on);
-      window.clearInterval(t);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, [bump]);
+    let cancelled = false;
+    setLoading(true);
+    apiLoadConversations()
+      .then((convs) => {
+        if (!cancelled) {
+          setConversations(convs);
+          setLoading(false);
+        }
+      })
+      .catch((e) => {
+        console.warn("[conversas] load error", e);
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [tenantId]);
 
-  const handleSelectConversation = useCallback(
-    (id: string) => {
-      setSelectedId(id);
-      markOperacaoConversationRead(tenantId, fallbackLeads, id);
-      bump();
+  // ---------------------------------------------------------------------------
+  // Supabase Realtime — INSERT em whatsapp_messages
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    const supa = getSupaBrowser();
+    const channel = supa
+      .channel(`wamsg-${tenantId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "whatsapp_messages",
+          filter: `tenant_id=eq.${tenantId}`,
+        },
+        (payload) => {
+          const row = payload.new as WaMessage & { remote_jid: string; tenant_id: string };
+          const msg: WaMessage = {
+            id: row.id,
+            direction: row.direction,
+            kind: row.kind,
+            content: row.content,
+            media_url: row.media_url,
+            agent_id: row.agent_id,
+            created_at: row.created_at,
+          };
+          const jid: string = row.remote_jid;
+
+          setConversations((prev) => {
+            const existing = prev.find((c) => c.remoteJid === jid);
+            if (existing) {
+              return prev
+                .map((c) =>
+                  c.remoteJid !== jid
+                    ? c
+                    : {
+                        ...c,
+                        lastContent: msg.content,
+                        lastKind: msg.kind,
+                        lastDirection: msg.direction,
+                        lastAt: msg.created_at,
+                        unreadCount: msg.direction === "inbound" && jid !== selectedJid
+                          ? c.unreadCount + 1
+                          : c.unreadCount,
+                        messages: c.messagesLoaded ? [...c.messages, msg] : c.messages,
+                      },
+                )
+                .sort((a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime());
+            }
+            // Nova conversa — adiciona no topo
+            const newConv: WaConversation = {
+              remoteJid: jid,
+              lastContent: msg.content,
+              lastKind: msg.kind,
+              lastDirection: msg.direction,
+              lastAt: msg.created_at,
+              unreadCount: msg.direction === "inbound" ? 1 : 0,
+              messages: [msg],
+              messagesLoaded: true,
+            };
+            return [newConv, ...prev];
+          });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supa.removeChannel(channel);
+    };
+  }, [tenantId, selectedJid]);
+
+  // ---------------------------------------------------------------------------
+  // Carrega mensagens ao seleccionar conversa
+  // ---------------------------------------------------------------------------
+
+  const handleSelect = useCallback(
+    async (jid: string) => {
+      setSelectedJid(jid);
+      setSendError("");
+      setDraft("");
+
+      // Zera unread
+      setConversations((prev) =>
+        prev.map((c) => (c.remoteJid === jid ? { ...c, unreadCount: 0 } : c)),
+      );
+
+      // Carrega mensagens se ainda não carregadas
+      const conv = conversations.find((c) => c.remoteJid === jid);
+      if (conv?.messagesLoaded) return;
+
+      try {
+        const msgs = await apiLoadMessages(jid);
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.remoteJid === jid ? { ...c, messages: msgs, messagesLoaded: true } : c,
+          ),
+        );
+      } catch (e) {
+        console.warn("[conversas] load messages error", e);
+      }
     },
-    [tenantId, fallbackLeads, bump],
+    [conversations],
   );
 
-  useEffect(() => {
-    if (inbox.conversations.length === 0) {
-      didInitialPickRef.current = false;
-    }
-    if (!selectedId && inbox.conversations[0] && !didInitialPickRef.current) {
-      didInitialPickRef.current = true;
-      handleSelectConversation(inbox.conversations[0].id);
-      return;
-    }
-    if (selectedId && !inbox.conversations.some((c) => c.id === selectedId)) {
-      const next = inbox.conversations[0]?.id;
-      if (next) handleSelectConversation(next);
-      else setSelectedId(null);
-    }
-  }, [inbox.conversations, selectedId, handleSelectConversation]);
-
+  // Scroll ao fim quando thread muda
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [selectedId, inbox]);
+  }, [selectedJid, conversations]);
+
+  // ---------------------------------------------------------------------------
+  // Enviar mensagem
+  // ---------------------------------------------------------------------------
+
+  const handleSend = useCallback(async () => {
+    if (!selectedJid || !draft.trim() || sending) return;
+    setSendError("");
+    const text = draft.trim();
+    setDraft("");
+    setSending(true);
+
+    // Optimistic: adiciona a mensagem localmente de imediato
+    const tempMsg: WaMessage = {
+      id: `temp-${Date.now()}`,
+      direction: "outbound",
+      kind: "text",
+      content: text,
+      media_url: null,
+      agent_id: "human",
+      created_at: new Date().toISOString(),
+    };
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.remoteJid !== selectedJid
+          ? c
+          : { ...c, messages: [...c.messages, tempMsg], lastContent: text, lastAt: tempMsg.created_at },
+      ),
+    );
+
+    try {
+      const saved = await apiSendMessage(selectedJid, text);
+      // Substitui mensagem temporária pela salva (com ID real)
+      if (saved) {
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.remoteJid !== selectedJid
+              ? c
+              : { ...c, messages: c.messages.map((m) => (m.id === tempMsg.id ? saved : m)) },
+          ),
+        );
+      }
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "Erro ao enviar mensagem.");
+      // Remove mensagem optimista em caso de erro
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.remoteJid !== selectedJid
+            ? c
+            : { ...c, messages: c.messages.filter((m) => m.id !== tempMsg.id) },
+        ),
+      );
+    } finally {
+      setSending(false);
+    }
+  }, [selectedJid, draft, sending]);
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return inbox.conversations;
-    return inbox.conversations.filter(
+    if (!q) return conversations;
+    return conversations.filter(
       (c) =>
-        c.contactName.toLowerCase().includes(q) ||
-        c.phoneLabel.toLowerCase().includes(q) ||
-        c.lastPreview.toLowerCase().includes(q),
+        c.remoteJid.toLowerCase().includes(q) ||
+        jidToPhone(c.remoteJid).includes(q) ||
+        c.lastContent.toLowerCase().includes(q),
     );
-  }, [inbox.conversations, query]);
+  }, [conversations, query]);
 
   const active = useMemo(
-    () => inbox.conversations.find((c) => c.id === selectedId) ?? null,
-    [inbox.conversations, selectedId],
+    () => conversations.find((c) => c.remoteJid === selectedJid) ?? null,
+    [conversations, selectedJid],
   );
 
   const planNorm = useMemo(() => normalizeClientPlan(session.plan), [session.plan]);
   const conversationCap = useMemo(() => getPlanMonthlyConversationCapForSession(session), [session]);
-  const conversationCount = inbox.conversations.length;
-
-  const sendText = useCallback(() => {
-    if (!active) return;
-    setSendError("");
-    const res = appendOperacaoOutboundText(tenantId, fallbackLeads, active.id, draft);
-    if (!res.ok) {
-      setSendError(res.error);
-      return;
-    }
-    setDraft("");
-    bump();
-  }, [active, draft, tenantId, fallbackLeads, bump]);
-
-  const onPickFile = useCallback(
-    async (files: FileList | null) => {
-      const file = files?.[0];
-      if (!file || !active) return;
-      setAttachError("");
-      const v = validateOperacaoAttachment(file);
-      if (!v.ok) {
-        setAttachError(v.error);
-        return;
-      }
-      setUploading(true);
-      try {
-        const payload = await readFilePayloadForOperacaoChat(file);
-        const res = appendOperacaoOutboundFile(tenantId, fallbackLeads, active.id, payload);
-        if (!res.ok) setAttachError(res.error);
-        bump();
-      } catch {
-        setAttachError("Não foi possível ler o arquivo. Tente novamente.");
-      } finally {
-        setUploading(false);
-        if (fileRef.current) fileRef.current.value = "";
-      }
-    },
-    [active, tenantId, fallbackLeads, bump],
-  );
 
   return (
     <div className="flex min-h-0 flex-col gap-3">
@@ -203,23 +388,22 @@ export function OperacaoConversasHub({ session, leads }: { session: ClientSessio
         <div className="min-w-0">
           <h2 className="text-xl font-semibold text-content sm:text-2xl">Conversas em tempo real</h2>
           <p className="mt-1 max-w-3xl text-sm leading-relaxed text-content-muted">
-            Visão operacional das conversas ligadas aos leads do CRM Kanban. As mensagens e anexos ficam neste navegador até
-            existir integração com o WhatsApp Cloud API no servidor. O painel sincroniza quando o CRM ou outras abas
-            alteram dados (eventos locais e atualização periódica).
+            Todas as conversas WhatsApp do tenant, sincronizadas via Supabase Realtime. Mensagens recebidas e enviadas pelo
+            agente IA aparecem automaticamente. Pode responder manualmente por aqui.
           </p>
         </div>
         <Badge className="w-fit border-line/60 bg-surface-elevated/50 text-[11px] font-medium text-content-secondary">
-          Armazenamento local · sem WebSocket
+          Supabase Realtime · ao vivo
         </Badge>
       </div>
 
       {planNorm !== "enterprise" ? (
         <div className="flex flex-col gap-2 rounded-xl border border-line bg-surface-deep/30 px-4 py-3 text-sm text-content-secondary sm:flex-row sm:items-center sm:justify-between">
           <p>
-            Limite de referência do plano: até <strong className="text-content">{formatIntegerPtBr(conversationCap)}</strong>{" "}
-            <strong className="text-content">novas conversas</strong> de clientes por mês (contatos / threads distintos — não
-            conta cada mensagem ao mesmo cliente). Neste painel:{" "}
-            <strong className="text-content">{formatIntegerPtBr(conversationCount)}</strong> conversas na caixa.
+            Limite de referência do plano: até{" "}
+            <strong className="text-content">{formatIntegerPtBr(conversationCap)}</strong>{" "}
+            <strong className="text-content">novas conversas</strong> de clientes por mês.{" "}
+            Neste painel: <strong className="text-content">{formatIntegerPtBr(conversations.length)}</strong> conversas.
           </p>
           <Link
             href="/planos"
@@ -236,20 +420,16 @@ export function OperacaoConversasHub({ session, leads }: { session: ClientSessio
           "h-[min(780px,calc(100dvh-12.5rem))] max-h-[calc(100dvh-12.5rem)]",
         )}
       >
-        {/* Lista */}
+        {/* Lista de conversas */}
         <div
           className={cn(
             "flex min-h-0 w-full min-w-0 flex-col border-line bg-surface-sidebar/30 md:w-[min(100%,320px)] md:max-w-[360px] md:border-r",
-            selectedId ? "hidden md:flex" : "flex",
+            selectedJid ? "hidden md:flex" : "flex",
           )}
         >
           <div className="shrink-0 border-b border-line/80 p-3">
             <label className="relative block">
-              <Search
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-content-faint"
-                strokeWidth={1.75}
-                aria-hidden
-              />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-content-faint" strokeWidth={1.75} aria-hidden />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -259,53 +439,55 @@ export function OperacaoConversasHub({ session, leads }: { session: ClientSessio
               />
             </label>
           </div>
+
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {filtered.length === 0 ? (
+            {loading ? (
+              <div className="flex items-center justify-center gap-2 py-12 text-sm text-content-muted">
+                <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
+              </div>
+            ) : filtered.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 px-4 py-12 text-center">
                 <p className="text-sm text-content-muted">
-                  {inbox.conversations.length === 0
-                    ? "Não há leads no CRM Kanban para mostrar como conversas."
+                  {conversations.length === 0
+                    ? "Nenhuma conversa ainda. As mensagens WhatsApp aparecerão aqui automaticamente."
                     : "Nenhuma conversa corresponde à busca."}
                 </p>
-                {inbox.conversations.length === 0 ? (
-                  <Link
-                    href="/dashboard/crm"
-                    className="inline-flex min-h-[44px] items-center rounded-xl border border-primary/30 bg-primary/[0.08] px-4 text-sm font-medium text-primary hover:bg-primary/[0.14]"
-                  >
-                    Abrir CRM Kanban
-                  </Link>
-                ) : null}
               </div>
             ) : (
               <ul className="divide-y divide-line/60">
                 {filtered.map((c) => {
-                  const selected = c.id === selectedId;
-                  const avatar = { kind: "initials" as const, initials: contactInitials(c.contactName) };
+                  const selected = c.remoteJid === selectedJid;
+                  const phone = jidToPhone(c.remoteJid);
                   return (
-                    <li key={c.id}>
+                    <li key={c.remoteJid}>
                       <button
                         type="button"
-                        onClick={() => handleSelectConversation(c.id)}
+                        onClick={() => handleSelect(c.remoteJid)}
                         className={cn(
                           "flex w-full gap-3 px-3 py-3 text-left transition hover:bg-surface-elevated/35",
                           selected && "bg-surface-elevated/50",
                         )}
                       >
-                        <ProfileAvatar avatar={avatar} size={44} className="ring-1 ring-line/40" />
+                        <ProfileAvatar
+                          avatar={{ kind: "initials", initials: phone.slice(-4) }}
+                          size={44}
+                          className="ring-1 ring-line/40"
+                        />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-start justify-between gap-2">
-                            <span className="truncate font-medium text-content">{c.contactName}</span>
+                            <span className="truncate font-medium text-content">{phone}</span>
                             <span className="shrink-0 text-[11px] text-content-faint">{formatShortTime(c.lastAt)}</span>
                           </div>
-                          <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                            <AttendantTag conv={c} />
-                            {c.unread > 0 ? (
+                          <div className="mt-0.5 flex items-center gap-1.5">
+                            {c.unreadCount > 0 && (
                               <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-bold text-white">
-                                {c.unread > 99 ? "99+" : c.unread}
+                                {c.unreadCount > 99 ? "99+" : c.unreadCount}
                               </span>
-                            ) : null}
+                            )}
                           </div>
-                          <p className="mt-1 line-clamp-2 text-[13px] text-content-muted">{c.lastPreview}</p>
+                          <p className="mt-1 line-clamp-2 text-[13px] text-content-muted">
+                            {previewFromConv(c)}
+                          </p>
                         </div>
                       </button>
                     </li>
@@ -313,15 +495,14 @@ export function OperacaoConversasHub({ session, leads }: { session: ClientSessio
                 })}
               </ul>
             )}
-            <div ref={listEndRef} />
           </div>
         </div>
 
-        {/* Thread */}
+        {/* Thread da conversa */}
         <div
           className={cn(
             "flex min-h-0 min-w-0 flex-1 flex-col bg-surface-base/40",
-            !selectedId ? "hidden md:flex" : "flex",
+            !selectedJid ? "hidden md:flex" : "flex",
           )}
         >
           {!active ? (
@@ -336,25 +517,24 @@ export function OperacaoConversasHub({ session, leads }: { session: ClientSessio
                   variant="ghost"
                   size="sm"
                   className="md:hidden"
-                  onClick={() => setSelectedId(null)}
-                  aria-label="Voltar à lista de conversas"
+                  onClick={() => setSelectedJid(null)}
+                  aria-label="Voltar"
                 >
                   <ArrowLeft className="h-5 w-5" />
                 </Button>
                 <ProfileAvatar
-                  avatar={{ kind: "initials", initials: contactInitials(active.contactName) }}
+                  avatar={{ kind: "initials", initials: jidToPhone(active.remoteJid).slice(-4) }}
                   size={40}
                   className="ring-1 ring-line/40"
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="truncate font-semibold text-content">{active.contactName}</h3>
-                    <AttendantTag conv={active} />
+                    <h3 className="truncate font-semibold text-content">{jidToPhone(active.remoteJid)}</h3>
                   </div>
                   <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-content-muted">
-                    <span className="truncate">{active.phoneLabel}</span>
+                    <span className="truncate font-mono text-[11px]">{active.remoteJid}</span>
                     <a
-                      href={phoneToWhatsAppWebHref(active.phoneLabel)}
+                      href={phoneToWhatsAppWebHref(jidToPhone(active.remoteJid))}
                       target="_blank"
                       rel="noreferrer"
                       className="inline-flex items-center gap-1 text-primary hover:underline"
@@ -366,99 +546,33 @@ export function OperacaoConversasHub({ session, leads }: { session: ClientSessio
                 </div>
               </header>
 
-              <div className="relative min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(ellipse_at_20%_0%,rgba(242,68,0,0.06),transparent_50%),radial-gradient(ellipse_at_80%_100%,rgba(14,29,47,0.10),transparent_45%)] px-2 py-4 sm:px-4">
-                <div
-                  className={cn("pointer-events-none absolute inset-0", isLight ? "opacity-[0.4]" : "opacity-[0.25]")}
-                  style={{
-                    backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%239C92AC' fill-opacity='0.07'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
-                  }}
-                  aria-hidden
-                />
+              <div className="relative min-h-0 flex-1 overflow-y-auto px-2 py-4 sm:px-4">
                 <div className="relative z-[1] mx-auto flex max-w-3xl flex-col gap-2">
-                  {active.messages.length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-line/70 bg-surface-card/60 px-4 py-10 text-center text-sm text-content-muted">
-                      Ainda não há mensagens nesta conversa. Escreva abaixo para registar a primeira, ou aguarde integração
-                      com o WhatsApp Cloud API para mensagens automáticas.
+                  {!active.messagesLoaded ? (
+                    <div className="flex items-center justify-center gap-2 py-8 text-sm text-content-muted">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Carregando mensagens…
                     </div>
-                  ) : null}
-                  {active.messages.map((m) => {
-                    const out = m.direction === "out";
-                    return (
-                      <div key={m.id} className={cn("flex w-full", out ? "justify-end" : "justify-start")}>
-                        <div
-                          className={cn(
-                            "max-w-[min(100%,28rem)] rounded-xl px-3 py-2 text-sm",
-                            out
-                              ? (isLight ? "rounded-br-md bg-[#d9fdd3] text-[#111b21]" : "rounded-br-md bg-emerald-900/55 text-emerald-50")
-                              : "rounded-bl-md border border-line/60 bg-surface-card text-content",
-                          )}
-                        >
-                          {m.kind === "text" ? (
-                            <p className="whitespace-pre-wrap break-words leading-relaxed">{m.text}</p>
-                          ) : (
-                            <div className="space-y-2">
-                              <p className="text-xs font-medium text-content-muted">
-                                {m.file?.name ?? "Arquivo"}
-                                {m.file?.size != null
-                                  ? ` · ${formatIntegerPtBr(Math.max(0, Math.round(m.file.size / 1024)))} KB`
-                                  : null}
-                              </p>
-                              {m.file?.previewDataUrl ? (
-                                <div className="relative h-44 w-full max-w-xs overflow-hidden rounded-lg border border-line/50">
-                                  <Image
-                                    src={m.file.previewDataUrl}
-                                    alt={m.file.name ?? "Pré-visualização"}
-                                    fill
-                                    className="object-cover"
-                                    unoptimized
-                                  />
-                                </div>
-                              ) : (
-                                <div className="rounded-lg border border-dashed border-line/60 bg-surface-elevated/30 px-3 py-6 text-center text-xs text-content-muted">
-                                  Pré-visualização indisponível — só os metadados do ficheiro foram guardados neste
-                                  navegador.
-                                </div>
-                              )}
-                            </div>
-                          )}
-                          <p className={cn("mt-1 text-[10px] opacity-70", out ? "text-right" : "text-left")}>
-                            {formatShortTime(m.createdAt)}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })}
+                  ) : active.messages.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-line/70 bg-surface-card/60 px-4 py-10 text-center text-sm text-content-muted">
+                      Sem mensagens nesta conversa ainda.
+                    </div>
+                  ) : (
+                    active.messages.map((m) => (
+                      <MessageBubble key={m.id} msg={m} isLight={isLight} />
+                    ))
+                  )}
                   <div ref={threadEndRef} />
                 </div>
               </div>
 
               <footer className="shrink-0 border-t border-line/80 bg-surface-card/90 px-2 py-2 backdrop-blur-sm sm:px-3">
-                {(sendError || attachError) && (
+                {sendError && (
                   <div className="mb-2 flex items-start gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
                     <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-                    <span>{sendError || attachError}</span>
+                    <span>{sendError}</span>
                   </div>
                 )}
                 <div className="flex items-end gap-2">
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    className="hidden"
-                    accept=".pdf,.doc,.docx,.xlsx,.pptx,.xml,.md,.markdown,.adoc,.html,.htm,.csv,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.txt"
-                    onChange={(e) => onPickFile(e.target.files)}
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-11 w-11 shrink-0 rounded-full"
-                    disabled={uploading}
-                    onClick={() => fileRef.current?.click()}
-                    aria-label="Anexar arquivo"
-                    title="Anexar arquivo"
-                  >
-                    {uploading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Paperclip className="h-5 w-5" />}
-                  </Button>
                   <textarea
                     value={draft}
                     onChange={(e) => setDraft(e.target.value.slice(0, 4000))}
@@ -468,31 +582,28 @@ export function OperacaoConversasHub({ session, leads }: { session: ClientSessio
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();
-                        sendText();
+                        void handleSend();
                       }
                     }}
                     aria-label="Mensagem"
-                    disabled={uploading}
+                    disabled={sending}
                   />
                   <Button
                     type="button"
                     className="h-11 w-11 shrink-0 rounded-full bg-primary text-white hover:brightness-110"
-                    disabled={uploading || !draft.trim()}
-                    onClick={sendText}
+                    disabled={sending || !draft.trim()}
+                    onClick={() => void handleSend()}
                     aria-label="Enviar"
                   >
-                    <Send className="h-4 w-4" />
+                    {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                   </Button>
                 </div>
-                <p className="mt-1 text-[10px] text-content-faint">
-                  {draft.length}/4000 · anexos até 10MB · tipos alinhados ao upload de treino de agentes
-                </p>
+                <p className="mt-1 text-[10px] text-content-faint">{draft.length}/4000</p>
               </footer>
             </>
           )}
         </div>
       </div>
-
     </div>
   );
 }

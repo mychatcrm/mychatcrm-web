@@ -82,6 +82,22 @@ export async function updateEvolutionInstanceStateByName(params: {
   if (error) throw new Error(`[tenant-evolution-instance-db] update state: ${error.message}`);
 }
 
+/** Retorna a primeira instância activa do tenant (slot 0 ou a mais recente). */
+export async function getEvolutionInstanceByTenantId(
+  tenantId: string,
+): Promise<TenantEvolutionInstanceRow | null> {
+  const sb = createSupabaseServiceClient();
+  const { data, error } = await sb
+    .from("tenant_evolution_instances")
+    .select("*")
+    .eq("tenant_id", tenantId)
+    .order("slot_index", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`[tenant-evolution-instance-db] select tenant: ${error.message}`);
+  return (data as TenantEvolutionInstanceRow) ?? null;
+}
+
 export async function deleteTenantEvolutionInstanceRow(tenantId: string, slotIndex: number): Promise<void> {
   const sb = createSupabaseServiceClient();
   const { error } = await sb.from("tenant_evolution_instances").delete().eq("tenant_id", tenantId).eq("slot_index", slotIndex);

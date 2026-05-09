@@ -3497,7 +3497,7 @@ export function DashboardWorkspace({
       case "agentes":
         return <AgentsListSection session={session} />;
       case "conversas":
-        return <OperacaoConversasHub session={session} leads={dataset.leads} />;
+        return <OperacaoConversasHub session={session} />;
       case "integracoes-leads":
         return <LeadDistributionHub session={session} />;
       case "colaboradores":

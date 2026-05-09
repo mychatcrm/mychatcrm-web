@@ -5,10 +5,12 @@ import {
   extractInboundMessagesFromEvolutionPayload,
   extractInstanceName,
   normalizeEvolutionEventName,
+  type EvolutionInboundMessage,
 } from "@/lib/integrations/evolution-webhook-parse";
 import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import { resolveEvolutionAgentId } from "@/lib/server/evolution-agent-resolve";
 import { getEvolutionInstanceByName, updateEvolutionInstanceStateByName } from "@/lib/server/tenant-evolution-instance-db";
+import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +26,51 @@ function verifyWebhookToken(request: Request): boolean {
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers — persistência de mensagens
+// ---------------------------------------------------------------------------
+
+function kindFromMsg(msg: EvolutionInboundMessage): "text" | "audio" | "image" | "document" {
+  if (msg.type === "audio") return "audio";
+  if (msg.type === "image") return "image";
+  return "text";
+}
+
+function contentFromMsg(msg: EvolutionInboundMessage): string {
+  if (msg.type === "text") return msg.text;
+  if (msg.type === "audio") return "[Áudio]";
+  if (msg.type === "image") return msg.caption ? `[Imagem] ${msg.caption}` : "[Imagem]";
+  return "";
+}
+
+async function saveMessage(opts: {
+  tenantId: string;
+  remoteJid: string;
+  direction: "inbound" | "outbound";
+  kind: "text" | "audio" | "image" | "document";
+  content: string;
+  messageId?: string | null;
+  agentId?: string | null;
+  mediaUrl?: string | null;
+}): Promise<void> {
+  try {
+    const sb = createSupabaseServiceClient();
+    const { error } = await sb.from("whatsapp_messages").insert({
+      tenant_id: opts.tenantId,
+      remote_jid: opts.remoteJid,
+      direction: opts.direction,
+      kind: opts.kind,
+      content: opts.content,
+      message_id: opts.messageId ?? null,
+      agent_id: opts.agentId ?? null,
+      media_url: opts.mediaUrl ?? null,
+    });
+    if (error) console.warn("[webhooks/evolution] saveMessage error", error.code, error.message);
+  } catch (e) {
+    console.warn("[webhooks/evolution] saveMessage exception", e);
+  }
 }
 
 /**
@@ -94,13 +141,22 @@ export async function POST(request: Request) {
     for (const msg of inbound) {
       const agentId = await resolveEvolutionAgentId(row.tenant_id, row.default_agent_id);
 
+      // Salva mensagem inbound no Supabase (fire-and-forget)
+      saveMessage({
+        tenantId: row.tenant_id,
+        remoteJid: msg.remoteJid,
+        direction: "inbound",
+        kind: kindFromMsg(msg),
+        content: contentFromMsg(msg),
+        messageId: msg.messageId,
+      });
+
       const result = await generateAgentResponse({
         tenantId: row.tenant_id,
         agentId,
         conversationId: msg.remoteJid,
         customerId: msg.remoteJid,
         feature: "agent_chat",
-        // Text messages go in `messages`; media messages use mediaContent + instanceName
         messages: msg.type === "text" ? [{ role: "user", content: msg.text }] : [],
         mediaContent: msg.type !== "text" ? msg : undefined,
         instanceName: msg.type !== "text" ? instanceName : undefined,
@@ -124,8 +180,19 @@ export async function POST(request: Request) {
         number,
         text: replyText.slice(0, 4000),
       });
+
       if (!send.ok) {
         console.error("[webhooks/evolution] sendText", send.status, send.error);
+      } else {
+        // Salva resposta da IA no Supabase (fire-and-forget)
+        saveMessage({
+          tenantId: row.tenant_id,
+          remoteJid: msg.remoteJid,
+          direction: "outbound",
+          kind: "text",
+          content: replyText.slice(0, 4000),
+          agentId,
+        });
       }
     }
   }
