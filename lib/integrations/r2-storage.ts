@@ -20,6 +20,8 @@ function createR2Client(): S3Client | null {
     region: "auto",
     endpoint,
     credentials: { accessKeyId, secretAccessKey },
+    // Cloudflare R2 requer path-style (não virtual-hosted-style)
+    forcePathStyle: true,
   });
 }
 
