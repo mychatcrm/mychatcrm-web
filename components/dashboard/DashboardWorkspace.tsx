@@ -3550,5 +3550,11 @@ export function DashboardWorkspace({
     }
   }, [routeKey, session, dataset]);
 
-  return <div>{content}</div>;
+  // Conversas: break out of DashboardShell's p-4/p-6/p-8 padding so the hub
+  // fills the full <main> area without extra margins around it.
+  if (routeKey === "conversas") {
+    return <div className="-m-4 sm:-m-6 lg:-m-8">{content}</div>;
+  }
+
+  return <div className="w-full">{content}</div>;
 }

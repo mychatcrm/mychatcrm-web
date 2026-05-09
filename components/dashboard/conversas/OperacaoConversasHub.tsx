@@ -769,20 +769,13 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   }, [selectedJid]);
 
   // ── Fetch contact photo (cached) ─────────────────────────────────────────
-  const fetchPhoto = useCallback(async (jid: string) => {
-    if (photoCacheRef.current.has(jid)) return; // já buscou ou está buscando
+  // Usa o próprio route como img src — o browser envia Accept: image/* e o
+  // servidor faz proxy do CDN WhatsApp. onError no <img> trata o fallback.
+  const fetchPhoto = useCallback((jid: string) => {
+    if (photoCacheRef.current.has(jid)) return; // já agendou
     photoCacheRef.current.add(jid);
-    try {
-      const res = await fetch(`/api/client/conversas/contact-photo?jid=${encodeURIComponent(jid)}`, {
-        cache: "no-store",
-      });
-      if (res.ok) {
-        const data = (await res.json()) as { photoUrl: string | null };
-        setContactPhotos((prev) => ({ ...prev, [jid]: data.photoUrl ?? null }));
-      }
-    } catch {
-      // silencioso — mantém initials como fallback
-    }
+    const url = `/api/client/conversas/contact-photo?jid=${encodeURIComponent(jid)}`;
+    setContactPhotos((prev) => ({ ...prev, [jid]: url }));
   }, []);
 
   // ── Select conversation ───────────────────────────────────────────────────
@@ -887,13 +880,14 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div
-      className="w-full h-[min(780px,calc(100dvh-80px))] md:h-[min(780px,calc(100dvh-96px))]"
       style={{
+        // DashboardWorkspace applies -m-4/sm:-m-6/lg:-m-8 for conversas, so
+        // this div fills the full width of <main>. Height = viewport - topbar (h-12=48px).
         display: "flex",
+        width: "100%",
+        height: "calc(100dvh - 48px)",
         background: W.bgApp,
-        borderRadius: 8,
         overflow: "hidden",
-        border: `1px solid ${W.bgBorder}`,
         fontFamily: "'Segoe UI', system-ui, sans-serif",
       }}
     >
@@ -978,15 +972,19 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 : "Nenhuma conversa encontrada."}
             </div>
           ) : (
-            filtered.map((c) => (
-              <ConversationItem
-                key={c.remoteJid}
-                conv={c}
-                selected={c.remoteJid === selectedJid}
-                onSelect={() => void handleSelect(c.remoteJid)}
-                photoUrl={contactPhotos[c.remoteJid]}
-              />
-            ))
+            filtered.map((c) => {
+              // Pré-carrega foto dos itens visíveis na sidebar (lazy, sem bloquear render)
+              fetchPhoto(c.remoteJid);
+              return (
+                <ConversationItem
+                  key={c.remoteJid}
+                  conv={c}
+                  selected={c.remoteJid === selectedJid}
+                  onSelect={() => void handleSelect(c.remoteJid)}
+                  photoUrl={contactPhotos[c.remoteJid]}
+                />
+              );
+            })
           )}
         </div>
       </SidebarPanel>

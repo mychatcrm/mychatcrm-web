@@ -1,6 +1,11 @@
 /**
  * GET /api/client/conversas/contact-photo?jid={remoteJid}
- * Busca a foto de perfil de um contato WhatsApp via Evolution API.
+ *
+ * Dois modos de operação determinados pelo Accept header:
+ *  - Accept: image/*  → faz proxy da imagem do CDN WhatsApp e serve os bytes
+ *  - Outro           → retorna JSON { photoUrl: string | null }
+ *
+ * A URL do CDN WhatsApp é buscada na Evolution API (POST /chat/fetchProfilePictureUrl).
  * Credenciais da Evolution API ficam no servidor — nunca expostas ao cliente.
  */
 import { NextResponse } from "next/server";
@@ -24,17 +29,52 @@ export async function GET(request: Request) {
     const row = await getEvolutionInstanceByTenantId(session.tenantId);
     instanceName = row?.instance_name ?? null;
   } catch {
-    // silencioso — retorna null abaixo
+    console.warn("[contact-photo] falha ao buscar instância", session.tenantId);
   }
 
   if (!instanceName) {
+    console.warn("[contact-photo] instância não encontrada para tenant", session.tenantId);
     return NextResponse.json({ photoUrl: null });
   }
 
+  let photoUrl: string | null = null;
   try {
-    const photoUrl = await fetchContactPhoto(instanceName, jid);
-    return NextResponse.json({ photoUrl });
-  } catch {
+    photoUrl = await fetchContactPhoto(instanceName, jid);
+  } catch (e) {
+    console.warn("[contact-photo] fetchContactPhoto exception", e);
+  }
+
+  if (!photoUrl) {
     return NextResponse.json({ photoUrl: null });
   }
+
+  // Modo proxy: se o cliente pede imagem, buscar e servir os bytes server-side
+  // evita problemas de CORS e expiração de URL no browser.
+  const accept = request.headers.get("accept") ?? "";
+  if (accept.includes("image/")) {
+    try {
+      const imgRes = await fetch(photoUrl, {
+        headers: { "User-Agent": "WhatsApp/2.24.1 A" },
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (imgRes.ok) {
+        const contentType = imgRes.headers.get("content-type") ?? "image/jpeg";
+        const buf = await imgRes.arrayBuffer();
+        return new Response(buf, {
+          headers: {
+            "Content-Type": contentType,
+            "Cache-Control": "public, max-age=3600",
+          },
+        });
+      }
+      console.warn("[contact-photo] proxy fetch non-ok", imgRes.status, photoUrl.slice(0, 80));
+    } catch (e) {
+      console.warn("[contact-photo] proxy fetch error", e);
+    }
+    // fallback: retornar sem imagem
+    return new Response(null, { status: 404 });
+  }
+
+  // Modo JSON: retorna URL para o cliente carregar directamente
+  return NextResponse.json({ photoUrl });
 }

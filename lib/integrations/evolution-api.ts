@@ -290,20 +290,42 @@ export function remoteJidToEvoNumber(remoteJid: string): string | null {
 }
 
 /**
- * Busca a URL da foto de perfil de um contato via Evolution API.
+ * Busca a URL da foto de perfil de um contato via Evolution API v2.
+ * Evolution API v2 usa POST /chat/fetchProfilePictureUrl/{instance} com body { number }.
  * Retorna a URL pública da foto, ou null se não encontrada / privada.
  */
 export async function fetchContactPhoto(
   instanceName: string,
   remoteJid: string,
 ): Promise<string | null> {
+  // Strip @s.whatsapp.net — Evolution API espera apenas o número com código de país
   const number = remoteJid.split("@")[0] ?? remoteJid;
   const enc = encodeURIComponent(instanceName);
-  const res = await evolutionFetchJson<{ profilePictureUrl?: string; wuid?: string }>(
-    `/chat/fetchProfilePictureUrl/${enc}?number=${encodeURIComponent(number)}`,
-    { method: "GET", timeoutMs: 8_000 },
+
+  // Evolution API v2: POST com body JSON { number }
+  const res = await evolutionFetchJson<Record<string, unknown>>(
+    `/chat/fetchProfilePictureUrl/${enc}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ number }),
+      timeoutMs: 8_000,
+    },
   );
-  if (!res.ok) return null;
-  const url = (res.data as Record<string, unknown>)?.profilePictureUrl;
-  return typeof url === "string" && url.startsWith("http") ? url : null;
+
+  if (!res.ok) {
+    console.warn("[evolution-api] fetchContactPhoto non-ok", res.status, res.error);
+    return null;
+  }
+
+  // A Evolution API v2 retorna { profilePictureUrl: "https://..." }
+  const d = res.data as Record<string, unknown>;
+  const url = typeof d.profilePictureUrl === "string" ? d.profilePictureUrl.trim() : null;
+
+  if (!url || !url.startsWith("http")) {
+    console.warn("[evolution-api] fetchContactPhoto sem URL para", number, "| data:", JSON.stringify(d).slice(0, 300));
+    return null;
+  }
+
+  return url;
 }
