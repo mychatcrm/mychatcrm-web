@@ -56,7 +56,17 @@ function DashboardShellInner({
   const isOverview = pathname === "/dashboard";
 
   return (
-    <div className="panel-shell flex h-full min-h-0 overflow-hidden bg-surface-base">
+    <div
+      className="panel-shell flex h-full min-h-0 overflow-hidden bg-surface-base"
+      style={{
+        // CSS variables consumidas por rotas full-bleed (ex.: OperacaoConversasHub
+        // usa `position: fixed` com top/left baseados nelas). Valor para md+.
+        // No mobile (<768px) a sidebar fica `hidden`; sobrepondo via @media em
+        // app/globals.css zeramos `--mc-sidebar-w`.
+        ["--mc-sidebar-w" as string]: collapsed ? "64px" : "240px",
+        ["--mc-header-h" as string]: "48px",
+      } as React.CSSProperties}
+    >
       <aside
         className={`panel-sidebar hidden shrink-0 border-r border-line bg-surface-sidebar md:block ${
           collapsed ? "w-16" : "w-[240px]"

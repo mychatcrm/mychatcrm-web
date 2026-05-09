@@ -927,14 +927,24 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   return (
     <div
       style={{
-        // DashboardShell define calc(100dvh - 48px) explicitamente; aqui
-        // ocupamos 100% × 100% desse contêiner sem depender de flex:1.
+        // Position fixed ignora qualquer container ancestral que esteja
+        // restringindo largura/altura. As CSS vars vêm do DashboardShell
+        // (--mc-sidebar-w: 0/64/240px conforme breakpoint+collapse,
+        //  --mc-header-h: 48px). Resultado: o hub ocupa exatamente o
+        // espaço disponível ao lado da sidebar e abaixo do header,
+        // sem padding externo, em qualquer layout.
+        position: "fixed",
+        top: "var(--mc-header-h, 48px)",
+        left: "var(--mc-sidebar-w, 240px)",
+        right: 0,
+        bottom: 0,
         display: "flex",
-        width: "100%",
-        height: "100%",
         background: W.bgApp,
         overflow: "hidden",
         fontFamily: "'Segoe UI', system-ui, sans-serif",
+        // z-index baixo para ficar abaixo de overlays globais (drawer, modal)
+        // mas acima do <main> vazio. Drawer mobile usa z-50, dialogs usam z-[60].
+        zIndex: 1,
       }}
     >
       {/* ── Overlay fullscreen de foto do contato ── */}

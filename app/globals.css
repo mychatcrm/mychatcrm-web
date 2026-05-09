@@ -264,3 +264,14 @@ body {
   height: 1px;
   background: linear-gradient(90deg, transparent, rgba(242, 68, 0, 0.55), rgba(255, 106, 0, 0.35), transparent);
 }
+
+/**
+ * No mobile (<768px) a sidebar do dashboard é `md:hidden` (recolhida em drawer).
+ * Zeramos --mc-sidebar-w para que rotas full-bleed (ex.: /dashboard/conversas)
+ * que usam `position: fixed; left: var(--mc-sidebar-w)` ocupem a largura inteira.
+ */
+@media (max-width: 767px) {
+  .panel-shell {
+    --mc-sidebar-w: 0px;
+  }
+}
