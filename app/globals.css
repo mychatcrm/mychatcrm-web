@@ -266,12 +266,26 @@ body {
 }
 
 /**
- * No mobile (<768px) a sidebar do dashboard é `md:hidden` (recolhida em drawer).
- * Zeramos --mc-sidebar-w para que rotas full-bleed (ex.: /dashboard/conversas)
- * que usam `position: fixed; left: var(--mc-sidebar-w)` ocupem a largura inteira.
+ * CSS variables consumidas por rotas full-bleed (ex.: /dashboard/conversas
+ * via OperacaoConversasHub) que usam `position: fixed` com top/left
+ * baseados em --mc-header-h e --mc-sidebar-w. Definidas em CSS (não inline)
+ * para que os seletores [data-sidebar-collapsed] e @media venceriam (specificity).
+ *
+ * Regras:
+ * - Mobile (<768px): sidebar é `md:hidden` → --mc-sidebar-w: 0px
+ * - md+ expandida: 240px (largura `w-[240px]` da <aside>)
+ * - md+ colapsada (data-sidebar-collapsed="true"): 64px (largura `w-16`)
  */
-@media (max-width: 767px) {
+.panel-shell {
+  --mc-sidebar-w: 0px;
+  --mc-header-h: 48px;
+}
+
+@media (min-width: 768px) {
   .panel-shell {
-    --mc-sidebar-w: 0px;
+    --mc-sidebar-w: 240px;
+  }
+  .panel-shell[data-sidebar-collapsed="true"] {
+    --mc-sidebar-w: 64px;
   }
 }
