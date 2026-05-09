@@ -489,11 +489,15 @@ function ConversationItem({
   selected,
   onSelect,
   photoUrl,
+  name,
+  onPhotoClick,
 }: {
   conv: WaConversation;
   selected: boolean;
   onSelect: () => void;
   photoUrl?: string | null;
+  name?: string | null;
+  onPhotoClick?: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
   const [imgError, setImgError] = useState(false);
@@ -501,6 +505,7 @@ function ConversationItem({
   const initials = jidToInitials(conv.remoteJid);
   const bg = avatarColor(conv.remoteJid);
   const showPhoto = photoUrl && !imgError;
+  const displayName = name ?? phone;
 
   return (
     <button
@@ -516,21 +521,23 @@ function ConversationItem({
         transition: "background 0.1s",
       }}
     >
-      {/* Avatar */}
+      {/* Avatar — clique na foto abre fullscreen (sem propagar select) */}
       <div
+        onClick={onPhotoClick ? (e) => { e.stopPropagation(); onPhotoClick(); } : undefined}
         style={{
           width: 49, height: 49, borderRadius: "50%",
           background: bg, display: "flex", alignItems: "center",
           justifyContent: "center", flexShrink: 0,
           color: "white", fontSize: 17, fontWeight: 600,
           userSelect: "none", overflow: "hidden",
+          cursor: onPhotoClick ? "zoom-in" : "pointer",
         }}
       >
         {showPhoto ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={photoUrl}
-            alt={phone}
+            alt={displayName}
             onError={() => setImgError(true)}
             style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "50%" }}
           />
@@ -538,19 +545,31 @@ function ConversationItem({
       </div>
 
       {/* Text content */}
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: 3 }}>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: 2 }}>
+        {/* Row 1: nome (ou número) + timestamp */}
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
           <span style={{
             color: W.text, fontSize: 16.5, fontWeight: 500,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
           }}>
-            {phone}
+            {displayName}
           </span>
           <span style={{ color: conv.unreadCount > 0 ? W.green : W.muted, fontSize: 12, flexShrink: 0 }}>
             {formatShortTime(conv.lastAt)}
           </span>
         </div>
 
+        {/* Row 1.5: número abaixo do nome (só quando há nome) */}
+        {name && (
+          <span style={{
+            color: "#8696a0", fontSize: 12,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>
+            {phone}
+          </span>
+        )}
+
+        {/* Row 2: preview da última mensagem + badge de não lidas */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
           <p style={{
             margin: 0, fontSize: 13.5, color: W.muted,
@@ -646,8 +665,13 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   const [mobileThread,   setMobileThread]   = useState(false);
   // Mapa JID → URL da foto (null = não tem foto, undefined = ainda não buscou)
   const [contactPhotos,  setContactPhotos]  = useState<Record<string, string | null>>({});
+  // Mapa JID → nome do contato (null = sem nome)
+  const [contactNames,   setContactNames]   = useState<Record<string, string | null>>({});
+  // Overlay de foto fullscreen (null = fechado)
+  const [photoOverlay,   setPhotoOverlay]   = useState<string | null>(null);
   // Cache em ref para evitar fetches duplicados concorrentes
   const photoCacheRef = useRef<Set<string>>(new Set());
+  const nameCacheRef  = useRef<Set<string>>(new Set());
 
   const threadEndRef = useRef<HTMLDivElement>(null);
 
@@ -772,10 +796,23 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   // Usa o próprio route como img src — o browser envia Accept: image/* e o
   // servidor faz proxy do CDN WhatsApp. onError no <img> trata o fallback.
   const fetchPhoto = useCallback((jid: string) => {
-    if (photoCacheRef.current.has(jid)) return; // já agendou
+    if (photoCacheRef.current.has(jid)) return;
     photoCacheRef.current.add(jid);
     const url = `/api/client/conversas/contact-photo?jid=${encodeURIComponent(jid)}`;
     setContactPhotos((prev) => ({ ...prev, [jid]: url }));
+  }, []);
+
+  // ── Fetch contact name (cached) ───────────────────────────────────────────
+  const fetchName = useCallback(async (jid: string) => {
+    if (nameCacheRef.current.has(jid)) return;
+    nameCacheRef.current.add(jid);
+    try {
+      const res = await fetch(`/api/client/conversas/contact-name?jid=${encodeURIComponent(jid)}`, { cache: "no-store" });
+      if (res.ok) {
+        const data = (await res.json()) as { name: string | null };
+        if (data.name) setContactNames((prev) => ({ ...prev, [jid]: data.name }));
+      }
+    } catch { /* silencioso */ }
   }, []);
 
   // ── Select conversation ───────────────────────────────────────────────────
@@ -787,8 +824,9 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
       setDraft("");
       setConversations((prev) => prev.map((c) => (c.remoteJid === jid ? { ...c, unreadCount: 0 } : c)));
 
-      // Busca foto do contato (não bloqueia a abertura da conversa)
+      // Busca foto e nome do contato (não bloqueia a abertura da conversa)
       void fetchPhoto(jid);
+      void fetchName(jid);
 
       const conv = conversations.find((c) => c.remoteJid === jid);
       if (conv?.messagesLoaded) return;
@@ -802,7 +840,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
         console.warn("[conversas] load messages error", e);
       }
     },
-    [conversations, fetchPhoto],
+    [conversations, fetchPhoto, fetchName],
   );
 
   // ── Scroll to bottom ──────────────────────────────────────────────────────
@@ -877,20 +915,65 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     [conversations, selectedJid],
   );
 
+  // ── ESC fecha overlay de foto fullscreen ─────────────────────────────────
+  useEffect(() => {
+    if (!photoOverlay) return;
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") setPhotoOverlay(null); };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [photoOverlay]);
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div
       style={{
-        // DashboardWorkspace applies -m-4/sm:-m-6/lg:-m-8 for conversas, so
-        // this div fills the full width of <main>. Height = viewport - topbar (h-12=48px).
+        // DashboardShell renders conversas full-bleed (no padding, no panel-content-frame).
+        // flex: 1 + minHeight: 0 fills the entire <main> area.
         display: "flex",
+        flex: 1,
+        minHeight: 0,
         width: "100%",
-        height: "calc(100dvh - 48px)",
         background: W.bgApp,
         overflow: "hidden",
         fontFamily: "'Segoe UI', system-ui, sans-serif",
       }}
     >
+      {/* ── Overlay fullscreen de foto do contato ── */}
+      {photoOverlay && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setPhotoOverlay(null)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 9999,
+            background: "rgba(0,0,0,0.88)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={photoOverlay}
+            alt="Foto do contato"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              maxWidth: "min(400px, 90vw)", maxHeight: "min(400px, 90vh)",
+              borderRadius: "50%", objectFit: "cover",
+              boxShadow: "0 8px 40px rgba(0,0,0,0.8)",
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => setPhotoOverlay(null)}
+            aria-label="Fechar foto"
+            style={{
+              position: "absolute", top: 16, right: 20,
+              background: "none", border: "none", cursor: "pointer",
+              color: "rgba(255,255,255,0.8)", fontSize: 32, lineHeight: 1,
+            }}
+          >×</button>
+        </div>
+      )}
+
       {/* ─────────────── LEFT SIDEBAR ─────────────── */}
       <SidebarPanel mobileThread={mobileThread}>
 
@@ -973,8 +1056,9 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
             </div>
           ) : (
             filtered.map((c) => {
-              // Pré-carrega foto dos itens visíveis na sidebar (lazy, sem bloquear render)
+              // Pré-carrega foto e nome dos itens visíveis na sidebar
               fetchPhoto(c.remoteJid);
+              void fetchName(c.remoteJid);
               return (
                 <ConversationItem
                   key={c.remoteJid}
@@ -982,6 +1066,10 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                   selected={c.remoteJid === selectedJid}
                   onSelect={() => void handleSelect(c.remoteJid)}
                   photoUrl={contactPhotos[c.remoteJid]}
+                  name={contactNames[c.remoteJid]}
+                  onPhotoClick={contactPhotos[c.remoteJid]
+                    ? () => setPhotoOverlay(contactPhotos[c.remoteJid]!)
+                    : undefined}
                 />
               );
             })
@@ -1061,36 +1149,71 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 </svg>
               </button>
 
-              {/* Avatar */}
-              <div
-                style={{
-                  width: 40, height: 40, borderRadius: "50%",
-                  background: avatarColor(active.remoteJid),
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  color: "white", fontSize: 14, fontWeight: 600, flexShrink: 0,
-                  userSelect: "none", overflow: "hidden",
-                }}
-              >
-                {contactPhotos[active.remoteJid] ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={contactPhotos[active.remoteJid]!}
-                    alt={jidToPhone(active.remoteJid)}
-                    style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "50%" }}
-                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-                  />
-                ) : jidToInitials(active.remoteJid)}
-              </div>
+              {/* Avatar — clicável para fullscreen quando há foto */}
+              {(() => {
+                const hasPhoto = Boolean(contactPhotos[active.remoteJid]);
+                return (
+                  <div
+                    onClick={hasPhoto ? () => setPhotoOverlay(contactPhotos[active.remoteJid]!) : undefined}
+                    style={{
+                      width: 40, height: 40, borderRadius: "50%",
+                      background: avatarColor(active.remoteJid),
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      color: "white", fontSize: 14, fontWeight: 600, flexShrink: 0,
+                      userSelect: "none", overflow: "hidden",
+                      cursor: hasPhoto ? "zoom-in" : "default",
+                    }}
+                  >
+                    {hasPhoto ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={contactPhotos[active.remoteJid]!}
+                        alt={contactNames[active.remoteJid] ?? jidToPhone(active.remoteJid)}
+                        style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "50%" }}
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                      />
+                    ) : jidToInitials(active.remoteJid)}
+                  </div>
+                );
+              })()}
 
-              {/* Contact info */}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ margin: 0, fontSize: 16, fontWeight: 600, color: W.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {jidToPhone(active.remoteJid)}
-                </p>
-                <p style={{ margin: 0, fontSize: 12.5, color: W.muted }}>
-                  {active.messages.length > 0 ? "online" : "WhatsApp"}
-                </p>
-              </div>
+              {/* Contact info — Ajuste 3 (nome) + Ajuste 4 (link WhatsApp) */}
+              {(() => {
+                const phone = jidToPhone(active.remoteJid);
+                const name = contactNames[active.remoteJid];
+                const waNumber = (active.remoteJid.split("@")[0] ?? "").replace(/\D/g, "");
+                const waUrl = `https://wa.me/${waNumber}`;
+                return (
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {/* Nome ou número — clicável abre WhatsApp */}
+                    <a
+                      href={waUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Abrir no WhatsApp"
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 5,
+                        color: W.text, textDecoration: "none",
+                        fontSize: 16, fontWeight: 600,
+                        overflow: "hidden", maxWidth: "100%",
+                      }}
+                    >
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {name ?? phone}
+                      </span>
+                      {/* Ícone WhatsApp */}
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="#25D366" style={{ flexShrink: 0, opacity: 0.85 }}>
+                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+                        <path d="M12 0C5.373 0 0 5.373 0 12c0 2.122.558 4.116 1.535 5.845L.057 23.57a.75.75 0 0 0 .92.92l5.725-1.478A11.955 11.955 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-1.93 0-3.732-.51-5.29-1.4l-.38-.22-3.945 1.018 1.018-3.946-.22-.38A9.956 9.956 0 0 1 2 12C2 6.477 6.477 2 12 2s10 4.477 10 10-4.477 10-10 10z"/>
+                      </svg>
+                    </a>
+                    {/* Número abaixo do nome (quando há nome) */}
+                    {name && (
+                      <p style={{ margin: 0, fontSize: 12, color: "#8696a0" }}>{phone}</p>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Action icons (decorative) */}
               <div style={{ display: "flex", gap: 10 }}>

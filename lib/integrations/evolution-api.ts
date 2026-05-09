@@ -290,6 +290,47 @@ export function remoteJidToEvoNumber(remoteJid: string): string | null {
 }
 
 /**
+ * Busca o nome/pushName de um contato via Evolution API v2.
+ * GET /chat/findContacts/{instance}?where={"remoteJid":"..."} devolve array de contactos.
+ * Retorna o pushName ou name, ou null se não encontrado.
+ */
+export async function fetchContactName(
+  instanceName: string,
+  remoteJid: string,
+): Promise<string | null> {
+  const enc = encodeURIComponent(instanceName);
+  const where = encodeURIComponent(JSON.stringify({ remoteJid }));
+  const res = await evolutionFetchJson<unknown>(
+    `/chat/findContacts/${enc}?where=${where}`,
+    { method: "GET", timeoutMs: 8_000 },
+  );
+
+  if (!res.ok) {
+    console.warn("[evolution-api] fetchContactName non-ok", res.status, res.error);
+    return null;
+  }
+
+  // Resposta pode ser array ou { data: [] }
+  let arr: unknown[] = [];
+  if (Array.isArray(res.data)) {
+    arr = res.data;
+  } else if (res.data && typeof res.data === "object") {
+    const d = res.data as Record<string, unknown>;
+    if (Array.isArray(d.data)) arr = d.data as unknown[];
+  }
+
+  if (!arr.length) return null;
+
+  const first = arr[0] as Record<string, unknown>;
+  const name =
+    (typeof first.pushName === "string" && first.pushName.trim()) ||
+    (typeof first.name === "string" && first.name.trim()) ||
+    null;
+
+  return name || null;
+}
+
+/**
  * Busca a URL da foto de perfil de um contato via Evolution API v2.
  * Evolution API v2 usa POST /chat/fetchProfilePictureUrl/{instance} com body { number }.
  * Retorna a URL pública da foto, ou null se não encontrada / privada.

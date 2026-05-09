@@ -3550,10 +3550,10 @@ export function DashboardWorkspace({
     }
   }, [routeKey, session, dataset]);
 
-  // Conversas: break out of DashboardShell's p-4/p-6/p-8 padding so the hub
-  // fills the full <main> area without extra margins around it.
+  // Conversas: DashboardShell já renderiza este filho directamente dentro de
+  // <main> sem padding (modo full-bleed). Basta um wrapper flex que cresce.
   if (routeKey === "conversas") {
-    return <div className="-m-4 sm:-m-6 lg:-m-8">{content}</div>;
+    return <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>{content}</div>;
   }
 
   return <div className="w-full">{content}</div>;

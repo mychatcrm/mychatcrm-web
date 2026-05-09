@@ -146,11 +146,19 @@ function DashboardShellInner({
         </header>
 
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface-base">
-          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-surface-base p-4 sm:p-6 lg:p-8">
-            <div className="panel-content-frame min-h-0 min-w-0">
+          {/* Full-bleed routes (conversas) recebem o conteúdo directamente,
+              sem padding nem panel-content-frame, para preencher toda a <main>. */}
+          {pathname.startsWith("/dashboard/conversas") ? (
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               {children}
             </div>
-          </div>
+          ) : (
+            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-surface-base p-4 sm:p-6 lg:p-8">
+              <div className="panel-content-frame min-h-0 min-w-0">
+                {children}
+              </div>
+            </div>
+          )}
         </main>
       </div>
     </div>
