@@ -39,9 +39,10 @@ async function downloadMediaBase64(
   const url = `${EVOLUTION_BASE}/chat/getBase64FromMediaMessage/${encodeURIComponent(instanceName)}`;
 
   // Build the message payload the Evolution API v2 expects.
-  // The outer `message` mirrors the Baileys message object:
-  //   message.key  → identifies the message (remoteJid, fromMe, id)
-  //   message.message → the actual content (audioMessage / imageMessage)
+  // Usamos o rawNode completo (spread do audioMessage/imageMessage do webhook) para
+  // que o Baileys tenha todos os campos de criptografia necessários para descriptografar:
+  // fileEncSha256, fileSha256, fileLength, directPath, mediaKeyTimestamp, etc.
+  // Sem esses campos o servidor retorna 400 mesmo com url/mediaKey/mimetype correctos.
   const messageField = content.type === "audio" ? "audioMessage" : "imageMessage";
   const body = {
     message: {
@@ -51,11 +52,7 @@ async function downloadMediaBase64(
         id: msgKey.messageId ?? "",
       },
       message: {
-        [messageField]: {
-          url: content.url,
-          mediaKey: content.mediaKey,
-          mimetype: content.mimetype,
-        },
+        [messageField]: content.rawNode,
       },
     },
   };

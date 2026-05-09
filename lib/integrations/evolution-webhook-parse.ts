@@ -18,6 +18,10 @@ export type EvolutionAudioContent = {
   url: string;
   mimetype: string;
   mediaKey: string;
+  /** Objeto audioMessage completo do webhook — contém todos os campos necessários
+   *  para Baileys descriptografar a mídia (fileEncSha256, fileSha256, fileLength,
+   *  directPath, mediaKeyTimestamp, etc.). Passado intacto ao endpoint de download. */
+  rawNode: Record<string, unknown>;
 };
 
 export type EvolutionImageContent = {
@@ -26,6 +30,8 @@ export type EvolutionImageContent = {
   mimetype: string;
   mediaKey: string;
   caption: string;
+  /** Objeto imageMessage completo do webhook — idem EvolutionAudioContent.rawNode. */
+  rawNode: Record<string, unknown>;
 };
 
 type EvolutionInboundBase = {
@@ -73,7 +79,9 @@ function extractContentFromMessageNode(
     const url = typeof a.url === "string" ? a.url : "";
     const mimetype = typeof a.mimetype === "string" ? a.mimetype : "audio/ogg";
     const mediaKey = typeof a.mediaKey === "string" ? a.mediaKey : "";
-    if (url) return { type: "audio", url, mimetype, mediaKey };
+    // Spread completo: preserva fileEncSha256, fileSha256, fileLength, directPath,
+    // mediaKeyTimestamp e todos os outros campos que Baileys precisa para descriptografar.
+    if (url) return { type: "audio", url, mimetype, mediaKey, rawNode: { ...a } };
   }
 
   // Image — imageMessage
@@ -84,7 +92,7 @@ function extractContentFromMessageNode(
     const mimetype = typeof i.mimetype === "string" ? i.mimetype : "image/jpeg";
     const mediaKey = typeof i.mediaKey === "string" ? i.mediaKey : "";
     const caption = typeof i.caption === "string" ? i.caption : "";
-    if (url) return { type: "image", url, mimetype, mediaKey, caption };
+    if (url) return { type: "image", url, mimetype, mediaKey, caption, rawNode: { ...i } };
   }
 
   return null;
