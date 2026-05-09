@@ -3551,9 +3551,15 @@ export function DashboardWorkspace({
   }, [routeKey, session, dataset]);
 
   // Conversas: DashboardShell já renderiza este filho directamente dentro de
-  // <main> sem padding (modo full-bleed). Basta um wrapper flex que cresce.
+  // <main> sem padding (modo full-bleed). Wrapper com 100% × 100% herda o
+  // calc(100dvh - 48px) imposto pelo DashboardShell — não usa flex:1 para
+  // evitar dependência da cadeia de min-height/flex parents.
   if (routeKey === "conversas") {
-    return <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>{content}</div>;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%" }}>
+        {content}
+      </div>
+    );
   }
 
   return <div className="w-full">{content}</div>;

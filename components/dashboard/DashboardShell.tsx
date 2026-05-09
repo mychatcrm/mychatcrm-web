@@ -147,9 +147,17 @@ function DashboardShellInner({
 
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface-base">
           {/* Full-bleed routes (conversas) recebem o conteúdo directamente,
-              sem padding nem panel-content-frame, para preencher toda a <main>. */}
+              sem padding nem panel-content-frame, para preencher toda a <main>.
+              Dimensões explícitas (100% × calc(100dvh - 48px)) garantem o full-bleed
+              mesmo se algum ancestral perder contexto de sizing. */}
           {pathname.startsWith("/dashboard/conversas") ? (
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div
+              className="flex flex-col overflow-hidden"
+              style={{
+                width: "100%",
+                height: "calc(100dvh - 48px)", // 48px = h-12 do header
+              }}
+            >
               {children}
             </div>
           ) : (

@@ -927,12 +927,11 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   return (
     <div
       style={{
-        // DashboardShell renders conversas full-bleed (no padding, no panel-content-frame).
-        // flex: 1 + minHeight: 0 fills the entire <main> area.
+        // DashboardShell define calc(100dvh - 48px) explicitamente; aqui
+        // ocupamos 100% × 100% desse contêiner sem depender de flex:1.
         display: "flex",
-        flex: 1,
-        minHeight: 0,
         width: "100%",
+        height: "100%",
         background: W.bgApp,
         overflow: "hidden",
         fontFamily: "'Segoe UI', system-ui, sans-serif",

@@ -291,7 +291,7 @@ export function remoteJidToEvoNumber(remoteJid: string): string | null {
 
 /**
  * Busca o nome/pushName de um contato via Evolution API v2.
- * GET /chat/findContacts/{instance}?where={"remoteJid":"..."} devolve array de contactos.
+ * POST /chat/findContacts/{instance} com body { where: { remoteJid } } devolve array de contactos.
  * Retorna o pushName ou name, ou null se não encontrado.
  */
 export async function fetchContactName(
@@ -299,10 +299,14 @@ export async function fetchContactName(
   remoteJid: string,
 ): Promise<string | null> {
   const enc = encodeURIComponent(instanceName);
-  const where = encodeURIComponent(JSON.stringify({ remoteJid }));
   const res = await evolutionFetchJson<unknown>(
-    `/chat/findContacts/${enc}?where=${where}`,
-    { method: "GET", timeoutMs: 8_000 },
+    `/chat/findContacts/${enc}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ where: { remoteJid } }),
+      timeoutMs: 8_000,
+    },
   );
 
   if (!res.ok) {
