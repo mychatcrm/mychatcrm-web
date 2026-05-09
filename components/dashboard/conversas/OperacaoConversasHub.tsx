@@ -131,15 +131,35 @@ function MessageBubble({ msg, isLight }: { msg: WaMessage; isLight: boolean }) {
         )}
       >
         {msg.kind === "audio" ? (
-          <p className="flex items-center gap-1.5 text-sm opacity-80">
-            <span>🎵</span>
-            <span>Áudio</span>
-          </p>
+          msg.media_url ? (
+            // eslint-disable-next-line jsx-a11y/media-has-caption
+            <audio controls src={msg.media_url} className="max-w-full" preload="metadata" />
+          ) : (
+            <p className="flex items-center gap-1.5 text-sm opacity-80">
+              <span>🎵</span>
+              <span>Áudio</span>
+            </p>
+          )
         ) : msg.kind === "image" ? (
-          <p className="flex items-center gap-1.5 text-sm opacity-80">
-            <span>🖼️</span>
-            <span>{msg.content.replace("[Imagem]", "").trim() || "Imagem"}</span>
-          </p>
+          msg.media_url ? (
+            <div className="flex flex-col gap-1">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={msg.media_url}
+                alt={msg.content.replace("[Imagem]", "").trim() || "Imagem"}
+                className="max-h-64 max-w-full rounded-lg object-contain"
+                loading="lazy"
+              />
+              {msg.content.replace("[Imagem]", "").trim() && (
+                <p className="text-xs opacity-80">{msg.content.replace("[Imagem]", "").trim()}</p>
+              )}
+            </div>
+          ) : (
+            <p className="flex items-center gap-1.5 text-sm opacity-80">
+              <span>🖼️</span>
+              <span>{msg.content.replace("[Imagem]", "").trim() || "Imagem"}</span>
+            </p>
+          )
         ) : (
           <p className="whitespace-pre-wrap break-words leading-relaxed">{msg.content}</p>
         )}
