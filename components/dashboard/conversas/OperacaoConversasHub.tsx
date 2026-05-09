@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { cn } from "@/lib/utils";
 import type { ClientSession } from "@/lib/client-auth";
@@ -408,8 +408,8 @@ function MessageBubble({ msg }: { msg: WaMessage }) {
   return (
     <div style={{ display: "flex", width: "100%", justifyContent: out ? "flex-end" : "flex-start" }}>
       <div
-        className="max-w-[85%] lg:max-w-[65%] xl:max-w-[55%]"
         style={{
+          maxWidth: "85%",
           background: out ? W.bubbleOut : W.bubbleIn,
           borderRadius: out ? "8px 8px 0 8px" : "8px 8px 8px 0",
           padding: msg.kind === "image" && msg.media_url ? "4px 4px 0 4px" : "7px 10px 4px 10px",
@@ -572,6 +572,61 @@ function ConversationItem({
         </div>
       </div>
     </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SidebarPanel — width driven by JS to bypass Tailwind JIT cache issues
+// breakpoints: <768 hidden, 768–1024 240px, 1024–1280 320px, 1280–1536 380px, 1536+ 420px
+// ─────────────────────────────────────────────────────────────────────────────
+function getDesktopSidebarWidth(w: number): number {
+  // Returns fixed px for desktop breakpoints; 0 means "mobile mode"
+  if (w < 768) return 0;
+  if (w < 1024) return 240;
+  if (w < 1280) return 320;
+  if (w < 1536) return 380;
+  return 420;
+}
+
+function SidebarPanel({
+  mobileThread,
+  children,
+}: {
+  mobileThread: boolean;
+  children: ReactNode;
+}) {
+  const [winWidth, setWinWidth] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth : 1024,
+  );
+
+  useEffect(() => {
+    const update = () => setWinWidth(window.innerWidth);
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  const isMobile = winWidth < 768;
+  const desktopWidth = getDesktopSidebarWidth(winWidth);
+
+  // On mobile: show sidebar only when no chat is open (mobileThread === false)
+  // On desktop: always show sidebar with computed fixed width
+  const isHidden = isMobile && mobileThread;
+
+  return (
+    <div
+      style={{
+        display: isHidden ? "none" : "flex",
+        flexDirection: "column",
+        // Mobile: full width; Desktop: fixed breakpoint width
+        width: isMobile ? "100%" : desktopWidth,
+        flexShrink: 0,
+        background: W.bgSidebar,
+        borderRight: `1px solid ${W.bgBorder}`,
+      }}
+    >
+      {children}
+    </div>
   );
 }
 
@@ -843,19 +898,8 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
       }}
     >
       {/* ─────────────── LEFT SIDEBAR ─────────────── */}
-      <div
-        className={cn(
-          mobileThread ? "hidden md:flex" : "flex",
-          // Responsive widths: md=240px, lg=320px, xl=380px, 2xl=420px
-          "md:w-[240px] lg:w-[320px] xl:w-[380px] 2xl:w-[420px]",
-        )}
-        style={{
-          flexDirection: "column",
-          background: W.bgSidebar,
-          borderRight: `1px solid ${W.bgBorder}`,
-          flexShrink: 0,
-        }}
-      >
+      <SidebarPanel mobileThread={mobileThread}>
+
         {/* Sidebar header */}
         <div
           style={{
@@ -945,7 +989,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
             ))
           )}
         </div>
-      </div>
+      </SidebarPanel>
 
       {/* ─────────────── RIGHT CHAT PANEL ─────────────── */}
       <div
