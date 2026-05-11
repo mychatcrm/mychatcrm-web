@@ -12,6 +12,33 @@ type Voice = {
   category: string;
 };
 
+const PREVIEW_LANG_STORAGE_KEY = "mychatcrm:agent-voice-preview-lang";
+
+const PREVIEW_LANG_OPTIONS = [
+  { value: "pt", label: "🇧🇷 Português" },
+  { value: "en", label: "🇺🇸 English" },
+  { value: "es", label: "🇪🇸 Español" },
+  { value: "fr", label: "🇫🇷 Français" },
+  { value: "de", label: "🇩🇪 Deutsch" },
+  { value: "it", label: "🇮🇹 Italiano" },
+] as const;
+
+type PreviewLang = (typeof PREVIEW_LANG_OPTIONS)[number]["value"];
+
+function isPreviewLang(value: string): value is PreviewLang {
+  return PREVIEW_LANG_OPTIONS.some((option) => option.value === value);
+}
+
+function loadPreviewLang(): PreviewLang {
+  if (typeof window === "undefined") return "pt";
+  try {
+    const stored = window.localStorage.getItem(PREVIEW_LANG_STORAGE_KEY);
+    return stored && isPreviewLang(stored) ? stored : "pt";
+  } catch {
+    return "pt";
+  }
+}
+
 type Props = {
   draft: AgentWizardDraft;
   onChange: (next: AgentWizardDraft) => void;
@@ -23,6 +50,7 @@ export function WizardStepVoz({ draft, onChange }: Props) {
   const [error, setError] = useState("");
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
+  const [previewLang, setPreviewLang] = useState<PreviewLang>(() => loadPreviewLang());
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const previewObjectUrlRef = useRef<string | null>(null);
   const loadedRef = useRef(false);
@@ -55,6 +83,16 @@ export function WizardStepVoz({ draft, onChange }: Props) {
     };
   }, []);
 
+  function changePreviewLang(nextLang: PreviewLang) {
+    setPreviewLang(nextLang);
+    stopAudio();
+    try {
+      window.localStorage.setItem(PREVIEW_LANG_STORAGE_KEY, nextLang);
+    } catch {
+      /* localStorage can be unavailable in private browsing */
+    }
+  }
+
   function stopAudio() {
     if (audioRef.current) {
       audioRef.current.pause();
@@ -82,7 +120,7 @@ export function WizardStepVoz({ draft, onChange }: Props) {
       const res = await fetch("/api/client/agentes/voices/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ voice_id: voice.voice_id }),
+        body: JSON.stringify({ voice_id: voice.voice_id, lang: previewLang }),
       });
 
       if (!res.ok) {
@@ -211,64 +249,92 @@ export function WizardStepVoz({ draft, onChange }: Props) {
           )}
 
           {!loading && voices.length > 0 && (
-            <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
-              {voices.map((voice) => {
-                const selected = draft.voiceId === voice.voice_id;
-                const isPlaying = playingId === voice.voice_id;
-                const isGeneratingPreview = previewLoadingId === voice.voice_id;
-                return (
-                  <div
-                    key={voice.voice_id}
-                    className={cn(
-                      "flex items-center gap-3 rounded-2xl border px-3 py-3 transition",
-                      selected
-                        ? "border-primary/60 bg-primary/10 text-content"
-                        : "border-line bg-surface-elevated/30 text-content-secondary hover:border-line/80 hover:bg-surface-elevated/50",
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => onChange({ ...draft, voiceId: voice.voice_id })}
-                      className="min-w-0 flex-1 text-left"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-content">{voice.name}</p>
-                          <p className="mt-1 truncate text-xs text-content-faint capitalize">{voice.category}</p>
-                        </div>
-                        {selected ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" /> : null}
-                      </div>
-                    </button>
-
-                    <div className="flex shrink-0 items-center gap-2">
-                      <span className="hidden rounded-full border border-line bg-surface-deep px-2 py-1 text-[11px] text-content-faint sm:inline-flex">
-                        {voice.category}
-                      </span>
+            <>
+              <div className="rounded-2xl border border-line bg-surface-elevated/30 p-2">
+                <p className="px-2 pb-2 pt-1 text-xs font-semibold uppercase tracking-wide text-content-secondary">
+                  Idioma do preview
+                </p>
+                <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+                  {PREVIEW_LANG_OPTIONS.map((option) => {
+                    const selected = previewLang === option.value;
+                    return (
                       <button
+                        key={option.value}
                         type="button"
-                        onClick={() => previewVoice(voice)}
-                        disabled={Boolean(previewLoadingId && previewLoadingId !== voice.voice_id)}
-                        title={isGeneratingPreview ? "Gerando preview" : isPlaying ? "Parar preview" : "Ouvir voz"}
+                        onClick={() => changePreviewLang(option.value)}
                         className={cn(
-                          "flex h-9 w-9 items-center justify-center rounded-xl border transition disabled:cursor-not-allowed disabled:opacity-50",
-                          isPlaying || isGeneratingPreview
-                            ? "border-primary/60 bg-primary/20 text-primary"
-                            : "border-line bg-surface-deep text-content-muted hover:text-content",
+                          "min-h-9 rounded-xl border px-2.5 text-left text-xs font-medium transition",
+                          selected
+                            ? "border-primary/60 bg-primary/10 text-content"
+                            : "border-line bg-surface-deep text-content-muted hover:border-line/80 hover:text-content",
                         )}
                       >
-                        {isGeneratingPreview ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : isPlaying ? (
-                          <Square className="h-3.5 w-3.5 fill-current" />
-                        ) : (
-                          <Play className="h-3.5 w-3.5 fill-current" />
-                        )}
+                        {option.label}
                       </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+                {voices.map((voice) => {
+                  const selected = draft.voiceId === voice.voice_id;
+                  const isPlaying = playingId === voice.voice_id;
+                  const isGeneratingPreview = previewLoadingId === voice.voice_id;
+                  return (
+                    <div
+                      key={voice.voice_id}
+                      className={cn(
+                        "flex items-center gap-3 rounded-2xl border px-3 py-3 transition",
+                        selected
+                          ? "border-primary/60 bg-primary/10 text-content"
+                          : "border-line bg-surface-elevated/30 text-content-secondary hover:border-line/80 hover:bg-surface-elevated/50",
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onChange({ ...draft, voiceId: voice.voice_id })}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-content">{voice.name}</p>
+                            <p className="mt-1 truncate text-xs text-content-faint capitalize">{voice.category}</p>
+                          </div>
+                          {selected ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" /> : null}
+                        </div>
+                      </button>
+
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span className="hidden rounded-full border border-line bg-surface-deep px-2 py-1 text-[11px] text-content-faint sm:inline-flex">
+                          {voice.category}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => previewVoice(voice)}
+                          disabled={Boolean(previewLoadingId && previewLoadingId !== voice.voice_id)}
+                          title={isGeneratingPreview ? "Gerando preview" : isPlaying ? "Parar preview" : "Ouvir voz"}
+                          className={cn(
+                            "flex h-9 w-9 items-center justify-center rounded-xl border transition disabled:cursor-not-allowed disabled:opacity-50",
+                            isPlaying || isGeneratingPreview
+                              ? "border-primary/60 bg-primary/20 text-primary"
+                              : "border-line bg-surface-deep text-content-muted hover:text-content",
+                          )}
+                        >
+                          {isGeneratingPreview ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : isPlaying ? (
+                            <Square className="h-3.5 w-3.5 fill-current" />
+                          ) : (
+                            <Play className="h-3.5 w-3.5 fill-current" />
+                          )}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            </>
           )}
 
           {selectedVoice ? (

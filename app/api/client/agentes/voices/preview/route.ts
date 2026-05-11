@@ -1,6 +1,6 @@
 /**
  * POST /api/client/agentes/voices/preview
- * Gera uma amostra em português para preview de voz ElevenLabs.
+ * Gera uma amostra no idioma escolhido para preview de voz ElevenLabs.
  */
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
@@ -8,15 +8,28 @@ import { textToSpeechElevenLabs } from "@/lib/integrations/elevenlabs";
 
 export const dynamic = "force-dynamic";
 
-const PREVIEW_TEXT = "Olá! Eu sou seu assistente virtual. Como posso te ajudar hoje?";
+const PREVIEW_TEXT_BY_LANG = {
+  pt: "Olá! Eu sou seu assistente virtual. Como posso te ajudar hoje?",
+  en: "Hello! I am your virtual assistant. How can I help you today?",
+  es: "¡Hola! Soy tu asistente virtual. ¿Cómo puedo ayudarte hoy?",
+  fr: "Bonjour! Je suis votre assistant virtuel. Comment puis-je vous aider aujourd'hui?",
+  de: "Hallo! Ich bin Ihr virtueller Assistent. Wie kann ich Ihnen heute helfen?",
+  it: "Ciao! Sono il tuo assistente virtuale. Come posso aiutarti oggi?",
+} as const;
+
+type PreviewLang = keyof typeof PREVIEW_TEXT_BY_LANG;
+
+function normalizePreviewLang(value: unknown): PreviewLang {
+  return typeof value === "string" && value in PREVIEW_TEXT_BY_LANG ? (value as PreviewLang) : "pt";
+}
 
 export async function POST(request: Request) {
   const session = await getClientSessionFromCookies();
   if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
-  let body: { voice_id?: unknown };
+  let body: { voice_id?: unknown; lang?: unknown };
   try {
-    body = (await request.json()) as { voice_id?: unknown };
+    body = (await request.json()) as { voice_id?: unknown; lang?: unknown };
   } catch {
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
   }
@@ -27,7 +40,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    const audioBuffer = await textToSpeechElevenLabs(PREVIEW_TEXT, voiceId);
+    const lang = normalizePreviewLang(body.lang);
+    const audioBuffer = await textToSpeechElevenLabs(PREVIEW_TEXT_BY_LANG[lang], voiceId);
     const audioBody = new Uint8Array(audioBuffer);
     return new Response(audioBody, {
       headers: {
