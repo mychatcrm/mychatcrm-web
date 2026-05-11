@@ -435,15 +435,28 @@ function MessageBubble({ msg, highlight }: { msg: WaMessage; highlight?: string 
   const out = msg.direction === "outbound";
   const caption = msg.content.replace(/\[Imagem\]/g, "").trim();
 
+  // ── Spacer dinâmico para a técnica WhatsApp ──────────────────────────────
+  // O spacer invisível no final do texto reserva espaço para o timestamp
+  // sobreposto via float. Valores fixos (64/46px) só cobrem "HH:MM" + tick,
+  // mas formatShortTime devolve "DD de MMM" (~10 chars, +60% mais largo)
+  // para mensagens de outros dias — e o timestamp transbordava o spacer,
+  // sobrepondo o texto em balões curtos ("Oi"). Calculamos a largura real
+  // aproximada baseado em chars × ~6px (font 11px) + extras.
+  const tsText = formatShortTime(msg.created_at);
+  const showsIA = Boolean(out && msg.agent_id && msg.agent_id !== "human");
+  const charW = 6;              // largura média de caractere em font 11px
+  const tickW = out ? 20 : 0;   // svg 16px + gap 4px
+  const iaW = showsIA ? 18 : 0; // "IA" 14px + gap 4px
+  const spacerWidth = Math.ceil(tsText.length * charW + tickW + iaW + 12); // +12 buffer
+
   // Timestamp row — shared by all bubble types
-  // outbound width ~64px (time + ticks), inbound ~44px (time only)
   const TimestampRow = (
-    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-      {out && msg.agent_id && msg.agent_id !== "human" && (
+    <div style={{ display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
+      {showsIA && (
         <span style={{ fontSize: 10, color: W.muted, opacity: 0.8 }}>IA</span>
       )}
       <span style={{ fontSize: 11, color: W.muted, whiteSpace: "nowrap" }}>
-        {formatShortTime(msg.created_at)}
+        {tsText}
       </span>
       {out && (
         // Double tick ✓✓
@@ -501,9 +514,8 @@ function MessageBubble({ msg, highlight }: { msg: WaMessage; highlight?: string 
            * right with a negative margin-top equal to the spacer height, so it
            * "rises" to sit beside the spacer on that last line.
            *
-           * Spacer width = timestamp visual width:
-           *   outbound: time + double-tick ≈ 64px
-           *   inbound:  time only           ≈ 46px
+           * Spacer width = spacerWidth (calculado acima, baseado no tsText
+           * real para acomodar tanto "HH:MM" quanto "DD de MMM").
            */
           <>
             <p
@@ -522,7 +534,7 @@ function MessageBubble({ msg, highlight }: { msg: WaMessage; highlight?: string 
                 aria-hidden
                 style={{
                   display: "inline-block",
-                  width: out ? 64 : 46,
+                  width: spacerWidth,
                   height: 15,
                   verticalAlign: "bottom",
                 }}
