@@ -1,10 +1,12 @@
 import type { Agent } from "@/lib/types";
 import { listAgentsForTenant } from "./registry";
+import { sanitizeAgentResponseSettings } from "./response-settings";
 import { agentObjectiveLabel, type AgentWizardDraft } from "./wizard-model";
 
 /** Aplica o rascunho do wizard a um agente existente (mantém id, métricas, status, horário, etc.). */
 export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDraft): Agent {
   const stamp = new Date().toISOString();
+  const responseSettings = sanitizeAgentResponseSettings(draft);
   return {
     ...existing,
     whatsappSlotIndex: draft.whatsappSlotIndex ?? 0,
@@ -32,8 +34,8 @@ export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDr
     followUps: draft.followUps,
     followUpInteligente: draft.followUpInteligente,
     atualizadoEm: stamp,
-    voiceId: draft.voiceId || null,
-    responseMode: draft.responseMode ?? "text",
+    voiceId: responseSettings.voiceId,
+    responseMode: responseSettings.responseMode,
   };
 }
 
@@ -42,6 +44,7 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
   const templates = listAgentsForTenant(tenantId);
   const base = structuredClone(templates[0]!);
   const stamp = new Date().toISOString();
+  const responseSettings = sanitizeAgentResponseSettings(draft);
   return {
     ...base,
     id: `ag-novo-${Date.now()}`,
@@ -80,7 +83,7 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
     },
     criadoEm: stamp,
     atualizadoEm: stamp,
-    voiceId: draft.voiceId || null,
-    responseMode: draft.responseMode ?? "text",
+    voiceId: responseSettings.voiceId,
+    responseMode: responseSettings.responseMode,
   };
 }

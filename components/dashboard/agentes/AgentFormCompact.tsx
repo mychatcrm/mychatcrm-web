@@ -213,8 +213,8 @@ export function AgentFormCompact({
                 <WizardStepFollowUpInteligente draft={draft} onChange={setDraft} />
               </AdvancedSection>
               <AdvancedSection
-                title="Voz (ElevenLabs TTS)"
-                description="Responda com áudio em vez de texto — escolha uma voz para o agente."
+                title="Modo de Resposta"
+                description="Escolha entre texto e áudio com ElevenLabs, incluindo a voz usada pelo agente."
                 titleIcon={<Volume2 strokeWidth={1.75} />}
               >
                 <WizardStepVoz draft={draft} onChange={setDraft} />

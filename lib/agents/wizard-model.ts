@@ -20,6 +20,7 @@ import type {
 } from "@/lib/types";
 import { totalWhatsAppLinesForTenant } from "@/lib/whatsapp-connection-storage";
 import { DEFAULT_SYSTEM_PROMPT_TEMPLATE } from "./default-system-prompt-template";
+import { normalizeAgentResponseMode, normalizeAgentVoiceId, validateAgentResponseSettings } from "./response-settings";
 
 export type AgentWizardDraft = {
   nome: string;
@@ -160,8 +161,8 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     ctaHandoffAtivo: false,
     foraDaVez: "padrao",
     foraDaVezMensagem: "",
-    responseMode: agent.responseMode ?? "text",
-    voiceId: agent.voiceId ?? "",
+    responseMode: normalizeAgentResponseMode(agent.responseMode),
+    voiceId: normalizeAgentVoiceId(agent.voiceId) ?? "",
   };
 }
 
@@ -231,6 +232,8 @@ export function validateCompactAgentDraft(
       return "Em «Configurações de Follow-up», o intervalo de verificação deve ser de pelo menos 1 minuto.";
     }
   }
+  const responseSettingsError = validateAgentResponseSettings(draft);
+  if (responseSettingsError) return responseSettingsError;
   return null;
 }
 

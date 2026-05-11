@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
+import { sanitizeAgentResponseSettings } from "@/lib/agents";
 import {
   extractConnectionState,
   extractInboundMessagesFromEvolutionPayload,
@@ -305,8 +306,10 @@ export async function POST(request: Request) {
         .eq("agent_id", agentId)
         .maybeSingle();
 
-      const responseMode = (agentRow?.response_mode as string | null) ?? "text";
-      const voiceId = (agentRow?.voice_id as string | null) ?? null;
+      const { responseMode, voiceId } = sanitizeAgentResponseSettings({
+        responseMode: agentRow?.response_mode,
+        voiceId: agentRow?.voice_id,
+      });
       const useAudio = responseMode === "audio" && Boolean(voiceId);
 
       if (useAudio) {

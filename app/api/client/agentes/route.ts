@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { buildTemplateAgentsForTenant } from "@/lib/agents/template-agents";
+import { normalizeAgentVoiceId, sanitizeAgentResponseSettings, validateAgentResponseSettings } from "@/lib/agents";
 import type { Agent } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +22,11 @@ function assembleSystemPrompt(agent: Agent): string {
 }
 
 function rowToAgent(row: Record<string, unknown>, tenantId: string): Agent {
+  const responseSettings = sanitizeAgentResponseSettings({
+    responseMode: row.response_mode,
+    voiceId: row.voice_id,
+  });
+
   // If full Agent was stored in metadata, use it (with DB overrides for live fields)
   if (row.metadata && typeof row.metadata === "object") {
     const meta = row.metadata as Agent;
@@ -31,8 +37,11 @@ function rowToAgent(row: Record<string, unknown>, tenantId: string): Agent {
       nome: String(row.display_name ?? meta.nome),
       status: (row.active as boolean) ? "ativo" : "pausado",
       atualizadoEm: String(row.updated_at ?? meta.atualizadoEm),
-      voiceId: (row.voice_id as string | null) ?? meta.voiceId ?? null,
-      responseMode: ((row.response_mode as string | null) === "audio" ? "audio" : "text") as "text" | "audio",
+      voiceId:
+        responseSettings.responseMode === "audio"
+          ? responseSettings.voiceId ?? normalizeAgentVoiceId(meta.voiceId)
+          : null,
+      responseMode: responseSettings.responseMode,
     };
   }
 
@@ -48,8 +57,8 @@ function rowToAgent(row: Record<string, unknown>, tenantId: string): Agent {
     status: (row.active as boolean) ? "ativo" : "pausado",
     criadoEm: String(row.created_at ?? base.criadoEm),
     atualizadoEm: String(row.updated_at ?? base.atualizadoEm),
-    voiceId: (row.voice_id as string | null) ?? null,
-    responseMode: ((row.response_mode as string | null) === "audio" ? "audio" : "text") as "text" | "audio",
+    voiceId: responseSettings.voiceId,
+    responseMode: responseSettings.responseMode,
   };
 }
 
@@ -98,10 +107,15 @@ export async function POST(request: Request) {
   if (!agent.id || !agent.nome?.trim()) {
     return NextResponse.json({ error: "Campos obrigatórios em falta (id, nome)." }, { status: 400 });
   }
+  const responseSettingsError = validateAgentResponseSettings(agent);
+  if (responseSettingsError) {
+    return NextResponse.json({ error: responseSettingsError }, { status: 400 });
+  }
 
   const sb = createSupabaseServiceClient();
   const systemPrompt = assembleSystemPrompt(agent);
   const now = new Date().toISOString();
+  const responseSettings = sanitizeAgentResponseSettings(agent);
 
   const { data, error } = await sb
     .from("tenant_agents")
@@ -113,10 +127,10 @@ export async function POST(request: Request) {
         system_prompt: systemPrompt || agent.systemPrompt || "",
         model: null,
         active: agent.status === "ativo",
-        metadata: agent,
+        metadata: { ...agent, ...responseSettings },
         updated_at: now,
-        voice_id: agent.voiceId ?? null,
-        response_mode: agent.responseMode ?? "text",
+        voice_id: responseSettings.voiceId,
+        response_mode: responseSettings.responseMode,
       },
       { onConflict: "tenant_id,agent_id" },
     )

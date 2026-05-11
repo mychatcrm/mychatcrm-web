@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Volume2, Play, Square, Loader2 } from "lucide-react";
+import { Volume2, Play, Square, Loader2, CheckCircle2 } from "lucide-react";
 import type { AgentWizardDraft } from "@/lib/agents";
 import { cn } from "@/lib/utils";
 
@@ -64,49 +64,83 @@ export function WizardStepVoz({ draft, onChange }: Props) {
   }
 
   const isAudio = draft.responseMode === "audio";
+  const selectedVoice = voices.find((voice) => voice.voice_id === draft.voiceId) ?? null;
 
   return (
     <div className="space-y-4">
-      {/* Toggle Texto / Áudio */}
-      <div className="flex items-center justify-between rounded-xl border border-line bg-surface-elevated/30 px-4 py-3">
-        <div className="flex items-center gap-2.5">
-          <Volume2 className="h-4 w-4 shrink-0 text-content-muted" strokeWidth={1.75} />
-          <div>
-            <p className="text-sm font-medium text-content">Modo de resposta</p>
-            <p className="text-xs text-content-muted">
-              {isAudio ? "O agente responde com mensagens de áudio (ElevenLabs TTS)" : "O agente responde com mensagens de texto"}
+      <div className="rounded-2xl border border-line bg-surface-elevated/20 p-4">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line bg-surface-elevated/40 text-content-muted">
+            <Volume2 className="h-4 w-4" strokeWidth={1.75} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-content">Modo de Resposta</p>
+            <p className="mt-1 text-xs leading-relaxed text-content-muted">
+              Escolha se o agente responde em texto normal ou em áudio com ElevenLabs.
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={isAudio}
-          onClick={() =>
-            onChange({
-              ...draft,
-              responseMode: isAudio ? "text" : "audio",
-              voiceId: isAudio ? "" : draft.voiceId,
-            })
-          }
-          className={cn(
-            "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200",
-            isAudio ? "bg-primary" : "bg-surface-deep",
-          )}
-        >
-          <span
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => onChange({ ...draft, responseMode: "text", voiceId: "" })}
             className={cn(
-              "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200",
-              isAudio ? "translate-x-5" : "translate-x-0",
+              "rounded-2xl border px-4 py-3 text-left transition",
+              !isAudio
+                ? "border-primary/60 bg-primary/10 shadow-[0_0_0_1px_rgba(255,255,255,0.04)]"
+                : "border-line bg-surface-elevated/30 hover:border-line/80 hover:bg-surface-elevated/50",
             )}
-          />
-        </button>
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-content">Texto</p>
+                <p className="mt-1 text-xs leading-relaxed text-content-muted">
+                  Envia mensagens padrão de WhatsApp sem gerar áudio.
+                </p>
+              </div>
+              {!isAudio ? <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" /> : null}
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onChange({ ...draft, responseMode: "audio" })}
+            className={cn(
+              "rounded-2xl border px-4 py-3 text-left transition",
+              isAudio
+                ? "border-primary/60 bg-primary/10 shadow-[0_0_0_1px_rgba(255,255,255,0.04)]"
+                : "border-line bg-surface-elevated/30 hover:border-line/80 hover:bg-surface-elevated/50",
+            )}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-content">Áudio</p>
+                <p className="mt-1 text-xs leading-relaxed text-content-muted">
+                  Gera TTS com ElevenLabs e envia a resposta como áudio.
+                </p>
+              </div>
+              {isAudio ? <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" /> : null}
+            </div>
+          </button>
+        </div>
       </div>
 
-      {/* Seleção de voz — visível apenas quando áudio ativo */}
       {isAudio && (
-        <div className="space-y-3 rounded-xl border border-line bg-surface-elevated/20 px-4 py-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-content-secondary">Escolha a voz</p>
+        <div className="space-y-3 rounded-2xl border border-line bg-surface-elevated/20 px-4 py-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-content">Voz do agente</p>
+              <p className="mt-1 text-xs leading-relaxed text-content-muted">
+                As vozes são carregadas de `/api/client/agentes/voices`. Escolha uma voz para persistir `voice_id` junto com `response_mode=&quot;audio&quot;`.
+              </p>
+            </div>
+            {selectedVoice ? (
+              <span className="rounded-full border border-primary/25 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary">
+                {selectedVoice.name}
+              </span>
+            ) : null}
+          </div>
 
           {loading && (
             <div className="flex items-center gap-2 text-sm text-content-muted">
@@ -126,63 +160,70 @@ export function WizardStepVoz({ draft, onChange }: Props) {
           )}
 
           {!loading && voices.length > 0 && (
-            <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+            <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
               {voices.map((voice) => {
                 const selected = draft.voiceId === voice.voice_id;
                 const isPlaying = playingId === voice.voice_id;
                 return (
-                  <button
+                  <div
                     key={voice.voice_id}
-                    type="button"
-                    onClick={() => onChange({ ...draft, voiceId: voice.voice_id })}
                     className={cn(
-                      "flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition",
+                      "flex items-center gap-3 rounded-2xl border px-3 py-3 transition",
                       selected
                         ? "border-primary/60 bg-primary/10 text-content"
                         : "border-line bg-surface-elevated/30 text-content-secondary hover:border-line/80 hover:bg-surface-elevated/50",
                     )}
                   >
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">{voice.name}</p>
-                      <p className="truncate text-xs text-content-faint capitalize">{voice.category}</p>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onChange({ ...draft, voiceId: voice.voice_id })}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-content">{voice.name}</p>
+                          <p className="mt-1 truncate text-xs text-content-faint capitalize">{voice.category}</p>
+                        </div>
+                        {selected ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" /> : null}
+                      </div>
+                    </button>
 
-                    {/* Botão de preview */}
-                    {voice.preview_url && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          previewVoice(voice);
-                        }}
-                        title={isPlaying ? "Parar preview" : "Ouvir voz"}
-                        className={cn(
-                          "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition",
-                          isPlaying
-                            ? "border-primary/60 bg-primary/20 text-primary"
-                            : "border-line bg-surface-deep text-content-muted hover:text-content",
-                        )}
-                      >
-                        {isPlaying ? (
-                          <Square className="h-3.5 w-3.5 fill-current" />
-                        ) : (
-                          <Play className="h-3.5 w-3.5 fill-current" />
-                        )}
-                      </button>
-                    )}
-                  </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="hidden rounded-full border border-line bg-surface-deep px-2 py-1 text-[11px] text-content-faint sm:inline-flex">
+                        {voice.category}
+                      </span>
+                      {voice.preview_url ? (
+                        <button
+                          type="button"
+                          onClick={() => previewVoice(voice)}
+                          title={isPlaying ? "Parar preview" : "Ouvir voz"}
+                          className={cn(
+                            "flex h-9 w-9 items-center justify-center rounded-xl border transition",
+                            isPlaying
+                              ? "border-primary/60 bg-primary/20 text-primary"
+                              : "border-line bg-surface-deep text-content-muted hover:text-content",
+                          )}
+                        >
+                          {isPlaying ? (
+                            <Square className="h-3.5 w-3.5 fill-current" />
+                          ) : (
+                            <Play className="h-3.5 w-3.5 fill-current" />
+                          )}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
                 );
               })}
             </div>
           )}
 
-          {draft.voiceId && (
+          {selectedVoice ? (
             <p className="text-xs text-content-muted">
-              Voz selecionada:{" "}
-              <span className="font-medium text-content">
-                {voices.find((v) => v.voice_id === draft.voiceId)?.name ?? draft.voiceId}
-              </span>
+              Voz selecionada: <span className="font-medium text-content">{selectedVoice.name}</span>
             </p>
+          ) : (
+            <p className="text-xs text-amber-300">Selecione uma voz para salvar o modo de resposta em áudio.</p>
           )}
         </div>
       )}

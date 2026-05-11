@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { sanitizeAgentResponseSettings, validateAgentResponseSettings } from "@/lib/agents";
 import type { Agent } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -37,10 +38,15 @@ export async function PUT(
   } catch {
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
   }
+  const responseSettingsError = validateAgentResponseSettings(agent);
+  if (responseSettingsError) {
+    return NextResponse.json({ error: responseSettingsError }, { status: 400 });
+  }
 
   const sb = createSupabaseServiceClient();
   const systemPrompt = assembleSystemPrompt(agent);
   const now = new Date().toISOString();
+  const responseSettings = sanitizeAgentResponseSettings(agent);
 
   const { error } = await sb
     .from("tenant_agents")
@@ -52,10 +58,10 @@ export async function PUT(
         system_prompt: systemPrompt || agent.systemPrompt || "",
         model: null,
         active: agent.status === "ativo",
-        metadata: agent,
+        metadata: { ...agent, ...responseSettings },
         updated_at: now,
-        voice_id: agent.voiceId ?? null,
-        response_mode: agent.responseMode ?? "text",
+        voice_id: responseSettings.voiceId,
+        response_mode: responseSettings.responseMode,
       },
       { onConflict: "tenant_id,agent_id" },
     );
@@ -65,7 +71,7 @@ export async function PUT(
     return NextResponse.json({ error: "Erro ao atualizar agente." }, { status: 503 });
   }
 
-  return NextResponse.json({ agent: { ...agent, atualizadoEm: now } });
+  return NextResponse.json({ agent: { ...agent, ...responseSettings, atualizadoEm: now } });
 }
 
 // ---------------------------------------------------------------------------
