@@ -1,6 +1,6 @@
 "use client";
 
-import { Handshake, Kanban, RadioTower, Timer } from "lucide-react";
+import { Handshake, Kanban, RadioTower, Timer, Volume2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useCrmFunnels } from "@/components/dashboard/CrmFunnelsContext";
@@ -23,6 +23,7 @@ import { WizardStep4Fluxo } from "./WizardStep4Fluxo";
 import { WizardStep5Funil } from "./WizardStep5Funil";
 import { WizardStepFollowUpInteligente } from "./WizardStepFollowUpInteligente";
 import { WizardStepWhatsappLinha } from "./WizardStepWhatsappLinha";
+import { WizardStepVoz } from "./WizardStepVoz";
 
 const DELETE_AGENT_CONFIRM_TEXT = "QUERO APAGAR";
 
@@ -210,6 +211,13 @@ export function AgentFormCompact({
                 titleIcon={<Timer strokeWidth={1.75} />}
               >
                 <WizardStepFollowUpInteligente draft={draft} onChange={setDraft} />
+              </AdvancedSection>
+              <AdvancedSection
+                title="Voz (ElevenLabs TTS)"
+                description="Responda com áudio em vez de texto — escolha uma voz para o agente."
+                titleIcon={<Volume2 strokeWidth={1.75} />}
+              >
+                <WizardStepVoz draft={draft} onChange={setDraft} />
               </AdvancedSection>
             </div>
           </div>

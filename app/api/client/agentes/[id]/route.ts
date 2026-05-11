@@ -54,6 +54,8 @@ export async function PUT(
         active: agent.status === "ativo",
         metadata: agent,
         updated_at: now,
+        voice_id: agent.voiceId ?? null,
+        response_mode: agent.responseMode ?? "text",
       },
       { onConflict: "tenant_id,agent_id" },
     );

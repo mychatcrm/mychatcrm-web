@@ -58,6 +58,10 @@ export type AgentWizardDraft = {
   handoffNumero: string;
   foraDaVez: "ignorar" | "padrao" | "mensagem";
   foraDaVezMensagem: string;
+  /** Modo de resposta: texto (padrão) ou áudio via ElevenLabs TTS. */
+  responseMode: "text" | "audio";
+  /** ID da voz ElevenLabs para TTS (obrigatório quando responseMode === 'audio'). */
+  voiceId: string;
 };
 
 /** Ordem exibida no passo «Objetivo principal» do wizard. */
@@ -156,6 +160,8 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     ctaHandoffAtivo: false,
     foraDaVez: "padrao",
     foraDaVezMensagem: "",
+    responseMode: agent.responseMode ?? "text",
+    voiceId: agent.voiceId ?? "",
   };
 }
 
@@ -288,4 +294,6 @@ export const defaultWizardDraft: AgentWizardDraft = {
   handoffNumero: "",
   foraDaVez: "padrao",
   foraDaVezMensagem: "",
+  responseMode: "text",
+  voiceId: "",
 };

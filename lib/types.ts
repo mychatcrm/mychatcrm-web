@@ -244,4 +244,8 @@ export interface Agent {
   metricas: AgentMetrics;
   criadoEm: string;
   atualizadoEm: string;
+  /** ID da voz no ElevenLabs para respostas em áudio (TTS). Null = texto. */
+  voiceId?: string | null;
+  /** Modo de resposta do agente: 'text' (padrão) ou 'audio' (TTS via ElevenLabs). */
+  responseMode?: "text" | "audio";
 }

@@ -7,11 +7,12 @@ import {
   normalizeEvolutionEventName,
   type EvolutionInboundMessage,
 } from "@/lib/integrations/evolution-webhook-parse";
-import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
+import { evolutionSendAudio, evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import { resolveEvolutionAgentId } from "@/lib/server/evolution-agent-resolve";
 import { getEvolutionInstanceByName, updateEvolutionInstanceStateByName } from "@/lib/server/tenant-evolution-instance-db";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { uploadMediaToR2 } from "@/lib/integrations/r2-storage";
+import { textToSpeechElevenLabs } from "@/lib/integrations/elevenlabs";
 
 export const dynamic = "force-dynamic";
 
@@ -295,24 +296,82 @@ export async function POST(request: Request) {
       const number = remoteJidToEvoNumber(msg.remoteJid);
       if (!number) continue;
 
-      const send = await evolutionSendText({
-        instanceName,
-        number,
-        text: replyText.slice(0, 4000),
-      });
+      // ── Verifica se o agente tem resposta em áudio (ElevenLabs TTS) ──────
+      const sb2 = createSupabaseServiceClient();
+      const { data: agentRow } = await sb2
+        .from("tenant_agents")
+        .select("voice_id, response_mode")
+        .eq("tenant_id", row.tenant_id)
+        .eq("agent_id", agentId)
+        .maybeSingle();
 
-      if (!send.ok) {
-        console.error("[webhooks/evolution] sendText", send.status, send.error);
+      const responseMode = (agentRow?.response_mode as string | null) ?? "text";
+      const voiceId = (agentRow?.voice_id as string | null) ?? null;
+      const useAudio = responseMode === "audio" && Boolean(voiceId);
+
+      if (useAudio) {
+        // ── TTS via ElevenLabs → R2 → Evolution WhatsApp Audio ──────────
+        try {
+          const audioBuffer = await textToSpeechElevenLabs(replyText.slice(0, 5000), voiceId!);
+          const ttsKey = `whatsapp/${row.tenant_id}/tts/${Date.now()}_reply.mp3`;
+          const r2Key = await uploadMediaToR2(audioBuffer, ttsKey, "audio/mpeg");
+          const mediaUrl = r2Key ? `/api/client/media/${ttsKey}` : null;
+
+          const audioB64 = audioBuffer.toString("base64");
+          const send = await evolutionSendAudio({
+            instanceName,
+            number,
+            audio: audioB64,
+          });
+
+          if (!send.ok) {
+            console.error("[webhooks/evolution] sendAudio (TTS)", send.status, send.error);
+          } else {
+            saveMessage({
+              tenantId: row.tenant_id,
+              remoteJid: msg.remoteJid,
+              direction: "outbound",
+              kind: "audio",
+              content: replyText.slice(0, 4000),
+              agentId,
+              mediaUrl,
+            });
+          }
+        } catch (ttsErr) {
+          console.error("[webhooks/evolution] TTS error — fallback to text", ttsErr instanceof Error ? ttsErr.message : ttsErr);
+          // Fallback: envia como texto se TTS falhar
+          const fallback = await evolutionSendText({ instanceName, number, text: replyText.slice(0, 4000) });
+          if (fallback.ok) {
+            saveMessage({
+              tenantId: row.tenant_id,
+              remoteJid: msg.remoteJid,
+              direction: "outbound",
+              kind: "text",
+              content: replyText.slice(0, 4000),
+              agentId,
+            });
+          }
+        }
       } else {
-        // Salva resposta da IA no Supabase (fire-and-forget)
-        saveMessage({
-          tenantId: row.tenant_id,
-          remoteJid: msg.remoteJid,
-          direction: "outbound",
-          kind: "text",
-          content: replyText.slice(0, 4000),
-          agentId,
+        // ── Envio de texto padrão ─────────────────────────────────────────
+        const send = await evolutionSendText({
+          instanceName,
+          number,
+          text: replyText.slice(0, 4000),
         });
+
+        if (!send.ok) {
+          console.error("[webhooks/evolution] sendText", send.status, send.error);
+        } else {
+          saveMessage({
+            tenantId: row.tenant_id,
+            remoteJid: msg.remoteJid,
+            direction: "outbound",
+            kind: "text",
+            content: replyText.slice(0, 4000),
+            agentId,
+          });
+        }
       }
     }
   }

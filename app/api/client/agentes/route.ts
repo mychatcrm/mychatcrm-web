@@ -31,6 +31,8 @@ function rowToAgent(row: Record<string, unknown>, tenantId: string): Agent {
       nome: String(row.display_name ?? meta.nome),
       status: (row.active as boolean) ? "ativo" : "pausado",
       atualizadoEm: String(row.updated_at ?? meta.atualizadoEm),
+      voiceId: (row.voice_id as string | null) ?? meta.voiceId ?? null,
+      responseMode: ((row.response_mode as string | null) === "audio" ? "audio" : "text") as "text" | "audio",
     };
   }
 
@@ -46,6 +48,8 @@ function rowToAgent(row: Record<string, unknown>, tenantId: string): Agent {
     status: (row.active as boolean) ? "ativo" : "pausado",
     criadoEm: String(row.created_at ?? base.criadoEm),
     atualizadoEm: String(row.updated_at ?? base.atualizadoEm),
+    voiceId: (row.voice_id as string | null) ?? null,
+    responseMode: ((row.response_mode as string | null) === "audio" ? "audio" : "text") as "text" | "audio",
   };
 }
 
@@ -60,7 +64,7 @@ export async function GET() {
   const sb = createSupabaseServiceClient();
   const { data, error } = await sb
     .from("tenant_agents")
-    .select("agent_id, display_name, system_prompt, model, active, metadata, created_at, updated_at")
+    .select("agent_id, display_name, system_prompt, model, active, metadata, created_at, updated_at, voice_id, response_mode")
     .eq("tenant_id", session.tenantId)
     .order("updated_at", { ascending: false });
 
@@ -111,10 +115,12 @@ export async function POST(request: Request) {
         active: agent.status === "ativo",
         metadata: agent,
         updated_at: now,
+        voice_id: agent.voiceId ?? null,
+        response_mode: agent.responseMode ?? "text",
       },
       { onConflict: "tenant_id,agent_id" },
     )
-    .select("agent_id, display_name, system_prompt, model, active, metadata, created_at, updated_at")
+    .select("agent_id, display_name, system_prompt, model, active, metadata, created_at, updated_at, voice_id, response_mode")
     .single();
 
   if (error) {

@@ -32,6 +32,8 @@ export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDr
     followUps: draft.followUps,
     followUpInteligente: draft.followUpInteligente,
     atualizadoEm: stamp,
+    voiceId: draft.voiceId || null,
+    responseMode: draft.responseMode ?? "text",
   };
 }
 
@@ -78,5 +80,7 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
     },
     criadoEm: stamp,
     atualizadoEm: stamp,
+    voiceId: draft.voiceId || null,
+    responseMode: draft.responseMode ?? "text",
   };
 }
