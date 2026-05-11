@@ -11,6 +11,7 @@ import {
 } from "@/lib/integrations/evolution-webhook-parse";
 import { evolutionSendAudio, evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import { resolveEvolutionAgentId } from "@/lib/server/evolution-agent-resolve";
+import { autoUpsertLeadFromWhatsApp } from "@/lib/server/auto-lead-upsert";
 import { getEvolutionInstanceByName, updateEvolutionInstanceStateByName } from "@/lib/server/tenant-evolution-instance-db";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { uploadMediaToR2 } from "@/lib/integrations/r2-storage";
@@ -85,6 +86,55 @@ function localizedGenericFailureReply(languageCode: SupportedLanguageCode): stri
     it: "Non sono riuscito a generare una risposta ora. Riprova tra poco.",
   };
   return replies[languageCode];
+}
+
+function pickContactName(row: Record<string, unknown>): string | null {
+  const fields = ["pushName", "pushname", "notifyName", "senderName", "contactName", "name"];
+  for (const field of fields) {
+    const value = row[field];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function extractContactNameFromPayload(
+  payload: Record<string, unknown>,
+  msg: EvolutionInboundMessage,
+): string | null {
+  function visit(value: unknown, depth: number): string | null {
+    if (!value || depth > 8) return null;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = visit(item, depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+    if (typeof value !== "object") return null;
+
+    const row = value as Record<string, unknown>;
+    const key = row.key;
+    const keyRecord = key && typeof key === "object" ? (key as Record<string, unknown>) : null;
+    const matchesMessage =
+      keyRecord?.remoteJid === msg.remoteJid ||
+      keyRecord?.remoteJidAlt === msg.remoteJid ||
+      keyRecord?.id === msg.messageId ||
+      row.remoteJid === msg.remoteJid ||
+      row.id === msg.messageId;
+
+    if (matchesMessage) {
+      const name = pickContactName(row);
+      if (name) return name;
+    }
+
+    for (const child of Object.values(row)) {
+      const found = visit(child, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  return visit(payload, 0);
 }
 
 function mimeToExt(mimetype: string): string {
@@ -302,7 +352,7 @@ export async function POST(request: Request) {
       }
 
       // Salva mensagem inbound no Supabase (fire-and-forget)
-      saveMessage({
+      await saveMessage({
         tenantId: row.tenant_id,
         remoteJid: msg.remoteJid,
         direction: "inbound",
@@ -310,6 +360,11 @@ export async function POST(request: Request) {
         content: contentFromMsg(msg),
         messageId: msg.messageId,
         mediaUrl: inboundMediaUrl,
+      });
+      await autoUpsertLeadFromWhatsApp({
+        tenantId: row.tenant_id,
+        remoteJid: msg.remoteJid,
+        contactName: extractContactNameFromPayload(payload, msg),
       });
 
       const inboundLanguageCode = detectSupportedLanguageCode(inboundLanguageSource(msg));
