@@ -1,4 +1,5 @@
 import type { ClientLead } from "@/lib/dashboard-data";
+import { createClient } from "@supabase/supabase-js";
 
 export const CRM_LEADS_UPDATED_EVENT = "mychatcrm-crm-leads-updated";
 
@@ -32,4 +33,103 @@ export function persistCrmLeadsSnapshot(tenantId: string, leads: ClientLead[]) {
   } catch {
     /* ignore */
   }
+}
+
+async function parseLeadsResponse(res: Response): Promise<ClientLead[]> {
+  if (!res.ok) throw new Error(`CRM leads API ${res.status}`);
+  const data = (await res.json()) as { leads?: ClientLead[]; lead?: ClientLead };
+  if (Array.isArray(data.leads)) return data.leads;
+  if (data.lead) return [data.lead];
+  return [];
+}
+
+export async function fetchCrmLeadsFromApi(): Promise<ClientLead[]> {
+  const res = await fetch("/api/client/crm/leads", { cache: "no-store" });
+  return parseLeadsResponse(res);
+}
+
+export async function createCrmLeadInApi(lead: ClientLead): Promise<ClientLead> {
+  const res = await fetch("/api/client/crm/leads", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(lead),
+  });
+  const [created] = await parseLeadsResponse(res);
+  return created ?? lead;
+}
+
+export async function updateCrmLeadInApi(leadId: string, patch: Partial<ClientLead> & Record<string, unknown>): Promise<ClientLead | null> {
+  const res = await fetch(`/api/client/crm/leads/${encodeURIComponent(leadId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  const [updated] = await parseLeadsResponse(res);
+  return updated ?? null;
+}
+
+export async function deleteCrmLeadInApi(leadId: string): Promise<void> {
+  const res = await fetch(`/api/client/crm/leads/${encodeURIComponent(leadId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`CRM leads DELETE ${res.status}`);
+}
+
+export async function loadCrmLeadsFromApiWithLocalMigration(
+  tenantId: string,
+  fallback: ClientLead[],
+): Promise<ClientLead[]> {
+  const remote = await fetchCrmLeadsFromApi();
+  if (remote.length > 0) {
+    persistCrmLeadsSnapshot(tenantId, remote);
+    return remote;
+  }
+
+  const local = loadCrmLeadsSnapshot(tenantId, fallback);
+  if (local.length === 0) {
+    persistCrmLeadsSnapshot(tenantId, []);
+    return [];
+  }
+
+  const migrated = await Promise.all(local.map((lead) => createCrmLeadInApi(lead)));
+  const clean = migrated.filter((lead): lead is ClientLead => Boolean(lead));
+  persistCrmLeadsSnapshot(tenantId, clean);
+  return clean;
+}
+
+let supabaseBrowser: ReturnType<typeof createClient> | null = null;
+
+function getSupabaseBrowser() {
+  if (!supabaseBrowser) {
+    supabaseBrowser = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    );
+  }
+  return supabaseBrowser;
+}
+
+export function subscribeToCrmLeadsRealtime(
+  tenantId: string,
+  onChange: () => void,
+): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  const supabase = getSupabaseBrowser();
+  const channel = supabase
+    .channel(`crm-leads-${tenantId}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "leads",
+        filter: `tenant_id=eq.${tenantId}`,
+      },
+      () => onChange(),
+    )
+    .subscribe();
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
 }

@@ -110,7 +110,16 @@ import { computeLeadTemperature, type LeadTemperatureResult } from "@/lib/crm-le
 import { formatIntegerPtBr } from "@/lib/format-number";
 import { funnelColumnTitle, normalizeColunaInicialForFunnel } from "@/lib/crm-funnels";
 import { getPlanMaxSalesFunnelsForSession, normalizeClientPlan } from "@/lib/plan-limits";
-import { loadCrmLeadsSnapshot, persistCrmLeadsSnapshot } from "@/lib/crm-leads-storage";
+import {
+  createCrmLeadInApi,
+  deleteCrmLeadInApi,
+  fetchCrmLeadsFromApi,
+  loadCrmLeadsFromApiWithLocalMigration,
+  loadCrmLeadsSnapshot,
+  persistCrmLeadsSnapshot,
+  subscribeToCrmLeadsRealtime,
+  updateCrmLeadInApi,
+} from "@/lib/crm-leads-storage";
 import { LeadThermometerBar, LeadThermometerInline } from "./crm/LeadThermometer";
 import { CrmAddLeadModal } from "./crm/CrmAddLeadModal";
 import { CrmReorderStagesModal } from "./crm/CrmReorderStagesModal";
@@ -1045,6 +1054,7 @@ function CrmPage({
   const [leads, setLeads] = useState<ClientLead[]>(() =>
     dataset.leads.map((l) => ({ ...l })),
   );
+  const [leadsLoadedFromApi, setLeadsLoadedFromApi] = useState(false);
   const [newFunnelOpen, setNewFunnelOpen] = useState(false);
   const [newFunnelNome, setNewFunnelNome] = useState("");
   const [newFunnelErr, setNewFunnelErr] = useState("");
@@ -1069,8 +1079,24 @@ function CrmPage({
   }));
 
   useEffect(() => {
-    setLeads(loadCrmLeadsSnapshot(dataset.tenantId, dataset.leads.map((l) => ({ ...l }))));
-    // Intencional: baseline do dataset ao mudar tenant; snapshot local continua se existir.
+    let cancelled = false;
+    const fallback = dataset.leads.map((l) => ({ ...l }));
+    setLeadsLoadedFromApi(false);
+    void loadCrmLeadsFromApiWithLocalMigration(dataset.tenantId, fallback)
+      .then((remoteLeads) => {
+        if (cancelled) return;
+        setLeads(remoteLeads);
+        setLeadsLoadedFromApi(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLeads(loadCrmLeadsSnapshot(dataset.tenantId, fallback));
+        setLeadsLoadedFromApi(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Intencional: baseline do dataset ao mudar tenant; snapshot local/servidor continua se existir.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dataset.leads omitido de propósito
   }, [dataset.tenantId]);
 
@@ -1087,11 +1113,29 @@ function CrmPage({
   }, [dataset.tenantId]);
 
   useEffect(() => {
+    if (!leadsLoadedFromApi) return;
     const id = window.setTimeout(() => {
       persistCrmLeadsSnapshot(dataset.tenantId, leads);
     }, 400);
     return () => window.clearTimeout(id);
-  }, [dataset.tenantId, leads]);
+  }, [dataset.tenantId, leads, leadsLoadedFromApi]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const unsubscribe = subscribeToCrmLeadsRealtime(dataset.tenantId, () => {
+      void fetchCrmLeadsFromApi()
+        .then((remoteLeads) => {
+          if (cancelled) return;
+          setLeads(remoteLeads);
+          persistCrmLeadsSnapshot(dataset.tenantId, remoteLeads);
+        })
+        .catch(() => undefined);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [dataset.tenantId]);
 
   useEffect(() => {
     if (!funnels.length) return;
@@ -1153,6 +1197,7 @@ function CrmPage({
               funnel: activeFunnel,
               item: buildPipelineMoveItem(activeLead.id, activeLead.status, targetStatus, activeFunnel),
             });
+            void updateCrmLeadInApi(activeLead.id, { status: targetStatus }).catch(() => undefined);
           });
 
           const moved = { ...activeLead, status: targetStatus };
@@ -1186,6 +1231,7 @@ function CrmPage({
               funnel: activeFunnel,
               item: buildPipelineMoveItem(activeLead.id, activeLead.status, targetStatus, activeFunnel),
             });
+            void updateCrmLeadInApi(activeLead.id, { status: targetStatus }).catch(() => undefined);
           });
         }
 
@@ -1352,9 +1398,13 @@ function CrmPage({
     const fallback = activeFunnel.columns.find((c) => c.id !== removeColId)?.id;
     if (!fallback) return;
     const fid = activeFunnel.id;
-    setLeads((prev) =>
-      prev.map((l) => (l.funilId === fid && l.status === removeColId ? { ...l, status: fallback } : l)),
-    );
+    setLeads((prev) => {
+      const affected = prev.filter((l) => l.funilId === fid && l.status === removeColId);
+      for (const lead of affected) {
+        void updateCrmLeadInApi(lead.id, { status: fallback }).catch(() => undefined);
+      }
+      return prev.map((l) => (l.funilId === fid && l.status === removeColId ? { ...l, status: fallback } : l));
+    });
     removeFunnelColumn(fid, removeColId);
     setRemoveColOpen(false);
     setRemoveColId("");
@@ -1373,20 +1423,29 @@ function CrmPage({
     const sourceId = activeFunnel.id;
 
     if (deleteFunnelLeadsMode === "remove") {
-      setLeads((prev) => prev.filter((l) => l.funilId !== sourceId));
+      setLeads((prev) => {
+        const removed = prev.filter((l) => l.funilId === sourceId);
+        for (const lead of removed) {
+          void deleteCrmLeadInApi(lead.id).catch(() => undefined);
+        }
+        return prev.filter((l) => l.funilId !== sourceId);
+      });
     } else {
       const targetFunnel = funnels.find((f) => f.id === deleteFunnelMigrateToId && f.id !== sourceId);
       if (!targetFunnel?.columns.length) return;
-      setLeads((prev) =>
-        prev.map((l) => {
+      setLeads((prev) => {
+        const next = prev.map((l) => {
           if (l.funilId !== sourceId) return l;
-          return {
+          const migrated = {
             ...l,
             funilId: targetFunnel.id,
             status: normalizeColunaInicialForFunnel(l.status, targetFunnel),
           };
-        }),
-      );
+          void updateCrmLeadInApi(migrated.id, { status: migrated.status }).catch(() => undefined);
+          return migrated;
+        });
+        return next;
+      });
     }
 
     deleteFunnel(sourceId);
@@ -1461,7 +1520,7 @@ function CrmPage({
           <span className="font-semibold text-content">Funis de vendas:</span> até{" "}
           <span className="font-semibold text-content">{formatIntegerPtBr(maxSalesFunnels)}</span> neste plano — nesta demo há{" "}
           <span className="font-semibold text-content">{funnels.length}</span> funil(is) e{" "}
-          <span className="font-semibold text-content">{formatIntegerPtBr(storedLeadCount)}</span> leads no armazenamento local.
+          <span className="font-semibold text-content">{formatIntegerPtBr(storedLeadCount)}</span> leads sincronizados no CRM.
         </p>
         <Link
           href="/planos"
@@ -2486,7 +2545,14 @@ function CrmPage({
           funnel={activeFunnel}
           allFunnels={funnels}
           onClose={() => setSelectedLead(null)}
-          onUpdateLead={(next) => setLeads((prev) => prev.map((l) => (l.id === next.id ? next : l)))}
+          onUpdateLead={(next) => {
+            setLeads((prev) => prev.map((l) => (l.id === next.id ? next : l)));
+            void updateCrmLeadInApi(next.id, next)
+              .then((saved) => {
+                if (saved) setLeads((prev) => prev.map((l) => (l.id === saved.id ? saved : l)));
+              })
+              .catch(() => undefined);
+          }}
         />
       ) : null}
       <CrmAddLeadModal
@@ -2498,7 +2564,12 @@ function CrmPage({
         responsavelLabel={
           session.organizationRole === "owner" || !session.employeeId ? "Equipe" : session.displayName
         }
-        onCreate={(lead) => setLeads((prev) => [...prev, lead])}
+        onCreate={(lead) => {
+          setLeads((prev) => [lead, ...prev]);
+          void createCrmLeadInApi(lead)
+            .then((created) => setLeads((prev) => prev.map((l) => (l.id === lead.id ? created : l))))
+            .catch(() => undefined);
+        }}
       />
     </div>
   );
