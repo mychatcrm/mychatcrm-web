@@ -201,7 +201,6 @@ export async function transcribeAudio(
   const form = new FormData();
   form.append("file", blob, `audio.${ext}`);
   form.append("model", "whisper-1");
-  form.append("language", "pt");
 
   let res: Response;
   try {

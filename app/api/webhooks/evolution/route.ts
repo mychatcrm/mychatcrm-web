@@ -351,7 +351,7 @@ export async function POST(request: Request) {
         responseMode: agentRow?.response_mode,
         voiceId: agentRow?.voice_id,
       });
-      const useAudio = responseMode === "audio" && Boolean(voiceId);
+      const useAudio = msg.type === "audio" && responseMode === "audio" && Boolean(voiceId);
 
       if (useAudio) {
         // ── TTS via ElevenLabs → R2 → Evolution WhatsApp Audio ──────────
