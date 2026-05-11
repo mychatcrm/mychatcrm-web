@@ -921,12 +921,35 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     [conversations, fetchPhoto, fetchName],
   );
 
-  // ── Smart auto-scroll: only scroll when near bottom ──────────────────────
+  // ── Initial scroll: instant jump to bottom when conversation opens ────────
+  // Fires when selectedJid changes OR when messagesLoaded flips to true (async
+  // load). Double rAF ensures the browser has painted the message list before
+  // we set scrollTop — otherwise scrollHeight is still the pre-render value.
   useEffect(() => {
-    if (isNearBottomRef.current) {
+    const el = msgContainerRef.current;
+    if (!el || !active?.messagesLoaded) return;
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+        isNearBottomRef.current = true;
+      });
+    });
+    return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };
+  // active?.messagesLoaded changes independently of conversations object ref
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedJid, active?.messagesLoaded]);
+
+  // ── Auto-scroll for new messages arriving in the open conversation ─────────
+  // Smooth scroll — only when user is already near the bottom.
+  // Does not run on conversation switch (handled by the effect above).
+  useEffect(() => {
+    if (!isNearBottomRef.current) return;
+    const raf = requestAnimationFrame(() => {
       threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [selectedJid, conversations]);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [conversations]);
 
   // ── Send ──────────────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
