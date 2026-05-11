@@ -176,7 +176,6 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
   const [createFormKey, setCreateFormKey] = useState(0);
   const [manageAgent, setManageAgent] = useState<Agent | null>(null);
   const [manageFormKey, setManageFormKey] = useState(0);
-  const loadedRef = useRef(false);
 
   const limit = getPlanIncludedAgentLimitForSession(session);
   const activeCount = agents.filter((agent) => agent.status === "ativo").length;
@@ -189,18 +188,24 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
 
   // Load from Supabase on mount
   useEffect(() => {
-    if (loadedRef.current) return;
-    loadedRef.current = true;
+    let cancelled = false;
+    setLoadedFromDb(false);
 
     apiLoadAgents()
       .then((dbAgents) => {
+        if (cancelled) return;
         setAgents(applySavedAgentOrder(dbAgents, tenantId));
         setLoadedFromDb(true);
       })
       .catch(() => {
+        if (cancelled) return;
         setAgents([]);
         setLoadedFromDb(true);
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, [tenantId]);
 
   const handleAgentsDragEnd = useCallback(
