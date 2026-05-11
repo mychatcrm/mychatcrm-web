@@ -282,6 +282,63 @@ export async function evolutionSendText(params: {
   });
 }
 
+/**
+ * Envia mídia (imagem, vídeo, documento) via Evolution API v2.
+ * POST /message/sendMedia/{instance}
+ * `media` deve ser base64 puro (sem prefixo data:...).
+ */
+export async function evolutionSendMedia(params: {
+  instanceName: string;
+  number: string;
+  mediatype: "image" | "video" | "document";
+  mimetype: string;
+  /** Base64 encoded file content (sem data: prefix). */
+  media: string;
+  /** Legenda / nome do ficheiro. */
+  caption?: string;
+  fileName?: string;
+}): Promise<EvolutionFetchResult<unknown>> {
+  const enc = encodeURIComponent(params.instanceName);
+  return evolutionFetchJson(`/message/sendMedia/${enc}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      number: params.number,
+      mediatype: params.mediatype,
+      mimetype: params.mimetype,
+      media: params.media,
+      caption: params.caption ?? "",
+      fileName: params.fileName ?? "",
+    }),
+    timeoutMs: 60_000,
+  });
+}
+
+/**
+ * Envia áudio PTT (push-to-talk) via Evolution API v2.
+ * POST /message/sendWhatsAppAudio/{instance}
+ * `audio` deve ser base64 puro. O campo `encoding: true` instrui a Evolution a
+ * re-codificar para opus/ogg se necessário.
+ */
+export async function evolutionSendAudio(params: {
+  instanceName: string;
+  number: string;
+  /** Base64 encoded audio content (sem data: prefix). */
+  audio: string;
+}): Promise<EvolutionFetchResult<unknown>> {
+  const enc = encodeURIComponent(params.instanceName);
+  return evolutionFetchJson(`/message/sendWhatsAppAudio/${enc}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      number: params.number,
+      audio: params.audio,
+      encoding: true,
+    }),
+    timeoutMs: 60_000,
+  });
+}
+
 /** Converte JID WhatsApp em número para envio pela API Evolution. */
 export function remoteJidToEvoNumber(remoteJid: string): string | null {
   if (!remoteJid || remoteJid.includes("@g.us")) return null;

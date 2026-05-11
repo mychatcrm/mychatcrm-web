@@ -1,9 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import { createClient } from "@supabase/supabase-js";
 import { cn } from "@/lib/utils";
 import type { ClientSession } from "@/lib/client-auth";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const emojiData = require("@emoji-mart/data") as unknown;
+// Lazy-loaded — accesses browser globals; must not run on server
+const EmojiPicker = dynamic(() => import("@emoji-mart/react"), { ssr: false });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WhatsApp Web colour palette
@@ -760,6 +765,15 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   // isScrollable: true when there's enough content to scroll (shows nav buttons)
   const [isScrollable,   setIsScrollable]   = useState(false);
 
+  // ── Emoji picker ──────────────────────────────────────────────────────────
+  const [emojiOpen,      setEmojiOpen]      = useState(false);
+
+  // ── File attachment state ─────────────────────────────────────────────────
+  type AttachmentKind = "image" | "audio" | "video" | "document";
+  type AttachmentState = { file: File; previewUrl: string; kind: AttachmentKind };
+  const [attachment,     setAttachment]     = useState<AttachmentState | null>(null);
+  const [uploading,      setUploading]      = useState(false);
+
   // Cache em ref para evitar fetches duplicados concorrentes
   const photoCacheRef    = useRef<Set<string>>(new Set());
   const nameCacheRef     = useRef<Set<string>>(new Set());
@@ -770,6 +784,9 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
 
   const threadEndRef     = useRef<HTMLDivElement>(null);
   const msgContainerRef  = useRef<HTMLDivElement>(null);
+  const draftTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef     = useRef<HTMLInputElement>(null);
+  const emojiPickerRef   = useRef<HTMLDivElement>(null);
   // Wrapper interno cujo tamanho é observado por ResizeObserver para
   // re-pinning do scroll quando imagens/áudios completam o load.
   const msgInnerRef      = useRef<HTMLDivElement>(null);
@@ -1116,6 +1133,82 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     }
   }, [selectedJid, draft, sending]);
 
+  // ── Emoji insert at cursor ────────────────────────────────────────────────
+  const handleEmojiSelect = useCallback((emoji: { native?: string; unified?: string }) => {
+    const native = emoji.native ?? (emoji.unified ? String.fromCodePoint(...emoji.unified.split("-").map((u) => parseInt(u, 16))) : "");
+    if (!native) return;
+    const ta = draftTextareaRef.current;
+    if (!ta) {
+      setDraft((d) => (d + native).slice(0, 4000));
+      return;
+    }
+    const start = ta.selectionStart ?? draft.length;
+    const end   = ta.selectionEnd   ?? draft.length;
+    const next  = (draft.slice(0, start) + native + draft.slice(end)).slice(0, 4000);
+    setDraft(next);
+    requestAnimationFrame(() => {
+      ta.selectionStart = start + native.length;
+      ta.selectionEnd   = start + native.length;
+      ta.focus();
+    });
+  }, [draft]);
+
+  // ── File attachment select ────────────────────────────────────────────────
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const mime = file.type.toLowerCase();
+    let kind: AttachmentKind;
+    if (mime.startsWith("image/")) kind = "image";
+    else if (mime.startsWith("audio/")) kind = "audio";
+    else if (mime.startsWith("video/")) kind = "video";
+    else kind = "document";
+    const previewUrl = kind === "image" ? URL.createObjectURL(file) : "";
+    setAttachment({ file, previewUrl, kind });
+    e.target.value = "";
+  }, []);
+
+  // Revoke object URL when attachment changes to avoid memory leaks
+  useEffect(() => {
+    return () => {
+      if (attachment?.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attachment?.previewUrl]);
+
+  // ── Send media ────────────────────────────────────────────────────────────
+  const handleSendMedia = useCallback(async () => {
+    if (!attachment || !selectedJid || uploading) return;
+    setUploading(true);
+    setSendError("");
+    isNearBottomRef.current = true;
+    try {
+      const fd = new FormData();
+      fd.append("file", attachment.file);
+      fd.append("remoteJid", selectedJid);
+      const res = await fetch("/api/client/conversas/send-media", { method: "POST", body: fd });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(err.error ?? `Erro ${res.status}`);
+      }
+      const data = (await res.json()) as { message?: WaMessage | null };
+      if (data.message) {
+        const msg = data.message;
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.remoteJid !== selectedJid ? c :
+            { ...c, messages: [...c.messages, msg], lastContent: msg.content, lastAt: msg.created_at },
+          ),
+        );
+      }
+      setAttachment(null);
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "Erro ao enviar arquivo.");
+    } finally {
+      setUploading(false);
+    }
+  }, [attachment, selectedJid, uploading]);
+
   // ── Scroll helpers (first / last message navigation) ─────────────────────
   const scrollToTop = useCallback(() => {
     const el = msgContainerRef.current;
@@ -1169,17 +1262,31 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     });
   }, [conversations, query, contactNames]);
 
-  // ── ESC fecha overlay de foto e busca interna ────────────────────────────
+  // ── ESC fecha overlay de foto, emoji picker e busca interna ────────────────
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (photoOverlay) { setPhotoOverlay(null); return; }
+        if (emojiOpen) { setEmojiOpen(false); return; }
+        if (attachment) { setAttachment(null); return; }
         if (inConvSearch) { setInConvSearch(false); setInConvQuery(""); }
       }
     };
     document.addEventListener("keydown", h);
     return () => document.removeEventListener("keydown", h);
-  }, [photoOverlay, inConvSearch]);
+  }, [photoOverlay, emojiOpen, attachment, inConvSearch]);
+
+  // ── Click outside fecha o emoji picker ────────────────────────────────────
+  useEffect(() => {
+    if (!emojiOpen) return;
+    const h = (e: MouseEvent) => {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(e.target as Node)) {
+        setEmojiOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [emojiOpen]);
 
   // Focus search input when it opens
   useEffect(() => {
@@ -1758,8 +1865,129 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 display: "flex",
                 flexDirection: "column",
                 gap: 6,
+                position: "relative",
               }}
             >
+              {/* ── Emoji Picker (opens above footer) ── */}
+              {emojiOpen && (
+                <div
+                  ref={emojiPickerRef}
+                  style={{
+                    position: "absolute",
+                    bottom: "100%",
+                    left: 0,
+                    zIndex: 50,
+                    marginBottom: 4,
+                  }}
+                >
+                  <EmojiPicker
+                    data={emojiData}
+                    onEmojiSelect={handleEmojiSelect}
+                    theme="dark"
+                    locale="pt"
+                    previewPosition="none"
+                    skinTonePosition="none"
+                    set="native"
+                  />
+                </div>
+              )}
+
+              {/* ── File attachment preview ── */}
+              {attachment && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    background: W.bgInput,
+                    borderRadius: 10,
+                    padding: "8px 12px",
+                  }}
+                >
+                  {/* Preview thumbnail (image only) */}
+                  {attachment.kind === "image" && attachment.previewUrl && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={attachment.previewUrl}
+                      alt="preview"
+                      style={{ width: 48, height: 48, borderRadius: 6, objectFit: "cover", flexShrink: 0 }}
+                    />
+                  )}
+                  {/* Icon for non-image types */}
+                  {attachment.kind !== "image" && (
+                    <div style={{
+                      width: 40, height: 40, borderRadius: 8, background: W.bgBorder,
+                      display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                    }}>
+                      {attachment.kind === "audio" && (
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke={W.muted} strokeWidth="1.5">
+                          <path d="M9 18V5l12-2v13" strokeLinecap="round" strokeLinejoin="round" />
+                          <circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
+                        </svg>
+                      )}
+                      {attachment.kind === "video" && (
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke={W.muted} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" />
+                        </svg>
+                      )}
+                      {attachment.kind === "document" && (
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke={W.muted} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                          <polyline points="14 2 14 8 20 8" />
+                        </svg>
+                      )}
+                    </div>
+                  )}
+                  {/* Filename */}
+                  <span style={{ flex: 1, fontSize: 13, color: W.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {attachment.file.name}
+                    <span style={{ color: W.muted, marginLeft: 6, fontSize: 11 }}>
+                      ({(attachment.file.size / 1024 / 1024).toFixed(1)} MB)
+                    </span>
+                  </span>
+                  {/* Send media button */}
+                  <button
+                    type="button"
+                    onClick={() => void handleSendMedia()}
+                    disabled={uploading}
+                    aria-label="Enviar arquivo"
+                    style={{
+                      width: 36, height: 36, borderRadius: "50%", background: W.green,
+                      border: "none", cursor: uploading ? "not-allowed" : "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      flexShrink: 0, opacity: uploading ? 0.55 : 1, transition: "opacity 0.2s",
+                    }}
+                  >
+                    {uploading ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+                        <path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round" />
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" width="17" height="17" fill="white">
+                        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                      </svg>
+                    )}
+                  </button>
+                  {/* Cancel attachment */}
+                  <button
+                    type="button"
+                    onClick={() => setAttachment(null)}
+                    disabled={uploading}
+                    aria-label="Cancelar arquivo"
+                    style={{
+                      background: "none", border: "none", cursor: uploading ? "not-allowed" : "pointer",
+                      padding: 4, color: W.muted, display: "flex", flexShrink: 0,
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+
+              {/* ── Send error ── */}
               {sendError && (
                 <div
                   style={{
@@ -1776,101 +2004,128 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                   ⚠ {sendError}
                 </div>
               )}
-              <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
-                {/* Left decorative icons */}
-                <div style={{ display: "flex", gap: 2, paddingBottom: 9 }}>
-                  {/* Emoji */}
+
+              {/* ── Main input row (only when no attachment pending) ── */}
+              {!attachment && (
+                <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
+                  {/* Left icons */}
+                  <div style={{ display: "flex", gap: 2, paddingBottom: 9 }}>
+                    {/* Emoji button */}
+                    <button
+                      type="button"
+                      title="Emoji"
+                      aria-label="Abrir painel de emojis"
+                      onClick={() => setEmojiOpen((v) => !v)}
+                      style={{
+                        background: emojiOpen ? "rgba(255,255,255,0.08)" : "none",
+                        border: "none", cursor: "pointer", padding: 5, borderRadius: 6,
+                        color: emojiOpen ? W.text : W.muted,
+                        display: "flex", alignItems: "center",
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5">
+                        <circle cx="12" cy="12" r="10" />
+                        <path d="M8 14s1.5 2 4 2 4-2 4-2" strokeLinecap="round" />
+                        <line x1="9" y1="9" x2="9.01" y2="9" strokeWidth="2.5" strokeLinecap="round" />
+                        <line x1="15" y1="9" x2="15.01" y2="9" strokeWidth="2.5" strokeLinecap="round" />
+                      </svg>
+                    </button>
+                    {/* Attach button */}
+                    <button
+                      type="button"
+                      title="Anexar arquivo"
+                      aria-label="Anexar arquivo"
+                      onClick={() => fileInputRef.current?.click()}
+                      style={{
+                        background: "none", border: "none", cursor: "pointer", padding: 5, borderRadius: 6,
+                        display: "flex", alignItems: "center",
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke={W.muted} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                      </svg>
+                    </button>
+                    {/* Hidden file input */}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      aria-hidden
+                      tabIndex={-1}
+                      accept="image/jpeg,image/png,image/gif,image/webp,audio/mpeg,audio/ogg,audio/mp4,audio/x-m4a,audio/opus,audio/webm,video/mp4,application/pdf"
+                      style={{ display: "none" }}
+                      onChange={handleFileSelect}
+                    />
+                  </div>
+
+                  {/* Text input */}
+                  <textarea
+                    ref={draftTextareaRef}
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value.slice(0, 4000))}
+                    rows={1}
+                    placeholder="Digite uma mensagem"
+                    disabled={sending}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void handleSend();
+                      }
+                    }}
+                    className="placeholder:text-[#8696a0]"
+                    style={{
+                      flex: 1,
+                      minHeight: 42,
+                      maxHeight: 130,
+                      background: W.bgInput,
+                      border: "none",
+                      borderRadius: 10,
+                      padding: "10px 14px",
+                      fontSize: 14.5,
+                      color: W.text,
+                      outline: "none",
+                      resize: "none",
+                      fontFamily: "inherit",
+                      lineHeight: 1.4,
+                    }}
+                  />
+
+                  {/* Send button */}
                   <button
                     type="button"
-                    title="Emoji"
-                    style={{ background: "none", border: "none", cursor: "pointer", padding: 5 }}
+                    onClick={() => void handleSend()}
+                    disabled={sending || !draft.trim()}
+                    aria-label="Enviar"
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: "50%",
+                      background: W.green,
+                      border: "none",
+                      cursor: draft.trim() && !sending ? "pointer" : "not-allowed",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                      opacity: sending || !draft.trim() ? 0.45 : 1,
+                      transition: "opacity 0.2s",
+                      paddingBottom: 9,
+                    }}
                   >
-                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke={W.muted} strokeWidth="1.5">
-                      <circle cx="12" cy="12" r="10" />
-                      <path d="M8 14s1.5 2 4 2 4-2 4-2" strokeLinecap="round" />
-                      <line x1="9" y1="9" x2="9.01" y2="9" strokeWidth="2.5" strokeLinecap="round" />
-                      <line x1="15" y1="9" x2="15.01" y2="9" strokeWidth="2.5" strokeLinecap="round" />
-                    </svg>
-                  </button>
-                  {/* Attach */}
-                  <button
-                    type="button"
-                    title="Anexar"
-                    style={{ background: "none", border: "none", cursor: "pointer", padding: 5 }}
-                  >
-                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke={W.muted} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-                    </svg>
+                    {sending ? (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+                        <path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round" />
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" width="20" height="20" fill="white">
+                        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                      </svg>
+                    )}
                   </button>
                 </div>
-
-                {/* Text input */}
-                <textarea
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value.slice(0, 4000))}
-                  rows={1}
-                  placeholder="Digite uma mensagem"
-                  disabled={sending}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void handleSend();
-                    }
-                  }}
-                  className="placeholder:text-[#8696a0]"
-                  style={{
-                    flex: 1,
-                    minHeight: 42,
-                    maxHeight: 130,
-                    background: W.bgInput,
-                    border: "none",
-                    borderRadius: 10,
-                    padding: "10px 14px",
-                    fontSize: 14.5,
-                    color: W.text,
-                    outline: "none",
-                    resize: "none",
-                    fontFamily: "inherit",
-                    lineHeight: 1.4,
-                  }}
-                />
-
-                {/* Send button */}
-                <button
-                  type="button"
-                  onClick={() => void handleSend()}
-                  disabled={sending || !draft.trim()}
-                  aria-label="Enviar"
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: "50%",
-                    background: W.green,
-                    border: "none",
-                    cursor: draft.trim() && !sending ? "pointer" : "not-allowed",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                    opacity: sending || !draft.trim() ? 0.45 : 1,
-                    transition: "opacity 0.2s",
-                    paddingBottom: 9,
-                  }}
-                >
-                  {sending ? (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-                      <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
-                      <path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round" />
-                    </svg>
-                  ) : (
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="white">
-                      <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-                    </svg>
-                  )}
-                </button>
-              </div>
+              )}
               <p style={{ margin: 0, fontSize: 10, color: W.bgBorder, textAlign: "right" }}>
-                {draft.length > 0 ? `${draft.length}/4000` : ""}
+                {!attachment && draft.length > 0 ? `${draft.length}/4000` : ""}
               </p>
             </div>
           </>
