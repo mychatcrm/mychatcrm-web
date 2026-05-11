@@ -74,9 +74,34 @@ function persistAgentOrder(agents: Agent[], tenantId: string) {
 
 async function apiLoadAgents(): Promise<Agent[]> {
   const res = await fetch("/api/client/agentes", { cache: "no-store" });
-  if (!res.ok) throw new Error(`GET /api/client/agentes ${res.status}`);
-  const data = (await res.json()) as { agents: Agent[] };
-  return data.agents ?? [];
+  if (!res.ok) {
+    console.warn("[agentes] GET non-OK", res.status);
+    throw new Error(`GET /api/client/agentes ${res.status}`);
+  }
+
+  // O cast `as { agents: Agent[] }` que existia aqui era apenas hint de
+  // TypeScript — não valida nada em runtime. Se a rota um dia mudasse de
+  // shape (ex.: array direto, payload envelopado em `data`, ou um corpo
+  // vazio por algum motivo), o componente lia `undefined`, caía no
+  // fallback `?? []` silenciosamente e o estado de carregamento podia
+  // ficar inconsistente. Validamos shape em runtime e aceitamos as três
+  // formas mais comuns para robustez futura.
+  let raw: unknown;
+  try {
+    raw = await res.json();
+  } catch (e) {
+    console.warn("[agentes] response not JSON", e);
+    return [];
+  }
+
+  if (Array.isArray(raw)) return raw as Agent[];
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    if (Array.isArray(obj.agents)) return obj.agents as Agent[];
+    if (Array.isArray(obj.data)) return obj.data as Agent[];
+  }
+  console.warn("[agentes] unexpected response shape:", raw);
+  return [];
 }
 
 async function apiCreateAgent(agent: Agent): Promise<Agent> {
@@ -186,22 +211,38 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  // Load from Supabase on mount
+  // Load from Supabase on mount.
+  //
+  // CRÍTICO: a versão anterior usava .then/.catch separados e setava
+  // `setLoadedFromDb(true)` em AMBOS os handlers. Se `applySavedAgentOrder`
+  // (executada dentro do .then) levantasse uma exceção síncrona, a rejeição
+  // não era propagada para o .catch chained (porque o setAgents acontece
+  // antes do setLoadedFromDb, e qualquer throw cai num caminho sem catch).
+  // Isso deixava o componente preso no skeleton apesar de a API responder
+  // 200. Reescrito com try/catch/finally: `loadedFromDb` agora vira `true`
+  // SEMPRE após o fetch retornar, mesmo se o consumo do payload falhar.
   useEffect(() => {
     let cancelled = false;
     setLoadedFromDb(false);
 
-    apiLoadAgents()
-      .then((dbAgents) => {
+    void (async () => {
+      try {
+        const dbAgents = await apiLoadAgents();
         if (cancelled) return;
-        setAgents(applySavedAgentOrder(dbAgents, tenantId));
-        setLoadedFromDb(true);
-      })
-      .catch(() => {
+        try {
+          setAgents(applySavedAgentOrder(dbAgents, tenantId));
+        } catch (e) {
+          console.warn("[agentes] applySavedAgentOrder falhou:", e);
+          setAgents(dbAgents);
+        }
+      } catch (e) {
         if (cancelled) return;
+        console.warn("[agentes] falha ao carregar:", e);
         setAgents([]);
-        setLoadedFromDb(true);
-      });
+      } finally {
+        if (!cancelled) setLoadedFromDb(true);
+      }
+    })();
 
     return () => {
       cancelled = true;
