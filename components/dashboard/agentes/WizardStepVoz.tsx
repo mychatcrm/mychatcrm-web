@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Volume2, Play, Square, Loader2, CheckCircle2 } from "lucide-react";
 import type { AgentWizardDraft } from "@/lib/agents";
 import { cn } from "@/lib/utils";
@@ -55,6 +55,21 @@ export function WizardStepVoz({ draft, onChange }: Props) {
   const previewObjectUrlRef = useRef<string | null>(null);
   const loadedRef = useRef(false);
 
+  const stopCurrentAudio = useCallback(() => {
+    const audio = audioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      audioRef.current = null;
+    }
+    if (previewObjectUrlRef.current) {
+      URL.revokeObjectURL(previewObjectUrlRef.current);
+      previewObjectUrlRef.current = null;
+    }
+    setPlayingId(null);
+  }, []);
+
   // Carrega vozes ao montar (lazy — só quando responseMode === 'audio')
   useEffect(() => {
     if (draft.responseMode !== "audio" || loadedRef.current) return;
@@ -72,20 +87,13 @@ export function WizardStepVoz({ draft, onChange }: Props) {
 
   useEffect(() => {
     return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = "";
-      }
-      if (previewObjectUrlRef.current) {
-        URL.revokeObjectURL(previewObjectUrlRef.current);
-        previewObjectUrlRef.current = null;
-      }
+      stopCurrentAudio();
     };
-  }, []);
+  }, [stopCurrentAudio]);
 
   function changePreviewLang(nextLang: PreviewLang) {
     setPreviewLang(nextLang);
-    stopAudio();
+    stopCurrentAudio();
     try {
       window.localStorage.setItem(PREVIEW_LANG_STORAGE_KEY, nextLang);
     } catch {
@@ -93,26 +101,14 @@ export function WizardStepVoz({ draft, onChange }: Props) {
     }
   }
 
-  function stopAudio() {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.src = "";
-    }
-    if (previewObjectUrlRef.current) {
-      URL.revokeObjectURL(previewObjectUrlRef.current);
-      previewObjectUrlRef.current = null;
-    }
-    setPlayingId(null);
-  }
-
   async function previewVoice(voice: Voice) {
     if (previewLoadingId) return;
     if (playingId === voice.voice_id) {
-      stopAudio();
+      stopCurrentAudio();
       return;
     }
 
-    stopAudio();
+    stopCurrentAudio();
     setPreviewLoadingId(voice.voice_id);
     setError("");
 
@@ -140,12 +136,18 @@ export function WizardStepVoz({ draft, onChange }: Props) {
 
       const audio = new Audio(objectUrl);
       audioRef.current = audio;
-      audio.onended = () => stopAudio();
-      audio.onerror = () => stopAudio();
-      await audio.play();
+      audio.onended = () => stopCurrentAudio();
+      audio.onerror = () => stopCurrentAudio();
+      await audio.play().catch((playError) => {
+        if (audioRef.current !== audio) return;
+        const message = playError instanceof Error ? playError.message : "";
+        if (message.includes("interrupted by a call to pause")) return;
+        throw playError;
+      });
+      if (audioRef.current !== audio) return;
       setPlayingId(voice.voice_id);
     } catch (e) {
-      stopAudio();
+      stopCurrentAudio();
       setError(e instanceof Error ? e.message : "Erro ao gerar preview de voz.");
     } finally {
       setPreviewLoadingId(null);
