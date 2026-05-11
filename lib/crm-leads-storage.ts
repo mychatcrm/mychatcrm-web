@@ -129,7 +129,10 @@ export function subscribeToCrmLeadsRealtime(
     )
     .subscribe();
 
+  const intervalId = setInterval(() => onChange(), 10_000);
+
   return () => {
+    clearInterval(intervalId);
     void supabase.removeChannel(channel);
   };
 }
