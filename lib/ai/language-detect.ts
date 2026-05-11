@@ -1,5 +1,14 @@
 export type SupportedLanguageCode = "pt" | "en" | "es" | "fr" | "de" | "it";
 
+const LANGUAGE_NAMES: Record<SupportedLanguageCode, string> = {
+  pt: "Portuguese",
+  en: "English",
+  es: "Spanish",
+  fr: "French",
+  de: "German",
+  it: "Italian",
+};
+
 const LANGUAGE_KEYWORDS: Record<SupportedLanguageCode, readonly string[]> = {
   pt: [
     "olá",
@@ -114,4 +123,8 @@ export function detectSupportedLanguageCode(text: string | null | undefined): Su
   }
 
   return best.score > 0 ? best.code : "pt";
+}
+
+export function supportedLanguageName(code: SupportedLanguageCode): string {
+  return LANGUAGE_NAMES[code];
 }

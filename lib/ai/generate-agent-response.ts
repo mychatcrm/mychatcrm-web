@@ -2,11 +2,9 @@ import { getAgentByIdForTenant } from "@/lib/agents/registry";
 import { getInferenceProfileByTenantAgent } from "@/lib/agents/inference-store";
 import { generateAIResponse } from "@/lib/ai/gateway";
 import type { AiFeature, AiGenerateResult, AiMessage } from "@/lib/ai/types";
+import { detectSupportedLanguageCode, supportedLanguageName } from "@/lib/ai/language-detect";
 import type { EvolutionAudioContent, EvolutionImageContent } from "@/lib/integrations/evolution-webhook-parse";
 import { transcribeAudio, describeImage } from "@/lib/ai/media-processor";
-
-const MATCH_USER_LANGUAGE_INSTRUCTION =
-  "IMPORTANT: Always respond in the exact same language the user writes in. If the user writes in Portuguese, respond in Portuguese. If the user writes in English, respond in English. If the user writes in Spanish, respond in Spanish. Automatically detect the language and always match it. Never respond in a different language than the one the user used.";
 
 /** Alinhado ao seed em supabase/migrations/20260506_tenant_agents.sql — usado se a tabela ainda não existir. */
 const FALLBACK_PUBLIC_MARKETING_SYSTEM =
@@ -24,6 +22,10 @@ function buildSystemPromptFromTemplateAgent(tenantId: string, agentId: string): 
     agent.promptRegrasAdicionais ? `Regras adicionais:\n${agent.promptRegrasAdicionais}` : null,
   ].filter((p): p is string => typeof p === "string" && p.trim().length > 0);
   return parts.length ? parts.join("\n\n") : null;
+}
+
+function buildLanguageInstruction(languageName: string): string {
+  return `CRITICAL INSTRUCTION - LANGUAGE: The user's message is in ${languageName}. You MUST respond EXCLUSIVELY in ${languageName}. Do not use any other language. This is mandatory and overrides everything else.`;
 }
 
 /**
@@ -98,6 +100,13 @@ export async function generateAgentResponse(params: {
     }
   }
 
+  const conversationOnly = params.messages.filter((m) => m.role === "user" || m.role === "assistant");
+  const latestUserMessage = [...conversationOnly, ...(mediaUserMessage ? [mediaUserMessage] : [])]
+    .reverse()
+    .find((m) => m.role === "user");
+  const detectedLanguageCode = detectSupportedLanguageCode(latestUserMessage?.content);
+  const detectedLanguageName = supportedLanguageName(detectedLanguageCode);
+
   // -------------------------------------------------------------------------
   // Agent / system prompt resolution
   // -------------------------------------------------------------------------
@@ -122,14 +131,13 @@ export async function generateAgentResponse(params: {
       model: params.model ?? "gpt-4o-mini",
     };
   }
-  systemPrompt = `${MATCH_USER_LANGUAGE_INSTRUCTION}\n\n${systemPrompt}`;
+  systemPrompt = `${buildLanguageInstruction(detectedLanguageName)}\n\n${systemPrompt}`;
 
   // -------------------------------------------------------------------------
   // Build message array
   // -------------------------------------------------------------------------
   const model = params.model?.trim() || profile?.model?.trim() || undefined;
   const systemMessage: AiMessage = { role: "system", content: systemPrompt };
-  const conversationOnly = params.messages.filter((m) => m.role === "user" || m.role === "assistant");
 
   // If there's a media message, append it after any existing conversation messages
   const messages: AiMessage[] = [
