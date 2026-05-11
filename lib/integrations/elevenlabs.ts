@@ -25,6 +25,8 @@ export type ElevenlabsVoice = {
   category: string;
 };
 
+export type ElevenlabsLanguageCode = "pt" | "en" | "es" | "fr" | "de" | "it";
+
 // ---------------------------------------------------------------------------
 // List voices
 // ---------------------------------------------------------------------------
@@ -86,6 +88,7 @@ export async function listElevenLabsVoices(): Promise<ElevenlabsVoice[]> {
 export async function textToSpeechElevenLabs(
   text: string,
   voiceId: string,
+  options?: { languageCode?: ElevenlabsLanguageCode },
 ): Promise<Buffer> {
   const apiKey = elevenlabsApiKey();
   if (!apiKey) throw new Error("ELEVENLABS_API_KEY não configurada.");
@@ -106,6 +109,7 @@ export async function textToSpeechElevenLabs(
       body: JSON.stringify({
         text: text.slice(0, 5000),
         model_id: "eleven_multilingual_v2",
+        ...(options?.languageCode ? { language_code: options.languageCode } : {}),
         voice_settings: {
           stability: 0.5,
           similarity_boost: 0.75,

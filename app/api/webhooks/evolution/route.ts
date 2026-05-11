@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
+import { detectSupportedLanguageCode, type SupportedLanguageCode } from "@/lib/ai/language-detect";
 import { sanitizeAgentResponseSettings } from "@/lib/agents";
 import {
   extractConnectionState,
@@ -46,6 +47,44 @@ function contentFromMsg(msg: EvolutionInboundMessage): string {
   if (msg.type === "audio") return "[Áudio]";
   if (msg.type === "image") return msg.caption ? `[Imagem] ${msg.caption}` : "[Imagem]";
   return "";
+}
+
+function inboundLanguageSource(msg: EvolutionInboundMessage, fallbackText = ""): string {
+  if (msg.type === "text") return msg.text;
+  if (msg.type === "image") return msg.caption || fallbackText;
+  return fallbackText;
+}
+
+function localizedMediaFailureReply(languageCode: SupportedLanguageCode, mediaLabel: "audio" | "image"): string {
+  const labels: Record<SupportedLanguageCode, Record<"audio" | "image", string>> = {
+    pt: { audio: "áudio", image: "imagem" },
+    en: { audio: "audio", image: "image" },
+    es: { audio: "audio", image: "imagen" },
+    fr: { audio: "audio", image: "image" },
+    de: { audio: "Audio", image: "Bild" },
+    it: { audio: "audio", image: "immagine" },
+  };
+  const replies: Record<SupportedLanguageCode, string> = {
+    pt: `Recebi seu ${labels.pt[mediaLabel]} mas não consegui processar. Pode enviar em texto?`,
+    en: `I received your ${labels.en[mediaLabel]}, but I couldn't process it. Could you send it as text?`,
+    es: `Recibí tu ${labels.es[mediaLabel]}, pero no pude procesarlo. ¿Puedes enviarlo en texto?`,
+    fr: `J'ai bien reçu votre ${labels.fr[mediaLabel]}, mais je n'ai pas pu le traiter. Pouvez-vous l'envoyer en texte ?`,
+    de: `Ich habe Ihr ${labels.de[mediaLabel]} erhalten, konnte es aber nicht verarbeiten. Können Sie es als Text senden?`,
+    it: `Ho ricevuto il tuo ${labels.it[mediaLabel]}, ma non sono riuscito a elaborarlo. Puoi inviarlo come testo?`,
+  };
+  return replies[languageCode];
+}
+
+function localizedGenericFailureReply(languageCode: SupportedLanguageCode): string {
+  const replies: Record<SupportedLanguageCode, string> = {
+    pt: "Não consegui gerar uma resposta agora. Por favor tente de novo em instantes.",
+    en: "I couldn't generate a response right now. Please try again in a moment.",
+    es: "No pude generar una respuesta ahora. Por favor inténtalo de nuevo en unos instantes.",
+    fr: "Je n'ai pas pu générer de réponse pour le moment. Veuillez réessayer dans quelques instants.",
+    de: "Ich konnte gerade keine Antwort erstellen. Bitte versuchen Sie es gleich noch einmal.",
+    it: "Non sono riuscito a generare una risposta ora. Riprova tra poco.",
+  };
+  return replies[languageCode];
 }
 
 function mimeToExt(mimetype: string): string {
@@ -273,6 +312,8 @@ export async function POST(request: Request) {
         mediaUrl: inboundMediaUrl,
       });
 
+      const inboundLanguageCode = detectSupportedLanguageCode(inboundLanguageSource(msg));
+
       const result = await generateAgentResponse({
         tenantId: row.tenant_id,
         agentId,
@@ -288,10 +329,10 @@ export async function POST(request: Request) {
       if (result.ok) {
         replyText = result.text;
       } else if (result.code === "MEDIA_DOWNLOAD_FAILED") {
-        const mediaLabel = msg.type === "audio" ? "áudio" : "imagem";
-        replyText = `Recebi seu ${mediaLabel} mas não consegui processar. Pode enviar em texto?`;
+        const mediaLabel = msg.type === "audio" ? "audio" : "image";
+        replyText = localizedMediaFailureReply(inboundLanguageCode, mediaLabel);
       } else {
-        replyText = "Não consegui gerar uma resposta agora. Por favor tente de novo em instantes.";
+        replyText = localizedGenericFailureReply(inboundLanguageCode);
       }
 
       const number = remoteJidToEvoNumber(msg.remoteJid);
@@ -315,7 +356,10 @@ export async function POST(request: Request) {
       if (useAudio) {
         // ── TTS via ElevenLabs → R2 → Evolution WhatsApp Audio ──────────
         try {
-          const audioBuffer = await textToSpeechElevenLabs(replyText.slice(0, 5000), voiceId!);
+          const languageCode = detectSupportedLanguageCode(inboundLanguageSource(msg, replyText));
+          const audioBuffer = await textToSpeechElevenLabs(replyText.slice(0, 5000), voiceId!, {
+            languageCode,
+          });
           const ttsKey = `whatsapp/${row.tenant_id}/tts/${Date.now()}_reply.mp3`;
           const r2Key = await uploadMediaToR2(audioBuffer, ttsKey, "audio/mpeg");
           const mediaUrl = r2Key ? `/api/client/media/${ttsKey}` : null;

@@ -5,6 +5,9 @@ import type { AiFeature, AiGenerateResult, AiMessage } from "@/lib/ai/types";
 import type { EvolutionAudioContent, EvolutionImageContent } from "@/lib/integrations/evolution-webhook-parse";
 import { transcribeAudio, describeImage } from "@/lib/ai/media-processor";
 
+const MATCH_USER_LANGUAGE_INSTRUCTION =
+  "IMPORTANT: Always respond in the exact same language the user writes in. If the user writes in Portuguese, respond in Portuguese. If the user writes in English, respond in English. If the user writes in Spanish, respond in Spanish. Automatically detect the language and always match it. Never respond in a different language than the one the user used.";
+
 /** Alinhado ao seed em supabase/migrations/20260506_tenant_agents.sql — usado se a tabela ainda não existir. */
 const FALLBACK_PUBLIC_MARKETING_SYSTEM =
   "És o assistente comercial do MyChatCRM no site público. Responde em português (pt-BR), com tom profissional e conciso. " +
@@ -119,6 +122,7 @@ export async function generateAgentResponse(params: {
       model: params.model ?? "gpt-4o-mini",
     };
   }
+  systemPrompt = `${MATCH_USER_LANGUAGE_INSTRUCTION}\n\n${systemPrompt}`;
 
   // -------------------------------------------------------------------------
   // Build message array
