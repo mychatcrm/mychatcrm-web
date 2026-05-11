@@ -902,13 +902,18 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return conversations;
-    return conversations.filter(
-      (c) =>
-        c.remoteJid.toLowerCase().includes(q) ||
-        jidToPhone(c.remoteJid).includes(q) ||
-        c.lastContent.toLowerCase().includes(q),
-    );
-  }, [conversations, query]);
+    return conversations.filter((c) => {
+      // Número: compara só dígitos (ignora @s.whatsapp.net, +, espaços)
+      const digits = (c.remoteJid.split("@")[0] ?? "").replace(/\D/g, "");
+      if (digits.includes(q.replace(/\D/g, ""))) return true;
+      // Nome cacheado (pushName/name)
+      const name = contactNames[c.remoteJid];
+      if (name && name.toLowerCase().includes(q)) return true;
+      // Conteúdo da última mensagem
+      if (c.lastContent.toLowerCase().includes(q)) return true;
+      return false;
+    });
+  }, [conversations, query, contactNames]);
 
   const active = useMemo(
     () => conversations.find((c) => c.remoteJid === selectedJid) ?? null,
@@ -999,19 +1004,6 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
           }}
         >
           <span style={{ fontSize: 18, fontWeight: 600, color: W.text }}>MyChatCRM</span>
-          <div style={{ display: "flex", gap: 6 }}>
-            {/* Dots menu icon (decorative) */}
-            <button
-              type="button"
-              style={{ background: "none", border: "none", cursor: "pointer", padding: 6, borderRadius: "50%" }}
-            >
-              <svg viewBox="0 0 24 24" width="20" height="20" fill={W.muted}>
-                <circle cx="12" cy="5" r="1.5" />
-                <circle cx="12" cy="12" r="1.5" />
-                <circle cx="12" cy="19" r="1.5" />
-              </svg>
-            </button>
-          </div>
         </div>
 
         {/* Search */}
@@ -1224,21 +1216,8 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 );
               })()}
 
-              {/* Action icons (decorative) */}
-              <div style={{ display: "flex", gap: 10 }}>
-                <button type="button" style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}>
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke={W.muted} strokeWidth="2" strokeLinecap="round">
-                    <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
-                  </svg>
-                </button>
-                <button type="button" style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}>
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill={W.muted}>
-                    <circle cx="12" cy="5" r="1.5" />
-                    <circle cx="12" cy="12" r="1.5" />
-                    <circle cx="12" cy="19" r="1.5" />
-                  </svg>
-                </button>
-              </div>
+              {/* Action icons placeholder — mantido sem pontinhos */}
+              <div style={{ display: "flex", gap: 10 }} />
             </div>
 
             {/* Messages thread */}
