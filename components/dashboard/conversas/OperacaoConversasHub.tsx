@@ -192,6 +192,36 @@ function makeWaveBars(seed: string, count = 32): number[] {
   });
 }
 
+// ── Highlight matching text in a string (case-insensitive) ──────────────────
+function highlightText(text: string, term: string): ReactNode {
+  if (!term.trim()) return text;
+  const termLower = term.toLowerCase();
+  const textLower = text.toLowerCase();
+  const parts: ReactNode[] = [];
+  let lastIndex = 0;
+  let idx = textLower.indexOf(termLower, lastIndex);
+  while (idx !== -1) {
+    if (idx > lastIndex) parts.push(text.slice(lastIndex, idx));
+    parts.push(
+      <mark
+        key={idx}
+        style={{
+          background: "#f0c842",
+          color: "#111",
+          borderRadius: 2,
+          padding: "0 1px",
+        }}
+      >
+        {text.slice(idx, idx + term.length)}
+      </mark>,
+    );
+    lastIndex = idx + term.length;
+    idx = textLower.indexOf(termLower, lastIndex);
+  }
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  return <>{parts}</>;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // AudioPlayer — WhatsApp-style custom player
 // ─────────────────────────────────────────────────────────────────────────────
@@ -401,7 +431,7 @@ function ImageBubble({ src, caption }: { src: string; caption: string }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // MessageBubble
 // ─────────────────────────────────────────────────────────────────────────────
-function MessageBubble({ msg }: { msg: WaMessage }) {
+function MessageBubble({ msg, highlight }: { msg: WaMessage; highlight?: string }) {
   const out = msg.direction === "outbound";
   const caption = msg.content.replace(/\[Imagem\]/g, "").trim();
 
@@ -442,7 +472,7 @@ function MessageBubble({ msg }: { msg: WaMessage }) {
               paddingRight: 52, // room for timestamp
             }}
           >
-            {msg.content}
+            {highlight ? highlightText(msg.content, highlight) : msg.content}
           </p>
         )}
 
@@ -669,11 +699,27 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   const [contactNames,   setContactNames]   = useState<Record<string, string | null>>({});
   // Overlay de foto fullscreen (null = fechado)
   const [photoOverlay,   setPhotoOverlay]   = useState<string | null>(null);
-  // Cache em ref para evitar fetches duplicados concorrentes
-  const photoCacheRef = useRef<Set<string>>(new Set());
-  const nameCacheRef  = useRef<Set<string>>(new Set());
 
-  const threadEndRef = useRef<HTMLDivElement>(null);
+  // ── In-conversation search state ─────────────────────────────────────────
+  const [inConvSearch,   setInConvSearch]   = useState(false);
+  const [inConvQuery,    setInConvQuery]    = useState("");
+  const [inConvMatchIdx, setInConvMatchIdx] = useState(0);
+
+  // ── Scroll state ──────────────────────────────────────────────────────────
+  // isScrollable: true when there's enough content to scroll (shows nav buttons)
+  const [isScrollable,   setIsScrollable]   = useState(false);
+
+  // Cache em ref para evitar fetches duplicados concorrentes
+  const photoCacheRef    = useRef<Set<string>>(new Set());
+  const nameCacheRef     = useRef<Set<string>>(new Set());
+  // Ref para saber se o usuário está perto do final (< 150px do bottom)
+  const isNearBottomRef  = useRef(true);
+  // Ref para evitar flicker ao atualizar isScrollable
+  const isScrollableRef  = useRef(false);
+
+  const threadEndRef     = useRef<HTMLDivElement>(null);
+  const msgContainerRef  = useRef<HTMLDivElement>(null);
+  const inConvSearchRef  = useRef<HTMLInputElement>(null);
 
   // ── Initial load ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -755,7 +801,6 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   }, [tenantId, selectedJid]);
 
   // ── Polling de fallback (garante sincronização mesmo sem Realtime) ─────────
-  // Atualiza a lista de conversas a cada 10s e as mensagens da conversa ativa a cada 5s
   useEffect(() => {
     const refreshConvs = async () => {
       if (typeof document !== "undefined" && document.hidden) return;
@@ -793,8 +838,6 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   }, [selectedJid]);
 
   // ── Fetch contact photo (cached) ─────────────────────────────────────────
-  // Usa o próprio route como img src — o browser envia Accept: image/* e o
-  // servidor faz proxy do CDN WhatsApp. onError no <img> trata o fallback.
   const fetchPhoto = useCallback((jid: string) => {
     if (photoCacheRef.current.has(jid)) return;
     photoCacheRef.current.add(jid);
@@ -815,6 +858,35 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     } catch { /* silencioso */ }
   }, []);
 
+  // ── Scroll handler for messages container ────────────────────────────────
+  const handleMsgScroll = useCallback(() => {
+    const el = msgContainerRef.current;
+    if (!el) return;
+    // Near-bottom: < 150px from bottom
+    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+    // Scrollable: enough content to need navigation
+    const scrollable = el.scrollHeight > el.clientHeight + 100;
+    if (scrollable !== isScrollableRef.current) {
+      isScrollableRef.current = scrollable;
+      setIsScrollable(scrollable);
+    }
+  }, []);
+
+  // ── Update scrollable after messages change (e.g. after load) ───────────
+  useEffect(() => {
+    // Use rAF to wait for DOM paint
+    const id = requestAnimationFrame(() => {
+      const el = msgContainerRef.current;
+      if (!el) return;
+      const scrollable = el.scrollHeight > el.clientHeight + 100;
+      if (scrollable !== isScrollableRef.current) {
+        isScrollableRef.current = scrollable;
+        setIsScrollable(scrollable);
+      }
+    });
+    return () => cancelAnimationFrame(id);
+  }, [selectedJid, conversations]);
+
   // ── Select conversation ───────────────────────────────────────────────────
   const handleSelect = useCallback(
     async (jid: string) => {
@@ -822,6 +894,12 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
       setMobileThread(true);
       setSendError("");
       setDraft("");
+      // Reset search when switching conversations
+      setInConvSearch(false);
+      setInConvQuery("");
+      setInConvMatchIdx(0);
+      // Reset near-bottom so new conversation always scrolls to bottom
+      isNearBottomRef.current = true;
       setConversations((prev) => prev.map((c) => (c.remoteJid === jid ? { ...c, unreadCount: 0 } : c)));
 
       // Busca foto e nome do contato (não bloqueia a abertura da conversa)
@@ -843,9 +921,11 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     [conversations, fetchPhoto, fetchName],
   );
 
-  // ── Scroll to bottom ──────────────────────────────────────────────────────
+  // ── Smart auto-scroll: only scroll when near bottom ──────────────────────
   useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (isNearBottomRef.current) {
+      threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [selectedJid, conversations]);
 
   // ── Send ──────────────────────────────────────────────────────────────────
@@ -855,6 +935,8 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     const text = draft.trim();
     setDraft("");
     setSending(true);
+    // When user sends a message, we want to scroll to bottom
+    isNearBottomRef.current = true;
 
     const tempMsg: WaMessage = {
       id: `temp-${Date.now()}`,
@@ -898,6 +980,42 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     }
   }, [selectedJid, draft, sending]);
 
+  // ── Scroll helpers (first / last message navigation) ─────────────────────
+  const scrollToTop = useCallback(() => {
+    const el = msgContainerRef.current;
+    if (el) el.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    isNearBottomRef.current = true;
+  }, []);
+
+  // ── In-conversation search matches ────────────────────────────────────────
+  const inConvMatches = useMemo<string[]>(() => {
+    if (!inConvSearch || !inConvQuery.trim()) return [];
+    const q = inConvQuery.trim().toLowerCase();
+    const conv = conversations.find((c) => c.remoteJid === selectedJid);
+    if (!conv) return [];
+    return conv.messages
+      .filter((m) => m.kind === "text" && m.content.toLowerCase().includes(q))
+      .map((m) => m.id);
+  }, [inConvSearch, inConvQuery, conversations, selectedJid]);
+
+  // When matches change, jump to the first result
+  useEffect(() => {
+    setInConvMatchIdx(0);
+  }, [inConvMatches.length, inConvQuery]);
+
+  // Scroll to current match
+  useEffect(() => {
+    if (!inConvMatches.length) return;
+    const id = inConvMatches[inConvMatchIdx];
+    if (!id) return;
+    const el = msgContainerRef.current?.querySelector(`[data-msg-id="${id}"]`);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [inConvMatches, inConvMatchIdx]);
+
   // ── Derived ───────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -920,24 +1038,29 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     [conversations, selectedJid],
   );
 
-  // ── ESC fecha overlay de foto fullscreen ─────────────────────────────────
+  // ── ESC fecha overlay de foto e busca interna ────────────────────────────
   useEffect(() => {
-    if (!photoOverlay) return;
-    const h = (e: KeyboardEvent) => { if (e.key === "Escape") setPhotoOverlay(null); };
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (photoOverlay) { setPhotoOverlay(null); return; }
+        if (inConvSearch) { setInConvSearch(false); setInConvQuery(""); }
+      }
+    };
     document.addEventListener("keydown", h);
     return () => document.removeEventListener("keydown", h);
-  }, [photoOverlay]);
+  }, [photoOverlay, inConvSearch]);
+
+  // Focus search input when it opens
+  useEffect(() => {
+    if (inConvSearch) {
+      requestAnimationFrame(() => inConvSearchRef.current?.focus());
+    }
+  }, [inConvSearch]);
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div
       style={{
-        // Position fixed ignora qualquer container ancestral que esteja
-        // restringindo largura/altura. As CSS vars vêm do DashboardShell
-        // (--mc-sidebar-w: 0/64/240px conforme breakpoint+collapse,
-        //  --mc-header-h: 48px). Resultado: o hub ocupa exatamente o
-        // espaço disponível ao lado da sidebar e abaixo do header,
-        // sem padding externo, em qualquer layout.
         position: "fixed",
         top: "var(--mc-header-h, 48px)",
         left: "var(--mc-sidebar-w, 240px)",
@@ -947,8 +1070,6 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
         background: W.bgApp,
         overflow: "hidden",
         fontFamily: "'Segoe UI', system-ui, sans-serif",
-        // z-index baixo para ficar abaixo de overlays globais (drawer, modal)
-        // mas acima do <main> vazio. Drawer mobile usa z-50, dialogs usam z-[60].
         zIndex: 1,
       }}
     >
@@ -1150,7 +1271,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 </svg>
               </button>
 
-              {/* Avatar — clicável para fullscreen quando há foto */}
+              {/* Avatar */}
               {(() => {
                 const hasPhoto = Boolean(contactPhotos[active.remoteJid]);
                 return (
@@ -1178,7 +1299,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 );
               })()}
 
-              {/* Contact info — Ajuste 3 (nome) + Ajuste 4 (link WhatsApp) */}
+              {/* Contact info */}
               {(() => {
                 const phone = jidToPhone(active.remoteJid);
                 const name = contactNames[active.remoteJid];
@@ -1186,7 +1307,6 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 const waUrl = `https://wa.me/${waNumber}`;
                 return (
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    {/* Nome ou número — clicável abre WhatsApp */}
                     <a
                       href={waUrl}
                       target="_blank"
@@ -1202,13 +1322,11 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {name ?? phone}
                       </span>
-                      {/* Ícone WhatsApp */}
                       <svg viewBox="0 0 24 24" width="13" height="13" fill="#25D366" style={{ flexShrink: 0, opacity: 0.85 }}>
                         <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
                         <path d="M12 0C5.373 0 0 5.373 0 12c0 2.122.558 4.116 1.535 5.845L.057 23.57a.75.75 0 0 0 .92.92l5.725-1.478A11.955 11.955 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-1.93 0-3.732-.51-5.29-1.4l-.38-.22-3.945 1.018 1.018-3.946-.22-.38A9.956 9.956 0 0 1 2 12C2 6.477 6.477 2 12 2s10 4.477 10 10-4.477 10-10 10z"/>
                       </svg>
                     </a>
-                    {/* Número abaixo do nome (quando há nome) */}
                     {name && (
                       <p style={{ margin: 0, fontSize: 12, color: "#8696a0" }}>{phone}</p>
                     )}
@@ -1216,68 +1334,276 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 );
               })()}
 
-              {/* Action icons placeholder — mantido sem pontinhos */}
-              <div style={{ display: "flex", gap: 10 }} />
+              {/* Header action: lupa para busca interna */}
+              <button
+                type="button"
+                aria-label="Buscar na conversa"
+                title="Buscar na conversa"
+                onClick={() => {
+                  setInConvSearch((v) => !v);
+                  setInConvQuery("");
+                  setInConvMatchIdx(0);
+                }}
+                style={{
+                  background: inConvSearch ? "rgba(255,255,255,0.1)" : "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: 6,
+                  borderRadius: 6,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: inConvSearch ? W.text : W.muted,
+                  flexShrink: 0,
+                }}
+              >
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="m21 21-4.35-4.35" />
+                </svg>
+              </button>
             </div>
 
-            {/* Messages thread */}
-            <div
-              style={{
-                flex: 1,
-                overflowY: "auto",
-                padding: "12px 5%",
-                display: "flex",
-                flexDirection: "column",
-                gap: 3,
-                ...CHAT_BG_STYLE,
-              }}
-            >
-              {!active.messagesLoaded ? (
-                <div style={{ textAlign: "center", padding: 32, color: W.muted, fontSize: 14 }}>
-                  Carregando mensagens…
+            {/* In-conversation search bar */}
+            {inConvSearch && (
+              <div
+                style={{
+                  background: W.bgHeader,
+                  borderBottom: `1px solid ${W.bgBorder}`,
+                  padding: "8px 12px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  flexShrink: 0,
+                }}
+              >
+                {/* Search input */}
+                <div style={{ position: "relative", flex: 1 }}>
+                  <svg
+                    viewBox="0 0 24 24" width="14" height="14" fill="none"
+                    stroke={W.muted} strokeWidth="2" strokeLinecap="round"
+                    style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
+                  >
+                    <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
+                  </svg>
+                  <input
+                    ref={inConvSearchRef}
+                    value={inConvQuery}
+                    onChange={(e) => setInConvQuery(e.target.value)}
+                    placeholder="Buscar na conversa…"
+                    style={{
+                      width: "100%", height: 33,
+                      background: W.bgInput, border: "none", borderRadius: 6,
+                      paddingLeft: 30, paddingRight: 10,
+                      fontSize: 13.5, color: W.text, outline: "none",
+                      boxSizing: "border-box",
+                    }}
+                  />
                 </div>
-              ) : active.messages.length === 0 ? (
-                <div
+
+                {/* Results counter */}
+                <span style={{ fontSize: 12, color: W.muted, whiteSpace: "nowrap", minWidth: 70, textAlign: "center" }}>
+                  {inConvMatches.length === 0
+                    ? (inConvQuery.trim() ? "Sem resultados" : "")
+                    : `${inConvMatchIdx + 1} de ${inConvMatches.length}`}
+                </span>
+
+                {/* Prev result */}
+                <button
+                  type="button"
+                  aria-label="Resultado anterior"
+                  disabled={inConvMatches.length === 0}
+                  onClick={() => setInConvMatchIdx((i) => (i - 1 + inConvMatches.length) % inConvMatches.length)}
                   style={{
-                    margin: "auto",
-                    background: "rgba(11,20,26,0.85)",
-                    borderRadius: 10,
-                    padding: "8px 16px",
-                    fontSize: 13,
-                    color: W.muted,
-                    backdropFilter: "blur(4px)",
+                    background: "none", border: "none", cursor: inConvMatches.length ? "pointer" : "default",
+                    padding: 4, color: inConvMatches.length ? W.text : W.muted, display: "flex",
+                    opacity: inConvMatches.length ? 1 : 0.4,
                   }}
                 >
-                  Sem mensagens nesta conversa ainda.
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="15 18 9 12 15 6" />
+                  </svg>
+                </button>
+
+                {/* Next result */}
+                <button
+                  type="button"
+                  aria-label="Próximo resultado"
+                  disabled={inConvMatches.length === 0}
+                  onClick={() => setInConvMatchIdx((i) => (i + 1) % inConvMatches.length)}
+                  style={{
+                    background: "none", border: "none", cursor: inConvMatches.length ? "pointer" : "default",
+                    padding: 4, color: inConvMatches.length ? W.text : W.muted, display: "flex",
+                    opacity: inConvMatches.length ? 1 : 0.4,
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                </button>
+
+                {/* Close search */}
+                <button
+                  type="button"
+                  aria-label="Fechar busca"
+                  onClick={() => { setInConvSearch(false); setInConvQuery(""); setInConvMatchIdx(0); }}
+                  style={{
+                    background: "none", border: "none", cursor: "pointer",
+                    padding: 4, color: W.muted, display: "flex",
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+            )}
+
+            {/* Messages thread — wrapped in position:relative for floating buttons */}
+            <div style={{ flex: 1, position: "relative", minHeight: 0, display: "flex", flexDirection: "column" }}>
+              <div
+                ref={msgContainerRef}
+                onScroll={handleMsgScroll}
+                style={{
+                  flex: 1,
+                  overflowY: "auto",
+                  padding: "12px 5%",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 3,
+                  ...CHAT_BG_STYLE,
+                }}
+              >
+                {!active.messagesLoaded ? (
+                  <div style={{ textAlign: "center", padding: 32, color: W.muted, fontSize: 14 }}>
+                    Carregando mensagens…
+                  </div>
+                ) : active.messages.length === 0 ? (
+                  <div
+                    style={{
+                      margin: "auto",
+                      background: "rgba(11,20,26,0.85)",
+                      borderRadius: 10,
+                      padding: "8px 16px",
+                      fontSize: 13,
+                      color: W.muted,
+                      backdropFilter: "blur(4px)",
+                    }}
+                  >
+                    Sem mensagens nesta conversa ainda.
+                  </div>
+                ) : (
+                  active.messages.map((m, i) => {
+                    const prev = active.messages[i - 1];
+                    const showDateSep = !prev || !sameCalendarDay(prev.created_at, m.created_at);
+                    const isCurrentMatch =
+                      inConvSearch && inConvMatches.length > 0 && inConvMatches[inConvMatchIdx] === m.id;
+                    return (
+                      <div
+                        key={m.id}
+                        data-msg-id={m.id}
+                        style={
+                          isCurrentMatch
+                            ? {
+                                borderRadius: 8,
+                                outline: "2px solid rgba(240,200,66,0.45)",
+                                outlineOffset: 3,
+                              }
+                            : undefined
+                        }
+                      >
+                        {showDateSep && (
+                          <div style={{ display: "flex", justifyContent: "center", margin: "10px 0 6px" }}>
+                            <span
+                              style={{
+                                background: "#1a2730",
+                                color: W.muted,
+                                borderRadius: 8,
+                                padding: "4px 14px",
+                                fontSize: 12,
+                              }}
+                            >
+                              {formatFullDate(m.created_at)}
+                            </span>
+                          </div>
+                        )}
+                        <MessageBubble
+                          msg={m}
+                          highlight={inConvSearch && inConvQuery.trim() ? inConvQuery.trim() : undefined}
+                        />
+                      </div>
+                    );
+                  })
+                )}
+                <div ref={threadEndRef} />
+              </div>
+
+              {/* Floating navigation buttons — only when scrollable */}
+              {isScrollable && (
+                <div
+                  style={{
+                    position: "absolute",
+                    bottom: 14,
+                    right: 18,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                    zIndex: 10,
+                  }}
+                >
+                  {/* ↑ First message */}
+                  <button
+                    type="button"
+                    aria-label="Ir para a primeira mensagem"
+                    title="Primeira mensagem"
+                    onClick={scrollToTop}
+                    style={{
+                      width: 38,
+                      height: 38,
+                      borderRadius: "50%",
+                      background: "#202c33",
+                      border: "none",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.45)",
+                      color: W.text,
+                      transition: "opacity 0.15s",
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="18 15 12 9 6 15" />
+                    </svg>
+                  </button>
+
+                  {/* ↓ Last message */}
+                  <button
+                    type="button"
+                    aria-label="Ir para a última mensagem"
+                    title="Última mensagem"
+                    onClick={scrollToBottom}
+                    style={{
+                      width: 38,
+                      height: 38,
+                      borderRadius: "50%",
+                      background: "#202c33",
+                      border: "none",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.45)",
+                      color: W.text,
+                      transition: "opacity 0.15s",
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </button>
                 </div>
-              ) : (
-                active.messages.map((m, i) => {
-                  const prev = active.messages[i - 1];
-                  const showDateSep =
-                    !prev || !sameCalendarDay(prev.created_at, m.created_at);
-                  return (
-                    <div key={m.id}>
-                      {showDateSep && (
-                        <div style={{ display: "flex", justifyContent: "center", margin: "10px 0 6px" }}>
-                          <span
-                            style={{
-                              background: "#1a2730",
-                              color: W.muted,
-                              borderRadius: 8,
-                              padding: "4px 14px",
-                              fontSize: 12,
-                            }}
-                          >
-                            {formatFullDate(m.created_at)}
-                          </span>
-                        </div>
-                      )}
-                      <MessageBubble msg={m} />
-                    </div>
-                  );
-                })
               )}
-              <div ref={threadEndRef} />
             </div>
 
             {/* Input footer */}
