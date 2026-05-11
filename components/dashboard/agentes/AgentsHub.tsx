@@ -110,13 +110,67 @@ async function apiDeleteAgent(agentId: string): Promise<void> {
 // Main component
 // ---------------------------------------------------------------------------
 
+function AgentsGridSkeleton() {
+  return (
+    <div className="grid auto-rows-fr gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label="Carregando agentes">
+      {Array.from({ length: 3 }).map((_, index) => (
+        <div
+          key={index}
+          className="min-h-[280px] rounded-xl border border-line bg-surface-card p-4 shadow-sm"
+        >
+          <div className="animate-pulse space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="h-11 w-11 rounded-xl bg-surface-elevated" />
+                <div className="space-y-2">
+                  <div className="h-4 w-32 rounded bg-surface-elevated" />
+                  <div className="h-3 w-24 rounded bg-surface-elevated/80" />
+                </div>
+              </div>
+              <div className="h-7 w-20 rounded-full bg-surface-elevated" />
+            </div>
+            <div className="space-y-2">
+              <div className="h-3 w-full rounded bg-surface-elevated/80" />
+              <div className="h-3 w-4/5 rounded bg-surface-elevated/70" />
+              <div className="h-3 w-2/3 rounded bg-surface-elevated/60" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="h-16 rounded-xl bg-surface-elevated/70" />
+              <div className="h-16 rounded-xl bg-surface-elevated/70" />
+            </div>
+            <div className="h-10 rounded-xl bg-surface-elevated" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AgentsEmptyState({ onCreate }: { onCreate: () => void }) {
+  return (
+    <section className="rounded-xl border border-dashed border-line bg-surface-card px-6 py-10 text-center">
+      <h3 className="text-base font-semibold text-content">Nenhum agente criado ainda</h3>
+      <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-content-muted">
+        Crie seu primeiro agente para começar a automatizar atendimentos e configurar canais.
+      </p>
+      <Button
+        type="button"
+        onClick={onCreate}
+        className="mt-5 inline-flex min-h-10 items-center gap-1.5 rounded-xl bg-primary px-4 text-sm font-semibold text-white hover:bg-primary-hover"
+      >
+        <Plus className="h-4 w-4 shrink-0" strokeWidth={2.25} aria-hidden />
+        Criar primeiro agente
+      </Button>
+    </section>
+  );
+}
+
 function AgentsListSectionInner({ session }: { session: ClientSession }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tenantId = session.tenantId;
 
-  // Start with template agents as placeholder while loading from DB
-  const [agents, setAgents] = useState<Agent[]>(() => listAgentsForTenant(tenantId));
+  const [agents, setAgents] = useState<Agent[]>([]);
   const [loadedFromDb, setLoadedFromDb] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [createFormKey, setCreateFormKey] = useState(0);
@@ -140,18 +194,11 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
 
     apiLoadAgents()
       .then((dbAgents) => {
-        if (dbAgents.length > 0) {
-          // Use DB agents (real data), apply saved order
-          setAgents(applySavedAgentOrder(dbAgents, tenantId));
-        } else {
-          // No DB agents yet — keep templates as suggestions, apply saved order
-          setAgents((prev) => applySavedAgentOrder(prev, tenantId));
-        }
+        setAgents(applySavedAgentOrder(dbAgents, tenantId));
         setLoadedFromDb(true);
       })
       .catch(() => {
-        // On error, fall back to templates with saved order
-        setAgents((prev) => applySavedAgentOrder(prev, tenantId));
+        setAgents([]);
         setLoadedFromDb(true);
       });
   }, [tenantId]);
@@ -321,21 +368,27 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
         </div>
       </div>
 
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleAgentsDragEnd}>
-        <SortableContext items={agents.map((a) => a.id)} strategy={rectSortingStrategy}>
-          <div className="grid auto-rows-fr gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {agents.map((agent) => (
-              <SortableAgentCard
-                key={agent.id}
-                agent={agent}
-                onManage={() => openManageAgent(agent)}
-                onToggleStatus={handleToggleStatus}
-                onDuplicate={handleDuplicate}
-              />
-            ))}
-          </div>
-        </SortableContext>
-      </DndContext>
+      {!loadedFromDb ? (
+        <AgentsGridSkeleton />
+      ) : agents.length === 0 ? (
+        <AgentsEmptyState onCreate={openCreateOverlay} />
+      ) : (
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleAgentsDragEnd}>
+          <SortableContext items={agents.map((a) => a.id)} strategy={rectSortingStrategy}>
+            <div className="grid auto-rows-fr gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {agents.map((agent) => (
+                <SortableAgentCard
+                  key={agent.id}
+                  agent={agent}
+                  onManage={() => openManageAgent(agent)}
+                  onToggleStatus={handleToggleStatus}
+                  onDuplicate={handleDuplicate}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
+      )}
     </div>
   );
 }
