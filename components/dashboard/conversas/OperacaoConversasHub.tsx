@@ -435,6 +435,26 @@ function MessageBubble({ msg, highlight }: { msg: WaMessage; highlight?: string 
   const out = msg.direction === "outbound";
   const caption = msg.content.replace(/\[Imagem\]/g, "").trim();
 
+  // Timestamp row — shared by all bubble types
+  // outbound width ~64px (time + ticks), inbound ~44px (time only)
+  const TimestampRow = (
+    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+      {out && msg.agent_id && msg.agent_id !== "human" && (
+        <span style={{ fontSize: 10, color: W.muted, opacity: 0.8 }}>IA</span>
+      )}
+      <span style={{ fontSize: 11, color: W.muted, whiteSpace: "nowrap" }}>
+        {formatShortTime(msg.created_at)}
+      </span>
+      {out && (
+        // Double tick ✓✓
+        <svg width="16" height="11" viewBox="0 0 16 11" fill="none">
+          <path d="M1 5.5 4.5 9 10 1" stroke={W.green} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M5 5.5 8.5 9 15 1" stroke={W.green} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )}
+    </div>
+  );
+
   return (
     <div style={{ display: "flex", width: "100%", justifyContent: out ? "flex-end" : "flex-start" }}>
       <div
@@ -442,70 +462,89 @@ function MessageBubble({ msg, highlight }: { msg: WaMessage; highlight?: string 
           maxWidth: "85%",
           background: out ? W.bubbleOut : W.bubbleIn,
           borderRadius: out ? "8px 8px 0 8px" : "8px 8px 8px 0",
-          padding: msg.kind === "image" && msg.media_url ? "4px 4px 0 4px" : "7px 10px 4px 10px",
+          padding: msg.kind === "image" && msg.media_url ? "4px 4px 0 4px" : "7px 10px 5px 10px",
           boxShadow: "0 1px 1px rgba(0,0,0,0.25)",
           position: "relative",
         }}
       >
         {/* ── Content ── */}
         {msg.kind === "audio" ? (
-          msg.media_url ? (
-            <AudioPlayer src={msg.media_url} msgId={msg.id} isOut={out} />
-          ) : (
-            <span style={{ color: W.muted, fontSize: 13 }}>🎵 Áudio</span>
-          )
+          <>
+            {msg.media_url ? (
+              <AudioPlayer src={msg.media_url} msgId={msg.id} isOut={out} />
+            ) : (
+              <span style={{ color: W.muted, fontSize: 13 }}>🎵 Áudio</span>
+            )}
+            {/* Timestamp below audio player */}
+            <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: 3, paddingBottom: 1 }}>
+              {TimestampRow}
+            </div>
+          </>
         ) : msg.kind === "image" ? (
-          msg.media_url ? (
-            <ImageBubble src={msg.media_url} caption={caption} />
-          ) : (
-            <span style={{ color: W.muted, fontSize: 13 }}>📷 Imagem</span>
-          )
+          <>
+            {msg.media_url ? (
+              <ImageBubble src={msg.media_url} caption={caption} />
+            ) : (
+              <span style={{ color: W.muted, fontSize: 13 }}>📷 Imagem</span>
+            )}
+            {/* Timestamp below image */}
+            <div style={{ display: "flex", justifyContent: "flex-end", padding: "3px 4px 2px" }}>
+              {TimestampRow}
+            </div>
+          </>
         ) : (
-          <p
-            style={{
-              margin: 0,
-              fontSize: 14.2,
-              lineHeight: 1.55,
-              color: W.text,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              paddingRight: 52, // room for timestamp
-            }}
-          >
-            {highlight ? highlightText(msg.content, highlight) : msg.content}
-          </p>
+          /*
+           * Text bubble — WhatsApp spacer technique:
+           *
+           * An invisible inline <span> at the end of the text pushes the last
+           * line so it never overlaps the timestamp. The timestamp is floated
+           * right with a negative margin-top equal to the spacer height, so it
+           * "rises" to sit beside the spacer on that last line.
+           *
+           * Spacer width = timestamp visual width:
+           *   outbound: time + double-tick ≈ 64px
+           *   inbound:  time only           ≈ 46px
+           */
+          <>
+            <p
+              style={{
+                margin: 0,
+                fontSize: 14.2,
+                lineHeight: 1.55,
+                color: W.text,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {highlight ? highlightText(msg.content, highlight) : msg.content}
+              {/* Invisible spacer — reserves the last-line slot for the timestamp */}
+              <span
+                aria-hidden
+                style={{
+                  display: "inline-block",
+                  width: out ? 64 : 46,
+                  height: 15,
+                  verticalAlign: "bottom",
+                }}
+              />
+            </p>
+            {/* Timestamp floated right, rises up next to the spacer */}
+            <div
+              style={{
+                float: "right",
+                marginTop: -15,
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                paddingBottom: 1,
+              }}
+            >
+              {TimestampRow}
+            </div>
+            {/* Clears the float so the bubble grows to contain it */}
+            <div style={{ clear: "both" }} />
+          </>
         )}
-
-        {/* ── Timestamp row ── */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            gap: 4,
-            marginTop: msg.kind === "text" ? -14 : 3,
-            paddingBottom: 2,
-            paddingRight: msg.kind === "text" ? 0 : 4,
-            float: msg.kind === "text" ? "right" : undefined,
-          }}
-        >
-          {out && msg.agent_id && msg.agent_id !== "human" && (
-            <span style={{ fontSize: 10, color: W.muted, opacity: 0.8 }}>IA</span>
-          )}
-          <span style={{ fontSize: 11, color: W.muted, whiteSpace: "nowrap" }}>
-            {formatShortTime(msg.created_at)}
-          </span>
-          {out && (
-            // Double tick ✓✓
-            <svg width="16" height="11" viewBox="0 0 16 11" fill="none">
-              <path d="M1 5.5 4.5 9 10 1" stroke={W.green} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M5 5.5 8.5 9 15 1" stroke={W.green} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          )}
-        </div>
-
-        {/* Clear float */}
-        {msg.kind === "text" && <div style={{ clear: "both" }} />}
       </div>
     </div>
   );
