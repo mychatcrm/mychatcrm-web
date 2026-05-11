@@ -5,10 +5,33 @@ import dynamic from "next/dynamic";
 import { createClient } from "@supabase/supabase-js";
 import { cn } from "@/lib/utils";
 import type { ClientSession } from "@/lib/client-auth";
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const emojiData = require("@emoji-mart/data") as unknown;
-// Lazy-loaded — accesses browser globals; must not run on server
-const EmojiPicker = dynamic(() => import("@emoji-mart/react"), { ssr: false });
+
+// ── Emoji picker (data + react component) ────────────────────────────────────
+// Antes usávamos `require("@emoji-mart/data")` no top-level, que em Next.js
+// 14 client-side podia retornar `{ default: {...} }` (CJS interop) — o
+// emoji-mart core esperava o objeto direto e a chamada `data.categories.unshift`
+// dentro de `init()` falhava silenciosamente em uma Promise sem catch,
+// deixando o shadow root vazio e o picker invisível.
+// Agora carregamos data + react picker juntos via dynamic import, garantindo
+// que ambos rodem só no client (`ssr: false`) e tratamos o default-wrap.
+const EmojiPicker = dynamic(
+  async () => {
+    const [pickerMod, dataMod] = await Promise.all([
+      import("@emoji-mart/react"),
+      import("@emoji-mart/data"),
+    ]);
+    const Picker = (pickerMod as { default: React.ComponentType<Record<string, unknown>> }).default;
+    const rawData = dataMod as { default?: unknown } & Record<string, unknown>;
+    const data: unknown = rawData.default ?? rawData;
+    // Wrapper que injeta `data` por padrão; o caller só passa configs visuais.
+    const Wrapped: React.FC<Record<string, unknown>> = (props) => {
+      return <Picker data={data} {...props} />;
+    };
+    Wrapped.displayName = "EmojiPickerWithData";
+    return Wrapped;
+  },
+  { ssr: false },
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WhatsApp Web colour palette
@@ -787,6 +810,13 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   const draftTextareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef     = useRef<HTMLInputElement>(null);
   const emojiPickerRef   = useRef<HTMLDivElement>(null);
+  // Ref no próprio toggle button — necessário para que o outside-click handler
+  // ignore cliques no botão (caso contrário ele fecha o picker no mesmo tick
+  // em que o onClick está tentando abri-lo, anulando o toggle).
+  const emojiButtonRef   = useRef<HTMLButtonElement>(null);
+  // Ref no botão de anexo — mesmo motivo (não relevante hoje, mas mantém
+  // simetria caso adicionemos um popover de attachment no futuro).
+  const attachButtonRef  = useRef<HTMLButtonElement>(null);
   // Wrapper interno cujo tamanho é observado por ResizeObserver para
   // re-pinning do scroll quando imagens/áudios completam o load.
   const msgInnerRef      = useRef<HTMLDivElement>(null);
@@ -1277,12 +1307,20 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   }, [photoOverlay, emojiOpen, attachment, inConvSearch]);
 
   // ── Click outside fecha o emoji picker ────────────────────────────────────
+  // CRÍTICO: o handler precisa ignorar cliques no próprio toggle button.
+  // Sem isso, ao clicar no botão para fechar o picker, o mousedown global é
+  // executado ANTES do onClick (mousedown vem antes de click), chama
+  // setEmojiOpen(false), e em seguida o onClick chama setEmojiOpen(v => !v)
+  // que abre de novo — fica preso no estado aberto e o usuário percebe que
+  // o botão "não funciona". Excluir o botão do handler resolve essa race.
   useEffect(() => {
     if (!emojiOpen) return;
     const h = (e: MouseEvent) => {
-      if (emojiPickerRef.current && !emojiPickerRef.current.contains(e.target as Node)) {
-        setEmojiOpen(false);
-      }
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (emojiPickerRef.current?.contains(target)) return;
+      if (emojiButtonRef.current?.contains(target)) return;
+      setEmojiOpen(false);
     };
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
@@ -1881,7 +1919,6 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                   }}
                 >
                   <EmojiPicker
-                    data={emojiData}
                     onEmojiSelect={handleEmojiSelect}
                     theme="dark"
                     locale="pt"
@@ -2012,9 +2049,15 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                   <div style={{ display: "flex", gap: 2, paddingBottom: 9 }}>
                     {/* Emoji button */}
                     <button
+                      ref={emojiButtonRef}
                       type="button"
                       title="Emoji"
                       aria-label="Abrir painel de emojis"
+                      onMouseDown={(e) => {
+                        // Impede que o mousedown global do outside-click handler
+                        // veja este clique antes do onClick disparar o toggle.
+                        e.stopPropagation();
+                      }}
                       onClick={() => setEmojiOpen((v) => !v)}
                       style={{
                         background: emojiOpen ? "rgba(255,255,255,0.08)" : "none",
@@ -2032,10 +2075,19 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                     </button>
                     {/* Attach button */}
                     <button
+                      ref={attachButtonRef}
                       type="button"
                       title="Anexar arquivo"
                       aria-label="Anexar arquivo"
-                      onClick={() => fileInputRef.current?.click()}
+                      onClick={() => {
+                        // Reset value antes do click para permitir selecionar
+                        // o mesmo arquivo duas vezes em sequência (onChange só
+                        // dispara se o value mudar).
+                        const input = fileInputRef.current;
+                        if (!input) return;
+                        input.value = "";
+                        input.click();
+                      }}
                       style={{
                         background: "none", border: "none", cursor: "pointer", padding: 5, borderRadius: 6,
                         display: "flex", alignItems: "center",
@@ -2045,14 +2097,33 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                         <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                       </svg>
                     </button>
-                    {/* Hidden file input */}
+                    {/*
+                     * Hidden file input.
+                     *
+                     * Importante: NÃO usar `display: none` aqui. Em alguns
+                     * navegadores (especialmente WebKit antigo e ambientes
+                     * embarcados/headless), input com `display: none` pode
+                     * ignorar chamadas programáticas a `.click()`. Usamos
+                     * a técnica clássica de "visually hidden but in tree":
+                     * position absolute, 1×1 px, opacity 0, pointer-events
+                     * desabilitados — o input permanece "renderizado" no
+                     * layout tree e responde ao .click() do botão de anexo.
+                     */}
                     <input
                       ref={fileInputRef}
                       type="file"
                       aria-hidden
                       tabIndex={-1}
                       accept="image/jpeg,image/png,image/gif,image/webp,audio/mpeg,audio/ogg,audio/mp4,audio/x-m4a,audio/opus,audio/webm,video/mp4,application/pdf"
-                      style={{ display: "none" }}
+                      style={{
+                        position: "absolute",
+                        width: 1,
+                        height: 1,
+                        opacity: 0,
+                        pointerEvents: "none",
+                        clip: "rect(0 0 0 0)",
+                        overflow: "hidden",
+                      }}
                       onChange={handleFileSelect}
                     />
                   </div>
