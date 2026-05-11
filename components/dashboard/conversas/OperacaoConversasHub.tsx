@@ -719,6 +719,12 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
 
   const threadEndRef     = useRef<HTMLDivElement>(null);
   const msgContainerRef  = useRef<HTMLDivElement>(null);
+  // Wrapper interno cujo tamanho é observado por ResizeObserver para
+  // re-pinning do scroll quando imagens/áudios completam o load.
+  const msgInnerRef      = useRef<HTMLDivElement>(null);
+  // True enquanto o initial-scroll está activo (logo após abrir a conversa).
+  // Desliga ao primeiro scroll manual do usuário para não brigar com ele.
+  const initialPinRef    = useRef(false);
   const inConvSearchRef  = useRef<HTMLInputElement>(null);
 
   // ── Initial load ──────────────────────────────────────────────────────────
@@ -862,8 +868,15 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   const handleMsgScroll = useCallback(() => {
     const el = msgContainerRef.current;
     if (!el) return;
-    // Near-bottom: < 150px from bottom
-    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+    // Distance from bottom — usado para decidir auto-scroll em novas mensagens
+    // e para desligar o initial-pin assim que o user rola para longe.
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isNearBottomRef.current = distanceFromBottom < 150;
+    // Se o user rolou pra fora do fim durante a janela de initial-pin,
+    // libera o pin para que ResizeObserver não force o scroll de volta.
+    if (initialPinRef.current && distanceFromBottom > 80) {
+      initialPinRef.current = false;
+    }
     // Scrollable: enough content to need navigation
     const scrollable = el.scrollHeight > el.clientHeight + 100;
     if (scrollable !== isScrollableRef.current) {
@@ -921,21 +934,70 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     [conversations, fetchPhoto, fetchName],
   );
 
+  // Conversa actualmente aberta — derivada de conversations + selectedJid.
+  // Declarada aqui (antes dos effects que dependem de `active?.messagesLoaded`)
+  // para evitar "used before declaration" em TypeScript strict.
+  const active = useMemo(
+    () => conversations.find((c) => c.remoteJid === selectedJid) ?? null,
+    [conversations, selectedJid],
+  );
+
   // ── Initial scroll: instant jump to bottom when conversation opens ────────
-  // Fires when selectedJid changes OR when messagesLoaded flips to true (async
-  // load). Double rAF ensures the browser has painted the message list before
-  // we set scrollTop — otherwise scrollHeight is still the pre-render value.
+  // Fires when selectedJid changes OR when messagesLoaded flips to true.
+  // Estratégia: pin imediato + ResizeObserver no wrapper interno para
+  // re-pinning enquanto mídias (imagens/áudios) ainda inflam o layout.
+  // O double-rAF anterior falhava porque imagens grandes só chegam ao DOM
+  // ~100-500ms depois do paint inicial — o scrollHeight ainda crescia e
+  // o scrollTop ficava congelado num ponto intermediário.
   useEffect(() => {
     const el = msgContainerRef.current;
-    if (!el || !active?.messagesLoaded) return;
-    let raf2 = 0;
-    const raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => {
-        el.scrollTop = el.scrollHeight;
-        isNearBottomRef.current = true;
-      });
+    const inner = msgInnerRef.current;
+    if (!el || !inner || !active?.messagesLoaded) return;
+
+    const pinToBottom = () => {
+      el.scrollTop = el.scrollHeight;
+    };
+
+    // Ativa a janela de initial-pin: handleMsgScroll desliga se user rolar.
+    initialPinRef.current = true;
+    pinToBottom();
+    isNearBottomRef.current = true;
+
+    // Re-pin sempre que o conteúdo crescer (imagem carregou, áudio expandiu,
+    // mensagem nova chegou via realtime, etc.) — desde que o usuário não
+    // tenha rolado para longe.
+    const observer = new ResizeObserver(() => {
+      if (!initialPinRef.current) return;
+      pinToBottom();
     });
-    return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };
+    observer.observe(inner);
+
+    // Defensivo: também ouve `load` em <img> dentro do inner. Algumas imagens
+    // podem disparar load com tamanho estável após o ResizeObserver já ter
+    // perdido relevância — esse listener pega o último frame.
+    const onImgLoad = () => {
+      if (!initialPinRef.current) return;
+      pinToBottom();
+    };
+    const imgs = inner.querySelectorAll("img");
+    imgs.forEach((img) => {
+      if (!img.complete) img.addEventListener("load", onImgLoad, { once: true });
+    });
+
+    // Libera o pin após 2s — janela suficiente para a maioria das mídias.
+    // Depois disso, qualquer crescimento (ex.: mensagem nova) usa o effect
+    // separado de auto-scroll baseado em isNearBottomRef.
+    const releaseId = window.setTimeout(() => {
+      initialPinRef.current = false;
+      observer.disconnect();
+    }, 2000);
+
+    return () => {
+      initialPinRef.current = false;
+      observer.disconnect();
+      window.clearTimeout(releaseId);
+      imgs.forEach((img) => img.removeEventListener("load", onImgLoad));
+    };
   // active?.messagesLoaded changes independently of conversations object ref
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedJid, active?.messagesLoaded]);
@@ -1055,11 +1117,6 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
       return false;
     });
   }, [conversations, query, contactNames]);
-
-  const active = useMemo(
-    () => conversations.find((c) => c.remoteJid === selectedJid) ?? null,
-    [conversations, selectedJid],
-  );
 
   // ── ESC fecha overlay de foto e busca interna ────────────────────────────
   useEffect(() => {
@@ -1484,17 +1541,28 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
 
             {/* Messages thread — wrapped in position:relative for floating buttons */}
             <div style={{ flex: 1, position: "relative", minHeight: 0, display: "flex", flexDirection: "column" }}>
+              {/* Outer: scroll container (overflow only). Inner: medido pelo
+                  ResizeObserver para re-pinning quando mídias inflam o layout. */}
               <div
                 ref={msgContainerRef}
                 onScroll={handleMsgScroll}
                 style={{
                   flex: 1,
+                  minHeight: 0,
                   overflowY: "auto",
+                  ...CHAT_BG_STYLE,
+                }}
+              >
+              <div
+                ref={msgInnerRef}
+                style={{
                   padding: "12px 5%",
                   display: "flex",
                   flexDirection: "column",
                   gap: 3,
-                  ...CHAT_BG_STYLE,
+                  // Garante que o inner ocupe ao menos a altura do outer
+                  // (mensagens começam alinhadas em cima quando há poucas).
+                  minHeight: "100%",
                 }}
               >
                 {!active.messagesLoaded ? (
@@ -1559,6 +1627,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                   })
                 )}
                 <div ref={threadEndRef} />
+              </div>
               </div>
 
               {/* Floating navigation buttons — only when scrollable */}
