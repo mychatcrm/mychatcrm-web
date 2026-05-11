@@ -22,7 +22,9 @@ export function WizardStepVoz({ draft, onChange }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const previewObjectUrlRef = useRef<string | null>(null);
   const loadedRef = useRef(false);
 
   // Carrega vozes ao montar (lazy — só quando responseMode === 'audio')
@@ -40,27 +42,76 @@ export function WizardStepVoz({ draft, onChange }: Props) {
       .finally(() => setLoading(false));
   }, [draft.responseMode]);
 
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = "";
+      }
+      if (previewObjectUrlRef.current) {
+        URL.revokeObjectURL(previewObjectUrlRef.current);
+        previewObjectUrlRef.current = null;
+      }
+    };
+  }, []);
+
   function stopAudio() {
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.src = "";
     }
+    if (previewObjectUrlRef.current) {
+      URL.revokeObjectURL(previewObjectUrlRef.current);
+      previewObjectUrlRef.current = null;
+    }
     setPlayingId(null);
   }
 
-  function previewVoice(voice: Voice) {
-    if (!voice.preview_url) return;
+  async function previewVoice(voice: Voice) {
+    if (previewLoadingId) return;
     if (playingId === voice.voice_id) {
       stopAudio();
       return;
     }
+
     stopAudio();
-    const audio = new Audio(voice.preview_url);
-    audioRef.current = audio;
-    audio.onended = () => setPlayingId(null);
-    audio.onerror = () => setPlayingId(null);
-    audio.play().catch(() => setPlayingId(null));
-    setPlayingId(voice.voice_id);
+    setPreviewLoadingId(voice.voice_id);
+    setError("");
+
+    try {
+      const res = await fetch("/api/client/agentes/voices/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ voice_id: voice.voice_id }),
+      });
+
+      if (!res.ok) {
+        let message = `Erro ao gerar preview (${res.status}).`;
+        try {
+          const data = (await res.json()) as { error?: string };
+          if (data.error) message = data.error;
+        } catch {
+          /* response may be audio or plain text */
+        }
+        throw new Error(message);
+      }
+
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      previewObjectUrlRef.current = objectUrl;
+
+      const audio = new Audio(objectUrl);
+      audioRef.current = audio;
+      audio.onended = () => stopAudio();
+      audio.onerror = () => stopAudio();
+      await audio.play();
+      setPlayingId(voice.voice_id);
+    } catch (e) {
+      stopAudio();
+      setError(e instanceof Error ? e.message : "Erro ao gerar preview de voz.");
+    } finally {
+      setPreviewLoadingId(null);
+    }
   }
 
   const isAudio = draft.responseMode === "audio";
@@ -164,6 +215,7 @@ export function WizardStepVoz({ draft, onChange }: Props) {
               {voices.map((voice) => {
                 const selected = draft.voiceId === voice.voice_id;
                 const isPlaying = playingId === voice.voice_id;
+                const isGeneratingPreview = previewLoadingId === voice.voice_id;
                 return (
                   <div
                     key={voice.voice_id}
@@ -192,25 +244,26 @@ export function WizardStepVoz({ draft, onChange }: Props) {
                       <span className="hidden rounded-full border border-line bg-surface-deep px-2 py-1 text-[11px] text-content-faint sm:inline-flex">
                         {voice.category}
                       </span>
-                      {voice.preview_url ? (
-                        <button
-                          type="button"
-                          onClick={() => previewVoice(voice)}
-                          title={isPlaying ? "Parar preview" : "Ouvir voz"}
-                          className={cn(
-                            "flex h-9 w-9 items-center justify-center rounded-xl border transition",
-                            isPlaying
-                              ? "border-primary/60 bg-primary/20 text-primary"
-                              : "border-line bg-surface-deep text-content-muted hover:text-content",
-                          )}
-                        >
-                          {isPlaying ? (
-                            <Square className="h-3.5 w-3.5 fill-current" />
-                          ) : (
-                            <Play className="h-3.5 w-3.5 fill-current" />
-                          )}
-                        </button>
-                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => previewVoice(voice)}
+                        disabled={Boolean(previewLoadingId && previewLoadingId !== voice.voice_id)}
+                        title={isGeneratingPreview ? "Gerando preview" : isPlaying ? "Parar preview" : "Ouvir voz"}
+                        className={cn(
+                          "flex h-9 w-9 items-center justify-center rounded-xl border transition disabled:cursor-not-allowed disabled:opacity-50",
+                          isPlaying || isGeneratingPreview
+                            ? "border-primary/60 bg-primary/20 text-primary"
+                            : "border-line bg-surface-deep text-content-muted hover:text-content",
+                        )}
+                      >
+                        {isGeneratingPreview ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : isPlaying ? (
+                          <Square className="h-3.5 w-3.5 fill-current" />
+                        ) : (
+                          <Play className="h-3.5 w-3.5 fill-current" />
+                        )}
+                      </button>
                     </div>
                   </div>
                 );
