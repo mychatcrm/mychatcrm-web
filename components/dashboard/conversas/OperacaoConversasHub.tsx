@@ -133,6 +133,28 @@ async function apiSendMessage(remoteJid: string, text: string): Promise<WaMessag
   return data.message ?? null;
 }
 
+async function apiDeleteMessage(messageId: string): Promise<void> {
+  const res = await fetch(`/api/client/conversas/messages/${encodeURIComponent(messageId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`DELETE message ${res.status}`);
+}
+
+async function apiDeleteConversation(remoteJid: string): Promise<void> {
+  const enc = encodeURIComponent(remoteJid);
+  const res = await fetch(`/api/client/conversas/${enc}/messages`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`DELETE conversation ${res.status}`);
+}
+
+async function apiDeleteAllConversations(): Promise<void> {
+  const res = await fetch("/api/client/conversas/all", {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`DELETE all conversations ${res.status}`);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Formatters / helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -201,6 +223,20 @@ function sameCalendarDay(a: string, b: string): boolean {
   } catch {
     return false;
   }
+}
+
+function conversationWithMessages(conv: WaConversation, messages: WaMessage[]): WaConversation | null {
+  if (messages.length === 0) return null;
+  const last = messages[messages.length - 1]!;
+  return {
+    ...conv,
+    lastContent: last.content,
+    lastKind: last.kind,
+    lastDirection: last.direction,
+    lastAt: last.created_at,
+    messages,
+    messagesLoaded: true,
+  };
 }
 
 function formatAudioTime(s: number): string {
@@ -459,9 +495,25 @@ function ImageBubble({ src, caption }: { src: string; caption: string }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // MessageBubble
 // ─────────────────────────────────────────────────────────────────────────────
-function MessageBubble({ msg, highlight }: { msg: WaMessage; highlight?: string }) {
+function MessageBubble({
+  msg,
+  highlight,
+  selectionMode,
+  selected,
+  onToggleSelected,
+  onDelete,
+}: {
+  msg: WaMessage;
+  highlight?: string;
+  selectionMode?: boolean;
+  selected?: boolean;
+  onToggleSelected?: () => void;
+  onDelete?: () => void;
+}) {
   const out = msg.direction === "outbound";
   const caption = msg.content.replace(/\[Imagem\]/g, "").trim();
+  const [hovered, setHovered] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   // ── Spacer dinâmico para a técnica WhatsApp ──────────────────────────────
   // O spacer invisível no final do texto reserva espaço para o timestamp
@@ -497,7 +549,45 @@ function MessageBubble({ msg, highlight }: { msg: WaMessage; highlight?: string 
   );
 
   return (
-    <div style={{ display: "flex", width: "100%", justifyContent: out ? "flex-end" : "flex-start" }}>
+    <div
+      style={{
+        display: "flex",
+        width: "100%",
+        justifyContent: out ? "flex-end" : "flex-start",
+        alignItems: "center",
+        gap: 8,
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => {
+        setHovered(false);
+        setMenuOpen(false);
+      }}
+    >
+      {selectionMode && (
+        <button
+          type="button"
+          aria-label={selected ? "Desmarcar mensagem" : "Selecionar mensagem"}
+          onClick={onToggleSelected}
+          style={{
+            width: 22,
+            height: 22,
+            borderRadius: "50%",
+            border: `1px solid ${selected ? W.green : "rgba(255,255,255,0.45)"}`,
+            background: selected ? W.green : "rgba(32,44,51,0.85)",
+            color: selected ? "white" : "transparent",
+            cursor: "pointer",
+            opacity: hovered || selected ? 1 : 0.18,
+            flexShrink: 0,
+            order: out ? 0 : -1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            transition: "opacity 0.12s, background 0.12s",
+          }}
+        >
+          ✓
+        </button>
+      )}
       <div
         style={{
           maxWidth: "85%",
@@ -506,8 +596,84 @@ function MessageBubble({ msg, highlight }: { msg: WaMessage; highlight?: string 
           padding: msg.kind === "image" && msg.media_url ? "4px 4px 0 4px" : "7px 10px 5px 10px",
           boxShadow: "0 1px 1px rgba(0,0,0,0.25)",
           position: "relative",
+          outline: selected ? `2px solid ${W.green}` : "none",
+          outlineOffset: 2,
         }}
       >
+        {!selectionMode && (
+          <div
+            style={{
+              position: "absolute",
+              top: 4,
+              right: out ? "auto" : 4,
+              left: out ? 4 : "auto",
+              zIndex: 4,
+              opacity: hovered || menuOpen ? 1 : 0,
+              transition: "opacity 0.12s",
+            }}
+          >
+            <button
+              type="button"
+              aria-label="Opções da mensagem"
+              title="Opções"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen((v) => !v);
+              }}
+              style={{
+                width: 26,
+                height: 24,
+                borderRadius: 6,
+                border: "none",
+                background: out ? "rgba(0,92,75,0.92)" : "rgba(32,44,51,0.92)",
+                color: W.muted,
+                cursor: "pointer",
+                lineHeight: 1,
+              }}
+            >
+              ⋯
+            </button>
+            {menuOpen && (
+              <div
+                role="menu"
+                style={{
+                  position: "absolute",
+                  top: 28,
+                  right: out ? "auto" : 0,
+                  left: out ? 0 : "auto",
+                  minWidth: 164,
+                  borderRadius: 8,
+                  overflow: "hidden",
+                  background: "#233138",
+                  border: `1px solid ${W.bgBorder}`,
+                  boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+                }}
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMenuOpen(false);
+                    onDelete?.();
+                  }}
+                  style={{
+                    width: "100%",
+                    border: "none",
+                    background: "transparent",
+                    color: "#ffb4b4",
+                    cursor: "pointer",
+                    padding: "10px 12px",
+                    textAlign: "left",
+                    fontSize: 13,
+                  }}
+                >
+                  Apagar mensagem
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         {/* ── Content ── */}
         {msg.kind === "audio" ? (
           <>
@@ -758,6 +924,92 @@ function SidebarPanel({
   );
 }
 
+function ConfirmDeleteModal({
+  title,
+  description,
+  confirmLabel,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 10000,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0,0,0,0.62)",
+        padding: 18,
+      }}
+      onClick={busy ? undefined : onCancel}
+    >
+      <div
+        style={{
+          width: "min(430px, 100%)",
+          borderRadius: 14,
+          background: W.bgHeader,
+          border: `1px solid ${W.bgBorder}`,
+          boxShadow: "0 18px 50px rgba(0,0,0,0.55)",
+          padding: 20,
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p style={{ margin: 0, color: W.text, fontSize: 18, fontWeight: 650 }}>{title}</p>
+        <p style={{ margin: "10px 0 0", color: W.muted, fontSize: 14, lineHeight: 1.55 }}>
+          {description}
+        </p>
+        <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            style={{
+              border: `1px solid ${W.bgBorder}`,
+              background: "transparent",
+              color: W.text,
+              borderRadius: 999,
+              padding: "9px 14px",
+              cursor: busy ? "not-allowed" : "pointer",
+              opacity: busy ? 0.55 : 1,
+            }}
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy}
+            style={{
+              border: "none",
+              background: "#d64d4d",
+              color: "white",
+              borderRadius: 999,
+              padding: "9px 15px",
+              cursor: busy ? "not-allowed" : "pointer",
+              opacity: busy ? 0.7 : 1,
+              fontWeight: 650,
+            }}
+          >
+            {busy ? "Apagando…" : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main component
 // ─────────────────────────────────────────────────────────────────────────────
@@ -772,6 +1024,12 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   const [sendError,      setSendError]      = useState("");
   const [sending,        setSending]        = useState(false);
   const [mobileThread,   setMobileThread]   = useState(false);
+  const [selectionMode,  setSelectionMode]  = useState(false);
+  const [selectedMsgIds, setSelectedMsgIds] = useState<Set<string>>(() => new Set());
+  const [chatMenuOpen,   setChatMenuOpen]   = useState(false);
+  const [sidebarMenuOpen,setSidebarMenuOpen]= useState(false);
+  const [confirmDelete,  setConfirmDelete]  = useState<"conversation" | "all" | null>(null);
+  const [deleteBusy,     setDeleteBusy]     = useState(false);
   // Mapa JID → URL da foto (null = não tem foto, undefined = ainda não buscou)
   const [contactPhotos,  setContactPhotos]  = useState<Record<string, string | null>>({});
   // Mapa JID → nome do contato (null = sem nome)
@@ -1009,6 +1267,9 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
       setInConvSearch(false);
       setInConvQuery("");
       setInConvMatchIdx(0);
+      setSelectionMode(false);
+      setSelectedMsgIds(new Set());
+      setChatMenuOpen(false);
       // Reset near-bottom so new conversation always scrolls to bottom
       isNearBottomRef.current = true;
       setConversations((prev) => prev.map((c) => (c.remoteJid === jid ? { ...c, unreadCount: 0 } : c)));
@@ -1039,6 +1300,103 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     () => conversations.find((c) => c.remoteJid === selectedJid) ?? null,
     [conversations, selectedJid],
   );
+
+  const selectedCount = selectedMsgIds.size;
+
+  useEffect(() => {
+    if (!active || selectedMsgIds.size === 0) return;
+    const visible = new Set(active.messages.map((m) => m.id));
+    setSelectedMsgIds((prev) => {
+      const next = new Set([...prev].filter((id) => visible.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [active, selectedMsgIds.size]);
+
+  const removeMessagesFromUi = useCallback((jid: string, ids: Set<string>) => {
+    setConversations((prev) => {
+      const next: WaConversation[] = [];
+      for (const conv of prev) {
+        if (conv.remoteJid !== jid) {
+          next.push(conv);
+          continue;
+        }
+        const messages = conv.messages.filter((m) => !ids.has(m.id));
+        const updated = conversationWithMessages(conv, messages);
+        if (updated) next.push(updated);
+      }
+      return next;
+    });
+    if (active?.remoteJid === jid && active.messages.filter((m) => !ids.has(m.id)).length === 0) {
+      setSelectedJid(null);
+      setMobileThread(false);
+      setSelectionMode(false);
+      setSelectedMsgIds(new Set());
+    }
+  }, [active]);
+
+  const handleDeleteOneMessage = useCallback((jid: string, messageId: string) => {
+    removeMessagesFromUi(jid, new Set([messageId]));
+    setSelectedMsgIds((prev) => {
+      const next = new Set(prev);
+      next.delete(messageId);
+      return next;
+    });
+    void apiDeleteMessage(messageId).catch((e) => {
+      setSendError(e instanceof Error ? e.message : "Erro ao apagar mensagem.");
+    });
+  }, [removeMessagesFromUi]);
+
+  const handleDeleteSelectedMessages = useCallback(() => {
+    if (!active || selectedMsgIds.size === 0 || deleteBusy) return;
+    const ids = new Set(selectedMsgIds);
+    const jid = active.remoteJid;
+    removeMessagesFromUi(jid, ids);
+    setSelectionMode(false);
+    setSelectedMsgIds(new Set());
+    setDeleteBusy(true);
+    void Promise.all([...ids].map((id) => apiDeleteMessage(id)))
+      .catch((e) => {
+        setSendError(e instanceof Error ? e.message : "Erro ao apagar mensagens.");
+      })
+      .finally(() => setDeleteBusy(false));
+  }, [active, deleteBusy, removeMessagesFromUi, selectedMsgIds]);
+
+  const handleDeleteConversation = useCallback(() => {
+    if (!active || deleteBusy) return;
+    const jid = active.remoteJid;
+    setDeleteBusy(true);
+    setConversations((prev) => prev.filter((c) => c.remoteJid !== jid));
+    setSelectedJid(null);
+    setMobileThread(false);
+    setSelectionMode(false);
+    setSelectedMsgIds(new Set());
+    void apiDeleteConversation(jid)
+      .catch((e) => {
+        setSendError(e instanceof Error ? e.message : "Erro ao apagar conversa.");
+      })
+      .finally(() => {
+        setDeleteBusy(false);
+        setConfirmDelete(null);
+      });
+  }, [active, deleteBusy]);
+
+  const handleDeleteAllConversations = useCallback(() => {
+    if (deleteBusy) return;
+    setDeleteBusy(true);
+    setConversations([]);
+    setSelectedJid(null);
+    setMobileThread(false);
+    setSelectionMode(false);
+    setSelectedMsgIds(new Set());
+    void apiDeleteAllConversations()
+      .catch((e) => {
+        setSendError(e instanceof Error ? e.message : "Erro ao limpar conversas.");
+      })
+      .finally(() => {
+        setDeleteBusy(false);
+        setConfirmDelete(null);
+      });
+  }, [deleteBusy]);
 
   // ── Initial scroll: instant jump to bottom when conversation opens ────────
   // Fires when selectedJid changes OR when messagesLoaded flips to true.
@@ -1299,12 +1657,13 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
         if (photoOverlay) { setPhotoOverlay(null); return; }
         if (emojiOpen) { setEmojiOpen(false); return; }
         if (attachment) { setAttachment(null); return; }
+        if (selectionMode) { setSelectionMode(false); setSelectedMsgIds(new Set()); return; }
         if (inConvSearch) { setInConvSearch(false); setInConvQuery(""); }
       }
     };
     document.addEventListener("keydown", h);
     return () => document.removeEventListener("keydown", h);
-  }, [photoOverlay, emojiOpen, attachment, inConvSearch]);
+  }, [photoOverlay, emojiOpen, attachment, selectionMode, inConvSearch]);
 
   // ── Click outside fecha o emoji picker ────────────────────────────────────
   // CRÍTICO: o handler precisa ignorar cliques no próprio toggle button.
@@ -1385,6 +1744,28 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
         </div>
       )}
 
+      {confirmDelete === "conversation" && (
+        <ConfirmDeleteModal
+          title="Apagar conversa"
+          description="Apagar todas as mensagens desta conversa? Os dados do contato no CRM serão mantidos."
+          confirmLabel="Apagar conversa"
+          busy={deleteBusy}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={handleDeleteConversation}
+        />
+      )}
+
+      {confirmDelete === "all" && (
+        <ConfirmDeleteModal
+          title="Limpar todas as conversas"
+          description="Isso apagará TODAS as mensagens de TODAS as conversas. Os contatos no CRM não serão afetados."
+          confirmLabel="Limpar tudo"
+          busy={deleteBusy}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={handleDeleteAllConversations}
+        />
+      )}
+
       {/* ─────────────── LEFT SIDEBAR ─────────────── */}
       <SidebarPanel mobileThread={mobileThread}>
 
@@ -1401,6 +1782,67 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
           }}
         >
           <span style={{ fontSize: 18, fontWeight: 600, color: W.text }}>MyChatCRM</span>
+          <div style={{ position: "relative" }}>
+            <button
+              type="button"
+              aria-label="Opções das conversas"
+              title="Opções"
+              onClick={() => setSidebarMenuOpen((v) => !v)}
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: "50%",
+                border: "none",
+                background: sidebarMenuOpen ? "rgba(255,255,255,0.08)" : "transparent",
+                color: W.muted,
+                cursor: "pointer",
+                fontSize: 20,
+                lineHeight: 1,
+              }}
+            >
+              ⋯
+            </button>
+            {sidebarMenuOpen && (
+              <div
+                role="menu"
+                style={{
+                  position: "absolute",
+                  top: 38,
+                  right: 0,
+                  zIndex: 30,
+                  minWidth: 214,
+                  borderRadius: 8,
+                  overflow: "hidden",
+                  background: "#233138",
+                  border: `1px solid ${W.bgBorder}`,
+                  boxShadow: "0 10px 28px rgba(0,0,0,0.35)",
+                }}
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setSidebarMenuOpen(false);
+                    setConfirmDelete("all");
+                  }}
+                  disabled={conversations.length === 0}
+                  style={{
+                    width: "100%",
+                    border: "none",
+                    background: "transparent",
+                    color: conversations.length ? "#ffb4b4" : W.muted,
+                    cursor: conversations.length ? "pointer" : "not-allowed",
+                    padding: "11px 13px",
+                    textAlign: "left",
+                    fontSize: 13,
+                    opacity: conversations.length ? 1 : 0.55,
+                  }}
+                >
+                  Limpar todas as conversas
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Search */}
@@ -1638,6 +2080,91 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                   <path d="m21 21-4.35-4.35" />
                 </svg>
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectionMode((v) => !v);
+                  setSelectedMsgIds(new Set());
+                  setChatMenuOpen(false);
+                }}
+                disabled={!active.messagesLoaded || active.messages.length === 0}
+                style={{
+                  border: `1px solid ${selectionMode ? W.green : W.bgBorder}`,
+                  background: selectionMode ? "rgba(0,168,132,0.12)" : "transparent",
+                  color: selectionMode ? W.green : W.muted,
+                  cursor: active.messagesLoaded && active.messages.length ? "pointer" : "not-allowed",
+                  borderRadius: 999,
+                  padding: "7px 11px",
+                  fontSize: 12.5,
+                  fontWeight: 650,
+                  opacity: active.messagesLoaded && active.messages.length ? 1 : 0.45,
+                  flexShrink: 0,
+                }}
+              >
+                {selectionMode ? "Cancelar" : "Selecionar"}
+              </button>
+              <div style={{ position: "relative", flexShrink: 0 }}>
+                <button
+                  type="button"
+                  aria-label="Opções da conversa"
+                  title="Opções da conversa"
+                  onClick={() => {
+                    setChatMenuOpen((v) => !v);
+                    setSidebarMenuOpen(false);
+                  }}
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: "50%",
+                    border: "none",
+                    background: chatMenuOpen ? "rgba(255,255,255,0.08)" : "transparent",
+                    color: W.muted,
+                    cursor: "pointer",
+                    fontSize: 20,
+                    lineHeight: 1,
+                  }}
+                >
+                  ⋯
+                </button>
+                {chatMenuOpen && (
+                  <div
+                    role="menu"
+                    style={{
+                      position: "absolute",
+                      top: 38,
+                      right: 0,
+                      zIndex: 30,
+                      minWidth: 188,
+                      borderRadius: 8,
+                      overflow: "hidden",
+                      background: "#233138",
+                      border: `1px solid ${W.bgBorder}`,
+                      boxShadow: "0 10px 28px rgba(0,0,0,0.35)",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setChatMenuOpen(false);
+                        setConfirmDelete("conversation");
+                      }}
+                      style={{
+                        width: "100%",
+                        border: "none",
+                        background: "transparent",
+                        color: "#ffb4b4",
+                        cursor: "pointer",
+                        padding: "11px 13px",
+                        textAlign: "left",
+                        fontSize: 13,
+                      }}
+                    >
+                      Apagar conversa
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* In-conversation search bar */}
@@ -1817,6 +2344,17 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                         <MessageBubble
                           msg={m}
                           highlight={inConvSearch && inConvQuery.trim() ? inConvQuery.trim() : undefined}
+                          selectionMode={selectionMode}
+                          selected={selectedMsgIds.has(m.id)}
+                          onToggleSelected={() => {
+                            setSelectedMsgIds((prevIds) => {
+                              const next = new Set(prevIds);
+                              if (next.has(m.id)) next.delete(m.id);
+                              else next.add(m.id);
+                              return next;
+                            });
+                          }}
+                          onDelete={() => handleDeleteOneMessage(active.remoteJid, m.id)}
                         />
                       </div>
                     );
@@ -1893,6 +2431,61 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 </div>
               )}
             </div>
+
+            {selectionMode && (
+              <div
+                style={{
+                  background: "#182229",
+                  borderTop: `1px solid ${W.bgBorder}`,
+                  padding: "10px 14px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  flexShrink: 0,
+                }}
+              >
+                <span style={{ color: W.text, fontSize: 14, fontWeight: 600 }}>
+                  {selectedCount} {selectedCount === 1 ? "mensagem selecionada" : "mensagens selecionadas"}
+                </span>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectionMode(false);
+                      setSelectedMsgIds(new Set());
+                    }}
+                    style={{
+                      border: `1px solid ${W.bgBorder}`,
+                      background: "transparent",
+                      color: W.text,
+                      borderRadius: 999,
+                      padding: "8px 12px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDeleteSelectedMessages}
+                    disabled={selectedCount === 0 || deleteBusy}
+                    style={{
+                      border: "none",
+                      background: "#d64d4d",
+                      color: "white",
+                      borderRadius: 999,
+                      padding: "8px 13px",
+                      cursor: selectedCount === 0 || deleteBusy ? "not-allowed" : "pointer",
+                      opacity: selectedCount === 0 || deleteBusy ? 0.55 : 1,
+                      fontWeight: 650,
+                    }}
+                  >
+                    {deleteBusy ? "Apagando…" : "Apagar selecionadas"}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Input footer */}
             <div

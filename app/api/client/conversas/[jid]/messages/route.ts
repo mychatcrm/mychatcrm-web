@@ -39,3 +39,28 @@ export async function GET(
 
   return NextResponse.json({ messages }, { headers: { "Cache-Control": "no-store" } });
 }
+
+export async function DELETE(
+  _request: Request,
+  { params }: { params: { jid: string } },
+) {
+  const session = await getClientSessionFromCookies();
+  if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+
+  const remoteJid = decodeURIComponent(params.jid);
+  if (!remoteJid) return NextResponse.json({ error: "jid em falta" }, { status: 400 });
+
+  const sb = createSupabaseServiceClient();
+  const { error } = await sb
+    .from("whatsapp_messages")
+    .delete()
+    .eq("tenant_id", session.tenantId)
+    .eq("remote_jid", remoteJid);
+
+  if (error) {
+    console.error("[api/client/conversas/jid/messages] DELETE", error.code, error.message);
+    return NextResponse.json({ error: "Erro ao apagar conversa." }, { status: 503 });
+  }
+
+  return NextResponse.json({ ok: true });
+}
