@@ -148,6 +148,24 @@ async function apiDeleteAllConversations(): Promise<void> {
   if (!res.ok) throw new Error(`DELETE all conversations ${res.status}`);
 }
 
+async function apiBulkDeleteConversations(remoteJids: string[]): Promise<void> {
+  const res = await fetch("/api/client/conversas/bulk-delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ remoteJids }),
+  });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const data = (await res.json()) as { error?: string };
+      detail = data.error ? ` — ${data.error}` : "";
+    } catch {
+      /* corpo não-JSON, ignora */
+    }
+    throw new Error(`POST bulk-delete ${res.status}${detail}`);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Formatters / helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -635,6 +653,9 @@ function ConversationItem({
   photoUrl,
   name,
   onPhotoClick,
+  selectionMode = false,
+  checked = false,
+  onToggleCheck,
 }: {
   conv: WaConversation;
   selected: boolean;
@@ -642,6 +663,13 @@ function ConversationItem({
   photoUrl?: string | null;
   name?: string | null;
   onPhotoClick?: () => void;
+  /** Quando true, o item exibe checkbox e o clique alterna a seleção em
+   *  vez de abrir a conversa. */
+  selectionMode?: boolean;
+  /** Estado do checkbox quando em modo seleção. */
+  checked?: boolean;
+  /** Disparado pelo clique no item OU pelo próprio checkbox. */
+  onToggleCheck?: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
   const [imgError, setImgError] = useState(false);
@@ -654,27 +682,60 @@ function ConversationItem({
   return (
     <button
       type="button"
-      onClick={onSelect}
+      onClick={selectionMode ? onToggleCheck : onSelect}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
         display: "flex", width: "100%", gap: 12, padding: "10px 16px",
         textAlign: "left", border: "none", cursor: "pointer",
-        background: selected ? W.bgBorder : hovered ? "#1f2c34" : "transparent",
+        // Em modo seleção, o highlight passa a refletir o checkbox em vez
+        // da conversa ativa — caso contrário o usuário não consegue ver o
+        // que marcou.
+        background: selectionMode
+          ? (checked ? "rgba(37, 211, 102, 0.18)" : hovered ? "#1f2c34" : "transparent")
+          : (selected ? W.bgBorder : hovered ? "#1f2c34" : "transparent"),
         borderBottom: `1px solid ${W.bgBorder}`,
         transition: "background 0.1s",
+        alignItems: "center",
       }}
     >
-      {/* Avatar — clique na foto abre fullscreen (sem propagar select) */}
+      {/* Checkbox (apenas em modo seleção) */}
+      {selectionMode && (
+        <span
+          aria-hidden
+          style={{
+            flexShrink: 0,
+            width: 20,
+            height: 20,
+            borderRadius: "50%",
+            border: `2px solid ${checked ? W.green : "rgba(255,255,255,0.35)"}`,
+            background: checked ? W.green : "transparent",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            transition: "background 0.12s, border-color 0.12s",
+          }}
+        >
+          {checked && (
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="white" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          )}
+        </span>
+      )}
+
+      {/* Avatar — clique na foto abre fullscreen (sem propagar select).
+       *  Em modo seleção desabilitamos o zoom para o clique inteiro do
+       *  item alternar o checkbox sem ambiguidade. */}
       <div
-        onClick={onPhotoClick ? (e) => { e.stopPropagation(); onPhotoClick(); } : undefined}
+        onClick={!selectionMode && onPhotoClick ? (e) => { e.stopPropagation(); onPhotoClick(); } : undefined}
         style={{
           width: 49, height: 49, borderRadius: "50%",
           background: bg, display: "flex", alignItems: "center",
           justifyContent: "center", flexShrink: 0,
           color: "white", fontSize: 17, fontWeight: 600,
           userSelect: "none", overflow: "hidden",
-          cursor: onPhotoClick ? "zoom-in" : "pointer",
+          cursor: selectionMode ? "pointer" : (onPhotoClick ? "zoom-in" : "pointer"),
         }}
       >
         {showPhoto ? (
@@ -895,8 +956,16 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   const [mobileThread,   setMobileThread]   = useState(false);
   const [chatMenuOpen,   setChatMenuOpen]   = useState(false);
   const [sidebarMenuOpen,setSidebarMenuOpen]= useState(false);
-  const [confirmDelete,  setConfirmDelete]  = useState<"conversation" | "all" | null>(null);
+  const [confirmDelete,  setConfirmDelete]  = useState<"conversation" | "all" | "selected" | null>(null);
   const [deleteBusy,     setDeleteBusy]     = useState(false);
+  // ── Selection mode (multi-delete via sidebar header) ─────────────────────
+  // Quando true, a sidebar entra em modo de seleção: cada item mostra um
+  // checkbox e o clique alterna a marcação em vez de abrir a conversa.
+  // Uma barra superior aparece com contagem + Cancelar + Apagar selecionadas.
+  const [selectionMode,      setSelectionMode]      = useState(false);
+  const [selectedForDeletion, setSelectedForDeletion] = useState<Set<string>>(
+    () => new Set<string>(),
+  );
   // Mapa JID → URL da foto (null = não tem foto, undefined = ainda não buscou)
   const [contactPhotos,  setContactPhotos]  = useState<Record<string, string | null>>({});
   // Mapa JID → nome do contato (null = sem nome)
@@ -1198,6 +1267,59 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
         setConfirmDelete(null);
       });
   }, [deleteBusy]);
+
+  // ── Selection mode handlers ──────────────────────────────────────────────
+  // Entrar no modo seleção fecha qualquer conversa aberta para liberar a
+  // sidebar inteira no mobile e garantir que o usuário vê todos os itens
+  // antes de marcar.
+  const enterSelectionMode = useCallback(() => {
+    setSidebarMenuOpen(false);
+    setSelectionMode(true);
+    setSelectedForDeletion(new Set());
+    setSelectedJid(null);
+    setMobileThread(false);
+  }, []);
+
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedForDeletion(new Set());
+  }, []);
+
+  const toggleSelectForDeletion = useCallback((jid: string) => {
+    setSelectedForDeletion((prev) => {
+      const next = new Set(prev);
+      if (next.has(jid)) next.delete(jid);
+      else next.add(jid);
+      return next;
+    });
+  }, []);
+
+  const handleDeleteSelected = useCallback(() => {
+    if (deleteBusy) return;
+    const jids = Array.from(selectedForDeletion);
+    if (jids.length === 0) {
+      setConfirmDelete(null);
+      return;
+    }
+    setDeleteBusy(true);
+    // Optimistic UI: remove imediatamente da lista. Se houver erro, o
+    // próximo poll/realtime devolve as conversas (as mensagens continuam
+    // no DB porque o DELETE falhou).
+    const set = new Set(jids);
+    setConversations((prev) => prev.filter((c) => !set.has(c.remoteJid)));
+    void apiBulkDeleteConversations(jids)
+      .catch((e) => {
+        setSendError(
+          e instanceof Error ? e.message : "Erro ao apagar conversas selecionadas.",
+        );
+      })
+      .finally(() => {
+        setDeleteBusy(false);
+        setConfirmDelete(null);
+        setSelectionMode(false);
+        setSelectedForDeletion(new Set());
+      });
+  }, [deleteBusy, selectedForDeletion]);
 
   // ── Initial scroll: instant jump to bottom when conversation opens ────────
   // Fires when selectedJid changes OR when messagesLoaded flips to true.
@@ -1566,6 +1688,25 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
         />
       )}
 
+      {confirmDelete === "selected" && (
+        <ConfirmDeleteModal
+          title="Apagar conversas selecionadas"
+          description={`Apagar ${selectedForDeletion.size} ${
+            selectedForDeletion.size === 1
+              ? "conversa selecionada"
+              : "conversas selecionadas"
+          }? Os contatos no CRM não serão afetados.`}
+          confirmLabel={
+            selectedForDeletion.size === 1
+              ? "Apagar 1 conversa"
+              : `Apagar ${selectedForDeletion.size} conversas`
+          }
+          busy={deleteBusy}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={handleDeleteSelected}
+        />
+      )}
+
       {/* ─────────────── LEFT SIDEBAR ─────────────── */}
       <SidebarPanel mobileThread={mobileThread}>
 
@@ -1621,6 +1762,26 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 <button
                   type="button"
                   role="menuitem"
+                  onClick={enterSelectionMode}
+                  disabled={conversations.length === 0}
+                  style={{
+                    width: "100%",
+                    border: "none",
+                    background: "transparent",
+                    color: conversations.length ? W.text : W.muted,
+                    cursor: conversations.length ? "pointer" : "not-allowed",
+                    padding: "11px 13px",
+                    textAlign: "left",
+                    fontSize: 13,
+                    opacity: conversations.length ? 1 : 0.55,
+                  }}
+                >
+                  Selecionar conversas
+                </button>
+                <div style={{ height: 1, background: W.bgBorder }} />
+                <button
+                  type="button"
+                  role="menuitem"
                   onClick={() => {
                     setSidebarMenuOpen(false);
                     setConfirmDelete("all");
@@ -1645,42 +1806,109 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
           </div>
         </div>
 
-        {/* Search */}
-        <div style={{ padding: "8px 12px", background: W.bgSidebar, flexShrink: 0 }}>
-          <div style={{ position: "relative" }}>
-            <svg
-              viewBox="0 0 24 24"
-              width="15"
-              height="15"
-              fill="none"
-              stroke={W.muted}
-              strokeWidth="2"
-              strokeLinecap="round"
-              style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
-            >
-              <circle cx="11" cy="11" r="8" />
-              <path d="m21 21-4.35-4.35" />
-            </svg>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Buscar ou começar nova conversa"
-              style={{
-                width: "100%",
-                height: 35,
-                background: W.bgInput,
-                border: "none",
-                borderRadius: 8,
-                paddingLeft: 34,
-                paddingRight: 12,
-                fontSize: 13.5,
-                color: W.text,
-                outline: "none",
-                boxSizing: "border-box",
-              }}
-            />
+        {/* Selection bar — visível apenas em modo seleção. Substitui
+         *  visualmente a barra de busca para que o usuário tenha foco
+         *  total nas ações de seleção. */}
+        {selectionMode && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              padding: "10px 12px",
+              background: "#1f2c34",
+              borderBottom: `1px solid ${W.bgBorder}`,
+              flexShrink: 0,
+            }}
+          >
+            <span style={{ color: W.text, fontSize: 13.5, fontWeight: 600 }}>
+              {selectedForDeletion.size === 1
+                ? "1 selecionada"
+                : `${selectedForDeletion.size} selecionadas`}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                onClick={exitSelectionMode}
+                disabled={deleteBusy}
+                style={{
+                  border: `1px solid ${W.bgBorder}`,
+                  background: "transparent",
+                  color: W.text,
+                  borderRadius: 999,
+                  padding: "6px 13px",
+                  fontSize: 12.5,
+                  cursor: deleteBusy ? "not-allowed" : "pointer",
+                  opacity: deleteBusy ? 0.55 : 1,
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmDelete("selected")}
+                disabled={deleteBusy || selectedForDeletion.size === 0}
+                style={{
+                  border: "none",
+                  background: "#d64d4d",
+                  color: "white",
+                  borderRadius: 999,
+                  padding: "6px 13px",
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  cursor:
+                    deleteBusy || selectedForDeletion.size === 0
+                      ? "not-allowed"
+                      : "pointer",
+                  opacity:
+                    deleteBusy || selectedForDeletion.size === 0 ? 0.55 : 1,
+                }}
+              >
+                Apagar selecionadas
+              </button>
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* Search — escondida em modo seleção */}
+        {!selectionMode && (
+          <div style={{ padding: "8px 12px", background: W.bgSidebar, flexShrink: 0 }}>
+            <div style={{ position: "relative" }}>
+              <svg
+                viewBox="0 0 24 24"
+                width="15"
+                height="15"
+                fill="none"
+                stroke={W.muted}
+                strokeWidth="2"
+                strokeLinecap="round"
+                style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
+              >
+                <circle cx="11" cy="11" r="8" />
+                <path d="m21 21-4.35-4.35" />
+              </svg>
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Buscar ou começar nova conversa"
+                style={{
+                  width: "100%",
+                  height: 35,
+                  background: W.bgInput,
+                  border: "none",
+                  borderRadius: 8,
+                  paddingLeft: 34,
+                  paddingRight: 12,
+                  fontSize: 13.5,
+                  color: W.text,
+                  outline: "none",
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Conversation list */}
         <div style={{ flex: 1, overflowY: "auto" }}>
@@ -1710,6 +1938,9 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                   onPhotoClick={contactPhotos[c.remoteJid]
                     ? () => setPhotoOverlay(contactPhotos[c.remoteJid]!)
                     : undefined}
+                  selectionMode={selectionMode}
+                  checked={selectedForDeletion.has(c.remoteJid)}
+                  onToggleCheck={() => toggleSelectForDeletion(c.remoteJid)}
                 />
               );
             })
