@@ -7,6 +7,10 @@ import type { Agent } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
+const BASE_AGENT_SELECT = "agent_id, display_name, system_prompt, model, active, metadata, created_at, updated_at, voice_id, response_mode";
+const AGENT_SELECT_WITH_CRM = `${BASE_AGENT_SELECT}, crm_auto_move_enabled, crm_target_funnel_id, crm_target_column_id, crm_target_status`;
+const MISSING_COLUMN_CODES = new Set(["42703", "PGRST204"]);
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -26,6 +30,10 @@ function rowToAgent(row: Record<string, unknown>, tenantId: string): Agent {
     responseMode: row.response_mode,
     voiceId: row.voice_id,
   });
+  const crmAutoMoveEnabled = Boolean(row.crm_auto_move_enabled);
+  const crmTargetFunnelId = typeof row.crm_target_funnel_id === "string" ? row.crm_target_funnel_id : null;
+  const crmTargetColumnId = typeof row.crm_target_column_id === "string" ? row.crm_target_column_id : null;
+  const crmTargetStatus = typeof row.crm_target_status === "string" ? row.crm_target_status : crmTargetColumnId;
 
   // If full Agent was stored in metadata, use it (with DB overrides for live fields)
   if (row.metadata && typeof row.metadata === "object") {
@@ -42,6 +50,10 @@ function rowToAgent(row: Record<string, unknown>, tenantId: string): Agent {
           ? responseSettings.voiceId ?? normalizeAgentVoiceId(meta.voiceId)
           : null,
       responseMode: responseSettings.responseMode,
+      crmAutoMoveEnabled: crmAutoMoveEnabled || Boolean(meta.crmAutoMoveEnabled),
+      crmTargetFunnelId: crmTargetFunnelId ?? meta.crmTargetFunnelId ?? null,
+      crmTargetColumnId: crmTargetColumnId ?? meta.crmTargetColumnId ?? meta.crmTargetStatus ?? null,
+      crmTargetStatus: crmTargetStatus ?? meta.crmTargetStatus ?? meta.crmTargetColumnId ?? null,
     };
   }
 
@@ -59,7 +71,27 @@ function rowToAgent(row: Record<string, unknown>, tenantId: string): Agent {
     atualizadoEm: String(row.updated_at ?? base.atualizadoEm),
     voiceId: responseSettings.voiceId,
     responseMode: responseSettings.responseMode,
+    crmAutoMoveEnabled,
+    crmTargetFunnelId,
+    crmTargetColumnId,
+    crmTargetStatus,
   };
+}
+
+function agentCrmDestinationDbFields(agent: Agent): Record<string, unknown> {
+  const enabled = Boolean(agent.crmAutoMoveEnabled);
+  const targetColumn = enabled ? (agent.crmTargetColumnId ?? agent.crmTargetStatus ?? null) : null;
+  return {
+    crm_auto_move_enabled: enabled,
+    crm_target_funnel_id: enabled ? (agent.crmTargetFunnelId ?? null) : null,
+    crm_target_column_id: targetColumn,
+    crm_target_status: targetColumn,
+  };
+}
+
+function isMissingColumnError(error: { code?: string; message?: string } | null | undefined): boolean {
+  const message = error?.message?.toLowerCase() ?? "";
+  return Boolean(error?.code && MISSING_COLUMN_CODES.has(error.code)) || message.includes("crm_auto_move_enabled");
 }
 
 // ---------------------------------------------------------------------------
@@ -71,11 +103,23 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
   const sb = createSupabaseServiceClient();
-  const { data, error } = await sb
+  const initial = await sb
     .from("tenant_agents")
-    .select("agent_id, display_name, system_prompt, model, active, metadata, created_at, updated_at, voice_id, response_mode")
+    .select(AGENT_SELECT_WITH_CRM)
     .eq("tenant_id", session.tenantId)
     .order("updated_at", { ascending: false });
+  let data: unknown[] | null = initial.data;
+  let error = initial.error;
+
+  if (isMissingColumnError(error)) {
+    const fallback = await sb
+      .from("tenant_agents")
+      .select(BASE_AGENT_SELECT)
+      .eq("tenant_id", session.tenantId)
+      .order("updated_at", { ascending: false });
+    data = fallback.data as unknown[] | null;
+    error = fallback.error;
+  }
 
   if (error) {
     console.error("[api/client/agentes] GET", error.code, error.message);
@@ -116,8 +160,9 @@ export async function POST(request: Request) {
   const systemPrompt = assembleSystemPrompt(agent);
   const now = new Date().toISOString();
   const responseSettings = sanitizeAgentResponseSettings(agent);
+  const crmDestination = agentCrmDestinationDbFields(agent);
 
-  const { data, error } = await sb
+  const initial = await sb
     .from("tenant_agents")
     .upsert(
       {
@@ -127,15 +172,42 @@ export async function POST(request: Request) {
         system_prompt: systemPrompt || agent.systemPrompt || "",
         model: null,
         active: agent.status === "ativo",
-        metadata: { ...agent, ...responseSettings },
+        metadata: { ...agent, ...responseSettings, ...crmDestination },
         updated_at: now,
         voice_id: responseSettings.voiceId,
         response_mode: responseSettings.responseMode,
+        ...crmDestination,
       },
       { onConflict: "tenant_id,agent_id" },
     )
-    .select("agent_id, display_name, system_prompt, model, active, metadata, created_at, updated_at, voice_id, response_mode")
+    .select(AGENT_SELECT_WITH_CRM)
     .single();
+  let data: unknown = initial.data;
+  let error = initial.error;
+
+  if (isMissingColumnError(error)) {
+    const { data: fallbackData, error: fallbackError } = await sb
+      .from("tenant_agents")
+      .upsert(
+        {
+          tenant_id: session.tenantId,
+          agent_id: agent.id,
+          display_name: agent.nome.trim(),
+          system_prompt: systemPrompt || agent.systemPrompt || "",
+          model: null,
+          active: agent.status === "ativo",
+          metadata: { ...agent, ...responseSettings, ...crmDestination },
+          updated_at: now,
+          voice_id: responseSettings.voiceId,
+          response_mode: responseSettings.responseMode,
+        },
+        { onConflict: "tenant_id,agent_id" },
+      )
+      .select(BASE_AGENT_SELECT)
+      .single();
+    data = fallbackData as unknown;
+    error = fallbackError;
+  }
 
   if (error) {
     console.error("[api/client/agentes] POST", error.code, error.message);

@@ -6,13 +6,26 @@ type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 type LeadRow = Record<string, unknown>;
 type WhatsAppLeadDirection = "inbound" | "outbound";
 type AutoLeadLogAction = "created" | "updated" | "skipped" | "conflict_updated" | "error";
+type CrmMoveAction = "enabled" | "disabled" | "skipped";
+type AgentCrmMoveTarget = {
+  enabled: boolean;
+  funnelId: string | null;
+  columnId: string | null;
+  reason?: string;
+};
 
 const MISSING_TABLE_CODES = new Set(["PGRST205", "42P01"]);
+const MISSING_COLUMN_CODES = new Set(["42703", "PGRST204"]);
 const DUPLICATE_KEY_CODES = new Set(["23505"]);
 const MIN_WHATSAPP_PHONE_DIGITS = 8;
 
 function isMissingTableError(error: { code?: string } | null | undefined): boolean {
   return Boolean(error?.code && MISSING_TABLE_CODES.has(error.code));
+}
+
+function isMissingColumnError(error: { code?: string; message?: string } | null | undefined, column: string): boolean {
+  const message = error?.message?.toLowerCase() ?? "";
+  return Boolean(error?.code && MISSING_COLUMN_CODES.has(error.code)) || message.includes(column.toLowerCase());
 }
 
 function logAutoLeadUpsert(params: {
@@ -22,6 +35,10 @@ function logAutoLeadUpsert(params: {
   reason?: string;
   direction?: WhatsAppLeadDirection;
   code?: string | null;
+  agentId?: string | null;
+  crmMove?: CrmMoveAction;
+  targetFunnel?: string | null;
+  targetColumn?: string | null;
 }): void {
   const payload: Record<string, string> = {
     tenant_id: params.tenantId,
@@ -31,6 +48,10 @@ function logAutoLeadUpsert(params: {
   if (params.reason) payload.reason = params.reason;
   if (params.direction) payload.direction = params.direction;
   if (params.code) payload.code = params.code;
+  if (params.agentId) payload.agent_id = params.agentId;
+  if (params.crmMove) payload.crm_move = params.crmMove;
+  if (params.targetFunnel) payload.target_funnel = params.targetFunnel;
+  if (params.targetColumn) payload.target_column = params.targetColumn;
 
   if (params.action === "error") {
     console.warn("[auto-lead-upsert]", payload);
@@ -124,6 +145,68 @@ function textOrNull(value: string | null | undefined): string | null {
   return clean ? clean : null;
 }
 
+function unknownTextOrNull(value: unknown): string | null {
+  return typeof value === "string" ? textOrNull(value) : null;
+}
+
+function unknownBoolean(value: unknown): boolean {
+  return typeof value === "boolean" ? value : value === "true";
+}
+
+async function resolveAgentCrmMoveTarget(
+  sb: SupabaseServiceClient,
+  params: { tenantId: string; agentId?: string | null },
+): Promise<AgentCrmMoveTarget> {
+  const agentId = textOrNull(params.agentId);
+  if (!agentId || agentId === "human") return { enabled: false, funnelId: null, columnId: null, reason: "no_agent_config" };
+
+  const initial = await sb
+    .from("tenant_agents")
+    .select("metadata, crm_auto_move_enabled, crm_target_funnel_id, crm_target_column_id, crm_target_status")
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", agentId)
+    .limit(1)
+    .maybeSingle();
+  let data: unknown = initial.data;
+  let error = initial.error;
+
+  if (isMissingColumnError(error, "crm_auto_move_enabled")) {
+    const fallback = await sb
+      .from("tenant_agents")
+      .select("metadata")
+      .eq("tenant_id", params.tenantId)
+      .eq("agent_id", agentId)
+      .limit(1)
+      .maybeSingle();
+    data = fallback.data as unknown;
+    error = fallback.error;
+  }
+
+  if (error) return { enabled: false, funnelId: null, columnId: null, reason: "agent_config_select_failed" };
+  if (!data || typeof data !== "object") return { enabled: false, funnelId: null, columnId: null, reason: "agent_config_not_found" };
+
+  const row = data as Record<string, unknown>;
+  const metadata = row.metadata && typeof row.metadata === "object" ? (row.metadata as Record<string, unknown>) : {};
+  const enabled = unknownBoolean(row.crm_auto_move_enabled ?? metadata.crmAutoMoveEnabled ?? metadata.crm_auto_move_enabled);
+  if (!enabled) return { enabled: false, funnelId: null, columnId: null, reason: "disabled" };
+
+  const funnelId = unknownTextOrNull(row.crm_target_funnel_id)
+    ?? unknownTextOrNull(metadata.crmTargetFunnelId)
+    ?? unknownTextOrNull(metadata.crm_target_funnel_id);
+  const columnId = unknownTextOrNull(row.crm_target_column_id)
+    ?? unknownTextOrNull(row.crm_target_status)
+    ?? unknownTextOrNull(metadata.crmTargetColumnId)
+    ?? unknownTextOrNull(metadata.crmTargetStatus)
+    ?? unknownTextOrNull(metadata.crm_target_column_id)
+    ?? unknownTextOrNull(metadata.crm_target_status);
+
+  if (!funnelId || !columnId) {
+    return { enabled: false, funnelId, columnId, reason: "incomplete_config" };
+  }
+
+  return { enabled: true, funnelId, columnId };
+}
+
 function isUsefulExistingName(row: LeadRow, phone: string): boolean {
   const name = typeof row.name === "string" ? row.name.trim() : "";
   return Boolean(name && name !== phone);
@@ -134,6 +217,7 @@ export function buildWhatsAppLeadInsertPayload(params: {
   phone: string;
   contactName?: string | null;
   status: string;
+  crmFunnelId?: string | null;
   agentId?: string | null;
   occurredAt: string;
 }): LeadRow {
@@ -143,6 +227,7 @@ export function buildWhatsAppLeadInsertPayload(params: {
     name: textOrNull(params.contactName),
     source: "whatsapp",
     status: params.status,
+    ...(textOrNull(params.crmFunnelId) ? { crm_funnel_id: textOrNull(params.crmFunnelId) } : {}),
     agent_id: textOrNull(params.agentId),
     last_seen: params.occurredAt,
     last_message_at: params.occurredAt,
@@ -158,6 +243,7 @@ function buildExistingLeadUpdate(
     contactName?: string | null;
     agentId?: string | null;
     occurredAt: string;
+    crmMoveTarget?: AgentCrmMoveTarget;
   },
 ): LeadRow {
   const patch: LeadRow = {};
@@ -166,6 +252,10 @@ function buildExistingLeadUpdate(
   if ("updated_at" in row) patch.updated_at = params.occurredAt;
   if ("source" in row) patch.source = "whatsapp";
   if ("agent_id" in row && textOrNull(params.agentId)) patch.agent_id = textOrNull(params.agentId);
+  if (params.crmMoveTarget?.enabled) {
+    patch.status = params.crmMoveTarget.columnId;
+    patch.crm_funnel_id = params.crmMoveTarget.funnelId;
+  }
   if ("name" in row && textOrNull(params.contactName) && !isUsefulExistingName(row, params.phone)) {
     patch.name = textOrNull(params.contactName);
   }
@@ -181,6 +271,7 @@ async function updateExistingLead(
     contactName?: string | null;
     agentId?: string | null;
     occurredAt: string;
+    crmMoveTarget?: AgentCrmMoveTarget;
   },
 ): Promise<boolean> {
   const patch = buildExistingLeadUpdate(row, params);
@@ -200,6 +291,15 @@ async function updateExistingLead(
       reason: "update_failed",
       code: error.code,
     });
+    if (isMissingColumnError(error, "crm_funnel_id") && "crm_funnel_id" in patch) {
+      const { crm_funnel_id: _crmFunnelId, ...fallbackPatch } = patch;
+      const fallbackQuery = sb.from("leads").update(fallbackPatch);
+      const { error: fallbackError } =
+        typeof row.id === "string" && row.id
+          ? await fallbackQuery.eq("tenant_id", params.tenantId).eq("id", row.id)
+          : await fallbackQuery.eq("tenant_id", params.tenantId).eq("phone", params.phone);
+      return !fallbackError;
+    }
     return false;
   }
 
@@ -254,6 +354,15 @@ export async function upsertLeadFromWhatsAppContact(params: {
 
   const sb = createSupabaseServiceClient();
   const occurredAt = textOrNull(params.occurredAt) ?? new Date().toISOString();
+  const crmMoveTarget = await resolveAgentCrmMoveTarget(sb, {
+    tenantId: params.tenantId,
+    agentId: params.agentId,
+  });
+  const crmMoveAction: CrmMoveAction = crmMoveTarget.enabled
+    ? "enabled"
+    : crmMoveTarget.reason === "disabled" || crmMoveTarget.reason === "no_agent_config"
+      ? "disabled"
+      : "skipped";
 
   const { row: existing, error: selectError } = await selectExistingLead(sb, {
     tenantId: params.tenantId,
@@ -269,6 +378,10 @@ export async function upsertLeadFromWhatsAppContact(params: {
         reason: "select_failed",
         direction: params.direction,
         code: selectError.code,
+        agentId: params.agentId,
+        crmMove: crmMoveAction,
+        targetFunnel: crmMoveTarget.funnelId,
+        targetColumn: crmMoveTarget.columnId,
       });
     } else {
       logAutoLeadUpsert({
@@ -278,6 +391,10 @@ export async function upsertLeadFromWhatsAppContact(params: {
         reason: "leads_table_missing",
         direction: params.direction,
         code: selectError.code,
+        agentId: params.agentId,
+        crmMove: crmMoveAction,
+        targetFunnel: crmMoveTarget.funnelId,
+        targetColumn: crmMoveTarget.columnId,
       });
     }
     return;
@@ -290,26 +407,40 @@ export async function upsertLeadFromWhatsAppContact(params: {
       contactName: params.contactName,
       agentId: params.agentId,
       occurredAt,
+      crmMoveTarget,
     });
     logAutoLeadUpsert({
       tenantId: params.tenantId,
       phone,
       action: updated ? "updated" : "skipped",
-      reason: updated ? undefined : "no_update_fields",
+      reason: updated ? crmMoveTarget.reason : (crmMoveTarget.reason ?? "no_update_fields"),
       direction: params.direction,
+      agentId: params.agentId,
+      crmMove: crmMoveAction,
+      targetFunnel: crmMoveTarget.funnelId,
+      targetColumn: crmMoveTarget.columnId,
     });
     return;
   }
 
-  const status = await resolveFirstKanbanStatus(sb, params.tenantId);
-  const { error: insertError } = await sb.from("leads").insert(buildWhatsAppLeadInsertPayload({
+  const fallbackStatus = await resolveFirstKanbanStatus(sb, params.tenantId);
+  const status = crmMoveTarget.enabled ? crmMoveTarget.columnId! : fallbackStatus;
+  const payload = buildWhatsAppLeadInsertPayload({
     tenantId: params.tenantId,
     phone,
     contactName: params.contactName,
     status,
+    crmFunnelId: crmMoveTarget.enabled ? crmMoveTarget.funnelId : null,
     agentId: params.agentId,
     occurredAt,
-  }));
+  });
+  let { error: insertError } = await sb.from("leads").insert(payload);
+
+  if (isMissingColumnError(insertError, "crm_funnel_id") && "crm_funnel_id" in payload) {
+    const { crm_funnel_id: _crmFunnelId, ...fallbackPayload } = payload;
+    const fallbackInsert = await sb.from("leads").insert(fallbackPayload);
+    insertError = fallbackInsert.error;
+  }
 
   if (insertError) {
     if (DUPLICATE_KEY_CODES.has(insertError.code ?? "")) {
@@ -325,6 +456,10 @@ export async function upsertLeadFromWhatsAppContact(params: {
           reason: "duplicate_conflict_lookup_failed",
           direction: params.direction,
           code: conflictSelectError?.code ?? "not_found",
+          agentId: params.agentId,
+          crmMove: crmMoveAction,
+          targetFunnel: crmMoveTarget.funnelId,
+          targetColumn: crmMoveTarget.columnId,
         });
         return;
       }
@@ -334,12 +469,17 @@ export async function upsertLeadFromWhatsAppContact(params: {
         contactName: params.contactName,
         agentId: params.agentId,
         occurredAt,
+        crmMoveTarget,
       });
       logAutoLeadUpsert({
         tenantId: params.tenantId,
         phone,
         action: "conflict_updated",
         direction: params.direction,
+        agentId: params.agentId,
+        crmMove: crmMoveAction,
+        targetFunnel: crmMoveTarget.funnelId,
+        targetColumn: crmMoveTarget.columnId,
       });
       return;
     }
@@ -351,6 +491,10 @@ export async function upsertLeadFromWhatsAppContact(params: {
         reason: "insert_failed",
         direction: params.direction,
         code: insertError.code,
+        agentId: params.agentId,
+        crmMove: crmMoveAction,
+        targetFunnel: crmMoveTarget.funnelId,
+        targetColumn: crmMoveTarget.columnId,
       });
     } else {
       logAutoLeadUpsert({
@@ -360,6 +504,10 @@ export async function upsertLeadFromWhatsAppContact(params: {
         reason: "leads_table_missing",
         direction: params.direction,
         code: insertError.code,
+        agentId: params.agentId,
+        crmMove: crmMoveAction,
+        targetFunnel: crmMoveTarget.funnelId,
+        targetColumn: crmMoveTarget.columnId,
       });
     }
     return;
@@ -370,6 +518,11 @@ export async function upsertLeadFromWhatsAppContact(params: {
     phone,
     action: "created",
     direction: params.direction ?? "inbound",
+    agentId: params.agentId,
+    crmMove: crmMoveAction,
+    targetFunnel: crmMoveTarget.funnelId,
+    targetColumn: crmMoveTarget.columnId,
+    reason: crmMoveTarget.reason,
   });
 }
 

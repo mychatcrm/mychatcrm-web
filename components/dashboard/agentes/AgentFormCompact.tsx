@@ -24,6 +24,7 @@ import { WizardStep5Funil } from "./WizardStep5Funil";
 import { WizardStepFollowUpInteligente } from "./WizardStepFollowUpInteligente";
 import { WizardStepWhatsappLinha } from "./WizardStepWhatsappLinha";
 import { WizardStepVoz } from "./WizardStepVoz";
+import { WizardStepCrmLeadDestination } from "./WizardStepCrmLeadDestination";
 
 const DELETE_AGENT_CONFIRM_TEXT = "QUERO APAGAR";
 
@@ -204,6 +205,13 @@ export function AgentFormCompact({
                 titleIcon={<Kanban strokeWidth={1.75} />}
               >
                 <WizardStep5Funil draft={draft} onChange={setDraft} />
+              </AdvancedSection>
+              <AdvancedSection
+                title="Destino do lead no CRM"
+                description="Opcional: mova automaticamente leads tocados por este agente."
+                titleIcon={<Kanban strokeWidth={1.75} />}
+              >
+                <WizardStepCrmLeadDestination draft={draft} onChange={setDraft} />
               </AdvancedSection>
               <AdvancedSection
                 title="Configurações de Follow-up"

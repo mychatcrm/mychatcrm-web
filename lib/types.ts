@@ -248,4 +248,12 @@ export interface Agent {
   voiceId?: string | null;
   /** Modo de resposta do agente: 'text' (padrão) ou 'audio' (TTS via ElevenLabs). */
   responseMode?: "text" | "audio";
+  /** Quando true, leads tocados por este agente são movidos para o destino CRM abaixo. */
+  crmAutoMoveEnabled?: boolean;
+  /** Funil CRM de destino para leads tocados por este agente. */
+  crmTargetFunnelId?: string | null;
+  /** Coluna/etapa CRM de destino para leads tocados por este agente. */
+  crmTargetColumnId?: string | null;
+  /** Alias do status/coluna usado pela tabela leads. */
+  crmTargetStatus?: string | null;
 }

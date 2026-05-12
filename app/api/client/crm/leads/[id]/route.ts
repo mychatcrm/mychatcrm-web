@@ -5,6 +5,10 @@ import type { ClientLead } from "@/lib/dashboard-data";
 
 export const dynamic = "force-dynamic";
 
+const BASE_LEAD_SELECT = "id, tenant_id, name, phone, email, source, status, notes, agent_id, last_seen, last_message_at, created_at, updated_at";
+const LEAD_SELECT_WITH_FUNNEL = `${BASE_LEAD_SELECT}, crm_funnel_id`;
+const MISSING_COLUMN_CODES = new Set(["42703", "PGRST204"]);
+
 type LeadRow = {
   id: string;
   tenant_id: string;
@@ -19,7 +23,13 @@ type LeadRow = {
   last_message_at: string | null;
   created_at: string | null;
   updated_at: string | null;
+  crm_funnel_id?: string | null;
 };
+
+function isMissingColumnError(error: { code?: string; message?: string } | null | undefined): boolean {
+  const message = error?.message?.toLowerCase() ?? "";
+  return Boolean(error?.code && MISSING_COLUMN_CODES.has(error.code)) || message.includes("crm_funnel_id");
+}
 
 function toDateISO(value: string | null | undefined): string {
   const date = value ? new Date(value) : new Date();
@@ -46,7 +56,7 @@ function rowToClientLead(row: LeadRow): ClientLead {
   const agent = row.agent_id?.trim() || "Agente padrão · CRM";
   return {
     id: row.id,
-    funilId: "funil-default",
+    funilId: row.crm_funnel_id?.trim() || "funil-default",
     dataEntradaISO: toDateISO(row.created_at),
     nome: row.name?.trim() || row.phone?.trim() || "Lead sem nome",
     empresa: "—",
@@ -84,6 +94,7 @@ function leadPayloadToUpdate(body: Record<string, unknown>) {
     ["agent_id", textOrNull(body.agent_id) ?? textOrNull(body.agenteAtendendo) ?? textOrNull(body.agenteEntrada)],
     ["last_seen", textOrNull(body.last_seen)],
     ["last_message_at", textOrNull(body.last_message_at)],
+    ["crm_funnel_id", textOrNull(body.crm_funnel_id) ?? textOrNull(body.funilId)],
   ];
 
   for (const [key, value] of pairs) {
@@ -109,13 +120,28 @@ export async function PUT(
   }
 
   const sb = createSupabaseServiceClient();
-  const { data, error } = await sb
+  const initial = await sb
     .from("leads")
     .update(leadPayloadToUpdate(body))
     .eq("tenant_id", session.tenantId)
     .eq("id", params.id)
-    .select("id, tenant_id, name, phone, email, source, status, notes, agent_id, last_seen, last_message_at, created_at, updated_at")
+    .select(LEAD_SELECT_WITH_FUNNEL)
     .single();
+  let data: unknown = initial.data;
+  let error = initial.error;
+
+  if (isMissingColumnError(error)) {
+    const { crm_funnel_id: _crmFunnelId, ...fallbackPatch } = leadPayloadToUpdate(body);
+    const fallback = await sb
+      .from("leads")
+      .update(fallbackPatch)
+      .eq("tenant_id", session.tenantId)
+      .eq("id", params.id)
+      .select(BASE_LEAD_SELECT)
+      .single();
+    data = fallback.data as unknown;
+    error = fallback.error;
+  }
 
   if (error) {
     console.error("[api/client/crm/leads] PUT", error.code, error.message);

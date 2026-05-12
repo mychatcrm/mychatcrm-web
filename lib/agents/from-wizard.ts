@@ -36,6 +36,10 @@ export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDr
     atualizadoEm: stamp,
     voiceId: responseSettings.voiceId,
     responseMode: responseSettings.responseMode,
+    crmAutoMoveEnabled: draft.crmAutoMoveEnabled,
+    crmTargetFunnelId: draft.crmAutoMoveEnabled ? draft.crmTargetFunnelId : null,
+    crmTargetColumnId: draft.crmAutoMoveEnabled ? draft.crmTargetColumnId : null,
+    crmTargetStatus: draft.crmAutoMoveEnabled ? draft.crmTargetColumnId : null,
   };
 }
 
@@ -85,5 +89,9 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
     atualizadoEm: stamp,
     voiceId: responseSettings.voiceId,
     responseMode: responseSettings.responseMode,
+    crmAutoMoveEnabled: draft.crmAutoMoveEnabled,
+    crmTargetFunnelId: draft.crmAutoMoveEnabled ? draft.crmTargetFunnelId : null,
+    crmTargetColumnId: draft.crmAutoMoveEnabled ? draft.crmTargetColumnId : null,
+    crmTargetStatus: draft.crmAutoMoveEnabled ? draft.crmTargetColumnId : null,
   };
 }

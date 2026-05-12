@@ -23,6 +23,7 @@ type Operation =
 
 function makeSupabaseMock(opts: {
   leadSelects?: Array<DbResult<Record<string, unknown>>>;
+  agentRow?: Record<string, unknown> | null;
   insertError?: { code?: string; message?: string } | null;
 }) {
   const operations: Operation[] = [];
@@ -45,6 +46,9 @@ function makeSupabaseMock(opts: {
             maybeSingle: async () => {
               if (table === "leads") {
                 return leadSelects.shift() ?? { data: null, error: null };
+              }
+              if (table === "tenant_agents") {
+                return { data: opts.agentRow ?? null, error: null };
               }
               return { data: null, error: null };
             },
@@ -118,6 +122,19 @@ describe("phoneFromRemoteJid", () => {
     });
   });
 
+  it("can include CRM funnel destination in a WhatsApp lead payload", () => {
+    const payload = buildWhatsAppLeadInsertPayload({
+      tenantId: "tenant-a",
+      phone: "5511999990000",
+      status: "qualificado",
+      crmFunnelId: "funil-vendas",
+      occurredAt: "2026-05-12T10:00:00.000Z",
+    });
+
+    expect(payload.status).toBe("qualificado");
+    expect(payload.crm_funnel_id).toBe("funil-vendas");
+  });
+
   it("does not touch the database for an empty phone", async () => {
     await upsertLeadFromWhatsAppContact({ tenantId: "tenant-a", phone: "" });
     expect(createSupabaseServiceClientMock).not.toHaveBeenCalled();
@@ -179,6 +196,117 @@ describe("phoneFromRemoteJid", () => {
         agent_id: "ag-vendas",
         name: "Maria Cliente",
       },
+      eqs: [
+        ["tenant_id", "tenant-a"],
+        ["id", "lead-1"],
+      ],
+    });
+  });
+
+  it("creates a lead without moving CRM status when the agent is configured not to move", async () => {
+    const { client, operations } = makeSupabaseMock({
+      leadSelects: [{ data: null, error: null }],
+      agentRow: {
+        metadata: { crmAutoMoveEnabled: false },
+      },
+    });
+    createSupabaseServiceClientMock.mockReturnValue(client);
+
+    await upsertLeadFromWhatsAppContact({
+      tenantId: "tenant-a",
+      phone: "5511999990000",
+      agentId: "ag-vendas",
+      occurredAt: "2026-05-12T10:00:00.000Z",
+    });
+
+    expect(operations).toContainEqual({
+      table: "leads",
+      type: "insert",
+      payload: expect.objectContaining({
+        tenant_id: "tenant-a",
+        phone: "5511999990000",
+        status: "novo",
+      }),
+    });
+    expect((operations[0] as Extract<Operation, { type: "insert" }>).payload.crm_funnel_id).toBeUndefined();
+  });
+
+  it("creates a lead in the configured CRM funnel and column when the agent has a destination", async () => {
+    const { client, operations } = makeSupabaseMock({
+      leadSelects: [{ data: null, error: null }],
+      agentRow: {
+        metadata: {
+          crmAutoMoveEnabled: true,
+          crmTargetFunnelId: "funil-vendas",
+          crmTargetColumnId: "qualificado",
+        },
+      },
+    });
+    createSupabaseServiceClientMock.mockReturnValue(client);
+
+    await upsertLeadFromWhatsAppContact({
+      tenantId: "tenant-a",
+      phone: "5511999990000",
+      agentId: "ag-vendas",
+      occurredAt: "2026-05-12T10:00:00.000Z",
+    });
+
+    expect(operations).toContainEqual({
+      table: "leads",
+      type: "insert",
+      payload: expect.objectContaining({
+        tenant_id: "tenant-a",
+        phone: "5511999990000",
+        status: "qualificado",
+        crm_funnel_id: "funil-vendas",
+        agent_id: "ag-vendas",
+      }),
+    });
+  });
+
+  it("does not move an existing lead when the agent CRM destination is incomplete", async () => {
+    const { client, operations } = makeSupabaseMock({
+      leadSelects: [
+        {
+          data: {
+            id: "lead-1",
+            tenant_id: "tenant-a",
+            phone: "5511999990000",
+            name: "Maria",
+            source: "manual",
+            agent_id: null,
+            last_seen: null,
+            last_message_at: null,
+            updated_at: null,
+            status: "novo",
+            crm_funnel_id: "funil-default",
+          },
+          error: null,
+        },
+      ],
+      agentRow: {
+        metadata: {
+          crmAutoMoveEnabled: true,
+          crmTargetFunnelId: "funil-vendas",
+        },
+      },
+    });
+    createSupabaseServiceClientMock.mockReturnValue(client);
+
+    await upsertLeadFromWhatsAppContact({
+      tenantId: "tenant-a",
+      phone: "5511999990000",
+      agentId: "ag-vendas",
+      occurredAt: "2026-05-12T10:00:00.000Z",
+    });
+
+    expect(operations).toContainEqual({
+      table: "leads",
+      type: "update",
+      patch: expect.not.objectContaining({
+        status: expect.any(String),
+        crm_funnel_id: expect.any(String),
+      }),
       eqs: [
         ["tenant_id", "tenant-a"],
         ["id", "lead-1"],

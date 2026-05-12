@@ -63,6 +63,12 @@ export type AgentWizardDraft = {
   responseMode: "text" | "audio";
   /** ID da voz ElevenLabs para TTS (obrigatório quando responseMode === 'audio'). */
   voiceId: string;
+  /** Se true, leads criados/atualizados por este agente são movidos no CRM. */
+  crmAutoMoveEnabled: boolean;
+  /** Funil de destino para movimento automático no CRM. */
+  crmTargetFunnelId: string;
+  /** Coluna/etapa de destino para movimento automático no CRM. */
+  crmTargetColumnId: string;
 };
 
 /** Ordem exibida no passo «Objetivo principal» do wizard. */
@@ -163,6 +169,9 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     foraDaVezMensagem: "",
     responseMode: normalizeAgentResponseMode(agent.responseMode),
     voiceId: normalizeAgentVoiceId(agent.voiceId) ?? "",
+    crmAutoMoveEnabled: Boolean(agent.crmAutoMoveEnabled),
+    crmTargetFunnelId: agent.crmTargetFunnelId ?? resolved.funilId,
+    crmTargetColumnId: agent.crmTargetColumnId ?? agent.crmTargetStatus ?? colunaInicial,
   };
 }
 
@@ -234,6 +243,14 @@ export function validateCompactAgentDraft(
   }
   const responseSettingsError = validateAgentResponseSettings(draft);
   if (responseSettingsError) return responseSettingsError;
+  if (draft.crmAutoMoveEnabled) {
+    if (!crmFunnels?.length) return "Carregue os funis do CRM antes de configurar o destino automático.";
+    const targetFunnel = crmFunnels.find((f) => f.id === draft.crmTargetFunnelId);
+    if (!targetFunnel) return "Escolha um funil válido em «Destino do lead no CRM».";
+    if (!isValidColunaForFunnel(draft.crmTargetColumnId, targetFunnel)) {
+      return "Escolha uma coluna válida em «Destino do lead no CRM».";
+    }
+  }
   return null;
 }
 
@@ -299,4 +316,7 @@ export const defaultWizardDraft: AgentWizardDraft = {
   foraDaVezMensagem: "",
   responseMode: "text",
   voiceId: "",
+  crmAutoMoveEnabled: false,
+  crmTargetFunnelId: DEFAULT_CRM_FUNNELS[0]!.id,
+  crmTargetColumnId: DEFAULT_CRM_FUNNELS[0]!.columns[0]!.id,
 };
