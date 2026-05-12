@@ -5,6 +5,7 @@ import {
   sendWhatsAppTextMessage,
   verifyMetaSignature256,
 } from "@/lib/integrations/whatsapp-cloud";
+import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +52,15 @@ export async function POST(request: Request) {
   const tenantId = process.env.WHATSAPP_DEFAULT_TENANT_ID?.trim() || "public";
   const agentId = process.env.WHATSAPP_DEFAULT_AGENT_ID?.trim() || "marketing_site_assistant";
 
+  await upsertLeadFromWhatsAppContact({
+    tenantId,
+    phone: inbound.fromWaId,
+    contactName: inbound.contactName,
+    direction: "inbound",
+    agentId,
+    conversationId: inbound.fromWaId,
+  });
+
   const result = await generateAgentResponse({
     tenantId,
     agentId,
@@ -74,6 +84,15 @@ export async function POST(request: Request) {
     });
     if (!send.ok) {
       console.error("[webhooks/whatsapp] send failed", send.status, send.error);
+    } else {
+      await upsertLeadFromWhatsAppContact({
+        tenantId,
+        phone: inbound.fromWaId,
+        contactName: inbound.contactName,
+        direction: "outbound",
+        agentId,
+        conversationId: inbound.fromWaId,
+      });
     }
   } else {
     console.warn("[webhooks/whatsapp] WHATSAPP_ACCESS_TOKEN ausente — inferência registada mas sem envio de resposta.");

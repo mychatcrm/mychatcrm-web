@@ -7,6 +7,7 @@
  *   file      — Blob / File
  *   remoteJid — string  (ex: 5511999999999@s.whatsapp.net)
  *   caption   — string  (opcional, para imagem/vídeo/documento)
+ *   contactName — string (opcional)
  */
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
@@ -18,6 +19,7 @@ import {
   remoteJidToEvoNumber,
 } from "@/lib/integrations/evolution-api";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
+import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +64,7 @@ export async function POST(request: Request) {
   const fileBlob = formData.get("file");
   const remoteJid = (formData.get("remoteJid") as string | null)?.trim();
   const caption = ((formData.get("caption") as string | null) ?? "").trim();
+  const contactName = ((formData.get("contactName") as string | null) ?? "").trim();
 
   if (!(fileBlob instanceof Blob)) {
     return NextResponse.json({ error: "Campo 'file' ausente" }, { status: 400 });
@@ -172,6 +175,16 @@ export async function POST(request: Request) {
   if (dbErr) {
     console.warn("[send-media] db insert error", dbErr.code, dbErr.message);
   }
+
+  await upsertLeadFromWhatsAppContact({
+    tenantId: session.tenantId,
+    remoteJid,
+    contactName,
+    direction: "outbound",
+    agentId: "human",
+    conversationId: remoteJid,
+    occurredAt: typeof saved?.created_at === "string" ? saved.created_at : undefined,
+  });
 
   return NextResponse.json({ ok: true, message: saved ?? null });
 }

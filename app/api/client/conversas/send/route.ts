@@ -3,13 +3,14 @@
  * Envia uma mensagem de texto para um número WhatsApp via Evolution API
  * e persiste o outbound na tabela whatsapp_messages.
  *
- * Body: { remoteJid: string; text: string }
+ * Body: { remoteJid: string; text: string; contactName?: string }
  */
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
+import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 
 export const dynamic = "force-dynamic";
 
@@ -17,14 +18,14 @@ export async function POST(request: Request) {
   const session = await getClientSessionFromCookies();
   if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
-  let body: { remoteJid?: string; text?: string };
+  let body: { remoteJid?: string; text?: string; contactName?: string };
   try {
-    body = (await request.json()) as { remoteJid?: string; text?: string };
+    body = (await request.json()) as { remoteJid?: string; text?: string; contactName?: string };
   } catch {
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
   }
 
-  const { remoteJid, text } = body;
+  const { remoteJid, text, contactName } = body;
   if (!remoteJid?.trim() || !text?.trim()) {
     return NextResponse.json({ error: "remoteJid e text são obrigatórios" }, { status: 400 });
   }
@@ -69,6 +70,16 @@ export async function POST(request: Request) {
     console.warn("[api/client/conversas/send] db insert", dbErr.code, dbErr.message);
     // Não falha — mensagem já foi enviada, só não persiste
   }
+
+  await upsertLeadFromWhatsAppContact({
+    tenantId: session.tenantId,
+    remoteJid,
+    contactName,
+    direction: "outbound",
+    agentId: "human",
+    conversationId: remoteJid,
+    occurredAt: typeof saved?.created_at === "string" ? saved.created_at : undefined,
+  });
 
   return NextResponse.json({ ok: true, message: saved ?? null });
 }

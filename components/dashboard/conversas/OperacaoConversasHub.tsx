@@ -119,11 +119,11 @@ async function apiLoadMessages(remoteJid: string): Promise<WaMessage[]> {
   return data.messages ?? [];
 }
 
-async function apiSendMessage(remoteJid: string, text: string): Promise<WaMessage | null> {
+async function apiSendMessage(remoteJid: string, text: string, contactName?: string | null): Promise<WaMessage | null> {
   const res = await fetch("/api/client/conversas/send", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ remoteJid, text }),
+    body: JSON.stringify({ remoteJid, text, contactName }),
   });
   if (!res.ok) {
     const err = (await res.json().catch(() => ({}))) as { error?: string };
@@ -1420,7 +1420,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     );
 
     try {
-      const saved = await apiSendMessage(selectedJid, text);
+      const saved = await apiSendMessage(selectedJid, text, contactNames[selectedJid]);
       if (saved) {
         setConversations((prev) =>
           prev.map((c) =>
@@ -1442,7 +1442,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     } finally {
       setSending(false);
     }
-  }, [selectedJid, draft, sending]);
+  }, [selectedJid, draft, sending, contactNames]);
 
   // ── Emoji insert at cursor ────────────────────────────────────────────────
   const handleEmojiSelect = useCallback((emoji: { native?: string; unified?: string }) => {
@@ -1497,6 +1497,8 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
       const fd = new FormData();
       fd.append("file", attachment.file);
       fd.append("remoteJid", selectedJid);
+      const contactName = contactNames[selectedJid];
+      if (contactName) fd.append("contactName", contactName);
       const res = await fetch("/api/client/conversas/send-media", { method: "POST", body: fd });
       if (!res.ok) {
         const err = (await res.json().catch(() => ({}))) as { error?: string };
@@ -1518,7 +1520,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     } finally {
       setUploading(false);
     }
-  }, [attachment, selectedJid, uploading]);
+  }, [attachment, selectedJid, uploading, contactNames]);
 
   // ── Scroll helpers (first / last message navigation) ─────────────────────
   const scrollToTop = useCallback(() => {

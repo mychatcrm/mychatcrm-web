@@ -11,7 +11,7 @@ import {
 } from "@/lib/integrations/evolution-webhook-parse";
 import { evolutionSendAudio, evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import { resolveEvolutionAgentId } from "@/lib/server/evolution-agent-resolve";
-import { autoUpsertLeadFromWhatsApp } from "@/lib/server/auto-lead-upsert";
+import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 import { getEvolutionInstanceByName, updateEvolutionInstanceStateByName } from "@/lib/server/tenant-evolution-instance-db";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { uploadMediaToR2 } from "@/lib/integrations/r2-storage";
@@ -361,10 +361,14 @@ export async function POST(request: Request) {
         messageId: msg.messageId,
         mediaUrl: inboundMediaUrl,
       });
-      await autoUpsertLeadFromWhatsApp({
+      const contactName = extractContactNameFromPayload(payload, msg);
+      await upsertLeadFromWhatsAppContact({
         tenantId: row.tenant_id,
         remoteJid: msg.remoteJid,
-        contactName: extractContactNameFromPayload(payload, msg),
+        contactName,
+        direction: "inbound",
+        agentId,
+        conversationId: msg.remoteJid,
       });
 
       const inboundLanguageCode = detectSupportedLanguageCode(inboundLanguageSource(msg));
@@ -429,7 +433,7 @@ export async function POST(request: Request) {
           if (!send.ok) {
             console.error("[webhooks/evolution] sendAudio (TTS)", send.status, send.error);
           } else {
-            saveMessage({
+            await saveMessage({
               tenantId: row.tenant_id,
               remoteJid: msg.remoteJid,
               direction: "outbound",
@@ -438,19 +442,35 @@ export async function POST(request: Request) {
               agentId,
               mediaUrl,
             });
+            await upsertLeadFromWhatsAppContact({
+              tenantId: row.tenant_id,
+              remoteJid: msg.remoteJid,
+              contactName,
+              direction: "outbound",
+              agentId,
+              conversationId: msg.remoteJid,
+            });
           }
         } catch (ttsErr) {
           console.error("[webhooks/evolution] TTS error — fallback to text", ttsErr instanceof Error ? ttsErr.message : ttsErr);
           // Fallback: envia como texto se TTS falhar
           const fallback = await evolutionSendText({ instanceName, number, text: replyText.slice(0, 4000) });
           if (fallback.ok) {
-            saveMessage({
+            await saveMessage({
               tenantId: row.tenant_id,
               remoteJid: msg.remoteJid,
               direction: "outbound",
               kind: "text",
               content: replyText.slice(0, 4000),
               agentId,
+            });
+            await upsertLeadFromWhatsAppContact({
+              tenantId: row.tenant_id,
+              remoteJid: msg.remoteJid,
+              contactName,
+              direction: "outbound",
+              agentId,
+              conversationId: msg.remoteJid,
             });
           }
         }
@@ -465,13 +485,21 @@ export async function POST(request: Request) {
         if (!send.ok) {
           console.error("[webhooks/evolution] sendText", send.status, send.error);
         } else {
-          saveMessage({
+          await saveMessage({
             tenantId: row.tenant_id,
             remoteJid: msg.remoteJid,
             direction: "outbound",
             kind: "text",
             content: replyText.slice(0, 4000),
             agentId,
+          });
+          await upsertLeadFromWhatsAppContact({
+            tenantId: row.tenant_id,
+            remoteJid: msg.remoteJid,
+            contactName,
+            direction: "outbound",
+            agentId,
+            conversationId: msg.remoteJid,
           });
         }
       }

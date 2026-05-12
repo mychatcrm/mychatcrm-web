@@ -5,6 +5,7 @@ export type WhatsAppInboundText = {
   phoneNumberId: string;
   text: string;
   messageId: string;
+  contactName: string | null;
 };
 
 /** Extrai primeira mensagem de texto do payload Cloud API (formato típico webhook). */
@@ -19,6 +20,7 @@ export function parseWhatsAppCloudPayload(body: unknown): WhatsAppInboundText | 
       const value = ch.value as Record<string, unknown> | undefined;
       if (!value || typeof value !== "object") continue;
       const metadata = value.metadata as { phone_number_id?: string } | undefined;
+      const contacts = value.contacts as unknown[] | undefined;
       const messages = value.messages as unknown[] | undefined;
       if (!Array.isArray(messages) || !metadata?.phone_number_id) continue;
       const m = messages[0] as Record<string, unknown> | undefined;
@@ -32,8 +34,24 @@ export function parseWhatsAppCloudPayload(body: unknown): WhatsAppInboundText | 
         phoneNumberId: String(metadata.phone_number_id),
         text: textObj.body,
         messageId: typeof id === "string" ? id : "",
+        contactName: extractCloudContactName(contacts, from),
       };
     }
+  }
+  return null;
+}
+
+function extractCloudContactName(contacts: unknown[] | undefined, waId: string): string | null {
+  if (!Array.isArray(contacts)) return null;
+  for (const contact of contacts) {
+    if (!contact || typeof contact !== "object") continue;
+    const row = contact as Record<string, unknown>;
+    if (typeof row.wa_id === "string" && row.wa_id !== waId) continue;
+    const profile = row.profile && typeof row.profile === "object"
+      ? (row.profile as Record<string, unknown>)
+      : null;
+    const name = profile?.name;
+    if (typeof name === "string" && name.trim()) return name.trim();
   }
   return null;
 }
