@@ -108,7 +108,7 @@ import {
 } from "@/lib/crm-lead-extras";
 import { computeLeadTemperature, type LeadTemperatureResult } from "@/lib/crm-lead-temperature";
 import { formatIntegerPtBr } from "@/lib/format-number";
-import { funnelColumnTitle, normalizeColunaInicialForFunnel } from "@/lib/crm-funnels";
+import { funnelColumnTitle, normalizeColunaInicialForFunnel, type CrmFunnel } from "@/lib/crm-funnels";
 import { getPlanMaxSalesFunnelsForSession, normalizeClientPlan } from "@/lib/plan-limits";
 import {
   createCrmLeadInApi,
@@ -854,6 +854,18 @@ function reorderLeadsForFunnelColumn(
   return out;
 }
 
+function normalizeLeadsForVisibleCrmFunnel(leads: ClientLead[], funnels: readonly CrmFunnel[]): ClientLead[] {
+  const fallbackFunnel = funnels[0];
+  if (!fallbackFunnel) return leads.map((lead) => ({ ...lead }));
+
+  return leads.map((lead) => {
+    const funnel = funnels.find((f) => f.id === lead.funilId) ?? fallbackFunnel;
+    const status = normalizeColunaInicialForFunnel(lead.status, funnel);
+    if (lead.funilId === funnel.id && lead.status === status) return { ...lead };
+    return { ...lead, funilId: funnel.id, status };
+  });
+}
+
 function crmLeadAccentSeed(lead: ClientLead) {
   return `${lead.agenteAtendendo} ${lead.agenteEntrada} ${lead.origem} ${lead.tag}`;
 }
@@ -1085,12 +1097,12 @@ function CrmPage({
     void loadCrmLeadsFromApiWithLocalMigration(dataset.tenantId, fallback)
       .then((remoteLeads) => {
         if (cancelled) return;
-        setLeads(remoteLeads);
+        setLeads(normalizeLeadsForVisibleCrmFunnel(remoteLeads, funnels));
         setLeadsLoadedFromApi(true);
       })
       .catch(() => {
         if (cancelled) return;
-        setLeads(loadCrmLeadsSnapshot(dataset.tenantId, fallback));
+        setLeads(normalizeLeadsForVisibleCrmFunnel(loadCrmLeadsSnapshot(dataset.tenantId, fallback), funnels));
         setLeadsLoadedFromApi(true);
       });
     return () => {
@@ -1098,7 +1110,7 @@ function CrmPage({
     };
     // Intencional: baseline do dataset ao mudar tenant; snapshot local/servidor continua se existir.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dataset.leads omitido de propósito
-  }, [dataset.tenantId]);
+  }, [dataset.tenantId, funnels]);
 
   useEffect(() => {
     void refreshTeamEmployeesFromApi(dataset.tenantId).then(() => setTeamEmployees(loadTeamEmployees(dataset.tenantId)));
@@ -1126,8 +1138,9 @@ function CrmPage({
       void fetchCrmLeadsFromApi()
         .then((remoteLeads) => {
           if (cancelled) return;
-          setLeads(remoteLeads);
-          persistCrmLeadsSnapshot(dataset.tenantId, remoteLeads);
+          const visibleLeads = normalizeLeadsForVisibleCrmFunnel(remoteLeads, funnels);
+          setLeads(visibleLeads);
+          persistCrmLeadsSnapshot(dataset.tenantId, visibleLeads);
         })
         .catch(() => undefined);
     });
@@ -1135,7 +1148,7 @@ function CrmPage({
       cancelled = true;
       unsubscribe();
     };
-  }, [dataset.tenantId]);
+  }, [dataset.tenantId, funnels]);
 
   useEffect(() => {
     if (!funnels.length) return;
