@@ -5,6 +5,15 @@ import dynamic from "next/dynamic";
 import { createClient } from "@supabase/supabase-js";
 import { cn } from "@/lib/utils";
 import type { ClientSession } from "@/lib/client-auth";
+import {
+  buildOptimisticAutomation,
+  getAutomationConfirmCopy,
+  nextAutomationEnabled,
+  resolveAutomationConfirmIntent,
+  runAutomationToggleCommit,
+  type AutomationConfirmIntent,
+  type AutomationSnapshot,
+} from "@/lib/conversas/automation-toggle-flow";
 
 // ── Emoji picker (data + react component) ────────────────────────────────────
 // Antes usávamos `require("@emoji-mart/data")` no top-level, que em Next.js
@@ -976,6 +985,8 @@ function ConfirmDeleteModal({
   description,
   confirmLabel,
   busy,
+  busyLabel,
+  confirmColor = "#d64d4d",
   onCancel,
   onConfirm,
 }: {
@@ -983,6 +994,8 @@ function ConfirmDeleteModal({
   description: string;
   confirmLabel: string;
   busy: boolean;
+  busyLabel?: string;
+  confirmColor?: string;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -1040,7 +1053,7 @@ function ConfirmDeleteModal({
             disabled={busy}
             style={{
               border: "none",
-              background: "#d64d4d",
+              background: confirmColor,
               color: "white",
               borderRadius: 999,
               padding: "9px 15px",
@@ -1049,7 +1062,7 @@ function ConfirmDeleteModal({
               fontWeight: 650,
             }}
           >
-            {busy ? "Apagando…" : confirmLabel}
+            {busy ? (busyLabel ?? "Apagando…") : confirmLabel}
           </button>
         </div>
       </div>
@@ -1107,11 +1120,10 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   type AttachmentState = { file: File; previewUrl: string; kind: AttachmentKind };
   const [attachment,     setAttachment]     = useState<AttachmentState | null>(null);
   const [uploading,      setUploading]      = useState(false);
-  const [automationByJid, setAutomationByJid] = useState<
-    Record<string, { enabled: boolean; human_paused: boolean; paused_by: string | null; paused_reason: string | null }>
-  >({});
+  const [automationByJid, setAutomationByJid] = useState<Record<string, AutomationSnapshot>>({});
   const [automationToggling, setAutomationToggling] = useState(false);
   const [automationError, setAutomationError] = useState("");
+  const [automationConfirm, setAutomationConfirm] = useState<AutomationConfirmIntent>(null);
 
   // Cache em ref para evitar fetches duplicados concorrentes
   const photoCacheRef    = useRef<Set<string>>(new Set());
@@ -1327,6 +1339,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
       setInConvQuery("");
       setInConvMatchIdx(0);
       setChatMenuOpen(false);
+      setAutomationConfirm(null);
       // Reset near-bottom so new conversation always scrolls to bottom
       isNearBottomRef.current = true;
       setConversations((prev) => prev.map((c) => (c.remoteJid === jid ? { ...c, unreadCount: 0 } : c)));
@@ -1364,38 +1377,33 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     : true;
 
   const handleAutomationToggle = useCallback(async () => {
-    if (!selectedJid || automationToggling) return;
-    const previous = automationByJid[selectedJid]?.enabled ?? true;
-    const next = !previous;
+    if (!selectedJid || !automationConfirm || automationToggling) return;
+    const previous = automationByJid[selectedJid] ?? buildOptimisticAutomation(true);
+    const nextEnabled = nextAutomationEnabled(automationConfirm);
     setAutomationByJid((prev) => ({
       ...prev,
-      [selectedJid]: {
-        enabled: next,
-        human_paused: !next,
-        paused_by: next ? null : "human_manual",
-        paused_reason: next ? null : "manual_toggle",
-      },
+      [selectedJid]: buildOptimisticAutomation(nextEnabled),
     }));
     setAutomationToggling(true);
     setAutomationError("");
-    try {
-      const automation = await apiToggleAutomation(selectedJid, next);
-      setAutomationByJid((prev) => ({ ...prev, [selectedJid]: automation }));
-    } catch (e) {
+    const result = await runAutomationToggleCommit({
+      remoteJid: selectedJid,
+      nextEnabled,
+      previous,
+      toggleApi: apiToggleAutomation,
+    });
+    if (result.ok) {
+      setAutomationByJid((prev) => ({ ...prev, [selectedJid]: result.automation }));
+      setAutomationConfirm(null);
+    } else {
       setAutomationByJid((prev) => ({
         ...prev,
-        [selectedJid]: {
-          enabled: previous,
-          human_paused: !previous,
-          paused_by: prev[selectedJid]?.paused_by ?? null,
-          paused_reason: prev[selectedJid]?.paused_reason ?? null,
-        },
+        [selectedJid]: result.rollback,
       }));
-      setAutomationError(e instanceof Error ? e.message : "Não foi possível alterar a automação.");
-    } finally {
-      setAutomationToggling(false);
+      setAutomationError(result.error);
     }
-  }, [selectedJid, automationToggling, automationByJid]);
+    setAutomationToggling(false);
+  }, [selectedJid, automationConfirm, automationToggling, automationByJid]);
 
   const handleDeleteConversation = useCallback(() => {
     if (!active || deleteBusy) return;
@@ -1871,6 +1879,24 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
         />
       )}
 
+      {automationConfirm && (() => {
+        const copy = getAutomationConfirmCopy(automationConfirm);
+        return (
+          <ConfirmDeleteModal
+            title={copy.title}
+            description={copy.description}
+            confirmLabel={copy.confirmLabel}
+            confirmColor={copy.confirmColor}
+            busyLabel={copy.busyLabel}
+            busy={automationToggling}
+            onCancel={() => {
+              if (!automationToggling) setAutomationConfirm(null);
+            }}
+            onConfirm={() => void handleAutomationToggle()}
+          />
+        );
+      })()}
+
       {/* ─────────────── LEFT SIDEBAR ─────────────── */}
       <SidebarPanel mobileThread={mobileThread}>
 
@@ -2250,7 +2276,10 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
               {/* Toggle automação do agente */}
               <button
                 type="button"
-                onClick={() => void handleAutomationToggle()}
+                onClick={() => {
+                  if (automationToggling) return;
+                  setAutomationConfirm(resolveAutomationConfirmIntent(activeAutomationEnabled));
+                }}
                 disabled={automationToggling}
                 title={activeAutomationEnabled ? "Desligar agente nesta conversa" : "Ligar agente nesta conversa"}
                 style={{
