@@ -117,6 +117,7 @@ import {
 import { getPlanMaxSalesFunnelsForSession, normalizeClientPlan } from "@/lib/plan-limits";
 import {
   createCrmLeadInApi,
+  deleteCrmLeadsInApi,
   deleteCrmLeadInApi,
   fetchCrmLeadsFromApi,
   loadCrmLeadsFromApiWithLocalMigration,
@@ -929,15 +930,26 @@ function CrmKanbanLeadCard({
   lead,
   temperature,
   onOpen,
+  selectionMode,
+  selected,
+  onToggleSelected,
+  onDelete,
   lastDragEndedAtRef,
 }: {
   lead: ClientLead;
   temperature: LeadTemperatureResult;
   onOpen: (lead: ClientLead) => void;
+  selectionMode: boolean;
+  selected: boolean;
+  onToggleSelected: (leadId: string) => void;
+  onDelete: (lead: ClientLead) => void;
   lastDragEndedAtRef: MutableRefObject<number>;
 }) {
   const { isLight } = usePanelAppearance();
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: lead.id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: lead.id,
+    disabled: selectionMode,
+  });
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -952,27 +964,77 @@ function CrmKanbanLeadCard({
       ref={setNodeRef}
       style={style}
       className={cn(
-        "group relative cursor-grab overflow-hidden rounded-xl border border-line bg-surface-card text-left outline-none active:cursor-grabbing",
+        "group relative overflow-hidden rounded-xl border border-line bg-surface-card text-left outline-none",
+        selectionMode ? "cursor-pointer" : "cursor-grab active:cursor-grabbing",
         "transition-[border-color,background-color] duration-200 ease-out",
         "hover:border-primary/40",
         "focus-visible:ring-2 focus-visible:ring-primary/30",
+        selected && "border-primary/55 bg-primary/[0.06] ring-2 ring-primary/25",
         isDragging && "z-40 cursor-grabbing opacity-[0.96] ring-2 ring-primary/35",
       )}
-      {...listeners}
-      {...attributes}
+      {...(selectionMode ? {} : listeners)}
+      {...(selectionMode ? {} : attributes)}
+      role="button"
+      tabIndex={0}
       onClick={() => {
         if (Date.now() - lastDragEndedAtRef.current < 280) return;
+        if (selectionMode) {
+          onToggleSelected(lead.id);
+          return;
+        }
         onOpen(lead);
       }}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
+          if (selectionMode) {
+            onToggleSelected(lead.id);
+            return;
+          }
           onOpen(lead);
         }
       }}
     >
       <div className={cn("h-1 w-full shrink-0 bg-gradient-to-r", accentBar)} aria-hidden />
       <div className="relative p-3.5 pt-3">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <label
+            className={cn(
+              "inline-flex items-center gap-2 text-[11px] font-medium text-content-muted transition",
+              selectionMode ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+            )}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-line text-primary focus:ring-primary/25"
+              checked={selected}
+              onChange={() => onToggleSelected(lead.id)}
+              aria-label={`Selecionar lead ${lead.nome}`}
+            />
+            Selecionar
+          </label>
+          <button
+            type="button"
+            className={cn(
+              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-rose-500 transition",
+              isLight
+                ? "border-rose-200/70 bg-rose-50/70 hover:bg-rose-100"
+                : "border-rose-500/25 bg-rose-500/10 hover:bg-rose-500/20",
+              "opacity-0 focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
+            )}
+            title="Apagar lead"
+            aria-label={`Apagar lead ${lead.nome}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(lead);
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <Trash2 className="h-4 w-4" strokeWidth={2} aria-hidden />
+          </button>
+        </div>
         <div className="relative min-w-0">
           <div className="flex items-start justify-between gap-2">
             <p className="min-w-0 flex-1 text-sm font-semibold leading-snug tracking-tight text-content">{lead.nome}</p>
@@ -1083,6 +1145,11 @@ function CrmPage({
   const [crmDraftFilters, setCrmDraftFilters] = useState<CrmLeadAppliedFilters>(() => ({
     ...EMPTY_CRM_LEAD_FILTERS,
   }));
+  const [crmSelectionMode, setCrmSelectionMode] = useState(false);
+  const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(() => new Set());
+  const [deleteLeadConfirm, setDeleteLeadConfirm] = useState<{ ids: string[]; names: string[] } | null>(null);
+  const [deleteLeadError, setDeleteLeadError] = useState<string | null>(null);
+  const [deleteLeadBusy, setDeleteLeadBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1162,6 +1229,14 @@ function CrmPage({
     setSelectedLead((prev) => {
       if (!prev) return prev;
       return leads.find((l) => l.id === prev.id) ?? null;
+    });
+  }, [leads]);
+
+  useEffect(() => {
+    const currentIds = new Set(leads.map((lead) => lead.id));
+    setSelectedLeadIds((prev) => {
+      const next = new Set([...prev].filter((id) => currentIds.has(id)));
+      return next.size === prev.size ? prev : next;
     });
   }, [leads]);
 
@@ -1305,6 +1380,80 @@ function CrmPage({
     [pipelineBase, crmAppliedFilters],
   );
 
+  const selectedVisibleLeadCount = useMemo(
+    () => pipelineLeads.filter((lead) => selectedLeadIds.has(lead.id)).length,
+    [pipelineLeads, selectedLeadIds],
+  );
+  const selectedLeadCount = selectedLeadIds.size;
+
+  const toggleLeadSelected = useCallback((leadId: string) => {
+    setSelectedLeadIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(leadId)) next.delete(leadId);
+      else next.add(leadId);
+      return next;
+    });
+  }, []);
+
+  const clearLeadSelection = useCallback(() => {
+    setSelectedLeadIds(new Set());
+    setCrmSelectionMode(false);
+  }, []);
+
+  const toggleAllVisibleLeads = useCallback(() => {
+    setSelectedLeadIds((prev) => {
+      const next = new Set(prev);
+      const allVisibleSelected = pipelineLeads.length > 0 && pipelineLeads.every((lead) => next.has(lead.id));
+      if (allVisibleSelected) {
+        for (const lead of pipelineLeads) next.delete(lead.id);
+      } else {
+        for (const lead of pipelineLeads) next.add(lead.id);
+      }
+      return next;
+    });
+  }, [pipelineLeads]);
+
+  const openDeleteLeadConfirm = useCallback((lead: ClientLead) => {
+    setDeleteLeadError(null);
+    setDeleteLeadConfirm({ ids: [lead.id], names: [lead.nome] });
+  }, []);
+
+  const openDeleteSelectedLeadsConfirm = useCallback(() => {
+    const ids = [...selectedLeadIds];
+    if (!ids.length) return;
+    const names = leads.filter((lead) => selectedLeadIds.has(lead.id)).map((lead) => lead.nome);
+    setDeleteLeadError(null);
+    setDeleteLeadConfirm({ ids, names });
+  }, [leads, selectedLeadIds]);
+
+  const confirmDeleteLeads = useCallback(() => {
+    if (!deleteLeadConfirm?.ids.length || deleteLeadBusy) return;
+    const ids = [...deleteLeadConfirm.ids];
+    const previousLeads = leads;
+    setDeleteLeadBusy(true);
+    setDeleteLeadError(null);
+    setLeads((prev) => prev.filter((lead) => !ids.includes(lead.id)));
+    setSelectedLeadIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) next.delete(id);
+      return next;
+    });
+    setSelectedLead((prev) => (prev && ids.includes(prev.id) ? null : prev));
+
+    const request = ids.length === 1 ? deleteCrmLeadInApi(ids[0]!) : deleteCrmLeadsInApi(ids).then(() => undefined);
+    void request
+      .then(() => {
+        setDeleteLeadConfirm(null);
+        setDeleteLeadBusy(false);
+        if (ids.length > 1) setCrmSelectionMode(false);
+      })
+      .catch(() => {
+        setLeads(previousLeads);
+        setDeleteLeadError("Não foi possível apagar agora. Tente novamente em instantes.");
+        setDeleteLeadBusy(false);
+      });
+  }, [deleteLeadBusy, deleteLeadConfirm, leads]);
+
   const crmVisibilityLogKeyRef = useRef("");
   useEffect(() => {
     if (!leadsLoadedFromApi) return;
@@ -1356,6 +1505,21 @@ function CrmPage({
     const tempOf = (row: ClientLead) => temperatureByLeadId[row.id]!;
     return [
       {
+        key: "select",
+        header: "",
+        className: "w-12",
+        render: (row) => (
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-line text-primary focus:ring-primary/25"
+            checked={selectedLeadIds.has(row.id)}
+            aria-label={`Selecionar lead ${row.nome}`}
+            onChange={() => toggleLeadSelected(row.id)}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ),
+      },
+      {
         key: "termo",
         header: "Temp.",
         className: "w-[6.5rem]",
@@ -1378,8 +1542,27 @@ function CrmPage({
       { key: "agenteAtendendo", header: "Agente IA", render: (row) => row.agenteAtendendo },
       { key: "responsavel", header: "Responsavel", render: (row) => row.responsavel },
       { key: "valor", header: "Valor", render: (row) => formatBRL(row.valor) },
+      {
+        key: "actions",
+        header: "",
+        className: "w-16 text-right",
+        render: (row) => (
+          <button
+            type="button"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-rose-500/25 bg-rose-500/10 text-rose-500 transition hover:bg-rose-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/30"
+            title="Apagar lead"
+            aria-label={`Apagar lead ${row.nome}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              openDeleteLeadConfirm(row);
+            }}
+          >
+            <Trash2 className="h-4 w-4" strokeWidth={2} aria-hidden />
+          </button>
+        ),
+      },
     ];
-  }, [temperatureByLeadId, activeFunnel]);
+  }, [temperatureByLeadId, activeFunnel, openDeleteLeadConfirm, selectedLeadIds, toggleLeadSelected]);
 
   const toggleCrmFiltersPanel = useCallback(() => {
     setCrmFiltersOpen((open) => {
@@ -1641,6 +1824,33 @@ function CrmPage({
                 <p className="text-sm tabular-nums text-content-muted sm:mr-auto sm:pt-2">
                   {pipelineLeads.length} {pipelineLeads.length === 1 ? "lead" : "leads"} visíveis
                 </p>
+                <Button
+                  variant={crmSelectionMode ? "outline" : "secondary"}
+                  size="sm"
+                  className="w-full shrink-0 gap-1.5 sm:w-auto"
+                  type="button"
+                  onClick={() => {
+                    if (crmSelectionMode) {
+                      clearLeadSelection();
+                      return;
+                    }
+                    setCrmSelectionMode(true);
+                  }}
+                >
+                  {crmSelectionMode ? "Cancelar seleção" : "Selecionar"}
+                </Button>
+                {crmSelectionMode ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full shrink-0 gap-1.5 sm:w-auto"
+                    type="button"
+                    disabled={!pipelineLeads.length}
+                    onClick={toggleAllVisibleLeads}
+                  >
+                    {selectedVisibleLeadCount === pipelineLeads.length && pipelineLeads.length > 0 ? "Desmarcar visíveis" : "Selecionar visíveis"}
+                  </Button>
+                ) : null}
                 <Button
                   variant="secondary"
                   size="sm"
@@ -2274,6 +2484,10 @@ function CrmPage({
                             lead={lead}
                             temperature={temperatureByLeadId[lead.id]!}
                             onOpen={setSelectedLead}
+                            selectionMode={crmSelectionMode}
+                            selected={selectedLeadIds.has(lead.id)}
+                            onToggleSelected={toggleLeadSelected}
+                            onDelete={openDeleteLeadConfirm}
                             lastDragEndedAtRef={lastKanbanDragEndedAtRef}
                           />
                         ))}
@@ -2287,6 +2501,34 @@ function CrmPage({
                 <DataTable columns={columns} data={pipelineLeads} rowKey={(row) => row.id} onRowClick={setSelectedLead} />
               </div>
             )}
+            {crmSelectionMode ? (
+              <div
+                className={cn(
+                  "sticky bottom-3 z-30 mt-3 flex flex-col gap-2 rounded-xl border px-3 py-3 shadow-xl backdrop-blur sm:flex-row sm:items-center sm:justify-between",
+                  isLight ? "border-primary/25 bg-white/95" : "border-primary/30 bg-surface-card/95",
+                )}
+              >
+                <p className="text-sm font-medium text-content">
+                  {selectedLeadCount} {selectedLeadCount === 1 ? "lead selecionado" : "leads selecionados"}
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <Button type="button" variant="secondary" size="sm" onClick={clearLeadSelection}>
+                    Cancelar
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="danger"
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={selectedLeadCount === 0}
+                    onClick={openDeleteSelectedLeadsConfirm}
+                  >
+                    <Trash2 className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
+                    Apagar selecionados
+                  </Button>
+                </div>
+              </div>
+            ) : null}
           </section>
         </div>
       </Panel>
@@ -2578,6 +2820,55 @@ function CrmPage({
           if (activeFunnel) updateFunnel(activeFunnel.id, { columns: next });
         }}
       />
+
+      <Modal
+        open={!!deleteLeadConfirm}
+        onClose={() => {
+          if (deleteLeadBusy) return;
+          setDeleteLeadConfirm(null);
+          setDeleteLeadError(null);
+        }}
+        title={deleteLeadConfirm?.ids.length === 1 ? "Apagar lead" : "Apagar leads selecionados"}
+        className="max-w-md"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              type="button"
+              disabled={deleteLeadBusy}
+              onClick={() => {
+                setDeleteLeadConfirm(null);
+                setDeleteLeadError(null);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button variant="danger" type="button" disabled={deleteLeadBusy} onClick={confirmDeleteLeads}>
+              {deleteLeadBusy ? "Apagando..." : "Apagar"}
+            </Button>
+          </>
+        }
+      >
+        {deleteLeadConfirm ? (
+          <div className="space-y-3">
+            <p className="text-sm leading-relaxed text-content-muted">
+              {deleteLeadConfirm.ids.length === 1
+                ? "Deseja apagar este lead do CRM? As conversas do WhatsApp não serão apagadas."
+                : `Deseja apagar ${deleteLeadConfirm.ids.length} leads do CRM? As conversas do WhatsApp não serão apagadas.`}
+            </p>
+            {deleteLeadConfirm.ids.length === 1 && deleteLeadConfirm.names[0] ? (
+              <p className="rounded-lg border border-line bg-surface-deep/40 px-3 py-2 text-sm font-medium text-content">
+                {deleteLeadConfirm.names[0]}
+              </p>
+            ) : null}
+            {deleteLeadError ? (
+              <p className="rounded-lg border border-rose-500/25 bg-rose-500/[0.08] px-3 py-2 text-sm text-rose-500">
+                {deleteLeadError}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </Modal>
 
       {selectedLead ? (
         <CrmLeadWorkspaceModal

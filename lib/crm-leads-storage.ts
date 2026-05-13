@@ -75,6 +75,20 @@ export async function deleteCrmLeadInApi(leadId: string): Promise<void> {
   if (!res.ok) throw new Error(`CRM leads DELETE ${res.status}`);
 }
 
+export async function deleteCrmLeadsInApi(leadIds: string[]): Promise<{ ids: string[]; count: number }> {
+  const res = await fetch("/api/client/crm/leads", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids: leadIds }),
+  });
+  if (!res.ok) throw new Error(`CRM leads bulk DELETE ${res.status}`);
+  const data = (await res.json()) as { ids?: string[]; count?: number };
+  return {
+    ids: Array.isArray(data.ids) ? data.ids : [],
+    count: typeof data.count === "number" ? data.count : 0,
+  };
+}
+
 export async function loadCrmLeadsFromApiWithLocalMigration(
   tenantId: string,
   fallback: ClientLead[],

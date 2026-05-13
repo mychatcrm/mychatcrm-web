@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { deleteCrmLeadsForTenant, normalizeCrmLeadIds, validateCrmLeadIds } from "@/lib/server/crm-leads-delete";
 import type { ClientLead } from "@/lib/dashboard-data";
 
 export const dynamic = "force-dynamic";
@@ -210,4 +211,29 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({ lead: rowToClientLead(data as LeadRow) }, { status: 201 });
+}
+
+export async function DELETE(request: Request) {
+  const session = await getClientSessionFromCookies();
+  if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
+  }
+
+  const ids = normalizeCrmLeadIds(body.ids);
+  const validationError = validateCrmLeadIds(ids);
+  if (validationError) return NextResponse.json({ error: validationError }, { status: 400 });
+
+  const sb = createSupabaseServiceClient();
+  try {
+    const result = await deleteCrmLeadsForTenant({ sb, tenantId: session.tenantId, ids });
+    return NextResponse.json({ ok: true, ids: result.deletedIds, count: result.deletedCount });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Erro ao apagar lead(s).";
+    return NextResponse.json({ error: message }, { status: 503 });
+  }
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { deleteCrmLeadsForTenant, normalizeCrmLeadIds, validateCrmLeadIds } from "@/lib/server/crm-leads-delete";
 import type { ClientLead } from "@/lib/dashboard-data";
 
 export const dynamic = "force-dynamic";
@@ -171,19 +172,17 @@ export async function DELETE(
 ) {
   const session = await getClientSessionFromCookies();
   if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
-  if (!params.id) return NextResponse.json({ error: "id em falta" }, { status: 400 });
+  const ids = normalizeCrmLeadIds(params.id);
+  const validationError = validateCrmLeadIds(ids);
+  if (validationError) return NextResponse.json({ error: validationError }, { status: 400 });
 
   const sb = createSupabaseServiceClient();
-  const { error } = await sb
-    .from("leads")
-    .delete()
-    .eq("tenant_id", session.tenantId)
-    .eq("id", params.id);
-
-  if (error) {
-    console.error("[api/client/crm/leads] DELETE", error.code, error.message);
-    return NextResponse.json({ error: "Erro ao remover lead." }, { status: 503 });
+  try {
+    const result = await deleteCrmLeadsForTenant({ sb, tenantId: session.tenantId, ids });
+    return NextResponse.json({ ok: true, id: result.deletedIds[0] ?? null, ids: result.deletedIds, count: result.deletedCount });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Erro ao remover lead.";
+    console.error("[api/client/crm/leads] DELETE", message);
+    return NextResponse.json({ error: message }, { status: 503 });
   }
-
-  return NextResponse.json({ ok: true });
 }
