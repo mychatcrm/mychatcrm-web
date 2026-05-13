@@ -1,5 +1,8 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { upsertConversationState } from "@/lib/server/conversation-memory";
+import {
+  type ConversationState,
+  upsertConversationState,
+} from "@/lib/server/conversation-memory";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -95,4 +98,59 @@ export async function pauseConversationForHumanOutbound(params: {
     lastMessageAt: params.occurredAt ?? new Date().toISOString(),
   });
   return "paused";
+}
+
+/**
+ * Mensagem inbound do cliente após takeover manual no painel reativa o agente.
+ * Pausas por comando explícito ou handoff permanecem até retomada configurada.
+ */
+export async function maybeResumeConversationOnClientInbound(params: {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  leadId?: string | null;
+  agentId?: string | null;
+  pausedState: ConversationState;
+  occurredAt?: string | null;
+}): Promise<boolean> {
+  if (!params.pausedState.humanPaused || params.pausedState.pausedBy !== "human_manual") {
+    return false;
+  }
+
+  await upsertConversationState({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    leadId: params.leadId,
+    agentId: params.agentId,
+    humanPaused: false,
+    pausedBy: null,
+    pausedReason: null,
+    lastMessageAt: params.occurredAt ?? new Date().toISOString(),
+  });
+  return true;
+}
+
+/** Retomada explícita pelo painel (qualquer motivo de pausa). */
+export async function resumeConversationFromPanel(params: {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  leadId?: string | null;
+  agentId?: string | null;
+  occurredAt?: string | null;
+}): Promise<void> {
+  await upsertConversationState({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    leadId: params.leadId,
+    agentId: params.agentId,
+    humanPaused: false,
+    pausedBy: null,
+    pausedReason: null,
+    handoffSuggested: false,
+    handoffReason: null,
+    lastMessageAt: params.occurredAt ?? new Date().toISOString(),
+  });
 }

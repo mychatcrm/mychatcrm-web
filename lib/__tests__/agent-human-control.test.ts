@@ -135,4 +135,66 @@ describe("conversation human control", () => {
       }),
     );
   });
+
+  it("resumes human_manual pause when client sends a new inbound message", async () => {
+    const { maybeResumeConversationOnClientInbound } = await import("@/lib/server/conversation-human-control");
+
+    const resumed = await maybeResumeConversationOnClientInbound({
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      agentId: "ag-vendas",
+      pausedState: {
+        id: "state-1",
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        leadId: null,
+        agentId: "ag-vendas",
+        channel: "whatsapp",
+        status: "human_paused",
+        humanPaused: true,
+        pausedReason: "human_takeover",
+        pausedBy: "human_manual",
+        handoffSuggested: false,
+        handoffReason: null,
+        lastSummaryAt: null,
+      },
+    });
+
+    expect(resumed).toBe(true);
+    expect(upsertConversationStateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        humanPaused: false,
+        pausedBy: null,
+        pausedReason: null,
+      }),
+    );
+  });
+
+  it("does not auto-resume when pause was triggered by explicit command", async () => {
+    const { maybeResumeConversationOnClientInbound } = await import("@/lib/server/conversation-human-control");
+
+    const resumed = await maybeResumeConversationOnClientInbound({
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      agentId: "ag-vendas",
+      pausedState: {
+        id: "state-1",
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        leadId: null,
+        agentId: "ag-vendas",
+        channel: "whatsapp",
+        status: "human_paused",
+        humanPaused: true,
+        pausedReason: "manual_pause_command",
+        pausedBy: "human_command",
+        handoffSuggested: false,
+        handoffReason: null,
+        lastSummaryAt: null,
+      },
+    });
+
+    expect(resumed).toBe(false);
+    expect(upsertConversationStateMock).not.toHaveBeenCalled();
+  });
 });
