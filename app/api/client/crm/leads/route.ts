@@ -2,12 +2,13 @@ import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { deleteCrmLeadsForTenant, normalizeCrmLeadIds, validateCrmLeadIds } from "@/lib/server/crm-leads-delete";
+import { readTeamMembersFromDb } from "@/lib/server/team-employees-db";
 import type { ClientLead } from "@/lib/dashboard-data";
 
 export const dynamic = "force-dynamic";
 
 const BASE_LEAD_SELECT = "id, tenant_id, name, phone, email, source, status, notes, agent_id, last_seen, last_message_at, created_at, updated_at";
-const LEAD_SELECT_WITH_FUNNEL = `${BASE_LEAD_SELECT}, crm_funnel_id`;
+const LEAD_SELECT_WITH_FUNNEL = `${BASE_LEAD_SELECT}, crm_funnel_id, owner_employee_id`;
 const MISSING_COLUMN_CODES = new Set(["42703", "PGRST204"]);
 
 type LeadRow = {
@@ -25,11 +26,12 @@ type LeadRow = {
   created_at: string | null;
   updated_at: string | null;
   crm_funnel_id?: string | null;
+  owner_employee_id?: string | null;
 };
 
 function isMissingColumnError(error: { code?: string; message?: string } | null | undefined): boolean {
   const message = error?.message?.toLowerCase() ?? "";
-  return Boolean(error?.code && MISSING_COLUMN_CODES.has(error.code)) || message.includes("crm_funnel_id");
+  return Boolean(error?.code && MISSING_COLUMN_CODES.has(error.code)) || message.includes("crm_funnel_id") || message.includes("owner_employee_id");
 }
 
 function toDateISO(value: string | null | undefined): string {
@@ -65,10 +67,12 @@ function sourceDisplay(source: string): { origem: string; tag: string; tags: str
   return { origem: "Entrada manual", tag: "Novo", tags: ["Novo", "Manual"] };
 }
 
-function rowToClientLead(row: LeadRow): ClientLead {
+function rowToClientLead(row: LeadRow, ownerNamesById?: Map<string, string>): ClientLead {
   const source = row.source?.trim() || "manual";
   const agent = row.agent_id?.trim() || "Agente padrão · CRM";
   const sourceView = sourceDisplay(source);
+  const ownerEmployeeId = row.owner_employee_id?.trim() || undefined;
+  const ownerName = ownerEmployeeId ? ownerNamesById?.get(ownerEmployeeId) ?? "Atendente" : "Equipe";
   return {
     id: row.id,
     funilId: row.crm_funnel_id?.trim() || "funil-default",
@@ -82,7 +86,8 @@ function rowToClientLead(row: LeadRow): ClientLead {
     tag: sourceView.tag,
     agenteEntrada: agent,
     agenteAtendendo: agent,
-    responsavel: "Equipe",
+    responsavel: ownerName,
+    ownerEmployeeId,
     ultimoContato: formatRelativeContact(row.last_message_at ?? row.last_seen ?? row.updated_at ?? row.created_at),
     proximaAcao: row.notes?.trim() || "Qualificar interesse",
     origem: sourceView.origem,
@@ -123,6 +128,8 @@ function leadPayloadToInsert(body: Record<string, unknown>, tenantId: string) {
   if (id) payload.id = id;
   const crmFunnelId = textOrNull(body.crm_funnel_id) ?? textOrNull(body.funilId);
   if (crmFunnelId) payload.crm_funnel_id = crmFunnelId;
+  const ownerEmployeeId = textOrNull(body.owner_employee_id) ?? textOrNull(body.ownerEmployeeId);
+  if (ownerEmployeeId) payload.owner_employee_id = ownerEmployeeId;
   return payload;
 }
 
@@ -154,8 +161,9 @@ export async function GET() {
     return NextResponse.json({ error: "Erro ao carregar leads." }, { status: 503 });
   }
 
+  const ownerNamesById = new Map((await readTeamMembersFromDb(session.tenantId, session.email)).map((employee) => [employee.id, employee.nome]));
   const rows = (data ?? []) as LeadRow[];
-  const leads = rows.map((row) => rowToClientLead(row));
+  const leads = rows.map((row) => rowToClientLead(row, ownerNamesById));
   const statuses = [...new Set(leads.map((lead) => lead.status))].sort();
   const funnels = [...new Set(leads.map((lead) => lead.funilId))].sort();
   console.warn("[crm-leads-api]", {
@@ -195,7 +203,7 @@ export async function POST(request: Request) {
   let error = initial.error;
 
   if (isMissingColumnError(error) && "crm_funnel_id" in payload) {
-    const { crm_funnel_id: _crmFunnelId, ...fallbackPayload } = payload;
+    const { crm_funnel_id: _crmFunnelId, owner_employee_id: _ownerEmployeeId, ...fallbackPayload } = payload;
     const fallback = await sb
       .from("leads")
       .insert(fallbackPayload)
@@ -210,7 +218,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Erro ao criar lead." }, { status: 503 });
   }
 
-  return NextResponse.json({ lead: rowToClientLead(data as LeadRow) }, { status: 201 });
+  const ownerNamesById = new Map((await readTeamMembersFromDb(session.tenantId, session.email)).map((employee) => [employee.id, employee.nome]));
+  return NextResponse.json({ lead: rowToClientLead(data as LeadRow, ownerNamesById) }, { status: 201 });
 }
 
 export async function DELETE(request: Request) {

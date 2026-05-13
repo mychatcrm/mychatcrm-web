@@ -89,6 +89,44 @@ export async function deleteCrmLeadsInApi(leadIds: string[]): Promise<{ ids: str
   };
 }
 
+export type CrmBulkAction =
+  | "assign_attendant"
+  | "change_status"
+  | "convert_to_active_offer"
+  | "delete";
+
+export type CrmBulkActionResponse = {
+  ok: boolean;
+  action: CrmBulkAction;
+  requestedCount: number;
+  affectedCount: number;
+  deletedIds?: string[];
+  offer?: {
+    id: string;
+    title: string;
+    status: string;
+    createdAt: string | null;
+    leadCount: number;
+  };
+};
+
+export async function runCrmLeadBulkActionInApi(params: {
+  action: CrmBulkAction;
+  leadIds: string[];
+  payload?: Record<string, unknown>;
+}): Promise<CrmBulkActionResponse> {
+  const res = await fetch("/api/client/crm/leads/bulk-action", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || `CRM bulk action ${res.status}`);
+  }
+  return (await res.json()) as CrmBulkActionResponse;
+}
+
 export async function loadCrmLeadsFromApiWithLocalMigration(
   tenantId: string,
   fallback: ClientLead[],

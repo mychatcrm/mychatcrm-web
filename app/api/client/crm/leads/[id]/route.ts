@@ -2,12 +2,13 @@ import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { deleteCrmLeadsForTenant, normalizeCrmLeadIds, validateCrmLeadIds } from "@/lib/server/crm-leads-delete";
+import { readTeamMembersFromDb } from "@/lib/server/team-employees-db";
 import type { ClientLead } from "@/lib/dashboard-data";
 
 export const dynamic = "force-dynamic";
 
 const BASE_LEAD_SELECT = "id, tenant_id, name, phone, email, source, status, notes, agent_id, last_seen, last_message_at, created_at, updated_at";
-const LEAD_SELECT_WITH_FUNNEL = `${BASE_LEAD_SELECT}, crm_funnel_id`;
+const LEAD_SELECT_WITH_FUNNEL = `${BASE_LEAD_SELECT}, crm_funnel_id, owner_employee_id`;
 const MISSING_COLUMN_CODES = new Set(["42703", "PGRST204"]);
 
 type LeadRow = {
@@ -25,11 +26,12 @@ type LeadRow = {
   created_at: string | null;
   updated_at: string | null;
   crm_funnel_id?: string | null;
+  owner_employee_id?: string | null;
 };
 
 function isMissingColumnError(error: { code?: string; message?: string } | null | undefined): boolean {
   const message = error?.message?.toLowerCase() ?? "";
-  return Boolean(error?.code && MISSING_COLUMN_CODES.has(error.code)) || message.includes("crm_funnel_id");
+  return Boolean(error?.code && MISSING_COLUMN_CODES.has(error.code)) || message.includes("crm_funnel_id") || message.includes("owner_employee_id");
 }
 
 function toDateISO(value: string | null | undefined): string {
@@ -65,10 +67,12 @@ function sourceDisplay(source: string): { origem: string; tag: string; tags: str
   return { origem: "Entrada manual", tag: "Novo", tags: ["Novo", "Manual"] };
 }
 
-function rowToClientLead(row: LeadRow): ClientLead {
+function rowToClientLead(row: LeadRow, ownerNamesById?: Map<string, string>): ClientLead {
   const source = row.source?.trim() || "manual";
   const agent = row.agent_id?.trim() || "Agente padrão · CRM";
   const sourceView = sourceDisplay(source);
+  const ownerEmployeeId = row.owner_employee_id?.trim() || undefined;
+  const ownerName = ownerEmployeeId ? ownerNamesById?.get(ownerEmployeeId) ?? "Atendente" : "Equipe";
   return {
     id: row.id,
     funilId: row.crm_funnel_id?.trim() || "funil-default",
@@ -82,7 +86,8 @@ function rowToClientLead(row: LeadRow): ClientLead {
     tag: sourceView.tag,
     agenteEntrada: agent,
     agenteAtendendo: agent,
-    responsavel: "Equipe",
+    responsavel: ownerName,
+    ownerEmployeeId,
     ultimoContato: formatRelativeContact(row.last_message_at ?? row.last_seen ?? row.updated_at ?? row.created_at),
     proximaAcao: row.notes?.trim() || "Qualificar interesse",
     origem: sourceView.origem,
@@ -107,6 +112,7 @@ function leadPayloadToUpdate(body: Record<string, unknown>) {
     ["status", textOrNull(body.status)],
     ["notes", textOrNull(body.notes) ?? textOrNull(body.proximaAcao)],
     ["agent_id", textOrNull(body.agent_id) ?? textOrNull(body.agenteAtendendo) ?? textOrNull(body.agenteEntrada)],
+    ["owner_employee_id", textOrNull(body.owner_employee_id) ?? textOrNull(body.ownerEmployeeId)],
     ["last_seen", textOrNull(body.last_seen)],
     ["last_message_at", textOrNull(body.last_message_at)],
     ["crm_funnel_id", textOrNull(body.crm_funnel_id) ?? textOrNull(body.funilId)],
@@ -146,7 +152,7 @@ export async function PUT(
   let error = initial.error;
 
   if (isMissingColumnError(error)) {
-    const { crm_funnel_id: _crmFunnelId, ...fallbackPatch } = leadPayloadToUpdate(body);
+    const { crm_funnel_id: _crmFunnelId, owner_employee_id: _ownerEmployeeId, ...fallbackPatch } = leadPayloadToUpdate(body);
     const fallback = await sb
       .from("leads")
       .update(fallbackPatch)
@@ -163,7 +169,8 @@ export async function PUT(
     return NextResponse.json({ error: "Erro ao atualizar lead." }, { status: 503 });
   }
 
-  return NextResponse.json({ lead: rowToClientLead(data as LeadRow) });
+  const ownerNamesById = new Map((await readTeamMembersFromDb(session.tenantId, session.email)).map((employee) => [employee.id, employee.nome]));
+  return NextResponse.json({ lead: rowToClientLead(data as LeadRow, ownerNamesById) });
 }
 
 export async function DELETE(

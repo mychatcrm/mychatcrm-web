@@ -123,9 +123,11 @@ import {
   loadCrmLeadsFromApiWithLocalMigration,
   loadCrmLeadsSnapshot,
   persistCrmLeadsSnapshot,
+  runCrmLeadBulkActionInApi,
   subscribeToCrmLeadsRealtime,
   updateCrmLeadInApi,
 } from "@/lib/crm-leads-storage";
+import { fetchActiveOfferDetailFromApi, fetchActiveOffersFromApi, type ActiveOfferDetail, type ActiveOfferSummary } from "@/lib/crm-active-offers-client";
 import { LeadThermometerBar, LeadThermometerInline } from "./crm/LeadThermometer";
 import { CrmAddLeadModal } from "./crm/CrmAddLeadModal";
 import { CrmReorderStagesModal } from "./crm/CrmReorderStagesModal";
@@ -930,25 +932,20 @@ function CrmKanbanLeadCard({
   lead,
   temperature,
   onOpen,
-  selectionMode,
   selected,
   onToggleSelected,
-  onDelete,
   lastDragEndedAtRef,
 }: {
   lead: ClientLead;
   temperature: LeadTemperatureResult;
   onOpen: (lead: ClientLead) => void;
-  selectionMode: boolean;
   selected: boolean;
   onToggleSelected: (leadId: string) => void;
-  onDelete: (lead: ClientLead) => void;
   lastDragEndedAtRef: MutableRefObject<number>;
 }) {
   const { isLight } = usePanelAppearance();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: lead.id,
-    disabled: selectionMode,
   });
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -965,32 +962,24 @@ function CrmKanbanLeadCard({
       style={style}
       className={cn(
         "group relative overflow-hidden rounded-xl border border-line bg-surface-card text-left outline-none",
-        selectionMode ? "cursor-pointer" : "cursor-grab active:cursor-grabbing",
+        "cursor-grab active:cursor-grabbing",
         "transition-[border-color,background-color] duration-200 ease-out",
         "hover:border-primary/40",
         "focus-visible:ring-2 focus-visible:ring-primary/30",
         selected && "border-primary/55 bg-primary/[0.06] ring-2 ring-primary/25",
         isDragging && "z-40 cursor-grabbing opacity-[0.96] ring-2 ring-primary/35",
       )}
-      {...(selectionMode ? {} : listeners)}
-      {...(selectionMode ? {} : attributes)}
+      {...listeners}
+      {...attributes}
       role="button"
       tabIndex={0}
       onClick={() => {
         if (Date.now() - lastDragEndedAtRef.current < 280) return;
-        if (selectionMode) {
-          onToggleSelected(lead.id);
-          return;
-        }
         onOpen(lead);
       }}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          if (selectionMode) {
-            onToggleSelected(lead.id);
-            return;
-          }
           onOpen(lead);
         }
       }}
@@ -1000,8 +989,8 @@ function CrmKanbanLeadCard({
         <div className="mb-2 flex items-center justify-between gap-2">
           <label
             className={cn(
-              "inline-flex items-center gap-2 text-[11px] font-medium text-content-muted transition",
-              selectionMode ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+              "inline-flex items-center gap-2 rounded-lg border border-line/70 bg-surface-elevated/60 px-2 py-1 text-[11px] font-medium text-content-muted transition hover:border-primary/30",
+              selected && "border-primary/35 bg-primary/10 text-content",
             )}
             onClick={(e) => e.stopPropagation()}
             onPointerDown={(e) => e.stopPropagation()}
@@ -1015,25 +1004,6 @@ function CrmKanbanLeadCard({
             />
             Selecionar
           </label>
-          <button
-            type="button"
-            className={cn(
-              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-rose-500 transition",
-              isLight
-                ? "border-rose-200/70 bg-rose-50/70 hover:bg-rose-100"
-                : "border-rose-500/25 bg-rose-500/10 hover:bg-rose-500/20",
-              "opacity-0 focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
-            )}
-            title="Apagar lead"
-            aria-label={`Apagar lead ${lead.nome}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(lead);
-            }}
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            <Trash2 className="h-4 w-4" strokeWidth={2} aria-hidden />
-          </button>
         </div>
         <div className="relative min-w-0">
           <div className="flex items-start justify-between gap-2">
@@ -1145,8 +1115,17 @@ function CrmPage({
   const [crmDraftFilters, setCrmDraftFilters] = useState<CrmLeadAppliedFilters>(() => ({
     ...EMPTY_CRM_LEAD_FILTERS,
   }));
-  const [crmSelectionMode, setCrmSelectionMode] = useState(false);
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(() => new Set());
+  const [bulkActionsOpen, setBulkActionsOpen] = useState(false);
+  const [bulkActionBusy, setBulkActionBusy] = useState<"assign" | "status" | "offer" | null>(null);
+  const [bulkActionError, setBulkActionError] = useState<string | null>(null);
+  const [assignAttendantOpen, setAssignAttendantOpen] = useState(false);
+  const [assignAttendantId, setAssignAttendantId] = useState("");
+  const [changeStatusOpen, setChangeStatusOpen] = useState(false);
+  const [changeStatusId, setChangeStatusId] = useState("");
+  const [activeOfferOpen, setActiveOfferOpen] = useState(false);
+  const [activeOfferTitle, setActiveOfferTitle] = useState("");
+  const [activeOfferSuccess, setActiveOfferSuccess] = useState<{ id: string; title: string } | null>(null);
   const [deleteLeadConfirm, setDeleteLeadConfirm] = useState<{ ids: string[]; names: string[] } | null>(null);
   const [deleteLeadError, setDeleteLeadError] = useState<string | null>(null);
   const [deleteLeadBusy, setDeleteLeadBusy] = useState(false);
@@ -1246,7 +1225,23 @@ function CrmPage({
     setCrmShowMoreFilters(false);
   }, [activeFunnel?.id]);
 
+  useEffect(() => {
+    setSelectedLeadIds(new Set());
+    setBulkActionsOpen(false);
+  }, [activeFunnel?.id, search, crmAppliedFilters]);
+
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent) => {
+      if (!bulkActionsMenuRef.current?.contains(event.target as Node)) {
+        setBulkActionsOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onPointerDown);
+    return () => window.removeEventListener("mousedown", onPointerDown);
+  }, []);
+
   const lastKanbanDragEndedAtRef = useRef(0);
+  const bulkActionsMenuRef = useRef<HTMLDivElement | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -1397,7 +1392,7 @@ function CrmPage({
 
   const clearLeadSelection = useCallback(() => {
     setSelectedLeadIds(new Set());
-    setCrmSelectionMode(false);
+    setBulkActionsOpen(false);
   }, []);
 
   const toggleAllVisibleLeads = useCallback(() => {
@@ -1413,16 +1408,12 @@ function CrmPage({
     });
   }, [pipelineLeads]);
 
-  const openDeleteLeadConfirm = useCallback((lead: ClientLead) => {
-    setDeleteLeadError(null);
-    setDeleteLeadConfirm({ ids: [lead.id], names: [lead.nome] });
-  }, []);
-
   const openDeleteSelectedLeadsConfirm = useCallback(() => {
     const ids = [...selectedLeadIds];
     if (!ids.length) return;
     const names = leads.filter((lead) => selectedLeadIds.has(lead.id)).map((lead) => lead.nome);
     setDeleteLeadError(null);
+    setBulkActionsOpen(false);
     setDeleteLeadConfirm({ ids, names });
   }, [leads, selectedLeadIds]);
 
@@ -1445,7 +1436,6 @@ function CrmPage({
       .then(() => {
         setDeleteLeadConfirm(null);
         setDeleteLeadBusy(false);
-        if (ids.length > 1) setCrmSelectionMode(false);
       })
       .catch(() => {
         setLeads(previousLeads);
@@ -1453,6 +1443,122 @@ function CrmPage({
         setDeleteLeadBusy(false);
       });
   }, [deleteLeadBusy, deleteLeadConfirm, leads]);
+
+  const activeTeamEmployees = useMemo(
+    () => teamEmployees.filter((employee) => employee.ativo && !employee.accountSuspended),
+    [teamEmployees],
+  );
+
+  const openAssignAttendantModal = useCallback(() => {
+    if (!selectedLeadIds.size) return;
+    setBulkActionsOpen(false);
+    setBulkActionError(null);
+    setAssignAttendantId((prev) => prev || activeTeamEmployees[0]?.id || "");
+    setAssignAttendantOpen(true);
+  }, [activeTeamEmployees, selectedLeadIds.size]);
+
+  const openChangeStatusModal = useCallback(() => {
+    if (!selectedLeadIds.size || !activeFunnel) return;
+    setBulkActionsOpen(false);
+    setBulkActionError(null);
+    setChangeStatusId((prev) => (prev && activeFunnel.columns.some((column) => column.id === prev) ? prev : activeFunnel.columns[0]?.id || ""));
+    setChangeStatusOpen(true);
+  }, [activeFunnel, selectedLeadIds.size]);
+
+  const openActiveOfferModal = useCallback(() => {
+    if (!selectedLeadIds.size) return;
+    const date = new Date().toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+    setBulkActionsOpen(false);
+    setBulkActionError(null);
+    setActiveOfferTitle(`Oferta ativa - ${date}`);
+    setActiveOfferOpen(true);
+  }, [selectedLeadIds.size]);
+
+  const confirmAssignAttendant = useCallback(() => {
+    const ids = [...selectedLeadIds];
+    if (!ids.length || !assignAttendantId || bulkActionBusy) return;
+    const attendant = activeTeamEmployees.find((employee) => employee.id === assignAttendantId);
+    if (!attendant) {
+      setBulkActionError("Selecione um atendente ativo.");
+      return;
+    }
+    setBulkActionBusy("assign");
+    setBulkActionError(null);
+    void runCrmLeadBulkActionInApi({
+      action: "assign_attendant",
+      leadIds: ids,
+      payload: { employeeId: attendant.id },
+    })
+      .then(() => {
+        setLeads((prev) =>
+          prev.map((lead) =>
+            ids.includes(lead.id)
+              ? { ...lead, ownerEmployeeId: attendant.id, responsavel: attendant.nome }
+              : lead,
+          ),
+        );
+        setAssignAttendantOpen(false);
+        clearLeadSelection();
+      })
+      .catch((error) => {
+        setBulkActionError(error instanceof Error ? error.message : "Não foi possível atribuir atendente.");
+      })
+      .finally(() => setBulkActionBusy(null));
+  }, [activeTeamEmployees, assignAttendantId, bulkActionBusy, clearLeadSelection, selectedLeadIds]);
+
+  const confirmChangeStatus = useCallback(() => {
+    const ids = [...selectedLeadIds];
+    if (!ids.length || !activeFunnel || !changeStatusId || bulkActionBusy) return;
+    const allowedStatusIds = activeFunnel.columns.map((column) => column.id);
+    if (!allowedStatusIds.includes(changeStatusId)) {
+      setBulkActionError("Selecione uma etapa válida.");
+      return;
+    }
+    setBulkActionBusy("status");
+    setBulkActionError(null);
+    void runCrmLeadBulkActionInApi({
+      action: "change_status",
+      leadIds: ids,
+      payload: { status: changeStatusId, funnelId: activeFunnel.id, allowedStatusIds },
+    })
+      .then(() => {
+        setLeads((prev) =>
+          prev.map((lead) =>
+            ids.includes(lead.id)
+              ? { ...lead, funilId: activeFunnel.id, status: changeStatusId }
+              : lead,
+          ),
+        );
+        setChangeStatusOpen(false);
+        clearLeadSelection();
+      })
+      .catch((error) => {
+        setBulkActionError(error instanceof Error ? error.message : "Não foi possível alterar status.");
+      })
+      .finally(() => setBulkActionBusy(null));
+  }, [activeFunnel, bulkActionBusy, changeStatusId, clearLeadSelection, selectedLeadIds]);
+
+  const confirmCreateActiveOffer = useCallback(() => {
+    const ids = [...selectedLeadIds];
+    const title = activeOfferTitle.trim();
+    if (!ids.length || !title || bulkActionBusy) return;
+    setBulkActionBusy("offer");
+    setBulkActionError(null);
+    void runCrmLeadBulkActionInApi({
+      action: "convert_to_active_offer",
+      leadIds: ids,
+      payload: { title },
+    })
+      .then((result) => {
+        if (result.offer) setActiveOfferSuccess({ id: result.offer.id, title: result.offer.title });
+        setActiveOfferOpen(false);
+        clearLeadSelection();
+      })
+      .catch((error) => {
+        setBulkActionError(error instanceof Error ? error.message : "Não foi possível criar oferta ativa.");
+      })
+      .finally(() => setBulkActionBusy(null));
+  }, [activeOfferTitle, bulkActionBusy, clearLeadSelection, selectedLeadIds]);
 
   const crmVisibilityLogKeyRef = useRef("");
   useEffect(() => {
@@ -1516,6 +1622,7 @@ function CrmPage({
             aria-label={`Selecionar lead ${row.nome}`}
             onChange={() => toggleLeadSelected(row.id)}
             onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
           />
         ),
       },
@@ -1540,29 +1647,10 @@ function CrmPage({
         render: (row) => funnelColumnTitle(activeFunnel, row.status),
       },
       { key: "agenteAtendendo", header: "Agente IA", render: (row) => row.agenteAtendendo },
-      { key: "responsavel", header: "Responsavel", render: (row) => row.responsavel },
+      { key: "responsavel", header: "Atendente", render: (row) => row.responsavel },
       { key: "valor", header: "Valor", render: (row) => formatBRL(row.valor) },
-      {
-        key: "actions",
-        header: "",
-        className: "w-16 text-right",
-        render: (row) => (
-          <button
-            type="button"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-rose-500/25 bg-rose-500/10 text-rose-500 transition hover:bg-rose-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/30"
-            title="Apagar lead"
-            aria-label={`Apagar lead ${row.nome}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              openDeleteLeadConfirm(row);
-            }}
-          >
-            <Trash2 className="h-4 w-4" strokeWidth={2} aria-hidden />
-          </button>
-        ),
-      },
     ];
-  }, [temperatureByLeadId, activeFunnel, openDeleteLeadConfirm, selectedLeadIds, toggleLeadSelected]);
+  }, [temperatureByLeadId, activeFunnel, selectedLeadIds, toggleLeadSelected]);
 
   const toggleCrmFiltersPanel = useCallback(() => {
     setCrmFiltersOpen((open) => {
@@ -1825,32 +1913,15 @@ function CrmPage({
                   {pipelineLeads.length} {pipelineLeads.length === 1 ? "lead" : "leads"} visíveis
                 </p>
                 <Button
-                  variant={crmSelectionMode ? "outline" : "secondary"}
+                  variant="secondary"
                   size="sm"
                   className="w-full shrink-0 gap-1.5 sm:w-auto"
                   type="button"
-                  onClick={() => {
-                    if (crmSelectionMode) {
-                      clearLeadSelection();
-                      return;
-                    }
-                    setCrmSelectionMode(true);
-                  }}
+                  disabled={!pipelineLeads.length}
+                  onClick={toggleAllVisibleLeads}
                 >
-                  {crmSelectionMode ? "Cancelar seleção" : "Selecionar"}
+                  {selectedVisibleLeadCount === pipelineLeads.length && pipelineLeads.length > 0 ? "Desmarcar visíveis" : "Selecionar visíveis"}
                 </Button>
-                {crmSelectionMode ? (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="w-full shrink-0 gap-1.5 sm:w-auto"
-                    type="button"
-                    disabled={!pipelineLeads.length}
-                    onClick={toggleAllVisibleLeads}
-                  >
-                    {selectedVisibleLeadCount === pipelineLeads.length && pipelineLeads.length > 0 ? "Desmarcar visíveis" : "Selecionar visíveis"}
-                  </Button>
-                ) : null}
                 <Button
                   variant="secondary"
                   size="sm"
@@ -2484,10 +2555,8 @@ function CrmPage({
                             lead={lead}
                             temperature={temperatureByLeadId[lead.id]!}
                             onOpen={setSelectedLead}
-                            selectionMode={crmSelectionMode}
                             selected={selectedLeadIds.has(lead.id)}
                             onToggleSelected={toggleLeadSelected}
-                            onDelete={openDeleteLeadConfirm}
                             lastDragEndedAtRef={lastKanbanDragEndedAtRef}
                           />
                         ))}
@@ -2501,7 +2570,30 @@ function CrmPage({
                 <DataTable columns={columns} data={pipelineLeads} rowKey={(row) => row.id} onRowClick={setSelectedLead} />
               </div>
             )}
-            {crmSelectionMode ? (
+            {activeOfferSuccess ? (
+              <div
+                className={cn(
+                  "mt-3 flex flex-col gap-2 rounded-xl border px-3 py-3 sm:flex-row sm:items-center sm:justify-between",
+                  isLight ? "border-emerald-200 bg-emerald-50/80 text-emerald-900" : "border-emerald-500/25 bg-emerald-500/10 text-emerald-100",
+                )}
+              >
+                <p className="text-sm font-medium">
+                  Oferta ativa criada: {activeOfferSuccess.title}
+                </p>
+                <div className="flex gap-2">
+                  <Link
+                    className="inline-flex items-center justify-center rounded-lg border border-primary/30 bg-primary/[0.08] px-3 py-2 text-sm font-medium text-primary transition hover:bg-primary/[0.14]"
+                    href={`/dashboard/ofertas-ativas?offer=${encodeURIComponent(activeOfferSuccess.id)}`}
+                  >
+                    Ver oferta ativa
+                  </Link>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setActiveOfferSuccess(null)}>
+                    Fechar
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+            {selectedLeadCount > 0 ? (
               <div
                 className={cn(
                   "sticky bottom-3 z-30 mt-3 flex flex-col gap-2 rounded-xl border px-3 py-3 shadow-xl backdrop-blur sm:flex-row sm:items-center sm:justify-between",
@@ -2511,20 +2603,43 @@ function CrmPage({
                 <p className="text-sm font-medium text-content">
                   {selectedLeadCount} {selectedLeadCount === 1 ? "lead selecionado" : "leads selecionados"}
                 </p>
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <Button type="button" variant="secondary" size="sm" onClick={clearLeadSelection}>
-                    Cancelar
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="danger"
-                    size="sm"
-                    className="gap-1.5"
-                    disabled={selectedLeadCount === 0}
-                    onClick={openDeleteSelectedLeadsConfirm}
-                  >
-                    <Trash2 className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
-                    Apagar selecionados
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center" ref={bulkActionsMenuRef}>
+                  <div className="relative">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="w-full gap-1.5 sm:w-auto"
+                      onClick={() => setBulkActionsOpen((open) => !open)}
+                      aria-expanded={bulkActionsOpen}
+                    >
+                      Ações em lote ({selectedLeadCount})
+                      <ChevronDown className="h-4 w-4" strokeWidth={2} aria-hidden />
+                    </Button>
+                    {bulkActionsOpen ? (
+                      <div
+                        className={cn(
+                          "absolute bottom-full right-0 z-40 mb-2 w-64 overflow-hidden rounded-xl border p-1 shadow-2xl",
+                          isLight ? "border-line bg-white" : "border-line bg-surface-elevated",
+                        )}
+                      >
+                        <button type="button" className="w-full rounded-lg px-3 py-2 text-left text-sm text-content transition hover:bg-primary/10" onClick={openAssignAttendantModal}>
+                          Atribuir atendente
+                        </button>
+                        <button type="button" className="w-full rounded-lg px-3 py-2 text-left text-sm text-content transition hover:bg-primary/10" onClick={openChangeStatusModal}>
+                          Alterar status
+                        </button>
+                        <button type="button" className="w-full rounded-lg px-3 py-2 text-left text-sm text-content transition hover:bg-primary/10" onClick={openActiveOfferModal}>
+                          Converter em oferta ativa
+                        </button>
+                        <button type="button" className="w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-rose-500 transition hover:bg-rose-500/10" onClick={openDeleteSelectedLeadsConfirm}>
+                          {selectedLeadCount === 1 ? "Excluir lead" : "Excluir leads"}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                  <Button type="button" variant="ghost" size="sm" onClick={clearLeadSelection}>
+                    Limpar seleção
                   </Button>
                 </div>
               </div>
@@ -2822,6 +2937,137 @@ function CrmPage({
       />
 
       <Modal
+        open={assignAttendantOpen}
+        onClose={() => {
+          if (bulkActionBusy) return;
+          setAssignAttendantOpen(false);
+          setBulkActionError(null);
+        }}
+        title="Atribuir atendente"
+        className="max-w-md"
+        footer={
+          <>
+            <Button variant="secondary" type="button" disabled={!!bulkActionBusy} onClick={() => setAssignAttendantOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="button" disabled={!assignAttendantId || !!bulkActionBusy} onClick={confirmAssignAttendant}>
+              {bulkActionBusy === "assign" ? "Atribuindo..." : "Atribuir atendente"}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-content-muted">
+            Escolha o atendente que ficará responsável por {selectedLeadCount} {selectedLeadCount === 1 ? "lead selecionado" : "leads selecionados"}.
+          </p>
+          <div>
+            <label className="text-xs text-content-faint" htmlFor="crm-bulk-attendant">
+              Atendente
+            </label>
+            <Select
+              id="crm-bulk-attendant"
+              className="mt-1"
+              value={assignAttendantId}
+              onChange={(event) => setAssignAttendantId(event.target.value)}
+            >
+              <option value="">Selecione um atendente</option>
+              {activeTeamEmployees.map((employee) => (
+                <option key={employee.id} value={employee.id}>
+                  {employee.nome}
+                </option>
+              ))}
+            </Select>
+          </div>
+          {bulkActionError ? <p className="text-sm text-rose-500">{bulkActionError}</p> : null}
+        </div>
+      </Modal>
+
+      <Modal
+        open={changeStatusOpen}
+        onClose={() => {
+          if (bulkActionBusy) return;
+          setChangeStatusOpen(false);
+          setBulkActionError(null);
+        }}
+        title="Alterar status"
+        className="max-w-md"
+        footer={
+          <>
+            <Button variant="secondary" type="button" disabled={!!bulkActionBusy} onClick={() => setChangeStatusOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="button" disabled={!changeStatusId || !!bulkActionBusy} onClick={confirmChangeStatus}>
+              {bulkActionBusy === "status" ? "Alterando..." : "Alterar status"}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-content-muted">
+            Os leads selecionados serão movidos dentro do funil ativo: {activeFunnel?.nome ?? "CRM"}.
+          </p>
+          <div>
+            <label className="text-xs text-content-faint" htmlFor="crm-bulk-status">
+              Etapa
+            </label>
+            <Select
+              id="crm-bulk-status"
+              className="mt-1"
+              value={changeStatusId}
+              onChange={(event) => setChangeStatusId(event.target.value)}
+            >
+              {(activeFunnel?.columns ?? []).map((column) => (
+                <option key={column.id} value={column.id}>
+                  {column.title}
+                </option>
+              ))}
+            </Select>
+          </div>
+          {bulkActionError ? <p className="text-sm text-rose-500">{bulkActionError}</p> : null}
+        </div>
+      </Modal>
+
+      <Modal
+        open={activeOfferOpen}
+        onClose={() => {
+          if (bulkActionBusy) return;
+          setActiveOfferOpen(false);
+          setBulkActionError(null);
+        }}
+        title="Converter em oferta ativa"
+        className="max-w-md"
+        footer={
+          <>
+            <Button variant="secondary" type="button" disabled={!!bulkActionBusy} onClick={() => setActiveOfferOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="button" disabled={!activeOfferTitle.trim() || !!bulkActionBusy} onClick={confirmCreateActiveOffer}>
+              {bulkActionBusy === "offer" ? "Criando..." : "Criar oferta ativa"}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-content-muted">
+            Será criada uma oferta ativa vinculada a {selectedLeadCount} {selectedLeadCount === 1 ? "lead" : "leads"} do tenant atual.
+          </p>
+          <div>
+            <label className="text-xs text-content-faint" htmlFor="crm-active-offer-title">
+              Nome da oferta
+            </label>
+            <Input
+              id="crm-active-offer-title"
+              className="mt-1"
+              value={activeOfferTitle}
+              onChange={(event) => setActiveOfferTitle(event.target.value)}
+              placeholder="Oferta ativa - 13/05/2026 14:30"
+            />
+          </div>
+          {bulkActionError ? <p className="text-sm text-rose-500">{bulkActionError}</p> : null}
+        </div>
+      </Modal>
+
+      <Modal
         open={!!deleteLeadConfirm}
         onClose={() => {
           if (deleteLeadBusy) return;
@@ -3082,6 +3328,156 @@ function PlanLeadsBilling({ session }: { session: ClientSession }) {
         onClose={() => setOfferMode(null)}
       />
     </div>
+  );
+}
+
+function formatActiveOfferDate(value: string | null) {
+  if (!value) return "Data não informada";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Data não informada";
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function ActiveOffersPage() {
+  const searchParams = useSearchParams();
+  const initialOfferId = searchParams.get("offer");
+  const [offers, setOffers] = useState<ActiveOfferSummary[]>([]);
+  const [selectedOfferId, setSelectedOfferId] = useState<string | null>(initialOfferId);
+  const [selectedOffer, setSelectedOffer] = useState<ActiveOfferDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    void fetchActiveOffersFromApi()
+      .then((rows) => {
+        if (cancelled) return;
+        setOffers(rows);
+        setSelectedOfferId((prev) => prev || rows[0]?.id || null);
+      })
+      .catch(() => {
+        if (!cancelled) setError("Não foi possível carregar as ofertas ativas.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedOfferId) {
+      setSelectedOffer(null);
+      return;
+    }
+    let cancelled = false;
+    setDetailLoading(true);
+    void fetchActiveOfferDetailFromApi(selectedOfferId)
+      .then((offer) => {
+        if (!cancelled) setSelectedOffer(offer);
+      })
+      .catch(() => {
+        if (!cancelled) setSelectedOffer(null);
+      })
+      .finally(() => {
+        if (!cancelled) setDetailLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedOfferId]);
+
+  return (
+    <Panel
+      title="Ofertas ativas"
+      description="Agrupe leads selecionados do CRM em uma ação comercial ativa, sem alterar conversas ou mensagens do WhatsApp."
+    >
+      {error ? (
+        <div className="mb-4 rounded-xl border border-rose-500/25 bg-rose-500/[0.08] px-4 py-3 text-sm text-rose-500">
+          {error}
+        </div>
+      ) : null}
+      <div className="grid gap-4 lg:grid-cols-[minmax(16rem,22rem)_1fr]">
+        <div className="space-y-3">
+          {loading ? (
+            Array.from({ length: 3 }).map((_, index) => (
+              <div key={index} className="h-24 animate-pulse rounded-xl border border-line bg-surface-elevated/40" />
+            ))
+          ) : offers.length ? (
+            offers.map((offer) => (
+              <button
+                key={offer.id}
+                type="button"
+                className={cn(
+                  "w-full rounded-xl border p-4 text-left transition",
+                  selectedOfferId === offer.id
+                    ? "border-primary/45 bg-primary/[0.08]"
+                    : "border-line bg-surface-card hover:border-primary/30",
+                )}
+                onClick={() => setSelectedOfferId(offer.id)}
+              >
+                <p className="font-semibold text-content">{offer.title}</p>
+                <p className="mt-1 text-xs text-content-muted">{formatActiveOfferDate(offer.createdAt)}</p>
+                <p className="mt-3 text-sm text-content-muted">
+                  {offer.leadCount} {offer.leadCount === 1 ? "lead vinculado" : "leads vinculados"}
+                </p>
+              </button>
+            ))
+          ) : (
+            <div className="rounded-xl border border-dashed border-line bg-surface-card p-5 text-sm text-content-muted">
+              Nenhuma oferta ativa criada ainda. Selecione leads no CRM e use “Ações em lote”.
+            </div>
+          )}
+        </div>
+        <div className="rounded-xl border border-line bg-surface-card p-4">
+          {detailLoading ? (
+            <div className="space-y-3">
+              <div className="h-6 w-64 animate-pulse rounded bg-surface-elevated" />
+              <div className="h-20 animate-pulse rounded-xl bg-surface-elevated/60" />
+              <div className="h-20 animate-pulse rounded-xl bg-surface-elevated/60" />
+            </div>
+          ) : selectedOffer ? (
+            <div>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold text-content">{selectedOffer.title}</h3>
+                  <p className="mt-1 text-sm text-content-muted">
+                    Criada em {formatActiveOfferDate(selectedOffer.createdAt)} · status {selectedOffer.status}
+                  </p>
+                </div>
+                <span className="rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-sm font-semibold text-primary">
+                  {selectedOffer.leadCount} leads
+                </span>
+              </div>
+              <div className="mt-5 space-y-3">
+                {selectedOffer.leads.map((lead) => (
+                  <div key={lead.id} className="rounded-xl border border-line bg-surface-elevated/35 p-3">
+                    <p className="font-medium text-content">{lead.nome}</p>
+                    <p className="mt-1 text-sm text-content-muted">
+                      {lead.telefone} · {lead.origem} · {lead.status}
+                    </p>
+                  </div>
+                ))}
+                {!selectedOffer.leads.length ? (
+                  <p className="rounded-xl border border-dashed border-line p-4 text-sm text-content-muted">
+                    Esta oferta ainda não tem leads vinculados.
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-content-muted">Selecione uma oferta ativa para ver os leads vinculados.</p>
+          )}
+        </div>
+      </div>
+    </Panel>
   );
 }
 
@@ -3906,6 +4302,8 @@ export function DashboardWorkspace({
         return <TeamEmployeesHub session={session} />;
       case "crm":
         return <CrmPage dataset={dataset} session={session} />;
+      case "ofertas-ativas":
+        return <ActiveOffersPage />;
       case "agenda":
         return <AgendaHub />;
       case "disparos":

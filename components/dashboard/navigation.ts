@@ -17,6 +17,7 @@ export type DashboardNavGroup = {
 export const dashboardNavPinnedItems: DashboardNavItem[] = [
   { href: "/dashboard", label: "Relatório", short: "VG", routeKey: "overview" },
   { href: "/dashboard/crm", label: "CRM Kanban", short: "CRM", routeKey: "crm" },
+  { href: "/dashboard/ofertas-ativas", label: "Ofertas ativas", short: "OA", routeKey: "ofertas-ativas" },
   { href: "/dashboard/agentes", label: "Agentes", short: "AG", routeKey: "agentes" },
   {
     href: "/dashboard/conversas",
