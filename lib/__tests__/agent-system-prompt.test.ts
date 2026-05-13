@@ -17,6 +17,11 @@ describe("buildAgentSystemPrompt", () => {
         systemPrompt: "Faça perguntas curtas.",
         promptRegrasAdicionais: "Não prometa desconto.",
         respostasProibidas: "Não fale de concorrentes.",
+        responseMode: "audio",
+        followUpInteligente: { ativo: true, tentativasContato: 2, intervaloVerificacaoMinutos: 60 },
+        crmAutoMoveEnabled: true,
+        crmTargetFunnelId: "funil-default",
+        crmTargetStatus: "contato",
       },
       runtimeContext: {
         state: null,
@@ -44,6 +49,8 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("Max Vendas");
     expect(prompt).toContain("Tom de voz: Consultivo");
     expect(prompt).toContain("Não fale de concorrentes.");
+    expect(prompt).toContain("Modo de resposta configurado: audio");
+    expect(prompt).toContain("Destino CRM automático: ativo");
     expect(prompt).toContain("Dados do lead:");
     expect(prompt).toContain("Material: FAQ");
   });

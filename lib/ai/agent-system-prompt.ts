@@ -23,6 +23,15 @@ function agentObjectiveLabel(value: string | undefined): string {
   return value ? map[value] ?? value : "Não informado";
 }
 
+function compactJson(value: unknown): string {
+  if (value == null) return "não configurado";
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "não configurado";
+  }
+}
+
 function formatRuntimeContext(ctx?: AgentRuntimeContext | null): string[] {
   if (!ctx) return [];
   const parts: string[] = [];
@@ -88,6 +97,15 @@ CTA final: ${clean((agent as { ctaFinal?: unknown }).ctaFinal) || "não configur
 Mensagem de handoff: ${clean((agent as { handoffMensagem?: unknown }).handoffMensagem) || "não configurada"}
 Palavras de handoff: ${handoffKeywords.length ? handoffKeywords.join(", ") : "padrão do sistema"}
 Se o usuário pedir humano, ligação, proposta, reclamar ou demonstrar alta intenção, responda de forma breve avisando que um atendente humano dará continuidade.`,
+    `CONFIGURAÇÕES AVANÇADAS DO AGENTE
+Modo de resposta configurado: ${clean((agent as { responseMode?: unknown }).responseMode) || "text"}
+Origens/ativação: ${compactJson((agent as { origens?: unknown }).origens)}
+Follow-up inteligente: ${compactJson((agent as { followUpInteligente?: unknown }).followUpInteligente)}
+Destino CRM automático: ${(agent as { crmAutoMoveEnabled?: unknown }).crmAutoMoveEnabled === true ? "ativo" : "inativo"}
+Funil CRM alvo: ${clean((agent as { crmTargetFunnelId?: unknown }).crmTargetFunnelId) || "não configurado"}
+Coluna/status CRM alvo: ${clean((agent as { crmTargetStatus?: unknown }).crmTargetStatus) || clean((agent as { crmTargetColumnId?: unknown }).crmTargetColumnId) || "não configurado"}
+Comando de pausa humana: ${clean((agent as { comandoPausaConversa?: unknown }).comandoPausaConversa) || "não configurado"}
+Comando de retomada: ${clean((agent as { comandoRetomaConversa?: unknown }).comandoRetomaConversa) || "não configurado"}`,
     `REGRAS DE SEGURANÇA E CONTEXTO
 - Nunca invente dados, preços, políticas, prazos ou garantias que não estejam nas instruções, histórico, lead ou materiais.
 - Se não souber, diga que vai confirmar com a equipe.
