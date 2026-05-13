@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 export type WhatsAppInboundText = {
   fromWaId: string;
   phoneNumberId: string;
+  displayPhoneNumber: string | null;
   text: string;
   messageId: string;
   contactName: string | null;
@@ -19,7 +20,7 @@ export function parseWhatsAppCloudPayload(body: unknown): WhatsAppInboundText | 
     for (const ch of changes) {
       const value = ch.value as Record<string, unknown> | undefined;
       if (!value || typeof value !== "object") continue;
-      const metadata = value.metadata as { phone_number_id?: string } | undefined;
+      const metadata = value.metadata as { display_phone_number?: string; phone_number_id?: string } | undefined;
       const contacts = value.contacts as unknown[] | undefined;
       const messages = value.messages as unknown[] | undefined;
       if (!Array.isArray(messages) || !metadata?.phone_number_id) continue;
@@ -32,6 +33,7 @@ export function parseWhatsAppCloudPayload(body: unknown): WhatsAppInboundText | 
       return {
         fromWaId: from,
         phoneNumberId: String(metadata.phone_number_id),
+        displayPhoneNumber: typeof metadata.display_phone_number === "string" ? metadata.display_phone_number : null,
         text: textObj.body,
         messageId: typeof id === "string" ? id : "",
         contactName: extractCloudContactName(contacts, from),

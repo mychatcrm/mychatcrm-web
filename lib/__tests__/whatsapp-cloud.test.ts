@@ -9,7 +9,7 @@ describe("parseWhatsAppCloudPayload", () => {
           changes: [
             {
               value: {
-                metadata: { phone_number_id: "PN123" },
+                metadata: { display_phone_number: "+55 11 3333-4444", phone_number_id: "PN123" },
                 contacts: [{ wa_id: "5511999999999", profile: { name: "Cliente Teste" } }],
                 messages: [{ type: "text", from: "5511999999999", id: "wamid.x", text: { body: "Olá" } }],
               },
@@ -21,6 +21,7 @@ describe("parseWhatsAppCloudPayload", () => {
     expect(parseWhatsAppCloudPayload(body)).toEqual({
       fromWaId: "5511999999999",
       phoneNumberId: "PN123",
+      displayPhoneNumber: "+55 11 3333-4444",
       text: "Olá",
       messageId: "wamid.x",
       contactName: "Cliente Teste",

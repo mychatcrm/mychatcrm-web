@@ -195,3 +195,48 @@ export function extractInstanceName(payload: Record<string, unknown>): string | 
   }
   return null;
 }
+
+export function extractInstanceJid(payload: Record<string, unknown>): string | null {
+  const candidateKeys = new Set([
+    "jid",
+    "owner",
+    "ownerJid",
+    "user",
+    "waJid",
+    "wuid",
+  ]);
+
+  function normalizeCandidate(value: string): string | null {
+    const clean = value.trim();
+    if (!clean) return null;
+    if (clean.includes("@s.whatsapp.net")) return clean;
+    const digits = clean.replace(/\D/g, "");
+    return digits.length >= 8 ? `${digits}@s.whatsapp.net` : null;
+  }
+
+  function visit(value: unknown, depth: number, keyHint?: string): string | null {
+    if (!value || depth > 6) return null;
+
+    if (typeof value === "string") {
+      if (!keyHint || !candidateKeys.has(keyHint)) return null;
+      return normalizeCandidate(value);
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = visit(item, depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    if (typeof value !== "object") return null;
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      const found = visit(child, depth + 1, key);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  return visit(payload.data, 0) ?? visit(payload.instance, 0) ?? null;
+}

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { buildEvolutionInstanceName } from "@/lib/integrations/evolution-api";
-import { extractInboundTextsFromEvolutionPayload } from "@/lib/integrations/evolution-webhook-parse";
+import {
+  extractInboundTextsFromEvolutionPayload,
+  extractInstanceJid,
+} from "@/lib/integrations/evolution-webhook-parse";
 
 describe("buildEvolutionInstanceName", () => {
   it("is deterministic per tenant and slot", () => {
@@ -13,6 +16,25 @@ describe("buildEvolutionInstanceName", () => {
     const n = buildEvolutionInstanceName("tenant_x", 2);
     expect(n.startsWith("mc")).toBe(true);
     expect(n.length).toBeLessThanOrEqual(32);
+  });
+});
+
+describe("extractInstanceJid", () => {
+  it("reads the connected instance jid from connection payloads", () => {
+    expect(extractInstanceJid({
+      event: "connection.update",
+      data: { state: "open", wuid: "551133334444@s.whatsapp.net" },
+    })).toBe("551133334444@s.whatsapp.net");
+  });
+
+  it("does not confuse customer remoteJid with the connected instance jid", () => {
+    expect(extractInstanceJid({
+      event: "messages.upsert",
+      data: {
+        key: { remoteJid: "5511999999999@s.whatsapp.net", fromMe: false, id: "1" },
+        message: { conversation: "Olá" },
+      },
+    })).toBeNull();
   });
 });
 

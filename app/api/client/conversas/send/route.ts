@@ -74,6 +74,8 @@ export async function POST(request: Request) {
   await upsertLeadFromWhatsAppContact({
     tenantId: session.tenantId,
     remoteJid,
+    recipientJid: remoteJid,
+    instanceJid: instance.wa_jid,
     contactName,
     direction: "outbound",
     agentId: "human",

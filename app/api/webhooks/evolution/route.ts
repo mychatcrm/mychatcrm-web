@@ -5,6 +5,7 @@ import { sanitizeAgentResponseSettings } from "@/lib/agents";
 import {
   extractConnectionState,
   extractInboundMessagesFromEvolutionPayload,
+  extractInstanceJid,
   extractInstanceName,
   normalizeEvolutionEventName,
   type EvolutionInboundMessage,
@@ -303,11 +304,13 @@ export async function POST(request: Request) {
 
     if (event === "CONNECTION_UPDATE") {
       const state = extractConnectionState(payload);
+      const waJid = extractInstanceJid(payload);
       if (state) {
         try {
           await updateEvolutionInstanceStateByName({
             instanceName,
             connectionState: state,
+            waJid: waJid ?? undefined,
           });
         } catch (e) {
           console.warn("[webhooks/evolution] connection update db", e);
@@ -339,6 +342,7 @@ export async function POST(request: Request) {
       console.warn("[webhooks/evolution] instance not registered", instanceName);
       continue;
     }
+    const instanceJid = row.wa_jid ?? extractInstanceJid(payload);
 
     const inbound = extractInboundMessagesFromEvolutionPayload(payload);
 
@@ -365,6 +369,8 @@ export async function POST(request: Request) {
       await upsertLeadFromWhatsAppContact({
         tenantId: row.tenant_id,
         remoteJid: msg.remoteJid,
+        senderJid: msg.remoteJid,
+        instanceJid,
         contactName,
         direction: "inbound",
         agentId,
@@ -445,6 +451,8 @@ export async function POST(request: Request) {
             await upsertLeadFromWhatsAppContact({
               tenantId: row.tenant_id,
               remoteJid: msg.remoteJid,
+              recipientJid: msg.remoteJid,
+              instanceJid,
               contactName,
               direction: "outbound",
               agentId,
@@ -467,6 +475,8 @@ export async function POST(request: Request) {
             await upsertLeadFromWhatsAppContact({
               tenantId: row.tenant_id,
               remoteJid: msg.remoteJid,
+              recipientJid: msg.remoteJid,
+              instanceJid,
               contactName,
               direction: "outbound",
               agentId,
@@ -496,6 +506,8 @@ export async function POST(request: Request) {
           await upsertLeadFromWhatsAppContact({
             tenantId: row.tenant_id,
             remoteJid: msg.remoteJid,
+            recipientJid: msg.remoteJid,
+            instanceJid,
             contactName,
             direction: "outbound",
             agentId,

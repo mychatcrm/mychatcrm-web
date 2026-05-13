@@ -51,9 +51,23 @@ function formatRelativeContact(value: string | null | undefined): string {
   return `há ${days} d`;
 }
 
+function normalizeSource(value: string): string {
+  return value.toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+}
+
+function sourceDisplay(source: string): { origem: string; tag: string; tags: string[] } {
+  const normalized = normalizeSource(source);
+  if (normalized === "whatsapp") return { origem: "WhatsApp", tag: "WhatsApp", tags: ["WhatsApp", "Novo"] };
+  if (normalized.includes("facebook") || normalized.includes("meta") || normalized.includes("lead_ads") || normalized.includes("form")) {
+    return { origem: "Meta / Facebook", tag: "Meta", tags: ["Meta", "Formulário"] };
+  }
+  return { origem: "Entrada manual", tag: "Novo", tags: ["Novo", "Manual"] };
+}
+
 function rowToClientLead(row: LeadRow): ClientLead {
   const source = row.source?.trim() || "manual";
   const agent = row.agent_id?.trim() || "Agente padrão · CRM";
+  const sourceView = sourceDisplay(source);
   return {
     id: row.id,
     funilId: row.crm_funnel_id?.trim() || "funil-default",
@@ -64,14 +78,14 @@ function rowToClientLead(row: LeadRow): ClientLead {
     email: row.email?.trim() || "—",
     valor: 0,
     status: row.status?.trim() || "novo",
-    tag: source === "whatsapp" ? "WhatsApp" : "Novo",
+    tag: sourceView.tag,
     agenteEntrada: agent,
     agenteAtendendo: agent,
     responsavel: "Equipe",
     ultimoContato: formatRelativeContact(row.last_message_at ?? row.last_seen ?? row.updated_at ?? row.created_at),
     proximaAcao: row.notes?.trim() || "Qualificar interesse",
-    origem: source === "whatsapp" ? "WhatsApp" : "Entrada manual",
-    tags: source === "whatsapp" ? ["WhatsApp", "Novo"] : ["Novo", "Manual"],
+    origem: sourceView.origem,
+    tags: sourceView.tags,
   };
 }
 

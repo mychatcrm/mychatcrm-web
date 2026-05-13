@@ -24,6 +24,7 @@ type Operation =
 function makeSupabaseMock(opts: {
   leadSelects?: Array<DbResult<Record<string, unknown>>>;
   agentRow?: Record<string, unknown> | null;
+  instanceRows?: Array<Record<string, unknown>>;
   insertError?: { code?: string; message?: string } | null;
 }) {
   const operations: Operation[] = [];
@@ -53,6 +54,10 @@ function makeSupabaseMock(opts: {
               return { data: null, error: null };
             },
             then(resolve: (value: DbResult<unknown[]>) => void) {
+              if (table === "tenant_evolution_instances") {
+                resolve({ data: opts.instanceRows ?? [], error: null });
+                return;
+              }
               resolve({ data: null, error: null });
             },
           };
@@ -192,13 +197,167 @@ describe("phoneFromRemoteJid", () => {
         last_seen: "2026-05-12T10:00:00.000Z",
         last_message_at: "2026-05-12T10:00:00.000Z",
         updated_at: "2026-05-12T10:00:00.000Z",
-        source: "whatsapp",
         agent_id: "ag-vendas",
         name: "Maria Cliente",
       },
       eqs: [
         ["tenant_id", "tenant-a"],
         ["id", "lead-1"],
+      ],
+    });
+  });
+
+  it("creates only the external customer for an inbound WhatsApp message", async () => {
+    const { client, operations } = makeSupabaseMock({
+      leadSelects: [{ data: null, error: null }],
+      instanceRows: [{ wa_jid: "551133334444@s.whatsapp.net" }],
+    });
+    createSupabaseServiceClientMock.mockReturnValue(client);
+
+    await upsertLeadFromWhatsAppContact({
+      tenantId: "tenant-a",
+      remoteJid: "5511999990000@s.whatsapp.net",
+      senderJid: "5511999990000@s.whatsapp.net",
+      instanceJid: "551133334444@s.whatsapp.net",
+      direction: "inbound",
+      occurredAt: "2026-05-12T10:00:00.000Z",
+    });
+
+    expect(operations).toContainEqual({
+      table: "leads",
+      type: "insert",
+      payload: expect.objectContaining({
+        tenant_id: "tenant-a",
+        phone: "5511999990000",
+        source: "whatsapp",
+      }),
+    });
+  });
+
+  it("creates only the destination customer for an outbound WhatsApp message", async () => {
+    const { client, operations } = makeSupabaseMock({
+      leadSelects: [{ data: null, error: null }],
+      instanceRows: [{ wa_jid: "551133334444@s.whatsapp.net" }],
+    });
+    createSupabaseServiceClientMock.mockReturnValue(client);
+
+    await upsertLeadFromWhatsAppContact({
+      tenantId: "tenant-a",
+      remoteJid: "5511999990000@s.whatsapp.net",
+      recipientJid: "5511999990000@s.whatsapp.net",
+      instanceJid: "551133334444@s.whatsapp.net",
+      direction: "outbound",
+      occurredAt: "2026-05-12T10:00:00.000Z",
+    });
+
+    expect(operations).toContainEqual({
+      table: "leads",
+      type: "insert",
+      payload: expect.objectContaining({
+        tenant_id: "tenant-a",
+        phone: "5511999990000",
+      }),
+    });
+  });
+
+  it("does not create a lead for the connected instance number", async () => {
+    const { client, operations } = makeSupabaseMock({
+      instanceRows: [{ wa_jid: "551133334444@s.whatsapp.net" }],
+    });
+    createSupabaseServiceClientMock.mockReturnValue(client);
+
+    await upsertLeadFromWhatsAppContact({
+      tenantId: "tenant-a",
+      remoteJid: "551133334444@s.whatsapp.net",
+      recipientJid: "551133334444@s.whatsapp.net",
+      instanceJid: "551133334444@s.whatsapp.net",
+      direction: "outbound",
+    });
+
+    expect(operations).toEqual([]);
+  });
+
+  it("does not overwrite a Facebook/Meta lead source when contacted by WhatsApp", async () => {
+    const { client, operations } = makeSupabaseMock({
+      leadSelects: [
+        {
+          data: {
+            id: "lead-facebook",
+            tenant_id: "tenant-a",
+            phone: "5511999990000",
+            name: "Lead Meta",
+            source: "facebook_lead_ads",
+            agent_id: null,
+            last_seen: null,
+            last_message_at: null,
+            updated_at: null,
+          },
+          error: null,
+        },
+      ],
+    });
+    createSupabaseServiceClientMock.mockReturnValue(client);
+
+    await upsertLeadFromWhatsAppContact({
+      tenantId: "tenant-a",
+      phone: "5511999990000",
+      direction: "outbound",
+      occurredAt: "2026-05-12T10:00:00.000Z",
+    });
+
+    expect(operations).toContainEqual({
+      table: "leads",
+      type: "update",
+      patch: expect.not.objectContaining({ source: expect.any(String) }),
+      eqs: [
+        ["tenant_id", "tenant-a"],
+        ["id", "lead-facebook"],
+      ],
+    });
+  });
+
+  it("updates a form lead with the same phone instead of inserting a duplicate", async () => {
+    const { client, operations } = makeSupabaseMock({
+      leadSelects: [
+        {
+          data: {
+            id: "lead-form",
+            tenant_id: "tenant-a",
+            phone: "5511999990000",
+            name: null,
+            source: "meta_form",
+            agent_id: null,
+            last_seen: null,
+            last_message_at: null,
+            updated_at: null,
+          },
+          error: null,
+        },
+      ],
+    });
+    createSupabaseServiceClientMock.mockReturnValue(client);
+
+    await upsertLeadFromWhatsAppContact({
+      tenantId: "tenant-a",
+      phone: "5511999990000",
+      contactName: "Cliente Meta",
+      direction: "outbound",
+      occurredAt: "2026-05-12T10:00:00.000Z",
+    });
+
+    expect(operations.some((operation) => operation.type === "insert")).toBe(false);
+    expect(operations).toContainEqual({
+      table: "leads",
+      type: "update",
+      patch: expect.objectContaining({
+        last_seen: "2026-05-12T10:00:00.000Z",
+        last_message_at: "2026-05-12T10:00:00.000Z",
+        updated_at: "2026-05-12T10:00:00.000Z",
+        name: "Cliente Meta",
+      }),
+      eqs: [
+        ["tenant_id", "tenant-a"],
+        ["id", "lead-form"],
       ],
     });
   });

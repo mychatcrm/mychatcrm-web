@@ -55,6 +55,8 @@ export async function POST(request: Request) {
   await upsertLeadFromWhatsAppContact({
     tenantId,
     phone: inbound.fromWaId,
+    senderJid: inbound.fromWaId,
+    instancePhone: inbound.displayPhoneNumber,
     contactName: inbound.contactName,
     direction: "inbound",
     agentId,
@@ -88,6 +90,8 @@ export async function POST(request: Request) {
       await upsertLeadFromWhatsAppContact({
         tenantId,
         phone: inbound.fromWaId,
+        recipientJid: inbound.fromWaId,
+        instancePhone: inbound.displayPhoneNumber,
         contactName: inbound.contactName,
         direction: "outbound",
         agentId,
