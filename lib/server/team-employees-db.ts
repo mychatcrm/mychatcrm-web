@@ -18,6 +18,11 @@ type DbMember = {
   account_suspended: boolean;
 };
 
+function isPermissionDenied(error: { code?: string; message?: string } | null | undefined): boolean {
+  const msg = error?.message?.toLowerCase() ?? "";
+  return error?.code === "42501" || msg.includes("permission denied");
+}
+
 function toTeamEmployee(row: DbMember): TeamEmployee {
   return {
     id: row.id,
@@ -33,13 +38,25 @@ function toTeamEmployee(row: DbMember): TeamEmployee {
   };
 }
 
-export async function readTeamMembersFromDb(tenantId: string): Promise<TeamEmployee[]> {
+export async function readTeamMembersFromDb(tenantId: string, actorEmail?: string | null): Promise<TeamEmployee[]> {
   const sb = createSupabaseServiceClient();
   const { data, error } = await sb
     .from("tenant_members")
     .select("*")
     .eq("tenant_id", tenantId);
   if (error) {
+    if (isPermissionDenied(error) && actorEmail?.trim()) {
+      const { data: rows, error: rpcError } = await sb.rpc("get_member_by_email", {
+        p_email: actorEmail.trim().toLowerCase(),
+      });
+      if (!rpcError && Array.isArray(rows)) {
+        return rows
+          .filter((row) => row && typeof row === "object" && (row as DbMember).tenant_id === tenantId)
+          .map((row) => toTeamEmployee(row as DbMember));
+      }
+      console.warn("[team-employees-db] readTeamMembers fallback:", rpcError?.message ?? "sem resultado");
+      return [];
+    }
     console.error("[team-employees-db] readTeamMembers:", error.message);
     return [];
   }
@@ -132,4 +149,3 @@ export async function deleteTeamMembersCascadeFromDb(ids: string[]): Promise<voi
   const { error } = await sb.from("tenant_members").delete().in("id", ids);
   if (error) throw new Error(`[team-employees-db] deleteCascade: ${error.message}`);
 }
-

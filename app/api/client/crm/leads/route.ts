@@ -139,10 +139,19 @@ export async function GET() {
     return NextResponse.json({ error: "Erro ao carregar leads." }, { status: 503 });
   }
 
-  return NextResponse.json(
-    { leads: (data ?? []).map((row) => rowToClientLead(row as LeadRow)) },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  const rows = (data ?? []) as LeadRow[];
+  const leads = rows.map((row) => rowToClientLead(row));
+  const statuses = [...new Set(leads.map((lead) => lead.status))].sort();
+  const funnels = [...new Set(leads.map((lead) => lead.funilId))].sort();
+  console.warn("[crm-leads-api]", {
+    tenant_id: session.tenantId,
+    total: leads.length,
+    whatsapp: leads.filter((lead) => lead.origem === "WhatsApp").length,
+    funnels,
+    statuses,
+  });
+
+  return NextResponse.json({ leads }, { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function POST(request: Request) {

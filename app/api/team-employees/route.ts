@@ -22,7 +22,7 @@ export async function GET() {
   const auth = await requireActiveClientSession();
   if (!auth.ok) return auth.response;
   const { session } = auth;
-  const employees = (await readTeamMembersFromDb(session.tenantId)).map(teamEmployeeForPublicResponse);
+  const employees = (await readTeamMembersFromDb(session.tenantId, session.email)).map(teamEmployeeForPublicResponse);
   return NextResponse.json({ employees });
 }
 
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Sem permissão para criar este papel." }, { status: 403 });
   }
 
-  const list = await readTeamMembersFromDb(session.tenantId);
+  const list = await readTeamMembersFromDb(session.tenantId, session.email);
   if (!canAddRole(list, input.hierarchyRole, session.plan, session.operationalLimits)) {
     return NextResponse.json({ error: "Limite de colaboradores deste tipo atingido." }, { status: 409 });
   }
@@ -90,7 +90,7 @@ export async function PATCH(request: Request) {
   } | null;
   const id = typeof body?.id === "string" ? body.id : "";
   if (!id) return NextResponse.json({ error: "Id obrigatório." }, { status: 400 });
-  const list = await readTeamMembersFromDb(session.tenantId);
+  const list = await readTeamMembersFromDb(session.tenantId, session.email);
   const target = list.find((e) => e.id === id);
   if (!target) return NextResponse.json({ error: "Colaborador não encontrado." }, { status: 404 });
   if (!canActorTargetEmployeeForAdminActions(session, list, target)) {
@@ -145,7 +145,7 @@ export async function DELETE(request: Request) {
   if (phrase !== TEAM_EMPLOYEE_DELETE_CONFIRM_PHRASE) {
     return NextResponse.json({ error: "Confirmação inválida." }, { status: 400 });
   }
-  const list = await readTeamMembersFromDb(session.tenantId);
+  const list = await readTeamMembersFromDb(session.tenantId, session.email);
   const root = list.find((e) => e.id === id);
   if (!root) return NextResponse.json({ error: "Colaborador não encontrado." }, { status: 404 });
   if (!canActorTargetEmployeeForAdminActions(session, list, root)) {

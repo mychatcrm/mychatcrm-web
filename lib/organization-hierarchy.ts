@@ -70,6 +70,10 @@ export function crmOwnerIdScopeForSession(
 
 export function leadMatchesOwnerScope(lead: ClientLead, scope: Set<string> | null): boolean {
   if (scope === null) return true;
+  // Leads criados automaticamente pelo WhatsApp ainda podem não ter responsável
+  // humano. Mantê-los visíveis no CRM do tenant evita que oportunidades novas
+  // sumam antes de alguém assumir/atribuir o atendimento.
+  if (!lead.ownerEmployeeId && lead.origem === "WhatsApp") return true;
   if (lead.ownerEmployeeId && scope.has(lead.ownerEmployeeId)) return true;
   return false;
 }

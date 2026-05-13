@@ -109,6 +109,11 @@ import {
 import { computeLeadTemperature, type LeadTemperatureResult } from "@/lib/crm-lead-temperature";
 import { formatIntegerPtBr } from "@/lib/format-number";
 import { funnelColumnTitle, normalizeColunaInicialForFunnel, type CrmFunnel } from "@/lib/crm-funnels";
+import {
+  buildCrmVisibilityDiagnostics,
+  normalizeLeadsForVisibleCrmFunnel,
+  preferredDefaultCrmFunnelId,
+} from "@/lib/crm-visible-leads";
 import { getPlanMaxSalesFunnelsForSession, normalizeClientPlan } from "@/lib/plan-limits";
 import {
   createCrmLeadInApi,
@@ -854,18 +859,6 @@ function reorderLeadsForFunnelColumn(
   return out;
 }
 
-function normalizeLeadsForVisibleCrmFunnel(leads: ClientLead[], funnels: readonly CrmFunnel[]): ClientLead[] {
-  const fallbackFunnel = funnels[0];
-  if (!fallbackFunnel) return leads.map((lead) => ({ ...lead }));
-
-  return leads.map((lead) => {
-    const funnel = funnels.find((f) => f.id === lead.funilId) ?? fallbackFunnel;
-    const status = normalizeColunaInicialForFunnel(lead.status, funnel);
-    if (lead.funilId === funnel.id && lead.status === status) return { ...lead };
-    return { ...lead, funilId: funnel.id, status };
-  });
-}
-
 function crmLeadAccentSeed(lead: ClientLead) {
   return `${lead.agenteAtendendo} ${lead.agenteEntrada} ${lead.origem} ${lead.tag}`;
 }
@@ -1061,6 +1054,7 @@ function CrmPage({
   const [selectedLead, setSelectedLead] = useState<ClientLead | null>(null);
   const [search, setSearch] = useState("");
   const [teamEmployees, setTeamEmployees] = useState<TeamEmployee[]>([]);
+  const [lastCrmApiLeadCount, setLastCrmApiLeadCount] = useState(dataset.leads.length);
   // Initialize with server data to avoid SSR/hydration mismatch.
   // The useEffect below loads persisted localStorage data after mount.
   const [leads, setLeads] = useState<ClientLead[]>(() =>
@@ -1097,12 +1091,16 @@ function CrmPage({
     void loadCrmLeadsFromApiWithLocalMigration(dataset.tenantId, fallback)
       .then((remoteLeads) => {
         if (cancelled) return;
-        setLeads(normalizeLeadsForVisibleCrmFunnel(remoteLeads, funnels));
+        const visibleLeads = normalizeLeadsForVisibleCrmFunnel(remoteLeads, funnels);
+        setLastCrmApiLeadCount(remoteLeads.length);
+        setLeads(visibleLeads);
         setLeadsLoadedFromApi(true);
       })
       .catch(() => {
         if (cancelled) return;
-        setLeads(normalizeLeadsForVisibleCrmFunnel(loadCrmLeadsSnapshot(dataset.tenantId, fallback), funnels));
+        const snapshot = normalizeLeadsForVisibleCrmFunnel(loadCrmLeadsSnapshot(dataset.tenantId, fallback), funnels);
+        setLastCrmApiLeadCount(snapshot.length);
+        setLeads(snapshot);
         setLeadsLoadedFromApi(true);
       });
     return () => {
@@ -1152,7 +1150,7 @@ function CrmPage({
 
   useEffect(() => {
     if (!funnels.length) return;
-    setPipelineFunilId((prev) => (prev && funnels.some((f) => f.id === prev) ? prev : funnels[0]!.id));
+    setPipelineFunilId((prev) => (prev && funnels.some((f) => f.id === prev) ? prev : preferredDefaultCrmFunnelId(funnels)));
   }, [funnels]);
 
   const activeFunnel = useMemo(
@@ -1306,6 +1304,35 @@ function CrmPage({
     () => applyCrmLeadFilters(pipelineBase, crmAppliedFilters),
     [pipelineBase, crmAppliedFilters],
   );
+
+  const crmVisibilityLogKeyRef = useRef("");
+  useEffect(() => {
+    if (!leadsLoadedFromApi) return;
+    const diagnostics = buildCrmVisibilityDiagnostics({
+      receivedFromApi: lastCrmApiLeadCount,
+      normalizedLeads: leads,
+      searchFiltered,
+      scopeFiltered,
+      pipelineBase,
+      pipelineLeads,
+      activeFunnel,
+      funnels,
+    });
+    const key = JSON.stringify(diagnostics);
+    if (crmVisibilityLogKeyRef.current === key) return;
+    crmVisibilityLogKeyRef.current = key;
+    console.warn("[crm-leads-visibility]", diagnostics);
+  }, [
+    activeFunnel,
+    funnels,
+    lastCrmApiLeadCount,
+    leads,
+    leadsLoadedFromApi,
+    pipelineBase,
+    pipelineLeads,
+    scopeFiltered,
+    searchFiltered,
+  ]);
 
   const [leadTempTick, setLeadTempTick] = useState(0);
   useEffect(() => {
