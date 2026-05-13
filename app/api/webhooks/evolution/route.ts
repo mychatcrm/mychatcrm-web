@@ -25,6 +25,7 @@ import {
   shouldTriggerHandoff,
   upsertConversationState,
 } from "@/lib/server/conversation-memory";
+import { applyHumanConversationCommand } from "@/lib/server/conversation-human-control";
 
 export const dynamic = "force-dynamic";
 
@@ -402,7 +403,21 @@ export async function POST(request: Request) {
 
       const inboundLanguageCode = detectSupportedLanguageCode(inboundLanguageSource(msg));
 
-      const pausedState = state ?? await getConversationState({ sb: sbState, tenantId: row.tenant_id, remoteJid: msg.remoteJid });
+      await applyHumanConversationCommand({
+        sb: sbState,
+        tenantId: row.tenant_id,
+        remoteJid: msg.remoteJid,
+        leadId,
+        agentId,
+        text: contentFromMsg(msg),
+        occurredAt: inboundSaved?.created_at ?? new Date().toISOString(),
+      });
+
+      const pausedState = await getConversationState({
+        sb: sbState,
+        tenantId: row.tenant_id,
+        remoteJid: msg.remoteJid,
+      });
       if (pausedState?.humanPaused) {
         console.info("[webhooks/evolution] agent skipped: human_paused", {
           tenant_id: row.tenant_id,
@@ -437,7 +452,7 @@ export async function POST(request: Request) {
         conversationId: msg.remoteJid,
         customerId: msg.remoteJid,
         feature: "agent_chat",
-        messages: msg.type === "text" ? [{ role: "user", content: msg.text }] : [],
+        messages: [],
         mediaContent: msg.type !== "text" ? msg : undefined,
         instanceName: msg.type !== "text" ? instanceName : undefined,
       });

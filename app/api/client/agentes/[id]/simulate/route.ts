@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { buildAgentSystemPrompt } from "@/lib/ai/agent-system-prompt";
-import { generateAIResponse } from "@/lib/ai/gateway";
+import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
 import { detectSupportedLanguageCode, supportedLanguageName } from "@/lib/ai/language-detect";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { loadAgentRuntimeContext } from "@/lib/server/conversation-memory";
@@ -59,22 +58,16 @@ export async function POST(
     agentId,
     remoteJid: body.remoteJid ?? null,
   });
-  const systemPrompt = buildAgentSystemPrompt({
-    agent,
-    runtimeContext,
-    languageInstruction: `CRITICAL INSTRUCTION - LANGUAGE: The user's message is in ${languageName}. You MUST respond EXCLUSIVELY in ${languageName}. Do not use any other language. This is mandatory and overrides everything else.`,
-  });
 
-  const result = await generateAIResponse({
+  const result = await generateAgentResponse({
     tenantId: session.tenantId,
     agentId,
+    conversationId: body.remoteJid ?? null,
     feature: "agent_completion",
-    temperature: typeof agent.temperatura === "number" ? agent.temperatura : undefined,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: message },
-    ],
-    metadata: { simulation: true },
+    messages: [{ role: "user", content: message }],
+    model: typeof data.model === "string" ? data.model : undefined,
+    simulation: true,
+    agentOverride: agent,
   });
 
   if (!result.ok) {
@@ -83,6 +76,7 @@ export async function POST(
 
   return NextResponse.json({
     reply: result.text,
+    simulation: true,
     contextUsed: {
       identity: Boolean(agent.promptIdentidade || agent.nome),
       objective: Boolean(agent.promptObjetivo || agent.objetivo),
@@ -92,6 +86,7 @@ export async function POST(
       summary: Boolean(runtimeContext.summary),
       lead: Boolean(runtimeContext.lead),
       language: languageName,
+      remoteJid: body.remoteJid ?? null,
     },
   });
 }

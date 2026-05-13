@@ -68,3 +68,31 @@ export async function applyHumanConversationCommand(params: {
 
   return "none";
 }
+
+/** Pausa a conversa quando um atendente responde pelo painel; respeita comando de retomada. */
+export async function pauseConversationForHumanOutbound(params: {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  agentId?: string | null;
+  text?: string | null;
+  leadId?: string | null;
+  occurredAt?: string | null;
+}): Promise<"paused" | "resumed" | "none"> {
+  const commandResult = await applyHumanConversationCommand(params);
+  if (commandResult === "resumed") return "resumed";
+  if (commandResult === "paused") return "paused";
+
+  await upsertConversationState({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    leadId: params.leadId,
+    agentId: params.agentId,
+    humanPaused: true,
+    pausedBy: "human_manual",
+    pausedReason: "human_takeover",
+    lastMessageAt: params.occurredAt ?? new Date().toISOString(),
+  });
+  return "paused";
+}

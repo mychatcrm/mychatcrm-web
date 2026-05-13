@@ -38,6 +38,28 @@ export function isR2Configured(): boolean {
   return Boolean(r2Client);
 }
 
+/** Mensagem amigável quando alguma env R2_* obrigatória está ausente. */
+export function getR2ConfigurationError(): string | null {
+  if (!process.env.R2_ENDPOINT?.trim()) {
+    return "Armazenamento R2 indisponível: configure R2_ENDPOINT na Vercel.";
+  }
+  if (!process.env.R2_ACCESS_KEY_ID?.trim()) {
+    return "Armazenamento R2 indisponível: configure R2_ACCESS_KEY_ID na Vercel.";
+  }
+  if (!process.env.R2_SECRET_ACCESS_KEY?.trim()) {
+    return "Armazenamento R2 indisponível: configure R2_SECRET_ACCESS_KEY na Vercel.";
+  }
+  if (!process.env.R2_BUCKET?.trim()) {
+    return "Armazenamento R2 indisponível: configure R2_BUCKET na Vercel.";
+  }
+  return null;
+}
+
+export function assertR2Configured(): void {
+  const error = getR2ConfigurationError();
+  if (error) throw new Error(error);
+}
+
 // ---------------------------------------------------------------------------
 // Upload
 // ---------------------------------------------------------------------------
@@ -79,7 +101,10 @@ export async function createR2PresignedUploadUrl(params: {
   contentLength: number;
   expiresInSeconds?: number;
 }): Promise<string> {
-  if (!r2Client) throw new Error("[r2-storage] cliente não configurado");
+  assertR2Configured();
+  if (!r2Client) {
+    throw new Error(getR2ConfigurationError() ?? "Armazenamento R2 indisponível.");
+  }
   return getSignedUrl(
     r2Client,
     new PutObjectCommand({

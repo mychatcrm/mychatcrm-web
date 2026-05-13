@@ -34,6 +34,27 @@ function buildLanguageInstruction(languageName: string): string {
   return `CRITICAL INSTRUCTION - LANGUAGE: The user's message is in ${languageName}. You MUST respond EXCLUSIVELY in ${languageName}. Do not use any other language. This is mandatory and overrides everything else.`;
 }
 
+/** Evita repetir no LLM a última mensagem do usuário já presente no histórico canônico. */
+export function withoutTrailingDuplicateUserMessages(
+  historyMessages: AiMessage[],
+  tailMessages: AiMessage[],
+): AiMessage[] {
+  if (!historyMessages.length || !tailMessages.length) return tailMessages;
+  const lastHistoryUser = [...historyMessages].reverse().find((m) => m.role === "user");
+  if (!lastHistoryUser) return tailMessages;
+
+  const trimmed = [...tailMessages];
+  while (trimmed.length > 0) {
+    const last = trimmed[trimmed.length - 1]!;
+    if (last.role === "user" && last.content.trim() === lastHistoryUser.content.trim()) {
+      trimmed.pop();
+      continue;
+    }
+    break;
+  }
+  return trimmed;
+}
+
 /**
  * Único caminho recomendado para canais de agente: carrega prompt em DB (tenant_agents) ou template em memória,
  * injeta mensagem system no servidor e delega em generateAIResponse (OpenAI + tracking).
@@ -57,6 +78,10 @@ export async function generateAgentResponse(params: {
   mediaContent?: EvolutionAudioContent | EvolutionImageContent | null;
   /** Nome da instância Evolution — obrigatório quando mediaContent está presente. */
   instanceName?: string | null;
+  /** Simulação no painel — não envia WhatsApp nem altera conversation_states. */
+  simulation?: boolean;
+  /** Sobrescreve metadados do agente (ex.: rascunho no simulador). */
+  agentOverride?: Partial<Agent> & { nome?: string; systemPrompt?: string };
 }): Promise<AiGenerateResult> {
   // -------------------------------------------------------------------------
   // Media pre-processing — convert audio/image to user text message
@@ -149,6 +174,12 @@ export async function generateAgentResponse(params: {
       tom: "Profissional",
     };
   }
+  if (params.agentOverride) {
+    baseAgent = { ...baseAgent, ...params.agentOverride };
+    if (params.agentOverride.systemPrompt?.trim()) {
+      systemPrompt = params.agentOverride.systemPrompt.trim();
+    }
+  }
   const runtimeContext = await loadAgentRuntimeContext({
     tenantId: params.tenantId,
     agentId: params.agentId,
@@ -167,14 +198,12 @@ export async function generateAgentResponse(params: {
   const temperature = typeof baseAgent.temperatura === "number" ? baseAgent.temperatura : undefined;
   const systemMessage: AiMessage = { role: "system", content: systemPrompt };
   const historyMessages = conversationMessagesToAi(runtimeContext.recentMessages);
-
-  // If there's a media message, append it after any existing conversation messages
-  const messages: AiMessage[] = [
-    systemMessage,
-    ...historyMessages,
+  const tailMessages = withoutTrailingDuplicateUserMessages(historyMessages, [
     ...conversationOnly,
     ...(mediaUserMessage ? [mediaUserMessage] : []),
-  ];
+  ]);
+
+  const messages: AiMessage[] = [systemMessage, ...historyMessages, ...tailMessages];
 
   return generateAIResponse({
     tenantId: params.tenantId.trim(),
@@ -188,6 +217,7 @@ export async function generateAgentResponse(params: {
       conversationId: params.conversationId ?? null,
       accountId: params.accountId ?? null,
       userId: params.userId ?? null,
+      simulation: params.simulation === true,
     },
   });
 }

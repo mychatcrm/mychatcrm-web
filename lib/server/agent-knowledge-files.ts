@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import {
+  assertR2Configured,
   createR2PresignedUploadUrl,
   deleteR2Object,
   getMediaBufferFromR2,
@@ -140,6 +141,7 @@ export async function createAgentKnowledgeUpload(params: {
   mimeType: string;
   sizeBytes: number;
 }): Promise<{ file: AgentKnowledgeFile; uploadUrl: string; expiresInSeconds: number }> {
+  assertR2Configured();
   const valid = validateKnowledgeFileInput(params);
   const currentCount = await countAgentKnowledgeFiles(params);
   if (currentCount >= AGENT_KNOWLEDGE_MAX_FILES) throw new Error("Limite de 50 materiais por agente atingido.");
