@@ -3,7 +3,11 @@ import { getInferenceProfileByTenantAgent } from "@/lib/agents/inference-store";
 import { generateAIResponse } from "@/lib/ai/gateway";
 import type { AiFeature, AiGenerateResult, AiMessage } from "@/lib/ai/types";
 import { detectSupportedLanguageCode, supportedLanguageName } from "@/lib/ai/language-detect";
-import type { EvolutionAudioContent, EvolutionImageContent } from "@/lib/integrations/evolution-webhook-parse";
+import type {
+  EvolutionAudioContent,
+  EvolutionImageContent,
+  EvolutionVideoContent,
+} from "@/lib/integrations/evolution-webhook-parse";
 import { transcribeAudio, describeImage } from "@/lib/ai/media-processor";
 import { buildAgentSystemPrompt } from "@/lib/ai/agent-system-prompt";
 import {
@@ -74,8 +78,8 @@ export async function generateAgentResponse(params: {
   /** Só user/assistant vindos do cliente; system é sempre montado aqui. */
   messages: AiMessage[];
   model?: string;
-  /** Conteúdo de mídia (áudio ou imagem) a processar antes de gerar resposta. */
-  mediaContent?: EvolutionAudioContent | EvolutionImageContent | null;
+  /** Conteúdo de mídia (áudio, imagem ou vídeo) a processar antes de gerar resposta. */
+  mediaContent?: EvolutionAudioContent | EvolutionImageContent | EvolutionVideoContent | null;
   /** Nome da instância Evolution — obrigatório quando mediaContent está presente. */
   instanceName?: string | null;
   /** Simulação no painel — não envia WhatsApp nem altera conversation_states. */
@@ -127,6 +131,16 @@ export async function generateAgentResponse(params: {
       mediaUserMessage = {
         role: "user",
         content: `[Imagem recebida] ${caption}Conteúdo: ${description}`,
+      };
+    } else if (params.mediaContent.type === "video") {
+      const caption = params.mediaContent.caption?.trim();
+      const duration =
+        typeof params.mediaContent.seconds === "number" && params.mediaContent.seconds > 0
+          ? ` Duração aproximada: ${Math.round(params.mediaContent.seconds)}s.`
+          : "";
+      mediaUserMessage = {
+        role: "user",
+        content: `[Vídeo recebido]${caption ? ` Legenda do cliente: ${caption}.` : ""}${duration} Não há transcrição nem análise automática do conteúdo visual disponível.`,
       };
     }
   }

@@ -34,6 +34,26 @@ export type EvolutionImageContent = {
   rawNode: Record<string, unknown>;
 };
 
+export type EvolutionVideoContent = {
+  type: "video";
+  url: string;
+  mimetype: string;
+  mediaKey: string;
+  caption: string;
+  seconds?: number | null;
+  rawNode: Record<string, unknown>;
+};
+
+export type EvolutionDocumentContent = {
+  type: "document";
+  url: string;
+  mimetype: string;
+  mediaKey: string;
+  fileName: string;
+  caption: string;
+  rawNode: Record<string, unknown>;
+};
+
 type EvolutionInboundBase = {
   remoteJid: string;
   fromMe: boolean;
@@ -41,7 +61,13 @@ type EvolutionInboundBase = {
 };
 
 export type EvolutionInboundMessage = EvolutionInboundBase &
-  (EvolutionTextContent | EvolutionAudioContent | EvolutionImageContent);
+  (
+    | EvolutionTextContent
+    | EvolutionAudioContent
+    | EvolutionImageContent
+    | EvolutionVideoContent
+    | EvolutionDocumentContent
+  );
 
 // ---------------------------------------------------------------------------
 // Legacy alias (backward-compat — existing callers that import EvolutionInboundText)
@@ -56,7 +82,13 @@ export type EvolutionInboundText = EvolutionInboundBase & EvolutionTextContent;
 
 function extractContentFromMessageNode(
   message: unknown,
-): EvolutionTextContent | EvolutionAudioContent | EvolutionImageContent | null {
+):
+  | EvolutionTextContent
+  | EvolutionAudioContent
+  | EvolutionImageContent
+  | EvolutionVideoContent
+  | EvolutionDocumentContent
+  | null {
   if (!message || typeof message !== "object") return null;
   const m = message as Record<string, unknown>;
 
@@ -93,6 +125,30 @@ function extractContentFromMessageNode(
     const mediaKey = typeof i.mediaKey === "string" ? i.mediaKey : "";
     const caption = typeof i.caption === "string" ? i.caption : "";
     if (url) return { type: "image", url, mimetype, mediaKey, caption, rawNode: { ...i } };
+  }
+
+  const video = m.videoMessage;
+  if (video && typeof video === "object") {
+    const v = video as Record<string, unknown>;
+    const url = typeof v.url === "string" ? v.url : "";
+    const mimetype = typeof v.mimetype === "string" ? v.mimetype : "video/mp4";
+    const mediaKey = typeof v.mediaKey === "string" ? v.mediaKey : "";
+    const caption = typeof v.caption === "string" ? v.caption : "";
+    const seconds = typeof v.seconds === "number" ? v.seconds : null;
+    if (url) return { type: "video", url, mimetype, mediaKey, caption, seconds, rawNode: { ...v } };
+  }
+
+  const document = m.documentMessage;
+  if (document && typeof document === "object") {
+    const d = document as Record<string, unknown>;
+    const url = typeof d.url === "string" ? d.url : "";
+    const mimetype = typeof d.mimetype === "string" ? d.mimetype : "application/octet-stream";
+    const mediaKey = typeof d.mediaKey === "string" ? d.mediaKey : "";
+    const fileName = typeof d.fileName === "string" ? d.fileName : "documento";
+    const caption = typeof d.caption === "string" ? d.caption : "";
+    if (url) {
+      return { type: "document", url, mimetype, mediaKey, fileName, caption, rawNode: { ...d } };
+    }
   }
 
   return null;

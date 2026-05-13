@@ -5,22 +5,25 @@
  */
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
-import { getMediaBufferFromR2 } from "@/lib/integrations/r2-storage";
+import { getMediaBufferFromR2, headR2Object } from "@/lib/integrations/r2-storage";
 
 export const dynamic = "force-dynamic";
 
 const EXT_TO_MIME: Record<string, string> = {
   ogg: "audio/ogg",
-  mp4: "audio/mp4",
+  mp4: "video/mp4",
+  mov: "video/quicktime",
+  m4v: "video/x-m4v",
   m4a: "audio/mp4",
   mp3: "audio/mpeg",
   aac: "audio/aac",
-  webm: "audio/webm",
+  webm: "video/webm",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
   png: "image/png",
   webp: "image/webp",
   gif: "image/gif",
+  pdf: "application/pdf",
 };
 
 export async function GET(
@@ -43,9 +46,12 @@ export async function GET(
   }
 
   try {
-    const buffer = await getMediaBufferFromR2(key);
+    const [buffer, head] = await Promise.all([
+      getMediaBufferFromR2(key),
+      headR2Object(key).catch(() => null),
+    ]);
     const ext = (key.split(".").pop() ?? "").toLowerCase();
-    const contentType = EXT_TO_MIME[ext] ?? "application/octet-stream";
+    const contentType = head?.contentType ?? EXT_TO_MIME[ext] ?? "application/octet-stream";
 
     return new Response(new Uint8Array(buffer), {
       headers: {

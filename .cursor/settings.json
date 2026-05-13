@@ -2,6 +2,12 @@
   "plugins": {
     "vercel": {
       "enabled": true
+    },
+    "cloudflare": {
+      "enabled": true
+    },
+    "stripe": {
+      "enabled": true
     }
   }
 }

@@ -47,9 +47,11 @@ function asRecord(v: unknown): Record<string, unknown> | null {
 // Helpers — persistência de mensagens
 // ---------------------------------------------------------------------------
 
-function kindFromMsg(msg: EvolutionInboundMessage): "text" | "audio" | "image" | "document" {
+function kindFromMsg(msg: EvolutionInboundMessage): "text" | "audio" | "image" | "video" | "document" {
   if (msg.type === "audio") return "audio";
   if (msg.type === "image") return "image";
+  if (msg.type === "video") return "video";
+  if (msg.type === "document") return "document";
   return "text";
 }
 
@@ -57,23 +59,33 @@ function contentFromMsg(msg: EvolutionInboundMessage): string {
   if (msg.type === "text") return msg.text;
   if (msg.type === "audio") return "[Áudio]";
   if (msg.type === "image") return msg.caption ? `[Imagem] ${msg.caption}` : "[Imagem]";
+  if (msg.type === "video") return msg.caption ? `[Vídeo] ${msg.caption}` : "[Vídeo]";
+  if (msg.type === "document") {
+    const name = msg.fileName?.trim() || "documento";
+    return msg.caption ? `[Documento] ${name} — ${msg.caption}` : `[Documento] ${name}`;
+  }
   return "";
 }
 
 function inboundLanguageSource(msg: EvolutionInboundMessage, fallbackText = ""): string {
   if (msg.type === "text") return msg.text;
-  if (msg.type === "image") return msg.caption || fallbackText;
+  if (msg.type === "image" || msg.type === "video" || msg.type === "document") {
+    return msg.caption || fallbackText;
+  }
   return fallbackText;
 }
 
-function localizedMediaFailureReply(languageCode: SupportedLanguageCode, mediaLabel: "audio" | "image"): string {
-  const labels: Record<SupportedLanguageCode, Record<"audio" | "image", string>> = {
-    pt: { audio: "áudio", image: "imagem" },
-    en: { audio: "audio", image: "image" },
-    es: { audio: "audio", image: "imagen" },
-    fr: { audio: "audio", image: "image" },
-    de: { audio: "Audio", image: "Bild" },
-    it: { audio: "audio", image: "immagine" },
+function localizedMediaFailureReply(
+  languageCode: SupportedLanguageCode,
+  mediaLabel: "audio" | "image" | "video",
+): string {
+  const labels: Record<SupportedLanguageCode, Record<"audio" | "image" | "video", string>> = {
+    pt: { audio: "áudio", image: "imagem", video: "vídeo" },
+    en: { audio: "audio", image: "image", video: "video" },
+    es: { audio: "audio", image: "imagen", video: "video" },
+    fr: { audio: "audio", image: "image", video: "vidéo" },
+    de: { audio: "Audio", image: "Bild", video: "Video" },
+    it: { audio: "audio", image: "immagine", video: "video" },
   };
   const replies: Record<SupportedLanguageCode, string> = {
     pt: `Recebi seu ${labels.pt[mediaLabel]} mas não consegui processar. Pode enviar em texto?`,
@@ -161,13 +173,17 @@ async function downloadAndStoreMedia(
   msg: EvolutionInboundMessage,
   tenantId: string,
   instanceName: string,
-): Promise<string | null> {
-  if (msg.type !== "audio" && msg.type !== "image") return null;
+): Promise<{ mediaUrl: string; storageKey: string; mimeType: string; fileName: string | null; caption: string | null; durationSeconds: number | null } | null> {
+  if (msg.type !== "audio" && msg.type !== "image" && msg.type !== "video" && msg.type !== "document") {
+    return null;
+  }
 
   const { mimetype, rawNode } = msg;
   const ext = mimeToExt(mimetype);
   const safeId = (msg.messageId || String(Date.now())).replace(/[^a-zA-Z0-9_-]/g, "");
-  const filename = `whatsapp/${tenantId}/${safeId}.${ext}`;
+  const fileName =
+    msg.type === "document" && msg.fileName?.trim() ? msg.fileName.trim() : `${safeId}.${ext}`;
+  const filename = `whatsapp/${tenantId}/${safeId}_${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
 
   let buffer: Buffer | null = null;
 
@@ -202,7 +218,14 @@ async function downloadAndStoreMedia(
       process.env.AUTHENTICATION_API_KEY?.trim() ||
       "";
     if (evoBase && evoKey) {
-      const messageField = msg.type === "audio" ? "audioMessage" : "imageMessage";
+      const messageField =
+        msg.type === "audio"
+          ? "audioMessage"
+          : msg.type === "video"
+            ? "videoMessage"
+            : msg.type === "document"
+              ? "documentMessage"
+              : "imageMessage";
       try {
         const res = await fetch(
           `${evoBase}/chat/getBase64FromMediaMessage/${encodeURIComponent(instanceName)}`,
@@ -246,18 +269,32 @@ async function downloadAndStoreMedia(
   const key = await uploadMediaToR2(buffer, filename, mimetype);
   if (!key) return null;
 
-  return `/api/client/media/${filename}`;
+  return {
+    mediaUrl: `/api/client/media/${filename}`,
+    storageKey: key,
+    mimeType: mimetype,
+    fileName: msg.type === "document" ? fileName : null,
+    caption: "caption" in msg && typeof msg.caption === "string" ? msg.caption : null,
+    durationSeconds: msg.type === "video" && typeof msg.seconds === "number" ? msg.seconds : null,
+  };
 }
 
 async function saveMessage(opts: {
   tenantId: string;
   remoteJid: string;
   direction: "inbound" | "outbound";
-  kind: "text" | "audio" | "image" | "document";
+  kind: "text" | "audio" | "image" | "video" | "document";
   content: string;
   messageId?: string | null;
   agentId?: string | null;
   mediaUrl?: string | null;
+  mimeType?: string | null;
+  storageKey?: string | null;
+  fileName?: string | null;
+  caption?: string | null;
+  mediaDurationSeconds?: number | null;
+  transcriptionStatus?: string | null;
+  analysisStatus?: string | null;
 }): Promise<{ id?: string; created_at?: string } | null> {
   try {
     const sb = createSupabaseServiceClient();
@@ -272,6 +309,13 @@ async function saveMessage(opts: {
         message_id: opts.messageId ?? null,
         agent_id: opts.agentId ?? null,
         media_url: opts.mediaUrl ?? null,
+        mime_type: opts.mimeType ?? null,
+        storage_key: opts.storageKey ?? null,
+        file_name: opts.fileName ?? null,
+        caption: opts.caption ?? null,
+        media_duration_seconds: opts.mediaDurationSeconds ?? null,
+        transcription_status: opts.transcriptionStatus ?? null,
+        analysis_status: opts.analysisStatus ?? null,
       })
       .select("id, created_at")
       .single();
@@ -341,8 +385,8 @@ export async function POST(request: Request) {
     // REMOVER após investigação concluída.
     {
       const rawJson = JSON.stringify(payload);
-      if (rawJson.includes('"audioMessage"') || rawJson.includes('"imageMessage"')) {
-        console.log("RAW PAYLOAD AUDIO/IMAGE:", JSON.stringify(payload, null, 2));
+      if (rawJson.includes('"audioMessage"') || rawJson.includes('"imageMessage"') || rawJson.includes('"videoMessage"')) {
+        console.log("RAW PAYLOAD MEDIA:", JSON.stringify(payload, null, 2));
       }
     }
 
@@ -365,9 +409,11 @@ export async function POST(request: Request) {
       const agentId = await resolveEvolutionAgentId(row.tenant_id, row.default_agent_id);
 
       // Para áudio/imagem: baixa mídia e faz upload para R2 para exibição no chat
-      let inboundMediaUrl: string | null = null;
-      if (msg.type === "audio" || msg.type === "image") {
-        inboundMediaUrl = await downloadAndStoreMedia(msg, row.tenant_id, instanceName);
+      let inboundMedia:
+        | Awaited<ReturnType<typeof downloadAndStoreMedia>>
+        | null = null;
+      if (msg.type === "audio" || msg.type === "image" || msg.type === "video" || msg.type === "document") {
+        inboundMedia = await downloadAndStoreMedia(msg, row.tenant_id, instanceName);
       }
 
       const inboundSaved = await saveMessage({
@@ -377,7 +423,15 @@ export async function POST(request: Request) {
         kind: kindFromMsg(msg),
         content: contentFromMsg(msg),
         messageId: msg.messageId,
-        mediaUrl: inboundMediaUrl,
+        mediaUrl: inboundMedia?.mediaUrl ?? null,
+        mimeType: inboundMedia?.mimeType ?? ("mimetype" in msg ? msg.mimetype : null),
+        storageKey: inboundMedia?.storageKey ?? null,
+        fileName: inboundMedia?.fileName ?? null,
+        caption: inboundMedia?.caption ?? null,
+        mediaDurationSeconds: inboundMedia?.durationSeconds ?? null,
+        transcriptionStatus: msg.type === "audio" ? "pending" : null,
+        analysisStatus:
+          msg.type === "video" ? "unsupported" : msg.type === "image" ? "pending" : null,
       });
       const contactName = extractContactNameFromPayload(payload, msg);
       const upsertedLead = await upsertLeadFromWhatsAppContact({
@@ -453,7 +507,8 @@ export async function POST(request: Request) {
         customerId: msg.remoteJid,
         feature: "agent_chat",
         messages: [],
-        mediaContent: msg.type !== "text" ? msg : undefined,
+        mediaContent:
+          msg.type === "audio" || msg.type === "image" || msg.type === "video" ? msg : undefined,
         instanceName: msg.type !== "text" ? instanceName : undefined,
       });
 
@@ -461,7 +516,8 @@ export async function POST(request: Request) {
       if (result.ok) {
         replyText = result.text;
       } else if (result.code === "MEDIA_DOWNLOAD_FAILED") {
-        const mediaLabel = msg.type === "audio" ? "audio" : "image";
+        const mediaLabel =
+          msg.type === "audio" ? "audio" : msg.type === "video" ? "video" : "image";
         replyText = localizedMediaFailureReply(inboundLanguageCode, mediaLabel);
       } else {
         replyText = localizedGenericFailureReply(inboundLanguageCode);

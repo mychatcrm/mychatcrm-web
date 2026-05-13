@@ -53,5 +53,6 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("Destino CRM automático: ativo");
     expect(prompt).toContain("Dados do lead:");
     expect(prompt).toContain("Material: FAQ");
+    expect(prompt).toContain("vídeo");
   });
 });

@@ -63,7 +63,7 @@ const CHAT_BG_STYLE: React.CSSProperties = {
 type WaMessage = {
   id: string;
   direction: "inbound" | "outbound";
-  kind: "text" | "audio" | "image" | "document";
+  kind: "text" | "audio" | "image" | "video" | "document";
   content: string;
   media_url: string | null;
   agent_id: string | null;
@@ -503,6 +503,47 @@ function ImageBubble({ src, caption }: { src: string; caption: string }) {
   );
 }
 
+function VideoBubble({ src, caption }: { src: string; caption: string }) {
+  const [error, setError] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  return (
+    <div>
+      {loading && !error ? (
+        <div style={{ padding: "24px 12px", textAlign: "center", color: W.muted, fontSize: 12 }}>
+          Carregando vídeo…
+        </div>
+      ) : null}
+      {error ? (
+        <span style={{ color: W.muted, fontSize: 13 }}>Não foi possível carregar o vídeo.</span>
+      ) : (
+        <video
+          src={src}
+          controls
+          preload="metadata"
+          playsInline
+          onLoadedData={() => setLoading(false)}
+          onError={() => {
+            setError(true);
+            setLoading(false);
+          }}
+          style={{
+            display: "block",
+            maxWidth: "100%",
+            maxHeight: 280,
+            width: "100%",
+            borderRadius: 6,
+            background: "#000",
+          }}
+        />
+      )}
+      {caption ? (
+        <p style={{ margin: "4px 4px 2px", fontSize: 13, color: W.text }}>{caption}</p>
+      ) : null}
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // MessageBubble
 // ─────────────────────────────────────────────────────────────────────────────
@@ -514,7 +555,12 @@ function MessageBubble({
   highlight?: string;
 }) {
   const out = msg.direction === "outbound";
-  const caption = msg.content.replace(/\[Imagem\]/g, "").trim();
+  const caption = msg.content
+    .replace(/\[Imagem\]/g, "")
+    .replace(/\[Vídeo\]/g, "")
+    .replace(/\[Documento\][^—]*/g, "")
+    .trim();
+  const hasMedia = Boolean(msg.media_url) && (msg.kind === "image" || msg.kind === "video");
 
   // ── Spacer dinâmico para a técnica WhatsApp ──────────────────────────────
   // O spacer invisível no final do texto reserva espaço para o timestamp
@@ -556,7 +602,7 @@ function MessageBubble({
           maxWidth: "85%",
           background: out ? W.bubbleOut : W.bubbleIn,
           borderRadius: out ? "8px 8px 0 8px" : "8px 8px 8px 0",
-          padding: msg.kind === "image" && msg.media_url ? "4px 4px 0 4px" : "7px 10px 5px 10px",
+          padding: hasMedia ? "4px 4px 0 4px" : "7px 10px 5px 10px",
           boxShadow: "0 1px 1px rgba(0,0,0,0.25)",
           position: "relative",
         }}
@@ -581,23 +627,41 @@ function MessageBubble({
             ) : (
               <span style={{ color: W.muted, fontSize: 13 }}>📷 Imagem</span>
             )}
-            {/* Timestamp below image */}
+            <div style={{ display: "flex", justifyContent: "flex-end", padding: "3px 4px 2px" }}>
+              {TimestampRow}
+            </div>
+          </>
+        ) : msg.kind === "video" ? (
+          <>
+            {msg.media_url ? (
+              <VideoBubble src={msg.media_url} caption={caption} />
+            ) : (
+              <span style={{ color: W.muted, fontSize: 13 }}>🎬 Vídeo</span>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", padding: "3px 4px 2px" }}>
+              {TimestampRow}
+            </div>
+          </>
+        ) : msg.kind === "document" ? (
+          <>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "2px 2px 0" }}>
+              <span style={{ fontSize: 13, color: W.text }}>{msg.content}</span>
+              {msg.media_url ? (
+                <a
+                  href={msg.media_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ fontSize: 12, color: W.green, textDecoration: "underline" }}
+                >
+                  Abrir arquivo
+                </a>
+              ) : null}
+            </div>
             <div style={{ display: "flex", justifyContent: "flex-end", padding: "3px 4px 2px" }}>
               {TimestampRow}
             </div>
           </>
         ) : (
-          /*
-           * Text bubble — WhatsApp spacer technique:
-           *
-           * An invisible inline <span> at the end of the text pushes the last
-           * line so it never overlaps the timestamp. The timestamp is floated
-           * right with a negative margin-top equal to the spacer height, so it
-           * "rises" to sit beside the spacer on that last line.
-           *
-           * Spacer width = spacerWidth (calculado acima, baseado no tsText
-           * real para acomodar tanto "HH:MM" quanto "DD de MMM").
-           */
           <>
             <p
               style={{
