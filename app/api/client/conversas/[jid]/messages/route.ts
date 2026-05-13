@@ -6,6 +6,8 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { getConversationState } from "@/lib/server/conversation-memory";
+import { isConversationAutomationEnabled } from "@/lib/server/conversation-human-control";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +39,24 @@ export async function GET(
   // Retorna em ordem cronológica (mais antigas primeiro)
   const messages = (data ?? []).reverse();
 
-  return NextResponse.json({ messages }, { headers: { "Cache-Control": "no-store" } });
+  const state = await getConversationState({
+    sb,
+    tenantId: session.tenantId,
+    remoteJid,
+  });
+
+  return NextResponse.json(
+    {
+      messages,
+      automation: {
+        enabled: isConversationAutomationEnabled(state),
+        human_paused: state?.humanPaused ?? false,
+        paused_by: state?.pausedBy ?? null,
+        paused_reason: state?.pausedReason ?? null,
+      },
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function DELETE(

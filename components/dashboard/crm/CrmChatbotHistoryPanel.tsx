@@ -143,12 +143,21 @@ export function CrmChatbotHistoryPanel({ leadId }: { leadId: string }) {
 
       {state ? (
         <div className="flex flex-wrap gap-2">
-          {state.human_paused ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-200">
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium",
+              state.human_paused
+                ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+            )}
+          >
+            {state.human_paused ? (
               <PauseCircle className="h-3.5 w-3.5" aria-hidden />
-              Pausa humana ativa
-            </span>
-          ) : null}
+            ) : (
+              <Bot className="h-3.5 w-3.5" aria-hidden />
+            )}
+            {state.human_paused ? "Automação pausada" : "Automação ativa"}
+          </span>
           {state.handoff_suggested ? (
             <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary">
               <Hand className="h-3.5 w-3.5" aria-hidden />

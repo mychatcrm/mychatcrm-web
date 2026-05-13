@@ -25,10 +25,7 @@ import {
   shouldTriggerHandoff,
   upsertConversationState,
 } from "@/lib/server/conversation-memory";
-import {
-  applyHumanConversationCommand,
-  maybeResumeConversationOnClientInbound,
-} from "@/lib/server/conversation-human-control";
+import { applyHumanConversationCommand } from "@/lib/server/conversation-human-control";
 
 export const dynamic = "force-dynamic";
 
@@ -470,29 +467,11 @@ export async function POST(request: Request) {
         occurredAt: inboundSaved?.created_at ?? new Date().toISOString(),
       });
 
-      let pausedState = await getConversationState({
+      const pausedState = await getConversationState({
         sb: sbState,
         tenantId: row.tenant_id,
         remoteJid: msg.remoteJid,
       });
-      if (pausedState?.humanPaused && pausedState.pausedBy === "human_manual") {
-        const resumed = await maybeResumeConversationOnClientInbound({
-          sb: sbState,
-          tenantId: row.tenant_id,
-          remoteJid: msg.remoteJid,
-          leadId,
-          agentId,
-          pausedState,
-          occurredAt: inboundSaved?.created_at ?? new Date().toISOString(),
-        });
-        if (resumed) {
-          pausedState = await getConversationState({
-            sb: sbState,
-            tenantId: row.tenant_id,
-            remoteJid: msg.remoteJid,
-          });
-        }
-      }
       if (pausedState?.humanPaused) {
         console.info("[webhooks/evolution] agent skipped: human_paused", {
           tenant_id: row.tenant_id,

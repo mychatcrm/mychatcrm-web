@@ -10,6 +10,11 @@ function normalizeCommand(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim().toLowerCase() : null;
 }
 
+/**
+ * Comandos textuais opcionais (comandoPausaConversa / comandoRetomaConversa).
+ * Só aplica match exato, case-insensitive, quando o campo estiver preenchido.
+ * O controle principal de automação é o toggle visual em /dashboard/conversas.
+ */
 export async function applyHumanConversationCommand(params: {
   sb?: SupabaseServiceClient;
   tenantId: string;
@@ -20,8 +25,7 @@ export async function applyHumanConversationCommand(params: {
   occurredAt?: string | null;
 }): Promise<"paused" | "resumed" | "none"> {
   const text = normalizeCommand(params.text);
-  const agentId = normalizeCommand(params.agentId);
-  if (!text || !agentId || agentId === "human") return "none";
+  if (!text || !params.agentId || params.agentId === "human") return "none";
 
   const sb = params.sb ?? createSupabaseServiceClient();
   const { data, error } = await sb
@@ -72,85 +76,34 @@ export async function applyHumanConversationCommand(params: {
   return "none";
 }
 
-/** Pausa a conversa quando um atendente responde pelo painel; respeita comando de retomada. */
-export async function pauseConversationForHumanOutbound(params: {
+/** Liga/desliga automação do agente para uma conversa (toggle do painel). */
+export async function setConversationAutomationEnabled(params: {
   sb?: SupabaseServiceClient;
   tenantId: string;
   remoteJid: string;
-  agentId?: string | null;
-  text?: string | null;
+  enabled: boolean;
   leadId?: string | null;
+  agentId?: string | null;
   occurredAt?: string | null;
-}): Promise<"paused" | "resumed" | "none"> {
-  const commandResult = await applyHumanConversationCommand(params);
-  if (commandResult === "resumed") return "resumed";
-  if (commandResult === "paused") return "paused";
-
-  await upsertConversationState({
+}): Promise<ConversationState | null> {
+  const patch: Parameters<typeof upsertConversationState>[0] = {
     sb: params.sb,
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,
     leadId: params.leadId,
     agentId: params.agentId,
-    humanPaused: true,
-    pausedBy: "human_manual",
-    pausedReason: "human_takeover",
+    humanPaused: !params.enabled,
+    pausedBy: params.enabled ? null : "human_manual",
+    pausedReason: params.enabled ? null : "manual_toggle",
     lastMessageAt: params.occurredAt ?? new Date().toISOString(),
-  });
-  return "paused";
-}
-
-/**
- * Mensagem inbound do cliente após takeover manual no painel reativa o agente.
- * Pausas por comando explícito ou handoff permanecem até retomada configurada.
- */
-export async function maybeResumeConversationOnClientInbound(params: {
-  sb?: SupabaseServiceClient;
-  tenantId: string;
-  remoteJid: string;
-  leadId?: string | null;
-  agentId?: string | null;
-  pausedState: ConversationState;
-  occurredAt?: string | null;
-}): Promise<boolean> {
-  if (!params.pausedState.humanPaused || params.pausedState.pausedBy !== "human_manual") {
-    return false;
+  };
+  if (params.enabled) {
+    patch.handoffSuggested = false;
+    patch.handoffReason = null;
   }
-
-  await upsertConversationState({
-    sb: params.sb,
-    tenantId: params.tenantId,
-    remoteJid: params.remoteJid,
-    leadId: params.leadId,
-    agentId: params.agentId,
-    humanPaused: false,
-    pausedBy: null,
-    pausedReason: null,
-    lastMessageAt: params.occurredAt ?? new Date().toISOString(),
-  });
-  return true;
+  return upsertConversationState(patch);
 }
 
-/** Retomada explícita pelo painel (qualquer motivo de pausa). */
-export async function resumeConversationFromPanel(params: {
-  sb?: SupabaseServiceClient;
-  tenantId: string;
-  remoteJid: string;
-  leadId?: string | null;
-  agentId?: string | null;
-  occurredAt?: string | null;
-}): Promise<void> {
-  await upsertConversationState({
-    sb: params.sb,
-    tenantId: params.tenantId,
-    remoteJid: params.remoteJid,
-    leadId: params.leadId,
-    agentId: params.agentId,
-    humanPaused: false,
-    pausedBy: null,
-    pausedReason: null,
-    handoffSuggested: false,
-    handoffReason: null,
-    lastMessageAt: params.occurredAt ?? new Date().toISOString(),
-  });
+export function isConversationAutomationEnabled(state: ConversationState | null | undefined): boolean {
+  return state ? !state.humanPaused : true;
 }

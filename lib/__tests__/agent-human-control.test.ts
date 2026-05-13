@@ -7,10 +7,10 @@ const upsertConversationStateMock = vi.fn(async () => ({
   leadId: null,
   agentId: "ag-vendas",
   channel: "whatsapp",
-  status: "human_paused",
-  humanPaused: true,
-  pausedReason: "manual_pause_command",
-  pausedBy: "human_command",
+  status: "active",
+  humanPaused: false,
+  pausedReason: null,
+  pausedBy: null,
   handoffSuggested: false,
   handoffReason: null,
   lastSummaryAt: null,
@@ -43,12 +43,21 @@ describe("conversation human control", () => {
     maybeSingleMock.mockReset();
   });
 
-  it("pauses when inbound text matches pause command", async () => {
+  it("pauses only on exact configured pause command", async () => {
     maybeSingleMock.mockResolvedValue({
       data: { metadata: { comandoPausaConversa: "pausar", comandoRetomaConversa: "retomar" } },
       error: null,
     });
     const { applyHumanConversationCommand } = await import("@/lib/server/conversation-human-control");
+
+    expect(
+      await applyHumanConversationCommand({
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "ag-vendas",
+        text: "oi",
+      }),
+    ).toBe("none");
 
     const result = await applyHumanConversationCommand({
       tenantId: "tenant-1",
@@ -64,6 +73,23 @@ describe("conversation human control", () => {
         pausedBy: "human_command",
       }),
     );
+  });
+
+  it("does not pause on common interest messages", async () => {
+    maybeSingleMock.mockResolvedValue({
+      data: { metadata: { comandoPausaConversa: "pausar" } },
+      error: null,
+    });
+    const { applyHumanConversationCommand } = await import("@/lib/server/conversation-human-control");
+
+    expect(
+      await applyHumanConversationCommand({
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "ag-vendas",
+        text: "tenho interesse",
+      }),
+    ).toBe("none");
   });
 
   it("resumes when inbound text matches resume command", async () => {
@@ -88,113 +114,109 @@ describe("conversation human control", () => {
     );
   });
 
-  it("pauses conversation when human replies from dashboard", async () => {
-    maybeSingleMock.mockResolvedValue({ data: { metadata: {} }, error: null });
-    const { pauseConversationForHumanOutbound } = await import("@/lib/server/conversation-human-control");
+  it("toggle disables automation for one conversation", async () => {
+    const { setConversationAutomationEnabled } = await import("@/lib/server/conversation-human-control");
 
-    const result = await pauseConversationForHumanOutbound({
+    await setConversationAutomationEnabled({
       tenantId: "tenant-1",
       remoteJid: "5511999999999@s.whatsapp.net",
+      enabled: false,
       agentId: "ag-vendas",
-      text: "Olá, sou o atendente",
     });
 
-    expect(result).toBe("paused");
     expect(upsertConversationStateMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        humanPaused: true,
-        pausedBy: "human_manual",
-        pausedReason: "human_takeover",
-      }),
-    );
-  });
-
-  it("does not pause again when resume command is sent from dashboard", async () => {
-    maybeSingleMock.mockResolvedValue({
-      data: { metadata: { comandoRetomaConversa: "retomar" } },
-      error: null,
-    });
-    const { pauseConversationForHumanOutbound } = await import("@/lib/server/conversation-human-control");
-
-    const result = await pauseConversationForHumanOutbound({
-      tenantId: "tenant-1",
-      remoteJid: "5511999999999@s.whatsapp.net",
-      agentId: "ag-vendas",
-      text: "retomar",
-    });
-
-    expect(result).toBe("resumed");
-    expect(upsertConversationStateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        humanPaused: false,
-      }),
-    );
-    expect(upsertConversationStateMock).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        pausedBy: "human_manual",
-      }),
-    );
-  });
-
-  it("resumes human_manual pause when client sends a new inbound message", async () => {
-    const { maybeResumeConversationOnClientInbound } = await import("@/lib/server/conversation-human-control");
-
-    const resumed = await maybeResumeConversationOnClientInbound({
-      tenantId: "tenant-1",
-      remoteJid: "5511999999999@s.whatsapp.net",
-      agentId: "ag-vendas",
-      pausedState: {
-        id: "state-1",
         tenantId: "tenant-1",
         remoteJid: "5511999999999@s.whatsapp.net",
-        leadId: null,
-        agentId: "ag-vendas",
-        channel: "whatsapp",
-        status: "human_paused",
         humanPaused: true,
-        pausedReason: "human_takeover",
         pausedBy: "human_manual",
-        handoffSuggested: false,
-        handoffReason: null,
-        lastSummaryAt: null,
-      },
+        pausedReason: "manual_toggle",
+      }),
+    );
+  });
+
+  it("toggle re-enables automation and clears pause flags", async () => {
+    const { setConversationAutomationEnabled } = await import("@/lib/server/conversation-human-control");
+
+    await setConversationAutomationEnabled({
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      enabled: true,
+      agentId: "ag-vendas",
     });
 
-    expect(resumed).toBe(true);
     expect(upsertConversationStateMock).toHaveBeenCalledWith(
       expect.objectContaining({
         humanPaused: false,
         pausedBy: null,
         pausedReason: null,
+        handoffSuggested: false,
+        handoffReason: null,
       }),
     );
   });
 
-  it("does not auto-resume when pause was triggered by explicit command", async () => {
-    const { maybeResumeConversationOnClientInbound } = await import("@/lib/server/conversation-human-control");
-
-    const resumed = await maybeResumeConversationOnClientInbound({
-      tenantId: "tenant-1",
-      remoteJid: "5511999999999@s.whatsapp.net",
-      agentId: "ag-vendas",
-      pausedState: {
-        id: "state-1",
-        tenantId: "tenant-1",
-        remoteJid: "5511999999999@s.whatsapp.net",
+  it("treats missing state as automation enabled", async () => {
+    const { isConversationAutomationEnabled } = await import("@/lib/server/conversation-human-control");
+    expect(isConversationAutomationEnabled(null)).toBe(true);
+    expect(
+      isConversationAutomationEnabled({
+        id: "s",
+        tenantId: "t",
+        remoteJid: "j",
         leadId: null,
-        agentId: "ag-vendas",
+        agentId: null,
         channel: "whatsapp",
         status: "human_paused",
         humanPaused: true,
-        pausedReason: "manual_pause_command",
-        pausedBy: "human_command",
+        pausedReason: "manual_toggle",
+        pausedBy: "human_manual",
         handoffSuggested: false,
         handoffReason: null,
         lastSummaryAt: null,
-      },
-    });
+      }),
+    ).toBe(false);
+  });
+});
 
-    expect(resumed).toBe(false);
-    expect(upsertConversationStateMock).not.toHaveBeenCalled();
+describe("webhook automation gate", () => {
+  it("skips agent when human_paused is true", async () => {
+    const { isConversationAutomationEnabled } = await import("@/lib/server/conversation-human-control");
+    const paused = {
+      id: "s",
+      tenantId: "t",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      leadId: null,
+      agentId: "ag-vendas",
+      channel: "whatsapp",
+      status: "human_paused",
+      humanPaused: true,
+      pausedReason: "manual_toggle",
+      pausedBy: "human_manual",
+      handoffSuggested: false,
+      handoffReason: null,
+      lastSummaryAt: null,
+    };
+    expect(isConversationAutomationEnabled(paused)).toBe(false);
+  });
+
+  it("allows agent when automation is enabled", async () => {
+    const { isConversationAutomationEnabled } = await import("@/lib/server/conversation-human-control");
+    const active = {
+      id: "s",
+      tenantId: "t",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      leadId: null,
+      agentId: "ag-vendas",
+      channel: "whatsapp",
+      status: "active",
+      humanPaused: false,
+      pausedReason: null,
+      pausedBy: null,
+      handoffSuggested: false,
+      handoffReason: null,
+      lastSummaryAt: null,
+    };
+    expect(isConversationAutomationEnabled(active)).toBe(true);
   });
 });

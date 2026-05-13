@@ -111,12 +111,65 @@ async function apiLoadConversations(): Promise<WaConversation[]> {
   }));
 }
 
-async function apiLoadMessages(remoteJid: string): Promise<WaMessage[]> {
+async function apiLoadMessages(remoteJid: string): Promise<{
+  messages: WaMessage[];
+  automation: {
+    enabled: boolean;
+    human_paused: boolean;
+    paused_by: string | null;
+    paused_reason: string | null;
+  };
+}> {
   const enc = encodeURIComponent(remoteJid);
   const res = await fetch(`/api/client/conversas/${enc}/messages`, { cache: "no-store" });
   if (!res.ok) throw new Error(`GET messages ${res.status}`);
-  const data = (await res.json()) as { messages: WaMessage[] };
-  return data.messages ?? [];
+  const data = (await res.json()) as {
+    messages: WaMessage[];
+    automation?: {
+      enabled: boolean;
+      human_paused: boolean;
+      paused_by: string | null;
+      paused_reason: string | null;
+    };
+  };
+  return {
+    messages: data.messages ?? [],
+    automation: data.automation ?? {
+      enabled: true,
+      human_paused: false,
+      paused_by: null,
+      paused_reason: null,
+    },
+  };
+}
+
+async function apiToggleAutomation(
+  remoteJid: string,
+  enabled: boolean,
+): Promise<{
+  enabled: boolean;
+  human_paused: boolean;
+  paused_by: string | null;
+  paused_reason: string | null;
+}> {
+  const res = await fetch("/api/client/conversas/automation-toggle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ remoteJid, enabled }),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? `Erro ${res.status} ao alterar automação`);
+  }
+  const data = (await res.json()) as {
+    automation: {
+      enabled: boolean;
+      human_paused: boolean;
+      paused_by: string | null;
+      paused_reason: string | null;
+    };
+  };
+  return data.automation;
 }
 
 async function apiSendMessage(remoteJid: string, text: string, contactName?: string | null): Promise<WaMessage | null> {
@@ -1054,6 +1107,11 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   type AttachmentState = { file: File; previewUrl: string; kind: AttachmentKind };
   const [attachment,     setAttachment]     = useState<AttachmentState | null>(null);
   const [uploading,      setUploading]      = useState(false);
+  const [automationByJid, setAutomationByJid] = useState<
+    Record<string, { enabled: boolean; human_paused: boolean; paused_by: string | null; paused_reason: string | null }>
+  >({});
+  const [automationToggling, setAutomationToggling] = useState(false);
+  const [automationError, setAutomationError] = useState("");
 
   // Cache em ref para evitar fetches duplicados concorrentes
   const photoCacheRef    = useRef<Set<string>>(new Set());
@@ -1187,10 +1245,11 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     const refreshMsgs = async () => {
       if (typeof document !== "undefined" && document.hidden) return;
       try {
-        const msgs = await apiLoadMessages(selectedJid);
+        const { messages, automation } = await apiLoadMessages(selectedJid);
+        setAutomationByJid((prev) => ({ ...prev, [selectedJid]: automation }));
         setConversations((prev) =>
           prev.map((c) =>
-            c.remoteJid === selectedJid ? { ...c, messages: msgs, messagesLoaded: true } : c,
+            c.remoteJid === selectedJid ? { ...c, messages, messagesLoaded: true } : c,
           ),
         );
       } catch { /* silencioso */ }
@@ -1277,13 +1336,14 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
       void fetchName(jid);
 
       const conv = conversations.find((c) => c.remoteJid === jid);
-      if (conv?.messagesLoaded) return;
-
       try {
-        const msgs = await apiLoadMessages(jid);
-        setConversations((prev) =>
-          prev.map((c) => (c.remoteJid === jid ? { ...c, messages: msgs, messagesLoaded: true } : c)),
-        );
+        const { messages, automation } = await apiLoadMessages(jid);
+        setAutomationByJid((prev) => ({ ...prev, [jid]: automation }));
+        if (!conv?.messagesLoaded) {
+          setConversations((prev) =>
+            prev.map((c) => (c.remoteJid === jid ? { ...c, messages, messagesLoaded: true } : c)),
+          );
+        }
       } catch (e) {
         console.warn("[conversas] load messages error", e);
       }
@@ -1298,6 +1358,44 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     () => conversations.find((c) => c.remoteJid === selectedJid) ?? null,
     [conversations, selectedJid],
   );
+
+  const activeAutomationEnabled = selectedJid
+    ? (automationByJid[selectedJid]?.enabled ?? true)
+    : true;
+
+  const handleAutomationToggle = useCallback(async () => {
+    if (!selectedJid || automationToggling) return;
+    const previous = automationByJid[selectedJid]?.enabled ?? true;
+    const next = !previous;
+    setAutomationByJid((prev) => ({
+      ...prev,
+      [selectedJid]: {
+        enabled: next,
+        human_paused: !next,
+        paused_by: next ? null : "human_manual",
+        paused_reason: next ? null : "manual_toggle",
+      },
+    }));
+    setAutomationToggling(true);
+    setAutomationError("");
+    try {
+      const automation = await apiToggleAutomation(selectedJid, next);
+      setAutomationByJid((prev) => ({ ...prev, [selectedJid]: automation }));
+    } catch (e) {
+      setAutomationByJid((prev) => ({
+        ...prev,
+        [selectedJid]: {
+          enabled: previous,
+          human_paused: !previous,
+          paused_by: prev[selectedJid]?.paused_by ?? null,
+          paused_reason: prev[selectedJid]?.paused_reason ?? null,
+        },
+      }));
+      setAutomationError(e instanceof Error ? e.message : "Não foi possível alterar a automação.");
+    } finally {
+      setAutomationToggling(false);
+    }
+  }, [selectedJid, automationToggling, automationByJid]);
 
   const handleDeleteConversation = useCallback(() => {
     if (!active || deleteBusy) return;
@@ -2149,6 +2247,44 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 );
               })()}
 
+              {/* Toggle automação do agente */}
+              <button
+                type="button"
+                onClick={() => void handleAutomationToggle()}
+                disabled={automationToggling}
+                title={activeAutomationEnabled ? "Desligar agente nesta conversa" : "Ligar agente nesta conversa"}
+                style={{
+                  flexShrink: 0,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "6px 10px",
+                  borderRadius: 16,
+                  border: `1px solid ${activeAutomationEnabled ? "rgba(0,168,132,0.45)" : "rgba(134,150,160,0.35)"}`,
+                  background: activeAutomationEnabled ? "rgba(0,168,132,0.15)" : "rgba(134,150,160,0.12)",
+                  color: activeAutomationEnabled ? "#25d366" : W.muted,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: automationToggling ? "wait" : "pointer",
+                  opacity: automationToggling ? 0.7 : 1,
+                }}
+              >
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: activeAutomationEnabled ? "#25d366" : "#8696a0",
+                    flexShrink: 0,
+                  }}
+                />
+                {automationToggling
+                  ? "Salvando…"
+                  : activeAutomationEnabled
+                    ? "Automação ativa"
+                    : "Automação pausada"}
+              </button>
+
               {/* Header action: lupa para busca interna */}
               <button
                 type="button"
@@ -2622,6 +2758,23 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                       <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
                     </svg>
                   </button>
+                </div>
+              )}
+
+              {automationError && (
+                <div
+                  style={{
+                    background: "rgba(229,57,53,0.15)",
+                    borderRadius: 8,
+                    padding: "5px 12px",
+                    fontSize: 12,
+                    color: "#ef5350",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  ⚠ {automationError}
                 </div>
               )}
 

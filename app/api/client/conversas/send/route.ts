@@ -11,7 +11,6 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
 import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
-import { pauseConversationForHumanOutbound } from "@/lib/server/conversation-human-control";
 import { upsertConversationState } from "@/lib/server/conversation-memory";
 
 export const dynamic = "force-dynamic";
@@ -94,15 +93,5 @@ export async function POST(request: Request) {
     agentId: linkedAgentId,
     lastMessageAt: occurredAt,
   });
-  await pauseConversationForHumanOutbound({
-    sb,
-    tenantId: session.tenantId,
-    remoteJid,
-    leadId: leadResult.lead?.id ?? null,
-    agentId: linkedAgentId,
-    text: trimmedText,
-    occurredAt,
-  });
-
   return NextResponse.json({ ok: true, message: saved ?? null });
 }
