@@ -91,6 +91,24 @@ function isMissingColumnError(error: { code?: string; message?: string } | null 
   return Boolean(error?.code && MISSING_COLUMN_CODES.has(error.code)) || message.includes("crm_auto_move_enabled");
 }
 
+async function linkAgentToWhatsAppSlot(params: {
+  sb: ReturnType<typeof createSupabaseServiceClient>;
+  tenantId: string;
+  agentId: string;
+  slotIndex?: number | null;
+}): Promise<void> {
+  if (!Number.isFinite(params.slotIndex)) return;
+  const slotIndex = Math.max(0, Math.floor(Number(params.slotIndex)));
+  const { error } = await params.sb
+    .from("tenant_evolution_instances")
+    .update({ default_agent_id: params.agentId, updated_at: new Date().toISOString() })
+    .eq("tenant_id", params.tenantId)
+    .eq("slot_index", slotIndex);
+  if (error && !isMissingColumnError(error)) {
+    console.warn("[api/client/agentes] WhatsApp slot link", error.code, error.message);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // GET — lista agentes do tenant
 // ---------------------------------------------------------------------------
@@ -215,6 +233,13 @@ export async function POST(request: Request) {
     console.error("[api/client/agentes] POST", error.code, error.message);
     return NextResponse.json({ error: "Erro ao criar agente." }, { status: 503 });
   }
+
+  await linkAgentToWhatsAppSlot({
+    sb,
+    tenantId: session.tenantId,
+    agentId: agent.id,
+    slotIndex: agent.whatsappSlotIndex,
+  });
 
   const created = rowToAgent(data as Record<string, unknown>, session.tenantId);
   return NextResponse.json({ agent: created }, { status: 201 });

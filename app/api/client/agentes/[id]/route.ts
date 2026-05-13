@@ -31,6 +31,24 @@ function isMissingColumnError(error: { code?: string; message?: string } | null 
   return Boolean(error?.code && MISSING_COLUMN_CODES.has(error.code)) || message.includes("crm_auto_move_enabled");
 }
 
+async function linkAgentToWhatsAppSlot(params: {
+  sb: ReturnType<typeof createSupabaseServiceClient>;
+  tenantId: string;
+  agentId: string;
+  slotIndex?: number | null;
+}): Promise<void> {
+  if (!Number.isFinite(params.slotIndex)) return;
+  const slotIndex = Math.max(0, Math.floor(Number(params.slotIndex)));
+  const { error } = await params.sb
+    .from("tenant_evolution_instances")
+    .update({ default_agent_id: params.agentId, updated_at: new Date().toISOString() })
+    .eq("tenant_id", params.tenantId)
+    .eq("slot_index", slotIndex);
+  if (error && !isMissingColumnError(error)) {
+    console.warn("[api/client/agentes] WhatsApp slot link", error.code, error.message);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // PUT — upsert agente (cria se não existir, atualiza se já existir)
 // Usa upsert em vez de update para garantir que templates editados pela
@@ -118,6 +136,13 @@ export async function PUT(
     console.error("[api/client/agentes] PUT", error.code, error.message);
     return NextResponse.json({ error: "Erro ao atualizar agente." }, { status: 503 });
   }
+
+  await linkAgentToWhatsAppSlot({
+    sb,
+    tenantId: session.tenantId,
+    agentId,
+    slotIndex: agent.whatsappSlotIndex,
+  });
 
   return NextResponse.json({
     agent: {

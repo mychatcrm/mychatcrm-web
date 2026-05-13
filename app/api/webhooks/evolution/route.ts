@@ -17,6 +17,14 @@ import { getEvolutionInstanceByName, updateEvolutionInstanceStateByName } from "
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { uploadMediaToR2 } from "@/lib/integrations/r2-storage";
 import { textToSpeechElevenLabs } from "@/lib/integrations/elevenlabs";
+import {
+  buildDeterministicHandoffSummary,
+  getConversationState,
+  getRecentConversationMessages,
+  saveConversationSummary,
+  shouldTriggerHandoff,
+  upsertConversationState,
+} from "@/lib/server/conversation-memory";
 
 export const dynamic = "force-dynamic";
 
@@ -249,22 +257,28 @@ async function saveMessage(opts: {
   messageId?: string | null;
   agentId?: string | null;
   mediaUrl?: string | null;
-}): Promise<void> {
+}): Promise<{ id?: string; created_at?: string } | null> {
   try {
     const sb = createSupabaseServiceClient();
-    const { error } = await sb.from("whatsapp_messages").insert({
-      tenant_id: opts.tenantId,
-      remote_jid: opts.remoteJid,
-      direction: opts.direction,
-      kind: opts.kind,
-      content: opts.content,
-      message_id: opts.messageId ?? null,
-      agent_id: opts.agentId ?? null,
-      media_url: opts.mediaUrl ?? null,
-    });
+    const { data, error } = await sb
+      .from("whatsapp_messages")
+      .insert({
+        tenant_id: opts.tenantId,
+        remote_jid: opts.remoteJid,
+        direction: opts.direction,
+        kind: opts.kind,
+        content: opts.content,
+        message_id: opts.messageId ?? null,
+        agent_id: opts.agentId ?? null,
+        media_url: opts.mediaUrl ?? null,
+      })
+      .select("id, created_at")
+      .single();
     if (error) console.warn("[webhooks/evolution] saveMessage error", error.code, error.message);
+    return (data as { id?: string; created_at?: string } | null) ?? null;
   } catch (e) {
     console.warn("[webhooks/evolution] saveMessage exception", e);
+    return null;
   }
 }
 
@@ -355,8 +369,7 @@ export async function POST(request: Request) {
         inboundMediaUrl = await downloadAndStoreMedia(msg, row.tenant_id, instanceName);
       }
 
-      // Salva mensagem inbound no Supabase (fire-and-forget)
-      await saveMessage({
+      const inboundSaved = await saveMessage({
         tenantId: row.tenant_id,
         remoteJid: msg.remoteJid,
         direction: "inbound",
@@ -366,7 +379,7 @@ export async function POST(request: Request) {
         mediaUrl: inboundMediaUrl,
       });
       const contactName = extractContactNameFromPayload(payload, msg);
-      await upsertLeadFromWhatsAppContact({
+      const upsertedLead = await upsertLeadFromWhatsAppContact({
         tenantId: row.tenant_id,
         remoteJid: msg.remoteJid,
         senderJid: msg.remoteJid,
@@ -376,8 +389,47 @@ export async function POST(request: Request) {
         agentId,
         conversationId: msg.remoteJid,
       });
+      const sbState = createSupabaseServiceClient();
+      const leadId = upsertedLead?.lead?.id ?? null;
+      const state = await upsertConversationState({
+        sb: sbState,
+        tenantId: row.tenant_id,
+        remoteJid: msg.remoteJid,
+        leadId,
+        agentId,
+        lastMessageAt: inboundSaved?.created_at ?? new Date().toISOString(),
+      });
 
       const inboundLanguageCode = detectSupportedLanguageCode(inboundLanguageSource(msg));
+
+      const pausedState = state ?? await getConversationState({ sb: sbState, tenantId: row.tenant_id, remoteJid: msg.remoteJid });
+      if (pausedState?.humanPaused) {
+        console.info("[webhooks/evolution] agent skipped: human_paused", {
+          tenant_id: row.tenant_id,
+          agent_id: agentId,
+          remote_jid_last4: msg.remoteJid.replace(/\D/g, "").slice(-4),
+        });
+        continue;
+      }
+
+      const agentConfig = await sbState
+        .from("tenant_agents")
+        .select("metadata")
+        .eq("tenant_id", row.tenant_id)
+        .eq("agent_id", agentId)
+        .maybeSingle();
+      const metadata = agentConfig.data?.metadata && typeof agentConfig.data.metadata === "object"
+        ? (agentConfig.data.metadata as Record<string, unknown>)
+        : {};
+      const handoffKeywords = Array.isArray(metadata.handoffKeywords)
+        ? metadata.handoffKeywords.filter((item): item is string => typeof item === "string")
+        : [];
+      const handoffEnabled = metadata.ctaHandoffAtivo === true;
+      const handoffMessage =
+        handoffEnabled && typeof metadata.handoffMensagem === "string" && metadata.handoffMensagem.trim()
+          ? metadata.handoffMensagem.trim()
+          : null;
+      const handoffCheck = shouldTriggerHandoff(inboundLanguageSource(msg), handoffKeywords);
 
       const result = await generateAgentResponse({
         tenantId: row.tenant_id,
@@ -402,6 +454,54 @@ export async function POST(request: Request) {
 
       const number = remoteJidToEvoNumber(msg.remoteJid);
       if (!number) continue;
+
+      if (handoffCheck.trigger) {
+        if (handoffMessage) replyText = handoffMessage;
+        const messages = await getRecentConversationMessages({
+          sb: sbState,
+          tenantId: row.tenant_id,
+          remoteJid: msg.remoteJid,
+        });
+        const summary = buildDeterministicHandoffSummary({
+          lead: leadId ? {
+            id: leadId,
+            name: contactName,
+            phone: msg.remoteJid.split("@")[0]?.replace(/\D/g, "") ?? null,
+            source: "whatsapp",
+            status: null,
+            crmFunnelId: null,
+            notes: null,
+            agentId,
+            aiSummary: null,
+            leadTemperature: null,
+            suggestedNextAction: null,
+            profileMetadata: {},
+          } : null,
+          messages,
+          reason: handoffCheck.reason ?? "handoff",
+        });
+        await saveConversationSummary({
+          sb: sbState,
+          tenantId: row.tenant_id,
+          remoteJid: msg.remoteJid,
+          stateId: state?.id,
+          leadId,
+          agentId,
+          summary,
+        });
+        await upsertConversationState({
+          sb: sbState,
+          tenantId: row.tenant_id,
+          remoteJid: msg.remoteJid,
+          leadId,
+          agentId,
+          humanPaused: true,
+          pausedReason: handoffCheck.reason,
+          pausedBy: "auto_handoff",
+          handoffSuggested: true,
+          handoffReason: handoffCheck.reason,
+        });
+      }
 
       // ── Verifica se o agente tem resposta em áudio (ElevenLabs TTS) ──────
       const sb2 = createSupabaseServiceClient();

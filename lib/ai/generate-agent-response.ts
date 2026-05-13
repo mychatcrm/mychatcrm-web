@@ -5,6 +5,12 @@ import type { AiFeature, AiGenerateResult, AiMessage } from "@/lib/ai/types";
 import { detectSupportedLanguageCode, supportedLanguageName } from "@/lib/ai/language-detect";
 import type { EvolutionAudioContent, EvolutionImageContent } from "@/lib/integrations/evolution-webhook-parse";
 import { transcribeAudio, describeImage } from "@/lib/ai/media-processor";
+import { buildAgentSystemPrompt } from "@/lib/ai/agent-system-prompt";
+import {
+  conversationMessagesToAi,
+  loadAgentRuntimeContext,
+} from "@/lib/server/conversation-memory";
+import type { Agent } from "@/lib/types";
 
 /** Alinhado ao seed em supabase/migrations/20260506_tenant_agents.sql — usado se a tabela ainda não existir. */
 const FALLBACK_PUBLIC_MARKETING_SYSTEM =
@@ -111,8 +117,12 @@ export async function generateAgentResponse(params: {
   // Agent / system prompt resolution
   // -------------------------------------------------------------------------
   const profile = await getInferenceProfileByTenantAgent(params.tenantId, params.agentId);
-  let systemPrompt =
-    profile?.systemPrompt?.trim() || buildSystemPromptFromTemplateAgent(params.tenantId, params.agentId);
+  const templatePrompt = buildSystemPromptFromTemplateAgent(params.tenantId, params.agentId);
+  let baseAgent: Partial<Agent> & { nome?: string; systemPrompt?: string } | null =
+    profile?.metadata && typeof profile.metadata === "object"
+      ? ({ ...profile.metadata, nome: profile.displayName, systemPrompt: profile.systemPrompt } as Partial<Agent> & { nome?: string; systemPrompt?: string })
+      : null;
+  let systemPrompt = profile?.systemPrompt?.trim() || templatePrompt;
 
   if (
     !systemPrompt &&
@@ -131,17 +141,37 @@ export async function generateAgentResponse(params: {
       model: params.model ?? "gpt-4o-mini",
     };
   }
-  systemPrompt = `${buildLanguageInstruction(detectedLanguageName)}\n\n${systemPrompt}`;
+  if (!baseAgent) {
+    baseAgent = {
+      nome: profile?.displayName ?? params.agentId,
+      systemPrompt,
+      idioma: "Automático",
+      tom: "Profissional",
+    };
+  }
+  const runtimeContext = await loadAgentRuntimeContext({
+    tenantId: params.tenantId,
+    agentId: params.agentId,
+    remoteJid: params.conversationId,
+  });
+  systemPrompt = buildAgentSystemPrompt({
+    agent: baseAgent,
+    runtimeContext,
+    languageInstruction: buildLanguageInstruction(detectedLanguageName),
+  });
 
   // -------------------------------------------------------------------------
   // Build message array
   // -------------------------------------------------------------------------
   const model = params.model?.trim() || profile?.model?.trim() || undefined;
+  const temperature = typeof baseAgent.temperatura === "number" ? baseAgent.temperatura : undefined;
   const systemMessage: AiMessage = { role: "system", content: systemPrompt };
+  const historyMessages = conversationMessagesToAi(runtimeContext.recentMessages);
 
   // If there's a media message, append it after any existing conversation messages
   const messages: AiMessage[] = [
     systemMessage,
+    ...historyMessages,
     ...conversationOnly,
     ...(mediaUserMessage ? [mediaUserMessage] : []),
   ];
@@ -152,6 +182,7 @@ export async function generateAgentResponse(params: {
     customerId: params.customerId ?? params.conversationId ?? null,
     feature: params.feature,
     model,
+    temperature,
     messages,
     metadata: {
       conversationId: params.conversationId ?? null,

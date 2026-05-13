@@ -20,6 +20,7 @@ export type AiGenerateInput = {
   agentId: string;
   feature: AiFeature;
   model?: string;
+  temperature?: number;
   messages: AiMessage[];
   metadata?: Record<string, string | number | boolean | null | undefined>;
 };

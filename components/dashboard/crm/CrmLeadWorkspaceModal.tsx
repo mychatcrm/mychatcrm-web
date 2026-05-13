@@ -48,6 +48,24 @@ import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 
 type Tab = "informacoes" | "historico" | "tarefas" | "ia";
 
+type LeadConversationMessage = {
+  id: string;
+  direction: "inbound" | "outbound";
+  kind: string;
+  content: string;
+  media_url?: string | null;
+  agent_id?: string | null;
+  created_at: string;
+};
+
+type LeadConversationSummary = {
+  summary: string;
+  customer_intent?: string | null;
+  lead_temperature?: string | null;
+  suggested_next_action?: string | null;
+  created_at?: string | null;
+};
+
 const tabs: { id: Tab; label: string; icon: typeof MessageCircle }[] = [
   { id: "informacoes", label: "Informações", icon: MessageCircle },
   { id: "historico", label: "Histórico de Interações", icon: CalendarClock },
@@ -81,6 +99,13 @@ function formatEntrada(iso: string) {
     month: "short",
     year: "numeric",
   });
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short", hour12: false });
 }
 
 function mergeOrigemDisplay(lead: ClientLead): {
@@ -185,10 +210,49 @@ export function CrmLeadWorkspaceModal({
   const [store, setStore] = useState<CrmLeadExtrasStore>(() => loadLeadExtras());
   const [taskDraft, setTaskDraft] = useState("");
   const [followUpOpen, setFollowUpOpen] = useState(false);
+  const [conversationMessages, setConversationMessages] = useState<LeadConversationMessage[]>([]);
+  const [conversationSummary, setConversationSummary] = useState<LeadConversationSummary | null>(null);
+  const [conversationLoading, setConversationLoading] = useState(false);
+  const [conversationError, setConversationError] = useState("");
 
   useEffect(() => {
     setStore(loadLeadExtras());
     setTab("informacoes");
+    setConversationMessages([]);
+    setConversationSummary(null);
+    setConversationError("");
+  }, [lead.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setConversationLoading(true);
+    setConversationError("");
+    fetch(`/api/client/crm/leads/${encodeURIComponent(lead.id)}/conversation-history`, {
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        const data = (await response.json().catch(() => ({}))) as {
+          messages?: LeadConversationMessage[];
+          summary?: LeadConversationSummary | null;
+          error?: string;
+        };
+        if (!response.ok) throw new Error(data.error || "Erro ao carregar histórico.");
+        if (cancelled) return;
+        setConversationMessages(Array.isArray(data.messages) ? data.messages : []);
+        setConversationSummary(data.summary ?? null);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setConversationMessages([]);
+        setConversationSummary(null);
+        setConversationError(error instanceof Error ? error.message : "Erro ao carregar histórico.");
+      })
+      .finally(() => {
+        if (!cancelled) setConversationLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [lead.id]);
 
   useEffect(() => {
@@ -480,6 +544,75 @@ export function CrmLeadWorkspaceModal({
               <Button type="button" className="w-full shrink-0 sm:w-auto" onClick={() => setFollowUpOpen(true)}>
                 Registrar Follow-Up
               </Button>
+            </div>
+            {conversationSummary ? (
+              <div className="rounded-xl border border-primary/25 bg-primary/[0.06] p-4 ring-1 ring-primary/10">
+                <div className="flex items-start gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                    <Sparkles className="h-4 w-4" aria-hidden />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-content">Resumo para handoff humano</p>
+                    <p className="mt-1 whitespace-pre-line text-sm leading-relaxed text-content-secondary">
+                      {conversationSummary.summary}
+                    </p>
+                    <div className="mt-3 grid gap-2 text-xs text-content-muted sm:grid-cols-3">
+                      <span>Temperatura: <strong className="text-content-secondary">{conversationSummary.lead_temperature ?? "—"}</strong></span>
+                      <span>Intenção: <strong className="text-content-secondary">{conversationSummary.customer_intent ?? "—"}</strong></span>
+                      <span>Próxima ação: <strong className="text-content-secondary">{conversationSummary.suggested_next_action ?? "—"}</strong></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            <div className="rounded-xl border border-line/90 bg-surface-deep/25 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-content">Conversas WhatsApp</p>
+                  <p className="mt-1 text-xs text-content-muted">
+                    Histórico real salvo em `whatsapp_messages`, usado também pelo agente de IA.
+                  </p>
+                </div>
+                {conversationLoading ? <span className="text-xs text-content-faint">Carregando…</span> : null}
+              </div>
+              {conversationError ? (
+                <p className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                  {conversationError}
+                </p>
+              ) : null}
+              {!conversationLoading && conversationMessages.length === 0 && !conversationError ? (
+                <p className="mt-4 rounded-xl border border-dashed border-line/80 bg-surface-card/40 px-4 py-8 text-center text-sm text-content-muted">
+                  Nenhuma mensagem WhatsApp encontrada para este lead ainda.
+                </p>
+              ) : null}
+              {conversationMessages.length > 0 ? (
+                <ul className="mt-4 max-h-[360px] space-y-2 overflow-y-auto pr-1">
+                  {conversationMessages.map((message) => {
+                    const outbound = message.direction === "outbound";
+                    return (
+                      <li key={message.id} className={cn("flex", outbound ? "justify-end" : "justify-start")}>
+                        <div
+                          className={cn(
+                            "max-w-[82%] rounded-2xl border px-3 py-2 text-sm shadow-sm",
+                            outbound
+                              ? "border-primary/30 bg-primary/12 text-content"
+                              : "border-line bg-surface-card text-content-secondary",
+                          )}
+                        >
+                          <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-wide text-content-faint">
+                            <span>{outbound ? (message.agent_id === "human" ? "Atendente" : "Agente IA") : "Cliente"}</span>
+                            <span>•</span>
+                            <span>{message.kind}</span>
+                            <span>•</span>
+                            <span>{formatDateTime(message.created_at)}</span>
+                          </div>
+                          <p className="whitespace-pre-line leading-relaxed">{message.content}</p>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
             </div>
             <div className="relative min-w-0 pr-1">
               {timeline.length === 0 ? (

@@ -11,6 +11,8 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
 import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
+import { applyHumanConversationCommand } from "@/lib/server/conversation-human-control";
+import { upsertConversationState } from "@/lib/server/conversation-memory";
 
 export const dynamic = "force-dynamic";
 
@@ -71,16 +73,35 @@ export async function POST(request: Request) {
     // Não falha — mensagem já foi enviada, só não persiste
   }
 
-  await upsertLeadFromWhatsAppContact({
+  const linkedAgentId = instance.default_agent_id ?? null;
+  const leadResult = await upsertLeadFromWhatsAppContact({
     tenantId: session.tenantId,
     remoteJid,
     recipientJid: remoteJid,
     instanceJid: instance.wa_jid,
     contactName,
     direction: "outbound",
-    agentId: "human",
+    agentId: linkedAgentId ?? "human",
     conversationId: remoteJid,
     occurredAt: typeof saved?.created_at === "string" ? saved.created_at : undefined,
+  });
+  const occurredAt = typeof saved?.created_at === "string" ? saved.created_at : new Date().toISOString();
+  await upsertConversationState({
+    sb,
+    tenantId: session.tenantId,
+    remoteJid,
+    leadId: leadResult.lead?.id ?? null,
+    agentId: linkedAgentId,
+    lastMessageAt: occurredAt,
+  });
+  await applyHumanConversationCommand({
+    sb,
+    tenantId: session.tenantId,
+    remoteJid,
+    leadId: leadResult.lead?.id ?? null,
+    agentId: linkedAgentId,
+    text: trimmedText,
+    occurredAt,
   });
 
   return NextResponse.json({ ok: true, message: saved ?? null });

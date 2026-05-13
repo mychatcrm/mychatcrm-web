@@ -15,6 +15,12 @@ const DEFAULT_TIMEOUT_MS = 25_000;
 const MAX_MESSAGES = 32;
 const MAX_MESSAGE_CONTENT = 8_000;
 
+function normalizeTemperature(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0.4;
+  return Math.min(1, Math.max(0.01, n));
+}
+
 function sanitizeMessages(messages: AiMessage[]): AiMessage[] {
   const validRoles = new Set<AiRole>(["system", "user", "assistant"]);
   const normalized: AiMessage[] = [];
@@ -172,7 +178,7 @@ export async function generateAIResponse(input: AiGenerateInput): Promise<AiGene
       },
       body: JSON.stringify({
         model,
-        temperature: 0.4,
+        temperature: normalizeTemperature(input.temperature),
         messages: safeMessages.map((m) => ({ role: m.role, content: m.content })),
       }),
     });

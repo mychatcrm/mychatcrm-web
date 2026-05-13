@@ -1,6 +1,6 @@
 "use client";
 
-import { Handshake, Kanban, RadioTower, Timer, Volume2 } from "lucide-react";
+import { Bot, Handshake, Kanban, RadioTower, Timer, Volume2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useCrmFunnels } from "@/components/dashboard/CrmFunnelsContext";
@@ -107,6 +107,11 @@ export function AgentFormCompact({
   const [promptContext, setPromptContext] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deletePhrase, setDeletePhrase] = useState("");
+  const [simulationMessage, setSimulationMessage] = useState("");
+  const [simulationReply, setSimulationReply] = useState("");
+  const [simulationContext, setSimulationContext] = useState<Record<string, unknown> | null>(null);
+  const [simulationLoading, setSimulationLoading] = useState(false);
+  const [simulationError, setSimulationError] = useState("");
 
   const submit = () => {
     const message = validateCompactAgentDraft(draft, funnels, tenantId);
@@ -128,6 +133,40 @@ export function AgentFormCompact({
   };
 
   const canConfirmDelete = deletePhrase.trim() === DELETE_AGENT_CONFIRM_TEXT;
+
+  const runSimulation = async () => {
+    if (!initialAgent?.id) {
+      setSimulationError("Salve o agente antes de testar com IA.");
+      return;
+    }
+    if (!simulationMessage.trim()) {
+      setSimulationError("Digite uma mensagem para simular.");
+      return;
+    }
+    setSimulationLoading(true);
+    setSimulationError("");
+    setSimulationReply("");
+    setSimulationContext(null);
+    try {
+      const response = await fetch(`/api/client/agentes/${encodeURIComponent(initialAgent.id)}/simulate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: simulationMessage, draft }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        reply?: string;
+        contextUsed?: Record<string, unknown>;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error || "Erro ao simular resposta.");
+      setSimulationReply(data.reply ?? "");
+      setSimulationContext(data.contextUsed ?? null);
+    } catch (error) {
+      setSimulationError(error instanceof Error ? error.message : "Erro ao simular resposta.");
+    } finally {
+      setSimulationLoading(false);
+    }
+  };
 
   return (
     <div
@@ -178,7 +217,12 @@ export function AgentFormCompact({
 
           <section className="space-y-3">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Instruções e treinamento</h3>
-            <WizardStep2Treinamento draft={draft} onChange={setDraft} onGeneratePrompt={() => setOpenPromptModal(true)} />
+            <WizardStep2Treinamento
+              draft={draft}
+              onChange={setDraft}
+              onGeneratePrompt={() => setOpenPromptModal(true)}
+              agentId={initialAgent?.id}
+            />
           </section>
 
           <div className="space-y-3">
@@ -218,6 +262,44 @@ export function AgentFormCompact({
                 titleIcon={<Volume2 strokeWidth={1.75} />}
               >
                 <WizardStepVoz draft={draft} onChange={setDraft} />
+              </AdvancedSection>
+              <AdvancedSection
+                title="Teste do agente"
+                description="Simule uma resposta sem enviar WhatsApp nem criar lead real."
+                titleIcon={<Bot strokeWidth={1.75} />}
+              >
+                <div className="space-y-3">
+                  <textarea
+                    value={simulationMessage}
+                    onChange={(event) => setSimulationMessage(event.target.value)}
+                    placeholder="Digite uma mensagem de cliente para testar o comportamento do agente."
+                    className="min-h-[96px] w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-3 text-sm text-content outline-none"
+                  />
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs text-content-muted">
+                      Usa o rascunho atual da tela, materiais já salvos e o prompt central do agente.
+                    </p>
+                    <Button type="button" onClick={runSimulation} disabled={simulationLoading} className="w-full sm:w-auto">
+                      {simulationLoading ? "Simulando..." : "Simular resposta"}
+                    </Button>
+                  </div>
+                  {simulationError ? (
+                    <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+                      {simulationError}
+                    </p>
+                  ) : null}
+                  {simulationReply ? (
+                    <div className="rounded-xl border border-line bg-surface-elevated/35 p-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-content-faint">Resposta simulada</p>
+                      <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-content-secondary">{simulationReply}</p>
+                      {simulationContext ? (
+                        <p className="mt-3 text-xs text-content-muted">
+                          Contexto usado: {Object.entries(simulationContext).map(([key, value]) => `${key}: ${String(value)}`).join(" · ")}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
               </AdvancedSection>
             </div>
           </div>

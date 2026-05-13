@@ -1,7 +1,7 @@
 "use client";
 
-import { Upload } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { FileText, Loader2, Trash2, Upload } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { PanelSelect as Select } from "@/components/panel/ui/PanelSelect";
 import type { TrainingFileFormat } from "@/lib/types";
@@ -9,10 +9,11 @@ import { cn } from "@/lib/utils";
 import type { AgentWizardDraft } from "@/lib/agents";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 
-const MAX_MATERIAL_BYTES = 10 * 1024 * 1024;
+const MAX_MATERIAL_BYTES = 1024 * 1024 * 1024;
+const MAX_MATERIAL_FILES = 50;
 
 const ACCEPT_EXTENSIONS =
-  ".pdf,.doc,.docx,.xlsx,.pptx,.xml,.md,.markdown,.adoc,.html,.htm,.csv,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.txt";
+  ".pdf,.docx,.xlsx,.pptx,.xml,.md,.markdown,.html,.htm,.csv,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.txt";
 
 const TEMP_MIN = 0.01;
 const TEMP_MAX = 1;
@@ -49,10 +50,12 @@ export function WizardStep2Treinamento({
   draft,
   onChange,
   onGeneratePrompt,
+  agentId,
 }: {
   draft: AgentWizardDraft;
   onChange: (next: AgentWizardDraft) => void;
   onGeneratePrompt: () => void;
+  agentId?: string;
 }) {
   const { isLight } = usePanelAppearance();
   const promptSizeUnits = useMemo(
@@ -74,31 +77,155 @@ export function WizardStep2Treinamento({
   const temperaturaPct = ((temperaturaClamped - TEMP_MIN) / (TEMP_MAX - TEMP_MIN)) * 100;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const draftRef = useRef(draft);
   const [dragActive, setDragActive] = useState(false);
   const [materialError, setMaterialError] = useState("");
+  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
+  const [loadingMaterials, setLoadingMaterials] = useState(false);
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  const syncServerFiles = useCallback(async () => {
+    if (!agentId) return;
+    setLoadingMaterials(true);
+    try {
+      const response = await fetch(`/api/client/agentes/${encodeURIComponent(agentId)}/knowledge-files`, {
+        cache: "no-store",
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        files?: Array<{ id: string; originalFilename: string; sizeBytes: number; status: string }>;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error || "Erro ao carregar materiais.");
+      const files = Array.isArray(data.files) ? data.files : [];
+      const currentDraft = draftRef.current;
+      onChange({
+        ...currentDraft,
+        arquivosTreinamento: files.map((file) => ({
+          id: file.id,
+          nome: file.originalFilename,
+          tipo: inferTrainingFileFormat(file.originalFilename),
+          status: file.status === "ready" ? "ativo" : file.status === "failed" ? "erro" : "processando",
+          tamanhoKb: Math.max(1, Math.round(file.sizeBytes / 1024)),
+        })),
+      });
+    } catch (error) {
+      setMaterialError(error instanceof Error ? error.message : "Erro ao carregar materiais.");
+    } finally {
+      setLoadingMaterials(false);
+    }
+  }, [agentId, onChange]);
+
+  useEffect(() => {
+    void syncServerFiles();
+  }, [syncServerFiles]);
+
+  const uploadToSignedUrl = useCallback((file: File, uploadUrl: string): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", uploadUrl);
+      xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+      xhr.upload.onprogress = (event) => {
+        if (!event.lengthComputable) return;
+        setUploadProgress((current) => ({
+          ...current,
+          [file.name]: Math.round((event.loaded / event.total) * 100),
+        }));
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error("Falha no upload para o R2."));
+      };
+      xhr.onerror = () => reject(new Error("Falha de rede no upload para o R2."));
+      xhr.send(file);
+    });
+  }, []);
 
   const ingestFiles = useCallback(
-    (fileList: FileList | File[] | null) => {
+    async (fileList: FileList | File[] | null) => {
       const files = Array.from(fileList ?? []);
       if (!files.length) return;
+      if (!agentId) {
+        setMaterialError("Salve o agente uma vez antes de enviar materiais de apoio.");
+        return;
+      }
+      if (draft.arquivosTreinamento.length + files.length > MAX_MATERIAL_FILES) {
+        setMaterialError("Cada agente pode ter no máximo 50 materiais de apoio.");
+        return;
+      }
       const oversize = files.filter((f) => f.size > MAX_MATERIAL_BYTES);
       const ok = files.filter((f) => f.size <= MAX_MATERIAL_BYTES);
       if (oversize.length) {
-        setMaterialError("Cada arquivo deve ter no máximo 10MB.");
+        setMaterialError("Cada arquivo deve ter no máximo 1GB.");
       } else {
         setMaterialError("");
       }
       if (!ok.length) return;
-      const nextFiles = ok.map((file) => ({
-        id: `${Date.now()}-${file.name}-${Math.random().toString(36).slice(2, 8)}`,
-        nome: file.name,
-        tipo: inferTrainingFileFormat(file.name),
-        status: "processando" as const,
-        tamanhoKb: Math.max(1, Math.round(file.size / 1024)),
-      }));
-      onChange({ ...draft, arquivosTreinamento: [...draft.arquivosTreinamento, ...nextFiles] });
+      for (const file of ok) {
+        try {
+          setUploadProgress((current) => ({ ...current, [file.name]: 1 }));
+          const startResponse = await fetch(`/api/client/agentes/${encodeURIComponent(agentId)}/knowledge-files`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              filename: file.name,
+              mimeType: file.type || "application/octet-stream",
+              sizeBytes: file.size,
+            }),
+          });
+          const startData = (await startResponse.json().catch(() => ({}))) as {
+            file?: { id: string };
+            uploadUrl?: string;
+            error?: string;
+          };
+          if (!startResponse.ok || !startData.file || !startData.uploadUrl) {
+            throw new Error(startData.error || "Erro ao iniciar upload.");
+          }
+          await uploadToSignedUrl(file, startData.uploadUrl);
+          setUploadProgress((current) => ({ ...current, [file.name]: 100 }));
+          const completeResponse = await fetch(
+            `/api/client/agentes/${encodeURIComponent(agentId)}/knowledge-files/${encodeURIComponent(startData.file.id)}`,
+            { method: "POST" },
+          );
+          const completeData = (await completeResponse.json().catch(() => ({}))) as { error?: string };
+          if (!completeResponse.ok) throw new Error(completeData.error || "Erro ao concluir upload.");
+        } catch (error) {
+          setMaterialError(error instanceof Error ? error.message : "Erro ao enviar material.");
+        } finally {
+          setUploadProgress((current) => {
+            const next = { ...current };
+            delete next[file.name];
+            return next;
+          });
+        }
+      }
+      await syncServerFiles();
     },
-    [draft, onChange],
+    [agentId, draft, syncServerFiles, uploadToSignedUrl],
+  );
+
+  const removeMaterial = useCallback(
+    async (fileId: string) => {
+      if (!agentId) return;
+      setMaterialError("");
+      try {
+        const response = await fetch(
+          `/api/client/agentes/${encodeURIComponent(agentId)}/knowledge-files/${encodeURIComponent(fileId)}`,
+          { method: "DELETE" },
+        );
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        if (!response.ok) throw new Error(data.error || "Erro ao remover material.");
+        onChange({
+          ...draft,
+          arquivosTreinamento: draft.arquivosTreinamento.filter((file) => file.id !== fileId),
+        });
+      } catch (error) {
+        setMaterialError(error instanceof Error ? error.message : "Erro ao remover material.");
+      }
+    },
+    [agentId, draft, onChange],
   );
 
   return (
@@ -270,7 +397,7 @@ export function WizardStep2Treinamento({
           accept={ACCEPT_EXTENSIONS}
           className="sr-only"
           onChange={(event) => {
-            ingestFiles(event.target.files);
+            void ingestFiles(event.target.files);
             event.currentTarget.value = "";
           }}
         />
@@ -298,7 +425,7 @@ export function WizardStep2Treinamento({
             event.preventDefault();
             event.stopPropagation();
             setDragActive(false);
-            ingestFiles(event.dataTransfer.files);
+            void ingestFiles(event.dataTransfer.files);
           }}
           className={cn(
             "mt-4 flex w-full cursor-pointer flex-col items-center rounded-xl border-2 border-dashed px-4 py-10 text-center transition",
@@ -310,11 +437,38 @@ export function WizardStep2Treinamento({
           <Upload className="h-10 w-10 text-primary" strokeWidth={1.75} aria-hidden />
           <p className="mt-3 text-sm font-semibold text-content">Clique para selecionar ou arraste seus arquivos aqui</p>
           <p className="mt-2 max-w-lg text-xs leading-relaxed text-content-muted">
-            Formatos aceitos: PDF, DOCX, XLSX, PPTX, XML, Markdown, AsciiDoc, HTML, CSV, PNG, JPEG, TIFF, BMP até 10MB
+            Formatos aceitos: PDF, DOCX, XLSX, PPTX, XML, Markdown, HTML, CSV, PNG, JPEG, TIFF e BMP. Até 50 arquivos por agente e 1GB por arquivo, com upload direto para R2.
           </p>
         </button>
 
+        {!agentId ? (
+          <p className="mt-2 text-xs text-content-faint">
+            Para novos agentes, salve primeiro e reabra a edição para enviar materiais grandes com segurança.
+          </p>
+        ) : null}
+
         {materialError ? <p className="mt-2 text-xs text-rose-300">{materialError}</p> : null}
+        {loadingMaterials ? (
+          <p className="mt-3 inline-flex items-center gap-2 text-xs text-content-muted">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            Carregando materiais salvos…
+          </p>
+        ) : null}
+        {Object.entries(uploadProgress).length > 0 ? (
+          <div className="mt-3 space-y-2">
+            {Object.entries(uploadProgress).map(([name, pct]) => (
+              <div key={name} className="rounded-xl border border-line bg-surface-elevated/35 px-3 py-2">
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="min-w-0 truncate text-content-secondary">{name}</span>
+                  <span className="shrink-0 tabular-nums text-content-faint">{pct}%</span>
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-line">
+                  <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${pct}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         {draft.arquivosTreinamento.length > 0 ? (
           <ul className="mt-4 space-y-2">
@@ -323,8 +477,23 @@ export function WizardStep2Treinamento({
                 key={file.id}
                 className="flex items-center justify-between gap-2 rounded-xl border border-line bg-surface-elevated/35 px-3 py-2 text-xs"
               >
-                <span className="min-w-0 truncate text-content-secondary">{file.nome}</span>
-                <span className="shrink-0 capitalize text-content-faint">{file.status}</span>
+                <span className="flex min-w-0 items-center gap-2">
+                  <FileText className="h-4 w-4 shrink-0 text-content-faint" aria-hidden />
+                  <span className="min-w-0 truncate text-content-secondary">{file.nome}</span>
+                </span>
+                <span className="flex shrink-0 items-center gap-2">
+                  <span className="capitalize text-content-faint">{file.status}</span>
+                  {agentId ? (
+                    <button
+                      type="button"
+                      onClick={() => void removeMaterial(file.id)}
+                      className="rounded-lg p-1.5 text-content-faint transition hover:bg-rose-500/10 hover:text-rose-300"
+                      aria-label={`Remover ${file.nome}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                    </button>
+                  ) : null}
+                </span>
               </li>
             ))}
           </ul>

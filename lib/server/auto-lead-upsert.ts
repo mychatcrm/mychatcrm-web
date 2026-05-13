@@ -7,6 +7,13 @@ type LeadRow = Record<string, unknown>;
 type WhatsAppLeadDirection = "inbound" | "outbound";
 type AutoLeadLogAction = "created" | "updated" | "skipped" | "conflict_updated" | "error";
 type CrmMoveAction = "enabled" | "disabled" | "skipped";
+export type WhatsAppLeadUpsertAction = AutoLeadLogAction;
+export type WhatsAppLeadUpsertResult = {
+  action: WhatsAppLeadUpsertAction;
+  lead: { id: string; phone: string | null } | null;
+  phone: string | null;
+  reason?: string;
+};
 type AgentCrmMoveTarget = {
   enabled: boolean;
   funnelId: string | null;
@@ -335,6 +342,21 @@ function isUsefulExistingName(row: LeadRow, phone: string): boolean {
   return Boolean(name && name !== phone);
 }
 
+function leadResult(
+  action: WhatsAppLeadUpsertAction,
+  row: LeadRow | null,
+  phone: string | null,
+  reason?: string,
+): WhatsAppLeadUpsertResult {
+  const id = typeof row?.id === "string" ? row.id : null;
+  return {
+    action,
+    lead: id ? { id, phone: typeof row?.phone === "string" ? row.phone : phone } : null,
+    phone,
+    ...(reason ? { reason } : {}),
+  };
+}
+
 export function buildWhatsAppLeadInsertPayload(params: {
   tenantId: string;
   phone: string;
@@ -466,7 +488,7 @@ export async function upsertLeadFromWhatsAppContact(params: {
   agentId?: string | null;
   conversationId?: string | null;
   occurredAt?: string | null;
-}): Promise<void> {
+}): Promise<WhatsAppLeadUpsertResult> {
   const preselected = selectCandidatePhone(params);
   const preselectedPhone = "phone" in preselected ? preselected.phone : preselected.candidatePhone;
   const invalidReason = !params.tenantId.trim()
@@ -484,7 +506,7 @@ export async function upsertLeadFromWhatsAppContact(params: {
       direction: params.direction,
       agentId: params.agentId,
     });
-    return;
+    return leadResult("skipped", null, preselectedPhone, invalidReason);
   }
 
   const sb = createSupabaseServiceClient();
@@ -504,7 +526,7 @@ export async function upsertLeadFromWhatsAppContact(params: {
       direction: params.direction,
       agentId: params.agentId,
     });
-    return;
+    return leadResult("skipped", null, selected.candidatePhone, selected.skippedReason);
   }
 
   const phone = selected.phone;
@@ -555,7 +577,7 @@ export async function upsertLeadFromWhatsAppContact(params: {
         targetColumn: crmMoveTarget.columnId,
       });
     }
-    return;
+    return leadResult(isMissingTableError(selectError) ? "skipped" : "error", null, phone, isMissingTableError(selectError) ? "leads_table_missing" : "select_failed");
   }
 
   if (existing) {
@@ -583,7 +605,7 @@ export async function upsertLeadFromWhatsAppContact(params: {
       sourcePreserved: existingSource && isFormLeadSource(existingSource) ? existingSource : null,
       sourceSet: !existingSource ? source : null,
     });
-    return;
+    return leadResult(updated ? "updated" : "skipped", existing, phone, updated ? crmMoveTarget.reason : (crmMoveTarget.reason ?? "no_update_fields"));
   }
 
   const fallbackStatus = await resolveFirstKanbanStatus(sb, params.tenantId);
@@ -626,7 +648,7 @@ export async function upsertLeadFromWhatsAppContact(params: {
           targetFunnel: crmMoveTarget.funnelId,
           targetColumn: crmMoveTarget.columnId,
         });
-        return;
+        return leadResult("error", null, phone, "duplicate_conflict_lookup_failed");
       }
       await updateExistingLead(sb, conflicted, {
         tenantId: params.tenantId,
@@ -651,7 +673,7 @@ export async function upsertLeadFromWhatsAppContact(params: {
         sourcePreserved: existingSource && isFormLeadSource(existingSource) ? existingSource : null,
         sourceSet: !existingSource ? source : null,
       });
-      return;
+      return leadResult("conflict_updated", conflicted, phone);
     }
     if (!isMissingTableError(insertError)) {
       logAutoLeadUpsert({
@@ -682,8 +704,13 @@ export async function upsertLeadFromWhatsAppContact(params: {
         targetColumn: crmMoveTarget.columnId,
       });
     }
-    return;
+    return leadResult(isMissingTableError(insertError) ? "skipped" : "error", null, phone, isMissingTableError(insertError) ? "leads_table_missing" : "insert_failed");
   }
+
+  const { row: inserted } = await selectExistingLead(sb, {
+    tenantId: params.tenantId,
+    phone,
+  });
 
   logAutoLeadUpsert({
     tenantId: params.tenantId,
@@ -698,6 +725,7 @@ export async function upsertLeadFromWhatsAppContact(params: {
     reason: crmMoveTarget.reason,
     sourceSet: source,
   });
+  return leadResult("created", inserted, phone, crmMoveTarget.reason);
 }
 
 export async function autoUpsertLeadFromWhatsApp(params: {
@@ -708,7 +736,7 @@ export async function autoUpsertLeadFromWhatsApp(params: {
   conversationId?: string | null;
   instanceJid?: string | null;
   instancePhone?: string | null;
-}): Promise<void> {
+}): Promise<WhatsAppLeadUpsertResult> {
   return upsertLeadFromWhatsAppContact({
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,

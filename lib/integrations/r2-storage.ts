@@ -3,7 +3,8 @@
  * Cliente Cloudflare R2 (S3-compatible) para armazenamento de mídias do WhatsApp.
  * Usado como camada de archiving entre o download da mídia e o envio à IA.
  */
-import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // ---------------------------------------------------------------------------
 // Cliente R2
@@ -28,6 +29,14 @@ function createR2Client(): S3Client | null {
 // Singleton — módulo é carregado uma vez por instância serverless
 const r2Client = createR2Client();
 const BUCKET = process.env.R2_BUCKET?.trim() ?? "mychatcrm-media";
+
+export function getR2BucketName(): string {
+  return BUCKET;
+}
+
+export function isR2Configured(): boolean {
+  return Boolean(r2Client);
+}
 
 // ---------------------------------------------------------------------------
 // Upload
@@ -62,6 +71,42 @@ export async function uploadMediaToR2(
     console.warn("[r2-storage] upload error", e);
     return null;
   }
+}
+
+export async function createR2PresignedUploadUrl(params: {
+  key: string;
+  contentType: string;
+  contentLength: number;
+  expiresInSeconds?: number;
+}): Promise<string> {
+  if (!r2Client) throw new Error("[r2-storage] cliente não configurado");
+  return getSignedUrl(
+    r2Client,
+    new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: params.key,
+      ContentType: params.contentType,
+    }),
+    { expiresIn: params.expiresInSeconds ?? 900 },
+  );
+}
+
+export async function headR2Object(key: string): Promise<{ sizeBytes: number; contentType: string | null } | null> {
+  if (!r2Client) throw new Error("[r2-storage] cliente não configurado");
+  try {
+    const res = await r2Client.send(new HeadObjectCommand({ Bucket: BUCKET, Key: key }));
+    return {
+      sizeBytes: Number(res.ContentLength ?? 0),
+      contentType: res.ContentType ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteR2Object(key: string): Promise<void> {
+  if (!r2Client) throw new Error("[r2-storage] cliente não configurado");
+  await r2Client.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
 }
 
 // ---------------------------------------------------------------------------

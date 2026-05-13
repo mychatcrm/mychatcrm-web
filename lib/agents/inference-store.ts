@@ -6,6 +6,7 @@ export type TenantAgentInferenceProfile = {
   displayName: string;
   systemPrompt: string;
   model: string | null;
+  metadata: Record<string, unknown> | null;
 };
 
 /** Perfil mínimo para montar system prompt na inferência (Supabase → fallback templates noutro módulo). */
@@ -20,7 +21,7 @@ export async function getInferenceProfileByTenantAgent(
   const sb = createSupabaseServiceClient();
   const { data, error } = await sb
     .from("tenant_agents")
-    .select("tenant_id,agent_id,display_name,system_prompt,model")
+    .select("tenant_id,agent_id,display_name,system_prompt,model,metadata")
     .eq("tenant_id", tenant)
     .eq("agent_id", agent)
     .eq("active", true)
@@ -38,5 +39,6 @@ export async function getInferenceProfileByTenantAgent(
     displayName: String(data.display_name ?? ""),
     systemPrompt: String(data.system_prompt ?? ""),
     model: data.model != null ? String(data.model) : null,
+    metadata: data.metadata && typeof data.metadata === "object" ? (data.metadata as Record<string, unknown>) : null,
   };
 }
