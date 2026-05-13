@@ -20,7 +20,6 @@ import { WizardStep1Identidade } from "./WizardStep1Identidade";
 import { WizardStep2Treinamento } from "./WizardStep2Treinamento";
 import { WizardStep3Ativacao } from "./WizardStep3Ativacao";
 import { WizardStep4Fluxo } from "./WizardStep4Fluxo";
-import { WizardStep5Funil } from "./WizardStep5Funil";
 import { WizardStepFollowUpInteligente } from "./WizardStepFollowUpInteligente";
 import { WizardStepWhatsappLinha } from "./WizardStepWhatsappLinha";
 import { WizardStepVoz } from "./WizardStepVoz";
@@ -198,13 +197,6 @@ export function AgentFormCompact({
                 titleIcon={<Handshake strokeWidth={1.75} />}
               >
                 <WizardStep4Fluxo draft={draft} onChange={setDraft} />
-              </AdvancedSection>
-              <AdvancedSection
-                title="Funil no CRM Kanban"
-                description="Escolha o funil e a coluna onde entram os novos leads."
-                titleIcon={<Kanban strokeWidth={1.75} />}
-              >
-                <WizardStep5Funil draft={draft} onChange={setDraft} />
               </AdvancedSection>
               <AdvancedSection
                 title="Destino do lead no CRM"

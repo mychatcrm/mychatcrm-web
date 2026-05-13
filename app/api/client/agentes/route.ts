@@ -2,7 +2,14 @@ import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { buildTemplateAgentsForTenant } from "@/lib/agents/template-agents";
-import { normalizeAgentVoiceId, sanitizeAgentResponseSettings, validateAgentResponseSettings } from "@/lib/agents";
+import {
+  agentCrmDestinationDbFields,
+  normalizeAgentCrmDestination,
+  normalizeAgentVoiceId,
+  sanitizeAgentResponseSettings,
+  validateAgentCrmDestination,
+  validateAgentResponseSettings,
+} from "@/lib/agents";
 import type { Agent } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -30,14 +37,21 @@ function rowToAgent(row: Record<string, unknown>, tenantId: string): Agent {
     responseMode: row.response_mode,
     voiceId: row.voice_id,
   });
-  const crmAutoMoveEnabled = Boolean(row.crm_auto_move_enabled);
-  const crmTargetFunnelId = typeof row.crm_target_funnel_id === "string" ? row.crm_target_funnel_id : null;
-  const crmTargetColumnId = typeof row.crm_target_column_id === "string" ? row.crm_target_column_id : null;
-  const crmTargetStatus = typeof row.crm_target_status === "string" ? row.crm_target_status : crmTargetColumnId;
+  const hasCrmColumns = Object.prototype.hasOwnProperty.call(row, "crm_auto_move_enabled");
+  const meta = row.metadata && typeof row.metadata === "object" ? (row.metadata as Agent) : null;
+  const crmDestination = normalizeAgentCrmDestination(
+    hasCrmColumns
+      ? {
+          crmAutoMoveEnabled: row.crm_auto_move_enabled === true,
+          crmTargetFunnelId: typeof row.crm_target_funnel_id === "string" ? row.crm_target_funnel_id : null,
+          crmTargetColumnId: typeof row.crm_target_column_id === "string" ? row.crm_target_column_id : null,
+          crmTargetStatus: typeof row.crm_target_status === "string" ? row.crm_target_status : null,
+        }
+      : (meta ?? {}),
+  );
 
   // If full Agent was stored in metadata, use it (with DB overrides for live fields)
-  if (row.metadata && typeof row.metadata === "object") {
-    const meta = row.metadata as Agent;
+  if (meta) {
     return {
       ...meta,
       id: String(row.agent_id),
@@ -50,10 +64,7 @@ function rowToAgent(row: Record<string, unknown>, tenantId: string): Agent {
           ? responseSettings.voiceId ?? normalizeAgentVoiceId(meta.voiceId)
           : null,
       responseMode: responseSettings.responseMode,
-      crmAutoMoveEnabled: crmAutoMoveEnabled || Boolean(meta.crmAutoMoveEnabled),
-      crmTargetFunnelId: crmTargetFunnelId ?? meta.crmTargetFunnelId ?? null,
-      crmTargetColumnId: crmTargetColumnId ?? meta.crmTargetColumnId ?? meta.crmTargetStatus ?? null,
-      crmTargetStatus: crmTargetStatus ?? meta.crmTargetStatus ?? meta.crmTargetColumnId ?? null,
+      ...crmDestination,
     };
   }
 
@@ -71,21 +82,7 @@ function rowToAgent(row: Record<string, unknown>, tenantId: string): Agent {
     atualizadoEm: String(row.updated_at ?? base.atualizadoEm),
     voiceId: responseSettings.voiceId,
     responseMode: responseSettings.responseMode,
-    crmAutoMoveEnabled,
-    crmTargetFunnelId,
-    crmTargetColumnId,
-    crmTargetStatus,
-  };
-}
-
-function agentCrmDestinationDbFields(agent: Agent): Record<string, unknown> {
-  const enabled = Boolean(agent.crmAutoMoveEnabled);
-  const targetColumn = enabled ? (agent.crmTargetColumnId ?? agent.crmTargetStatus ?? null) : null;
-  return {
-    crm_auto_move_enabled: enabled,
-    crm_target_funnel_id: enabled ? (agent.crmTargetFunnelId ?? null) : null,
-    crm_target_column_id: targetColumn,
-    crm_target_status: targetColumn,
+    ...crmDestination,
   };
 }
 
@@ -155,11 +152,16 @@ export async function POST(request: Request) {
   if (responseSettingsError) {
     return NextResponse.json({ error: responseSettingsError }, { status: 400 });
   }
+  const crmDestinationError = validateAgentCrmDestination(agent);
+  if (crmDestinationError) {
+    return NextResponse.json({ error: crmDestinationError }, { status: 400 });
+  }
 
   const sb = createSupabaseServiceClient();
   const systemPrompt = assembleSystemPrompt(agent);
   const now = new Date().toISOString();
   const responseSettings = sanitizeAgentResponseSettings(agent);
+  const normalizedCrmDestination = normalizeAgentCrmDestination(agent);
   const crmDestination = agentCrmDestinationDbFields(agent);
 
   const initial = await sb
@@ -172,7 +174,7 @@ export async function POST(request: Request) {
         system_prompt: systemPrompt || agent.systemPrompt || "",
         model: null,
         active: agent.status === "ativo",
-        metadata: { ...agent, ...responseSettings, ...crmDestination },
+        metadata: { ...agent, ...responseSettings, ...normalizedCrmDestination },
         updated_at: now,
         voice_id: responseSettings.voiceId,
         response_mode: responseSettings.responseMode,
@@ -196,7 +198,7 @@ export async function POST(request: Request) {
           system_prompt: systemPrompt || agent.systemPrompt || "",
           model: null,
           active: agent.status === "ativo",
-          metadata: { ...agent, ...responseSettings, ...crmDestination },
+          metadata: { ...agent, ...responseSettings, ...normalizedCrmDestination },
           updated_at: now,
           voice_id: responseSettings.voiceId,
           response_mode: responseSettings.responseMode,

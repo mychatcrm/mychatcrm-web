@@ -31,3 +31,9 @@ export {
   validateAgentResponseSettings,
   type AgentResponseMode,
 } from "./response-settings";
+export {
+  agentCrmDestinationDbFields,
+  normalizeAgentCrmDestination,
+  validateAgentCrmDestination,
+  type NormalizedAgentCrmDestination,
+} from "./crm-destination";

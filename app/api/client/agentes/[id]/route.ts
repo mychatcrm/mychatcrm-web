@@ -1,12 +1,20 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { sanitizeAgentResponseSettings, validateAgentResponseSettings } from "@/lib/agents";
+import {
+  agentCrmDestinationDbFields,
+  normalizeAgentCrmDestination,
+  sanitizeAgentResponseSettings,
+  validateAgentCrmDestination,
+  validateAgentResponseSettings,
+} from "@/lib/agents";
 import type { Agent } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 const MISSING_COLUMN_CODES = new Set(["42703", "PGRST204"]);
+const BASE_AGENT_SELECT = "agent_id, display_name, system_prompt, model, active, metadata, created_at, updated_at, voice_id, response_mode";
+const AGENT_SELECT_WITH_CRM = `${BASE_AGENT_SELECT}, crm_auto_move_enabled, crm_target_funnel_id, crm_target_column_id, crm_target_status`;
 
 function assembleSystemPrompt(agent: Agent): string {
   const parts = [
@@ -21,17 +29,6 @@ function assembleSystemPrompt(agent: Agent): string {
 function isMissingColumnError(error: { code?: string; message?: string } | null | undefined): boolean {
   const message = error?.message?.toLowerCase() ?? "";
   return Boolean(error?.code && MISSING_COLUMN_CODES.has(error.code)) || message.includes("crm_auto_move_enabled");
-}
-
-function agentCrmDestinationDbFields(agent: Agent): Record<string, unknown> {
-  const enabled = Boolean(agent.crmAutoMoveEnabled);
-  const targetColumn = enabled ? (agent.crmTargetColumnId ?? agent.crmTargetStatus ?? null) : null;
-  return {
-    crm_auto_move_enabled: enabled,
-    crm_target_funnel_id: enabled ? (agent.crmTargetFunnelId ?? null) : null,
-    crm_target_column_id: targetColumn,
-    crm_target_status: targetColumn,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -60,14 +57,19 @@ export async function PUT(
   if (responseSettingsError) {
     return NextResponse.json({ error: responseSettingsError }, { status: 400 });
   }
+  const crmDestinationError = validateAgentCrmDestination(agent);
+  if (crmDestinationError) {
+    return NextResponse.json({ error: crmDestinationError }, { status: 400 });
+  }
 
   const sb = createSupabaseServiceClient();
   const systemPrompt = assembleSystemPrompt(agent);
   const now = new Date().toISOString();
   const responseSettings = sanitizeAgentResponseSettings(agent);
+  const normalizedCrmDestination = normalizeAgentCrmDestination(agent);
   const crmDestination = agentCrmDestinationDbFields(agent);
 
-  let { error } = await sb
+  const initial = await sb
     .from("tenant_agents")
     .upsert(
       {
@@ -77,14 +79,17 @@ export async function PUT(
         system_prompt: systemPrompt || agent.systemPrompt || "",
         model: null,
         active: agent.status === "ativo",
-        metadata: { ...agent, ...responseSettings, ...crmDestination },
+        metadata: { ...agent, ...responseSettings, ...normalizedCrmDestination },
         updated_at: now,
         voice_id: responseSettings.voiceId,
         response_mode: responseSettings.responseMode,
         ...crmDestination,
       },
       { onConflict: "tenant_id,agent_id" },
-    );
+    )
+    .select(AGENT_SELECT_WITH_CRM)
+    .single();
+  let error = initial.error;
 
   if (isMissingColumnError(error)) {
     const fallback = await sb
@@ -97,13 +102,15 @@ export async function PUT(
           system_prompt: systemPrompt || agent.systemPrompt || "",
           model: null,
           active: agent.status === "ativo",
-          metadata: { ...agent, ...responseSettings, ...crmDestination },
+          metadata: { ...agent, ...responseSettings, ...normalizedCrmDestination },
           updated_at: now,
           voice_id: responseSettings.voiceId,
           response_mode: responseSettings.responseMode,
         },
         { onConflict: "tenant_id,agent_id" },
-      );
+      )
+      .select(BASE_AGENT_SELECT)
+      .single();
     error = fallback.error;
   }
 
@@ -116,10 +123,7 @@ export async function PUT(
     agent: {
       ...agent,
       ...responseSettings,
-      crmAutoMoveEnabled: Boolean(agent.crmAutoMoveEnabled),
-      crmTargetFunnelId: agent.crmAutoMoveEnabled ? (agent.crmTargetFunnelId ?? null) : null,
-      crmTargetColumnId: agent.crmAutoMoveEnabled ? (agent.crmTargetColumnId ?? agent.crmTargetStatus ?? null) : null,
-      crmTargetStatus: agent.crmAutoMoveEnabled ? (agent.crmTargetColumnId ?? agent.crmTargetStatus ?? null) : null,
+      ...normalizedCrmDestination,
       atualizadoEm: now,
     },
   });

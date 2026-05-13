@@ -115,13 +115,15 @@ async function apiCreateAgent(agent: Agent): Promise<Agent> {
   return data.agent;
 }
 
-async function apiUpdateAgent(agent: Agent): Promise<void> {
+async function apiUpdateAgent(agent: Agent): Promise<Agent> {
   const res = await fetch(`/api/client/agentes/${encodeURIComponent(agent.id)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(agent),
   });
   if (!res.ok) throw new Error(`PUT /api/client/agentes/${agent.id} ${res.status}`);
+  const data = (await res.json()) as { agent?: Agent };
+  return data.agent ?? agent;
 }
 
 async function apiDeleteAgent(agentId: string): Promise<void> {
@@ -311,7 +313,8 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
   const handleAgentUpdated = useCallback(async (updated: Agent) => {
     setAgents((current) => current.map((item) => (item.id === updated.id ? updated : item)));
     try {
-      await apiUpdateAgent(updated);
+      const saved = await apiUpdateAgent(updated);
+      setAgents((current) => current.map((item) => (item.id === updated.id ? saved : item)));
     } catch (e) {
       console.warn("[agentes] falha ao atualizar no DB:", e);
     }

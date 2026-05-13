@@ -1,11 +1,8 @@
 import { BRAND } from "@/lib/brand";
-import { isValidCrmKanbanColumnId } from "@/lib/crm-kanban-columns";
 import {
   DEFAULT_CRM_FUNNELS,
   getCrmFunnelsSnapshot,
   isValidColunaForFunnel,
-  normalizeColunaInicialForFunnel,
-  resolveAgentFunnelFromCrm,
   type CrmFunnel,
 } from "@/lib/crm-funnels";
 import type {
@@ -20,6 +17,7 @@ import type {
 } from "@/lib/types";
 import { totalWhatsAppLinesForTenant } from "@/lib/whatsapp-connection-storage";
 import { DEFAULT_SYSTEM_PROMPT_TEMPLATE } from "./default-system-prompt-template";
+import { normalizeAgentCrmDestination } from "./crm-destination";
 import { normalizeAgentResponseMode, normalizeAgentVoiceId, validateAgentResponseSettings } from "./response-settings";
 
 export type AgentWizardDraft = {
@@ -126,9 +124,24 @@ export function getWizardOrigin(draft: AgentWizardDraft, tipo: OriginType): Agen
 
 export function draftFromAgent(agent: Agent): AgentWizardDraft {
   const funnels = getCrmFunnelsSnapshot();
-  const resolved = resolveAgentFunnelFromCrm({ ...agent.funil }, funnels);
-  const funnel = funnels.find((f) => f.id === resolved.funilId);
-  const colunaInicial = normalizeColunaInicialForFunnel(agent.funil.colunaInicial, funnel);
+  const fallbackFunnel = funnels[0] ?? DEFAULT_CRM_FUNNELS[0]!;
+  const fallbackColumn = fallbackFunnel.columns[0]?.id ?? DEFAULT_CRM_FUNNELS[0]!.columns[0]!.id;
+  const legacyFunil = agent.funil ?? {
+    funilId: fallbackFunnel.id,
+    nomeFunil: fallbackFunnel.nome,
+    colunaInicial: fallbackColumn,
+    tagsEntrada: [],
+    origemRelatorio: "Não definido",
+    valorEstimado: 0,
+    slaHoras: 2,
+    maxFollowUps: 0,
+  };
+  const crmDestination = normalizeAgentCrmDestination(agent);
+  const targetFunnel = funnels.find((f) => f.id === crmDestination.crmTargetFunnelId) ?? fallbackFunnel;
+  const targetColumn =
+    targetFunnel.columns.find((column) => column.id === crmDestination.crmTargetColumnId)?.id ??
+    targetFunnel.columns[0]?.id ??
+    fallbackColumn;
   const waCap = totalWhatsAppLinesForTenant(agent.clientId);
   const rawWa = agent.whatsappSlotIndex ?? 0;
   const whatsappSlotIndex = Math.min(Math.max(0, Math.floor(rawWa)), Math.max(0, waCap - 1));
@@ -158,7 +171,7 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
       tentativasContato: 3,
       intervaloVerificacaoMinutos: 60,
     },
-    funil: { ...resolved, colunaInicial },
+    funil: { ...legacyFunil },
     whatsappSlotIndex,
     ctaFinal: "Transferir para humano",
     handoffKeywords: ["humano", "especialista"],
@@ -169,9 +182,9 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     foraDaVezMensagem: "",
     responseMode: normalizeAgentResponseMode(agent.responseMode),
     voiceId: normalizeAgentVoiceId(agent.voiceId) ?? "",
-    crmAutoMoveEnabled: Boolean(agent.crmAutoMoveEnabled),
-    crmTargetFunnelId: agent.crmTargetFunnelId ?? resolved.funilId,
-    crmTargetColumnId: agent.crmTargetColumnId ?? agent.crmTargetStatus ?? colunaInicial,
+    crmAutoMoveEnabled: crmDestination.crmAutoMoveEnabled,
+    crmTargetFunnelId: crmDestination.crmTargetFunnelId ?? targetFunnel.id,
+    crmTargetColumnId: crmDestination.crmTargetColumnId ?? targetColumn,
   };
 }
 
@@ -219,19 +232,6 @@ export function validateCompactAgentDraft(
   }
   if (!draft.origens.some((origin) => origin?.ativo)) return "Ative pelo menos uma origem em «Ativação e origens».";
   if (!draft.fluxo.length) return "Mantenha ao menos uma etapa no fluxo.";
-  if (crmFunnels?.length) {
-    if (!crmFunnels.some((f) => f.id === draft.funil.funilId)) {
-      return "Selecione um funil cadastrado em CRM Kanban.";
-    }
-    const funnel = crmFunnels.find((f) => f.id === draft.funil.funilId)!;
-    if (!isValidColunaForFunnel(draft.funil.colunaInicial, funnel)) {
-      return "Escolha a coluna inicial entre as etapas do funil selecionado.";
-    }
-  } else {
-    if (!(draft.funil.nomeFunil ?? "").trim()) return "Defina o funil em «Funil no CRM Kanban».";
-    if (!isValidCrmKanbanColumnId(draft.funil.colunaInicial))
-      return "Escolha a coluna inicial entre as colunas do CRM Kanban.";
-  }
   const followUpInteligente = draft.followUpInteligente;
   if (followUpInteligente?.ativo) {
     if ((followUpInteligente.tentativasContato ?? 0) < 1) {

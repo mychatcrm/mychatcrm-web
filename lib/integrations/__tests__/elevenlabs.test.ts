@@ -11,7 +11,9 @@ describe("textToSpeechElevenLabs", () => {
 
   it("sends language_code in the ElevenLabs TTS request body", async () => {
     process.env.ELEVENLABS_API_KEY = "test-key";
-    const fetchMock = vi.fn(async () => new Response(new Uint8Array([1, 2, 3])));
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(new Uint8Array([1, 2, 3])),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     await textToSpeechElevenLabs("Hola, necesito ayuda", "voice-123", { languageCode: "es" });
