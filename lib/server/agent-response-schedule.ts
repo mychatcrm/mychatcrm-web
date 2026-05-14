@@ -15,10 +15,7 @@ export function computeAgentResponseSchedule(params: {
       ? params.settings.initialSeconds
       : params.settings.followupSeconds) * 1000;
   const ideal = new Date(params.lastMessageAt.getTime() + waitMs);
-  let scheduledFor = ideal > maxWaitUntil ? maxWaitUntil : ideal;
-  if (scheduledFor.getTime() < params.now.getTime()) {
-    scheduledFor = params.now;
-  }
+  const scheduledFor = ideal.getTime() > maxWaitUntil.getTime() ? maxWaitUntil : ideal;
   return { scheduledFor, maxWaitUntil };
 }
 
@@ -26,6 +23,10 @@ export function maskRemoteJidForLog(remoteJid: string): string {
   const digits = remoteJid.replace(/\D/g, "");
   if (digits.length <= 4) return "****";
   return `***${digits.slice(-4)}`;
+}
+
+export function isJobReadyToProcess(scheduledForIso: string, now = new Date()): boolean {
+  return now.getTime() >= new Date(scheduledForIso).getTime();
 }
 
 export function sleep(ms: number): Promise<void> {

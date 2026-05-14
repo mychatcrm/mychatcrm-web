@@ -73,17 +73,30 @@ export async function processAgentResponseJob(
   sb: SupabaseServiceClient,
   job: AgentResponseJobRow,
 ): Promise<{ ok: true; dedupedCount: number } | { ok: false; error: string; dedupedCount?: number }> {
-  const { data: rows, error } = await sb
+  const { data: rowsByWindow, error: windowError } = await sb
     .from("whatsapp_messages")
     .select("id, content, kind, message_id, remote_jid, created_at")
     .eq("tenant_id", job.tenant_id)
     .eq("remote_jid", job.remote_jid)
     .eq("direction", "inbound")
-    .in("id", job.message_ids)
+    .gte("created_at", job.first_message_at)
+    .lte("created_at", job.last_message_at)
     .order("created_at", { ascending: true });
-  if (error) return { ok: false, error: error.message };
+  if (windowError) return { ok: false, error: windowError.message };
 
-  const inboundRows = (rows ?? []) as PendingInboundRow[];
+  let inboundRows = (rowsByWindow ?? []) as PendingInboundRow[];
+  if (!inboundRows.length && job.message_ids.length) {
+    const { data: rowsById, error } = await sb
+      .from("whatsapp_messages")
+      .select("id, content, kind, message_id, remote_jid, created_at")
+      .eq("tenant_id", job.tenant_id)
+      .eq("remote_jid", job.remote_jid)
+      .eq("direction", "inbound")
+      .in("id", job.message_ids)
+      .order("created_at", { ascending: true });
+    if (error) return { ok: false, error: error.message };
+    inboundRows = (rowsById ?? []) as PendingInboundRow[];
+  }
   if (!inboundRows.length) return { ok: false, error: "no_inbound_messages" };
 
   const { data: agentRow } = await sb

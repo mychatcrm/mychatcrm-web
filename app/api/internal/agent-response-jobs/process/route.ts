@@ -10,7 +10,8 @@ export const maxDuration = 60;
 function verifyInternalSecret(request: Request): boolean {
   const expected =
     process.env.AGENT_RESPONSE_JOBS_SECRET?.trim() ||
-    process.env.CRON_SECRET?.trim();
+    process.env.CRON_SECRET?.trim() ||
+    process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
   if (!expected) return false;
   const auth = request.headers.get("authorization");
   if (auth === `Bearer ${expected}`) return true;

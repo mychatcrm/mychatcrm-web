@@ -29,10 +29,7 @@ import { applyHumanConversationCommand } from "@/lib/server/conversation-human-c
 import { revealConversationOnInbound } from "@/lib/server/conversation-visibility";
 import { markWaitingForHuman } from "@/lib/server/conversation-operation";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
-import {
-  scheduleAgentResponseJob,
-  triggerAgentResponseJobProcessor,
-} from "@/lib/server/agent-response-jobs";
+import { runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
 
 export const dynamic = "force-dynamic";
 
@@ -502,19 +499,40 @@ export async function POST(request: Request) {
         ? (agentConfig.data.metadata as Record<string, unknown>)
         : {};
       const smartWait = smartWaitFromMetadata(metadata);
-      if (smartWait.enabled && inboundSaved?.id) {
-        const job = await scheduleAgentResponseJob({
-          sb: sbState,
-          tenantId: row.tenant_id,
-          remoteJid: msg.remoteJid,
-          leadId,
-          agentId,
-          instanceName,
-          whatsappMessageId: inboundSaved.id,
-          occurredAt: inboundSaved.created_at ?? new Date().toISOString(),
-          settings: smartWait,
-        });
-        if (job) triggerAgentResponseJobProcessor(job.id);
+      if (smartWait.enabled) {
+        let inboundMessageKey = inboundSaved?.id ?? null;
+        if (!inboundMessageKey && msg.messageId) {
+          const { data: existingRow } = await sbState
+            .from("whatsapp_messages")
+            .select("id")
+            .eq("tenant_id", row.tenant_id)
+            .eq("remote_jid", msg.remoteJid)
+            .eq("message_id", msg.messageId)
+            .maybeSingle();
+          inboundMessageKey = typeof existingRow?.id === "string" ? existingRow.id : msg.messageId;
+        }
+        if (inboundMessageKey) {
+          await runInboundSmartWaitFlow({
+            sb: sbState,
+            tenantId: row.tenant_id,
+            remoteJid: msg.remoteJid,
+            leadId,
+            agentId,
+            instanceName,
+            inboundMessageKey,
+            occurredAt: inboundSaved?.created_at ?? new Date().toISOString(),
+            smartWait,
+          });
+        } else {
+          console.info("[agent-response-jobs] webhook_smart_wait", {
+            action: "skipped_immediate_blocked",
+            smart_wait_enabled: true,
+            immediate_flow_blocked: true,
+            reason: "missing_inbound_message_key",
+            tenant_id: row.tenant_id,
+            remote_jid: msg.remoteJid.replace(/\D/g, "").slice(-4),
+          });
+        }
         continue;
       }
       const handoffKeywords = Array.isArray(metadata.handoffKeywords)

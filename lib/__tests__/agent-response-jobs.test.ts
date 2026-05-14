@@ -5,7 +5,11 @@ import {
   deduplicateInboundTexts,
   normalizeInboundTextForDedupe,
 } from "@/lib/conversas/inbound-message-dedupe";
-import { computeAgentResponseSchedule } from "@/lib/server/agent-response-schedule";
+import {
+  computeAgentResponseSchedule,
+  isJobReadyToProcess,
+} from "@/lib/server/agent-response-schedule";
+import { resolveInboundAgentFlowDecision } from "@/lib/server/evolution-webhook-agent-flow";
 
 describe("agent smart wait schedule", () => {
   it("schedules first inbound message after initial window", () => {
@@ -49,20 +53,53 @@ describe("agent smart wait schedule", () => {
   });
 });
 
+describe("processor readiness", () => {
+  it("does not process before scheduled_for", () => {
+    const now = new Date("2026-05-14T10:00:02.000Z");
+    expect(isJobReadyToProcess("2026-05-14T10:00:05.000Z", now)).toBe(false);
+  });
+
+  it("processes after scheduled_for", () => {
+    const now = new Date("2026-05-14T10:00:06.000Z");
+    expect(isJobReadyToProcess("2026-05-14T10:00:05.000Z", now)).toBe(true);
+  });
+});
+
+describe("webhook flow decision", () => {
+  it("blocks immediate flow when smart wait is enabled", () => {
+    expect(
+      resolveInboundAgentFlowDecision({
+        smartWait: { ...DEFAULT_AGENT_SMART_WAIT, enabled: true },
+        inboundMessageKey: "msg-1",
+      }).mode,
+    ).toBe("smart_wait");
+  });
+
+  it("allows immediate flow only when smart wait is disabled", () => {
+    expect(
+      resolveInboundAgentFlowDecision({
+        smartWait: { ...DEFAULT_AGENT_SMART_WAIT, enabled: false },
+        inboundMessageKey: "msg-1",
+      }),
+    ).toEqual({ mode: "immediate", reason: "smart_wait_disabled" });
+  });
+});
+
 describe("inbound message dedupe", () => {
   it("normalizes repeated greetings and duplicate questions", () => {
     expect(normalizeInboundTextForDedupe("  Oi ")).toBe(normalizeInboundTextForDedupe("oi"));
     expect(normalizeInboundTextForDedupe("BOM   DIA")).toBe(normalizeInboundTextForDedupe("bom dia"));
   });
 
-  it("deduplicates identical consecutive texts", () => {
+  it("deduplicates three identical oi into one", () => {
     const { messages, dedupedCount } = deduplicateInboundTexts([
       { id: "1", content: "oi" },
       { id: "2", content: "oi" },
-      { id: "3", content: "queria saber preço" },
+      { id: "3", content: "oi" },
     ]);
-    expect(messages).toHaveLength(2);
-    expect(dedupedCount).toBe(1);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.content).toBe("oi");
+    expect(dedupedCount).toBe(2);
   });
 
   it("groups different questions into one consolidated prompt", () => {

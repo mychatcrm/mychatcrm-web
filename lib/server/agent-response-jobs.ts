@@ -5,6 +5,7 @@ import {
 } from "@/lib/agents/smart-wait-settings";
 import {
   computeAgentResponseSchedule,
+  isJobReadyToProcess,
   maskRemoteJidForLog,
   sleep,
 } from "@/lib/server/agent-response-schedule";
@@ -128,6 +129,13 @@ export async function shouldScheduleAgentResponse(params: {
   return { ok: true };
 }
 
+function logJobEvent(
+  action: "created" | "rescheduled" | "processing" | "completed" | "cancelled" | "skipped_not_due" | "schedule_failed",
+  payload: Record<string, unknown>,
+): void {
+  console.info("[agent-response-jobs]", { action, ...payload });
+}
+
 export async function scheduleAgentResponseJob(params: {
   sb?: SupabaseServiceClient;
   tenantId: string;
@@ -190,23 +198,24 @@ export async function scheduleAgentResponseJob(params: {
         updated_at: now.toISOString(),
       })
       .eq("id", current.id)
-      .eq("status", current.status)
+      .in("status", ["pending", "processing"])
       .select("*")
       .maybeSingle();
     if (error || !data) {
-      console.warn("[agent-response-jobs] job_reschedule_failed", {
+      logJobEvent("schedule_failed", {
         tenant_id: params.tenantId,
         remote_jid: maskRemoteJidForLog(params.remoteJid),
-        error: error?.message,
+        reason: error?.message ?? "reschedule_conflict",
       });
       return null;
     }
-    console.info("[agent-response-jobs] job_rescheduled", {
+    logJobEvent("rescheduled", {
       tenant_id: params.tenantId,
       remote_jid: maskRemoteJidForLog(params.remoteJid),
       job_id: current.id,
       messages_count: messageIds.length,
       scheduled_for: scheduledFor.toISOString(),
+      now: now.toISOString(),
     });
     return rowFromDb(data as Record<string, unknown>);
   }
@@ -237,19 +246,20 @@ export async function scheduleAgentResponseJob(params: {
     .select("*")
     .single();
   if (error || !data) {
-    console.warn("[agent-response-jobs] job_create_failed", {
+    logJobEvent("schedule_failed", {
       tenant_id: params.tenantId,
       remote_jid: maskRemoteJidForLog(params.remoteJid),
-      error: error?.message,
+      reason: error?.message ?? "insert_failed",
     });
     return null;
   }
-  console.info("[agent-response-jobs] job_created", {
+  logJobEvent("created", {
     tenant_id: params.tenantId,
     remote_jid: maskRemoteJidForLog(params.remoteJid),
     job_id: (data as Record<string, unknown>).id,
     messages_count: 1,
     scheduled_for: scheduledFor.toISOString(),
+    now: now.toISOString(),
   });
   return rowFromDb(data as Record<string, unknown>);
 }
@@ -294,22 +304,30 @@ export async function cancelPendingAgentResponseJobs(params: {
 }
 
 async function claimJob(sb: SupabaseServiceClient, jobId: string): Promise<AgentResponseJobRow | null> {
-  const nowIso = new Date().toISOString();
+  const now = new Date();
+  const nowIso = now.toISOString();
   const { data: current } = await sb
     .from("agent_response_jobs")
     .select("*")
     .eq("id", jobId)
     .eq("status", "pending")
-    .lte("scheduled_for", nowIso)
     .maybeSingle();
   if (!current) return null;
-  const previous = rowFromDb(current as Record<string, unknown>);
+  const pending = rowFromDb(current as Record<string, unknown>);
+  if (!isJobReadyToProcess(pending.scheduled_for, now)) {
+    logJobEvent("skipped_not_due", {
+      job_id: jobId,
+      scheduled_for: pending.scheduled_for,
+      now: nowIso,
+    });
+    return null;
+  }
   const { data, error } = await sb
     .from("agent_response_jobs")
     .update({
       status: "processing",
       locked_at: nowIso,
-      attempt_count: previous.attempt_count + 1,
+      attempt_count: pending.attempt_count + 1,
       updated_at: nowIso,
     })
     .eq("id", jobId)
@@ -328,11 +346,13 @@ export async function tryProcessAgentResponseJob(
   const job = await claimJob(client, jobId);
   if (!job) return "skipped";
 
-  console.info("[agent-response-jobs] job_processing", {
+  logJobEvent("processing", {
     tenant_id: job.tenant_id,
     remote_jid: maskRemoteJidForLog(job.remote_jid),
     job_id: job.id,
     messages_count: job.message_ids.length,
+    scheduled_for: job.scheduled_for,
+    now: new Date().toISOString(),
   });
 
   try {
@@ -371,7 +391,7 @@ export async function tryProcessAgentResponseJob(
       })
       .eq("id", job.id);
 
-    console.info("[agent-response-jobs] job_completed", {
+    logJobEvent("completed", {
       tenant_id: job.tenant_id,
       remote_jid: maskRemoteJidForLog(job.remote_jid),
       job_id: job.id,
@@ -426,25 +446,31 @@ export async function waitAndProcessAgentResponseJob(jobId: string): Promise<voi
     if (!data) return;
     const job = rowFromDb(data as Record<string, unknown>);
     if (job.status !== "pending") return;
-    const now = Date.now();
-    const scheduledAt = new Date(job.scheduled_for).getTime();
-    if (now >= scheduledAt) {
+    if (isJobReadyToProcess(job.scheduled_for)) {
       await tryProcessAgentResponseJob(jobId, sb);
       return;
     }
-    await sleep(Math.min(750, Math.max(250, scheduledAt - now)));
+    const waitMs = new Date(job.scheduled_for).getTime() - Date.now();
+    await sleep(Math.min(750, Math.max(250, waitMs)));
   }
-  await tryProcessAgentResponseJob(jobId);
 }
 
 export function triggerAgentResponseJobProcessor(jobId?: string): void {
   const secret =
     process.env.AGENT_RESPONSE_JOBS_SECRET?.trim() ||
-    process.env.CRON_SECRET?.trim();
-  if (!secret) return;
-  const base = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : process.env.NEXT_PUBLIC_APP_URL?.trim() || "http://localhost:3000";
+    process.env.CRON_SECRET?.trim() ||
+    process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
+  if (!secret) {
+    console.warn("[agent-response-jobs] processor_trigger_skipped", {
+      reason: "missing_internal_secret",
+      job_id: jobId ?? null,
+    });
+    return;
+  }
+  const base =
+    process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "") ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "") ||
+    "https://mychatcrm.vercel.app";
   const url = new URL("/api/internal/agent-response-jobs/process", base);
   if (jobId) url.searchParams.set("jobId", jobId);
   void fetch(url.toString(), {
@@ -453,5 +479,10 @@ export function triggerAgentResponseJobProcessor(jobId?: string): void {
       Authorization: `Bearer ${secret}`,
       "x-agent-jobs-secret": secret,
     },
-  }).catch(() => {});
+  }).catch((error) => {
+    console.warn("[agent-response-jobs] processor_trigger_failed", {
+      job_id: jobId ?? null,
+      error: error instanceof Error ? error.message : "fetch_failed",
+    });
+  });
 }
