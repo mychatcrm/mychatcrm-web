@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import type { ClientAgendaEvent } from "@/lib/agenda/client-event";
 import { cn } from "@/lib/utils";
+import { AgendaDisconnectModal } from "./AgendaDisconnectModal";
 import { AgendaEventModal, type AgendaEventFormState } from "./AgendaEventModal";
 import {
   AGENDA_BRAND,
@@ -40,6 +41,7 @@ import {
 } from "./agenda-date-utils";
 import { eventsForDay, layoutTimedEvents } from "./agenda-layout";
 import { useAgendaData } from "./use-agenda-data";
+import { useIsMobile } from "./use-is-mobile";
 
 type QuickCreateState = { x: number; y: number; start: Date; end: Date } | null;
 type DetailState = { event: ClientAgendaEvent; x: number; y: number } | null;
@@ -79,7 +81,10 @@ export function AgendaHub() {
   const [detail, setDetail] = useState<DetailState>(null);
   const [now, setNow] = useState(() => new Date());
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [disconnectOpen, setDisconnectOpen] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     const t = window.setInterval(() => setNow(new Date()), 60000);
@@ -102,6 +107,16 @@ export function AgendaHub() {
   const periodTitle = formatPeriodTitle(view, anchor, selected);
   const weekStart = useMemo(() => startOfWeekSunday(selected), [selected]);
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
+  const visibleWeekDays = useMemo(() => {
+    if (view !== "week" || !isMobile) return weekDays;
+    return [addDays(selected, -1), selected, addDays(selected, 1)];
+  }, [view, isMobile, weekDays, selected]);
+  const timeGridDays = view === "week" ? visibleWeekDays : [selected];
+  const timeGridColCount = timeGridDays.length;
+  const timeGridMinWidth = view === "week" ? 56 + timeGridColCount * 120 : undefined;
+  const timeGridTemplate = view === "week"
+    ? `56px repeat(${timeGridColCount}, minmax(120px, 1fr))`
+    : "56px minmax(0, 1fr)";
   const monthGrid = useMemo(() => getMonthGrid(anchor.getFullYear(), anchor.getMonth()), [anchor]);
 
   const goToday = () => {
@@ -112,7 +127,7 @@ export function AgendaHub() {
 
   const navigate = (delta: number) => {
     if (view === "month" || view === "agenda") setAnchor((a) => addMonths(a, delta));
-    else if (view === "week") setSelected((d) => addDays(d, delta * 7));
+    else if (view === "week") setSelected((d) => addDays(d, isMobile ? delta : delta * 7));
     else setSelected((d) => addDays(d, delta));
   };
 
@@ -150,6 +165,18 @@ export function AgendaHub() {
     if (!window.confirm(`Cancelar o evento "${ev.title}"?`)) return;
     await data.deleteEvent(ev.id);
     setDetail(null);
+  };
+
+  const handleDisconnect = async (clearEvents: boolean) => {
+    setDisconnecting(true);
+    try {
+      await data.disconnectGoogle(clearEvents);
+      setDisconnectOpen(false);
+    } catch {
+      data.setError("Não foi possível desconectar o Google Calendar.");
+    } finally {
+      setDisconnecting(false);
+    }
   };
 
   const onCellClick = (e: React.MouseEvent, day: Date, hour?: number) => {
@@ -319,7 +346,7 @@ export function AgendaHub() {
                         {data.syncing ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
                         Sincronizar
                       </button>
-                      <button type="button" onClick={() => void data.disconnectGoogle()} className="inline-flex items-center gap-1 rounded-full border border-rose-200 px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50">
+                      <button type="button" onClick={() => setDisconnectOpen(true)} className="inline-flex items-center gap-1 rounded-full border border-rose-200 px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50">
                         <Unlink className="size-3" />
                         Desconectar
                       </button>
@@ -420,11 +447,12 @@ export function AgendaHub() {
               ) : null}
 
               {(view === "week" || view === "day") ? (
-                <div className="relative min-w-[640px]">
-                  <div className="sticky top-0 z-10 grid border-b border-[#dadce0] bg-white" style={{ gridTemplateColumns: view === "week" ? "56px repeat(7, 1fr)" : "56px 1fr" }}>
-                    <div />
-                    {(view === "week" ? weekDays : [selected]).map((d) => (
-                      <div key={d.toISOString()} className="border-l border-[#dadce0] py-2 text-center text-xs">
+                <div className="w-full overflow-x-auto">
+                  <div className="relative w-full" style={{ minWidth: timeGridMinWidth }}>
+                    <div className="sticky top-0 z-10 grid border-b border-[#dadce0] bg-white" style={{ gridTemplateColumns: timeGridTemplate }}>
+                      <div />
+                      {timeGridDays.map((d) => (
+                        <div key={d.toISOString()} className="min-w-[120px] border-l border-[#dadce0] py-2 text-center text-xs">
                         <div className="uppercase text-[#70757a]">{WEEKDAYS_SHORT[d.getDay()]}</div>
                         <div className={cn("mx-auto mt-1 flex size-9 items-center justify-center rounded-full text-lg", sameDay(d, today) && "bg-[#f24400] font-bold text-white")}>
                           {d.getDate()}
@@ -432,7 +460,7 @@ export function AgendaHub() {
                       </div>
                     ))}
                   </div>
-                  <div className="relative grid" style={{ gridTemplateColumns: view === "week" ? "56px repeat(7, 1fr)" : "56px 1fr" }}>
+                  <div className="relative grid w-full" style={{ gridTemplateColumns: timeGridTemplate }}>
                     <div>
                       {Array.from({ length: GRID_HOURS }, (_, h) => (
                         <div key={h} className="relative border-b border-[#dadce0] pr-2 text-right text-[10px] text-[#70757a]" style={{ height: HOUR_HEIGHT_PX }}>
@@ -440,7 +468,7 @@ export function AgendaHub() {
                         </div>
                       ))}
                     </div>
-                    {(view === "week" ? weekDays : [selected]).map((day) => {
+                    {timeGridDays.map((day) => {
                       const positioned = layoutTimedEvents(data.events, day, HOUR_HEIGHT_PX);
                       return (
                         <div
@@ -506,11 +534,12 @@ export function AgendaHub() {
                       );
                     })}
                   </div>
+                  </div>
                 </div>
               ) : null}
 
               {view === "agenda" ? (
-                <div className="max-w-3xl p-4">
+                <div className="w-full p-3 sm:p-4">
                   {groupedList.map(([dayKey, items]) => (
                     <div key={dayKey} className="mb-6">
                       <h3 className="mb-2 text-sm font-medium text-[#70757a]">
@@ -521,10 +550,10 @@ export function AgendaHub() {
                           <li key={ev.id}>
                             <button
                               type="button"
-                              className="flex w-full gap-4 rounded-lg px-2 py-2 text-left hover:bg-[#f1f3f4]"
+                              className="flex w-full flex-col gap-1 rounded-lg border border-[#dadce0] px-3 py-3 text-left hover:bg-[#f1f3f4] sm:flex-row sm:items-start sm:gap-4 sm:border-0 sm:px-2 sm:py-2"
                               onClick={(e) => setDetail({ event: ev, x: e.clientX, y: e.clientY })}
                             >
-                              <span className="w-28 shrink-0 text-sm text-[#70757a]">
+                              <span className="shrink-0 text-sm text-[#70757a] sm:w-28">
                                 {new Date(ev.startISO).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
                                 {" – "}
                                 {new Date(ev.endISO).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
@@ -606,6 +635,14 @@ export function AgendaHub() {
           </div>
         </div>
       ) : null}
+
+      <AgendaDisconnectModal
+        open={disconnectOpen}
+        onClose={() => setDisconnectOpen(false)}
+        loading={disconnecting}
+        onKeepEvents={() => void handleDisconnect(false)}
+        onClearEvents={() => void handleDisconnect(true)}
+      />
 
       <AgendaEventModal
         open={modalOpen}

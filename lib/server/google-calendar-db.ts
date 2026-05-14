@@ -178,3 +178,16 @@ export async function upsertAgendaEventFromGoogle(
 export async function cancelAgendaEvent(tenantId: string, id: string) {
   await updateAgendaEvent(tenantId, id, { status: "cancelled" });
 }
+
+/** Remove eventos importados do Google (google_event_id preenchido). Mantém os criados só no MyChatCRM. */
+export async function deleteGoogleSyncedAgendaEvents(tenantId: string): Promise<number> {
+  const sb = createSupabaseServiceClient();
+  const { data, error } = await sb
+    .from("agenda_events")
+    .delete()
+    .eq("tenant_id", tenantId)
+    .not("google_event_id", "is", null)
+    .select("id");
+  if (error) throw error;
+  return data?.length ?? 0;
+}

@@ -135,10 +135,13 @@ export function useAgendaData() {
     window.location.href = "/api/auth/google";
   }, []);
 
-  const disconnectGoogle = useCallback(async () => {
-    await fetch("/api/client/google-calendar/status", { method: "DELETE", credentials: "include" });
-    setGoogle((g) => ({ ...g, connected: false, email: null }));
-  }, []);
+  const disconnectGoogle = useCallback(async (clearEvents = false) => {
+    const qs = clearEvents ? "?clearEvents=true" : "";
+    const res = await fetch(`/api/client/google-calendar/status${qs}`, { method: "DELETE", credentials: "include" });
+    if (!res.ok) throw new Error("disconnect_failed");
+    setGoogle((g) => ({ ...g, connected: false, email: null, lastSyncISO: null }));
+    if (clearEvents) await refreshEvents();
+  }, [refreshEvents]);
 
   useEffect(() => {
     void refreshStatus().then(() => refreshEvents());
