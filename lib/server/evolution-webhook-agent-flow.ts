@@ -50,16 +50,14 @@ export async function runInboundSmartWaitFlow(params: {
     settings: params.smartWait,
   });
 
-  console.info("[agent-response-jobs] webhook_smart_wait", {
-    action: job ? "scheduled" : "schedule_failed",
+  console.info("[agent-response-jobs]", {
+    event: job ? "webhook_smart_wait_scheduled" : "webhook_smart_wait_failed",
     smart_wait_enabled: true,
-    immediate_flow_blocked: true,
     tenant_id: params.tenantId,
     remote_jid: maskRemoteJidForLog(params.remoteJid),
     job_id: job?.id ?? null,
     scheduled_for: job?.scheduled_for ?? null,
     messages_count: job?.message_ids.length ?? 0,
-    reason: job ? null : "schedule_returned_null",
   });
 
   if (job) queueAgentResponseJobProcessor(job.id);

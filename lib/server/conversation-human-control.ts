@@ -1,7 +1,8 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { syncAutomationMode } from "@/lib/server/conversation-operation";
 import {
+  getConversationState,
   type ConversationState,
-  upsertConversationState,
 } from "@/lib/server/conversation-memory";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
@@ -42,33 +43,25 @@ export async function applyHumanConversationCommand(params: {
   const resumeCommand = normalizeCommand(meta.comandoRetomaConversa);
 
   if (pauseCommand && text === pauseCommand) {
-    await upsertConversationState({
+    await syncAutomationMode({
       sb,
       tenantId: params.tenantId,
       remoteJid: params.remoteJid,
+      enabled: false,
       leadId: params.leadId,
       agentId: params.agentId,
-      humanPaused: true,
-      pausedBy: "human_command",
-      pausedReason: "manual_pause_command",
-      lastMessageAt: params.occurredAt ?? new Date().toISOString(),
     });
     return "paused";
   }
 
   if (resumeCommand && text === resumeCommand) {
-    await upsertConversationState({
+    await syncAutomationMode({
       sb,
       tenantId: params.tenantId,
       remoteJid: params.remoteJid,
+      enabled: true,
       leadId: params.leadId,
       agentId: params.agentId,
-      humanPaused: false,
-      pausedBy: null,
-      pausedReason: null,
-      handoffSuggested: false,
-      handoffReason: null,
-      lastMessageAt: params.occurredAt ?? new Date().toISOString(),
     });
     return "resumed";
   }
@@ -86,22 +79,20 @@ export async function setConversationAutomationEnabled(params: {
   agentId?: string | null;
   occurredAt?: string | null;
 }): Promise<ConversationState | null> {
-  const patch: Parameters<typeof upsertConversationState>[0] = {
-    sb: params.sb,
+  const sb = params.sb ?? createSupabaseServiceClient();
+  await syncAutomationMode({
+    sb,
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,
+    enabled: params.enabled,
     leadId: params.leadId,
     agentId: params.agentId,
-    humanPaused: !params.enabled,
-    pausedBy: params.enabled ? null : "human_manual",
-    pausedReason: params.enabled ? null : "manual_toggle",
-    lastMessageAt: params.occurredAt ?? new Date().toISOString(),
-  };
-  if (params.enabled) {
-    patch.handoffSuggested = false;
-    patch.handoffReason = null;
-  }
-  return upsertConversationState(patch);
+  });
+  return getConversationState({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+  });
 }
 
 export function isConversationAutomationEnabled(state: ConversationState | null | undefined): boolean {

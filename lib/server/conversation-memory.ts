@@ -33,6 +33,7 @@ export type ConversationSummary = {
 };
 
 export type ConversationMessageContext = {
+  id?: string;
   role: "user" | "assistant" | "human";
   content: string;
   kind: string;
@@ -128,6 +129,7 @@ function rowToMessage(row: Record<string, unknown>): ConversationMessageContext 
   const direction = String(row.direction ?? "");
   const agentId = textOrNull(row.agent_id);
   return {
+    id: typeof row.id === "string" ? row.id : undefined,
     role: direction === "inbound" ? "user" : agentId === "human" ? "human" : "assistant",
     content: String(row.content ?? ""),
     kind: String(row.kind ?? "text"),
@@ -250,7 +252,7 @@ export async function getRecentConversationMessages(params: {
   const sb = params.sb ?? createSupabaseServiceClient();
   const { data, error } = await sb
     .from("whatsapp_messages")
-    .select("direction,kind,content,agent_id,created_at")
+    .select("id,direction,kind,content,agent_id,created_at")
     .eq("tenant_id", params.tenantId)
     .eq("remote_jid", params.remoteJid)
     .order("created_at", { ascending: false })

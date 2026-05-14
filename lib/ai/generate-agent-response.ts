@@ -13,6 +13,7 @@ import { buildAgentSystemPrompt } from "@/lib/ai/agent-system-prompt";
 import {
   buildLeadConversationMemory,
 } from "@/lib/server/lead-conversation-memory";
+import type { BurstResponseStrategy } from "@/lib/conversas/normalize-conversation-burst";
 import type { Agent } from "@/lib/types";
 
 /** Alinhado ao seed em supabase/migrations/20260506_tenant_agents.sql — usado se a tabela ainda não existir. */
@@ -85,6 +86,15 @@ export async function generateAgentResponse(params: {
   simulation?: boolean;
   /** Sobrescreve metadados do agente (ex.: rascunho no simulador). */
   agentOverride?: Partial<Agent> & { nome?: string; systemPrompt?: string };
+  /** IDs de mensagens inbound já representadas no burst atual — omitir do histórico. */
+  excludeMessageIds?: string[];
+  /** Sinais do burst para humanização no system prompt. */
+  burstContext?: {
+    groupedIntent?: string;
+    urgencyLevel?: string;
+    responseStrategy?: BurstResponseStrategy;
+    dominantIntent?: string;
+  };
 }): Promise<AiGenerateResult> {
   // -------------------------------------------------------------------------
   // Media pre-processing — convert audio/image to user text message
@@ -197,6 +207,7 @@ export async function generateAgentResponse(params: {
     tenantId: params.tenantId,
     agentId: params.agentId,
     remoteJid: params.conversationId,
+    excludeMessageIds: params.excludeMessageIds,
   });
   systemPrompt = buildAgentSystemPrompt({
     agent: baseAgent,
@@ -204,6 +215,7 @@ export async function generateAgentResponse(params: {
     languageInstruction: buildLanguageInstruction(detectedLanguageName),
     recognitionHint: memory.recognitionHint,
     condensedContext: memory.condensedContext,
+    burstContext: params.burstContext,
   });
 
   // -------------------------------------------------------------------------

@@ -74,6 +74,12 @@ export function buildAgentSystemPrompt(params: {
   languageInstruction: string;
   recognitionHint?: string | null;
   condensedContext?: string | null;
+  burstContext?: {
+    groupedIntent?: string;
+    urgencyLevel?: string;
+    responseStrategy?: string;
+    dominantIntent?: string;
+  };
 }): string {
   const agent = params.agent;
   const handoffKeywords = Array.isArray((agent as { handoffKeywords?: unknown }).handoffKeywords)
@@ -116,6 +122,20 @@ Comando de retomada: ${clean((agent as { comandoRetomaConversa?: unknown }).coma
 - Responda curto e prático quando a configuração pedir velocidade/humanização.
 - Se a conversa estiver pausada por humano, o sistema não deve chamar você; se esse contexto aparecer, responda apenas que o atendimento humano está em andamento.
 - Se o cliente enviar um vídeo e não houver transcrição ou análise disponível no contexto, confirme que recebeu o vídeo e peça contexto de forma natural. Nunca invente o que aparece no vídeo.`,
+    `ESTILO WHATSAPP (OBRIGATÓRIO)
+- Soe humano, natural e direto — como atendente real no celular, não FAQ corporativo.
+- Responda em um único bloco coeso quando o cliente mandou várias mensagens seguidas.
+- Não repita apresentação, CTA, localização ou nome do empreendimento se já consta no histórico recente.
+- Priorize a intenção mais urgente e a pergunta mais recente.
+- Evite listas numeradas longas; prefira 2–4 frases curtas e úteis.
+- Não use linguagem robótica ("O empreendimento possui...", "Conforme informado anteriormente...").`,
+    params.burstContext?.dominantIntent
+      ? `BURST ATUAL DO CLIENTE
+Intenção dominante: ${params.burstContext.dominantIntent}
+Urgência: ${params.burstContext.urgencyLevel ?? "low"}
+Estratégia: ${params.burstContext.responseStrategy ?? "single_natural"}
+Responda uma única vez cobrindo o conjunto, sem tratar cada linha como pergunta separada.`
+      : null,
     ...formatRuntimeContext(params.runtimeContext),
     params.condensedContext?.trim() ? params.condensedContext.trim() : null,
     params.recognitionHint?.trim() ? params.recognitionHint.trim() : null,

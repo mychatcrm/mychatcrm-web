@@ -58,6 +58,50 @@ export function canHumanSendMessage(mode: ConversationMode): boolean {
   return mode !== "automation";
 }
 
+/** Gate unificado: webhook e scheduler usam a mesma regra. */
+export async function isAgentAutomationAllowed(params: {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  agentId: string;
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const sb = params.sb ?? createSupabaseServiceClient();
+  const state = await getConversationState({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+  });
+  const opRow = await loadStateOperationRow({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+  });
+  const mode = deriveConversationMode({
+    conversationMode: typeof opRow?.conversation_mode === "string" ? opRow.conversation_mode : null,
+    humanPaused: state?.humanPaused,
+    handoffSuggested: state?.handoffSuggested,
+    pausedReason: state?.pausedReason,
+  });
+  if (mode !== "automation") return { ok: false, reason: "conversation_mode_not_automation" };
+  if (state?.humanPaused) return { ok: false, reason: "human_paused" };
+
+  const { data: agentRow } = await sb
+    .from("tenant_agents")
+    .select("metadata")
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", params.agentId)
+    .maybeSingle();
+  const metadata =
+    agentRow?.metadata && typeof agentRow.metadata === "object"
+      ? (agentRow.metadata as Record<string, unknown>)
+      : {};
+  const status = typeof metadata.status === "string" ? metadata.status : "ativo";
+  if (status === "inativo" || status === "pausado") {
+    return { ok: false, reason: "agent_inactive" };
+  }
+  return { ok: true };
+}
+
 export function buildOperationSnapshot(
   state: ConversationState | null,
   extra?: {

@@ -176,6 +176,7 @@ export async function buildLeadConversationMemory(params: {
   remoteJid?: string | null;
   leadId?: string | null;
   messageLimit?: number;
+  excludeMessageIds?: string[];
 }): Promise<LeadConversationMemory> {
   if (!params.remoteJid && !params.leadId) {
     return {
@@ -260,7 +261,12 @@ export async function buildLeadConversationMemory(params: {
     summary?.createdAt ??
     null;
 
-  const aiMessages = conversationMessagesToAi(recentMessages);
+  const exclude = new Set(params.excludeMessageIds ?? []);
+  const filteredMessages = exclude.size
+    ? recentMessages.filter((m) => !m.id || !exclude.has(m.id))
+    : recentMessages;
+
+  const aiMessages = conversationMessagesToAi(filteredMessages);
   const condensedContext = buildCondensedMemoryContext({
     lead,
     state,

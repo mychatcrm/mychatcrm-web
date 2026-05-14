@@ -1,4 +1,5 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { cancelPendingAgentResponseJobs } from "@/lib/server/agent-response-jobs";
 import {
   type ConversationState,
   getConversationState,
@@ -138,7 +139,8 @@ export async function revealConversationOnInbound(params: {
       remoteJid: params.remoteJid,
     }));
 
-  return upsertConversationState({
+  const resettingAutomation = shouldResetAutomationOnArchivedReopen(previous);
+  const state = await upsertConversationState({
     sb,
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,
@@ -148,6 +150,17 @@ export async function revealConversationOnInbound(params: {
       lastMessageAt: params.lastMessageAt,
     }),
   });
+
+  if (resettingAutomation) {
+    await cancelPendingAgentResponseJobs({
+      sb,
+      tenantId: params.tenantId,
+      remoteJid: params.remoteJid,
+      reason: "archived_reopen_reset",
+    });
+  }
+
+  return state;
 }
 
 export function isConversationVisibleInInbox(state: {

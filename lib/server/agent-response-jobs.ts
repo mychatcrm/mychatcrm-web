@@ -10,13 +10,15 @@ import {
   sleep,
 } from "@/lib/server/agent-response-schedule";
 import {
-  deriveConversationMode,
-  loadStateOperationRow,
+  isAgentAutomationAllowed,
 } from "@/lib/server/conversation-operation";
-import { getConversationState } from "@/lib/server/conversation-memory";
 import { processAgentResponseJob } from "@/lib/server/evolution-agent-reply";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
+
+const STUCK_PROCESSING_MS = 5 * 60 * 1000;
+const MAX_JOB_ATTEMPTS = 3;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export type AgentResponseJobRow = {
   id: string;
@@ -33,6 +35,7 @@ export type AgentResponseJobRow = {
   message_ids: string[];
   inbound_message_count: number;
   attempt_count: number;
+  burst_generation: number;
   locked_at: string | null;
   completed_at: string | null;
   failed_reason: string | null;
@@ -42,7 +45,7 @@ export type AgentResponseJobRow = {
 
 function parseMessageIds(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  return value.filter((item): item is string => typeof item === "string" && UUID_RE.test(item));
 }
 
 function rowFromDb(data: Record<string, unknown>): AgentResponseJobRow {
@@ -61,12 +64,28 @@ function rowFromDb(data: Record<string, unknown>): AgentResponseJobRow {
     message_ids: parseMessageIds(data.message_ids),
     inbound_message_count: Number(data.inbound_message_count ?? 1),
     attempt_count: Number(data.attempt_count ?? 0),
+    burst_generation: Number(data.burst_generation ?? 1),
     locked_at: typeof data.locked_at === "string" ? data.locked_at : null,
     completed_at: typeof data.completed_at === "string" ? data.completed_at : null,
     failed_reason: typeof data.failed_reason === "string" ? data.failed_reason : null,
     created_at: String(data.created_at),
     updated_at: String(data.updated_at),
   };
+}
+
+function logJobEvent(event: string, payload: Record<string, unknown>): void {
+  console.info("[agent-response-jobs]", { event, ...payload });
+}
+
+function isTransientFailure(error: string): boolean {
+  const e = error.toLowerCase();
+  return (
+    e.includes("evolution") ||
+    e.includes("timeout") ||
+    e.includes("fetch") ||
+    e.includes("network") ||
+    e.includes("rate")
+  );
 }
 
 export async function loadAgentSmartWaitSettings(
@@ -93,47 +112,15 @@ export async function shouldScheduleAgentResponse(params: {
   remoteJid: string;
   agentId: string;
 }): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const state = await getConversationState({
+  const allowed = await isAgentAutomationAllowed({
     sb: params.sb,
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,
+    agentId: params.agentId,
   });
-  const opRow = await loadStateOperationRow({
-    sb: params.sb,
-    tenantId: params.tenantId,
-    remoteJid: params.remoteJid,
-  });
-  const mode = deriveConversationMode({
-    conversationMode: typeof opRow?.conversation_mode === "string" ? opRow.conversation_mode : null,
-    humanPaused: state?.humanPaused,
-    handoffSuggested: state?.handoffSuggested,
-    pausedReason: state?.pausedReason,
-  });
-  if (mode !== "automation") return { ok: false, reason: "conversation_mode_not_automation" };
-  if (state?.humanPaused) return { ok: false, reason: "human_paused" };
-
-  const { data: agentRow } = await params.sb
-    .from("tenant_agents")
-    .select("metadata")
-    .eq("tenant_id", params.tenantId)
-    .eq("agent_id", params.agentId)
-    .maybeSingle();
-  const metadata =
-    agentRow?.metadata && typeof agentRow.metadata === "object"
-      ? (agentRow.metadata as Record<string, unknown>)
-      : {};
-  const status = typeof metadata.status === "string" ? metadata.status : "ativo";
-  if (status === "inativo" || status === "pausado") {
-    return { ok: false, reason: "agent_inactive" };
-  }
+  if (!allowed.ok) return { ok: false, reason: allowed.reason };
   return { ok: true };
 }
-
-function logJobEvent(event: string, payload: Record<string, unknown>): void {
-  console.info("[agent-response-jobs]", { event, ...payload });
-}
-
-const STUCK_PROCESSING_MS = 5 * 60 * 1000;
 
 export async function reclaimStuckProcessingJobs(sb?: SupabaseServiceClient): Promise<number> {
   const client = sb ?? createSupabaseServiceClient();
@@ -147,20 +134,106 @@ export async function reclaimStuckProcessingJobs(sb?: SupabaseServiceClient): Pr
     })
     .eq("status", "processing")
     .lt("locked_at", cutoff)
+    .lt("attempt_count", MAX_JOB_ATTEMPTS)
     .select("id");
   if (error) {
-    console.warn("[agent-response-jobs]", {
-      event: "failed_reason",
-      scope: "reclaim_stuck",
-      reason: error.message,
-    });
+    logJobEvent("failed_reason", { scope: "reclaim_stuck", reason: error.message });
     return 0;
   }
   const count = Array.isArray(data) ? data.length : 0;
-  if (count > 0) {
-    logJobEvent("reclaimed_stuck", { count });
-  }
+  if (count > 0) logJobEvent("reclaimed_stuck", { count });
   return count;
+}
+
+async function rescheduleExistingJob(params: {
+  sb: SupabaseServiceClient;
+  current: AgentResponseJobRow;
+  tenantId: string;
+  remoteJid: string;
+  leadId?: string | null;
+  agentId: string;
+  instanceName: string;
+  whatsappMessageId: string;
+  occurredAt: Date;
+  settings: AgentSmartWaitSettings;
+  now: Date;
+}): Promise<AgentResponseJobRow | null> {
+  const { current, sb, settings, now, occurredAt } = params;
+  if (!UUID_RE.test(params.whatsappMessageId)) {
+    logJobEvent("failed_reason", {
+      scope: "reschedule",
+      reason: "invalid_message_uuid",
+      tenant_id: params.tenantId,
+    });
+    return null;
+  }
+
+  const messageIds = Array.from(new Set([...current.message_ids, params.whatsappMessageId]));
+  const inboundMessageCount = current.inbound_message_count + 1;
+  const firstMessageAt = new Date(current.first_message_at);
+  const { scheduledFor, maxWaitUntil } = computeAgentResponseSchedule({
+    now,
+    firstMessageAt,
+    lastMessageAt: occurredAt,
+    inboundMessageCount,
+    settings,
+  });
+  const nextGeneration = current.burst_generation + 1;
+  const isProcessing = current.status === "processing";
+
+  const patch: Record<string, unknown> = {
+    lead_id: params.leadId ?? current.lead_id,
+    agent_id: params.agentId,
+    instance_name: params.instanceName,
+    last_message_at: occurredAt.toISOString(),
+    scheduled_for: scheduledFor.toISOString(),
+    max_wait_until: maxWaitUntil.toISOString(),
+    message_ids: messageIds,
+    inbound_message_count: inboundMessageCount,
+    burst_generation: nextGeneration,
+    updated_at: now.toISOString(),
+  };
+
+  if (!isProcessing) {
+    patch.status = "pending";
+    patch.locked_at = null;
+  }
+
+  const { data, error } = await sb
+    .from("agent_response_jobs")
+    .update(patch)
+    .eq("id", current.id)
+    .in("status", ["pending", "processing"])
+    .select("*")
+    .maybeSingle();
+
+  if (error || !data) {
+    logJobEvent("failed_reason", {
+      tenant_id: params.tenantId,
+      remote_jid: maskRemoteJidForLog(params.remoteJid),
+      scope: "reschedule",
+      reason: error?.message ?? "reschedule_conflict",
+    });
+    return null;
+  }
+
+  if (isProcessing) {
+    logJobEvent("generation_bumped", {
+      job_id: current.id,
+      from: current.burst_generation,
+      to: nextGeneration,
+    });
+  }
+
+  logJobEvent("job_rescheduled", {
+    tenant_id: params.tenantId,
+    remote_jid: maskRemoteJidForLog(params.remoteJid),
+    job_id: current.id,
+    messages_count: messageIds.length,
+    scheduled_for: scheduledFor.toISOString(),
+    processing: isProcessing,
+  });
+  return rowFromDb(data as Record<string, unknown>);
 }
 
 export async function scheduleAgentResponseJob(params: {
@@ -177,6 +250,15 @@ export async function scheduleAgentResponseJob(params: {
   const sb = params.sb ?? createSupabaseServiceClient();
   const settings = params.settings ?? (await loadAgentSmartWaitSettings(sb, params.tenantId, params.agentId));
   if (!settings.enabled) return null;
+
+  if (!UUID_RE.test(params.whatsappMessageId)) {
+    logJobEvent("failed_reason", {
+      scope: "schedule",
+      reason: "invalid_message_uuid",
+      tenant_id: params.tenantId,
+    });
+    return null;
+  }
 
   const eligible = await shouldScheduleAgentResponse({
     sb,
@@ -205,54 +287,19 @@ export async function scheduleAgentResponseJob(params: {
     .maybeSingle();
 
   if (existing) {
-    const current = rowFromDb(existing as Record<string, unknown>);
-    const messageIds = Array.from(new Set([...current.message_ids, params.whatsappMessageId]));
-    const inboundMessageCount = current.inbound_message_count + 1;
-    const firstMessageAt = new Date(current.first_message_at);
-    const { scheduledFor, maxWaitUntil } = computeAgentResponseSchedule({
-      now,
-      firstMessageAt,
-      lastMessageAt: occurredAt,
-      inboundMessageCount,
+    return rescheduleExistingJob({
+      sb,
+      current: rowFromDb(existing as Record<string, unknown>),
+      tenantId: params.tenantId,
+      remoteJid: params.remoteJid,
+      leadId: params.leadId,
+      agentId: params.agentId,
+      instanceName: params.instanceName,
+      whatsappMessageId: params.whatsappMessageId,
+      occurredAt,
       settings,
+      now,
     });
-    const { data, error } = await sb
-      .from("agent_response_jobs")
-      .update({
-        lead_id: params.leadId ?? current.lead_id,
-        agent_id: params.agentId,
-        instance_name: params.instanceName,
-        status: "pending",
-        last_message_at: occurredAt.toISOString(),
-        scheduled_for: scheduledFor.toISOString(),
-        max_wait_until: maxWaitUntil.toISOString(),
-        message_ids: messageIds,
-        inbound_message_count: inboundMessageCount,
-        locked_at: null,
-        updated_at: now.toISOString(),
-      })
-      .eq("id", current.id)
-      .in("status", ["pending", "processing"])
-      .select("*")
-      .maybeSingle();
-    if (error || !data) {
-      logJobEvent("failed_reason", {
-        tenant_id: params.tenantId,
-        remote_jid: maskRemoteJidForLog(params.remoteJid),
-        scope: "reschedule",
-        reason: error?.message ?? "reschedule_conflict",
-      });
-      return null;
-    }
-    logJobEvent("job_rescheduled", {
-      tenant_id: params.tenantId,
-      remote_jid: maskRemoteJidForLog(params.remoteJid),
-      job_id: current.id,
-      messages_count: messageIds.length,
-      scheduled_for: scheduledFor.toISOString(),
-      now: now.toISOString(),
-    });
-    return rowFromDb(data as Record<string, unknown>);
   }
 
   const { scheduledFor, maxWaitUntil } = computeAgentResponseSchedule({
@@ -262,6 +309,7 @@ export async function scheduleAgentResponseJob(params: {
     inboundMessageCount: 1,
     settings,
   });
+
   const { data, error } = await sb
     .from("agent_response_jobs")
     .insert({
@@ -277,25 +325,53 @@ export async function scheduleAgentResponseJob(params: {
       max_wait_until: maxWaitUntil.toISOString(),
       message_ids: [params.whatsappMessageId],
       inbound_message_count: 1,
+      burst_generation: 1,
     })
     .select("*")
     .single();
-  if (error || !data) {
+
+  if (error) {
+    const isConflict = error.code === "23505" || error.message.includes("duplicate");
+    if (isConflict) {
+      logJobEvent("schedule_conflict", { tenant_id: params.tenantId });
+      const { data: retryExisting } = await sb
+        .from("agent_response_jobs")
+        .select("*")
+        .eq("tenant_id", params.tenantId)
+        .eq("remote_jid", params.remoteJid)
+        .in("status", ["pending", "processing"])
+        .maybeSingle();
+      if (retryExisting) {
+        return rescheduleExistingJob({
+          sb,
+          current: rowFromDb(retryExisting as Record<string, unknown>),
+          tenantId: params.tenantId,
+          remoteJid: params.remoteJid,
+          leadId: params.leadId,
+          agentId: params.agentId,
+          instanceName: params.instanceName,
+          whatsappMessageId: params.whatsappMessageId,
+          occurredAt,
+          settings,
+          now,
+        });
+      }
+    }
     logJobEvent("failed_reason", {
       tenant_id: params.tenantId,
       remote_jid: maskRemoteJidForLog(params.remoteJid),
       scope: "insert",
-      reason: error?.message ?? "insert_failed",
+      reason: error.message ?? "insert_failed",
     });
     return null;
   }
+
   logJobEvent("job_created", {
     tenant_id: params.tenantId,
     remote_jid: maskRemoteJidForLog(params.remoteJid),
     job_id: (data as Record<string, unknown>).id,
     messages_count: 1,
     scheduled_for: scheduledFor.toISOString(),
-    now: now.toISOString(),
   });
   return rowFromDb(data as Record<string, unknown>);
 }
@@ -320,22 +396,11 @@ export async function cancelPendingAgentResponseJobs(params: {
     .in("status", ["pending", "processing"])
     .select("id");
   if (error) {
-    console.warn("[agent-response-jobs] job_cancel_failed", {
-      tenant_id: params.tenantId,
-      remote_jid: maskRemoteJidForLog(params.remoteJid),
-      error: error.message,
-    });
+    logJobEvent("failed_reason", { scope: "cancel", reason: error.message });
     return 0;
   }
   const count = Array.isArray(data) ? data.length : 0;
-  if (count > 0) {
-    console.info("[agent-response-jobs] job_cancelled", {
-      tenant_id: params.tenantId,
-      remote_jid: maskRemoteJidForLog(params.remoteJid),
-      count,
-      reason: params.reason,
-    });
-  }
+  if (count > 0) logJobEvent("job_cancelled", { count, reason: params.reason });
   return count;
 }
 
@@ -350,6 +415,17 @@ async function claimJob(sb: SupabaseServiceClient, jobId: string): Promise<Agent
     .maybeSingle();
   if (!current) return null;
   const pending = rowFromDb(current as Record<string, unknown>);
+
+  const maxWait = new Date(pending.max_wait_until).getTime();
+  if (now.getTime() > maxWait) {
+    logJobEvent("not_ready", { job_id: jobId, reason: "past_max_wait_until" });
+    await sb
+      .from("agent_response_jobs")
+      .update({ status: "failed", failed_reason: "max_wait_exceeded", updated_at: nowIso })
+      .eq("id", jobId);
+    return null;
+  }
+
   if (!isJobReadyToProcess(pending.scheduled_for, now)) {
     logJobEvent("not_ready", {
       job_id: jobId,
@@ -358,6 +434,7 @@ async function claimJob(sb: SupabaseServiceClient, jobId: string): Promise<Agent
     });
     return null;
   }
+
   const { data, error } = await sb
     .from("agent_response_jobs")
     .update({
@@ -374,12 +451,23 @@ async function claimJob(sb: SupabaseServiceClient, jobId: string): Promise<Agent
   const claimed = rowFromDb(data as Record<string, unknown>);
   logJobEvent("claimed", {
     job_id: claimed.id,
+    burst_generation: claimed.burst_generation,
     tenant_id: claimed.tenant_id,
     remote_jid: maskRemoteJidForLog(claimed.remote_jid),
     scheduled_for: claimed.scheduled_for,
-    now: nowIso,
   });
   return claimed;
+}
+
+async function isJobGenerationStale(
+  sb: SupabaseServiceClient,
+  jobId: string,
+  claimedGeneration: number,
+): Promise<boolean> {
+  const { data } = await sb.from("agent_response_jobs").select("burst_generation, status").eq("id", jobId).maybeSingle();
+  if (!data) return true;
+  const row = data as { burst_generation?: number; status?: string };
+  return Number(row.burst_generation ?? 1) !== claimedGeneration || row.status === "cancelled";
 }
 
 export async function tryProcessAgentResponseJob(
@@ -389,6 +477,7 @@ export async function tryProcessAgentResponseJob(
   const client = sb ?? createSupabaseServiceClient();
   const job = await claimJob(client, jobId);
   if (!job) return "skipped";
+  const claimedGeneration = job.burst_generation;
 
   try {
     const eligible = await shouldScheduleAgentResponse({
@@ -406,54 +495,79 @@ export async function tryProcessAgentResponseJob(
           updated_at: new Date().toISOString(),
         })
         .eq("id", job.id);
-      console.info("[agent-response-jobs] job_cancelled", {
-        tenant_id: job.tenant_id,
-        remote_jid: maskRemoteJidForLog(job.remote_jid),
-        job_id: job.id,
-        reason: eligible.reason,
-      });
+      logJobEvent("job_cancelled", { job_id: job.id, reason: eligible.reason });
       return "skipped";
     }
 
-    const result = await processAgentResponseJob(client, job);
-    await client
-      .from("agent_response_jobs")
-      .update({
-        status: result.ok ? "completed" : "failed",
-        completed_at: new Date().toISOString(),
-        failed_reason: result.ok ? null : result.error,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", job.id);
+    const result = await processAgentResponseJob(client, job, claimedGeneration);
+
+    if (await isJobGenerationStale(client, job.id, claimedGeneration)) {
+      logJobEvent("generation_stale", { job_id: job.id, claimed_generation: claimedGeneration });
+      await client
+        .from("agent_response_jobs")
+        .update({
+          status: "pending",
+          locked_at: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", job.id);
+      return "skipped";
+    }
+
+    if (result.ok === false && result.error === "generation_stale") {
+      await client
+        .from("agent_response_jobs")
+        .update({ status: "pending", locked_at: null, updated_at: new Date().toISOString() })
+        .eq("id", job.id);
+      return "skipped";
+    }
+
+    const finalStatus = result.ok
+      ? "completed"
+      : !result.ok && isTransientFailure(result.error) && job.attempt_count < MAX_JOB_ATTEMPTS
+        ? "pending"
+        : "failed";
+
+    const failedError = !result.ok ? result.error : null;
+
+    const patch: Record<string, unknown> = {
+      status: finalStatus,
+      updated_at: new Date().toISOString(),
+    };
+    if (finalStatus === "completed") {
+      patch.completed_at = new Date().toISOString();
+      patch.failed_reason = null;
+    } else if (finalStatus === "pending") {
+      patch.locked_at = null;
+      patch.scheduled_for = new Date(Date.now() + 5_000).toISOString();
+      patch.failed_reason = failedError;
+    } else {
+      patch.completed_at = new Date().toISOString();
+      patch.failed_reason = failedError;
+    }
+
+    await client.from("agent_response_jobs").update(patch).eq("id", job.id);
 
     logJobEvent("completed", {
-      tenant_id: job.tenant_id,
-      remote_jid: maskRemoteJidForLog(job.remote_jid),
       job_id: job.id,
       ok: result.ok,
-      deduped_count: result.dedupedCount ?? 0,
+      deduped_count: result.ok ? result.dedupedCount : (result.dedupedCount ?? 0),
+      final_status: finalStatus,
     });
-    if (!result.ok) {
-      logJobEvent("failed_reason", {
-        job_id: job.id,
-        reason: result.error,
-      });
-    }
-    return result.ok ? "processed" : "failed";
+    if (!result.ok) logJobEvent("failed_reason", { job_id: job.id, reason: result.error });
+    return result.ok ? "processed" : finalStatus === "pending" ? "skipped" : "failed";
   } catch (error) {
     const message = error instanceof Error ? error.message : "process_failed";
     await client
       .from("agent_response_jobs")
       .update({
-        status: "failed",
+        status: job.attempt_count < MAX_JOB_ATTEMPTS ? "pending" : "failed",
         failed_reason: message,
+        locked_at: null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", job.id);
-    logJobEvent("failed_reason", {
-      job_id: job.id,
-      reason: message,
-    });
+    logJobEvent("failed_reason", { job_id: job.id, reason: message });
     return "failed";
   }
 }
@@ -469,10 +583,9 @@ export async function processDueAgentResponseJobs(sb?: SupabaseServiceClient): P
     .lte("scheduled_for", now)
     .order("scheduled_for", { ascending: true })
     .limit(20);
-  const ids = (data ?? []).map((row) => String((row as { id: string }).id));
   let processed = 0;
-  for (const id of ids) {
-    const outcome = await tryProcessAgentResponseJob(id, client);
+  for (const row of data ?? []) {
+    const outcome = await tryProcessAgentResponseJob(String((row as { id: string }).id), client);
     if (outcome === "processed") processed += 1;
   }
   return processed;
@@ -495,30 +608,37 @@ export async function processDueJobsForConversation(params: {
     .lte("scheduled_for", now)
     .order("scheduled_for", { ascending: true })
     .limit(5);
-  const ids = (data ?? []).map((row) => String((row as { id: string }).id));
   let processed = 0;
-  for (const id of ids) {
-    const outcome = await tryProcessAgentResponseJob(id, client);
+  for (const row of data ?? []) {
+    const outcome = await tryProcessAgentResponseJob(String((row as { id: string }).id), client);
     if (outcome === "processed") processed += 1;
   }
   return processed;
 }
 
 export async function waitAndProcessAgentResponseJob(jobId: string): Promise<void> {
-  const deadline = Date.now() + 40_000;
+  const sb = createSupabaseServiceClient();
+  const { data: initial } = await sb.from("agent_response_jobs").select("*").eq("id", jobId).maybeSingle();
+  if (!initial) return;
+  const job = rowFromDb(initial as Record<string, unknown>);
+  const deadline = Math.min(
+    new Date(job.max_wait_until).getTime() + 15_000,
+    Date.now() + Math.max(45_000, job.inbound_message_count * 5_000),
+  );
+
   while (Date.now() < deadline) {
-    const sb = createSupabaseServiceClient();
     const { data } = await sb.from("agent_response_jobs").select("*").eq("id", jobId).maybeSingle();
     if (!data) return;
-    const job = rowFromDb(data as Record<string, unknown>);
-    if (job.status !== "pending") return;
-    if (isJobReadyToProcess(job.scheduled_for)) {
+    const current = rowFromDb(data as Record<string, unknown>);
+    if (current.status === "completed" || current.status === "cancelled" || current.status === "failed") return;
+    if (current.status === "pending" && isJobReadyToProcess(current.scheduled_for)) {
       await tryProcessAgentResponseJob(jobId, sb);
       return;
     }
-    const waitMs = new Date(job.scheduled_for).getTime() - Date.now();
-    await sleep(Math.min(750, Math.max(250, waitMs)));
+    const waitMs = new Date(current.scheduled_for).getTime() - Date.now();
+    await sleep(Math.min(1000, Math.max(250, waitMs)));
   }
+  logJobEvent("wait_timeout", { job_id: jobId });
 }
 
 export function triggerAgentResponseJobProcessor(jobId?: string): void {
@@ -527,10 +647,7 @@ export function triggerAgentResponseJobProcessor(jobId?: string): void {
     process.env.CRON_SECRET?.trim() ||
     process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
   if (!secret) {
-    console.warn("[agent-response-jobs] processor_trigger_skipped", {
-      reason: "missing_internal_secret",
-      job_id: jobId ?? null,
-    });
+    logJobEvent("failed_reason", { scope: "processor_trigger", reason: "missing_internal_secret" });
     return;
   }
   const base =
@@ -546,9 +663,10 @@ export function triggerAgentResponseJobProcessor(jobId?: string): void {
       "x-agent-jobs-secret": secret,
     },
   }).catch((error) => {
-    console.warn("[agent-response-jobs] processor_trigger_failed", {
+    logJobEvent("failed_reason", {
+      scope: "processor_trigger",
       job_id: jobId ?? null,
-      error: error instanceof Error ? error.message : "fetch_failed",
+      reason: error instanceof Error ? error.message : "fetch_failed",
     });
   });
 }

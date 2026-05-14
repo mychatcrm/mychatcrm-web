@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const upsertConversationStateMock = vi.fn(async () => ({
+const syncAutomationModeMock = vi.fn(async () => "human" as const);
+const getConversationStateMock = vi.fn(async () => ({
   id: "state-1",
   tenantId: "tenant-1",
   remoteJid: "5511999999999@s.whatsapp.net",
@@ -32,14 +33,19 @@ vi.mock("@/lib/supabase/server", () => ({
   }),
 }));
 
+vi.mock("@/lib/server/conversation-operation", () => ({
+  syncAutomationMode: (...args: unknown[]) => syncAutomationModeMock(...args),
+}));
+
 vi.mock("@/lib/server/conversation-memory", () => ({
-  upsertConversationState: (...args: unknown[]) => upsertConversationStateMock(...args),
+  getConversationState: (...args: unknown[]) => getConversationStateMock(...args),
 }));
 
 describe("conversation human control", () => {
   beforeEach(async () => {
     vi.resetModules();
-    upsertConversationStateMock.mockClear();
+    syncAutomationModeMock.mockClear();
+    getConversationStateMock.mockClear();
     maybeSingleMock.mockReset();
   });
 
@@ -67,10 +73,9 @@ describe("conversation human control", () => {
     });
 
     expect(result).toBe("paused");
-    expect(upsertConversationStateMock).toHaveBeenCalledWith(
+    expect(syncAutomationModeMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        humanPaused: true,
-        pausedBy: "human_command",
+        enabled: false,
       }),
     );
   });
@@ -107,9 +112,9 @@ describe("conversation human control", () => {
     });
 
     expect(result).toBe("resumed");
-    expect(upsertConversationStateMock).toHaveBeenCalledWith(
+    expect(syncAutomationModeMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        humanPaused: false,
+        enabled: true,
       }),
     );
   });
@@ -124,13 +129,11 @@ describe("conversation human control", () => {
       agentId: "ag-vendas",
     });
 
-    expect(upsertConversationStateMock).toHaveBeenCalledWith(
+    expect(syncAutomationModeMock).toHaveBeenCalledWith(
       expect.objectContaining({
         tenantId: "tenant-1",
         remoteJid: "5511999999999@s.whatsapp.net",
-        humanPaused: true,
-        pausedBy: "human_manual",
-        pausedReason: "manual_toggle",
+        enabled: false,
       }),
     );
   });
@@ -145,15 +148,12 @@ describe("conversation human control", () => {
       agentId: "ag-vendas",
     });
 
-    expect(upsertConversationStateMock).toHaveBeenCalledWith(
+    expect(syncAutomationModeMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        humanPaused: false,
-        pausedBy: null,
-        pausedReason: null,
-        handoffSuggested: false,
-        handoffReason: null,
+        enabled: true,
       }),
     );
+    expect(getConversationStateMock).toHaveBeenCalled();
   });
 
   it("treats missing state as automation enabled", async () => {

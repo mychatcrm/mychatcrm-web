@@ -27,7 +27,7 @@ import {
 } from "@/lib/server/conversation-memory";
 import { applyHumanConversationCommand } from "@/lib/server/conversation-human-control";
 import { revealConversationOnInbound } from "@/lib/server/conversation-visibility";
-import { markWaitingForHuman } from "@/lib/server/conversation-operation";
+import { isAgentAutomationAllowed, markWaitingForHuman } from "@/lib/server/conversation-operation";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
 
@@ -475,13 +475,15 @@ export async function POST(request: Request) {
         occurredAt: inboundSaved?.created_at ?? new Date().toISOString(),
       });
 
-      const pausedState = await getConversationState({
+      const automationAllowed = await isAgentAutomationAllowed({
         sb: sbState,
         tenantId: row.tenant_id,
         remoteJid: msg.remoteJid,
+        agentId,
       });
-      if (pausedState?.humanPaused) {
-        console.info("[webhooks/evolution] agent skipped: human_paused", {
+      if (!automationAllowed.ok) {
+        console.info("[webhooks/evolution] agent skipped", {
+          reason: automationAllowed.reason,
           tenant_id: row.tenant_id,
           agent_id: agentId,
           remote_jid_last4: msg.remoteJid.replace(/\D/g, "").slice(-4),
@@ -500,18 +502,13 @@ export async function POST(request: Request) {
         : {};
       const smartWait = smartWaitFromMetadata(metadata);
       if (smartWait.enabled) {
-        let inboundMessageKey = inboundSaved?.id ?? null;
-        if (!inboundMessageKey && msg.messageId) {
-          const { data: existingRow } = await sbState
-            .from("whatsapp_messages")
-            .select("id")
-            .eq("tenant_id", row.tenant_id)
-            .eq("remote_jid", msg.remoteJid)
-            .eq("message_id", msg.messageId)
-            .maybeSingle();
-          inboundMessageKey = typeof existingRow?.id === "string" ? existingRow.id : msg.messageId;
-        }
+        const inboundMessageKey = inboundSaved?.id ?? null;
         if (inboundMessageKey) {
+          console.info("[agent-response-jobs]", {
+            event: "immediate_flow_blocked",
+            tenant_id: row.tenant_id,
+            remote_jid: msg.remoteJid.replace(/\D/g, "").slice(-4),
+          });
           await runInboundSmartWaitFlow({
             sb: sbState,
             tenantId: row.tenant_id,
@@ -524,11 +521,9 @@ export async function POST(request: Request) {
             smartWait,
           });
         } else {
-          console.info("[agent-response-jobs] webhook_smart_wait", {
-            action: "skipped_immediate_blocked",
-            smart_wait_enabled: true,
-            immediate_flow_blocked: true,
-            reason: "missing_inbound_message_key",
+          console.info("[agent-response-jobs]", {
+            event: "immediate_flow_blocked",
+            reason: "missing_inbound_message_uuid",
             tenant_id: row.tenant_id,
             remote_jid: msg.remoteJid.replace(/\D/g, "").slice(-4),
           });

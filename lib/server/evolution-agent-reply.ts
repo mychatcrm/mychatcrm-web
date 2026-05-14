@@ -2,10 +2,9 @@ import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
 import { detectSupportedLanguageCode, type SupportedLanguageCode } from "@/lib/ai/language-detect";
 import { sanitizeAgentResponseSettings } from "@/lib/agents";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
-import {
-  buildGroupedUserPrompt,
-  deduplicateInboundTexts,
-} from "@/lib/conversas/inbound-message-dedupe";
+import { buildTextualReplyFallbackTopics } from "@/lib/conversas/inbound-message-dedupe";
+import { normalizeConversationBurst } from "@/lib/conversas/normalize-conversation-burst";
+import { detectOutboundRepetition } from "@/lib/conversas/outbound-repetition-guard";
 import {
   evolutionSendAudio,
   evolutionSendText,
@@ -69,10 +68,23 @@ async function saveOutboundMessage(opts: {
   });
 }
 
+async function isGenerationStale(
+  sb: SupabaseServiceClient,
+  jobId: string,
+  claimedGeneration: number,
+): Promise<boolean> {
+  const { data } = await sb.from("agent_response_jobs").select("burst_generation").eq("id", jobId).maybeSingle();
+  if (!data) return true;
+  return Number((data as { burst_generation?: number }).burst_generation ?? 1) !== claimedGeneration;
+}
+
 export async function processAgentResponseJob(
   sb: SupabaseServiceClient,
   job: AgentResponseJobRow,
+  claimedGeneration?: number,
 ): Promise<{ ok: true; dedupedCount: number } | { ok: false; error: string; dedupedCount?: number }> {
+  const generation = claimedGeneration ?? job.burst_generation;
+
   const { data: rowsByWindow, error: windowError } = await sb
     .from("whatsapp_messages")
     .select("id, content, kind, message_id, remote_jid, created_at")
@@ -110,27 +122,48 @@ export async function processAgentResponseJob(
       ? (agentRow.metadata as Record<string, unknown>)
       : {};
   const smartWait = smartWaitFromMetadata(metadata);
-  const deduped = smartWait.dedupeRepeated
-    ? deduplicateInboundTexts(
-        inboundRows.map((row) => ({
-          id: row.id,
-          content: row.content,
-          messageId: row.message_id,
-          kind: row.kind,
-        })),
-      )
-    : {
-        messages: inboundRows.map((row) => ({
-          id: row.id,
-          content: row.content,
-          messageId: row.message_id,
-          kind: row.kind,
-        })),
-        dedupedCount: 0,
-      };
+  const burstMode =
+    metadata.smartWaitBurstMode === "exact" ? "exact" as const : "relaxed" as const;
 
-  const groupedPrompt = buildGroupedUserPrompt(deduped.messages);
-  const languageCode = detectSupportedLanguageCode(groupedPrompt);
+  const burst = normalizeConversationBurst(
+    inboundRows.map((row) => ({
+      id: row.id,
+      content: row.content,
+      messageId: row.message_id,
+      kind: row.kind,
+    })),
+    { dedupeEnabled: smartWait.dedupeRepeated, burstMode },
+  );
+
+  console.info("[agent-response-jobs]", {
+    event: "grouped_messages_count",
+    job_id: job.id,
+    count: burst.groupedMessagesCount,
+  });
+  console.info("[agent-response-jobs]", {
+    event: "deduped_messages_count",
+    job_id: job.id,
+    count: burst.dedupedCount,
+  });
+  console.info("[agent-response-jobs]", {
+    event: "grouped_intent",
+    job_id: job.id,
+    intent: burst.signals.groupedIntent,
+    dominant: burst.signals.dominantIntent,
+  });
+  console.info("[agent-response-jobs]", {
+    event: "urgency_level",
+    job_id: job.id,
+    level: burst.signals.urgencyLevel,
+  });
+  console.info("[agent-response-jobs]", {
+    event: "response_strategy",
+    job_id: job.id,
+    strategy: burst.responseStrategy,
+  });
+
+  const userPrompt = burst.userPrompt;
+  const languageCode = detectSupportedLanguageCode(userPrompt);
   const handoffKeywords = Array.isArray(metadata.handoffKeywords)
     ? metadata.handoffKeywords.filter((item): item is string => typeof item === "string")
     : [];
@@ -139,29 +172,81 @@ export async function processAgentResponseJob(
     handoffEnabled && typeof metadata.handoffMensagem === "string" && metadata.handoffMensagem.trim()
       ? metadata.handoffMensagem.trim()
       : null;
-  const handoffCheck = shouldTriggerHandoff(groupedPrompt, handoffKeywords);
+  const handoffCheck = shouldTriggerHandoff(userPrompt, handoffKeywords);
 
-  const result = await generateAgentResponse({
+  let result = await generateAgentResponse({
     tenantId: job.tenant_id,
     agentId: job.agent_id,
     conversationId: job.remote_jid,
     customerId: job.remote_jid,
     feature: "agent_chat",
-    messages: groupedPrompt ? [{ role: "user", content: groupedPrompt }] : [],
+    messages: userPrompt ? [{ role: "user", content: userPrompt }] : [],
+    excludeMessageIds: burst.suppressedHistoryIds,
+    burstContext: {
+      groupedIntent: burst.signals.groupedIntent,
+      urgencyLevel: burst.signals.urgencyLevel,
+      responseStrategy: burst.responseStrategy,
+      dominantIntent: burst.signals.dominantIntent,
+    },
   });
+
   console.info("[agent-response-jobs]", {
     event: "generated_response",
     job_id: job.id,
     ok: result.ok,
-    messages_count: deduped.messages.length,
+    messages_count: burst.groupedMessagesCount,
   });
 
   let replyText = result.ok
     ? result.text
-    : localizedGenericFailureReply(languageCode);
+    : buildTextualReplyFallbackTopics(burst.canonicalMessages) ??
+      localizedGenericFailureReply(languageCode);
+
+  if (result.ok) {
+    const recentOutbound = (
+      await getRecentConversationMessages({
+        sb,
+        tenantId: job.tenant_id,
+        remoteJid: job.remote_jid,
+        limit: 6,
+      })
+    )
+      .filter((m) => m.role === "assistant")
+      .map((m) => m.content)
+      .slice(-2);
+    const repeated = detectOutboundRepetition(replyText, recentOutbound);
+    if (repeated) {
+      const retry = await generateAgentResponse({
+        tenantId: job.tenant_id,
+        agentId: job.agent_id,
+        conversationId: job.remote_jid,
+        customerId: job.remote_jid,
+        feature: "agent_chat",
+        messages: [
+          { role: "user", content: userPrompt },
+          {
+            role: "user",
+            content: "Reescreva sem repetir frases ou CTAs já usadas nas últimas respostas.",
+          },
+        ],
+        excludeMessageIds: burst.suppressedHistoryIds,
+        burstContext: {
+          groupedIntent: burst.signals.groupedIntent,
+          urgencyLevel: burst.signals.urgencyLevel,
+          responseStrategy: burst.responseStrategy,
+          dominantIntent: burst.signals.dominantIntent,
+        },
+      });
+      if (retry.ok) replyText = retry.text;
+    }
+  }
+
+  if (await isGenerationStale(sb, job.id, generation)) {
+    return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
+  }
 
   const number = remoteJidToEvoNumber(job.remote_jid);
-  if (!number) return { ok: false, error: "invalid_remote_jid", dedupedCount: deduped.dedupedCount };
+  if (!number) return { ok: false, error: "invalid_remote_jid", dedupedCount: burst.dedupedCount };
 
   if (handoffCheck.trigger) {
     if (handoffMessage) replyText = handoffMessage;
@@ -208,7 +293,13 @@ export async function processAgentResponseJob(
     });
   }
 
-  const lastQuoted = [...deduped.messages].reverse().find((m) => m.messageId && m.kind === "text");
+  if (await isGenerationStale(sb, job.id, generation)) {
+    return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
+  }
+
+  const lastQuoted = [...burst.canonicalMessages]
+    .reverse()
+    .find((m) => m.messageId && m.kind === "text");
   const quoted =
     lastQuoted?.messageId
       ? {
@@ -239,13 +330,8 @@ export async function processAgentResponseJob(
         number,
         audio: audioBuffer.toString("base64"),
       });
-      if (!send.ok) return { ok: false, error: send.error, dedupedCount: deduped.dedupedCount };
-      console.info("[agent-response-jobs]", {
-        event: "sent_evolution",
-        job_id: job.id,
-        mode: "audio",
-        ok: true,
-      });
+      if (!send.ok) return { ok: false, error: send.error, dedupedCount: burst.dedupedCount };
+      console.info("[agent-response-jobs]", { event: "sent_evolution", job_id: job.id, mode: "audio", ok: true });
       await saveOutboundMessage({
         tenantId: job.tenant_id,
         remoteJid: job.remote_jid,
@@ -262,13 +348,8 @@ export async function processAgentResponseJob(
         text: replyText.slice(0, 4000),
         quoted,
       });
-      if (!send.ok) return { ok: false, error: send.error, dedupedCount: deduped.dedupedCount };
-      console.info("[agent-response-jobs]", {
-        event: "sent_evolution",
-        job_id: job.id,
-        mode: "text",
-        ok: true,
-      });
+      if (!send.ok) return { ok: false, error: send.error, dedupedCount: burst.dedupedCount };
+      console.info("[agent-response-jobs]", { event: "sent_evolution", job_id: job.id, mode: "text", ok: true });
       await saveOutboundMessage({
         tenantId: job.tenant_id,
         remoteJid: job.remote_jid,
@@ -285,13 +366,8 @@ export async function processAgentResponseJob(
       text: replyText.slice(0, 4000),
       quoted,
     });
-    if (!send.ok) return { ok: false, error: send.error, dedupedCount: deduped.dedupedCount };
-    console.info("[agent-response-jobs]", {
-      event: "sent_evolution",
-      job_id: job.id,
-      mode: "text",
-      ok: true,
-    });
+    if (!send.ok) return { ok: false, error: send.error, dedupedCount: burst.dedupedCount };
+    console.info("[agent-response-jobs]", { event: "sent_evolution", job_id: job.id, mode: "text", ok: true });
     await saveOutboundMessage({
       tenantId: job.tenant_id,
       remoteJid: job.remote_jid,
@@ -311,5 +387,5 @@ export async function processAgentResponseJob(
     conversationId: job.remote_jid,
   });
 
-  return { ok: true, dedupedCount: deduped.dedupedCount };
+  return { ok: true, dedupedCount: burst.dedupedCount };
 }
