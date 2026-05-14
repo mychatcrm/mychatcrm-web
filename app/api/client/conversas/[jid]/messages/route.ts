@@ -26,7 +26,7 @@ export async function GET(
 
   const { data, error } = await sb
     .from("whatsapp_messages")
-    .select("id, direction, kind, content, media_url, agent_id, message_id, created_at")
+    .select("id, direction, kind, content, media_url, agent_id, message_id, created_at, client_temp_id, delivery_status")
     .eq("tenant_id", session.tenantId)
     .eq("remote_jid", remoteJid)
     .order("created_at", { ascending: false })

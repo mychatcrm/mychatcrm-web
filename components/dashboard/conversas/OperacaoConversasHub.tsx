@@ -14,6 +14,18 @@ import {
   type AutomationConfirmIntent,
   type AutomationSnapshot,
 } from "@/lib/conversas/automation-toggle-flow";
+import { focusComposeTextarea, shouldSendOnEnter } from "@/lib/conversas/compose-focus";
+import { logMessageLatency } from "@/lib/conversas/message-latency-log";
+import {
+  appendMessageDeduped,
+  createClientTempId,
+  createOptimisticOutboundMessage,
+  mapDeliveryToSendStatus,
+  markOptimisticMessageFailed,
+  mergePolledMessages,
+  reconcileOptimisticMessage,
+  type SyncChatMessage,
+} from "@/lib/conversas/message-sync";
 
 // ── Emoji picker (data + react component) ────────────────────────────────────
 // Antes usávamos `require("@emoji-mart/data")` no top-level, que em Next.js
@@ -69,15 +81,30 @@ const CHAT_BG_STYLE: React.CSSProperties = {
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
-type WaMessage = {
-  id: string;
-  direction: "inbound" | "outbound";
+type WaMessage = SyncChatMessage & {
   kind: "text" | "audio" | "image" | "video" | "document";
-  content: string;
   media_url: string | null;
   agent_id: string | null;
-  created_at: string;
 };
+
+function rowToWaMessage(row: Record<string, unknown>): WaMessage {
+  const deliveryStatus = typeof row.delivery_status === "string" ? row.delivery_status : null;
+  return {
+    id: String(row.id),
+    direction: row.direction === "outbound" ? "outbound" : "inbound",
+    kind:
+      row.kind === "audio" || row.kind === "image" || row.kind === "video" || row.kind === "document"
+        ? row.kind
+        : "text",
+    content: typeof row.content === "string" ? row.content : "",
+    media_url: typeof row.media_url === "string" ? row.media_url : null,
+    agent_id: typeof row.agent_id === "string" ? row.agent_id : null,
+    created_at: String(row.created_at ?? new Date().toISOString()),
+    client_temp_id: typeof row.client_temp_id === "string" ? row.client_temp_id : null,
+    delivery_status: deliveryStatus,
+    send_status: mapDeliveryToSendStatus(deliveryStatus),
+  };
+}
 
 type WaConversation = {
   remoteJid: string;
@@ -181,15 +208,24 @@ async function apiToggleAutomation(
   return data.automation;
 }
 
-async function apiSendMessage(remoteJid: string, text: string, contactName?: string | null): Promise<WaMessage | null> {
+async function apiSendMessage(
+  remoteJid: string,
+  text: string,
+  contactName?: string | null,
+  clientTempId?: string,
+): Promise<WaMessage | null> {
   const res = await fetch("/api/client/conversas/send", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ remoteJid, text, contactName }),
+    body: JSON.stringify({ remoteJid, text, contactName, clientTempId }),
   });
   if (!res.ok) {
-    const err = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(err.error ?? `Erro ${res.status} ao enviar`);
+    const err = (await res.json().catch(() => ({}))) as { error?: string; message?: WaMessage };
+    const error = new Error(err.error ?? `Erro ${res.status} ao enviar`) as Error & {
+      persistedMessage?: WaMessage | null;
+    };
+    error.persistedMessage = err.message ?? null;
+    throw error;
   }
   const data = (await res.json()) as { message?: WaMessage };
   return data.message ?? null;
@@ -648,11 +684,20 @@ function MessageBubble({
         {tsText}
       </span>
       {out && (
+        msg.send_status === "failed" ? (
+          <span style={{ fontSize: 11, color: "#f87171" }} title="Falha ao enviar">!</span>
+        ) : msg.send_status === "sending" ? (
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <circle cx="12" cy="12" r="9" stroke={W.muted} strokeWidth="2" strokeOpacity="0.35" />
+            <path d="M12 3a9 9 0 0 1 9 9" stroke={W.muted} strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        ) : (
         // Double tick ✓✓
         <svg width="16" height="11" viewBox="0 0 16 11" fill="none">
           <path d="M1 5.5 4.5 9 10 1" stroke={W.green} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
           <path d="M5 5.5 8.5 9 15 1" stroke={W.green} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
+        )
       )}
     </div>
   );
@@ -1082,7 +1127,6 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   const [query,          setQuery]          = useState("");
   const [draft,          setDraft]          = useState("");
   const [sendError,      setSendError]      = useState("");
-  const [sending,        setSending]        = useState(false);
   const [mobileThread,   setMobileThread]   = useState(false);
   const [chatMenuOpen,   setChatMenuOpen]   = useState(false);
   const [sidebarMenuOpen,setSidebarMenuOpen]= useState(false);
@@ -1177,18 +1221,17 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
           filter: `tenant_id=eq.${tenantId}`,
         },
         (payload) => {
-          console.log("[realtime] INSERT recebido", payload.new);
-          const row = payload.new as WaMessage & { remote_jid: string };
-          const msg: WaMessage = {
-            id: row.id,
-            direction: row.direction,
-            kind: row.kind,
-            content: row.content,
-            media_url: row.media_url,
-            agent_id: row.agent_id,
-            created_at: row.created_at,
-          };
-          const jid: string = row.remote_jid;
+          const row = payload.new as Record<string, unknown>;
+          const msg = rowToWaMessage(row);
+          const jid = String(row.remote_jid ?? "");
+          if (!jid) return;
+          logMessageLatency({
+            phase: "received",
+            source: msg.direction === "inbound" ? "inbound" : msg.agent_id === "human" ? "manual" : "ai",
+            tenantId,
+            remoteJid: jid,
+            messageId: msg.id,
+          });
           setConversations((prev) => {
             const existing = prev.find((c) => c.remoteJid === jid);
             if (existing) {
@@ -1206,7 +1249,9 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                           msg.direction === "inbound" && jid !== selectedJid
                             ? c.unreadCount + 1
                             : c.unreadCount,
-                        messages: c.messagesLoaded ? [...c.messages, msg] : c.messages,
+                        messages: c.messagesLoaded
+                          ? (appendMessageDeduped(c.messages, msg) as WaMessage[])
+                          : c.messages,
                       },
                 )
                 .sort((a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime());
@@ -1223,16 +1268,57 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
             };
             return [newConv, ...prev];
           });
+          if (jid === selectedJid) {
+            requestAnimationFrame(() => {
+              logMessageLatency({
+                phase: "rendered",
+                source: msg.direction === "inbound" ? "inbound" : "manual",
+                tenantId,
+                remoteJid: jid,
+                messageId: msg.id,
+              });
+            });
+          }
         },
       )
-      .subscribe((status) => {
-        console.log("[realtime] status do canal:", status);
-      });
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "whatsapp_messages",
+          filter: `tenant_id=eq.${tenantId}`,
+        },
+        (payload) => {
+          const row = payload.new as Record<string, unknown>;
+          const msg = rowToWaMessage(row);
+          const jid = String(row.remote_jid ?? "");
+          if (!jid) return;
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.remoteJid !== jid
+                ? c
+                : {
+                    ...c,
+                    messages: c.messagesLoaded
+                      ? c.messages.map((existing) =>
+                          existing.id === msg.id ||
+                          (msg.client_temp_id && existing.client_temp_id === msg.client_temp_id)
+                            ? msg
+                            : existing,
+                        )
+                      : c.messages,
+                  },
+            ),
+          );
+        },
+      )
+      .subscribe();
 
     return () => { void supa.removeChannel(channel); };
   }, [tenantId, selectedJid]);
 
-  // ── Polling de fallback (garante sincronização mesmo sem Realtime) ─────────
+  // ── Polling de fallback (conversa ativa mais rápida) ─────────────────────
   useEffect(() => {
     const refreshConvs = async () => {
       if (typeof document !== "undefined" && document.hidden) return;
@@ -1248,7 +1334,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
         );
       } catch { /* silencioso */ }
     };
-    const convInterval = setInterval(() => void refreshConvs(), 10_000);
+    const convInterval = setInterval(() => void refreshConvs(), 8_000);
     return () => clearInterval(convInterval);
   }, []);
 
@@ -1261,12 +1347,18 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
         setAutomationByJid((prev) => ({ ...prev, [selectedJid]: automation }));
         setConversations((prev) =>
           prev.map((c) =>
-            c.remoteJid === selectedJid ? { ...c, messages, messagesLoaded: true } : c,
+            c.remoteJid === selectedJid
+              ? {
+                  ...c,
+                  messages: mergePolledMessages(c.messages, messages) as WaMessage[],
+                  messagesLoaded: true,
+                }
+              : c,
           ),
         );
       } catch { /* silencioso */ }
     };
-    const msgInterval = setInterval(() => void refreshMsgs(), 5_000);
+    const msgInterval = setInterval(() => void refreshMsgs(), 2_500);
     return () => clearInterval(msgInterval);
   }, [selectedJid]);
 
@@ -1359,6 +1451,8 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
         }
       } catch (e) {
         console.warn("[conversas] load messages error", e);
+      } finally {
+        focusComposeTextarea(draftTextareaRef, "conversation_switch");
       }
     },
     [conversations, fetchPhoto, fetchName],
@@ -1564,55 +1658,73 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
 
   // ── Send ──────────────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
-    if (!selectedJid || !draft.trim() || sending) return;
-    setSendError("");
+    if (!selectedJid || !draft.trim()) return;
     const text = draft.trim();
+    setSendError("");
     setDraft("");
-    setSending(true);
-    // When user sends a message, we want to scroll to bottom
     isNearBottomRef.current = true;
 
-    const tempMsg: WaMessage = {
-      id: `temp-${Date.now()}`,
-      direction: "outbound",
-      kind: "text",
-      content: text,
-      media_url: null,
-      agent_id: "human",
-      created_at: new Date().toISOString(),
-    };
+    const clientTempId = createClientTempId();
+    const tempMsg = createOptimisticOutboundMessage({ text, clientTempId }) as WaMessage;
     setConversations((prev) =>
       prev.map((c) =>
         c.remoteJid !== selectedJid
           ? c
-          : { ...c, messages: [...c.messages, tempMsg], lastContent: text, lastAt: tempMsg.created_at },
+          : {
+              ...c,
+              messages: [...c.messages, tempMsg],
+              lastContent: text,
+              lastAt: tempMsg.created_at,
+              messagesLoaded: true,
+            },
       ),
     );
+    focusComposeTextarea(draftTextareaRef, "after_send");
 
     try {
-      const saved = await apiSendMessage(selectedJid, text, contactNames[selectedJid]);
+      const saved = await apiSendMessage(
+        selectedJid,
+        text,
+        contactNames[selectedJid],
+        clientTempId,
+      );
       if (saved) {
         setConversations((prev) =>
           prev.map((c) =>
             c.remoteJid !== selectedJid
               ? c
-              : { ...c, messages: c.messages.map((m) => (m.id === tempMsg.id ? saved : m)) },
+              : {
+                  ...c,
+                  messages: reconcileOptimisticMessage(c.messages, clientTempId, saved) as WaMessage[],
+                },
           ),
         );
       }
     } catch (e) {
+      const persisted =
+        e && typeof e === "object" && "persistedMessage" in e
+          ? (e as { persistedMessage?: WaMessage | null }).persistedMessage
+          : null;
       setSendError(e instanceof Error ? e.message : "Erro ao enviar mensagem.");
       setConversations((prev) =>
         prev.map((c) =>
           c.remoteJid !== selectedJid
             ? c
-            : { ...c, messages: c.messages.filter((m) => m.id !== tempMsg.id) },
+            : {
+                ...c,
+                messages: persisted
+                  ? (reconcileOptimisticMessage(
+                      c.messages,
+                      clientTempId,
+                      { ...persisted, send_status: "failed", delivery_status: "failed" },
+                    ) as WaMessage[])
+                  : (markOptimisticMessageFailed(c.messages, clientTempId) as WaMessage[]),
+              },
         ),
       );
-    } finally {
-      setSending(false);
+      focusComposeTextarea(draftTextareaRef, "after_error");
     }
-  }, [selectedJid, draft, sending, contactNames]);
+  }, [selectedJid, draft, contactNames]);
 
   // ── Emoji insert at cursor ────────────────────────────────────────────────
   const handleEmojiSelect = useCallback((emoji: { native?: string; unified?: string }) => {
@@ -1663,30 +1775,80 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     setUploading(true);
     setSendError("");
     isNearBottomRef.current = true;
+    const clientTempId = createClientTempId();
+    const previewLabel =
+      attachment.kind === "audio"
+        ? "[Áudio]"
+        : attachment.kind === "image"
+          ? "[Imagem]"
+          : attachment.kind === "video"
+            ? "[Vídeo]"
+            : `[Documento] ${attachment.file.name}`;
+    const optimistic = createOptimisticOutboundMessage({
+      text: previewLabel,
+      clientTempId,
+      kind: attachment.kind,
+      mediaUrl: attachment.previewUrl || null,
+    }) as WaMessage;
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.remoteJid !== selectedJid
+          ? c
+          : {
+              ...c,
+              messages: [...c.messages, optimistic],
+              lastContent: previewLabel,
+              lastAt: optimistic.created_at,
+              messagesLoaded: true,
+            },
+      ),
+    );
+    focusComposeTextarea(draftTextareaRef, "after_send");
     try {
       const fd = new FormData();
       fd.append("file", attachment.file);
       fd.append("remoteJid", selectedJid);
+      fd.append("clientTempId", clientTempId);
       const contactName = contactNames[selectedJid];
       if (contactName) fd.append("contactName", contactName);
       const res = await fetch("/api/client/conversas/send-media", { method: "POST", body: fd });
+      const data = (await res.json().catch(() => ({}))) as { message?: WaMessage | null; error?: string };
       if (!res.ok) {
-        const err = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(err.error ?? `Erro ${res.status}`);
+        throw new Error(data.error ?? `Erro ${res.status}`);
       }
-      const data = (await res.json()) as { message?: WaMessage | null };
       if (data.message) {
-        const msg = data.message;
         setConversations((prev) =>
           prev.map((c) =>
-            c.remoteJid !== selectedJid ? c :
-            { ...c, messages: [...c.messages, msg], lastContent: msg.content, lastAt: msg.created_at },
+            c.remoteJid !== selectedJid
+              ? c
+              : {
+                  ...c,
+                  messages: reconcileOptimisticMessage(
+                    c.messages,
+                    clientTempId,
+                    data.message!,
+                  ) as WaMessage[],
+                  lastContent: data.message!.content,
+                  lastAt: data.message!.created_at,
+                },
           ),
         );
       }
       setAttachment(null);
+      focusComposeTextarea(draftTextareaRef, "attachment_closed");
     } catch (e) {
       setSendError(e instanceof Error ? e.message : "Erro ao enviar arquivo.");
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.remoteJid !== selectedJid
+            ? c
+            : {
+                ...c,
+                messages: markOptimisticMessageFailed(c.messages, clientTempId) as WaMessage[],
+              },
+        ),
+      );
+      focusComposeTextarea(draftTextareaRef, "after_error");
     } finally {
       setUploading(false);
     }
@@ -2918,9 +3080,8 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                     onChange={(e) => setDraft(e.target.value.slice(0, 4000))}
                     rows={1}
                     placeholder="Digite uma mensagem"
-                    disabled={sending}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
+                      if (shouldSendOnEnter(e)) {
                         e.preventDefault();
                         void handleSend();
                       }
@@ -2947,7 +3108,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                   <button
                     type="button"
                     onClick={() => void handleSend()}
-                    disabled={sending || !draft.trim()}
+                    disabled={!draft.trim()}
                     aria-label="Enviar"
                     style={{
                       width: 44,
@@ -2955,26 +3116,19 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                       borderRadius: "50%",
                       background: W.green,
                       border: "none",
-                      cursor: draft.trim() && !sending ? "pointer" : "not-allowed",
+                      cursor: draft.trim() ? "pointer" : "not-allowed",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
                       flexShrink: 0,
-                      opacity: sending || !draft.trim() ? 0.45 : 1,
+                      opacity: !draft.trim() ? 0.45 : 1,
                       transition: "opacity 0.2s",
                       paddingBottom: 9,
                     }}
                   >
-                    {sending ? (
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-                        <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
-                        <path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round" />
-                      </svg>
-                    ) : (
-                      <svg viewBox="0 0 24 24" width="20" height="20" fill="white">
-                        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-                      </svg>
-                    )}
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="white">
+                      <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                    </svg>
                   </button>
                 </div>
               )}

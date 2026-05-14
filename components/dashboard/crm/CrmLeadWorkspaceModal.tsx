@@ -171,6 +171,7 @@ export function CrmLeadWorkspaceModal({
   lead,
   funnel,
   allFunnels = [],
+  tenantId,
   onClose,
   onUpdateLead,
 }: {
@@ -178,6 +179,7 @@ export function CrmLeadWorkspaceModal({
   funnel: CrmFunnel | undefined;
   /** Todos os funis (transferência de lead entre funis no follow-up). */
   allFunnels?: readonly CrmFunnel[];
+  tenantId: string;
   onClose: () => void;
   onUpdateLead?: (next: ClientLead) => void;
 }) {
@@ -542,7 +544,7 @@ export function CrmLeadWorkspaceModal({
           </div>
         ) : null}
 
-        {tab === "chatbot" ? <CrmChatbotHistoryPanel leadId={lead.id} /> : null}
+        {tab === "chatbot" ? <CrmChatbotHistoryPanel leadId={lead.id} tenantId={tenantId} /> : null}
 
         {tab === "tarefas" ? (
           <div className="space-y-4">

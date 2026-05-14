@@ -3121,6 +3121,7 @@ function CrmPage({
           lead={selectedLead}
           funnel={activeFunnel}
           allFunnels={funnels}
+          tenantId={dataset.tenantId}
           onClose={() => setSelectedLead(null)}
           onUpdateLead={(next) => {
             setLeads((prev) => prev.map((l) => (l.id === next.id ? next : l)));

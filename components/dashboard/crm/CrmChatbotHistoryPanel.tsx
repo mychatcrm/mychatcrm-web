@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Bot, Hand, PauseCircle, Sparkles, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { subscribeToWhatsappMessages } from "@/lib/conversas/whatsapp-messages-realtime";
 import type {
   ChatbotConversationState,
   ChatbotHistoryMessage,
@@ -90,33 +91,40 @@ function ChatMedia({ message }: { message: ChatbotHistoryMessage }) {
   return null;
 }
 
-export function CrmChatbotHistoryPanel({ leadId }: { leadId: string }) {
+export function CrmChatbotHistoryPanel({
+  leadId,
+  tenantId,
+}: {
+  leadId: string;
+  tenantId: string;
+}) {
   const [messages, setMessages] = useState<ChatbotHistoryMessage[]>([]);
   const [summary, setSummary] = useState<ChatbotHistorySummary | null>(null);
   const [state, setState] = useState<ChatbotConversationState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const loadHistory = useCallback(async () => {
+    const response = await fetch(`/api/client/crm/leads/${encodeURIComponent(leadId)}/chatbot-history`, {
+      cache: "no-store",
+    });
+    const data = (await response.json().catch(() => ({}))) as {
+      messages?: ChatbotHistoryMessage[];
+      summary?: ChatbotHistorySummary | null;
+      conversationState?: ChatbotConversationState | null;
+      error?: string;
+    };
+    if (!response.ok) throw new Error(data.error || "Erro ao carregar histórico do chatbot.");
+    setMessages(Array.isArray(data.messages) ? data.messages : []);
+    setSummary(data.summary ?? null);
+    setState(data.conversationState ?? null);
+  }, [leadId]);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError("");
-    fetch(`/api/client/crm/leads/${encodeURIComponent(leadId)}/chatbot-history`, {
-      cache: "no-store",
-    })
-      .then(async (response) => {
-        const data = (await response.json().catch(() => ({}))) as {
-          messages?: ChatbotHistoryMessage[];
-          summary?: ChatbotHistorySummary | null;
-          conversationState?: ChatbotConversationState | null;
-          error?: string;
-        };
-        if (!response.ok) throw new Error(data.error || "Erro ao carregar histórico do chatbot.");
-        if (cancelled) return;
-        setMessages(Array.isArray(data.messages) ? data.messages : []);
-        setSummary(data.summary ?? null);
-        setState(data.conversationState ?? null);
-      })
+    loadHistory()
       .catch((err) => {
         if (cancelled) return;
         setMessages([]);
@@ -130,7 +138,25 @@ export function CrmChatbotHistoryPanel({ leadId }: { leadId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [leadId]);
+  }, [leadId, loadHistory]);
+
+  useEffect(() => {
+    if (!tenantId || !leadId) return undefined;
+    return subscribeToWhatsappMessages({
+      tenantId,
+      leadId,
+      pollMs: 3_000,
+      onPoll: () => {
+        void loadHistory().catch(() => undefined);
+      },
+      onInsert: () => {
+        void loadHistory().catch(() => undefined);
+      },
+      onUpdate: () => {
+        void loadHistory().catch(() => undefined);
+      },
+    });
+  }, [tenantId, leadId, loadHistory]);
 
   return (
     <div className="space-y-4">

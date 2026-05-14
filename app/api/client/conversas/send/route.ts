@@ -1,9 +1,8 @@
 /**
  * POST /api/client/conversas/send
- * Envia uma mensagem de texto para um número WhatsApp via Evolution API
- * e persiste o outbound na tabela whatsapp_messages.
+ * Persiste outbound na memória central e envia via Evolution API.
  *
- * Body: { remoteJid: string; text: string; contactName?: string }
+ * Body: { remoteJid: string; text: string; contactName?: string; clientTempId?: string }
  */
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
@@ -12,47 +11,47 @@ import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evol
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
 import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 import { upsertConversationState } from "@/lib/server/conversation-memory";
+import { logMessageLatency } from "@/lib/conversas/message-latency-log";
 
 export const dynamic = "force-dynamic";
+
+const MESSAGE_SELECT =
+  "id, direction, kind, content, media_url, agent_id, created_at, client_temp_id, delivery_status";
 
 export async function POST(request: Request) {
   const session = await getClientSessionFromCookies();
   if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
-  let body: { remoteJid?: string; text?: string; contactName?: string };
+  let body: {
+    remoteJid?: string;
+    text?: string;
+    contactName?: string;
+    clientTempId?: string;
+  };
   try {
-    body = (await request.json()) as { remoteJid?: string; text?: string; contactName?: string };
+    body = (await request.json()) as typeof body;
   } catch {
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
   }
 
-  const { remoteJid, text, contactName } = body;
+  const { remoteJid, text, contactName, clientTempId } = body;
   if (!remoteJid?.trim() || !text?.trim()) {
     return NextResponse.json({ error: "remoteJid e text são obrigatórios" }, { status: 400 });
   }
 
   const trimmedText = text.trim().slice(0, 4000);
+  const tempId = clientTempId?.trim() || null;
 
-  // Busca a instância Evolution do tenant
   const instance = await getEvolutionInstanceByTenantId(session.tenantId);
   if (!instance) {
     return NextResponse.json({ error: "Nenhuma instância WhatsApp configurada para este tenant." }, { status: 422 });
   }
 
-  // Converte JID para número
   const number = remoteJidToEvoNumber(remoteJid);
   if (!number) {
     return NextResponse.json({ error: "remoteJid inválido" }, { status: 400 });
   }
 
-  // Envia via Evolution API
-  const send = await evolutionSendText({ instanceName: instance.instance_name, number, text: trimmedText });
-  if (!send.ok) {
-    console.error("[api/client/conversas/send] evolutionSendText", send.status, send.error);
-    return NextResponse.json({ error: "Falha ao enviar mensagem pelo WhatsApp." }, { status: 502 });
-  }
-
-  // Persiste outbound no Supabase
   const sb = createSupabaseServiceClient();
   const linkedAgentId = instance.default_agent_id ?? null;
   const leadResult = await upsertLeadFromWhatsAppContact({
@@ -65,6 +64,7 @@ export async function POST(request: Request) {
     agentId: linkedAgentId ?? "human",
     conversationId: remoteJid,
   });
+
   const { data: saved, error: dbErr } = await sb
     .from("whatsapp_messages")
     .insert({
@@ -75,16 +75,27 @@ export async function POST(request: Request) {
       content: trimmedText,
       agent_id: "human",
       lead_id: leadResult.lead?.id ?? null,
+      client_temp_id: tempId,
+      delivery_status: "pending",
     })
-    .select("id, direction, kind, content, created_at")
+    .select(MESSAGE_SELECT)
     .single();
 
-  if (dbErr) {
-    console.warn("[api/client/conversas/send] db insert", dbErr.code, dbErr.message);
-    // Não falha — mensagem já foi enviada, só não persiste
+  if (dbErr || !saved) {
+    console.error("[api/client/conversas/send] db insert", dbErr?.code, dbErr?.message);
+    return NextResponse.json({ error: "Erro ao salvar mensagem." }, { status: 503 });
   }
 
-  const occurredAt = typeof saved?.created_at === "string" ? saved.created_at : new Date().toISOString();
+  logMessageLatency({
+    phase: "saved",
+    source: "manual",
+    tenantId: session.tenantId,
+    remoteJid,
+    messageId: String(saved.id),
+  });
+
+  const occurredAt =
+    typeof saved.created_at === "string" ? saved.created_at : new Date().toISOString();
   await upsertConversationState({
     sb,
     tenantId: session.tenantId,
@@ -93,5 +104,41 @@ export async function POST(request: Request) {
     agentId: linkedAgentId,
     lastMessageAt: occurredAt,
   });
-  return NextResponse.json({ ok: true, message: saved ?? null });
+
+  const send = await evolutionSendText({
+    instanceName: instance.instance_name,
+    number,
+    text: trimmedText,
+  });
+
+  if (!send.ok) {
+    console.error("[api/client/conversas/send] evolutionSendText", send.status, send.error);
+    await sb
+      .from("whatsapp_messages")
+      .update({
+        delivery_status: "failed",
+        failed_reason: send.error ?? "evolution_send_failed",
+      })
+      .eq("tenant_id", session.tenantId)
+      .eq("id", saved.id);
+
+    return NextResponse.json(
+      { error: "Falha ao enviar mensagem pelo WhatsApp.", message: { ...saved, delivery_status: "failed" } },
+      { status: 502 },
+    );
+  }
+
+  const sentAt = new Date().toISOString();
+  const { data: updated } = await sb
+    .from("whatsapp_messages")
+    .update({
+      delivery_status: "sent",
+      sent_at: sentAt,
+    })
+    .eq("tenant_id", session.tenantId)
+    .eq("id", saved.id)
+    .select(MESSAGE_SELECT)
+    .maybeSingle();
+
+  return NextResponse.json({ ok: true, message: updated ?? { ...saved, delivery_status: "sent" } });
 }

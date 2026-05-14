@@ -66,6 +66,10 @@ export async function POST(request: Request) {
   const remoteJid = (formData.get("remoteJid") as string | null)?.trim();
   const caption = ((formData.get("caption") as string | null) ?? "").trim();
   const contactName = ((formData.get("contactName") as string | null) ?? "").trim();
+  const clientTempId = ((formData.get("clientTempId") as string | null) ?? "").trim() || null;
+
+  const MESSAGE_SELECT =
+    "id, direction, kind, content, media_url, agent_id, created_at, client_temp_id, delivery_status";
 
   if (!(fileBlob instanceof Blob)) {
     return NextResponse.json({ error: "Campo 'file' ausente" }, { status: 400 });
@@ -115,6 +119,58 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "remoteJid inválido" }, { status: 400 });
   }
 
+  const contentLabel =
+    kind === "audio" ? "[Áudio]" :
+    kind === "image" ? (caption ? `[Imagem] ${caption}` : "[Imagem]") :
+    kind === "video" ? (caption ? `[Vídeo] ${caption}` : "[Vídeo]") :
+    `[Documento] ${originalName}`;
+
+  const sb = createSupabaseServiceClient();
+  const linkedAgentId = instance.default_agent_id ?? null;
+  const leadResult = await upsertLeadFromWhatsAppContact({
+    tenantId: session.tenantId,
+    remoteJid,
+    recipientJid: remoteJid,
+    instanceJid: instance.wa_jid,
+    contactName,
+    direction: "outbound",
+    agentId: linkedAgentId ?? "human",
+    conversationId: remoteJid,
+  });
+
+  const { data: saved, error: dbErr } = await sb
+    .from("whatsapp_messages")
+    .insert({
+      tenant_id: session.tenantId,
+      remote_jid: remoteJid,
+      direction: "outbound",
+      kind,
+      content: contentLabel,
+      media_url: mediaUrl,
+      agent_id: "human",
+      lead_id: leadResult.lead?.id ?? null,
+      client_temp_id: clientTempId,
+      delivery_status: "pending",
+    })
+    .select(MESSAGE_SELECT)
+    .single();
+
+  if (dbErr || !saved) {
+    console.error("[send-media] db insert error", dbErr?.code, dbErr?.message);
+    return NextResponse.json({ error: "Erro ao salvar mídia." }, { status: 503 });
+  }
+
+  const occurredAt =
+    typeof saved.created_at === "string" ? saved.created_at : new Date().toISOString();
+  await upsertConversationState({
+    sb,
+    tenantId: session.tenantId,
+    remoteJid,
+    leadId: leadResult.lead?.id ?? null,
+    agentId: linkedAgentId,
+    lastMessageAt: occurredAt,
+  });
+
   // ── Send via Evolution API ────────────────────────────────────────────────
   const b64 = buffer.toString("base64");
 
@@ -145,58 +201,30 @@ export async function POST(request: Request) {
 
   if (!sendResult.ok) {
     console.error("[send-media] Evolution API error", sendResult.status, sendResult.error);
+    await sb
+      .from("whatsapp_messages")
+      .update({
+        delivery_status: "failed",
+        failed_reason: sendResult.error ?? "evolution_send_failed",
+      })
+      .eq("tenant_id", session.tenantId)
+      .eq("id", saved.id);
     return NextResponse.json(
-      { error: "Falha ao enviar mídia pelo WhatsApp: " + sendResult.error },
+      { error: "Falha ao enviar mídia pelo WhatsApp: " + sendResult.error, message: { ...saved, delivery_status: "failed" } },
       { status: 502 },
     );
   }
 
-  // ── Persist to whatsapp_messages ──────────────────────────────────────────
-  const contentLabel =
-    kind === "audio" ? "[Áudio]" :
-    kind === "image" ? (caption ? `[Imagem] ${caption}` : "[Imagem]") :
-    kind === "video" ? (caption ? `[Vídeo] ${caption}` : "[Vídeo]") :
-    `[Documento] ${originalName}`;
-
-  const sb = createSupabaseServiceClient();
-  const linkedAgentId = instance.default_agent_id ?? null;
-  const leadResult = await upsertLeadFromWhatsAppContact({
-    tenantId: session.tenantId,
-    remoteJid,
-    recipientJid: remoteJid,
-    instanceJid: instance.wa_jid,
-    contactName,
-    direction: "outbound",
-    agentId: linkedAgentId ?? "human",
-    conversationId: remoteJid,
-  });
-  const { data: saved, error: dbErr } = await sb
+  const { data: updated } = await sb
     .from("whatsapp_messages")
-    .insert({
-      tenant_id: session.tenantId,
-      remote_jid: remoteJid,
-      direction: "outbound",
-      kind,
-      content: contentLabel,
-      media_url: mediaUrl,
-      agent_id: "human",
-      lead_id: leadResult.lead?.id ?? null,
+    .update({
+      delivery_status: "sent",
+      sent_at: new Date().toISOString(),
     })
-    .select("id, direction, kind, content, media_url, agent_id, created_at")
-    .single();
+    .eq("tenant_id", session.tenantId)
+    .eq("id", saved.id)
+    .select(MESSAGE_SELECT)
+    .maybeSingle();
 
-  if (dbErr) {
-    console.warn("[send-media] db insert error", dbErr.code, dbErr.message);
-  }
-
-  const occurredAt = typeof saved?.created_at === "string" ? saved.created_at : new Date().toISOString();
-  await upsertConversationState({
-    sb,
-    tenantId: session.tenantId,
-    remoteJid,
-    leadId: leadResult.lead?.id ?? null,
-    agentId: linkedAgentId,
-    lastMessageAt: occurredAt,
-  });
-  return NextResponse.json({ ok: true, message: saved ?? null });
+  return NextResponse.json({ ok: true, message: updated ?? { ...saved, delivery_status: "sent" } });
 }
