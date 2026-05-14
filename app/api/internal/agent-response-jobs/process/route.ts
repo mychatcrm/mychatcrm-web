@@ -11,17 +11,7 @@ import {
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-function verifyInternalSecret(request: Request): boolean {
-  const expected =
-    process.env.AGENT_RESPONSE_JOBS_SECRET?.trim() ||
-    process.env.CRON_SECRET?.trim() ||
-    process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
-  if (!expected) return false;
-  const auth = request.headers.get("authorization");
-  if (auth === `Bearer ${expected}`) return true;
-  const header = request.headers.get("x-agent-jobs-secret");
-  return Boolean(header && header === expected);
-}
+import { verifyInternalApiRequest } from "@/lib/server/internal-api-auth";
 
 export async function GET(request: Request) {
   return POST(request);
@@ -36,7 +26,7 @@ export async function POST(request: Request) {
     job_id: jobId ?? null,
   });
 
-  if (!verifyInternalSecret(request)) {
+  if (!verifyInternalApiRequest(request)) {
     console.info("[agent-response-jobs]", { event: "auth_failed" });
     return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
   }

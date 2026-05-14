@@ -21,8 +21,8 @@ describe("agent smart wait schedule", () => {
       inboundMessageCount: 1,
       settings: DEFAULT_AGENT_SMART_WAIT,
     });
-    expect(scheduledFor.toISOString()).toBe("2026-05-14T10:00:05.000Z");
-    expect(maxWaitUntil.toISOString()).toBe("2026-05-14T10:00:30.000Z");
+    expect(scheduledFor.toISOString()).toBe("2026-05-14T10:00:07.000Z");
+    expect(maxWaitUntil.toISOString()).toBe("2026-05-14T10:01:00.000Z");
   });
 
   it("reschedules second inbound message to follow-up window", () => {
@@ -40,7 +40,7 @@ describe("agent smart wait schedule", () => {
 
   it("does not exceed max wait from first message", () => {
     const first = new Date("2026-05-14T10:00:00.000Z");
-    const last = new Date("2026-05-14T10:00:25.000Z");
+    const last = new Date("2026-05-14T10:00:55.000Z");
     const { scheduledFor, maxWaitUntil } = computeAgentResponseSchedule({
       now: last,
       firstMessageAt: first,
@@ -49,19 +49,19 @@ describe("agent smart wait schedule", () => {
       settings: DEFAULT_AGENT_SMART_WAIT,
     });
     expect(scheduledFor.getTime()).toBe(maxWaitUntil.getTime());
-    expect(scheduledFor.toISOString()).toBe("2026-05-14T10:00:30.000Z");
+    expect(scheduledFor.toISOString()).toBe("2026-05-14T10:01:00.000Z");
   });
 });
 
 describe("processor readiness", () => {
   it("does not process before scheduled_for", () => {
-    const now = new Date("2026-05-14T10:00:02.000Z");
-    expect(isJobReadyToProcess("2026-05-14T10:00:05.000Z", now)).toBe(false);
+    const now = new Date("2026-05-14T10:00:05.000Z");
+    expect(isJobReadyToProcess("2026-05-14T10:00:07.000Z", now)).toBe(false);
   });
 
   it("processes after scheduled_for", () => {
-    const now = new Date("2026-05-14T10:00:06.000Z");
-    expect(isJobReadyToProcess("2026-05-14T10:00:05.000Z", now)).toBe(true);
+    const now = new Date("2026-05-14T10:00:08.000Z");
+    expect(isJobReadyToProcess("2026-05-14T10:00:07.000Z", now)).toBe(true);
   });
 });
 

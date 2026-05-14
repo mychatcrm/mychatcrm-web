@@ -37,7 +37,7 @@ export function WizardStepSmartWait({
             disabled={!draft.smartWaitEnabled}
             value={draft.smartWaitInitialSeconds}
             onChange={(event) =>
-              onChange({ ...draft, smartWaitInitialSeconds: Number(event.target.value) || 5 })
+              onChange({ ...draft, smartWaitInitialSeconds: Number(event.target.value) || 7 })
             }
           />
         </label>

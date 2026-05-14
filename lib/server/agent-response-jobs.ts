@@ -13,6 +13,7 @@ import {
   isAgentAutomationAllowed,
 } from "@/lib/server/conversation-operation";
 import { processAgentResponseJob } from "@/lib/server/evolution-agent-reply";
+import { getInternalApiToken, internalApiAuthHeaders } from "@/lib/server/internal-api-auth";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -668,18 +669,11 @@ export async function waitAndProcessAgentResponseJob(
 }
 
 export function hasAgentResponseProcessorSecret(): boolean {
-  return Boolean(
-    process.env.AGENT_RESPONSE_JOBS_SECRET?.trim() ||
-      process.env.CRON_SECRET?.trim() ||
-      process.env.EVOLUTION_WEBHOOK_SECRET?.trim(),
-  );
+  return Boolean(getInternalApiToken());
 }
 
 export function triggerAgentResponseJobProcessor(jobId?: string): boolean {
-  const secret =
-    process.env.AGENT_RESPONSE_JOBS_SECRET?.trim() ||
-    process.env.CRON_SECRET?.trim() ||
-    process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
+  const secret = getInternalApiToken();
   if (!secret) {
     logJobEvent("processor_not_called", { scope: "processor_trigger", reason: "missing_internal_secret" });
     return false;
@@ -688,14 +682,15 @@ export function triggerAgentResponseJobProcessor(jobId?: string): boolean {
     process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "") ||
     (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "") ||
     "https://mychatcrm.vercel.app";
-  const url = new URL("/api/internal/agent-response-jobs/process", base);
+  const url = new URL("/api/internal/process-agent-job", base);
   if (jobId) url.searchParams.set("jobId", jobId);
   void fetch(url.toString(), {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${secret}`,
-      "x-agent-jobs-secret": secret,
+      "Content-Type": "application/json",
+      ...internalApiAuthHeaders(),
     },
+    body: JSON.stringify(jobId ? { jobId } : {}),
   }).catch((error) => {
     logJobEvent("processor_not_called", {
       scope: "processor_trigger",

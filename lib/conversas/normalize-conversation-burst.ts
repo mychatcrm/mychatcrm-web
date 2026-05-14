@@ -89,7 +89,7 @@ function buildHumanPrompt(messages: InboundTextMessage[], dominantIntent: string
     return `O cliente enviou em sequência: ${substantive.map((l) => `"${l}"`).join(", ")}. Interprete como um único pedido relacionado e responda de forma natural e consolidada, sem repetir apresentação.`;
   }
 
-  return `O cliente enviou em sequência: ${substantive.map((l) => `"${l}"`).join(", ")}. Responda uma única vez de forma natural, direta e humana, cobrindo os pontos sem formato de FAQ numerado.`;
+  return `O cliente enviou as seguintes mensagens em sequência: ${substantive.map((l) => `"${l}"`).join(", ")}. Responda de forma natural e humana, consolidando todas as dúvidas em uma única resposta coerente. Não responda pergunta por pergunta de forma robótica.`;
 }
 
 function pickResponseStrategy(messageCount: number, urgency: BurstUrgencyLevel): BurstResponseStrategy {

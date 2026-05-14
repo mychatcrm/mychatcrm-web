@@ -8,9 +8,9 @@ export type AgentSmartWaitSettings = {
 
 export const DEFAULT_AGENT_SMART_WAIT: AgentSmartWaitSettings = {
   enabled: true,
-  initialSeconds: 5,
+  initialSeconds: 7,
   followupSeconds: 10,
-  maxSeconds: 30,
+  maxSeconds: 60,
   dedupeRepeated: true,
 };
 
