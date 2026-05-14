@@ -129,11 +129,38 @@ export async function shouldScheduleAgentResponse(params: {
   return { ok: true };
 }
 
-function logJobEvent(
-  action: "created" | "rescheduled" | "processing" | "completed" | "cancelled" | "skipped_not_due" | "schedule_failed",
-  payload: Record<string, unknown>,
-): void {
-  console.info("[agent-response-jobs]", { action, ...payload });
+function logJobEvent(event: string, payload: Record<string, unknown>): void {
+  console.info("[agent-response-jobs]", { event, ...payload });
+}
+
+const STUCK_PROCESSING_MS = 5 * 60 * 1000;
+
+export async function reclaimStuckProcessingJobs(sb?: SupabaseServiceClient): Promise<number> {
+  const client = sb ?? createSupabaseServiceClient();
+  const cutoff = new Date(Date.now() - STUCK_PROCESSING_MS).toISOString();
+  const { data, error } = await client
+    .from("agent_response_jobs")
+    .update({
+      status: "pending",
+      locked_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("status", "processing")
+    .lt("locked_at", cutoff)
+    .select("id");
+  if (error) {
+    console.warn("[agent-response-jobs]", {
+      event: "failed_reason",
+      scope: "reclaim_stuck",
+      reason: error.message,
+    });
+    return 0;
+  }
+  const count = Array.isArray(data) ? data.length : 0;
+  if (count > 0) {
+    logJobEvent("reclaimed_stuck", { count });
+  }
+  return count;
 }
 
 export async function scheduleAgentResponseJob(params: {
@@ -157,7 +184,14 @@ export async function scheduleAgentResponseJob(params: {
     remoteJid: params.remoteJid,
     agentId: params.agentId,
   });
-  if (!eligible.ok) return null;
+  if (!eligible.ok) {
+    logJobEvent("schedule_skipped", {
+      tenant_id: params.tenantId,
+      remote_jid: maskRemoteJidForLog(params.remoteJid),
+      reason: eligible.reason,
+    });
+    return null;
+  }
 
   const now = new Date();
   const occurredAt = params.occurredAt ? new Date(params.occurredAt) : now;
@@ -202,14 +236,15 @@ export async function scheduleAgentResponseJob(params: {
       .select("*")
       .maybeSingle();
     if (error || !data) {
-      logJobEvent("schedule_failed", {
+      logJobEvent("failed_reason", {
         tenant_id: params.tenantId,
         remote_jid: maskRemoteJidForLog(params.remoteJid),
+        scope: "reschedule",
         reason: error?.message ?? "reschedule_conflict",
       });
       return null;
     }
-    logJobEvent("rescheduled", {
+    logJobEvent("job_rescheduled", {
       tenant_id: params.tenantId,
       remote_jid: maskRemoteJidForLog(params.remoteJid),
       job_id: current.id,
@@ -246,14 +281,15 @@ export async function scheduleAgentResponseJob(params: {
     .select("*")
     .single();
   if (error || !data) {
-    logJobEvent("schedule_failed", {
+    logJobEvent("failed_reason", {
       tenant_id: params.tenantId,
       remote_jid: maskRemoteJidForLog(params.remoteJid),
+      scope: "insert",
       reason: error?.message ?? "insert_failed",
     });
     return null;
   }
-  logJobEvent("created", {
+  logJobEvent("job_created", {
     tenant_id: params.tenantId,
     remote_jid: maskRemoteJidForLog(params.remoteJid),
     job_id: (data as Record<string, unknown>).id,
@@ -315,7 +351,7 @@ async function claimJob(sb: SupabaseServiceClient, jobId: string): Promise<Agent
   if (!current) return null;
   const pending = rowFromDb(current as Record<string, unknown>);
   if (!isJobReadyToProcess(pending.scheduled_for, now)) {
-    logJobEvent("skipped_not_due", {
+    logJobEvent("not_ready", {
       job_id: jobId,
       scheduled_for: pending.scheduled_for,
       now: nowIso,
@@ -335,7 +371,15 @@ async function claimJob(sb: SupabaseServiceClient, jobId: string): Promise<Agent
     .select("*")
     .maybeSingle();
   if (error || !data) return null;
-  return rowFromDb(data as Record<string, unknown>);
+  const claimed = rowFromDb(data as Record<string, unknown>);
+  logJobEvent("claimed", {
+    job_id: claimed.id,
+    tenant_id: claimed.tenant_id,
+    remote_jid: maskRemoteJidForLog(claimed.remote_jid),
+    scheduled_for: claimed.scheduled_for,
+    now: nowIso,
+  });
+  return claimed;
 }
 
 export async function tryProcessAgentResponseJob(
@@ -345,15 +389,6 @@ export async function tryProcessAgentResponseJob(
   const client = sb ?? createSupabaseServiceClient();
   const job = await claimJob(client, jobId);
   if (!job) return "skipped";
-
-  logJobEvent("processing", {
-    tenant_id: job.tenant_id,
-    remote_jid: maskRemoteJidForLog(job.remote_jid),
-    job_id: job.id,
-    messages_count: job.message_ids.length,
-    scheduled_for: job.scheduled_for,
-    now: new Date().toISOString(),
-  });
 
   try {
     const eligible = await shouldScheduleAgentResponse({
@@ -398,6 +433,12 @@ export async function tryProcessAgentResponseJob(
       ok: result.ok,
       deduped_count: result.dedupedCount ?? 0,
     });
+    if (!result.ok) {
+      logJobEvent("failed_reason", {
+        job_id: job.id,
+        reason: result.error,
+      });
+    }
     return result.ok ? "processed" : "failed";
   } catch (error) {
     const message = error instanceof Error ? error.message : "process_failed";
@@ -409,11 +450,9 @@ export async function tryProcessAgentResponseJob(
         updated_at: new Date().toISOString(),
       })
       .eq("id", job.id);
-    console.warn("[agent-response-jobs] job_failed", {
-      tenant_id: job.tenant_id,
-      remote_jid: maskRemoteJidForLog(job.remote_jid),
+    logJobEvent("failed_reason", {
       job_id: job.id,
-      error: message,
+      reason: message,
     });
     return "failed";
   }
@@ -421,6 +460,7 @@ export async function tryProcessAgentResponseJob(
 
 export async function processDueAgentResponseJobs(sb?: SupabaseServiceClient): Promise<number> {
   const client = sb ?? createSupabaseServiceClient();
+  await reclaimStuckProcessingJobs(client);
   const now = new Date().toISOString();
   const { data } = await client
     .from("agent_response_jobs")
@@ -429,6 +469,32 @@ export async function processDueAgentResponseJobs(sb?: SupabaseServiceClient): P
     .lte("scheduled_for", now)
     .order("scheduled_for", { ascending: true })
     .limit(20);
+  const ids = (data ?? []).map((row) => String((row as { id: string }).id));
+  let processed = 0;
+  for (const id of ids) {
+    const outcome = await tryProcessAgentResponseJob(id, client);
+    if (outcome === "processed") processed += 1;
+  }
+  return processed;
+}
+
+export async function processDueJobsForConversation(params: {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+}): Promise<number> {
+  const client = params.sb ?? createSupabaseServiceClient();
+  await reclaimStuckProcessingJobs(client);
+  const now = new Date().toISOString();
+  const { data } = await client
+    .from("agent_response_jobs")
+    .select("id")
+    .eq("tenant_id", params.tenantId)
+    .eq("remote_jid", params.remoteJid)
+    .eq("status", "pending")
+    .lte("scheduled_for", now)
+    .order("scheduled_for", { ascending: true })
+    .limit(5);
   const ids = (data ?? []).map((row) => String((row as { id: string }).id));
   let processed = 0;
   for (const id of ids) {

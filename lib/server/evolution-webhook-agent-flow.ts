@@ -1,6 +1,7 @@
 import type { AgentSmartWaitSettings } from "@/lib/agents/smart-wait-settings";
 import { maskRemoteJidForLog } from "@/lib/server/agent-response-schedule";
 import {
+  processDueJobsForConversation,
   scheduleAgentResponseJob,
   triggerAgentResponseJobProcessor,
 } from "@/lib/server/agent-response-jobs";
@@ -62,5 +63,18 @@ export async function runInboundSmartWaitFlow(params: {
   });
 
   if (job) queueAgentResponseJobProcessor(job.id);
+  const processedDue = await processDueJobsForConversation({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+  });
+  if (processedDue > 0) {
+    console.info("[agent-response-jobs]", {
+      event: "fallback_processed",
+      tenant_id: params.tenantId,
+      remote_jid: maskRemoteJidForLog(params.remoteJid),
+      processed: processedDue,
+    });
+  }
   return { mode: "smart_wait", jobId: job?.id ?? null, reason: job ? undefined : "schedule_returned_null" };
 }

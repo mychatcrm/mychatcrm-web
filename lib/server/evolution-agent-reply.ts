@@ -149,6 +149,12 @@ export async function processAgentResponseJob(
     feature: "agent_chat",
     messages: groupedPrompt ? [{ role: "user", content: groupedPrompt }] : [],
   });
+  console.info("[agent-response-jobs]", {
+    event: "generated_response",
+    job_id: job.id,
+    ok: result.ok,
+    messages_count: deduped.messages.length,
+  });
 
   let replyText = result.ok
     ? result.text
@@ -234,6 +240,12 @@ export async function processAgentResponseJob(
         audio: audioBuffer.toString("base64"),
       });
       if (!send.ok) return { ok: false, error: send.error, dedupedCount: deduped.dedupedCount };
+      console.info("[agent-response-jobs]", {
+        event: "sent_evolution",
+        job_id: job.id,
+        mode: "audio",
+        ok: true,
+      });
       await saveOutboundMessage({
         tenantId: job.tenant_id,
         remoteJid: job.remote_jid,
@@ -251,6 +263,12 @@ export async function processAgentResponseJob(
         quoted,
       });
       if (!send.ok) return { ok: false, error: send.error, dedupedCount: deduped.dedupedCount };
+      console.info("[agent-response-jobs]", {
+        event: "sent_evolution",
+        job_id: job.id,
+        mode: "text",
+        ok: true,
+      });
       await saveOutboundMessage({
         tenantId: job.tenant_id,
         remoteJid: job.remote_jid,
@@ -268,6 +286,12 @@ export async function processAgentResponseJob(
       quoted,
     });
     if (!send.ok) return { ok: false, error: send.error, dedupedCount: deduped.dedupedCount };
+    console.info("[agent-response-jobs]", {
+      event: "sent_evolution",
+      job_id: job.id,
+      mode: "text",
+      ok: true,
+    });
     await saveOutboundMessage({
       tenantId: job.tenant_id,
       remoteJid: job.remote_jid,

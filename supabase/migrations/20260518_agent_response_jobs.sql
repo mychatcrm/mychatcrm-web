@@ -37,3 +37,5 @@ comment on column public.agent_response_jobs.status is
   'pending | processing | completed | cancelled | failed';
 
 alter table public.agent_response_jobs enable row level security;
+
+grant select, insert, update, delete on table public.agent_response_jobs to service_role;
