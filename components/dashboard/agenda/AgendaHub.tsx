@@ -87,6 +87,11 @@ export function AgendaHub() {
   const isMobile = useIsMobile();
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.matchMedia("(max-width: 767px)").matches) setSidebarOpen(false);
+  }, []);
+
+  useEffect(() => {
     const t = window.setInterval(() => setNow(new Date()), 60000);
     return () => window.clearInterval(t);
   }, []);
@@ -268,7 +273,12 @@ export function AgendaHub() {
             <Search className="size-5" />
           </button>
         )}
-        <button type="button" className="rounded-full p-2 hover:bg-[#f1f3f4]" aria-label="Configurações">
+        <button
+          type="button"
+          className="rounded-full p-2 hover:bg-[#f1f3f4]"
+          aria-label="Configurações"
+          onClick={() => setSidebarOpen(true)}
+        >
           <Settings className="size-5" />
         </button>
         <select
@@ -283,10 +293,17 @@ export function AgendaHub() {
         </select>
       </header>
 
-      <div className="flex min-h-0 flex-1">
-        {/* Sidebar */}
+      <div className="relative flex min-h-0 flex-1">
+        {/* Sidebar — desktop: in-flow; mobile: drawer so Google / Desconectar stay reachable */}
         {sidebarOpen ? (
-          <aside className="hidden w-[256px] shrink-0 flex-col gap-4 overflow-y-auto border-r border-[#dadce0] p-4 md:flex">
+          <>
+            <button
+              type="button"
+              className="fixed inset-0 z-40 bg-black/40 md:hidden"
+              aria-label="Fechar menu da agenda"
+              onClick={() => setSidebarOpen(false)}
+            />
+            <aside className="fixed inset-y-0 left-0 z-50 flex w-[min(100vw-2rem,280px)] shrink-0 flex-col gap-4 overflow-y-auto border-r border-[#dadce0] bg-white p-4 shadow-xl md:static md:z-auto md:w-[256px] md:shadow-none">
             <button
               type="button"
               onClick={() => openCreateModal()}
@@ -363,6 +380,7 @@ export function AgendaHub() {
               </div>
             </div>
           </aside>
+          </>
         ) : null}
 
         {/* Main */}
