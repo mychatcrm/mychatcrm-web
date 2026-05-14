@@ -26,6 +26,7 @@ import {
   upsertConversationState,
 } from "@/lib/server/conversation-memory";
 import { applyHumanConversationCommand } from "@/lib/server/conversation-human-control";
+import { revealConversationOnInbound } from "@/lib/server/conversation-visibility";
 
 export const dynamic = "force-dynamic";
 
@@ -450,16 +451,12 @@ export async function POST(request: Request) {
           msg.type === "video" ? "unsupported" : msg.type === "image" ? "pending" : null,
       });
       const sbState = createSupabaseServiceClient();
-      const state = await upsertConversationState({
+      const state = await revealConversationOnInbound({
         sb: sbState,
         tenantId: row.tenant_id,
         remoteJid: msg.remoteJid,
         leadId,
         agentId,
-        isHidden: false,
-        archivedAt: null,
-        hiddenAt: null,
-        hiddenBy: null,
         lastMessageAt: inboundSaved?.created_at ?? new Date().toISOString(),
       });
 

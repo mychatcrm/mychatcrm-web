@@ -1,7 +1,92 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { upsertConversationState } from "@/lib/server/conversation-memory";
+import {
+  type ConversationState,
+  getConversationState,
+  upsertConversationState,
+} from "@/lib/server/conversation-memory";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
+
+export function isConversationArchived(state: {
+  isHidden?: boolean;
+  archivedAt?: string | null;
+} | null | undefined): boolean {
+  if (!state) return false;
+  return state.isHidden === true || Boolean(state.archivedAt);
+}
+
+/** Pausa manual do painel (toggle) que pode ser descartada ao reabrir conversa arquivada. */
+export function isStaleManualAutomationPause(state: {
+  humanPaused?: boolean;
+  pausedBy?: string | null;
+  pausedReason?: string | null;
+} | null | undefined): boolean {
+  if (!state?.humanPaused) return false;
+  return state.pausedReason === "manual_toggle" || state.pausedBy === "human_manual";
+}
+
+/** Bloqueios que não devem ser limpos automaticamente ao reabrir conversa arquivada. */
+export function isStructuralAutomationBlock(state: {
+  humanPaused?: boolean;
+  pausedBy?: string | null;
+  pausedReason?: string | null;
+  handoffSuggested?: boolean;
+} | null | undefined): boolean {
+  if (!state?.humanPaused) return false;
+  if (state.handoffSuggested) return true;
+  if (state.pausedBy === "auto_handoff") return true;
+  if (state.pausedBy === "human_command" || state.pausedReason === "manual_pause_command") {
+    return true;
+  }
+  return false;
+}
+
+export function shouldResetAutomationOnArchivedReopen(
+  previous: ConversationState | null | undefined,
+): boolean {
+  if (!isConversationArchived(previous)) return false;
+  if (!previous?.humanPaused) return false;
+  if (isStructuralAutomationBlock(previous)) return false;
+  return isStaleManualAutomationPause(previous);
+}
+
+type InboundRevealPatch = {
+  leadId?: string | null;
+  agentId?: string | null;
+  lastMessageAt?: string | null;
+  isHidden: false;
+  archivedAt: null;
+  hiddenAt: null;
+  hiddenBy: null;
+  humanPaused?: false;
+  pausedBy?: null;
+  pausedReason?: null;
+};
+
+export function buildInboundRevealPatch(
+  previous: ConversationState | null | undefined,
+  overrides: {
+    leadId?: string | null;
+    agentId?: string | null;
+    lastMessageAt?: string | null;
+  } = {},
+): InboundRevealPatch {
+  const patch: InboundRevealPatch = {
+    isHidden: false,
+    archivedAt: null,
+    hiddenAt: null,
+    hiddenBy: null,
+    ...overrides,
+  };
+
+  if (shouldResetAutomationOnArchivedReopen(previous)) {
+    patch.humanPaused = false;
+    patch.pausedBy = null;
+    patch.pausedReason = null;
+  }
+
+  return patch;
+}
 
 export async function hideConversationsForTenant(params: {
   sb?: SupabaseServiceClient;
@@ -37,15 +122,29 @@ export async function revealConversationOnInbound(params: {
   sb?: SupabaseServiceClient;
   tenantId: string;
   remoteJid: string;
-}): Promise<void> {
-  await upsertConversationState({
-    sb: params.sb,
+  leadId?: string | null;
+  agentId?: string | null;
+  lastMessageAt?: string | null;
+  previousState?: ConversationState | null;
+}): Promise<ConversationState | null> {
+  const sb = params.sb ?? createSupabaseServiceClient();
+  const previous =
+    params.previousState ??
+    (await getConversationState({
+      sb,
+      tenantId: params.tenantId,
+      remoteJid: params.remoteJid,
+    }));
+
+  return upsertConversationState({
+    sb,
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,
-    isHidden: false,
-    archivedAt: null,
-    hiddenAt: null,
-    hiddenBy: null,
+    ...buildInboundRevealPatch(previous, {
+      leadId: params.leadId,
+      agentId: params.agentId,
+      lastMessageAt: params.lastMessageAt,
+    }),
   });
 }
 
