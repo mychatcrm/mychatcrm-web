@@ -3,6 +3,10 @@
     {
       "path": "/api/internal/agent-response-jobs/process",
       "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/internal/process-follow-ups",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

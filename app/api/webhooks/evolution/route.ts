@@ -30,6 +30,8 @@ import { revealConversationOnInbound } from "@/lib/server/conversation-visibilit
 import { isAgentAutomationAllowed, markWaitingForHuman } from "@/lib/server/conversation-operation";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { isSmartWaitGloballyDisabled, runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
+import { scheduleFollowUpAfterInbound } from "@/lib/server/follow-up-jobs";
+import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -481,6 +483,32 @@ export async function POST(request: Request) {
             text: contentFromMsg(msg),
             occurredAt: inboundSaved?.created_at ?? new Date().toISOString(),
           });
+
+          try {
+            const { data: agentMetaRow } = await sbState
+              .from("tenant_agents")
+              .select("metadata")
+              .eq("tenant_id", row.tenant_id)
+              .eq("agent_id", agentId)
+              .maybeSingle();
+            const agentMetadata =
+              agentMetaRow?.metadata && typeof agentMetaRow.metadata === "object"
+                ? (agentMetaRow.metadata as Record<string, unknown>)
+                : {};
+            await scheduleFollowUpAfterInbound({
+              sb: sbState,
+              tenantId: row.tenant_id,
+              agentId,
+              remoteJid: msg.remoteJid,
+              leadId,
+              settings: followUpInteligenteFromMetadata(agentMetadata),
+            });
+          } catch (followUpErr) {
+            console.warn(
+              "[webhooks/evolution] follow-up schedule",
+              followUpErr instanceof Error ? followUpErr.message : followUpErr,
+            );
+          }
 
           const inboundLanguageCode = detectSupportedLanguageCode(inboundLanguageSource(msg));
 

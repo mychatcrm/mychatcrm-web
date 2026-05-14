@@ -86,6 +86,7 @@ export function CrmRegistrarFollowUpModal({
   const [funilDestinoId, setFunilDestinoId] = useState(lead.funilId);
   const [etapaId, setEtapaId] = useState(lead.status);
   const [erro, setErro] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const funnelDestino = useMemo(
     () => allFunnels.find((f) => f.id === funilDestinoId) ?? funnel,
@@ -101,6 +102,7 @@ export function CrmRegistrarFollowUpModal({
     setFunilDestinoId(lead.funilId);
     setEtapaId(lead.status);
     setErro("");
+    setSaving(false);
   }, [open, lead.id, lead.status, lead.funilId]);
 
   /** Ao mudar o funil, normaliza a etapa para uma coluna válida no funil de destino. */
@@ -113,7 +115,7 @@ export function CrmRegistrarFollowUpModal({
 
   const colunas = funnelDestino?.columns ?? [];
 
-  const submit = () => {
+  const submit = async () => {
     const d = descricao.trim();
     if (!d) {
       setErro("A descrição da atividade é obrigatória.");
@@ -130,6 +132,34 @@ export function CrmRegistrarFollowUpModal({
     if (colunas.length && !colunas.some((c) => c.id === etapaId)) {
       setErro("Seleccione uma etapa válida do funil.");
       return;
+    }
+
+    setSaving(true);
+    setErro("");
+
+    try {
+      const res = await fetch("/api/client/crm/follow-up-timeline", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leadId: lead.id,
+          type: tipo,
+          dataIso,
+          hora,
+          description: d,
+          agentId: lead.agenteAtendendo || lead.agenteEntrada || null,
+        }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setErro(json.error ?? "Não foi possível salvar o follow-up.");
+        return;
+      }
+    } catch {
+      setErro("Falha de rede ao salvar o follow-up.");
+      return;
+    } finally {
+      setSaving(false);
     }
 
     const mudouFunil = funilDestinoId !== lead.funilId;
@@ -208,9 +238,9 @@ export function CrmRegistrarFollowUpModal({
           <Button type="button" variant="secondary" className="w-full min-w-0 sm:w-auto" onClick={onClose}>
             Cancelar
           </Button>
-          <Button type="button" className="w-full min-w-0 gap-2 sm:w-auto" onClick={submit}>
+          <Button type="button" className="w-full min-w-0 gap-2 sm:w-auto" onClick={() => void submit()} disabled={saving}>
             <CalendarClock className="h-4 w-4 shrink-0" aria-hidden />
-            Agendar Atividade
+            {saving ? "A guardar…" : "Agendar Atividade"}
           </Button>
         </>
       }
