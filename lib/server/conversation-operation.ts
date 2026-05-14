@@ -1,12 +1,11 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { cancelPendingAgentResponseJobs } from "@/lib/server/agent-response-jobs";
-import { evolutionSendText } from "@/lib/integrations/evolution-api";
 import {
   getConversationState,
   upsertConversationState,
   type ConversationState,
 } from "@/lib/server/conversation-memory";
-import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
+import { getSystemAgentInstanceName, sendSystemNotification } from "@/lib/server/system-agent";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -446,27 +445,23 @@ export async function markWaitingForHuman(params: {
   const handoffDigits = (params.handoffNumero ?? "").replace(/\D/g, "");
   if (handoffDigits.length >= 10) {
     try {
-      const instance = await getEvolutionInstanceByTenantId(params.tenantId);
-      if (instance?.instance_name) {
-        const lastMessage = (params.lastMessage ?? "").trim() || "(sem texto)";
-        const notifyText = [
-          "🔔 Novo atendimento aguardando humano",
-          `Cliente: ${params.remoteJid}`,
-          `Última mensagem: ${lastMessage.slice(0, 500)}`,
-          "Conversa pausada para atendimento humano.",
-        ].join("\n");
-        const send = await evolutionSendText({
-          instanceName: instance.instance_name,
-          number: handoffDigits,
-          text: notifyText,
-        });
-        if (!send.ok) {
-          console.warn("[conversation-operation] handoff_notify_failed", {
-            tenant_id: params.tenantId,
-            error: send.error,
-          });
-        }
-      }
+      const instanceName = (await getSystemAgentInstanceName()) ?? "";
+      const lastMessage = (params.lastMessage ?? "").trim() || "(sem texto)";
+      const notifyText = [
+        "🔔 Novo atendimento aguardando humano",
+        `Cliente: ${params.remoteJid}`,
+        `Última mensagem: ${lastMessage.slice(0, 500)}`,
+        "Conversa pausada para atendimento humano.",
+      ].join("\n");
+      await sendSystemNotification(handoffDigits, notifyText, instanceName, {
+        type: "handoff_alert",
+        metadata: {
+          tenant_id: params.tenantId,
+          remote_jid: params.remoteJid,
+          reason: params.reason ?? "handoff",
+          agent_id: params.agentId ?? null,
+        },
+      });
     } catch (error) {
       console.warn("[conversation-operation] handoff_notify_error", {
         tenant_id: params.tenantId,

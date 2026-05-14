@@ -24,7 +24,8 @@ export type AdminRouteKey =
   | "ia"
   | "apis"
   | "logs"
-  | "seguranca";
+  | "seguranca"
+  | "system-agent";
 
 export type AdminClientRow = {
   id: string;

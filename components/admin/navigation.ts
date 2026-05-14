@@ -61,6 +61,7 @@ export const adminNavGroups: AdminNavGroup[] = [
       { href: "/admin/equipe", label: "Equipe", routeKey: "equipe" },
       { href: "/admin/apis", label: "API & Integrações", routeKey: "apis" },
       { href: "/admin/logs", label: "Logs do Sistema", routeKey: "logs" },
+      { href: "/admin/system-agent", label: "Agente do Sistema", routeKey: "system-agent" },
       { href: "/admin/seguranca", label: "Segurança", routeKey: "seguranca" },
     ],
   },

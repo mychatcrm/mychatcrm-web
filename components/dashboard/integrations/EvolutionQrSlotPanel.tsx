@@ -93,7 +93,15 @@ function formatWaNumber(jid: string | null | undefined): string | null {
   return `+${num}`;
 }
 
-export function EvolutionQrSlotPanel({ slotIndex }: { slotIndex: number }) {
+export function EvolutionQrSlotPanel({
+  slotIndex,
+  sessionApiPath = "/api/client/whatsapp/evolution/session",
+  statusApiPath = "/api/client/whatsapp/evolution/status",
+}: {
+  slotIndex: number;
+  sessionApiPath?: string;
+  statusApiPath?: string;
+}) {
   const { isLight } = usePanelAppearance();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const qrReceivedAtRef = useRef<number | null>(null);
@@ -176,7 +184,7 @@ export function EvolutionQrSlotPanel({ slotIndex }: { slotIndex: number }) {
   }, []);
 
   const refresh = useCallback(async () => {
-    const res = await fetch(`/api/client/whatsapp/evolution/session?slotIndex=${slotIndex}`, {
+    const res = await fetch(`${sessionApiPath}?slotIndex=${slotIndex}`, {
       credentials: "same-origin",
     });
     const j = await readSessionJson(res);
@@ -188,7 +196,7 @@ export function EvolutionQrSlotPanel({ slotIndex }: { slotIndex: number }) {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/client/whatsapp/evolution/session", {
+      const res = await fetch(sessionApiPath, {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
@@ -205,7 +213,7 @@ export function EvolutionQrSlotPanel({ slotIndex }: { slotIndex: number }) {
   const handleDisconnect = useCallback(async () => {
     setDisconnecting(true);
     try {
-      await fetch(`/api/client/whatsapp/evolution/session?slotIndex=${slotIndex}`, {
+      await fetch(`${sessionApiPath}?slotIndex=${slotIndex}`, {
         method: "DELETE",
         credentials: "same-origin",
       });
@@ -228,7 +236,7 @@ export function EvolutionQrSlotPanel({ slotIndex }: { slotIndex: number }) {
     let cancelled = false;
     void (async () => {
       try {
-        const stRes = await fetch("/api/client/whatsapp/evolution/status", { credentials: "same-origin" });
+        const stRes = await fetch(statusApiPath, { credentials: "same-origin" });
         const st = (await stRes.json().catch(() => ({}))) as EvolutionStatusJson;
         if (cancelled) return;
         if (stRes.ok && st.evolutionConfigured && st.evolutionReachable === false) {
@@ -251,7 +259,7 @@ export function EvolutionQrSlotPanel({ slotIndex }: { slotIndex: number }) {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const res = await fetch(`/api/client/whatsapp/evolution/session?slotIndex=${slotIndex}`, {
+      const res = await fetch(`${sessionApiPath}?slotIndex=${slotIndex}`, {
         credentials: "same-origin",
       });
       const j = await readSessionJson(res);
