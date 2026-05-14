@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/internal/agent-response-jobs/process",
-      "schedule": "* * * * *"
+      "schedule": "30 3 * * *"
     }
   ]
 }
