@@ -82,8 +82,8 @@ export function buildAgentSystemPrompt(params: {
   };
 }): string {
   const agent = params.agent;
-  const handoffKeywords = Array.isArray((agent as { handoffKeywords?: unknown }).handoffKeywords)
-    ? ((agent as { handoffKeywords: unknown[] }).handoffKeywords).filter((item): item is string => typeof item === "string")
+  const handoffKeywords = Array.isArray(agent.handoffKeywords)
+    ? agent.handoffKeywords.filter((item): item is string => typeof item === "string")
     : [];
   const parts = [
     params.languageInstruction,
@@ -100,10 +100,11 @@ Idioma configurado: ${clean(agent.idioma) || "Automático"}`,
     section("REGRAS ADICIONAIS", agent.promptRegrasAdicionais),
     section("RESPOSTAS PROIBIDAS", agent.respostasProibidas),
     `CTA E HANDOFF
-CTA ativo: ${(agent as { ctaHandoffAtivo?: unknown }).ctaHandoffAtivo === true ? "sim" : "não"}
-CTA final: ${clean((agent as { ctaFinal?: unknown }).ctaFinal) || "não configurado"}
-Mensagem de handoff: ${clean((agent as { handoffMensagem?: unknown }).handoffMensagem) || "não configurada"}
+CTA ativo: ${agent.ctaHandoffAtivo === true ? "sim" : "não"}
+CTA final: ${clean(agent.ctaFinal) || "não configurado"}
+Mensagem de handoff: ${clean(agent.handoffMensagem) || "não configurada"}
 Palavras de handoff: ${handoffKeywords.length ? handoffKeywords.join(", ") : "padrão do sistema"}
+Número para transferência: ${clean(agent.handoffNumero) || "não configurado"}
 Se o usuário pedir humano, ligação, proposta, reclamar ou demonstrar alta intenção, responda de forma breve avisando que um atendente humano dará continuidade.`,
     `CONFIGURAÇÕES AVANÇADAS DO AGENTE
 Modo de resposta configurado: ${clean((agent as { responseMode?: unknown }).responseMode) || "text"}

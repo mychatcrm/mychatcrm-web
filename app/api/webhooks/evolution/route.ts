@@ -596,7 +596,9 @@ export async function POST(request: Request) {
             handoffEnabled && typeof metadata.handoffMensagem === "string" && metadata.handoffMensagem.trim()
               ? metadata.handoffMensagem.trim()
               : null;
-          const handoffCheck = shouldTriggerHandoff(inboundLanguageSource(msg), handoffKeywords);
+          const handoffCheck = handoffEnabled
+            ? shouldTriggerHandoff(inboundLanguageSource(msg), handoffKeywords)
+            : { trigger: false, reason: null };
 
           const result = await generateAgentResponse({
             tenantId: row.tenant_id,
@@ -665,6 +667,9 @@ export async function POST(request: Request) {
               leadId,
               agentId,
               reason: handoffCheck.reason ?? "handoff",
+              handoffNumero:
+                typeof metadata.handoffNumero === "string" ? metadata.handoffNumero : null,
+              lastMessage: inboundLanguageSource(msg),
             });
           }
 

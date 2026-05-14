@@ -288,6 +288,7 @@ export async function processAgentResponseJob(
 
   let handoffTriggered = false;
   let handoffReason: string | undefined;
+  let handoffLastMessage: string | undefined;
   let repliesSent = 0;
 
   for (let unitIndex = 0; unitIndex < burst.replyUnits.length; unitIndex++) {
@@ -301,7 +302,9 @@ export async function processAgentResponseJob(
 
     const unit = burst.replyUnits[unitIndex]!;
     const unitPrompt = buildReplyUnitPrompt(unit);
-    const handoffCheck = shouldTriggerHandoff(unitPrompt, handoffKeywords);
+    const handoffCheck = handoffEnabled
+      ? shouldTriggerHandoff(unitPrompt, handoffKeywords)
+      : { trigger: false, reason: null };
 
     const replyText = await generateReplyForUnit({
       job,
@@ -323,6 +326,7 @@ export async function processAgentResponseJob(
     if (handoffCheck.trigger) {
       handoffTriggered = true;
       handoffReason = handoffCheck.reason ?? "handoff";
+      handoffLastMessage = unitPrompt;
       if (handoffMessage) outboundText = handoffMessage;
     }
 
@@ -448,6 +452,8 @@ export async function processAgentResponseJob(
       leadId: job.lead_id,
       agentId: job.agent_id,
       reason: handoffReason ?? "handoff",
+      handoffNumero: typeof metadata.handoffNumero === "string" ? metadata.handoffNumero : null,
+      lastMessage: handoffLastMessage ?? null,
     });
   }
 

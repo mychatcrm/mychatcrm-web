@@ -47,6 +47,11 @@ export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDr
     crmTargetFunnelId: draft.crmAutoMoveEnabled ? draft.crmTargetFunnelId : null,
     crmTargetColumnId: draft.crmAutoMoveEnabled ? draft.crmTargetColumnId : null,
     crmTargetStatus: draft.crmAutoMoveEnabled ? draft.crmTargetColumnId : null,
+    ctaHandoffAtivo: draft.ctaHandoffAtivo ?? false,
+    ctaFinal: draft.ctaFinal ?? "Transferir para humano",
+    handoffKeywords: draft.handoffKeywords ?? ["humano", "especialista"],
+    handoffMensagem: draft.handoffMensagem ?? "",
+    handoffNumero: draft.handoffNumero ?? "",
   };
 }
 
@@ -106,5 +111,10 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
     crmTargetFunnelId: draft.crmAutoMoveEnabled ? draft.crmTargetFunnelId : null,
     crmTargetColumnId: draft.crmAutoMoveEnabled ? draft.crmTargetColumnId : null,
     crmTargetStatus: draft.crmAutoMoveEnabled ? draft.crmTargetColumnId : null,
+    ctaHandoffAtivo: draft.ctaHandoffAtivo ?? false,
+    ctaFinal: draft.ctaFinal ?? "Transferir para humano",
+    handoffKeywords: draft.handoffKeywords ?? ["humano", "especialista"],
+    handoffMensagem: draft.handoffMensagem ?? "",
+    handoffNumero: draft.handoffNumero ?? "",
   };
 }

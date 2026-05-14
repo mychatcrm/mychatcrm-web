@@ -261,4 +261,14 @@ export interface Agent {
   crmTargetColumnId?: string | null;
   /** Alias do status/coluna usado pela tabela leads. */
   crmTargetStatus?: string | null;
+  /** Se true, CTA/handoff estruturado está ativo para este agente. */
+  ctaHandoffAtivo?: boolean;
+  /** CTA final configurado no wizard (ex.: transferir para humano). */
+  ctaFinal?: string;
+  /** Palavras-chave adicionais que disparam handoff automático. */
+  handoffKeywords?: string[];
+  /** Mensagem enviada ao cliente na transição para humano. */
+  handoffMensagem?: string;
+  /** Número WhatsApp do atendente humano para notificação de handoff. */
+  handoffNumero?: string;
 }
