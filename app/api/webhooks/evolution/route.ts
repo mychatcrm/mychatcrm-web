@@ -412,322 +412,351 @@ export async function POST(request: Request) {
 
     const inbound = extractInboundMessagesFromEvolutionPayload(payload);
 
-    for (const msg of inbound) {
-      const agentId = await resolveEvolutionAgentId(row.tenant_id, row.default_agent_id);
+    // Bug 3 fix: split the per-message loop into two serial phases so that ALL messages
+    // from a batch Evolution payload are persisted to DB before any smart-wait flow starts.
+    // Previously, await runInboundSmartWaitFlow() blocked the for-loop, preventing messages
+    // 2+ from being saved while message 1's job was being processed (up to 60 s wait).
+    // With the two-phase approach, Phase 1 saves every message in parallel, then Phase 2
+    // triggers automation flows in parallel — ensuring complete burst accumulation.
 
-      // Para áudio/imagem: baixa mídia e faz upload para R2 para exibição no chat
-      let inboundMedia:
-        | Awaited<ReturnType<typeof downloadAndStoreMedia>>
-        | null = null;
-      if (msg.type === "audio" || msg.type === "image" || msg.type === "video" || msg.type === "document") {
-        inboundMedia = await downloadAndStoreMedia(msg, row.tenant_id, instanceName);
-      }
+    // ── Phase 1: save all messages to DB ────────────────────────────────────
+    const savedContexts = await Promise.all(
+      inbound.map(async (msg) => {
+        try {
+          const agentId = await resolveEvolutionAgentId(row.tenant_id, row.default_agent_id);
 
-      const contactName = extractContactNameFromPayload(payload, msg);
-      const upsertedLead = await upsertLeadFromWhatsAppContact({
-        tenantId: row.tenant_id,
-        remoteJid: msg.remoteJid,
-        senderJid: msg.remoteJid,
-        instanceJid,
-        contactName,
-        direction: "inbound",
-        agentId,
-        conversationId: msg.remoteJid,
-      });
-      const leadId = upsertedLead?.lead?.id ?? null;
+          let inboundMedia: Awaited<ReturnType<typeof downloadAndStoreMedia>> = null;
+          if (msg.type === "audio" || msg.type === "image" || msg.type === "video" || msg.type === "document") {
+            inboundMedia = await downloadAndStoreMedia(msg, row.tenant_id, instanceName);
+          }
 
-      const inboundSaved = await saveMessage({
-        tenantId: row.tenant_id,
-        remoteJid: msg.remoteJid,
-        direction: "inbound",
-        kind: kindFromMsg(msg),
-        content: contentFromMsg(msg),
-        messageId: msg.messageId,
-        leadId,
-        mediaUrl: inboundMedia?.mediaUrl ?? null,
-        mimeType: inboundMedia?.mimeType ?? ("mimetype" in msg ? msg.mimetype : null),
-        storageKey: inboundMedia?.storageKey ?? null,
-        fileName: inboundMedia?.fileName ?? null,
-        caption: inboundMedia?.caption ?? null,
-        mediaDurationSeconds: inboundMedia?.durationSeconds ?? null,
-        transcriptionStatus: msg.type === "audio" ? "pending" : null,
-        analysisStatus:
-          msg.type === "video" ? "unsupported" : msg.type === "image" ? "pending" : null,
-      });
-      const sbState = createSupabaseServiceClient();
-      const state = await revealConversationOnInbound({
-        sb: sbState,
-        tenantId: row.tenant_id,
-        remoteJid: msg.remoteJid,
-        leadId,
-        agentId,
-        lastMessageAt: inboundSaved?.created_at ?? new Date().toISOString(),
-      });
+          const contactName = extractContactNameFromPayload(payload, msg);
+          const upsertedLead = await upsertLeadFromWhatsAppContact({
+            tenantId: row.tenant_id,
+            remoteJid: msg.remoteJid,
+            senderJid: msg.remoteJid,
+            instanceJid,
+            contactName,
+            direction: "inbound",
+            agentId,
+            conversationId: msg.remoteJid,
+          });
+          const leadId = upsertedLead?.lead?.id ?? null;
 
-      const inboundLanguageCode = detectSupportedLanguageCode(inboundLanguageSource(msg));
+          const inboundSaved = await saveMessage({
+            tenantId: row.tenant_id,
+            remoteJid: msg.remoteJid,
+            direction: "inbound",
+            kind: kindFromMsg(msg),
+            content: contentFromMsg(msg),
+            messageId: msg.messageId,
+            leadId,
+            mediaUrl: inboundMedia?.mediaUrl ?? null,
+            mimeType: inboundMedia?.mimeType ?? ("mimetype" in msg ? msg.mimetype : null),
+            storageKey: inboundMedia?.storageKey ?? null,
+            fileName: inboundMedia?.fileName ?? null,
+            caption: inboundMedia?.caption ?? null,
+            mediaDurationSeconds: inboundMedia?.durationSeconds ?? null,
+            transcriptionStatus: msg.type === "audio" ? "pending" : null,
+            analysisStatus:
+              msg.type === "video" ? "unsupported" : msg.type === "image" ? "pending" : null,
+          });
 
-      await applyHumanConversationCommand({
-        sb: sbState,
-        tenantId: row.tenant_id,
-        remoteJid: msg.remoteJid,
-        leadId,
-        agentId,
-        text: contentFromMsg(msg),
-        occurredAt: inboundSaved?.created_at ?? new Date().toISOString(),
-      });
-
-      const automationAllowed = await isAgentAutomationAllowed({
-        sb: sbState,
-        tenantId: row.tenant_id,
-        remoteJid: msg.remoteJid,
-        agentId,
-      });
-      if (!automationAllowed.ok) {
-        console.info("[webhooks/evolution] agent skipped", {
-          reason: automationAllowed.reason,
-          tenant_id: row.tenant_id,
-          agent_id: agentId,
-          remote_jid_last4: msg.remoteJid.replace(/\D/g, "").slice(-4),
-        });
-        continue;
-      }
-
-      const agentConfig = await sbState
-        .from("tenant_agents")
-        .select("metadata")
-        .eq("tenant_id", row.tenant_id)
-        .eq("agent_id", agentId)
-        .maybeSingle();
-      const metadata = agentConfig.data?.metadata && typeof agentConfig.data.metadata === "object"
-        ? (agentConfig.data.metadata as Record<string, unknown>)
-        : {};
-      const smartWait = smartWaitFromMetadata(metadata);
-      const useSmartWait = smartWait.enabled && !isSmartWaitGloballyDisabled();
-      let runImmediateReply = !useSmartWait;
-
-      if (useSmartWait) {
-        const inboundMessageKey = inboundSaved?.id ?? null;
-        if (inboundMessageKey) {
-          const flowResult = await runInboundSmartWaitFlow({
+          const sbState = createSupabaseServiceClient();
+          const state = await revealConversationOnInbound({
             sb: sbState,
             tenantId: row.tenant_id,
             remoteJid: msg.remoteJid,
             leadId,
             agentId,
-            instanceName,
-            inboundMessageKey,
+            lastMessageAt: inboundSaved?.created_at ?? new Date().toISOString(),
+          });
+
+          await applyHumanConversationCommand({
+            sb: sbState,
+            tenantId: row.tenant_id,
+            remoteJid: msg.remoteJid,
+            leadId,
+            agentId,
+            text: contentFromMsg(msg),
             occurredAt: inboundSaved?.created_at ?? new Date().toISOString(),
-            smartWait,
           });
-          if (flowResult.mode === "smart_wait") {
-            continue;
-          }
-          runImmediateReply = true;
-        } else {
-          console.info("[agent-response-jobs]", {
-            event: "job_create_failed",
-            reason: "missing_inbound_message_uuid",
-            tenant_id: row.tenant_id,
-            remote_jid: msg.remoteJid.replace(/\D/g, "").slice(-4),
-          });
-          runImmediateReply = true;
+
+          const inboundLanguageCode = detectSupportedLanguageCode(inboundLanguageSource(msg));
+
+          return { msg, agentId, inboundMedia, contactName, leadId, inboundSaved, state, inboundLanguageCode };
+        } catch (e) {
+          console.warn("[webhooks/evolution] Phase 1 save error", e instanceof Error ? e.message : e);
+          return null;
         }
-      }
+      }),
+    );
 
-      if (!runImmediateReply) continue;
-      const handoffKeywords = Array.isArray(metadata.handoffKeywords)
-        ? metadata.handoffKeywords.filter((item): item is string => typeof item === "string")
-        : [];
-      const handoffEnabled = metadata.ctaHandoffAtivo === true;
-      const handoffMessage =
-        handoffEnabled && typeof metadata.handoffMensagem === "string" && metadata.handoffMensagem.trim()
-          ? metadata.handoffMensagem.trim()
-          : null;
-      const handoffCheck = shouldTriggerHandoff(inboundLanguageSource(msg), handoffKeywords);
-
-      const result = await generateAgentResponse({
-        tenantId: row.tenant_id,
-        agentId,
-        conversationId: msg.remoteJid,
-        customerId: msg.remoteJid,
-        feature: "agent_chat",
-        messages: [],
-        mediaContent:
-          msg.type === "audio" || msg.type === "image" || msg.type === "video" ? msg : undefined,
-        instanceName: msg.type !== "text" ? instanceName : undefined,
-      });
-
-      let replyText: string;
-      if (result.ok) {
-        replyText = result.text;
-      } else if (result.code === "MEDIA_DOWNLOAD_FAILED") {
-        const mediaLabel =
-          msg.type === "audio" ? "audio" : msg.type === "video" ? "video" : "image";
-        replyText = localizedMediaFailureReply(inboundLanguageCode, mediaLabel);
-      } else {
-        replyText = localizedGenericFailureReply(inboundLanguageCode);
-      }
-
-      const number = remoteJidToEvoNumber(msg.remoteJid);
-      if (!number) continue;
-
-      if (handoffCheck.trigger) {
-        if (handoffMessage) replyText = handoffMessage;
-        const messages = await getRecentConversationMessages({
-          sb: sbState,
-          tenantId: row.tenant_id,
-          remoteJid: msg.remoteJid,
-        });
-        const summary = buildDeterministicHandoffSummary({
-          lead: leadId ? {
-            id: leadId,
-            name: contactName,
-            phone: msg.remoteJid.split("@")[0]?.replace(/\D/g, "") ?? null,
-            source: "whatsapp",
-            status: null,
-            crmFunnelId: null,
-            notes: null,
-            agentId,
-            aiSummary: null,
-            leadTemperature: null,
-            suggestedNextAction: null,
-            profileMetadata: {},
-          } : null,
-          messages,
-          reason: handoffCheck.reason ?? "handoff",
-        });
-        await saveConversationSummary({
-          sb: sbState,
-          tenantId: row.tenant_id,
-          remoteJid: msg.remoteJid,
-          stateId: state?.id,
-          leadId,
-          agentId,
-          summary,
-        });
-        await markWaitingForHuman({
-          sb: sbState,
-          tenantId: row.tenant_id,
-          remoteJid: msg.remoteJid,
-          leadId,
-          agentId,
-          reason: handoffCheck.reason ?? "handoff",
-        });
-      }
-
-      // ── Verifica se o agente tem resposta em áudio (ElevenLabs TTS) ──────
-      const sb2 = createSupabaseServiceClient();
-      const { data: agentRow } = await sb2
-        .from("tenant_agents")
-        .select("voice_id, response_mode")
-        .eq("tenant_id", row.tenant_id)
-        .eq("agent_id", agentId)
-        .maybeSingle();
-
-      const { responseMode, voiceId } = sanitizeAgentResponseSettings({
-        responseMode: agentRow?.response_mode,
-        voiceId: agentRow?.voice_id,
-      });
-      const useAudio = msg.type === "audio" && responseMode === "audio" && Boolean(voiceId);
-
-      if (useAudio) {
-        // ── TTS via ElevenLabs → R2 → Evolution WhatsApp Audio ──────────
+    // ── Phase 2: run automation flows in parallel (all messages already in DB) ──
+    await Promise.all(
+      savedContexts.map(async (ctx) => {
+        if (!ctx) return;
+        const { msg, agentId, contactName, leadId, inboundSaved, state, inboundLanguageCode } = ctx;
         try {
-          const languageCode = detectSupportedLanguageCode(inboundLanguageSource(msg, replyText));
-          const audioBuffer = await textToSpeechElevenLabs(replyText.slice(0, 5000), voiceId!, {
-            languageCode,
-          });
-          const ttsKey = `whatsapp/${row.tenant_id}/tts/${Date.now()}_reply.mp3`;
-          const r2Key = await uploadMediaToR2(audioBuffer, ttsKey, "audio/mpeg");
-          const mediaUrl = r2Key ? `/api/client/media/${ttsKey}` : null;
+          const sbState = createSupabaseServiceClient();
 
-          const audioB64 = audioBuffer.toString("base64");
-          const send = await evolutionSendAudio({
-            instanceName,
-            number,
-            audio: audioB64,
-          });
-
-          if (!send.ok) {
-            console.error("[webhooks/evolution] sendAudio (TTS)", send.status, send.error);
-          } else {
-            await saveMessage({
-              tenantId: row.tenant_id,
-              remoteJid: msg.remoteJid,
-              direction: "outbound",
-              kind: "audio",
-              content: replyText.slice(0, 4000),
-              agentId,
-              mediaUrl,
-            });
-            await upsertLeadFromWhatsAppContact({
-              tenantId: row.tenant_id,
-              remoteJid: msg.remoteJid,
-              recipientJid: msg.remoteJid,
-              instanceJid,
-              contactName,
-              direction: "outbound",
-              agentId,
-              conversationId: msg.remoteJid,
-            });
-          }
-        } catch (ttsErr) {
-          console.error("[webhooks/evolution] TTS error — fallback to text", ttsErr instanceof Error ? ttsErr.message : ttsErr);
-          // Fallback: envia como texto se TTS falhar
-          const fallback = await evolutionSendText({ instanceName, number, text: replyText.slice(0, 4000) });
-          if (fallback.ok) {
-            await saveMessage({
-              tenantId: row.tenant_id,
-              remoteJid: msg.remoteJid,
-              direction: "outbound",
-              kind: "text",
-              content: replyText.slice(0, 4000),
-              agentId,
-            });
-            await upsertLeadFromWhatsAppContact({
-              tenantId: row.tenant_id,
-              remoteJid: msg.remoteJid,
-              recipientJid: msg.remoteJid,
-              instanceJid,
-              contactName,
-              direction: "outbound",
-              agentId,
-              conversationId: msg.remoteJid,
-            });
-          }
-        }
-      } else {
-        // ── Envio de texto padrão ─────────────────────────────────────────
-        const send = await evolutionSendText({
-          instanceName,
-          number,
-          text: replyText.slice(0, 4000),
-        });
-
-        if (!send.ok) {
-          console.error("[webhooks/evolution] sendText", send.status, send.error);
-        } else {
-          await saveMessage({
+          const automationAllowed = await isAgentAutomationAllowed({
+            sb: sbState,
             tenantId: row.tenant_id,
             remoteJid: msg.remoteJid,
-            direction: "outbound",
-            kind: "text",
-            content: replyText.slice(0, 4000),
             agentId,
           });
-          await upsertLeadFromWhatsAppContact({
+          if (!automationAllowed.ok) {
+            console.info("[webhooks/evolution] agent skipped", {
+              reason: automationAllowed.reason,
+              tenant_id: row.tenant_id,
+              agent_id: agentId,
+              remote_jid_last4: msg.remoteJid.replace(/\D/g, "").slice(-4),
+            });
+            return;
+          }
+
+          const agentConfig = await sbState
+            .from("tenant_agents")
+            .select("metadata")
+            .eq("tenant_id", row.tenant_id)
+            .eq("agent_id", agentId)
+            .maybeSingle();
+          const metadata = agentConfig.data?.metadata && typeof agentConfig.data.metadata === "object"
+            ? (agentConfig.data.metadata as Record<string, unknown>)
+            : {};
+          const smartWait = smartWaitFromMetadata(metadata);
+          const useSmartWait = smartWait.enabled && !isSmartWaitGloballyDisabled();
+          let runImmediateReply = !useSmartWait;
+
+          if (useSmartWait) {
+            const inboundMessageKey = inboundSaved?.id ?? null;
+            if (inboundMessageKey) {
+              const flowResult = await runInboundSmartWaitFlow({
+                sb: sbState,
+                tenantId: row.tenant_id,
+                remoteJid: msg.remoteJid,
+                leadId,
+                agentId,
+                instanceName,
+                inboundMessageKey,
+                occurredAt: inboundSaved?.created_at ?? new Date().toISOString(),
+                smartWait,
+              });
+              if (flowResult.mode === "smart_wait") {
+                return;
+              }
+              runImmediateReply = true;
+            } else {
+              console.info("[agent-response-jobs]", {
+                event: "job_create_failed",
+                reason: "missing_inbound_message_uuid",
+                tenant_id: row.tenant_id,
+                remote_jid: msg.remoteJid.replace(/\D/g, "").slice(-4),
+              });
+              runImmediateReply = true;
+            }
+          }
+
+          if (!runImmediateReply) return;
+
+          const handoffKeywords = Array.isArray(metadata.handoffKeywords)
+            ? metadata.handoffKeywords.filter((item): item is string => typeof item === "string")
+            : [];
+          const handoffEnabled = metadata.ctaHandoffAtivo === true;
+          const handoffMessage =
+            handoffEnabled && typeof metadata.handoffMensagem === "string" && metadata.handoffMensagem.trim()
+              ? metadata.handoffMensagem.trim()
+              : null;
+          const handoffCheck = shouldTriggerHandoff(inboundLanguageSource(msg), handoffKeywords);
+
+          const result = await generateAgentResponse({
             tenantId: row.tenant_id,
-            remoteJid: msg.remoteJid,
-            recipientJid: msg.remoteJid,
-            instanceJid,
-            contactName,
-            direction: "outbound",
             agentId,
             conversationId: msg.remoteJid,
+            customerId: msg.remoteJid,
+            feature: "agent_chat",
+            messages: [],
+            mediaContent:
+              msg.type === "audio" || msg.type === "image" || msg.type === "video" ? msg : undefined,
+            instanceName: msg.type !== "text" ? instanceName : undefined,
           });
+
+          let replyText: string;
+          if (result.ok) {
+            replyText = result.text;
+          } else if (result.code === "MEDIA_DOWNLOAD_FAILED") {
+            const mediaLabel =
+              msg.type === "audio" ? "audio" : msg.type === "video" ? "video" : "image";
+            replyText = localizedMediaFailureReply(inboundLanguageCode, mediaLabel);
+          } else {
+            replyText = localizedGenericFailureReply(inboundLanguageCode);
+          }
+
+          const number = remoteJidToEvoNumber(msg.remoteJid);
+          if (!number) return;
+
+          if (handoffCheck.trigger) {
+            if (handoffMessage) replyText = handoffMessage;
+            const messages = await getRecentConversationMessages({
+              sb: sbState,
+              tenantId: row.tenant_id,
+              remoteJid: msg.remoteJid,
+            });
+            const summary = buildDeterministicHandoffSummary({
+              lead: leadId ? {
+                id: leadId,
+                name: contactName,
+                phone: msg.remoteJid.split("@")[0]?.replace(/\D/g, "") ?? null,
+                source: "whatsapp",
+                status: null,
+                crmFunnelId: null,
+                notes: null,
+                agentId,
+                aiSummary: null,
+                leadTemperature: null,
+                suggestedNextAction: null,
+                profileMetadata: {},
+              } : null,
+              messages,
+              reason: handoffCheck.reason ?? "handoff",
+            });
+            await saveConversationSummary({
+              sb: sbState,
+              tenantId: row.tenant_id,
+              remoteJid: msg.remoteJid,
+              stateId: state?.id,
+              leadId,
+              agentId,
+              summary,
+            });
+            await markWaitingForHuman({
+              sb: sbState,
+              tenantId: row.tenant_id,
+              remoteJid: msg.remoteJid,
+              leadId,
+              agentId,
+              reason: handoffCheck.reason ?? "handoff",
+            });
+          }
+
+          // ── Verifica se o agente tem resposta em áudio (ElevenLabs TTS) ──────
+          const sb2 = createSupabaseServiceClient();
+          const { data: agentRow } = await sb2
+            .from("tenant_agents")
+            .select("voice_id, response_mode")
+            .eq("tenant_id", row.tenant_id)
+            .eq("agent_id", agentId)
+            .maybeSingle();
+
+          const { responseMode, voiceId } = sanitizeAgentResponseSettings({
+            responseMode: agentRow?.response_mode,
+            voiceId: agentRow?.voice_id,
+          });
+          const useAudio = msg.type === "audio" && responseMode === "audio" && Boolean(voiceId);
+
+          if (useAudio) {
+            // ── TTS via ElevenLabs → R2 → Evolution WhatsApp Audio ──────────
+            try {
+              const languageCode = detectSupportedLanguageCode(inboundLanguageSource(msg, replyText));
+              const audioBuffer = await textToSpeechElevenLabs(replyText.slice(0, 5000), voiceId!, {
+                languageCode,
+              });
+              const ttsKey = `whatsapp/${row.tenant_id}/tts/${Date.now()}_reply.mp3`;
+              const r2Key = await uploadMediaToR2(audioBuffer, ttsKey, "audio/mpeg");
+              const mediaUrl = r2Key ? `/api/client/media/${ttsKey}` : null;
+
+              const audioB64 = audioBuffer.toString("base64");
+              const send = await evolutionSendAudio({
+                instanceName,
+                number,
+                audio: audioB64,
+              });
+
+              if (!send.ok) {
+                console.error("[webhooks/evolution] sendAudio (TTS)", send.status, send.error);
+              } else {
+                await saveMessage({
+                  tenantId: row.tenant_id,
+                  remoteJid: msg.remoteJid,
+                  direction: "outbound",
+                  kind: "audio",
+                  content: replyText.slice(0, 4000),
+                  agentId,
+                  mediaUrl,
+                });
+                await upsertLeadFromWhatsAppContact({
+                  tenantId: row.tenant_id,
+                  remoteJid: msg.remoteJid,
+                  recipientJid: msg.remoteJid,
+                  instanceJid,
+                  contactName,
+                  direction: "outbound",
+                  agentId,
+                  conversationId: msg.remoteJid,
+                });
+              }
+            } catch (ttsErr) {
+              console.error("[webhooks/evolution] TTS error — fallback to text", ttsErr instanceof Error ? ttsErr.message : ttsErr);
+              // Fallback: envia como texto se TTS falhar
+              const fallback = await evolutionSendText({ instanceName, number, text: replyText.slice(0, 4000) });
+              if (fallback.ok) {
+                await saveMessage({
+                  tenantId: row.tenant_id,
+                  remoteJid: msg.remoteJid,
+                  direction: "outbound",
+                  kind: "text",
+                  content: replyText.slice(0, 4000),
+                  agentId,
+                });
+                await upsertLeadFromWhatsAppContact({
+                  tenantId: row.tenant_id,
+                  remoteJid: msg.remoteJid,
+                  recipientJid: msg.remoteJid,
+                  instanceJid,
+                  contactName,
+                  direction: "outbound",
+                  agentId,
+                  conversationId: msg.remoteJid,
+                });
+              }
+            }
+          } else {
+            // ── Envio de texto padrão ─────────────────────────────────────────
+            const send = await evolutionSendText({
+              instanceName,
+              number,
+              text: replyText.slice(0, 4000),
+            });
+
+            if (!send.ok) {
+              console.error("[webhooks/evolution] sendText", send.status, send.error);
+            } else {
+              await saveMessage({
+                tenantId: row.tenant_id,
+                remoteJid: msg.remoteJid,
+                direction: "outbound",
+                kind: "text",
+                content: replyText.slice(0, 4000),
+                agentId,
+              });
+              await upsertLeadFromWhatsAppContact({
+                tenantId: row.tenant_id,
+                remoteJid: msg.remoteJid,
+                recipientJid: msg.remoteJid,
+                instanceJid,
+                contactName,
+                direction: "outbound",
+                agentId,
+                conversationId: msg.remoteJid,
+              });
+            }
+          }
+        } catch (e) {
+          console.warn("[webhooks/evolution] Phase 2 flow error", e instanceof Error ? e.message : e);
         }
-      }
-    }
+      }),
+    );
   }
 
   return NextResponse.json({ ok: true });

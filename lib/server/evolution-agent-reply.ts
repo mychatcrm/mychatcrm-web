@@ -166,6 +166,11 @@ export async function processAgentResponseJob(
   const generation = claimedGeneration ?? job.burst_generation;
   const skipGenerationCheck = options?.skipGenerationCheck === true;
 
+  // Bug 1 fix: add 1ms buffer to last_message_at to compensate for JS Date microsecond
+  // truncation. PostgreSQL stores created_at with µs precision (e.g. "14:15:51.051645");
+  // JS toISOString() truncates to ms ("14:15:51.051"), causing .lte() to exclude the last
+  // message of every burst. Adding 1ms ensures the filter covers the full window.
+  const windowEnd = new Date(new Date(job.last_message_at).getTime() + 1).toISOString();
   const { data: rowsByWindow, error: windowError } = await sb
     .from("whatsapp_messages")
     .select("id, content, kind, message_id, remote_jid, created_at")
@@ -173,22 +178,31 @@ export async function processAgentResponseJob(
     .eq("remote_jid", job.remote_jid)
     .eq("direction", "inbound")
     .gte("created_at", job.first_message_at)
-    .lte("created_at", job.last_message_at)
+    .lte("created_at", windowEnd)
     .order("created_at", { ascending: true });
   if (windowError) return { ok: false, error: windowError.message };
 
   let inboundRows = (rowsByWindow ?? []) as PendingInboundRow[];
-  if (!inboundRows.length && job.message_ids.length) {
-    const { data: rowsById, error } = await sb
-      .from("whatsapp_messages")
-      .select("id, content, kind, message_id, remote_jid, created_at")
-      .eq("tenant_id", job.tenant_id)
-      .eq("remote_jid", job.remote_jid)
-      .eq("direction", "inbound")
-      .in("id", job.message_ids)
-      .order("created_at", { ascending: true });
-    if (error) return { ok: false, error: error.message };
-    inboundRows = (rowsById ?? []) as PendingInboundRow[];
+  // Bug 2 fix: fallback also triggers when window returns partial results (N-1 instead of N).
+  // Previously only fired on zero results, silently processing incomplete bursts.
+  if (inboundRows.length < job.message_ids.length && job.message_ids.length > 0) {
+    const existingIds = new Set(inboundRows.map((r) => r.id));
+    const missingIds = job.message_ids.filter((id) => !existingIds.has(id));
+    if (missingIds.length > 0) {
+      const { data: rowsById, error } = await sb
+        .from("whatsapp_messages")
+        .select("id, content, kind, message_id, remote_jid, created_at")
+        .eq("tenant_id", job.tenant_id)
+        .eq("remote_jid", job.remote_jid)
+        .eq("direction", "inbound")
+        .in("id", missingIds)
+        .order("created_at", { ascending: true });
+      if (error) return { ok: false, error: error.message };
+      const missing = (rowsById ?? []) as PendingInboundRow[];
+      inboundRows = [...inboundRows, ...missing].sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      );
+    }
   }
   if (!inboundRows.length) return { ok: false, error: "no_inbound_messages" };
 
