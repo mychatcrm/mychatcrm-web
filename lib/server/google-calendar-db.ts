@@ -17,6 +17,8 @@ export type AgendaEventRow = {
   google_event_id: string | null;
   title: string;
   description: string | null;
+  location: string | null;
+  color: string | null;
   start_at: string;
   end_at: string;
   attendee_name: string | null;
@@ -92,10 +94,37 @@ export async function insertAgendaEvent(
   return data as AgendaEventRow;
 }
 
+export async function getAgendaEventById(tenantId: string, id: string): Promise<AgendaEventRow | null> {
+  const sb = createSupabaseServiceClient();
+  const { data, error } = await sb
+    .from("agenda_events")
+    .select("*")
+    .eq("tenant_id", tenantId)
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as AgendaEventRow | null) ?? null;
+}
+
 export async function updateAgendaEvent(
   tenantId: string,
   id: string,
-  patch: Partial<Pick<AgendaEventRow, "google_event_id" | "title" | "description" | "start_at" | "end_at" | "status">>,
+  patch: Partial<
+    Pick<
+      AgendaEventRow,
+      | "google_event_id"
+      | "title"
+      | "description"
+      | "location"
+      | "color"
+      | "start_at"
+      | "end_at"
+      | "attendee_name"
+      | "attendee_phone"
+      | "attendee_email"
+      | "status"
+    >
+  >,
 ) {
   const sb = createSupabaseServiceClient();
   const { error } = await sb
@@ -133,6 +162,8 @@ export async function upsertAgendaEventFromGoogle(
     google_event_id: event.google_event_id,
     title: event.title,
     description: event.description,
+    location: null,
+    color: "#f24400",
     start_at: event.start_at,
     end_at: event.end_at,
     attendee_name: null,

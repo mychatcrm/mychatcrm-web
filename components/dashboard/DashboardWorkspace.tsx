@@ -4355,7 +4355,7 @@ export function DashboardWorkspace({
   // <main> sem padding (modo full-bleed). Wrapper com 100% × 100% herda o
   // calc(100dvh - 48px) imposto pelo DashboardShell — não usa flex:1 para
   // evitar dependência da cadeia de min-height/flex parents.
-  if (routeKey === "conversas") {
+  if (routeKey === "conversas" || routeKey === "agenda") {
     return (
       <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%" }}>
         {content}

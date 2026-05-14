@@ -12,6 +12,7 @@ export async function GET() {
   }
   const row = await getGoogleCalendarToken(session.tenantId);
   return NextResponse.json({
+    tenantId: session.tenantId,
     configured: isGoogleCalendarConfigured(),
     connected: Boolean(row),
     email: row?.email ?? null,

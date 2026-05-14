@@ -154,6 +154,7 @@ export async function disconnectGoogleCalendar(tenantId: string) {
 export type GoogleCalendarEventInput = {
   title: string;
   description?: string | null;
+  location?: string | null;
   startAt: string;
   endAt: string;
   attendeeEmail?: string | null;
@@ -226,6 +227,7 @@ export async function createGoogleCalendarEvent(
   const body: Record<string, unknown> = {
     summary: input.title,
     description: input.description ?? undefined,
+    location: input.location ?? undefined,
     start: { dateTime: input.startAt, timeZone: "America/Sao_Paulo" },
     end: { dateTime: input.endAt, timeZone: "America/Sao_Paulo" },
   };
@@ -247,6 +249,44 @@ export async function createGoogleCalendarEvent(
   const item = (await res.json()) as Record<string, unknown>;
   const mapped = mapGoogleEvent(item);
   if (!mapped) throw new Error("Resposta inválida ao criar evento no Google.");
+  return mapped;
+}
+
+export async function updateGoogleCalendarEvent(
+  tenantId: string,
+  googleEventId: string,
+  input: GoogleCalendarEventInput,
+): Promise<GoogleCalendarEvent> {
+  const accessToken = await getValidGoogleAccessToken(tenantId);
+  if (!accessToken) throw new Error("Google Agenda não conectada.");
+  const body: Record<string, unknown> = {
+    summary: input.title,
+    description: input.description ?? undefined,
+    location: input.location ?? undefined,
+    start: { dateTime: input.startAt, timeZone: "America/Sao_Paulo" },
+    end: { dateTime: input.endAt, timeZone: "America/Sao_Paulo" },
+  };
+  if (input.attendeeEmail) {
+    body.attendees = [{ email: input.attendeeEmail }];
+  }
+  const res = await fetch(
+    `${GOOGLE_CALENDAR_API}/calendars/primary/events/${encodeURIComponent(googleEventId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Google Calendar update failed (${res.status}): ${err.slice(0, 200)}`);
+  }
+  const item = (await res.json()) as Record<string, unknown>;
+  const mapped = mapGoogleEvent(item);
+  if (!mapped) throw new Error("Resposta inválida ao atualizar evento no Google.");
   return mapped;
 }
 
