@@ -3,6 +3,10 @@ export type AutomationSnapshot = {
   human_paused: boolean;
   paused_by: string | null;
   paused_reason: string | null;
+  conversation_mode?: "automation" | "waiting_human" | "human";
+  can_human_send?: boolean;
+  assigned_human_name?: string | null;
+  handoff_suggested?: boolean;
 };
 
 export type AutomationConfirmIntent = "pause" | "resume" | null;
@@ -40,6 +44,8 @@ export function buildOptimisticAutomation(enabled: boolean): AutomationSnapshot 
     human_paused: !enabled,
     paused_by: enabled ? null : "human_manual",
     paused_reason: enabled ? null : "manual_toggle",
+    conversation_mode: enabled ? "automation" : "human",
+    can_human_send: !enabled,
   };
 }
 
@@ -48,8 +54,7 @@ export function buildRollbackAutomation(
   stored?: Partial<AutomationSnapshot> | null,
 ): AutomationSnapshot {
   return {
-    enabled: previous.enabled,
-    human_paused: !previous.enabled,
+    ...previous,
     paused_by: stored?.paused_by ?? previous.paused_by,
     paused_reason: stored?.paused_reason ?? previous.paused_reason,
   };

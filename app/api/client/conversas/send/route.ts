@@ -12,6 +12,11 @@ import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-in
 import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 import { upsertConversationState } from "@/lib/server/conversation-memory";
 import { logMessageLatency } from "@/lib/conversas/message-latency-log";
+import {
+  canHumanSendMessage,
+  deriveConversationMode,
+  loadStateOperationRow,
+} from "@/lib/server/conversation-operation";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +47,25 @@ export async function POST(request: Request) {
   const trimmedText = text.trim().slice(0, 4000);
   const tempId = clientTempId?.trim() || null;
 
+  const sb = createSupabaseServiceClient();
+  const stateRow = await loadStateOperationRow({
+    sb,
+    tenantId: session.tenantId,
+    remoteJid,
+  });
+  const mode = deriveConversationMode({
+    conversationMode: typeof stateRow?.conversation_mode === "string" ? stateRow.conversation_mode : null,
+    humanPaused: stateRow?.human_paused === true,
+    handoffSuggested: stateRow?.handoff_suggested === true,
+    pausedReason: typeof stateRow?.paused_reason === "string" ? stateRow.paused_reason : null,
+  });
+  if (!canHumanSendMessage(mode)) {
+    return NextResponse.json(
+      { error: "A automação está ativa nesta conversa. Assuma o atendimento para enviar mensagens." },
+      { status: 403 },
+    );
+  }
+
   const instance = await getEvolutionInstanceByTenantId(session.tenantId);
   if (!instance) {
     return NextResponse.json({ error: "Nenhuma instância WhatsApp configurada para este tenant." }, { status: 422 });
@@ -52,7 +76,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "remoteJid inválido" }, { status: 400 });
   }
 
-  const sb = createSupabaseServiceClient();
   const linkedAgentId = instance.default_agent_id ?? null;
   const leadResult = await upsertLeadFromWhatsAppContact({
     tenantId: session.tenantId,

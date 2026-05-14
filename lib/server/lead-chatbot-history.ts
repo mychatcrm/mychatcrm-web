@@ -1,3 +1,5 @@
+import { buildConversationTimeline } from "@/lib/conversas/conversation-timeline";
+import { loadConversationEvents } from "@/lib/server/conversation-operation";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export type ChatbotHistoryMessage = {
@@ -41,6 +43,16 @@ export type ChatbotConversationState = {
   status: string | null;
   channel: string | null;
   last_message_at: string | null;
+  conversation_mode: string | null;
+  assigned_human_name: string | null;
+};
+
+export type ChatbotHistoryEvent = {
+  id: string;
+  event_type: string;
+  title: string;
+  detail: string | null;
+  created_at: string;
 };
 
 export function normalizeLeadPhone(value: unknown): string {
@@ -79,6 +91,8 @@ export async function loadLeadChatbotHistory(params: {
   limit?: number;
 }): Promise<{
   messages: ChatbotHistoryMessage[];
+  events: ChatbotHistoryEvent[];
+  timeline: ReturnType<typeof buildConversationTimeline<ChatbotHistoryMessage>>;
   summary: ChatbotHistorySummary | null;
   conversationState: ChatbotConversationState | null;
 }> {
@@ -95,7 +109,7 @@ export async function loadLeadChatbotHistory(params: {
 
   const phone = normalizeLeadPhone((lead as { phone?: unknown }).phone);
   if (!phone) {
-    return { messages: [], summary: null, conversationState: null };
+    return { messages: [], events: [], timeline: [], summary: null, conversationState: null };
   }
 
   const remoteJidPattern = `${phone}%`;
@@ -123,7 +137,7 @@ export async function loadLeadChatbotHistory(params: {
     sb
       .from("conversation_states")
       .select(
-        "human_paused, paused_reason, paused_by, paused_at, handoff_suggested, handoff_reason, status, channel, last_message_at, remote_jid",
+        "human_paused, paused_reason, paused_by, paused_at, handoff_suggested, handoff_reason, status, channel, last_message_at, remote_jid, conversation_mode, assigned_human_name",
       )
       .eq("tenant_id", params.tenantId)
       .eq("lead_id", params.leadId)
@@ -210,8 +224,19 @@ export async function loadLeadChatbotHistory(params: {
         channel: typeof stateMatch.channel === "string" ? stateMatch.channel : null,
         last_message_at:
           typeof stateMatch.last_message_at === "string" ? stateMatch.last_message_at : null,
+        conversation_mode:
+          typeof stateMatch.conversation_mode === "string" ? stateMatch.conversation_mode : null,
+        assigned_human_name:
+          typeof stateMatch.assigned_human_name === "string" ? stateMatch.assigned_human_name : null,
       }
     : null;
 
-  return { messages, summary, conversationState };
+  const events = await loadConversationEvents({
+    sb,
+    tenantId: params.tenantId,
+    leadId: params.leadId,
+  });
+  const timeline = buildConversationTimeline(messages, events);
+
+  return { messages, events, timeline, summary, conversationState };
 }

@@ -19,6 +19,7 @@ export type ConversationState = {
   lastSummaryAt: string | null;
   isHidden: boolean;
   archivedAt: string | null;
+  conversationMode?: string | null;
 };
 
 export type ConversationSummary = {
@@ -87,6 +88,7 @@ function rowToState(row: Record<string, unknown>): ConversationState {
     lastSummaryAt: textOrNull(row.last_summary_at),
     isHidden: row.is_hidden === true,
     archivedAt: textOrNull(row.archived_at),
+    conversationMode: textOrNull(row.conversation_mode),
   };
 }
 
@@ -173,6 +175,7 @@ export async function upsertConversationState(params: {
   archivedAt?: string | null;
   hiddenAt?: string | null;
   hiddenBy?: string | null;
+  conversationMode?: string | null;
 }): Promise<ConversationState | null> {
   const sb = params.sb ?? createSupabaseServiceClient();
   const now = new Date().toISOString();
@@ -202,6 +205,7 @@ export async function upsertConversationState(params: {
   if (params.archivedAt !== undefined) patch.archived_at = params.archivedAt;
   if (params.hiddenAt !== undefined) patch.hidden_at = params.hiddenAt;
   if (params.hiddenBy !== undefined) patch.hidden_by = params.hiddenBy;
+  if (params.conversationMode !== undefined) patch.conversation_mode = params.conversationMode;
 
   const { data, error } = await sb
     .from("conversation_states")

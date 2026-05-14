@@ -17,6 +17,11 @@ import {
 import { focusComposeTextarea, shouldSendOnEnter } from "@/lib/conversas/compose-focus";
 import { logMessageLatency } from "@/lib/conversas/message-latency-log";
 import {
+  filterConversationsByInboxTab,
+  type InboxTab,
+} from "@/lib/conversas/inbox-filters";
+import type { ConversationMode } from "@/lib/server/conversation-operation";
+import {
   appendMessageDeduped,
   createClientTempId,
   createOptimisticOutboundMessage,
@@ -113,6 +118,10 @@ type WaConversation = {
   lastDirection: string;
   lastAt: string;
   unreadCount: number;
+  conversation_mode?: ConversationMode;
+  assigned_human_name?: string | null;
+  agent_id?: string | null;
+  handoff_suggested?: boolean;
   messages: WaMessage[];
   messagesLoaded: boolean;
 };
@@ -149,33 +158,89 @@ async function apiLoadConversations(): Promise<WaConversation[]> {
 
 async function apiLoadMessages(remoteJid: string): Promise<{
   messages: WaMessage[];
-  automation: {
-    enabled: boolean;
-    human_paused: boolean;
-    paused_by: string | null;
-    paused_reason: string | null;
-  };
+  automation: AutomationSnapshot;
 }> {
   const enc = encodeURIComponent(remoteJid);
   const res = await fetch(`/api/client/conversas/${enc}/messages`, { cache: "no-store" });
   if (!res.ok) throw new Error(`GET messages ${res.status}`);
   const data = (await res.json()) as {
     messages: WaMessage[];
-    automation?: {
-      enabled: boolean;
-      human_paused: boolean;
-      paused_by: string | null;
-      paused_reason: string | null;
+    automation?: AutomationSnapshot & {
+      conversation_mode?: ConversationMode;
+      can_human_send?: boolean;
+      assigned_human_name?: string | null;
+      agent_id?: string | null;
+      handoff_suggested?: boolean;
     };
   };
+  const automation = data.automation;
   return {
     messages: data.messages ?? [],
-    automation: data.automation ?? {
-      enabled: true,
-      human_paused: false,
-      paused_by: null,
-      paused_reason: null,
+    automation: {
+      enabled: automation?.enabled ?? true,
+      human_paused: automation?.human_paused ?? false,
+      paused_by: automation?.paused_by ?? null,
+      paused_reason: automation?.paused_reason ?? null,
+      conversation_mode: automation?.conversation_mode ?? (automation?.enabled === false ? "human" : "automation"),
+      can_human_send: automation?.can_human_send ?? automation?.enabled === false,
+      assigned_human_name: automation?.assigned_human_name ?? null,
+      handoff_suggested: automation?.handoff_suggested ?? false,
     },
+  };
+}
+
+async function apiTakeoverConversation(remoteJid: string): Promise<AutomationSnapshot> {
+  const res = await fetch("/api/client/conversas/takeover", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ remoteJid }),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? `Erro ${res.status} ao assumir atendimento`);
+  }
+  const data = (await res.json()) as {
+    operation?: {
+      conversation_mode: ConversationMode;
+      can_human_send: boolean;
+      human_paused: boolean;
+      paused_reason: string | null;
+      assigned_human_name: string | null;
+    };
+  };
+  const op = data.operation;
+  return {
+    enabled: false,
+    human_paused: true,
+    paused_by: "human_manual",
+    paused_reason: "human_takeover",
+    conversation_mode: op?.conversation_mode ?? "human",
+    can_human_send: op?.can_human_send ?? true,
+    assigned_human_name: op?.assigned_human_name ?? null,
+  };
+}
+
+async function apiReturnToAutomation(remoteJid: string): Promise<AutomationSnapshot> {
+  const res = await fetch("/api/client/conversas/return-automation", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ remoteJid }),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? `Erro ${res.status} ao retornar para automação`);
+  }
+  const data = (await res.json()) as {
+    operation?: { conversation_mode: ConversationMode; can_human_send: boolean };
+  };
+  return {
+    enabled: true,
+    human_paused: false,
+    paused_by: null,
+    paused_reason: null,
+    conversation_mode: data.operation?.conversation_mode ?? "automation",
+    can_human_send: data.operation?.can_human_send ?? false,
+    assigned_human_name: null,
   };
 }
 
@@ -311,6 +376,13 @@ function formatFullDate(iso: string): string {
   } catch {
     return "";
   }
+}
+
+function conversationModeLabel(mode?: ConversationMode | null): string | null {
+  if (mode === "automation") return "IA";
+  if (mode === "waiting_human") return "Aguardando humano";
+  if (mode === "human") return "Humano";
+  return null;
 }
 
 function previewFromConv(conv: WaConversation): string {
@@ -669,6 +741,7 @@ function MessageBubble({
   // aproximada baseado em chars × ~6px (font 11px) + extras.
   const tsText = formatShortTime(msg.created_at);
   const showsIA = Boolean(out && msg.agent_id && msg.agent_id !== "human");
+  const showsHuman = Boolean(out && msg.agent_id === "human");
   const charW = 6;              // largura média de caractere em font 11px
   const tickW = out ? 20 : 0;   // svg 16px + gap 4px
   const iaW = showsIA ? 18 : 0; // "IA" 14px + gap 4px
@@ -678,7 +751,10 @@ function MessageBubble({
   const TimestampRow = (
     <div style={{ display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
       {showsIA && (
-        <span style={{ fontSize: 10, color: W.muted, opacity: 0.8 }}>IA</span>
+        <span style={{ fontSize: 10, color: W.muted, opacity: 0.8 }}>🤖 IA</span>
+      )}
+      {showsHuman && (
+        <span style={{ fontSize: 10, color: W.muted, opacity: 0.8 }}>👤 Humano</span>
       )}
       <span style={{ fontSize: 11, color: W.muted, whiteSpace: "nowrap" }}>
         {tsText}
@@ -953,6 +1029,21 @@ function ConversationItem({
           }}>
             {previewFromConv(conv)}
           </p>
+          {conversationModeLabel(conv.conversation_mode) ? (
+            <span style={{
+              flexShrink: 0,
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: 0.2,
+              textTransform: "uppercase",
+              color: conv.conversation_mode === "automation" ? "#53bdeb" : conv.conversation_mode === "waiting_human" ? "#f0b429" : "#25d366",
+              border: `1px solid ${conv.conversation_mode === "automation" ? "rgba(83,189,235,0.35)" : conv.conversation_mode === "waiting_human" ? "rgba(240,180,41,0.35)" : "rgba(37,211,102,0.35)"}`,
+              borderRadius: 999,
+              padding: "2px 7px",
+            }}>
+              {conversationModeLabel(conv.conversation_mode)}
+            </span>
+          ) : null}
           {conv.unreadCount > 0 && (
             <span style={{
               background: W.green, color: "white",
@@ -1168,6 +1259,9 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   const [automationToggling, setAutomationToggling] = useState(false);
   const [automationError, setAutomationError] = useState("");
   const [automationConfirm, setAutomationConfirm] = useState<AutomationConfirmIntent>(null);
+  const [inboxTab, setInboxTab] = useState<InboxTab>("all");
+  const [operationConfirm, setOperationConfirm] = useState<"takeover" | "return_automation" | null>(null);
+  const [operationBusy, setOperationBusy] = useState(false);
 
   // Cache em ref para evitar fetches duplicados concorrentes
   const photoCacheRef    = useRef<Set<string>>(new Set());
@@ -1469,6 +1563,11 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   const activeAutomationEnabled = selectedJid
     ? (automationByJid[selectedJid]?.enabled ?? true)
     : true;
+  const activeOperation = selectedJid ? automationByJid[selectedJid] : null;
+  const activeCanHumanSend = activeOperation?.can_human_send ?? !activeAutomationEnabled;
+  const activeConversationMode: ConversationMode =
+    activeOperation?.conversation_mode ??
+    (activeAutomationEnabled ? "automation" : "human");
 
   const handleAutomationToggle = useCallback(async () => {
     if (!selectedJid || !automationConfirm || automationToggling) return;
@@ -1498,6 +1597,60 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     }
     setAutomationToggling(false);
   }, [selectedJid, automationConfirm, automationToggling, automationByJid]);
+
+  const handleTakeover = useCallback(async () => {
+    if (!selectedJid || operationBusy) return;
+    setOperationBusy(true);
+    setAutomationError("");
+    try {
+      const automation = await apiTakeoverConversation(selectedJid);
+      setAutomationByJid((prev) => ({ ...prev, [selectedJid]: automation }));
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.remoteJid === selectedJid
+            ? {
+                ...c,
+                conversation_mode: automation.conversation_mode ?? "human",
+                assigned_human_name: automation.assigned_human_name ?? null,
+              }
+            : c,
+        ),
+      );
+      setOperationConfirm(null);
+      focusComposeTextarea(draftTextareaRef, "after_send");
+    } catch (e) {
+      setAutomationError(e instanceof Error ? e.message : "Erro ao assumir atendimento.");
+    } finally {
+      setOperationBusy(false);
+    }
+  }, [selectedJid, operationBusy]);
+
+  const handleReturnAutomation = useCallback(async () => {
+    if (!selectedJid || operationBusy) return;
+    setOperationBusy(true);
+    setAutomationError("");
+    try {
+      const automation = await apiReturnToAutomation(selectedJid);
+      setAutomationByJid((prev) => ({ ...prev, [selectedJid]: automation }));
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.remoteJid === selectedJid
+            ? {
+                ...c,
+                conversation_mode: "automation",
+                assigned_human_name: null,
+                handoff_suggested: false,
+              }
+            : c,
+        ),
+      );
+      setOperationConfirm(null);
+    } catch (e) {
+      setAutomationError(e instanceof Error ? e.message : "Erro ao retornar para automação.");
+    } finally {
+      setOperationBusy(false);
+    }
+  }, [selectedJid, operationBusy]);
 
   const handleDeleteConversation = useCallback(() => {
     if (!active || deleteBusy) return;
@@ -1658,7 +1811,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
 
   // ── Send ──────────────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
-    if (!selectedJid || !draft.trim()) return;
+    if (!selectedJid || !draft.trim() || !activeCanHumanSend) return;
     const text = draft.trim();
     setSendError("");
     setDraft("");
@@ -1724,7 +1877,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
       );
       focusComposeTextarea(draftTextareaRef, "after_error");
     }
-  }, [selectedJid, draft, contactNames]);
+  }, [selectedJid, draft, contactNames, activeCanHumanSend]);
 
   // ── Emoji insert at cursor ────────────────────────────────────────────────
   const handleEmojiSelect = useCallback((emoji: { native?: string; unified?: string }) => {
@@ -1771,7 +1924,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
 
   // ── Send media ────────────────────────────────────────────────────────────
   const handleSendMedia = useCallback(async () => {
-    if (!attachment || !selectedJid || uploading) return;
+    if (!attachment || !selectedJid || uploading || !activeCanHumanSend) return;
     setUploading(true);
     setSendError("");
     isNearBottomRef.current = true;
@@ -1852,7 +2005,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     } finally {
       setUploading(false);
     }
-  }, [attachment, selectedJid, uploading, contactNames]);
+  }, [attachment, selectedJid, uploading, contactNames, activeCanHumanSend]);
 
   // ── Scroll helpers (first / last message navigation) ─────────────────────
   const scrollToTop = useCallback(() => {
@@ -1892,9 +2045,10 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
 
   // ── Derived ───────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
+    const tabbed = filterConversationsByInboxTab(conversations, inboxTab);
     const q = query.trim().toLowerCase();
-    if (!q) return conversations;
-    return conversations.filter((c) => {
+    if (!q) return tabbed;
+    return tabbed.filter((c) => {
       // Número: compara só dígitos (ignora @s.whatsapp.net, +, espaços)
       const digits = (c.remoteJid.split("@")[0] ?? "").replace(/\D/g, "");
       if (digits.includes(q.replace(/\D/g, ""))) return true;
@@ -1905,7 +2059,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
       if (c.lastContent.toLowerCase().includes(q)) return true;
       return false;
     });
-  }, [conversations, query, contactNames]);
+  }, [conversations, inboxTab, query, contactNames]);
 
   // ── ESC fecha overlay de foto, emoji picker e busca interna ────────────────
   useEffect(() => {
@@ -2058,6 +2212,36 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
           />
         );
       })()}
+
+      {operationConfirm === "takeover" && (
+        <ConfirmDeleteModal
+          title="Assumir atendimento desta conversa?"
+          description="A automação será pausada e você poderá responder manualmente. O evento ficará registrado no histórico do CRM."
+          confirmLabel="Assumir atendimento"
+          confirmColor="#00a884"
+          busyLabel="Assumindo…"
+          busy={operationBusy}
+          onCancel={() => {
+            if (!operationBusy) setOperationConfirm(null);
+          }}
+          onConfirm={() => void handleTakeover()}
+        />
+      )}
+
+      {operationConfirm === "return_automation" && (
+        <ConfirmDeleteModal
+          title="Retornar conversa para automação?"
+          description="O agente IA voltará a responder automaticamente e o envio manual será bloqueado."
+          confirmLabel="Retornar para automação"
+          confirmColor="#00a884"
+          busyLabel="Retornando…"
+          busy={operationBusy}
+          onCancel={() => {
+            if (!operationBusy) setOperationConfirm(null);
+          }}
+          onConfirm={() => void handleReturnAutomation()}
+        />
+      )}
 
       {/* ─────────────── LEFT SIDEBAR ─────────────── */}
       <SidebarPanel mobileThread={mobileThread}>
@@ -2259,6 +2443,35 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 }}
               />
             </div>
+          </div>
+        )}
+
+        {!selectionMode && (
+          <div style={{ display: "flex", gap: 6, padding: "0 12px 8px", background: W.bgSidebar, flexShrink: 0 }}>
+            {([
+              ["all", "Todos"],
+              ["automation", "Automação"],
+              ["human", "Humanos"],
+            ] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setInboxTab(id)}
+                style={{
+                  flex: 1,
+                  border: `1px solid ${inboxTab === id ? "rgba(0,168,132,0.45)" : W.bgBorder}`,
+                  background: inboxTab === id ? "rgba(0,168,132,0.15)" : "transparent",
+                  color: inboxTab === id ? "#25d366" : W.muted,
+                  borderRadius: 999,
+                  padding: "6px 8px",
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         )}
 
@@ -2952,6 +3165,86 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 </div>
               )}
 
+              {activeConversationMode === "automation" && (
+                <div
+                  style={{
+                    background: "rgba(83,189,235,0.12)",
+                    border: "1px solid rgba(83,189,235,0.28)",
+                    borderRadius: 10,
+                    padding: "10px 12px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: W.text }}>
+                      Esta conversa está sendo conduzida pela automação.
+                    </p>
+                    <p style={{ margin: "4px 0 0", fontSize: 12, color: W.muted }}>
+                      Você pode acompanhar em tempo real. Para responder manualmente, assuma o atendimento.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setOperationConfirm("takeover")}
+                    disabled={operationBusy}
+                    style={{
+                      flexShrink: 0,
+                      border: "none",
+                      background: W.green,
+                      color: "white",
+                      borderRadius: 999,
+                      padding: "8px 14px",
+                      fontSize: 12.5,
+                      fontWeight: 600,
+                      cursor: operationBusy ? "wait" : "pointer",
+                    }}
+                  >
+                    Assumir atendimento
+                  </button>
+                </div>
+              )}
+
+              {(activeConversationMode === "human" || activeConversationMode === "waiting_human") && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    background: "rgba(37,211,102,0.08)",
+                    border: "1px solid rgba(37,211,102,0.22)",
+                    borderRadius: 10,
+                    padding: "8px 12px",
+                  }}
+                >
+                  <p style={{ margin: 0, fontSize: 12.5, color: W.text }}>
+                    {activeConversationMode === "waiting_human"
+                      ? "Aguardando atendimento humano."
+                      : `Atendimento humano${activeOperation?.assigned_human_name ? `: ${activeOperation.assigned_human_name}` : ""}.`}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setOperationConfirm("return_automation")}
+                    disabled={operationBusy}
+                    style={{
+                      flexShrink: 0,
+                      border: `1px solid ${W.bgBorder}`,
+                      background: "transparent",
+                      color: W.text,
+                      borderRadius: 999,
+                      padding: "7px 12px",
+                      fontSize: 12,
+                      cursor: operationBusy ? "wait" : "pointer",
+                    }}
+                  >
+                    Retornar para automação
+                  </button>
+                </div>
+              )}
+
               {automationError && (
                 <div
                   style={{
@@ -3003,7 +3296,8 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                         // veja este clique antes do onClick disparar o toggle.
                         e.stopPropagation();
                       }}
-                      onClick={() => setEmojiOpen((v) => !v)}
+                      onClick={() => activeCanHumanSend && setEmojiOpen((v) => !v)}
+                      disabled={!activeCanHumanSend}
                       style={{
                         background: emojiOpen ? "rgba(255,255,255,0.08)" : "none",
                         border: "none", cursor: "pointer", padding: 5, borderRadius: 6,
@@ -3024,7 +3318,9 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                       type="button"
                       title="Anexar arquivo"
                       aria-label="Anexar arquivo"
+                      disabled={!activeCanHumanSend}
                       onClick={() => {
+                        if (!activeCanHumanSend) return;
                         // Reset value antes do click para permitir selecionar
                         // o mesmo arquivo duas vezes em sequência (onChange só
                         // dispara se o value mudar).
@@ -3079,7 +3375,8 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                     value={draft}
                     onChange={(e) => setDraft(e.target.value.slice(0, 4000))}
                     rows={1}
-                    placeholder="Digite uma mensagem"
+                    placeholder={activeCanHumanSend ? "Digite uma mensagem" : "Assuma o atendimento para enviar mensagens"}
+                    readOnly={!activeCanHumanSend}
                     onKeyDown={(e) => {
                       if (shouldSendOnEnter(e)) {
                         e.preventDefault();
@@ -3108,7 +3405,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                   <button
                     type="button"
                     onClick={() => void handleSend()}
-                    disabled={!draft.trim()}
+                    disabled={!draft.trim() || !activeCanHumanSend}
                     aria-label="Enviar"
                     style={{
                       width: 44,

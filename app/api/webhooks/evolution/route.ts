@@ -27,6 +27,7 @@ import {
 } from "@/lib/server/conversation-memory";
 import { applyHumanConversationCommand } from "@/lib/server/conversation-human-control";
 import { revealConversationOnInbound } from "@/lib/server/conversation-visibility";
+import { markWaitingForHuman } from "@/lib/server/conversation-operation";
 
 export const dynamic = "force-dynamic";
 
@@ -565,17 +566,13 @@ export async function POST(request: Request) {
           agentId,
           summary,
         });
-        await upsertConversationState({
+        await markWaitingForHuman({
           sb: sbState,
           tenantId: row.tenant_id,
           remoteJid: msg.remoteJid,
           leadId,
           agentId,
-          humanPaused: true,
-          pausedReason: handoffCheck.reason,
-          pausedBy: "auto_handoff",
-          handoffSuggested: true,
-          handoffReason: handoffCheck.reason,
+          reason: handoffCheck.reason ?? "handoff",
         });
       }
 

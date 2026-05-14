@@ -52,7 +52,7 @@ type Tab = "informacoes" | "historico" | "chatbot" | "tarefas" | "ia";
 const tabs: { id: Tab; label: string; icon: typeof MessageCircle }[] = [
   { id: "informacoes", label: "Informações", icon: MessageCircle },
   { id: "historico", label: "Histórico de Interações", icon: CalendarClock },
-  { id: "chatbot", label: "Histórico do Chatbot", icon: Bot },
+  { id: "chatbot", label: "Histórico de Conversas", icon: Bot },
   { id: "tarefas", label: "Tarefas", icon: ListTodo },
   { id: "ia", label: "Insights IA", icon: Sparkles },
 ];
@@ -213,7 +213,10 @@ export function CrmLeadWorkspaceModal({
 
   const origemView = useMemo(() => mergeOrigemDisplay(lead), [lead]);
 
-  const timeline = useMemo(() => store.timeline[lead.id] ?? [], [lead.id, store.timeline]);
+  const timeline = useMemo(
+    () => (store.timeline[lead.id] ?? []).filter((item) => item.tipo !== "whatsapp"),
+    [lead.id, store.timeline],
+  );
 
   const temperatura = useMemo(
     () => computeLeadTemperature(lead, timeline, funnelDoLead),
@@ -476,8 +479,8 @@ export function CrmLeadWorkspaceModal({
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-content">Histórico de Interações</p>
                   <p className="mt-1 text-xs leading-relaxed text-content-muted">
-                    Registo manual e humano: follow-ups, alterações de status, atribuições, tarefas, observações e
-                    movimentações no funil. Para conversa com o agente IA, use a aba «Histórico do Chatbot».
+                    Registo manual e operacional: follow-ups, alterações de status, atribuições, tarefas e observações internas.
+                    As mensagens WhatsApp/IA/humano ficam em «Histórico de Conversas».
                   </p>
                 </div>
               </div>

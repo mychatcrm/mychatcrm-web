@@ -7,8 +7,10 @@ import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { hideConversationsForTenant } from "@/lib/server/conversation-visibility";
-import { getConversationState } from "@/lib/server/conversation-memory";
-import { isConversationAutomationEnabled } from "@/lib/server/conversation-human-control";
+import {
+  loadStateOperationRow,
+  operationFromStateRow,
+} from "@/lib/server/conversation-operation";
 
 export const dynamic = "force-dynamic";
 
@@ -40,21 +42,28 @@ export async function GET(
   // Retorna em ordem cronológica (mais antigas primeiro)
   const messages = (data ?? []).reverse();
 
-  const state = await getConversationState({
+  const stateRow = await loadStateOperationRow({
     sb,
     tenantId: session.tenantId,
     remoteJid,
   });
+  const operation = operationFromStateRow(stateRow);
 
   return NextResponse.json(
     {
       messages,
       automation: {
-        enabled: isConversationAutomationEnabled(state),
-        human_paused: state?.humanPaused ?? false,
-        paused_by: state?.pausedBy ?? null,
-        paused_reason: state?.pausedReason ?? null,
+        enabled: operation.conversation_mode === "automation",
+        human_paused: operation.human_paused,
+        paused_by: stateRow && typeof stateRow.paused_by === "string" ? stateRow.paused_by : null,
+        paused_reason: operation.paused_reason,
+        conversation_mode: operation.conversation_mode,
+        can_human_send: operation.can_human_send,
+        assigned_human_name: operation.assigned_human_name,
+        agent_id: operation.agent_id,
+        handoff_suggested: operation.handoff_suggested,
       },
+      operation,
     },
     { headers: { "Cache-Control": "no-store" } },
   );

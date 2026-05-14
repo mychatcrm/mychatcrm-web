@@ -61,6 +61,7 @@ type InboundRevealPatch = {
   humanPaused?: false;
   pausedBy?: null;
   pausedReason?: null;
+  conversationMode?: "automation";
 };
 
 export function buildInboundRevealPatch(
@@ -83,6 +84,7 @@ export function buildInboundRevealPatch(
     patch.humanPaused = false;
     patch.pausedBy = null;
     patch.pausedReason = null;
+    patch.conversationMode = "automation";
   }
 
   return patch;

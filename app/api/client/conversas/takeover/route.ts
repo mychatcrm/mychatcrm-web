@@ -1,11 +1,11 @@
 /**
- * POST /api/client/conversas/automation-toggle
- * Liga ou desliga o agente/automação para uma conversa específica.
+ * POST /api/client/conversas/takeover
+ * Humano assume atendimento: pausa IA, libera input e registra transferência.
  */
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { syncAutomationMode } from "@/lib/server/conversation-operation";
+import { takeoverConversation } from "@/lib/server/conversation-operation";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
 
 export const dynamic = "force-dynamic";
@@ -14,9 +14,9 @@ export async function POST(request: Request) {
   const session = await getClientSessionFromCookies();
   if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
-  let body: { remoteJid?: string; enabled?: boolean };
+  let body: { remoteJid?: string };
   try {
-    body = (await request.json()) as { remoteJid?: string; enabled?: boolean };
+    body = (await request.json()) as { remoteJid?: string };
   } catch {
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
   }
@@ -25,31 +25,18 @@ export async function POST(request: Request) {
   if (!remoteJid) {
     return NextResponse.json({ error: "remoteJid é obrigatório" }, { status: 400 });
   }
-  if (typeof body.enabled !== "boolean") {
-    return NextResponse.json({ error: "enabled deve ser boolean" }, { status: 400 });
-  }
 
   const instance = await getEvolutionInstanceByTenantId(session.tenantId);
   const sb = createSupabaseServiceClient();
-  const mode = await syncAutomationMode({
+  const actorId = session.employeeId ?? session.email;
+  const result = await takeoverConversation({
     sb,
     tenantId: session.tenantId,
     remoteJid,
-    enabled: body.enabled,
-    actorId: session.employeeId ?? session.email,
+    actorId,
     actorName: session.displayName,
     agentId: instance?.default_agent_id ?? null,
   });
 
-  return NextResponse.json({
-    ok: true,
-    automation: {
-      enabled: body.enabled,
-      human_paused: !body.enabled,
-      paused_by: body.enabled ? null : "human_manual",
-      paused_reason: body.enabled ? null : "manual_toggle",
-      conversation_mode: mode,
-      can_human_send: body.enabled ? false : true,
-    },
-  });
+  return NextResponse.json({ ok: true, operation: result.operation });
 }

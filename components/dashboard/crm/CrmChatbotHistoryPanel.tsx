@@ -6,9 +6,11 @@ import { cn } from "@/lib/utils";
 import { subscribeToWhatsappMessages } from "@/lib/conversas/whatsapp-messages-realtime";
 import type {
   ChatbotConversationState,
+  ChatbotHistoryEvent,
   ChatbotHistoryMessage,
   ChatbotHistorySummary,
 } from "@/lib/server/lead-chatbot-history";
+import type { TimelineItem } from "@/lib/conversas/conversation-timeline";
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "—";
@@ -24,8 +26,8 @@ function formatDateTime(value: string | null | undefined) {
 
 function messageLabel(message: ChatbotHistoryMessage) {
   if (message.direction === "inbound") return "Cliente";
-  if (message.agent_id === "human") return "Humano";
-  return message.agent_name ? `Agente IA · ${message.agent_name}` : "Agente IA";
+  if (message.agent_id === "human") return "👤 Humano";
+  return message.agent_name ? `🤖 Agente ${message.agent_name}` : "🤖 Agente IA";
 }
 
 function stripMediaPrefix(content: string) {
@@ -99,6 +101,7 @@ export function CrmChatbotHistoryPanel({
   tenantId: string;
 }) {
   const [messages, setMessages] = useState<ChatbotHistoryMessage[]>([]);
+  const [timeline, setTimeline] = useState<Array<TimelineItem<ChatbotHistoryMessage>>>([]);
   const [summary, setSummary] = useState<ChatbotHistorySummary | null>(null);
   const [state, setState] = useState<ChatbotConversationState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -110,12 +113,15 @@ export function CrmChatbotHistoryPanel({
     });
     const data = (await response.json().catch(() => ({}))) as {
       messages?: ChatbotHistoryMessage[];
+      timeline?: Array<TimelineItem<ChatbotHistoryMessage>>;
+      events?: ChatbotHistoryEvent[];
       summary?: ChatbotHistorySummary | null;
       conversationState?: ChatbotConversationState | null;
       error?: string;
     };
-    if (!response.ok) throw new Error(data.error || "Erro ao carregar histórico do chatbot.");
+    if (!response.ok) throw new Error(data.error || "Erro ao carregar histórico de conversas.");
     setMessages(Array.isArray(data.messages) ? data.messages : []);
+    setTimeline(Array.isArray(data.timeline) ? data.timeline : []);
     setSummary(data.summary ?? null);
     setState(data.conversationState ?? null);
   }, [leadId]);
@@ -128,6 +134,7 @@ export function CrmChatbotHistoryPanel({
       .catch((err) => {
         if (cancelled) return;
         setMessages([]);
+        setTimeline([]);
         setSummary(null);
         setState(null);
         setError(err instanceof Error ? err.message : "Erro ao carregar histórico do chatbot.");
@@ -161,9 +168,9 @@ export function CrmChatbotHistoryPanel({
   return (
     <div className="space-y-4">
       <div>
-        <p className="text-sm font-semibold text-content">Histórico do Chatbot</p>
+        <p className="text-sm font-semibold text-content">Histórico de Conversas</p>
         <p className="mt-1 text-xs leading-relaxed text-content-muted">
-          Conversa entre o lead e o agente IA no WhatsApp, com mídias e estado de handoff/pausa humana.
+          Timeline oficial do WhatsApp: cliente, agente IA, atendente humano, mídias, transferências e eventos operacionais.
         </p>
       </div>
 
@@ -232,14 +239,30 @@ export function CrmChatbotHistoryPanel({
             {error}
           </p>
         ) : null}
-        {!loading && !error && messages.length === 0 ? (
+        {!loading && !error && timeline.length === 0 ? (
           <p className="rounded-xl border border-dashed border-line/80 bg-surface-card/40 px-4 py-8 text-center text-sm text-content-muted">
-            Ainda não há mensagens do chatbot para este lead.
+            Ainda não há mensagens para este lead.
           </p>
         ) : null}
-        {messages.length > 0 ? (
+        {timeline.length > 0 ? (
           <ul className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
-            {messages.map((message) => {
+            {timeline.map((item) => {
+              if (item.kind === "event") {
+                return (
+                  <li key={`event-${item.id}`} className="flex justify-center">
+                    <div className="w-full max-w-[92%] rounded-xl border border-dashed border-line/80 bg-surface-card/50 px-4 py-3 text-center">
+                      <p className="text-xs font-medium text-content-secondary">{item.title}</p>
+                      {item.detail ? (
+                        <p className="mt-1 text-[11px] text-content-muted">{item.detail}</p>
+                      ) : null}
+                      <p className="mt-2 text-[10px] uppercase tracking-wide text-content-faint">
+                        {formatDateTime(item.created_at)}
+                      </p>
+                    </div>
+                  </li>
+                );
+              }
+              const message = item.message;
               const outbound = message.direction === "outbound";
               const isHuman = message.agent_id === "human";
               return (

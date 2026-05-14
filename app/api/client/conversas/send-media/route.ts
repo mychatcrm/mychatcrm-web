@@ -21,6 +21,11 @@ import {
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
 import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 import { upsertConversationState } from "@/lib/server/conversation-memory";
+import {
+  canHumanSendMessage,
+  deriveConversationMode,
+  loadStateOperationRow,
+} from "@/lib/server/conversation-operation";
 
 export const dynamic = "force-dynamic";
 
@@ -105,6 +110,25 @@ export async function POST(request: Request) {
   // r2Path may be null if R2 is not configured — we still try to send
   const mediaUrl = r2Path ? `/api/client/media/${r2Key}` : null;
 
+  const sb = createSupabaseServiceClient();
+  const stateRow = await loadStateOperationRow({
+    sb,
+    tenantId: session.tenantId,
+    remoteJid,
+  });
+  const mode = deriveConversationMode({
+    conversationMode: typeof stateRow?.conversation_mode === "string" ? stateRow.conversation_mode : null,
+    humanPaused: stateRow?.human_paused === true,
+    handoffSuggested: stateRow?.handoff_suggested === true,
+    pausedReason: typeof stateRow?.paused_reason === "string" ? stateRow.paused_reason : null,
+  });
+  if (!canHumanSendMessage(mode)) {
+    return NextResponse.json(
+      { error: "A automação está ativa nesta conversa. Assuma o atendimento para enviar mensagens." },
+      { status: 403 },
+    );
+  }
+
   // ── Get Evolution instance ────────────────────────────────────────────────
   const instance = await getEvolutionInstanceByTenantId(session.tenantId);
   if (!instance) {
@@ -125,7 +149,6 @@ export async function POST(request: Request) {
     kind === "video" ? (caption ? `[Vídeo] ${caption}` : "[Vídeo]") :
     `[Documento] ${originalName}`;
 
-  const sb = createSupabaseServiceClient();
   const linkedAgentId = instance.default_agent_id ?? null;
   const leadResult = await upsertLeadFromWhatsAppContact({
     tenantId: session.tenantId,
