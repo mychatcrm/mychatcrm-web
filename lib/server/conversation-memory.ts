@@ -17,6 +17,8 @@ export type ConversationState = {
   handoffSuggested: boolean;
   handoffReason: string | null;
   lastSummaryAt: string | null;
+  isHidden: boolean;
+  archivedAt: string | null;
 };
 
 export type ConversationSummary = {
@@ -83,6 +85,8 @@ function rowToState(row: Record<string, unknown>): ConversationState {
     handoffSuggested: row.handoff_suggested === true,
     handoffReason: textOrNull(row.handoff_reason),
     lastSummaryAt: textOrNull(row.last_summary_at),
+    isHidden: row.is_hidden === true,
+    archivedAt: textOrNull(row.archived_at),
   };
 }
 
@@ -165,6 +169,10 @@ export async function upsertConversationState(params: {
   status?: string;
   lastMessageAt?: string | null;
   lastSummaryAt?: string | null;
+  isHidden?: boolean;
+  archivedAt?: string | null;
+  hiddenAt?: string | null;
+  hiddenBy?: string | null;
 }): Promise<ConversationState | null> {
   const sb = params.sb ?? createSupabaseServiceClient();
   const now = new Date().toISOString();
@@ -190,6 +198,10 @@ export async function upsertConversationState(params: {
   if (params.handoffReason !== undefined) patch.handoff_reason = params.handoffReason;
   if (params.lastMessageAt !== undefined) patch.last_message_at = params.lastMessageAt;
   if (params.lastSummaryAt !== undefined) patch.last_summary_at = params.lastSummaryAt;
+  if (params.isHidden !== undefined) patch.is_hidden = params.isHidden;
+  if (params.archivedAt !== undefined) patch.archived_at = params.archivedAt;
+  if (params.hiddenAt !== undefined) patch.hidden_at = params.hiddenAt;
+  if (params.hiddenBy !== undefined) patch.hidden_by = params.hiddenBy;
 
   const { data, error } = await sb
     .from("conversation_states")

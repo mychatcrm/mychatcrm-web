@@ -6,6 +6,7 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { hideConversationsForTenant } from "@/lib/server/conversation-visibility";
 import { getConversationState } from "@/lib/server/conversation-memory";
 import { isConversationAutomationEnabled } from "@/lib/server/conversation-human-control";
 
@@ -70,16 +71,13 @@ export async function DELETE(
   if (!remoteJid) return NextResponse.json({ error: "jid em falta" }, { status: 400 });
 
   const sb = createSupabaseServiceClient();
-  const { error } = await sb
-    .from("whatsapp_messages")
-    .delete()
-    .eq("tenant_id", session.tenantId)
-    .eq("remote_jid", remoteJid);
+  const count = await hideConversationsForTenant({
+    sb,
+    tenantId: session.tenantId,
+    remoteJids: [remoteJid],
+    archive: true,
+    hiddenBy: "conversas_panel",
+  });
 
-  if (error) {
-    console.error("[api/client/conversas/jid/messages] DELETE", error.code, error.message);
-    return NextResponse.json({ error: "Erro ao apagar conversa." }, { status: 503 });
-  }
-
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, hidden: count > 0 });
 }

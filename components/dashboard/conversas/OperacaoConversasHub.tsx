@@ -1414,7 +1414,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     setMobileThread(false);
     void apiDeleteConversation(jid)
       .catch((e) => {
-        setSendError(e instanceof Error ? e.message : "Erro ao apagar conversa.");
+        setSendError(e instanceof Error ? e.message : "Erro ao arquivar conversa.");
       })
       .finally(() => {
         setDeleteBusy(false);
@@ -1480,7 +1480,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     void apiBulkDeleteConversations(jids)
       .catch((e) => {
         setSendError(
-          e instanceof Error ? e.message : "Erro ao apagar conversas selecionadas.",
+          e instanceof Error ? e.message : "Erro ao arquivar conversas selecionadas.",
         );
       })
       .finally(() => {
@@ -1840,9 +1840,9 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
 
       {confirmDelete === "conversation" && (
         <ConfirmDeleteModal
-          title="Apagar conversa"
-          description="Apagar todas as mensagens desta conversa? Os dados do contato no CRM serão mantidos."
-          confirmLabel="Apagar conversa"
+          title="Arquivar conversa"
+          description="Ocultar esta conversa do painel? O histórico completo permanecerá salvo no CRM."
+          confirmLabel="Arquivar conversa"
           busy={deleteBusy}
           onCancel={() => setConfirmDelete(null)}
           onConfirm={handleDeleteConversation}
@@ -1851,9 +1851,9 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
 
       {confirmDelete === "all" && (
         <ConfirmDeleteModal
-          title="Limpar todas as conversas"
-          description="Isso apagará TODAS as mensagens de TODAS as conversas. Os contatos no CRM não serão afetados."
-          confirmLabel="Limpar tudo"
+          title="Arquivar todas as conversas"
+          description="Ocultar todas as conversas deste painel? O histórico completo permanecerá salvo no CRM."
+          confirmLabel="Arquivar tudo"
           busy={deleteBusy}
           onCancel={() => setConfirmDelete(null)}
           onConfirm={handleDeleteAllConversations}
@@ -1862,16 +1862,16 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
 
       {confirmDelete === "selected" && (
         <ConfirmDeleteModal
-          title="Apagar conversas selecionadas"
-          description={`Apagar ${selectedForDeletion.size} ${
+          title="Arquivar conversas selecionadas"
+          description={`Arquivar ${selectedForDeletion.size} ${
             selectedForDeletion.size === 1
               ? "conversa selecionada"
               : "conversas selecionadas"
-          }? Os contatos no CRM não serão afetados.`}
+          }? O histórico completo permanecerá salvo no CRM.`}
           confirmLabel={
             selectedForDeletion.size === 1
-              ? "Apagar 1 conversa"
-              : `Apagar ${selectedForDeletion.size} conversas`
+              ? "Arquivar 1 conversa"
+              : `Arquivar ${selectedForDeletion.size} conversas`
           }
           busy={deleteBusy}
           onCancel={() => setConfirmDelete(null)}
@@ -2055,7 +2055,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                     deleteBusy || selectedForDeletion.size === 0 ? 0.55 : 1,
                 }}
               >
-                Apagar selecionadas
+                Arquivar selecionadas
               </button>
             </div>
           </div>
@@ -2399,7 +2399,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                         fontSize: 13,
                       }}
                     >
-                      Apagar conversa
+                      Arquivar conversa
                     </button>
                   </div>
                 )}

@@ -6,6 +6,7 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { isConversationVisibleInInbox } from "@/lib/server/conversation-visibility";
 
 export const dynamic = "force-dynamic";
 
@@ -15,12 +16,18 @@ export async function GET() {
 
   const sb = createSupabaseServiceClient();
 
-  // Busca última mensagem por remote_jid usando window function via RPC raw SQL
-  const { data, error } = await sb
-    .from("whatsapp_messages")
-    .select("remote_jid, content, kind, direction, created_at")
-    .eq("tenant_id", session.tenantId)
-    .order("created_at", { ascending: false });
+  const [{ data, error }, { data: states }] = await Promise.all([
+    sb
+      .from("whatsapp_messages")
+      .select("remote_jid, content, kind, direction, created_at")
+      .eq("tenant_id", session.tenantId)
+      .order("created_at", { ascending: false }),
+    sb
+      .from("conversation_states")
+      .select("remote_jid, is_hidden, archived_at")
+      .eq("tenant_id", session.tenantId)
+      .eq("channel", "whatsapp"),
+  ]);
 
   if (error) {
     console.error("[api/client/conversas] GET", error.code, error.message);
@@ -28,8 +35,18 @@ export async function GET() {
   }
 
   // Agrupa por remote_jid — mantém só a mais recente por conversa
+  const hiddenJids = new Set(
+    (states ?? [])
+      .filter((row) => !isConversationVisibleInInbox({
+        isHidden: row.is_hidden === true,
+        archivedAt: typeof row.archived_at === "string" ? row.archived_at : null,
+      }))
+      .map((row) => String(row.remote_jid)),
+  );
+
   const seen = new Map<string, { remoteJid: string; lastContent: string; lastKind: string; lastDirection: string; lastAt: string; unreadCount: number }>();
   for (const row of data ?? []) {
+    if (hiddenJids.has(row.remote_jid)) continue;
     if (!seen.has(row.remote_jid)) {
       seen.set(row.remote_jid, {
         remoteJid: row.remote_jid,

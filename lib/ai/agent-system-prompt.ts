@@ -72,6 +72,8 @@ export function buildAgentSystemPrompt(params: {
   agent: Partial<Agent> & { nome?: string; systemPrompt?: string };
   runtimeContext?: AgentRuntimeContext | null;
   languageInstruction: string;
+  recognitionHint?: string | null;
+  condensedContext?: string | null;
 }): string {
   const agent = params.agent;
   const handoffKeywords = Array.isArray((agent as { handoffKeywords?: unknown }).handoffKeywords)
@@ -115,6 +117,8 @@ Comando de retomada: ${clean((agent as { comandoRetomaConversa?: unknown }).coma
 - Se a conversa estiver pausada por humano, o sistema não deve chamar você; se esse contexto aparecer, responda apenas que o atendimento humano está em andamento.
 - Se o cliente enviar um vídeo e não houver transcrição ou análise disponível no contexto, confirme que recebeu o vídeo e peça contexto de forma natural. Nunca invente o que aparece no vídeo.`,
     ...formatRuntimeContext(params.runtimeContext),
+    params.condensedContext?.trim() ? params.condensedContext.trim() : null,
+    params.recognitionHint?.trim() ? params.recognitionHint.trim() : null,
   ].filter((item): item is string => Boolean(item && item.trim()));
 
   return parts.join("\n\n");

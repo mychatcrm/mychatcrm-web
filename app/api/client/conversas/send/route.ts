@@ -54,24 +54,6 @@ export async function POST(request: Request) {
 
   // Persiste outbound no Supabase
   const sb = createSupabaseServiceClient();
-  const { data: saved, error: dbErr } = await sb
-    .from("whatsapp_messages")
-    .insert({
-      tenant_id: session.tenantId,
-      remote_jid: remoteJid,
-      direction: "outbound",
-      kind: "text",
-      content: trimmedText,
-      agent_id: "human",
-    })
-    .select("id, direction, kind, content, created_at")
-    .single();
-
-  if (dbErr) {
-    console.warn("[api/client/conversas/send] db insert", dbErr.code, dbErr.message);
-    // Não falha — mensagem já foi enviada, só não persiste
-  }
-
   const linkedAgentId = instance.default_agent_id ?? null;
   const leadResult = await upsertLeadFromWhatsAppContact({
     tenantId: session.tenantId,
@@ -82,8 +64,26 @@ export async function POST(request: Request) {
     direction: "outbound",
     agentId: linkedAgentId ?? "human",
     conversationId: remoteJid,
-    occurredAt: typeof saved?.created_at === "string" ? saved.created_at : undefined,
   });
+  const { data: saved, error: dbErr } = await sb
+    .from("whatsapp_messages")
+    .insert({
+      tenant_id: session.tenantId,
+      remote_jid: remoteJid,
+      direction: "outbound",
+      kind: "text",
+      content: trimmedText,
+      agent_id: "human",
+      lead_id: leadResult.lead?.id ?? null,
+    })
+    .select("id, direction, kind, content, created_at")
+    .single();
+
+  if (dbErr) {
+    console.warn("[api/client/conversas/send] db insert", dbErr.code, dbErr.message);
+    // Não falha — mensagem já foi enviada, só não persiste
+  }
+
   const occurredAt = typeof saved?.created_at === "string" ? saved.created_at : new Date().toISOString();
   await upsertConversationState({
     sb,

@@ -1,45 +1,24 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   deleteCrmLeadsForTenant,
   normalizeCrmLeadIds,
   validateCrmLeadIds,
 } from "@/lib/server/crm-leads-delete";
 
-type DeleteCall = {
-  table: string;
-  eqs: Array<[string, unknown]>;
-  ins: Array<[string, unknown[]]>;
-};
+const deleteLeadCompletelyMock = vi.fn();
 
-function makeDeleteClient(rows: Array<{ id: string }>, error: { code?: string; message?: string } | null = null) {
-  const call: DeleteCall = { table: "", eqs: [], ins: [] };
-  const client = {
-    from(table: string) {
-      call.table = table;
-      return {
-        delete() {
-          return {
-            eq(key: string, value: unknown) {
-              call.eqs.push([key, value]);
-              return this;
-            },
-            in(key: string, value: unknown[]) {
-              call.ins.push([key, value]);
-              return this;
-            },
-            select: vi.fn(async () => ({ data: rows, error })),
-          };
-        },
-      };
-    },
-  };
-  return { client, call };
-}
+vi.mock("@/lib/server/delete-lead-completely", () => ({
+  deleteLeadCompletely: (...args: unknown[]) => deleteLeadCompletelyMock(...args),
+}));
 
 const idA = "11111111-1111-4111-8111-111111111111";
 const idB = "22222222-2222-4222-8222-222222222222";
 
 describe("CRM lead deletion helpers", () => {
+  beforeEach(() => {
+    deleteLeadCompletelyMock.mockReset();
+  });
+
   it("normalizes and deduplicates explicit ids", () => {
     expect(normalizeCrmLeadIds([idA, " ", idA, idB, 12])).toEqual([idA, idB]);
   });
@@ -52,43 +31,52 @@ describe("CRM lead deletion helpers", () => {
     expect(validateCrmLeadIds(["all"])).toBe("Lista de leads inválida.");
   });
 
-  it("deletes one lead scoped by tenant_id", async () => {
-    const { client, call } = makeDeleteClient([{ id: idA }]);
+  it("delegates complete deletion scoped by tenant_id", async () => {
+    deleteLeadCompletelyMock.mockResolvedValue({
+      leadIds: [idA],
+      leadDeleted: 1,
+      messagesDeleted: 4,
+      summariesDeleted: 1,
+      statesDeleted: 1,
+      mediaDeleted: 2,
+      mediaFailed: [],
+      relatedRecordsDeleted: 0,
+    });
+
     const result = await deleteCrmLeadsForTenant({
-      sb: client as never,
+      sb: {} as never,
       tenantId: "tenant-a",
       ids: [idA],
     });
 
-    expect(call.table).toBe("leads");
-    expect(call.eqs).toEqual([["tenant_id", "tenant-a"]]);
-    expect(call.ins).toEqual([["id", [idA]]]);
+    expect(deleteLeadCompletelyMock).toHaveBeenCalledWith({
+      sb: {},
+      tenantId: "tenant-a",
+      leadIds: [idA],
+    });
     expect(result.deletedIds).toEqual([idA]);
     expect(result.deletedCount).toBe(1);
+    expect(result.report?.messagesDeleted).toBe(4);
   });
 
-  it("deletes multiple leads scoped by tenant_id", async () => {
-    const { client, call } = makeDeleteClient([{ id: idA }, { id: idB }]);
-    const result = await deleteCrmLeadsForTenant({
-      sb: client as never,
-      tenantId: "tenant-a",
-      ids: [idA, idB],
+  it("returns empty result when no leads match tenant", async () => {
+    deleteLeadCompletelyMock.mockResolvedValue({
+      leadIds: [],
+      leadDeleted: 0,
+      messagesDeleted: 0,
+      summariesDeleted: 0,
+      statesDeleted: 0,
+      mediaDeleted: 0,
+      mediaFailed: [],
+      relatedRecordsDeleted: 0,
     });
 
-    expect(call.eqs).toEqual([["tenant_id", "tenant-a"]]);
-    expect(call.ins).toEqual([["id", [idA, idB]]]);
-    expect(result.deletedCount).toBe(2);
-  });
-
-  it("does not report another tenant lead as deleted when Supabase returns no rows", async () => {
-    const { client, call } = makeDeleteClient([]);
     const result = await deleteCrmLeadsForTenant({
-      sb: client as never,
+      sb: {} as never,
       tenantId: "tenant-a",
       ids: [idA],
     });
 
-    expect(call.eqs).toEqual([["tenant_id", "tenant-a"]]);
     expect(result.deletedIds).toEqual([]);
     expect(result.deletedCount).toBe(0);
   });

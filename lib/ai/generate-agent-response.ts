@@ -11,9 +11,8 @@ import type {
 import { transcribeAudio, describeImage } from "@/lib/ai/media-processor";
 import { buildAgentSystemPrompt } from "@/lib/ai/agent-system-prompt";
 import {
-  conversationMessagesToAi,
-  loadAgentRuntimeContext,
-} from "@/lib/server/conversation-memory";
+  buildLeadConversationMemory,
+} from "@/lib/server/lead-conversation-memory";
 import type { Agent } from "@/lib/types";
 
 /** Alinhado ao seed em supabase/migrations/20260506_tenant_agents.sql — usado se a tabela ainda não existir. */
@@ -194,15 +193,17 @@ export async function generateAgentResponse(params: {
       systemPrompt = params.agentOverride.systemPrompt.trim();
     }
   }
-  const runtimeContext = await loadAgentRuntimeContext({
+  const memory = await buildLeadConversationMemory({
     tenantId: params.tenantId,
     agentId: params.agentId,
     remoteJid: params.conversationId,
   });
   systemPrompt = buildAgentSystemPrompt({
     agent: baseAgent,
-    runtimeContext,
+    runtimeContext: memory,
     languageInstruction: buildLanguageInstruction(detectedLanguageName),
+    recognitionHint: memory.recognitionHint,
+    condensedContext: memory.condensedContext,
   });
 
   // -------------------------------------------------------------------------
@@ -211,7 +212,7 @@ export async function generateAgentResponse(params: {
   const model = params.model?.trim() || profile?.model?.trim() || undefined;
   const temperature = typeof baseAgent.temperatura === "number" ? baseAgent.temperatura : undefined;
   const systemMessage: AiMessage = { role: "system", content: systemPrompt };
-  const historyMessages = conversationMessagesToAi(runtimeContext.recentMessages);
+  const historyMessages = memory.aiMessages;
   const tailMessages = withoutTrailingDuplicateUserMessages(historyMessages, [
     ...conversationOnly,
     ...(mediaUserMessage ? [mediaUserMessage] : []),

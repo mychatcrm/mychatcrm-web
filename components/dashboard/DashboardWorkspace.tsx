@@ -3099,8 +3099,8 @@ function CrmPage({
           <div className="space-y-3">
             <p className="text-sm leading-relaxed text-content-muted">
               {deleteLeadConfirm.ids.length === 1
-                ? "Deseja apagar este lead do CRM? As conversas do WhatsApp não serão apagadas."
-                : `Deseja apagar ${deleteLeadConfirm.ids.length} leads do CRM? As conversas do WhatsApp não serão apagadas.`}
+                ? "Deseja excluir este lead permanentemente? Todo o histórico, mensagens, mídias, áudios, vídeos, imagens e registros vinculados serão apagados."
+                : `Deseja excluir ${deleteLeadConfirm.ids.length} leads permanentemente? Todo o histórico, mensagens, mídias, áudios, vídeos, imagens e registros vinculados desses clientes serão apagados.`}
             </p>
             {deleteLeadConfirm.ids.length === 1 && deleteLeadConfirm.names[0] ? (
               <p className="rounded-lg border border-line bg-surface-deep/40 px-3 py-2 text-sm font-medium text-content">

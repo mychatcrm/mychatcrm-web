@@ -159,24 +159,6 @@ export async function POST(request: Request) {
     `[Documento] ${originalName}`;
 
   const sb = createSupabaseServiceClient();
-  const { data: saved, error: dbErr } = await sb
-    .from("whatsapp_messages")
-    .insert({
-      tenant_id: session.tenantId,
-      remote_jid: remoteJid,
-      direction: "outbound",
-      kind,
-      content: contentLabel,
-      media_url: mediaUrl,
-      agent_id: "human",
-    })
-    .select("id, direction, kind, content, media_url, agent_id, created_at")
-    .single();
-
-  if (dbErr) {
-    console.warn("[send-media] db insert error", dbErr.code, dbErr.message);
-  }
-
   const linkedAgentId = instance.default_agent_id ?? null;
   const leadResult = await upsertLeadFromWhatsAppContact({
     tenantId: session.tenantId,
@@ -187,8 +169,26 @@ export async function POST(request: Request) {
     direction: "outbound",
     agentId: linkedAgentId ?? "human",
     conversationId: remoteJid,
-    occurredAt: typeof saved?.created_at === "string" ? saved.created_at : undefined,
   });
+  const { data: saved, error: dbErr } = await sb
+    .from("whatsapp_messages")
+    .insert({
+      tenant_id: session.tenantId,
+      remote_jid: remoteJid,
+      direction: "outbound",
+      kind,
+      content: contentLabel,
+      media_url: mediaUrl,
+      agent_id: "human",
+      lead_id: leadResult.lead?.id ?? null,
+    })
+    .select("id, direction, kind, content, media_url, agent_id, created_at")
+    .single();
+
+  if (dbErr) {
+    console.warn("[send-media] db insert error", dbErr.code, dbErr.message);
+  }
+
   const occurredAt = typeof saved?.created_at === "string" ? saved.created_at : new Date().toISOString();
   await upsertConversationState({
     sb,

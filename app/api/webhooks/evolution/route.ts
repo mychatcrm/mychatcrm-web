@@ -287,6 +287,7 @@ async function saveMessage(opts: {
   content: string;
   messageId?: string | null;
   agentId?: string | null;
+  leadId?: string | null;
   mediaUrl?: string | null;
   mimeType?: string | null;
   storageKey?: string | null;
@@ -308,6 +309,7 @@ async function saveMessage(opts: {
         content: opts.content,
         message_id: opts.messageId ?? null,
         agent_id: opts.agentId ?? null,
+        lead_id: opts.leadId ?? null,
         media_url: opts.mediaUrl ?? null,
         mime_type: opts.mimeType ?? null,
         storage_key: opts.storageKey ?? null,
@@ -416,23 +418,6 @@ export async function POST(request: Request) {
         inboundMedia = await downloadAndStoreMedia(msg, row.tenant_id, instanceName);
       }
 
-      const inboundSaved = await saveMessage({
-        tenantId: row.tenant_id,
-        remoteJid: msg.remoteJid,
-        direction: "inbound",
-        kind: kindFromMsg(msg),
-        content: contentFromMsg(msg),
-        messageId: msg.messageId,
-        mediaUrl: inboundMedia?.mediaUrl ?? null,
-        mimeType: inboundMedia?.mimeType ?? ("mimetype" in msg ? msg.mimetype : null),
-        storageKey: inboundMedia?.storageKey ?? null,
-        fileName: inboundMedia?.fileName ?? null,
-        caption: inboundMedia?.caption ?? null,
-        mediaDurationSeconds: inboundMedia?.durationSeconds ?? null,
-        transcriptionStatus: msg.type === "audio" ? "pending" : null,
-        analysisStatus:
-          msg.type === "video" ? "unsupported" : msg.type === "image" ? "pending" : null,
-      });
       const contactName = extractContactNameFromPayload(payload, msg);
       const upsertedLead = await upsertLeadFromWhatsAppContact({
         tenantId: row.tenant_id,
@@ -444,14 +429,37 @@ export async function POST(request: Request) {
         agentId,
         conversationId: msg.remoteJid,
       });
-      const sbState = createSupabaseServiceClient();
       const leadId = upsertedLead?.lead?.id ?? null;
+
+      const inboundSaved = await saveMessage({
+        tenantId: row.tenant_id,
+        remoteJid: msg.remoteJid,
+        direction: "inbound",
+        kind: kindFromMsg(msg),
+        content: contentFromMsg(msg),
+        messageId: msg.messageId,
+        leadId,
+        mediaUrl: inboundMedia?.mediaUrl ?? null,
+        mimeType: inboundMedia?.mimeType ?? ("mimetype" in msg ? msg.mimetype : null),
+        storageKey: inboundMedia?.storageKey ?? null,
+        fileName: inboundMedia?.fileName ?? null,
+        caption: inboundMedia?.caption ?? null,
+        mediaDurationSeconds: inboundMedia?.durationSeconds ?? null,
+        transcriptionStatus: msg.type === "audio" ? "pending" : null,
+        analysisStatus:
+          msg.type === "video" ? "unsupported" : msg.type === "image" ? "pending" : null,
+      });
+      const sbState = createSupabaseServiceClient();
       const state = await upsertConversationState({
         sb: sbState,
         tenantId: row.tenant_id,
         remoteJid: msg.remoteJid,
         leadId,
         agentId,
+        isHidden: false,
+        archivedAt: null,
+        hiddenAt: null,
+        hiddenBy: null,
         lastMessageAt: inboundSaved?.created_at ?? new Date().toISOString(),
       });
 

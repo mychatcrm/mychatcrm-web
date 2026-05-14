@@ -174,6 +174,8 @@ describe("conversation human control", () => {
         handoffSuggested: false,
         handoffReason: null,
         lastSummaryAt: null,
+        isHidden: false,
+        archivedAt: null,
       }),
     ).toBe(false);
   });
@@ -196,6 +198,8 @@ describe("webhook automation gate", () => {
       handoffSuggested: false,
       handoffReason: null,
       lastSummaryAt: null,
+      isHidden: false,
+      archivedAt: null,
     };
     expect(isConversationAutomationEnabled(paused)).toBe(false);
   });
@@ -216,6 +220,8 @@ describe("webhook automation gate", () => {
       handoffSuggested: false,
       handoffReason: null,
       lastSummaryAt: null,
+      isHidden: false,
+      archivedAt: null,
     };
     expect(isConversationAutomationEnabled(active)).toBe(true);
   });

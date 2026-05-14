@@ -1,4 +1,5 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { deleteLeadCompletely } from "@/lib/server/delete-lead-completely";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -7,6 +8,7 @@ export type DeleteCrmLeadsResult = {
   deletedIds: string[];
   requestedCount: number;
   deletedCount: number;
+  report?: Awaited<ReturnType<typeof deleteLeadCompletely>>;
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -73,28 +75,13 @@ export async function deleteCrmLeadsForTenant(params: {
     throw new Error(validationError);
   }
 
-  const { data, error } = await params.sb
-    .from("leads")
-    .delete()
-    .eq("tenant_id", params.tenantId)
-    .in("id", requestedIds)
-    .select("id");
+  const report = await deleteLeadCompletely({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    leadIds: requestedIds,
+  });
 
-  if (error) {
-    logCrmLeadDelete({
-      tenantId: params.tenantId,
-      requestedCount: requestedIds.length,
-      deletedCount: 0,
-      action: "error",
-      reason: "delete_failed",
-      code: error.code,
-    });
-    throw new Error("Erro ao apagar lead(s).");
-  }
-
-  const deletedIds = (data ?? [])
-    .map((row) => (row && typeof row === "object" ? (row as { id?: unknown }).id : null))
-    .filter((id): id is string => typeof id === "string");
+  const deletedIds = report.leadIds;
 
   logCrmLeadDelete({
     tenantId: params.tenantId,
@@ -108,5 +95,6 @@ export async function deleteCrmLeadsForTenant(params: {
     deletedIds,
     requestedCount: requestedIds.length,
     deletedCount: deletedIds.length,
+    report,
   };
 }
