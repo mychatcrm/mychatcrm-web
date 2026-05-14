@@ -82,8 +82,10 @@ export async function processAgentResponseJob(
   sb: SupabaseServiceClient,
   job: AgentResponseJobRow,
   claimedGeneration?: number,
+  options?: { skipGenerationCheck?: boolean },
 ): Promise<{ ok: true; dedupedCount: number } | { ok: false; error: string; dedupedCount?: number }> {
   const generation = claimedGeneration ?? job.burst_generation;
+  const skipGenerationCheck = options?.skipGenerationCheck === true;
 
   const { data: rowsByWindow, error: windowError } = await sb
     .from("whatsapp_messages")
@@ -241,7 +243,7 @@ export async function processAgentResponseJob(
     }
   }
 
-  if (await isGenerationStale(sb, job.id, generation)) {
+  if (!skipGenerationCheck && (await isGenerationStale(sb, job.id, generation))) {
     return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
   }
 
@@ -293,7 +295,7 @@ export async function processAgentResponseJob(
     });
   }
 
-  if (await isGenerationStale(sb, job.id, generation)) {
+  if (!skipGenerationCheck && (await isGenerationStale(sb, job.id, generation))) {
     return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
   }
 
@@ -332,6 +334,7 @@ export async function processAgentResponseJob(
       });
       if (!send.ok) return { ok: false, error: send.error, dedupedCount: burst.dedupedCount };
       console.info("[agent-response-jobs]", { event: "sent_evolution", job_id: job.id, mode: "audio", ok: true });
+      console.info("[agent-response-jobs]", { event: "final_outbound_sent", job_id: job.id, mode: "audio" });
       await saveOutboundMessage({
         tenantId: job.tenant_id,
         remoteJid: job.remote_jid,
@@ -350,6 +353,7 @@ export async function processAgentResponseJob(
       });
       if (!send.ok) return { ok: false, error: send.error, dedupedCount: burst.dedupedCount };
       console.info("[agent-response-jobs]", { event: "sent_evolution", job_id: job.id, mode: "text", ok: true });
+      console.info("[agent-response-jobs]", { event: "final_outbound_sent", job_id: job.id, mode: "text" });
       await saveOutboundMessage({
         tenantId: job.tenant_id,
         remoteJid: job.remote_jid,
@@ -368,6 +372,7 @@ export async function processAgentResponseJob(
     });
     if (!send.ok) return { ok: false, error: send.error, dedupedCount: burst.dedupedCount };
     console.info("[agent-response-jobs]", { event: "sent_evolution", job_id: job.id, mode: "text", ok: true });
+    console.info("[agent-response-jobs]", { event: "final_outbound_sent", job_id: job.id, mode: "text" });
     await saveOutboundMessage({
       tenantId: job.tenant_id,
       remoteJid: job.remote_jid,

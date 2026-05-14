@@ -1,20 +1,31 @@
 import type { AgentSmartWaitSettings } from "@/lib/agents/smart-wait-settings";
+import {
+  executeAgentResponseFallback,
+  isJobStuckPastGrace,
+  isSmartWaitGloballyDisabled,
+  loadAgentResponseJob,
+  type AgentResponseFallbackReason,
+} from "@/lib/server/agent-response-fallback";
+
+export { isSmartWaitGloballyDisabled };
 import { maskRemoteJidForLog } from "@/lib/server/agent-response-schedule";
 import {
+  hasAgentResponseProcessorSecret,
   processDueJobsForConversation,
   scheduleAgentResponseJob,
   triggerAgentResponseJobProcessor,
+  waitAndProcessAgentResponseJob,
 } from "@/lib/server/agent-response-jobs";
 
 export type InboundAgentFlowDecision =
-  | { mode: "smart_wait"; jobId: string | null; reason?: string }
+  | { mode: "smart_wait"; jobId: string | null; reason?: string; fallback?: boolean }
   | { mode: "immediate"; reason: string };
 
 export function resolveInboundAgentFlowDecision(params: {
   smartWait: AgentSmartWaitSettings;
   inboundMessageKey: string | null;
 }): InboundAgentFlowDecision {
-  if (!params.smartWait.enabled) {
+  if (isSmartWaitGloballyDisabled() || !params.smartWait.enabled) {
     return { mode: "immediate", reason: "smart_wait_disabled" };
   }
   if (!params.inboundMessageKey) {
@@ -23,8 +34,22 @@ export function resolveInboundAgentFlowDecision(params: {
   return { mode: "smart_wait", jobId: null };
 }
 
-export function queueAgentResponseJobProcessor(jobId: string): void {
-  triggerAgentResponseJobProcessor(jobId);
+export function queueAgentResponseJobProcessor(jobId: string): boolean {
+  return triggerAgentResponseJobProcessor(jobId);
+}
+
+async function runFallbackForJob(params: {
+  sb: ReturnType<typeof import("@/lib/supabase/server").createSupabaseServiceClient>;
+  jobId: string;
+  reason: AgentResponseFallbackReason;
+}): Promise<void> {
+  const job = await loadAgentResponseJob(params.sb, params.jobId);
+  if (!job) return;
+  await executeAgentResponseFallback({
+    sb: params.sb,
+    job,
+    reason: params.reason,
+  });
 }
 
 export async function runInboundSmartWaitFlow(params: {
@@ -38,6 +63,13 @@ export async function runInboundSmartWaitFlow(params: {
   smartWait: AgentSmartWaitSettings;
   sb: ReturnType<typeof import("@/lib/supabase/server").createSupabaseServiceClient>;
 }): Promise<InboundAgentFlowDecision> {
+  console.info("[agent-response-jobs]", {
+    event: "smart_wait_started",
+    tenant_id: params.tenantId,
+    remote_jid: maskRemoteJidForLog(params.remoteJid),
+    inbound_message_id: params.inboundMessageKey,
+  });
+
   const job = await scheduleAgentResponseJob({
     sb: params.sb,
     tenantId: params.tenantId,
@@ -50,17 +82,70 @@ export async function runInboundSmartWaitFlow(params: {
     settings: params.smartWait,
   });
 
+  if (!job) {
+    console.info("[agent-response-jobs]", {
+      event: "job_create_failed",
+      tenant_id: params.tenantId,
+      remote_jid: maskRemoteJidForLog(params.remoteJid),
+    });
+    return { mode: "immediate", reason: "job_create_failed" };
+  }
+
   console.info("[agent-response-jobs]", {
-    event: job ? "webhook_smart_wait_scheduled" : "webhook_smart_wait_failed",
-    smart_wait_enabled: true,
+    event: "webhook_smart_wait_scheduled",
     tenant_id: params.tenantId,
     remote_jid: maskRemoteJidForLog(params.remoteJid),
-    job_id: job?.id ?? null,
-    scheduled_for: job?.scheduled_for ?? null,
-    messages_count: job?.message_ids.length ?? 0,
+    job_id: job.id,
+    scheduled_for: job.scheduled_for,
+    messages_count: job.message_ids.length,
   });
 
-  if (job) queueAgentResponseJobProcessor(job.id);
+  const processorSecretOk = hasAgentResponseProcessorSecret();
+  if (!processorSecretOk) {
+    console.info("[agent-response-jobs]", {
+      event: "processor_not_called",
+      reason: "missing_internal_secret",
+      job_id: job.id,
+    });
+  } else {
+    queueAgentResponseJobProcessor(job.id);
+  }
+
+  const waitOutcome = await waitAndProcessAgentResponseJob(job.id, params.sb);
+  const current = await loadAgentResponseJob(params.sb, job.id);
+
+  if (current?.status === "completed" || current?.status === "completed_with_fallback") {
+    return { mode: "smart_wait", jobId: job.id };
+  }
+
+  const needsFallback =
+    waitOutcome === "timeout" ||
+    waitOutcome === "failed" ||
+    current?.status === "failed" ||
+    (current?.status === "pending" && current && isJobStuckPastGrace(current));
+
+  if (needsFallback && current) {
+    const reason: AgentResponseFallbackReason =
+      waitOutcome === "timeout"
+        ? "processor_timeout"
+        : current.status === "failed"
+          ? "max_wait_exceeded"
+          : !processorSecretOk
+            ? "processor_not_called"
+            : "job_stuck";
+    await runFallbackForJob({ sb: params.sb, jobId: current.id, reason });
+    return { mode: "smart_wait", jobId: job.id, fallback: true, reason };
+  }
+
+  if (waitOutcome === "timeout" || waitOutcome === "failed") {
+    await runFallbackForJob({
+      sb: params.sb,
+      jobId: job.id,
+      reason: waitOutcome === "timeout" ? "processor_timeout" : "job_failed",
+    });
+    return { mode: "smart_wait", jobId: job.id, fallback: true };
+  }
+
   const processedDue = await processDueJobsForConversation({
     sb: params.sb,
     tenantId: params.tenantId,
@@ -68,11 +153,12 @@ export async function runInboundSmartWaitFlow(params: {
   });
   if (processedDue > 0) {
     console.info("[agent-response-jobs]", {
-      event: "fallback_processed",
+      event: "inline_due_processed",
       tenant_id: params.tenantId,
       remote_jid: maskRemoteJidForLog(params.remoteJid),
       processed: processedDue,
     });
   }
-  return { mode: "smart_wait", jobId: job?.id ?? null, reason: job ? undefined : "schedule_returned_null" };
+
+  return { mode: "smart_wait", jobId: job.id };
 }

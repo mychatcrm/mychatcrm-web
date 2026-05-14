@@ -29,9 +29,10 @@ import { applyHumanConversationCommand } from "@/lib/server/conversation-human-c
 import { revealConversationOnInbound } from "@/lib/server/conversation-visibility";
 import { isAgentAutomationAllowed, markWaitingForHuman } from "@/lib/server/conversation-operation";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
-import { runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
+import { isSmartWaitGloballyDisabled, runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 function verifyWebhookToken(request: Request): boolean {
   const expected = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
@@ -501,15 +502,13 @@ export async function POST(request: Request) {
         ? (agentConfig.data.metadata as Record<string, unknown>)
         : {};
       const smartWait = smartWaitFromMetadata(metadata);
-      if (smartWait.enabled) {
+      const useSmartWait = smartWait.enabled && !isSmartWaitGloballyDisabled();
+      let runImmediateReply = !useSmartWait;
+
+      if (useSmartWait) {
         const inboundMessageKey = inboundSaved?.id ?? null;
         if (inboundMessageKey) {
-          console.info("[agent-response-jobs]", {
-            event: "immediate_flow_blocked",
-            tenant_id: row.tenant_id,
-            remote_jid: msg.remoteJid.replace(/\D/g, "").slice(-4),
-          });
-          await runInboundSmartWaitFlow({
+          const flowResult = await runInboundSmartWaitFlow({
             sb: sbState,
             tenantId: row.tenant_id,
             remoteJid: msg.remoteJid,
@@ -520,16 +519,22 @@ export async function POST(request: Request) {
             occurredAt: inboundSaved?.created_at ?? new Date().toISOString(),
             smartWait,
           });
+          if (flowResult.mode === "smart_wait") {
+            continue;
+          }
+          runImmediateReply = true;
         } else {
           console.info("[agent-response-jobs]", {
-            event: "immediate_flow_blocked",
+            event: "job_create_failed",
             reason: "missing_inbound_message_uuid",
             tenant_id: row.tenant_id,
             remote_jid: msg.remoteJid.replace(/\D/g, "").slice(-4),
           });
+          runImmediateReply = true;
         }
-        continue;
       }
+
+      if (!runImmediateReply) continue;
       const handoffKeywords = Array.isArray(metadata.handoffKeywords)
         ? metadata.handoffKeywords.filter((item): item is string => typeof item === "string")
         : [];

@@ -236,6 +236,15 @@ async function rescheduleExistingJob(params: {
   return rowFromDb(data as Record<string, unknown>);
 }
 
+export async function getAgentResponseJobById(
+  sb: SupabaseServiceClient,
+  jobId: string,
+): Promise<AgentResponseJobRow | null> {
+  const { data } = await sb.from("agent_response_jobs").select("*").eq("id", jobId).maybeSingle();
+  if (!data) return null;
+  return rowFromDb(data as Record<string, unknown>);
+}
+
 export async function scheduleAgentResponseJob(params: {
   sb?: SupabaseServiceClient;
   tenantId: string;
@@ -616,39 +625,64 @@ export async function processDueJobsForConversation(params: {
   return processed;
 }
 
-export async function waitAndProcessAgentResponseJob(jobId: string): Promise<void> {
-  const sb = createSupabaseServiceClient();
-  const { data: initial } = await sb.from("agent_response_jobs").select("*").eq("id", jobId).maybeSingle();
-  if (!initial) return;
+export type WaitAndProcessOutcome =
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "timeout"
+  | "not_found";
+
+export async function waitAndProcessAgentResponseJob(
+  jobId: string,
+  sb?: SupabaseServiceClient,
+): Promise<WaitAndProcessOutcome> {
+  const client = sb ?? createSupabaseServiceClient();
+  const { data: initial } = await client.from("agent_response_jobs").select("*").eq("id", jobId).maybeSingle();
+  if (!initial) return "not_found";
   const job = rowFromDb(initial as Record<string, unknown>);
   const deadline = Math.min(
-    new Date(job.max_wait_until).getTime() + 15_000,
-    Date.now() + Math.max(45_000, job.inbound_message_count * 5_000),
+    new Date(job.max_wait_until).getTime() + 20_000,
+    Date.now() + Math.max(60_000, job.inbound_message_count * 5_000),
   );
 
   while (Date.now() < deadline) {
-    const { data } = await sb.from("agent_response_jobs").select("*").eq("id", jobId).maybeSingle();
-    if (!data) return;
+    const { data } = await client.from("agent_response_jobs").select("*").eq("id", jobId).maybeSingle();
+    if (!data) return "not_found";
     const current = rowFromDb(data as Record<string, unknown>);
-    if (current.status === "completed" || current.status === "cancelled" || current.status === "failed") return;
+    if (current.status === "completed" || current.status === "completed_with_fallback") return "completed";
+    if (current.status === "cancelled") return "cancelled";
+    if (current.status === "failed" || current.status === "failed_with_fallback") return "failed";
     if (current.status === "pending" && isJobReadyToProcess(current.scheduled_for)) {
-      await tryProcessAgentResponseJob(jobId, sb);
-      return;
+      const outcome = await tryProcessAgentResponseJob(jobId, client);
+      if (outcome === "processed") return "completed";
+      const { data: after } = await client.from("agent_response_jobs").select("status").eq("id", jobId).maybeSingle();
+      const status = (after as { status?: string } | null)?.status;
+      if (status === "completed" || status === "completed_with_fallback") return "completed";
+      if (status === "failed" || status === "failed_with_fallback") return "failed";
     }
     const waitMs = new Date(current.scheduled_for).getTime() - Date.now();
     await sleep(Math.min(1000, Math.max(250, waitMs)));
   }
   logJobEvent("wait_timeout", { job_id: jobId });
+  return "timeout";
 }
 
-export function triggerAgentResponseJobProcessor(jobId?: string): void {
+export function hasAgentResponseProcessorSecret(): boolean {
+  return Boolean(
+    process.env.AGENT_RESPONSE_JOBS_SECRET?.trim() ||
+      process.env.CRON_SECRET?.trim() ||
+      process.env.EVOLUTION_WEBHOOK_SECRET?.trim(),
+  );
+}
+
+export function triggerAgentResponseJobProcessor(jobId?: string): boolean {
   const secret =
     process.env.AGENT_RESPONSE_JOBS_SECRET?.trim() ||
     process.env.CRON_SECRET?.trim() ||
     process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
   if (!secret) {
-    logJobEvent("failed_reason", { scope: "processor_trigger", reason: "missing_internal_secret" });
-    return;
+    logJobEvent("processor_not_called", { scope: "processor_trigger", reason: "missing_internal_secret" });
+    return false;
   }
   const base =
     process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "") ||
@@ -663,10 +697,11 @@ export function triggerAgentResponseJobProcessor(jobId?: string): void {
       "x-agent-jobs-secret": secret,
     },
   }).catch((error) => {
-    logJobEvent("failed_reason", {
+    logJobEvent("processor_not_called", {
       scope: "processor_trigger",
       job_id: jobId ?? null,
       reason: error instanceof Error ? error.message : "fetch_failed",
     });
   });
+  return true;
 }

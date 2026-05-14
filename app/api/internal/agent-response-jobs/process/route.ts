@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import {
+  executeAgentResponseFallback,
+  loadAgentResponseJob,
+} from "@/lib/server/agent-response-fallback";
+import {
   processDueAgentResponseJobs,
   waitAndProcessAgentResponseJob,
 } from "@/lib/server/agent-response-jobs";
@@ -39,8 +43,20 @@ export async function POST(request: Request) {
   console.info("[agent-response-jobs]", { event: "auth_ok" });
 
   if (jobId) {
-    await waitAndProcessAgentResponseJob(jobId);
-    return NextResponse.json({ ok: true, mode: "wait_and_process", jobId });
+    const outcome = await waitAndProcessAgentResponseJob(jobId);
+    if (outcome === "timeout" || outcome === "failed") {
+      const job = await loadAgentResponseJob(
+        (await import("@/lib/supabase/server")).createSupabaseServiceClient(),
+        jobId,
+      );
+      if (job) {
+        await executeAgentResponseFallback({
+          job,
+          reason: outcome === "timeout" ? "processor_timeout" : "job_failed",
+        });
+      }
+    }
+    return NextResponse.json({ ok: true, mode: "wait_and_process", jobId, outcome });
   }
 
   const processed = await processDueAgentResponseJobs();
