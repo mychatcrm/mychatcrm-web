@@ -23,6 +23,7 @@ import { WizardStep4Fluxo } from "./WizardStep4Fluxo";
 import { WizardStepFollowUpInteligente } from "./WizardStepFollowUpInteligente";
 import { WizardStepWhatsappLinha } from "./WizardStepWhatsappLinha";
 import { WizardStepVoz } from "./WizardStepVoz";
+import { WizardStepSmartWait } from "./WizardStepSmartWait";
 import { WizardStepCrmLeadDestination } from "./WizardStepCrmLeadDestination";
 
 const DELETE_AGENT_CONFIRM_TEXT = "QUERO APAGAR";
@@ -214,6 +215,11 @@ export function AgentFormCompact({
               <WizardStepWhatsappLinha tenantId={tenantId} draft={draft} onChange={setDraft} />
             </section>
           ) : null}
+
+          <section className="space-y-3">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Tempo de espera antes de responder</h3>
+            <WizardStepSmartWait draft={draft} onChange={setDraft} />
+          </section>
 
           <section className="space-y-3">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Instruções e treinamento</h3>

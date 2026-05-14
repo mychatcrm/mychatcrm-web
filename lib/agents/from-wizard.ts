@@ -1,12 +1,14 @@
 import type { Agent } from "@/lib/types";
 import { listAgentsForTenant } from "./registry";
 import { sanitizeAgentResponseSettings } from "./response-settings";
+import { sanitizeAgentSmartWaitSettings } from "./smart-wait-settings";
 import { agentObjectiveLabel, type AgentWizardDraft } from "./wizard-model";
 
 /** Aplica o rascunho do wizard a um agente existente (mantém id, métricas, status, horário, etc.). */
 export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDraft): Agent {
   const stamp = new Date().toISOString();
   const responseSettings = sanitizeAgentResponseSettings(draft);
+  const smartWait = sanitizeAgentSmartWaitSettings(draft);
   return {
     ...existing,
     whatsappSlotIndex: draft.whatsappSlotIndex ?? 0,
@@ -36,6 +38,11 @@ export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDr
     atualizadoEm: stamp,
     voiceId: responseSettings.voiceId,
     responseMode: responseSettings.responseMode,
+    smartWaitEnabled: smartWait.enabled,
+    smartWaitInitialSeconds: smartWait.initialSeconds,
+    smartWaitFollowupSeconds: smartWait.followupSeconds,
+    smartWaitMaxSeconds: smartWait.maxSeconds,
+    smartWaitDedupeRepeated: smartWait.dedupeRepeated,
     crmAutoMoveEnabled: draft.crmAutoMoveEnabled,
     crmTargetFunnelId: draft.crmAutoMoveEnabled ? draft.crmTargetFunnelId : null,
     crmTargetColumnId: draft.crmAutoMoveEnabled ? draft.crmTargetColumnId : null,
@@ -49,6 +56,7 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
   const base = structuredClone(templates[0]!);
   const stamp = new Date().toISOString();
   const responseSettings = sanitizeAgentResponseSettings(draft);
+  const smartWait = sanitizeAgentSmartWaitSettings(draft);
   return {
     ...base,
     id: `ag-novo-${Date.now()}`,
@@ -89,6 +97,11 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
     atualizadoEm: stamp,
     voiceId: responseSettings.voiceId,
     responseMode: responseSettings.responseMode,
+    smartWaitEnabled: smartWait.enabled,
+    smartWaitInitialSeconds: smartWait.initialSeconds,
+    smartWaitFollowupSeconds: smartWait.followupSeconds,
+    smartWaitMaxSeconds: smartWait.maxSeconds,
+    smartWaitDedupeRepeated: smartWait.dedupeRepeated,
     crmAutoMoveEnabled: draft.crmAutoMoveEnabled,
     crmTargetFunnelId: draft.crmAutoMoveEnabled ? draft.crmTargetFunnelId : null,
     crmTargetColumnId: draft.crmAutoMoveEnabled ? draft.crmTargetColumnId : null,

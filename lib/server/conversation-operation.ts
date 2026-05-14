@@ -1,4 +1,5 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { cancelPendingAgentResponseJobs } from "@/lib/server/agent-response-jobs";
 import {
   getConversationState,
   upsertConversationState,
@@ -268,6 +269,13 @@ export async function takeoverConversation(params: {
     transferReason: "takeover",
   });
 
+  await cancelPendingAgentResponseJobs({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    reason: "human_takeover",
+  });
+
   return {
     state,
     operation: buildOperationSnapshot(state, {
@@ -379,6 +387,13 @@ export async function markWaitingForHuman(params: {
     actorType: "system",
     transferReason: params.reason ?? "handoff",
   });
+
+  await cancelPendingAgentResponseJobs({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    reason: "handoff_waiting_human",
+  });
 }
 
 export async function syncAutomationMode(params: {
@@ -419,6 +434,15 @@ export async function syncAutomationMode(params: {
     actorId: params.actorId ?? null,
     actorName: params.actorName ?? null,
   });
+
+  if (!params.enabled) {
+    await cancelPendingAgentResponseJobs({
+      sb: params.sb,
+      tenantId: params.tenantId,
+      remoteJid: params.remoteJid,
+      reason: "automation_paused",
+    });
+  }
 
   return mode;
 }

@@ -19,6 +19,7 @@ import { totalWhatsAppLinesForTenant } from "@/lib/whatsapp-connection-storage";
 import { DEFAULT_SYSTEM_PROMPT_TEMPLATE } from "./default-system-prompt-template";
 import { normalizeAgentCrmDestination } from "./crm-destination";
 import { normalizeAgentResponseMode, normalizeAgentVoiceId, validateAgentResponseSettings } from "./response-settings";
+import { DEFAULT_AGENT_SMART_WAIT, sanitizeAgentSmartWaitSettings } from "./smart-wait-settings";
 
 export type AgentWizardDraft = {
   nome: string;
@@ -61,6 +62,11 @@ export type AgentWizardDraft = {
   responseMode: "text" | "audio";
   /** ID da voz ElevenLabs para TTS (obrigatório quando responseMode === 'audio'). */
   voiceId: string;
+  smartWaitEnabled: boolean;
+  smartWaitInitialSeconds: number;
+  smartWaitFollowupSeconds: number;
+  smartWaitMaxSeconds: number;
+  smartWaitDedupeRepeated: boolean;
   /** Se true, leads criados/atualizados por este agente são movidos no CRM. */
   crmAutoMoveEnabled: boolean;
   /** Funil de destino para movimento automático no CRM. */
@@ -145,6 +151,13 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
   const waCap = totalWhatsAppLinesForTenant(agent.clientId);
   const rawWa = agent.whatsappSlotIndex ?? 0;
   const whatsappSlotIndex = Math.min(Math.max(0, Math.floor(rawWa)), Math.max(0, waCap - 1));
+  const smartWait = sanitizeAgentSmartWaitSettings({
+    enabled: agent.smartWaitEnabled,
+    initialSeconds: agent.smartWaitInitialSeconds,
+    followupSeconds: agent.smartWaitFollowupSeconds,
+    maxSeconds: agent.smartWaitMaxSeconds,
+    dedupeRepeated: agent.smartWaitDedupeRepeated,
+  });
   return {
     nome: agent.nome,
     avatar: agent.avatar ?? "bot",
@@ -182,6 +195,11 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     foraDaVezMensagem: "",
     responseMode: normalizeAgentResponseMode(agent.responseMode),
     voiceId: normalizeAgentVoiceId(agent.voiceId) ?? "",
+    smartWaitEnabled: smartWait.enabled,
+    smartWaitInitialSeconds: smartWait.initialSeconds,
+    smartWaitFollowupSeconds: smartWait.followupSeconds,
+    smartWaitMaxSeconds: smartWait.maxSeconds,
+    smartWaitDedupeRepeated: smartWait.dedupeRepeated,
     crmAutoMoveEnabled: crmDestination.crmAutoMoveEnabled,
     crmTargetFunnelId: crmDestination.crmTargetFunnelId ?? targetFunnel.id,
     crmTargetColumnId: crmDestination.crmTargetColumnId ?? targetColumn,
@@ -316,6 +334,11 @@ export const defaultWizardDraft: AgentWizardDraft = {
   foraDaVezMensagem: "",
   responseMode: "text",
   voiceId: "",
+  smartWaitEnabled: DEFAULT_AGENT_SMART_WAIT.enabled,
+  smartWaitInitialSeconds: DEFAULT_AGENT_SMART_WAIT.initialSeconds,
+  smartWaitFollowupSeconds: DEFAULT_AGENT_SMART_WAIT.followupSeconds,
+  smartWaitMaxSeconds: DEFAULT_AGENT_SMART_WAIT.maxSeconds,
+  smartWaitDedupeRepeated: DEFAULT_AGENT_SMART_WAIT.dedupeRepeated,
   crmAutoMoveEnabled: false,
   crmTargetFunnelId: DEFAULT_CRM_FUNNELS[0]!.id,
   crmTargetColumnId: DEFAULT_CRM_FUNNELS[0]!.columns[0]!.id,

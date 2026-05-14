@@ -28,6 +28,11 @@ import {
 import { applyHumanConversationCommand } from "@/lib/server/conversation-human-control";
 import { revealConversationOnInbound } from "@/lib/server/conversation-visibility";
 import { markWaitingForHuman } from "@/lib/server/conversation-operation";
+import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
+import {
+  scheduleAgentResponseJob,
+  triggerAgentResponseJobProcessor,
+} from "@/lib/server/agent-response-jobs";
 
 export const dynamic = "force-dynamic";
 
@@ -496,6 +501,22 @@ export async function POST(request: Request) {
       const metadata = agentConfig.data?.metadata && typeof agentConfig.data.metadata === "object"
         ? (agentConfig.data.metadata as Record<string, unknown>)
         : {};
+      const smartWait = smartWaitFromMetadata(metadata);
+      if (smartWait.enabled && inboundSaved?.id) {
+        const job = await scheduleAgentResponseJob({
+          sb: sbState,
+          tenantId: row.tenant_id,
+          remoteJid: msg.remoteJid,
+          leadId,
+          agentId,
+          instanceName,
+          whatsappMessageId: inboundSaved.id,
+          occurredAt: inboundSaved.created_at ?? new Date().toISOString(),
+          settings: smartWait,
+        });
+        if (job) triggerAgentResponseJobProcessor(job.id);
+        continue;
+      }
       const handoffKeywords = Array.isArray(metadata.handoffKeywords)
         ? metadata.handoffKeywords.filter((item): item is string => typeof item === "string")
         : [];

@@ -270,15 +270,34 @@ export async function evolutionSendText(params: {
   /** Digits with country code, no @ suffix (ex: 5511999999999). */
   number: string;
   text: string;
+  quoted?: {
+    messageId: string;
+    remoteJid: string;
+    fromMe?: boolean;
+    conversation?: string;
+  } | null;
 }): Promise<EvolutionFetchResult<unknown>> {
   const enc = encodeURIComponent(params.instanceName);
+  const body: Record<string, unknown> = {
+    number: params.number,
+    text: params.text.slice(0, 4000),
+  };
+  if (params.quoted?.messageId) {
+    body.quoted = {
+      key: {
+        id: params.quoted.messageId,
+        remoteJid: params.quoted.remoteJid,
+        fromMe: params.quoted.fromMe ?? false,
+      },
+      message: {
+        conversation: params.quoted.conversation ?? "",
+      },
+    };
+  }
   return evolutionFetchJson(`/message/sendText/${enc}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      number: params.number,
-      text: params.text.slice(0, 4000),
-    }),
+    body: JSON.stringify(body),
   });
 }
 

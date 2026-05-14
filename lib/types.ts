@@ -248,6 +248,11 @@ export interface Agent {
   voiceId?: string | null;
   /** Modo de resposta do agente: 'text' (padrão) ou 'audio' (TTS via ElevenLabs). */
   responseMode?: "text" | "audio";
+  smartWaitEnabled?: boolean;
+  smartWaitInitialSeconds?: number;
+  smartWaitFollowupSeconds?: number;
+  smartWaitMaxSeconds?: number;
+  smartWaitDedupeRepeated?: boolean;
   /** Quando true, leads tocados por este agente são movidos para o destino CRM abaixo. */
   crmAutoMoveEnabled?: boolean;
   /** Funil CRM de destino para leads tocados por este agente. */
