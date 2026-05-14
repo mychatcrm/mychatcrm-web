@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  groupBurstIntoReplyUnits,
   normalizeBurstDedupeKey,
   normalizeConversationBurst,
 } from "@/lib/conversas/normalize-conversation-burst";
@@ -34,7 +35,7 @@ describe("normalizeConversationBurst", () => {
     expect(burst.groupedMessagesCount).toBe(1);
   });
 
-  it("keeps distinct questions and builds consolidated prompt", () => {
+  it("keeps distinct questions as separate reply units", () => {
     const burst = normalizeConversationBurst([
       { id: "1", content: "oi" },
       { id: "2", content: "quais lotes vc tem?" },
@@ -42,9 +43,27 @@ describe("normalizeConversationBurst", () => {
       { id: "4", content: "localização?" },
     ]);
     expect(burst.canonicalMessages.length).toBeGreaterThanOrEqual(3);
-    expect(burst.userPrompt).not.toMatch(/^\d+\./m);
-    expect(burst.signals.dominantIntent).not.toBe("greeting");
+    expect(burst.replyUnits.length).toBeGreaterThanOrEqual(3);
+    expect(burst.responseStrategy).toBe("sequential_replies");
     expect(burst.suppressedHistoryIds).toEqual(["1", "2", "3", "4"]);
+  });
+
+  it("merges greeting clusters into one reply unit", () => {
+    const units = groupBurstIntoReplyUnits([
+      { id: "1", content: "oi" },
+      { id: "2", content: "tudo bem?" },
+    ]);
+    expect(units).toHaveLength(1);
+    expect(units[0]).toHaveLength(2);
+  });
+
+  it("splits unrelated messages into separate units", () => {
+    const units = groupBurstIntoReplyUnits([
+      { id: "1", content: "oi" },
+      { id: "2", content: "qual o preço?" },
+      { id: "3", content: "tem vaga?" },
+    ]);
+    expect(units).toHaveLength(3);
   });
 
   it("prioritizes urgency in strategy", () => {
@@ -53,7 +72,7 @@ describe("normalizeConversationBurst", () => {
       { id: "2", content: "me manda agora por favor" },
     ]);
     expect(burst.signals.urgencyLevel).toBe("high");
-    expect(burst.responseStrategy).toBe("urgent_direct");
-    expect(burst.userPrompt.toLowerCase()).toContain("agora");
+    expect(burst.responseStrategy).toBe("sequential_replies");
+    expect(burst.replyUnits).toHaveLength(2);
   });
 });

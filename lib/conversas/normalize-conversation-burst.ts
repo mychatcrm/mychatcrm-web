@@ -1,11 +1,16 @@
 import type { InboundTextMessage } from "@/lib/conversas/inbound-message-dedupe";
 
 export type BurstUrgencyLevel = "low" | "medium" | "high";
-export type BurstResponseStrategy = "single_natural" | "progressive_short" | "urgent_direct";
+export type BurstResponseStrategy =
+  | "single_natural"
+  | "progressive_short"
+  | "urgent_direct"
+  | "sequential_replies";
 
 export type NormalizedBurst = {
   userPrompt: string;
   canonicalMessages: InboundTextMessage[];
+  replyUnits: InboundTextMessage[][];
   dedupedCount: number;
   groupedMessagesCount: number;
   suppressedHistoryIds: string[];
@@ -27,6 +32,49 @@ const SCHEDULE_PATTERNS = /\b(agendar|agenda|horário|horario|visita|reunião|re
 const HANDOFF_PATTERNS = /\b(humano|atendente|pessoa|falar com|ligar|telefone)\b/i;
 const URGENCY_HIGH = /\b(agora|urgente|urgência|urgencia|imediato|já|ja|me manda|me passa|preciso hoje)\b/i;
 const URGENCY_MEDIUM = /\b(hoje|rápido|rapido|logo|quanto antes)\b/i;
+const SMALL_TALK_FOLLOWUP =
+  /^(tudo bem|td bem|como vai|beleza|e você|e vc|tudo certo|como está|como esta)\??$/i;
+
+/** Agrupa mensagens relacionadas que devem receber uma única resposta (ex.: oi + tudo bem?). */
+export function groupBurstIntoReplyUnits(messages: InboundTextMessage[]): InboundTextMessage[][] {
+  if (messages.length === 0) return [];
+  if (messages.length === 1) return [messages];
+
+  const units: InboundTextMessage[][] = [];
+  let current: InboundTextMessage[] = [messages[0]!];
+
+  for (let i = 1; i < messages.length; i++) {
+    const prev = messages[i - 1]!;
+    const next = messages[i]!;
+    if (shouldMergeReplyUnit(prev, next)) {
+      current.push(next);
+    } else {
+      units.push(current);
+      current = [next];
+    }
+  }
+  units.push(current);
+  return units;
+}
+
+function shouldMergeReplyUnit(prev: InboundTextMessage, next: InboundTextMessage): boolean {
+  const prevIntent = classifyIntent(prev.content);
+  const nextIntent = classifyIntent(next.content);
+  const nextKey = normalizeBurstDedupeKey(next.content);
+
+  if (prevIntent === "greeting" && nextIntent === "greeting") return true;
+  if (prevIntent === "greeting" && SMALL_TALK_FOLLOWUP.test(nextKey)) return true;
+  if (prevIntent === "greeting" && nextKey.length <= 22 && !next.content.includes("?")) return true;
+  return false;
+}
+
+/** Prompt para uma unidade de resposta (1 mensagem ou cluster relacionado). */
+export function buildReplyUnitPrompt(unit: InboundTextMessage[]): string {
+  const lines = unit.map((m) => m.content.trim()).filter(Boolean);
+  if (lines.length === 0) return "";
+  if (lines.length === 1) return lines[0]!;
+  return `O cliente enviou em sequência: ${lines.map((l) => `"${l}"`).join(" e ")}. Responda de forma natural e humana em uma única mensagem curta.`;
+}
 
 /** Chave de dedupe: acentos, pontuação final e emojis removidos da comparação. */
 export function normalizeBurstDedupeKey(text: string, mode: "exact" | "relaxed" = "relaxed"): string {
@@ -92,7 +140,12 @@ function buildHumanPrompt(messages: InboundTextMessage[], dominantIntent: string
   return `O cliente enviou as seguintes mensagens em sequência: ${substantive.map((l) => `"${l}"`).join(", ")}. Responda de forma natural e humana, consolidando todas as dúvidas em uma única resposta coerente. Não responda pergunta por pergunta de forma robótica.`;
 }
 
-function pickResponseStrategy(messageCount: number, urgency: BurstUrgencyLevel): BurstResponseStrategy {
+function pickResponseStrategy(
+  messageCount: number,
+  unitCount: number,
+  urgency: BurstUrgencyLevel,
+): BurstResponseStrategy {
+  if (unitCount > 1) return "sequential_replies";
   if (urgency === "high") return "urgent_direct";
   if (messageCount <= 2) return "single_natural";
   return "progressive_short";
@@ -142,12 +195,14 @@ export function normalizeConversationBurst(
   const dominantIntent = pickDominantIntent(intents);
   const urgencyLevel = scoreUrgency(ordered.map((m) => m.content));
   const groupedIntent = dominantIntent;
+  const replyUnits = groupBurstIntoReplyUnits(ordered);
   const userPrompt = buildHumanPrompt(ordered, dominantIntent, urgencyLevel);
-  const responseStrategy = pickResponseStrategy(ordered.length, urgencyLevel);
+  const responseStrategy = pickResponseStrategy(ordered.length, replyUnits.length, urgencyLevel);
 
   return {
     userPrompt,
     canonicalMessages: ordered,
+    replyUnits,
     dedupedCount,
     groupedMessagesCount: ordered.length,
     suppressedHistoryIds: messages.map((m) => m.id),

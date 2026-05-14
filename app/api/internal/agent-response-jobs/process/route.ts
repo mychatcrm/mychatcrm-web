@@ -9,7 +9,7 @@ import {
 } from "@/lib/server/agent-response-jobs";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 import { verifyInternalApiRequest } from "@/lib/server/internal-api-auth";
 

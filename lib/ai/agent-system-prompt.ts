@@ -134,7 +134,11 @@ Comando de retomada: ${clean((agent as { comandoRetomaConversa?: unknown }).coma
 Intenção dominante: ${params.burstContext.dominantIntent}
 Urgência: ${params.burstContext.urgencyLevel ?? "low"}
 Estratégia: ${params.burstContext.responseStrategy ?? "single_natural"}
-Responda uma única vez cobrindo o conjunto, sem tratar cada linha como pergunta separada.`
+${
+  params.burstContext.responseStrategy === "sequential_replies"
+    ? "O cliente mandou várias mensagens seguidas. Você está respondendo UMA unidade por vez. Responda só ao trecho atual de forma curta e natural; não antecipe as próximas perguntas."
+    : "Responda uma única vez cobrindo o conjunto, sem tratar cada linha como pergunta separada."
+}`
       : null,
     ...formatRuntimeContext(params.runtimeContext),
     params.condensedContext?.trim() ? params.condensedContext.trim() : null,

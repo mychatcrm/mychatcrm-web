@@ -10,7 +10,7 @@ import {
 import { verifyInternalApiRequest } from "@/lib/server/internal-api-auth";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 async function resolveJobId(request: Request): Promise<string | null> {
   const url = new URL(request.url);
