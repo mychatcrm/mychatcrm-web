@@ -19,13 +19,8 @@ import { Toggle } from "@/components/ui/Toggle";
 import { cn } from "@/lib/utils";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 import {
-  GOOGLE_AGENDA_LS_KEY,
   GOOGLE_AGENDA_UPDATED_EVENT,
-  loadAgendaEvents,
-  loadGoogleAgendaState,
   persistAgendaEvents,
-  persistGoogleAgendaState,
-  seedDemoAgendaEvents,
   type AgendaEventRecord,
   type GoogleAgendaLinkState,
 } from "@/components/dashboard/agenda/agenda-storage";
@@ -108,6 +103,24 @@ function eventBlocksForDay(events: AgendaEventRecord[], day: Date) {
   });
 }
 
+function apiEventToRecord(ev: {
+  id: string;
+  title: string;
+  startISO: string;
+  endISO?: string;
+  description?: string | null;
+}): AgendaEventRecord {
+  return {
+    id: ev.id,
+    title: ev.title,
+    startISO: ev.startISO,
+    endISO: ev.endISO,
+    kind: "evento",
+    meetLink: ev.description?.includes("Link:") ? ev.description.split("Link:")[1]?.trim() : undefined,
+    notifyWa: false,
+  };
+}
+
 export function AgendaHub() {
   const { isLight } = usePanelAppearance();
   const [view, setView] = useState<"month" | "week" | "day">("month");
@@ -119,6 +132,8 @@ export function AgendaHub() {
   const [selected, setSelected] = useState<Date | null>(() => new Date());
   const [events, setEvents] = useState<AgendaEventRecord[]>([]);
   const [google, setGoogle] = useState<GoogleAgendaLinkState>({ connected: false });
+  const [loadingEvents, setLoadingEvents] = useState(true);
+  const [statusError, setStatusError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [title, setTitle] = useState("");
   const [start, setStart] = useState("");
@@ -126,77 +141,113 @@ export function AgendaHub() {
   const [meet, setMeet] = useState("");
   const [notifyWa, setNotifyWa] = useState(true);
 
-  useEffect(() => {
-    let list = loadAgendaEvents();
-    if (list.length === 0) {
-      list = seedDemoAgendaEvents();
-      persistAgendaEvents(list);
+  const refreshGoogleStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/client/google-calendar/status", { credentials: "include" });
+      if (!res.ok) throw new Error("status_failed");
+      const data = (await res.json()) as {
+        connected?: boolean;
+        email?: string | null;
+        lastSyncISO?: string | null;
+      };
+      setGoogle({
+        connected: data.connected === true,
+        accountLabel: data.email || undefined,
+        lastSyncISO: data.lastSyncISO || undefined,
+      });
+      setStatusError(null);
+    } catch {
+      setStatusError("Não foi possível carregar o status do Google Agenda.");
     }
-    setEvents(list);
-    setGoogle(loadGoogleAgendaState());
+  }, []);
+
+  const refreshEvents = useCallback(async () => {
+    setLoadingEvents(true);
+    try {
+      const res = await fetch("/api/client/google-calendar/events", { credentials: "include" });
+      if (!res.ok) throw new Error("events_failed");
+      const data = (await res.json()) as { events?: Array<{ id: string; title: string; startISO: string; endISO?: string; description?: string | null }> };
+      const list = (data.events ?? []).map(apiEventToRecord);
+      setEvents(list);
+      persistAgendaEvents(list);
+    } catch {
+      setEvents([]);
+    } finally {
+      setLoadingEvents(false);
+    }
   }, []);
 
   useEffect(() => {
-    const sync = () => setGoogle(loadGoogleAgendaState());
-    window.addEventListener(GOOGLE_AGENDA_UPDATED_EVENT, sync);
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === GOOGLE_AGENDA_LS_KEY) sync();
-    };
-    window.addEventListener("storage", onStorage);
-    return () => {
-      window.removeEventListener(GOOGLE_AGENDA_UPDATED_EVENT, sync);
-      window.removeEventListener("storage", onStorage);
-    };
-  }, []);
+    void refreshGoogleStatus();
+    void refreshEvents();
+  }, [refreshEvents, refreshGoogleStatus]);
 
-  const persistEvents = useCallback((updater: AgendaEventRecord[] | ((prev: AgendaEventRecord[]) => AgendaEventRecord[])) => {
-    setEvents((prev) => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      persistAgendaEvents(next);
-      return next;
-    });
-  }, []);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const googleParam = params.get("google");
+    if (!googleParam) return;
+    if (googleParam === "connected") {
+      void refreshGoogleStatus();
+      void refreshEvents();
+    }
+    if (googleParam === "error") {
+      setStatusError(params.get("reason") || "Falha ao conectar Google Agenda.");
+    }
+    params.delete("google");
+    params.delete("reason");
+    const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
+    window.history.replaceState({}, "", next);
+  }, [refreshEvents, refreshGoogleStatus]);
 
-  const touchGoogleSync = useCallback(() => {
-    const s = loadGoogleAgendaState();
-    if (!s.connected) return;
+  const touchGoogleSync = useCallback(async () => {
+    if (!google.connected) return;
     setSyncing(true);
-    const next: GoogleAgendaLinkState = { ...s, lastSyncISO: new Date().toISOString() };
-    setGoogle(next);
-    persistGoogleAgendaState(next);
-    window.setTimeout(() => setSyncing(false), 900);
-  }, []);
+    try {
+      const res = await fetch("/api/client/google-calendar/sync", { method: "POST", credentials: "include" });
+      if (!res.ok) throw new Error("sync_failed");
+      const data = (await res.json()) as { lastSyncISO?: string };
+      setGoogle((prev) => ({ ...prev, lastSyncISO: data.lastSyncISO || new Date().toISOString() }));
+      await refreshEvents();
+      await refreshGoogleStatus();
+    } catch {
+      setStatusError("Falha ao sincronizar com o Google Agenda.");
+    } finally {
+      setSyncing(false);
+    }
+  }, [google.connected, refreshEvents, refreshGoogleStatus]);
 
-  const onSaveEvent = useCallback(() => {
+  const onSaveEvent = useCallback(async () => {
     if (!title.trim() || !start) return;
-    const ev: AgendaEventRecord = {
-      id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `ev-${Date.now()}`,
-      title: title.trim(),
-      startISO: new Date(start).toISOString(),
-      kind,
-      meetLink: meet.trim() || undefined,
-      notifyWa,
-    };
-    persistEvents((prev) => [ev, ...prev]);
+    const startDate = new Date(start);
+    const res = await fetch("/api/client/google-calendar/events", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: title.trim(),
+        startAt: startDate.toISOString(),
+        kind,
+        meetLink: meet.trim() || undefined,
+        notifyWa,
+        syncToGoogle: google.connected,
+      }),
+    });
+    if (!res.ok) return;
     setTitle("");
     setMeet("");
-    touchGoogleSync();
-  }, [kind, meet, notifyWa, persistEvents, start, title, touchGoogleSync]);
+    setStart("");
+    await refreshEvents();
+    if (google.connected) await touchGoogleSync();
+  }, [google.connected, kind, meet, notifyWa, refreshEvents, start, title, touchGoogleSync]);
 
   const connectGoogle = useCallback(() => {
-    const next: GoogleAgendaLinkState = {
-      connected: true,
-      accountLabel: "conta Google (simulada)",
-      lastSyncISO: new Date().toISOString(),
-    };
-    setGoogle(next);
-    persistGoogleAgendaState(next);
+    window.location.href = "/api/auth/google";
   }, []);
 
-  const disconnectGoogle = useCallback(() => {
-    const next: GoogleAgendaLinkState = { connected: false };
-    setGoogle(next);
-    persistGoogleAgendaState(next);
+  const disconnectGoogle = useCallback(async () => {
+    await fetch("/api/client/google-calendar/status", { method: "DELETE", credentials: "include" });
+    setGoogle({ connected: false });
+    window.dispatchEvent(new Event(GOOGLE_AGENDA_UPDATED_EVENT));
   }, []);
 
   const y = anchor.getFullYear();
@@ -364,9 +415,9 @@ export function AgendaHub() {
               </div>
               {google.connected ? (
                 <>
-                  <p className="text-current/70">Conta: {google.accountLabel}</p>
+                  <p className="text-current/70">Conta: {google.accountLabel || "Google conectado"}</p>
                   <p className="mt-1 text-[10px] text-current/60">
-                    Em producao: OAuth 2.0 + Calendar API + sync incremental (webhook) mantem 100% alinhado ao Google.
+                    Eventos sincronizados com Google Calendar via OAuth 2.0.
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <a
@@ -399,7 +450,8 @@ export function AgendaHub() {
                 </>
               ) : (
                 <>
-                  <p className="text-current/70">Conecte para espelhar eventos e ver o calendario Google aqui.</p>
+                  <p className="text-current/70">Conecte para espelhar eventos e criar compromissos no Google Agenda.</p>
+                  {statusError ? <p className="mt-1 text-[11px] text-rose-500">{statusError}</p> : null}
                   <button type="button" onClick={connectGoogle} className={cn("mt-2 w-full rounded-full py-2 text-xs font-semibold", g.createBtn)}>
                     Conectar Google Agenda
                   </button>
@@ -409,6 +461,12 @@ export function AgendaHub() {
           </aside>
 
           <div className="min-h-[480px] min-w-0 flex-1 overflow-auto p-2 sm:p-3">
+            {loadingEvents ? (
+              <div className="flex min-h-[200px] items-center justify-center text-sm text-content-muted">
+                <Loader2 className="mr-2 size-4 animate-spin" />
+                Carregando eventos…
+              </div>
+            ) : null}
             {view === "month" ? (
               <div className="min-w-[320px]">
                 <div className="grid grid-cols-7 gap-px">
