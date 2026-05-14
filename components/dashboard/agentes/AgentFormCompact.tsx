@@ -242,8 +242,8 @@ export function AgentFormCompact({
                 <WizardStep3Ativacao draft={draft} onChange={setDraft} />
               </AdvancedSection>
               <AdvancedSection
-                title="CTA e handoff"
-                description="Opcional: ative o interruptor dentro da secção para preencher CTA, número e mensagem de transição."
+                title="Transferência humana e objetivo final"
+                description="Configure quando o agente passa o atendimento para uma pessoa real e qual ação ele deve buscar na conversa."
                 titleIcon={<Handshake strokeWidth={1.75} />}
               >
                 <WizardStep4Fluxo draft={draft} onChange={setDraft} />
