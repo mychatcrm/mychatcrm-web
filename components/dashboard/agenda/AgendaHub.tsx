@@ -44,6 +44,9 @@ import { eventsForDay, layoutTimedEvents } from "./agenda-layout";
 import { useAgendaData } from "./use-agenda-data";
 import { useIsMobile } from "./use-is-mobile";
 
+/** Grelha de 7 colunas que encolhe em viewports estreitos (evita overflow horizontal). */
+const GRID_7 = "grid w-full min-w-0 [grid-template-columns:repeat(7,minmax(0,1fr))]";
+
 type QuickCreateState = { x: number; y: number; start: Date; end: Date } | null;
 type DetailState = { event: ClientAgendaEvent; x: number; y: number } | null;
 
@@ -70,7 +73,8 @@ export function AgendaHub() {
   const [view, setView] = useState<AgendaViewMode>("month");
   const [anchor, setAnchor] = useState(() => new Date());
   const [selected, setSelected] = useState(() => new Date());
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  /** Desktop: aberta por defeito; mobile: fechada (drawer) para não cobrir o calendário no primeiro paint. */
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQ, setSearchQ] = useState("");
   const [listLimit, setListLimit] = useState(30);
@@ -91,7 +95,7 @@ export function AgendaHub() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (window.matchMedia("(max-width: 767px)").matches) setSidebarOpen(false);
+    if (window.matchMedia("(min-width: 768px)").matches) setSidebarOpen(true);
   }, []);
 
   useEffect(() => {
@@ -249,15 +253,15 @@ export function AgendaHub() {
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 max-w-full flex-col overflow-x-hidden bg-white text-[#3c4043]">
-      {/* Topbar: duas linhas em mobile para evitar cortes e scroll horizontal */}
-      <header className="flex shrink-0 flex-col gap-2 border-b border-[#dadce0] px-2 py-2 md:flex-row md:flex-wrap md:items-center md:gap-2 md:px-3">
-        <div className="flex min-w-0 w-full items-center gap-1 md:w-auto md:flex-1 md:gap-2">
+      {/* Topbar: título do período em linha própria no mobile para não competir com os controlos */}
+      <header className="flex shrink-0 flex-col gap-2 border-b border-[#dadce0] px-2 py-2 md:flex-row md:items-center md:gap-3 md:px-3">
+        <div className="flex min-w-0 w-full flex-wrap items-center gap-x-1 gap-y-1 md:w-auto md:shrink-0 md:flex-nowrap md:gap-2">
           <button type="button" className="shrink-0 rounded-full p-1.5 hover:bg-[#f1f3f4] md:p-2" onClick={() => setSidebarOpen((v) => !v)} aria-label="Menu">
             <Menu className="size-5" />
           </button>
           <div className="flex shrink-0 items-center gap-1.5">
-            <Calendar className="size-5 md:size-6" style={{ color: AGENDA_BRAND }} />
-            <span className="hidden text-[22px] font-normal text-[#3c4043] md:inline">Agenda</span>
+            <Calendar className="size-5 md:size-6" style={{ color: AGENDA_BRAND }} aria-hidden />
+            <span className="whitespace-nowrap text-[15px] font-medium leading-none text-[#3c4043] md:text-[22px] md:font-normal">Agenda</span>
           </div>
           <button
             type="button"
@@ -274,11 +278,11 @@ export function AgendaHub() {
               <ChevronRight className="size-5" />
             </button>
           </div>
-          <h1 className="min-w-0 flex-1 truncate text-sm font-normal capitalize text-[#3c4043] md:text-xl">{periodTitle}</h1>
         </div>
-        <div className="flex w-full min-w-0 shrink-0 items-center justify-end gap-1.5 md:w-auto md:justify-end md:gap-2">
+        <h1 className="min-w-0 w-full shrink-0 truncate px-0.5 text-sm font-normal capitalize text-[#3c4043] md:min-w-0 md:flex-1 md:text-xl">{periodTitle}</h1>
+        <div className="flex w-full min-w-0 shrink-0 flex-wrap items-center justify-end gap-x-1.5 gap-y-1.5 sm:flex-nowrap md:w-auto md:shrink-0 md:justify-end md:gap-2">
           {searchOpen ? (
-            <div className="flex min-w-0 flex-1 items-center gap-1.5 md:max-w-md">
+            <div className="flex min-w-0 w-full flex-1 items-center gap-1.5 sm:max-w-md md:max-w-md">
               <input
                 autoFocus
                 value={searchQ}
@@ -306,7 +310,8 @@ export function AgendaHub() {
           <select
             value={view}
             onChange={(e) => setView(e.target.value as AgendaViewMode)}
-            className="min-w-0 max-w-[46%] shrink rounded-lg border border-[#dadce0] bg-white px-2 py-1.5 text-xs md:max-w-none md:px-3 md:text-sm"
+            className="shrink-0 rounded-lg border border-[#dadce0] bg-white py-1.5 pl-2 pr-7 text-xs md:px-3 md:text-sm"
+            style={{ maxWidth: "min(11rem, 100%)" }}
             aria-label="Vista do calendário"
           >
             <option value="day">Dia</option>
@@ -317,7 +322,7 @@ export function AgendaHub() {
         </div>
       </header>
 
-      <div className="relative flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
         {/* Sidebar — desktop: in-flow; mobile: drawer so Google / Desconectar stay reachable */}
         {sidebarOpen ? (
           <>
@@ -339,16 +344,16 @@ export function AgendaHub() {
               <Plus className="size-5" />
               Criar
             </button>
-            <div>
+            <div className="min-w-0">
               <p className="mb-2 text-center text-xs font-medium text-[#70757a]">
                 {MONTHS_PT[anchor.getMonth()].slice(0, 3)} {anchor.getFullYear()}
               </p>
-              <div className="grid grid-cols-7 text-center text-[10px] text-[#70757a]">
+              <div className={`${GRID_7} text-center text-[10px] text-[#70757a]`}>
                 {WEEKDAYS_MINI.map((d, i) => (
-                  <div key={`${d}-${i}`}>{d}</div>
+                  <div key={`${d}-${i}`} className="min-w-0 truncate">{d}</div>
                 ))}
               </div>
-              <div className="mt-1 grid grid-cols-7 gap-px text-center text-[11px]">
+              <div className={`${GRID_7} mt-1 gap-px text-center text-[11px]`}>
                 {monthGrid.map((cell, idx) => {
                   const isSel = sameDay(cell.date, selected);
                   const isTod = sameDay(cell.date, today);
@@ -444,14 +449,20 @@ export function AgendaHub() {
             <>
               {view === "month" ? (
                 <div className="box-border w-full min-w-0 max-w-full p-1 sm:p-2">
-                  <div className="grid w-full min-w-0 grid-cols-7 border-b border-[#dadce0]">
-                    {WEEKDAYS_SHORT.map((d) => (
-                      <div key={d} className="min-w-0 truncate py-1.5 text-center text-[9px] font-medium uppercase text-[#70757a] sm:py-2 sm:text-[11px]">
+                  <div className={`${GRID_7} border-b border-[#dadce0]`}>
+                    {WEEKDAYS_SHORT.map((d, i) => (
+                      <div
+                        key={d}
+                        className={cn(
+                          "min-w-0 truncate py-1.5 text-center text-[9px] font-medium uppercase text-[#70757a] sm:py-2 sm:text-[11px]",
+                          i < 6 && "border-r border-[#dadce0]",
+                        )}
+                      >
                         {d}
                       </div>
                     ))}
                   </div>
-                  <div className="grid w-full min-w-0 grid-cols-7">
+                  <div className={GRID_7}>
                     {monthGrid.map((cell, idx) => {
                       const dayEvents = eventsForDay(data.events, cell.date);
                       const isSel = sameDay(cell.date, selected);
@@ -462,7 +473,8 @@ export function AgendaHub() {
                           type="button"
                           onClick={(e) => onCellClick(e, cell.date)}
                           className={cn(
-                            "min-h-0 min-w-0 border-b border-r border-[#dadce0] p-0.5 text-left hover:bg-[#f1f3f4] sm:p-1",
+                            "min-h-0 min-w-0 border-b border-[#dadce0] p-0.5 text-left hover:bg-[#f1f3f4] sm:p-1",
+                            idx % 7 !== 6 && "border-r border-[#dadce0]",
                             "min-h-[56px] sm:min-h-[120px]",
                             !cell.inMonth && "bg-[#fafafa] text-[#70757a]",
                             isSel && "bg-[#fef0eb]",
@@ -511,7 +523,13 @@ export function AgendaHub() {
                     <div className="sticky top-0 z-10 grid min-w-0 border-b border-[#dadce0] bg-white" style={{ gridTemplateColumns: timeGridTemplate }}>
                       <div className="min-w-0" />
                       {timeGridDays.map((d) => (
-                        <div key={d.toISOString()} className="min-w-[100px] border-l border-[#dadce0] py-2 text-center text-xs">
+                        <div
+                          key={d.toISOString()}
+                          className={cn(
+                            "border-l border-[#dadce0] py-2 text-center text-xs",
+                            view === "day" ? "min-w-0" : "min-w-[100px]",
+                          )}
+                        >
                         <div className="truncate uppercase text-[#70757a]">{WEEKDAYS_SHORT[d.getDay()]}</div>
                         <div className={cn("mx-auto mt-1 flex size-8 items-center justify-center rounded-full text-base sm:size-9 sm:text-lg", sameDay(d, today) && "bg-[#f24400] font-bold text-white")}>
                           {d.getDate()}
@@ -618,9 +636,9 @@ export function AgendaHub() {
                                 {new Date(ev.endISO).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
                               </span>
                               <span className="min-w-0 flex-1">
-                                <span className="flex items-center gap-2 font-medium text-[#3c4043]">
-                                  <span className="size-3 shrink-0 rounded-sm" style={{ backgroundColor: eventColor(ev) }} />
-                                  {ev.title}
+                                <span className="flex min-w-0 items-start gap-2 font-medium text-[#3c4043]">
+                                  <span className="mt-0.5 size-3 shrink-0 rounded-sm" style={{ backgroundColor: eventColor(ev) }} />
+                                  <span className="min-w-0 break-words">{ev.title}</span>
                                 </span>
                                 {ev.location ? <span className="mt-0.5 block text-xs text-[#70757a]">{ev.location}</span> : null}
                                 <span className="mt-0.5 block text-[10px] text-[#70757a]">{ev.calendarLabel}</span>

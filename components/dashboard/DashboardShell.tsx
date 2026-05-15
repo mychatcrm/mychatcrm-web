@@ -101,7 +101,7 @@ function DashboardShellInner({
                 <span className="text-content-faint/40">·</span>
                 <span className="truncate text-sm font-medium text-content">{pageTitle}</span>
               </div>
-              <span className="truncate text-sm font-medium text-content sm:hidden">{pageTitle}</span>
+              <span className="min-w-0 flex-1 truncate text-sm font-medium text-content sm:hidden">{pageTitle}</span>
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
@@ -152,11 +152,11 @@ function DashboardShellInner({
         </header>
 
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface-base">
-          {/* Full-bleed routes (conversas) recebem o conteúdo directamente,
+          {/* Full-bleed routes (conversas, agenda) recebem o conteúdo directamente,
               sem padding nem panel-content-frame, para preencher toda a <main>.
               Dimensões explícitas (100% × calc(100dvh - 48px)) garantem o full-bleed
               mesmo se algum ancestral perder contexto de sizing. */}
-          {pathname.startsWith("/dashboard/conversas") ? (
+          {pathname.startsWith("/dashboard/conversas") || pathname.startsWith("/dashboard/agenda") ? (
             <div
               className="flex flex-col overflow-hidden"
               style={{
