@@ -339,20 +339,24 @@ export async function processAgentResponseJob(
       textToSend = "Segue o envio solicitado.";
     }
 
-    const sendOutboundMediaSafe = (): void => {
+    console.log("[evolution-agent-reply] outbound filenames:", outboundFilenames);
+
+    const sendOutboundMediaSafe = async (): Promise<void> => {
       if (!outboundFilenames.length) return;
-      void sendAgentOutboundMediaViaEvolution({
-        tenantId: job.tenant_id,
-        agentId: job.agent_id,
-        instanceName: job.instance_name,
-        number,
-        originalFilenames: outboundFilenames,
-      }).catch((err) =>
+      try {
+        await sendAgentOutboundMediaViaEvolution({
+          tenantId: job.tenant_id,
+          agentId: job.agent_id,
+          instanceName: job.instance_name,
+          number,
+          originalFilenames: outboundFilenames,
+        });
+      } catch (err) {
         console.warn(
           "[agent-response-jobs] outbound agent media",
           err instanceof Error ? err.message : err,
-        ),
-      );
+        );
+      }
     };
 
     const quotedMessage = [...unit].reverse().find((m) => m.messageId && m.kind === "text");
@@ -390,7 +394,7 @@ export async function processAgentResponseJob(
           leadId: job.lead_id,
           mediaUrl,
         });
-        sendOutboundMediaSafe();
+        await sendOutboundMediaSafe();
       } catch {
         const send = await evolutionSendText({
           instanceName: job.instance_name,
@@ -407,7 +411,7 @@ export async function processAgentResponseJob(
           agentId: job.agent_id,
           leadId: job.lead_id,
         });
-        sendOutboundMediaSafe();
+        await sendOutboundMediaSafe();
       }
     } else {
       const send = await evolutionSendText({
@@ -425,7 +429,7 @@ export async function processAgentResponseJob(
         agentId: job.agent_id,
         leadId: job.lead_id,
       });
-      sendOutboundMediaSafe();
+      await sendOutboundMediaSafe();
     }
 
     repliesSent += 1;
