@@ -265,7 +265,20 @@ export function AgendaHub() {
   }, [sortedListEvents, listLimit]);
 
   return (
-    <div className="flex h-full min-h-0 w-full min-w-0 max-w-full flex-col overflow-x-hidden bg-white text-[#3c4043]">
+    <div
+      className="bg-white text-[#3c4043]"
+      style={{
+        position: "fixed",
+        top: "var(--mc-header-h, 48px)",
+        left: "var(--mc-sidebar-w, 0px)",
+        right: 0,
+        bottom: 0,
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+        zIndex: 1,
+      }}
+    >
       {/* Topbar: título do período em linha própria no mobile para não competir com os controlos */}
       <header className="flex shrink-0 flex-col gap-2 border-b border-[#dadce0] px-2 py-2 md:flex-row md:items-center md:gap-3 md:px-3">
         <div className="flex min-w-0 w-full flex-wrap items-center gap-x-1 gap-y-1 md:w-auto md:shrink-0 md:flex-nowrap md:gap-2">
