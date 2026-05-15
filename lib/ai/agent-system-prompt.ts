@@ -1,3 +1,4 @@
+import { agentUsesSimpleInstructions } from "@/lib/agents/instruction-mode";
 import type { Agent } from "@/lib/types";
 import type { AgentRuntimeContext } from "@/lib/server/conversation-memory";
 
@@ -85,6 +86,16 @@ export function buildAgentSystemPrompt(params: {
   const handoffKeywords = Array.isArray(agent.handoffKeywords)
     ? agent.handoffKeywords.filter((item): item is string => typeof item === "string")
     : [];
+  const useSimple = agentUsesSimpleInstructions(agent);
+  const instructionBlocks = useSimple
+    ? [section("PROMPT DO AGENTE", agent.simplePrompt)]
+    : [
+        section("IDENTIDADE CONFIGURADA", agent.promptIdentidade),
+        section("OBJETIVO CONFIGURADO", agent.promptObjetivo),
+        section("INSTRUÇÕES PRINCIPAIS", agent.systemPrompt),
+        section("REGRAS ADICIONAIS", agent.promptRegrasAdicionais),
+        section("RESPOSTAS PROIBIDAS", agent.respostasProibidas),
+      ];
   const parts = [
     params.languageInstruction,
     `IDENTIDADE DO AGENTE
@@ -94,11 +105,7 @@ Objetivo principal: ${agentObjectiveLabel(clean(agent.objetivo))}
 Tom de voz: ${clean(agent.tom) || "profissional"}
 Velocidade simulada: ${typeof agent.delayResposta === "number" ? `${agent.delayResposta}s` : "não informada"}
 Idioma configurado: ${clean(agent.idioma) || "Automático"}`,
-    section("IDENTIDADE CONFIGURADA", agent.promptIdentidade),
-    section("OBJETIVO CONFIGURADO", agent.promptObjetivo),
-    section("INSTRUÇÕES PRINCIPAIS", agent.systemPrompt),
-    section("REGRAS ADICIONAIS", agent.promptRegrasAdicionais),
-    section("RESPOSTAS PROIBIDAS", agent.respostasProibidas),
+    ...instructionBlocks,
     `CTA E HANDOFF
 CTA ativo: ${agent.ctaHandoffAtivo === true ? "sim" : "não"}
 CTA final: ${clean(agent.ctaFinal) || "não configurado"}

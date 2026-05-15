@@ -218,6 +218,10 @@ export interface Agent {
   promptIdentidade?: string;
   /** Objetivo em texto livre (complementa o enum `objetivo`). */
   promptObjetivo?: string;
+  /** Modo de edição das instruções: campos separados (pro) ou prompt único (simple). */
+  instructionMode?: "simple" | "pro";
+  /** Prompt único usado quando `instructionMode === "simple"`. */
+  simplePrompt?: string;
   systemPrompt: string;
   /** Regras e preferências extras em texto livre (além de `respostasProibidas`). */
   promptRegrasAdicionais?: string;

@@ -12,6 +12,13 @@ export {
 } from "./registry";
 export { buildTemplateAgentsForTenant } from "./template-agents";
 export { agentFromWizardDraft, agentFromWizardDraftUpdate } from "./from-wizard";
+export {
+  assembleStoredSystemPrompt,
+  agentUsesSimpleInstructions,
+  buildSimplePromptFromProFields,
+  normalizeInstructionMode,
+  type InstructionMode,
+} from "./instruction-mode";
 export { DEFAULT_SYSTEM_PROMPT_TEMPLATE } from "./default-system-prompt-template";
 export {
   AGENT_OBJECTIVE_OPTIONS,

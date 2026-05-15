@@ -4,6 +4,7 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { buildTemplateAgentsForTenant } from "@/lib/agents/template-agents";
 import {
   agentCrmDestinationDbFields,
+  assembleStoredSystemPrompt,
   normalizeAgentCrmDestination,
   normalizeAgentVoiceId,
   sanitizeAgentResponseSettings,
@@ -21,16 +22,6 @@ const MISSING_COLUMN_CODES = new Set(["42703", "PGRST204"]);
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function assembleSystemPrompt(agent: Agent): string {
-  const parts = [
-    agent.systemPrompt,
-    agent.promptIdentidade,
-    agent.promptObjetivo,
-    agent.promptRegrasAdicionais ? `Regras adicionais:\n${agent.promptRegrasAdicionais}` : null,
-  ].filter((p): p is string => typeof p === "string" && p.trim().length > 0);
-  return parts.join("\n\n");
-}
 
 function rowToAgent(row: Record<string, unknown>, tenantId: string): Agent {
   const responseSettings = sanitizeAgentResponseSettings({
@@ -176,7 +167,7 @@ export async function POST(request: Request) {
   }
 
   const sb = createSupabaseServiceClient();
-  const systemPrompt = assembleSystemPrompt(agent);
+  const systemPrompt = assembleStoredSystemPrompt(agent);
   const now = new Date().toISOString();
   const responseSettings = sanitizeAgentResponseSettings(agent);
   const normalizedCrmDestination = normalizeAgentCrmDestination(agent);

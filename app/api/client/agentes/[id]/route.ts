@@ -3,6 +3,7 @@ import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
   agentCrmDestinationDbFields,
+  assembleStoredSystemPrompt,
   normalizeAgentCrmDestination,
   sanitizeAgentResponseSettings,
   validateAgentCrmDestination,
@@ -15,16 +16,6 @@ export const dynamic = "force-dynamic";
 const MISSING_COLUMN_CODES = new Set(["42703", "PGRST204"]);
 const BASE_AGENT_SELECT = "agent_id, display_name, system_prompt, model, active, metadata, created_at, updated_at, voice_id, response_mode";
 const AGENT_SELECT_WITH_CRM = `${BASE_AGENT_SELECT}, crm_auto_move_enabled, crm_target_funnel_id, crm_target_column_id, crm_target_status`;
-
-function assembleSystemPrompt(agent: Agent): string {
-  const parts = [
-    agent.systemPrompt,
-    agent.promptIdentidade,
-    agent.promptObjetivo,
-    agent.promptRegrasAdicionais ? `Regras adicionais:\n${agent.promptRegrasAdicionais}` : null,
-  ].filter((p): p is string => typeof p === "string" && p.trim().length > 0);
-  return parts.join("\n\n");
-}
 
 function isMissingColumnError(error: { code?: string; message?: string } | null | undefined): boolean {
   const message = error?.message?.toLowerCase() ?? "";
@@ -81,7 +72,7 @@ export async function PUT(
   }
 
   const sb = createSupabaseServiceClient();
-  const systemPrompt = assembleSystemPrompt(agent);
+  const systemPrompt = assembleStoredSystemPrompt(agent);
   const now = new Date().toISOString();
   const responseSettings = sanitizeAgentResponseSettings(agent);
   const normalizedCrmDestination = normalizeAgentCrmDestination(agent);

@@ -55,4 +55,22 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("Material: FAQ");
     expect(prompt).toContain("vídeo");
   });
+
+  it("uses simplePrompt as the main instruction block in simple mode", () => {
+    const prompt = buildAgentSystemPrompt({
+      languageInstruction: "Responda em português.",
+      agent: {
+        nome: "Assistente",
+        objetivo: "vender",
+        instructionMode: "simple",
+        simplePrompt: "Você vende planos Pro com tom consultivo.",
+        systemPrompt: "instruções pro legadas",
+        promptIdentidade: "identidade pro legada",
+      },
+    });
+
+    expect(prompt).toContain("PROMPT DO AGENTE\nVocê vende planos Pro com tom consultivo.");
+    expect(prompt).not.toContain("IDENTIDADE CONFIGURADA");
+    expect(prompt).not.toContain("instruções pro legadas");
+  });
 });

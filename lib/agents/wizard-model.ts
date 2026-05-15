@@ -17,6 +17,7 @@ import type {
 } from "@/lib/types";
 import { totalWhatsAppLinesForTenant } from "@/lib/whatsapp-connection-storage";
 import { DEFAULT_SYSTEM_PROMPT_TEMPLATE } from "./default-system-prompt-template";
+import { normalizeInstructionMode } from "./instruction-mode";
 import { normalizeAgentCrmDestination } from "./crm-destination";
 import { normalizeAgentResponseMode, normalizeAgentVoiceId, validateAgentResponseSettings } from "./response-settings";
 import { DEFAULT_AGENT_SMART_WAIT, sanitizeAgentSmartWaitSettings } from "./smart-wait-settings";
@@ -32,6 +33,8 @@ export type AgentWizardDraft = {
   /** Temperatura do modelo (0.01–1). */
   temperatura: number;
   /** Identidade e apresentação perante o cliente (texto curto). */
+  instructionMode: "simple" | "pro";
+  simplePrompt: string;
   promptIdentidade: string;
   promptObjetivo: string;
   systemPrompt: string;
@@ -167,6 +170,8 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     tom: agent.tom,
     delayResposta: agent.delayResposta,
     temperatura: agent.temperatura ?? 0.2,
+    instructionMode: normalizeInstructionMode(agent.instructionMode),
+    simplePrompt: agent.simplePrompt ?? "",
     promptIdentidade: agent.promptIdentidade ?? "",
     promptObjetivo: agent.promptObjetivo ?? "",
     systemPrompt: agent.systemPrompt,
@@ -240,7 +245,11 @@ export function validateCompactAgentDraft(
   tenantId?: string,
 ): string | null {
   if (!draft.nome.trim()) return "Informe o nome do agente.";
-  if (!draft.systemPrompt.trim()) return "Preencha as instruções do agente.";
+  if (draft.instructionMode === "simple") {
+    if (!draft.simplePrompt.trim()) return "Preencha o prompt do agente.";
+  } else if (!draft.systemPrompt.trim()) {
+    return "Preencha as instruções do agente.";
+  }
   if (tenantId && typeof window !== "undefined") {
     const cap = totalWhatsAppLinesForTenant(tenantId);
     const idx = Math.max(0, Math.floor(Number.isFinite(draft.whatsappSlotIndex) ? draft.whatsappSlotIndex : 0));
@@ -281,6 +290,8 @@ export const defaultWizardDraft: AgentWizardDraft = {
   tom: "Profissional",
   delayResposta: 2,
   temperatura: 0.2,
+  instructionMode: "pro",
+  simplePrompt: "",
   promptIdentidade: "",
   promptObjetivo: "",
   systemPrompt: DEFAULT_SYSTEM_PROMPT_TEMPLATE,

@@ -7,6 +7,7 @@ import { PanelSelect as Select } from "@/components/panel/ui/PanelSelect";
 import type { TrainingFile, TrainingFileFormat } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import type { AgentWizardDraft } from "@/lib/agents";
+import { WizardStep2Instructions } from "./WizardStep2Instructions";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 
 const MAX_MATERIAL_BYTES = 1024 * 1024 * 1024;
@@ -116,7 +117,6 @@ export function WizardStep2Treinamento({
 
   const temperaturaClamped = Math.min(TEMP_MAX, Math.max(TEMP_MIN, draft.temperatura));
   const temperaturaPct = ((temperaturaClamped - TEMP_MIN) / (TEMP_MAX - TEMP_MIN)) * 100;
-
   const fileInputRef = useRef<HTMLInputElement>(null);
   const draftRef = useRef(draft);
   const [dragActive, setDragActive] = useState(false);
@@ -334,126 +334,15 @@ export function WizardStep2Treinamento({
         </div>
       </div>
 
-      <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-        <p className="text-sm font-semibold text-content">Identidade</p>
-        <p className="mt-1 text-xs text-content-faint">
-          Mini prompt: como o agente deve se identificar e se posicionar com o cliente (nome que usa, papel, tom de
-          apresentação). Fica antes do objetivo e das instruções longas.
-        </p>
-        <textarea
-          value={draft.promptIdentidade}
-          onChange={(event) => onChange({ ...draft, promptIdentidade: event.target.value })}
-          placeholder='Ex.: Sou a assistente virtual da empresa X; falo em português claro, no «tu», e deixo explícito que sou um assistente automatizado quando couber.'
-          className="mt-3 min-h-[88px] w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-3 text-sm text-content outline-none"
-        />
-      </div>
-
-      <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-        <p className="text-sm font-semibold text-content">Objetivo</p>
-        <p className="mt-1 text-xs text-content-faint">
-          Em texto livre: o que este agente deve alcançar (meta comercial, escopo de atendimento, público-alvo). Complementa
-          a categoria «Objetivo principal» do passo anterior.
-        </p>
-        <textarea
-          value={draft.promptObjetivo}
-          onChange={(event) => onChange({ ...draft, promptObjetivo: event.target.value })}
-          placeholder="Ex.: Converter visitantes do WhatsApp em reuniões agendadas com o time comercial, priorizando PMEs de serviços."
-          className="mt-3 min-h-[100px] w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-3 text-sm text-content outline-none"
-        />
-      </div>
-
-      <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-content">Instruções</p>
-            <p className="mt-1 text-xs text-content-faint">
-              Comportamento principal do agente (tom, passos, exemplos). O texto abaixo é editável — pode apagar o modelo
-              e colar outro.
-            </p>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-            <span className="text-xs text-content-faint">Tamanho do prompt (aprox.): {promptSizeUnits} unidades</span>
-            <Button variant="secondary" size="sm" className="w-full sm:w-auto" onClick={onGeneratePrompt}>
-              Gerar com IA
-            </Button>
-          </div>
-        </div>
-        <textarea
-          value={draft.systemPrompt}
-          onChange={(event) => onChange({ ...draft, systemPrompt: event.target.value })}
-          placeholder="Descreva como o agente deve conduzir a conversa, o que priorizar e quando pedir ajuda humana."
-          className="mt-3 min-h-[180px] w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-3 text-sm text-content outline-none"
-        />
-      </div>
-
-      <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-        <p className="text-sm font-semibold text-content">Regras adicionais</p>
-        <p className="mt-1 text-xs text-content-faint">
-          Opcional: políticas extras, limites de promessa, formato de respostas, ou o que não couber em «Respostas
-          proibidas».
-        </p>
-        <textarea
-          value={draft.promptRegrasAdicionais}
-          onChange={(event) => onChange({ ...draft, promptRegrasAdicionais: event.target.value })}
-          placeholder="Ex.: Sempre confirmar cidade e segmento antes de enviar preço. Usar listas curtas com no máximo 3 itens."
-          className="mt-3 min-h-[100px] w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-3 text-sm text-content outline-none"
-        />
-      </div>
-
-      <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-        <p className="text-sm font-semibold text-content">Respostas proibidas</p>
-        <p className="mt-1 text-xs text-content-faint">
-          Liste o que o agente não deve dizer ou prometer (concorrentes, descontos, garantias legais, etc.).
-        </p>
-        <textarea
-          value={draft.respostasProibidas}
-          onChange={(event) => onChange({ ...draft, respostasProibidas: event.target.value })}
-          placeholder="Não mencione concorrentes, não dê descontos acima de 5%..."
-          className="mt-3 min-h-[110px] w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-3 text-sm text-content outline-none"
-        />
-      </div>
-
-      <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-3">
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-content">Temperatura</p>
-            <p className="mt-1 text-xs text-content-muted">Menor = mais diretas | Maior = mais criativo</p>
-          </div>
-          <span className="w-fit shrink-0 rounded-full border border-line bg-surface-elevated px-3 py-1 text-sm font-semibold tabular-nums text-content">
-            {Number(temperaturaClamped.toFixed(2))}
-          </span>
-        </div>
-        <div className="mt-5 px-0.5">
-          <div className="relative flex h-10 items-center">
-            <div className="pointer-events-none absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 rounded-full bg-line" />
-            <div
-              className="pointer-events-none absolute left-0 top-1/2 h-2 max-w-full -translate-y-1/2 rounded-l-full bg-primary transition-[width] duration-75 ease-out"
-              style={{ width: `${temperaturaPct}%` }}
-            />
-            <div
-              className={cn("pointer-events-none absolute top-1/2 z-[1] h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border transition-[left] duration-75 ease-out", isLight ? "border-line bg-white" : "border-white/20 bg-surface-elevated")}
-              style={{ left: `${temperaturaPct}%` }}
-            />
-            <input
-              type="range"
-              min={TEMP_MIN}
-              max={TEMP_MAX}
-              step={0.01}
-              value={temperaturaClamped}
-              aria-label="Temperatura do modelo"
-              onChange={(event) => {
-                const v = Number(event.target.value);
-                onChange({ ...draft, temperatura: Math.min(TEMP_MAX, Math.max(TEMP_MIN, v)) });
-              }}
-              className="absolute inset-0 z-[2] w-full cursor-pointer opacity-0"
-            />
-          </div>
-          <div className="mt-2 flex justify-between text-[11px] tabular-nums text-content-muted">
-            <span>{TEMP_MIN}</span>
-            <span>{TEMP_MAX}</span>
-          </div>
-        </div>
-      </div>
+      <WizardStep2Instructions
+        draft={draft}
+        onChange={onChange}
+        onGeneratePrompt={onGeneratePrompt}
+        promptSizeUnits={promptSizeUnits}
+        temperaturaClamped={temperaturaClamped}
+        temperaturaPct={temperaturaPct}
+        isLight={isLight}
+      />
 
       <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
         <p className="text-sm font-semibold text-content">Materiais de Apoio</p>
