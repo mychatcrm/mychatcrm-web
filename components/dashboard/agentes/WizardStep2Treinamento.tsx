@@ -600,6 +600,25 @@ export function WizardStep2Treinamento({
             ))}
           </ul>
         ) : null}
+
+        <div className="mt-4 space-y-2 rounded-xl border border-line bg-surface-elevated/20 px-3 py-3 text-xs">
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-content-secondary">Quantidade de arquivos</span>
+              <span className="tabular-nums text-content-faint">
+                {draft.arquivosTreinamento.length} arquivos / {MAX_MATERIAL_FILES}
+              </span>
+            </div>
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-line">
+              <div
+                className="h-full rounded-full bg-emerald-500/80 transition-[width]"
+                style={{
+                  width: `${Math.min(100, (draft.arquivosTreinamento.length / MAX_MATERIAL_FILES) * 100)}%`,
+                }}
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
       <WizardStep2OutboundMedia agentId={agentId} />
