@@ -496,6 +496,37 @@ export function WizardStep2Treinamento({
           }}
         />
 
+        <div className="mt-4 space-y-2 rounded-xl border border-line bg-surface-elevated/20 px-3 py-3 text-xs">
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-content-secondary">Ficheiros</span>
+              <span className="tabular-nums text-content-faint">
+                {materialMetrics.activeCount} / {MAX_MATERIAL_FILES}
+              </span>
+            </div>
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-line">
+              <div
+                className="h-full rounded-full bg-emerald-500/80 transition-[width]"
+                style={{ width: `${materialMetrics.fileBarPct}%` }}
+              />
+            </div>
+          </div>
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-content-secondary">Armazenamento</span>
+              <span className="tabular-nums text-content-faint">
+                {materialMetrics.totalKbRounded.toLocaleString("pt-BR")} KB / 1 GB
+              </span>
+            </div>
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-line">
+              <div
+                className="h-full rounded-full bg-emerald-500/50 transition-[width]"
+                style={{ width: `${materialMetrics.byteBarPct}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
         <button
           type="button"
           disabled={!canAddMaterials}
@@ -539,37 +570,6 @@ export function WizardStep2Treinamento({
             Formatos aceitos: PDF, DOCX, XLSX, PPTX, XML, Markdown, HTML, CSV, PNG, JPEG, TIFF e BMP. Até 5 arquivos por agente e até 1GB por arquivo, com upload direto para R2.
           </p>
         </button>
-
-        <div className="mt-4 space-y-2 rounded-xl border border-line bg-surface-elevated/20 px-3 py-3 text-xs">
-          <div>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-content-secondary">Ficheiros</span>
-              <span className="tabular-nums text-content-faint">
-                {materialMetrics.activeCount} / {MAX_MATERIAL_FILES}
-              </span>
-            </div>
-            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-line">
-              <div
-                className="h-full rounded-full bg-emerald-500/80 transition-[width]"
-                style={{ width: `${materialMetrics.fileBarPct}%` }}
-              />
-            </div>
-          </div>
-          <div>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-content-secondary">Armazenamento</span>
-              <span className="tabular-nums text-content-faint">
-                {materialMetrics.totalKbRounded.toLocaleString("pt-BR")} KB / 1 GB
-              </span>
-            </div>
-            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-line">
-              <div
-                className="h-full rounded-full bg-emerald-500/50 transition-[width]"
-                style={{ width: `${materialMetrics.byteBarPct}%` }}
-              />
-            </div>
-          </div>
-        </div>
 
         {!agentId ? (
           <p className="mt-2 text-xs text-content-faint">
