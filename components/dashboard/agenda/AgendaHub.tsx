@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Calendar,
   ChevronLeft,
@@ -248,64 +248,73 @@ export function AgendaHub() {
   }, [sortedListEvents, listLimit]);
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col bg-white text-[#3c4043]">
-      {/* Topbar */}
-      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[#dadce0] px-3 py-2">
-        <button type="button" className="rounded-full p-2 hover:bg-[#f1f3f4]" onClick={() => setSidebarOpen((v) => !v)} aria-label="Menu">
-          <Menu className="size-5" />
-        </button>
-        <div className="flex items-center gap-2">
-          <Calendar className="size-6" style={{ color: AGENDA_BRAND }} />
-          <span className="hidden text-[22px] font-normal text-[#3c4043] sm:inline">Agenda</span>
-        </div>
-        <button type="button" onClick={goToday} className="rounded border border-[#dadce0] px-4 py-1.5 text-sm font-medium hover:bg-[#f1f3f4]">
-          Hoje
-        </button>
-        <div className="flex items-center">
-          <button type="button" className="rounded-full p-2 hover:bg-[#f1f3f4]" onClick={() => navigate(-1)} aria-label="Anterior">
-            <ChevronLeft className="size-5" />
+    <div className="flex h-full min-h-0 w-full min-w-0 max-w-full flex-col overflow-x-hidden bg-white text-[#3c4043]">
+      {/* Topbar: duas linhas em mobile para evitar cortes e scroll horizontal */}
+      <header className="flex shrink-0 flex-col gap-2 border-b border-[#dadce0] px-2 py-2 md:flex-row md:flex-wrap md:items-center md:gap-2 md:px-3">
+        <div className="flex min-w-0 w-full items-center gap-1 md:w-auto md:flex-1 md:gap-2">
+          <button type="button" className="shrink-0 rounded-full p-1.5 hover:bg-[#f1f3f4] md:p-2" onClick={() => setSidebarOpen((v) => !v)} aria-label="Menu">
+            <Menu className="size-5" />
           </button>
-          <button type="button" className="rounded-full p-2 hover:bg-[#f1f3f4]" onClick={() => navigate(1)} aria-label="Próximo">
-            <ChevronRight className="size-5" />
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Calendar className="size-5 md:size-6" style={{ color: AGENDA_BRAND }} />
+            <span className="hidden text-[22px] font-normal text-[#3c4043] md:inline">Agenda</span>
+          </div>
+          <button
+            type="button"
+            onClick={goToday}
+            className="shrink-0 rounded border border-[#dadce0] px-2 py-1 text-xs font-medium hover:bg-[#f1f3f4] md:px-4 md:py-1.5 md:text-sm"
+          >
+            Hoje
           </button>
-        </div>
-        <h1 className="min-w-0 flex-1 truncate text-xl font-normal capitalize text-[#3c4043]">{periodTitle}</h1>
-        {searchOpen ? (
-          <div className="flex w-full items-center gap-2 sm:w-auto">
-            <input
-              autoFocus
-              value={searchQ}
-              onChange={(e) => setSearchQ(e.target.value)}
-              placeholder="Pesquisar eventos"
-              className="h-9 min-w-0 flex-1 rounded-lg border border-[#dadce0] px-3 text-sm outline-none focus:border-[#f24400]"
-            />
-            <button type="button" className="rounded-full p-2 hover:bg-[#f1f3f4]" onClick={() => { setSearchOpen(false); setSearchQ(""); void data.refreshEvents(); }}>
-              <X className="size-4" />
+          <div className="flex shrink-0 items-center">
+            <button type="button" className="rounded-full p-1.5 hover:bg-[#f1f3f4] md:p-2" onClick={() => navigate(-1)} aria-label="Anterior">
+              <ChevronLeft className="size-5" />
+            </button>
+            <button type="button" className="rounded-full p-1.5 hover:bg-[#f1f3f4] md:p-2" onClick={() => navigate(1)} aria-label="Próximo">
+              <ChevronRight className="size-5" />
             </button>
           </div>
-        ) : (
-          <button type="button" className="rounded-full p-2 hover:bg-[#f1f3f4]" onClick={() => setSearchOpen(true)} aria-label="Pesquisar">
-            <Search className="size-5" />
+          <h1 className="min-w-0 flex-1 truncate text-sm font-normal capitalize text-[#3c4043] md:text-xl">{periodTitle}</h1>
+        </div>
+        <div className="flex w-full min-w-0 shrink-0 items-center justify-end gap-1.5 md:w-auto md:justify-end md:gap-2">
+          {searchOpen ? (
+            <div className="flex min-w-0 flex-1 items-center gap-1.5 md:max-w-md">
+              <input
+                autoFocus
+                value={searchQ}
+                onChange={(e) => setSearchQ(e.target.value)}
+                placeholder="Pesquisar eventos"
+                className="h-9 min-w-0 flex-1 rounded-lg border border-[#dadce0] px-2 text-sm outline-none focus:border-[#f24400] sm:px-3"
+              />
+              <button type="button" className="shrink-0 rounded-full p-2 hover:bg-[#f1f3f4]" onClick={() => { setSearchOpen(false); setSearchQ(""); void data.refreshEvents(); }}>
+                <X className="size-4" />
+              </button>
+            </div>
+          ) : (
+            <button type="button" className="shrink-0 rounded-full p-2 hover:bg-[#f1f3f4]" onClick={() => setSearchOpen(true)} aria-label="Pesquisar">
+              <Search className="size-5" />
+            </button>
+          )}
+          <button
+            type="button"
+            className="shrink-0 rounded-full p-2 hover:bg-[#f1f3f4]"
+            aria-label="Configurações"
+            onClick={() => setSidebarOpen(true)}
+          >
+            <Settings className="size-5" />
           </button>
-        )}
-        <button
-          type="button"
-          className="rounded-full p-2 hover:bg-[#f1f3f4]"
-          aria-label="Configurações"
-          onClick={() => setSidebarOpen(true)}
-        >
-          <Settings className="size-5" />
-        </button>
-        <select
-          value={view}
-          onChange={(e) => setView(e.target.value as AgendaViewMode)}
-          className="shrink-0 rounded-lg border border-[#dadce0] bg-white px-3 py-1.5 text-sm"
-        >
-          <option value="day">Dia</option>
-          <option value="week">Semana</option>
-          <option value="month">Mês</option>
-          <option value="agenda">Agenda</option>
-        </select>
+          <select
+            value={view}
+            onChange={(e) => setView(e.target.value as AgendaViewMode)}
+            className="min-w-0 max-w-[46%] shrink rounded-lg border border-[#dadce0] bg-white px-2 py-1.5 text-xs md:max-w-none md:px-3 md:text-sm"
+            aria-label="Vista do calendário"
+          >
+            <option value="day">Dia</option>
+            <option value="week">Semana</option>
+            <option value="month">Mês</option>
+            <option value="agenda">Agenda</option>
+          </select>
+        </div>
       </header>
 
       <div className="relative flex min-h-0 flex-1">
@@ -378,9 +387,9 @@ export function AgendaHub() {
                         {data.syncing ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
                         Sincronizar
                       </button>
-                      <button type="button" onClick={() => setClearEventsOpen(true)} className="inline-flex items-center gap-1 rounded-full border border-amber-200 px-2 py-1 text-[11px] text-amber-700 hover:bg-amber-50">
-                        <Trash2 className="size-3" />
-                        Limpar agenda
+                      <button type="button" onClick={() => setClearEventsOpen(true)} className="inline-flex items-center gap-1 rounded-full border border-amber-200 px-2 py-1 text-[10px] leading-tight text-amber-700 hover:bg-amber-50 sm:text-[11px]">
+                        <Trash2 className="size-3 shrink-0" />
+                        Limpar agenda sincronizada
                       </button>
                       <button type="button" onClick={() => setDisconnectOpen(true)} className="inline-flex items-center gap-1 rounded-full border border-rose-200 px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50">
                         <Unlink className="size-3" />
@@ -403,7 +412,7 @@ export function AgendaHub() {
         ) : null}
 
         {/* Main */}
-        <main className="relative min-h-0 min-w-0 flex-1 overflow-auto" ref={gridRef}>
+        <main className="relative min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden" ref={gridRef}>
           {data.loading ? (
             <div className="flex h-48 items-center justify-center text-sm text-[#70757a]">
               <Loader2 className="mr-2 size-4 animate-spin" />
@@ -413,7 +422,7 @@ export function AgendaHub() {
           {data.error ? <p className="px-4 py-2 text-sm text-rose-600">{data.error}</p> : null}
 
           {searchOpen && searchQ.trim() ? (
-            <div className="p-4">
+            <div className="min-w-0 max-w-full p-3 md:p-4">
               <p className="mb-3 text-sm text-[#70757a]">{data.events.length} resultado(s)</p>
               <ul className="space-y-2">
                 {data.events.map((ev) => (
@@ -434,13 +443,15 @@ export function AgendaHub() {
           {!searchOpen || !searchQ.trim() ? (
             <>
               {view === "month" ? (
-                <div className="min-w-[320px] p-2">
-                  <div className="grid grid-cols-7 border-b border-[#dadce0]">
+                <div className="box-border w-full min-w-0 max-w-full p-1 sm:p-2">
+                  <div className="grid w-full min-w-0 grid-cols-7 border-b border-[#dadce0]">
                     {WEEKDAYS_SHORT.map((d) => (
-                      <div key={d} className="py-2 text-center text-[11px] font-medium uppercase text-[#70757a]">{d}</div>
+                      <div key={d} className="min-w-0 truncate py-1.5 text-center text-[9px] font-medium uppercase text-[#70757a] sm:py-2 sm:text-[11px]">
+                        {d}
+                      </div>
                     ))}
                   </div>
-                  <div className="grid grid-cols-7">
+                  <div className="grid w-full min-w-0 grid-cols-7">
                     {monthGrid.map((cell, idx) => {
                       const dayEvents = eventsForDay(data.events, cell.date);
                       const isSel = sameDay(cell.date, selected);
@@ -451,30 +462,38 @@ export function AgendaHub() {
                           type="button"
                           onClick={(e) => onCellClick(e, cell.date)}
                           className={cn(
-                            "min-h-[72px] border-b border-r border-[#dadce0] p-1 text-left hover:bg-[#f1f3f4] sm:min-h-[120px]",
+                            "min-h-0 min-w-0 border-b border-r border-[#dadce0] p-0.5 text-left hover:bg-[#f1f3f4] sm:p-1",
+                            "min-h-[56px] sm:min-h-[120px]",
                             !cell.inMonth && "bg-[#fafafa] text-[#70757a]",
                             isSel && "bg-[#fef0eb]",
                             isTod && "font-bold",
                           )}
                         >
-                          <span className={cn("inline-flex size-7 items-center justify-center rounded-full text-sm", isTod && "bg-[#f24400] text-white")}>
+                          <span
+                            className={cn(
+                              "inline-flex size-6 items-center justify-center rounded-full text-xs sm:size-7 sm:text-sm",
+                              isTod && "bg-[#f24400] text-white",
+                            )}
+                          >
                             {cell.label}
                           </span>
-                          <div className="mt-1 space-y-0.5">
-                            {dayEvents.slice(0, 4).map((ev) => (
+                          <div className="mt-0.5 space-y-0.5 sm:mt-1">
+                            {dayEvents.slice(0, 3).map((ev) => (
                               <div
                                 key={ev.id}
                                 data-event-id={ev.id}
                                 role="button"
                                 tabIndex={0}
                                 onClick={(e) => { e.stopPropagation(); setDetail({ event: ev, x: e.clientX, y: e.clientY }); }}
-                                className="truncate rounded px-1.5 py-0.5 text-[11px] font-medium text-white"
+                                className="truncate rounded px-1 py-0.5 text-[9px] font-medium text-white sm:px-1.5 sm:text-[11px]"
                                 style={{ backgroundColor: eventColor(ev) }}
                               >
                                 {ev.title}
                               </div>
                             ))}
-                            {dayEvents.length > 4 ? <div className="text-[10px] text-[#70757a]">+{dayEvents.length - 4} mais</div> : null}
+                            {dayEvents.length > 3 ? (
+                              <div className="text-[8px] text-[#70757a] sm:text-[10px]">+{dayEvents.length - 3}</div>
+                            ) : null}
                           </div>
                         </button>
                       );
@@ -484,20 +503,23 @@ export function AgendaHub() {
               ) : null}
 
               {(view === "week" || view === "day") ? (
-                <div className="w-full overflow-x-auto">
-                  <div className="relative w-full" style={{ minWidth: timeGridMinWidth }}>
-                    <div className="sticky top-0 z-10 grid border-b border-[#dadce0] bg-white" style={{ gridTemplateColumns: timeGridTemplate }}>
-                      <div />
+                <div className={cn("w-full min-w-0", view === "week" && "overflow-x-auto")}>
+                  <div
+                    className="relative w-full min-w-0"
+                    style={view === "week" && timeGridMinWidth ? { minWidth: timeGridMinWidth } : undefined}
+                  >
+                    <div className="sticky top-0 z-10 grid min-w-0 border-b border-[#dadce0] bg-white" style={{ gridTemplateColumns: timeGridTemplate }}>
+                      <div className="min-w-0" />
                       {timeGridDays.map((d) => (
                         <div key={d.toISOString()} className="min-w-[100px] border-l border-[#dadce0] py-2 text-center text-xs">
-                        <div className="uppercase text-[#70757a]">{WEEKDAYS_SHORT[d.getDay()]}</div>
-                        <div className={cn("mx-auto mt-1 flex size-9 items-center justify-center rounded-full text-lg", sameDay(d, today) && "bg-[#f24400] font-bold text-white")}>
+                        <div className="truncate uppercase text-[#70757a]">{WEEKDAYS_SHORT[d.getDay()]}</div>
+                        <div className={cn("mx-auto mt-1 flex size-8 items-center justify-center rounded-full text-base sm:size-9 sm:text-lg", sameDay(d, today) && "bg-[#f24400] font-bold text-white")}>
                           {d.getDate()}
                         </div>
                       </div>
                     ))}
                   </div>
-                  <div className="relative grid w-full" style={{ gridTemplateColumns: timeGridTemplate }}>
+                  <div className="relative grid w-full min-w-0" style={{ gridTemplateColumns: timeGridTemplate }}>
                     <div>
                       {Array.from({ length: GRID_HOURS }, (_, h) => (
                         <div key={h} className="relative border-b border-[#dadce0] pr-2 text-right text-[10px] text-[#70757a]" style={{ height: HOUR_HEIGHT_PX }}>
@@ -576,10 +598,10 @@ export function AgendaHub() {
               ) : null}
 
               {view === "agenda" ? (
-                <div className="w-full p-3 sm:p-4">
+                <div className="w-full min-w-0 max-w-full box-border p-3 md:p-4">
                   {groupedList.map(([dayKey, items]) => (
-                    <div key={dayKey} className="mb-6">
-                      <h3 className="mb-2 text-sm font-medium text-[#70757a]">
+                    <div key={dayKey} className="mb-6 min-w-0">
+                      <h3 className="mb-2 break-words text-sm font-medium text-[#70757a]">
                         {new Date(items[0]!.startISO).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" })}
                       </h3>
                       <ul className="space-y-2">
@@ -587,10 +609,10 @@ export function AgendaHub() {
                           <li key={ev.id}>
                             <button
                               type="button"
-                              className="flex w-full flex-col gap-1 rounded-lg border border-[#dadce0] px-3 py-3 text-left hover:bg-[#f1f3f4] sm:flex-row sm:items-start sm:gap-4 sm:border-0 sm:px-2 sm:py-2"
+                              className="flex w-full min-w-0 max-w-full flex-col gap-1 rounded-lg border border-[#dadce0] px-3 py-3 text-left hover:bg-[#f1f3f4] md:flex-row md:items-start md:gap-4 md:border-0 md:px-2 md:py-2"
                               onClick={(e) => setDetail({ event: ev, x: e.clientX, y: e.clientY })}
                             >
-                              <span className="shrink-0 text-sm text-[#70757a] sm:w-28">
+                              <span className="shrink-0 text-sm text-[#70757a] md:w-28">
                                 {new Date(ev.startISO).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
                                 {" – "}
                                 {new Date(ev.endISO).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}

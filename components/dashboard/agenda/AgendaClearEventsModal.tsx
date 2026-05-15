@@ -30,11 +30,11 @@ export function AgendaClearEventsModal({
         <Button
           type="button"
           disabled={loading}
-          className="inline-flex w-full items-center justify-center gap-2 border border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100 sm:w-auto"
+          className="inline-flex w-full items-center justify-center gap-2 border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 sm:w-auto"
           onClick={onConfirm}
         >
           <Trash2 className="size-3.5 shrink-0" />
-          Limpar eventos
+          <span className="text-center leading-tight">Limpar agenda sincronizada</span>
         </Button>
       </div>
     </Modal>

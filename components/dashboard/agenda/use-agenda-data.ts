@@ -151,7 +151,8 @@ export function useAgendaData() {
     });
     if (!res.ok) throw new Error("clear_failed");
     await refreshEvents();
-  }, [refreshEvents]);
+    await refreshStatus();
+  }, [refreshEvents, refreshStatus]);
 
   useEffect(() => {
     void refreshStatus().then(() => refreshEvents());

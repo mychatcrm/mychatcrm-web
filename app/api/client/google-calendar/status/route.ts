@@ -34,7 +34,7 @@ export async function DELETE(request: Request) {
     deletedCount = await deleteGoogleSyncedAgendaEvents(session.tenantId);
     await broadcastAgendaChange(session.tenantId, "delete");
   }
-  // keepConnection=true → only wipe events, preserve the OAuth token
+  /** keepConnection=true: apaga só eventos sincronizados (com clearEvents) e mantém o token OAuth. */
   if (!keepConnection) {
     await disconnectGoogleCalendar(session.tenantId);
   }
