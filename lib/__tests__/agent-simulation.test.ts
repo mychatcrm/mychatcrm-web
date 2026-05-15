@@ -24,6 +24,7 @@ vi.mock("@/lib/server/conversation-memory", () => ({
     summary: null,
     recentMessages: [],
     knowledgeSnippets: [],
+    outboundMediaLines: [],
   })),
   conversationMessagesToAi: vi.fn(() => []),
 }));

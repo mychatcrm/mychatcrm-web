@@ -8,10 +8,11 @@ import type { TrainingFile, TrainingFileFormat } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import type { AgentWizardDraft } from "@/lib/agents";
 import { WizardStep2Instructions } from "./WizardStep2Instructions";
+import { WizardStep2OutboundMedia } from "./WizardStep2OutboundMedia";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 
 const MAX_MATERIAL_BYTES = 1024 * 1024 * 1024;
-const MAX_MATERIAL_FILES = 50;
+const MAX_MATERIAL_FILES = 5;
 const R2_PUT_TIMEOUT_MS = 30_000;
 
 const ACCEPT_EXTENSIONS =
@@ -125,6 +126,8 @@ export function WizardStep2Treinamento({
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const [loadingMaterials, setLoadingMaterials] = useState(false);
   const [reprocessingId, setReprocessingId] = useState<string | null>(null);
+
+  const canAddMaterials = draft.arquivosTreinamento.length < MAX_MATERIAL_FILES && Boolean(agentId);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -291,7 +294,7 @@ export function WizardStep2Treinamento({
         return;
       }
       if (draft.arquivosTreinamento.length + files.length > MAX_MATERIAL_FILES) {
-        setMaterialError("Cada agente pode ter no máximo 50 materiais de apoio.");
+        setMaterialError("Cada agente pode ter no máximo 5 materiais de apoio.");
         return;
       }
       const oversize = files.filter((f) => f.size > MAX_MATERIAL_BYTES);
@@ -477,15 +480,18 @@ export function WizardStep2Treinamento({
 
         <button
           type="button"
+          disabled={!canAddMaterials}
           aria-label="Selecionar ou largar materiais de apoio"
           onClick={() => fileInputRef.current?.click()}
           onDragOver={(event) => {
             event.preventDefault();
             event.stopPropagation();
+            if (!canAddMaterials) return;
             setDragActive(true);
           }}
           onDragEnter={(event) => {
             event.preventDefault();
+            if (!canAddMaterials) return;
             setDragActive(true);
           }}
           onDragLeave={(event) => {
@@ -498,11 +504,13 @@ export function WizardStep2Treinamento({
             event.preventDefault();
             event.stopPropagation();
             setDragActive(false);
+            if (draft.arquivosTreinamento.length >= MAX_MATERIAL_FILES || !agentId) return;
             void ingestFiles(event.dataTransfer.files);
           }}
           className={cn(
-            "mt-4 flex w-full cursor-pointer flex-col items-center rounded-xl border-2 border-dashed px-4 py-10 text-center transition",
-            dragActive
+            "mt-4 flex w-full flex-col items-center rounded-xl border-2 border-dashed px-4 py-10 text-center transition",
+            !canAddMaterials ? "cursor-not-allowed opacity-55" : "cursor-pointer",
+            dragActive && canAddMaterials
               ? "border-primary/50 bg-primary/[0.06]"
               : "border-line bg-surface-elevated/25 hover:border-primary/35 hover:bg-surface-elevated/40",
           )}
@@ -510,7 +518,7 @@ export function WizardStep2Treinamento({
           <Upload className="h-10 w-10 text-primary" strokeWidth={1.75} aria-hidden />
           <p className="mt-3 text-sm font-semibold text-content">Clique para selecionar ou arraste seus arquivos aqui</p>
           <p className="mt-2 max-w-lg text-xs leading-relaxed text-content-muted">
-            Formatos aceitos: PDF, DOCX, XLSX, PPTX, XML, Markdown, HTML, CSV, PNG, JPEG, TIFF e BMP. Até 50 arquivos por agente e 1GB por arquivo, com upload direto para R2.
+            Formatos aceitos: PDF, DOCX, XLSX, PPTX, XML, Markdown, HTML, CSV, PNG, JPEG, TIFF e BMP. Até 5 arquivos por agente e até 1GB por arquivo, com upload direto para R2.
           </p>
         </button>
 
@@ -593,6 +601,8 @@ export function WizardStep2Treinamento({
           </ul>
         ) : null}
       </div>
+
+      <WizardStep2OutboundMedia agentId={agentId} />
 
       <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
         <p className="text-sm font-semibold text-content">Pausa humana por conversa</p>

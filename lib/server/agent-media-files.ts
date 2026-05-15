@@ -1,0 +1,383 @@
+import "server-only";
+
+import crypto from "crypto";
+import {
+  assertR2Configured,
+  createR2PresignedUploadUrl,
+  deleteR2Object,
+  headR2Object,
+} from "@/lib/integrations/r2-storage";
+import { createSupabaseServiceClient } from "@/lib/supabase/server";
+
+export const AGENT_MEDIA_MAX_FILES = 50;
+/** Limite total de armazenamento por agente (soma apenas ficheiros `ready`). */
+export const AGENT_MEDIA_TOTAL_BYTES_CAP = 1024 * 1024 * 1024;
+/** Evita uploads individuais demasiado grandes dentro do quota total. */
+export const AGENT_MEDIA_MAX_SINGLE_FILE_BYTES = 256 * 1024 * 1024;
+
+type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
+
+export type AgentMediaFile = {
+  id: string;
+  tenantId: string;
+  agentId: string;
+  originalFilename: string;
+  mimeType: string;
+  sizeBytes: number;
+  storageKey: string;
+  description: string | null;
+  status: "uploading" | "ready" | "failed";
+  createdAt: string;
+  updatedAt: string;
+};
+
+function cleanAgentId(agentId: string): string {
+  return agentId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 96);
+}
+
+function safeFilename(filename: string): string {
+  const clean = filename
+    .trim()
+    .replace(/[/\\]/g, "_")
+    .replace(/[^a-zA-Z0-9._ -]/g, "_")
+    .replace(/\s+/g, "_");
+  return clean.slice(0, 160) || "arquivo";
+}
+
+function textOrNull(v: unknown): string | null {
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+function toRow(row: Record<string, unknown>): AgentMediaFile {
+  return {
+    id: String(row.id),
+    tenantId: String(row.tenant_id),
+    agentId: String(row.agent_id),
+    originalFilename: String(row.original_filename ?? ""),
+    mimeType: String(row.mime_type ?? "application/octet-stream"),
+    sizeBytes: Number(row.size_bytes ?? 0),
+    storageKey: String(row.storage_key ?? ""),
+    description: typeof row.description === "string" ? row.description : null,
+    status: String(row.status ?? "uploading") as AgentMediaFile["status"],
+    createdAt: String(row.created_at ?? ""),
+    updatedAt: String(row.updated_at ?? ""),
+  };
+}
+
+function resolveValidatedOutboundMime(stored: string, headType: string | null): string {
+  for (const candidate of [stored, headType ?? ""].filter(Boolean)) {
+    try {
+      return validateAgentMediaMimeType(String(candidate));
+    } catch {
+      // tenta próximo candidato
+    }
+  }
+  throw new Error("Tipo de arquivo não permitido após o upload.");
+}
+
+export function validateAgentMediaMimeType(raw: string): string {
+  const base = raw.split(";")[0]!.trim().toLowerCase();
+  if (base.startsWith("image/")) return base;
+  if (base === "video/mp4") return base;
+  const audio = new Set(["audio/mp3", "audio/ogg", "audio/mpeg", "audio/mp4", "audio/x-m4a"]);
+  if (audio.has(base)) return base;
+  throw new Error(
+    "Tipo de arquivo não permitido. Use imagens (JPG, PNG, GIF, WEBP), vídeo MP4 ou áudio MP3/OGG/M4A.",
+  );
+}
+
+export type OutboundMediaDirectiveParse = {
+  cleanedText: string;
+  filenames: string[];
+};
+
+/**
+ * Remove marcadores [[ENVIAR_MEDIA:filename.ext]] enviados pelo modelo e devolve nomes ordenados únicos.
+ */
+export function stripOutboundMediaDirectives(text: string): OutboundMediaDirectiveParse {
+  const filenames: string[] = [];
+  const seen = new Set<string>();
+  const re = /\[\[ENVIAR_MEDIA:([^\]]+)]]/gi;
+  const cleanedText = text.replace(re, (_m, rawName: string) => {
+    const name = String(rawName ?? "").trim();
+    if (name && !seen.has(name)) {
+      seen.add(name);
+      filenames.push(name);
+    }
+    return "";
+  });
+  return { cleanedText: cleanedText.replace(/\s+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trimEnd(), filenames };
+}
+
+export async function listAgentMediaFiles(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  agentId: string;
+}): Promise<AgentMediaFile[]> {
+  const { data, error } = await params.sb
+    .from("agent_media_files")
+    .select("*")
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", params.agentId)
+    .order("created_at", { ascending: false });
+  if (error) throw new Error("Erro ao listar arquivos de mídia do agente.");
+  return ((data ?? []) as Array<Record<string, unknown>>).map(toRow);
+}
+
+/** Linhas numeradas para o system prompt (`nome — descrição`). */
+export async function getAgentOutboundMediaPromptLines(params: {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  agentId: string;
+}): Promise<string[]> {
+  const sb = params.sb ?? createSupabaseServiceClient();
+  const { data, error } = await sb
+    .from("agent_media_files")
+    .select("original_filename,description")
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", params.agentId)
+    .eq("status", "ready")
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.warn("[agent-media-files] outbound prompt lines", error.code, error.message);
+    return [];
+  }
+  return ((data ?? []) as Array<Record<string, unknown>>).map((row) => {
+    const name = String(row.original_filename ?? "arquivo");
+    const desc = textOrNull(row.description);
+    return desc ? `${name} — ${desc}` : `${name} — (sem descrição)`;
+  });
+}
+
+export async function findReadyAgentMediaByOriginalFilename(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  agentId: string;
+  originalFilename: string;
+}): Promise<AgentMediaFile | null> {
+  const { data, error } = await params.sb
+    .from("agent_media_files")
+    .select("*")
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", params.agentId)
+    .eq("original_filename", params.originalFilename)
+    .eq("status", "ready")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
+  return toRow(data as Record<string, unknown>);
+}
+
+async function countActiveAgentMediaSlots(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  agentId: string;
+}): Promise<number> {
+  const { count, error } = await params.sb
+    .from("agent_media_files")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", params.agentId)
+    .in("status", ["uploading", "ready"]);
+  if (error) throw new Error("Erro ao contar arquivos de mídia do agente.");
+  return count ?? 0;
+}
+
+async function sumReadyAgentMediaBytes(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  agentId: string;
+}): Promise<number> {
+  const { data, error } = await params.sb
+    .from("agent_media_files")
+    .select("size_bytes")
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", params.agentId)
+    .eq("status", "ready");
+  if (error) throw new Error("Erro ao somar armazenamento de mídia do agente.");
+  let sum = 0;
+  for (const row of (data ?? []) as Array<{ size_bytes?: unknown }>) {
+    sum += Number(row.size_bytes ?? 0);
+  }
+  return sum;
+}
+
+export async function createAgentMediaUpload(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  agentId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  description?: string | null;
+}): Promise<{ file: AgentMediaFile; uploadUrl: string; expiresInSeconds: number }> {
+  assertR2Configured();
+  const trimmedName = params.filename.trim();
+  if (!trimmedName) throw new Error("Nome do arquivo em falta.");
+  const mimeType = validateAgentMediaMimeType(params.mimeType);
+  const sizeBytes = Number(params.sizeBytes);
+  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
+    throw new Error("Tamanho inválido.");
+  }
+  if (sizeBytes > AGENT_MEDIA_MAX_SINGLE_FILE_BYTES) {
+    throw new Error("Arquivo individual demasiado grande (máx 256MB).");
+  }
+
+  const currentSlots = await countActiveAgentMediaSlots(params);
+  if (currentSlots >= AGENT_MEDIA_MAX_FILES) throw new Error("Limite de 50 arquivos de envio por agente atingido.");
+
+  const usedBytes = await sumReadyAgentMediaBytes(params);
+  if (usedBytes + sizeBytes > AGENT_MEDIA_TOTAL_BYTES_CAP) {
+    throw new Error("Limite de 1GB de mídia para envio por agente ultrapassado.");
+  }
+
+  const now = new Date().toISOString();
+  const storedFilename = `${crypto.randomUUID()}_${safeFilename(trimmedName)}`;
+  const storageKey = `agents-media/${params.tenantId}/${cleanAgentId(params.agentId)}/${storedFilename}`;
+  const expiresInSeconds = 900;
+
+  const uploadUrl = await createR2PresignedUploadUrl({
+    key: storageKey,
+    contentType: mimeType,
+    contentLength: sizeBytes,
+    expiresInSeconds,
+  });
+
+  const { data, error } = await params.sb
+    .from("agent_media_files")
+    .insert({
+      tenant_id: params.tenantId,
+      agent_id: params.agentId,
+      original_filename: trimmedName,
+      mime_type: mimeType,
+      size_bytes: sizeBytes,
+      storage_key: storageKey,
+      description: params.description?.trim() ? params.description.trim() : null,
+      status: "uploading",
+      created_at: now,
+      updated_at: now,
+    })
+    .select("*")
+    .single();
+
+  if (error) throw new Error("Erro ao criar registo de mídia.");
+  return { file: toRow(data as Record<string, unknown>), uploadUrl, expiresInSeconds };
+}
+
+export async function completeAgentMediaUpload(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  agentId: string;
+  fileId: string;
+}): Promise<AgentMediaFile> {
+  const { data: current, error: currentError } = await params.sb
+    .from("agent_media_files")
+    .select("*")
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", params.agentId)
+    .eq("id", params.fileId)
+    .single();
+
+  if (currentError || !current) throw new Error("Arquivo de mídia não encontrado.");
+  const row = current as Record<string, unknown>;
+  const storageKey = String(row.storage_key ?? "");
+
+  const head = await headR2Object(storageKey);
+  if (!head || head.sizeBytes <= 0) {
+    await params.sb
+      .from("agent_media_files")
+      .update({ status: "failed", updated_at: new Date().toISOString() })
+      .eq("tenant_id", params.tenantId)
+      .eq("agent_id", params.agentId)
+      .eq("id", params.fileId);
+    throw new Error("Arquivo ainda não encontrado no armazenamento.");
+  }
+
+  const mimeType = resolveValidatedOutboundMime(
+    String(row.mime_type ?? "application/octet-stream"),
+    head.contentType,
+  );
+
+  const readyBytesSum = await sumReadyAgentMediaBytes(params);
+  if (readyBytesSum + head.sizeBytes > AGENT_MEDIA_TOTAL_BYTES_CAP) {
+    await params.sb
+      .from("agent_media_files")
+      .update({ status: "failed", updated_at: new Date().toISOString() })
+      .eq("tenant_id", params.tenantId)
+      .eq("agent_id", params.agentId)
+      .eq("id", params.fileId);
+    throw new Error("O tamanho real do arquivo ultrapassa o limite de 1GB por agente.");
+  }
+
+  const now = new Date().toISOString();
+  const { data, error } = await params.sb
+    .from("agent_media_files")
+    .update({
+      mime_type: mimeType,
+      size_bytes: head.sizeBytes,
+      status: "ready",
+      updated_at: now,
+    })
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", params.agentId)
+    .eq("id", params.fileId)
+    .select("*")
+    .single();
+
+  if (error) throw new Error("Erro ao concluir upload de mídia.");
+  return toRow(data as Record<string, unknown>);
+}
+
+export async function updateAgentMediaDescription(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  agentId: string;
+  fileId: string;
+  description: string | null;
+}): Promise<AgentMediaFile> {
+  const desc = params.description?.trim() ? params.description.trim() : null;
+  const { data, error } = await params.sb
+    .from("agent_media_files")
+    .update({
+      description: desc,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", params.agentId)
+    .eq("id", params.fileId)
+    .select("*")
+    .single();
+  if (error) throw new Error("Erro ao atualizar descrição.");
+  return toRow(data as Record<string, unknown>);
+}
+
+export async function removeAgentMediaFile(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  agentId: string;
+  fileId: string;
+}): Promise<void> {
+  const { data, error } = await params.sb
+    .from("agent_media_files")
+    .select("storage_key")
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", params.agentId)
+    .eq("id", params.fileId)
+    .single();
+  if (error || !data) throw new Error("Arquivo de mídia não encontrado.");
+
+  const storageKey = String((data as { storage_key?: unknown }).storage_key ?? "");
+
+  const { error: deleteError } = await params.sb
+    .from("agent_media_files")
+    .delete()
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", params.agentId)
+    .eq("id", params.fileId);
+  if (deleteError) throw new Error("Erro ao remover arquivo de mídia.");
+
+  if (storageKey) {
+    await deleteR2Object(storageKey).catch(() => undefined);
+  }
+}

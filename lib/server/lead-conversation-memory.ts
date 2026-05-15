@@ -12,6 +12,7 @@ import {
   getConversationState,
   getRecentConversationMessages,
 } from "@/lib/server/conversation-memory";
+import { getAgentOutboundMediaPromptLines } from "@/lib/server/agent-media-files";
 
 const DEFAULT_MESSAGE_LIMIT = 20;
 
@@ -185,6 +186,7 @@ export async function buildLeadConversationMemory(params: {
       summary: null,
       recentMessages: [],
       knowledgeSnippets: [],
+      outboundMediaLines: [],
       aiMessages: [],
       condensedContext: "",
       recognitionHint: null,
@@ -193,7 +195,7 @@ export async function buildLeadConversationMemory(params: {
   }
 
   const sb = createSupabaseServiceClient();
-  const [state, leadByJid, knowledgeSnippets] = await Promise.all([
+  const [state, leadByJid, knowledgeSnippets, outboundMediaLines] = await Promise.all([
     params.remoteJid
       ? getConversationState({ sb, tenantId: params.tenantId, remoteJid: params.remoteJid })
       : Promise.resolve(null),
@@ -201,6 +203,7 @@ export async function buildLeadConversationMemory(params: {
       ? findLeadForConversation({ sb, tenantId: params.tenantId, remoteJid: params.remoteJid })
       : Promise.resolve(null),
     getAgentKnowledgeSnippets({ sb, tenantId: params.tenantId, agentId: params.agentId }),
+    getAgentOutboundMediaPromptLines({ sb, tenantId: params.tenantId, agentId: params.agentId }),
   ]);
 
   let lead = leadByJid;
@@ -286,6 +289,7 @@ export async function buildLeadConversationMemory(params: {
     summary,
     recentMessages,
     knowledgeSnippets,
+    outboundMediaLines,
     aiMessages,
     condensedContext,
     recognitionHint,

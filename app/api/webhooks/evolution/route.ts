@@ -11,6 +11,8 @@ import {
   type EvolutionInboundMessage,
 } from "@/lib/integrations/evolution-webhook-parse";
 import { evolutionSendAudio, evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
+import { stripOutboundMediaDirectives } from "@/lib/server/agent-media-files";
+import { sendAgentOutboundMediaViaEvolution } from "@/lib/server/send-agent-outbound-media-evolution";
 import { resolveEvolutionAgentId } from "@/lib/server/evolution-agent-resolve";
 import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 import { getEvolutionInstanceByName, updateEvolutionInstanceStateByName } from "@/lib/server/tenant-evolution-instance-db";
@@ -673,6 +675,30 @@ export async function POST(request: Request) {
             });
           }
 
+          const outboundMediaParse = stripOutboundMediaDirectives(replyText);
+          const outboundFilenames = outboundMediaParse.filenames;
+          replyText = outboundMediaParse.cleanedText.trim();
+          if (!replyText && outboundFilenames.length) {
+            replyText = "Segue o envio solicitado.";
+          }
+
+          const sendOutboundQueuedMedia =
+            outboundFilenames.length > 0
+              ? () =>
+                  sendAgentOutboundMediaViaEvolution({
+                    tenantId: row.tenant_id,
+                    agentId,
+                    instanceName,
+                    number,
+                    originalFilenames: outboundFilenames,
+                  }).catch((err) =>
+                    console.warn(
+                      "[webhooks/evolution] outbound agent media",
+                      err instanceof Error ? err.message : err,
+                    ),
+                  )
+              : null;
+
           // ── Verifica se o agente tem resposta em áudio (ElevenLabs TTS) ──────
           const sb2 = createSupabaseServiceClient();
           const { data: agentRow } = await sb2
@@ -728,6 +754,7 @@ export async function POST(request: Request) {
                   agentId,
                   conversationId: msg.remoteJid,
                 });
+                await sendOutboundQueuedMedia?.();
               }
             } catch (ttsErr) {
               console.error("[webhooks/evolution] TTS error — fallback to text", ttsErr instanceof Error ? ttsErr.message : ttsErr);
@@ -752,6 +779,7 @@ export async function POST(request: Request) {
                   agentId,
                   conversationId: msg.remoteJid,
                 });
+                await sendOutboundQueuedMedia?.();
               }
             }
           } else {
@@ -783,6 +811,7 @@ export async function POST(request: Request) {
                 agentId,
                 conversationId: msg.remoteJid,
               });
+              await sendOutboundQueuedMedia?.();
             }
           }
         } catch (e) {

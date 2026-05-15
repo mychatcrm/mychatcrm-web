@@ -1,5 +1,6 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import type { AiMessage } from "@/lib/ai/types";
+import { getAgentOutboundMediaPromptLines } from "@/lib/server/agent-media-files";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -61,6 +62,8 @@ export type AgentRuntimeContext = {
   summary: ConversationSummary | null;
   recentMessages: ConversationMessageContext[];
   knowledgeSnippets: string[];
+  /** Linhas `nome — descrição` para o bloco ARQUIVOS DISPONÍVEIS PARA ENVIO. */
+  outboundMediaLines: string[];
 };
 
 function textOrNull(value: unknown): string | null {
@@ -319,17 +322,18 @@ export async function loadAgentRuntimeContext(params: {
   remoteJid?: string | null;
 }): Promise<AgentRuntimeContext> {
   if (!params.remoteJid) {
-    return { state: null, lead: null, summary: null, recentMessages: [], knowledgeSnippets: [] };
+    return { state: null, lead: null, summary: null, recentMessages: [], knowledgeSnippets: [], outboundMediaLines: [] };
   }
   const sb = createSupabaseServiceClient();
-  const [state, lead, summary, recentMessages, knowledgeSnippets] = await Promise.all([
+  const [state, lead, summary, recentMessages, knowledgeSnippets, outboundMediaLines] = await Promise.all([
     getConversationState({ sb, tenantId: params.tenantId, remoteJid: params.remoteJid }),
     findLeadForConversation({ sb, tenantId: params.tenantId, remoteJid: params.remoteJid }),
     getLatestConversationSummary({ sb, tenantId: params.tenantId, remoteJid: params.remoteJid }),
     getRecentConversationMessages({ sb, tenantId: params.tenantId, remoteJid: params.remoteJid }),
     getAgentKnowledgeSnippets({ sb, tenantId: params.tenantId, agentId: params.agentId }),
+    getAgentOutboundMediaPromptLines({ sb, tenantId: params.tenantId, agentId: params.agentId }),
   ]);
-  return { state, lead, summary, recentMessages, knowledgeSnippets };
+  return { state, lead, summary, recentMessages, knowledgeSnippets, outboundMediaLines };
 }
 
 export function conversationMessagesToAi(messages: ConversationMessageContext[]): AiMessage[] {

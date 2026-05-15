@@ -82,6 +82,7 @@ export async function POST(
       objective: Boolean(agent.promptObjetivo || agent.objetivo),
       rules: Boolean(agent.promptRegrasAdicionais || agent.respostasProibidas),
       materials: runtimeContext.knowledgeSnippets.length,
+      outboundMedia: runtimeContext.outboundMediaLines.length,
       history: runtimeContext.recentMessages.length,
       summary: Boolean(runtimeContext.summary),
       lead: Boolean(runtimeContext.lead),

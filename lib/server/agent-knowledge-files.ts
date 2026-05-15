@@ -12,7 +12,7 @@ import {
 } from "@/lib/integrations/r2-storage";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
-export const AGENT_KNOWLEDGE_MAX_FILES = 50;
+export const AGENT_KNOWLEDGE_MAX_FILES = 5;
 export const AGENT_KNOWLEDGE_MAX_BYTES = 1024 * 1024 * 1024;
 export const AGENT_KNOWLEDGE_MAX_EXTRACTED_CHARS = 80_000;
 const PLAIN_TEXT_MAX_BYTES = 5 * 1024 * 1024;
@@ -315,7 +315,7 @@ export async function createAgentKnowledgeUpload(params: {
   assertR2Configured();
   const valid = validateKnowledgeFileInput(params);
   const currentCount = await countAgentKnowledgeFiles(params);
-  if (currentCount >= AGENT_KNOWLEDGE_MAX_FILES) throw new Error("Limite de 50 materiais por agente atingido.");
+  if (currentCount >= AGENT_KNOWLEDGE_MAX_FILES) throw new Error("Limite de 5 materiais por agente atingido.");
 
   const now = new Date().toISOString();
   const storedFilename = `${crypto.randomUUID()}_${safeFilename(valid.filename)}`;

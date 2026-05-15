@@ -42,6 +42,7 @@ describe("buildAgentSystemPrompt", () => {
         summary: null,
         recentMessages: [],
         knowledgeSnippets: ["Material: FAQ\nTrecho extraído:\nUse o plano Pro."],
+        outboundMediaLines: [],
       },
     });
 
