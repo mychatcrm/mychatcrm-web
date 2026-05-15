@@ -9,6 +9,7 @@ export type GoogleCalendarTokenRow = {
   expires_at: string;
   email: string | null;
   updated_at?: string;
+  last_sync_at?: string | null;
 };
 
 export type AgendaEventRow = {
@@ -30,11 +31,20 @@ export type AgendaEventRow = {
   updated_at: string;
 };
 
+export async function updateGoogleCalendarLastSync(tenantId: string): Promise<void> {
+  const sb = createSupabaseServiceClient();
+  const { error } = await sb
+    .from("google_calendar_tokens")
+    .update({ last_sync_at: new Date().toISOString() })
+    .eq("tenant_id", tenantId);
+  if (error) throw error;
+}
+
 export async function getGoogleCalendarToken(tenantId: string): Promise<GoogleCalendarTokenRow | null> {
   const sb = createSupabaseServiceClient();
   const { data, error } = await sb
     .from("google_calendar_tokens")
-    .select("tenant_id, access_token, refresh_token, expires_at, email, updated_at")
+    .select("tenant_id, access_token, refresh_token, expires_at, email, updated_at, last_sync_at")
     .eq("tenant_id", tenantId)
     .maybeSingle();
   if (error) throw error;

@@ -306,21 +306,40 @@ export async function cancelGoogleCalendarEvent(tenantId: string, googleEventId:
   }
 }
 
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
 export async function syncGoogleCalendarToDatabase(tenantId: string) {
   const now = new Date();
   const timeMin = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString();
   const timeMax = new Date(now.getTime() + 180 * 24 * 60 * 60 * 1000).toISOString();
   const events = await listGoogleCalendarEvents(tenantId, timeMin, timeMax);
-  const { upsertAgendaEventFromGoogle } = await import("@/lib/server/google-calendar-db");
-  for (const ev of events) {
-    await upsertAgendaEventFromGoogle(tenantId, {
-      google_event_id: ev.id,
-      title: ev.title,
-      description: ev.description,
-      start_at: ev.startAt,
-      end_at: ev.endAt,
-      status: ev.status,
-    });
+  const { upsertAgendaEventFromGoogle, updateGoogleCalendarLastSync } = await import("@/lib/server/google-calendar-db");
+
+  // BUG S2 fix: process in parallel batches of 10 instead of sequentially
+  const BATCH_SIZE = 10;
+  const batches = chunkArray(events, BATCH_SIZE);
+  for (const batch of batches) {
+    await Promise.all(
+      batch.map((ev) =>
+        upsertAgendaEventFromGoogle(tenantId, {
+          google_event_id: ev.id,
+          title: ev.title,
+          description: ev.description,
+          start_at: ev.startAt,
+          end_at: ev.endAt,
+          status: ev.status,
+        }),
+      ),
+    );
   }
-  return { synced: events.length, lastSyncISO: new Date().toISOString() };
+
+  // BUG S1 fix: persist last_sync_at so status endpoint returns the real sync time
+  const lastSyncISO = new Date().toISOString();
+  await updateGoogleCalendarLastSync(tenantId);
+
+  return { synced: events.length, lastSyncISO };
 }

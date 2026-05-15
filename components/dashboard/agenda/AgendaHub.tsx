@@ -91,6 +91,9 @@ export function AgendaHub() {
   const [clearEventsOpen, setClearEventsOpen] = useState(false);
   const [clearing, setClearing] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
+  /** R2 fix: refs para sincronizar scroll horizontal do header com o corpo da grelha horária. */
+  const weekHeaderRef = useRef<HTMLDivElement>(null);
+  const weekBodyRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -109,6 +112,16 @@ export function AgendaHub() {
     }, 250);
     return () => window.clearTimeout(t);
   }, [searchOpen, searchQ, data.refreshEvents]);
+
+  /** R2 fix: sincronizar scrollLeft do header com o corpo quando há scroll horizontal. */
+  useEffect(() => {
+    const body = weekBodyRef.current;
+    const header = weekHeaderRef.current;
+    if (!body || !header) return;
+    const onScroll = () => { header.scrollLeft = body.scrollLeft; };
+    body.addEventListener("scroll", onScroll, { passive: true });
+    return () => body.removeEventListener("scroll", onScroll);
+  });
 
   const today = useMemo(() => {
     const t = new Date();
@@ -417,7 +430,7 @@ export function AgendaHub() {
         ) : null}
 
         {/* Main */}
-        <main className="relative min-h-0 min-w-0 flex-[1_1_0%] overflow-y-auto overflow-x-hidden" ref={gridRef}>
+        <main className="relative min-h-0 min-w-0 flex-[1_1_0%] overflow-y-auto overflow-x-auto" ref={gridRef}>
           {data.loading ? (
             <div className="flex h-48 items-center justify-center text-sm text-[#70757a]">
               <Loader2 className="mr-2 size-4 animate-spin" />
@@ -515,13 +528,22 @@ export function AgendaHub() {
               ) : null}
 
               {(view === "week" || view === "day") ? (
-                <div className={cn("w-full min-w-0", view === "week" && "overflow-x-auto")}>
+                // R2 fix: header fica FORA do overflow-x-auto para o sticky funcionar em Safari.
+                // O scroll horizontal do corpo é sincronizado com o header via ref + scroll event.
+                <div className="w-full min-w-0">
+                  {/* Header dos dias — sticky relativo ao main (overflow-y-auto), sem overflow-x */}
                   <div
-                    className="relative w-full min-w-0"
-                    style={view === "week" && timeGridMinWidth ? { minWidth: timeGridMinWidth } : undefined}
+                    ref={weekHeaderRef}
+                    className="sticky top-0 z-10 overflow-x-hidden border-b border-[#dadce0] bg-white"
                   >
-                    <div className="sticky top-0 z-10 grid min-w-0 border-b border-[#dadce0] bg-white" style={{ gridTemplateColumns: timeGridTemplate }}>
-                      <div className="min-w-0" />
+                    <div
+                      className="grid"
+                      style={{
+                        gridTemplateColumns: timeGridTemplate,
+                        minWidth: timeGridMinWidth,
+                      }}
+                    >
+                      <div />
                       {timeGridDays.map((d) => (
                         <div
                           key={d.toISOString()}
@@ -530,87 +552,100 @@ export function AgendaHub() {
                             view === "day" ? "min-w-0" : "min-w-[100px]",
                           )}
                         >
-                        <div className="truncate uppercase text-[#70757a]">{WEEKDAYS_SHORT[d.getDay()]}</div>
-                        <div className={cn("mx-auto mt-1 flex size-8 items-center justify-center rounded-full text-base sm:size-9 sm:text-lg", sameDay(d, today) && "bg-[#f24400] font-bold text-white")}>
-                          {d.getDate()}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="relative grid w-full min-w-0" style={{ gridTemplateColumns: timeGridTemplate }}>
-                    <div>
-                      {Array.from({ length: GRID_HOURS }, (_, h) => (
-                        <div key={h} className="relative border-b border-[#dadce0] pr-2 text-right text-[10px] text-[#70757a]" style={{ height: HOUR_HEIGHT_PX }}>
-                          <span className="absolute -top-2 right-2">{h === 0 ? "" : `${h}:00`}</span>
+                          <div className="truncate uppercase text-[#70757a]">{WEEKDAYS_SHORT[d.getDay()]}</div>
+                          <div className={cn("mx-auto mt-1 flex size-8 items-center justify-center rounded-full text-base sm:size-9 sm:text-lg", sameDay(d, today) && "bg-[#f24400] font-bold text-white")}>
+                            {d.getDate()}
+                          </div>
                         </div>
                       ))}
                     </div>
-                    {timeGridDays.map((day) => {
-                      const positioned = layoutTimedEvents(data.events, day, HOUR_HEIGHT_PX);
-                      return (
-                        <div
-                          key={day.toISOString()}
-                          className="relative border-l border-[#dadce0]"
-                          style={{ height: GRID_HOURS * HOUR_HEIGHT_PX }}
-                          onClick={(e) => {
-                            const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-                            const y = e.clientY - rect.top;
-                            const totalMin = (y / HOUR_HEIGHT_PX) * 60;
-                            const hour = Math.floor(totalMin / 60);
-                            const minute = Math.floor((totalMin % 60) / 15) * 15;
-                            const start = new Date(day);
-                            start.setHours(hour, minute, 0, 0);
-                            const end = new Date(start.getTime() + 60 * 60 * 1000);
-                            setQuick({ x: e.clientX, y: e.clientY, start, end });
-                            setQuickTitle("");
-                          }}
-                        >
-                          {sameDay(day, today) ? (
-                            <div className="pointer-events-none absolute left-0 right-0 z-20 border-t-2 border-[#ea4335]" style={{ top: nowLineTop }}>
-                              <span className="absolute -left-1 -top-1.5 size-2.5 rounded-full bg-[#ea4335]" />
-                            </div>
-                          ) : null}
-                          {Array.from({ length: GRID_HOURS }, (_, h) => (
-                            <div key={h} className="border-b border-[#f1f3f4]" style={{ height: HOUR_HEIGHT_PX }} />
-                          ))}
-                          {positioned.map((ev) => (
-                            <div
-                              key={ev.id}
-                              data-event-id={ev.id}
-                              draggable
-                              onDragStart={() => setDraggingId(ev.id)}
-                              onDragEnd={(e) => {
-                                const col = (e.currentTarget.parentElement as HTMLDivElement);
-                                const rect = col.getBoundingClientRect();
-                                const y = e.clientY - rect.top;
-                                const totalMin = Math.max(0, (y / HOUR_HEIGHT_PX) * 60);
-                                const hour = Math.min(23, Math.floor(totalMin / 60));
-                                const minute = Math.floor((totalMin % 60) / 15) * 15;
-                                void onDragEnd(ev, day, hour, minute);
-                              }}
-                              onClick={(e) => { e.stopPropagation(); setDetail({ event: ev, x: e.clientX, y: e.clientY }); }}
-                              className={cn(
-                                "absolute z-10 cursor-pointer overflow-hidden rounded border border-white/30 px-1 py-0.5 text-[11px] font-medium text-white shadow-sm",
-                                draggingId === ev.id && "opacity-70",
-                              )}
-                              style={{
-                                top: ev.topPx,
-                                height: Math.max(ev.heightPx, 18),
-                                left: `calc(${(ev.col / ev.colCount) * 100}% + 2px)`,
-                                width: `calc(${100 / ev.colCount}% - 4px)`,
-                                backgroundColor: eventColor(ev),
-                              }}
-                            >
-                              <span className="block truncate font-semibold">{ev.title}</span>
-                              <span className="block truncate text-[10px] opacity-90">
-                                {new Date(ev.startISO).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })}
                   </div>
+
+                  {/* Corpo horário — scrollável horizontalmente; scroll sincronizado com header via JS */}
+                  <div
+                    ref={weekBodyRef}
+                    className={cn("w-full min-w-0", view === "week" && "overflow-x-auto")}
+                  >
+                    <div
+                      className="relative grid w-full"
+                      style={{
+                        gridTemplateColumns: timeGridTemplate,
+                        minWidth: timeGridMinWidth,
+                      }}
+                    >
+                      <div>
+                        {Array.from({ length: GRID_HOURS }, (_, h) => (
+                          <div key={h} className="relative border-b border-[#dadce0] pr-2 text-right text-[10px] text-[#70757a]" style={{ height: HOUR_HEIGHT_PX }}>
+                            <span className="absolute -top-2 right-2">{h === 0 ? "" : `${h}:00`}</span>
+                          </div>
+                        ))}
+                      </div>
+                      {timeGridDays.map((day) => {
+                        const positioned = layoutTimedEvents(data.events, day, HOUR_HEIGHT_PX);
+                        return (
+                          <div
+                            key={day.toISOString()}
+                            className="relative border-l border-[#dadce0]"
+                            style={{ height: GRID_HOURS * HOUR_HEIGHT_PX }}
+                            onClick={(e) => {
+                              const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                              const y = e.clientY - rect.top;
+                              const totalMin = (y / HOUR_HEIGHT_PX) * 60;
+                              const hour = Math.floor(totalMin / 60);
+                              const minute = Math.floor((totalMin % 60) / 15) * 15;
+                              const start = new Date(day);
+                              start.setHours(hour, minute, 0, 0);
+                              const end = new Date(start.getTime() + 60 * 60 * 1000);
+                              setQuick({ x: e.clientX, y: e.clientY, start, end });
+                              setQuickTitle("");
+                            }}
+                          >
+                            {sameDay(day, today) ? (
+                              <div className="pointer-events-none absolute left-0 right-0 z-20 border-t-2 border-[#ea4335]" style={{ top: nowLineTop }}>
+                                <span className="absolute -left-1 -top-1.5 size-2.5 rounded-full bg-[#ea4335]" />
+                              </div>
+                            ) : null}
+                            {Array.from({ length: GRID_HOURS }, (_, h) => (
+                              <div key={h} className="border-b border-[#f1f3f4]" style={{ height: HOUR_HEIGHT_PX }} />
+                            ))}
+                            {positioned.map((ev) => (
+                              <div
+                                key={ev.id}
+                                data-event-id={ev.id}
+                                draggable
+                                onDragStart={() => setDraggingId(ev.id)}
+                                onDragEnd={(e) => {
+                                  const col = (e.currentTarget.parentElement as HTMLDivElement);
+                                  const rect = col.getBoundingClientRect();
+                                  const y = e.clientY - rect.top;
+                                  const totalMin = Math.max(0, (y / HOUR_HEIGHT_PX) * 60);
+                                  const hour = Math.min(23, Math.floor(totalMin / 60));
+                                  const minute = Math.floor((totalMin % 60) / 15) * 15;
+                                  void onDragEnd(ev, day, hour, minute);
+                                }}
+                                onClick={(e) => { e.stopPropagation(); setDetail({ event: ev, x: e.clientX, y: e.clientY }); }}
+                                className={cn(
+                                  "absolute z-10 cursor-pointer overflow-hidden rounded border border-white/30 px-1 py-0.5 text-[11px] font-medium text-white shadow-sm",
+                                  draggingId === ev.id && "opacity-70",
+                                )}
+                                style={{
+                                  top: ev.topPx,
+                                  height: Math.max(ev.heightPx, 18),
+                                  left: `calc(${(ev.col / ev.colCount) * 100}% + 2px)`,
+                                  width: `calc(${100 / ev.colCount}% - 4px)`,
+                                  backgroundColor: eventColor(ev),
+                                }}
+                              >
+                                <span className="block truncate font-semibold">{ev.title}</span>
+                                <span className="block truncate text-[10px] opacity-90">
+                                  {new Date(ev.startISO).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               ) : null}

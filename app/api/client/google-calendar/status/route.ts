@@ -17,7 +17,8 @@ export async function GET() {
     configured: isGoogleCalendarConfigured(),
     connected: Boolean(row),
     email: row?.email ?? null,
-    lastSyncISO: row?.updated_at ?? null,
+    // BUG S1 fix: use last_sync_at (real sync time) instead of updated_at (token refresh time)
+    lastSyncISO: row?.last_sync_at ?? null,
   });
 }
 
