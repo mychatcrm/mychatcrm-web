@@ -49,6 +49,7 @@ export async function POST(request: Request) {
     syncToGoogle?: boolean;
     meetLink?: string;
     notifyWa?: boolean;
+    allDay?: boolean;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -99,6 +100,7 @@ export async function POST(request: Request) {
     color,
     start_at: startDate.toISOString(),
     end_at: endDate.toISOString(),
+    all_day: body.allDay === true,
     attendee_name: body.attendeeName?.trim() || null,
     attendee_phone: body.attendeePhone?.trim() || null,
     attendee_email: body.attendeeEmail?.trim() || null,

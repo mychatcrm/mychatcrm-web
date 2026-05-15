@@ -1,8 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   AGENT_KNOWLEDGE_MAX_BYTES,
+  extractTextFromDocument,
   validateKnowledgeFileInput,
 } from "@/lib/server/agent-knowledge-files";
+
+vi.mock("pdf-parse", () => ({
+  PDFParse: vi.fn().mockImplementation(() => ({
+    getText: vi.fn(async () => ({ text: "  Conteúdo PDF  \n\n" })),
+    destroy: vi.fn(async () => undefined),
+  })),
+}));
+
+vi.mock("mammoth", () => ({
+  extractRawText: vi.fn(async () => ({ value: "  Texto DOCX  " })),
+}));
 
 describe("agent knowledge file validation", () => {
   it("accepts supported files under the 1GB limit", () => {
@@ -41,5 +53,26 @@ describe("agent knowledge file validation", () => {
         sizeBytes: 1024,
       }),
     ).toThrow("Tipo");
+  });
+});
+
+describe("extractTextFromDocument", () => {
+  it("extracts and normalizes PDF text", async () => {
+    const text = await extractTextFromDocument(Buffer.from("%PDF"), "application/pdf", "pdf");
+    expect(text).toBe("Conteúdo PDF");
+  });
+
+  it("extracts and normalizes DOCX text", async () => {
+    const text = await extractTextFromDocument(
+      Buffer.from("PK"),
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "docx",
+    );
+    expect(text).toBe("Texto DOCX");
+  });
+
+  it("returns null for unsupported formats", async () => {
+    const text = await extractTextFromDocument(Buffer.from("x"), "image/png", "png");
+    expect(text).toBeNull();
   });
 });

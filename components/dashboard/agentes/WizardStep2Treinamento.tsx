@@ -1,10 +1,10 @@
 "use client";
 
-import { FileText, Loader2, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, FileText, Loader2, RefreshCw, Trash2, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { PanelSelect as Select } from "@/components/panel/ui/PanelSelect";
-import type { TrainingFileFormat } from "@/lib/types";
+import type { TrainingFile, TrainingFileFormat } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import type { AgentWizardDraft } from "@/lib/agents";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
@@ -46,6 +46,47 @@ function inferTrainingFileFormat(fileName: string): TrainingFileFormat {
   return map[ext] ?? "txt";
 }
 
+type KnowledgeExtractStatus = NonNullable<import("@/lib/types").TrainingFile["extractedTextStatus"]>;
+
+function mapUploadStatus(fileStatus: string): TrainingFile["status"] {
+  if (fileStatus === "ready") return "ativo";
+  if (fileStatus === "failed") return "erro";
+  return "processando";
+}
+
+function MaterialExtractionBadge({ status }: { status: KnowledgeExtractStatus }) {
+  if (status === "ready") {
+    return (
+      <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        Conteúdo extraído
+      </span>
+    );
+  }
+  if (status === "unsupported") {
+    return (
+      <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        Formato não suportado para extração
+      </span>
+    );
+  }
+  if (status === "pending" || status === "processing") {
+    return (
+      <span className="inline-flex items-center gap-1 text-content-muted">
+        <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        Aguardando extração
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-rose-500">
+      <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      Falha na extração
+    </span>
+  );
+}
+
 export function WizardStep2Treinamento({
   draft,
   onChange,
@@ -82,6 +123,7 @@ export function WizardStep2Treinamento({
   const [materialError, setMaterialError] = useState("");
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const [loadingMaterials, setLoadingMaterials] = useState(false);
+  const [reprocessingId, setReprocessingId] = useState<string | null>(null);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -95,7 +137,13 @@ export function WizardStep2Treinamento({
         cache: "no-store",
       });
       const data = (await response.json().catch(() => ({}))) as {
-        files?: Array<{ id: string; originalFilename: string; sizeBytes: number; status: string }>;
+        files?: Array<{
+          id: string;
+          originalFilename: string;
+          sizeBytes: number;
+          status: string;
+          extractedTextStatus: KnowledgeExtractStatus;
+        }>;
         error?: string;
       };
       if (!response.ok) throw new Error(data.error || "Erro ao carregar materiais.");
@@ -107,7 +155,8 @@ export function WizardStep2Treinamento({
           id: file.id,
           nome: file.originalFilename,
           tipo: inferTrainingFileFormat(file.originalFilename),
-          status: file.status === "ready" ? "ativo" : file.status === "failed" ? "erro" : "processando",
+          status: mapUploadStatus(file.status),
+          extractedTextStatus: file.extractedTextStatus,
           tamanhoKb: Math.max(1, Math.round(file.sizeBytes / 1024)),
         })),
       });
@@ -204,6 +253,28 @@ export function WizardStep2Treinamento({
       await syncServerFiles();
     },
     [agentId, draft, syncServerFiles, uploadToSignedUrl],
+  );
+
+  const reprocessMaterial = useCallback(
+    async (fileId: string) => {
+      if (!agentId) return;
+      setMaterialError("");
+      setReprocessingId(fileId);
+      try {
+        const response = await fetch(
+          `/api/client/agentes/${encodeURIComponent(agentId)}/knowledge-files/${encodeURIComponent(fileId)}/reprocess`,
+          { method: "POST" },
+        );
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        if (!response.ok) throw new Error(data.error || "Erro ao reprocessar material.");
+        await syncServerFiles();
+      } catch (error) {
+        setMaterialError(error instanceof Error ? error.message : "Erro ao reprocessar material.");
+      } finally {
+        setReprocessingId(null);
+      }
+    },
+    [agentId, syncServerFiles],
   );
 
   const removeMaterial = useCallback(
@@ -475,25 +546,46 @@ export function WizardStep2Treinamento({
             {draft.arquivosTreinamento.map((file) => (
               <li
                 key={file.id}
-                className="flex items-center justify-between gap-2 rounded-xl border border-line bg-surface-elevated/35 px-3 py-2 text-xs"
+                className="flex flex-col gap-1.5 rounded-xl border border-line bg-surface-elevated/35 px-3 py-2 text-xs"
               >
-                <span className="flex min-w-0 items-center gap-2">
-                  <FileText className="h-4 w-4 shrink-0 text-content-faint" aria-hidden />
-                  <span className="min-w-0 truncate text-content-secondary">{file.nome}</span>
-                </span>
-                <span className="flex shrink-0 items-center gap-2">
-                  <span className="capitalize text-content-faint">{file.status}</span>
-                  {agentId ? (
-                    <button
-                      type="button"
-                      onClick={() => void removeMaterial(file.id)}
-                      className="rounded-lg p-1.5 text-content-faint transition hover:bg-rose-500/10 hover:text-rose-300"
-                      aria-label={`Remover ${file.nome}`}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                    </button>
-                  ) : null}
-                </span>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <FileText className="h-4 w-4 shrink-0 text-content-faint" aria-hidden />
+                    <span className="min-w-0 truncate text-content-secondary">{file.nome}</span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-1">
+                    {agentId &&
+                    (file.extractedTextStatus === "unsupported" || file.extractedTextStatus === "failed") ? (
+                      <button
+                        type="button"
+                        disabled={reprocessingId === file.id}
+                        onClick={() => void reprocessMaterial(file.id)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-[10px] font-medium text-content-secondary transition hover:bg-surface-card disabled:opacity-50"
+                        aria-label={`Reprocessar ${file.nome}`}
+                      >
+                        {reprocessingId === file.id ? (
+                          <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                        ) : (
+                          <RefreshCw className="h-3 w-3" aria-hidden />
+                        )}
+                        Reprocessar
+                      </button>
+                    ) : null}
+                    {agentId ? (
+                      <button
+                        type="button"
+                        onClick={() => void removeMaterial(file.id)}
+                        className="rounded-lg p-1.5 text-content-faint transition hover:bg-rose-500/10 hover:text-rose-300"
+                        aria-label={`Remover ${file.nome}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                      </button>
+                    ) : null}
+                  </span>
+                </div>
+                {file.extractedTextStatus ? (
+                  <MaterialExtractionBadge status={file.extractedTextStatus} />
+                ) : null}
               </li>
             ))}
           </ul>

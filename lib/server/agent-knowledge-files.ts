@@ -1,3 +1,5 @@
+import "server-only";
+
 import crypto from "crypto";
 import {
   assertR2Configured,
@@ -11,6 +13,8 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const AGENT_KNOWLEDGE_MAX_FILES = 50;
 export const AGENT_KNOWLEDGE_MAX_BYTES = 1024 * 1024 * 1024;
+export const AGENT_KNOWLEDGE_MAX_EXTRACTED_CHARS = 80_000;
+const PLAIN_TEXT_MAX_BYTES = 5 * 1024 * 1024;
 
 export const AGENT_KNOWLEDGE_ALLOWED_EXTENSIONS = new Set([
   "pdf",
@@ -49,6 +53,9 @@ export const AGENT_KNOWLEDGE_ALLOWED_MIME = new Set([
   "image/bmp",
 ]);
 
+const PLAIN_TEXT_EXTENSIONS = new Set(["xml", "md", "markdown", "html", "htm", "csv", "txt"]);
+const DOCUMENT_EXTENSIONS = new Set(["pdf", "docx"]);
+
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
 export type AgentKnowledgeFile = {
@@ -68,11 +75,17 @@ export type AgentKnowledgeFile = {
   updatedAt: string;
 };
 
+type KnowledgeExtractionResult = {
+  extractedText: string | null;
+  extractedTextStatus: AgentKnowledgeFile["extractedTextStatus"];
+  errorMessage: string | null;
+};
+
 function cleanAgentId(agentId: string): string {
   return agentId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 96);
 }
 
-function filenameExt(filename: string): string {
+export function filenameExt(filename: string): string {
   const clean = filename.trim().toLowerCase();
   const dot = clean.lastIndexOf(".");
   return dot >= 0 ? clean.slice(dot + 1) : "";
@@ -81,6 +94,10 @@ function filenameExt(filename: string): string {
 function safeFilename(filename: string): string {
   const clean = filename.trim().replace(/[/\\]/g, "_").replace(/[^a-zA-Z0-9._ -]/g, "_").replace(/\s+/g, "_");
   return clean.slice(0, 160) || "arquivo";
+}
+
+function normalizeExtractedText(text: string): string {
+  return text.replace(/\u0000/g, "").trim().slice(0, AGENT_KNOWLEDGE_MAX_EXTRACTED_CHARS);
 }
 
 function toRow(row: Record<string, unknown>): AgentKnowledgeFile {
@@ -117,6 +134,144 @@ export function validateKnowledgeFileInput(params: {
   if (!AGENT_KNOWLEDGE_ALLOWED_EXTENSIONS.has(ext)) throw new Error("Extensão de arquivo não permitida.");
   if (!AGENT_KNOWLEDGE_ALLOWED_MIME.has(mimeType)) throw new Error("Tipo de arquivo não permitido.");
   return { filename: params.filename.trim(), mimeType, sizeBytes, ext };
+}
+
+function isPlainTextCandidate(mimeType: string, ext: string): boolean {
+  return mimeType.startsWith("text/") || PLAIN_TEXT_EXTENSIONS.has(ext);
+}
+
+function isDocumentCandidate(mimeType: string, ext: string): boolean {
+  return (
+    DOCUMENT_EXTENSIONS.has(ext) ||
+    mimeType === "application/pdf" ||
+    mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  );
+}
+
+/** Indica formatos para os quais há pipeline de extração (texto plano, PDF ou DOCX). */
+export function extractSmallTextCandidate(mimeType: string, storageKey: string): boolean {
+  const ext = filenameExt(storageKey);
+  return isPlainTextCandidate(mimeType, ext) || isDocumentCandidate(mimeType, ext);
+}
+
+/** Extrai texto de PDF/DOCX; outros binários retornam null. */
+export async function extractTextFromDocument(
+  buffer: Buffer,
+  mimeType: string,
+  ext: string,
+): Promise<string | null> {
+  const normalizedMime = mimeType.split(";")[0]!.trim().toLowerCase();
+  const normalizedExt = ext.toLowerCase();
+
+  try {
+    if (normalizedMime === "application/pdf" || normalizedExt === "pdf") {
+      const { PDFParse } = await import("pdf-parse");
+      const parser = new PDFParse({ data: buffer });
+      try {
+        const parsed = await parser.getText();
+        const text = typeof parsed.text === "string" ? parsed.text : "";
+        const normalized = normalizeExtractedText(text);
+        return normalized || null;
+      } finally {
+        await parser.destroy().catch(() => undefined);
+      }
+    }
+
+    if (
+      normalizedMime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+      normalizedExt === "docx"
+    ) {
+      const mammoth = await import("mammoth");
+      const result = await mammoth.extractRawText({ buffer });
+      const normalized = normalizeExtractedText(result.value ?? "");
+      return normalized || null;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+async function extractPlainTextFromBuffer(buffer: Buffer): Promise<string | null> {
+  const normalized = normalizeExtractedText(buffer.toString("utf8"));
+  return normalized || null;
+}
+
+async function extractKnowledgeFromStorage(
+  storageKey: string,
+  mimeType: string,
+  sizeBytes: number,
+): Promise<KnowledgeExtractionResult> {
+  const ext = filenameExt(storageKey);
+  const buffer = await getMediaBufferFromR2(storageKey).catch(() => null);
+  if (!buffer) {
+    return {
+      extractedText: null,
+      extractedTextStatus: "failed",
+      errorMessage: "Não foi possível ler o arquivo no storage.",
+    };
+  }
+
+  if (isDocumentCandidate(mimeType, ext)) {
+    const extractedText = await extractTextFromDocument(buffer, mimeType, ext);
+    if (extractedText) {
+      return { extractedText, extractedTextStatus: "ready", errorMessage: null };
+    }
+    return {
+      extractedText: null,
+      extractedTextStatus: "failed",
+      errorMessage: "Falha ao extrair texto do documento.",
+    };
+  }
+
+  if (isPlainTextCandidate(mimeType, ext)) {
+    if (sizeBytes > PLAIN_TEXT_MAX_BYTES) {
+      return { extractedText: null, extractedTextStatus: "pending", errorMessage: null };
+    }
+    const extractedText = await extractPlainTextFromBuffer(buffer);
+    if (extractedText) {
+      return { extractedText, extractedTextStatus: "ready", errorMessage: null };
+    }
+    return {
+      extractedText: null,
+      extractedTextStatus: "failed",
+      errorMessage: "Arquivo de texto vazio ou ilegível.",
+    };
+  }
+
+  return { extractedText: null, extractedTextStatus: "unsupported", errorMessage: null };
+}
+
+async function applyKnowledgeExtractionToRow(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  agentId: string;
+  fileId: string;
+  storageKey: string;
+  mimeType: string;
+  sizeBytes: number;
+}): Promise<AgentKnowledgeFile> {
+  const extraction = await extractKnowledgeFromStorage(params.storageKey, params.mimeType, params.sizeBytes);
+
+  const { data, error } = await params.sb
+    .from("agent_knowledge_files")
+    .update({
+      status: "ready",
+      extracted_text_status: extraction.extractedTextStatus,
+      extracted_text: extraction.extractedText,
+      error_message: extraction.errorMessage,
+      size_bytes: params.sizeBytes,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", params.agentId)
+    .eq("id", params.fileId)
+    .select("*")
+    .single();
+
+  if (error) throw new Error("Erro ao atualizar material.");
+  return toRow(data as Record<string, unknown>);
 }
 
 export async function countAgentKnowledgeFiles(params: {
@@ -180,21 +335,6 @@ export async function createAgentKnowledgeUpload(params: {
   return { file: toRow(data as Record<string, unknown>), uploadUrl, expiresInSeconds };
 }
 
-function extractSmallTextCandidate(mimeType: string, storageKey: string): boolean {
-  const ext = filenameExt(storageKey);
-  return (
-    mimeType.startsWith("text/") ||
-    ["xml", "md", "markdown", "html", "htm", "csv", "txt"].includes(ext)
-  );
-}
-
-async function extractSmallTextFromR2(storageKey: string, sizeBytes: number): Promise<string | null> {
-  if (sizeBytes > 5 * 1024 * 1024) return null;
-  const buffer = await getMediaBufferFromR2(storageKey).catch(() => null);
-  if (!buffer) return null;
-  return buffer.toString("utf8").replace(/\u0000/g, "").slice(0, 80_000);
-}
-
 export async function completeAgentKnowledgeUpload(params: {
   sb: SupabaseServiceClient;
   tenantId: string;
@@ -218,27 +358,65 @@ export async function completeAgentKnowledgeUpload(params: {
   }
 
   const mimeType = String(row.mime_type ?? head.contentType ?? "application/octet-stream");
-  const canExtractLater = extractSmallTextCandidate(mimeType, storageKey);
-  const extractedText = canExtractLater
-    ? await extractSmallTextFromR2(storageKey, head.sizeBytes || Number(row.size_bytes ?? 0))
-    : null;
-  const { data, error } = await params.sb
+  const sizeBytes = head.sizeBytes || Number(row.size_bytes ?? 0);
+
+  return applyKnowledgeExtractionToRow({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    agentId: params.agentId,
+    fileId: params.fileId,
+    storageKey,
+    mimeType,
+    sizeBytes,
+  });
+}
+
+export async function reprocessAgentKnowledgeFile(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  agentId: string;
+  fileId: string;
+}): Promise<AgentKnowledgeFile> {
+  const { data: current, error: currentError } = await params.sb
+    .from("agent_knowledge_files")
+    .select("*")
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", params.agentId)
+    .eq("id", params.fileId)
+    .single();
+  if (currentError || !current) throw new Error("Material não encontrado.");
+
+  const row = current as Record<string, unknown>;
+  const storageKey = String(row.storage_key ?? "");
+  const head = await headR2Object(storageKey);
+  if (!head) {
+    throw new Error("Arquivo não encontrado no R2.");
+  }
+
+  const mimeType = String(row.mime_type ?? head.contentType ?? "application/octet-stream");
+  const sizeBytes = head.sizeBytes || Number(row.size_bytes ?? 0);
+
+  await params.sb
     .from("agent_knowledge_files")
     .update({
-      status: "ready",
-      extracted_text_status: extractedText ? "ready" : canExtractLater ? "pending" : "unsupported",
-      extracted_text: extractedText,
-      size_bytes: head.sizeBytes || Number(row.size_bytes ?? 0),
+      status: "processing",
+      extracted_text_status: "processing",
+      error_message: null,
       updated_at: new Date().toISOString(),
     })
     .eq("tenant_id", params.tenantId)
     .eq("agent_id", params.agentId)
-    .eq("id", params.fileId)
-    .select("*")
-    .single();
+    .eq("id", params.fileId);
 
-  if (error) throw new Error("Erro ao concluir upload do material.");
-  return toRow(data as Record<string, unknown>);
+  return applyKnowledgeExtractionToRow({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    agentId: params.agentId,
+    fileId: params.fileId,
+    storageKey,
+    mimeType,
+    sizeBytes,
+  });
 }
 
 export async function listAgentKnowledgeFiles(params: {

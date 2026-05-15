@@ -114,6 +114,8 @@ export interface TrainingFile {
   tipo: TrainingFileFormat;
   status: "processando" | "ativo" | "erro";
   tamanhoKb: number;
+  /** Estado da extração de texto para o agente (materiais no R2). */
+  extractedTextStatus?: "pending" | "processing" | "ready" | "failed" | "unsupported";
 }
 
 export interface KeywordRule {
