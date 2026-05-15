@@ -12,6 +12,7 @@ import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 
 const MAX_MATERIAL_BYTES = 1024 * 1024 * 1024;
 const MAX_MATERIAL_FILES = 50;
+const R2_PUT_TIMEOUT_MS = 30_000;
 
 const ACCEPT_EXTENSIONS =
   ".pdf,.docx,.xlsx,.pptx,.xml,.md,.markdown,.html,.htm,.csv,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.txt";
@@ -174,23 +175,112 @@ export function WizardStep2Treinamento({
   const uploadToSignedUrl = useCallback((file: File, uploadUrl: string): Promise<void> => {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
+      let settled = false;
+
+      const settle = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        fn();
+      };
+
+      const timeoutId = window.setTimeout(() => {
+        settle(() => {
+          reject(
+            new Error(
+              "O envio do arquivo excedeu 30 segundos. Tente um arquivo menor ou verifique sua conexão.",
+            ),
+          );
+        });
+        xhr.abort();
+      }, R2_PUT_TIMEOUT_MS);
+
+      const clearTimer = () => window.clearTimeout(timeoutId);
+
       xhr.open("PUT", uploadUrl);
+      xhr.timeout = R2_PUT_TIMEOUT_MS;
       xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+
       xhr.upload.onprogress = (event) => {
         if (!event.lengthComputable) return;
         setUploadProgress((current) => ({
           ...current,
-          [file.name]: Math.round((event.loaded / event.total) * 100),
+          [file.name]: Math.max(1, Math.round((event.loaded / event.total) * 99)),
         }));
       };
+
       xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) resolve();
-        else reject(new Error("Falha no upload para o R2."));
+        clearTimer();
+        settle(() => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+            return;
+          }
+          if (xhr.status === 0) {
+            reject(
+              new Error(
+                "Não foi possível enviar o arquivo para o armazenamento (rede ou CORS). O upload não foi concluído — a extração não será iniciada.",
+              ),
+            );
+            return;
+          }
+          reject(new Error(`Falha no upload para o armazenamento (HTTP ${xhr.status}).`));
+        });
       };
-      xhr.onerror = () => reject(new Error("Falha de rede no upload para o R2."));
-      xhr.send(file);
+
+      xhr.onerror = () => {
+        clearTimer();
+        settle(() => {
+          reject(
+            new Error(
+              "Falha de rede ou CORS ao enviar o arquivo. Verifique sua conexão e se o bucket R2 permite upload a partir deste site.",
+            ),
+          );
+        });
+      };
+
+      xhr.ontimeout = () => {
+        clearTimer();
+        settle(() => {
+          reject(
+            new Error(
+              "O envio do arquivo excedeu 30 segundos. Tente um arquivo menor ou verifique sua conexão.",
+            ),
+          );
+        });
+      };
+
+      xhr.onabort = () => {
+        clearTimer();
+        settle(() => {
+          reject(new Error("Upload interrompido (timeout ou cancelamento). O arquivo não foi enviado por completo."));
+        });
+      };
+
+      try {
+        xhr.send(file);
+      } catch (sendError) {
+        clearTimer();
+        console.error("[WizardStep2Treinamento] xhr.send failed", { fileName: file.name, sendError });
+        settle(() => {
+          reject(new Error("Não foi possível iniciar o envio do arquivo para o armazenamento."));
+        });
+      }
     });
   }, []);
+
+  const completeKnowledgeUpload = useCallback(
+    async (knowledgeFileId: string) => {
+      const completeResponse = await fetch(
+        `/api/client/agentes/${encodeURIComponent(agentId!)}/knowledge-files/${encodeURIComponent(knowledgeFileId)}`,
+        { method: "POST" },
+      );
+      const completeData = (await completeResponse.json().catch(() => ({}))) as { error?: string };
+      if (!completeResponse.ok) {
+        throw new Error(completeData.error || "Erro ao concluir upload e extrair conteúdo.");
+      }
+    },
+    [agentId],
+  );
 
   const ingestFiles = useCallback(
     async (fileList: FileList | File[] | null) => {
@@ -212,9 +302,14 @@ export function WizardStep2Treinamento({
         setMaterialError("");
       }
       if (!ok.length) return;
+
       for (const file of ok) {
+        let knowledgeFileId: string | null = null;
+        let r2UploadSucceeded = false;
+
         try {
           setUploadProgress((current) => ({ ...current, [file.name]: 1 }));
+
           const startResponse = await fetch(`/api/client/agentes/${encodeURIComponent(agentId)}/knowledge-files`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -229,19 +324,36 @@ export function WizardStep2Treinamento({
             uploadUrl?: string;
             error?: string;
           };
-          if (!startResponse.ok || !startData.file || !startData.uploadUrl) {
+
+          if (!startResponse.ok || !startData.file?.id || !startData.uploadUrl) {
+            console.error("[WizardStep2Treinamento] knowledge upload start failed", {
+              fileName: file.name,
+              status: startResponse.status,
+              startData,
+            });
             throw new Error(startData.error || "Erro ao iniciar upload.");
           }
+
+          knowledgeFileId = startData.file.id;
+
           await uploadToSignedUrl(file, startData.uploadUrl);
+          r2UploadSucceeded = true;
           setUploadProgress((current) => ({ ...current, [file.name]: 100 }));
-          const completeResponse = await fetch(
-            `/api/client/agentes/${encodeURIComponent(agentId)}/knowledge-files/${encodeURIComponent(startData.file.id)}`,
-            { method: "POST" },
-          );
-          const completeData = (await completeResponse.json().catch(() => ({}))) as { error?: string };
-          if (!completeResponse.ok) throw new Error(completeData.error || "Erro ao concluir upload.");
+
+          await completeKnowledgeUpload(knowledgeFileId);
         } catch (error) {
-          setMaterialError(error instanceof Error ? error.message : "Erro ao enviar material.");
+          const message = error instanceof Error ? error.message : "Erro ao enviar material.";
+          console.error("[WizardStep2Treinamento] knowledge upload failed", {
+            fileName: file.name,
+            knowledgeFileId,
+            r2UploadSucceeded,
+            error,
+          });
+          setMaterialError(
+            r2UploadSucceeded && knowledgeFileId
+              ? `${message} O arquivo foi enviado, mas a extração não foi concluída — tente «Reprocessar» na lista.`
+              : message,
+          );
         } finally {
           setUploadProgress((current) => {
             const next = { ...current };
@@ -250,9 +362,10 @@ export function WizardStep2Treinamento({
           });
         }
       }
+
       await syncServerFiles();
     },
-    [agentId, draft, syncServerFiles, uploadToSignedUrl],
+    [agentId, completeKnowledgeUpload, draft.arquivosTreinamento.length, syncServerFiles, uploadToSignedUrl],
   );
 
   const reprocessMaterial = useCallback(
