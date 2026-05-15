@@ -6,10 +6,7 @@ import {
 } from "@/lib/server/agent-knowledge-files";
 
 vi.mock("pdf-parse", () => ({
-  PDFParse: vi.fn().mockImplementation(() => ({
-    getText: vi.fn(async () => ({ text: "  Conteúdo PDF  \n\n" })),
-    destroy: vi.fn(async () => undefined),
-  })),
+  default: vi.fn(async () => ({ text: "  Conteúdo PDF  \n\n" })),
 }));
 
 vi.mock("mammoth", () => ({

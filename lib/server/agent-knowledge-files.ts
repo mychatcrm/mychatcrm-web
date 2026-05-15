@@ -165,16 +165,10 @@ export async function extractTextFromDocument(
 
   try {
     if (normalizedMime === "application/pdf" || normalizedExt === "pdf") {
-      const { PDFParse } = await import("pdf-parse");
-      const parser = new PDFParse({ data: buffer });
-      try {
-        const parsed = await parser.getText();
-        const text = typeof parsed.text === "string" ? parsed.text : "";
-        const normalized = normalizeExtractedText(text);
-        return normalized || null;
-      } finally {
-        await parser.destroy().catch(() => undefined);
-      }
+      const pdfParse = (await import("pdf-parse")).default;
+      const parsed = await pdfParse(buffer);
+      const normalized = normalizeExtractedText(typeof parsed.text === "string" ? parsed.text : "");
+      return normalized || null;
     }
 
     if (
@@ -186,7 +180,8 @@ export async function extractTextFromDocument(
       const normalized = normalizeExtractedText(result.value ?? "");
       return normalized || null;
     }
-  } catch {
+  } catch (err) {
+    console.error("[agent-knowledge-files] extractTextFromDocument error:", err);
     return null;
   }
 
