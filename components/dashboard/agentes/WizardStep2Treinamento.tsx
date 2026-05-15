@@ -129,6 +129,23 @@ export function WizardStep2Treinamento({
 
   const canAddMaterials = draft.arquivosTreinamento.length < MAX_MATERIAL_FILES && Boolean(agentId);
 
+  const materialMetrics = useMemo(() => {
+    const files = draft.arquivosTreinamento;
+    const activeCount = files.length;
+    const totalBytes = files.reduce((sum, f) => {
+      const raw =
+        typeof f.sizeBytes === "number" && Number.isFinite(f.sizeBytes) && f.sizeBytes > 0 ? f.sizeBytes : f.tamanhoKb * 1024;
+      return sum + Math.max(0, raw);
+    }, 0);
+    return {
+      activeCount,
+      totalBytes,
+      fileBarPct: Math.min(100, (activeCount / MAX_MATERIAL_FILES) * 100),
+      byteBarPct: Math.min(100, (totalBytes / MAX_MATERIAL_BYTES) * 100),
+      totalKbRounded: Math.round(Math.max(0, totalBytes) / 1024),
+    };
+  }, [draft.arquivosTreinamento]);
+
   useEffect(() => {
     draftRef.current = draft;
   }, [draft]);
@@ -162,6 +179,7 @@ export function WizardStep2Treinamento({
           status: mapUploadStatus(file.status),
           extractedTextStatus: file.extractedTextStatus,
           tamanhoKb: Math.max(1, Math.round(file.sizeBytes / 1024)),
+          sizeBytes: file.sizeBytes,
         })),
       });
     } catch (error) {
@@ -522,6 +540,37 @@ export function WizardStep2Treinamento({
           </p>
         </button>
 
+        <div className="mt-4 space-y-2 rounded-xl border border-line bg-surface-elevated/20 px-3 py-3 text-xs">
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-content-secondary">Ficheiros</span>
+              <span className="tabular-nums text-content-faint">
+                {materialMetrics.activeCount} / {MAX_MATERIAL_FILES}
+              </span>
+            </div>
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-line">
+              <div
+                className="h-full rounded-full bg-emerald-500/80 transition-[width]"
+                style={{ width: `${materialMetrics.fileBarPct}%` }}
+              />
+            </div>
+          </div>
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-content-secondary">Armazenamento</span>
+              <span className="tabular-nums text-content-faint">
+                {materialMetrics.totalKbRounded.toLocaleString("pt-BR")} KB / 1 GB
+              </span>
+            </div>
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-line">
+              <div
+                className="h-full rounded-full bg-emerald-500/50 transition-[width]"
+                style={{ width: `${materialMetrics.byteBarPct}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
         {!agentId ? (
           <p className="mt-2 text-xs text-content-faint">
             Para novos agentes, salve primeiro e reabra a edição para enviar materiais grandes com segurança.
@@ -600,25 +649,6 @@ export function WizardStep2Treinamento({
             ))}
           </ul>
         ) : null}
-
-        <div className="mt-4 space-y-2 rounded-xl border border-line bg-surface-elevated/20 px-3 py-3 text-xs">
-          <div>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-content-secondary">Quantidade de arquivos</span>
-              <span className="tabular-nums text-content-faint">
-                {draft.arquivosTreinamento.length} arquivos / {MAX_MATERIAL_FILES}
-              </span>
-            </div>
-            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-line">
-              <div
-                className="h-full rounded-full bg-emerald-500/80 transition-[width]"
-                style={{
-                  width: `${Math.min(100, (draft.arquivosTreinamento.length / MAX_MATERIAL_FILES) * 100)}%`,
-                }}
-              />
-            </div>
-          </div>
-        </div>
       </div>
 
       <WizardStep2OutboundMedia agentId={agentId} />

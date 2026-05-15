@@ -114,6 +114,8 @@ export interface TrainingFile {
   tipo: TrainingFileFormat;
   status: "processando" | "ativo" | "erro";
   tamanhoKb: number;
+  /** Tamanho em bytes quando conhecido (ex.: API knowledge-files); senão usar tamanhoKb. */
+  sizeBytes?: number;
   /** Estado da extração de texto para o agente (materiais no R2). */
   extractedTextStatus?: "pending" | "processing" | "ready" | "failed" | "unsupported";
 }
