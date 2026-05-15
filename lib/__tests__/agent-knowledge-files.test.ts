@@ -55,21 +55,30 @@ describe("agent knowledge file validation", () => {
 
 describe("extractTextFromDocument", () => {
   it("extracts and normalizes PDF text", async () => {
-    const text = await extractTextFromDocument(Buffer.from("%PDF"), "application/pdf", "pdf");
-    expect(text).toBe("Conteúdo PDF");
+    const result = await extractTextFromDocument(Buffer.from("%PDF"), "application/pdf", "pdf");
+    expect(result).toEqual({ text: "Conteúdo PDF", error: null });
   });
 
   it("extracts and normalizes DOCX text", async () => {
-    const text = await extractTextFromDocument(
+    const result = await extractTextFromDocument(
       Buffer.from("PK"),
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       "docx",
     );
-    expect(text).toBe("Texto DOCX");
+    expect(result).toEqual({ text: "Texto DOCX", error: null });
   });
 
-  it("returns null for unsupported formats", async () => {
-    const text = await extractTextFromDocument(Buffer.from("x"), "image/png", "png");
-    expect(text).toBeNull();
+  it("returns null text and error for unsupported formats", async () => {
+    const result = await extractTextFromDocument(Buffer.from("x"), "image/png", "png");
+    expect(result).toEqual({ text: null, error: null });
+  });
+
+  it("returns error payload when extraction throws", async () => {
+    const { extractText } = await import("unpdf");
+    vi.mocked(extractText).mockRejectedValueOnce(new Error("pdf boom"));
+    const result = await extractTextFromDocument(Buffer.from("%PDF"), "application/pdf", "pdf");
+    expect(result.text).toBeNull();
+    expect(result.error).toContain("pdf boom");
+    expect(result.error).toContain("|");
   });
 });

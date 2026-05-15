@@ -155,12 +155,15 @@ export function extractSmallTextCandidate(mimeType: string, storageKey: string):
   return isPlainTextCandidate(mimeType, ext) || isDocumentCandidate(mimeType, ext);
 }
 
-/** Extrai texto de PDF/DOCX; outros binários retornam null. */
+/** Resultado da extração PDF/DOCX; `error` preenche quando a extração falhou de forma excecional. */
+export type ExtractTextFromDocumentResult = { text: string | null; error: string | null };
+
+/** Extrai texto de PDF/DOCX; outros binários retornam { text: null, error: null }. */
 export async function extractTextFromDocument(
   buffer: Buffer,
   mimeType: string,
   ext: string,
-): Promise<string | null> {
+): Promise<ExtractTextFromDocumentResult> {
   const normalizedMime = mimeType.split(";")[0]!.trim().toLowerCase();
   const normalizedExt = ext.toLowerCase();
 
@@ -169,7 +172,7 @@ export async function extractTextFromDocument(
       const uint8 = new Uint8Array(buffer);
       const { text } = await extractText(uint8, { mergePages: true });
       const normalized = normalizeExtractedText(text ?? "");
-      return normalized || null;
+      return { text: normalized || null, error: null };
     }
 
     if (
@@ -179,7 +182,7 @@ export async function extractTextFromDocument(
       const mammoth = await import("mammoth");
       const result = await mammoth.extractRawText({ buffer });
       const normalized = normalizeExtractedText(result.value ?? "");
-      return normalized || null;
+      return { text: normalized || null, error: null };
     }
   } catch (err) {
     console.error("[agent-knowledge-files] extractTextFromDocument error", {
@@ -189,10 +192,13 @@ export async function extractTextFromDocument(
       message: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
     });
-    return null;
+    return {
+      text: null,
+      error: err instanceof Error ? err.message + " | " + err.stack?.slice(0, 500) : String(err),
+    };
   }
 
-  return null;
+  return { text: null, error: null };
 }
 
 async function extractPlainTextFromBuffer(buffer: Buffer): Promise<string | null> {
@@ -216,7 +222,14 @@ async function extractKnowledgeFromStorage(
   }
 
   if (isDocumentCandidate(mimeType, ext)) {
-    const extractedText = await extractTextFromDocument(buffer, mimeType, ext);
+    const { text: extractedText, error: documentError } = await extractTextFromDocument(buffer, mimeType, ext);
+    if (documentError) {
+      return {
+        extractedText: null,
+        extractedTextStatus: "failed",
+        errorMessage: documentError,
+      };
+    }
     if (extractedText) {
       return { extractedText, extractedTextStatus: "ready", errorMessage: null };
     }
@@ -254,6 +267,7 @@ async function applyKnowledgeExtractionToRow(params: {
   mimeType: string;
   sizeBytes: number;
 }): Promise<AgentKnowledgeFile> {
+  // Inclui erro de PDF/DOCX (mensagem real) em extraction.error_message → coluna Supabase `error_message`.
   const extraction = await extractKnowledgeFromStorage(params.storageKey, params.mimeType, params.sizeBytes);
 
   const { data, error } = await params.sb
