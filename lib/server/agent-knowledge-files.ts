@@ -167,6 +167,10 @@ export async function extractTextFromDocument(
     if (normalizedMime === "application/pdf" || normalizedExt === "pdf") {
       const pdfParse = (await import("pdf-parse")).default;
       const parsed = await pdfParse(buffer);
+      console.log("[pdf-parse debug] parsed.text length:", parsed.text?.length);
+      console.log("[pdf-parse debug] parsed.text preview:", parsed.text?.slice(0, 200));
+      console.log("[pdf-parse debug] parsed.numpages:", parsed.numpages);
+      console.log("[pdf-parse debug] parsed.info:", JSON.stringify(parsed.info));
       const normalized = normalizeExtractedText(typeof parsed.text === "string" ? parsed.text : "");
       return normalized || null;
     }
