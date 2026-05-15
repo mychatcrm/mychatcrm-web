@@ -3,7 +3,7 @@ import "server-only";
 import { evolutionSendAudio, evolutionSendMedia } from "@/lib/integrations/evolution-api";
 import { getMediaBufferFromR2 } from "@/lib/integrations/r2-storage";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { findReadyAgentMediaByOriginalFilename } from "@/lib/server/agent-media-files";
+import { findReadyAgentMediaByFilenameFlexible } from "@/lib/server/agent-media-files";
 
 type SendOpts = {
   tenantId: string;
@@ -28,11 +28,11 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
   const sb = createSupabaseServiceClient();
 
   for (const name of opts.originalFilenames) {
-    const file = await findReadyAgentMediaByOriginalFilename({
+    const file = await findReadyAgentMediaByFilenameFlexible({
       sb,
       tenantId: opts.tenantId,
       agentId: opts.agentId,
-      originalFilename: name,
+      candidateName: name,
     });
     if (!file) {
       console.warn("[outbound-media] ficheiro não encontrado ou não pronto:", name);

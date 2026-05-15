@@ -13,6 +13,7 @@ import {
 import { textToSpeechElevenLabs } from "@/lib/integrations/elevenlabs";
 import { uploadMediaToR2 } from "@/lib/integrations/r2-storage";
 import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
+import { stripOutboundMediaDirectives } from "@/lib/server/agent-media-files";
 import type { AgentResponseJobRow } from "@/lib/server/agent-response-jobs";
 import {
   buildDeterministicHandoffSummary,
@@ -22,6 +23,7 @@ import {
 } from "@/lib/server/conversation-memory";
 import { markWaitingForHuman } from "@/lib/server/conversation-operation";
 import { sleep } from "@/lib/server/agent-response-schedule";
+import { sendAgentOutboundMediaViaEvolution } from "@/lib/server/send-agent-outbound-media-evolution";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
@@ -330,6 +332,29 @@ export async function processAgentResponseJob(
       if (handoffMessage) outboundText = handoffMessage;
     }
 
+    const outboundMediaParse = stripOutboundMediaDirectives(outboundText);
+    const outboundFilenames = outboundMediaParse.filenames;
+    let textToSend = outboundMediaParse.cleanedText.trim();
+    if (!textToSend && outboundFilenames.length) {
+      textToSend = "Segue o envio solicitado.";
+    }
+
+    const sendOutboundMediaSafe = (): void => {
+      if (!outboundFilenames.length) return;
+      void sendAgentOutboundMediaViaEvolution({
+        tenantId: job.tenant_id,
+        agentId: job.agent_id,
+        instanceName: job.instance_name,
+        number,
+        originalFilenames: outboundFilenames,
+      }).catch((err) =>
+        console.warn(
+          "[agent-response-jobs] outbound agent media",
+          err instanceof Error ? err.message : err,
+        ),
+      );
+    };
+
     const quotedMessage = [...unit].reverse().find((m) => m.messageId && m.kind === "text");
     const quoted = quotedMessage?.messageId
       ? {
@@ -344,7 +369,7 @@ export async function processAgentResponseJob(
 
     if (useAudio && unitIndex === 0) {
       try {
-        const audioBuffer = await textToSpeechElevenLabs(outboundText.slice(0, 5000), voiceId!, {
+        const audioBuffer = await textToSpeechElevenLabs(textToSend.slice(0, 5000), voiceId!, {
           languageCode,
         });
         const ttsKey = `whatsapp/${job.tenant_id}/tts/${Date.now()}_reply.mp3`;
@@ -360,16 +385,17 @@ export async function processAgentResponseJob(
           tenantId: job.tenant_id,
           remoteJid: job.remote_jid,
           kind: "audio",
-          content: outboundText.slice(0, 4000),
+          content: textToSend.slice(0, 4000),
           agentId: job.agent_id,
           leadId: job.lead_id,
           mediaUrl,
         });
+        sendOutboundMediaSafe();
       } catch {
         const send = await evolutionSendText({
           instanceName: job.instance_name,
           number,
-          text: outboundText.slice(0, 4000),
+          text: textToSend.slice(0, 4000),
           quoted,
         });
         if (!send.ok) return { ok: false, error: send.error, dedupedCount: burst.dedupedCount };
@@ -377,16 +403,17 @@ export async function processAgentResponseJob(
           tenantId: job.tenant_id,
           remoteJid: job.remote_jid,
           kind: "text",
-          content: outboundText.slice(0, 4000),
+          content: textToSend.slice(0, 4000),
           agentId: job.agent_id,
           leadId: job.lead_id,
         });
+        sendOutboundMediaSafe();
       }
     } else {
       const send = await evolutionSendText({
         instanceName: job.instance_name,
         number,
-        text: outboundText.slice(0, 4000),
+        text: textToSend.slice(0, 4000),
         quoted,
       });
       if (!send.ok) return { ok: false, error: send.error, dedupedCount: burst.dedupedCount };
@@ -394,10 +421,11 @@ export async function processAgentResponseJob(
         tenantId: job.tenant_id,
         remoteJid: job.remote_jid,
         kind: "text",
-        content: outboundText.slice(0, 4000),
+        content: textToSend.slice(0, 4000),
         agentId: job.agent_id,
         leadId: job.lead_id,
       });
+      sendOutboundMediaSafe();
     }
 
     repliesSent += 1;

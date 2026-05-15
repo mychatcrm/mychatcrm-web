@@ -163,6 +163,83 @@ export async function findReadyAgentMediaByOriginalFilename(params: {
   return toRow(data as Record<string, unknown>);
 }
 
+function normalizeFilenameForLooseCompare(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+/** Último segmento sem extensão (minúsculas, sem marcas Unicode). */
+function comparableStem(value: string): string {
+  const base = normalizeFilenameForLooseCompare(value).replace(/^.*[/\\]/, "").trim();
+  const dot = base.lastIndexOf(".");
+  const withoutExt = dot > 0 ? base.slice(0, dot) : base;
+  return withoutExt.trim();
+}
+
+/**
+ * Resolve nome vindo do modelo (marcador ENVIAR_MEDIA): igualdade exact na BD primeiro,
+ * depois igualdades insensível a caso / acentos, stem sem extensão e substrings curtas seguras.
+ */
+export async function findReadyAgentMediaByFilenameFlexible(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  agentId: string;
+  candidateName: string;
+}): Promise<AgentMediaFile | null> {
+  const trimmed = params.candidateName.trim();
+  if (!trimmed) return null;
+
+  const direct = await findReadyAgentMediaByOriginalFilename({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    agentId: params.agentId,
+    originalFilename: trimmed,
+  });
+  if (direct) return direct;
+
+  const { data, error } = await params.sb
+    .from("agent_media_files")
+    .select("*")
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", params.agentId)
+    .eq("status", "ready")
+    .order("created_at", { ascending: false })
+    .limit(Math.min(AGENT_MEDIA_MAX_FILES + 10, 80));
+
+  if (error || !data?.length) return null;
+
+  const files = ((data ?? []) as Array<Record<string, unknown>>).map(toRow);
+
+  const candNorm = normalizeFilenameForLooseCompare(trimmed);
+
+  let hit = files.find((f) => f.originalFilename.toLowerCase() === trimmed.toLowerCase());
+  if (hit) return hit;
+
+  hit = files.find((f) => normalizeFilenameForLooseCompare(f.originalFilename) === candNorm);
+  if (hit) return hit;
+
+  const candStem = comparableStem(trimmed);
+  if (candStem.length > 0) {
+    hit = files.find((f) => comparableStem(f.originalFilename) === candStem);
+    if (hit) return hit;
+  }
+
+  if (candNorm.length >= 4) {
+    hit = files.find((f) => normalizeFilenameForLooseCompare(f.originalFilename).includes(candNorm));
+    if (hit) return hit;
+  }
+
+  if (candStem.length >= 4) {
+    hit = files.find((f) => comparableStem(f.originalFilename).includes(candStem));
+  }
+
+  return hit ?? null;
+}
+
 async function countActiveAgentMediaSlots(params: {
   sb: SupabaseServiceClient;
   tenantId: string;
