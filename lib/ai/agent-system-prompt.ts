@@ -67,8 +67,12 @@ Próxima ação: ${ctx.summary.suggestedNextAction ?? "não informada"}`);
 ${ctx.knowledgeSnippets.map((item, index) => `${index + 1}. ${item}`).join("\n\n")}`);
   }
   if ((ctx.outboundMediaLines ?? []).length) {
-    parts.push(`ARQUIVOS DISPONÍVEIS PARA ENVIO:
-${(ctx.outboundMediaLines ?? []).map((line, index) => `${index + 1}. ${line}`).join("\n")}`);
+    const list = (ctx.outboundMediaLines ?? []).map((line, index) => `${index + 1}. ${line}`).join("\n");
+    parts.push(`ARQUIVOS DISPONÍVEIS PARA ENVIO (você PODE e DEVE enviar estes arquivos quando o cliente pedir):
+${list}
+
+INSTRUÇÃO OBRIGATÓRIA: Quando o cliente pedir qualquer arquivo desta lista ou algo relacionado, você DEVE enviá-lo. Responda naturalmente ao cliente e coloque na ÚLTIMA LINHA da resposta exatamente: [[ENVIAR_MEDIA:nome_exato_do_arquivo_com_extensao]]
+NUNCA diga que não pode enviar arquivos. Você TEM a capacidade de enviar todos os arquivos listados acima.`);
   }
   return parts;
 }
