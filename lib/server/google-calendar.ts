@@ -166,11 +166,18 @@ export type GoogleCalendarEvent = {
   description: string | null;
   startAt: string;
   endAt: string;
+  allDay: boolean;
+  calendarName: string;
   status: "confirmed" | "cancelled" | "pending";
   htmlLink?: string;
 };
 
-function mapGoogleEvent(item: Record<string, unknown>): GoogleCalendarEvent | null {
+type CalendarListItem = {
+  id: string;
+  summary?: string;
+};
+
+function mapGoogleEvent(item: Record<string, unknown>, calendarName = "Google Calendar"): GoogleCalendarEvent | null {
   const id = typeof item.id === "string" ? item.id : null;
   const summary = typeof item.summary === "string" ? item.summary : "Sem título";
   const description = typeof item.description === "string" ? item.description : null;
@@ -179,19 +186,67 @@ function mapGoogleEvent(item: Record<string, unknown>): GoogleCalendarEvent | nu
     statusRaw === "cancelled" ? "cancelled" : statusRaw === "tentative" ? "pending" : "confirmed";
   const startObj = item.start as { dateTime?: string; date?: string } | undefined;
   const endObj = item.end as { dateTime?: string; date?: string } | undefined;
-  const startAt = startObj?.dateTime || (startObj?.date ? `${startObj.date}T00:00:00.000Z` : null);
-  const endAt = endObj?.dateTime || (endObj?.date ? `${endObj.date}T23:59:59.000Z` : null);
+
+  // Bug C fix: all-day events (start.date sem dateTime) usam meia-noite de Brasília (UTC-3 = T03:00Z).
+  // Google retorna end.date como dia seguinte exclusivo, então end.dateT02:59:59Z = fim do dia em Brasília.
+  const isAllDay = !startObj?.dateTime && !!startObj?.date;
+  let startAt: string | null;
+  let endAt: string | null;
+  if (isAllDay && startObj?.date && endObj?.date) {
+    startAt = `${startObj.date}T03:00:00.000Z`;
+    endAt = `${endObj.date}T02:59:59.000Z`;
+  } else {
+    startAt = startObj?.dateTime ? new Date(startObj.dateTime).toISOString() : null;
+    endAt = endObj?.dateTime ? new Date(endObj.dateTime).toISOString() : null;
+  }
+
   if (!id || !startAt || !endAt) return null;
   return {
     id,
     title: summary,
     description,
-    startAt: new Date(startAt).toISOString(),
-    endAt: new Date(endAt).toISOString(),
+    startAt,
+    endAt,
+    allDay: isAllDay,
+    calendarName,
     status,
     htmlLink: typeof item.htmlLink === "string" ? item.htmlLink : undefined,
   };
 }
+
+/** Bug B: busca uma página de eventos de um calendário específico, com suporte a pageToken. */
+async function fetchCalendarEventPage(
+  accessToken: string,
+  calendarId: string,
+  timeMin: string,
+  timeMax: string,
+  pageToken?: string,
+): Promise<{ items: Record<string, unknown>[]; nextPageToken?: string }> {
+  const params = new URLSearchParams({
+    timeMin,
+    timeMax,
+    singleEvents: "true",
+    orderBy: "startTime",
+    maxResults: "250",
+  });
+  if (pageToken) params.set("pageToken", pageToken);
+  const res = await fetch(
+    `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Google Calendar events failed for ${calendarId} (${res.status}): ${err.slice(0, 200)}`);
+  }
+  const data = (await res.json()) as { items?: Record<string, unknown>[]; nextPageToken?: string };
+  return { items: data.items ?? [], nextPageToken: data.nextPageToken };
+}
+
+// Calendários a ignorar na sincronização (feriados de outros países e contactos)
+const CALENDAR_SKIP_PATTERNS = [
+  "holiday",
+  "#contacts@group.v.calendar.google.com",
+];
 
 export async function listGoogleCalendarEvents(
   tenantId: string,
@@ -200,22 +255,40 @@ export async function listGoogleCalendarEvents(
 ): Promise<GoogleCalendarEvent[]> {
   const accessToken = await getValidGoogleAccessToken(tenantId);
   if (!accessToken) return [];
-  const params = new URLSearchParams({
-    timeMin,
-    timeMax,
-    singleEvents: "true",
-    orderBy: "startTime",
-    maxResults: "250",
-  });
-  const res = await fetch(`${GOOGLE_CALENDAR_API}/calendars/primary/events?${params.toString()}`, {
+
+  // Bug A fix: listar todos os calendários do utilizador e filtrar os irrelevantes
+  const calListRes = await fetch(`${GOOGLE_CALENDAR_API}/users/me/calendarList`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Google Calendar list failed (${res.status}): ${err.slice(0, 200)}`);
+  if (!calListRes.ok) {
+    const err = await calListRes.text();
+    throw new Error(`Google CalendarList failed (${calListRes.status}): ${err.slice(0, 200)}`);
   }
-  const data = (await res.json()) as { items?: Record<string, unknown>[] };
-  return (data.items ?? []).map(mapGoogleEvent).filter((e): e is GoogleCalendarEvent => e !== null);
+  const calListData = (await calListRes.json()) as { items?: CalendarListItem[] };
+  const calendars = (calListData.items ?? []).filter(
+    (cal) => !CALENDAR_SKIP_PATTERNS.some((p) => cal.id.includes(p)),
+  );
+
+  const allEvents: GoogleCalendarEvent[] = [];
+  const MAX_PAGES = 10;
+
+  for (const cal of calendars) {
+    const calendarName = cal.summary ?? "Google Calendar";
+    // Bug B fix: iterar nextPageToken até não haver mais páginas (limite 10)
+    let pageToken: string | undefined;
+    let pageCount = 0;
+    do {
+      const page = await fetchCalendarEventPage(accessToken, cal.id, timeMin, timeMax, pageToken);
+      const mapped = page.items
+        .map((item) => mapGoogleEvent(item, calendarName))
+        .filter((e): e is GoogleCalendarEvent => e !== null);
+      allEvents.push(...mapped);
+      pageToken = page.nextPageToken;
+      pageCount++;
+    } while (pageToken && pageCount < MAX_PAGES);
+  }
+
+  return allEvents;
 }
 
 export async function createGoogleCalendarEvent(
@@ -331,6 +404,8 @@ export async function syncGoogleCalendarToDatabase(tenantId: string) {
           description: ev.description,
           start_at: ev.startAt,
           end_at: ev.endAt,
+          all_day: ev.allDay,
+          calendar_name: ev.calendarName,
           status: ev.status,
         }),
       ),

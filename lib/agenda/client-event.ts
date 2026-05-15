@@ -5,6 +5,7 @@ export type ClientAgendaEvent = {
   title: string;
   startISO: string;
   endISO: string;
+  allDay: boolean;
   description: string | null;
   location: string | null;
   color: string | null;
@@ -23,6 +24,7 @@ export function toClientAgendaEvent(row: AgendaEventRow): ClientAgendaEvent {
     title: row.title,
     startISO: row.start_at,
     endISO: row.end_at,
+    allDay: row.all_day ?? false,
     description: row.description,
     location: row.location,
     color: row.color,

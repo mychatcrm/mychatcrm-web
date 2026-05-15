@@ -22,6 +22,7 @@ export type AgendaEventRow = {
   color: string | null;
   start_at: string;
   end_at: string;
+  all_day: boolean;
   attendee_name: string | null;
   attendee_phone: string | null;
   attendee_email: string | null;
@@ -129,6 +130,7 @@ export async function updateAgendaEvent(
       | "color"
       | "start_at"
       | "end_at"
+      | "all_day"
       | "attendee_name"
       | "attendee_phone"
       | "attendee_email"
@@ -153,6 +155,8 @@ export async function upsertAgendaEventFromGoogle(
     description: string | null;
     start_at: string;
     end_at: string;
+    all_day: boolean;
+    calendar_name?: string;
     status: "confirmed" | "cancelled" | "pending";
   },
 ) {
@@ -164,7 +168,14 @@ export async function upsertAgendaEventFromGoogle(
     .eq("google_event_id", event.google_event_id)
     .maybeSingle();
   if (existing?.id) {
-    await updateAgendaEvent(tenantId, existing.id as string, event);
+    await updateAgendaEvent(tenantId, existing.id as string, {
+      title: event.title,
+      description: event.description,
+      start_at: event.start_at,
+      end_at: event.end_at,
+      all_day: event.all_day,
+      status: event.status,
+    });
     return existing.id as string;
   }
   const inserted = await insertAgendaEvent({
@@ -176,6 +187,7 @@ export async function upsertAgendaEventFromGoogle(
     color: "#f24400",
     start_at: event.start_at,
     end_at: event.end_at,
+    all_day: event.all_day,
     attendee_name: null,
     attendee_phone: null,
     attendee_email: null,

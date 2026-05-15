@@ -12,7 +12,13 @@ export function eventsForDay(events: ClientAgendaEvent[], day: Date) {
   return events.filter((e) => sameDay(new Date(e.startISO), day));
 }
 
-/** Layout de eventos sobrepostos (estilo Google) para vista semana/dia. */
+/** Eventos all-day para um dia (aparecem no topo da célula, não no grid horário). */
+export function allDayEventsForDay(events: ClientAgendaEvent[], day: Date) {
+  return events.filter((e) => e.allDay && sameDay(new Date(e.startISO), day));
+}
+
+/** Layout de eventos sobrepostos (estilo Google) para vista semana/dia.
+ *  Eventos all-day são excluídos — aparecem na faixa acima do grid. */
 export function layoutTimedEvents(
   events: ClientAgendaEvent[],
   day: Date,
@@ -21,6 +27,7 @@ export function layoutTimedEvents(
   const dayStart = startOfDay(day).getTime();
   const dayEnd = dayStart + 24 * 60 * 60 * 1000;
   const items = events
+    .filter((e) => !e.allDay)
     .map((e) => {
       const s = new Date(e.startISO).getTime();
       const en = new Date(e.endISO).getTime();

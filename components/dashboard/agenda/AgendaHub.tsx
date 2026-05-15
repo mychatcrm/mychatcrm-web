@@ -40,7 +40,7 @@ import {
   startOfWeekSunday,
   toDatetimeLocalValue,
 } from "./agenda-date-utils";
-import { eventsForDay, layoutTimedEvents } from "./agenda-layout";
+import { allDayEventsForDay, eventsForDay, layoutTimedEvents } from "./agenda-layout";
 import { useAgendaData } from "./use-agenda-data";
 import { useIsMobile } from "./use-is-mobile";
 
@@ -523,7 +523,10 @@ export function AgendaHub() {
                                 role="button"
                                 tabIndex={0}
                                 onClick={(e) => { e.stopPropagation(); setDetail({ event: ev, x: e.clientX, y: e.clientY }); }}
-                                className="truncate rounded px-1 py-0.5 text-[9px] font-medium text-white sm:px-1.5 sm:text-[11px]"
+                                className={cn(
+                                  "truncate rounded px-1 py-0.5 text-[9px] font-medium text-white sm:px-1.5 sm:text-[11px]",
+                                  ev.allDay && "opacity-80",
+                                )}
                                 style={{ backgroundColor: eventColor(ev) }}
                               >
                                 {ev.title}
@@ -573,6 +576,40 @@ export function AgendaHub() {
                       ))}
                     </div>
                   </div>
+
+                  {/* Faixa all-day — eventos de dia inteiro por coluna, alinhados com o header */}
+                  {timeGridDays.some((d) => allDayEventsForDay(data.events, d).length > 0) ? (
+                    <div
+                      className="overflow-x-hidden border-b border-[#dadce0] bg-[#f8f9fa]"
+                    >
+                      <div
+                        className="grid"
+                        style={{ gridTemplateColumns: timeGridTemplate, minWidth: timeGridMinWidth }}
+                      >
+                        <div className="flex items-center justify-end pr-2 text-[9px] text-[#70757a]">dia int.</div>
+                        {timeGridDays.map((d) => {
+                          const allDay = allDayEventsForDay(data.events, d);
+                          return (
+                            <div key={d.toISOString()} className="min-h-[24px] border-l border-[#dadce0] px-1 py-0.5">
+                              {allDay.map((ev) => (
+                                <div
+                                  key={ev.id}
+                                  data-event-id={ev.id}
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={(e) => { e.stopPropagation(); setDetail({ event: ev, x: e.clientX, y: e.clientY }); }}
+                                  className="mb-0.5 truncate rounded px-1 py-0.5 text-[10px] font-medium text-white"
+                                  style={{ backgroundColor: eventColor(ev) }}
+                                >
+                                  {ev.title}
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
 
                   {/* Corpo horário — scrollável horizontalmente; scroll sincronizado com header via JS */}
                   <div
@@ -679,9 +716,9 @@ export function AgendaHub() {
                               onClick={(e) => setDetail({ event: ev, x: e.clientX, y: e.clientY })}
                             >
                               <span className="shrink-0 text-sm text-[#70757a] md:w-28">
-                                {new Date(ev.startISO).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
-                                {" – "}
-                                {new Date(ev.endISO).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                                {ev.allDay
+                                  ? "Dia inteiro"
+                                  : `${new Date(ev.startISO).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} – ${new Date(ev.endISO).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`}
                               </span>
                               <span className="min-w-0 flex-1">
                                 <span className="flex min-w-0 items-start gap-2 font-medium text-[#3c4043]">
