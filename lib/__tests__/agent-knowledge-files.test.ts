@@ -5,8 +5,8 @@ import {
   validateKnowledgeFileInput,
 } from "@/lib/server/agent-knowledge-files";
 
-vi.mock("pdf-parse", () => ({
-  default: vi.fn(async () => ({ text: "  Conteúdo PDF  \n\n" })),
+vi.mock("unpdf", () => ({
+  extractText: vi.fn(async () => ({ text: "  Conteúdo PDF  \n\n" })),
 }));
 
 vi.mock("mammoth", () => ({

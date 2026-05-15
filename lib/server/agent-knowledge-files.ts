@@ -1,6 +1,7 @@
 import "server-only";
 
 import crypto from "crypto";
+import { extractText } from "unpdf";
 import {
   assertR2Configured,
   createR2PresignedUploadUrl,
@@ -165,13 +166,9 @@ export async function extractTextFromDocument(
 
   try {
     if (normalizedMime === "application/pdf" || normalizedExt === "pdf") {
-      const pdfParse = (await import("pdf-parse")).default;
-      const parsed = await pdfParse(buffer);
-      console.log("[pdf-parse debug] parsed.text length:", parsed.text?.length);
-      console.log("[pdf-parse debug] parsed.text preview:", parsed.text?.slice(0, 200));
-      console.log("[pdf-parse debug] parsed.numpages:", parsed.numpages);
-      console.log("[pdf-parse debug] parsed.info:", JSON.stringify(parsed.info));
-      const normalized = normalizeExtractedText(typeof parsed.text === "string" ? parsed.text : "");
+      const uint8 = new Uint8Array(buffer);
+      const { text } = await extractText(uint8, { mergePages: true });
+      const normalized = normalizeExtractedText(text ?? "");
       return normalized || null;
     }
 
@@ -185,7 +182,13 @@ export async function extractTextFromDocument(
       return normalized || null;
     }
   } catch (err) {
-    console.error("[agent-knowledge-files] extractTextFromDocument error:", err);
+    console.error("[agent-knowledge-files] extractTextFromDocument error", {
+      mimeType: normalizedMime,
+      ext: normalizedExt,
+      sizeBytes: buffer.byteLength,
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
     return null;
   }
 
