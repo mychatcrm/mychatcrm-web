@@ -322,7 +322,7 @@ export function AgendaHub() {
         </div>
       </header>
 
-      <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      <div className="relative flex min-h-0 min-w-0 flex-[1_1_0%] overflow-hidden">
         {/* Sidebar — desktop: in-flow; mobile: drawer so Google / Desconectar stay reachable */}
         {sidebarOpen ? (
           <>
@@ -417,7 +417,7 @@ export function AgendaHub() {
         ) : null}
 
         {/* Main */}
-        <main className="relative min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden" ref={gridRef}>
+        <main className="relative min-h-0 min-w-0 flex-[1_1_0%] overflow-y-auto overflow-x-hidden" ref={gridRef}>
           {data.loading ? (
             <div className="flex h-48 items-center justify-center text-sm text-[#70757a]">
               <Loader2 className="mr-2 size-4 animate-spin" />
