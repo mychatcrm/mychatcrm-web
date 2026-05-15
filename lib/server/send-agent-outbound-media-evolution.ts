@@ -14,8 +14,14 @@ type SendOpts = {
   originalFilenames: string[];
 };
 
+function primaryMime(mime: string): string {
+  const base = mime.split(";")[0]?.trim() ?? "";
+  return base || "application/octet-stream";
+}
+
 /**
  * Envia ficheiros configurados no agente pela Evolution, na ordem pedida.
+ * O ramo Evolution segue o `mime_type` gravado na BD (image / video / áudio / documento).
  */
 export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promise<void> {
   if (!opts.originalFilenames.length) return;
@@ -42,45 +48,53 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
     }
 
     const b64 = buffer.toString("base64");
-    const mime = file.mimeType.toLowerCase();
+    const mimeLower = primaryMime(file.mimeType).toLowerCase();
 
-    if (mime.startsWith("image/")) {
+    if (mimeLower.startsWith("image/")) {
       const res = await evolutionSendMedia({
         instanceName: opts.instanceName,
         number: opts.number,
         mediatype: "image",
-        mimetype: file.mimeType,
+        mimetype: primaryMime(file.mimeType),
         media: b64,
         caption: file.originalFilename,
       });
-      if (!res.ok) {
-        console.warn("[outbound-media] sendMedia image", res.status, res.error);
-      }
+      if (!res.ok) console.warn("[outbound-media] sendMedia image", res.status, res.error);
       continue;
     }
 
-    if (mime === "video/mp4" || mime.startsWith("video/")) {
+    if (mimeLower.startsWith("video/")) {
       const res = await evolutionSendMedia({
         instanceName: opts.instanceName,
         number: opts.number,
         mediatype: "video",
-        mimetype: file.mimeType,
+        mimetype: primaryMime(file.mimeType),
         media: b64,
         caption: file.originalFilename,
       });
-      if (!res.ok) {
-        console.warn("[outbound-media] sendMedia video", res.status, res.error);
-      }
+      if (!res.ok) console.warn("[outbound-media] sendMedia video", res.status, res.error);
       continue;
     }
 
-    const res = await evolutionSendAudio({
+    if (mimeLower.startsWith("audio/")) {
+      const res = await evolutionSendAudio({
+        instanceName: opts.instanceName,
+        number: opts.number,
+        audio: b64,
+      });
+      if (!res.ok) console.warn("[outbound-media] sendWhatsAppAudio", res.status, res.error);
+      continue;
+    }
+
+    const res = await evolutionSendMedia({
       instanceName: opts.instanceName,
       number: opts.number,
-      audio: b64,
+      mediatype: "document",
+      mimetype: primaryMime(file.mimeType),
+      media: b64,
+      caption: file.originalFilename,
+      fileName: file.originalFilename,
     });
-    if (!res.ok) {
-      console.warn("[outbound-media] sendWhatsAppAudio", res.status, res.error);
-    }
+    if (!res.ok) console.warn("[outbound-media] sendMedia document", res.status, res.error);
   }
 }

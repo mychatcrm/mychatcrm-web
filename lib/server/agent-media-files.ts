@@ -64,26 +64,20 @@ function toRow(row: Record<string, unknown>): AgentMediaFile {
   };
 }
 
-function resolveValidatedOutboundMime(stored: string, headType: string | null): string {
-  for (const candidate of [stored, headType ?? ""].filter(Boolean)) {
-    try {
-      return validateAgentMediaMimeType(String(candidate));
-    } catch {
-      // tenta próximo candidato
-    }
-  }
-  throw new Error("Tipo de arquivo não permitido após o upload.");
+/** Normaliza o MIME (sem validar tipo — qualquer ficheiro é aceite). */
+export function normalizeAgentMediaMimeType(raw: string): string {
+  const t = typeof raw === "string" ? raw.trim() : "";
+  if (!t) return "application/octet-stream";
+  const base = t.split(";")[0]!.trim().toLowerCase();
+  return base || "application/octet-stream";
 }
 
-export function validateAgentMediaMimeType(raw: string): string {
-  const base = raw.split(";")[0]!.trim().toLowerCase();
-  if (base.startsWith("image/")) return base;
-  if (base === "video/mp4") return base;
-  const audio = new Set(["audio/mp3", "audio/ogg", "audio/mpeg", "audio/mp4", "audio/x-m4a"]);
-  if (audio.has(base)) return base;
-  throw new Error(
-    "Tipo de arquivo não permitido. Use imagens (JPG, PNG, GIF, WEBP), vídeo MP4 ou áudio MP3/OGG/M4A.",
-  );
+function resolveOutboundMimeFromUpload(stored: string, headType: string | null): string {
+  const h = normalizeAgentMediaMimeType(headType ?? "");
+  const s = normalizeAgentMediaMimeType(stored);
+  if (headType?.trim() && h !== "application/octet-stream") return h;
+  if (s !== "application/octet-stream") return s;
+  return h || s;
 }
 
 export type OutboundMediaDirectiveParse = {
@@ -215,7 +209,7 @@ export async function createAgentMediaUpload(params: {
   assertR2Configured();
   const trimmedName = params.filename.trim();
   if (!trimmedName) throw new Error("Nome do arquivo em falta.");
-  const mimeType = validateAgentMediaMimeType(params.mimeType);
+  const mimeType = normalizeAgentMediaMimeType(params.mimeType);
   const sizeBytes = Number(params.sizeBytes);
   if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
     throw new Error("Tamanho inválido.");
@@ -294,10 +288,7 @@ export async function completeAgentMediaUpload(params: {
     throw new Error("Arquivo ainda não encontrado no armazenamento.");
   }
 
-  const mimeType = resolveValidatedOutboundMime(
-    String(row.mime_type ?? "application/octet-stream"),
-    head.contentType,
-  );
+  const mimeType = resolveOutboundMimeFromUpload(String(row.mime_type ?? "application/octet-stream"), head.contentType);
 
   const readyBytesSum = await sumReadyAgentMediaBytes(params);
   if (readyBytesSum + head.sizeBytes > AGENT_MEDIA_TOTAL_BYTES_CAP) {

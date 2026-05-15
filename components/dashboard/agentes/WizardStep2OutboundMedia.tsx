@@ -1,6 +1,6 @@
 "use client";
 
-import { FileImage, Film, Loader2, Music, Trash2, Upload } from "lucide-react";
+import { File as FileIcon, FileImage, Film, Loader2, Music, Trash2, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
@@ -8,9 +8,6 @@ const MAX_FILES = 50;
 const TOTAL_CAP_BYTES = 1024 * 1024 * 1024;
 /** Timeout maior que materiais — vídeos em redes lentas. */
 const R2_PUT_TIMEOUT_MS = 120_000;
-
-const ACCEPT_MEDIA_ATTR =
-  "image/jpeg,image/png,image/gif,image/webp,video/mp4,audio/mpeg,audio/mp3,audio/ogg,audio/mp4,audio/x-m4a,.jpg,.jpeg,.png,.gif,.webp,.mp4,.mp3,.ogg,.m4a";
 
 type ApiOutboundFile = {
   id: string;
@@ -289,31 +286,33 @@ export function WizardStep2OutboundMedia({ agentId }: { agentId?: string }) {
     [agentId, syncMediaFiles],
   );
 
-  function mediaIcon(kind: "image" | "video" | "audio") {
+  function mediaIcon(kind: "image" | "video" | "audio" | "file") {
     if (kind === "video") return <Film className="h-4 w-4 shrink-0 text-content-faint" aria-hidden />;
     if (kind === "audio") return <Music className="h-4 w-4 shrink-0 text-content-faint" aria-hidden />;
-    return <FileImage className="h-4 w-4 shrink-0 text-content-faint" aria-hidden />;
+    if (kind === "image") return <FileImage className="h-4 w-4 shrink-0 text-content-faint" aria-hidden />;
+    return <FileIcon className="h-4 w-4 shrink-0 text-content-faint" aria-hidden />;
   }
 
-  function kindFromMime(m: string): "image" | "video" | "audio" {
-    const lower = m.toLowerCase();
+  function kindFromMime(m: string): "image" | "video" | "audio" | "file" {
+    const lower = m.toLowerCase().split(";")[0] ?? "";
     if (lower.startsWith("audio/")) return "audio";
     if (lower.startsWith("video/")) return "video";
-    return "image";
+    if (lower.startsWith("image/")) return "image";
+    return "file";
   }
 
   return (
     <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
       <p className="text-sm font-semibold text-content">Arquivos para Envio</p>
       <p className="mt-1 text-xs text-content-muted">
-        Imagens, vídeos e áudios que o agente pode enviar aos clientes quando solicitado. Máximo 50 arquivos, 1GB por agente.
+        Adicione qualquer tipo de arquivo que o agente pode enviar aos clientes: imagens, vídeos, áudios, PDFs, documentos e mais. Máximo 50 arquivos, 1GB por agente.
       </p>
 
       <input
         ref={mediaInputRef}
         type="file"
         multiple
-        accept={ACCEPT_MEDIA_ATTR}
+        accept="*/*"
         className="sr-only"
         disabled={overlayBlocked}
         onChange={(event) => {
@@ -385,9 +384,9 @@ export function WizardStep2OutboundMedia({ agentId }: { agentId?: string }) {
         )}
       >
         <Upload className="h-10 w-10 text-emerald-500" strokeWidth={1.75} aria-hidden />
-        <p className="mt-3 text-sm font-semibold text-content">Clique ou arraste ficheiros (imagem / vídeo / áudio)</p>
+        <p className="mt-3 text-sm font-semibold text-content">Clique ou arraste qualquer ficheiro</p>
         <p className="mt-2 max-w-lg text-xs leading-relaxed text-content-muted">
-          Formatos: JPG, PNG, GIF, WEBP, MP4, MP3, OGG, M4A. O agente vê esta lista no prompt; para enviar no WhatsApp o modelo usa a marca interna{" "}
+          Qualquer extensão permitida. O agente vê esta lista no prompt; no WhatsApp o modelo pode marcar o envio com{" "}
           <span className="font-mono text-[10px]">[[ENVIAR_MEDIA:nome.ext]]</span> (removida antes do cliente ver).
         </p>
       </button>
