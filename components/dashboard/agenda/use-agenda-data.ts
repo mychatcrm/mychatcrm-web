@@ -143,6 +143,16 @@ export function useAgendaData() {
     if (clearEvents) await refreshEvents();
   }, [refreshEvents]);
 
+  /** Remove os eventos sincronizados do Google sem desconectar o token OAuth. */
+  const clearGoogleEvents = useCallback(async () => {
+    const res = await fetch("/api/client/google-calendar/status?clearEvents=true&keepConnection=true", {
+      method: "DELETE",
+      credentials: "include",
+    });
+    if (!res.ok) throw new Error("clear_failed");
+    await refreshEvents();
+  }, [refreshEvents]);
+
   useEffect(() => {
     void refreshStatus().then(() => refreshEvents());
   }, [refreshEvents, refreshStatus]);
@@ -202,5 +212,6 @@ export function useAgendaData() {
     deleteEvent,
     connectGoogle,
     disconnectGoogle,
+    clearGoogleEvents,
   };
 }

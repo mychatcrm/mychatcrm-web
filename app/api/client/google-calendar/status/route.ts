@@ -26,12 +26,17 @@ export async function DELETE(request: Request) {
   if (!session) {
     return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
   }
-  const clearEvents = new URL(request.url).searchParams.get("clearEvents") === "true";
+  const params = new URL(request.url).searchParams;
+  const clearEvents = params.get("clearEvents") === "true";
+  const keepConnection = params.get("keepConnection") === "true";
   let deletedCount = 0;
   if (clearEvents) {
     deletedCount = await deleteGoogleSyncedAgendaEvents(session.tenantId);
     await broadcastAgendaChange(session.tenantId, "delete");
   }
-  await disconnectGoogleCalendar(session.tenantId);
-  return NextResponse.json({ ok: true, cleared: clearEvents, deletedCount });
+  // keepConnection=true → only wipe events, preserve the OAuth token
+  if (!keepConnection) {
+    await disconnectGoogleCalendar(session.tenantId);
+  }
+  return NextResponse.json({ ok: true, cleared: clearEvents, keepConnection, deletedCount });
 }

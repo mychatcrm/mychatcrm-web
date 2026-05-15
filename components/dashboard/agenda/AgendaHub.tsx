@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import type { ClientAgendaEvent } from "@/lib/agenda/client-event";
 import { cn } from "@/lib/utils";
+import { AgendaClearEventsModal } from "./AgendaClearEventsModal";
 import { AgendaDisconnectModal } from "./AgendaDisconnectModal";
 import { AgendaEventModal, type AgendaEventFormState } from "./AgendaEventModal";
 import {
@@ -83,6 +84,8 @@ export function AgendaHub() {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [disconnectOpen, setDisconnectOpen] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [clearEventsOpen, setClearEventsOpen] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
 
@@ -118,9 +121,9 @@ export function AgendaHub() {
   }, [view, isMobile, weekDays, selected]);
   const timeGridDays = view === "week" ? visibleWeekDays : [selected];
   const timeGridColCount = timeGridDays.length;
-  const timeGridMinWidth = view === "week" ? 56 + timeGridColCount * 120 : undefined;
+  const timeGridMinWidth = view === "week" ? 56 + timeGridColCount * 100 : undefined;
   const timeGridTemplate = view === "week"
-    ? `56px repeat(${timeGridColCount}, minmax(120px, 1fr))`
+    ? `56px repeat(${timeGridColCount}, minmax(100px, 1fr))`
     : "56px minmax(0, 1fr)";
   const monthGrid = useMemo(() => getMonthGrid(anchor.getFullYear(), anchor.getMonth()), [anchor]);
 
@@ -172,15 +175,27 @@ export function AgendaHub() {
     setDetail(null);
   };
 
-  const handleDisconnect = async (clearEvents: boolean) => {
+  const handleDisconnect = async () => {
     setDisconnecting(true);
     try {
-      await data.disconnectGoogle(clearEvents);
+      await data.disconnectGoogle(false);
       setDisconnectOpen(false);
     } catch {
       data.setError("Não foi possível desconectar o Google Calendar.");
     } finally {
       setDisconnecting(false);
+    }
+  };
+
+  const handleClearEvents = async () => {
+    setClearing(true);
+    try {
+      await data.clearGoogleEvents();
+      setClearEventsOpen(false);
+    } catch {
+      data.setError("Não foi possível limpar os eventos sincronizados.");
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -262,7 +277,7 @@ export function AgendaHub() {
               value={searchQ}
               onChange={(e) => setSearchQ(e.target.value)}
               placeholder="Pesquisar eventos"
-              className="h-9 min-w-[200px] flex-1 rounded-lg border border-[#dadce0] px-3 text-sm outline-none focus:border-[#f24400]"
+              className="h-9 min-w-0 flex-1 rounded-lg border border-[#dadce0] px-3 text-sm outline-none focus:border-[#f24400]"
             />
             <button type="button" className="rounded-full p-2 hover:bg-[#f1f3f4]" onClick={() => { setSearchOpen(false); setSearchQ(""); void data.refreshEvents(); }}>
               <X className="size-4" />
@@ -284,7 +299,7 @@ export function AgendaHub() {
         <select
           value={view}
           onChange={(e) => setView(e.target.value as AgendaViewMode)}
-          className="rounded-lg border border-[#dadce0] bg-white px-3 py-1.5 text-sm"
+          className="shrink-0 rounded-lg border border-[#dadce0] bg-white px-3 py-1.5 text-sm"
         >
           <option value="day">Dia</option>
           <option value="week">Semana</option>
@@ -363,6 +378,10 @@ export function AgendaHub() {
                         {data.syncing ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
                         Sincronizar
                       </button>
+                      <button type="button" onClick={() => setClearEventsOpen(true)} className="inline-flex items-center gap-1 rounded-full border border-amber-200 px-2 py-1 text-[11px] text-amber-700 hover:bg-amber-50">
+                        <Trash2 className="size-3" />
+                        Limpar agenda
+                      </button>
                       <button type="button" onClick={() => setDisconnectOpen(true)} className="inline-flex items-center gap-1 rounded-full border border-rose-200 px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50">
                         <Unlink className="size-3" />
                         Desconectar
@@ -432,7 +451,7 @@ export function AgendaHub() {
                           type="button"
                           onClick={(e) => onCellClick(e, cell.date)}
                           className={cn(
-                            "min-h-[120px] border-b border-r border-[#dadce0] p-1 text-left hover:bg-[#f1f3f4]",
+                            "min-h-[72px] border-b border-r border-[#dadce0] p-1 text-left hover:bg-[#f1f3f4] sm:min-h-[120px]",
                             !cell.inMonth && "bg-[#fafafa] text-[#70757a]",
                             isSel && "bg-[#fef0eb]",
                             isTod && "font-bold",
@@ -470,7 +489,7 @@ export function AgendaHub() {
                     <div className="sticky top-0 z-10 grid border-b border-[#dadce0] bg-white" style={{ gridTemplateColumns: timeGridTemplate }}>
                       <div />
                       {timeGridDays.map((d) => (
-                        <div key={d.toISOString()} className="min-w-[120px] border-l border-[#dadce0] py-2 text-center text-xs">
+                        <div key={d.toISOString()} className="min-w-[100px] border-l border-[#dadce0] py-2 text-center text-xs">
                         <div className="uppercase text-[#70757a]">{WEEKDAYS_SHORT[d.getDay()]}</div>
                         <div className={cn("mx-auto mt-1 flex size-9 items-center justify-center rounded-full text-lg", sameDay(d, today) && "bg-[#f24400] font-bold text-white")}>
                           {d.getDate()}
@@ -604,7 +623,7 @@ export function AgendaHub() {
 
       {/* Quick create popover */}
       {quick ? (
-        <div className="fixed z-50 w-[280px] rounded-lg border border-[#dadce0] bg-white p-3 shadow-xl" style={{ left: Math.min(quick.x, window.innerWidth - 300), top: Math.min(quick.y, window.innerHeight - 200) }}>
+        <div className="fixed z-50 w-[280px] max-w-[calc(100vw-16px)] rounded-lg border border-[#dadce0] bg-white p-3 shadow-xl" style={{ left: Math.min(quick.x, window.innerWidth - 296), top: Math.min(quick.y, window.innerHeight - 200) }}>
           <input
             autoFocus
             value={quickTitle}
@@ -627,7 +646,7 @@ export function AgendaHub() {
 
       {/* Event detail popover */}
       {detail ? (
-        <div className="fixed z-50 w-[300px] rounded-lg border border-[#dadce0] bg-white p-4 shadow-xl" style={{ left: Math.min(detail.x, window.innerWidth - 320), top: Math.min(detail.y, window.innerHeight - 240) }}>
+        <div className="fixed z-50 w-[300px] max-w-[calc(100vw-16px)] rounded-lg border border-[#dadce0] bg-white p-4 shadow-xl" style={{ left: Math.min(detail.x, window.innerWidth - 316), top: Math.min(detail.y, window.innerHeight - 240) }}>
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
@@ -658,8 +677,14 @@ export function AgendaHub() {
         open={disconnectOpen}
         onClose={() => setDisconnectOpen(false)}
         loading={disconnecting}
-        onKeepEvents={() => void handleDisconnect(false)}
-        onClearEvents={() => void handleDisconnect(true)}
+        onConfirm={() => void handleDisconnect()}
+      />
+
+      <AgendaClearEventsModal
+        open={clearEventsOpen}
+        onClose={() => setClearEventsOpen(false)}
+        loading={clearing}
+        onConfirm={() => void handleClearEvents()}
       />
 
       <AgendaEventModal
