@@ -33,6 +33,23 @@ function compactJson(value: unknown): string {
   }
 }
 
+/**
+ * Corpo injectado no prompt quando há ficheiros pré-configurados para envio (WhatsApp).
+ * Mantido aqui para poder posicionar **antes** de CTA/HANDOFF.
+ */
+function formatOutboundMediaPromptBlock(lines: string[] | undefined | null): string | null {
+  const safe = lines ?? [];
+  if (!safe.length) return null;
+  const list = safe.map((line, index) => `${index + 1}. ${line}`).join("\n");
+  return `PRIORIDADE MÁXIMA: Antes de sugerir transferência para humano ou consultor, verifique se o arquivo solicitado está na lista abaixo. Se estiver, ENVIE O ARQUIVO DIRETAMENTE.
+
+ARQUIVOS DISPONÍVEIS PARA ENVIO (você PODE e DEVE enviar estes arquivos quando o cliente pedir):
+${list}
+
+INSTRUÇÃO OBRIGATÓRIA: Quando o cliente pedir qualquer arquivo desta lista ou algo relacionado, você DEVE enviá-lo. Responda naturalmente ao cliente e coloque na ÚLTIMA LINHA da resposta exatamente: [[ENVIAR_MEDIA:nome_exato_do_arquivo_com_extensao]]
+NUNCA diga que não pode enviar arquivos. Você TEM a capacidade de enviar todos os arquivos listados acima.`;
+}
+
 function formatRuntimeContext(ctx?: AgentRuntimeContext | null): string[] {
   if (!ctx) return [];
   const parts: string[] = [];
@@ -65,14 +82,6 @@ Próxima ação: ${ctx.summary.suggestedNextAction ?? "não informada"}`);
   if (ctx.knowledgeSnippets.length) {
     parts.push(`Materiais de apoio disponíveis:
 ${ctx.knowledgeSnippets.map((item, index) => `${index + 1}. ${item}`).join("\n\n")}`);
-  }
-  if ((ctx.outboundMediaLines ?? []).length) {
-    const list = (ctx.outboundMediaLines ?? []).map((line, index) => `${index + 1}. ${line}`).join("\n");
-    parts.push(`ARQUIVOS DISPONÍVEIS PARA ENVIO (você PODE e DEVE enviar estes arquivos quando o cliente pedir):
-${list}
-
-INSTRUÇÃO OBRIGATÓRIA: Quando o cliente pedir qualquer arquivo desta lista ou algo relacionado, você DEVE enviá-lo. Responda naturalmente ao cliente e coloque na ÚLTIMA LINHA da resposta exatamente: [[ENVIAR_MEDIA:nome_exato_do_arquivo_com_extensao]]
-NUNCA diga que não pode enviar arquivos. Você TEM a capacidade de enviar todos os arquivos listados acima.`);
   }
   return parts;
 }
@@ -114,6 +123,7 @@ Tom de voz: ${clean(agent.tom) || "profissional"}
 Velocidade simulada: ${typeof agent.delayResposta === "number" ? `${agent.delayResposta}s` : "não informada"}
 Idioma configurado: ${clean(agent.idioma) || "Automático"}`,
     ...instructionBlocks,
+    formatOutboundMediaPromptBlock(params.runtimeContext?.outboundMediaLines ?? null),
     `CTA E HANDOFF
 CTA ativo: ${agent.ctaHandoffAtivo === true ? "sim" : "não"}
 CTA final: ${clean(agent.ctaFinal) || "não configurado"}

@@ -180,6 +180,7 @@ export async function buildLeadConversationMemory(params: {
   excludeMessageIds?: string[];
 }): Promise<LeadConversationMemory> {
   if (!params.remoteJid && !params.leadId) {
+    console.log("[lead-memory] outboundMediaLines count:", 0, []);
     return {
       state: null,
       lead: null,
@@ -282,6 +283,8 @@ export async function buildLeadConversationMemory(params: {
     lead,
     hasPriorMessages: recentMessages.length > 0,
   });
+
+  console.log("[lead-memory] outboundMediaLines count:", outboundMediaLines.length, outboundMediaLines);
 
   return {
     state,
