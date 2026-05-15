@@ -484,18 +484,6 @@ export function WizardStep2Treinamento({
           Adicione materiais de suporte para ajudar o agente a responder perguntas específicas
         </p>
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept={ACCEPT_EXTENSIONS}
-          className="sr-only"
-          onChange={(event) => {
-            void ingestFiles(event.target.files);
-            event.currentTarget.value = "";
-          }}
-        />
-
         <div className="mt-4 space-y-2 rounded-xl border border-line bg-surface-elevated/20 px-3 py-3 text-xs">
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -526,6 +514,18 @@ export function WizardStep2Treinamento({
             </div>
           </div>
         </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept={ACCEPT_EXTENSIONS}
+          className="sr-only"
+          onChange={(event) => {
+            void ingestFiles(event.target.files);
+            event.currentTarget.value = "";
+          }}
+        />
 
         <button
           type="button"
