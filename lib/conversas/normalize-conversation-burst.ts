@@ -73,7 +73,7 @@ export function buildReplyUnitPrompt(unit: InboundTextMessage[]): string {
   const lines = unit.map((m) => m.content.trim()).filter(Boolean);
   if (lines.length === 0) return "";
   if (lines.length === 1) return lines[0]!;
-  return `O cliente enviou em sequência: ${lines.map((l) => `"${l}"`).join(" e ")}. Responda de forma natural e humana em uma única mensagem curta.`;
+  return `O cliente enviou em sequência: ${lines.map((l) => `"${l}"`).join(" e ")}.`;
 }
 
 /** Chave de dedupe: acentos, pontuação final e emojis removidos da comparação. */
