@@ -56,14 +56,14 @@ describe("extractMediaFilenames / stripMediaTags", () => {
     expect(stripped).toBe("Rodapé");
   });
 
-  it("stripOutboundMediaDirectives extracts before stripping", () => {
+  it("stripOutboundMediaDirectives keeps only intro text when multiple tags are interleaved", () => {
     const parsed = stripOutboundMediaDirectives(
-      "Aqui está o SPA:\n[[ENVIAR_MEDIA:spa.jpg]]\nE a piscina:\n[[ENVIAR_MEDIA:piscina.jpg]]\n",
+      "Claro! Aqui estão as fotos 👇\n[[ENVIAR_MEDIA:spa.jpg]]\nE a piscina:\n[[ENVIAR_MEDIA:piscina.jpg]]\n",
     );
     expect(parsed.filenames).toEqual(["spa.jpg", "piscina.jpg"]);
+    expect(parsed.cleanedText).toBe("Claro! Aqui estão as fotos 👇");
+    expect(parsed.cleanedText).not.toContain("piscina");
     expect(parsed.cleanedText).not.toContain("ENVIAR_MEDIA");
-    expect(parsed.cleanedText).toContain("SPA");
-    expect(parsed.cleanedText).toContain("piscina");
   });
 });
 

@@ -31,6 +31,7 @@ function sleepMs(ms: number): Promise<void> {
 
 /**
  * Envia ficheiros configurados no agente pela Evolution, na ordem pedida (sequencial).
+ * O texto introdutório deve ser enviado pelo caller (webhook / Smart Wait) antes desta função.
  * Usa URL presignada R2 (GET) para a Evolution descarregar o ficheiro.
  */
 export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promise<void> {
@@ -41,6 +42,7 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
   }
 
   const sb = createSupabaseServiceClient();
+  const omitCaptions = opts.originalFilenames.length > 1;
 
   for (let index = 0; index < opts.originalFilenames.length; index++) {
     const filename = opts.originalFilenames[index]!;
@@ -71,6 +73,7 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
       });
 
       const mimeLower = primaryMime(file.mimeType).toLowerCase();
+      const caption = omitCaptions ? "" : file.originalFilename;
       let sendOk = false;
 
       if (mimeLower.startsWith("image/")) {
@@ -80,7 +83,7 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
           mediatype: "image",
           mimetype: primaryMime(file.mimeType),
           media: mediaUrl,
-          caption: file.originalFilename,
+          caption,
         });
         sendOk = res.ok;
         if (!res.ok) console.warn("[outbound-media] sendMedia image", res.status, res.error);
@@ -91,7 +94,7 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
           mediatype: "video",
           mimetype: primaryMime(file.mimeType),
           media: mediaUrl,
-          caption: file.originalFilename,
+          caption,
         });
         sendOk = res.ok;
         if (!res.ok) console.warn("[outbound-media] sendMedia video", res.status, res.error);
@@ -110,7 +113,7 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
           mediatype: "document",
           mimetype: primaryMime(file.mimeType),
           media: mediaUrl,
-          caption: file.originalFilename,
+          caption,
           fileName: file.originalFilename,
         });
         sendOk = res.ok;

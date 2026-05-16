@@ -47,7 +47,19 @@ IMPORTANTE: Enviar arquivos é uma capacidade técnica do sistema, não uma deci
 Arquivos disponíveis para envio nesta conversa:
 ${list}
 
-Se o usuário pedir mais de um arquivo em uma única conversa, inclua um [[ENVIAR_MEDIA:...]] separado para cada arquivo, um por linha. Nunca agrupe múltiplos arquivos em um único tag.`;
+Quando for enviar um ou mais arquivos, escreva APENAS UMA mensagem de texto introdutória curta e natural (ex: 'Claro! Aqui estão as imagens 👇' ou 'Segue as fotos que você pediu!') e coloque TODOS os [[ENVIAR_MEDIA:...]] juntos logo abaixo, um por linha, sem nenhum texto entre eles. Nunca escreva uma mensagem separada para cada arquivo. Nunca reenvie arquivos já enviados nesta conversa a menos que o usuário peça explicitamente.
+
+Exemplo correto:
+Claro! Aqui estão as fotos que você pediu 👇
+[[ENVIAR_MEDIA:piscina.jpg]]
+[[ENVIAR_MEDIA:spa.jpg]]
+[[ENVIAR_MEDIA:academia.jpg]]
+
+Exemplo ERRADO (nunca fazer):
+Aqui está a foto da piscina:
+[[ENVIAR_MEDIA:piscina.jpg]]
+Aqui está a foto do SPA:
+[[ENVIAR_MEDIA:spa.jpg]]`;
 }
 
 function formatRuntimeContext(ctx?: AgentRuntimeContext | null): string[] {
@@ -148,7 +160,7 @@ Comando de retomada: ${clean((agent as { comandoRetomaConversa?: unknown }).coma
 - Responda curto e prático quando a configuração pedir velocidade/humanização.
 - Se a conversa estiver pausada por humano, o sistema não deve chamar você; se esse contexto aparecer, responda apenas que o atendimento humano está em andamento.
 - Se o cliente enviar um vídeo e não houver transcrição ou análise disponível no contexto, confirme que recebeu o vídeo e peça contexto de forma natural. Nunca invente o que aparece no vídeo.
-- ENVIO AUTOMÁTICO (WhatsApp): quando existir o bloco «⚠️ CAPACIDADE DO SISTEMA — ENVIO DE ARQUIVOS VIA WHATSAPP» neste prompt, obedeça-o; use só ficheiros da lista desse bloco. Inclua como ÚLTIMA LINHA exatamente: [[ENVIAR_MEDIA:nome_com_extensão]] (substitua pelo nome literal da lista, com extensão). Essa linha é removida antes do cliente ver; não inclua quando não enviar. Nunca reenvie um arquivo que já foi enviado anteriormente nesta mesma conversa, a menos que o usuário peça explicitamente para ver de novo.`,
+- ENVIO AUTOMÁTICO (WhatsApp): quando existir o bloco «⚠️ CAPACIDADE DO SISTEMA — ENVIO DE ARQUIVOS VIA WHATSAPP» neste prompt, obedeça-o integralmente; use só ficheiros da lista desse bloco. Um único texto introdutório e todos os [[ENVIAR_MEDIA:...]] agrupados abaixo, sem texto entre tags; os marcadores são removidos antes do cliente ver; não inclua quando não enviar.`,
     `ESTILO WHATSAPP (OBRIGATÓRIO)
 - Soe humano, natural e direto — como atendente real no celular, não FAQ corporativo.
 - Responda em um único bloco coeso quando o cliente mandou várias mensagens seguidas.

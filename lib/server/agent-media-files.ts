@@ -185,12 +185,23 @@ export function stripMediaTags(text: string): string {
   return text.replace(MEDIA_TAG_REGEX, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+/** Mantém só o texto introdutório antes do primeiro [[ENVIAR_MEDIA:...]]. */
+export function introTextBeforeFirstMediaTag(text: string): string {
+  const firstTag = /\[\[ENVIAR_MEDIA:/i.exec(text);
+  if (!firstTag || firstTag.index === undefined) return stripMediaTags(text);
+  return text
+    .slice(0, firstTag.index)
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 /**
  * Remove marcadores [[ENVIAR_MEDIA:filename.ext]] enviados pelo modelo e devolve nomes na ordem.
  */
 export function stripOutboundMediaDirectives(text: string): OutboundMediaDirectiveParse {
   const filenames = extractMediaFilenames(text);
-  const cleanedText = stripMediaTags(text);
+  const cleanedText =
+    filenames.length > 1 ? introTextBeforeFirstMediaTag(text) : stripMediaTags(text);
   return { cleanedText, filenames };
 }
 
@@ -325,7 +336,10 @@ export async function resolveOutboundMediaForAgentResponse(params: {
   userRequestText: string;
 }): Promise<OutboundMediaDirectiveParse & { inferred: boolean }> {
   const filenames = extractMediaFilenames(params.responseText);
-  let cleanedText = stripMediaTags(params.responseText);
+  let cleanedText =
+    filenames.length > 1
+      ? introTextBeforeFirstMediaTag(params.responseText)
+      : stripMediaTags(params.responseText);
   if (filenames.length) {
     console.log("[MEDIA_DEBUG] directives_parsed:", { count: filenames.length, filenames });
     return { cleanedText, filenames, inferred: false };
