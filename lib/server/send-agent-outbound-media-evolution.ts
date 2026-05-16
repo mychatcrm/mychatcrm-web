@@ -1,7 +1,7 @@
 import "server-only";
 
 import { evolutionSendAudio, evolutionSendMedia } from "@/lib/integrations/evolution-api";
-import { getMediaBufferFromR2 } from "@/lib/integrations/r2-storage";
+import { createR2PresignedGetUrl, isR2Configured } from "@/lib/integrations/r2-storage";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { findReadyAgentMediaByFilenameFlexible } from "@/lib/server/agent-media-files";
 
@@ -19,12 +19,20 @@ function primaryMime(mime: string): string {
   return base || "application/octet-stream";
 }
 
+const PRESIGNED_GET_TTL_SECONDS = 3600;
+
 /**
  * Envia ficheiros configurados no agente pela Evolution, na ordem pedida.
- * O ramo Evolution segue o `mime_type` gravado na BD (image / video / áudio / documento).
+ * Usa URL presignada R2 (GET) em `media`/`audio` para a Evolution descarregar o ficheiro,
+ * evitando buffer/base64 no servidor (timeouts em webhooks).
  */
 export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promise<void> {
   if (!opts.originalFilenames.length) return;
+  if (!isR2Configured()) {
+    console.warn("[outbound-media] R2 não configurado — não é possível presign GET");
+    return;
+  }
+
   const sb = createSupabaseServiceClient();
 
   for (const name of opts.originalFilenames) {
@@ -39,15 +47,17 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
       continue;
     }
 
-    let buffer: Buffer;
+    let mediaUrl: string;
     try {
-      buffer = await getMediaBufferFromR2(file.storageKey);
+      mediaUrl = await createR2PresignedGetUrl({
+        key: file.storageKey,
+        expiresInSeconds: PRESIGNED_GET_TTL_SECONDS,
+      });
     } catch (e) {
-      console.warn("[outbound-media] download R2 falhou", file.storageKey, e);
+      console.warn("[outbound-media] presign GET R2 falhou", file.storageKey, e);
       continue;
     }
 
-    const b64 = buffer.toString("base64");
     const mimeLower = primaryMime(file.mimeType).toLowerCase();
 
     if (mimeLower.startsWith("image/")) {
@@ -56,7 +66,7 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
         number: opts.number,
         mediatype: "image",
         mimetype: primaryMime(file.mimeType),
-        media: b64,
+        media: mediaUrl,
         caption: file.originalFilename,
       });
       if (!res.ok) console.warn("[outbound-media] sendMedia image", res.status, res.error);
@@ -69,7 +79,7 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
         number: opts.number,
         mediatype: "video",
         mimetype: primaryMime(file.mimeType),
-        media: b64,
+        media: mediaUrl,
         caption: file.originalFilename,
       });
       if (!res.ok) console.warn("[outbound-media] sendMedia video", res.status, res.error);
@@ -80,7 +90,7 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
       const res = await evolutionSendAudio({
         instanceName: opts.instanceName,
         number: opts.number,
-        audio: b64,
+        audio: mediaUrl,
       });
       if (!res.ok) console.warn("[outbound-media] sendWhatsAppAudio", res.status, res.error);
       continue;
@@ -91,7 +101,7 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
       number: opts.number,
       mediatype: "document",
       mimetype: primaryMime(file.mimeType),
-      media: b64,
+      media: mediaUrl,
       caption: file.originalFilename,
       fileName: file.originalFilename,
     });

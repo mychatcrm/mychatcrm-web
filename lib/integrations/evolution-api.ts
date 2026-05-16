@@ -304,14 +304,15 @@ export async function evolutionSendText(params: {
 /**
  * Envia mídia (imagem, vídeo, documento) via Evolution API v2.
  * POST /message/sendMedia/{instance}
- * `media` deve ser base64 puro (sem prefixo data:...).
+ * `media` pode ser base64 puro (sem prefixo data:...) ou URL HTTPS (ex.: presign R2)
+ * conforme suportado pela instância Evolution.
  */
 export async function evolutionSendMedia(params: {
   instanceName: string;
   number: string;
   mediatype: "image" | "video" | "document";
   mimetype: string;
-  /** Base64 encoded file content (sem data: prefix). */
+  /** Base64 do ficheiro ou URL HTTPS acessível pela Evolution. */
   media: string;
   /** Legenda / nome do ficheiro. */
   caption?: string;
@@ -336,13 +337,13 @@ export async function evolutionSendMedia(params: {
 /**
  * Envia áudio PTT (push-to-talk) via Evolution API v2.
  * POST /message/sendWhatsAppAudio/{instance}
- * `audio` deve ser base64 puro. O campo `encoding: true` instrui a Evolution a
- * re-codificar para opus/ogg se necessário.
+ * `audio` pode ser base64 puro ou URL HTTPS acessível pela Evolution.
+ * O campo `encoding: true` instrui a Evolution a re-codificar para opus/ogg se necessário.
  */
 export async function evolutionSendAudio(params: {
   instanceName: string;
   number: string;
-  /** Base64 encoded audio content (sem data: prefix). */
+  /** Base64 do áudio ou URL HTTPS. */
   audio: string;
 }): Promise<EvolutionFetchResult<unknown>> {
   const enc = encodeURIComponent(params.instanceName);

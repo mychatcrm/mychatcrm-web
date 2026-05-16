@@ -116,6 +116,25 @@ export async function createR2PresignedUploadUrl(params: {
   );
 }
 
+/** URL HTTPS temporária para leitura pública da Evolution (GET presignado R2). */
+export async function createR2PresignedGetUrl(params: {
+  key: string;
+  expiresInSeconds?: number;
+}): Promise<string> {
+  assertR2Configured();
+  if (!r2Client) {
+    throw new Error(getR2ConfigurationError() ?? "Armazenamento R2 indisponível.");
+  }
+  return getSignedUrl(
+    r2Client,
+    new GetObjectCommand({
+      Bucket: BUCKET,
+      Key: params.key,
+    }),
+    { expiresIn: params.expiresInSeconds ?? 3600 },
+  );
+}
+
 export async function headR2Object(key: string): Promise<{ sizeBytes: number; contentType: string | null } | null> {
   if (!r2Client) throw new Error("[r2-storage] cliente não configurado");
   try {
