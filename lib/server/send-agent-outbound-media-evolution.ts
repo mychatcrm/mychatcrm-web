@@ -42,7 +42,6 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
   }
 
   const sb = createSupabaseServiceClient();
-  const omitCaptions = opts.originalFilenames.length > 1;
 
   for (let index = 0; index < opts.originalFilenames.length; index++) {
     const filename = opts.originalFilenames[index]!;
@@ -73,7 +72,7 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
       });
 
       const mimeLower = primaryMime(file.mimeType).toLowerCase();
-      const caption = omitCaptions ? "" : file.originalFilename;
+      const caption = "";
       let sendOk = false;
 
       if (mimeLower.startsWith("image/")) {

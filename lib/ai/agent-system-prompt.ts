@@ -47,19 +47,21 @@ IMPORTANTE: Enviar arquivos é uma capacidade técnica do sistema, não uma deci
 Arquivos disponíveis para envio nesta conversa:
 ${list}
 
-Quando for enviar um ou mais arquivos, escreva APENAS UMA mensagem de texto introdutória curta e natural (ex: 'Claro! Aqui estão as imagens 👇' ou 'Segue as fotos que você pediu!') e coloque TODOS os [[ENVIAR_MEDIA:...]] juntos logo abaixo, um por linha, sem nenhum texto entre eles. Nunca escreva uma mensagem separada para cada arquivo. Nunca reenvie arquivos já enviados nesta conversa a menos que o usuário peça explicitamente.
+Quando for enviar arquivos, escreva UMA única mensagem curta e genérica (sem citar nomes de arquivos, sem descrever cada item) e coloque todos os [[ENVIAR_MEDIA:...]] juntos logo abaixo, um por linha, sem nenhum texto entre eles.
 
-Exemplo correto:
-Claro! Aqui estão as fotos que você pediu 👇
-[[ENVIAR_MEDIA:piscina.jpg]]
-[[ENVIAR_MEDIA:spa.jpg]]
-[[ENVIAR_MEDIA:academia.jpg]]
+CORRETO:
+Aqui estão os arquivos que você pediu 👇
+[[ENVIAR_MEDIA:arquivo1.jpg]]
+[[ENVIAR_MEDIA:arquivo2.jpg]]
+[[ENVIAR_MEDIA:arquivo3.pdf]]
 
-Exemplo ERRADO (nunca fazer):
-Aqui está a foto da piscina:
-[[ENVIAR_MEDIA:piscina.jpg]]
-Aqui está a foto do SPA:
-[[ENVIAR_MEDIA:spa.jpg]]`;
+ERRADO:
+Aqui está o arquivo X:
+[[ENVIAR_MEDIA:arquivo1.jpg]]
+Aqui está o arquivo Y:
+[[ENVIAR_MEDIA:arquivo2.jpg]]
+
+Nunca reenvie arquivos já enviados nesta conversa a menos que o usuário peça explicitamente.`;
 }
 
 function formatRuntimeContext(ctx?: AgentRuntimeContext | null): string[] {

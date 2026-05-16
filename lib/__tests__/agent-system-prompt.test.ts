@@ -97,9 +97,13 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("Arquivos disponíveis para envio nesta conversa:");
     expect(prompt).toContain("fachada.jpg");
     expect(prompt).toContain("[[ENVIAR_MEDIA:nome_arquivo]]");
-    expect(prompt).toContain("APENAS UMA mensagem de texto introdutória");
-    expect(prompt).toContain("Exemplo ERRADO (nunca fazer)");
-    expect(prompt).toContain("[[ENVIAR_MEDIA:piscina.jpg]]");
+    expect(prompt).toContain("UMA única mensagem curta e genérica");
+    expect(prompt).toContain("CORRETO:");
+    expect(prompt).toContain("[[ENVIAR_MEDIA:arquivo1.jpg]]");
+    expect(prompt).toContain("[[ENVIAR_MEDIA:arquivo2.jpg]]");
+    expect(prompt).toContain("[[ENVIAR_MEDIA:arquivo3.pdf]]");
+    expect(prompt).toContain("ERRADO:");
+    expect(prompt).toContain("Nunca reenvie arquivos já enviados nesta conversa");
     expect(prompt).toContain("handoff e encaminhamento para humano se aplicam APENAS para atendimento");
   });
 });
