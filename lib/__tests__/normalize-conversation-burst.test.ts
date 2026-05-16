@@ -35,7 +35,7 @@ describe("normalizeConversationBurst", () => {
     expect(burst.groupedMessagesCount).toBe(1);
   });
 
-  it("keeps distinct questions as separate reply units", () => {
+  it("groups all burst messages into a single reply unit regardless of intent", () => {
     const burst = normalizeConversationBurst([
       { id: "1", content: "oi" },
       { id: "2", content: "quais lotes vc tem?" },
@@ -43,8 +43,9 @@ describe("normalizeConversationBurst", () => {
       { id: "4", content: "localização?" },
     ]);
     expect(burst.canonicalMessages.length).toBeGreaterThanOrEqual(3);
-    expect(burst.replyUnits.length).toBeGreaterThanOrEqual(3);
-    expect(burst.responseStrategy).toBe("sequential_replies");
+    // All messages must be in exactly ONE reply unit — single AI call, single reply
+    expect(burst.replyUnits).toHaveLength(1);
+    expect(burst.responseStrategy).not.toBe("sequential_replies");
     expect(burst.suppressedHistoryIds).toEqual(["1", "2", "3", "4"]);
   });
 
@@ -57,22 +58,23 @@ describe("normalizeConversationBurst", () => {
     expect(units[0]).toHaveLength(2);
   });
 
-  it("splits unrelated messages into separate units", () => {
+  it("always groups all messages into a single unit (one reply per burst)", () => {
     const units = groupBurstIntoReplyUnits([
       { id: "1", content: "oi" },
       { id: "2", content: "qual o preço?" },
       { id: "3", content: "tem vaga?" },
     ]);
-    expect(units).toHaveLength(3);
+    expect(units).toHaveLength(1);
+    expect(units[0]).toHaveLength(3);
   });
 
-  it("prioritizes urgency in strategy", () => {
+  it("prioritizes urgency in strategy and keeps single unit", () => {
     const burst = normalizeConversationBurst([
       { id: "1", content: "qual localização?" },
       { id: "2", content: "me manda agora por favor" },
     ]);
     expect(burst.signals.urgencyLevel).toBe("high");
-    expect(burst.responseStrategy).toBe("sequential_replies");
-    expect(burst.replyUnits).toHaveLength(2);
+    expect(burst.responseStrategy).toBe("urgent_direct");
+    expect(burst.replyUnits).toHaveLength(1);
   });
 });

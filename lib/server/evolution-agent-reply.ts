@@ -91,8 +91,11 @@ async function generateReplyForUnit(params: {
   burst: ReturnType<typeof normalizeConversationBurst>;
   suppressedHistoryIds: string[];
   sb: SupabaseServiceClient;
+  /** Sobrescreve o prompt calculado via buildReplyUnitPrompt. Usado para passar
+   *  burst.userPrompt quando todas as mensagens estão numa única unidade. */
+  promptOverride?: string;
 }): Promise<string> {
-  const unitPrompt = buildReplyUnitPrompt(params.unit);
+  const unitPrompt = params.promptOverride ?? buildReplyUnitPrompt(params.unit);
   const languageCode = detectSupportedLanguageCode(unitPrompt);
   const unitIds = new Set(params.unit.map((m) => m.id));
   const excludeMessageIds = params.suppressedHistoryIds.filter((id) => !unitIds.has(id));
@@ -314,6 +317,9 @@ export async function processAgentResponseJob(
       burst,
       suppressedHistoryIds: burst.suppressedHistoryIds,
       sb,
+      // Sempre usa o prompt consolidado do burst (buildHumanPrompt),
+      // que já lida com urgência, intent dominante e filtragem de saudações.
+      promptOverride: burst.userPrompt,
     });
 
     console.info("[agent-response-jobs]", {

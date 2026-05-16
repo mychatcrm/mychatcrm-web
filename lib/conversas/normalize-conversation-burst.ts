@@ -35,37 +35,12 @@ const URGENCY_MEDIUM = /\b(hoje|rápido|rapido|logo|quanto antes)\b/i;
 const SMALL_TALK_FOLLOWUP =
   /^(tudo bem|td bem|como vai|beleza|e você|e vc|tudo certo|como está|como esta)\??$/i;
 
-/** Agrupa mensagens relacionadas que devem receber uma única resposta (ex.: oi + tudo bem?). */
+/** Agrupa todas as mensagens do burst em uma única unidade de resposta.
+ *  Todas as mensagens dentro da mesma janela de debounce (Smart Wait) devem
+ *  gerar UMA única chamada ao modelo e UMA única mensagem de resposta. */
 export function groupBurstIntoReplyUnits(messages: InboundTextMessage[]): InboundTextMessage[][] {
   if (messages.length === 0) return [];
-  if (messages.length === 1) return [messages];
-
-  const units: InboundTextMessage[][] = [];
-  let current: InboundTextMessage[] = [messages[0]!];
-
-  for (let i = 1; i < messages.length; i++) {
-    const prev = messages[i - 1]!;
-    const next = messages[i]!;
-    if (shouldMergeReplyUnit(prev, next)) {
-      current.push(next);
-    } else {
-      units.push(current);
-      current = [next];
-    }
-  }
-  units.push(current);
-  return units;
-}
-
-function shouldMergeReplyUnit(prev: InboundTextMessage, next: InboundTextMessage): boolean {
-  const prevIntent = classifyIntent(prev.content);
-  const nextIntent = classifyIntent(next.content);
-  const nextKey = normalizeBurstDedupeKey(next.content);
-
-  if (prevIntent === "greeting" && nextIntent === "greeting") return true;
-  if (prevIntent === "greeting" && SMALL_TALK_FOLLOWUP.test(nextKey)) return true;
-  if (prevIntent === "greeting" && nextKey.length <= 22 && !next.content.includes("?")) return true;
-  return false;
+  return [messages];
 }
 
 /** Prompt para uma unidade de resposta (1 mensagem ou cluster relacionado). */
@@ -142,10 +117,9 @@ function buildHumanPrompt(messages: InboundTextMessage[], dominantIntent: string
 
 function pickResponseStrategy(
   messageCount: number,
-  unitCount: number,
+  _unitCount: number,
   urgency: BurstUrgencyLevel,
 ): BurstResponseStrategy {
-  if (unitCount > 1) return "sequential_replies";
   if (urgency === "high") return "urgent_direct";
   if (messageCount <= 2) return "single_natural";
   return "progressive_short";
