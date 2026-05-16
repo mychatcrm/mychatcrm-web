@@ -4,6 +4,7 @@ import {
   isLikelyOutboundMediaRequest,
   looksLikeOutboundMediaRefusal,
   resolveOutboundMediaForAgentResponse,
+  stripOutboundMediaDirectives,
 } from "@/lib/server/agent-media-files";
 
 function fakeSupabaseWithMedia(rows: Array<Record<string, unknown>>) {
@@ -21,6 +22,16 @@ function fakeSupabaseWithMedia(rows: Array<Record<string, unknown>>) {
 }
 
 describe("agent outbound media helpers", () => {
+  it("extracts every ENVIAR_MEDIA tag in order and strips all from text", () => {
+    const parsed = stripOutboundMediaDirectives(
+      "Aqui está o SPA:\n[[ENVIAR_MEDIA:spa.jpg]]\nE a piscina:\n[[ENVIAR_MEDIA:piscina.jpg]]\n",
+    );
+    expect(parsed.filenames).toEqual(["spa.jpg", "piscina.jpg"]);
+    expect(parsed.cleanedText).not.toContain("ENVIAR_MEDIA");
+    expect(parsed.cleanedText).toContain("SPA");
+    expect(parsed.cleanedText).toContain("piscina");
+  });
+
   it("detects media requests and media refusal text", () => {
     expect(isLikelyOutboundMediaRequest("Pode me enviar as fotos?")).toBe(true);
     expect(isLikelyOutboundMediaRequest("Qual é o horário de atendimento?")).toBe(false);

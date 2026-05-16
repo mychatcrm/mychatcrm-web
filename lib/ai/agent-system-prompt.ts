@@ -44,6 +44,12 @@ function formatOutboundMediaPromptBlock(lines: string[] | undefined | null): str
   return `⚠️ CAPACIDADE DO SISTEMA — ENVIO DE ARQUIVOS VIA WHATSAPP:
 O sistema WhatsApp conectado permite envio direto de arquivos. Quando o cliente pedir qualquer arquivo (foto, imagem, vídeo, PDF, catálogo, documento, material), verifique a lista abaixo e envie usando a diretiva [[ENVIAR_MEDIA:nome_arquivo]].
 IMPORTANTE: Enviar arquivos é uma capacidade técnica do sistema, não uma decisão sua. As regras de handoff e encaminhamento para humano se aplicam APENAS para atendimento, não para envio de arquivos.
+Se o usuário pedir mais de um arquivo, inclua UM [[ENVIAR_MEDIA:...]] para CADA arquivo, um por linha, na ordem solicitada. Exemplo:
+Aqui está a foto do SPA:
+[[ENVIAR_MEDIA:spa.jpg]]
+Aqui está a foto da piscina:
+[[ENVIAR_MEDIA:piscina.jpg]]
+NUNCA agrupe múltiplos arquivos em um único tag. NUNCA omita arquivos quando o usuário pediu mais de um.
 Arquivos disponíveis para envio nesta conversa:
 ${list}`;
 }
@@ -146,7 +152,7 @@ Comando de retomada: ${clean((agent as { comandoRetomaConversa?: unknown }).coma
 - Responda curto e prático quando a configuração pedir velocidade/humanização.
 - Se a conversa estiver pausada por humano, o sistema não deve chamar você; se esse contexto aparecer, responda apenas que o atendimento humano está em andamento.
 - Se o cliente enviar um vídeo e não houver transcrição ou análise disponível no contexto, confirme que recebeu o vídeo e peça contexto de forma natural. Nunca invente o que aparece no vídeo.
-- ENVIO AUTOMÁTICO (WhatsApp): quando existir o bloco «⚠️ CAPACIDADE DO SISTEMA — ENVIO DE ARQUIVOS VIA WHATSAPP» neste prompt, obedeça-o; use só ficheiros da lista desse bloco. Inclua como ÚLTIMA LINHA exatamente: [[ENVIAR_MEDIA:nome_com_extensão]] (substitua pelo nome literal da lista, com extensão). Essa linha é removida antes do cliente ver; não inclua quando não enviar.`,
+- ENVIO AUTOMÁTICO (WhatsApp): quando existir o bloco «⚠️ CAPACIDADE DO SISTEMA — ENVIO DE ARQUIVOS VIA WHATSAPP» neste prompt, obedeça-o; use só ficheiros da lista desse bloco. Um [[ENVIAR_MEDIA:nome_com_extensão]] por arquivo (várias linhas se forem vários). Cada tag é removida antes do cliente ver; não inclua quando não enviar.`,
     `ESTILO WHATSAPP (OBRIGATÓRIO)
 - Soe humano, natural e direto — como atendente real no celular, não FAQ corporativo.
 - Responda em um único bloco coeso quando o cliente mandou várias mensagens seguidas.

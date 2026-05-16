@@ -171,22 +171,28 @@ export function looksLikeOutboundMediaRefusal(text: string): boolean {
   return OUTBOUND_MEDIA_REFUSAL_WORDS.some((word) => normalized.includes(normalizeSearchText(word)));
 }
 
+const OUTBOUND_MEDIA_DIRECTIVE_RE = /\[\[ENVIAR_MEDIA:([^\]]+)]]/gi;
+
 /**
- * Remove marcadores [[ENVIAR_MEDIA:filename.ext]] enviados pelo modelo e devolve nomes ordenados únicos.
+ * Remove marcadores [[ENVIAR_MEDIA:filename.ext]] enviados pelo modelo e devolve todos os nomes
+ * na ordem de aparição (sem duplicar o mesmo nome literal).
  */
 export function stripOutboundMediaDirectives(text: string): OutboundMediaDirectiveParse {
   const filenames: string[] = [];
   const seen = new Set<string>();
-  const re = /\[\[ENVIAR_MEDIA:([^\]]+)]]/gi;
-  const cleanedText = text.replace(re, (_m, rawName: string) => {
-    const name = String(rawName ?? "").trim();
+  for (const match of text.matchAll(OUTBOUND_MEDIA_DIRECTIVE_RE)) {
+    const name = String(match[1] ?? "").trim();
     if (name && !seen.has(name)) {
       seen.add(name);
       filenames.push(name);
     }
-    return "";
-  });
-  return { cleanedText: cleanedText.replace(/\s+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trimEnd(), filenames };
+  }
+  const cleanedText = text
+    .replace(OUTBOUND_MEDIA_DIRECTIVE_RE, "")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trimEnd();
+  return { cleanedText, filenames };
 }
 
 export async function listAgentMediaFiles(params: {
