@@ -171,27 +171,26 @@ export function looksLikeOutboundMediaRefusal(text: string): boolean {
   return OUTBOUND_MEDIA_REFUSAL_WORDS.some((word) => normalized.includes(normalizeSearchText(word)));
 }
 
-const OUTBOUND_MEDIA_DIRECTIVE_RE = /\[\[ENVIAR_MEDIA:([^\]]+)]]/gi;
+const MEDIA_TAG_REGEX = /\[\[ENVIAR_MEDIA:(.*?)\]\]/gi;
+
+/** Extrai todos os nomes de arquivo das diretivas [[ENVIAR_MEDIA:...]] na ordem de aparição. */
+export function extractMediaFilenames(text: string): string[] {
+  const matches = [...text.matchAll(MEDIA_TAG_REGEX)];
+  return matches.map((m) => m[1].trim()).filter(Boolean);
+}
+
+/** Remove todas as diretivas [[ENVIAR_MEDIA:...]] do texto visível ao cliente. */
+export function stripMediaTags(text: string): string {
+  MEDIA_TAG_REGEX.lastIndex = 0;
+  return text.replace(MEDIA_TAG_REGEX, "").replace(/\n{3,}/g, "\n\n").trim();
+}
 
 /**
- * Remove marcadores [[ENVIAR_MEDIA:filename.ext]] enviados pelo modelo e devolve todos os nomes
- * na ordem de aparição (sem duplicar o mesmo nome literal).
+ * Remove marcadores [[ENVIAR_MEDIA:filename.ext]] enviados pelo modelo e devolve nomes na ordem.
  */
 export function stripOutboundMediaDirectives(text: string): OutboundMediaDirectiveParse {
-  const filenames: string[] = [];
-  const seen = new Set<string>();
-  for (const match of text.matchAll(OUTBOUND_MEDIA_DIRECTIVE_RE)) {
-    const name = String(match[1] ?? "").trim();
-    if (name && !seen.has(name)) {
-      seen.add(name);
-      filenames.push(name);
-    }
-  }
-  const cleanedText = text
-    .replace(OUTBOUND_MEDIA_DIRECTIVE_RE, "")
-    .replace(/\s+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trimEnd();
+  const filenames = extractMediaFilenames(text);
+  const cleanedText = stripMediaTags(text);
   return { cleanedText, filenames };
 }
 
@@ -325,8 +324,12 @@ export async function resolveOutboundMediaForAgentResponse(params: {
   responseText: string;
   userRequestText: string;
 }): Promise<OutboundMediaDirectiveParse & { inferred: boolean }> {
-  const parsed = stripOutboundMediaDirectives(params.responseText);
-  if (parsed.filenames.length) return { ...parsed, inferred: false };
+  const filenames = extractMediaFilenames(params.responseText);
+  let cleanedText = stripMediaTags(params.responseText);
+  if (filenames.length) {
+    console.log("[MEDIA_DEBUG] directives_parsed:", { count: filenames.length, filenames });
+    return { cleanedText, filenames, inferred: false };
+  }
 
   const inferred = await inferOutboundMediaFilenamesForRequest({
     sb: params.sb,
@@ -334,11 +337,11 @@ export async function resolveOutboundMediaForAgentResponse(params: {
     agentId: params.agentId,
     requestText: params.userRequestText,
   });
-  if (!inferred.length) return { ...parsed, inferred: false };
+  if (!inferred.length) return { cleanedText, filenames: [], inferred: false };
 
-  const cleanedText = looksLikeOutboundMediaRefusal(parsed.cleanedText)
+  cleanedText = looksLikeOutboundMediaRefusal(cleanedText)
     ? "Claro, vou te enviar agora."
-    : parsed.cleanedText.trim() || "Segue o envio solicitado.";
+    : cleanedText.trim() || "Segue o envio solicitado.";
 
   console.info("[outbound-media]", {
     action: "inferred_directive",
@@ -348,6 +351,53 @@ export async function resolveOutboundMediaForAgentResponse(params: {
   });
 
   return { cleanedText, filenames: inferred, inferred: true };
+}
+
+function escapeIlikePattern(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
+/** Lookup por original_filename (ilike exacto, depois contains) para envio Evolution. */
+export async function lookupReadyAgentMediaForOutbound(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  agentId: string;
+  filename: string;
+}): Promise<AgentMediaFile | null> {
+  const trimmed = params.filename.trim();
+  if (!trimmed) {
+    console.log("[MEDIA_DEBUG] lookup:", { filename: trimmed, found: false });
+    return null;
+  }
+
+  const base = params.sb
+    .from("agent_media_files")
+    .select("*")
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", params.agentId)
+    .eq("status", "ready");
+
+  const { data: exactMatch, error: exactError } = await base
+    .ilike("original_filename", trimmed)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!exactError && exactMatch) {
+    console.log("[MEDIA_DEBUG] lookup:", { filename: trimmed, found: true, mode: "exact" });
+    return toRow(exactMatch as Record<string, unknown>);
+  }
+
+  const partialPattern = `%${escapeIlikePattern(trimmed)}%`;
+  const { data: partialMatch, error: partialError } = await base
+    .ilike("original_filename", partialPattern)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const found = !partialError && Boolean(partialMatch);
+  console.log("[MEDIA_DEBUG] lookup:", { filename: trimmed, found, mode: found ? "partial" : "none" });
+  return found ? toRow(partialMatch as Record<string, unknown>) : null;
 }
 
 export async function findReadyAgentMediaByOriginalFilename(params: {

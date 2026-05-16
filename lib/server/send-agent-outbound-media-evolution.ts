@@ -2,9 +2,11 @@ import "server-only";
 
 import { evolutionSendAudio, evolutionSendMedia } from "@/lib/integrations/evolution-api";
 import { createR2PresignedGetUrl, isR2Configured } from "@/lib/integrations/r2-storage";
+import {
+  findReadyAgentMediaByFilenameFlexible,
+  lookupReadyAgentMediaForOutbound,
+} from "@/lib/server/agent-media-files";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { findReadyAgentMediaByFilenameFlexible } from "@/lib/server/agent-media-files";
-import { sleep } from "@/lib/server/agent-response-schedule";
 
 type SendOpts = {
   tenantId: string;
@@ -21,13 +23,15 @@ function primaryMime(mime: string): string {
 }
 
 const PRESIGNED_GET_TTL_SECONDS = 3600;
-/** Espaço entre envios sequenciais para evitar bloqueio por rajada no WhatsApp. */
-const OUTBOUND_MEDIA_SEND_GAP_MS = 500;
+const OUTBOUND_MEDIA_SEND_GAP_MS = 600;
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /**
- * Envia ficheiros configurados no agente pela Evolution, na ordem pedida.
- * Usa URL presignada R2 (GET) em `media`/`audio` para a Evolution descarregar o ficheiro,
- * evitando buffer/base64 no servidor (timeouts em webhooks).
+ * Envia ficheiros configurados no agente pela Evolution, na ordem pedida (sequencial).
+ * Usa URL presignada R2 (GET) para a Evolution descarregar o ficheiro.
  */
 export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promise<void> {
   if (!opts.originalFilenames.length) return;
@@ -39,31 +43,35 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
   const sb = createSupabaseServiceClient();
 
   for (let index = 0; index < opts.originalFilenames.length; index++) {
+    const filename = opts.originalFilenames[index]!;
     try {
-      const name = opts.originalFilenames[index]!;
-      const file = await findReadyAgentMediaByFilenameFlexible({
+      let file = await lookupReadyAgentMediaForOutbound({
         sb,
         tenantId: opts.tenantId,
         agentId: opts.agentId,
-        candidateName: name,
+        filename,
       });
       if (!file) {
-        console.warn("[outbound-media] ficheiro não encontrado ou não pronto:", name);
+        file = await findReadyAgentMediaByFilenameFlexible({
+          sb,
+          tenantId: opts.tenantId,
+          agentId: opts.agentId,
+          candidateName: filename,
+        });
+        console.log("[MEDIA_DEBUG] lookup:", { filename, found: !!file, mode: file ? "flexible" : "none" });
+      }
+
+      if (!file) {
         continue;
       }
 
-      let mediaUrl: string;
-      try {
-        mediaUrl = await createR2PresignedGetUrl({
-          key: file.storageKey,
-          expiresInSeconds: PRESIGNED_GET_TTL_SECONDS,
-        });
-      } catch (e) {
-        console.warn("[outbound-media] presign GET R2 falhou", file.storageKey, e);
-        continue;
-      }
+      const mediaUrl = await createR2PresignedGetUrl({
+        key: file.storageKey,
+        expiresInSeconds: PRESIGNED_GET_TTL_SECONDS,
+      });
 
       const mimeLower = primaryMime(file.mimeType).toLowerCase();
+      let sendOk = false;
 
       if (mimeLower.startsWith("image/")) {
         const res = await evolutionSendMedia({
@@ -74,11 +82,9 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
           media: mediaUrl,
           caption: file.originalFilename,
         });
+        sendOk = res.ok;
         if (!res.ok) console.warn("[outbound-media] sendMedia image", res.status, res.error);
-        continue;
-      }
-
-      if (mimeLower.startsWith("video/")) {
+      } else if (mimeLower.startsWith("video/")) {
         const res = await evolutionSendMedia({
           instanceName: opts.instanceName,
           number: opts.number,
@@ -87,34 +93,40 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
           media: mediaUrl,
           caption: file.originalFilename,
         });
+        sendOk = res.ok;
         if (!res.ok) console.warn("[outbound-media] sendMedia video", res.status, res.error);
-        continue;
-      }
-
-      if (mimeLower.startsWith("audio/")) {
+      } else if (mimeLower.startsWith("audio/")) {
         const res = await evolutionSendAudio({
           instanceName: opts.instanceName,
           number: opts.number,
           audio: mediaUrl,
         });
+        sendOk = res.ok;
         if (!res.ok) console.warn("[outbound-media] sendWhatsAppAudio", res.status, res.error);
-        continue;
+      } else {
+        const res = await evolutionSendMedia({
+          instanceName: opts.instanceName,
+          number: opts.number,
+          mediatype: "document",
+          mimetype: primaryMime(file.mimeType),
+          media: mediaUrl,
+          caption: file.originalFilename,
+          fileName: file.originalFilename,
+        });
+        sendOk = res.ok;
+        if (!res.ok) console.warn("[outbound-media] sendMedia document", res.status, res.error);
       }
 
-      const res = await evolutionSendMedia({
-        instanceName: opts.instanceName,
-        number: opts.number,
-        mediatype: "document",
-        mimetype: primaryMime(file.mimeType),
-        media: mediaUrl,
-        caption: file.originalFilename,
-        fileName: file.originalFilename,
+      console.log("[MEDIA_DEBUG] sent:", { filename, status: sendOk ? "ok" : "error" });
+    } catch (err) {
+      console.error("[MEDIA_DEBUG] error sending:", {
+        filename,
+        err: err instanceof Error ? err.message : err,
       });
-      if (!res.ok) console.warn("[outbound-media] sendMedia document", res.status, res.error);
-    } finally {
-      if (index < opts.originalFilenames.length - 1) {
-        await sleep(OUTBOUND_MEDIA_SEND_GAP_MS);
-      }
+    }
+
+    if (index < opts.originalFilenames.length - 1) {
+      await sleepMs(OUTBOUND_MEDIA_SEND_GAP_MS);
     }
   }
 }

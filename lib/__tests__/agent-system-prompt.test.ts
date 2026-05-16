@@ -97,8 +97,8 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("Arquivos disponíveis para envio nesta conversa:");
     expect(prompt).toContain("fachada.jpg");
     expect(prompt).toContain("[[ENVIAR_MEDIA:nome_arquivo]]");
-    expect(prompt).toContain("UM [[ENVIAR_MEDIA:...]] para CADA arquivo");
-    expect(prompt).toContain("[[ENVIAR_MEDIA:spa.jpg]]");
+    expect(prompt).toContain("Nunca agrupe múltiplos arquivos em um único tag");
+    expect(prompt).toContain("Inclua como ÚLTIMA LINHA exatamente: [[ENVIAR_MEDIA:nome_com_extensão]]");
     expect(prompt).toContain("handoff e encaminhamento para humano se aplicam APENAS para atendimento");
   });
 });

@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  extractMediaFilenames,
   inferOutboundMediaFilenamesForRequest,
   isLikelyOutboundMediaRequest,
   looksLikeOutboundMediaRefusal,
   resolveOutboundMediaForAgentResponse,
+  stripMediaTags,
   stripOutboundMediaDirectives,
 } from "@/lib/server/agent-media-files";
 
@@ -21,8 +23,40 @@ function fakeSupabaseWithMedia(rows: Array<Record<string, unknown>>) {
   } as never;
 }
 
-describe("agent outbound media helpers", () => {
-  it("extracts every ENVIAR_MEDIA tag in order and strips all from text", () => {
+describe("extractMediaFilenames / stripMediaTags", () => {
+  it("returns empty array when there are no tags", () => {
+    expect(extractMediaFilenames("Olá, segue a informação.")).toEqual([]);
+    expect(stripMediaTags("Olá, segue a informação.")).toBe("Olá, segue a informação.");
+  });
+
+  it("extracts one tag and strips it from visible text", () => {
+    const text = "Segue a foto:\n[[ENVIAR_MEDIA:fachada.jpg]]\n";
+    expect(extractMediaFilenames(text)).toEqual(["fachada.jpg"]);
+    expect(stripMediaTags(text)).toBe("Segue a foto:");
+    expect(stripMediaTags(text)).not.toContain("ENVIAR_MEDIA");
+  });
+
+  it("extracts three tags in order", () => {
+    const text = [
+      "A:",
+      "[[ENVIAR_MEDIA:a.jpg]]",
+      "B:",
+      "[[ENVIAR_MEDIA:b.png]]",
+      "C:",
+      "[[ENVIAR_MEDIA:c.pdf]]",
+    ].join("\n");
+    expect(extractMediaFilenames(text)).toEqual(["a.jpg", "b.png", "c.pdf"]);
+  });
+
+  it("trims spaces inside tags and tolerates varied casing", () => {
+    const text = "[[enviar_media:  spa.jpg ]]\n[[ENVIAR_MEDIA:Piscina.JPG]]";
+    expect(extractMediaFilenames(text)).toEqual(["spa.jpg", "Piscina.JPG"]);
+    const stripped = stripMediaTags(`${text}\n\n\n\nRodapé`);
+    expect(stripped).not.toMatch(/ENVIAR_MEDIA/i);
+    expect(stripped).toBe("Rodapé");
+  });
+
+  it("stripOutboundMediaDirectives extracts before stripping", () => {
     const parsed = stripOutboundMediaDirectives(
       "Aqui está o SPA:\n[[ENVIAR_MEDIA:spa.jpg]]\nE a piscina:\n[[ENVIAR_MEDIA:piscina.jpg]]\n",
     );
@@ -31,7 +65,9 @@ describe("agent outbound media helpers", () => {
     expect(parsed.cleanedText).toContain("SPA");
     expect(parsed.cleanedText).toContain("piscina");
   });
+});
 
+describe("agent outbound media helpers", () => {
   it("detects media requests and media refusal text", () => {
     expect(isLikelyOutboundMediaRequest("Pode me enviar as fotos?")).toBe(true);
     expect(isLikelyOutboundMediaRequest("Qual é o horário de atendimento?")).toBe(false);

@@ -695,22 +695,23 @@ export async function POST(request: Request) {
             inferred: outboundMediaParse.inferred,
           });
 
-          const sendOutboundQueuedMedia =
-            outboundFilenames.length > 0
-              ? () =>
-                  sendAgentOutboundMediaViaEvolution({
-                    tenantId: row.tenant_id,
-                    agentId,
-                    instanceName,
-                    number,
-                    originalFilenames: outboundFilenames,
-                  }).catch((err) =>
-                    console.warn(
-                      "[webhooks/evolution] outbound agent media",
-                      err instanceof Error ? err.message : err,
-                    ),
-                  )
-              : null;
+          const sendOutboundMediaSafe = async (): Promise<void> => {
+            if (!outboundFilenames.length) return;
+            try {
+              await sendAgentOutboundMediaViaEvolution({
+                tenantId: row.tenant_id,
+                agentId,
+                instanceName,
+                number,
+                originalFilenames: outboundFilenames,
+              });
+            } catch (err) {
+              console.warn(
+                "[webhooks/evolution] outbound agent media",
+                err instanceof Error ? err.message : err,
+              );
+            }
+          };
 
           // ── Verifica se o agente tem resposta em áudio (ElevenLabs TTS) ──────
           const sb2 = createSupabaseServiceClient();
@@ -767,7 +768,7 @@ export async function POST(request: Request) {
                   agentId,
                   conversationId: msg.remoteJid,
                 });
-                await sendOutboundQueuedMedia?.();
+                await sendOutboundMediaSafe();
               }
             } catch (ttsErr) {
               console.error("[webhooks/evolution] TTS error — fallback to text", ttsErr instanceof Error ? ttsErr.message : ttsErr);
@@ -792,7 +793,7 @@ export async function POST(request: Request) {
                   agentId,
                   conversationId: msg.remoteJid,
                 });
-                await sendOutboundQueuedMedia?.();
+                await sendOutboundMediaSafe();
               }
             }
           } else {
@@ -824,7 +825,7 @@ export async function POST(request: Request) {
                 agentId,
                 conversationId: msg.remoteJid,
               });
-              await sendOutboundQueuedMedia?.();
+              await sendOutboundMediaSafe();
             }
           }
         } catch (e) {
