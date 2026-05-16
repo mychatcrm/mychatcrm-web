@@ -93,9 +93,10 @@ describe("buildAgentSystemPrompt", () => {
       },
     });
 
-    expect(prompt).toContain("ARQUIVOS DISPONÍVEIS PARA ENVIO");
+    expect(prompt).toContain("CAPACIDADE DO SISTEMA — ENVIO DE ARQUIVOS VIA WHATSAPP");
+    expect(prompt).toContain("Arquivos disponíveis para envio nesta conversa:");
     expect(prompt).toContain("fachada.jpg");
-    expect(prompt).toContain("[[ENVIAR_MEDIA:nome_exato_do_arquivo_com_extensao]]");
-    expect(prompt).toContain("NUNCA diga que não pode enviar arquivos");
+    expect(prompt).toContain("[[ENVIAR_MEDIA:nome_arquivo]]");
+    expect(prompt).toContain("handoff e encaminhamento para humano se aplicam APENAS para atendimento");
   });
 });
