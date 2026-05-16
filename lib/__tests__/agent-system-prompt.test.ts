@@ -74,4 +74,28 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).not.toContain("IDENTIDADE CONFIGURADA");
     expect(prompt).not.toContain("instruções pro legadas");
   });
+
+  it("includes an imperative outbound media block when ready files exist", () => {
+    const prompt = buildAgentSystemPrompt({
+      languageInstruction: "Responda em português.",
+      agent: {
+        nome: "Max Vendas",
+        objetivo: "vender",
+        systemPrompt: "Ajude o cliente.",
+      },
+      runtimeContext: {
+        state: null,
+        lead: null,
+        summary: null,
+        recentMessages: [],
+        knowledgeSnippets: [],
+        outboundMediaLines: ["fachada.jpg — Foto da fachada"],
+      },
+    });
+
+    expect(prompt).toContain("ARQUIVOS DISPONÍVEIS PARA ENVIO");
+    expect(prompt).toContain("fachada.jpg");
+    expect(prompt).toContain("[[ENVIAR_MEDIA:nome_exato_do_arquivo_com_extensao]]");
+    expect(prompt).toContain("NUNCA diga que não pode enviar arquivos");
+  });
 });

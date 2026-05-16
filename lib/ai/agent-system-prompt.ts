@@ -41,13 +41,17 @@ function formatOutboundMediaPromptBlock(lines: string[] | undefined | null): str
   const safe = lines ?? [];
   if (!safe.length) return null;
   const list = safe.map((line, index) => `${index + 1}. ${line}`).join("\n");
-  return `PRIORIDADE MÁXIMA: Antes de sugerir transferência para humano ou consultor, verifique se o arquivo solicitado está na lista abaixo. Se estiver, ENVIE O ARQUIVO DIRETAMENTE.
+  return `PRIORIDADE MÁXIMA: Antes de sugerir transferência para humano ou atendente, verifique se o arquivo solicitado está na lista abaixo. Se estiver, ENVIE O ARQUIVO DIRETAMENTE.
 
 ARQUIVOS DISPONÍVEIS PARA ENVIO (você PODE e DEVE enviar estes arquivos quando o cliente pedir):
 ${list}
 
-INSTRUÇÃO OBRIGATÓRIA: Quando o cliente pedir qualquer arquivo desta lista ou algo relacionado, você DEVE enviá-lo. Responda naturalmente ao cliente e coloque na ÚLTIMA LINHA da resposta exatamente: [[ENVIAR_MEDIA:nome_exato_do_arquivo_com_extensao]]
-NUNCA diga que não pode enviar arquivos. Você TEM a capacidade de enviar todos os arquivos listados acima.`;
+INSTRUÇÃO OBRIGATÓRIA: Quando o cliente pedir foto, imagem, vídeo, PDF, catálogo, planta, material, tabela, proposta ou qualquer arquivo relacionado a esta lista, você DEVE enviá-lo. Responda naturalmente ao cliente e coloque na ÚLTIMA LINHA da resposta exatamente: [[ENVIAR_MEDIA:nome_exato_do_arquivo_com_extensao]]
+Exemplo:
+Claro, vou te enviar agora.
+[[ENVIAR_MEDIA:arquivo-exemplo.jpg]]
+
+NUNCA diga que não pode enviar arquivos, fotos ou anexos. Você TEM a capacidade de enviar todos os arquivos listados acima porque o sistema externo do WhatsApp anexará o arquivo quando você emitir a diretiva.`;
 }
 
 function formatRuntimeContext(ctx?: AgentRuntimeContext | null): string[] {

@@ -180,14 +180,44 @@ export async function buildLeadConversationMemory(params: {
   excludeMessageIds?: string[];
 }): Promise<LeadConversationMemory> {
   if (!params.remoteJid && !params.leadId) {
-    console.log("[lead-memory] outboundMediaLines count:", 0, []);
+    let sb: ReturnType<typeof createSupabaseServiceClient>;
+    try {
+      sb = createSupabaseServiceClient();
+    } catch {
+      return {
+        state: null,
+        lead: null,
+        summary: null,
+        recentMessages: [],
+        knowledgeSnippets: [],
+        outboundMediaLines: [],
+        aiMessages: [],
+        condensedContext: "",
+        recognitionHint: null,
+        lastInteractionAt: null,
+      };
+    }
+
+    const [knowledgeSnippets, outboundMediaLines] = await Promise.all([
+      getAgentKnowledgeSnippets({ sb, tenantId: params.tenantId, agentId: params.agentId }),
+      getAgentOutboundMediaPromptLines({ sb, tenantId: params.tenantId, agentId: params.agentId }),
+    ]);
+
+    console.info("[lead-memory]", {
+      event: "agent_context_without_conversation",
+      tenant_id: params.tenantId,
+      agent_id: params.agentId,
+      outbound_media_count: outboundMediaLines.length,
+      knowledge_count: knowledgeSnippets.length,
+    });
+
     return {
       state: null,
       lead: null,
       summary: null,
       recentMessages: [],
-      knowledgeSnippets: [],
-      outboundMediaLines: [],
+      knowledgeSnippets,
+      outboundMediaLines,
       aiMessages: [],
       condensedContext: "",
       recognitionHint: null,
@@ -284,7 +314,13 @@ export async function buildLeadConversationMemory(params: {
     hasPriorMessages: recentMessages.length > 0,
   });
 
-  console.log("[lead-memory] outboundMediaLines count:", outboundMediaLines.length, outboundMediaLines);
+  console.info("[lead-memory]", {
+    event: "agent_context_loaded",
+    tenant_id: params.tenantId,
+    agent_id: params.agentId,
+    outbound_media_count: outboundMediaLines.length,
+    knowledge_count: knowledgeSnippets.length,
+  });
 
   return {
     state,

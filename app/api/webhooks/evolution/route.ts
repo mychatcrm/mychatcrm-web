@@ -11,7 +11,7 @@ import {
   type EvolutionInboundMessage,
 } from "@/lib/integrations/evolution-webhook-parse";
 import { evolutionSendAudio, evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
-import { stripOutboundMediaDirectives } from "@/lib/server/agent-media-files";
+import { resolveOutboundMediaForAgentResponse } from "@/lib/server/agent-media-files";
 import { sendAgentOutboundMediaViaEvolution } from "@/lib/server/send-agent-outbound-media-evolution";
 import { resolveEvolutionAgentId } from "@/lib/server/evolution-agent-resolve";
 import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
@@ -675,12 +675,25 @@ export async function POST(request: Request) {
             });
           }
 
-          const outboundMediaParse = stripOutboundMediaDirectives(replyText);
+          const outboundMediaParse = await resolveOutboundMediaForAgentResponse({
+            sb: sbState,
+            tenantId: row.tenant_id,
+            agentId,
+            responseText: replyText,
+            userRequestText: inboundLanguageSource(msg),
+          });
           const outboundFilenames = outboundMediaParse.filenames;
           replyText = outboundMediaParse.cleanedText.trim();
           if (!replyText && outboundFilenames.length) {
             replyText = "Segue o envio solicitado.";
           }
+          console.info("[webhooks/evolution]", {
+            event: "outbound_media_resolved",
+            tenant_id: row.tenant_id,
+            agent_id: agentId,
+            filenames_count: outboundFilenames.length,
+            inferred: outboundMediaParse.inferred,
+          });
 
           const sendOutboundQueuedMedia =
             outboundFilenames.length > 0

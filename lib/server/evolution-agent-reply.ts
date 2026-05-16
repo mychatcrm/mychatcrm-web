@@ -13,7 +13,7 @@ import {
 import { textToSpeechElevenLabs } from "@/lib/integrations/elevenlabs";
 import { uploadMediaToR2 } from "@/lib/integrations/r2-storage";
 import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
-import { stripOutboundMediaDirectives } from "@/lib/server/agent-media-files";
+import { resolveOutboundMediaForAgentResponse } from "@/lib/server/agent-media-files";
 import type { AgentResponseJobRow } from "@/lib/server/agent-response-jobs";
 import {
   buildDeterministicHandoffSummary,
@@ -332,14 +332,25 @@ export async function processAgentResponseJob(
       if (handoffMessage) outboundText = handoffMessage;
     }
 
-    const outboundMediaParse = stripOutboundMediaDirectives(outboundText);
+    const outboundMediaParse = await resolveOutboundMediaForAgentResponse({
+      sb,
+      tenantId: job.tenant_id,
+      agentId: job.agent_id,
+      responseText: outboundText,
+      userRequestText: unitPrompt,
+    });
     const outboundFilenames = outboundMediaParse.filenames;
     let textToSend = outboundMediaParse.cleanedText.trim();
     if (!textToSend && outboundFilenames.length) {
       textToSend = "Segue o envio solicitado.";
     }
 
-    console.log("[evolution-agent-reply] outbound filenames:", outboundFilenames);
+    console.info("[evolution-agent-reply]", {
+      event: "outbound_media_resolved",
+      job_id: job.id,
+      filenames_count: outboundFilenames.length,
+      inferred: outboundMediaParse.inferred,
+    });
 
     const sendOutboundMediaSafe = async (): Promise<void> => {
       if (!outboundFilenames.length) return;

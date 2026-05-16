@@ -321,10 +321,14 @@ export async function loadAgentRuntimeContext(params: {
   agentId: string;
   remoteJid?: string | null;
 }): Promise<AgentRuntimeContext> {
-  if (!params.remoteJid) {
-    return { state: null, lead: null, summary: null, recentMessages: [], knowledgeSnippets: [], outboundMediaLines: [] };
-  }
   const sb = createSupabaseServiceClient();
+  if (!params.remoteJid) {
+    const [knowledgeSnippets, outboundMediaLines] = await Promise.all([
+      getAgentKnowledgeSnippets({ sb, tenantId: params.tenantId, agentId: params.agentId }),
+      getAgentOutboundMediaPromptLines({ sb, tenantId: params.tenantId, agentId: params.agentId }),
+    ]);
+    return { state: null, lead: null, summary: null, recentMessages: [], knowledgeSnippets, outboundMediaLines };
+  }
   const [state, lead, summary, recentMessages, knowledgeSnippets, outboundMediaLines] = await Promise.all([
     getConversationState({ sb, tenantId: params.tenantId, remoteJid: params.remoteJid }),
     findLeadForConversation({ sb, tenantId: params.tenantId, remoteJid: params.remoteJid }),

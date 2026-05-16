@@ -16,6 +16,8 @@ import {
 import type { BurstResponseStrategy } from "@/lib/conversas/normalize-conversation-burst";
 import type { Agent } from "@/lib/types";
 
+type AiGenerateFailureResult = Extract<AiGenerateResult, { ok: false }>;
+
 /** Alinhado ao seed em supabase/migrations/20260506_tenant_agents.sql — usado se a tabela ainda não existir. */
 const FALLBACK_PUBLIC_MARKETING_SYSTEM =
   "És o assistente comercial do MyChatCRM no site público. Responde em português (pt-BR), com tom profissional e conciso. " +
@@ -38,6 +40,69 @@ function buildLanguageInstruction(languageName: string): string {
   return `CRITICAL INSTRUCTION - LANGUAGE: The user's message is in ${languageName}. You MUST respond EXCLUSIVELY in ${languageName}. Do not use any other language. This is mandatory and overrides everything else.`;
 }
 
+async function resolveAgentPromptBase(params: {
+  tenantId: string;
+  agentId: string;
+  model?: string;
+  agentOverride?: Partial<Agent> & { nome?: string; systemPrompt?: string };
+}): Promise<
+  | {
+      ok: true;
+      profile: Awaited<ReturnType<typeof getInferenceProfileByTenantAgent>>;
+      baseAgent: Partial<Agent> & { nome?: string; systemPrompt?: string };
+      systemPrompt: string;
+    }
+  | {
+      ok: false;
+      result: AiGenerateFailureResult;
+    }
+> {
+  const profile = await getInferenceProfileByTenantAgent(params.tenantId, params.agentId);
+  const templatePrompt = buildSystemPromptFromTemplateAgent(params.tenantId, params.agentId);
+  let baseAgent: Partial<Agent> & { nome?: string; systemPrompt?: string } | null =
+    profile?.metadata && typeof profile.metadata === "object"
+      ? ({ ...profile.metadata, nome: profile.displayName, systemPrompt: profile.systemPrompt } as Partial<Agent> & { nome?: string; systemPrompt?: string })
+      : null;
+  let systemPrompt = profile?.systemPrompt?.trim() || templatePrompt;
+
+  if (
+    !systemPrompt &&
+    params.tenantId.trim() === "public" &&
+    params.agentId.trim() === "marketing_site_assistant"
+  ) {
+    systemPrompt = FALLBACK_PUBLIC_MARKETING_SYSTEM;
+  }
+
+  if (!systemPrompt) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        code: "INVALID_INPUT",
+        detail: "AGENT_NOT_FOUND",
+        provider: "openai",
+        model: params.model ?? "gpt-4o-mini",
+      },
+    };
+  }
+  if (!baseAgent) {
+    baseAgent = {
+      nome: profile?.displayName ?? params.agentId,
+      systemPrompt,
+      idioma: "Automático",
+      tom: "Profissional",
+    };
+  }
+  if (params.agentOverride) {
+    baseAgent = { ...baseAgent, ...params.agentOverride };
+    if (params.agentOverride.systemPrompt?.trim()) {
+      systemPrompt = params.agentOverride.systemPrompt.trim();
+    }
+  }
+
+  return { ok: true, profile, baseAgent, systemPrompt };
+}
+
 /** Evita repetir no LLM a última mensagem do usuário já presente no histórico canônico. */
 export function withoutTrailingDuplicateUserMessages(
   historyMessages: AiMessage[],
@@ -57,6 +122,60 @@ export function withoutTrailingDuplicateUserMessages(
     break;
   }
   return trimmed;
+}
+
+export async function buildAgentDebugSystemPrompt(params: {
+  tenantId: string;
+  agentId: string;
+  conversationId?: string | null;
+  message?: string | null;
+}): Promise<
+  | {
+      ok: true;
+      systemPrompt: string;
+      model: string | null;
+      temperature: number | null;
+      detectedLanguage: string;
+      outboundMediaLines: string[];
+      knowledgeSnippetsCount: number;
+      recentMessagesCount: number;
+    }
+  | { ok: false; code: string; detail: string }
+> {
+  const resolved = await resolveAgentPromptBase({
+    tenantId: params.tenantId,
+    agentId: params.agentId,
+  });
+  if (!resolved.ok) {
+    return { ok: false, code: resolved.result.code, detail: resolved.result.detail ?? "AGENT_NOT_FOUND" };
+  }
+
+  const probeMessage = params.message?.trim() || "Quero ver fotos e materiais disponíveis.";
+  const detectedLanguageCode = detectSupportedLanguageCode(probeMessage);
+  const detectedLanguageName = supportedLanguageName(detectedLanguageCode);
+  const memory = await buildLeadConversationMemory({
+    tenantId: params.tenantId,
+    agentId: params.agentId,
+    remoteJid: params.conversationId ?? null,
+  });
+  const systemPrompt = buildAgentSystemPrompt({
+    agent: resolved.baseAgent,
+    runtimeContext: memory,
+    languageInstruction: buildLanguageInstruction(detectedLanguageName),
+    recognitionHint: memory.recognitionHint,
+    condensedContext: memory.condensedContext,
+  });
+
+  return {
+    ok: true,
+    systemPrompt,
+    model: resolved.profile?.model?.trim() || null,
+    temperature: typeof resolved.baseAgent.temperatura === "number" ? resolved.baseAgent.temperatura : null,
+    detectedLanguage: detectedLanguageName,
+    outboundMediaLines: memory.outboundMediaLines,
+    knowledgeSnippetsCount: memory.knowledgeSnippets.length,
+    recentMessagesCount: memory.recentMessages.length,
+  };
 }
 
 /**
@@ -164,52 +283,21 @@ export async function generateAgentResponse(params: {
   // -------------------------------------------------------------------------
   // Agent / system prompt resolution
   // -------------------------------------------------------------------------
-  const profile = await getInferenceProfileByTenantAgent(params.tenantId, params.agentId);
-  const templatePrompt = buildSystemPromptFromTemplateAgent(params.tenantId, params.agentId);
-  let baseAgent: Partial<Agent> & { nome?: string; systemPrompt?: string } | null =
-    profile?.metadata && typeof profile.metadata === "object"
-      ? ({ ...profile.metadata, nome: profile.displayName, systemPrompt: profile.systemPrompt } as Partial<Agent> & { nome?: string; systemPrompt?: string })
-      : null;
-  let systemPrompt = profile?.systemPrompt?.trim() || templatePrompt;
-
-  if (
-    !systemPrompt &&
-    params.tenantId.trim() === "public" &&
-    params.agentId.trim() === "marketing_site_assistant"
-  ) {
-    systemPrompt = FALLBACK_PUBLIC_MARKETING_SYSTEM;
-  }
-
-  if (!systemPrompt) {
-    return {
-      ok: false,
-      code: "INVALID_INPUT",
-      detail: "AGENT_NOT_FOUND",
-      provider: "openai",
-      model: params.model ?? "gpt-4o-mini",
-    };
-  }
-  if (!baseAgent) {
-    baseAgent = {
-      nome: profile?.displayName ?? params.agentId,
-      systemPrompt,
-      idioma: "Automático",
-      tom: "Profissional",
-    };
-  }
-  if (params.agentOverride) {
-    baseAgent = { ...baseAgent, ...params.agentOverride };
-    if (params.agentOverride.systemPrompt?.trim()) {
-      systemPrompt = params.agentOverride.systemPrompt.trim();
-    }
-  }
+  const resolved = await resolveAgentPromptBase({
+    tenantId: params.tenantId,
+    agentId: params.agentId,
+    model: params.model,
+    agentOverride: params.agentOverride,
+  });
+  if (!resolved.ok) return resolved.result;
+  const { profile, baseAgent } = resolved;
   const memory = await buildLeadConversationMemory({
     tenantId: params.tenantId,
     agentId: params.agentId,
     remoteJid: params.conversationId,
     excludeMessageIds: params.excludeMessageIds,
   });
-  systemPrompt = buildAgentSystemPrompt({
+  const systemPrompt = buildAgentSystemPrompt({
     agent: baseAgent,
     runtimeContext: memory,
     languageInstruction: buildLanguageInstruction(detectedLanguageName),
