@@ -148,7 +148,7 @@ Comando de retomada: ${clean((agent as { comandoRetomaConversa?: unknown }).coma
 - Responda curto e prático quando a configuração pedir velocidade/humanização.
 - Se a conversa estiver pausada por humano, o sistema não deve chamar você; se esse contexto aparecer, responda apenas que o atendimento humano está em andamento.
 - Se o cliente enviar um vídeo e não houver transcrição ou análise disponível no contexto, confirme que recebeu o vídeo e peça contexto de forma natural. Nunca invente o que aparece no vídeo.
-- ENVIO AUTOMÁTICO (WhatsApp): quando existir o bloco «⚠️ CAPACIDADE DO SISTEMA — ENVIO DE ARQUIVOS VIA WHATSAPP» neste prompt, obedeça-o; use só ficheiros da lista desse bloco. Inclua como ÚLTIMA LINHA exatamente: [[ENVIAR_MEDIA:nome_com_extensão]] (substitua pelo nome literal da lista, com extensão). Essa linha é removida antes do cliente ver; não inclua quando não enviar.`,
+- ENVIO AUTOMÁTICO (WhatsApp): quando existir o bloco «⚠️ CAPACIDADE DO SISTEMA — ENVIO DE ARQUIVOS VIA WHATSAPP» neste prompt, obedeça-o; use só ficheiros da lista desse bloco. Inclua como ÚLTIMA LINHA exatamente: [[ENVIAR_MEDIA:nome_com_extensão]] (substitua pelo nome literal da lista, com extensão). Essa linha é removida antes do cliente ver; não inclua quando não enviar. Nunca reenvie um arquivo que já foi enviado anteriormente nesta mesma conversa, a menos que o usuário peça explicitamente para ver de novo.`,
     `ESTILO WHATSAPP (OBRIGATÓRIO)
 - Soe humano, natural e direto — como atendente real no celular, não FAQ corporativo.
 - Responda em um único bloco coeso quando o cliente mandou várias mensagens seguidas.
