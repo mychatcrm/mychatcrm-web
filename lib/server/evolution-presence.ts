@@ -6,16 +6,15 @@
  *
  * Endpoint Evolution API v2:
  *   POST /chat/sendPresence/{instanceName}
- *   Body: { "number": "5511999999999", "options": { "presence": "composing"|"recording", "delay": ms } }
+ *   Body: { "number": "5511999999999", "options": { "presence": "composing"|"recording", "delay": ms, "number": "5511999999999" } }
  *
  * A função envia o indicador e aguarda o delay antes de retornar,
  * para que o utilizador veja "digitando..." antes de a mensagem chegar.
  */
 
-import { evolutionApiKey } from "@/lib/integrations/evolution-api";
+import { evolutionFetchJson } from "@/lib/integrations/evolution-api";
 
-const EVOLUTION_BASE =
-  process.env.EVOLUTION_API_BASE_URL?.trim().replace(/\/+$/, "") ?? "";
+const PRESENCE_TIMEOUT_MS = 5_000;
 
 /**
  * Calcula o delay de digitação para um texto outbound.
@@ -40,56 +39,30 @@ export async function sendPresence(
   presence: "composing" | "recording",
   delayMs: number,
 ): Promise<void> {
-  if (!EVOLUTION_BASE) {
-    await sleep(delayMs);
-    return;
-  }
-
-  const apiKey = evolutionApiKey();
-  if (!apiKey) {
-    await sleep(delayMs);
-    return;
-  }
-
-  console.log("[PRESENCE_DEBUG] sending", {
-    instanceName,
-    number: number.slice(-4), // apenas últimos 4 dígitos por privacidade
-    presence,
-    delayMs,
-    hasBase: Boolean(EVOLUTION_BASE),
-    hasKey: Boolean(apiKey),
-  });
-
-  let responseStatus: number | null = null;
   try {
-    const res = await fetch(
-      `${EVOLUTION_BASE}/chat/sendPresence/${encodeURIComponent(instanceName)}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: apiKey,
-        },
-        body: JSON.stringify({
-          number,
-          options: { presence, delay: delayMs },
-        }),
-        signal: AbortSignal.timeout(5_000),
-      },
-    );
-    responseStatus = res.status;
-    console.log("[PRESENCE_DEBUG] response", { status: res.status, ok: res.ok });
+    const enc = encodeURIComponent(instanceName);
+    const res = await evolutionFetchJson<unknown>(`/chat/sendPresence/${enc}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        number,
+        options: { presence, delay: delayMs, number },
+      }),
+      timeoutMs: PRESENCE_TIMEOUT_MS,
+    });
+    if (!res.ok) {
+      console.warn("[evolution-presence] sendPresence non-ok", {
+        status: res.status,
+        error: res.error,
+      });
+    }
   } catch (err) {
     // Falha silenciosa — a mensagem será enviada na mesma sem o indicador
     console.warn(
       "[evolution-presence] sendPresence falhou",
       err instanceof Error ? err.message : err,
     );
-    console.log("[PRESENCE_DEBUG] fetch_error", {
-      error: err instanceof Error ? err.message : String(err),
-    });
   }
-  void responseStatus; // usado apenas no debug
 
   // Aguarda o delay independentemente do resultado da chamada,
   // para que o utilizador veja o indicador antes de a mensagem chegar.

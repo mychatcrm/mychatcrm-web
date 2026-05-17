@@ -69,7 +69,7 @@ export function buildEvolutionInstanceName(tenantId: string, slotIndex: number):
   return `mc${h}`;
 }
 
-async function evolutionFetchJson<T>(
+export async function evolutionFetchJson<T>(
   path: string,
   init: RequestInit & { timeoutMs?: number } = {},
 ): Promise<EvolutionFetchResult<T>> {
