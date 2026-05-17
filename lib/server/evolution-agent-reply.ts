@@ -27,6 +27,7 @@ import { sendAgentOutboundMediaViaEvolution } from "@/lib/server/send-agent-outb
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { transcribeAudioFromBuffer } from "@/lib/ai/media-processor";
 import { getMediaBufferFromR2 } from "@/lib/integrations/r2-storage";
+import { sendPresence, typingDelayMs } from "@/lib/server/evolution-presence";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -355,6 +356,7 @@ export async function processAgentResponseJob(
   if (allAudioUntranscribed) {
     const apology =
       "Desculpe, não consegui processar seu áudio. Pode digitar sua mensagem?";
+    await sendPresence(job.instance_name, number, "composing", typingDelayMs(apology));
     const apologyResult = await evolutionSendText({
       instanceName: job.instance_name,
       number,
@@ -501,6 +503,7 @@ export async function processAgentResponseJob(
         const ttsKey = `whatsapp/${job.tenant_id}/tts/${Date.now()}_reply.mp3`;
         const r2Key = await uploadMediaToR2(audioBuffer, ttsKey, "audio/mpeg");
         const mediaUrl = r2Key ? `/api/client/media/${ttsKey}` : null;
+        await sendPresence(job.instance_name, number, "recording", 3000);
         const send = await evolutionSendAudio({
           instanceName: job.instance_name,
           number,
@@ -518,6 +521,7 @@ export async function processAgentResponseJob(
         });
         await sendOutboundMediaSafe();
       } catch {
+        await sendPresence(job.instance_name, number, "composing", typingDelayMs(textToSend));
         const send = await evolutionSendText({
           instanceName: job.instance_name,
           number,
@@ -536,6 +540,7 @@ export async function processAgentResponseJob(
         await sendOutboundMediaSafe();
       }
     } else {
+      await sendPresence(job.instance_name, number, "composing", typingDelayMs(textToSend));
       const send = await evolutionSendText({
         instanceName: job.instance_name,
         number,
