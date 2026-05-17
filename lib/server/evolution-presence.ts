@@ -51,8 +51,18 @@ export async function sendPresence(
     return;
   }
 
+  console.log("[PRESENCE_DEBUG] sending", {
+    instanceName,
+    number: number.slice(-4), // apenas últimos 4 dígitos por privacidade
+    presence,
+    delayMs,
+    hasBase: Boolean(EVOLUTION_BASE),
+    hasKey: Boolean(apiKey),
+  });
+
+  let responseStatus: number | null = null;
   try {
-    await fetch(
+    const res = await fetch(
       `${EVOLUTION_BASE}/chat/sendPresence/${encodeURIComponent(instanceName)}`,
       {
         method: "POST",
@@ -67,13 +77,19 @@ export async function sendPresence(
         signal: AbortSignal.timeout(5_000),
       },
     );
+    responseStatus = res.status;
+    console.log("[PRESENCE_DEBUG] response", { status: res.status, ok: res.ok });
   } catch (err) {
     // Falha silenciosa — a mensagem será enviada na mesma sem o indicador
     console.warn(
       "[evolution-presence] sendPresence falhou",
       err instanceof Error ? err.message : err,
     );
+    console.log("[PRESENCE_DEBUG] fetch_error", {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
+  void responseStatus; // usado apenas no debug
 
   // Aguarda o delay independentemente do resultado da chamada,
   // para que o utilizador veja o indicador antes de a mensagem chegar.
