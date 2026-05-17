@@ -34,6 +34,7 @@ import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { isSmartWaitGloballyDisabled, runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
 import { scheduleFollowUpAfterInbound } from "@/lib/server/follow-up-jobs";
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
+import { transcribeAudio } from "@/lib/ai/media-processor";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -434,6 +435,29 @@ export async function POST(request: Request) {
             inboundMedia = await downloadAndStoreMedia(msg, row.tenant_id, instanceName);
           }
 
+          // Transcreve áudio via Whisper em Phase 1, antes de persistir no DB.
+          // Isso garante que o job do Smart Wait leia o texto real da mensagem,
+          // e não o placeholder "[Áudio]" que bloqueava respostas corretas.
+          let audioTranscript: string | null = null;
+          if (msg.type === "audio") {
+            audioTranscript = await transcribeAudio(msg, instanceName, {
+              remoteJid: msg.remoteJid,
+              fromMe: msg.fromMe,
+              messageId: msg.messageId,
+            }).catch((e) => {
+              console.warn(
+                "[webhooks/evolution] audio transcription failed",
+                e instanceof Error ? e.message : e,
+              );
+              return null;
+            });
+            if (audioTranscript) {
+              console.log("[webhooks/evolution] audio transcribed ok, length:", audioTranscript.length);
+            } else {
+              console.warn("[webhooks/evolution] audio transcription returned null — saving placeholder");
+            }
+          }
+
           const contactName = extractContactNameFromPayload(payload, msg);
           const upsertedLead = await upsertLeadFromWhatsAppContact({
             tenantId: row.tenant_id,
@@ -447,12 +471,19 @@ export async function POST(request: Request) {
           });
           const leadId = upsertedLead?.lead?.id ?? null;
 
+          // Conteúdo a persistir: para áudio usa a transcrição Whisper quando disponível;
+          // caso a transcrição falhe, salva "[Áudio]" para não perder a mensagem.
+          const persistedContent =
+            msg.type === "audio" && audioTranscript
+              ? audioTranscript
+              : contentFromMsg(msg);
+
           const inboundSaved = await saveMessage({
             tenantId: row.tenant_id,
             remoteJid: msg.remoteJid,
             direction: "inbound",
             kind: kindFromMsg(msg),
-            content: contentFromMsg(msg),
+            content: persistedContent,
             messageId: msg.messageId,
             leadId,
             mediaUrl: inboundMedia?.mediaUrl ?? null,
@@ -461,7 +492,12 @@ export async function POST(request: Request) {
             fileName: inboundMedia?.fileName ?? null,
             caption: inboundMedia?.caption ?? null,
             mediaDurationSeconds: inboundMedia?.durationSeconds ?? null,
-            transcriptionStatus: msg.type === "audio" ? "pending" : null,
+            transcriptionStatus:
+              msg.type === "audio"
+                ? audioTranscript
+                  ? "completed"
+                  : "failed"
+                : null,
             analysisStatus:
               msg.type === "video" ? "unsupported" : msg.type === "image" ? "pending" : null,
           });
@@ -512,9 +548,11 @@ export async function POST(request: Request) {
             );
           }
 
-          const inboundLanguageCode = detectSupportedLanguageCode(inboundLanguageSource(msg));
+          // Para áudio usa a transcrição para detectar o idioma; para outros tipos usa o texto/caption.
+          const languageSourceText = audioTranscript ?? inboundLanguageSource(msg);
+          const inboundLanguageCode = detectSupportedLanguageCode(languageSourceText);
 
-          return { msg, agentId, inboundMedia, contactName, leadId, inboundSaved, state, inboundLanguageCode };
+          return { msg, agentId, inboundMedia, audioTranscript, contactName, leadId, inboundSaved, state, inboundLanguageCode };
         } catch (e) {
           console.warn("[webhooks/evolution] Phase 1 save error", e instanceof Error ? e.message : e);
           return null;
@@ -526,7 +564,7 @@ export async function POST(request: Request) {
     await Promise.all(
       savedContexts.map(async (ctx) => {
         if (!ctx) return;
-        const { msg, agentId, contactName, leadId, inboundSaved, state, inboundLanguageCode } = ctx;
+        const { msg, agentId, audioTranscript, contactName, leadId, inboundSaved, state, inboundLanguageCode } = ctx;
         try {
           const sbState = createSupabaseServiceClient();
 
@@ -602,6 +640,11 @@ export async function POST(request: Request) {
             ? shouldTriggerHandoff(inboundLanguageSource(msg), handoffKeywords)
             : { trigger: false, reason: null };
 
+          // Para áudio: se Phase 1 já transcreveu, o texto está no DB — não é necessário
+          // passar mediaContent (evita segundo call ao Whisper). Caso a transcrição tenha
+          // falhado em Phase 1, tenta de novo aqui passando mediaContent como fallback.
+          // Para imagem/vídeo: sempre passa mediaContent (GPT-4o vision).
+          const audioAlreadyTranscribed = msg.type === "audio" && audioTranscript != null;
           const result = await generateAgentResponse({
             tenantId: row.tenant_id,
             agentId,
@@ -610,8 +653,11 @@ export async function POST(request: Request) {
             feature: "agent_chat",
             messages: [],
             mediaContent:
-              msg.type === "audio" || msg.type === "image" || msg.type === "video" ? msg : undefined,
-            instanceName: msg.type !== "text" ? instanceName : undefined,
+              !audioAlreadyTranscribed && (msg.type === "audio" || msg.type === "image" || msg.type === "video")
+                ? msg
+                : undefined,
+            instanceName:
+              !audioAlreadyTranscribed && msg.type !== "text" ? instanceName : undefined,
           });
 
           let replyText: string;
