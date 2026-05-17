@@ -8,7 +8,6 @@ import {
 import type {
   Agent,
   AgentFollowUpInteligente,
-  AgentObjective,
   AgentOrigin,
   FollowUp,
   FlowStep,
@@ -27,7 +26,6 @@ export type AgentWizardDraft = {
   avatar: string;
   cor: string;
   genero: Agent["genero"];
-  objetivo: AgentObjective;
   tom: string;
   delayResposta: number;
   /** Temperatura do modelo (0.01–1). */
@@ -77,21 +75,6 @@ export type AgentWizardDraft = {
   /** Coluna/etapa de destino para movimento automático no CRM. */
   crmTargetColumnId: string;
 };
-
-/** Ordem exibida no passo «Objetivo principal» do wizard. */
-export const AGENT_OBJECTIVE_OPTIONS: ReadonlyArray<{ value: AgentObjective; label: string }> = [
-  { value: "gerar_leads", label: "Gerar leads" },
-  { value: "vender", label: "Vender produto" },
-  { value: "suporte", label: "Suporte técnico" },
-  { value: "agendar", label: "Agendar reunião" },
-  { value: "qualificar", label: "Qualificar lead" },
-  { value: "reengajar", label: "Reengajar cliente" },
-  { value: "atendimento_geral", label: "Atendimento geral (linha única / secretaria)" },
-];
-
-export function agentObjectiveLabel(objetivo: AgentObjective): string {
-  return AGENT_OBJECTIVE_OPTIONS.find((o) => o.value === objetivo)?.label ?? objetivo;
-}
 
 const WIZARD_ORIGIN_ORDER: readonly OriginType[] = ["lead_ads", "ctw", "keyword", "organico", "crm"];
 
@@ -166,7 +149,6 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     avatar: agent.avatar ?? "bot",
     cor: agent.cor,
     genero: agent.genero,
-    objetivo: agent.objetivo,
     tom: agent.tom,
     delayResposta: agent.delayResposta,
     temperatura: agent.temperatura ?? 0.2,
@@ -214,8 +196,7 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
 export function createPromptFromBusiness(context: string, draft: AgentWizardDraft): string {
   const identidade = draft.promptIdentidade.trim();
   return `Você é ${draft.nome || "um agente de IA"}.
-${identidade ? `Identidade e apresentação:\n${identidade}\n\n` : ""}Objetivo principal (categoria): ${agentObjectiveLabel(draft.objetivo)}.
-Tom de voz: ${draft.tom}.
+${identidade ? `Identidade e apresentação:\n${identidade}\n\n` : ""}Tom de voz: ${draft.tom}.
 
 Contexto do negócio (produto/serviço, oferta e detalhes — complemente o campo «Objetivo» se precisar):
 ${context || "Sem contexto adicional."}
@@ -286,7 +267,6 @@ export const defaultWizardDraft: AgentWizardDraft = {
   avatar: "bot",
   cor: BRAND.orange,
   genero: "feminino",
-  objetivo: "gerar_leads",
   tom: "Profissional",
   delayResposta: 2,
   temperatura: 0.2,

@@ -132,7 +132,7 @@ export function WizardStep2Instructions({
             <p className="text-sm font-semibold text-content">Objetivo</p>
             <p className="mt-1 text-xs text-content-faint">
               Em texto livre: o que este agente deve alcançar (meta comercial, escopo de atendimento, público-alvo).
-              Complementa a categoria «Objetivo principal» do passo anterior.
+              Complementa as instruções principais com o foco de negócio do agente.
             </p>
             <textarea
               value={draft.promptObjetivo}

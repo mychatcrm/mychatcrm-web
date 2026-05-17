@@ -11,19 +11,6 @@ function section(title: string, body: string | null | undefined): string | null 
   return content ? `${title}\n${content}` : null;
 }
 
-function agentObjectiveLabel(value: string | undefined): string {
-  const map: Record<string, string> = {
-    gerar_leads: "Gerar leads",
-    vender: "Vender produto/serviço",
-    suporte: "Suporte",
-    agendar: "Agendar reunião",
-    qualificar: "Qualificar lead",
-    reengajar: "Reengajar cliente",
-    atendimento_geral: "Atendimento geral",
-  };
-  return value ? map[value] ?? value : "Não informado";
-}
-
 function compactJson(value: unknown): string {
   if (value == null) return "não configurado";
   try {
@@ -132,7 +119,6 @@ export function buildAgentSystemPrompt(params: {
     `IDENTIDADE DO AGENTE
 Nome: ${clean(agent.nome) || "Agente de atendimento"}
 Gênero configurado: ${clean(agent.genero) || "não informado"}
-Objetivo principal: ${agentObjectiveLabel(clean(agent.objetivo))}
 Tom de voz: ${clean(agent.tom) || "profissional"}
 Velocidade simulada: ${typeof agent.delayResposta === "number" ? `${agent.delayResposta}s` : "não informada"}
 Idioma configurado: ${clean(agent.idioma) || "Automático"}`,

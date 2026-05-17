@@ -2,7 +2,7 @@ import type { Agent } from "@/lib/types";
 import { listAgentsForTenant } from "./registry";
 import { sanitizeAgentResponseSettings } from "./response-settings";
 import { sanitizeAgentSmartWaitSettings } from "./smart-wait-settings";
-import { agentObjectiveLabel, type AgentWizardDraft } from "./wizard-model";
+import type { AgentWizardDraft } from "./wizard-model";
 
 /** Aplica o rascunho do wizard a um agente existente (mantém id, métricas, status, horário, etc.). */
 export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDraft): Agent {
@@ -13,11 +13,9 @@ export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDr
     ...existing,
     whatsappSlotIndex: draft.whatsappSlotIndex ?? 0,
     nome: draft.nome.trim(),
-    nomeProduto: `Modelo: ${agentObjectiveLabel(draft.objetivo)}`,
     cor: draft.cor,
     avatar: draft.avatar,
     genero: draft.genero,
-    objetivo: draft.objetivo,
     tom: draft.tom,
     delayResposta: draft.delayResposta,
     temperatura: draft.temperatura,
@@ -70,11 +68,9 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
     clientId: tenantId,
     whatsappSlotIndex: draft.whatsappSlotIndex ?? 0,
     nome: draft.nome.trim(),
-    nomeProduto: `Modelo: ${agentObjectiveLabel(draft.objetivo)}`,
     cor: draft.cor,
     avatar: draft.avatar,
     genero: draft.genero,
-    objetivo: draft.objetivo,
     status: "inativo",
     tom: draft.tom,
     delayResposta: draft.delayResposta,

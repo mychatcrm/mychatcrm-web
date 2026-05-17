@@ -21,8 +21,6 @@ export {
 } from "./instruction-mode";
 export { DEFAULT_SYSTEM_PROMPT_TEMPLATE } from "./default-system-prompt-template";
 export {
-  AGENT_OBJECTIVE_OPTIONS,
-  agentObjectiveLabel,
   createPromptFromBusiness,
   defaultWizardDraft,
   draftFromAgent,
