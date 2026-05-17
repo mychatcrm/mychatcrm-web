@@ -25,6 +25,7 @@ import { markWaitingForHuman } from "@/lib/server/conversation-operation";
 import { sleep } from "@/lib/server/agent-response-schedule";
 import { sendAgentOutboundMediaViaEvolution } from "@/lib/server/send-agent-outbound-media-evolution";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { transcribeAudio } from "@/lib/ai/media-processor";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -211,6 +212,93 @@ export async function processAgentResponseJob(
   }
   if (!inboundRows.length) return { ok: false, error: "no_inbound_messages" };
 
+  // ── Aguarda transcrição de áudio ─────────────────────────────────────────
+  // A transcrição é feita em background por /api/internal/transcribe-audio.
+  // O Smart Wait garante ~7-10s de debounce, mas pode não ser suficiente para
+  // áudios com Evolution API lenta. Aqui fazemos polling adicional de até 14s.
+  const pendingAudioIds = inboundRows
+    .filter((r) => r.kind === "audio" && r.content === "[Áudio]")
+    .map((r) => r.id);
+
+  if (pendingAudioIds.length > 0) {
+    console.info("[agent-response-jobs]", {
+      event: "awaiting_audio_transcription",
+      job_id: job.id,
+      pending_count: pendingAudioIds.length,
+    });
+
+    const POLL_INTERVAL_MS = 2000;
+    const MAX_POLLS = 7; // 14s total
+
+    for (let poll = 0; poll < MAX_POLLS; poll++) {
+      await sleep(POLL_INTERVAL_MS);
+
+      const stillPendingIds = inboundRows
+        .filter((r) => r.kind === "audio" && r.content === "[Áudio]")
+        .map((r) => r.id);
+      if (!stillPendingIds.length) break;
+
+      const { data: refreshed } = await sb
+        .from("whatsapp_messages")
+        .select("id, content, transcription_status")
+        .in("id", stillPendingIds);
+
+      for (const fresh of (refreshed ?? []) as Array<{ id: string; content: string; transcription_status: string | null }>) {
+        const local = inboundRows.find((r) => r.id === fresh.id);
+        if (local && fresh.content !== "[Áudio]") {
+          local.content = fresh.content;
+        }
+      }
+
+      const allResolved = !inboundRows.some(
+        (r) => r.kind === "audio" && r.content === "[Áudio]",
+      );
+      if (allResolved) break;
+    }
+
+    // Tentativa on-the-spot para áudios ainda pendentes (Evolution API fallback)
+    const stillPlaceholder = inboundRows.filter(
+      (r) => r.kind === "audio" && r.content === "[Áudio]",
+    );
+
+    for (const audioRow of stillPlaceholder) {
+      if (!audioRow.message_id) continue;
+      try {
+        // EvolutionAudioContent sem rawNode.base64 → downloadMediaBuffer vai tentar
+        // a Evolution API com o message key para re-baixar e descriptografar o áudio.
+        const transcript = await transcribeAudio(
+          {
+            type: "audio",
+            url: "",
+            mimetype: "audio/ogg",
+            mediaKey: "",
+            rawNode: {},
+          },
+          job.instance_name,
+          { remoteJid: audioRow.remote_jid, fromMe: false, messageId: audioRow.message_id },
+        );
+        if (transcript) {
+          audioRow.content = transcript;
+          await sb
+            .from("whatsapp_messages")
+            .update({ content: transcript, transcription_status: "completed" })
+            .eq("id", audioRow.id);
+          console.info("[agent-response-jobs]", {
+            event: "on_spot_transcription_ok",
+            job_id: job.id,
+            message_id: audioRow.id,
+          });
+        }
+      } catch (err) {
+        console.warn(
+          "[agent-response-jobs] on-spot transcription failed",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+  }
+  // ── Fim do polling de transcrição ────────────────────────────────────────
+
   const { data: agentRow } = await sb
     .from("tenant_agents")
     .select("metadata, voice_id, response_mode")
@@ -279,6 +367,45 @@ export async function processAgentResponseJob(
 
   const number = remoteJidToEvoNumber(job.remote_jid);
   if (!number) return { ok: false, error: "invalid_remote_jid", dedupedCount: burst.dedupedCount };
+
+  // Se TODOS os inbounds são áudio e NENHUM foi transcrito, enviar mensagem de apologia
+  // em vez de passar "[Áudio]" para o modelo (que responderia "não posso processar áudio").
+  const allAudioUntranscribed =
+    inboundRows.length > 0 &&
+    inboundRows.every((r) => r.kind === "audio" && r.content === "[Áudio]");
+
+  if (allAudioUntranscribed) {
+    const apology =
+      "Desculpe, não consegui processar seu áudio. Pode digitar sua mensagem?";
+    const apologyResult = await evolutionSendText({
+      instanceName: job.instance_name,
+      number,
+      text: apology,
+    });
+    if (apologyResult.ok) {
+      await saveOutboundMessage({
+        tenantId: job.tenant_id,
+        remoteJid: job.remote_jid,
+        kind: "text",
+        content: apology,
+        agentId: job.agent_id,
+        leadId: job.lead_id,
+      });
+    }
+    console.info("[agent-response-jobs]", {
+      event: "audio_transcription_apology_sent",
+      job_id: job.id,
+    });
+    return { ok: true, dedupedCount: burst.dedupedCount };
+  }
+
+  // Burst misto (texto + áudio não transcrito): substitui placeholder para
+  // o modelo receber contexto parcial em vez de texto literal "[Áudio]".
+  for (const row of inboundRows) {
+    if (row.kind === "audio" && row.content === "[Áudio]") {
+      row.content = "[Áudio não transcrito]";
+    }
+  }
 
   const { responseMode, voiceId } = sanitizeAgentResponseSettings({
     responseMode: agentRow?.response_mode,
