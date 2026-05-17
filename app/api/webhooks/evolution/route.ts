@@ -34,7 +34,7 @@ import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { isSmartWaitGloballyDisabled, runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
 import { scheduleFollowUpAfterInbound } from "@/lib/server/follow-up-jobs";
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
-import { triggerAudioTranscription } from "@/lib/server/audio-transcription-trigger";
+
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -513,20 +513,11 @@ export async function POST(request: Request) {
             );
           }
 
-          // Para áudio: dispara transcrição Whisper em background (fire-and-forget).
-          // O endpoint /api/internal/transcribe-audio tem maxDuration=120 e actualiza
-          // o banco após concluir. O processAgentResponseJob faz polling antes de responder.
-          if (msg.type === "audio" && inboundSaved?.id) {
-            triggerAudioTranscription({
-              dbMessageId: inboundSaved.id,
-              waMessageId: msg.messageId ?? null,
-              remoteJid: msg.remoteJid,
-              fromMe: msg.fromMe,
-              instanceName,
-              mimetype: msg.mimetype,
-              rawNode: msg.rawNode,
-            });
-          }
+          // Nota: a transcrição de áudio é feita directamente em processAgentResponseJob
+          // (evolution-agent-reply.ts) lendo o buffer do R2 via storage_key.
+          // O padrão fire-and-forget anterior foi removido porque o Vercel descarta
+          // a conexão TCP antes de o endpoint /api/internal/transcribe-audio receber
+          // a requisição (zero hits nos logs de produção).
 
           const inboundLanguageCode = detectSupportedLanguageCode(inboundLanguageSource(msg));
 

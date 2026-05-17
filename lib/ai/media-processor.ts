@@ -233,6 +233,60 @@ export async function transcribeAudio(
 }
 
 // ---------------------------------------------------------------------------
+// Audio (buffer) → text via Whisper
+// Usado quando os bytes já estão disponíveis (ex: lidos do R2) e não é
+// necessário passar por rawNode / Evolution API para obter o buffer.
+// ---------------------------------------------------------------------------
+
+/**
+ * Transcreve um buffer de áudio directamente via OpenAI Whisper.
+ * Útil quando o áudio já está armazenado no R2 e não precisamos do rawNode.
+ */
+export async function transcribeAudioFromBuffer(
+  buffer: Buffer,
+  mimetype: string,
+): Promise<string | null> {
+  const apiKey = await resolveOpenAiApiKey();
+  if (!apiKey) return null;
+
+  const ext = mimeToExt(mimetype);
+  const blob = new Blob([new Uint8Array(buffer)], { type: mimetype });
+
+  const form = new FormData();
+  form.append("file", blob, `audio.${ext}`);
+  form.append("model", "whisper-1");
+
+  let res: Response;
+  try {
+    res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (e) {
+    console.warn("[media-processor] whisper (buffer) fetch error", e);
+    return null;
+  }
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => "");
+    console.warn("[media-processor] whisper (buffer) non-ok", res.status, errBody.slice(0, 200));
+    return null;
+  }
+
+  let json: unknown;
+  try { json = await res.json(); } catch { return null; }
+
+  const text =
+    json && typeof json === "object" && typeof (json as Record<string, unknown>).text === "string"
+      ? ((json as Record<string, unknown>).text as string).trim()
+      : null;
+
+  return text || null;
+}
+
+// ---------------------------------------------------------------------------
 // Image → text via GPT-4o vision
 // ---------------------------------------------------------------------------
 
