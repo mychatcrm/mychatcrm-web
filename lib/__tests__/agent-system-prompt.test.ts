@@ -106,7 +106,7 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("handoff e encaminhamento para humano se aplicam APENAS para atendimento");
   });
 
-  it("instructs handoff marker to remain present when sending media too", () => {
+  it("uses a simple mandatory handoff marker instruction", () => {
     const prompt = buildAgentSystemPrompt({
       languageInstruction: "Responda em português.",
       agent: {
@@ -117,7 +117,8 @@ describe("buildAgentSystemPrompt", () => {
       },
     });
 
-    expect(prompt).toContain("Mesmo que você precise enviar arquivos na mesma resposta");
-    expect(prompt).toContain("[[ENVIAR_MEDIA:piscina.jpg]] [[HANDOFF]]");
+    expect(prompt).toContain("Quando o cliente quiser falar com uma pessoa real");
+    expect(prompt).toContain("inclua [[HANDOFF]] no final da resposta. Nada mais.");
+    expect(prompt).not.toContain("Mesmo que você precise enviar arquivos na mesma resposta");
   });
 });

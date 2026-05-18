@@ -683,18 +683,17 @@ export async function POST(request: Request) {
           const number = remoteJidToEvoNumber(msg.remoteJid);
           if (!number) return;
 
-          // Strip [[HANDOFF]] marker (always) and detect AI-signaled handoff
+          // Prioridade do backend: a intenção do cliente aciona handoff mesmo se
+          // o modelo esquecer [[HANDOFF]] ao combinar transferência + mídia.
+          const userRequestedHandoff = handoffCheck.trigger;
           const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
-          replyText = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
-
-          // Combine keyword-based + marker-based handoff detection
-          const finalHandoffCheck = handoffCheck.trigger || aiMarkerHandoff;
+          const modelTextWithoutHandoff = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
+          const finalHandoffCheck = userRequestedHandoff || aiMarkerHandoff;
           const finalHandoffReason = handoffCheck.trigger
             ? (handoffCheck.reason ?? "handoff")
             : "ai_handoff";
 
           if (finalHandoffCheck) {
-            if (handoffMessage) replyText = handoffMessage;
             const messages = await getRecentConversationMessages({
               sb: sbState,
               tenantId: row.tenant_id,
@@ -744,11 +743,14 @@ export async function POST(request: Request) {
             sb: sbState,
             tenantId: row.tenant_id,
             agentId,
-            responseText: replyText,
+            responseText: modelTextWithoutHandoff,
             userRequestText: inboundLanguageSource(msg),
           });
           const outboundFilenames = outboundMediaParse.filenames;
           replyText = outboundMediaParse.cleanedText.trim();
+          if (finalHandoffCheck && handoffMessage) {
+            replyText = handoffMessage;
+          }
           if (!replyText && outboundFilenames.length) {
             replyText = "Segue o envio solicitado.";
           }
@@ -791,7 +793,8 @@ export async function POST(request: Request) {
             responseMode: agentRow?.response_mode,
             voiceId: agentRow?.voice_id,
           });
-          const useAudio = msg.type === "audio" && responseMode === "audio" && Boolean(voiceId);
+          const useAudio =
+            !finalHandoffCheck && msg.type === "audio" && responseMode === "audio" && Boolean(voiceId);
 
           if (useAudio) {
             // ── TTS via ElevenLabs → R2 → Evolution WhatsApp Audio ──────────

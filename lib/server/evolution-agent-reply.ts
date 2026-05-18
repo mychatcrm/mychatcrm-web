@@ -437,16 +437,16 @@ export async function processAgentResponseJob(
       ok: true,
     });
 
-    // Strip [[HANDOFF]] marker from AI reply (always safe to remove)
-    const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
-    let outboundText = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
-
     // Primary: keyword-based detection on user's message
     if (handoffCheck.trigger) {
       handoffTriggered = true;
       handoffReason = handoffCheck.reason ?? "handoff";
       handoffLastMessage = unitPrompt;
     }
+
+    // Strip [[HANDOFF]] marker from AI reply (always safe to remove)
+    const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
+    const modelTextWithoutHandoff = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
 
     // Secondary: LLM included [[HANDOFF]] marker (catches "alta intenção" cases
     // where keywords don't match but LLM correctly decided to transfer)
@@ -456,18 +456,18 @@ export async function processAgentResponseJob(
       handoffLastMessage = unitPrompt;
     }
 
-    // Always override with configured handoff message when handoff triggered
-    if (handoffTriggered && handoffMessage) outboundText = handoffMessage;
-
     const outboundMediaParse = await resolveOutboundMediaForAgentResponse({
       sb,
       tenantId: job.tenant_id,
       agentId: job.agent_id,
-      responseText: outboundText,
+      responseText: modelTextWithoutHandoff,
       userRequestText: unitPrompt,
     });
     const outboundFilenames = outboundMediaParse.filenames;
     let textToSend = outboundMediaParse.cleanedText.trim();
+    if (handoffTriggered && handoffMessage) {
+      textToSend = handoffMessage;
+    }
     if (!textToSend && outboundFilenames.length) {
       textToSend = "Segue o envio solicitado.";
     }
@@ -509,7 +509,7 @@ export async function processAgentResponseJob(
 
     const languageCode = detectSupportedLanguageCode(unitPrompt);
 
-    if (useAudio && unitIndex === 0) {
+    if (useAudio && !handoffTriggered && unitIndex === 0) {
       try {
         const audioBuffer = await textToSpeechElevenLabs(textToSend.slice(0, 5000), voiceId!, {
           languageCode,
