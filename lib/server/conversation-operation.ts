@@ -453,11 +453,21 @@ export async function markWaitingForHuman(params: {
   });
 
   const handoffDigits = (params.handoffNumero ?? "").replace(/\D/g, "");
+  console.log("[HANDOFF_DEBUG] markWaitingForHuman", {
+    tenant_id: params.tenantId,
+    remote_jid: params.remoteJid,
+    handoffNumero_raw: params.handoffNumero ?? "(null)",
+    handoffDigits,
+    handoffDigits_length: handoffDigits.length,
+    instanceName_param: params.instanceName ?? "(null)",
+    reason: params.reason ?? "handoff",
+  });
   if (handoffDigits.length >= 10) {
     try {
       // Usa a instância do tenant se fornecida; caso contrário tenta o system agent
       const instanceName =
         params.instanceName?.trim() || ((await getSystemAgentInstanceName()) ?? "");
+      console.log("[HANDOFF_DEBUG] instanceName resolvido em markWaitingForHuman:", instanceName || "(vazio)");
       const lastMessage = (params.lastMessage ?? "").trim() || "(sem texto)";
       const notifyText = [
         "🔔 Novo atendimento aguardando humano",
