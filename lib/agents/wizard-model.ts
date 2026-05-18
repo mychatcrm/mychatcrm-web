@@ -38,10 +38,6 @@ export type AgentWizardDraft = {
   systemPrompt: string;
   promptRegrasAdicionais: string;
   respostasProibidas: string;
-  /** Frase que pausa o bot só nesta conversa (ex.: humano assume o atendimento). */
-  comandoPausaConversa: string;
-  /** Frase que volta a ligar o bot nesta conversa. */
-  comandoRetomaConversa: string;
   idioma: string;
   arquivosTreinamento: Agent["arquivosTreinamento"];
   origens: AgentOrigin[];
@@ -159,8 +155,6 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     systemPrompt: agent.systemPrompt,
     promptRegrasAdicionais: agent.promptRegrasAdicionais ?? "",
     respostasProibidas: agent.respostasProibidas,
-    comandoPausaConversa: agent.comandoPausaConversa ?? "",
-    comandoRetomaConversa: agent.comandoRetomaConversa ?? "",
     idioma: agent.idioma,
     arquivosTreinamento: agent.arquivosTreinamento,
     origens: normalizeOrigensForWizard(agent.origens),
@@ -277,8 +271,6 @@ export const defaultWizardDraft: AgentWizardDraft = {
   systemPrompt: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
   promptRegrasAdicionais: "",
   respostasProibidas: "",
-  comandoPausaConversa: "",
-  comandoRetomaConversa: "",
   idioma: "Português BR",
   arquivosTreinamento: [],
   origens: [

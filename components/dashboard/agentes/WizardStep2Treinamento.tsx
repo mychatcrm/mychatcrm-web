@@ -651,32 +651,6 @@ export function WizardStep2Treinamento({
       </div>
 
       <WizardStep2OutboundMedia agentId={agentId} />
-
-      <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-        <FieldTitle title="Pausa humana por conversa" help={AGENT_FIELD_HELP.pausaHumana} className="mb-4" />
-        <div className="space-y-3">
-          <div>
-            <FieldLabel label="Mensagem para pausar o agente (esta conversa)" help={AGENT_FIELD_HELP.pausaMsg} />
-            <input
-              type="text"
-              value={draft.comandoPausaConversa}
-              onChange={(event) => onChange({ ...draft, comandoPausaConversa: event.target.value })}
-              placeholder='Ex.: "Oi cheguei"'
-              className="mt-1 w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-2.5 text-sm text-content outline-none"
-            />
-          </div>
-          <div>
-            <FieldLabel label="Mensagem para reativar o agente (esta conversa)" help={AGENT_FIELD_HELP.retomaMsg} />
-            <input
-              type="text"
-              value={draft.comandoRetomaConversa}
-              onChange={(event) => onChange({ ...draft, comandoRetomaConversa: event.target.value })}
-              placeholder='Ex.: "Oi, ainda tem interesse?"'
-              className="mt-1 w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-2.5 text-sm text-content outline-none"
-            />
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

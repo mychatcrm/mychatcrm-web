@@ -35,10 +35,6 @@ export const AGENT_FIELD_HELP = {
     'PDFs e documentos que o agente lê para responder. Ex.: tabela de preços, manual do produto. Até 5 ficheiros, 1 GB no total',
   arquivosEnvio:
     'Fotos, vídeos e ficheiros que o agente envia no WhatsApp. Ex.: fotos do produto, contrato em PDF. Até 50 ficheiros por agente',
-  pausaHumana:
-    'Frases que você envia no WhatsApp para pausar ou reativar o bot só naquela conversa. Ex.: digitar "Oi cheguei" pausa o agente',
-  pausaMsg: 'Texto exato que pausa o agente nesta conversa. Ex.: "Oi cheguei"',
-  retomaMsg: 'Texto exato que reativa o agente nesta conversa. Ex.: "Bot pode voltar"',
   handoffAtivar: 'Detecta quando o cliente quer falar com uma pessoa e avisa a equipe.',
   handoffKeywords: 'Palavras que disparam a transferência. Ex.: "humano", "atendente", "falar com pessoa"',
   handoffNumero: 'WhatsApp do atendente (com DDI). Ex.: 5562999999999',

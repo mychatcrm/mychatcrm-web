@@ -26,8 +26,6 @@ export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDr
     systemPrompt: draft.systemPrompt,
     promptRegrasAdicionais: draft.promptRegrasAdicionais,
     respostasProibidas: draft.respostasProibidas,
-    comandoPausaConversa: draft.comandoPausaConversa,
-    comandoRetomaConversa: draft.comandoRetomaConversa,
     idioma: draft.idioma,
     arquivosTreinamento: draft.arquivosTreinamento,
     origens: draft.origens,
@@ -58,7 +56,8 @@ export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDr
 /** Monta um `Agent` de demonstração a partir do rascunho (clone do primeiro template + campos do wizard). */
 export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string): Agent {
   const templates = listAgentsForTenant(tenantId);
-  const base = structuredClone(templates[0]!);
+  const baseFull = structuredClone(templates[0]!);
+  const { comandoPausaConversa: _pause, comandoRetomaConversa: _resume, ...base } = baseFull;
   const stamp = new Date().toISOString();
   const responseSettings = sanitizeAgentResponseSettings(draft);
   const smartWait = sanitizeAgentSmartWaitSettings(draft);
@@ -82,8 +81,6 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
     systemPrompt: draft.systemPrompt,
     promptRegrasAdicionais: draft.promptRegrasAdicionais,
     respostasProibidas: draft.respostasProibidas,
-    comandoPausaConversa: draft.comandoPausaConversa,
-    comandoRetomaConversa: draft.comandoRetomaConversa,
     idioma: draft.idioma,
     arquivosTreinamento: draft.arquivosTreinamento,
     origens: draft.origens,
