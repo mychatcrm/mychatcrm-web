@@ -2,12 +2,36 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { buildTemplateAgentsForTenant } from "@/lib/agents/template-agents";
 
 /**
- * Agente usado nas respostas automáticas Evolution: env > stored > primeiro ativo em `tenant_agents` > primeiro template.
- * Usa service_role para garantir acesso mesmo com RLS ativa.
+ * Agente usado nas respostas automáticas Evolution:
+ *   lead.agent_id (by phone) > env > stored > primeiro ativo em `tenant_agents` > primeiro template.
+ *
+ * @param tenantId   Tenant do evento.
+ * @param storedDefault  default_agent_id armazenado na instância Evolution (pode ser null).
+ * @param leadPhone  Número do remetente normalizado (apenas dígitos, com DDI).
+ *                   Quando fornecido, consulta leads.agent_id — útil para leads vindos do Lead Ads.
  */
-export async function resolveEvolutionAgentId(tenantId: string, storedDefault: string | null): Promise<string> {
+export async function resolveEvolutionAgentId(
+  tenantId: string,
+  storedDefault: string | null,
+  leadPhone?: string | null,
+): Promise<string> {
   const fromEnv = process.env.EVOLUTION_DEFAULT_AGENT_ID?.trim();
   if (fromEnv) return fromEnv;
+
+  // Priority: lead's own agent_id (set e.g. by Lead Ads webhook)
+  if (leadPhone) {
+    const sb = createSupabaseServiceClient();
+    const { data: lead } = await sb
+      .from("leads")
+      .select("agent_id")
+      .eq("tenant_id", tenantId)
+      .eq("phone", leadPhone)
+      .maybeSingle();
+    if (lead?.agent_id && typeof lead.agent_id === "string") {
+      return lead.agent_id;
+    }
+  }
+
   if (storedDefault?.trim()) return storedDefault.trim();
 
   const sb = createSupabaseServiceClient();

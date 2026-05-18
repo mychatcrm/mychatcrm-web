@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
-import { AlertTriangle, BadgeCheck, Check, Plug, QrCode, Share2, Sparkles } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { AlertTriangle, BadgeCheck, Check, ChevronDown, ExternalLink, Loader2, Plug, QrCode, Share2, Sparkles, Unlink } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
 import { Modal } from "@/components/ui/Modal";
-import { Toggle } from "@/components/ui/Toggle";
 import { cn, formatBRL } from "@/lib/utils";
 import { WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL } from "@/lib/plans";
 import { readExtraSlotsSummary, whatsappExtraSlotsStorageKey, WHATSAPP_EXTRAS_UPDATED_EVENT } from "@/lib/whatsapp-extra-numbers-storage";
@@ -18,17 +18,10 @@ import {
   WHATSAPP_CONNECTION_UPDATED_EVENT,
   whatsappConnectionWatchableStorageKeys,
 } from "@/lib/whatsapp-connection-storage";
-import {
-  facebookPagesStorageKey,
-  FACEBOOK_PAGES_CONNECTION_UPDATED_EVENT,
-  loadFacebookPagesConnection,
-  persistFacebookPagesConnection,
-  type FacebookPagesConnectionState,
-} from "@/lib/facebook-pages-connection-storage";
 import { typography } from "@/lib/typography";
 import { EvolutionQrSlotPanel } from "@/components/dashboard/integrations/EvolutionQrSlotPanel";
-
-const MAX_HINT = 120;
+import type { MetaStatusPage, MetaStatusResponse } from "@/app/api/client/meta/status/route";
+import type { Agent } from "@/lib/types";
 
 function safeRun<T>(fn: () => T, fallback: T): T {
   try {
@@ -96,10 +89,17 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const { isLight } = usePanelAppearance();
   const [revision, setRevision] = useState(0);
   const [banner, setBanner] = useState<string | null>(null);
-  const [fbModalOpen, setFbModalOpen] = useState(false);
-  const [fbHint, setFbHint] = useState("");
-  const [fbConnected, setFbConnected] = useState(false);
-  const [fbSaving, setFbSaving] = useState(false);
+  const searchParams = useSearchParams();
+
+  // ── Meta Lead Ads state ───────────────────────────────────────────────────
+  const [metaStatus, setMetaStatus] = useState<MetaStatusResponse | null>(null);
+  const [metaLoading, setMetaLoading] = useState(true);
+  const [metaDisconnecting, setMetaDisconnecting] = useState(false);
+  const [agents, setAgents] = useState<Pick<Agent, "id" | "nome">[]>([]);
+  const [formMappingSaving, setFormMappingSaving] = useState<Record<string, boolean>>({});
+  const [formMappingValues, setFormMappingValues] = useState<Record<string, string>>({});
+  const [metaBanner, setMetaBanner] = useState<string | null>(null);
+  const [disconnectModalOpen, setDisconnectModalOpen] = useState(false);
 
   const bump = useCallback(() => setRevision((r) => r + 1), []);
 
@@ -122,18 +122,14 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
 
   useEffect(() => {
     const onWa = () => bump();
-    const onFb = () => bump();
     window.addEventListener(WHATSAPP_CONNECTION_UPDATED_EVENT, onWa);
-    window.addEventListener(FACEBOOK_PAGES_CONNECTION_UPDATED_EVENT, onFb);
     const onStorage = (e: StorageEvent) => {
       if (!e.key) return;
       if (whatsappConnectionWatchableStorageKeys(tenantId).includes(e.key)) onWa();
-      if (e.key === facebookPagesStorageKey(tenantId)) bump();
     };
     window.addEventListener("storage", onStorage);
     return () => {
       window.removeEventListener(WHATSAPP_CONNECTION_UPDATED_EVENT, onWa);
-      window.removeEventListener(FACEBOOK_PAGES_CONNECTION_UPDATED_EVENT, onFb);
       window.removeEventListener("storage", onStorage);
     };
   }, [bump, tenantId]);
@@ -148,7 +144,6 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     const onStorage = (e: StorageEvent) => {
       if (!e.key) return;
       if (
-        e.key === facebookPagesStorageKey(tenantId) ||
         e.key === whatsappExtraSlotsStorageKey(tenantId) ||
         whatsappConnectionWatchableStorageKeys(tenantId).includes(e.key)
       ) {
@@ -161,10 +156,92 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     };
   }, [bump, tenantId]);
 
-  const facebookState = useMemo(() => {
-    void revision;
-    return safeRun(() => loadFacebookPagesConnection(tenantId), { connected: false } satisfies FacebookPagesConnectionState);
-  }, [revision, tenantId]);
+  // ── Load Meta status on mount / after OAuth redirect ─────────────────────
+  const loadMetaStatus = useCallback(async () => {
+    setMetaLoading(true);
+    try {
+      const res = await fetch("/api/client/meta/status", { credentials: "same-origin" });
+      if (res.ok) {
+        const data = (await res.json()) as MetaStatusResponse;
+        setMetaStatus(data);
+        // Initialize form mapping values from DB
+        const initValues: Record<string, string> = {};
+        for (const page of data.pages) {
+          for (const form of page.forms) {
+            if (form.agent_id) initValues[form.form_id] = form.agent_id;
+          }
+        }
+        setFormMappingValues(initValues);
+      }
+    } catch {
+      // Non-critical — Meta section degrades gracefully
+    } finally {
+      setMetaLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadMetaStatus();
+  }, [loadMetaStatus]);
+
+  // Show banner if redirected back from OAuth
+  useEffect(() => {
+    const meta = searchParams.get("meta");
+    if (meta === "connected") {
+      setMetaBanner("✅ Páginas Meta conectadas com sucesso!");
+      void loadMetaStatus();
+    } else if (meta === "denied") {
+      setMetaBanner("Autorização cancelada no Facebook. Tente novamente.");
+    } else if (meta === "no_pages") {
+      setMetaBanner("Nenhuma página Facebook encontrada nesta conta.");
+    } else if (meta === "error") {
+      setMetaBanner("Erro ao conectar com a Meta. Tente novamente.");
+    }
+  }, [searchParams, loadMetaStatus]);
+
+  // ── Load agents for form → agent selector ────────────────────────────────
+  useEffect(() => {
+    fetch("/api/client/agentes", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { agents?: Agent[] } | null) => {
+        if (d?.agents) setAgents(d.agents.map((a) => ({ id: a.id, nome: a.nome })));
+      })
+      .catch(() => {});
+  }, []);
+
+  const saveFormMapping = useCallback(
+    async (form: MetaStatusPage["forms"][number], pageId: string) => {
+      const agentId = formMappingValues[form.form_id];
+      if (!agentId) return;
+      setFormMappingSaving((prev) => ({ ...prev, [form.form_id]: true }));
+      try {
+        await fetch("/api/client/meta/form-mapping", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ form_id: form.form_id, agent_id: agentId, form_name: form.form_name, page_id: pageId }),
+        });
+      } finally {
+        setFormMappingSaving((prev) => ({ ...prev, [form.form_id]: false }));
+      }
+    },
+    [formMappingValues],
+  );
+
+  const disconnectMeta = useCallback(async () => {
+    setMetaDisconnecting(true);
+    try {
+      await fetch("/api/client/meta/disconnect", { method: "DELETE", credentials: "same-origin" });
+      setMetaStatus({ connected: false, pages: [] });
+      setFormMappingValues({});
+      setMetaBanner(null);
+      setDisconnectModalOpen(false);
+    } catch {
+      setMetaBanner("Erro ao desconectar. Tente novamente.");
+    } finally {
+      setMetaDisconnecting(false);
+    }
+  }, []);
 
   const waExtraSlots = useMemo(() => {
     void revision;
@@ -176,57 +253,11 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     return readWhatsAppSlotMethods(tenantId);
   }, [revision, tenantId]);
 
-  const openFbModal = useCallback(() => {
-    setBanner(null);
-    const st = safeRun(() => loadFacebookPagesConnection(tenantId), { connected: false });
-    setFbConnected(st.connected);
-    setFbHint(st.accountHint ?? "");
-    setFbModalOpen(true);
-  }, [tenantId]);
-
-  const closeFbModal = useCallback(() => {
-    setFbModalOpen(false);
-    setFbHint("");
-    setFbSaving(false);
-  }, []);
-
-  const saveFbModal = useCallback(() => {
-    const trimmed = fbHint.trim().slice(0, MAX_HINT);
-    if (fbHint.length > MAX_HINT) {
-      setBanner(`Use no maximo ${MAX_HINT} caracteres na descricao da conta.`);
-      return;
-    }
-    setFbSaving(true);
-    setBanner(null);
-    try {
-      persistFacebookPagesConnection(tenantId, {
-        connected: fbConnected,
-        accountHint: fbConnected ? trimmed || undefined : undefined,
-      });
-      bump();
-      closeFbModal();
-    } catch {
-      setBanner("Nao foi possivel guardar. Verifique o armazenamento do navegador ou tente de novo.");
-    } finally {
-      setFbSaving(false);
-    }
-  }, [bump, closeFbModal, fbConnected, fbHint, tenantId]);
-
-  const quickDisconnectFacebook = useCallback(() => {
-    setBanner(null);
-    try {
-      persistFacebookPagesConnection(tenantId, { connected: false, accountHint: undefined });
-      bump();
-    } catch {
-      setBanner("Falha ao desligar a integracao.");
-    }
-  }, [bump, tenantId]);
-
   const health = useMemo(() => {
     void revision;
     const waLinesReady = waSlots.filter(Boolean).length;
     const waOn = waLinesReady > 0;
-    const fbOn = Boolean(facebookState.connected);
+    const fbOn = Boolean(metaStatus?.connected);
     const channelTotal = 2;
     const channelActive = (waOn ? 1 : 0) + (fbOn ? 1 : 0);
     return {
@@ -235,7 +266,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
       waLinesReady,
       waLineCount: waSlots.length,
     };
-  }, [facebookState.connected, revision, waSlots]);
+  }, [metaStatus?.connected, revision, waSlots]);
 
   return (
     <div className="space-y-8">
@@ -473,6 +504,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
           isLight ? "border-blue-200/70 bg-surface-card" : "border-blue-500/25 bg-surface-card/40",
         )}
       >
+        {/* Header */}
         <div
           className={cn(
             "flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4 sm:px-6",
@@ -484,44 +516,167 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
               <Share2 className="size-5" strokeWidth={2} aria-hidden />
             </span>
             <div>
-              <p className={cn(typography.ui.overline, "text-blue-700 dark:text-blue-300/90")}>Outro canal</p>
-              <h3 className="font-display text-lg font-bold text-content">Páginas Facebook da empresa</h3>
-              <p className="text-xs text-content-secondary">Ligue páginas Meta para campanhas e mensagens. Nesta versão de demonstração o estado fica no navegador.</p>
+              <p className={cn(typography.ui.overline, "text-blue-700 dark:text-blue-300/90")}>Meta Lead Ads</p>
+              <h3 className="font-display text-lg font-bold text-content">Páginas Facebook · Lead Ads</h3>
+              <p className="text-xs text-content-secondary">Leads dos formulários Meta entram direto no CRM e recebem mensagem automática no WhatsApp.</p>
             </div>
           </div>
           <Badge
             className={cn(
               "shrink-0 text-[10px]",
-              facebookState.connected
+              metaStatus?.connected
                 ? cn("border-emerald-500/40 bg-emerald-500/15", isLight ? "text-emerald-700" : "text-emerald-300")
                 : "border-line bg-surface-elevated/50 text-content-secondary",
             )}
           >
-            {facebookState.connected ? "Ligado" : "Nao ligado"}
+            {metaLoading ? "..." : metaStatus?.connected ? "Conectado" : "Não conectado"}
           </Badge>
         </div>
-        <div className="space-y-4 p-5 sm:p-6">
-          <p className="text-sm text-content-secondary">
-            Indique se as <strong className="text-content">páginas Facebook</strong> da empresa estão associadas ao MyChatCRM. A ligação completa com a Meta (OAuth) virá numa
-            próxima versão.
-          </p>
-          {facebookState.accountHint ? (
-            <p className="truncate text-xs text-content-secondary" title={facebookState.accountHint}>
-              Conta ou página: <span className="font-medium text-content">{facebookState.accountHint}</span>
-            </p>
+
+        {/* Body */}
+        <div className="space-y-5 p-5 sm:p-6">
+          {/* Meta OAuth banner */}
+          {metaBanner ? (
+            <div
+              className={cn(
+                "flex items-start gap-2 rounded-lg border px-4 py-3 text-sm",
+                metaBanner.startsWith("✅")
+                  ? isLight
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                  : isLight
+                    ? "border-amber-200 bg-amber-50 text-amber-800"
+                    : "border-amber-500/30 bg-amber-500/10 text-amber-300",
+              )}
+            >
+              <span className="mt-0.5 shrink-0">
+                {metaBanner.startsWith("✅") ? <BadgeCheck className="size-4" aria-hidden /> : <AlertTriangle className="size-4" aria-hidden />}
+              </span>
+              <p>{metaBanner}</p>
+            </div>
           ) : null}
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant={facebookState.connected ? "secondary" : "gradient"} size="sm" className="min-h-[44px]" onClick={openFbModal}>
-              {facebookState.connected ? "Ajustar ligacao" : "Ligar agora"}
-            </Button>
-            {facebookState.connected ? (
-              <Button type="button" variant="outline" size="sm" className="min-h-[44px]" onClick={quickDisconnectFacebook}>
-                Desligar
-              </Button>
-            ) : null}
-          </div>
+
+          {metaLoading ? (
+            <div className="flex items-center gap-2 text-sm text-content-muted">
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+              A verificar ligação Meta…
+            </div>
+          ) : metaStatus?.connected ? (
+            /* Connected state: show pages + form→agent mappings */
+            <div className="space-y-4">
+              {metaStatus.pages.map((page) => (
+                <details key={page.page_id} className={cn("rounded-lg border", isLight ? "border-blue-100 bg-blue-50/30" : "border-blue-500/15 bg-blue-500/[0.05]")} open>
+                  <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 [&::-webkit-details-marker]:hidden">
+                    <span className="flex items-center gap-2 text-sm font-semibold text-content">
+                      <BadgeCheck className={cn("size-4 shrink-0", isLight ? "text-emerald-600" : "text-emerald-400")} aria-hidden />
+                      {page.page_name ?? page.page_id}
+                    </span>
+                    <ChevronDown className="size-4 shrink-0 text-content-muted transition-transform [[open]_summary_&]:rotate-180" aria-hidden />
+                  </summary>
+                  <div className="border-t border-line/30 px-4 py-3">
+                    <p className="mb-3 text-xs text-content-secondary">
+                      ID da página: <code className="rounded bg-surface-elevated/60 px-1">{page.page_id}</code>
+                    </p>
+                    {page.forms.length > 0 ? (
+                      <div className="space-y-3">
+                        <p className="text-xs font-medium text-content-secondary">Formulários detectados — escolha o agente para cada um:</p>
+                        {page.forms.map((form) => (
+                          <div key={form.form_id} className="flex flex-wrap items-center gap-2">
+                            <span className="min-w-0 flex-1 truncate text-xs text-content" title={form.form_name ?? form.form_id}>
+                              {form.form_name ?? form.form_id}
+                            </span>
+                            <select
+                              value={formMappingValues[form.form_id] ?? ""}
+                              onChange={(e) => setFormMappingValues((prev) => ({ ...prev, [form.form_id]: e.target.value }))}
+                              className="rounded-md border border-line bg-surface-elevated px-2 py-1 text-xs text-content focus:outline-none focus:ring-1 focus:ring-primary"
+                            >
+                              <option value="">— Agente padrão —</option>
+                              {agents.map((a) => (
+                                <option key={a.id} value={a.id}>
+                                  {a.nome}
+                                </option>
+                              ))}
+                            </select>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => saveFormMapping(form, page.page_id)}
+                              isLoading={formMappingSaving[form.form_id]}
+                              disabled={!formMappingValues[form.form_id] || formMappingSaving[form.form_id]}
+                            >
+                              <Check className="size-3" aria-hidden />
+                              Salvar
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-content-muted">
+                        Nenhum formulário mapeado ainda. Os leads chegarão com o agente padrão do tenant até que forms sejam detectados.
+                      </p>
+                    )}
+                  </div>
+                </details>
+              ))}
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-h-[44px]"
+                  onClick={() => setDisconnectModalOpen(true)}
+                >
+                  <Unlink className="size-4" aria-hidden />
+                  Desconectar Meta
+                </Button>
+              </div>
+            </div>
+          ) : (
+            /* Disconnected state */
+            <div className="space-y-4">
+              <p className="text-sm text-content-secondary">
+                Conecte suas <strong className="text-content">páginas Facebook</strong> via OAuth para que leads dos formulários{" "}
+                <strong className="text-content">Lead Ads</strong> entrem automaticamente no CRM e recebam mensagem no WhatsApp.
+              </p>
+              <ul className="space-y-1 text-xs text-content-muted">
+                <li className="flex items-center gap-1.5"><Check className="size-3 shrink-0 text-primary" aria-hidden />Lead capturado → criado no CRM automaticamente</li>
+                <li className="flex items-center gap-1.5"><Check className="size-3 shrink-0 text-primary" aria-hidden />Mensagem WhatsApp enviada na hora</li>
+                <li className="flex items-center gap-1.5"><Check className="size-3 shrink-0 text-primary" aria-hidden />Agente específico por formulário</li>
+              </ul>
+              <a href="/api/meta/connect" className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#1877F2] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90">
+                <ExternalLink className="size-4" aria-hidden />
+                Conectar com Meta
+              </a>
+            </div>
+          )}
         </div>
       </section>
+
+      {/* Disconnect confirmation modal */}
+      {disconnectModalOpen ? (
+        <Modal
+          open={true}
+          onClose={() => setDisconnectModalOpen(false)}
+          title="Desconectar Meta"
+          footer={
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button type="button" variant="ghost" onClick={() => setDisconnectModalOpen(false)} disabled={metaDisconnecting}>
+                Cancelar
+              </Button>
+              <Button type="button" variant="outline" onClick={disconnectMeta} isLoading={metaDisconnecting}>
+                <Unlink className="size-4" aria-hidden />
+                Desconectar
+              </Button>
+            </div>
+          }
+        >
+          <p className="text-sm text-content-secondary">
+            Isso removerá todas as páginas Facebook conectadas e os mapeamentos de formulários. Os leads já criados no CRM não serão afetados.
+          </p>
+        </Modal>
+      ) : null}
 
       <details
         className={cn(
@@ -586,7 +741,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                 caption="WhatsApp + Facebook"
               />
               <p className="mt-1 text-center text-[11px] text-content-muted">
-                WhatsApp {health.waLinesReady}/{health.waLineCount} linha(s) com método · Facebook {facebookState.connected ? "ligado" : "nao ligado"}
+                WhatsApp {health.waLinesReady}/{health.waLineCount} linha(s) com método · Meta {metaStatus?.connected ? "conectado" : "não conectado"}
               </p>
             </div>
           </div>
@@ -622,47 +777,6 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
         </div>
       </details>
 
-      {fbModalOpen ? (
-        <Modal
-          open={true}
-          onClose={closeFbModal}
-          title="Páginas Facebook da empresa"
-          footer={
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={closeFbModal} disabled={fbSaving}>
-                Cancelar
-              </Button>
-              <Button type="button" variant="gradient" onClick={saveFbModal} isLoading={fbSaving}>
-                <Check className="size-4" aria-hidden />
-                Guardar
-              </Button>
-            </div>
-          }
-        >
-          <p className="text-sm text-content-secondary">
-            Indique se as páginas da empresa estão ligadas e, opcionalmente, o nome da página ou da conta comercial.
-          </p>
-          <div className="mt-4 space-y-4">
-            <div>
-              <label className="text-xs font-medium text-content-secondary" htmlFor="fb-hint">
-                Nome da página ou nota (opcional, ate {MAX_HINT} caracteres)
-              </label>
-              <Input
-                id="fb-hint"
-                value={fbHint}
-                onChange={(e) => setFbHint(e.target.value.slice(0, MAX_HINT))}
-                placeholder="Ex.: Pagina Minha Empresa PT"
-                className="mt-1"
-                maxLength={MAX_HINT}
-              />
-            </div>
-            <Toggle id="fb-connected" checked={fbConnected} onChange={setFbConnected} label="Ligacao ativa" />
-            <p className="text-[11px] text-content-secondary">
-              O mesmo estado aparece em <strong className="text-content">Integrações de Leads</strong> na aba Canais.
-            </p>
-          </div>
-        </Modal>
-      ) : null}
     </div>
   );
 }
