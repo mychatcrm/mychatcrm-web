@@ -209,7 +209,6 @@ export function buildAgentSystemPrompt(params: {
     params.languageInstruction,
     `IDENTIDADE DO AGENTE
 Nome: ${clean(agent.nome) || "Agente de atendimento"}
-Gênero configurado: ${clean(agent.genero) || "não informado"}
 Tom de voz: ${clean(agent.tom) || "profissional"}
 Velocidade simulada: ${typeof agent.delayResposta === "number" ? `${agent.delayResposta}s` : "não informada"}
 Idioma configurado: ${clean(agent.idioma) || "Automático"}`,

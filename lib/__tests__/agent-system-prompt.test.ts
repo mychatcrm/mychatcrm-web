@@ -7,7 +7,6 @@ describe("buildAgentSystemPrompt", () => {
       languageInstruction: "CRITICAL INSTRUCTION - LANGUAGE: The user's message is in English.",
       agent: {
         nome: "Max Vendas",
-        genero: "masculino",
         objetivo: "vender",
         tom: "Consultivo",
         delayResposta: 2,

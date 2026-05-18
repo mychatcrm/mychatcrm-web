@@ -1,7 +1,6 @@
 "use client";
 
 import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
-import { PanelSelect as Select } from "@/components/panel/ui/PanelSelect";
 import type { AgentWizardDraft } from "@/lib/agents";
 import { cn } from "@/lib/utils";
 import { AGENT_FIELD_HELP } from "./agent-field-help-content";
@@ -20,14 +19,6 @@ export function WizardStep1Identidade({
       <div className="md:col-span-2">
         <FieldLabel label="Nome do agente" help={AGENT_FIELD_HELP.nome} />
         <Input value={draft.nome} onChange={(event) => onChange({ ...draft, nome: event.target.value })} placeholder="Carlos - Suporte Técnico" />
-      </div>
-      <div>
-        <FieldLabel label="Gênero da IA" help={AGENT_FIELD_HELP.genero} />
-        <Select value={draft.genero} onChange={(event) => onChange({ ...draft, genero: event.target.value as AgentWizardDraft["genero"] })}>
-          <option value="feminino">Feminino</option>
-          <option value="masculino">Masculino</option>
-          <option value="neutro">Neutro</option>
-        </Select>
       </div>
       <div className="min-w-0">
         <FieldLabel label="Cor do agente" help={AGENT_FIELD_HELP.cor} />

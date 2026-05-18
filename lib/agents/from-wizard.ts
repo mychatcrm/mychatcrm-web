@@ -15,7 +15,6 @@ export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDr
     nome: draft.nome.trim(),
     cor: draft.cor,
     avatar: draft.avatar,
-    genero: draft.genero,
     tom: draft.tom,
     delayResposta: draft.delayResposta,
     temperatura: draft.temperatura,
@@ -57,7 +56,12 @@ export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDr
 export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string): Agent {
   const templates = listAgentsForTenant(tenantId);
   const baseFull = structuredClone(templates[0]!);
-  const { comandoPausaConversa: _pause, comandoRetomaConversa: _resume, ...base } = baseFull;
+  const {
+    comandoPausaConversa: _pause,
+    comandoRetomaConversa: _resume,
+    genero: _genero,
+    ...base
+  } = baseFull;
   const stamp = new Date().toISOString();
   const responseSettings = sanitizeAgentResponseSettings(draft);
   const smartWait = sanitizeAgentSmartWaitSettings(draft);
@@ -69,7 +73,6 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
     nome: draft.nome.trim(),
     cor: draft.cor,
     avatar: draft.avatar,
-    genero: draft.genero,
     status: "inativo",
     tom: draft.tom,
     delayResposta: draft.delayResposta,

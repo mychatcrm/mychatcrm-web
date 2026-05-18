@@ -209,7 +209,8 @@ export interface Agent {
   nomeProduto: string;
   avatar?: string;
   cor: string;
-  genero: AgentGender;
+  /** Legado — não editável no wizard; pode existir em metadata antiga. */
+  genero?: AgentGender;
   objetivo: AgentObjective;
   status: AgentStatus;
   tom: string;

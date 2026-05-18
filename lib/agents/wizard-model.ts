@@ -25,7 +25,6 @@ export type AgentWizardDraft = {
   nome: string;
   avatar: string;
   cor: string;
-  genero: Agent["genero"];
   tom: string;
   delayResposta: number;
   /** Temperatura do modelo (0.01–1). */
@@ -144,7 +143,6 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     nome: agent.nome,
     avatar: agent.avatar ?? "bot",
     cor: agent.cor,
-    genero: agent.genero,
     tom: agent.tom,
     delayResposta: agent.delayResposta,
     temperatura: agent.temperatura ?? 0.2,
@@ -260,7 +258,6 @@ export const defaultWizardDraft: AgentWizardDraft = {
   nome: "",
   avatar: "bot",
   cor: BRAND.orange,
-  genero: "feminino",
   tom: "Profissional",
   delayResposta: 2,
   temperatura: 0.2,

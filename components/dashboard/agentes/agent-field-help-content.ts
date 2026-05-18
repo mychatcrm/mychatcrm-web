@@ -1,7 +1,6 @@
 /** Textos dos tooltips (?) dos campos do wizard/modal de agente. */
 export const AGENT_FIELD_HELP = {
   nome: 'Como seu agente será identificado internamente. Ex.: "Ana - Atendimento" ou "Bot Vendas"',
-  genero: 'Define pronomes e tom de voz. Ex.: Feminino usa "ela", Masculino usa "ele"',
   cor: 'Cor usada no painel para identificar o agente. Ex.: laranja da marca da sua empresa',
   avatar: 'Ícone exibido na lista de agentes. Escolha o que melhor representa o papel do bot.',
   whatsappLinha:
