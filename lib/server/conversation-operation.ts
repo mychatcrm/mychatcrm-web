@@ -7,6 +7,7 @@ import {
   type ConversationState,
 } from "@/lib/server/conversation-memory";
 import { getSystemAgentInstanceName, sendSystemNotification } from "@/lib/server/system-agent";
+import { buildHandoffNotificationText } from "@/lib/server/handoff-notification-builder";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -471,13 +472,12 @@ export async function markWaitingForHuman(params: {
         });
         return;
       }
-      const lastMessage = (params.lastMessage ?? "").trim() || "(sem texto)";
-      const notifyText = [
-        "🔔 Novo atendimento aguardando humano",
-        `Cliente: ${params.remoteJid}`,
-        `Última mensagem: ${lastMessage.slice(0, 500)}`,
-        "Conversa pausada para atendimento humano.",
-      ].join("\n");
+      const notifyText = await buildHandoffNotificationText({
+        sb,
+        tenantId: params.tenantId,
+        remoteJid: params.remoteJid,
+        reason: params.reason,
+      });
       await sendSystemNotification(handoffDigits, notifyText, instanceName, {
         type: "handoff_alert",
         metadata: {
