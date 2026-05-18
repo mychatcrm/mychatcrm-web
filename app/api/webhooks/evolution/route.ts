@@ -289,6 +289,16 @@ async function downloadAndStoreMedia(
   };
 }
 
+/**
+ * Resultado de saveMessage.
+ * `duplicate: true` significa que o message_id já existia na DB (webhook retry da Evolution API).
+ * Quando duplicate=true o chamador deve pular todo o fluxo de automação para essa mensagem.
+ */
+type SaveMessageResult =
+  | { duplicate: false; id: string; created_at: string }
+  | { duplicate: true }
+  | null;
+
 async function saveMessage(opts: {
   tenantId: string;
   remoteJid: string;
@@ -306,7 +316,7 @@ async function saveMessage(opts: {
   mediaDurationSeconds?: number | null;
   transcriptionStatus?: string | null;
   analysisStatus?: string | null;
-}): Promise<{ id?: string; created_at?: string } | null> {
+}): Promise<SaveMessageResult> {
   try {
     const sb = createSupabaseServiceClient();
     const { data, error } = await sb
@@ -329,10 +339,30 @@ async function saveMessage(opts: {
         transcription_status: opts.transcriptionStatus ?? null,
         analysis_status: opts.analysisStatus ?? null,
       })
+      // Deduplicação: a constraint UNIQUE (tenant_id, message_id) WHERE message_id IS NOT NULL
+      // garante que um retry da Evolution API não crie um segundo job de resposta.
+      // Se o message_id já existir, o INSERT é silenciosamente ignorado (RETURNING vazio → null).
       .select("id, created_at")
-      .single();
-    if (error) console.warn("[webhooks/evolution] saveMessage error", error.code, error.message);
-    return (data as { id?: string; created_at?: string } | null) ?? null;
+      .maybeSingle();
+
+    if (error) {
+      // Erro real (não conflito) — logar e retornar null
+      console.warn("[webhooks/evolution] saveMessage error", error.code, error.message);
+      return null;
+    }
+
+    if (!data) {
+      // RETURNING vazio = conflito de unique → mensagem duplicada (retry da Evolution API)
+      console.info("[webhooks/evolution] saveMessage duplicate skipped", {
+        message_id: opts.messageId,
+        tenant_id: opts.tenantId,
+        remote_jid_last4: opts.remoteJid.replace(/\D/g, "").slice(-4),
+      });
+      return { duplicate: true };
+    }
+
+    const row = data as { id: string; created_at: string };
+    return { duplicate: false, id: row.id, created_at: row.created_at };
   } catch (e) {
     console.warn("[webhooks/evolution] saveMessage exception", e);
     return null;
@@ -467,6 +497,20 @@ export async function POST(request: Request) {
               msg.type === "video" ? "unsupported" : msg.type === "image" ? "pending" : null,
           });
 
+          // Webhook retry da Evolution API — mensagem já processada anteriormente.
+          // Retornar null para que Phase 2 ignore esta entrada e não gere resposta duplicada.
+          if (inboundSaved?.duplicate === true) {
+            console.info("[webhooks/evolution] duplicate message skipped", {
+              message_id: msg.messageId,
+              tenant_id: row.tenant_id,
+              remote_jid_last4: msg.remoteJid.replace(/\D/g, "").slice(-4),
+            });
+            return null;
+          }
+
+          const savedAt =
+            inboundSaved && !inboundSaved.duplicate ? inboundSaved.created_at : new Date().toISOString();
+
           const sbState = createSupabaseServiceClient();
           const state = await revealConversationOnInbound({
             sb: sbState,
@@ -474,7 +518,7 @@ export async function POST(request: Request) {
             remoteJid: msg.remoteJid,
             leadId,
             agentId,
-            lastMessageAt: inboundSaved?.created_at ?? new Date().toISOString(),
+            lastMessageAt: savedAt,
           });
 
           await applyHumanConversationCommand({
@@ -484,7 +528,7 @@ export async function POST(request: Request) {
             leadId,
             agentId,
             text: contentFromMsg(msg),
-            occurredAt: inboundSaved?.created_at ?? new Date().toISOString(),
+            occurredAt: savedAt,
           });
 
           try {
@@ -567,7 +611,8 @@ export async function POST(request: Request) {
           let runImmediateReply = !useSmartWait;
 
           if (useSmartWait) {
-            const inboundMessageKey = inboundSaved?.id ?? null;
+            const inboundMessageKey =
+              inboundSaved && !inboundSaved.duplicate ? inboundSaved.id : null;
             if (inboundMessageKey) {
               const flowResult = await runInboundSmartWaitFlow({
                 sb: sbState,
@@ -577,7 +622,10 @@ export async function POST(request: Request) {
                 agentId,
                 instanceName,
                 inboundMessageKey,
-                occurredAt: inboundSaved?.created_at ?? new Date().toISOString(),
+                occurredAt:
+                  inboundSaved && !inboundSaved.duplicate
+                    ? inboundSaved.created_at
+                    : new Date().toISOString(),
                 smartWait,
               });
               if (flowResult.mode === "smart_wait") {
