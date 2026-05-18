@@ -683,7 +683,17 @@ export async function POST(request: Request) {
           const number = remoteJidToEvoNumber(msg.remoteJid);
           if (!number) return;
 
-          if (handoffCheck.trigger) {
+          // Strip [[HANDOFF]] marker (always) and detect AI-signaled handoff
+          const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
+          replyText = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
+
+          // Combine keyword-based + marker-based handoff detection
+          const finalHandoffCheck = handoffCheck.trigger || aiMarkerHandoff;
+          const finalHandoffReason = handoffCheck.trigger
+            ? (handoffCheck.reason ?? "handoff")
+            : "ai_handoff";
+
+          if (finalHandoffCheck) {
             if (handoffMessage) replyText = handoffMessage;
             const messages = await getRecentConversationMessages({
               sb: sbState,
@@ -706,7 +716,7 @@ export async function POST(request: Request) {
                 profileMetadata: {},
               } : null,
               messages,
-              reason: handoffCheck.reason ?? "handoff",
+              reason: finalHandoffReason,
             });
             await saveConversationSummary({
               sb: sbState,
@@ -723,7 +733,7 @@ export async function POST(request: Request) {
               remoteJid: msg.remoteJid,
               leadId,
               agentId,
-              reason: handoffCheck.reason ?? "handoff",
+              reason: finalHandoffReason,
               handoffNumero:
                 typeof metadata.handoffNumero === "string" ? metadata.handoffNumero : null,
               lastMessage: inboundLanguageSource(msg),

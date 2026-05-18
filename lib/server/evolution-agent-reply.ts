@@ -437,13 +437,27 @@ export async function processAgentResponseJob(
       ok: true,
     });
 
-    let outboundText = replyText;
+    // Strip [[HANDOFF]] marker from AI reply (always safe to remove)
+    const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
+    let outboundText = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
+
+    // Primary: keyword-based detection on user's message
     if (handoffCheck.trigger) {
       handoffTriggered = true;
       handoffReason = handoffCheck.reason ?? "handoff";
       handoffLastMessage = unitPrompt;
-      if (handoffMessage) outboundText = handoffMessage;
     }
+
+    // Secondary: LLM included [[HANDOFF]] marker (catches "alta intenção" cases
+    // where keywords don't match but LLM correctly decided to transfer)
+    if (aiMarkerHandoff && !handoffTriggered) {
+      handoffTriggered = true;
+      handoffReason = "ai_handoff";
+      handoffLastMessage = unitPrompt;
+    }
+
+    // Always override with configured handoff message when handoff triggered
+    if (handoffTriggered && handoffMessage) outboundText = handoffMessage;
 
     const outboundMediaParse = await resolveOutboundMediaForAgentResponse({
       sb,
