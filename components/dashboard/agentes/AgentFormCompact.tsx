@@ -25,6 +25,8 @@ import { WizardStepWhatsappLinha } from "./WizardStepWhatsappLinha";
 import { WizardStepVoz } from "./WizardStepVoz";
 import { WizardStepSmartWait } from "./WizardStepSmartWait";
 import { WizardStepCrmLeadDestination } from "./WizardStepCrmLeadDestination";
+import { AGENT_FIELD_HELP } from "./agent-field-help-content";
+import { FieldHelp } from "./agent-field-help";
 
 const DELETE_AGENT_CONFIRM_TEXT = "QUERO APAGAR";
 
@@ -196,16 +198,12 @@ export function AgentFormCompact({
             <h2 className="text-xl font-semibold text-content sm:text-2xl">
               {mode === "create" ? "Criar novo agente" : "Editar agente"}
             </h2>
-            <p className="mt-2 text-sm leading-relaxed text-content-muted">
-              Tudo numa tela: o nome, o objetivo e as instruções definem o comportamento principal. Origens, fluxo e funil ficam em secções
-              avançadas — abra só se precisar ajustar.
-            </p>
           </div>
         ) : null}
 
         <div className="space-y-6 sm:space-y-8">
           <section className="space-y-3">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Nome, objetivo e aparência</h3>
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Identidade</h3>
             <WizardStep1Identidade draft={draft} onChange={setDraft} />
           </section>
 
@@ -217,12 +215,12 @@ export function AgentFormCompact({
           ) : null}
 
           <section className="space-y-3">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Tempo de espera antes de responder</h3>
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Tempo de resposta</h3>
             <WizardStepSmartWait draft={draft} onChange={setDraft} />
           </section>
 
           <section className="space-y-3">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Instruções e treinamento</h3>
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Treinamento</h3>
             <WizardStep2Treinamento
               draft={draft}
               onChange={setDraft}
@@ -282,8 +280,9 @@ export function AgentFormCompact({
                     className="min-h-[96px] w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-3 text-sm text-content outline-none"
                   />
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-xs text-content-muted">
-                      Usa o rascunho atual da tela, materiais já salvos e o prompt central do agente.
+                    <p className="flex flex-wrap items-center gap-1.5 text-xs text-content-muted">
+                      <span>Simulação</span>
+                      <FieldHelp content={AGENT_FIELD_HELP.simulacao} />
                     </p>
                     <Button type="button" onClick={runSimulation} disabled={simulationLoading} className="w-full sm:w-auto">
                       {simulationLoading ? "Simulando..." : "Simular resposta"}

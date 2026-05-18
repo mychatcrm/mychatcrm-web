@@ -1,8 +1,10 @@
 "use client";
 
 import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
-import { Toggle } from "@/components/ui/Toggle";
 import type { AgentWizardDraft } from "@/lib/agents";
+import { cn } from "@/lib/utils";
+import { AGENT_FIELD_HELP } from "./agent-field-help-content";
+import { FieldTitle, InlineFieldTitle } from "./agent-field-help";
 
 function parsePositiveInt(raw: string, fallback: number, max: number) {
   const n = parseInt(raw, 10);
@@ -29,20 +31,32 @@ export function WizardStepFollowUpInteligente({
     <div className="min-w-0 space-y-3">
       <div className="min-w-0 divide-y divide-line rounded-xl border border-line bg-surface-elevated/20">
         <div className="px-3 py-4 sm:px-4">
-          <Toggle
-            id="follow-up-inteligente-ativo"
-            checked={f.ativo}
-            onChange={(ativo) => setF({ ativo })}
-            label="Ativar Follow-up"
-            description="Permite que o agente entre em contato novamente com clientes que não responderam. Com follow-up inteligente, o motor usa todo o histórico da conversa para retomar no assunto certo — sem frases prontas nem modelos fixos."
-          />
+          <div className="flex items-start justify-between gap-4">
+            <InlineFieldTitle title="Ativar Follow-up" help={AGENT_FIELD_HELP.followUpAtivar} />
+            <button
+              id="follow-up-inteligente-ativo"
+              type="button"
+              role="switch"
+              aria-checked={f.ativo}
+              onClick={() => setF({ ativo: !f.ativo })}
+              className={cn(
+                "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                f.ativo ? "border-primary/40 bg-gradient-primary" : "border-line/80 bg-surface-deep",
+              )}
+              aria-label="Ativar Follow-up"
+            >
+              <span
+                className={cn(
+                  "pointer-events-none inline-block h-[18px] w-[18px] transform rounded-full bg-white transition-transform duration-200 ease-out",
+                  f.ativo ? "translate-x-[22px]" : "translate-x-[2px]",
+                )}
+              />
+            </button>
+          </div>
         </div>
         <div className="px-3 py-4 sm:px-4">
-          <p className="text-sm font-medium text-content">Tentativas de contato</p>
-          <p className="mt-1 text-xs text-content-muted">
-            Quantas vezes o agente tentará entrar em contato com clientes que não responderam
-          </p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+          <FieldTitle title="Tentativas de contato" help={AGENT_FIELD_HELP.followUpTentativas} className="mb-3" />
+          <div className="flex flex-wrap items-center gap-2">
             <Input
               type="number"
               min={1}
@@ -58,11 +72,8 @@ export function WizardStepFollowUpInteligente({
           </div>
         </div>
         <div className="px-3 py-4 sm:px-4">
-          <p className="text-sm font-medium text-content">Intervalo de verificação</p>
-          <p className="mt-1 text-xs text-content-muted">
-            Intervalo de tempo para verificar o status das conversas (em minutos)
-          </p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+          <FieldTitle title="Intervalo de verificação" help={AGENT_FIELD_HELP.followUpIntervalo} className="mb-3" />
+          <div className="flex flex-wrap items-center gap-2">
             <Input
               type="number"
               min={1}

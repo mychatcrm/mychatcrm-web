@@ -3,6 +3,8 @@
 import { File as FileIcon, FileImage, Film, Loader2, Music, Trash2, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { AGENT_FIELD_HELP } from "./agent-field-help-content";
+import { FieldTitle } from "./agent-field-help";
 
 const MAX_FILES = 50;
 const TOTAL_CAP_BYTES = 1024 * 1024 * 1024;
@@ -303,10 +305,7 @@ export function WizardStep2OutboundMedia({ agentId }: { agentId?: string }) {
 
   return (
     <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-      <p className="text-sm font-semibold text-content">Arquivos para Envio</p>
-      <p className="mt-1 text-xs text-content-muted">
-        Adicione qualquer tipo de arquivo que o agente pode enviar aos clientes: imagens, vídeos, áudios, PDFs, documentos e mais. Máximo 50 arquivos, 1GB por agente.
-      </p>
+      <FieldTitle title="Arquivos para Envio" help={AGENT_FIELD_HELP.arquivosEnvio} />
 
       <input
         ref={mediaInputRef}

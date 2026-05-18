@@ -10,6 +10,8 @@ import type { AgentWizardDraft } from "@/lib/agents";
 import { WizardStep2Instructions } from "./WizardStep2Instructions";
 import { WizardStep2OutboundMedia } from "./WizardStep2OutboundMedia";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
+import { AGENT_FIELD_HELP } from "./agent-field-help-content";
+import { FieldLabel, FieldTitle } from "./agent-field-help";
 
 const MAX_MATERIAL_BYTES = 1024 * 1024 * 1024;
 const MAX_MATERIAL_FILES = 5;
@@ -437,7 +439,7 @@ export function WizardStep2Treinamento({
     <div className="min-w-0 space-y-4">
       <div className="grid min-w-0 gap-4 sm:grid-cols-2 md:grid-cols-3">
         <div>
-          <label className="text-xs text-content-faint">Tom de voz</label>
+          <FieldLabel label="Tom de voz" help={AGENT_FIELD_HELP.tom} />
           <Select value={draft.tom} onChange={(event) => onChange({ ...draft, tom: event.target.value })}>
             <option>Formal</option>
             <option>Profissional</option>
@@ -447,7 +449,7 @@ export function WizardStep2Treinamento({
           </Select>
         </div>
         <div>
-          <label className="text-xs text-content-faint">Velocidade simulada</label>
+          <FieldLabel label="Velocidade simulada" help={AGENT_FIELD_HELP.velocidade} />
           <Select
             value={`${draft.delayResposta}`}
             onChange={(event) => onChange({ ...draft, delayResposta: Number(event.target.value) })}
@@ -458,7 +460,7 @@ export function WizardStep2Treinamento({
           </Select>
         </div>
         <div>
-          <label className="text-xs text-content-faint">Idioma do agente</label>
+          <FieldLabel label="Idioma do agente" help={AGENT_FIELD_HELP.idioma} />
           <Select value={draft.idioma} onChange={(event) => onChange({ ...draft, idioma: event.target.value })}>
             <option>Português BR</option>
             <option>Inglês</option>
@@ -479,10 +481,19 @@ export function WizardStep2Treinamento({
       />
 
       <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-        <p className="text-sm font-semibold text-content">Materiais de Apoio</p>
-        <p className="mt-1 text-xs text-content-muted">
-          Adicione materiais de suporte para ajudar o agente a responder perguntas específicas
-        </p>
+        <FieldTitle title="Materiais de Apoio" help={AGENT_FIELD_HELP.materiaisApoio} />
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept={ACCEPT_EXTENSIONS}
+          className="sr-only"
+          onChange={(event) => {
+            void ingestFiles(event.target.files);
+            event.currentTarget.value = "";
+          }}
+        />
 
         <div className="mt-4 space-y-2 rounded-xl border border-line bg-surface-elevated/20 px-3 py-3 text-xs">
           <div>
@@ -514,18 +525,6 @@ export function WizardStep2Treinamento({
             </div>
           </div>
         </div>
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept={ACCEPT_EXTENSIONS}
-          className="sr-only"
-          onChange={(event) => {
-            void ingestFiles(event.target.files);
-            event.currentTarget.value = "";
-          }}
-        />
 
         <button
           type="button"
@@ -654,16 +653,10 @@ export function WizardStep2Treinamento({
       <WizardStep2OutboundMedia agentId={agentId} />
 
       <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-        <p className="text-sm font-semibold text-content">Pausa humana por conversa</p>
-        <p className="mt-1 text-xs text-content-faint">
-          Defina frases enviadas no chat com o cliente. Quando o número da empresa enviar a frase de pausa, o agente deixa de responder{" "}
-          <span className="font-medium text-content-muted">só naquela conversa</span> — por exemplo, você assumiu o atendimento no WhatsApp. A
-          frase de retoma volta a ativar o agente na mesma conversa. Na integração com o canal, use a mesma frase configurada aqui (normalmente
-          comparação exata ao texto da mensagem).
-        </p>
-        <div className="mt-4 space-y-3">
+        <FieldTitle title="Pausa humana por conversa" help={AGENT_FIELD_HELP.pausaHumana} className="mb-4" />
+        <div className="space-y-3">
           <div>
-            <label className="text-xs text-content-faint">Mensagem para pausar o agente (esta conversa)</label>
+            <FieldLabel label="Mensagem para pausar o agente (esta conversa)" help={AGENT_FIELD_HELP.pausaMsg} />
             <input
               type="text"
               value={draft.comandoPausaConversa}
@@ -673,7 +666,7 @@ export function WizardStep2Treinamento({
             />
           </div>
           <div>
-            <label className="text-xs text-content-faint">Mensagem para reativar o agente (esta conversa)</label>
+            <FieldLabel label="Mensagem para reativar o agente (esta conversa)" help={AGENT_FIELD_HELP.retomaMsg} />
             <input
               type="text"
               value={draft.comandoRetomaConversa}

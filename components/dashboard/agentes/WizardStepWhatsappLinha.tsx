@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { Smartphone } from "lucide-react";
 import { PanelSelect as Select } from "@/components/panel/ui/PanelSelect";
 import {
   readWhatsAppSlotMethods,
@@ -10,8 +8,9 @@ import {
   WHATSAPP_CONNECTION_UPDATED_EVENT,
 } from "@/lib/whatsapp-connection-storage";
 import { WHATSAPP_EXTRAS_UPDATED_EVENT } from "@/lib/whatsapp-extra-numbers-storage";
-import { cn } from "@/lib/utils";
 import type { AgentWizardDraft } from "@/lib/agents";
+import { AGENT_FIELD_HELP } from "./agent-field-help-content";
+import { FieldLabel } from "./agent-field-help";
 
 function lineLabel(index: number, extrasPurchased: number): string {
   if (index === 0) return "Linha 1 — número incluído no plano";
@@ -64,49 +63,25 @@ export function WizardStepWhatsappLinha({
   );
 
   return (
-    <div
-      className={cn(
-        "rounded-xl border border-line bg-surface-elevated/25 px-3 py-4 sm:px-4",
-        "space-y-3",
-      )}
-    >
-      <div className="flex items-start gap-2.5">
-        <span className="mt-0.5 text-content-muted [&_svg]:h-[18px] [&_svg]:w-[18px]" aria-hidden>
-          <Smartphone strokeWidth={1.75} />
-        </span>
-        <div className="min-w-0 flex-1 space-y-1">
-          <p className="text-sm font-semibold text-content">Número WhatsApp do agente</p>
-          <p className="text-xs leading-relaxed text-content-muted">
-            Escolha qual linha contratada este agente utiliza. Cada linha liga-se em{" "}
-            <Link href="/dashboard/integracoes#canal-whatsapp" className="font-medium text-primary underline-offset-2 hover:underline">
-              Integrações → WhatsApp
-            </Link>{" "}
-            (QR ou API oficial — uma opção por linha).
-          </p>
-        </div>
-      </div>
-      <div>
-        <label className="text-xs font-medium text-content-faint" htmlFor="agent-wa-slot-select">
-          Linha
-        </label>
-        <Select
-          id="agent-wa-slot-select"
-          className="mt-1.5 min-h-[44px]"
-          value={String(safeIdx)}
-          onChange={(e) => {
-            const v = Number.parseInt(e.target.value, 10);
-            if (Number.isNaN(v)) return;
-            onChange({ ...draft, whatsappSlotIndex: Math.min(Math.max(0, v), maxIdx) });
-          }}
-        >
-          {options.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-              {o.hint}
-            </option>
-          ))}
-        </Select>
-      </div>
+    <div>
+      <FieldLabel label="Número WhatsApp do agente" help={AGENT_FIELD_HELP.whatsappLinha} htmlFor="agent-wa-slot-select" />
+      <Select
+        id="agent-wa-slot-select"
+        className="mt-1.5 min-h-[44px]"
+        value={String(safeIdx)}
+        onChange={(e) => {
+          const v = Number.parseInt(e.target.value, 10);
+          if (Number.isNaN(v)) return;
+          onChange({ ...draft, whatsappSlotIndex: Math.min(Math.max(0, v), maxIdx) });
+        }}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+            {o.hint}
+          </option>
+        ))}
+      </Select>
     </div>
   );
 }

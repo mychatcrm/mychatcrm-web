@@ -5,6 +5,8 @@ import { PanelSelect as Select } from "@/components/panel/ui/PanelSelect";
 import { useCrmFunnels } from "@/components/dashboard/CrmFunnelsContext";
 import type { AgentWizardDraft } from "@/lib/agents";
 import { cn } from "@/lib/utils";
+import { AGENT_FIELD_HELP } from "./agent-field-help-content";
+import { FieldHelp, FieldLabel, InlineFieldTitle } from "./agent-field-help";
 
 export function WizardStepCrmLeadDestination({
   draft,
@@ -47,12 +49,12 @@ export function WizardStepCrmLeadDestination({
           {
             value: false,
             title: "Não mover no CRM",
-            description: "Cria ou atualiza o lead sem alterar funil/coluna.",
+            help: AGENT_FIELD_HELP.crmNaoMover,
           },
           {
             value: true,
             title: "Mover para funil/coluna específica",
-            description: "Sempre posiciona o lead no destino definido abaixo.",
+            help: AGENT_FIELD_HELP.crmMover,
           },
         ].map((option) => {
           const active = draft.crmAutoMoveEnabled === option.value;
@@ -68,8 +70,7 @@ export function WizardStepCrmLeadDestination({
                   : "border-line bg-surface-card text-content-secondary hover:border-primary/30 hover:bg-surface-elevated/40",
               )}
             >
-              <span className="block text-sm font-semibold">{option.title}</span>
-              <span className="mt-1 block text-xs leading-relaxed text-content-muted">{option.description}</span>
+              <InlineFieldTitle title={option.title} help={option.help} />
             </button>
           );
         })}
@@ -78,7 +79,7 @@ export function WizardStepCrmLeadDestination({
       {draft.crmAutoMoveEnabled ? (
         <div className="grid min-w-0 gap-4 rounded-xl border border-line bg-surface-deep/40 p-4 sm:grid-cols-2">
           <div>
-            <label className="text-xs text-content-faint">Funil de destino</label>
+            <FieldLabel label="Funil de destino" help={AGENT_FIELD_HELP.crmFunil} />
             <Select
               className="mt-2"
               value={selectedFunnel?.id ?? ""}
@@ -101,7 +102,7 @@ export function WizardStepCrmLeadDestination({
             </Select>
           </div>
           <div>
-            <label className="text-xs text-content-faint">Coluna/etapa de destino</label>
+            <FieldLabel label="Coluna/etapa de destino" help={AGENT_FIELD_HELP.crmColuna} />
             <Select
               key={selectedFunnel?.id ?? "no-funnel"}
               className="mt-2"
@@ -125,8 +126,9 @@ export function WizardStepCrmLeadDestination({
         </div>
       ) : null}
 
-      <p className="text-xs leading-relaxed text-content-muted">
-        A regra é aplicada no backend somente para leads do mesmo tenant e quando a conversa tiver um agente identificado.
+      <p className="flex flex-wrap items-center gap-1.5 text-xs text-content-muted">
+        <span>Regra automática no CRM</span>
+        <FieldHelp content={AGENT_FIELD_HELP.crmRegraBackend} />
       </p>
     </div>
   );

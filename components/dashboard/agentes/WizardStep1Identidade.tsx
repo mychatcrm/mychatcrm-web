@@ -4,6 +4,8 @@ import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
 import { PanelSelect as Select } from "@/components/panel/ui/PanelSelect";
 import type { AgentWizardDraft } from "@/lib/agents";
 import { cn } from "@/lib/utils";
+import { AGENT_FIELD_HELP } from "./agent-field-help-content";
+import { FieldLabel } from "./agent-field-help";
 import { AGENT_AVATAR_OPTIONS } from "./agent-avatar-icons";
 
 export function WizardStep1Identidade({
@@ -16,11 +18,11 @@ export function WizardStep1Identidade({
   return (
     <div className="grid min-w-0 gap-4 md:grid-cols-2">
       <div className="md:col-span-2">
-        <label className="text-xs text-content-faint">Nome do agente</label>
+        <FieldLabel label="Nome do agente" help={AGENT_FIELD_HELP.nome} />
         <Input value={draft.nome} onChange={(event) => onChange({ ...draft, nome: event.target.value })} placeholder="Carlos - Suporte Técnico" />
       </div>
       <div>
-        <label className="text-xs text-content-faint">Gênero da IA</label>
+        <FieldLabel label="Gênero da IA" help={AGENT_FIELD_HELP.genero} />
         <Select value={draft.genero} onChange={(event) => onChange({ ...draft, genero: event.target.value as AgentWizardDraft["genero"] })}>
           <option value="feminino">Feminino</option>
           <option value="masculino">Masculino</option>
@@ -28,7 +30,7 @@ export function WizardStep1Identidade({
         </Select>
       </div>
       <div className="min-w-0">
-        <label className="text-xs text-content-faint">Cor do agente</label>
+        <FieldLabel label="Cor do agente" help={AGENT_FIELD_HELP.cor} />
         <div className="flex min-w-0 flex-wrap items-center gap-3">
           <input
             type="color"
@@ -40,7 +42,7 @@ export function WizardStep1Identidade({
         </div>
       </div>
       <div>
-        <label className="text-xs text-content-faint">Avatar</label>
+        <FieldLabel label="Avatar" help={AGENT_FIELD_HELP.avatar} />
         <div className="flex flex-wrap gap-2">
           {AGENT_AVATAR_OPTIONS.map(({ id, label, Icon }) => (
             <button

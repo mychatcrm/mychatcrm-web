@@ -4,6 +4,8 @@ import { CheckCircle2 } from "lucide-react";
 import { buildSimplePromptFromProFields, type AgentWizardDraft, type InstructionMode } from "@/lib/agents";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { cn } from "@/lib/utils";
+import { AGENT_FIELD_HELP } from "./agent-field-help-content";
+import { FieldLabel, FieldTitle } from "./agent-field-help";
 
 const TEMP_MIN = 0.01;
 const TEMP_MAX = 1;
@@ -42,11 +44,8 @@ export function WizardStep2Instructions({
   return (
     <>
       <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-        <p className="text-sm font-semibold text-content">Modo de instruções</p>
-        <p className="mt-1 text-xs text-content-faint">
-          Escolha entre um prompt único (Simples) ou campos separados para identidade, objetivo e regras (Pro).
-        </p>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <FieldTitle title="Modo de instruções" help={AGENT_FIELD_HELP.modoInstrucoes} className="mb-4" />
+        <div className="grid gap-3 sm:grid-cols-2">
           <button
             type="button"
             onClick={() => setInstructionMode("simple")}
@@ -58,12 +57,7 @@ export function WizardStep2Instructions({
             )}
           >
             <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-content">Simples</p>
-                <p className="mt-1 text-xs leading-relaxed text-content-muted">
-                  Um único campo de texto com tudo sobre o agente.
-                </p>
-              </div>
+              <p className="text-sm font-semibold text-content">Simples</p>
               {isSimpleMode ? <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" /> : null}
             </div>
           </button>
@@ -78,12 +72,7 @@ export function WizardStep2Instructions({
             )}
           >
             <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-content">Pro</p>
-                <p className="mt-1 text-xs leading-relaxed text-content-muted">
-                  Campos separados para identidade, objetivo, instruções e regras.
-                </p>
-              </div>
+              <p className="text-sm font-semibold text-content">Pro</p>
               {!isSimpleMode ? <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" /> : null}
             </div>
           </button>
@@ -92,13 +81,7 @@ export function WizardStep2Instructions({
 
       {isSimpleMode ? (
         <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-          <label className="text-sm font-semibold text-content" htmlFor="agent-simple-prompt">
-            Prompt do agente
-          </label>
-          <p className="mt-1 text-xs text-content-faint">
-            Descreva tudo em um lugar: quem é o agente, como deve se comportar, o que pode e não pode dizer e qual é o
-            objetivo.
-          </p>
+          <FieldLabel label="Prompt do agente" help={AGENT_FIELD_HELP.promptSimples} htmlFor="agent-simple-prompt" />
           <div className="relative mt-3">
             <textarea
               id="agent-simple-prompt"
@@ -115,42 +98,28 @@ export function WizardStep2Instructions({
       ) : (
         <>
           <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-            <p className="text-sm font-semibold text-content">Identidade</p>
-            <p className="mt-1 text-xs text-content-faint">
-              Mini prompt: como o agente deve se identificar e se posicionar com o cliente (nome que usa, papel, tom de
-              apresentação). Fica antes do objetivo e das instruções longas.
-            </p>
+            <FieldTitle title="Identidade" help={AGENT_FIELD_HELP.identidade} className="mb-3" />
             <textarea
               value={draft.promptIdentidade}
               onChange={(event) => onChange({ ...draft, promptIdentidade: event.target.value })}
               placeholder='Ex.: Sou a assistente virtual da empresa X; falo em português claro, no «tu», e deixo explícito que sou um assistente automatizado quando couber.'
-              className="mt-3 min-h-[88px] w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-3 text-sm text-content outline-none"
+              className="min-h-[88px] w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-3 text-sm text-content outline-none"
             />
           </div>
 
           <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-            <p className="text-sm font-semibold text-content">Objetivo</p>
-            <p className="mt-1 text-xs text-content-faint">
-              Em texto livre: o que este agente deve alcançar (meta comercial, escopo de atendimento, público-alvo).
-              Complementa as instruções principais com o foco de negócio do agente.
-            </p>
+            <FieldTitle title="Objetivo" help={AGENT_FIELD_HELP.objetivo} className="mb-3" />
             <textarea
               value={draft.promptObjetivo}
               onChange={(event) => onChange({ ...draft, promptObjetivo: event.target.value })}
               placeholder="Ex.: Converter visitantes do WhatsApp em reuniões agendadas com o time comercial, priorizando PMEs de serviços."
-              className="mt-3 min-h-[100px] w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-3 text-sm text-content outline-none"
+              className="min-h-[100px] w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-3 text-sm text-content outline-none"
             />
           </div>
 
           <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
             <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-content">Instruções</p>
-                <p className="mt-1 text-xs text-content-faint">
-                  Comportamento principal do agente (tom, passos, exemplos). O texto abaixo é editável — pode apagar o
-                  modelo e colar outro.
-                </p>
-              </div>
+              <FieldTitle title="Instruções" help={AGENT_FIELD_HELP.instrucoes} />
               <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
                 <span className="text-xs text-content-faint">Tamanho do prompt (aprox.): {promptSizeUnits} unidades</span>
                 <Button variant="secondary" size="sm" className="w-full sm:w-auto" onClick={onGeneratePrompt}>
@@ -167,38 +136,28 @@ export function WizardStep2Instructions({
           </div>
 
           <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-            <p className="text-sm font-semibold text-content">Regras adicionais</p>
-            <p className="mt-1 text-xs text-content-faint">
-              Opcional: políticas extras, limites de promessa, formato de respostas, ou o que não couber em «Respostas
-              proibidas».
-            </p>
+            <FieldTitle title="Regras adicionais" help={AGENT_FIELD_HELP.regrasAdicionais} className="mb-3" />
             <textarea
               value={draft.promptRegrasAdicionais}
               onChange={(event) => onChange({ ...draft, promptRegrasAdicionais: event.target.value })}
               placeholder="Ex.: Sempre confirmar cidade e segmento antes de enviar preço. Usar listas curtas com no máximo 3 itens."
-              className="mt-3 min-h-[100px] w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-3 text-sm text-content outline-none"
+              className="min-h-[100px] w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-3 text-sm text-content outline-none"
             />
           </div>
 
           <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-            <p className="text-sm font-semibold text-content">Respostas proibidas</p>
-            <p className="mt-1 text-xs text-content-faint">
-              Liste o que o agente não deve dizer ou prometer (concorrentes, descontos, garantias legais, etc.).
-            </p>
+            <FieldTitle title="Respostas proibidas" help={AGENT_FIELD_HELP.respostasProibidas} className="mb-3" />
             <textarea
               value={draft.respostasProibidas}
               onChange={(event) => onChange({ ...draft, respostasProibidas: event.target.value })}
               placeholder="Não mencione concorrentes, não dê descontos acima de 5%..."
-              className="mt-3 min-h-[110px] w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-3 text-sm text-content outline-none"
+              className="min-h-[110px] w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-3 text-sm text-content outline-none"
             />
           </div>
 
           <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
             <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-3">
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-content">Temperatura</p>
-                <p className="mt-1 text-xs text-content-muted">Menor = mais diretas | Maior = mais criativo</p>
-              </div>
+              <FieldTitle title="Temperatura" help={AGENT_FIELD_HELP.temperatura} />
               <span className="w-fit shrink-0 rounded-full border border-line bg-surface-elevated px-3 py-1 text-sm font-semibold tabular-nums text-content">
                 {Number(temperaturaClamped.toFixed(2))}
               </span>
