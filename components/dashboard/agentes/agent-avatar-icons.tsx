@@ -1,13 +1,13 @@
 "use client";
 
 import type { LucideIcon } from "lucide-react";
-import { Bot, Building2, Phone, Store, Target, UserRound, Wrench } from "lucide-react";
+import { Bot, Building2, Headphones, Phone, Store, Target, UserRound, Wrench } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export const AGENT_AVATAR_OPTIONS = [
   { id: "bot", label: "Assistente", Icon: Bot },
   { id: "user-f", label: "Perfil A", Icon: UserRound },
-  { id: "user-m", label: "Perfil B", Icon: UserRound },
+  { id: "user-m", label: "Perfil B", Icon: Headphones },
   { id: "wrench", label: "Suporte", Icon: Wrench },
   { id: "building", label: "Empresa", Icon: Building2 },
   { id: "store", label: "Vendas", Icon: Store },
