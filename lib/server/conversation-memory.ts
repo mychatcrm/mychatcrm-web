@@ -1,6 +1,7 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import type { AiMessage } from "@/lib/ai/types";
 import { getAgentOutboundMediaPromptLines } from "@/lib/server/agent-media-files";
+import { resolveOpenAiApiKey } from "@/lib/ai/openai-api-key";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -368,6 +369,88 @@ export function shouldTriggerHandoff(text: string, keywords: string[] = []): { t
   const all = [...defaults, ...keywords.map((k) => k.toLowerCase())].filter(Boolean);
   const found = all.find((keyword) => normalized.includes(keyword.normalize("NFD").replace(/\p{Diacritic}/gu, "")));
   return { trigger: Boolean(found), reason: found ?? null };
+}
+
+/**
+ * Versão IA de detecção de handoff. Usa gpt-4o-mini como classificador binário (sim/não)
+ * para detectar se o cliente quer falar com uma pessoa real — independente do vocabulário
+ * usado (universal para qualquer nicho).
+ *
+ * Em caso de falha (API indisponível, timeout, erro), cai automaticamente para a detecção
+ * baseada em keywords via shouldTriggerHandoff().
+ */
+export async function shouldTriggerHandoffAI(
+  userMessage: string,
+  handoffKeywords: string[] = [],
+): Promise<{ trigger: boolean; reason: string | null }> {
+  const text = userMessage.trim();
+  if (!text) return { trigger: false, reason: null };
+
+  try {
+    const apiKey = await resolveOpenAiApiKey();
+    if (!apiKey) {
+      // Sem chave disponível — fallback síncrono
+      return shouldTriggerHandoff(text, handoffKeywords);
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3_000);
+
+    let response: Response;
+    try {
+      response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          temperature: 0,
+          max_tokens: 5,
+          messages: [
+            {
+              role: "system",
+              content: "Você é um classificador. Responda apenas 'sim' ou 'nao'.",
+            },
+            {
+              role: "user",
+              content: `O cliente quer falar com uma pessoa humana real (atendente, responsável, especialista, corretor, gerente ou qualquer cargo/função)? Mensagem: "${text.slice(0, 500)}"`,
+            },
+          ],
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!response.ok) {
+      return shouldTriggerHandoff(text, handoffKeywords);
+    }
+
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const answer = data?.choices?.[0]?.message?.content?.trim().toLowerCase() ?? "";
+    const trigger = answer.includes("sim");
+
+    if (trigger) {
+      console.info("[handoff-ai] handoff detected by AI classifier", {
+        answer,
+        message_excerpt: text.slice(0, 80),
+      });
+    }
+
+    return { trigger, reason: trigger ? "ai_classifier" : null };
+  } catch (err) {
+    // Timeout ou erro de rede — fallback síncrono sem bloquear o fluxo
+    const isAbort = err instanceof Error && err.name === "AbortError";
+    console.warn("[handoff-ai] classifier failed, falling back to keywords", {
+      reason: isAbort ? "timeout_3s" : err instanceof Error ? err.message : "unknown",
+    });
+    return shouldTriggerHandoff(text, handoffKeywords);
+  }
 }
 
 export function buildDeterministicHandoffSummary(params: {

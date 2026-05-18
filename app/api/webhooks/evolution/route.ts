@@ -24,7 +24,7 @@ import {
   getConversationState,
   getRecentConversationMessages,
   saveConversationSummary,
-  shouldTriggerHandoff,
+  shouldTriggerHandoffAI,
   upsertConversationState,
 } from "@/lib/server/conversation-memory";
 import { applyHumanConversationCommand } from "@/lib/server/conversation-human-control";
@@ -653,8 +653,9 @@ export async function POST(request: Request) {
             handoffEnabled && typeof metadata.handoffMensagem === "string" && metadata.handoffMensagem.trim()
               ? metadata.handoffMensagem.trim()
               : null;
+          // AI-based detection: universal, nicho-agnóstica, com fallback automático para keywords
           const handoffCheck = handoffEnabled
-            ? shouldTriggerHandoff(inboundLanguageSource(msg), handoffKeywords)
+            ? await shouldTriggerHandoffAI(inboundLanguageSource(msg), handoffKeywords)
             : { trigger: false, reason: null };
 
           const result = await generateAgentResponse({

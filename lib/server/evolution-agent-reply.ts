@@ -20,6 +20,7 @@ import {
   getRecentConversationMessages,
   saveConversationSummary,
   shouldTriggerHandoff,
+  shouldTriggerHandoffAI,
 } from "@/lib/server/conversation-memory";
 import { markWaitingForHuman } from "@/lib/server/conversation-operation";
 import { sleep } from "@/lib/server/agent-response-schedule";
@@ -414,8 +415,9 @@ export async function processAgentResponseJob(
 
     const unit = burst.replyUnits[unitIndex]!;
     const unitPrompt = buildReplyUnitPrompt(unit);
+    // AI-based detection: universal, nicho-agnóstica, com fallback automático para keywords
     const handoffCheck = handoffEnabled
-      ? shouldTriggerHandoff(unitPrompt, handoffKeywords)
+      ? await shouldTriggerHandoffAI(unitPrompt, handoffKeywords)
       : { trigger: false, reason: null };
 
     const replyText = await generateReplyForUnit({
