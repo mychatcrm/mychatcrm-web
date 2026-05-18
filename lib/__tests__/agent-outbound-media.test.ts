@@ -65,6 +65,15 @@ describe("extractMediaFilenames / stripMediaTags", () => {
     expect(parsed.cleanedText).not.toContain("piscina");
     expect(parsed.cleanedText).not.toContain("ENVIAR_MEDIA");
   });
+
+  it("stripOutboundMediaDirectives deduplicates repeated filenames before sending", () => {
+    const parsed = stripOutboundMediaDirectives(
+      "Segue 👇\n[[ENVIAR_MEDIA:piscina.jpg]]\n[[ENVIAR_MEDIA:spa.jpg]]\n[[ENVIAR_MEDIA:piscina.jpg]]\n",
+    );
+
+    expect(parsed.filenames).toEqual(["piscina.jpg", "spa.jpg"]);
+    expect(parsed.cleanedText).toBe("Segue 👇");
+  });
 });
 
 describe("agent outbound media helpers", () => {
@@ -114,5 +123,22 @@ describe("agent outbound media helpers", () => {
     expect(resolved.inferred).toBe(true);
     expect(resolved.cleanedText).toBe("Claro, vou te enviar agora.");
     expect(resolved.filenames).toEqual(["decorado.png"]);
+  });
+
+  it("deduplicates repeated media directives when resolving a response", async () => {
+    const resolved = await resolveOutboundMediaForAgentResponse({
+      tenantId: "tenant-1",
+      agentId: "agent-1",
+      responseText: [
+        "Aqui estão os arquivos 👇",
+        "[[ENVIAR_MEDIA:piscina.jpg]]",
+        "[[ENVIAR_MEDIA:piscina.jpg]]",
+        "[[ENVIAR_MEDIA:spa.jpg]]",
+      ].join("\n"),
+      userRequestText: "Quero fotos da piscina e do spa",
+    });
+
+    expect(resolved.inferred).toBe(false);
+    expect(resolved.filenames).toEqual(["piscina.jpg", "spa.jpg"]);
   });
 });

@@ -179,6 +179,10 @@ export function extractMediaFilenames(text: string): string[] {
   return matches.map((m) => m[1].trim()).filter(Boolean);
 }
 
+function dedupeMediaFilenames(filenames: string[]): string[] {
+  return [...new Set(filenames)];
+}
+
 /** Remove todas as diretivas [[ENVIAR_MEDIA:...]] do texto visível ao cliente. */
 export function stripMediaTags(text: string): string {
   MEDIA_TAG_REGEX.lastIndex = 0;
@@ -199,7 +203,7 @@ export function introTextBeforeFirstMediaTag(text: string): string {
  * Remove marcadores [[ENVIAR_MEDIA:filename.ext]] enviados pelo modelo e devolve nomes na ordem.
  */
 export function stripOutboundMediaDirectives(text: string): OutboundMediaDirectiveParse {
-  const filenames = extractMediaFilenames(text);
+  const filenames = dedupeMediaFilenames(extractMediaFilenames(text));
   const cleanedText =
     filenames.length > 1 ? introTextBeforeFirstMediaTag(text) : stripMediaTags(text);
   return { cleanedText, filenames };
@@ -335,7 +339,7 @@ export async function resolveOutboundMediaForAgentResponse(params: {
   responseText: string;
   userRequestText: string;
 }): Promise<OutboundMediaDirectiveParse & { inferred: boolean }> {
-  const filenames = extractMediaFilenames(params.responseText);
+  const filenames = dedupeMediaFilenames(extractMediaFilenames(params.responseText));
   let cleanedText =
     filenames.length > 1
       ? introTextBeforeFirstMediaTag(params.responseText)

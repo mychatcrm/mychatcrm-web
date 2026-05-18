@@ -105,4 +105,19 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("Nunca reenvie arquivos já enviados nesta conversa");
     expect(prompt).toContain("handoff e encaminhamento para humano se aplicam APENAS para atendimento");
   });
+
+  it("instructs handoff marker to remain present when sending media too", () => {
+    const prompt = buildAgentSystemPrompt({
+      languageInstruction: "Responda em português.",
+      agent: {
+        nome: "Max Vendas",
+        objetivo: "vender",
+        ctaHandoffAtivo: true,
+        systemPrompt: "Ajude o cliente.",
+      },
+    });
+
+    expect(prompt).toContain("Mesmo que você precise enviar arquivos na mesma resposta");
+    expect(prompt).toContain("[[ENVIAR_MEDIA:piscina.jpg]] [[HANDOFF]]");
+  });
 });
