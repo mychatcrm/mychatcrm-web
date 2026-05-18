@@ -1,5 +1,6 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { cancelPendingAgentResponseJobs } from "@/lib/server/agent-response-jobs";
+import { cancelPendingFollowUpJobs } from "@/lib/server/follow-up-jobs";
 import {
   getConversationState,
   upsertConversationState,
@@ -406,6 +407,8 @@ export async function markWaitingForHuman(params: {
   reason?: string | null;
   handoffNumero?: string | null;
   lastMessage?: string | null;
+  /** Nome da instância Evolution do tenant — preferido ao system agent para enviar a notificação */
+  instanceName?: string | null;
 }): Promise<void> {
   const sb = params.sb ?? createSupabaseServiceClient();
   const state = await patchConversationOperation({
@@ -442,10 +445,19 @@ export async function markWaitingForHuman(params: {
     reason: "handoff_waiting_human",
   });
 
+  await cancelPendingFollowUpJobs({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    reason: "handoff_waiting_human",
+  });
+
   const handoffDigits = (params.handoffNumero ?? "").replace(/\D/g, "");
   if (handoffDigits.length >= 10) {
     try {
-      const instanceName = (await getSystemAgentInstanceName()) ?? "";
+      // Usa a instância do tenant se fornecida; caso contrário tenta o system agent
+      const instanceName =
+        params.instanceName?.trim() || ((await getSystemAgentInstanceName()) ?? "");
       const lastMessage = (params.lastMessage ?? "").trim() || "(sem texto)";
       const notifyText = [
         "🔔 Novo atendimento aguardando humano",
