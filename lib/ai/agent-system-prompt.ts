@@ -221,7 +221,7 @@ CTA final: ${clean(agent.ctaFinal) || "não configurado"}
 Mensagem de handoff: ${clean(agent.handoffMensagem) || "não configurada"}
 Palavras de handoff: ${handoffKeywords.length ? handoffKeywords.join(", ") : "padrão do sistema"}
 Número para transferência: ${clean(agent.handoffNumero) || "não configurado"}
-Se o usuário pedir humano, ligação, proposta, reclamar ou demonstrar alta intenção, responda de forma breve avisando que um atendente humano dará continuidade.${agent.ctaHandoffAtivo === true ? '\nQuando decidir fazer handoff, inclua o marcador [[HANDOFF]] em qualquer parte da sua resposta — ele será removido automaticamente antes de o cliente ver. Exemplos: "Um corretor vai entrar em contato agora! [[HANDOFF]]" ou "Vou te transferir para a equipe. [[HANDOFF]]"' : ""}`,
+Se o usuário pedir humano, ligação, proposta, reclamar ou demonstrar alta intenção, responda de forma breve avisando que um atendente humano dará continuidade.${agent.ctaHandoffAtivo === true ? '\nQuando decidir fazer handoff, inclua o marcador [[HANDOFF]] em qualquer parte da sua resposta — ele será removido automaticamente antes de o cliente ver. Exemplos: "Vou chamar um atendente humano para continuar com você. [[HANDOFF]]" ou "Já encaminhei para nossa equipe — alguém fala com você em seguida. [[HANDOFF]]"' : ""}`,
     `CONFIGURAÇÕES AVANÇADAS DO AGENTE
 Modo de resposta configurado: ${clean((agent as { responseMode?: unknown }).responseMode) || "text"}
 Origens/ativação: ${compactJson((agent as { origens?: unknown }).origens)}
