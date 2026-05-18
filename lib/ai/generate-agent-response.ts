@@ -36,7 +36,28 @@ function buildSystemPromptFromTemplateAgent(tenantId: string, agentId: string): 
   return parts.length ? parts.join("\n\n") : null;
 }
 
-function buildLanguageInstruction(languageName: string): string {
+/**
+ * Constrói a instrução de idioma para o system prompt.
+ *
+ * Se o agente tiver um idioma fixo configurado (não "Automático"), usa a instrução
+ * imperativa correspondente — o agente responde SEMPRE naquele idioma, independente
+ * do que o cliente escreveu.
+ *
+ * Se o idioma for "Automático" (ou não configurado), detecta o idioma da última
+ * mensagem do cliente e instrui o modelo a responder no mesmo idioma.
+ */
+function buildLanguageInstruction(languageName: string, agentIdioma?: string | null): string {
+  const idioma = (agentIdioma ?? "").trim().toLowerCase();
+  if (idioma === "português br" || idioma === "portugues br" || idioma === "pt-br") {
+    return "OBRIGATÓRIO: Responda SEMPRE em Português do Brasil, independente do idioma que o cliente usar. Nunca mude o idioma da resposta.";
+  }
+  if (idioma === "inglês" || idioma === "ingles" || idioma === "english") {
+    return "MANDATORY: Always respond in English only, regardless of the language the customer uses. Never switch languages.";
+  }
+  if (idioma === "espanhol" || idioma === "español" || idioma === "spanish") {
+    return "OBLIGATORIO: Responde SIEMPRE en español, sin importar el idioma que use el cliente. Nunca cambies de idioma.";
+  }
+  // Automático ou não configurado: detecta o idioma do cliente
   return `CRITICAL INSTRUCTION - LANGUAGE: The user's message is in ${languageName}. You MUST respond EXCLUSIVELY in ${languageName}. Do not use any other language. This is mandatory and overrides everything else.`;
 }
 
@@ -161,7 +182,7 @@ export async function buildAgentDebugSystemPrompt(params: {
   const systemPrompt = buildAgentSystemPrompt({
     agent: resolved.baseAgent,
     runtimeContext: memory,
-    languageInstruction: buildLanguageInstruction(detectedLanguageName),
+    languageInstruction: buildLanguageInstruction(detectedLanguageName, resolved.baseAgent.idioma),
     recognitionHint: memory.recognitionHint,
     condensedContext: memory.condensedContext,
   });
@@ -300,7 +321,7 @@ export async function generateAgentResponse(params: {
   const systemPrompt = buildAgentSystemPrompt({
     agent: baseAgent,
     runtimeContext: memory,
-    languageInstruction: buildLanguageInstruction(detectedLanguageName),
+    languageInstruction: buildLanguageInstruction(detectedLanguageName, baseAgent.idioma),
     recognitionHint: memory.recognitionHint,
     condensedContext: memory.condensedContext,
     burstContext: params.burstContext,

@@ -51,6 +51,97 @@ Aqui está o arquivo Y:
 Nunca reenvie arquivos já enviados nesta conversa a menos que o usuário peça explicitamente.`;
 }
 
+// ---------------------------------------------------------------------------
+// Behavioral instruction blocks — Tom, Velocidade, Idioma
+// ---------------------------------------------------------------------------
+
+/**
+ * Instrução imperativa de tom de voz com base no valor configurado no agente.
+ * Retorna null se o tom não estiver configurado ou não for reconhecido.
+ */
+function buildToneInstruction(tom: string): string | null {
+  const normalized = tom.trim().toLowerCase();
+  if (normalized === "formal") {
+    return "Use linguagem formal. Sem gírias, sem abreviações, sem emojis. Sempre trate o cliente por 'você' ou 'senhor/senhora'. Frases completas e estruturadas.";
+  }
+  if (normalized === "profissional") {
+    return "Use linguagem profissional e objetiva. Sem gírias. Tom neutro e respeitoso. Foco em clareza e eficiência.";
+  }
+  if (normalized === "casual") {
+    return "Use linguagem casual e amigável. Pode usar algumas abreviações comuns (vc, tbm). Tom de conversa natural entre amigos. Sem formalidade excessiva.";
+  }
+  if (normalized === "descontraído" || normalized === "descontraido") {
+    return "Use linguagem completamente descontraída. Pode usar gírias populares, emojis ocasionalmente, humor leve. Fale como um amigo próximo.";
+  }
+  if (normalized === "vendedor") {
+    return "Use linguagem persuasiva e entusiasmada. Destaque benefícios, crie senso de urgência quando apropriado. Tom animado e motivador. Foque sempre em avançar para o próximo passo da venda.";
+  }
+  return null;
+}
+
+/**
+ * Instrução comportamental de velocidade simulada.
+ * delayResposta 0 / null → sem instrução adicional (Imediato).
+ * 1–3s → tom humano respondendo pelo celular.
+ * >3s  → tom humano ocupado, respostas mais curtas.
+ */
+function buildSpeedInstruction(delayResposta: number | null | undefined): string | null {
+  if (!delayResposta || delayResposta <= 0) return null;
+  if (delayResposta <= 3) {
+    return "Você é um ser humano respondendo pelo celular. Nunca demonstre que é uma IA. Suas respostas devem parecer digitadas na hora, naturais e com pequenas imperfeições humanas ocasionais.";
+  }
+  return "Você é um ser humano ocupado respondendo quando pode. Suas respostas são mais curtas e diretas, como alguém que está atendendo várias pessoas ao mesmo tempo.";
+}
+
+/**
+ * Instrução imperativa de idioma com base em agent.idioma.
+ * Complementa e reforça a languageInstruction já no topo do prompt.
+ */
+function buildIdiomaInstruction(idioma: string): string | null {
+  const normalized = idioma.trim().toLowerCase();
+  if (normalized === "português br" || normalized === "portugues br" || normalized === "pt-br") {
+    return "OBRIGATÓRIO: Responda SEMPRE em Português do Brasil, independente do idioma que o cliente usar. Nunca mude o idioma da resposta.";
+  }
+  if (normalized === "inglês" || normalized === "ingles" || normalized === "english") {
+    return "MANDATORY: Always respond in English only, regardless of the language the customer uses. Never switch languages.";
+  }
+  if (normalized === "espanhol" || normalized === "español" || normalized === "spanish") {
+    return "OBLIGATORIO: Responde SIEMPRE en español, sin importar el idioma que use el cliente. Nunca cambies de idioma.";
+  }
+  if (normalized === "automático" || normalized === "automatico" || normalized === "") {
+    return "Detecte o idioma do cliente e responda sempre no mesmo idioma que ele usar.";
+  }
+  return null;
+}
+
+/**
+ * Constrói o bloco de instruções comportamentais (tom, velocidade, idioma)
+ * que será injectado logo após a identidade do agente.
+ * Retorna null se não houver nenhuma instrução para injectar.
+ */
+function buildBehavioralInstructions(agent: {
+  tom?: unknown;
+  delayResposta?: unknown;
+  idioma?: unknown;
+}): string | null {
+  const lines: string[] = [];
+
+  const tom = typeof agent.tom === "string" ? agent.tom : "";
+  const delay = typeof agent.delayResposta === "number" ? agent.delayResposta : null;
+  const idioma = typeof agent.idioma === "string" ? agent.idioma : "";
+
+  const toneInstr = tom ? buildToneInstruction(tom) : null;
+  const speedInstr = buildSpeedInstruction(delay);
+  const idiomaInstr = idioma ? buildIdiomaInstruction(idioma) : null;
+
+  if (toneInstr) lines.push(`TOM DE VOZ: ${toneInstr}`);
+  if (speedInstr) lines.push(`COMPORTAMENTO: ${speedInstr}`);
+  if (idiomaInstr) lines.push(`IDIOMA: ${idiomaInstr}`);
+
+  if (!lines.length) return null;
+  return `INSTRUÇÕES OBRIGATÓRIAS DE COMPORTAMENTO\n${lines.join("\n")}`;
+}
+
 function formatRuntimeContext(ctx?: AgentRuntimeContext | null): string[] {
   if (!ctx) return [];
   const parts: string[] = [];
@@ -122,6 +213,7 @@ Gênero configurado: ${clean(agent.genero) || "não informado"}
 Tom de voz: ${clean(agent.tom) || "profissional"}
 Velocidade simulada: ${typeof agent.delayResposta === "number" ? `${agent.delayResposta}s` : "não informada"}
 Idioma configurado: ${clean(agent.idioma) || "Automático"}`,
+    buildBehavioralInstructions(agent),
     ...instructionBlocks,
     formatOutboundMediaPromptBlock(params.runtimeContext?.outboundMediaLines ?? null),
     `CTA E HANDOFF
