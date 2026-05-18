@@ -407,8 +407,6 @@ export async function markWaitingForHuman(params: {
   reason?: string | null;
   handoffNumero?: string | null;
   lastMessage?: string | null;
-  /** Nome da instância Evolution do tenant — preferido ao system agent para enviar a notificação */
-  instanceName?: string | null;
 }): Promise<void> {
   const sb = params.sb ?? createSupabaseServiceClient();
   const state = await patchConversationOperation({
@@ -459,15 +457,20 @@ export async function markWaitingForHuman(params: {
     handoffNumero_raw: params.handoffNumero ?? "(null)",
     handoffDigits,
     handoffDigits_length: handoffDigits.length,
-    instanceName_param: params.instanceName ?? "(null)",
     reason: params.reason ?? "handoff",
   });
   if (handoffDigits.length >= 10) {
     try {
-      // Usa a instância do tenant se fornecida; caso contrário tenta o system agent
-      const instanceName =
-        params.instanceName?.trim() || ((await getSystemAgentInstanceName()) ?? "");
-      console.log("[HANDOFF_DEBUG] instanceName resolvido em markWaitingForHuman:", instanceName || "(vazio)");
+      // A notificação ao atendente SEMPRE usa a instância do system agent (/admin/system-agent).
+      // Nunca usa a instância do agente que atendeu o lead (job.instance_name).
+      const instanceName = await getSystemAgentInstanceName();
+      console.log("[HANDOFF_DEBUG] system agent instance:", instanceName ?? "(null — notificação não será enviada)");
+      if (!instanceName) {
+        console.warn("[conversation-operation] handoff_notify_skipped — system agent instance not configured", {
+          tenant_id: params.tenantId,
+        });
+        return;
+      }
       const lastMessage = (params.lastMessage ?? "").trim() || "(sem texto)";
       const notifyText = [
         "🔔 Novo atendimento aguardando humano",

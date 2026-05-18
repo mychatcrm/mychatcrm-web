@@ -613,7 +613,6 @@ export async function processAgentResponseJob(
       reason: handoffReason ?? "handoff",
       handoffNumero: typeof metadata.handoffNumero === "string" ? metadata.handoffNumero : null,
       lastMessage: handoffLastMessage ?? null,
-      instanceName: job.instance_name,
     });
   }
 
