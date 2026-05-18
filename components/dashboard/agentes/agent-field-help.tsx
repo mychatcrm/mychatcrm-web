@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 import { cn } from "@/lib/utils";
 
 const TOOLTIP_GAP = 8;
@@ -17,7 +16,6 @@ function splitFieldHelpContent(content: string) {
 }
 
 export function FieldHelp({ content, className }: { content: string; className?: string }) {
-  const { isLight } = usePanelAppearance();
   const [open, setOpen] = useState(false);
   const [tooltipStyle, setTooltipStyle] = useState<CSSProperties | null>(null);
   const [placement, setPlacement] = useState<"top" | "bottom">("bottom");
@@ -88,12 +86,7 @@ export function FieldHelp({ content, className }: { content: string; className?:
         aria-label="Ajuda sobre este campo"
         aria-expanded={open}
         aria-describedby={open ? tooltipId : undefined}
-        className={cn(
-          "inline-flex h-[14px] w-[14px] cursor-pointer items-center justify-center rounded-full border text-[9px] font-bold leading-none transition-colors duration-150 focus:outline-none focus-visible:ring-2",
-          isLight
-            ? "border-content/30 bg-transparent text-content hover:border-content/50 hover:bg-content/5 focus-visible:ring-content/25"
-            : "border-[#f24400] bg-transparent text-white hover:bg-[#c93800] hover:text-white focus-visible:ring-[#f24400]/40",
-        )}
+        className="inline-flex h-4 w-4 cursor-pointer items-center justify-center rounded-full bg-[#f24400] text-[9px] font-bold leading-none text-white transition-colors duration-150 hover:bg-[#c93800] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#f24400]/40"
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
