@@ -39,7 +39,11 @@ type LongLivedTokenResponse = {
 function metaOAuthPublicOrigin(req: NextRequest): string {
   try {
     const origin = req.nextUrl.origin;
-    if (origin.startsWith("http://") || origin.startsWith("https://")) return origin.replace(/\/$/, "");
+    if (origin.startsWith("http://") || origin.startsWith("https://")) {
+      // Sempre normaliza para sem-www para que o cookie setado em mychatcrm.com.br
+      // seja enviado no redirect imediato (www. e não-www têm scopes de cookie distintos).
+      return origin.replace(/\/$/, "").replace(/^(https?:\/\/)www\./, "$1");
+    }
   } catch {
     /* fall through */
   }
