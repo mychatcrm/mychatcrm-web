@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
 import { signMetaOAuthState } from "@/lib/server/meta-oauth-state";
+import { SITE_URL } from "@/lib/constants";
 
 export const dynamic = "force-dynamic";
 
@@ -22,15 +23,22 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json({ error: "META_APP_ID not configured on server." }, { status: 503 });
   }
 
-  const state = await signMetaOAuthState(session.tenantId);
+  const state = await signMetaOAuthState({
+    tenantId: session.tenantId,
+    ...(session.employeeId ? { employeeId: session.employeeId } : {}),
+  });
   if (!state) {
     return NextResponse.json(
-      { error: "Cannot start Meta OAuth — CLIENT_SESSION_COOKIE_SECRET not configured." },
+      {
+        error:
+          "Cannot start Meta OAuth — configure META_APP_SECRET, JWT_SECRET or CLIENT_SESSION_COOKIE_SECRET.",
+      },
       { status: 503 },
     );
   }
 
-  const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://mychatcrm.vercel.app").replace(/\/$/, "");
+  // Use SITE_URL from constants — já resolve NEXT_PUBLIC_SITE_URL com fallback para https://mychatcrm.com.br
+  const siteUrl = SITE_URL.replace(/\/$/, "");
   const redirectUri = `${siteUrl}/api/meta/callback`;
 
   const fbUrl = new URL("https://www.facebook.com/v19.0/dialog/oauth");
