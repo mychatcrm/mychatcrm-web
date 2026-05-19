@@ -118,9 +118,11 @@ async function redirectToIntegracoes(
       ...baseOpts,
       value: cookieValue,
       sameSite: "lax", // override: strict bloqueia envio em redirect cross-site (OAuth)
+      domain: ".mychatcrm.com.br", // válido para mychatcrm.com.br e www.mychatcrm.com.br
     });
     console.info("[meta-callback] cookie set ok", {
       sameSite: "lax",
+      domain: ".mychatcrm.com.br",
       secure: baseOpts.secure,
       valuePrefix: cookieValue.slice(0, 8),
     });
