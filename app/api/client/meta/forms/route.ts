@@ -93,5 +93,6 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     nextUrl = raw.paging?.next ?? null;
   }
 
-  return NextResponse.json({ forms } satisfies MetaFormsResponse);
+  const activeForms = forms.filter((f) => f.status === "ACTIVE");
+  return NextResponse.json({ forms: activeForms } satisfies MetaFormsResponse);
 }
