@@ -658,9 +658,11 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                 <strong className="text-content">Lead Ads</strong> entrem automaticamente no CRM e recebam mensagem no WhatsApp.
               </p>
               <ul className="space-y-1 text-xs text-content-muted">
-                <li className="flex items-center gap-1.5"><Check className="size-3 shrink-0 text-primary" aria-hidden />Lead capturado → criado no CRM automaticamente</li>
-                <li className="flex items-center gap-1.5"><Check className="size-3 shrink-0 text-primary" aria-hidden />Mensagem WhatsApp enviada na hora</li>
-                <li className="flex items-center gap-1.5"><Check className="size-3 shrink-0 text-primary" aria-hidden />Agente específico por formulário</li>
+                <li className="flex items-center gap-1.5"><Check className="size-3 shrink-0 text-primary" aria-hidden />Todas as suas páginas do Facebook conectadas automaticamente</li>
+                <li className="flex items-center gap-1.5"><Check className="size-3 shrink-0 text-primary" aria-hidden />Formulários de Lead Ads mapeados por página</li>
+                <li className="flex items-center gap-1.5"><Check className="size-3 shrink-0 text-primary" aria-hidden />Leads entram no CRM Kanban em tempo real</li>
+                <li className="flex items-center gap-1.5"><Check className="size-3 shrink-0 text-primary" aria-hidden />Agente de IA responde o lead no WhatsApp na hora</li>
+                <li className="flex items-center gap-1.5"><Check className="size-3 shrink-0 text-primary" aria-hidden />Roteamento por formulário — cada formulário pode ter um agente diferente</li>
               </ul>
               <a href="/api/meta/connect" className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#1877F2] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90">
                 <ExternalLink className="size-4" aria-hidden />
