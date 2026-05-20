@@ -30,6 +30,7 @@ import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils";
 import type { Agent } from "@/lib/types";
 import type { MetaStatusPage } from "@/app/api/client/meta/status/route";
+import type { MetaFormsForm } from "@/app/api/client/meta/forms/route";
 import {
   ORGANIC_WHATSAPP_SOURCE,
   distributionLabel,
@@ -367,6 +368,9 @@ export function NewLeadRuleWizard({
   const [distPickerOpen, setDistPickerOpen] = useState(false);
   const [distQuery, setDistQuery] = useState("");
   const [metaPages, setMetaPages] = useState<MetaStatusPage[]>([]);
+  const [availableForms, setAvailableForms] = useState<MetaFormsForm[]>([]);
+  const [formsLoading, setFormsLoading] = useState(false);
+  const [formsError, setFormsError] = useState<string | null>(null);
   const [employeesRev, setEmployeesRev] = useState(0);
   const { isLight } = usePanelAppearance();
   const distButtonRef = useRef<HTMLButtonElement>(null);
@@ -508,9 +512,44 @@ export function NewLeadRuleWizard({
     return opts;
   }, [draft.pageId, draft.pageLabel, metaPages]);
 
-  const availableForms = useMemo(() => {
-    return metaPages.find((page) => page.page_id === draft.pageId)?.forms ?? [];
-  }, [draft.pageId, metaPages]);
+  // Fetch forms in real-time from the Meta Graph API whenever the selected page changes.
+  useEffect(() => {
+    if (!open || draft.source !== "meta_form" || !draft.pageId.trim()) {
+      setAvailableForms([]);
+      setFormsLoading(false);
+      setFormsError(null);
+      return;
+    }
+    let cancelled = false;
+    setFormsLoading(true);
+    setFormsError(null);
+    setAvailableForms([]);
+    fetch(`/api/client/meta/forms?page_id=${encodeURIComponent(draft.pageId)}`, {
+      credentials: "same-origin",
+    })
+      .then((r) => r.json())
+      .then((d: { forms?: MetaFormsForm[]; error?: string }) => {
+        if (cancelled) return;
+        if (d.error) {
+          setFormsError(d.error);
+          setAvailableForms([]);
+        } else {
+          setAvailableForms(d.forms ?? []);
+          setFormsError(null);
+        }
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setFormsError(err instanceof Error ? err.message : "Erro ao buscar formulários");
+        setAvailableForms([]);
+      })
+      .finally(() => {
+        if (!cancelled) setFormsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, draft.source, draft.pageId]);
 
   const metaFormLabel = useCallback(
     (id: string) => availableForms.find((form) => form.form_id === id)?.form_name ?? id,
@@ -1038,7 +1077,7 @@ export function NewLeadRuleWizard({
                                 id={`${formId}-exclude-form`}
                                 className={cn("mt-1.5", isLight ? "border-rose-200/80 bg-white" : "border-rose-800/60 bg-surface-deep/90")}
                                 value={excludeFormPicker}
-                                disabled={!availableForms.length}
+                                disabled={formsLoading || !!formsError || !availableForms.length}
                                 onChange={(e) => {
                                   const id = e.target.value;
                                   if (!id) {
@@ -1053,13 +1092,24 @@ export function NewLeadRuleWizard({
                                   setExcludeFormPicker("");
                                 }}
                               >
-                                <option value="">{availableForms.length ? "Selecionar formulários para excluir" : "Nenhum formulário encontrado nesta página"}</option>
+                                <option value="">
+                                  {formsLoading
+                                    ? "Buscando formulários..."
+                                    : availableForms.length
+                                      ? "Selecionar formulários para excluir"
+                                      : "Nenhum formulário encontrado nesta página"}
+                                </option>
                                 {availableForms.filter((f) => !draft.excludedFormIds.includes(f.form_id)).map((f) => (
                                   <option key={f.form_id} value={f.form_id}>
                                     {f.form_name ?? f.form_id}
                                   </option>
                                 ))}
                               </Select>
+                              {formsError ? (
+                                <p className={cn("mt-1 text-xs font-medium", isLight ? "text-orange-700" : "text-orange-400")}>
+                                  {formsError}
+                                </p>
+                              ) : null}
                               {draft.excludedFormIds.length ? (
                                 <ul className="mt-3 flex flex-wrap gap-2" aria-label="Formulários excluídos">
                                   {draft.excludedFormIds.map((fid) => (
@@ -1103,7 +1153,7 @@ export function NewLeadRuleWizard({
                             id={`${formId}-include-form`}
                             className="mt-3 h-11 rounded-xl"
                             value={includeFormPicker}
-                            disabled={!availableForms.length}
+                            disabled={formsLoading || !!formsError || !availableForms.length}
                             onChange={(e) => {
                               const id = e.target.value;
                               if (!id) {
@@ -1118,13 +1168,24 @@ export function NewLeadRuleWizard({
                               setIncludeFormPicker("");
                             }}
                           >
-                            <option value="">{availableForms.length ? "Selecione formulários específicos" : "Nenhum formulário encontrado nesta página"}</option>
+                            <option value="">
+                              {formsLoading
+                                ? "Buscando formulários..."
+                                : availableForms.length
+                                  ? "Selecione formulários específicos"
+                                  : "Nenhum formulário encontrado nesta página"}
+                            </option>
                             {availableForms.filter((f) => !draft.includedFormIds.includes(f.form_id)).map((f) => (
                               <option key={f.form_id} value={f.form_id}>
                                 {f.form_name ?? f.form_id}
                               </option>
                             ))}
                           </Select>
+                          {formsError ? (
+                            <p className={cn("mt-1 text-xs font-medium", isLight ? "text-orange-700" : "text-orange-400")}>
+                              {formsError}
+                            </p>
+                          ) : null}
                           {draft.includedFormIds.length ? (
                             <ul className="mt-3 flex flex-wrap gap-2" aria-label="Formulários incluídos nesta regra">
                               {draft.includedFormIds.map((fid) => (
