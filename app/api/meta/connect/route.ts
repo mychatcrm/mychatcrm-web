@@ -10,6 +10,7 @@ const SCOPES = [
   "leads_retrieval",
   "pages_read_engagement",
   "pages_manage_metadata",
+  "business_management",
 ].join(",");
 
 /** Redirects the authenticated tenant to Facebook OAuth consent screen. */

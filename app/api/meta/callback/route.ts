@@ -26,8 +26,20 @@ type FacebookPage = {
   access_token: string;
 };
 
+type FacebookBusiness = {
+  id: string;
+  name?: string;
+};
+
 type PagesResponse = {
   data?: FacebookPage[];
+  paging?: { next?: string };
+  error?: { message: string; type?: string; code?: number };
+};
+
+type BusinessesResponse = {
+  data?: FacebookBusiness[];
+  paging?: { next?: string };
   error?: { message: string; type?: string; code?: number };
 };
 
@@ -217,78 +229,142 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     userAccessToken = shortLivedToken;
   }
 
-  // 3. Fetch pages (includes per-page access tokens which are already long-lived)
+  // 3. Fetch pages from every available source (includes per-page long-lived tokens).
+  function redactGraphUrl(url: string): string {
+    return url.replaceAll(userAccessToken, "[REDACTED]");
+  }
+
+  function addPages(target: Map<string, FacebookPage>, rows: FacebookPage[]) {
+    for (const page of rows) {
+      if (!target.has(page.id)) target.set(page.id, page);
+    }
+  }
+
   async function fetchPagesAttempt(
     attempt: string,
     url: string,
   ): Promise<{ pages: FacebookPage[]; apiError?: string }> {
-    const pagesRes = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-    const rawBody: unknown = await pagesRes.json();
-    console.info("[meta-callback] pages-fetch attempt", {
-      attempt,
-      tenantId,
-      httpStatus: pagesRes.status,
-      httpOk: pagesRes.ok,
-      requestUrl: url.replace(userAccessToken, "[REDACTED]"),
-      apiResponse: rawBody,
-    });
-    const pagesData = rawBody as PagesResponse;
-    if (pagesData.error) {
-      return { pages: [], apiError: pagesData.error.message };
+    const pages: FacebookPage[] = [];
+    let nextUrl: string | undefined = url;
+    let pageNumber = 0;
+
+    while (nextUrl && pageNumber < 20) {
+      pageNumber += 1;
+      const pagesRes = await fetch(nextUrl, { signal: AbortSignal.timeout(10_000) });
+      const rawBody: unknown = await pagesRes.json();
+      const pagesData = rawBody as PagesResponse;
+      const rows = (pagesData.data ?? []).filter(
+        (p): p is FacebookPage => Boolean(p?.id && p?.name && p?.access_token),
+      );
+
+      console.info("[meta-callback] pages-fetch attempt", {
+        attempt,
+        tenantId,
+        pageNumber,
+        httpStatus: pagesRes.status,
+        httpOk: pagesRes.ok,
+        requestUrl: redactGraphUrl(nextUrl),
+        rowsReturned: pagesData.data?.length ?? 0,
+        validPages: rows.length,
+        apiError: pagesData.error?.message ?? null,
+      });
+
+      if (pagesData.error) return { pages, apiError: pagesData.error.message };
+
+      pages.push(...rows);
+      nextUrl = pagesData.paging?.next;
     }
-    const rows = (pagesData.data ?? []).filter(
-      (p): p is FacebookPage => Boolean(p?.id && p?.name && p?.access_token),
-    );
-    return { pages: rows };
+
+    return { pages };
   }
 
-  let pages: FacebookPage[] = [];
+  async function fetchBusinessesAttempt(url: string): Promise<{ businesses: FacebookBusiness[]; apiError?: string }> {
+    const businesses: FacebookBusiness[] = [];
+    let nextUrl: string | undefined = url;
+    let pageNumber = 0;
+
+    while (nextUrl && pageNumber < 20) {
+      pageNumber += 1;
+      const businessRes = await fetch(nextUrl, { signal: AbortSignal.timeout(10_000) });
+      const rawBody: unknown = await businessRes.json();
+      const businessData = rawBody as BusinessesResponse;
+      const rows = (businessData.data ?? []).filter((b): b is FacebookBusiness => Boolean(b?.id));
+
+      console.info("[meta-callback] businesses-fetch attempt", {
+        tenantId,
+        pageNumber,
+        httpStatus: businessRes.status,
+        httpOk: businessRes.ok,
+        requestUrl: redactGraphUrl(nextUrl),
+        rowsReturned: businessData.data?.length ?? 0,
+        validBusinesses: rows.length,
+        apiError: businessData.error?.message ?? null,
+      });
+
+      if (businessData.error) return { businesses, apiError: businessData.error.message };
+
+      businesses.push(...rows);
+      nextUrl = businessData.paging?.next;
+    }
+
+    return { businesses };
+  }
+
+  const collectedPages = new Map<string, FacebookPage>();
   let pagesFetchError: string | undefined;
   try {
     const attempt1Url = `${GRAPH}/me/accounts?access_token=${encodeURIComponent(userAccessToken)}&fields=id,name,access_token`;
-    const attempt1 = await fetchPagesAttempt("me/accounts (fields=id,name,access_token)", attempt1Url);
-    pages = attempt1.pages;
+    const attempt1 = await fetchPagesAttempt("me/accounts", attempt1Url);
+    addPages(collectedPages, attempt1.pages);
     pagesFetchError = attempt1.apiError;
 
-    if (!pages.length) {
-      const attempt2Url = `${GRAPH}/me/accounts?access_token=${encodeURIComponent(userAccessToken)}&fields=id,name,access_token,instagram_business_account`;
-      const attempt2 = await fetchPagesAttempt(
-        "me/accounts (fields=id,name,access_token,instagram_business_account)",
-        attempt2Url,
-      );
-      pages = attempt2.pages;
-      pagesFetchError = attempt2.apiError ?? pagesFetchError;
+    const meUrl = `${GRAPH}/me?access_token=${encodeURIComponent(userAccessToken)}&fields=id`;
+    const meRes = await fetch(meUrl, { signal: AbortSignal.timeout(10_000) });
+    const meRaw: unknown = await meRes.json();
+    const meData = meRaw as MeResponse;
+    const userId = meData.id;
+    console.info("[meta-callback] me/id for accounts fallback", {
+      tenantId,
+      httpStatus: meRes.status,
+      httpOk: meRes.ok,
+      requestUrl: redactGraphUrl(meUrl),
+      userIdPresent: Boolean(userId),
+      apiError: meData.error?.message ?? null,
+    });
 
-      if (!pages.length) {
-        const meUrl = `${GRAPH}/me?access_token=${encodeURIComponent(userAccessToken)}&fields=id`;
-        const meRes = await fetch(meUrl, { signal: AbortSignal.timeout(10_000) });
-        const meRaw: unknown = await meRes.json();
-        console.info("[meta-callback] me/id for accounts fallback", {
-          tenantId,
-          httpStatus: meRes.status,
-          httpOk: meRes.ok,
-          requestUrl: meUrl.replace(userAccessToken, "[REDACTED]"),
-          apiResponse: meRaw,
-        });
-        const meData = meRaw as MeResponse;
-        const userId = meData.id;
-        if (userId) {
-          const attempt3Url = `${GRAPH}/${userId}/accounts?access_token=${encodeURIComponent(userAccessToken)}`;
-          const attempt3 = await fetchPagesAttempt(`${userId}/accounts (no field filters)`, attempt3Url);
-          pages = attempt3.pages;
-          pagesFetchError = attempt3.apiError ?? pagesFetchError;
-        } else {
-          console.warn("[meta-callback] Could not resolve user id for accounts fallback", {
-            tenantId,
-            meError: meData.error?.message,
-          });
-        }
-      }
+    if (userId) {
+      const attempt2Url = `${GRAPH}/${userId}/accounts?access_token=${encodeURIComponent(userAccessToken)}`;
+      const attempt2 = await fetchPagesAttempt(`${userId}/accounts`, attempt2Url);
+      addPages(collectedPages, attempt2.pages);
+      pagesFetchError = attempt2.apiError ?? pagesFetchError;
+    } else {
+      console.warn("[meta-callback] Could not resolve user id for accounts fallback", {
+        tenantId,
+        meError: meData.error?.message,
+      });
+    }
+
+    const businessesUrl = `${GRAPH}/me/businesses?access_token=${encodeURIComponent(userAccessToken)}&fields=id,name`;
+    const businessesAttempt = await fetchBusinessesAttempt(businessesUrl);
+    pagesFetchError = businessesAttempt.apiError ?? pagesFetchError;
+
+    for (const business of businessesAttempt.businesses) {
+      const ownedPagesUrl = `${GRAPH}/${business.id}/owned_pages?access_token=${encodeURIComponent(userAccessToken)}&fields=id,name,access_token`;
+      const ownedPages = await fetchPagesAttempt(`${business.id}/owned_pages`, ownedPagesUrl);
+      addPages(collectedPages, ownedPages.pages);
+      pagesFetchError = ownedPages.apiError ?? pagesFetchError;
+
+      const clientPagesUrl = `${GRAPH}/${business.id}/client_pages?access_token=${encodeURIComponent(userAccessToken)}&fields=id,name,access_token`;
+      const clientPages = await fetchPagesAttempt(`${business.id}/client_pages`, clientPagesUrl);
+      addPages(collectedPages, clientPages.pages);
+      pagesFetchError = clientPages.apiError ?? pagesFetchError;
     }
   } catch (err) {
     console.error("[meta-callback] Pages fetch request failed", err instanceof Error ? err.message : String(err));
     return redirectToIntegracoes(req, "meta=error&reason=network", sessionRestore);
   }
+
+  const pages = Array.from(collectedPages.values());
 
   if (pagesFetchError && !pages.length) {
     console.error("[meta-callback] Failed to fetch pages after all attempts", { message: pagesFetchError });
