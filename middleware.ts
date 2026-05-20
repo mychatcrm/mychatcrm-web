@@ -73,6 +73,26 @@ export async function middleware(request: NextRequest) {
   const isAdminPublicAuth = isAdminLogin || isAdminForgotPassword;
   const isApiRoute = pathname.startsWith("/api/");
 
+  const isPublicLegalDocument =
+    pathname === "/politica-de-privacidade" || pathname === "/termos-de-uso";
+
+  if (isPublicLegalDocument) {
+    const maintenance = await fetchMaintenanceSnapshot(request);
+    if (maintenance.enabled) {
+      const adminToken = request.cookies.get(ADMIN_SESSION_COOKIE)?.value;
+      const adminSession = getAdminSessionByToken(adminToken);
+      const bypass = Boolean(adminSession) || isMaintenanceAnonymousAllowPath(pathname);
+      if (!bypass) {
+        const locale = detectLocaleFromPath(pathname);
+        const dest = request.nextUrl.clone();
+        dest.pathname = localizedMaintenancePath(locale);
+        dest.search = "";
+        return NextResponse.redirect(dest);
+      }
+    }
+    return NextResponse.next();
+  }
+
   if (isDashboard || isAdminArea || isApiRoute) {
     // Maintenance check (these routes are not locale-prefixed)
     const maintenance = await fetchMaintenanceSnapshot(request);
