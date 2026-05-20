@@ -37,6 +37,7 @@ export type LeadDistributionRule = {
   name: string;
   order: number;
   source: LeadRuleSource;
+  active?: boolean;
   redistribution: boolean;
   distributionType: LeadDistributionType;
   /** Quando `specific_agents` ou `automation_agent` (este: um único id). */
@@ -45,6 +46,7 @@ export type LeadDistributionRule = {
   employeeIds: string[];
   mappings: LeadFieldMapping[];
   pageLabel?: string;
+  pageId?: string;
   useAllForms?: boolean;
   /** Com `useAllForms`, formulários desta lista não entram na distribuição (demo). */
   excludedFormIds?: string[];
@@ -55,6 +57,14 @@ export type LeadDistributionRule = {
   conversionPixelId?: string;
   /** Chave de acesso à API de conversões (ex. Meta CAPI). */
   conversionApiSecret?: string;
+  redistributionConfig?: {
+    prazo_minutos: number;
+    quantidade: number;
+    tipo: LeadDistributionType;
+    agent_ids: string[];
+    employee_ids: string[];
+    executar_anteriores: boolean;
+  };
   createdBy: string;
   createdAtLabel: string;
 };

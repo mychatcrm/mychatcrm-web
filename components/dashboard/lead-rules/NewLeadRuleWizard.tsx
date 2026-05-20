@@ -29,6 +29,7 @@ import { Toggle } from "@/components/ui/Toggle";
 import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils";
 import type { Agent } from "@/lib/types";
+import type { MetaStatusPage } from "@/app/api/client/meta/status/route";
 import {
   ORGANIC_WHATSAPP_SOURCE,
   distributionLabel,
@@ -49,27 +50,6 @@ import { loadTeamEmployees, TEAM_EMPLOYEES_UPDATED_EVENT } from "@/lib/team-empl
 import { typography } from "@/lib/typography";
 
 const STEPS = ["Entrada", "Mapeamento", "Distribuição", "Resumo"] as const;
-
-/** Páginas de exemplo para o passo 1 (demo); em produção viriam da Meta OAuth. */
-const FACEBOOK_DEMO_PAGE_OPTIONS: { value: string; label: string }[] = [
-  { value: "Página principal (demo)", label: "Página principal" },
-  { value: "Página da marca", label: "Página da marca" },
-  { value: "Campanhas · Lead Ads", label: "Campanhas · Lead Ads" },
-  { value: "Atendimento comercial", label: "Atendimento comercial" },
-];
-
-/** Formulários de exemplo da página (demo); em produção viriam da Meta. */
-const DEMO_META_FORM_OPTIONS: { id: string; label: string }[] = [
-  { id: "demo-form-orcamento", label: "Pedido de orçamento" },
-  { id: "demo-form-newsletter", label: "Newsletter / conteúdos" },
-  { id: "demo-form-agendamento", label: "Agendamento comercial" },
-  { id: "demo-form-suporte", label: "Suporte técnico" },
-  { id: "demo-form-parceiros", label: "Parcerias B2B" },
-];
-
-function demoMetaFormLabel(id: string): string {
-  return DEMO_META_FORM_OPTIONS.find((f) => f.id === id)?.label ?? id;
-}
 
 /** Logótipo Facebook (círculo “f” oficial, cor de marca Meta #1877F2). */
 function FacebookMark({ className }: { className?: string }) {
@@ -280,6 +260,7 @@ type Draft = {
   /** `null` = utilizador ainda não escolheu (só em criação). */
   source: LeadRuleSource | null;
   pageLabel: string;
+  pageId: string;
   useAllForms: boolean;
   /** Quando `useAllForms`, formulários a não distribuir (ids da lista demo). */
   excludedFormIds: string[];
@@ -293,6 +274,7 @@ type Draft = {
   conversionSendEnabled: boolean;
   conversionPixelId: string;
   conversionApiSecret: string;
+  redistributionConfig: NonNullable<LeadDistributionRule["redistributionConfig"]>;
 };
 
 function sourceLabelOrPlaceholder(s: LeadRuleSource | null): string {
@@ -305,6 +287,7 @@ const emptyDraft = (): Draft => ({
   redistribution: false,
   source: null,
   pageLabel: "",
+  pageId: "",
   useAllForms: false,
   excludedFormIds: [],
   includedFormIds: [],
@@ -315,6 +298,14 @@ const emptyDraft = (): Draft => ({
   conversionSendEnabled: true,
   conversionPixelId: "",
   conversionApiSecret: "",
+  redistributionConfig: {
+    prazo_minutos: 5,
+    quantidade: 2,
+    tipo: "round_robin",
+    agent_ids: [],
+    employee_ids: [],
+    executar_anteriores: true,
+  },
 });
 
 function ruleToDraft(r: LeadDistributionRule): Draft {
@@ -323,6 +314,7 @@ function ruleToDraft(r: LeadDistributionRule): Draft {
     redistribution: r.redistribution,
     source: r.source,
     pageLabel: r.pageLabel ?? "",
+    pageId: r.pageId ?? "",
     useAllForms: r.useAllForms ?? true,
     excludedFormIds: [...(r.excludedFormIds ?? [])],
     includedFormIds: [...(r.includedFormIds ?? [])],
@@ -333,6 +325,14 @@ function ruleToDraft(r: LeadDistributionRule): Draft {
     conversionSendEnabled: r.conversionSendEnabled ?? false,
     conversionPixelId: r.conversionPixelId ?? "",
     conversionApiSecret: r.conversionApiSecret ?? "",
+    redistributionConfig: r.redistributionConfig ?? {
+      prazo_minutos: 5,
+      quantidade: 2,
+      tipo: "round_robin",
+      agent_ids: [],
+      employee_ids: [],
+      executar_anteriores: true,
+    },
   };
 }
 
@@ -366,6 +366,7 @@ export function NewLeadRuleWizard({
   const [includeFormPicker, setIncludeFormPicker] = useState("");
   const [distPickerOpen, setDistPickerOpen] = useState(false);
   const [distQuery, setDistQuery] = useState("");
+  const [metaPages, setMetaPages] = useState<MetaStatusPage[]>([]);
   const [employeesRev, setEmployeesRev] = useState(0);
   const { isLight } = usePanelAppearance();
   const distButtonRef = useRef<HTMLButtonElement>(null);
@@ -397,6 +398,14 @@ export function NewLeadRuleWizard({
     if (!open) return;
     void refreshTeamEmployeesFromApi(tenantId).then(() => setEmployeesRev((n) => n + 1));
   }, [open, tenantId]);
+
+  useEffect(() => {
+    if (!open) return;
+    fetch("/api/client/meta/status", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { pages?: MetaStatusPage[] } | null) => setMetaPages(d?.pages || []))
+      .catch(() => setMetaPages([]));
+  }, [open]);
 
   const syncDistPopoverRect = useCallback(() => {
     const btn = distButtonRef.current;
@@ -489,12 +498,24 @@ export function NewLeadRuleWizard({
   const isOrganicWhatsApp = draft.source === ORGANIC_WHATSAPP_SOURCE;
 
   const facebookPageSelectOptions = useMemo(() => {
-    const opts = [...FACEBOOK_DEMO_PAGE_OPTIONS];
-    if (draft.pageLabel.trim() && !opts.some((o) => o.value === draft.pageLabel)) {
-      opts.push({ value: draft.pageLabel, label: draft.pageLabel });
+    const opts = metaPages.map((page) => ({
+      value: page.page_id,
+      label: page.page_name ?? page.page_id,
+    }));
+    if (draft.pageId.trim() && !opts.some((o) => o.value === draft.pageId)) {
+      opts.push({ value: draft.pageId, label: draft.pageLabel || draft.pageId });
     }
     return opts;
-  }, [draft.pageLabel]);
+  }, [draft.pageId, draft.pageLabel, metaPages]);
+
+  const availableForms = useMemo(() => {
+    return metaPages.find((page) => page.page_id === draft.pageId)?.forms ?? [];
+  }, [draft.pageId, metaPages]);
+
+  const metaFormLabel = useCallback(
+    (id: string) => availableForms.find((form) => form.form_id === id)?.form_name ?? id,
+    [availableForms],
+  );
 
   const applyAutoMap = useCallback(() => {
     const src = draft.source;
@@ -565,7 +586,7 @@ export function NewLeadRuleWizard({
     if (step === 0) {
       const base = draft.name.trim().length >= 2 && draft.source !== null;
       if (draft.source === "meta_form") {
-        if (!draft.pageLabel.trim()) return false;
+        if (!draft.pageId.trim()) return false;
         if (!draft.useAllForms && draft.includedFormIds.length === 0) return false;
       }
       return base;
@@ -595,7 +616,7 @@ export function NewLeadRuleWizard({
     draft.employeeIds.length,
     draft.includedFormIds.length,
     draft.name,
-    draft.pageLabel,
+    draft.pageId,
     draft.source,
     draft.useAllForms,
     isOrganicWhatsApp,
@@ -636,7 +657,7 @@ export function NewLeadRuleWizard({
       setStep(2);
       return;
     }
-    if (draft.source === "meta_form" && !draft.pageLabel.trim()) {
+    if (draft.source === "meta_form" && !draft.pageId.trim()) {
       setStep(0);
       return;
     }
@@ -659,12 +680,14 @@ export function NewLeadRuleWizard({
               : [],
         mappings: draft.mappings,
         pageLabel: draft.pageLabel,
+        pageId: draft.pageId,
         useAllForms: draft.useAllForms,
         excludedFormIds: draft.useAllForms ? [...draft.excludedFormIds] : [],
         includedFormIds: !draft.useAllForms ? [...draft.includedFormIds] : [],
         conversionSendEnabled: draft.conversionSendEnabled,
         conversionPixelId: draft.conversionSendEnabled ? draft.conversionPixelId.trim() : "",
         conversionApiSecret: draft.conversionSendEnabled ? draft.conversionApiSecret : "",
+        redistributionConfig: draft.redistribution ? draft.redistributionConfig : undefined,
         employeeIds: dist === "specific_employees" || dist === "round_robin_employees" ? [...draft.employeeIds] : [],
       };
       onUpdated(rule);
@@ -682,12 +705,14 @@ export function NewLeadRuleWizard({
         dist === "specific_agents" ? [...draft.agentIds] : dist === "automation_agent" ? draft.agentIds.slice(0, 1) : [],
       mappings: draft.mappings,
       pageLabel: draft.pageLabel,
+      pageId: draft.pageId,
       useAllForms: draft.useAllForms,
       excludedFormIds: draft.useAllForms ? [...draft.excludedFormIds] : [],
       includedFormIds: !draft.useAllForms ? [...draft.includedFormIds] : [],
       conversionSendEnabled: draft.conversionSendEnabled,
       conversionPixelId: draft.conversionSendEnabled ? draft.conversionPixelId.trim() : "",
       conversionApiSecret: draft.conversionSendEnabled ? draft.conversionApiSecret : "",
+      redistributionConfig: draft.redistribution ? draft.redistributionConfig : undefined,
       employeeIds: dist === "specific_employees" || dist === "round_robin_employees" ? [...draft.employeeIds] : [],
       createdBy: displayName,
       createdAtLabel: new Date().toLocaleDateString("pt-BR"),
@@ -845,7 +870,13 @@ export function NewLeadRuleWizard({
                       key={card.id}
                       type="button"
                       onClick={() => {
-                        setDraft((d) => ({ ...d, source: card.id }));
+                        setDraft((d) => ({
+                          ...d,
+                          source: card.id,
+                          ...(card.id === "meta_form"
+                            ? {}
+                            : { pageId: "", pageLabel: "", excludedFormIds: [], includedFormIds: [] }),
+                        }));
                       }}
                       className={cn(
                         "relative flex min-h-[132px] w-[calc(50%-0.375rem)] min-w-[140px] max-w-[200px] flex-1 flex-col items-center rounded-xl border px-3 pb-4 pt-5 text-center transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:w-[min(100%,11.5rem)] sm:max-w-none sm:flex-none",
@@ -895,7 +926,7 @@ export function NewLeadRuleWizard({
                     Selecione a página do Facebook para esta regra <span className="text-primary">*</span>
                   </p>
                   <p className="mt-1 text-[11px] leading-relaxed text-content-muted">
-                    Nada vem pré-selecionado — toque na página vinculada de onde quer puxar os formulários (lista de demonstração).
+                    Nada vem pré-selecionado — toque na página vinculada de onde quer puxar os formulários.
                   </p>
                   <div
                     className="mt-3 overflow-hidden rounded-xl border border-line/80 bg-surface-deep/60"
@@ -903,14 +934,22 @@ export function NewLeadRuleWizard({
                     aria-labelledby={`${formId}-fb-page-label`}
                   >
                     {facebookPageSelectOptions.map((o, i) => {
-                      const selected = draft.pageLabel === o.value;
+                      const selected = draft.pageId === o.value;
                       return (
                         <button
                           key={o.value}
                           type="button"
                           role="radio"
                           aria-checked={selected}
-                          onClick={() => setDraft((d) => ({ ...d, pageLabel: o.value }))}
+                          onClick={() =>
+                            setDraft((d) => ({
+                              ...d,
+                              pageId: o.value,
+                              pageLabel: o.label,
+                              excludedFormIds: [],
+                              includedFormIds: [],
+                            }))
+                          }
                           className={cn(
                             "flex w-full items-center gap-3 px-3 py-3 text-left transition sm:gap-3.5 sm:px-4 sm:py-3.5",
                             i > 0 && "border-t border-line/70",
@@ -933,7 +972,7 @@ export function NewLeadRuleWizard({
                       );
                     })}
                   </div>
-                  {!draft.pageLabel.trim() ? (
+                  {!draft.pageId.trim() ? (
                     <p className="mt-2 text-xs font-medium text-amber-300/90">
                       Escolha uma página para poder avançar e vincular os formulários.
                     </p>
@@ -999,6 +1038,7 @@ export function NewLeadRuleWizard({
                                 id={`${formId}-exclude-form`}
                                 className={cn("mt-1.5", isLight ? "border-rose-200/80 bg-white" : "border-rose-800/60 bg-surface-deep/90")}
                                 value={excludeFormPicker}
+                                disabled={!availableForms.length}
                                 onChange={(e) => {
                                   const id = e.target.value;
                                   if (!id) {
@@ -1013,10 +1053,10 @@ export function NewLeadRuleWizard({
                                   setExcludeFormPicker("");
                                 }}
                               >
-                                <option value="">Selecionar formulários para excluir</option>
-                                {DEMO_META_FORM_OPTIONS.filter((f) => !draft.excludedFormIds.includes(f.id)).map((f) => (
-                                  <option key={f.id} value={f.id}>
-                                    {f.label}
+                                <option value="">{availableForms.length ? "Selecionar formulários para excluir" : "Nenhum formulário encontrado nesta página"}</option>
+                                {availableForms.filter((f) => !draft.excludedFormIds.includes(f.form_id)).map((f) => (
+                                  <option key={f.form_id} value={f.form_id}>
+                                    {f.form_name ?? f.form_id}
                                   </option>
                                 ))}
                               </Select>
@@ -1027,11 +1067,11 @@ export function NewLeadRuleWizard({
                                       key={fid}
                                       className={cn("inline-flex max-w-full items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium", isLight ? "border-rose-300/80 bg-white/90 text-rose-900" : "border-rose-800 bg-rose-950/40 text-rose-100")}
                                     >
-                                      <span className="truncate">{demoMetaFormLabel(fid)}</span>
+                                      <span className="truncate">{metaFormLabel(fid)}</span>
                                       <button
                                         type="button"
                                         className={cn("ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full transition", isLight ? "text-rose-600 hover:bg-rose-100" : "text-rose-300 hover:bg-rose-900/60")}
-                                        aria-label={`Remover ${demoMetaFormLabel(fid)} da exclusão`}
+                                        aria-label={`Remover ${metaFormLabel(fid)} da exclusão`}
                                         onClick={() =>
                                           setDraft((d) => ({
                                             ...d,
@@ -1045,8 +1085,8 @@ export function NewLeadRuleWizard({
                                   ))}
                                 </ul>
                               ) : null}
-                              {DEMO_META_FORM_OPTIONS.every((f) => draft.excludedFormIds.includes(f.id)) ? (
-                                <p className={cn("mt-2 text-[11px]", isLight ? "text-rose-800/80" : "text-rose-300/90")}>Todos os formulários demo estão na lista de exclusão.</p>
+                              {availableForms.length > 0 && availableForms.every((f) => draft.excludedFormIds.includes(f.form_id)) ? (
+                                <p className={cn("mt-2 text-[11px]", isLight ? "text-rose-800/80" : "text-rose-300/90")}>Todos os formulários estão na lista de exclusão.</p>
                               ) : null}
                             </div>
                           </div>
@@ -1063,6 +1103,7 @@ export function NewLeadRuleWizard({
                             id={`${formId}-include-form`}
                             className="mt-3 h-11 rounded-xl"
                             value={includeFormPicker}
+                            disabled={!availableForms.length}
                             onChange={(e) => {
                               const id = e.target.value;
                               if (!id) {
@@ -1077,10 +1118,10 @@ export function NewLeadRuleWizard({
                               setIncludeFormPicker("");
                             }}
                           >
-                            <option value="">Selecione formulários específicos</option>
-                            {DEMO_META_FORM_OPTIONS.filter((f) => !draft.includedFormIds.includes(f.id)).map((f) => (
-                              <option key={f.id} value={f.id}>
-                                {f.label}
+                            <option value="">{availableForms.length ? "Selecione formulários específicos" : "Nenhum formulário encontrado nesta página"}</option>
+                            {availableForms.filter((f) => !draft.includedFormIds.includes(f.form_id)).map((f) => (
+                              <option key={f.form_id} value={f.form_id}>
+                                {f.form_name ?? f.form_id}
                               </option>
                             ))}
                           </Select>
@@ -1091,11 +1132,11 @@ export function NewLeadRuleWizard({
                                   key={fid}
                                   className="inline-flex max-w-full items-center gap-1 rounded-full border border-line bg-surface-card px-2.5 py-1 text-xs font-medium text-content"
                                 >
-                                  <span className="truncate">{demoMetaFormLabel(fid)}</span>
+                                  <span className="truncate">{metaFormLabel(fid)}</span>
                                   <button
                                     type="button"
                                     className="ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-content-muted transition hover:bg-surface-deep hover:text-content"
-                                    aria-label={`Remover ${demoMetaFormLabel(fid)}`}
+                                    aria-label={`Remover ${metaFormLabel(fid)}`}
                                     onClick={() =>
                                       setDraft((d) => ({
                                         ...d,
@@ -1574,6 +1615,102 @@ export function NewLeadRuleWizard({
               </div>
             )}
 
+            <div className="mt-4 rounded-xl border border-line bg-surface-deep/25 p-3">
+              <Toggle
+                id={`${formId}-redistribution`}
+                checked={draft.redistribution}
+                onChange={(checked) =>
+                  setDraft((d) => ({
+                    ...d,
+                    redistribution: checked,
+                    redistributionConfig: checked
+                      ? d.redistributionConfig
+                      : {
+                          prazo_minutos: 5,
+                          quantidade: 2,
+                          tipo: "round_robin",
+                          agent_ids: [],
+                          employee_ids: [],
+                          executar_anteriores: true,
+                        },
+                  }))
+                }
+                label="Ativar redistribuição?"
+                description="Se o primeiro destino não avançar no prazo definido, a regra pode tentar outro destino."
+              />
+              {draft.redistribution ? (
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <div>
+                    <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-redistribution-minutes`}>
+                      Prazo em minutos
+                    </label>
+                    <Input
+                      id={`${formId}-redistribution-minutes`}
+                      type="number"
+                      min={1}
+                      className="mt-1.5 h-10 rounded-xl"
+                      value={draft.redistributionConfig.prazo_minutos}
+                      onChange={(e) =>
+                        setDraft((d) => ({
+                          ...d,
+                          redistributionConfig: {
+                            ...d.redistributionConfig,
+                            prazo_minutos: Math.max(1, Number(e.target.value) || 5),
+                          },
+                        }))
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-redistribution-count`}>
+                      Quantidade de tentativas
+                    </label>
+                    <Input
+                      id={`${formId}-redistribution-count`}
+                      type="number"
+                      min={1}
+                      className="mt-1.5 h-10 rounded-xl"
+                      value={draft.redistributionConfig.quantidade}
+                      onChange={(e) =>
+                        setDraft((d) => ({
+                          ...d,
+                          redistributionConfig: {
+                            ...d.redistributionConfig,
+                            quantidade: Math.max(1, Number(e.target.value) || 2),
+                          },
+                        }))
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-redistribution-type`}>
+                      Tipo de redistribuição
+                    </label>
+                    <Select
+                      id={`${formId}-redistribution-type`}
+                      className="mt-1.5 h-10 rounded-xl"
+                      value={draft.redistributionConfig.tipo}
+                      onChange={(e) =>
+                        setDraft((d) => ({
+                          ...d,
+                          redistributionConfig: {
+                            ...d.redistributionConfig,
+                            tipo: e.target.value as LeadDistributionType,
+                          },
+                        }))
+                      }
+                    >
+                      {DISTRIBUTION_CHOICES.map((choice) => (
+                        <option key={choice.value} value={choice.value}>
+                          {choice.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
             {(draft.distributionType === "specific_agents" && !isOrganicWhatsApp) || isOrganicWhatsApp ? (
               <div className="mt-4 rounded-xl border border-line bg-surface-deep/25 p-3">
                 <p className="text-xs font-medium text-content-muted">{isOrganicWhatsApp ? "Agente de destino" : "Agentes de IA de destino"}</p>
@@ -1788,7 +1925,7 @@ export function NewLeadRuleWizard({
                           draft.excludedFormIds.length ? (
                             <span>
                               <span className="font-medium text-content">Todos os formulários</span>, excepto:{" "}
-                              {draft.excludedFormIds.map(demoMetaFormLabel).join(" · ")}
+                              {draft.excludedFormIds.map(metaFormLabel).join(" · ")}
                             </span>
                           ) : (
                             <span className="font-medium text-content">Todos os formulários desta página</span>
@@ -1796,7 +1933,7 @@ export function NewLeadRuleWizard({
                         ) : draft.includedFormIds.length ? (
                           <span>
                             <span className="font-medium text-content">Só estes formulários:</span>{" "}
-                            {draft.includedFormIds.map(demoMetaFormLabel).join(" · ")}
+                            {draft.includedFormIds.map(metaFormLabel).join(" · ")}
                           </span>
                         ) : (
                           <span className="text-content-muted">Nenhum conjunto de formulários seleccionado</span>

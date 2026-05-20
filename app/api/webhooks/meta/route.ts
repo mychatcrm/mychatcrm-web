@@ -43,6 +43,16 @@ type GraphLeadResponse = {
   field_data?: GraphLeadFieldData[];
 };
 
+type LeadDistributionRuleRow = {
+  id: string;
+  page_id: string | null;
+  use_all_forms: boolean | null;
+  included_form_ids: unknown;
+  excluded_form_ids: unknown;
+  distribution_type: string;
+  agent_ids: unknown;
+};
+
 // ─── GET — webhook verification ──────────────────────────────────────────────
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
@@ -159,22 +169,9 @@ async function processLeadgenEvent(value: LeadgenValue): Promise<void> {
     return;
   }
 
-  // 4. Resolve agent: form mapping > instance default > tenant default
-  let agentId: string | null = null;
-  if (form_id) {
-    const { data: mapping } = await sb
-      .from("meta_form_agent_mapping")
-      .select("agent_id")
-      .eq("tenant_id", tenant_id)
-      .eq("form_id", form_id)
-      .maybeSingle();
-    if (mapping?.agent_id) agentId = mapping.agent_id;
-  }
-  if (!agentId) {
-    // Fall back to instance default or first active agent
-    const instance = await getEvolutionInstanceByTenantId(tenant_id);
-    agentId = await resolveEvolutionAgentId(tenant_id, instance?.default_agent_id ?? null);
-  }
+  // 4. Resolve agent: distribution rules > legacy form mapping > instance default > tenant default
+  const routing = await resolveAgentForLead(sb, tenant_id, form_id ?? "", page_id);
+  const agentId = routing.agentId;
 
   // 5. Upsert lead in CRM
   const leadMetadata: Record<string, unknown> = { source: "lead_ads" };
@@ -193,6 +190,7 @@ async function processLeadgenEvent(value: LeadgenValue): Promise<void> {
         email: email ?? undefined,
         source: "lead_ads",
         agent_id: agentId,
+        rule_id: routing.ruleId,
         profile_metadata: leadMetadata,
         last_seen: new Date().toISOString(),
       },
@@ -238,6 +236,83 @@ async function processLeadgenEvent(value: LeadgenValue): Promise<void> {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}
+
+async function resolveAgentForLead(
+  sb: ReturnType<typeof createSupabaseServiceClient>,
+  tenantId: string,
+  formId: string,
+  pageId: string,
+): Promise<{ agentId: string | null; ruleId: string | null }> {
+  const { data: rules } = await sb
+    .from("lead_distribution_rules")
+    .select("id, page_id, use_all_forms, included_form_ids, excluded_form_ids, distribution_type, agent_ids")
+    .eq("tenant_id", tenantId)
+    .eq("active", true)
+    .eq("source", "meta_form")
+    .order("order_index", { ascending: true })
+    .returns<LeadDistributionRuleRow[]>();
+
+  const matchingRule = rules?.find((rule) => {
+    if (rule.page_id && rule.page_id !== pageId) return false;
+    if (rule.use_all_forms !== false) {
+      const excluded = stringArray(rule.excluded_form_ids);
+      return formId ? !excluded.includes(formId) : true;
+    }
+    const included = stringArray(rule.included_form_ids);
+    return Boolean(formId && included.includes(formId));
+  });
+
+  if (matchingRule) {
+    const agentIds = stringArray(matchingRule.agent_ids);
+    if (
+      (matchingRule.distribution_type === "automation_agent" ||
+        matchingRule.distribution_type === "specific_agents" ||
+        matchingRule.distribution_type === "round_robin") &&
+      agentIds.length > 0
+    ) {
+      if (agentIds.length === 1) return { agentId: agentIds[0] ?? null, ruleId: matchingRule.id };
+
+      const counts = await Promise.all(
+        agentIds.map(async (aid) => {
+          const { count } = await sb
+            .from("leads")
+            .select("*", { count: "exact", head: true })
+            .eq("tenant_id", tenantId)
+            .eq("rule_id", matchingRule.id)
+            .eq("agent_id", aid);
+          return { aid, count: count || 0 };
+        }),
+      );
+      counts.sort((a, b) => a.count - b.count);
+      return { agentId: counts[0]?.aid ?? null, ruleId: matchingRule.id };
+    }
+  }
+
+  if (formId) {
+    const { data: mapping } = await sb
+      .from("meta_form_agent_mapping")
+      .select("agent_id")
+      .eq("tenant_id", tenantId)
+      .eq("form_id", formId)
+      .maybeSingle();
+    if (mapping?.agent_id) return { agentId: mapping.agent_id, ruleId: matchingRule?.id ?? null };
+  }
+
+  const { data: instance } = await sb
+    .from("tenant_evolution_instances")
+    .select("default_agent_id")
+    .eq("tenant_id", tenantId)
+    .order("slot_index", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (instance?.default_agent_id) return { agentId: instance.default_agent_id, ruleId: matchingRule?.id ?? null };
+
+  return { agentId: await resolveEvolutionAgentId(tenantId, null), ruleId: matchingRule?.id ?? null };
+}
 
 async function fetchGraphLead(leadgenId: string, pageAccessToken: string): Promise<GraphLeadResponse | null> {
   try {
