@@ -64,6 +64,13 @@ function FacebookMark({ className }: { className?: string }) {
   );
 }
 
+function normalizeFormSearchText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase();
+}
+
 const CRM_FIELD_OPTIONS: { value: string; label: string }[] = [
   { value: "nome", label: "Nome" },
   { value: "email", label: "Email" },
@@ -1143,49 +1150,119 @@ export function NewLeadRuleWizard({
                         </div>
                       ) : (
                         <div className="mt-4 rounded-xl border border-line/80 bg-surface-deep/35 p-4">
-                          <label className="text-sm font-semibold text-content" htmlFor={`${formId}-include-form`}>
+                          <label
+                            id={`${formId}-include-form-label`}
+                            className="text-sm font-semibold text-content"
+                            htmlFor={`${formId}-include-form-search`}
+                          >
                             Formulários Específicos
                           </label>
                           <p className="mt-1 text-xs text-content-muted">
                             Escolha um ou mais formulários desta página. Só leads destes formulários serão tratados por esta regra.
                           </p>
-                          <Select
-                            id={`${formId}-include-form`}
-                            className="mt-3 h-11 rounded-xl"
-                            value={includeFormPicker}
-                            disabled={formsLoading || !!formsError || !availableForms.length}
-                            onChange={(e) => {
-                              const id = e.target.value;
-                              if (!id) {
-                                setIncludeFormPicker("");
-                                return;
-                              }
-                              setDraft((d) =>
-                                d.includedFormIds.includes(id)
-                                  ? d
-                                  : { ...d, includedFormIds: [...d.includedFormIds, id] },
-                              );
-                              setIncludeFormPicker("");
-                            }}
+                          <div
+                            className="mt-3 overflow-hidden rounded-xl border border-line/80 bg-surface-deep/60"
+                            role="group"
+                            aria-labelledby={`${formId}-include-form-label`}
                           >
-                            <option value="">
-                              {formsLoading
-                                ? "Buscando formulários..."
-                                : availableForms.length
-                                  ? "Selecione formulários específicos"
-                                  : "Nenhum formulário encontrado nesta página"}
-                            </option>
-                            {availableForms.filter((f) => !draft.includedFormIds.includes(f.form_id)).map((f) => (
-                              <option key={f.form_id} value={f.form_id}>
-                                {f.form_name ?? f.form_id}
-                              </option>
-                            ))}
-                          </Select>
-                          {formsError ? (
-                            <p className={cn("mt-1 text-xs font-medium", isLight ? "text-orange-700" : "text-orange-400")}>
-                              {formsError}
-                            </p>
-                          ) : null}
+                            <div className="border-b border-line/70 p-2 sm:p-2.5">
+                              <div className="relative">
+                                <Search
+                                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-content-muted"
+                                  strokeWidth={2}
+                                  aria-hidden
+                                />
+                                <Input
+                                  id={`${formId}-include-form-search`}
+                                  type="search"
+                                  autoComplete="off"
+                                  placeholder="Buscar formulário..."
+                                  value={includeFormPicker}
+                                  disabled={formsLoading || !!formsError}
+                                  onChange={(e) => setIncludeFormPicker(e.target.value)}
+                                  className="h-11 rounded-xl border-line bg-surface-card pl-9 text-sm"
+                                />
+                              </div>
+                            </div>
+                            <ul
+                              className="max-h-52 overflow-y-auto overscroll-contain"
+                              role="listbox"
+                              aria-multiselectable="true"
+                              aria-label="Formulários específicos"
+                            >
+                              {formsLoading ? (
+                                <li className="px-3 py-3.5 text-xs text-content-muted">Buscando formulários...</li>
+                              ) : formsError ? (
+                                <li
+                                  className={cn(
+                                    "px-3 py-3.5 text-xs font-medium",
+                                    isLight ? "text-orange-700" : "text-orange-400",
+                                  )}
+                                >
+                                  {formsError}
+                                </li>
+                              ) : !availableForms.length ? (
+                                <li className="px-3 py-3.5 text-xs text-content-muted">
+                                  Nenhum formulário encontrado nesta página
+                                </li>
+                              ) : (
+                                (() => {
+                                  const query = normalizeFormSearchText(includeFormPicker.trim());
+                                  const filtered = availableForms.filter((f) => {
+                                    if (!query) return true;
+                                    const label = normalizeFormSearchText(f.form_name ?? f.form_id);
+                                    return label.includes(query);
+                                  });
+                                  if (!filtered.length) {
+                                    return (
+                                      <li className="px-3 py-3.5 text-xs text-content-muted">
+                                        Nenhum formulário encontrado para essa busca
+                                      </li>
+                                    );
+                                  }
+                                  return filtered.map((f, i) => {
+                                    const selected = draft.includedFormIds.includes(f.form_id);
+                                    return (
+                                      <li key={f.form_id} className="list-none">
+                                        <button
+                                          type="button"
+                                          role="option"
+                                          aria-selected={selected}
+                                          onClick={() =>
+                                            setDraft((d) => ({
+                                              ...d,
+                                              includedFormIds: selected
+                                                ? d.includedFormIds.filter((x) => x !== f.form_id)
+                                                : [...d.includedFormIds, f.form_id],
+                                            }))
+                                          }
+                                          className={cn(
+                                            "flex w-full items-center gap-3 px-3 py-3 text-left transition sm:gap-3.5 sm:px-4 sm:py-3.5",
+                                            i > 0 && "border-t border-line/70",
+                                            selected
+                                              ? "bg-[#f24400]/10 ring-1 ring-inset ring-primary/30"
+                                              : "hover:bg-surface-card/70",
+                                          )}
+                                        >
+                                          <span className="min-w-0 flex-1">
+                                            <span className="block font-medium text-content">{f.form_name ?? f.form_id}</span>
+                                            {f.form_name && f.form_name !== f.form_id ? (
+                                              <span className="mt-0.5 block truncate text-[11px] text-content-muted">
+                                                {f.form_id}
+                                              </span>
+                                            ) : null}
+                                          </span>
+                                          {selected ? (
+                                            <Check className="h-5 w-5 shrink-0 text-primary" strokeWidth={2.5} aria-hidden />
+                                          ) : null}
+                                        </button>
+                                      </li>
+                                    );
+                                  });
+                                })()
+                              )}
+                            </ul>
+                          </div>
                           {draft.includedFormIds.length ? (
                             <ul className="mt-3 flex flex-wrap gap-2" aria-label="Formulários incluídos nesta regra">
                               {draft.includedFormIds.map((fid) => (
