@@ -17,6 +17,10 @@ export function isMaintenanceAnonymousAllowPath(pathname: string): boolean {
   if (pathname === "/reset-password") return true;
   if (pathname === "/politica-de-privacidade") return true;
   if (pathname === "/termos-de-uso") return true;
+  if (pathname === "/en/privacy-policy") return true;
+  if (pathname === "/en/terms-of-use") return true;
+  if (pathname === "/es/politica-de-privacidad") return true;
+  if (pathname === "/es/terminos-de-uso") return true;
   if (pathname === "/forgot-password") return true;
   if (pathname === "/en/forgot-password") return true;
   if (pathname === "/es/forgot-password") return true;

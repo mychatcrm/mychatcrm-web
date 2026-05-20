@@ -9,6 +9,12 @@ export const metadata: Metadata = {
     "Política de Privacidade do MyChatCRM — como tratamos dados de leads, WhatsApp e uso da plataforma.",
   alternates: {
     canonical: "/politica-de-privacidade",
+    languages: {
+      "pt-BR": `${SITE_URL}/politica-de-privacidade`,
+      en: `${SITE_URL}/en/privacy-policy`,
+      es: `${SITE_URL}/es/politica-de-privacidad`,
+      "x-default": `${SITE_URL}/politica-de-privacidade`,
+    },
   },
   openGraph: {
     title: "Política de Privacidade | MyChatCRM",

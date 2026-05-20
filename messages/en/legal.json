@@ -1,14 +1,140 @@
 {
-  "terms": {
-    "title": "Terms of Use | MyChatCRM",
-    "description": "MyChatCRM Terms of Use — conditions for using the platform.",
-    "heading": "Terms of Use",
-    "placeholder": "Legal text placeholder. Replace with the official document before publishing."
+  "shell": {
+    "backHome": "Back to home",
+    "updatedLabel": "Last updated:"
   },
-  "privacy": {
-    "title": "Privacy Policy | MyChatCRM",
-    "description": "MyChatCRM Privacy Policy — how we handle your personal data (GDPR/LGPD).",
-    "heading": "Privacy Policy",
-    "placeholder": "Legal text placeholder. Replace with the official document before publishing."
+  "privacyPage": {
+    "metaTitle": "Privacy Policy | MyChatCRM",
+    "metaDescription": "MyChatCRM Privacy Policy — how we handle leads, WhatsApp and platform usage data.",
+    "title": "Privacy Policy",
+    "updated": "May 20, 2026",
+    "footerBefore": "This policy complements our ",
+    "footerLink": "Terms of Use",
+    "footerAfter": ". In case of conflict with applicable Brazilian law, the governing law prevails.",
+    "sections": {
+      "whoWeAre": {
+        "title": "1. Who we are",
+        "paragraphs": [
+          "<strong>MyChatCRM</strong> is the conversational automation and CRM platform available at <strong>mychatcrm.com.br</strong>. This Policy explains how we process personal data in line with the <strong>Brazilian General Data Protection Law (LGPD — Law No. 13,709/2018)</strong>."
+        ]
+      },
+      "dataCollected": {
+        "title": "2. Data we collect",
+        "list": [
+          "<strong>Account data:</strong> name, email, phone, company and billing information provided when subscribing.",
+          "<strong>Leads and forms:</strong> data submitted through <strong>Facebook Lead Ads</strong> and other sources connected by the customer (name, phone, email, form answers and campaign metadata).",
+          "<strong>WhatsApp and conversations:</strong> messages, phone numbers, media and metadata exchanged in conversations handled on the platform, according to integrations authorized by the customer.",
+          "<strong>Usage data:</strong> access logs, IP, device, browser and actions on the platform for security, support and product improvement.",
+          "<strong>Cookies and similar technologies:</strong> session identifiers and preferences essential to the website and dashboard."
+        ]
+      },
+      "purposes": {
+        "title": "3. Processing purposes",
+        "list": [
+          "Provide, operate and improve MyChatCRM services;",
+          "Receive, organize and respond to leads captured via Facebook Lead Ads and WhatsApp;",
+          "Automate support, CRM pipelines and follow-ups configured by the customer;",
+          "Process payments, billing and legal obligations;",
+          "Ensure security, fraud prevention and technical support;",
+          "Send transactional communications about the account and service."
+        ],
+        "paragraphs": [
+          "Data entered by the customer about their own leads is the customer's responsibility as controller; MyChatCRM acts as processor under the applicable agreement."
+        ]
+      },
+      "storage": {
+        "title": "4. Storage and security",
+        "paragraphs": [
+          "Data is stored on cloud infrastructure with access controls, encryption in transit (TLS) and industry-aligned security practices. Passwords are handled with secure hashing. We retain data as long as needed to provide the service and meet legal obligations.",
+          "<strong>We do not sell</strong> personal data to third parties for commercial purposes. We share information only with essential providers (hosting, database, payments, messaging APIs and integrations authorized by the customer) and with authorities when required by law."
+        ]
+      },
+      "rights": {
+        "title": "5. Data subject rights (LGPD)",
+        "intro": "You may request, under the LGPD:",
+        "list": [
+          "confirmation of and access to processed data;",
+          "correction of incomplete or outdated data;",
+          "anonymization, blocking or deletion of unnecessary data;",
+          "portability, where applicable;",
+          "withdrawal of consent and information on sharing;",
+          "a complaint to the National Data Protection Authority (ANPD)."
+        ]
+      },
+      "cookies": {
+        "title": "6. Cookies",
+        "paragraphs": [
+          "We use cookies and local storage strictly necessary for authentication, security and dashboard operation. Analytics or marketing cookies, when used, depend on consent or browser settings. You can manage cookies in your device preferences."
+        ]
+      },
+      "contact": {
+        "title": "7. Contact",
+        "paragraphs": [
+          "For questions, privacy requests or exercising your rights, email us. We will respond within a reasonable time, generally within 15 business days."
+        ]
+      }
+    }
+  },
+  "termsPage": {
+    "metaTitle": "Terms of Use | MyChatCRM",
+    "metaDescription": "MyChatCRM Terms of Use — conditions for using the CRM and WhatsApp platform.",
+    "title": "Terms of Use",
+    "updated": "May 20, 2026",
+    "footerBefore": "See also our ",
+    "footerLink": "Privacy Policy",
+    "footerAfter": ".",
+    "sections": {
+      "acceptance": {
+        "title": "1. Acceptance",
+        "paragraphs": [
+          "By accessing or using the <strong>MyChatCRM</strong> platform at <strong>mychatcrm.com.br</strong>, you confirm that you have read and accepted these Terms of Use. If you do not agree, do not use the service."
+        ]
+      },
+      "permittedUse": {
+        "title": "2. Permitted use",
+        "intro": "MyChatCRM provides CRM, automation and support tools, including integration with:",
+        "list": [
+          "<strong>Facebook Lead Ads</strong> — to receive and process leads from ad forms;",
+          "<strong>WhatsApp</strong> — to communicate with end customers, according to connections and Meta/WhatsApp policies."
+        ],
+        "subIntro": "You may use the platform for legitimate business purposes, provided that:",
+        "subList": [
+          "you have a legal basis and consent when required to contact leads;",
+          "you comply with integration policies (Meta, WhatsApp, etc.);",
+          "you do not use the service for spam, fraud, illegal content or violation of third-party rights."
+        ]
+      },
+      "responsibilities": {
+        "title": "3. Responsibilities",
+        "paragraphs": [
+          "The customer is responsible for data they enter, messages sent to leads, LGPD compliance and agent, pipeline and campaign settings. MyChatCRM strives to keep the service available and secure but does not guarantee specific business outcomes (sales, conversions or response rates).",
+          "Lead and conversation data is stored securely on contracted infrastructure. MyChatCRM <strong>does not sell</strong> customer or lead data to third parties."
+        ]
+      },
+      "cancellation": {
+        "title": "4. Cancellation",
+        "paragraphs": [
+          "Plans are recurring as per the subscribed offer. You may request cancellation through support channels or dashboard instructions. Cancellation stops future charges; amounts already paid and current periods follow the offer rules in effect at subscription."
+        ]
+      },
+      "liability": {
+        "title": "5. Limitation of liability",
+        "paragraphs": [
+          "To the extent permitted by law, MyChatCRM is not liable for lost profits, data loss caused by customer misuse, temporary unavailability of third parties (WhatsApp, Meta, cloud providers) or force majeure. Our total liability, when applicable, is limited to amounts paid by the customer in the 12 months before the event giving rise to the claim."
+        ]
+      },
+      "changes": {
+        "title": "6. Changes",
+        "paragraphs": [
+          "We may update these Terms to reflect legal or product changes. The revision date appears at the top of the page. Continued use after relevant changes constitutes acceptance."
+        ]
+      },
+      "contact": {
+        "title": "7. Contact",
+        "paragraphs": [
+          "Questions about these Terms:"
+        ]
+      }
+    }
   }
 }

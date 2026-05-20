@@ -18,6 +18,7 @@ import {
   resolveOrganizationRole,
 } from "@/lib/organization-role";
 import { routing } from "@/i18n/routing";
+import { resolveLegacyLegalRedirect } from "@/lib/legal-legacy-redirects";
 import { resolveUnlocalizedPublicPath } from "@/lib/unlocalized-public-paths";
 
 const intlMiddleware = createIntlMiddleware(routing);
@@ -73,6 +74,13 @@ export async function middleware(request: NextRequest) {
   const isAdminForgotPassword = pathname === "/admin/forgot-password";
   const isAdminPublicAuth = isAdminLogin || isAdminForgotPassword;
   const isApiRoute = pathname.startsWith("/api/");
+
+  const legacyLegalRedirect = resolveLegacyLegalRedirect(pathname);
+  if (legacyLegalRedirect) {
+    const dest = request.nextUrl.clone();
+    dest.pathname = legacyLegalRedirect;
+    return NextResponse.redirect(dest, 308);
+  }
 
   const unlocalizedPublicPath = resolveUnlocalizedPublicPath(pathname);
   if (unlocalizedPublicPath) {

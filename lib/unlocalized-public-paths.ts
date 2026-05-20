@@ -20,10 +20,10 @@ function isUnlocalizedPublicPath(path: string): path is UnlocalizedPublicPath {
 export function resolveUnlocalizedPublicPath(pathname: string): UnlocalizedPublicPath | null {
   if (isUnlocalizedPublicPath(pathname)) return pathname;
 
-  for (const locale of routing.locales) {
-    const prefix = `/${locale}`;
-    if (!pathname.startsWith(`${prefix}/`)) continue;
-    const rest = pathname.slice(prefix.length);
+  // Apenas pt-BR prefixado redireciona para a URL canônica sem locale (EN/ES usam slugs próprios).
+  const ptPrefix = `/${routing.defaultLocale}`;
+  if (pathname.startsWith(`${ptPrefix}/`)) {
+    const rest = pathname.slice(ptPrefix.length);
     if (isUnlocalizedPublicPath(rest)) return rest;
   }
 

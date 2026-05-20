@@ -7,6 +7,14 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { whatsappHandoffHref } from "@/lib/whatsapp-handoff";
+import {
+  LEGAL_PRIVACY_PATHNAME,
+  LEGAL_TERMS_PATHNAME,
+  canonicalizeLegalPrivacyPath,
+  canonicalizeLegalTermsPath,
+  localizeLegalPrivacyPath,
+  localizeLegalTermsPath,
+} from "@/lib/legal-routes";
 import { LinkButton, linkButtonClass } from "@/components/ui/LinkButton";
 import { useLocale, useTranslations } from "next-intl";
 
@@ -46,37 +54,43 @@ export function Navbar() {
   ];
 
   function canonicalizePath(path: string) {
-    let canonical = path.replace(/^\/(en|es)(?=\/|$)/, "");
+    const privacy = canonicalizeLegalPrivacyPath(path);
+    if (privacy) return privacy;
+    const terms = canonicalizeLegalTermsPath(path);
+    if (terms) return terms;
+
+    let canonical = path.replace(/^\/(pt-BR|en|es)(?=\/|$)/, "");
     if (canonical === "") canonical = "/";
 
     if (canonical === "/plans" || canonical === "/planes") canonical = "/planos";
-    if (canonical === "/terms" || canonical === "/terminos") canonical = "/termos";
-    if (canonical === "/privacy" || canonical === "/privacidad") canonical = "/privacidade";
     if (canonical === "/maintenance" || canonical === "/mantenimiento") canonical = "/manutencao";
 
     return canonical;
   }
 
   function localizePath(canonicalPath: string, nextLocale: "pt-BR" | "en" | "es") {
+    if (canonicalPath === LEGAL_PRIVACY_PATHNAME) {
+      return localizeLegalPrivacyPath(LEGAL_PRIVACY_PATHNAME, nextLocale);
+    }
+    if (canonicalPath === LEGAL_TERMS_PATHNAME) {
+      return localizeLegalTermsPath(LEGAL_TERMS_PATHNAME, nextLocale);
+    }
+
     let localized = canonicalPath;
 
     if (nextLocale === "en") {
       if (localized === "/planos") localized = "/plans";
-      if (localized === "/termos") localized = "/terms";
-      if (localized === "/privacidade") localized = "/privacy";
       if (localized === "/manutencao") localized = "/maintenance";
       return localized === "/" ? "/en" : `/en${localized}`;
     }
 
     if (nextLocale === "es") {
       if (localized === "/planos") localized = "/planes";
-      if (localized === "/termos") localized = "/terminos";
-      if (localized === "/privacidade") localized = "/privacidad";
       if (localized === "/manutencao") localized = "/mantenimiento";
       return localized === "/" ? "/es" : `/es${localized}`;
     }
 
-    return localized;
+    return localized === "/" ? "/pt-BR" : `/pt-BR${localized}`;
   }
 
   function changeLanguage(nextLocale: "pt-BR" | "en" | "es") {

@@ -1,17 +1,20 @@
+import type { ComponentProps } from "react";
 import Image from "next/image";
 import { BRAND_LOGO } from "@/lib/brand";
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
+import { LEGAL_PRIVACY_PATHNAME, LEGAL_TERMS_PATHNAME } from "@/lib/legal-routes";
 import { getTranslations } from "next-intl/server";
+
+type IntlLinkHref = ComponentProps<typeof Link>["href"];
 
 export async function Footer() {
   const t = await getTranslations("common.footer");
 
-  const links = [
-    { href: "/#recursos", label: t("links.resources") },
+  const intlLinks: { href: IntlLinkHref; label: string }[] = [
     { href: "/planos", label: t("links.plans") },
     { href: "/blog", label: t("links.blog") },
-    { href: "/termos", label: t("links.terms") },
-    { href: "/privacidade", label: t("links.privacy") },
+    { href: LEGAL_TERMS_PATHNAME, label: t("links.terms") },
+    { href: LEGAL_PRIVACY_PATHNAME, label: t("links.privacy") },
   ];
 
   const social = [
@@ -38,8 +41,13 @@ export async function Footer() {
         </div>
         <nav aria-label={t("navAriaLabel")}>
           <ul className="flex flex-col gap-3 text-sm text-content-secondary sm:flex-row sm:flex-wrap sm:gap-x-6">
-            {links.map((l) => (
-              <li key={l.href}>
+            <li>
+              <a href="/#recursos" className="landing-link-grow transition-colors hover:text-primary">
+                {t("links.resources")}
+              </a>
+            </li>
+            {intlLinks.map((l) => (
+              <li key={String(l.href)}>
                 <Link href={l.href} className="landing-link-grow transition-colors hover:text-primary">
                   {l.label}
                 </Link>

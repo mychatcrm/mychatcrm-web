@@ -6,28 +6,36 @@ export function PublicLegalPageShell({
   updated,
   children,
   footer,
+  backHomeLabel = "Voltar ao início",
+  updatedLabel = "Última atualização:",
+  homeHref = "/",
 }: {
   title: string;
   updated: string;
   children: ReactNode;
   footer?: ReactNode;
+  backHomeLabel?: string;
+  updatedLabel?: string;
+  homeHref?: string;
 }) {
   return (
     <div className="min-h-screen bg-surface-base text-content">
       <header className="border-b border-line/80 bg-surface-deep/90">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-4 py-5 sm:px-6">
-          <Link href="/" className="font-display text-lg font-semibold tracking-tight text-[#f24400] hover:text-[#c93800]">
+          <Link href={homeHref} className="font-display text-lg font-semibold tracking-tight text-[#f24400] hover:text-[#c93800]">
             MyChatCRM
           </Link>
-          <Link href="/" className="text-sm text-content-muted transition hover:text-content">
-            Voltar ao início
+          <Link href={homeHref} className="text-sm text-content-muted transition hover:text-content">
+            {backHomeLabel}
           </Link>
         </div>
       </header>
 
       <main className="mx-auto max-w-3xl px-4 py-12 sm:px-6 sm:py-16">
         <h1 className="font-display text-3xl font-bold text-content sm:text-4xl">{title}</h1>
-        <p className="mt-2 text-sm text-content-muted">Última atualização: {updated}</p>
+        <p className="mt-2 text-sm text-content-muted">
+          {updatedLabel} {updated}
+        </p>
 
         <div className="mt-10 space-y-8 text-sm leading-relaxed text-content-secondary">{children}</div>
 

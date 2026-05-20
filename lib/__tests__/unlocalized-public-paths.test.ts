@@ -8,10 +8,15 @@ describe("resolveUnlocalizedPublicPath", () => {
     expect(resolveUnlocalizedPublicPath("/termos-de-uso")).toBe("/termos-de-uso");
   });
 
-  it("strips locale prefix from localized URLs", () => {
+  it("strips only pt-BR locale prefix to canonical URLs", () => {
     expect(resolveUnlocalizedPublicPath("/pt-BR/politica-de-privacidade")).toBe("/politica-de-privacidade");
-    expect(resolveUnlocalizedPublicPath("/en/termos-de-uso")).toBe("/termos-de-uso");
-    expect(resolveUnlocalizedPublicPath("/es/reset-password")).toBe("/reset-password");
+    expect(resolveUnlocalizedPublicPath("/pt-BR/reset-password")).toBe("/reset-password");
+  });
+
+  it("does not strip en/es legal slugs (handled by next-intl)", () => {
+    expect(resolveUnlocalizedPublicPath("/en/privacy-policy")).toBeNull();
+    expect(resolveUnlocalizedPublicPath("/en/terms-of-use")).toBeNull();
+    expect(resolveUnlocalizedPublicPath("/es/politica-de-privacidad")).toBeNull();
   });
 
   it("returns null for unrelated paths", () => {

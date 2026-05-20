@@ -8,6 +8,12 @@ export const metadata: Metadata = {
   description: "Termos de Uso do MyChatCRM — condições para utilização da plataforma de CRM e WhatsApp.",
   alternates: {
     canonical: "/termos-de-uso",
+    languages: {
+      "pt-BR": `${SITE_URL}/termos-de-uso`,
+      en: `${SITE_URL}/en/terms-of-use`,
+      es: `${SITE_URL}/es/terminos-de-uso`,
+      "x-default": `${SITE_URL}/termos-de-uso`,
+    },
   },
   openGraph: {
     title: "Termos de Uso | MyChatCRM",
