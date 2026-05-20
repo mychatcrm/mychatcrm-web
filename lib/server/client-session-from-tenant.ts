@@ -27,7 +27,6 @@ type DbTenant = {
   id: string;
   name: string | null;
   billing_plan?: string | null;
-  plan_slug?: string | null;
   status?: string | null;
 };
 
@@ -68,7 +67,7 @@ async function readTenantFromDb(tenantId: string): Promise<DbTenant | null> {
   const sb = createSupabaseServiceClient();
   const { data, error } = await sb
     .from("tenants")
-    .select("id,name,billing_plan,plan_slug,status")
+    .select("id,name,billing_plan,status")
     .eq("id", tenantId)
     .maybeSingle();
 
@@ -142,7 +141,7 @@ export async function buildClientSessionForTenant(
   }
   if (!employee) return null;
 
-  const planSlug = tenant.billing_plan ?? tenant.plan_slug ?? undefined;
+  const planSlug = tenant.billing_plan ?? undefined;
   const meta = tenantPlanDefaults(tenantId);
   const plan = isEnterpriseTenant
     ? ("enterprise" as const)
