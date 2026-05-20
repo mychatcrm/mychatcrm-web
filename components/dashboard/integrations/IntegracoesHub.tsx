@@ -157,24 +157,31 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   }, [bump, tenantId]);
 
   // ── Load Meta status on mount / after OAuth redirect ─────────────────────
-  const loadMetaStatus = useCallback(async () => {
+  const loadMetaStatus = useCallback(async (): Promise<MetaStatusResponse | null> => {
     setMetaLoading(true);
     try {
       const res = await fetch("/api/client/meta/status", { credentials: "same-origin" });
-      if (res.ok) {
-        const data = (await res.json()) as MetaStatusResponse;
-        setMetaStatus(data);
-        // Initialize form mapping values from DB
-        const initValues: Record<string, string> = {};
-        for (const page of data.pages) {
-          for (const form of page.forms) {
-            if (form.agent_id) initValues[form.form_id] = form.agent_id;
-          }
+      if (!res.ok) throw new Error("Unable to load Meta status");
+
+      const data = (await res.json()) as MetaStatusResponse;
+      const pages = data.pages ?? [];
+      const nextStatus = { connected: pages.length > 0, pages } satisfies MetaStatusResponse;
+      setMetaStatus(nextStatus);
+
+      // Initialize form mapping values from DB
+      const initValues: Record<string, string> = {};
+      for (const page of pages) {
+        for (const form of page.forms) {
+          if (form.agent_id) initValues[form.form_id] = form.agent_id;
         }
-        setFormMappingValues(initValues);
       }
+      setFormMappingValues(initValues);
+      return nextStatus;
     } catch {
       // Non-critical — Meta section degrades gracefully
+      setMetaStatus({ connected: false, pages: [] });
+      setFormMappingValues({});
+      return null;
     } finally {
       setMetaLoading(false);
     }
@@ -188,8 +195,9 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   useEffect(() => {
     const meta = searchParams.get("meta");
     if (meta === "connected") {
-      setMetaBanner("✅ Páginas Meta conectadas com sucesso!");
-      void loadMetaStatus();
+      void loadMetaStatus().then((status) => {
+        setMetaBanner(status?.pages.length ? "✅ Páginas Meta conectadas com sucesso!" : "Nenhuma página Facebook encontrada nesta conta.");
+      });
     } else if (meta === "denied") {
       setMetaBanner("Autorização cancelada no Facebook. Tente novamente.");
     } else if (meta === "no_pages") {
@@ -231,17 +239,20 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const disconnectMeta = useCallback(async () => {
     setMetaDisconnecting(true);
     try {
-      await fetch("/api/client/meta/disconnect", { method: "DELETE", credentials: "same-origin" });
+      const res = await fetch("/api/client/meta/disconnect", { method: "DELETE", credentials: "same-origin" });
+      if (!res.ok) throw new Error("Unable to disconnect Meta");
+
       setMetaStatus({ connected: false, pages: [] });
       setFormMappingValues({});
       setMetaBanner(null);
       setDisconnectModalOpen(false);
+      void loadMetaStatus();
     } catch {
       setMetaBanner("Erro ao desconectar. Tente novamente.");
     } finally {
       setMetaDisconnecting(false);
     }
-  }, []);
+  }, [loadMetaStatus]);
 
   const waExtraSlots = useMemo(() => {
     void revision;
@@ -253,11 +264,15 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     return readWhatsAppSlotMethods(tenantId);
   }, [revision, tenantId]);
 
+  const metaPages = metaStatus?.pages ?? [];
+  const metaConnected = metaPages.length > 0;
+  const visibleMetaBanner = metaBanner?.startsWith("✅") && !metaConnected ? null : metaBanner;
+
   const health = useMemo(() => {
     void revision;
     const waLinesReady = waSlots.filter(Boolean).length;
     const waOn = waLinesReady > 0;
-    const fbOn = Boolean(metaStatus?.connected);
+    const fbOn = metaConnected;
     const channelTotal = 2;
     const channelActive = (waOn ? 1 : 0) + (fbOn ? 1 : 0);
     return {
@@ -266,7 +281,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
       waLinesReady,
       waLineCount: waSlots.length,
     };
-  }, [metaStatus?.connected, revision, waSlots]);
+  }, [metaConnected, revision, waSlots]);
 
   return (
     <div className="space-y-8">
@@ -524,23 +539,23 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
           <Badge
             className={cn(
               "shrink-0 text-[10px]",
-              metaStatus?.connected
+              metaConnected
                 ? cn("border-emerald-500/40 bg-emerald-500/15", isLight ? "text-emerald-700" : "text-emerald-300")
                 : "border-line bg-surface-elevated/50 text-content-secondary",
             )}
           >
-            {metaLoading ? "..." : metaStatus?.connected ? "Conectado" : "Não conectado"}
+            {metaLoading ? "..." : metaConnected ? "Conectado" : "Não conectado"}
           </Badge>
         </div>
 
         {/* Body */}
         <div className="space-y-5 p-5 sm:p-6">
           {/* Meta OAuth banner */}
-          {metaBanner ? (
+          {visibleMetaBanner ? (
             <div
               className={cn(
                 "flex items-start gap-2 rounded-lg border px-4 py-3 text-sm",
-                metaBanner.startsWith("✅")
+                visibleMetaBanner.startsWith("✅")
                   ? isLight
                     ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                     : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
@@ -550,9 +565,9 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
               )}
             >
               <span className="mt-0.5 shrink-0">
-                {metaBanner.startsWith("✅") ? <BadgeCheck className="size-4" aria-hidden /> : <AlertTriangle className="size-4" aria-hidden />}
+                {visibleMetaBanner.startsWith("✅") ? <BadgeCheck className="size-4" aria-hidden /> : <AlertTriangle className="size-4" aria-hidden />}
               </span>
-              <p>{metaBanner}</p>
+              <p>{visibleMetaBanner}</p>
             </div>
           ) : null}
 
@@ -561,10 +576,10 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
               <Loader2 className="size-4 animate-spin" aria-hidden />
               A verificar ligação Meta…
             </div>
-          ) : metaStatus?.connected ? (
+          ) : metaConnected ? (
             /* Connected state: show pages + form→agent mappings */
             <div className="space-y-4">
-              {metaStatus.pages.map((page) => (
+              {metaPages.map((page) => (
                 <details key={page.page_id} className={cn("rounded-lg border", isLight ? "border-blue-100 bg-blue-50/30" : "border-blue-500/15 bg-blue-500/[0.05]")} open>
                   <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 [&::-webkit-details-marker]:hidden">
                     <span className="flex items-center gap-2 text-sm font-semibold text-content">
@@ -741,7 +756,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                 caption="WhatsApp + Facebook"
               />
               <p className="mt-1 text-center text-[11px] text-content-muted">
-                WhatsApp {health.waLinesReady}/{health.waLineCount} linha(s) com método · Meta {metaStatus?.connected ? "conectado" : "não conectado"}
+                WhatsApp {health.waLinesReady}/{health.waLineCount} linha(s) com método · Meta {metaConnected ? "conectado" : "não conectado"}
               </p>
             </div>
           </div>
