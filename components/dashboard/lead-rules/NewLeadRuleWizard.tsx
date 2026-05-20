@@ -1077,46 +1077,124 @@ export function NewLeadRuleWizard({
                                   <strong className="font-bold">NÃO</strong> serão distribuídos.
                                 </p>
                               </div>
-                              <label className={cn("mt-3 block text-[11px] font-medium", isLight ? "text-rose-900/80" : "text-rose-200/90")} htmlFor={`${formId}-exclude-form`}>
+                              <label
+                                id={`${formId}-exclude-form-label`}
+                                className={cn("mt-3 block text-[11px] font-medium", isLight ? "text-rose-900/80" : "text-rose-200/90")}
+                                htmlFor={`${formId}-exclude-form-search`}
+                              >
                                 Excluir da distribuição
                               </label>
-                              <Select
-                                id={`${formId}-exclude-form`}
-                                className={cn("mt-1.5", isLight ? "border-rose-200/80 bg-white" : "border-rose-800/60 bg-surface-deep/90")}
-                                value={excludeFormPicker}
-                                disabled={formsLoading || !!formsError || !availableForms.length}
-                                onChange={(e) => {
-                                  const id = e.target.value;
-                                  if (!id) {
-                                    setExcludeFormPicker("");
-                                    return;
-                                  }
-                                  setDraft((d) =>
-                                    d.excludedFormIds.includes(id)
-                                      ? d
-                                      : { ...d, excludedFormIds: [...d.excludedFormIds, id] },
-                                  );
-                                  setExcludeFormPicker("");
-                                }}
+                              <div
+                                className={cn(
+                                  "mt-1.5 overflow-hidden rounded-xl border",
+                                  isLight ? "border-rose-200/80 bg-white" : "border-rose-800/60 bg-surface-deep/90",
+                                )}
+                                role="group"
+                                aria-labelledby={`${formId}-exclude-form-label`}
                               >
-                                <option value="">
-                                  {formsLoading
-                                    ? "Buscando formulários..."
-                                    : availableForms.length
-                                      ? "Selecionar formulários para excluir"
-                                      : "Nenhum formulário encontrado nesta página"}
-                                </option>
-                                {availableForms.filter((f) => !draft.excludedFormIds.includes(f.form_id)).map((f) => (
-                                  <option key={f.form_id} value={f.form_id}>
-                                    {f.form_name ?? f.form_id}
-                                  </option>
-                                ))}
-                              </Select>
-                              {formsError ? (
-                                <p className={cn("mt-1 text-xs font-medium", isLight ? "text-orange-700" : "text-orange-400")}>
-                                  {formsError}
-                                </p>
-                              ) : null}
+                                <div className={cn("border-b", isLight ? "border-rose-200/80" : "border-rose-800/60")}>
+                                  <div className="relative p-2 sm:p-2.5">
+                                    <Search
+                                      className="pointer-events-none absolute left-5 top-1/2 h-4 w-4 -translate-y-1/2 text-content-muted"
+                                      strokeWidth={2}
+                                      aria-hidden
+                                    />
+                                    <Input
+                                      id={`${formId}-exclude-form-search`}
+                                      type="search"
+                                      autoComplete="off"
+                                      placeholder="Buscar formulário..."
+                                      value={excludeFormPicker}
+                                      disabled={formsLoading || !!formsError}
+                                      onChange={(e) => setExcludeFormPicker(e.target.value)}
+                                      className={cn(
+                                        "h-11 rounded-xl pl-9 text-sm",
+                                        isLight ? "border-rose-200/80 bg-white" : "border-rose-800/60 bg-surface-deep/90",
+                                      )}
+                                    />
+                                  </div>
+                                </div>
+                                <ul
+                                  className="max-h-60 overflow-y-auto overscroll-contain"
+                                  role="listbox"
+                                  aria-multiselectable="true"
+                                  aria-label="Formulários a desconsiderar"
+                                >
+                                  {formsLoading ? (
+                                    <li className="px-3 py-3.5 text-xs text-content-muted">Buscando formulários...</li>
+                                  ) : formsError ? (
+                                    <li
+                                      className={cn(
+                                        "px-3 py-3.5 text-xs font-medium",
+                                        isLight ? "text-orange-700" : "text-orange-400",
+                                      )}
+                                    >
+                                      {formsError}
+                                    </li>
+                                  ) : !availableForms.length ? (
+                                    <li className="px-3 py-3.5 text-xs text-content-muted">
+                                      Nenhum formulário encontrado nesta página
+                                    </li>
+                                  ) : (
+                                    (() => {
+                                      const query = normalizeFormSearchText(excludeFormPicker.trim());
+                                      const filtered = availableForms.filter((f) => {
+                                        if (!query) return true;
+                                        const label = normalizeFormSearchText(f.form_name ?? f.form_id);
+                                        return label.includes(query);
+                                      });
+                                      if (!filtered.length) {
+                                        return (
+                                          <li className="px-3 py-3.5 text-xs text-content-muted">
+                                            Nenhum formulário encontrado para essa busca
+                                          </li>
+                                        );
+                                      }
+                                      return filtered.map((f, i) => {
+                                        const selected = draft.excludedFormIds.includes(f.form_id);
+                                        return (
+                                          <li key={f.form_id} className="list-none">
+                                            <button
+                                              type="button"
+                                              role="option"
+                                              aria-selected={selected}
+                                              onClick={() =>
+                                                setDraft((d) => ({
+                                                  ...d,
+                                                  excludedFormIds: selected
+                                                    ? d.excludedFormIds.filter((x) => x !== f.form_id)
+                                                    : [...d.excludedFormIds, f.form_id],
+                                                }))
+                                              }
+                                              className={cn(
+                                                "flex w-full items-center gap-3 px-3 py-3 text-left transition sm:gap-3.5 sm:px-4 sm:py-3.5",
+                                                i > 0 && (isLight ? "border-t border-rose-200/70" : "border-t border-rose-800/60"),
+                                                selected
+                                                  ? "bg-[rgba(242,68,0,0.08)] ring-1 ring-inset ring-primary/30"
+                                                  : isLight
+                                                    ? "hover:bg-rose-50/80"
+                                                    : "hover:bg-rose-950/40",
+                                              )}
+                                            >
+                                              <span className="min-w-0 flex-1">
+                                                <span className="block font-medium text-content">{f.form_name ?? f.form_id}</span>
+                                                {f.form_name && f.form_name !== f.form_id ? (
+                                                  <span className="mt-0.5 block truncate text-[11px] text-content-muted">
+                                                    {f.form_id}
+                                                  </span>
+                                                ) : null}
+                                              </span>
+                                              {selected ? (
+                                                <Check className="h-5 w-5 shrink-0 text-primary" strokeWidth={2.5} aria-hidden />
+                                              ) : null}
+                                            </button>
+                                          </li>
+                                        );
+                                      });
+                                    })()
+                                  )}
+                                </ul>
+                              </div>
                               {draft.excludedFormIds.length ? (
                                 <ul className="mt-3 flex flex-wrap gap-2" aria-label="Formulários excluídos">
                                   {draft.excludedFormIds.map((fid) => (

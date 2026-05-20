@@ -258,12 +258,12 @@ async function resolveAgentForLead(
 
   const matchingRule = rules?.find((rule) => {
     if (rule.page_id && rule.page_id !== pageId) return false;
-    if (rule.use_all_forms !== false) {
+    if (rule.use_all_forms) {
       const excluded = stringArray(rule.excluded_form_ids);
-      return formId ? !excluded.includes(formId) : true;
+      return !excluded.includes(formId);
     }
     const included = stringArray(rule.included_form_ids);
-    return Boolean(formId && included.includes(formId));
+    return included.includes(formId);
   });
 
   if (matchingRule) {
