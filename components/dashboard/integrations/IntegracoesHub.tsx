@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, BadgeCheck, Check, ChevronDown, ExternalLink, Loader2, Plug, QrCode, Share2, Sparkles, Unlink } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
@@ -89,6 +89,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const { isLight } = usePanelAppearance();
   const [revision, setRevision] = useState(0);
   const [banner, setBanner] = useState<string | null>(null);
+  const router = useRouter();
   const searchParams = useSearchParams();
 
   // ── Meta Lead Ads state ───────────────────────────────────────────────────
@@ -247,12 +248,13 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
       setMetaBanner(null);
       setDisconnectModalOpen(false);
       void loadMetaStatus();
+      router.replace("/dashboard/integracoes");
     } catch {
       setMetaBanner("Erro ao desconectar. Tente novamente.");
     } finally {
       setMetaDisconnecting(false);
     }
-  }, [loadMetaStatus]);
+  }, [loadMetaStatus, router]);
 
   const waExtraSlots = useMemo(() => {
     void revision;
