@@ -28,6 +28,11 @@ type FacebookPage = {
 
 type PagesResponse = {
   data?: FacebookPage[];
+  error?: { message: string; type?: string; code?: number };
+};
+
+type MeResponse = {
+  id?: string;
   error?: { message: string };
 };
 
@@ -213,23 +218,85 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
 
   // 3. Fetch pages (includes per-page access tokens which are already long-lived)
-  const pagesUrl = `${GRAPH}/me/accounts?access_token=${encodeURIComponent(userAccessToken)}&fields=id,name,access_token`;
-  let pages: FacebookPage[] = [];
-  try {
-    const pagesRes = await fetch(pagesUrl, { signal: AbortSignal.timeout(10_000) });
-    const pagesData = (await pagesRes.json()) as PagesResponse;
+  async function fetchPagesAttempt(
+    attempt: string,
+    url: string,
+  ): Promise<{ pages: FacebookPage[]; apiError?: string }> {
+    const pagesRes = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    const rawBody: unknown = await pagesRes.json();
+    console.info("[meta-callback] pages-fetch attempt", {
+      attempt,
+      tenantId,
+      httpStatus: pagesRes.status,
+      httpOk: pagesRes.ok,
+      requestUrl: url.replace(userAccessToken, "[REDACTED]"),
+      apiResponse: rawBody,
+    });
+    const pagesData = rawBody as PagesResponse;
     if (pagesData.error) {
-      console.error("[meta-callback] Failed to fetch pages", pagesData.error.message);
-      return redirectToIntegracoes(req, "meta=error&reason=pages_fetch", sessionRestore);
+      return { pages: [], apiError: pagesData.error.message };
     }
-    pages = pagesData.data ?? [];
+    const rows = (pagesData.data ?? []).filter(
+      (p): p is FacebookPage => Boolean(p?.id && p?.name && p?.access_token),
+    );
+    return { pages: rows };
+  }
+
+  let pages: FacebookPage[] = [];
+  let pagesFetchError: string | undefined;
+  try {
+    const attempt1Url = `${GRAPH}/me/accounts?access_token=${encodeURIComponent(userAccessToken)}&fields=id,name,access_token`;
+    const attempt1 = await fetchPagesAttempt("me/accounts (fields=id,name,access_token)", attempt1Url);
+    pages = attempt1.pages;
+    pagesFetchError = attempt1.apiError;
+
+    if (!pages.length) {
+      const attempt2Url = `${GRAPH}/me/accounts?access_token=${encodeURIComponent(userAccessToken)}&fields=id,name,access_token,instagram_business_account`;
+      const attempt2 = await fetchPagesAttempt(
+        "me/accounts (fields=id,name,access_token,instagram_business_account)",
+        attempt2Url,
+      );
+      pages = attempt2.pages;
+      pagesFetchError = attempt2.apiError ?? pagesFetchError;
+
+      if (!pages.length) {
+        const meUrl = `${GRAPH}/me?access_token=${encodeURIComponent(userAccessToken)}&fields=id`;
+        const meRes = await fetch(meUrl, { signal: AbortSignal.timeout(10_000) });
+        const meRaw: unknown = await meRes.json();
+        console.info("[meta-callback] me/id for accounts fallback", {
+          tenantId,
+          httpStatus: meRes.status,
+          httpOk: meRes.ok,
+          requestUrl: meUrl.replace(userAccessToken, "[REDACTED]"),
+          apiResponse: meRaw,
+        });
+        const meData = meRaw as MeResponse;
+        const userId = meData.id;
+        if (userId) {
+          const attempt3Url = `${GRAPH}/${userId}/accounts?access_token=${encodeURIComponent(userAccessToken)}`;
+          const attempt3 = await fetchPagesAttempt(`${userId}/accounts (no field filters)`, attempt3Url);
+          pages = attempt3.pages;
+          pagesFetchError = attempt3.apiError ?? pagesFetchError;
+        } else {
+          console.warn("[meta-callback] Could not resolve user id for accounts fallback", {
+            tenantId,
+            meError: meData.error?.message,
+          });
+        }
+      }
+    }
   } catch (err) {
     console.error("[meta-callback] Pages fetch request failed", err instanceof Error ? err.message : String(err));
     return redirectToIntegracoes(req, "meta=error&reason=network", sessionRestore);
   }
 
+  if (pagesFetchError && !pages.length) {
+    console.error("[meta-callback] Failed to fetch pages after all attempts", { message: pagesFetchError });
+    return redirectToIntegracoes(req, "meta=error&reason=pages_fetch", sessionRestore);
+  }
+
   if (!pages.length) {
-    console.warn("[meta-callback] No pages returned for tenant", { tenantId });
+    console.warn("[meta-callback] No pages returned for tenant after all attempts", { tenantId });
     return redirectToIntegracoes(req, "meta=no_pages", sessionRestore);
   }
 
