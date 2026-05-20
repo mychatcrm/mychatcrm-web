@@ -10,6 +10,7 @@ const SCOPES = [
   "leads_retrieval",
   "pages_read_engagement",
   "pages_manage_metadata",
+  "pages_manage_ads",
   "business_management",
 ].join(",");
 
