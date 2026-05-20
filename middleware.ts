@@ -18,6 +18,7 @@ import {
   resolveOrganizationRole,
 } from "@/lib/organization-role";
 import { routing } from "@/i18n/routing";
+import { resolveUnlocalizedPublicPath } from "@/lib/unlocalized-public-paths";
 
 const intlMiddleware = createIntlMiddleware(routing);
 
@@ -73,10 +74,14 @@ export async function middleware(request: NextRequest) {
   const isAdminPublicAuth = isAdminLogin || isAdminForgotPassword;
   const isApiRoute = pathname.startsWith("/api/");
 
-  const isPublicLegalDocument =
-    pathname === "/politica-de-privacidade" || pathname === "/termos-de-uso";
+  const unlocalizedPublicPath = resolveUnlocalizedPublicPath(pathname);
+  if (unlocalizedPublicPath) {
+    if (pathname !== unlocalizedPublicPath) {
+      const dest = request.nextUrl.clone();
+      dest.pathname = unlocalizedPublicPath;
+      return NextResponse.redirect(dest, 308);
+    }
 
-  if (isPublicLegalDocument) {
     const maintenance = await fetchMaintenanceSnapshot(request);
     if (maintenance.enabled) {
       const adminToken = request.cookies.get(ADMIN_SESSION_COOKIE)?.value;
