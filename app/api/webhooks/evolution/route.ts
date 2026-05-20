@@ -459,7 +459,7 @@ export async function POST(request: Request) {
       inbound.map(async (msg) => {
         try {
           const leadPhone = remoteJidToEvoNumber(msg.remoteJid);
-          const agentId = await resolveEvolutionAgentId(row.tenant_id, row.default_agent_id, leadPhone);
+          const agentId = await resolveEvolutionAgentId(row.tenant_id, row.default_agent_id, leadPhone, instanceName);
 
           let inboundMedia: Awaited<ReturnType<typeof downloadAndStoreMedia>> = null;
           if (msg.type === "audio" || msg.type === "image" || msg.type === "video" || msg.type === "document") {

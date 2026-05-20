@@ -10,6 +10,41 @@ import { syncMetaFormAgentMappingForRule } from "@/lib/server/lead-rules-meta-sy
 
 export const dynamic = "force-dynamic";
 
+/** @see app/api/client/lead-rules/route.ts — same logic, kept in sync */
+async function syncOrganicAgentId(
+  sb: ReturnType<typeof createSupabaseServiceClient>,
+  tenantId: string,
+  agentIds: unknown,
+): Promise<void> {
+  const ids = Array.isArray(agentIds)
+    ? (agentIds as unknown[]).filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+    : [];
+  const firstAgentId = ids[0];
+  if (!firstAgentId) return;
+
+  const { data: agentRow } = await sb
+    .from("tenant_agents")
+    .select("metadata")
+    .eq("tenant_id", tenantId)
+    .eq("agent_id", firstAgentId)
+    .maybeSingle();
+
+  const meta = agentRow?.metadata as Record<string, unknown> | null;
+  const rawSlot = meta?.whatsappSlotIndex;
+  const slotIndex =
+    typeof rawSlot === "number" && Number.isFinite(rawSlot) ? Math.max(0, Math.floor(rawSlot)) : 0;
+
+  const { error } = await sb
+    .from("tenant_evolution_instances")
+    .update({ organic_agent_id: firstAgentId, updated_at: new Date().toISOString() })
+    .eq("tenant_id", tenantId)
+    .eq("slot_index", slotIndex);
+
+  if (error) {
+    console.warn("[lead-rules/[id]] Failed to sync organic_agent_id", error.message);
+  }
+}
+
 type RouteContext = {
   params: { id: string };
 };
@@ -44,6 +79,26 @@ export async function PUT(req: NextRequest, { params }: RouteContext): Promise<N
     return NextResponse.json({ error: err instanceof Error ? err.message : "Invalid payload" }, { status: 400 });
   }
 
+  // Block editing to whatsapp_organico if another rule of this type already exists
+  if (payload.source === "whatsapp_organico") {
+    const { count: organicCount } = await sb
+      .from("lead_distribution_rules")
+      .select("id", { count: "exact", head: true })
+      .eq("tenant_id", session.tenantId)
+      .eq("source", "whatsapp_organico")
+      .neq("id", params.id); // exclude the rule being edited
+
+    if ((organicCount ?? 0) > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Já existe um agente orgânico configurado para este número. Apenas um agente pode atender contatos diretos por número.",
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   delete payload.tenant_id;
 
   const { data, error } = await sb
@@ -57,6 +112,11 @@ export async function PUT(req: NextRequest, { params }: RouteContext): Promise<N
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   await syncMetaFormAgentMappingForRule(sb, data);
+
+  // Keep organic_agent_id in sync for organic WhatsApp rules
+  if (data.source === "whatsapp_organico") {
+    await syncOrganicAgentId(sb, session.tenantId, data.agent_ids);
+  }
 
   return NextResponse.json({ rule: leadRuleRowToClient(data) });
 }

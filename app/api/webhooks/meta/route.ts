@@ -190,6 +190,12 @@ async function processLeadgenEvent(value: LeadgenValue): Promise<void> {
         email: email ?? undefined,
         source: "lead_ads",
         agent_id: agentId,
+        // Campaign priority fields — always updated on new Lead Ads events so that
+        // a new campaign overwrites a previous one for the same phone number.
+        campaign_agent_id: agentId,
+        campaign_active: true,
+        campaign_rule_id: routing.ruleId ?? null,
+        agent_assignment_source: "meta_rule",
         rule_id: routing.ruleId,
         profile_metadata: leadMetadata,
         last_seen: new Date().toISOString(),
