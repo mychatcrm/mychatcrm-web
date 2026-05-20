@@ -64,7 +64,7 @@ function metaOAuthRedirectUri(siteUrl: string): string {
 async function redirectToIntegracoes(
   req: NextRequest,
   query: string,
-  sessionRestore?: { tenantId: string; employeeId?: string },
+  sessionRestore?: { tenantId: string; employeeId?: string; employeeEmail?: string },
 ): Promise<NextResponse> {
   const origin = metaOAuthPublicOrigin(req);
   const response = NextResponse.redirect(`${origin}/dashboard/integracoes?${query}`);
@@ -77,6 +77,7 @@ async function redirectToIntegracoes(
   console.info("[meta-callback] session-restore start", {
     tenantId: sessionRestore.tenantId,
     employeeId: sessionRestore.employeeId ?? null,
+    employeeEmailPresent: Boolean(sessionRestore.employeeEmail),
     existingCookiePresent: Boolean(existingToken),
   });
 
@@ -94,7 +95,11 @@ async function redirectToIntegracoes(
   // 2. Se não puder reutilizar a sessão existente, reconstrói a partir do Supabase.
   const session = canReuseExisting
     ? existing
-    : await buildClientSessionForTenant(sessionRestore.tenantId, sessionRestore.employeeId);
+    : await buildClientSessionForTenant(
+        sessionRestore.tenantId,
+        sessionRestore.employeeId,
+        sessionRestore.employeeEmail,
+      );
 
   console.info("[meta-callback] built-session", {
     present: Boolean(session),
@@ -158,8 +163,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return redirectToIntegracoes(req, "meta=error&reason=invalid_state");
   }
 
-  const { tenantId, employeeId } = oauthState;
-  const sessionRestore = { tenantId, employeeId };
+  const { tenantId, employeeId, employeeEmail } = oauthState;
+  const sessionRestore = { tenantId, employeeId, employeeEmail };
 
   const appId = process.env.META_APP_ID?.trim();
   const appSecret = process.env.META_APP_SECRET?.trim();

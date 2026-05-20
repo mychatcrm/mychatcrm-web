@@ -26,6 +26,7 @@ export async function GET(): Promise<NextResponse> {
   const state = await signMetaOAuthState({
     tenantId: session.tenantId,
     ...(session.employeeId ? { employeeId: session.employeeId } : {}),
+    employeeEmail: session.email,
   });
   if (!state) {
     return NextResponse.json(

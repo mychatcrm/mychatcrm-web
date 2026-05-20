@@ -10,10 +10,11 @@ import {
 import { hierarchyRoleToOrganizationRole } from "@/lib/organization-hierarchy";
 import { normalizeToPlan } from "@/lib/plan-policy";
 import { enterpriseLimitsToPlanLimits } from "@/lib/enterprise-provision-limits";
-import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { createSupabaseAnonClient, createSupabaseServiceClient } from "@/lib/supabase/server";
 import { readEnterpriseProvisionByTenant } from "@/lib/server/enterprise-provisions-db";
 import { readTeamMembersFromDb } from "@/lib/server/team-employees-db";
 import { tenantPlanDefaults } from "@/lib/tenant-session-defaults";
+import type { EnterpriseProvisionRecord } from "@/lib/enterprise-provision-types";
 import type { TeamEmployee } from "@/lib/team-employees-types";
 
 const PLAN_LABELS: Record<ClientPlan, ClientSession["planLabel"]> = {
@@ -64,7 +65,13 @@ function normalizeTenantStatus(status: string | null | undefined): ClientAccount
 }
 
 async function readTenantFromDb(tenantId: string): Promise<DbTenant | null> {
-  const sb = createSupabaseServiceClient();
+  let sb: ReturnType<typeof createSupabaseServiceClient>;
+  try {
+    sb = createSupabaseServiceClient();
+  } catch (error) {
+    console.error("[client-session-from-tenant] service client unavailable:", error instanceof Error ? error.message : String(error));
+    return null;
+  }
   const { data, error } = await sb
     .from("tenants")
     .select("id,name,billing_plan,status")
@@ -79,7 +86,13 @@ async function readTenantFromDb(tenantId: string): Promise<DbTenant | null> {
 }
 
 async function readTenantMemberById(tenantId: string, memberId: string): Promise<TeamEmployee | null> {
-  const sb = createSupabaseServiceClient();
+  let sb: ReturnType<typeof createSupabaseServiceClient>;
+  try {
+    sb = createSupabaseServiceClient();
+  } catch (error) {
+    console.error("[client-session-from-tenant] service client unavailable:", error instanceof Error ? error.message : String(error));
+    return null;
+  }
   const { data, error } = await sb
     .from("tenant_members")
     .select("id,tenant_id,nome,email,funcao,hierarchy_role,reports_to_id,ativo,account_suspended")
@@ -93,6 +106,32 @@ async function readTenantMemberById(tenantId: string, memberId: string): Promise
   }
   if (!data) return null;
   return dbMemberToEmployee(data as DbMember);
+}
+
+async function readTenantMemberByEmailRpc(
+  tenantId: string,
+  email: string,
+  preferredEmployeeId?: string,
+): Promise<TeamEmployee | null> {
+  const emailLc = email.trim().toLowerCase();
+  if (!emailLc) return null;
+  try {
+    const sb = createSupabaseAnonClient();
+    const { data, error } = await sb.rpc("get_member_by_email", { p_email: emailLc });
+    if (error || !Array.isArray(data)) {
+      console.error("[client-session-from-tenant] read member rpc:", error?.message ?? "sem resultado");
+      return null;
+    }
+    const rows = (data as DbMember[]).filter((row) => row.tenant_id === tenantId);
+    const row = preferredEmployeeId
+      ? rows.find((item) => item.id === preferredEmployeeId) ?? rows[0]
+      : rows[0];
+    if (!row) return null;
+    return dbMemberToEmployee(row);
+  } catch (error) {
+    console.error("[client-session-from-tenant] read member rpc:", error instanceof Error ? error.message : String(error));
+    return null;
+  }
 }
 
 function resolveEmployeeForSession(
@@ -120,12 +159,19 @@ function resolveEmployeeForSession(
 export async function buildClientSessionForTenant(
   tenantId: string,
   employeeId?: string,
+  employeeEmail?: string,
 ): Promise<ClientSession | null> {
-  const tenant = await readTenantFromDb(tenantId);
-  if (!tenant) return null;
+  const dbTenant = await readTenantFromDb(tenantId);
 
-  const ent = await readEnterpriseProvisionByTenant(tenantId);
+  let ent: EnterpriseProvisionRecord | null = null;
+  try {
+    ent = await readEnterpriseProvisionByTenant(tenantId);
+  } catch (error) {
+    console.error("[client-session-from-tenant] read enterprise:", error instanceof Error ? error.message : String(error));
+  }
   const isEnterpriseTenant = Boolean(ent);
+  const meta = tenantPlanDefaults(tenantId);
+  let tenant: DbTenant | null = dbTenant;
 
   let employee: TeamEmployee | null = null;
   if (employeeId) {
@@ -135,14 +181,40 @@ export async function buildClientSessionForTenant(
     }
   }
 
-  const members = employee ? [employee] : await readTeamMembersFromDb(tenantId);
+  let members: TeamEmployee[] = [];
+  if (employee) {
+    members = [employee];
+  } else {
+    try {
+      members = await readTeamMembersFromDb(tenantId);
+    } catch (error) {
+      console.error("[client-session-from-tenant] read members:", error instanceof Error ? error.message : String(error));
+      members = [];
+    }
+  }
+  if (!employee && employeeEmail) {
+    employee = await readTenantMemberByEmailRpc(tenantId, employeeEmail, employeeId);
+    if (employee && (!employee.ativo || employee.accountSuspended)) {
+      employee = null;
+    }
+    if (employee && !members.some((item) => item.id === employee?.id)) {
+      members = [employee, ...members];
+    }
+  }
   if (!employee) {
     employee = resolveEmployeeForSession(members, employeeId, ent?.ownerEmployeeId);
   }
   if (!employee) return null;
+  if (!tenant) {
+    tenant = {
+      id: tenantId,
+      name: meta.companyName,
+      billing_plan: meta.plan,
+      status: "ativa",
+    };
+  }
 
   const planSlug = tenant.billing_plan ?? undefined;
-  const meta = tenantPlanDefaults(tenantId);
   const plan = isEnterpriseTenant
     ? ("enterprise" as const)
     : (normalizeToPlan(planSlug ?? meta.plan) as ClientPlan);

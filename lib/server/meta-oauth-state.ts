@@ -6,11 +6,13 @@ const STATE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 export type MetaOAuthStateInput = {
   tenantId: string;
   employeeId?: string;
+  employeeEmail?: string;
 };
 
 export type MetaOAuthStatePayload = {
   tenantId: string;
   employeeId?: string;
+  employeeEmail?: string;
 };
 
 function resolveSigningSecret(): string | null {
@@ -43,6 +45,7 @@ export async function signMetaOAuthState(input: MetaOAuthStateInput): Promise<st
   const payload = JSON.stringify({
     tenantId: input.tenantId,
     ...(input.employeeId ? { employeeId: input.employeeId } : {}),
+    ...(input.employeeEmail ? { employeeEmail: input.employeeEmail.trim().toLowerCase() } : {}),
     timestamp: Date.now(),
   });
   const payloadBytes = new TextEncoder().encode(payload);
@@ -78,6 +81,7 @@ export async function verifyMetaOAuthState(state: string): Promise<MetaOAuthStat
     const parsed = JSON.parse(payloadBytes.toString("utf8")) as {
       tenantId?: string;
       employeeId?: string;
+      employeeEmail?: string;
       timestamp?: number;
       /** Legado: states assinados antes da migração para `timestamp`. */
       exp?: number;
@@ -97,6 +101,7 @@ export async function verifyMetaOAuthState(state: string): Promise<MetaOAuthStat
     return {
       tenantId: parsed.tenantId,
       ...(parsed.employeeId ? { employeeId: parsed.employeeId } : {}),
+      ...(parsed.employeeEmail ? { employeeEmail: parsed.employeeEmail } : {}),
     };
   } catch {
     return null;
