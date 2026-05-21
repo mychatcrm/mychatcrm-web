@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
-import { Check } from "lucide-react";
-import { Toggle } from "@/components/ui/Toggle";
-import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
+import { Check, FileText } from "lucide-react";
+import { WhatsAppGlyph } from "@/components/dashboard/crm/crm-phone";
 import { Badge } from "@/components/ui/Badge";
 import type { AgentOrigin } from "@/lib/types";
 import { getWizardOrigin, normalizeOrigensForWizard, type AgentWizardDraft } from "@/lib/agents";
 import {
+  ORGANIC_WHATSAPP_SOURCE,
   sourceLabel,
   type LeadDistributionRule,
   type LeadDistributionType,
@@ -20,6 +20,19 @@ function updateOrigin(draft: AgentWizardDraft, type: AgentOrigin["tipo"], patch:
   return normalizeOrigensForWizard(draft.origens).map((origin) =>
     origin.tipo === type ? ({ ...origin, ...patch } as AgentOrigin) : origin,
   );
+}
+
+function setExclusiveActivationMode(
+  draft: AgentWizardDraft,
+  mode: "formulario" | "organico" | null,
+): AgentWizardDraft {
+  const origens = normalizeOrigensForWizard(draft.origens).map((origin) => {
+    if (origin.tipo === "lead_ads") return { ...origin, ativo: mode === "formulario" };
+    if (origin.tipo === "organico") return { ...origin, ativo: mode === "organico" };
+    if (origin.tipo === "ctw") return { ...origin, ativo: false };
+    return origin;
+  });
+  return { ...draft, origens };
 }
 
 const AGENT_DISTRIBUTION_TYPES: LeadDistributionType[] = [
@@ -71,7 +84,10 @@ function LeadRulesSelector({
   const [togglingRuleId, setTogglingRuleId] = useState<string | null>(null);
 
   const activeRules = useMemo(
-    () => availableRules.filter((r) => r.active !== false).sort((a, b) => a.order - b.order),
+    () =>
+      availableRules
+        .filter((r) => r.active !== false && r.source !== ORGANIC_WHATSAPP_SOURCE)
+        .sort((a, b) => a.order - b.order),
     [availableRules],
   );
 
@@ -227,6 +243,11 @@ export function WizardStep3Ativacao({
 }) {
   const pathname = usePathname();
   const [resolvedAgentId, setResolvedAgentId] = useState<string | null>(null);
+  const [checkingOrganic, setCheckingOrganic] = useState(false);
+  const [organicBlocked, setOrganicBlocked] = useState(false);
+  const [organicBlockedBy, setOrganicBlockedBy] = useState<string | null>(null);
+  const [organicSaving, setOrganicSaving] = useState(false);
+  const [organicError, setOrganicError] = useState<string | null>(null);
 
   const agentIdFromPath = useMemo(() => {
     const match = pathname?.match(/\/dashboard\/agentes\/([^/]+)\/editar/);
@@ -258,58 +279,188 @@ export function WizardStep3Ativacao({
     };
   }, [agentIdFromPath, agentIdProp, draft.nome]);
 
-  const leadAds = getWizardOrigin(draft, "lead_ads");
-  const ctw = getWizardOrigin(draft, "ctw");
+  useEffect(() => {
+    if (!agentId) {
+      setOrganicBlocked(false);
+      setOrganicBlockedBy(null);
+      setCheckingOrganic(false);
+      return;
+    }
 
-  const handleLinkedChange = useCallback(
-    (hasLinked: boolean) => {
-      if (leadAds.ativo === hasLinked) return;
-      onChange({ ...draft, origens: updateOrigin(draft, "lead_ads", { ativo: hasLinked }) });
-    },
-    [draft, leadAds.ativo, onChange],
-  );
+    let cancelled = false;
+    setCheckingOrganic(true);
+    fetch("/api/client/lead-rules", { credentials: "same-origin" })
+      .then((r) => r.json())
+      .then((data: { rules?: LeadDistributionRule[] }) => {
+        if (cancelled) return;
+        const organicRule = data.rules?.find(
+          (r) =>
+            r.source === ORGANIC_WHATSAPP_SOURCE &&
+            r.agentIds.length > 0 &&
+            !r.agentIds.includes(agentId),
+        );
+        if (organicRule) {
+          setOrganicBlocked(true);
+          setOrganicBlockedBy(organicRule.name);
+        } else {
+          setOrganicBlocked(false);
+          setOrganicBlockedBy(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setOrganicBlocked(false);
+          setOrganicBlockedBy(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCheckingOrganic(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [agentId]);
+
+  const leadAds = getWizardOrigin(draft, "lead_ads");
+  const organico = getWizardOrigin(draft, "organico");
+
+  const activeMode: "formulario" | "organico" | null = leadAds.ativo
+    ? "formulario"
+    : organico.ativo
+      ? "organico"
+      : null;
+
+  /** Card 1 mantém `lead_ads.ativo`; vínculos de regras não desactivam o modo formulário. */
+  const handleLinkedChange = useCallback(() => {}, []);
+
+  const selectFormulario = () => {
+    setOrganicError(null);
+    onChange(setExclusiveActivationMode(draft, "formulario"));
+  };
+
+  const ensureOrganicRule = async (id: string): Promise<boolean> => {
+    const res = await fetch("/api/client/lead-rules", { credentials: "same-origin" });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { rules?: LeadDistributionRule[] };
+    const ownRule = data.rules?.find(
+      (r) => r.source === ORGANIC_WHATSAPP_SOURCE && r.agentIds.includes(id),
+    );
+    if (ownRule) return true;
+
+    const postRes = await fetch("/api/client/lead-rules", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "WhatsApp direto",
+        source: ORGANIC_WHATSAPP_SOURCE,
+        distributionType: "automation_agent",
+        agentIds: [id],
+        redistribution: false,
+        mappings: [],
+        employeeIds: [],
+      }),
+    });
+    if (!postRes.ok) {
+      const body = (await postRes.json().catch(() => ({}))) as { error?: string };
+      throw new Error(body.error ?? "Não foi possível criar a regra de WhatsApp direto.");
+    }
+    return true;
+  };
+
+  const selectOrganico = async () => {
+    if (organicBlocked || checkingOrganic || !agentId) return;
+    setOrganicError(null);
+    onChange(setExclusiveActivationMode(draft, "organico"));
+    setOrganicSaving(true);
+    try {
+      await ensureOrganicRule(agentId);
+    } catch (err) {
+      setOrganicError(err instanceof Error ? err.message : "Erro ao configurar WhatsApp direto.");
+      onChange(setExclusiveActivationMode(draft, null));
+    } finally {
+      setOrganicSaving(false);
+    }
+  };
+
+  const cardSelectedClass = "border-[#f24400] bg-[rgba(242,68,0,0.05)] ring-1 ring-inset ring-[#f24400]/30";
+  const cardNeutralClass = "border-line/80 bg-surface-card hover:border-primary/30 hover:bg-surface-deep/40";
 
   return (
     <div className="min-w-0 space-y-4">
       <h3 className="text-base font-semibold text-content">Quando este agente deve ser acionado?</h3>
 
-      <LeadRulesSelector agentId={agentId} onLinkedChange={handleLinkedChange} />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <button
+          type="button"
+          onClick={selectFormulario}
+          className={cn(
+            "flex min-h-[120px] flex-col items-start gap-3 rounded-xl border p-4 text-left transition",
+            activeMode === "formulario" ? cardSelectedClass : cardNeutralClass,
+          )}
+        >
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <FileText className="h-5 w-5" strokeWidth={1.75} aria-hidden />
+          </span>
+          <span>
+            <span className="block text-sm font-semibold text-content">Leads por formulário</span>
+            <span className="mt-1 block text-xs leading-relaxed text-content-muted">
+              O agente atende leads que chegam por formulários vinculados em Integrações de Leads.
+            </span>
+          </span>
+        </button>
 
-      <section className="min-w-0 space-y-3 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-        <Toggle
-          id="ctw-toggle"
-          checked={ctw.ativo}
-          onChange={(next) => onChange({ ...draft, origens: updateOrigin(draft, "ctw", { ativo: next }) })}
-          label="Click to WhatsApp (anúncio com botão)"
-        />
-        {ctw.ativo ? (
-          <>
-            <div className="flex flex-wrap gap-2">
-              <button type="button" className="rounded-xl border border-line px-3 py-2 text-xs hover:bg-surface-elevated/50">
-                Buscar anúncios ativos
-              </button>
-            </div>
-            <Input
-              value={(ctw.config.adIds ?? []).join(", ")}
-              onChange={(event) =>
-                onChange({
-                  ...draft,
-                  origens: updateOrigin(draft, "ctw", {
-                    config: {
-                      ...ctw.config,
-                      adIds: event.target.value
-                        .split(",")
-                        .map((item) => item.trim())
-                        .filter(Boolean),
-                    },
-                  }),
-                })
-              }
-              placeholder="IDs dos anúncios separados por vírgula"
-            />
-          </>
-        ) : null}
-      </section>
+        <button
+          type="button"
+          disabled={organicBlocked || checkingOrganic || organicSaving || !agentId}
+          onClick={() => void selectOrganico()}
+          className={cn(
+            "flex min-h-[120px] flex-col items-start gap-3 rounded-xl border p-4 text-left transition",
+            organicBlocked
+              ? "cursor-not-allowed border-line/60 bg-surface-deep/50 opacity-80"
+              : activeMode === "organico"
+                ? cardSelectedClass
+                : cardNeutralClass,
+            (checkingOrganic || organicSaving) && "cursor-wait opacity-70",
+          )}
+        >
+          <span
+            className={cn(
+              "flex h-10 w-10 items-center justify-center rounded-xl",
+              organicBlocked ? "bg-surface-deep text-content-muted" : "bg-emerald-500/15 text-emerald-600",
+            )}
+          >
+            <WhatsAppGlyph className="h-6 w-6 shrink-0" aria-hidden />
+          </span>
+          <span>
+            <span className="block text-sm font-semibold text-content">Atendimento direto (WhatsApp)</span>
+            <span className="mt-1 block text-xs leading-relaxed text-content-muted">
+              O agente atende quem entra em contacto directo pelo WhatsApp, sem ser por formulário.
+            </span>
+            {organicBlocked && organicBlockedBy ? (
+              <span className="mt-2 block text-xs font-semibold text-red-600 dark:text-red-400">
+                Já em uso por: {organicBlockedBy}
+              </span>
+            ) : null}
+            {organicSaving ? (
+              <span className="mt-2 block text-xs text-content-muted">A configurar regra orgânica…</span>
+            ) : null}
+            {organicError ? (
+              <span className="mt-2 block text-xs font-medium text-orange-600 dark:text-orange-400">{organicError}</span>
+            ) : null}
+            {!agentId ? (
+              <span className="mt-2 block text-xs font-medium text-amber-600 dark:text-amber-300/90">
+                Guarde o agente para activar WhatsApp directo.
+              </span>
+            ) : null}
+          </span>
+        </button>
+      </div>
+
+      {activeMode === "formulario" ? (
+        <LeadRulesSelector agentId={agentId} onLinkedChange={handleLinkedChange} />
+      ) : null}
     </div>
   );
 }

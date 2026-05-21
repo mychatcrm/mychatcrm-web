@@ -237,7 +237,11 @@ export function AgentFormCompact({
                 description="Onde o agente entra em ação (Lead Ads, keyword, orgânico, etc.)."
                 titleIcon={<RadioTower strokeWidth={1.75} />}
               >
-                <WizardStep3Ativacao draft={draft} onChange={setDraft} />
+                <WizardStep3Ativacao
+                  draft={draft}
+                  onChange={setDraft}
+                  agentId={initialAgent?.id ?? (initialAgent as { agent_id?: string } | undefined)?.agent_id}
+                />
               </AdvancedSection>
               <AdvancedSection
                 title="Transferência humana e objetivo final"
