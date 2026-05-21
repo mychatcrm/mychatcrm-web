@@ -163,19 +163,110 @@ function inferCrmTarget(sourceKey: string): string {
   return "mensagem";
 }
 
-function MappingRowCard({ m, onPickCrm }: { m: LeadFieldMapping; onPickCrm: (crm: string) => void }) {
-  const Icon = CRM_ICONS[m.crmField] ?? MessageCircle;
+const MAPPING_CRM_OPTIONS: { value: string; label: string }[] = [
+  { value: "nome", label: "Nome" },
+  { value: "celular", label: "Celular" },
+  { value: "email", label: "Email" },
+  { value: "empresa", label: "Empresa" },
+  { value: "mensagem", label: "Observações / mensagem" },
+  { value: "__ignore__", label: "Ignorar campo (não mapear)" },
+];
+
+function inferCrmFromMetaField(field: MetaFormField): string {
+  const type = (field.type ?? "").toUpperCase();
+  const k = field.key.toLowerCase();
+  if (type === "FULL_NAME" || /nome|name/.test(k)) return "nome";
+  if (type === "PHONE" || /phone|telefone|celular/.test(k)) return "celular";
+  if (type === "EMAIL" || /email/.test(k)) return "email";
+  return "mensagem";
+}
+
+function buildMappingsFromMetaFields(
+  fields: MetaFormField[],
+  existing: LeadFieldMapping[],
+  options: { forceAuto: boolean },
+): LeadFieldMapping[] {
+  const existingByKey = new Map(existing.filter((m) => m.kind === "form").map((m) => [m.sourceKey, m]));
+  const formRows: LeadFieldMapping[] = fields.map((f) => {
+    const prev = existingByKey.get(f.key);
+    const crm = options.forceAuto ? inferCrmFromMetaField(f) : (prev?.crmField ?? inferCrmFromMetaField(f));
+    return {
+      id: prev?.id ?? mappingId(),
+      sourceKey: f.key,
+      sourceLabel: f.label || f.key,
+      kind: "form",
+      crmField: crm,
+    };
+  });
+  const ctxExisting = existing.filter((m) => m.kind === "context");
+  const ctx: LeadFieldMapping[] = CONTEXT_FIELDS.map((c) => {
+    const prev = ctxExisting.find((x) => x.sourceKey === c.key);
+    return {
+      id: prev?.id ?? mappingId(),
+      sourceKey: c.key,
+      sourceLabel: c.label,
+      kind: "context",
+      crmField: options.forceAuto ? "mensagem" : (prev?.crmField ?? "mensagem"),
+    };
+  });
+  return [...formRows, ...ctx];
+}
+
+function MetaFieldTypeBadge({ type }: { type: string }) {
+  const t = (type ?? "").toUpperCase();
+  if (t === "CUSTOM") {
+    return (
+      <Badge className="border-line/80 bg-surface-elevated/60 text-[10px] font-medium text-content-muted">Personalizado</Badge>
+    );
+  }
+  if (t === "FULL_NAME") {
+    return (
+      <Badge className="border-sky-500/40 bg-sky-500/15 text-[10px] font-medium text-sky-800 dark:text-sky-200">
+        Nome completo
+      </Badge>
+    );
+  }
+  if (t === "PHONE") {
+    return (
+      <Badge className="border-emerald-500/40 bg-emerald-500/15 text-[10px] font-medium text-emerald-800 dark:text-emerald-200">
+        Telefone
+      </Badge>
+    );
+  }
+  if (t === "EMAIL") {
+    return (
+      <Badge className="border-violet-500/40 bg-violet-500/15 text-[10px] font-medium text-violet-800 dark:text-violet-200">
+        Email
+      </Badge>
+    );
+  }
+  return null;
+}
+
+function MetaMappingRow({
+  m,
+  metaType,
+  onPickCrm,
+}: {
+  m: LeadFieldMapping;
+  metaType?: string;
+  onPickCrm: (crm: string) => void;
+}) {
+  const Icon = CRM_ICONS[m.crmField === "__ignore__" ? "mensagem" : m.crmField] ?? MessageCircle;
   const showKeySuffix = !m.sourceLabel.toLowerCase().includes(`(${m.sourceKey.toLowerCase()})`);
   return (
     <li className="flex flex-col gap-2 rounded-xl border border-line bg-surface-deep/20 p-3 sm:flex-row sm:items-center sm:gap-3">
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium text-content">
-          {m.sourceLabel}
-          {showKeySuffix ? <span className="font-normal text-content-muted"> ({m.sourceKey})</span> : null}
-        </p>
-        <p className="text-[10px] text-content-faint">
-          {m.kind === "context" ? "Campo de contexto" : "Campo do formulário"} · {m.sourceKey}
-        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-xs font-medium text-content">
+            {m.sourceLabel}
+            {showKeySuffix ? <span className="font-normal text-content-muted"> ({m.sourceKey})</span> : null}
+          </p>
+          {metaType && m.kind === "form" ? <MetaFieldTypeBadge type={metaType} /> : null}
+        </div>
+        {m.kind === "context" ? (
+          <p className="mt-0.5 text-[10px] text-content-faint">Campo de contexto · {m.sourceKey}</p>
+        ) : null}
       </div>
       <ArrowRight className="hidden h-4 w-4 shrink-0 text-content-faint sm:block" aria-hidden />
       <div className="flex min-w-0 flex-col gap-1 sm:w-[min(100%,14rem)] sm:flex-none">
@@ -187,8 +278,13 @@ function MappingRowCard({ m, onPickCrm }: { m: LeadFieldMapping; onPickCrm: (crm
           >
             <Icon className="h-4 w-4" strokeWidth={1.75} />
           </span>
-          <Select aria-label={`CRM para ${m.sourceKey}`} className="min-h-[44px] flex-1" value={m.crmField} onChange={(e) => onPickCrm(e.target.value)}>
-            {CRM_FIELD_OPTIONS.map((o) => (
+          <Select
+            aria-label={`CRM para ${m.sourceKey}`}
+            className="min-h-[44px] flex-1"
+            value={m.crmField}
+            onChange={(e) => onPickCrm(e.target.value)}
+          >
+            {MAPPING_CRM_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>
@@ -369,9 +465,6 @@ export function NewLeadRuleWizard({
 }) {
   const [step, setStep] = useState(0);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
-  const [mapBannerOpen, setMapBannerOpen] = useState(true);
-  const [manualSource, setManualSource] = useState("");
-  const [manualCrm, setManualCrm] = useState("");
   const [excludeFormPicker, setExcludeFormPicker] = useState("");
   const [includeFormPicker, setIncludeFormPicker] = useState("");
   const [distPickerOpen, setDistPickerOpen] = useState(false);
@@ -380,8 +473,9 @@ export function NewLeadRuleWizard({
   const [availableForms, setAvailableForms] = useState<MetaFormsForm[]>([]);
   const [formsLoading, setFormsLoading] = useState(false);
   const [formsError, setFormsError] = useState<string | null>(null);
-  const [autoMapLoading, setAutoMapLoading] = useState(false);
-  const [autoMapError, setAutoMapError] = useState<string | null>(null);
+  const [metaFormFieldsMeta, setMetaFormFieldsMeta] = useState<MetaFormField[]>([]);
+  const [fieldsFetchLoading, setFieldsFetchLoading] = useState(false);
+  const [fieldsFetchError, setFieldsFetchError] = useState<string | null>(null);
   const [employeesRev, setEmployeesRev] = useState(0);
   const { isLight } = usePanelAppearance();
   const distButtonRef = useRef<HTMLButtonElement>(null);
@@ -477,9 +571,9 @@ export function NewLeadRuleWizard({
     if (!open) return;
     setStep(0);
     prevStepRef.current = 0;
-    setMapBannerOpen(true);
-    setManualSource("");
-    setManualCrm("");
+    setMetaFormFieldsMeta([]);
+    setFieldsFetchLoading(false);
+    setFieldsFetchError(null);
     setExcludeFormPicker("");
     setIncludeFormPicker("");
     setDistPickerOpen(false);
@@ -567,102 +661,134 @@ export function NewLeadRuleWizard({
     [availableForms],
   );
 
-  const applyAutoMap = useCallback(async () => {
-    const src = draft.source;
+  const applyCatalogMappings = useCallback(
+    (forceAuto: boolean) => {
+      const src = draft.source;
+      if (!src) return;
+      const formCatalog = catalogForSource(src);
+      const existing = draft.mappings;
+      const existingByKey = new Map(existing.filter((m) => m.kind === "form").map((m) => [m.sourceKey, m]));
+      const base: LeadFieldMapping[] = formCatalog.map((f) => {
+        const prev = existingByKey.get(f.key);
+        return {
+          id: prev?.id ?? mappingId(),
+          sourceKey: f.key,
+          sourceLabel: f.label,
+          kind: "form" as const,
+          crmField: forceAuto ? inferCrmTarget(f.key) : (prev?.crmField ?? inferCrmTarget(f.key)),
+        };
+      });
+      const ctxExisting = existing.filter((m) => m.kind === "context");
+      const ctx: LeadFieldMapping[] =
+        src === "meta_form"
+          ? CONTEXT_FIELDS.map((c) => {
+              const prev = ctxExisting.find((x) => x.sourceKey === c.key);
+              return {
+                id: prev?.id ?? mappingId(),
+                sourceKey: c.key,
+                sourceLabel: c.label,
+                kind: "context" as const,
+                crmField: forceAuto ? "mensagem" : (prev?.crmField ?? "mensagem"),
+              };
+            })
+          : [];
+      setDraft((d) => ({ ...d, mappings: [...base, ...ctx] }));
+    },
+    [draft.mappings, draft.source],
+  );
 
-    // For meta_form with a specific form selected, try to fetch real fields first.
-    if (src === "meta_form" && draft.includedFormIds[0] && draft.pageId.trim()) {
-      setAutoMapLoading(true);
-      setAutoMapError(null);
-      try {
-        const res = await fetch(
-          `/api/client/meta/form-fields?form_id=${encodeURIComponent(draft.includedFormIds[0])}&page_id=${encodeURIComponent(draft.pageId)}`,
-          { credentials: "same-origin" },
-        );
-        const data = (await res.json()) as { fields?: MetaFormField[]; error?: string };
-        if (data.error) throw new Error(data.error);
-        const realFields = data.fields ?? [];
-        if (realFields.length > 0) {
-          const base: LeadFieldMapping[] = realFields.map((f) => ({
-            id: mappingId(),
-            sourceKey: f.key,
-            sourceLabel: f.label || f.key,
-            kind: "form" as const,
-            crmField: inferCrmTarget(f.key),
-          }));
-          const ctx: LeadFieldMapping[] = CONTEXT_FIELDS.map((c) => ({
-            id: mappingId(),
-            sourceKey: c.key,
-            sourceLabel: c.label,
-            kind: "context" as const,
-            crmField: inferCrmTarget(c.key),
-          }));
-          setDraft((d) => ({ ...d, mappings: [...base, ...ctx] }));
-          setMapBannerOpen(true);
-          return;
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Erro ao buscar campos do formulário";
-        setAutoMapError(msg);
-        // Fall through to demo catalog below
-      } finally {
-        setAutoMapLoading(false);
-      }
+  const refazerMapeamentoAutomatico = useCallback(() => {
+    if (draft.source === "meta_form" && metaFormFieldsMeta.length > 0) {
+      setDraft((d) => ({
+        ...d,
+        mappings: buildMappingsFromMetaFields(metaFormFieldsMeta, [], { forceAuto: true }),
+      }));
+      return;
+    }
+    applyCatalogMappings(true);
+  }, [applyCatalogMappings, draft.source, metaFormFieldsMeta]);
+
+  const metaFieldTypeByKey = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const f of metaFormFieldsMeta) map.set(f.key, f.type);
+    return map;
+  }, [metaFormFieldsMeta]);
+
+  /** Ao entrar no passo Mapeamento: busca campos reais (Meta) ou catálogo de fallback. */
+  useEffect(() => {
+    if (!open || step !== 1 || !draft.source) return;
+
+    if (draft.source !== "meta_form") {
+      setMetaFormFieldsMeta([]);
+      setFieldsFetchError(null);
+      setFieldsFetchLoading(false);
+      if (draft.mappings.length === 0) applyCatalogMappings(true);
+      return;
     }
 
-    // Fallback: demo catalog (also used for non-meta sources and when API fails)
-    const formCatalog = catalogForSource(src);
-    const base: LeadFieldMapping[] = formCatalog.map((f) => ({
-      id: mappingId(),
-      sourceKey: f.key,
-      sourceLabel: f.label,
-      kind: "form" as const,
-      crmField: inferCrmTarget(f.key),
-    }));
-    const ctx: LeadFieldMapping[] =
-      src === "meta_form"
-        ? CONTEXT_FIELDS.map((c) => ({
-            id: mappingId(),
-            sourceKey: c.key,
-            sourceLabel: c.label,
-            kind: "context" as const,
-            crmField: inferCrmTarget(c.key),
-          }))
-        : [];
-    setDraft((d) => ({ ...d, mappings: [...base, ...ctx] }));
-    setMapBannerOpen(true);
-  }, [draft.source, draft.includedFormIds, draft.pageId]);
+    if (draft.useAllForms) {
+      setMetaFormFieldsMeta([]);
+      setFieldsFetchLoading(false);
+      setFieldsFetchError("Selecione formulários específicos no passo Entrada para mapear os campos.");
+      return;
+    }
 
-  /** Ao entrar em Mapeamento vindo da Entrada: preenche o catálogo automaticamente se ainda não houver linhas (evita esquecimento; regras já com mapeamento não são sobrescritas). */
-  useEffect(() => {
-    if (!open) return;
-    const prev = prevStepRef.current;
-    prevStepRef.current = step;
-    if (step !== 1 || prev !== 0) return;
-    if (!draft.source) return;
-    if (draft.mappings.length > 0) return;
-    void applyAutoMap();
-  }, [open, step, draft.source, draft.mappings.length, applyAutoMap]);
+    const formId = draft.includedFormIds[0];
+    if (!formId?.trim() || !draft.pageId.trim()) {
+      setMetaFormFieldsMeta([]);
+      setFieldsFetchLoading(false);
+      setFieldsFetchError("Selecione um formulário no passo anterior.");
+      return;
+    }
+
+    let cancelled = false;
+    setFieldsFetchLoading(true);
+    setFieldsFetchError(null);
+
+    fetch(
+      `/api/client/meta/form-fields?form_id=${encodeURIComponent(formId)}&page_id=${encodeURIComponent(draft.pageId)}`,
+      { credentials: "same-origin" },
+    )
+      .then((r) => r.json())
+      .then((data: { fields?: MetaFormField[]; error?: string }) => {
+        if (cancelled) return;
+        if (data.error) throw new Error(data.error);
+        const fields = data.fields ?? [];
+        if (fields.length === 0) throw new Error("Nenhum campo encontrado neste formulário.");
+        setMetaFormFieldsMeta(fields);
+        setDraft((d) => ({
+          ...d,
+          mappings: buildMappingsFromMetaFields(fields, d.mappings, { forceAuto: d.mappings.length === 0 }),
+        }));
+        setFieldsFetchError(null);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : "Erro ao buscar campos do formulário";
+        setFieldsFetchError(msg);
+        setMetaFormFieldsMeta([]);
+      })
+      .finally(() => {
+        if (!cancelled) setFieldsFetchLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyCatalogMappings, draft.includedFormIds, draft.pageId, draft.source, draft.useAllForms, open, step]);
 
   const formMappings = useMemo(() => draft.mappings.filter((m) => m.kind === "form"), [draft.mappings]);
   const contextMappings = useMemo(() => draft.mappings.filter((m) => m.kind === "context"), [draft.mappings]);
 
   const mappingStepHealth = useMemo(() => {
-    const hasNome = draft.mappings.some((m) => m.crmField === "nome");
-    const hasCelular = draft.mappings.some((m) => m.crmField === "celular");
-    const hasEmail = draft.mappings.some((m) => m.crmField === "email");
-    const ready = hasNome && (hasCelular || hasEmail);
-    return { hasNome, hasCelular, hasEmail, ready };
+    const active = draft.mappings.filter((m) => m.crmField !== "__ignore__");
+    const hasNome = active.some((m) => m.crmField === "nome");
+    const hasCelular = active.some((m) => m.crmField === "celular");
+    const hasEmail = active.some((m) => m.crmField === "email");
+    const canAdvance = hasCelular || hasEmail;
+    const warnEssential = !hasNome || !hasCelular;
+    return { hasNome, hasCelular, hasEmail, canAdvance, warnEssential };
   }, [draft.mappings]);
-
-  const demoCatalogCoverage = useMemo(() => {
-    if (!draft.source) return { expected: 0, matched: 0 };
-    const form = catalogForSource(draft.source);
-    const ctx = draft.source === "meta_form" ? CONTEXT_FIELDS : [];
-    const keys = new Set([...form.map((f) => f.key), ...ctx.map((c) => c.key)]);
-    const matched = [...keys].filter((k) => draft.mappings.some((m) => m.sourceKey === k)).length;
-    return { expected: keys.size, matched };
-  }, [draft.mappings, draft.source]);
 
   const filteredDistChoices = useMemo(() => {
     const q = distQuery.trim().toLowerCase();
@@ -682,6 +808,10 @@ export function NewLeadRuleWizard({
         if (!draft.useAllForms && draft.includedFormIds.length === 0) return false;
       }
       return base;
+    }
+    if (step === 1) {
+      const active = draft.mappings.filter((m) => m.crmField !== "__ignore__");
+      return active.some((m) => m.crmField === "celular") || active.some((m) => m.crmField === "email");
     }
     if (step === 2) {
       if (isOrganicWhatsApp) return draft.agentIds.length === 1;
@@ -707,6 +837,7 @@ export function NewLeadRuleWizard({
     draft.distributionType,
     draft.employeeIds.length,
     draft.includedFormIds.length,
+    draft.mappings,
     draft.name,
     draft.pageId,
     draft.source,
@@ -1509,113 +1640,66 @@ export function NewLeadRuleWizard({
 
         {step === 1 ? (
           <>
-            <div className="flex items-start gap-3">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-primary/25 bg-primary/[0.08] text-primary">
-                <FileText className="h-5 w-5" strokeWidth={1.75} aria-hidden />
-              </span>
-              <div className="min-w-0">
-                <p className="font-semibold text-content">Configure o mapeamento de campos</p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-content">Mapeamento de campos</p>
                 <p className="mt-1 text-xs leading-relaxed text-content-muted">
-                  {draft.source === "meta_form"
-                    ? "Conecte cada chave que o formulário e a campanha enviam ao CRM. «Mapear automaticamente» gera uma linha por campo do catálogo demo; ajuste ou acrescente chaves reais da sua integração."
-                    : draft.source === "whatsapp_api" || draft.source === "whatsapp_qr"
-                      ? "Ligue perfil, número, texto e metadados do WhatsApp aos campos do CRM. O catálogo demo cobre o que costuma vir no webhook; use linhas manuais para o resto."
-                      : "Ligue os identificadores que a origem expõe aos campos do CRM. Campos extra podem ser adicionados manualmente."}
+                  Os campos do seu formulário foram detectados automaticamente. Revise e ajuste se necessário.
                 </p>
               </div>
-            </div>
-            {mapBannerOpen ? (
-              <div
-                role="status"
-                aria-live="polite"
-                className={cn(
-                  "rounded-xl border-2 px-3 py-3",
-                  isLight
-                    ? "border-red-600/85 bg-red-50 text-red-950 ring-2 ring-red-500/35"
-                    : "border-red-500/70 bg-red-950/50 text-red-50 ring-2 ring-red-400/30",
-                  "motion-reduce:animate-none motion-safe:animate-pulse",
-                )}
-              >
-                <p className={cn("text-sm font-bold tracking-tight", isLight ? "text-red-900" : "text-red-100")}>
-                  Mapeamento automático (catálogo completo)
-                </p>
-                <p className={cn("mt-1 text-xs font-medium leading-relaxed", isLight ? "text-red-900/90" : "text-red-100/90")}>
-                  Ao entrar neste passo, o catálogo é aplicado <strong className="font-bold">automaticamente</strong> quando ainda não havia linhas — ajuste cada linha em baixo ou toque outra vez em
-                  «Mapear automaticamente» para refazer. Em produção, use as chaves reais da Meta ou do WhatsApp —{" "}
-                  <strong className="font-bold">revise antes de publicar.</strong>
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    disabled={autoMapLoading}
-                    className={cn("font-semibold", isLight ? "border-red-800/25 bg-white text-red-900 hover:bg-red-50" : "border-red-300/20 bg-red-950/80 text-red-50 hover:bg-red-900/60")}
-                    onClick={() => { void applyAutoMap(); }}
-                  >
-                    {autoMapLoading ? (
-                      <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />A buscar campos…</>
-                    ) : (
-                      "Mapear automaticamente"
-                    )}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className={cn("font-semibold", isLight ? "text-red-900 hover:bg-red-100/80" : "text-red-100 hover:bg-red-900/50")}
-                    onClick={() => setMapBannerOpen(false)}
-                  >
-                    Entendi, vou revisar
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-            {autoMapError ? (
-              <p className="flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-                <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                Não foi possível buscar campos reais: {autoMapError}. Catálogo demo aplicado.
-              </p>
-            ) : null}
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-content-faint">Mapeamento de campos</p>
               <Button
                 type="button"
                 size="sm"
-                variant="outline"
-                disabled={autoMapLoading}
-                onClick={() => { void applyAutoMap(); }}
+                variant="secondary"
+                disabled={fieldsFetchLoading || (draft.source === "meta_form" && metaFormFieldsMeta.length === 0 && !fieldsFetchError)}
+                className="shrink-0"
+                onClick={() => refazerMapeamentoAutomatico()}
               >
-                {autoMapLoading ? (
-                  <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />A buscar campos…</>
-                ) : (
-                  "Mapear automaticamente"
-                )}
+                Refazer mapeamento automático
               </Button>
             </div>
-            <ul className="space-y-2">
-              {formMappings.map((m) => (
-                <MappingRowCard
-                  key={m.id}
-                  m={m}
-                  onPickCrm={(crm) =>
-                    setDraft((d) => ({
-                      ...d,
-                      mappings: d.mappings.map((x) => (x.id === m.id ? { ...x, crmField: crm } : x)),
-                    }))
-                  }
-                />
-              ))}
-            </ul>
-            {contextMappings.length ? (
-              <details className="rounded-xl border border-line/80 bg-surface-deep/10 p-3 sm:p-4" open>
+
+            {fieldsFetchLoading ? (
+              <p className="flex items-center gap-2 rounded-xl border border-line/80 bg-surface-deep/20 px-3 py-3 text-sm text-content-muted">
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" aria-hidden />
+                Buscando campos do formulário...
+              </p>
+            ) : null}
+
+            {fieldsFetchError ? (
+              <p className="flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                {fieldsFetchError}
+              </p>
+            ) : null}
+
+            {!fieldsFetchLoading && formMappings.length > 0 ? (
+              <ul className="space-y-2">
+                {formMappings.map((m) => (
+                  <MetaMappingRow
+                    key={m.id}
+                    m={m}
+                    metaType={metaFieldTypeByKey.get(m.sourceKey)}
+                    onPickCrm={(crm) =>
+                      setDraft((d) => ({
+                        ...d,
+                        mappings: d.mappings.map((x) => (x.id === m.id ? { ...x, crmField: crm } : x)),
+                      }))
+                    }
+                  />
+                ))}
+              </ul>
+            ) : null}
+
+            {contextMappings.length > 0 ? (
+              <details className="rounded-xl border border-line/80 bg-surface-deep/10 p-3 sm:p-4">
                 <summary className="cursor-pointer text-xs font-semibold text-content marker:text-content-muted">
                   Campos de contexto (opcional) — {contextMappings.length}{" "}
                   {contextMappings.length === 1 ? "campo" : "campos"}
                 </summary>
                 <ul className="mt-3 space-y-2 border-t border-line/60 pt-3">
                   {contextMappings.map((m) => (
-                    <MappingRowCard
+                    <MetaMappingRow
                       key={m.id}
                       m={m}
                       onPickCrm={(crm) =>
@@ -1629,131 +1713,37 @@ export function NewLeadRuleWizard({
                 </ul>
               </details>
             ) : null}
-            <div className="rounded-xl border border-dashed border-line bg-surface-deep/20 p-3">
-              <p className="text-xs font-medium text-content-muted">Adicionar mapeamento manual</p>
-              <p className="mt-0.5 text-[11px] text-content-faint">
-                Use a chave exacta que o fornecedor envia no JSON (ex.: campo personalizado do formulário).
-              </p>
-              <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
-                <Input
-                  placeholder="Nome ou chave do campo na origem"
-                  value={manualSource}
-                  onChange={(e) => setManualSource(e.target.value)}
-                  className="sm:flex-1"
-                />
-                <span className="hidden text-content-faint sm:inline" aria-hidden>
-                  →
-                </span>
-                <Select
-                  aria-label="Campo do CRM"
-                  value={manualCrm || "nome"}
-                  onChange={(e) => setManualCrm(e.target.value)}
-                  className="sm:flex-1"
-                >
-                  {CRM_FIELD_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </Select>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => {
-                    const key = manualSource.trim();
-                    if (!key) return;
-                    setDraft((d) => {
-                      if (d.mappings.some((x) => x.sourceKey === key)) return d;
-                      return {
-                        ...d,
-                        mappings: [
-                          ...d.mappings,
-                          {
-                            id: mappingId(),
-                            sourceKey: key,
-                            sourceLabel: key,
-                            kind: "form",
-                            crmField: manualCrm || "nome",
-                          },
-                        ],
-                      };
-                    });
-                    setManualSource("");
-                  }}
-                >
-                  + Adicionar
-                </Button>
-              </div>
-            </div>
+
             {draft.mappings.length > 0 ? (
-              <div className="rounded-xl border border-primary/30 bg-primary/[0.08] p-4 text-sm">
-                <p className="text-xs font-semibold text-primary">
-                  Resumo dos mapeamentos ({draft.mappings.length} {draft.mappings.length === 1 ? "campo" : "campos"})
-                </p>
-                <div className="mt-3 max-h-44 space-y-1.5 overflow-y-auto overscroll-contain pr-1 text-xs leading-snug text-content-secondary">
-                  {draft.mappings.map((m) => (
-                    <div key={m.id} className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-                      <span className="font-medium text-content">{m.sourceLabel}</span>
-                      <ArrowRight className="inline h-3 w-3 shrink-0 text-primary" aria-hidden />
-                      <span>{CRM_FIELD_OPTIONS.find((o) => o.value === m.crmField)?.label ?? m.crmField}</span>
-                    </div>
-                  ))}
+              <div
+                className={cn(
+                  "rounded-xl border px-3 py-3 text-xs",
+                  mappingStepHealth.warnEssential
+                    ? "border-amber-500/40 bg-amber-500/10"
+                    : "border-line/80 bg-surface-deep/15",
+                )}
+              >
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  {mappingStepHealth.hasNome ? (
+                    <span className={cn("font-medium", isLight ? "text-emerald-700" : "text-emerald-300")}>✓ Nome mapeado</span>
+                  ) : null}
+                  {mappingStepHealth.hasCelular ? (
+                    <span className={cn("font-medium", isLight ? "text-emerald-700" : "text-emerald-300")}>✓ Celular mapeado</span>
+                  ) : null}
+                  {mappingStepHealth.hasEmail ? (
+                    <span className={cn("font-medium", isLight ? "text-emerald-700" : "text-emerald-300")}>✓ Email mapeado</span>
+                  ) : null}
                 </div>
-                {draft.source && demoCatalogCoverage.expected > 0 ? (
-                  <p className="mt-3 text-[11px] leading-relaxed text-content-muted">
-                    Catálogo demo desta origem: {demoCatalogCoverage.matched}/{demoCatalogCoverage.expected} chaves de referência com linha de mapeamento
-                    {demoCatalogCoverage.matched < demoCatalogCoverage.expected ? " — acrescente manualmente o que faltar." : "."}
+                {mappingStepHealth.warnEssential ? (
+                  <p className={cn("mt-2 font-medium", isLight ? "text-amber-800" : "text-amber-200")}>
+                    Recomendado: mapeie nome e celular para identificar o contacto no CRM.
                   </p>
                 ) : null}
-                <div className="mt-4 border-t border-primary/20 pt-3 text-xs">
-                  <p className="font-semibold text-content">Estado sugerido</p>
-                  <ul className="mt-2 space-y-1.5 text-content-secondary">
-                    <li className="flex flex-wrap items-center gap-2">
-                      <span
-                        className={cn(
-                          "inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold",
-                          mappingStepHealth.ready
-                            ? cn("bg-emerald-500/20", isLight ? "text-emerald-700" : "text-emerald-300")
-                            : cn("bg-amber-500/15", isLight ? "text-amber-800" : "text-amber-200"),
-                        )}
-                        aria-hidden
-                      >
-                        {mappingStepHealth.ready ? "✓" : "!"}
-                      </span>
-                      <span className={mappingStepHealth.ready ? (isLight ? "text-emerald-800" : "text-emerald-200/90") : "text-content"}>
-                        {mappingStepHealth.ready ? "Pronto para continuar" : "Revise nome e contacto (telefone ou email) no CRM Kanban"}
-                      </span>
-                    </li>
-                    <li className="flex flex-wrap items-center gap-2">
-                      <Check
-                        className={cn("h-4 w-4 shrink-0", mappingStepHealth.hasNome ? (isLight ? "text-emerald-600" : "text-emerald-400") : "text-content-faint")}
-                        strokeWidth={2.5}
-                        aria-hidden
-                      />
-                      <span className={mappingStepHealth.hasNome ? (isLight ? "text-emerald-800" : "text-emerald-200/90") : ""}>Nome mapeado para o CRM</span>
-                    </li>
-                    <li className="flex flex-wrap items-center gap-2">
-                      <Check
-                        className={cn(
-                          "h-4 w-4 shrink-0",
-                          mappingStepHealth.hasCelular ? (isLight ? "text-emerald-600" : "text-emerald-400") : "text-content-faint",
-                        )}
-                        strokeWidth={2.5}
-                        aria-hidden
-                      />
-                      <span className={mappingStepHealth.hasCelular ? (isLight ? "text-emerald-800" : "text-emerald-200/90") : ""}>Celular mapeado</span>
-                    </li>
-                    <li className="flex flex-wrap items-center gap-2">
-                      <Check
-                        className={cn("h-4 w-4 shrink-0", mappingStepHealth.hasEmail ? (isLight ? "text-emerald-600" : "text-emerald-400") : "text-content-faint")}
-                        strokeWidth={2.5}
-                        aria-hidden
-                      />
-                      <span className={mappingStepHealth.hasEmail ? (isLight ? "text-emerald-800" : "text-emerald-200/90") : ""}>Email mapeado</span>
-                    </li>
-                  </ul>
-                </div>
+                {!mappingStepHealth.canAdvance ? (
+                  <p className={cn("mt-2 font-medium", isLight ? "text-amber-800" : "text-amber-200")}>
+                    Mapeie pelo menos celular ou email para continuar.
+                  </p>
+                ) : null}
               </div>
             ) : null}
           </>
