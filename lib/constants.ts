@@ -2,7 +2,7 @@ import type { ClientRow, Conversation, LeadMetric, PaymentRow, Plan, Ticket } fr
 import { BRAND } from "./brand";
 import { WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL } from "./plans";
 
-const DEFAULT_SITE_URL = "https://mychatcrm.com.br";
+const DEFAULT_SITE_URL = "https://www.mychatcrm.com.br";
 
 /** Garante URL absoluta válida para `metadataBase` / Open Graph (evita crash se a env vier sem protocolo). */
 function normalizeSiteUrl(raw: string): string {

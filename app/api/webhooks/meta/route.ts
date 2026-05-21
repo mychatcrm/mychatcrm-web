@@ -78,7 +78,24 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
 // ─── POST — leadgen events ────────────────────────────────────────────────────
 
+const LEADGEN_WEBHOOK_FIELDS = new Set(["leadgen", "leadgen_update"]);
+
+function newRequestId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `meta-${Date.now()}`;
+}
+
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  const requestId = newRequestId();
+  console.info("[meta-webhook] POST received", {
+    requestId,
+    contentLength: req.headers.get("content-length"),
+    hasSignature: Boolean(req.headers.get("x-hub-signature-256")),
+    userAgent: req.headers.get("user-agent"),
+  });
+
   // Always return 200 quickly — Meta retries if it doesn't get 200 promptly
   const rawBody = await req.text();
 
@@ -104,23 +121,39 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   if (payload.object !== "page") {
+    console.info("[meta-webhook] Ignored non-page object", {
+      requestId,
+      object: payload.object ?? null,
+    });
     return NextResponse.json({ ok: true }, { status: 200 });
   }
 
+  const entryCount = payload.entry?.length ?? 0;
+  const changeCount = (payload.entry ?? []).reduce((n, e) => n + (e.changes?.length ?? 0), 0);
+  console.info("[meta-webhook] Page payload accepted", { requestId, entryCount, changeCount });
+
   // Process entries asynchronously — do not await so we return 200 immediately
-  void processLeadgenEntries(payload.entry ?? []);
+  void processLeadgenEntries(payload.entry ?? [], requestId);
 
   return NextResponse.json({ ok: true }, { status: 200 });
 }
 
 // ─── Core processing ──────────────────────────────────────────────────────────
 
-async function processLeadgenEntries(entries: MetaEntry[]): Promise<void> {
+async function processLeadgenEntries(entries: MetaEntry[], requestId: string): Promise<void> {
   for (const entry of entries) {
     for (const change of entry.changes ?? []) {
-      if (change.field !== "leadgen") continue;
+      if (!LEADGEN_WEBHOOK_FIELDS.has(change.field)) continue;
+      console.info("[meta-webhook] Processing leadgen change", {
+        requestId,
+        field: change.field,
+        page_id: change.value?.page_id,
+        leadgen_id: change.value?.leadgen_id,
+      });
       await processLeadgenEvent(change.value).catch((err) => {
         console.error("[meta-webhook] Error processing leadgen event", {
+          requestId,
+          field: change.field,
           leadgen_id: change.value?.leadgen_id,
           error: err instanceof Error ? err.message : String(err),
         });

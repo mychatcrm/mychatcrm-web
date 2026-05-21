@@ -9,6 +9,7 @@ import {
 import { SITE_URL } from "@/lib/constants";
 import { buildClientSessionForTenant } from "@/lib/server/client-session-from-tenant";
 import { verifyMetaOAuthState } from "@/lib/server/meta-oauth-state";
+import { subscribePageToLeadgenWebhooks } from "@/lib/server/meta-page-webhook-subscribe";
 
 export const dynamic = "force-dynamic";
 
@@ -397,5 +398,23 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
 
   console.info("[meta-callback] Connected Meta pages for tenant", { tenantId, pageCount: pages.length });
+
+  for (const page of pages) {
+    const sub = await subscribePageToLeadgenWebhooks(page.id, page.access_token);
+    if (sub.ok) {
+      console.info("[meta-callback] Page subscribed to leadgen webhooks", {
+        tenantId,
+        pageId: page.id,
+        subscribedFields: sub.subscribedFields,
+      });
+    } else {
+      console.warn("[meta-callback] Page leadgen webhook subscribe failed", {
+        tenantId,
+        pageId: page.id,
+        error: sub.error,
+      });
+    }
+  }
+
   return redirectToIntegracoes(req, "meta=connected", sessionRestore);
 }
