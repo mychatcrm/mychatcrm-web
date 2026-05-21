@@ -82,8 +82,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // Always return 200 quickly — Meta retries if it doesn't get 200 promptly
   const rawBody = await req.text();
 
+  const signatureBypass = process.env.WEBHOOK_SIGNATURE_BYPASS === "true";
   const appSecret = process.env.META_APP_SECRET?.trim();
-  if (appSecret) {
+  if (signatureBypass) {
+    console.warn("[meta-webhook] WEBHOOK_SIGNATURE_BYPASS=true — skipping signature check (REMOVE FOR PRODUCTION)");
+  } else if (appSecret) {
     const sig = req.headers.get("x-hub-signature-256");
     if (!verifyMetaSignature256(rawBody, sig, appSecret)) {
       console.warn("[meta-webhook] Invalid signature — ignoring");
