@@ -12,6 +12,7 @@ import {
   ChevronRight,
   FileText,
   Link2,
+  Loader2,
   Mail,
   MessageCircle,
   Phone,
@@ -31,6 +32,7 @@ import { cn } from "@/lib/utils";
 import type { Agent } from "@/lib/types";
 import type { MetaStatusPage } from "@/app/api/client/meta/status/route";
 import type { MetaFormsForm } from "@/app/api/client/meta/forms/route";
+import type { MetaFormField } from "@/app/api/client/meta/form-fields/route";
 import {
   ORGANIC_WHATSAPP_SOURCE,
   distributionLabel,
@@ -378,6 +380,8 @@ export function NewLeadRuleWizard({
   const [availableForms, setAvailableForms] = useState<MetaFormsForm[]>([]);
   const [formsLoading, setFormsLoading] = useState(false);
   const [formsError, setFormsError] = useState<string | null>(null);
+  const [autoMapLoading, setAutoMapLoading] = useState(false);
+  const [autoMapError, setAutoMapError] = useState<string | null>(null);
   const [employeesRev, setEmployeesRev] = useState(0);
   const { isLight } = usePanelAppearance();
   const distButtonRef = useRef<HTMLButtonElement>(null);
@@ -563,8 +567,50 @@ export function NewLeadRuleWizard({
     [availableForms],
   );
 
-  const applyAutoMap = useCallback(() => {
+  const applyAutoMap = useCallback(async () => {
     const src = draft.source;
+
+    // For meta_form with a specific form selected, try to fetch real fields first.
+    if (src === "meta_form" && draft.includedFormIds[0] && draft.pageId.trim()) {
+      setAutoMapLoading(true);
+      setAutoMapError(null);
+      try {
+        const res = await fetch(
+          `/api/client/meta/form-fields?form_id=${encodeURIComponent(draft.includedFormIds[0])}&page_id=${encodeURIComponent(draft.pageId)}`,
+          { credentials: "same-origin" },
+        );
+        const data = (await res.json()) as { fields?: MetaFormField[]; error?: string };
+        if (data.error) throw new Error(data.error);
+        const realFields = data.fields ?? [];
+        if (realFields.length > 0) {
+          const base: LeadFieldMapping[] = realFields.map((f) => ({
+            id: mappingId(),
+            sourceKey: f.key,
+            sourceLabel: f.label || f.key,
+            kind: "form" as const,
+            crmField: inferCrmTarget(f.key),
+          }));
+          const ctx: LeadFieldMapping[] = CONTEXT_FIELDS.map((c) => ({
+            id: mappingId(),
+            sourceKey: c.key,
+            sourceLabel: c.label,
+            kind: "context" as const,
+            crmField: inferCrmTarget(c.key),
+          }));
+          setDraft((d) => ({ ...d, mappings: [...base, ...ctx] }));
+          setMapBannerOpen(true);
+          return;
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Erro ao buscar campos do formulário";
+        setAutoMapError(msg);
+        // Fall through to demo catalog below
+      } finally {
+        setAutoMapLoading(false);
+      }
+    }
+
+    // Fallback: demo catalog (also used for non-meta sources and when API fails)
     const formCatalog = catalogForSource(src);
     const base: LeadFieldMapping[] = formCatalog.map((f) => ({
       id: mappingId(),
@@ -585,7 +631,7 @@ export function NewLeadRuleWizard({
         : [];
     setDraft((d) => ({ ...d, mappings: [...base, ...ctx] }));
     setMapBannerOpen(true);
-  }, [draft.source]);
+  }, [draft.source, draft.includedFormIds, draft.pageId]);
 
   /** Ao entrar em Mapeamento vindo da Entrada: preenche o catálogo automaticamente se ainda não houver linhas (evita esquecimento; regras já com mapeamento não são sobrescritas). */
   useEffect(() => {
@@ -595,7 +641,7 @@ export function NewLeadRuleWizard({
     if (step !== 1 || prev !== 0) return;
     if (!draft.source) return;
     if (draft.mappings.length > 0) return;
-    applyAutoMap();
+    void applyAutoMap();
   }, [open, step, draft.source, draft.mappings.length, applyAutoMap]);
 
   const formMappings = useMemo(() => draft.mappings.filter((m) => m.kind === "form"), [draft.mappings]);
@@ -1503,10 +1549,15 @@ export function NewLeadRuleWizard({
                     type="button"
                     size="sm"
                     variant="secondary"
+                    disabled={autoMapLoading}
                     className={cn("font-semibold", isLight ? "border-red-800/25 bg-white text-red-900 hover:bg-red-50" : "border-red-300/20 bg-red-950/80 text-red-50 hover:bg-red-900/60")}
-                    onClick={applyAutoMap}
+                    onClick={() => { void applyAutoMap(); }}
                   >
-                    Mapear automaticamente
+                    {autoMapLoading ? (
+                      <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />A buscar campos…</>
+                    ) : (
+                      "Mapear automaticamente"
+                    )}
                   </Button>
                   <Button
                     type="button"
@@ -1520,10 +1571,26 @@ export function NewLeadRuleWizard({
                 </div>
               </div>
             ) : null}
+            {autoMapError ? (
+              <p className="flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                Não foi possível buscar campos reais: {autoMapError}. Catálogo demo aplicado.
+              </p>
+            ) : null}
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs font-semibold uppercase tracking-wide text-content-faint">Mapeamento de campos</p>
-              <Button type="button" size="sm" variant="outline" onClick={applyAutoMap}>
-                Mapear automaticamente
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={autoMapLoading}
+                onClick={() => { void applyAutoMap(); }}
+              >
+                {autoMapLoading ? (
+                  <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />A buscar campos…</>
+                ) : (
+                  "Mapear automaticamente"
+                )}
               </Button>
             </div>
             <ul className="space-y-2">
