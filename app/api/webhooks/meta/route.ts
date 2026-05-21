@@ -180,18 +180,23 @@ async function processLeadgenEvent(value: LeadgenValue): Promise<void> {
   if (page_id) leadMetadata.meta_page_id = page_id;
   if (email) leadMetadata.email = email;
 
-  const { data: upsertedLead, error: upsertErr } = await sb
+  const { data: existingLead } = await sb
     .from("leads")
-    .upsert(
-      {
+    .select("id, created_at, campaign_active, agent_id")
+    .eq("tenant_id", tenant_id)
+    .eq("phone", phone)
+    .maybeSingle();
+
+  const isNewLead = !existingLead;
+
+  const upsertPayload = isNewLead
+    ? {
         tenant_id,
         phone,
         name: fullName,
         email: email ?? undefined,
         source: "lead_ads",
         agent_id: agentId,
-        // Campaign priority fields — always updated on new Lead Ads events so that
-        // a new campaign overwrites a previous one for the same phone number.
         campaign_agent_id: agentId,
         campaign_active: true,
         campaign_rule_id: routing.ruleId ?? null,
@@ -199,12 +204,25 @@ async function processLeadgenEvent(value: LeadgenValue): Promise<void> {
         rule_id: routing.ruleId,
         profile_metadata: leadMetadata,
         last_seen: new Date().toISOString(),
-      },
-      {
-        onConflict: "tenant_id,phone",
-        ignoreDuplicates: false,
-      },
-    )
+      }
+    : {
+        tenant_id,
+        phone,
+        name: fullName,
+        email: email ?? undefined,
+        source: "lead_ads",
+        rule_id: routing.ruleId,
+        campaign_rule_id: routing.ruleId ?? null,
+        profile_metadata: leadMetadata,
+        last_seen: new Date().toISOString(),
+      };
+
+  const { data: upsertedLead, error: upsertErr } = await sb
+    .from("leads")
+    .upsert(upsertPayload, {
+      onConflict: "tenant_id,phone",
+      ignoreDuplicates: false,
+    })
     .select("id")
     .maybeSingle();
 
@@ -212,6 +230,13 @@ async function processLeadgenEvent(value: LeadgenValue): Promise<void> {
     console.error("[meta-webhook] Failed to upsert lead", { error: upsertErr.message, phone });
   } else {
     console.info("[meta-webhook] Lead upserted", { lead_id: upsertedLead?.id, phone, agentId });
+  }
+
+  if (!isNewLead) {
+    console.log(
+      `[Meta Webhook] Lead já existente (${phone}) — agente não acionado para evitar contato com lead em atendimento`,
+    );
+    return;
   }
 
   // 6. Send initial WhatsApp message via Evolution
