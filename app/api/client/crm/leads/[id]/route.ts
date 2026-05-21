@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 
 const BASE_LEAD_SELECT = "id, tenant_id, name, phone, email, source, status, notes, agent_id, last_seen, last_message_at, created_at, updated_at";
 const LEAD_SELECT_WITH_FUNNEL = `${BASE_LEAD_SELECT}, crm_funnel_id, owner_employee_id`;
+const LEAD_SELECT_WITH_PROFILE = `${LEAD_SELECT_WITH_FUNNEL}, profile_metadata`;
 const MISSING_COLUMN_CODES = new Set(["42703", "PGRST204"]);
 
 type LeadRow = {
@@ -27,6 +28,7 @@ type LeadRow = {
   updated_at: string | null;
   crm_funnel_id?: string | null;
   owner_employee_id?: string | null;
+  profile_metadata?: Record<string, unknown> | null;
 };
 
 function isMissingColumnError(error: { code?: string; message?: string } | null | undefined): boolean {
@@ -123,6 +125,56 @@ function leadPayloadToUpdate(body: Record<string, unknown>) {
   }
 
   return patch;
+}
+
+export async function GET(
+  _request: Request,
+  { params }: { params: { id: string } },
+) {
+  const session = await getClientSessionFromCookies();
+  if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  if (!params.id) return NextResponse.json({ error: "id em falta" }, { status: 400 });
+
+  const sb = createSupabaseServiceClient();
+  const initial = await sb
+    .from("leads")
+    .select(LEAD_SELECT_WITH_PROFILE)
+    .eq("tenant_id", session.tenantId)
+    .eq("id", params.id)
+    .maybeSingle();
+  let row = initial.data as LeadRow | null;
+  let error = initial.error;
+
+  if (isMissingColumnError(error)) {
+    const fallback = await sb
+      .from("leads")
+      .select(LEAD_SELECT_WITH_FUNNEL)
+      .eq("tenant_id", session.tenantId)
+      .eq("id", params.id)
+      .maybeSingle();
+    row = (fallback.data as LeadRow | null) ?? null;
+    error = fallback.error;
+  }
+
+  if (error) {
+    console.error("[api/client/crm/leads] GET", error.code, error.message);
+    return NextResponse.json({ error: "Erro ao carregar lead." }, { status: 503 });
+  }
+  if (!row) return NextResponse.json({ error: "Lead não encontrado." }, { status: 404 });
+
+  const ownerNamesById = new Map(
+    (await readTeamMembersFromDb(session.tenantId, session.email)).map((employee) => [employee.id, employee.nome]),
+  );
+  const profileMetadata =
+    row.profile_metadata && typeof row.profile_metadata === "object" && !Array.isArray(row.profile_metadata)
+      ? row.profile_metadata
+      : {};
+
+  return NextResponse.json({
+    lead: rowToClientLead(row, ownerNamesById),
+    source: row.source?.trim() || null,
+    profile_metadata: profileMetadata,
+  });
 }
 
 export async function PUT(

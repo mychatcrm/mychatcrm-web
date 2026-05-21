@@ -147,7 +147,11 @@ async function processLeadgenEvent(value: LeadgenValue): Promise<void> {
     return;
   }
 
-  const { tenant_id, page_access_token } = conn;
+  const { tenant_id, page_access_token, page_name: connPageName } = conn as {
+    tenant_id: string;
+    page_access_token: string;
+    page_name?: string | null;
+  };
 
   // 2. Fetch lead details from Graph API
   const lead = await fetchGraphLead(leadgen_id, page_access_token);
@@ -173,16 +177,29 @@ async function processLeadgenEvent(value: LeadgenValue): Promise<void> {
   const routing = await resolveAgentForLead(sb, tenant_id, form_id ?? "", page_id);
   const agentId = routing.agentId;
 
-  // 5. Upsert lead in CRM
-  const leadMetadata: Record<string, unknown> = { source: "lead_ads" };
-  if (form_id) leadMetadata.meta_form_id = form_id;
-  if (ad_id) leadMetadata.meta_ad_id = ad_id;
-  if (page_id) leadMetadata.meta_page_id = page_id;
-  if (email) leadMetadata.email = email;
+  // 5. Upsert lead in CRM — profile_metadata com todos os campos do formulário
+  const [formName, adContext] = await Promise.all([
+    form_id ? fetchGraphObjectField(form_id, "name", page_access_token) : Promise.resolve(null),
+    ad_id ? fetchGraphAdContext(ad_id, page_access_token) : Promise.resolve(null),
+  ]);
+
+  const questionLabels = form_id ? await fetchFormQuestionLabels(form_id, page_access_token) : new Map<string, string>();
+
+  const leadMetadata = buildLeadProfileMetadata({
+    fieldData: lead.field_data ?? [],
+    formId: form_id,
+    formName,
+    adId: ad_id,
+    pageId: page_id,
+    pageName: connPageName?.trim() || null,
+    campaignName: adContext?.campaignName ?? null,
+    adName: adContext?.adName ?? null,
+    questionLabels,
+  });
 
   const { data: existingLead } = await sb
     .from("leads")
-    .select("id, created_at, campaign_active, agent_id")
+    .select("id, created_at, campaign_active, agent_id, profile_metadata")
     .eq("tenant_id", tenant_id)
     .eq("phone", phone)
     .maybeSingle();
@@ -213,7 +230,7 @@ async function processLeadgenEvent(value: LeadgenValue): Promise<void> {
         source: "lead_ads",
         rule_id: routing.ruleId,
         campaign_rule_id: routing.ruleId ?? null,
-        profile_metadata: leadMetadata,
+        profile_metadata: mergeLeadProfileMetadata(existingLead?.profile_metadata, leadMetadata),
         last_seen: new Date().toISOString(),
       };
 
@@ -369,6 +386,139 @@ function parseFieldData(fieldData: GraphLeadFieldData[]): Record<string, string>
     }
   }
   return out;
+}
+
+type LeadFormFieldEntry = { key: string; label: string; value: string };
+
+function humanizeFieldKeyAsLabel(key: string): string {
+  const trimmed = key.trim();
+  if (!trimmed) return key;
+  if (/[A-Za-zÀ-ÿ]/.test(trimmed) && trimmed.includes(" ")) return trimmed;
+  return trimmed
+    .replace(/_/g, " ")
+    .replace(/\?/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\w/u, (c) => c.toUpperCase());
+}
+
+function buildFormFieldsFromFieldData(
+  fieldData: GraphLeadFieldData[],
+  questionLabels: Map<string, string>,
+): LeadFormFieldEntry[] {
+  const rows: LeadFormFieldEntry[] = [];
+  for (const f of fieldData) {
+    const key = f.name?.trim();
+    if (!key || !Array.isArray(f.values) || f.values.length === 0) continue;
+    const value = f.values.map((v) => String(v).trim()).filter(Boolean).join(", ");
+    if (!value) continue;
+    rows.push({
+      key,
+      label: questionLabels.get(key) ?? humanizeFieldKeyAsLabel(key),
+      value,
+    });
+  }
+  return rows;
+}
+
+function buildLeadProfileMetadata(params: {
+  fieldData: GraphLeadFieldData[];
+  formId?: string;
+  formName: string | null;
+  adId?: string;
+  pageId: string;
+  pageName: string | null;
+  campaignName: string | null;
+  adName: string | null;
+  questionLabels: Map<string, string>;
+}): Record<string, unknown> {
+  const meta: Record<string, unknown> = {
+    source: "lead_ads",
+    form_fields: buildFormFieldsFromFieldData(params.fieldData, params.questionLabels),
+  };
+  if (params.formId) meta.meta_form_id = params.formId;
+  if (params.formName) meta.meta_form_name = params.formName;
+  if (params.adId) meta.meta_ad_id = params.adId;
+  if (params.adName) meta.meta_ad_name = params.adName;
+  if (params.pageId) meta.meta_page_id = params.pageId;
+  if (params.pageName) meta.meta_page_name = params.pageName;
+  if (params.campaignName) meta.meta_campaign_name = params.campaignName;
+  return meta;
+}
+
+function mergeLeadProfileMetadata(
+  previous: unknown,
+  next: Record<string, unknown>,
+): Record<string, unknown> {
+  const prev =
+    previous && typeof previous === "object" && !Array.isArray(previous)
+      ? (previous as Record<string, unknown>)
+      : {};
+  return { ...prev, ...next };
+}
+
+async function fetchGraphObjectField(
+  objectId: string,
+  field: string,
+  pageAccessToken: string,
+): Promise<string | null> {
+  try {
+    const url = `https://graph.facebook.com/v19.0/${encodeURIComponent(objectId)}?fields=${encodeURIComponent(field)}&access_token=${encodeURIComponent(pageAccessToken)}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+    if (!res.ok) return null;
+    const data = (await res.json()) as Record<string, unknown>;
+    const value = data[field];
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchGraphAdContext(
+  adId: string,
+  pageAccessToken: string,
+): Promise<{ adName: string | null; campaignName: string | null }> {
+  try {
+    const url = `https://graph.facebook.com/v19.0/${encodeURIComponent(adId)}?fields=name,campaign{name}&access_token=${encodeURIComponent(pageAccessToken)}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+    if (!res.ok) return { adName: null, campaignName: null };
+    const data = (await res.json()) as {
+      name?: string;
+      campaign?: { name?: string };
+    };
+    return {
+      adName: typeof data.name === "string" && data.name.trim() ? data.name.trim() : null,
+      campaignName:
+        typeof data.campaign?.name === "string" && data.campaign.name.trim() ? data.campaign.name.trim() : null,
+    };
+  } catch {
+    return { adName: null, campaignName: null };
+  }
+}
+
+async function fetchFormQuestionLabels(formId: string, pageAccessToken: string): Promise<Map<string, string>> {
+  const labels = new Map<string, string>();
+  try {
+    const url = `https://graph.facebook.com/v19.0/${encodeURIComponent(formId)}?fields=questions{key,label}&access_token=${encodeURIComponent(pageAccessToken)}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+    if (!res.ok) return labels;
+    const raw = (await res.json()) as {
+      questions?: Array<{ key?: string; label?: string }> | { data?: Array<{ key?: string; label?: string }> };
+    };
+    const list = Array.isArray(raw.questions)
+      ? raw.questions
+      : Array.isArray(raw.questions?.data)
+        ? raw.questions.data
+        : [];
+    for (const q of list) {
+      const key = q.key?.trim();
+      const label = q.label?.trim();
+      if (key && label) labels.set(key, label);
+    }
+  } catch {
+    return labels;
+  }
+  return labels;
 }
 
 /** Strips formatting from a phone string and ensures E.164-ish format with country code. */
