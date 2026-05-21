@@ -697,6 +697,15 @@ export function NewLeadRuleWizard({
     [draft.mappings, draft.source],
   );
 
+  /**
+   * Ref estável para applyCatalogMappings — atualizado em cada render.
+   * Permite o useEffect de fetch usá-lo sem incluí-lo no array de dependências,
+   * evitando um loop infinito: fetch sucesso → draft.mappings muda →
+   * applyCatalogMappings nova referência → effect re-executa → novo fetch → …
+   */
+  const applyCatalogMappingsFn = useRef(applyCatalogMappings);
+  applyCatalogMappingsFn.current = applyCatalogMappings;
+
   const refazerMapeamentoAutomatico = useCallback(() => {
     if (draft.source === "meta_form" && metaFormFieldsMeta.length > 0) {
       setDraft((d) => ({
@@ -722,7 +731,7 @@ export function NewLeadRuleWizard({
       setMetaFormFieldsMeta([]);
       setFieldsFetchError(null);
       setFieldsFetchLoading(false);
-      if (draft.mappings.length === 0) applyCatalogMappings(true);
+      if (draft.mappings.length === 0) applyCatalogMappingsFn.current(true);
       return;
     }
 
@@ -775,7 +784,10 @@ export function NewLeadRuleWizard({
     return () => {
       cancelled = true;
     };
-  }, [applyCatalogMappings, draft.includedFormIds, draft.pageId, draft.source, draft.useAllForms, open, step]);
+  // applyCatalogMappings é intencionalmente omitido: é lido via ref estável (applyCatalogMappingsFn)
+  // para evitar loop fetch → draft.mappings muda → nova ref → effect re-executa.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.includedFormIds, draft.pageId, draft.source, draft.useAllForms, open, step]);
 
   const formMappings = useMemo(() => draft.mappings.filter((m) => m.kind === "form"), [draft.mappings]);
   const contextMappings = useMemo(() => draft.mappings.filter((m) => m.kind === "context"), [draft.mappings]);

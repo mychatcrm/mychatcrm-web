@@ -66,6 +66,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   const { page_access_token } = connection as { page_access_token: string };
 
+  console.info("[meta/form-fields] fetching", { formId, pageId, tenantId: session.tenantId });
+
   // Fetch the form questions from the Meta Graph API.
   const url = `${GRAPH}/${encodeURIComponent(formId)}?fields=questions&access_token=${encodeURIComponent(page_access_token)}`;
 
@@ -78,7 +80,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: `Erro de rede ao contactar a Meta: ${msg}` }, { status: 502 });
   }
 
-  const raw = (await res.json()) as GraphFormResponse;
+  let raw: GraphFormResponse;
+  try {
+    raw = (await res.json()) as GraphFormResponse;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[meta/form-fields] JSON parse error", { status: res.status, msg });
+    return NextResponse.json({ error: "Resposta inválida da Meta API (JSON inválido)" }, { status: 502 });
+  }
 
   if (raw.error) {
     console.error("[meta/form-fields] Meta API error", raw.error.message, raw.error.code);
@@ -92,6 +101,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       label: q.label ?? q.key!,
       type: q.type ?? "CUSTOM",
     }));
+
+  console.info("[meta/form-fields] ok", { formId, fieldCount: fields.length });
 
   return NextResponse.json({ fields } satisfies MetaFormFieldsResponse);
 }
