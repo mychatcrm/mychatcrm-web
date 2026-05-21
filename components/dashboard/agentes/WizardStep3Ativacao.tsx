@@ -3,17 +3,15 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
-import { Check, FileText } from "lucide-react";
+import { Check, FileText, Search } from "lucide-react";
 import { WhatsAppGlyph } from "@/components/dashboard/crm/crm-phone";
-import { Badge } from "@/components/ui/Badge";
+import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
+import { PanelSelect as Select } from "@/components/panel/ui/PanelSelect";
+import type { MetaFormsForm } from "@/app/api/client/meta/forms/route";
+import type { MetaStatusPage } from "@/app/api/client/meta/status/route";
 import type { AgentOrigin } from "@/lib/types";
 import { getWizardOrigin, normalizeOrigensForWizard, type AgentWizardDraft } from "@/lib/agents";
-import {
-  ORGANIC_WHATSAPP_SOURCE,
-  sourceLabel,
-  type LeadDistributionRule,
-  type LeadDistributionType,
-} from "@/lib/lead-distribution-rules";
+import { ORGANIC_WHATSAPP_SOURCE, type LeadDistributionRule } from "@/lib/lead-distribution-rules";
 import { cn } from "@/lib/utils";
 
 function updateOrigin(draft: AgentWizardDraft, type: AgentOrigin["tipo"], patch: Partial<AgentOrigin>) {
@@ -35,198 +33,419 @@ function setExclusiveActivationMode(
   return { ...draft, origens };
 }
 
-const AGENT_DISTRIBUTION_TYPES: LeadDistributionType[] = [
-  "specific_agents",
-  "automation_agent",
-  "round_robin",
-  "all_agents",
-];
-
-function ruleLinksAgent(rule: LeadDistributionRule, agentId: string): boolean {
-  return rule.agentIds.includes(agentId);
+function normalizeFormSearchText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase();
 }
 
-function buildRulePayloadForLink(
-  rule: LeadDistributionRule,
-  agentId: string,
-  linked: boolean,
-): LeadDistributionRule {
-  const hasAgentDistribution = AGENT_DISTRIBUTION_TYPES.includes(rule.distributionType);
-  let distributionType = rule.distributionType;
-  if (!hasAgentDistribution) {
-    distributionType = "automation_agent";
-  }
-
-  let agentIds = rule.agentIds;
-  if (linked) {
-    if (distributionType === "automation_agent") {
-      agentIds = [agentId];
-    } else if (!agentIds.includes(agentId)) {
-      agentIds = [...agentIds, agentId];
+function getFormsUsedByOtherAgents(rules: LeadDistributionRule[], agentId: string): Set<string> {
+  const blocked = new Set<string>();
+  for (const rule of rules) {
+    if (rule.source !== "meta_form") continue;
+    const hasOtherAgent = rule.agentIds.some((id) => id !== agentId);
+    if (!hasOtherAgent) continue;
+    for (const formId of rule.includedFormIds ?? []) {
+      blocked.add(formId);
     }
-  } else {
-    agentIds = agentIds.filter((id) => id !== agentId);
   }
-
-  return { ...rule, distributionType, agentIds };
+  return blocked;
 }
 
-function LeadRulesSelector({
+function getFormsLinkedToAgent(rules: LeadDistributionRule[], agentId: string): Set<string> {
+  const linked = new Set<string>();
+  for (const rule of rules) {
+    if (rule.source !== "meta_form") continue;
+    if (!rule.agentIds.includes(agentId)) continue;
+    for (const formId of rule.includedFormIds ?? []) {
+      linked.add(formId);
+    }
+  }
+  return linked;
+}
+
+function findRuleForAgentForm(
+  rules: LeadDistributionRule[],
+  agentId: string,
+  formId: string,
+): LeadDistributionRule | undefined {
+  return rules.find(
+    (r) =>
+      r.source === "meta_form" &&
+      r.agentIds.includes(agentId) &&
+      (r.includedFormIds ?? []).includes(formId),
+  );
+}
+
+function MetaFormsSelector({
   agentId,
-  onLinkedChange,
+  draft,
+  onChange,
 }: {
   agentId: string | null;
-  onLinkedChange: (hasLinked: boolean) => void;
+  draft: AgentWizardDraft;
+  onChange: (next: AgentWizardDraft) => void;
 }) {
-  const [availableRules, setAvailableRules] = useState<LeadDistributionRule[]>([]);
+  const leadAds = getWizardOrigin(draft, "lead_ads");
+
+  const [pages, setPages] = useState<MetaStatusPage[]>([]);
+  const [pagesLoading, setPagesLoading] = useState(true);
+  const [pagesError, setPagesError] = useState<string | null>(null);
+  const [pageId, setPageId] = useState("");
+
+  const [availableForms, setAvailableForms] = useState<MetaFormsForm[]>([]);
+  const [formsLoading, setFormsLoading] = useState(false);
+  const [formsError, setFormsError] = useState<string | null>(null);
+
+  const [leadRules, setLeadRules] = useState<LeadDistributionRule[]>([]);
   const [rulesLoading, setRulesLoading] = useState(true);
-  const [rulesError, setRulesError] = useState<string | null>(null);
-  const [togglingRuleId, setTogglingRuleId] = useState<string | null>(null);
 
-  const activeRules = useMemo(
-    () =>
-      availableRules
-        .filter((r) => r.active !== false && r.source !== ORGANIC_WHATSAPP_SOURCE)
-        .sort((a, b) => a.order - b.order),
-    [availableRules],
+  const [formSearch, setFormSearch] = useState("");
+  const [togglingFormId, setTogglingFormId] = useState<string | null>(null);
+  const [formsActionError, setFormsActionError] = useState<string | null>(null);
+
+  const selectedFormIds = useMemo(() => getFormsLinkedToAgent(leadRules, agentId ?? ""), [leadRules, agentId]);
+
+  const blockedFormIds = useMemo(
+    () => (agentId ? getFormsUsedByOtherAgents(leadRules, agentId) : new Set<string>()),
+    [agentId, leadRules],
   );
 
-  const linkedCount = useMemo(
-    () => (agentId ? activeRules.filter((r) => ruleLinksAgent(r, agentId)).length : 0),
-    [activeRules, agentId],
-  );
-
-  useEffect(() => {
-    onLinkedChange(linkedCount > 0);
-  }, [linkedCount, onLinkedChange]);
-
-  const fetchRules = useCallback(async () => {
+  const fetchLeadRules = useCallback(async () => {
     setRulesLoading(true);
-    setRulesError(null);
     try {
       const res = await fetch("/api/client/lead-rules", { credentials: "same-origin" });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? "Não foi possível carregar as regras.");
-      }
+      if (!res.ok) throw new Error("Não foi possível carregar regras.");
       const data = (await res.json()) as { rules?: LeadDistributionRule[] };
-      setAvailableRules(data.rules ?? []);
-    } catch (err) {
-      setRulesError(err instanceof Error ? err.message : "Erro ao carregar regras.");
-      setAvailableRules([]);
+      setLeadRules(data.rules ?? []);
+    } catch {
+      setLeadRules([]);
     } finally {
       setRulesLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void fetchRules();
-  }, [fetchRules]);
+    void fetchLeadRules();
+  }, [fetchLeadRules]);
 
-  const toggleRule = async (rule: LeadDistributionRule) => {
-    if (!agentId) return;
-    const linked = ruleLinksAgent(rule, agentId);
-    const nextRule = buildRulePayloadForLink(rule, agentId, !linked);
-
-    setTogglingRuleId(rule.id);
-    setRulesError(null);
-    try {
-      const res = await fetch(`/api/client/lead-rules/${encodeURIComponent(rule.id)}`, {
-        method: "PUT",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(nextRule),
+  useEffect(() => {
+    let cancelled = false;
+    setPagesLoading(true);
+    setPagesError(null);
+    fetch("/api/client/meta/status", { credentials: "same-origin" })
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? "Não foi possível carregar páginas Meta.");
+        }
+        return res.json() as Promise<{ connected?: boolean; pages?: MetaStatusPage[] }>;
+      })
+      .then((data) => {
+        if (cancelled) return;
+        const list = data.pages ?? [];
+        setPages(list);
+        setPageId((current) => {
+          if (list.length === 1) return list[0]!.page_id;
+          if (current && list.some((p) => p.page_id === current)) return current;
+          return list[0]?.page_id ?? "";
+        });
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setPagesError(err instanceof Error ? err.message : "Erro ao carregar Meta.");
+          setPages([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPagesLoading(false);
       });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? "Não foi possível atualizar a regra.");
-      }
-      const data = (await res.json()) as { rule?: LeadDistributionRule };
-      if (data.rule) {
-        setAvailableRules((prev) => prev.map((r) => (r.id === data.rule!.id ? data.rule! : r)));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pageId.trim()) {
+      setAvailableForms([]);
+      setFormsError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setFormsLoading(true);
+    setFormsError(null);
+    fetch(`/api/client/meta/forms?page_id=${encodeURIComponent(pageId)}`, { credentials: "same-origin" })
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? "Não foi possível carregar formulários.");
+        }
+        return res.json() as Promise<{ forms?: MetaFormsForm[] }>;
+      })
+      .then((data) => {
+        if (!cancelled) setAvailableForms(data.forms ?? []);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setFormsError(err instanceof Error ? err.message : "Erro ao carregar formulários.");
+          setAvailableForms([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setFormsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pageId]);
+
+  const selectedPage = pages.find((p) => p.page_id === pageId);
+
+  const updateDraftFormIdsFromRules = (rules: LeadDistributionRule[]) => {
+    if (!agentId) return;
+    const ids = [...getFormsLinkedToAgent(rules, agentId)];
+    onChange({
+      ...draft,
+      origens: updateOrigin(draft, "lead_ads", {
+        config: { ...leadAds.config, formIds: ids },
+      }),
+    });
+  };
+
+  const toggleForm = async (form: MetaFormsForm) => {
+    if (!agentId || !pageId) return;
+    const formId = form.form_id;
+    if (blockedFormIds.has(formId)) return;
+
+    const selected = selectedFormIds.has(formId);
+    setTogglingFormId(formId);
+    setFormsActionError(null);
+
+    try {
+      if (selected) {
+        const rule = findRuleForAgentForm(leadRules, agentId, formId);
+        if (!rule) {
+          await fetchLeadRules();
+          return;
+        }
+        const nextRule: LeadDistributionRule = {
+          ...rule,
+          agentIds: rule.agentIds.filter((id) => id !== agentId),
+        };
+        const res = await fetch(`/api/client/lead-rules/${encodeURIComponent(rule.id)}`, {
+          method: "PUT",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(nextRule),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? "Não foi possível actualizar a regra.");
+        }
+        const data = (await res.json()) as { rule?: LeadDistributionRule };
+        const nextRules = data.rule
+          ? leadRules.map((r) => (r.id === data.rule!.id ? data.rule! : r))
+          : leadRules;
+        setLeadRules(nextRules);
+        updateDraftFormIdsFromRules(nextRules);
       } else {
-        await fetchRules();
+        const existing = findRuleForAgentForm(leadRules, agentId, formId);
+        if (existing) {
+          updateDraftFormIdsFromRules(leadRules);
+          return;
+        }
+
+        const formName = form.form_name?.trim() || formId;
+        const res = await fetch("/api/client/lead-rules", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: `Formulário · ${formName}`,
+            source: "meta_form",
+            distributionType: "automation_agent",
+            agentIds: [agentId],
+            includedFormIds: [formId],
+            useAllForms: false,
+            pageId,
+            pageLabel: selectedPage?.page_name ?? pageId,
+            redistribution: false,
+            mappings: [],
+            employeeIds: [],
+          }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? "Não foi possível criar a regra do formulário.");
+        }
+        const data = (await res.json()) as { rule?: LeadDistributionRule };
+        const nextRules = data.rule ? [...leadRules, data.rule] : leadRules;
+        setLeadRules(nextRules);
+        updateDraftFormIdsFromRules(nextRules);
       }
     } catch (err) {
-      setRulesError(err instanceof Error ? err.message : "Erro ao atualizar a regra.");
+      setFormsActionError(err instanceof Error ? err.message : "Erro ao guardar formulário.");
     } finally {
-      setTogglingRuleId(null);
+      setTogglingFormId(null);
     }
   };
+
+  const filteredForms = useMemo(() => {
+    const query = normalizeFormSearchText(formSearch.trim());
+    return availableForms.filter((f) => {
+      if (!query) return true;
+      const label = normalizeFormSearchText(f.form_name ?? f.form_id);
+      return label.includes(query);
+    });
+  }, [availableForms, formSearch]);
+
+  if (!agentId) {
+    return (
+      <section className="min-w-0 space-y-3 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
+        <p className="text-xs font-medium text-amber-600 dark:text-amber-300/90">
+          Guarde o agente e abra novamente em modo edição para vincular formulários Meta.
+        </p>
+      </section>
+    );
+  }
 
   return (
     <section className="min-w-0 space-y-3 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
       <div>
-        <p className="text-sm font-semibold text-content">Regras de distribuição de leads</p>
+        <p className="text-sm font-semibold text-content">Formulários Meta (Lead Ads)</p>
         <p className="mt-1 text-xs leading-relaxed text-content-muted">
-          Selecione as regras do Integrações de Leads que este agente vai monitorar. Quando um novo lead chegar por essas
-          regras, este agente entra em contato automaticamente.
+          Escolha os formulários desta página. Cada formulário seleccionado cria automaticamente uma regra em Integrações de
+          Leads.
         </p>
       </div>
 
-      {!agentId ? (
-        <p className="text-xs font-medium text-amber-600 dark:text-amber-300/90">
-          Guarde o agente e abra novamente em modo edição para vincular regras de distribuição.
-        </p>
-      ) : null}
-
-      {rulesLoading ? (
-        <p className="text-xs text-content-muted">Buscando regras...</p>
-      ) : rulesError ? (
-        <p className="text-xs font-medium text-orange-600 dark:text-orange-400">{rulesError}</p>
-      ) : activeRules.length === 0 ? (
+      {pagesLoading || rulesLoading ? (
+        <p className="text-xs text-content-muted">A carregar páginas Meta…</p>
+      ) : pagesError ? (
+        <p className="text-xs font-medium text-orange-600 dark:text-orange-400">{pagesError}</p>
+      ) : !pages.length ? (
         <p className="text-xs leading-relaxed text-content-muted">
-          Nenhuma regra configurada. Crie regras em{" "}
-          <Link href="/dashboard/integracoes-leads" className="font-semibold text-primary underline-offset-2 hover:underline">
-            Integrações de Leads
+          Nenhuma página Meta conectada. Configure em{" "}
+          <Link href="/dashboard/integracoes" className="font-semibold text-primary underline-offset-2 hover:underline">
+            Integrações
           </Link>
           .
         </p>
       ) : (
-        <ul className="max-h-60 space-y-2 overflow-y-auto overscroll-contain" role="listbox" aria-label="Regras de distribuição">
-          {activeRules.map((rule) => {
-            const linked = Boolean(agentId && ruleLinksAgent(rule, agentId));
-            const busy = togglingRuleId === rule.id;
-            const originLabel = sourceLabel(rule.source);
-            const subtitle =
-              rule.source === "meta_form" && rule.pageLabel?.trim()
-                ? `${rule.name} · ${rule.pageLabel}`
-                : rule.name;
+        <>
+          {pages.length > 1 ? (
+            <div>
+              <label className="text-[11px] font-semibold text-content-muted" htmlFor="agent-meta-page-select">
+                Página do Facebook
+              </label>
+              <Select
+                id="agent-meta-page-select"
+                className="mt-1.5 min-h-[44px] rounded-xl"
+                value={pageId}
+                onChange={(e) => setPageId(e.target.value)}
+              >
+                {pages.map((p) => (
+                  <option key={p.page_id} value={p.page_id}>
+                    {p.page_name ?? p.page_id}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          ) : (
+            <p className="text-xs text-content-secondary">
+              Página: <span className="font-medium text-content">{selectedPage?.page_name ?? pageId}</span>
+            </p>
+          )}
 
-            return (
-              <li key={rule.id} className="list-none">
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={linked}
-                  disabled={!agentId || busy}
-                  onClick={() => void toggleRule(rule)}
-                  className={cn(
-                    "flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition sm:px-4",
-                    linked
-                      ? "border-[#f24400]/35 bg-[rgba(242,68,0,0.08)] ring-1 ring-inset ring-[#f24400]/30"
-                      : "border-line/80 bg-surface-deep/30 hover:bg-surface-elevated/40",
-                    (!agentId || busy) && "cursor-not-allowed opacity-60",
-                  )}
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-medium text-content">{subtitle}</span>
-                    <span className="mt-1 inline-flex flex-wrap items-center gap-2">
-                      <Badge className="border-line/80 bg-surface-card text-[10px] font-medium text-content-secondary">
-                        {originLabel}
-                      </Badge>
-                      {busy ? <span className="text-[10px] text-content-muted">A guardar…</span> : null}
-                    </span>
-                  </span>
-                  {linked ? (
-                    <Check className="h-5 w-5 shrink-0 text-[#f24400]" strokeWidth={2.5} aria-hidden />
-                  ) : null}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+          <div className="overflow-hidden rounded-xl border border-line/80 bg-surface-deep/60">
+            <div className="border-b border-line/70 p-2 sm:p-2.5">
+              <div className="relative">
+                <Search
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-content-muted"
+                  strokeWidth={2}
+                  aria-hidden
+                />
+                <Input
+                  type="search"
+                  autoComplete="off"
+                  placeholder="Buscar formulário..."
+                  value={formSearch}
+                  disabled={formsLoading || !!formsError}
+                  onChange={(e) => setFormSearch(e.target.value)}
+                  className="h-11 rounded-xl border-line bg-surface-card pl-9 text-sm"
+                />
+              </div>
+            </div>
+            <ul
+              className="max-h-60 overflow-y-auto overscroll-contain"
+              role="listbox"
+              aria-multiselectable="true"
+              aria-label="Formulários Meta"
+            >
+              {formsLoading ? (
+                <li className="px-3 py-3.5 text-xs text-content-muted">Buscando formulários...</li>
+              ) : formsError ? (
+                <li className="px-3 py-3.5 text-xs font-medium text-orange-600 dark:text-orange-400">{formsError}</li>
+              ) : !availableForms.length ? (
+                <li className="px-3 py-3.5 text-xs text-content-muted">Nenhum formulário activo nesta página</li>
+              ) : !filteredForms.length ? (
+                <li className="px-3 py-3.5 text-xs text-content-muted">Nenhum formulário encontrado para essa busca</li>
+              ) : (
+                filteredForms.map((f, i) => {
+                  const selected = selectedFormIds.has(f.form_id);
+                  const blocked = blockedFormIds.has(f.form_id);
+                  const busy = togglingFormId === f.form_id;
+
+                  return (
+                    <li key={f.form_id} className="list-none">
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={selected}
+                        disabled={blocked || busy}
+                        onClick={() => void toggleForm(f)}
+                        className={cn(
+                          "flex w-full items-center gap-3 px-3 py-3 text-left transition sm:gap-3.5 sm:px-4 sm:py-3.5",
+                          i > 0 && "border-t border-line/70",
+                          blocked
+                            ? "cursor-not-allowed bg-red-500/[0.06] text-red-800 dark:text-red-200"
+                            : selected
+                              ? "bg-[rgba(242,68,0,0.08)] ring-1 ring-inset ring-[#f24400]/30"
+                              : "hover:bg-surface-card/70",
+                          busy && "opacity-60",
+                        )}
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block font-medium text-content">{f.form_name ?? f.form_id}</span>
+                          {f.form_name && f.form_name !== f.form_id ? (
+                            <span className="mt-0.5 block truncate text-[11px] text-content-muted">{f.form_id}</span>
+                          ) : null}
+                          {blocked ? (
+                            <span className="mt-1 block text-[11px] font-semibold text-red-600 dark:text-red-400">
+                              Em uso por outro agente
+                            </span>
+                          ) : null}
+                          {busy ? <span className="mt-1 block text-[10px] text-content-muted">A guardar…</span> : null}
+                        </span>
+                        {selected && !blocked ? (
+                          <Check className="h-5 w-5 shrink-0 text-[#f24400]" strokeWidth={2.5} aria-hidden />
+                        ) : null}
+                      </button>
+                    </li>
+                  );
+                })
+              )}
+            </ul>
+          </div>
+        </>
       )}
+
+      {formsActionError ? (
+        <p className="text-xs font-medium text-orange-600 dark:text-orange-400">{formsActionError}</p>
+      ) : null}
     </section>
   );
 }
@@ -238,7 +457,6 @@ export function WizardStep3Ativacao({
 }: {
   draft: AgentWizardDraft;
   onChange: (next: AgentWizardDraft) => void;
-  /** ID do agente em edição (página ou overlay). */
   agentId?: string;
 }) {
   const pathname = usePathname();
@@ -330,9 +548,6 @@ export function WizardStep3Ativacao({
     : organico.ativo
       ? "organico"
       : null;
-
-  /** Card 1 mantém `lead_ads.ativo`; vínculos de regras não desactivam o modo formulário. */
-  const handleLinkedChange = useCallback(() => {}, []);
 
   const selectFormulario = () => {
     setOrganicError(null);
@@ -459,7 +674,7 @@ export function WizardStep3Ativacao({
       </div>
 
       {activeMode === "formulario" ? (
-        <LeadRulesSelector agentId={agentId} onLinkedChange={handleLinkedChange} />
+        <MetaFormsSelector agentId={agentId} draft={draft} onChange={onChange} />
       ) : null}
     </div>
   );
