@@ -542,7 +542,7 @@ export function CrmLeadWorkspaceModal({
                     <FileText className="h-4 w-4" aria-hidden />
                   </span>
                   <div className="min-w-0">
-                    <h3 className="text-sm font-semibold text-content">Dados do formulário</h3>
+                    <h3 className="text-sm font-semibold text-content">Informações do formulário</h3>
                     {profileMeta?.meta_form_name ? (
                       <p className="mt-0.5 text-xs text-content-muted">{profileMeta.meta_form_name}</p>
                     ) : (

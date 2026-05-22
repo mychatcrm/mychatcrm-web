@@ -337,6 +337,16 @@ async function resolveAgentCrmMoveTarget(
   return { enabled: true, funnelId, columnId };
 }
 
+/** CRM funnel/status for new leads (e.g. Meta Lead Ads) when agent has auto-move enabled. */
+export async function resolveAgentCrmFieldsForLeadInsert(
+  sb: SupabaseServiceClient,
+  params: { tenantId: string; agentId: string | null },
+): Promise<{ crm_funnel_id?: string; status?: string }> {
+  const target = await resolveAgentCrmMoveTarget(sb, params);
+  if (!target.enabled || !target.funnelId || !target.columnId) return {};
+  return { crm_funnel_id: target.funnelId, status: target.columnId };
+}
+
 function isUsefulExistingName(row: LeadRow, phone: string): boolean {
   const name = typeof row.name === "string" ? row.name.trim() : "";
   return Boolean(name && name !== phone);

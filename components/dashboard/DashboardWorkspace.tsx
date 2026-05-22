@@ -141,7 +141,7 @@ import { LembretesHub } from "./lembretes/LembretesHub";
 import { IntegracoesHub } from "./integrations/IntegracoesHub";
 import { SuporteHub } from "./suporte/SuporteHub";
 import { BillingOffersPopover } from "./BillingOffersPopover";
-import { LeadDistributionHub } from "./lead-rules/LeadDistributionHub";
+import { IntegracoesLeadsHub } from "./lead-rules/IntegracoesLeadsHub";
 import { TeamEmployeesHub } from "./equipe/TeamEmployeesHub";
 import { BotStatusToggle } from "./BotStatusToggle";
 import { typography } from "@/lib/typography";
@@ -4298,7 +4298,7 @@ export function DashboardWorkspace({
       case "conversas":
         return <OperacaoConversasHub session={session} />;
       case "integracoes-leads":
-        return <LeadDistributionHub session={session} />;
+        return <IntegracoesLeadsHub session={session} />;
       case "colaboradores":
         return <TeamEmployeesHub session={session} />;
       case "crm":
