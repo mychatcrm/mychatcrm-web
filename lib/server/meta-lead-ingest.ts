@@ -322,14 +322,21 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     .eq("message_id", initialMessageExternalId)
     .maybeSingle();
   if (existingInitialMessage?.id) {
-    await eventRecorder.step("skipped_duplicate", { reason: "same_leadgen_already_sent" });
-    await eventRecorder.patch({ whatsapp_status: "skipped", error_message: "same_leadgen_already_sent" });
+    const alreadySent = existingInitialMessage.delivery_status === "sent";
+    if (alreadySent) {
+      await eventRecorder.step("whatsapp_sent", { reason: "same_leadgen_already_sent", message_id: existingInitialMessage.id });
+      await eventRecorder.patch({ whatsapp_status: "sent", error_message: null, current_step: "whatsapp_sent" });
+    } else {
+      await eventRecorder.step("skipped_duplicate", { reason: "same_leadgen_already_sent" });
+      await eventRecorder.patch({ whatsapp_status: "skipped", error_message: "same_leadgen_already_sent" });
+    }
     console.info("[meta-webhook] Initial outreach skipped", {
       tenant_id,
       lead_id: leadId,
       phone_last4: maskPhoneLast4(phone),
       reason: "same_leadgen_already_sent",
       delivery_status: existingInitialMessage.delivery_status ?? null,
+      inbox_status: alreadySent ? "sent" : "skipped",
     });
     return;
   }
