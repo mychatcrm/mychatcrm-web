@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyMetaSignature256 } from "@/lib/integrations/whatsapp-cloud";
+import { resolveMetaAppSecret } from "@/lib/server/meta-app-secret";
 import { processMetaLeadgenEvent, type LeadgenValue } from "@/lib/server/meta-lead-ingest";
 
 export const dynamic = "force-dynamic";
@@ -61,14 +62,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const rawBody = await req.text();
 
   const signatureBypass = process.env.WEBHOOK_SIGNATURE_BYPASS === "true";
-  const appSecret = process.env.META_APP_SECRET?.trim();
+  const appSecret = resolveMetaAppSecret();
   if (signatureBypass) {
     console.warn("[meta-webhook] WEBHOOK_SIGNATURE_BYPASS=true — skipping signature check (REMOVE FOR PRODUCTION)");
   } else if (appSecret) {
     const sig = req.headers.get("x-hub-signature-256");
     if (!verifyMetaSignature256(rawBody, sig, appSecret)) {
-      console.warn("[meta-webhook] Invalid signature — ignoring");
-      return NextResponse.json({ ok: false }, { status: 200 });
+      console.warn("[meta-webhook] Invalid signature — ignoring", {
+        requestId,
+        hasSignatureHeader: Boolean(sig),
+        appSecretConfigured: true,
+        hint: "Confira META_APP_SECRET na Vercel = App Secret do app Meta (developers.facebook.com)",
+      });
+      return NextResponse.json({ ok: false, reason: "invalid_signature" }, { status: 200 });
     }
   } else {
     console.warn("[meta-webhook] META_APP_SECRET not set — skipping signature check");

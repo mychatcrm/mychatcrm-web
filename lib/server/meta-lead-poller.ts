@@ -1,5 +1,6 @@
 import { createHmac } from "crypto";
 import type { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { processMetaLeadgenEvent } from "@/lib/server/meta-lead-ingest";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -81,14 +82,6 @@ export function buildSignedMetaWebhookHeaders(rawBody: string, appSecret: string
   };
 }
 
-function getPublicWebhookUrl(): string {
-  const base =
-    process.env.MYCHATCRM_PUBLIC_BASE_URL?.trim() ||
-    process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
-    "https://www.mychatcrm.com.br";
-  return `${base.replace(/\/+$/, "")}/api/webhooks/meta`;
-}
-
 function getPollWindowMinutes(): number {
   const raw = Number(process.env.META_LEAD_POLL_WINDOW_MINUTES);
   return Number.isFinite(raw) && raw > 0 ? Math.min(raw, 24 * 60) : DEFAULT_POLL_WINDOW_MINUTES;
@@ -137,63 +130,37 @@ async function fetchGraphLeadFormsWithRecentLeads(pageId: string, pageAccessToke
   return forms;
 }
 
-async function forwardLeadToWebhook(params: {
-  webhookUrl: string;
-  appSecret: string;
+async function ingestLeadFromPoller(params: {
   pageId: string;
   formId: string;
   lead: GraphLeadRef;
 }): Promise<boolean> {
+  const leadgenId = params.lead.id?.trim();
+  if (!leadgenId) return false;
   const createdAtMs = metaLeadCreatedAtMs(params.lead.created_time);
-  const body = JSON.stringify({
-    object: "page",
-    entry: [
-      {
-        id: params.pageId,
-        time: createdAtMs ? Math.floor(createdAtMs / 1000) : Math.floor(Date.now() / 1000),
-        changes: [
-          {
-            field: "leadgen",
-            value: {
-              form_id: params.formId,
-              leadgen_id: params.lead.id,
-              page_id: params.pageId,
-              ad_id: params.lead.ad_id ?? undefined,
-              created_time: createdAtMs ? Math.floor(createdAtMs / 1000) : undefined,
-            },
-          },
-        ],
-      },
-    ],
-  });
-
-  const res = await fetch(params.webhookUrl, {
-    method: "POST",
-    headers: buildSignedMetaWebhookHeaders(body, params.appSecret),
-    body,
-    signal: AbortSignal.timeout(30_000),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    console.warn("[meta-lead-poller] webhook_forward_failed", {
+  try {
+    await processMetaLeadgenEvent({
+      form_id: params.formId,
+      leadgen_id: leadgenId,
+      page_id: params.pageId,
+      ad_id: params.lead.ad_id ?? undefined,
+      created_time: createdAtMs ? Math.floor(createdAtMs / 1000) : undefined,
+    });
+    return true;
+  } catch (err) {
+    console.warn("[meta-lead-poller] ingest_failed", {
       page_id: params.pageId,
       form_id: params.formId,
-      leadgen_id: params.lead.id,
-      status: res.status,
-      body: text.slice(0, 180),
+      leadgen_id: leadgenId,
+      error: err instanceof Error ? err.message : String(err),
     });
     return false;
   }
-
-  return true;
 }
 
 async function processConnection(params: {
   sb: SupabaseServiceClient;
   connection: MetaConnectionRow;
-  appSecret: string;
-  webhookUrl: string;
   nowMs: number;
   windowMinutes: number;
 }): Promise<PollerConnectionResult> {
@@ -252,9 +219,7 @@ async function processConnection(params: {
         continue;
       }
 
-      const ok = await forwardLeadToWebhook({
-        webhookUrl: params.webhookUrl,
-        appSecret: params.appSecret,
+      const ok = await ingestLeadFromPoller({
         pageId: params.connection.page_id,
         formId,
         lead,
@@ -273,13 +238,7 @@ async function processConnection(params: {
 export async function processRecentMetaLeadAds(params: {
   sb: SupabaseServiceClient;
   now?: Date;
-  webhookUrl?: string;
 }): Promise<MetaLeadPollerResult> {
-  const appSecret = process.env.META_APP_SECRET?.trim();
-  if (!appSecret) {
-    throw new Error("META_APP_SECRET not configured");
-  }
-
   const { data: connections, error } = await params.sb
     .from("meta_connections")
     .select("tenant_id, page_id, page_access_token")
@@ -300,15 +259,12 @@ export async function processRecentMetaLeadAds(params: {
   const details: PollerConnectionResult[] = [];
   const nowMs = (params.now ?? new Date()).getTime();
   const windowMinutes = getPollWindowMinutes();
-  const webhookUrl = params.webhookUrl ?? getPublicWebhookUrl();
 
   for (const connection of uniqueConnections) {
     try {
       const detail = await processConnection({
         sb: params.sb,
         connection,
-        appSecret,
-        webhookUrl,
         nowMs,
         windowMinutes,
       });
