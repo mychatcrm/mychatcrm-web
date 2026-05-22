@@ -21,7 +21,7 @@ import {
   buildWhatsappRemoteJid,
   extractLeadName,
   extractLeadPhone,
-  shouldSendMetaInitialOutreach,
+  shouldSkipMetaOutreachForHumanAttending,
 } from "@/lib/server/meta-lead-processing";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
@@ -221,6 +221,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         rule_id: routing.ruleId,
         profile_metadata: leadMetadata,
         last_seen: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
         ...crmExtras,
       }
     : {
@@ -237,6 +238,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         campaign_rule_id: routing.ruleId ?? null,
         profile_metadata: mergeLeadProfileMetadata(existingLead?.profile_metadata, leadMetadata),
         last_seen: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
         ...crmExtras,
       };
 
@@ -300,22 +302,6 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     return;
   }
 
-  const outreachDecision = shouldSendMetaInitialOutreach(
-    upsertedLead?.profile_metadata ?? upsertPayload.profile_metadata,
-    leadgen_id,
-  );
-  if (!outreachDecision.shouldSend) {
-    await eventRecorder.step("skipped_duplicate", { reason: outreachDecision.reason });
-    await eventRecorder.patch({ whatsapp_status: "skipped", error_message: outreachDecision.reason });
-    console.info("[meta-webhook] Initial outreach skipped", {
-      tenant_id,
-      lead_id: leadId,
-      phone_last4: maskPhoneLast4(phone),
-      reason: outreachDecision.reason,
-    });
-    return;
-  }
-
   const remoteJid = buildWhatsappRemoteJid(phone);
   const evoNumber = remoteJidToEvoNumber(remoteJid);
   if (!evoNumber) {
@@ -336,14 +322,30 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     .eq("message_id", initialMessageExternalId)
     .maybeSingle();
   if (existingInitialMessage?.id) {
-    await eventRecorder.step("skipped_duplicate", { reason: "initial_message_already_exists" });
-    await eventRecorder.patch({ whatsapp_status: "skipped", error_message: "initial_message_already_exists" });
+    await eventRecorder.step("skipped_duplicate", { reason: "same_leadgen_already_sent" });
+    await eventRecorder.patch({ whatsapp_status: "skipped", error_message: "same_leadgen_already_sent" });
     console.info("[meta-webhook] Initial outreach skipped", {
       tenant_id,
       lead_id: leadId,
       phone_last4: maskPhoneLast4(phone),
-      reason: "initial_message_already_exists",
+      reason: "same_leadgen_already_sent",
       delivery_status: existingInitialMessage.delivery_status ?? null,
+    });
+    return;
+  }
+
+  const humanAttending = await shouldSkipMetaOutreachForHumanAttending({
+    sb,
+    tenantId: tenant_id,
+    remoteJid,
+  });
+  if (humanAttending) {
+    await eventRecorder.step("skipped_human_attending", { reason: "human_attending_today" });
+    await eventRecorder.patch({ whatsapp_status: "skipped", error_message: "human_attending_today" });
+    console.info("[meta-webhook] Initial outreach skipped — human attending today", {
+      tenant_id,
+      lead_id: leadId,
+      phone_last4: maskPhoneLast4(phone),
     });
     return;
   }

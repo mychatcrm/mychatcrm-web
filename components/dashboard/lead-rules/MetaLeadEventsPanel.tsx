@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertCircle, CheckCircle2, Clock, Loader2, RefreshCw } from "lucide-react";
+import Link from "next/link";
+import { AlertCircle, CheckCircle2, Clock, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { Badge } from "@/components/ui/Badge";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
@@ -36,7 +37,9 @@ function stepLabel(step: string): string {
     skipped_no_phone: "Sem telefone",
     skipped_no_agent: "Sem agente",
     skipped_no_evolution: "Sem WhatsApp",
-    skipped_duplicate: "Duplicado",
+    skipped_duplicate: "Mesmo leadgen",
+    skipped_initial_outreach: "WA não enviado",
+    skipped_human_attending: "Humano ativo",
     conversation_state_created: "Conversa",
     ai_response_generated: "IA gerada",
     whatsapp_sent: "WhatsApp enviado",
@@ -51,11 +54,33 @@ function crmBadge(status: string) {
   return { label: "CRM pendente", className: "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200" };
 }
 
-function waBadge(status: string) {
+function waBadge(status: string, errorMessage: string | null) {
   if (status === "sent") return { label: "WhatsApp OK", className: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" };
   if (status === "failed") return { label: "WhatsApp erro", className: "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300" };
-  if (status === "skipped") return { label: "WhatsApp —", className: "border-line bg-surface-elevated/80 text-content-muted" };
+  if (status === "skipped") {
+    if (errorMessage === "same_leadgen_already_sent") {
+      return { label: "WA: mesmo leadgen", className: "border-line bg-surface-elevated/80 text-content-muted" };
+    }
+    if (errorMessage === "initial_outreach_already_sent") {
+      return { label: "WA: bloqueio antigo", className: "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200" };
+    }
+    if (errorMessage === "human_attending_today") {
+      return { label: "WA: humano ativo", className: "border-line bg-surface-elevated/80 text-content-muted" };
+    }
+    return { label: "WA: não enviado", className: "border-line bg-surface-elevated/80 text-content-muted" };
+  }
   return { label: "WhatsApp pendente", className: "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200" };
+}
+
+function errorMessageHint(message: string | null): string | null {
+  if (!message) return null;
+  const map: Record<string, string> = {
+    same_leadgen_already_sent: "Este leadgen_id já recebeu mensagem inicial.",
+    initial_outreach_already_sent: "Regra antiga bloqueou por telefone — corrigido no deploy mais recente.",
+    human_attending_today: "Atendimento humano ativo hoje nesta conversa.",
+    initial_message_already_exists: "Mensagem meta:{leadgen_id}:initial já existe.",
+  };
+  return map[message] ?? message;
 }
 
 export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
@@ -64,6 +89,28 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tableReady, setTableReady] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const removeFromInbox = useCallback(
+    async (eventId: string, leadName: string) => {
+      const ok = window.confirm(
+        `Remover "${leadName}" da lista de leads recebidos?\n\nO lead no CRM não será excluído.`,
+      );
+      if (!ok) return;
+      setDeletingId(eventId);
+      try {
+        const res = await fetch(`/api/client/meta/lead-events/${encodeURIComponent(eventId)}`, { method: "DELETE" });
+        const json = (await res.json()) as { error?: string };
+        if (!res.ok) throw new Error(json.error ?? "Falha ao remover");
+        setEvents((prev) => prev.filter((e) => e.id !== eventId));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Erro ao remover");
+      } finally {
+        setDeletingId(null);
+      }
+    },
+    [],
+  );
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -157,7 +204,8 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
       <ul className="space-y-3">
         {events.map((ev) => {
           const crm = crmBadge(ev.crm_sync_status);
-          const wa = waBadge(ev.whatsapp_status);
+          const wa = waBadge(ev.whatsapp_status, ev.error_message);
+          const hint = errorMessageHint(ev.error_message);
           const lastSteps = Array.isArray(ev.steps_log) ? ev.steps_log.slice(-4) : [];
           return (
             <li
@@ -174,9 +222,27 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
                     {ev.phone || "—"} {ev.email ? `· ${ev.email}` : ""}
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-1.5">
-                  <Badge className={cn("text-[10px]", crm.className)}>{crm.label}</Badge>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Badge className={cn("text-[10px]", crm.className)} title={ev.lead_id ? `Lead CRM: ${ev.lead_id}` : undefined}>
+                    {crm.label}
+                  </Badge>
                   <Badge className={cn("text-[10px]", wa.className)}>{wa.label}</Badge>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="h-7 px-2 text-[11px]"
+                    disabled={deletingId === ev.id}
+                    onClick={() => void removeFromInbox(ev.id, ev.name || ev.phone || "lead")}
+                    title="Remover só desta lista (mantém no CRM)"
+                  >
+                    {deletingId === ev.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                    ) : (
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                    )}
+                    Remover
+                  </Button>
                 </div>
               </div>
 
@@ -214,6 +280,23 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
                     ) : null}
                   </dd>
                 </div>
+                <div>
+                  <dt className="text-content-muted">Leadgen ID</dt>
+                  <dd className="truncate font-mono text-[10px]">{ev.leadgen_id}</dd>
+                </div>
+                {ev.lead_id ? (
+                  <div className="sm:col-span-2">
+                    <dt className="text-content-muted">CRM</dt>
+                    <dd>
+                      <Link
+                        href={`/dashboard/crm?lead=${ev.lead_id}`}
+                        className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+                      >
+                        Abrir lead no CRM ({ev.phone || "sem telefone"})
+                      </Link>
+                    </dd>
+                  </div>
+                ) : null}
               </dl>
 
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -234,9 +317,12 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
               </div>
 
               {ev.error_message ? (
-                <p className="mt-2 flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
+                <p className="mt-2 flex items-start gap-1.5 text-xs text-amber-800 dark:text-amber-200">
                   <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-                  {ev.error_message}
+                  <span>
+                    <span className="font-medium">{ev.error_message}</span>
+                    {hint ? <span className="block text-content-muted">{hint}</span> : null}
+                  </span>
                 </p>
               ) : ev.current_step === "whatsapp_sent" ? (
                 <p className="mt-2 flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-300">

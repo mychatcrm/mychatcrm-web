@@ -83,6 +83,14 @@ export function buildLeadProfileMetadata(params: {
   return meta;
 }
 
+export type MetaFormSubmissionEntry = {
+  leadgen_id: string;
+  form_id?: string;
+  form_name?: string;
+  form_fields: LeadFormFieldEntry[];
+  received_at: string;
+};
+
 export function mergeLeadProfileMetadata(
   previous: unknown,
   next: Record<string, unknown>,
@@ -91,7 +99,43 @@ export function mergeLeadProfileMetadata(
     previous && typeof previous === "object" && !Array.isArray(previous)
       ? (previous as Record<string, unknown>)
       : {};
-  return { ...prev, ...next };
+  const merged: Record<string, unknown> = { ...prev, ...next };
+
+  const history: MetaFormSubmissionEntry[] = Array.isArray(prev.meta_form_submissions)
+    ? (prev.meta_form_submissions as MetaFormSubmissionEntry[]).filter(
+        (row) => row && typeof row === "object" && typeof row.leadgen_id === "string",
+      )
+    : [];
+
+  const prevLeadgenId = typeof prev.meta_leadgen_id === "string" ? prev.meta_leadgen_id.trim() : "";
+  const prevFields = Array.isArray(prev.form_fields) ? (prev.form_fields as LeadFormFieldEntry[]) : [];
+  if (prevLeadgenId && prevFields.length > 0 && !history.some((row) => row.leadgen_id === prevLeadgenId)) {
+    history.push({
+      leadgen_id: prevLeadgenId,
+      form_id: typeof prev.meta_form_id === "string" ? prev.meta_form_id : undefined,
+      form_name: typeof prev.meta_form_name === "string" ? prev.meta_form_name : undefined,
+      form_fields: prevFields,
+      received_at: typeof prev.meta_initial_outreach_sent_at === "string" ? prev.meta_initial_outreach_sent_at : "",
+    });
+  }
+
+  const leadgenId = typeof next.meta_leadgen_id === "string" ? next.meta_leadgen_id.trim() : "";
+  const formFields = Array.isArray(next.form_fields) ? (next.form_fields as LeadFormFieldEntry[]) : [];
+  if (leadgenId && formFields.length > 0) {
+    const withoutDup = history.filter((row) => row.leadgen_id !== leadgenId);
+    withoutDup.push({
+      leadgen_id: leadgenId,
+      form_id: typeof next.meta_form_id === "string" ? next.meta_form_id : undefined,
+      form_name: typeof next.meta_form_name === "string" ? next.meta_form_name : undefined,
+      form_fields: formFields,
+      received_at: new Date().toISOString(),
+    });
+    merged.meta_form_submissions = withoutDup;
+  } else if (history.length > 0) {
+    merged.meta_form_submissions = history;
+  }
+
+  return merged;
 }
 
 export function buildMetaInitialAgentPrompt(params: {

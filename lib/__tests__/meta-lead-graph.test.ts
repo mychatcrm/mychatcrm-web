@@ -3,6 +3,7 @@ import {
   buildFormFieldsFromFieldData,
   buildLeadProfileMetadata,
   buildMetaInitialAgentPrompt,
+  mergeLeadProfileMetadata,
 } from "@/lib/server/meta-lead-graph";
 
 describe("meta-lead-graph", () => {
@@ -36,6 +37,38 @@ describe("meta-lead-graph", () => {
     expect(meta.meta_form_id).toBe("form-1");
     expect(meta.meta_agent_resolution_source).toBe("routing");
     expect(Array.isArray(meta.form_fields)).toBe(true);
+  });
+
+  it("appends each leadgen to meta_form_submissions without dropping prior forms", () => {
+    const first = buildLeadProfileMetadata({
+      leadgenId: "lg-1",
+      fieldData: [{ name: "interesse", values: ["A"] }],
+      formId: "form-a",
+      formName: "Form A",
+      pageId: "p1",
+      pageName: null,
+      campaignName: null,
+      adsetName: null,
+      adName: null,
+      questionLabels: new Map(),
+    });
+    const second = buildLeadProfileMetadata({
+      leadgenId: "lg-2",
+      fieldData: [{ name: "interesse", values: ["B"] }],
+      formId: "form-b",
+      formName: "Form B",
+      pageId: "p1",
+      pageName: null,
+      campaignName: null,
+      adsetName: null,
+      adName: null,
+      questionLabels: new Map(),
+    });
+    const merged = mergeLeadProfileMetadata(first, second);
+    const history = merged.meta_form_submissions as Array<{ leadgen_id: string; form_name?: string }>;
+    expect(history).toHaveLength(2);
+    expect(history.map((h) => h.leadgen_id)).toEqual(["lg-1", "lg-2"]);
+    expect(merged.meta_form_name).toBe("Form B");
   });
 
   it("includes form answers in the initial AI prompt", () => {

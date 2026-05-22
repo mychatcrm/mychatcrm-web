@@ -51,10 +51,19 @@ type Tab = "informacoes" | "historico" | "chatbot" | "tarefas" | "ia";
 
 type LeadFormFieldRow = { key: string; label: string; value: string };
 
+type LeadFormSubmissionRow = {
+  leadgen_id: string;
+  form_id?: string;
+  form_name?: string;
+  form_fields: LeadFormFieldRow[];
+  received_at?: string;
+};
+
 type LeadProfileMetadata = {
   source?: string;
   meta_form_name?: string;
   form_fields?: LeadFormFieldRow[];
+  meta_form_submissions?: LeadFormSubmissionRow[];
 };
 
 function parseLeadProfileMetadata(raw: unknown): LeadProfileMetadata | null {
@@ -73,10 +82,40 @@ function parseLeadProfileMetadata(raw: unknown): LeadProfileMetadata | null {
         })
         .filter((row): row is LeadFormFieldRow => row !== null)
     : [];
+  const meta_form_submissions: LeadFormSubmissionRow[] = [];
+  if (Array.isArray(o.meta_form_submissions)) {
+    for (const row of o.meta_form_submissions) {
+      if (!row || typeof row !== "object") continue;
+      const item = row as Record<string, unknown>;
+      const leadgen_id = typeof item.leadgen_id === "string" ? item.leadgen_id.trim() : "";
+      if (!leadgen_id) continue;
+      const subFields: LeadFormFieldRow[] = [];
+      if (Array.isArray(item.form_fields)) {
+        for (const f of item.form_fields) {
+          if (!f || typeof f !== "object") continue;
+          const fr = f as Record<string, unknown>;
+          const key = typeof fr.key === "string" ? fr.key.trim() : "";
+          const label = typeof fr.label === "string" ? fr.label.trim() : "";
+          const value = typeof fr.value === "string" ? fr.value.trim() : "";
+          if (!key || !value) continue;
+          subFields.push({ key, label: label || key, value });
+        }
+      }
+      meta_form_submissions.push({
+        leadgen_id,
+        form_id: typeof item.form_id === "string" ? item.form_id : undefined,
+        form_name: typeof item.form_name === "string" ? item.form_name : undefined,
+        form_fields: subFields,
+        received_at: typeof item.received_at === "string" ? item.received_at : undefined,
+      });
+    }
+  }
+
   return {
     source: typeof o.source === "string" ? o.source : undefined,
     meta_form_name: typeof o.meta_form_name === "string" ? o.meta_form_name : undefined,
     form_fields,
+    meta_form_submissions,
   };
 }
 
@@ -562,6 +601,32 @@ export function CrmLeadWorkspaceModal({
                     </li>
                   ))}
                 </ul>
+                {(profileMeta?.meta_form_submissions?.length ?? 0) > 1 ? (
+                  <div className="mt-4 space-y-3 border-t border-line/70 pt-4">
+                    <p className="text-xs font-semibold text-content">Histórico de formulários preenchidos</p>
+                    {[...(profileMeta?.meta_form_submissions ?? [])]
+                      .reverse()
+                      .map((submission) => (
+                        <div
+                          key={submission.leadgen_id}
+                          className="rounded-lg border border-line/70 bg-surface-base/30 p-3"
+                        >
+                          <p className="text-xs font-medium text-content">
+                            {submission.form_name || submission.form_id || "Formulário"}
+                          </p>
+                          <p className="mt-0.5 font-mono text-[10px] text-content-faint">{submission.leadgen_id}</p>
+                          <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                            {submission.form_fields.map((field) => (
+                              <li key={`${submission.leadgen_id}-${field.key}`} className="text-xs">
+                                <span className="text-content-muted">{field.label}: </span>
+                                <span className="font-medium text-content">{field.value}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                  </div>
+                ) : null}
               </div>
             ) : null}
             </div>

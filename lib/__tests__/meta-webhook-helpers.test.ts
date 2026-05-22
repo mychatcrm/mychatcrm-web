@@ -3,6 +3,7 @@ import {
   buildWhatsappRemoteJid,
   extractLeadName,
   extractLeadPhone,
+  isSameCalendarDayUtc,
   shouldSendMetaInitialOutreach,
 } from "@/lib/server/meta-lead-processing";
 
@@ -41,19 +42,7 @@ describe("Meta webhook helpers", () => {
     expect(buildWhatsappRemoteJid("5562999991234")).toBe("5562999991234@s.whatsapp.net");
   });
 
-  it("prevents duplicate initial outreach for the same Meta leadgen id", () => {
-    expect(
-      shouldSendMetaInitialOutreach(
-        {
-          meta_initial_outreach_leadgen_id: "lead-1",
-          meta_initial_outreach_sent_at: "2026-05-22T12:00:00.000Z",
-        },
-        "lead-1",
-      ),
-    ).toEqual({ shouldSend: false, reason: "same_leadgen_already_sent" });
-  });
-
-  it("prevents duplicate initial outreach after any previous initial outreach", () => {
+  it("allows initial outreach for a new leadgen id even if phone had prior outreach", () => {
     expect(
       shouldSendMetaInitialOutreach(
         {
@@ -62,6 +51,11 @@ describe("Meta webhook helpers", () => {
         },
         "lead-2",
       ),
-    ).toEqual({ shouldSend: false, reason: "initial_outreach_already_sent" });
+    ).toEqual({ shouldSend: true, reason: "not_sent_yet" });
+  });
+
+  it("detects same UTC calendar day", () => {
+    expect(isSameCalendarDayUtc("2026-05-22T08:00:00.000Z", "2026-05-22T20:00:00.000Z")).toBe(true);
+    expect(isSameCalendarDayUtc("2026-05-22T08:00:00.000Z", "2026-05-23T01:00:00.000Z")).toBe(false);
   });
 });

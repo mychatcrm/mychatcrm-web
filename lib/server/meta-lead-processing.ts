@@ -1,6 +1,14 @@
+import type { createSupabaseServiceClient } from "@/lib/supabase/server";
+
+type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
+
 export type LeadOutreachDecision = {
   shouldSend: boolean;
-  reason: "not_sent_yet" | "same_leadgen_already_sent" | "initial_outreach_already_sent";
+  reason:
+    | "not_sent_yet"
+    | "same_leadgen_already_sent"
+    | "human_attending_today"
+    | "no_agent";
 };
 
 function textField(fields: Record<string, string>, keys: string[]): string {
@@ -49,21 +57,38 @@ export function buildWhatsappRemoteJid(phone: string): string {
   return `${phone.replace(/\D/g, "")}@s.whatsapp.net`;
 }
 
-export function shouldSendMetaInitialOutreach(metadata: unknown, leadgenId: string): LeadOutreachDecision {
-  const meta = metadata && typeof metadata === "object" && !Array.isArray(metadata)
-    ? (metadata as Record<string, unknown>)
-    : {};
-  const sentLeadgenId = typeof meta.meta_initial_outreach_leadgen_id === "string"
-    ? meta.meta_initial_outreach_leadgen_id.trim()
-    : "";
-  if (sentLeadgenId && sentLeadgenId === leadgenId) {
-    return { shouldSend: false, reason: "same_leadgen_already_sent" };
-  }
-  const sentAt = typeof meta.meta_initial_outreach_sent_at === "string"
-    ? meta.meta_initial_outreach_sent_at.trim()
-    : "";
-  if (sentAt) {
-    return { shouldSend: false, reason: "initial_outreach_already_sent" };
-  }
+/**
+ * Idempotência por leadgen_id apenas — telefone repetido em outro formulário pode receber nova mensagem.
+ * Bloqueio adicional: mensagem `meta:{leadgen_id}:initial` e atendimento humano ativo no dia (checados no ingest).
+ */
+export function shouldSendMetaInitialOutreach(_metadata: unknown, leadgenId: string): LeadOutreachDecision {
+  const id = leadgenId.trim();
+  if (!id) return { shouldSend: false, reason: "same_leadgen_already_sent" };
   return { shouldSend: true, reason: "not_sent_yet" };
+}
+
+export function isSameCalendarDayUtc(isoA: string, isoB: string): boolean {
+  const a = new Date(isoA);
+  const b = new Date(isoB);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return false;
+  return a.toISOString().slice(0, 10) === b.toISOString().slice(0, 10);
+}
+
+export async function shouldSkipMetaOutreachForHumanAttending(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  now?: Date;
+}): Promise<boolean> {
+  const { data } = await params.sb
+    .from("conversation_states")
+    .select("human_paused, paused_at, status")
+    .eq("tenant_id", params.tenantId)
+    .eq("remote_jid", params.remoteJid)
+    .maybeSingle();
+  if (!data || data.human_paused !== true) return false;
+  const pausedAt = typeof data.paused_at === "string" ? data.paused_at : null;
+  if (!pausedAt) return true;
+  const nowIso = (params.now ?? new Date()).toISOString();
+  return isSameCalendarDayUtc(pausedAt, nowIso);
 }

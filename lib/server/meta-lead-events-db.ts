@@ -21,6 +21,7 @@ export const META_LEAD_EVENT_STEPS = [
   "whatsapp_failed",
   "skipped_duplicate",
   "skipped_initial_outreach",
+  "skipped_human_attending",
 ] as const;
 
 export type MetaLeadEventStep = (typeof META_LEAD_EVENT_STEPS)[number];
