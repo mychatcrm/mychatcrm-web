@@ -7,10 +7,6 @@
     {
       "path": "/api/internal/process-follow-ups",
       "schedule": "0 4 * * *"
-    },
-    {
-      "path": "/api/internal/process-meta-leads",
-      "schedule": "*/5 * * * *"
     }
   ]
 }
