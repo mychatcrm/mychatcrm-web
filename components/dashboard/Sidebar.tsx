@@ -316,7 +316,7 @@ export function Sidebar({
             "panel-nav-item group relative flex h-9 items-center rounded-xl px-2.5 text-[13px] font-medium transition duration-200 ease-out",
             active && "panel-nav-item--active",
             active
-              ? "bg-surface-elevated border border-line text-primary"
+              ? "bg-[rgba(242,68,0,0.1)] border border-transparent text-primary"
               : "border border-transparent text-content-secondary hover:bg-surface-elevated/40 hover:text-content",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
             collapsed && "justify-center px-0",

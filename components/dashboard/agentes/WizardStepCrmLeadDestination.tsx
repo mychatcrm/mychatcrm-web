@@ -66,7 +66,7 @@ export function WizardStepCrmLeadDestination({
               className={cn(
                 "rounded-xl border px-4 py-3 text-left transition",
                 active
-                  ? "border-primary/45 bg-primary/10 text-content shadow-sm"
+                  ? "border-primary/45 bg-primary/10 text-content"
                   : "border-line bg-surface-card text-content-secondary hover:border-primary/30 hover:bg-surface-elevated/40",
               )}
             >

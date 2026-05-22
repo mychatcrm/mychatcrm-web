@@ -50,7 +50,7 @@ export function WizardStep2Instructions({
             type="button"
             onClick={() => setInstructionMode("simple")}
             className={cn(
-              "rounded-2xl border px-4 py-3 text-left transition",
+              "rounded-xl border px-4 py-3 text-left transition",
               isSimpleMode
                 ? "border-primary/60 bg-primary/10 shadow-[0_0_0_1px_rgba(255,255,255,0.04)]"
                 : "border-line bg-surface-elevated/30 hover:border-line/80 hover:bg-surface-elevated/50",
@@ -65,7 +65,7 @@ export function WizardStep2Instructions({
             type="button"
             onClick={() => setInstructionMode("pro")}
             className={cn(
-              "rounded-2xl border px-4 py-3 text-left transition",
+              "rounded-xl border px-4 py-3 text-left transition",
               !isSimpleMode
                 ? "border-primary/60 bg-primary/10 shadow-[0_0_0_1px_rgba(255,255,255,0.04)]"
                 : "border-line bg-surface-elevated/30 hover:border-line/80 hover:bg-surface-elevated/50",

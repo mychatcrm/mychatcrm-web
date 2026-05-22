@@ -143,7 +143,7 @@ function AgentsGridSkeleton() {
       {Array.from({ length: 3 }).map((_, index) => (
         <div
           key={index}
-          className="min-h-[280px] rounded-xl border border-line bg-surface-card p-4 shadow-sm"
+          className="min-h-[280px] rounded-xl border border-line bg-surface-card p-4"
         >
           <div className="animate-pulse space-y-4">
             <div className="flex items-start justify-between gap-3">

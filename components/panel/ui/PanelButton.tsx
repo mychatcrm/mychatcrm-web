@@ -3,8 +3,9 @@
  *
  * API idêntica ao components/ui/Button.tsx, mas com:
  *  - Tamanhos maiores do DS (px-7 py-3.5 no md, + xs size)
- *  - rounded-panel-xl (radius DS 0.45rem)
+ *  - rounded-xl (radius DS 0.45rem via panel-appearance override)
  *  - Sem min-h forçado (padding generoso já garante altura adequada)
+ *  - Zero box-shadow — flat design
  *
  * NUNCA importar fora de components/dashboard/**, components/admin/**, components/panel/**.
  */
@@ -25,8 +26,12 @@ const variants = {
     "border border-line/90 bg-surface-card/40 text-content-secondary hover:text-content hover:border-line hover:bg-surface-elevated/50 active:scale-[0.98]",
   ghost:
     "text-content-secondary hover:text-content hover:bg-surface-elevated/40 active:bg-surface-elevated/55 active:scale-[0.98]",
+  link:
+    "bg-transparent text-primary hover:underline p-0 h-auto font-semibold",
+  success:
+    "bg-success text-white hover:bg-[#008a44] active:scale-[0.98]",
   danger:
-    "bg-error text-white hover:bg-rose-500 active:scale-[0.98]",
+    "bg-error text-white hover:bg-rose-600 active:scale-[0.98]",
 } as const;
 
 export interface PanelButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -47,13 +52,15 @@ export function PanelButton({
   type = "button",
   ...props
 }: PanelButtonProps) {
+  const isLink = variant === "link";
   return (
     <button
       type={type}
       className={cn(
         "inline-flex touch-manipulation items-center justify-center gap-2 font-medium transition duration-200 ease-out will-change-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base disabled:opacity-50 disabled:pointer-events-none",
+        !isLink && "rounded-xl",
+        !isLink && PANEL_BUTTON_SIZES[size],
         variants[variant],
-        PANEL_BUTTON_SIZES[size],
         className,
       )}
       disabled={disabled || isLoading}

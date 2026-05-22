@@ -206,7 +206,7 @@ function ProgressBar({ value }: { value: number }) {
       aria-valuemax={100}
     >
       <div
-        className="relative h-full rounded-full bg-gradient-to-r from-primary to-primary-hover shadow-sm shadow-primary/25 transition-[width] duration-500 ease-out"
+        className="relative h-full rounded-full bg-gradient-to-r from-primary to-primary-hover transition-[width] duration-500 ease-out"
         style={{ width: `${pct}%` }}
       />
     </div>
@@ -2596,7 +2596,7 @@ function CrmPage({
             {selectedLeadCount > 0 ? (
               <div
                 className={cn(
-                  "sticky bottom-3 z-30 mt-3 flex flex-col gap-2 rounded-xl border px-3 py-3 shadow-xl backdrop-blur sm:flex-row sm:items-center sm:justify-between",
+                  "sticky bottom-3 z-30 mt-3 flex flex-col gap-2 rounded-xl border px-3 py-3 backdrop-blur sm:flex-row sm:items-center sm:justify-between",
                   isLight ? "border-primary/25 bg-white/95" : "border-primary/30 bg-surface-card/95",
                 )}
               >

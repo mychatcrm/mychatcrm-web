@@ -12,7 +12,7 @@ const config: Config = {
       colors: {
         primary: {
           DEFAULT: "#f24400",
-          hover: "#ff6a00",
+          hover: "#B22A00",
           light: "rgba(242, 68, 0, 0.15)",
           glow: "rgba(242, 68, 0, 0.35)",
         },
@@ -34,14 +34,14 @@ const config: Config = {
           muted: "rgb(var(--color-content-muted) / <alpha-value>)",
           faint: "rgb(var(--color-content-faint) / <alpha-value>)",
         },
-        success: "#22c55e",
+        success: "#00A650",
         warning: "#f59e0b",
         error: "#ef4444",
         info: "#3b82f6",
-        /** DS brand tokens — use these in new components */
+          /** DS brand tokens — use these in new components */
         brand: {
-          primary:   "#F24400",
-          secondary: "#0E1D29",
+          primary:          "#F24400",
+          secondary:        "#0E1D29",
           "secondary-orange": "#B22A00",
           success:   "#00A650",
           dark:      "#000000",

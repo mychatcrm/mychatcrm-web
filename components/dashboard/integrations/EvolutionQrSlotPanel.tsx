@@ -486,10 +486,10 @@ export function EvolutionQrSlotPanel({
           {/* QR frame with shadow */}
           <div
             className={cn(
-              "relative overflow-hidden rounded-2xl border-2 p-2.5 shadow-xl transition-all duration-300",
+              "relative overflow-hidden rounded-xl border-2 p-2.5 transition-all duration-300",
               isLight
-                ? "border-slate-200 bg-white shadow-slate-200/80"
-                : "border-line/60 bg-white shadow-black/25",
+                ? "border-slate-200 bg-white"
+                : "border-line/60 bg-white",
               qrSecondsLeft <= 15 && "border-amber-400/70 shadow-amber-400/20",
             )}
           >
@@ -504,8 +504,8 @@ export function EvolutionQrSlotPanel({
             />
             {/* Expiry overlay at ≤ 10 seconds */}
             {qrSecondsLeft <= 10 && qrSecondsLeft > 0 ? (
-              <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-black/55 backdrop-blur-[2px]">
-                <div className="rounded-xl bg-surface-card/95 px-5 py-4 text-center shadow-lg">
+              <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/55 backdrop-blur-[2px]">
+                <div className="rounded-xl bg-surface-card/95 px-5 py-4 text-center">
                   <p className="text-xs font-medium text-content-secondary">QR expira em</p>
                   <p className={cn("mt-0.5 text-3xl font-bold tabular-nums", countdownColor)}>
                     {qrSecondsLeft}s

@@ -30,7 +30,7 @@
   --color-content-faint: 85 85 85;
 
   --primary: #f24400;
-  --primary-hover: #ff6a00;
+  --primary-hover: #B22A00;
   --primary-light: rgba(242, 68, 0, 0.15);
   --primary-glow: rgba(242, 68, 0, 0.35);
 
@@ -47,7 +47,7 @@
   --text-muted: #888888;
   --text-disabled: #555555;
 
-  --success: #22c55e;
+  --success: #00A650;
   --warning: #f59e0b;
   --error: #ef4444;
   --info: #3b82f6;

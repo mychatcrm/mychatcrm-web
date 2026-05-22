@@ -664,7 +664,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                 <li className="flex items-center gap-1.5"><Check className="size-3 shrink-0 text-primary" aria-hidden />Agente de IA responde o lead no WhatsApp na hora</li>
                 <li className="flex items-center gap-1.5"><Check className="size-3 shrink-0 text-primary" aria-hidden />Roteamento por formulário — cada formulário pode ter um agente diferente</li>
               </ul>
-              <a href="/api/meta/connect" className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#1877F2] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90">
+              <a href="/api/meta/connect" className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-[#1877F2] px-5 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90">
                 <ExternalLink className="size-4" aria-hidden />
                 Conectar com Meta
               </a>

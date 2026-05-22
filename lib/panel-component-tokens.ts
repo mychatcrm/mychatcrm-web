@@ -9,14 +9,14 @@
 
 /** Tamanhos de botão do painel (DS) — padding generoso, sem min-h forçado */
 export const PANEL_BUTTON_SIZES = {
-  xs: "px-3 py-1.5 text-[10px] rounded-panel-xl",
-  sm: "px-5 py-2.5 text-xs rounded-panel-xl",
-  md: "px-7 py-3.5 text-sm rounded-panel-xl",
-  lg: "px-10 py-[1.125rem] text-base font-bold rounded-panel-xl",
+  xs: "px-3 py-1.5 text-[10px]",
+  sm: "px-5 py-2.5 text-xs",
+  md: "px-7 py-3.5 text-sm",
+  lg: "px-10 py-[1.125rem] text-base font-bold",
 } as const;
 
 export type PanelButtonSize = keyof typeof PANEL_BUTTON_SIZES;
 
-/** Classes base de input do painel (DS) — bg-surface-base, py-3.5, focus bg-surface-deep */
+/** Classes base de input do painel (DS) — bg-surface-base, py-3.5, focus bg-surface-deep, zero shadow */
 export const PANEL_INPUT_BASE =
-  "w-full min-h-[44px] rounded-panel-xl border border-line/80 bg-surface-base px-4 py-3 text-sm font-normal text-content transition-all duration-150 placeholder:text-content-faint hover:border-line focus:border-primary/70 focus:bg-surface-deep focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-0 sm:py-3.5";
+  "w-full rounded-xl border border-line/80 bg-surface-base px-4 py-3 text-sm font-normal text-content transition-all duration-150 placeholder:text-content-faint hover:border-line focus:border-primary/70 focus:bg-surface-deep focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base disabled:cursor-not-allowed disabled:opacity-60 shadow-none sm:py-3.5";

@@ -269,7 +269,7 @@ export function CrmChatbotHistoryPanel({
                 <li key={message.id} className={cn("flex", outbound ? "justify-end" : "justify-start")}>
                   <div
                     className={cn(
-                      "max-w-[88%] rounded-2xl border px-3 py-2 text-sm shadow-sm",
+                      "max-w-[88%] rounded-xl border px-3 py-2 text-sm",
                       outbound
                         ? isHuman
                           ? "border-emerald-500/30 bg-emerald-500/10"

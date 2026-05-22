@@ -161,7 +161,7 @@ export function WizardStepVoz({ draft, onChange }: Props) {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl border border-line bg-surface-elevated/20 p-4">
+      <div className="rounded-xl border border-line bg-surface-elevated/20 p-4">
         <div className="flex items-start gap-3">
           <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line bg-surface-elevated/40 text-content-muted">
             <Volume2 className="h-4 w-4" strokeWidth={1.75} />
@@ -176,7 +176,7 @@ export function WizardStepVoz({ draft, onChange }: Props) {
             type="button"
             onClick={() => onChange({ ...draft, responseMode: "text", voiceId: "" })}
             className={cn(
-              "rounded-2xl border px-4 py-3 text-left transition",
+              "rounded-xl border px-4 py-3 text-left transition",
               !isAudio
                 ? "border-primary/60 bg-primary/10 shadow-[0_0_0_1px_rgba(255,255,255,0.04)]"
                 : "border-line bg-surface-elevated/30 hover:border-line/80 hover:bg-surface-elevated/50",
@@ -197,7 +197,7 @@ export function WizardStepVoz({ draft, onChange }: Props) {
             type="button"
             onClick={() => onChange({ ...draft, responseMode: "audio" })}
             className={cn(
-              "rounded-2xl border px-4 py-3 text-left transition",
+              "rounded-xl border px-4 py-3 text-left transition",
               isAudio
                 ? "border-primary/60 bg-primary/10 shadow-[0_0_0_1px_rgba(255,255,255,0.04)]"
                 : "border-line bg-surface-elevated/30 hover:border-line/80 hover:bg-surface-elevated/50",
@@ -217,7 +217,7 @@ export function WizardStepVoz({ draft, onChange }: Props) {
       </div>
 
       {isAudio && (
-        <div className="space-y-3 rounded-2xl border border-line bg-surface-elevated/20 px-4 py-4">
+        <div className="space-y-3 rounded-xl border border-line bg-surface-elevated/20 px-4 py-4">
           <div className="flex items-start justify-between gap-3">
             <div>
               <FieldTitle title="Voz do agente" help={AGENT_FIELD_HELP.vozAgente} />
@@ -248,7 +248,7 @@ export function WizardStepVoz({ draft, onChange }: Props) {
 
           {!loading && voices.length > 0 && (
             <>
-              <div className="rounded-2xl border border-line bg-surface-elevated/30 p-2">
+              <div className="rounded-xl border border-line bg-surface-elevated/30 p-2">
                 <div className="px-2 pb-2 pt-1">
                   <FieldTitle
                     title="Idioma do preview"
@@ -288,7 +288,7 @@ export function WizardStepVoz({ draft, onChange }: Props) {
                     <div
                       key={voice.voice_id}
                       className={cn(
-                        "flex items-center gap-3 rounded-2xl border px-3 py-3 transition",
+                        "flex items-center gap-3 rounded-xl border px-3 py-3 transition",
                         selected
                           ? "border-primary/60 bg-primary/10 text-content"
                           : "border-line bg-surface-elevated/30 text-content-secondary hover:border-line/80 hover:bg-surface-elevated/50",

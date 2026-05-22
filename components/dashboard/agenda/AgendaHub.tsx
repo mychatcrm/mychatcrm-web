@@ -266,7 +266,7 @@ export function AgendaHub() {
 
   return (
     <div
-      className="bg-white text-[#3c4043]"
+      className="bg-surface-card text-content"
       style={{
         position: "fixed",
         top: "var(--mc-header-h, 48px)",
@@ -336,7 +336,7 @@ export function AgendaHub() {
           <select
             value={view}
             onChange={(e) => setView(e.target.value as AgendaViewMode)}
-            className="shrink-0 rounded-lg border border-[#dadce0] bg-white py-1.5 pl-2 pr-7 text-xs md:px-3 md:text-sm"
+            className="shrink-0 rounded-xl border border-line bg-surface-card py-1.5 pl-2 pr-7 text-xs text-content md:px-3 md:text-sm"
             style={{ maxWidth: "min(11rem, 100%)" }}
             aria-label="Vista do calendário"
           >
@@ -358,11 +358,11 @@ export function AgendaHub() {
               aria-label="Fechar menu da agenda"
               onClick={() => setSidebarOpen(false)}
             />
-            <aside className="fixed inset-y-0 left-0 z-50 flex w-[min(100vw-2rem,280px)] shrink-0 flex-col gap-4 overflow-y-auto border-r border-[#dadce0] bg-white p-4 shadow-xl md:static md:z-auto md:w-[256px] md:shadow-none">
+            <aside className="fixed inset-y-0 left-0 z-50 flex w-[min(100vw-2rem,280px)] shrink-0 flex-col gap-4 overflow-y-auto border-r border-line bg-surface-card p-4 md:static md:z-auto md:w-[256px]">
             <button
               type="button"
               onClick={() => openCreateModal()}
-              className="flex items-center gap-3 rounded-full px-6 py-3 text-sm font-medium text-white shadow-sm"
+              className="flex items-center gap-3 rounded-full px-6 py-3 text-sm font-medium text-white"
               style={{ backgroundColor: AGENDA_BRAND }}
               onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = AGENDA_BRAND_HOVER; }}
               onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = AGENDA_BRAND; }}
@@ -550,7 +550,7 @@ export function AgendaHub() {
                   {/* Header dos dias — sticky relativo ao main (overflow-y-auto), sem overflow-x */}
                   <div
                     ref={weekHeaderRef}
-                    className="sticky top-0 z-10 overflow-x-hidden border-b border-[#dadce0] bg-white"
+                    className="sticky top-0 z-10 overflow-x-hidden border-b border-line bg-surface-card"
                   >
                     <div
                       className="grid"
@@ -675,7 +675,7 @@ export function AgendaHub() {
                                 }}
                                 onClick={(e) => { e.stopPropagation(); setDetail({ event: ev, x: e.clientX, y: e.clientY }); }}
                                 className={cn(
-                                  "absolute z-10 cursor-pointer overflow-hidden rounded border border-white/30 px-1 py-0.5 text-[11px] font-medium text-white shadow-sm",
+                                  "absolute z-10 cursor-pointer overflow-hidden rounded border border-white/30 px-1 py-0.5 text-[11px] font-medium text-white",
                                   draggingId === ev.id && "opacity-70",
                                 )}
                                 style={{
@@ -748,7 +748,7 @@ export function AgendaHub() {
 
       {/* Quick create popover */}
       {quick ? (
-        <div className="fixed z-50 w-[280px] max-w-[calc(100vw-16px)] rounded-lg border border-[#dadce0] bg-white p-3 shadow-xl" style={{ left: Math.min(quick.x, window.innerWidth - 296), top: Math.min(quick.y, window.innerHeight - 200) }}>
+        <div className="fixed z-50 w-[280px] max-w-[calc(100vw-16px)] rounded-xl border border-line bg-surface-card p-3" style={{ left: Math.min(quick.x, window.innerWidth - 296), top: Math.min(quick.y, window.innerHeight - 200) }}>
           <input
             autoFocus
             value={quickTitle}
@@ -771,7 +771,7 @@ export function AgendaHub() {
 
       {/* Event detail popover */}
       {detail ? (
-        <div className="fixed z-50 w-[300px] max-w-[calc(100vw-16px)] rounded-lg border border-[#dadce0] bg-white p-4 shadow-xl" style={{ left: Math.min(detail.x, window.innerWidth - 316), top: Math.min(detail.y, window.innerHeight - 240) }}>
+        <div className="fixed z-50 w-[300px] max-w-[calc(100vw-16px)] rounded-xl border border-line bg-surface-card p-4" style={{ left: Math.min(detail.x, window.innerWidth - 316), top: Math.min(detail.y, window.innerHeight - 240) }}>
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <div className="flex items-center gap-2">

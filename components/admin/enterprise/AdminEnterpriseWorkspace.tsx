@@ -145,7 +145,7 @@ export function AdminEnterpriseWorkspace() {
     <div className="space-y-8">
       <div
         className={cn(
-          "relative overflow-hidden rounded-2xl border p-6 sm:p-8",
+          "relative overflow-hidden rounded-xl border p-6 sm:p-8",
           isLight
             ? "border-slate-200 bg-gradient-to-br from-slate-50 via-white to-orange-50/40"
             : "border-line bg-gradient-to-br from-surface-deep via-surface-card to-surface-deep/80",
@@ -190,7 +190,7 @@ export function AdminEnterpriseWorkspace() {
         <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">{error}</div>
       ) : null}
 
-      <section className="rounded-2xl border border-line bg-surface-card p-5 sm:p-6">
+      <section className="rounded-xl border border-line bg-surface-card p-5 sm:p-6">
         <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 className={cn(typography.ui.overline, "text-content-faint")}>Organizações</h2>
