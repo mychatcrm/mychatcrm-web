@@ -96,7 +96,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     userAgent: req.headers.get("user-agent"),
   });
 
-  // Always return 200 quickly — Meta retries if it doesn't get 200 promptly
   const rawBody = await req.text();
 
   const signatureBypass = process.env.WEBHOOK_SIGNATURE_BYPASS === "true";
@@ -132,8 +131,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const changeCount = (payload.entry ?? []).reduce((n, e) => n + (e.changes?.length ?? 0), 0);
   console.info("[meta-webhook] Page payload accepted", { requestId, entryCount, changeCount });
 
-  // Process entries asynchronously — do not await so we return 200 immediately
-  void processLeadgenEntries(payload.entry ?? [], requestId);
+  await processLeadgenEntries(payload.entry ?? [], requestId);
 
   return NextResponse.json({ ok: true }, { status: 200 });
 }
