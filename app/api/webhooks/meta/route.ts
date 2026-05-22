@@ -1,11 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { verifyMetaSignature256 } from "@/lib/integrations/whatsapp-cloud";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
-import { evolutionSendText } from "@/lib/integrations/evolution-api";
+import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import { resolveEvolutionAgentId } from "@/lib/server/evolution-agent-resolve";
+import { upsertConversationState } from "@/lib/server/conversation-memory";
+import {
+  buildWhatsappRemoteJid,
+  extractLeadName,
+  extractLeadPhone,
+  shouldSendMetaInitialOutreach,
+} from "@/lib/server/meta-lead-processing";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,6 +60,13 @@ type LeadDistributionRuleRow = {
   excluded_form_ids: unknown;
   distribution_type: string;
   agent_ids: unknown;
+};
+
+type AgentValidationResult = {
+  agentId: string | null;
+  source: "routing" | "instance_default" | "tenant_active" | "none";
+  invalidAgentId: string | null;
+  invalidReason: string | null;
 };
 
 // ─── GET — webhook verification ──────────────────────────────────────────────
@@ -186,6 +202,7 @@ async function processLeadgenEvent(value: LeadgenValue): Promise<void> {
     page_access_token: string;
     page_name?: string | null;
   };
+  console.info("[meta-webhook] Tenant resolved", { tenant_id, page_id });
 
   // 2. Fetch lead details from Graph API
   const lead = await fetchGraphLead(leadgen_id, page_access_token);
@@ -196,20 +213,43 @@ async function processLeadgenEvent(value: LeadgenValue): Promise<void> {
 
   // 3. Parse field_data
   const fields = parseFieldData(lead.field_data ?? []);
-  const phone = normalizePhone(fields.phone_number ?? fields.phone ?? fields.telefone ?? fields.celular ?? "");
-  const firstName = fields.first_name ?? fields.nome ?? "";
-  const lastName = fields.last_name ?? fields.sobrenome ?? "";
-  const fullName = [firstName, lastName].filter(Boolean).join(" ") || "Lead";
+  const phone = extractLeadPhone(fields);
+  const fullName = extractLeadName(fields);
   const email = fields.email ?? null;
 
   if (!phone) {
-    console.warn("[meta-webhook] Lead has no phone — cannot route via WhatsApp", { leadgen_id, fields });
+    console.warn("[meta-webhook] Lead has no phone — cannot route via WhatsApp", {
+      leadgen_id,
+      field_keys: Object.keys(fields),
+    });
     return;
   }
 
   // 4. Resolve agent: distribution rules > legacy form mapping > instance default > tenant default
   const routing = await resolveAgentForLead(sb, tenant_id, form_id ?? "", page_id);
-  const agentId = routing.agentId;
+  const instance = await getEvolutionInstanceByTenantId(tenant_id);
+  const agentResolution = await resolveValidMetaAgent({
+    sb,
+    tenantId: tenant_id,
+    routedAgentId: routing.agentId,
+    instanceDefaultAgentId: instance?.default_agent_id ?? null,
+  });
+  const agentId = agentResolution.agentId;
+
+  if (agentResolution.invalidAgentId) {
+    console.warn("[meta-webhook] Invalid agent ignored", {
+      tenant_id,
+      invalid_agent_id: agentResolution.invalidAgentId,
+      reason: agentResolution.invalidReason,
+      fallback_source: agentResolution.source,
+    });
+  }
+  console.info("[meta-webhook] Agent resolved", {
+    tenant_id,
+    agent_id: agentId,
+    source: agentResolution.source,
+    rule_id: routing.ruleId,
+  });
 
   // 5. Upsert lead in CRM — profile_metadata com todos os campos do formulário
   const [formName, adContext] = await Promise.all([
@@ -220,6 +260,7 @@ async function processLeadgenEvent(value: LeadgenValue): Promise<void> {
   const questionLabels = form_id ? await fetchFormQuestionLabels(form_id, page_access_token) : new Map<string, string>();
 
   const leadMetadata = buildLeadProfileMetadata({
+    leadgenId: leadgen_id,
     fieldData: lead.field_data ?? [],
     formId: form_id,
     formName,
@@ -233,7 +274,7 @@ async function processLeadgenEvent(value: LeadgenValue): Promise<void> {
 
   const { data: existingLead } = await sb
     .from("leads")
-    .select("id, created_at, campaign_active, agent_id, profile_metadata")
+    .select("id, created_at, campaign_active, agent_id, campaign_agent_id, profile_metadata")
     .eq("tenant_id", tenant_id)
     .eq("phone", phone)
     .maybeSingle();
@@ -249,7 +290,7 @@ async function processLeadgenEvent(value: LeadgenValue): Promise<void> {
         source: "lead_ads",
         agent_id: agentId,
         campaign_agent_id: agentId,
-        campaign_active: true,
+        campaign_active: Boolean(agentId),
         campaign_rule_id: routing.ruleId ?? null,
         agent_assignment_source: "meta_rule",
         rule_id: routing.ruleId,
@@ -262,6 +303,10 @@ async function processLeadgenEvent(value: LeadgenValue): Promise<void> {
         name: fullName,
         email: email ?? undefined,
         source: "lead_ads",
+        agent_id: agentId,
+        campaign_agent_id: agentId,
+        campaign_active: Boolean(agentId),
+        agent_assignment_source: agentId ? "meta_rule" : "unassigned",
         rule_id: routing.ruleId,
         campaign_rule_id: routing.ruleId ?? null,
         profile_metadata: mergeLeadProfileMetadata(existingLead?.profile_metadata, leadMetadata),
@@ -274,46 +319,244 @@ async function processLeadgenEvent(value: LeadgenValue): Promise<void> {
       onConflict: "tenant_id,phone",
       ignoreDuplicates: false,
     })
-    .select("id")
+    .select("id, profile_metadata")
     .maybeSingle();
 
   if (upsertErr) {
-    console.error("[meta-webhook] Failed to upsert lead", { error: upsertErr.message, phone });
+    console.error("[meta-webhook] Failed to upsert lead", {
+      error: upsertErr.message,
+      phone_last4: maskPhoneLast4(phone),
+    });
+    return;
   } else {
-    console.info("[meta-webhook] Lead upserted", { lead_id: upsertedLead?.id, phone, agentId });
+    console.info("[meta-webhook] Lead upserted", {
+      lead_id: upsertedLead?.id,
+      phone_last4: maskPhoneLast4(phone),
+      agentId,
+      is_new: isNewLead,
+    });
   }
 
-  if (!isNewLead) {
-    console.log(
-      `[Meta Webhook] Lead já existente (${phone}) — agente não acionado para evitar contato com lead em atendimento`,
-    );
+  if (!agentId) {
+    console.warn("[meta-webhook] No valid agent for lead — skipping initial outreach", {
+      tenant_id,
+      lead_id: upsertedLead?.id,
+      phone_last4: maskPhoneLast4(phone),
+    });
     return;
   }
 
-  // 6. Send initial WhatsApp message via Evolution
-  const instance = await getEvolutionInstanceByTenantId(tenant_id);
   if (!instance?.instance_name) {
     console.warn("[meta-webhook] No Evolution instance for tenant — skipping initial message", { tenant_id });
     return;
   }
 
-  // Build a simple initial greeting (agent will handle proper AI response on reply)
-  const initialMessage =
-    `Olá, ${firstName || fullName}! 👋 Recebemos seu contato pelo nosso formulário. ` +
-    `Em instantes nossa equipe entrará em contato com você.`;
+  const leadId = upsertedLead?.id;
+  if (!leadId) {
+    console.warn("[meta-webhook] Lead upsert returned no id — skipping initial outreach", {
+      tenant_id,
+      phone_last4: maskPhoneLast4(phone),
+    });
+    return;
+  }
+
+  const outreachDecision = shouldSendMetaInitialOutreach(
+    upsertedLead?.profile_metadata ?? upsertPayload.profile_metadata,
+    leadgen_id,
+  );
+  if (!outreachDecision.shouldSend) {
+    console.info("[meta-webhook] Initial outreach skipped", {
+      tenant_id,
+      lead_id: leadId,
+      phone_last4: maskPhoneLast4(phone),
+      reason: outreachDecision.reason,
+    });
+    return;
+  }
+
+  const remoteJid = buildWhatsappRemoteJid(phone);
+  const evoNumber = remoteJidToEvoNumber(remoteJid);
+  if (!evoNumber) {
+    console.warn("[meta-webhook] Invalid remoteJid after phone normalization — skipping", {
+      tenant_id,
+      lead_id: leadId,
+      phone_last4: maskPhoneLast4(phone),
+    });
+    return;
+  }
+  const initialMessageExternalId = `meta:${leadgen_id}:initial`;
+  const { data: existingInitialMessage } = await sb
+    .from("whatsapp_messages")
+    .select("id, delivery_status")
+    .eq("tenant_id", tenant_id)
+    .eq("message_id", initialMessageExternalId)
+    .maybeSingle();
+  if (existingInitialMessage?.id) {
+    console.info("[meta-webhook] Initial outreach skipped", {
+      tenant_id,
+      lead_id: leadId,
+      phone_last4: maskPhoneLast4(phone),
+      reason: "initial_message_already_exists",
+      delivery_status: existingInitialMessage.delivery_status ?? null,
+    });
+    return;
+  }
+
+  const state = await upsertConversationState({
+    sb,
+    tenantId: tenant_id,
+    remoteJid,
+    leadId,
+    agentId,
+    channel: "whatsapp",
+    status: "active",
+    humanPaused: false,
+    lastMessageAt: new Date().toISOString(),
+  });
+  console.info("[meta-webhook] Conversation state upserted", {
+    tenant_id,
+    lead_id: leadId,
+    agent_id: agentId,
+    state_id: state?.id ?? null,
+    remote_jid_last4: maskPhoneLast4(remoteJid),
+  });
+
+  const aiPrompt = buildMetaInitialAgentPrompt({
+    leadName: fullName,
+    phone,
+    email,
+    formName,
+    pageName: connPageName?.trim() || null,
+    campaignName: adContext?.campaignName ?? null,
+    adName: adContext?.adName ?? null,
+    formFields: leadMetadata.form_fields,
+  });
+
+  const aiResult = await generateAgentResponse({
+    tenantId: tenant_id,
+    agentId,
+    conversationId: remoteJid,
+    customerId: remoteJid,
+    feature: "agent_chat",
+    messages: [{ role: "user", content: aiPrompt }],
+  });
+
+  const replyText = sanitizeInitialReply(aiResult.ok ? aiResult.text : "") || buildFallbackInitialMessage(fullName);
+
+  console.info("[meta-webhook] AI initial response generated", {
+    tenant_id,
+    lead_id: leadId,
+    agent_id: agentId,
+    ok: aiResult.ok,
+    model: aiResult.ok ? aiResult.model : aiResult.model ?? null,
+    fallback_reason: aiResult.ok ? null : aiResult.code,
+  });
+
+  const { data: savedMessage, error: msgErr } = await sb
+    .from("whatsapp_messages")
+    .insert({
+      tenant_id,
+      remote_jid: remoteJid,
+      direction: "outbound",
+      kind: "text",
+      content: replyText.slice(0, 4000),
+      message_id: initialMessageExternalId,
+      agent_id: agentId,
+      lead_id: leadId,
+      delivery_status: "pending",
+    })
+    .select("id")
+    .maybeSingle();
+
+  if (msgErr || !savedMessage?.id) {
+    console.error("[meta-webhook] Failed to save initial WhatsApp message", {
+      tenant_id,
+      lead_id: leadId,
+      error: msgErr?.message ?? "missing_saved_message",
+    });
+    return;
+  }
 
   try {
-    await evolutionSendText({
+    const send = await evolutionSendText({
       instanceName: instance.instance_name,
-      number: phone,
-      text: initialMessage,
+      number: evoNumber,
+      text: replyText,
     });
-    console.info("[meta-webhook] Initial message sent", { phone, instanceName: instance.instance_name });
+
+    if (!send.ok) {
+      console.error("[meta-webhook] Failed to send initial WhatsApp message", {
+        tenant_id,
+        lead_id: leadId,
+        message_id: savedMessage.id,
+        status: send.status,
+        error: send.error,
+      });
+      await sb
+        .from("whatsapp_messages")
+        .update({
+          delivery_status: "failed",
+          failed_reason: send.error ?? "evolution_send_failed",
+        })
+        .eq("tenant_id", tenant_id)
+        .eq("id", savedMessage.id);
+      return;
+    }
+
+    const sentAt = new Date().toISOString();
+    await Promise.all([
+      sb
+        .from("whatsapp_messages")
+        .update({ delivery_status: "sent", sent_at: sentAt })
+        .eq("tenant_id", tenant_id)
+        .eq("id", savedMessage.id),
+      sb
+        .from("leads")
+        .update({
+          profile_metadata: mergeLeadProfileMetadata(upsertedLead?.profile_metadata, {
+            meta_initial_outreach_leadgen_id: leadgen_id,
+            meta_initial_outreach_sent_at: sentAt,
+            meta_initial_outreach_message_id: savedMessage.id,
+          }),
+          last_message_at: sentAt,
+          updated_at: sentAt,
+        })
+        .eq("tenant_id", tenant_id)
+        .eq("id", leadId),
+      upsertConversationState({
+        sb,
+        tenantId: tenant_id,
+        remoteJid,
+        leadId,
+        agentId,
+        channel: "whatsapp",
+        lastMessageAt: sentAt,
+      }),
+    ]);
+
+    console.info("[meta-webhook] Initial WhatsApp message sent", {
+      tenant_id,
+      lead_id: leadId,
+      agent_id: agentId,
+      message_id: savedMessage.id,
+      phone_last4: maskPhoneLast4(phone),
+      instanceName: instance.instance_name,
+    });
   } catch (err) {
     console.error("[meta-webhook] Failed to send initial WhatsApp message", {
       error: err instanceof Error ? err.message : String(err),
-      phone,
+      tenant_id,
+      lead_id: leadId,
+      phone_last4: maskPhoneLast4(phone),
     });
+    await sb
+      .from("whatsapp_messages")
+      .update({
+        delivery_status: "failed",
+        failed_reason: err instanceof Error ? err.message : "evolution_send_exception",
+      })
+      .eq("tenant_id", tenant_id)
+      .eq("id", savedMessage.id);
   }
 }
 
@@ -321,6 +564,140 @@ async function processLeadgenEvent(value: LeadgenValue): Promise<void> {
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}
+
+function maskPhoneLast4(value: string): string {
+  const digits = value.replace(/\D/g, "");
+  return digits.slice(-4) || "empty";
+}
+
+async function isUsableTenantAgent(params: {
+  sb: ReturnType<typeof createSupabaseServiceClient>;
+  tenantId: string;
+  agentId: string | null | undefined;
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const id = params.agentId?.trim();
+  if (!id) return { ok: false, reason: "empty_agent_id" };
+  const { data, error } = await params.sb
+    .from("tenant_agents")
+    .select("agent_id, active, metadata")
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", id)
+    .maybeSingle();
+  if (error) return { ok: false, reason: error.message };
+  if (!data) return { ok: false, reason: "agent_not_found" };
+  if (data.active !== true) return { ok: false, reason: "agent_inactive" };
+  const metadata = data.metadata && typeof data.metadata === "object"
+    ? (data.metadata as Record<string, unknown>)
+    : {};
+  const status = typeof metadata.status === "string" ? metadata.status : "ativo";
+  if (status === "inativo" || status === "pausado") return { ok: false, reason: `metadata_${status}` };
+  return { ok: true };
+}
+
+async function resolveValidMetaAgent(params: {
+  sb: ReturnType<typeof createSupabaseServiceClient>;
+  tenantId: string;
+  routedAgentId: string | null;
+  instanceDefaultAgentId: string | null;
+}): Promise<AgentValidationResult> {
+  const routedCheck = await isUsableTenantAgent({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    agentId: params.routedAgentId,
+  });
+  if (routedCheck.ok && params.routedAgentId) {
+    return { agentId: params.routedAgentId, source: "routing", invalidAgentId: null, invalidReason: null };
+  }
+  const routedInvalidReason = routedCheck.ok ? null : routedCheck.reason;
+
+  const defaultCheck = await isUsableTenantAgent({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    agentId: params.instanceDefaultAgentId,
+  });
+  if (defaultCheck.ok && params.instanceDefaultAgentId) {
+    return {
+      agentId: params.instanceDefaultAgentId,
+      source: "instance_default",
+      invalidAgentId: params.routedAgentId,
+      invalidReason: routedInvalidReason,
+    };
+  }
+
+  const { data } = await params.sb
+    .from("tenant_agents")
+    .select("agent_id")
+    .eq("tenant_id", params.tenantId)
+    .eq("active", true)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const fallbackAgentId = typeof data?.agent_id === "string" ? data.agent_id : null;
+  if (fallbackAgentId) {
+    return {
+      agentId: fallbackAgentId,
+      source: "tenant_active",
+      invalidAgentId: params.routedAgentId,
+      invalidReason: routedInvalidReason,
+    };
+  }
+
+  return {
+    agentId: null,
+    source: "none",
+    invalidAgentId: params.routedAgentId,
+    invalidReason: routedInvalidReason,
+  };
+}
+
+function buildMetaInitialAgentPrompt(params: {
+  leadName: string;
+  phone: string;
+  email: string | null;
+  formName: string | null;
+  pageName: string | null;
+  campaignName: string | null;
+  adName: string | null;
+  formFields: unknown;
+}): string {
+  const fields = Array.isArray(params.formFields)
+    ? params.formFields
+        .map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const row = item as Record<string, unknown>;
+          const label = typeof row.label === "string" ? row.label.trim() : typeof row.key === "string" ? row.key.trim() : "";
+          const value = typeof row.value === "string" ? row.value.trim() : "";
+          return label && value ? `- ${label}: ${value}` : null;
+        })
+        .filter((item): item is string => Boolean(item))
+    : [];
+  return [
+    "Um novo lead acabou de preencher um formulário Meta Lead Ads e deve receber o primeiro atendimento agora pelo WhatsApp.",
+    "Responda como o agente configurado, com uma primeira mensagem curta, útil e contextual.",
+    "Não diga que é uma simulação. Não invente dados além do contexto abaixo.",
+    "",
+    `Nome do lead: ${params.leadName}`,
+    `Telefone: ${params.phone}`,
+    params.email ? `E-mail: ${params.email}` : null,
+    params.pageName ? `Página Meta: ${params.pageName}` : null,
+    params.formName ? `Formulário: ${params.formName}` : null,
+    params.campaignName ? `Campanha: ${params.campaignName}` : null,
+    params.adName ? `Anúncio: ${params.adName}` : null,
+    fields.length ? `Campos preenchidos:\n${fields.join("\n")}` : null,
+  ].filter((line): line is string => Boolean(line)).join("\n");
+}
+
+function buildFallbackInitialMessage(fullName: string): string {
+  const firstName = fullName.split(/\s+/)[0] || "tudo bem";
+  return `Olá, ${firstName}! Recebi seu cadastro e já vou te ajudar por aqui.`;
+}
+
+function sanitizeInitialReply(text: string): string {
+  return text
+    .replace(/\[\[HANDOFF\]\]/gi, "")
+    .replace(/\[\[ENVIAR_MEDIA:[^\]]+\]\]/gi, "")
+    .trim();
 }
 
 async function resolveAgentForLead(
@@ -456,6 +833,7 @@ function buildFormFieldsFromFieldData(
 }
 
 function buildLeadProfileMetadata(params: {
+  leadgenId: string;
   fieldData: GraphLeadFieldData[];
   formId?: string;
   formName: string | null;
@@ -468,6 +846,7 @@ function buildLeadProfileMetadata(params: {
 }): Record<string, unknown> {
   const meta: Record<string, unknown> = {
     source: "lead_ads",
+    meta_leadgen_id: params.leadgenId,
     form_fields: buildFormFieldsFromFieldData(params.fieldData, params.questionLabels),
   };
   if (params.formId) meta.meta_form_id = params.formId;
@@ -553,17 +932,4 @@ async function fetchFormQuestionLabels(formId: string, pageAccessToken: string):
     return labels;
   }
   return labels;
-}
-
-/** Strips formatting from a phone string and ensures E.164-ish format with country code. */
-function normalizePhone(raw: string): string {
-  const digits = raw.replace(/\D/g, "");
-  if (!digits) return "";
-  // If number starts with 0, strip it (local format)
-  const stripped = digits.startsWith("0") ? digits.slice(1) : digits;
-  // Add Brazil country code if missing (no leading 55) and 10-11 digits
-  if (stripped.length >= 10 && stripped.length <= 11 && !stripped.startsWith("55")) {
-    return `55${stripped}`;
-  }
-  return stripped;
 }
