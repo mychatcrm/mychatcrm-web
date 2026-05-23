@@ -168,6 +168,20 @@ export interface AgentFollowUpInteligente {
   ativo: boolean;
   tentativasContato: number;
   intervaloVerificacaoMinutos: number;
+  /** Estratégia de abordagem: agressivo = urgência; moderado = natural; suave = gentil. */
+  modo: "agressivo" | "moderado" | "suave";
+  /** Cooldown mínimo em minutos entre follow-ups consecutivos (anti-spam). */
+  cooldownMinutos: number;
+  /** Horas sem resposta que configuram violação de SLA (null = desabilitado). */
+  slaHorasResposta: number | null;
+  /** Hora UTC de início da janela comercial (0–23). */
+  horaInicio: number;
+  /** Hora UTC de fim da janela comercial (0–23, exclusive). */
+  horaFim: number;
+  /** Dias da semana permitidos: 0=Dom…6=Sáb. Lista vazia = todos os dias. */
+  diasAtivos: number[];
+  /** Se true, só retoma se um humano estava atendendo e abandonou. */
+  retomadaApenasSeHumanoAbandonou: boolean;
 }
 
 export interface AgentSchedule {

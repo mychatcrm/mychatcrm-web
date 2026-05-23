@@ -162,6 +162,13 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
       ativo: false,
       tentativasContato: 3,
       intervaloVerificacaoMinutos: 60,
+      modo: "moderado" as const,
+      cooldownMinutos: 60,
+      slaHorasResposta: null,
+      horaInicio: 8,
+      horaFim: 18,
+      diasAtivos: [1, 2, 3, 4, 5],
+      retomadaApenasSeHumanoAbandonou: false,
     },
     funil: { ...legacyFunil },
     whatsappSlotIndex,
@@ -240,6 +247,9 @@ export function validateCompactAgentDraft(
     if ((followUpInteligente.intervaloVerificacaoMinutos ?? 0) < 1) {
       return "Em «Configurações de Follow-up», o intervalo de verificação deve ser de pelo menos 1 minuto.";
     }
+    if ((followUpInteligente.horaInicio ?? 0) >= (followUpInteligente.horaFim ?? 23)) {
+      return "Em «Configurações de Follow-up», a hora de início deve ser menor que a hora de fim.";
+    }
   }
   const responseSettingsError = validateAgentResponseSettings(draft);
   if (responseSettingsError) return responseSettingsError;
@@ -293,6 +303,13 @@ export const defaultWizardDraft: AgentWizardDraft = {
     ativo: false,
     tentativasContato: 3,
     intervaloVerificacaoMinutos: 60,
+    modo: "moderado" as const,
+    cooldownMinutos: 60,
+    slaHorasResposta: null,
+    horaInicio: 8,
+    horaFim: 18,
+    diasAtivos: [1, 2, 3, 4, 5],
+    retomadaApenasSeHumanoAbandonou: false,
   },
   funil: {
     funilId: DEFAULT_CRM_FUNNELS[0]!.id,

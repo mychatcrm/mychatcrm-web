@@ -120,7 +120,7 @@ export function buildTemplateAgentsForTenant(clientId: string): Agent[] {
       ],
       funil: { ...funilBase, tagsEntrada: ["inbound", "qualificacao"] },
       followUps: [],
-      followUpInteligente: { ativo: false, tentativasContato: 3, intervaloVerificacaoMinutos: 60 },
+      followUpInteligente: { ativo: false, tentativasContato: 3, intervaloVerificacaoMinutos: 60, modo: "moderado" as const, cooldownMinutos: 60, slaHorasResposta: null, horaInicio: 8, horaFim: 18, diasAtivos: [1, 2, 3, 4, 5], retomadaApenasSeHumanoAbandonou: false },
       metricas: {
         conversasHoje: 14,
         leadsConvertidos: 5,
@@ -204,7 +204,7 @@ export function buildTemplateAgentsForTenant(clientId: string): Agent[] {
       ],
       funil: { ...funilBase, tagsEntrada: ["demo", "vendas"], valorEstimado: 12000 },
       followUps: [],
-      followUpInteligente: { ativo: false, tentativasContato: 3, intervaloVerificacaoMinutos: 60 },
+      followUpInteligente: { ativo: false, tentativasContato: 3, intervaloVerificacaoMinutos: 60, modo: "moderado" as const, cooldownMinutos: 60, slaHorasResposta: null, horaInicio: 8, horaFim: 18, diasAtivos: [1, 2, 3, 4, 5], retomadaApenasSeHumanoAbandonou: false },
       metricas: {
         conversasHoje: 9,
         leadsConvertidos: 3,
@@ -291,7 +291,7 @@ export function buildTemplateAgentsForTenant(clientId: string): Agent[] {
       ],
       funil: { ...funilBase, tagsEntrada: ["suporte", "pos-venda"], valorEstimado: 0, slaHoras: 2 },
       followUps: [],
-      followUpInteligente: { ativo: false, tentativasContato: 3, intervaloVerificacaoMinutos: 60 },
+      followUpInteligente: { ativo: false, tentativasContato: 3, intervaloVerificacaoMinutos: 60, modo: "moderado" as const, cooldownMinutos: 60, slaHorasResposta: null, horaInicio: 8, horaFim: 18, diasAtivos: [1, 2, 3, 4, 5], retomadaApenasSeHumanoAbandonou: false },
       metricas: {
         conversasHoje: 21,
         leadsConvertidos: 1,

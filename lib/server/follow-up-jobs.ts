@@ -10,6 +10,12 @@ import {
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import {
+  buildFollowUpAiInstruction,
+  evaluateFollowUpNeed,
+  type FollowUpDecision,
+  type FollowUpEvalContext,
+} from "@/lib/server/follow-up-engine";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -18,17 +24,18 @@ export type FollowUpJobRow = {
   tenant_id: string;
   agent_id: string;
   remote_jid: string;
+  lead_id: string | null;
   scheduled_at: string;
   attempts: number;
   max_attempts: number;
   status: string;
+  follow_up_type: string;
+  priority: number;
+  context_summary: string | null;
   last_error: string | null;
   created_at: string;
   updated_at: string;
 };
-
-const FOLLOW_UP_USER_INSTRUCTION =
-  "O cliente não respondeu há algum tempo. Envie uma mensagem de follow-up natural e contextual para retomar a conversa, sem ser insistente.";
 
 function logFollowUp(event: string, payload: Record<string, unknown>): void {
   console.info("[follow-up-jobs]", { event, ...payload });
@@ -40,15 +47,226 @@ function rowFromDb(data: Record<string, unknown>): FollowUpJobRow {
     tenant_id: String(data.tenant_id),
     agent_id: String(data.agent_id),
     remote_jid: String(data.remote_jid),
+    lead_id: typeof data.lead_id === "string" ? data.lead_id : null,
     scheduled_at: String(data.scheduled_at),
     attempts: Number(data.attempts ?? 0),
     max_attempts: Number(data.max_attempts ?? 3),
     status: String(data.status),
+    follow_up_type: typeof data.follow_up_type === "string" ? data.follow_up_type : "silence",
+    priority: Number(data.priority ?? 3),
+    context_summary: typeof data.context_summary === "string" ? data.context_summary : null,
     last_error: typeof data.last_error === "string" ? data.last_error : null,
     created_at: String(data.created_at),
     updated_at: String(data.updated_at),
   };
 }
+
+// ─── observability event ────────────────────────────────────────────────────
+
+type FollowUpEventType =
+  | "follow_up_evaluated"
+  | "follow_up_skipped"
+  | "follow_up_blocked_by_human"
+  | "follow_up_sent"
+  | "follow_up_failed"
+  | "cooldown_active"
+  | "spam_risk_detected"
+  | "sla_breached"
+  | "follow_up_closed"
+  | "business_hours_skipped"
+  | "customer_replied"
+  | "follow_up_exhausted";
+
+async function recordEvent(
+  sb: SupabaseServiceClient,
+  event: FollowUpEventType,
+  params: {
+    tenantId: string;
+    agentId: string;
+    remoteJid: string;
+    leadId?: string | null;
+    jobId?: string | null;
+    payload?: Record<string, unknown>;
+  },
+): Promise<void> {
+  try {
+    await sb.from("agent_followup_events").insert({
+      tenant_id: params.tenantId,
+      agent_id: params.agentId,
+      remote_jid: params.remoteJid,
+      lead_id: params.leadId ?? null,
+      job_id: params.jobId ?? null,
+      event_type: event,
+      payload: params.payload ?? null,
+    });
+  } catch {
+    // observability must never crash the main flow
+  }
+}
+
+// ─── outbound helper ─────────────────────────────────────────────────────────
+
+async function saveOutboundFollowUp(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  agentId: string;
+  content: string;
+  leadId?: string | null;
+}): Promise<void> {
+  await params.sb.from("whatsapp_messages").insert({
+    tenant_id: params.tenantId,
+    remote_jid: params.remoteJid,
+    direction: "outbound",
+    kind: "text",
+    content: params.content.slice(0, 4000),
+    agent_id: params.agentId,
+    lead_id: params.leadId ?? null,
+  });
+}
+
+// ─── lead loader ─────────────────────────────────────────────────────────────
+
+type LeadForFollowUp = {
+  id: string;
+  name: string | null;
+  status: string | null;
+  last_message_at: string | null;
+  last_follow_up_at: string | null;
+  follow_up_count: number;
+  follow_up_cooldown_until: string | null;
+  sla_breached_at: string | null;
+};
+
+async function loadLeadForFollowUp(
+  sb: SupabaseServiceClient,
+  tenantId: string,
+  remoteJid: string,
+  explicitLeadId?: string | null,
+): Promise<LeadForFollowUp | null> {
+  if (explicitLeadId) {
+    const { data } = await sb
+      .from("leads")
+      .select(
+        "id,name,status,last_message_at,last_follow_up_at,follow_up_count,follow_up_cooldown_until,sla_breached_at",
+      )
+      .eq("id", explicitLeadId)
+      .eq("tenant_id", tenantId)
+      .maybeSingle();
+    return data ? normalizeLeadRow(data as Record<string, unknown>) : null;
+  }
+
+  const phone = phoneFromRemoteJid(remoteJid);
+  if (!phone) return null;
+  const { data } = await sb
+    .from("leads")
+    .select(
+      "id,name,status,last_message_at,last_follow_up_at,follow_up_count,follow_up_cooldown_until,sla_breached_at",
+    )
+    .eq("tenant_id", tenantId)
+    .eq("phone", phone)
+    .maybeSingle();
+  return data ? normalizeLeadRow(data as Record<string, unknown>) : null;
+}
+
+function normalizeLeadRow(row: Record<string, unknown>): LeadForFollowUp {
+  return {
+    id: String(row.id),
+    name: typeof row.name === "string" ? row.name.trim() || null : null,
+    status: typeof row.status === "string" ? row.status : null,
+    last_message_at:
+      typeof row.last_message_at === "string" ? row.last_message_at : null,
+    last_follow_up_at:
+      typeof row.last_follow_up_at === "string" ? row.last_follow_up_at : null,
+    follow_up_count: Number(row.follow_up_count ?? 0),
+    follow_up_cooldown_until:
+      typeof row.follow_up_cooldown_until === "string"
+        ? row.follow_up_cooldown_until
+        : null,
+    sla_breached_at:
+      typeof row.sla_breached_at === "string" ? row.sla_breached_at : null,
+  };
+}
+
+// ─── message timestamp helpers ───────────────────────────────────────────────
+
+async function loadMessageTimestamps(
+  sb: SupabaseServiceClient,
+  tenantId: string,
+  remoteJid: string,
+): Promise<{
+  lastCustomerMessageAt: Date | null;
+  lastAgentMessageAt: Date | null;
+  lastHumanOutboundAt: Date | null;
+}> {
+  const { data } = await sb
+    .from("whatsapp_messages")
+    .select("direction,agent_id,created_at")
+    .eq("tenant_id", tenantId)
+    .eq("remote_jid", remoteJid)
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  const rows = (data ?? []) as Array<{
+    direction: string;
+    agent_id: string | null;
+    created_at: string;
+  }>;
+
+  let lastCustomerMessageAt: Date | null = null;
+  let lastAgentMessageAt: Date | null = null;
+  let lastHumanOutboundAt: Date | null = null;
+
+  for (const row of rows) {
+    const ts = new Date(row.created_at);
+    if (row.direction === "inbound") {
+      if (!lastCustomerMessageAt) lastCustomerMessageAt = ts;
+    } else if (row.direction === "outbound") {
+      if (row.agent_id) {
+        if (!lastAgentMessageAt) lastAgentMessageAt = ts;
+      } else {
+        if (!lastHumanOutboundAt) lastHumanOutboundAt = ts;
+      }
+    }
+    if (lastCustomerMessageAt && lastAgentMessageAt && lastHumanOutboundAt) break;
+  }
+
+  return { lastCustomerMessageAt, lastAgentMessageAt, lastHumanOutboundAt };
+}
+
+// ─── conversation state loader ───────────────────────────────────────────────
+
+async function loadConversationStateForJob(
+  sb: SupabaseServiceClient,
+  tenantId: string,
+  remoteJid: string,
+): Promise<{
+  humanPaused: boolean;
+  pausedReason: string | null;
+  handoffSuggested: boolean;
+  conversationMode: string | null;
+  archivedAt: Date | null;
+} | null> {
+  const { data } = await sb
+    .from("conversation_states")
+    .select("human_paused,paused_reason,handoff_suggested,conversation_mode,archived_at")
+    .eq("tenant_id", tenantId)
+    .eq("remote_jid", remoteJid)
+    .maybeSingle();
+  if (!data) return null;
+  const row = data as Record<string, unknown>;
+  return {
+    humanPaused: row.human_paused === true,
+    pausedReason: typeof row.paused_reason === "string" ? row.paused_reason : null,
+    handoffSuggested: row.handoff_suggested === true,
+    conversationMode:
+      typeof row.conversation_mode === "string" ? row.conversation_mode : null,
+    archivedAt:
+      typeof row.archived_at === "string" ? new Date(row.archived_at) : null,
+  };
+}
+
+// ─── public exports ──────────────────────────────────────────────────────────
 
 export async function cancelPendingFollowUpJobs(params: {
   sb: SupabaseServiceClient;
@@ -106,10 +324,13 @@ export async function scheduleFollowUpAfterInbound(params: {
       tenant_id: params.tenantId,
       agent_id: params.agentId,
       remote_jid: params.remoteJid,
+      lead_id: params.leadId ?? null,
       scheduled_at: scheduledAt.toISOString(),
       max_attempts: params.settings.tentativasContato,
       attempts: 0,
       status: "pending",
+      follow_up_type: "silence",
+      priority: 4,
     })
     .select("id")
     .single();
@@ -123,11 +344,14 @@ export async function scheduleFollowUpAfterInbound(params: {
     return null;
   }
 
+  const jobId = String((data as { id: string }).id);
+
   if (params.leadId) {
     await sb
       .from("leads")
       .update({
         follow_up_scheduled_at: scheduledAt.toISOString(),
+        follow_up_status: "scheduled",
         updated_at: now.toISOString(),
       })
       .eq("id", params.leadId)
@@ -136,53 +360,12 @@ export async function scheduleFollowUpAfterInbound(params: {
 
   logFollowUp("scheduled", {
     tenant_id: params.tenantId,
-    job_id: (data as { id: string }).id,
+    job_id: jobId,
     scheduled_at: scheduledAt.toISOString(),
     max_attempts: params.settings.tentativasContato,
   });
 
-  return String((data as { id: string }).id);
-}
-
-async function saveOutboundFollowUp(params: {
-  sb: SupabaseServiceClient;
-  tenantId: string;
-  remoteJid: string;
-  agentId: string;
-  content: string;
-  leadId?: string | null;
-}): Promise<void> {
-  await params.sb.from("whatsapp_messages").insert({
-    tenant_id: params.tenantId,
-    remote_jid: params.remoteJid,
-    direction: "outbound",
-    kind: "text",
-    content: params.content.slice(0, 4000),
-    agent_id: params.agentId,
-    lead_id: params.leadId ?? null,
-  });
-}
-
-async function loadLeadForFollowUp(
-  sb: SupabaseServiceClient,
-  tenantId: string,
-  remoteJid: string,
-): Promise<{ id: string; last_message_at: string | null; follow_up_count: number } | null> {
-  const phone = phoneFromRemoteJid(remoteJid);
-  if (!phone) return null;
-  const { data } = await sb
-    .from("leads")
-    .select("id, last_message_at, follow_up_count")
-    .eq("tenant_id", tenantId)
-    .eq("phone", phone)
-    .maybeSingle();
-  if (!data) return null;
-  const row = data as { id: string; last_message_at?: string | null; follow_up_count?: number };
-  return {
-    id: row.id,
-    last_message_at: row.last_message_at ?? null,
-    follow_up_count: Number(row.follow_up_count ?? 0),
-  };
+  return jobId;
 }
 
 export async function processFollowUpJob(
@@ -208,34 +391,23 @@ export async function processFollowUpJob(
   if (!claimed) return "skipped";
 
   const job = rowFromDb(claimed as Record<string, unknown>);
-  logFollowUp("processing", { job_id: job.id, tenant_id: job.tenant_id, attempts: job.attempts });
+  logFollowUp("processing", {
+    job_id: job.id,
+    tenant_id: job.tenant_id,
+    attempts: job.attempts,
+    follow_up_type: job.follow_up_type,
+    priority: job.priority,
+  });
+
+  const commonEventParams = {
+    tenantId: job.tenant_id,
+    agentId: job.agent_id,
+    remoteJid: job.remote_jid,
+    jobId: job.id,
+  };
 
   try {
-    const lead = await loadLeadForFollowUp(client, job.tenant_id, job.remote_jid);
-    if (lead?.last_message_at && new Date(lead.last_message_at).getTime() > new Date(job.created_at).getTime()) {
-      await client
-        .from("follow_up_jobs")
-        .update({ status: "cancelled", last_error: "customer_replied", updated_at: nowIso })
-        .eq("id", job.id);
-      logFollowUp("cancelled_customer_replied", { job_id: job.id });
-      return "cancelled";
-    }
-
-    const automationAllowed = await isAgentAutomationAllowed({
-      sb: client,
-      tenantId: job.tenant_id,
-      remoteJid: job.remote_jid,
-      agentId: job.agent_id,
-    });
-    if (!automationAllowed.ok) {
-      await client
-        .from("follow_up_jobs")
-        .update({ status: "cancelled", last_error: automationAllowed.reason, updated_at: nowIso })
-        .eq("id", job.id);
-      logFollowUp("cancelled_automation", { job_id: job.id, reason: automationAllowed.reason });
-      return "cancelled";
-    }
-
+    // ── check settings ───────────────────────────────────────────────────────
     const { data: agentRow } = await client
       .from("tenant_agents")
       .select("metadata")
@@ -247,14 +419,174 @@ export async function processFollowUpJob(
         ? (agentRow.metadata as Record<string, unknown>)
         : {};
     const settings = followUpInteligenteFromMetadata(metadata);
-    if (!settings.ativo) {
+
+    // ── load context ─────────────────────────────────────────────────────────
+    const now = new Date();
+    const lead = await loadLeadForFollowUp(client, job.tenant_id, job.remote_jid, job.lead_id);
+    const conversationState = await loadConversationStateForJob(
+      client,
+      job.tenant_id,
+      job.remote_jid,
+    );
+    const { lastCustomerMessageAt, lastAgentMessageAt, lastHumanOutboundAt } =
+      await loadMessageTimestamps(client, job.tenant_id, job.remote_jid);
+
+    const evalCtx: FollowUpEvalContext = {
+      now,
+      settings,
+      job: {
+        id: job.id,
+        attempts: job.attempts,
+        maxAttempts: job.max_attempts,
+        createdAt: new Date(job.created_at),
+      },
+      lead: lead
+        ? {
+            id: lead.id,
+            name: lead.name,
+            status: lead.status,
+            lastMessageAt: lead.last_message_at ? new Date(lead.last_message_at) : null,
+            lastFollowUpAt: lead.last_follow_up_at
+              ? new Date(lead.last_follow_up_at)
+              : null,
+            followUpCount: lead.follow_up_count,
+            followUpCooldownUntil: lead.follow_up_cooldown_until
+              ? new Date(lead.follow_up_cooldown_until)
+              : null,
+          }
+        : null,
+      conversationState,
+      lastCustomerMessageAt,
+      lastAgentMessageAt,
+      lastHumanOutboundAt,
+    };
+
+    const decision: FollowUpDecision = evaluateFollowUpNeed(evalCtx);
+
+    await recordEvent(client, "follow_up_evaluated", {
+      ...commonEventParams,
+      leadId: lead?.id,
+      payload: {
+        shouldSend: decision.shouldSend,
+        reason: decision.reason,
+        skipReason: decision.skipReason,
+        followUpType: decision.followUpType,
+        priority: decision.priority,
+        urgency: decision.urgency,
+        attempts: job.attempts,
+      },
+    });
+
+    // ── handle skips ─────────────────────────────────────────────────────────
+    if (!decision.shouldSend) {
+      const skipReason = decision.skipReason ?? "engine_skip";
+
+      if (decision.humanBlocked) {
+        await recordEvent(client, "follow_up_blocked_by_human", {
+          ...commonEventParams,
+          leadId: lead?.id,
+          payload: { reason: skipReason },
+        });
+      }
+      if (decision.cooldownActive || decision.spamRisk) {
+        await recordEvent(client, "cooldown_active", {
+          ...commonEventParams,
+          leadId: lead?.id,
+          payload: { reason: skipReason },
+        });
+      }
+      if (decision.businessHoursBlocked) {
+        await recordEvent(client, "business_hours_skipped", {
+          ...commonEventParams,
+          leadId: lead?.id,
+          payload: { nextRetryAt: decision.nextRetryAt?.toISOString(), reason: skipReason },
+        });
+        // Reschedule for next business window
+        if (decision.nextRetryAt) {
+          await client
+            .from("follow_up_jobs")
+            .update({
+              status: "pending",
+              scheduled_at: decision.nextRetryAt.toISOString(),
+              last_error: "rescheduled_business_hours",
+              updated_at: now.toISOString(),
+            })
+            .eq("id", job.id);
+          return "skipped";
+        }
+      }
+      if (skipReason === "customer_replied") {
+        await recordEvent(client, "customer_replied", {
+          ...commonEventParams,
+          leadId: lead?.id,
+          payload: {},
+        });
+      }
+
       await client
         .from("follow_up_jobs")
-        .update({ status: "cancelled", last_error: "follow_up_disabled", updated_at: nowIso })
+        .update({
+          status: "cancelled",
+          last_error: skipReason,
+          updated_at: now.toISOString(),
+        })
         .eq("id", job.id);
+
+      logFollowUp("skipped", { job_id: job.id, skip_reason: skipReason });
+
+      await recordEvent(client, "follow_up_skipped", {
+        ...commonEventParams,
+        leadId: lead?.id,
+        payload: { reason: skipReason },
+      });
       return "cancelled";
     }
 
+    // ── SLA breach flag ───────────────────────────────────────────────────────
+    if (decision.followUpType === "sla_breach" && lead?.id && !lead.sla_breached_at) {
+      await client
+        .from("leads")
+        .update({ sla_breached_at: now.toISOString(), updated_at: now.toISOString() })
+        .eq("id", lead.id);
+      await recordEvent(client, "sla_breached", {
+        ...commonEventParams,
+        leadId: lead.id,
+        payload: {
+          sla_hours: settings.slaHorasResposta,
+          follow_up_type: decision.followUpType,
+        },
+      });
+    }
+
+    // ── automation gate ───────────────────────────────────────────────────────
+    const automationAllowed = await isAgentAutomationAllowed({
+      sb: client,
+      tenantId: job.tenant_id,
+      remoteJid: job.remote_jid,
+      agentId: job.agent_id,
+    });
+    if (!automationAllowed.ok) {
+      await client
+        .from("follow_up_jobs")
+        .update({
+          status: "cancelled",
+          last_error: automationAllowed.reason,
+          updated_at: now.toISOString(),
+        })
+        .eq("id", job.id);
+      await recordEvent(client, "follow_up_blocked_by_human", {
+        ...commonEventParams,
+        leadId: lead?.id,
+        payload: { reason: automationAllowed.reason },
+      });
+      logFollowUp("cancelled_automation", {
+        job_id: job.id,
+        reason: automationAllowed.reason,
+      });
+      return "cancelled";
+    }
+
+    // ── build AI prompt ───────────────────────────────────────────────────────
     const history = await getRecentConversationMessages({
       sb: client,
       tenantId: job.tenant_id,
@@ -262,7 +594,17 @@ export async function processFollowUpJob(
       limit: 20,
     });
 
-    const result = await generateAgentResponse({
+    const followUpInstruction = buildFollowUpAiInstruction({
+      decision,
+      leadName: lead?.name ?? null,
+      settings: {
+        modo: settings.modo,
+        slaHorasResposta: settings.slaHorasResposta,
+      },
+      attemptNumber: job.attempts,
+    });
+
+    const aiResult = await generateAgentResponse({
       tenantId: job.tenant_id,
       agentId: job.agent_id,
       conversationId: job.remote_jid,
@@ -270,20 +612,30 @@ export async function processFollowUpJob(
       feature: "agent_chat",
       messages: [
         ...conversationMessagesToAi(history),
-        { role: "user", content: FOLLOW_UP_USER_INSTRUCTION },
+        { role: "user", content: followUpInstruction },
       ],
     });
 
-    const replyText = result.ok
-      ? result.text
+    const replyText = aiResult.ok
+      ? aiResult.text
       : "Oi! Passando para saber se ainda posso te ajudar com algo. Fico à disposição.";
 
+    // ── send via Evolution ────────────────────────────────────────────────────
     const instance = await getEvolutionInstanceByTenantId(job.tenant_id);
     if (!instance?.instance_name) {
       await client
         .from("follow_up_jobs")
-        .update({ status: "cancelled", last_error: "missing_evolution_instance", updated_at: nowIso })
+        .update({
+          status: "cancelled",
+          last_error: "missing_evolution_instance",
+          updated_at: now.toISOString(),
+        })
         .eq("id", job.id);
+      await recordEvent(client, "follow_up_failed", {
+        ...commonEventParams,
+        leadId: lead?.id,
+        payload: { reason: "missing_evolution_instance" },
+      });
       return "failed";
     }
 
@@ -291,7 +643,11 @@ export async function processFollowUpJob(
     if (!number) {
       await client
         .from("follow_up_jobs")
-        .update({ status: "cancelled", last_error: "invalid_remote_jid", updated_at: nowIso })
+        .update({
+          status: "cancelled",
+          last_error: "invalid_remote_jid",
+          updated_at: now.toISOString(),
+        })
         .eq("id", job.id);
       return "failed";
     }
@@ -305,12 +661,18 @@ export async function processFollowUpJob(
     if (!send.ok) {
       await client
         .from("follow_up_jobs")
-        .update({ status: "pending", last_error: send.error, updated_at: nowIso })
+        .update({ status: "pending", last_error: send.error, updated_at: now.toISOString() })
         .eq("id", job.id);
+      await recordEvent(client, "follow_up_failed", {
+        ...commonEventParams,
+        leadId: lead?.id,
+        payload: { error: send.error },
+      });
       logFollowUp("send_failed", { job_id: job.id, error: send.error });
       return "failed";
     }
 
+    // ── persist outbound + update lead ────────────────────────────────────────
     await saveOutboundFollowUp({
       sb: client,
       tenantId: job.tenant_id,
@@ -321,25 +683,44 @@ export async function processFollowUpJob(
     });
 
     const nextAttempts = job.attempts + 1;
-    const now = new Date();
 
     if (lead?.id) {
+      const cooldownUntil = new Date(
+        now.getTime() + settings.cooldownMinutos * 60_000,
+      );
       await client
         .from("leads")
         .update({
           follow_up_count: (lead.follow_up_count ?? 0) + 1,
           last_follow_up_at: now.toISOString(),
+          follow_up_status: nextAttempts >= job.max_attempts ? "exhausted" : "active",
+          follow_up_cooldown_until: cooldownUntil.toISOString(),
           updated_at: now.toISOString(),
         })
         .eq("id", lead.id);
     }
 
+    await recordEvent(client, "follow_up_sent", {
+      ...commonEventParams,
+      leadId: lead?.id,
+      payload: {
+        attempt: nextAttempts,
+        follow_up_type: decision.followUpType,
+        urgency: decision.urgency,
+        priority: decision.priority,
+        model: aiResult.ok ? aiResult.model : null,
+      },
+    });
+
+    // ── reschedule or exhaust ─────────────────────────────────────────────────
     if (nextAttempts >= job.max_attempts) {
       await client
         .from("follow_up_jobs")
         .update({
           status: "exhausted",
           attempts: nextAttempts,
+          follow_up_type: decision.followUpType,
+          priority: decision.priority,
           last_error: null,
           updated_at: now.toISOString(),
         })
@@ -347,20 +728,33 @@ export async function processFollowUpJob(
       if (lead?.id) {
         await client
           .from("leads")
-          .update({ follow_up_scheduled_at: null, updated_at: now.toISOString() })
+          .update({
+            follow_up_scheduled_at: null,
+            follow_up_status: "exhausted",
+            updated_at: now.toISOString(),
+          })
           .eq("id", lead.id);
       }
+      await recordEvent(client, "follow_up_exhausted", {
+        ...commonEventParams,
+        leadId: lead?.id,
+        payload: { attempts: nextAttempts },
+      });
       logFollowUp("exhausted", { job_id: job.id, attempts: nextAttempts });
       return "exhausted";
     }
 
-    const nextScheduled = new Date(now.getTime() + settings.intervaloVerificacaoMinutos * 60_000);
+    const nextScheduled = new Date(
+      now.getTime() + settings.intervaloVerificacaoMinutos * 60_000,
+    );
 
     await client
       .from("follow_up_jobs")
       .update({
         status: "sent",
         attempts: nextAttempts,
+        follow_up_type: decision.followUpType,
+        priority: decision.priority,
         last_error: null,
         updated_at: now.toISOString(),
       })
@@ -370,14 +764,20 @@ export async function processFollowUpJob(
       tenant_id: job.tenant_id,
       agent_id: job.agent_id,
       remote_jid: job.remote_jid,
+      lead_id: lead?.id ?? null,
       scheduled_at: nextScheduled.toISOString(),
       attempts: nextAttempts,
       max_attempts: job.max_attempts,
       status: "pending",
+      follow_up_type: "silence",
+      priority: decision.priority,
     });
 
     if (rescheduleError) {
-      logFollowUp("reschedule_failed", { job_id: job.id, error: rescheduleError.message });
+      logFollowUp("reschedule_failed", {
+        job_id: job.id,
+        error: rescheduleError.message,
+      });
     } else if (lead?.id) {
       await client
         .from("leads")
@@ -391,6 +791,8 @@ export async function processFollowUpJob(
     logFollowUp("sent", {
       job_id: job.id,
       attempts: nextAttempts,
+      follow_up_type: decision.followUpType,
+      urgency: decision.urgency,
       history_messages: history.length,
       next_scheduled_at: nextScheduled.toISOString(),
     });
@@ -401,6 +803,10 @@ export async function processFollowUpJob(
       .from("follow_up_jobs")
       .update({ status: "pending", last_error: message, updated_at: nowIso })
       .eq("id", jobId);
+    await recordEvent(client, "follow_up_failed", {
+      ...commonEventParams,
+      payload: { error: message },
+    });
     logFollowUp("process_error", { job_id: jobId, error: message });
     return "failed";
   }
@@ -420,6 +826,7 @@ export async function processDueFollowUpJobs(sb?: SupabaseServiceClient): Promis
     .select("id")
     .eq("status", "pending")
     .lte("scheduled_at", nowIso)
+    .order("priority", { ascending: true })
     .order("scheduled_at", { ascending: true })
     .limit(30);
 
@@ -430,7 +837,10 @@ export async function processDueFollowUpJobs(sb?: SupabaseServiceClient): Promis
   let failed = 0;
 
   for (const row of data ?? []) {
-    const outcome = await processFollowUpJob(String((row as { id: string }).id), client);
+    const outcome = await processFollowUpJob(
+      String((row as { id: string }).id),
+      client,
+    );
     if (outcome === "skipped") continue;
     processed += 1;
     if (outcome === "sent") sent += 1;

@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/internal/process-follow-ups",
-      "schedule": "0 4 * * *"
+      "schedule": "0 * * * *"
     }
   ]
 }
