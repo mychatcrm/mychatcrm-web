@@ -163,25 +163,35 @@ export interface FollowUp {
   mensagem: string;
 }
 
-/** Follow-up contextual por IA a partir do histórico completo (sem templates fixos). */
+/** Follow-up contextual por IA — todas as regras são controladas por estas flags (nada obrigatório no código). */
 export interface AgentFollowUpInteligente {
+  /** Master switch: desligado = zero jobs, zero envios, zero avaliações ativas. */
   ativo: boolean;
   tentativasContato: number;
   intervaloVerificacaoMinutos: number;
-  /** Estratégia de abordagem: agressivo = urgência; moderado = natural; suave = gentil. */
   modo: "agressivo" | "moderado" | "suave";
-  /** Cooldown mínimo em minutos entre follow-ups consecutivos (anti-spam). */
+  /** Aplicar cooldown mínimo entre follow-ups (anti-spam). */
+  cooldownAtivo: boolean;
   cooldownMinutos: number;
-  /** Horas sem resposta que configuram violação de SLA (null = desabilitado). */
-  slaHorasResposta: number | null;
-  /** Hora UTC de início da janela comercial (0–23). */
+  /** Restringir envios à janela horária/dias configurados. */
+  usarHorarioComercial: boolean;
   horaInicio: number;
-  /** Hora UTC de fim da janela comercial (0–23, exclusive). */
   horaFim: number;
-  /** Dias da semana permitidos: 0=Dom…6=Sáb. Lista vazia = todos os dias. */
   diasAtivos: number[];
-  /** Se true, só retoma se um humano estava atendendo e abandonou. */
+  /** Bloquear quando humano pausou, modo humano ou humano respondeu recentemente. */
+  respeitarHumanoAtivo: boolean;
   retomadaApenasSeHumanoAbandonou: boolean;
+  bloquearSeLeadRespondeu: boolean;
+  bloquearTarefaFutura: boolean;
+  bloquearStatusPerdido: boolean;
+  /** Priorizar retomada quando SLA (horas) for ultrapassado. */
+  permitirSlaVencido: boolean;
+  slaHorasResposta: number | null;
+  /** Ao esgotar tentativas, limpar agendamento e marcar follow-up inativo no lead. */
+  desativarAposEncerrar: boolean;
+  usarDadosFormularioMeta: boolean;
+  usarHistoricoCrm: boolean;
+  usarHistoricoWhatsapp: boolean;
 }
 
 export interface AgentSchedule {

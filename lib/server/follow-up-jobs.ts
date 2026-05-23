@@ -14,8 +14,8 @@ import {
   buildFollowUpAiInstruction,
   evaluateFollowUpNeed,
   type FollowUpDecision,
-  type FollowUpEvalContext,
 } from "@/lib/server/follow-up-engine";
+import { buildFollowUpEvalContext } from "@/lib/server/follow-up-evaluate";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -87,8 +87,11 @@ async function recordEvent(
     leadId?: string | null;
     jobId?: string | null;
     payload?: Record<string, unknown>;
+    /** Só grava eventos quando follow-up está ativo no agente. */
+    followUpActive: boolean;
   },
 ): Promise<void> {
+  if (!params.followUpActive) return;
   try {
     await sb.from("agent_followup_events").insert({
       tenant_id: params.tenantId,
@@ -138,7 +141,7 @@ type LeadForFollowUp = {
   sla_breached_at: string | null;
 };
 
-async function loadLeadForFollowUp(
+export async function loadLeadForFollowUp(
   sb: SupabaseServiceClient,
   tenantId: string,
   remoteJid: string,
@@ -190,7 +193,7 @@ function normalizeLeadRow(row: Record<string, unknown>): LeadForFollowUp {
 
 // ─── message timestamp helpers ───────────────────────────────────────────────
 
-async function loadMessageTimestamps(
+export async function loadMessageTimestamps(
   sb: SupabaseServiceClient,
   tenantId: string,
   remoteJid: string,
@@ -236,7 +239,7 @@ async function loadMessageTimestamps(
 
 // ─── conversation state loader ───────────────────────────────────────────────
 
-async function loadConversationStateForJob(
+export async function loadConversationStateForJob(
   sb: SupabaseServiceClient,
   tenantId: string,
   remoteJid: string,
@@ -420,19 +423,27 @@ export async function processFollowUpJob(
         : {};
     const settings = followUpInteligenteFromMetadata(metadata);
 
-    // ── load context ─────────────────────────────────────────────────────────
+    if (!settings.ativo) {
+      await client
+        .from("follow_up_jobs")
+        .update({
+          status: "cancelled",
+          last_error: "follow_up_disabled",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", job.id);
+      logFollowUp("skipped_disabled", { job_id: job.id, tenant_id: job.tenant_id });
+      return "cancelled";
+    }
+
     const now = new Date();
     const lead = await loadLeadForFollowUp(client, job.tenant_id, job.remote_jid, job.lead_id);
-    const conversationState = await loadConversationStateForJob(
-      client,
-      job.tenant_id,
-      job.remote_jid,
-    );
-    const { lastCustomerMessageAt, lastAgentMessageAt, lastHumanOutboundAt } =
-      await loadMessageTimestamps(client, job.tenant_id, job.remote_jid);
 
-    const evalCtx: FollowUpEvalContext = {
-      now,
+    const evalCtx = await buildFollowUpEvalContext({
+      sb: client,
+      tenantId: job.tenant_id,
+      agentId: job.agent_id,
+      remoteJid: job.remote_jid,
       settings,
       job: {
         id: job.id,
@@ -440,31 +451,17 @@ export async function processFollowUpJob(
         maxAttempts: job.max_attempts,
         createdAt: new Date(job.created_at),
       },
-      lead: lead
-        ? {
-            id: lead.id,
-            name: lead.name,
-            status: lead.status,
-            lastMessageAt: lead.last_message_at ? new Date(lead.last_message_at) : null,
-            lastFollowUpAt: lead.last_follow_up_at
-              ? new Date(lead.last_follow_up_at)
-              : null,
-            followUpCount: lead.follow_up_count,
-            followUpCooldownUntil: lead.follow_up_cooldown_until
-              ? new Date(lead.follow_up_cooldown_until)
-              : null,
-          }
-        : null,
-      conversationState,
-      lastCustomerMessageAt,
-      lastAgentMessageAt,
-      lastHumanOutboundAt,
-    };
+      leadId: job.lead_id,
+      loadLead: loadLeadForFollowUp,
+      loadConversationState: loadConversationStateForJob,
+      loadMessageTimestamps,
+    });
 
     const decision: FollowUpDecision = evaluateFollowUpNeed(evalCtx);
 
     await recordEvent(client, "follow_up_evaluated", {
       ...commonEventParams,
+      followUpActive: settings.ativo,
       leadId: lead?.id,
       payload: {
         shouldSend: decision.shouldSend,
@@ -481,9 +478,21 @@ export async function processFollowUpJob(
     if (!decision.shouldSend) {
       const skipReason = decision.skipReason ?? "engine_skip";
 
+      if (lead?.id) {
+        await client
+          .from("leads")
+          .update({
+            follow_up_status: "blocked",
+            follow_up_blocked_reason: skipReason,
+            updated_at: now.toISOString(),
+          })
+          .eq("id", lead.id);
+      }
+
       if (decision.humanBlocked) {
         await recordEvent(client, "follow_up_blocked_by_human", {
           ...commonEventParams,
+          followUpActive: settings.ativo,
           leadId: lead?.id,
           payload: { reason: skipReason },
         });
@@ -491,6 +500,7 @@ export async function processFollowUpJob(
       if (decision.cooldownActive || decision.spamRisk) {
         await recordEvent(client, "cooldown_active", {
           ...commonEventParams,
+          followUpActive: settings.ativo,
           leadId: lead?.id,
           payload: { reason: skipReason },
         });
@@ -498,6 +508,7 @@ export async function processFollowUpJob(
       if (decision.businessHoursBlocked) {
         await recordEvent(client, "business_hours_skipped", {
           ...commonEventParams,
+          followUpActive: settings.ativo,
           leadId: lead?.id,
           payload: { nextRetryAt: decision.nextRetryAt?.toISOString(), reason: skipReason },
         });
@@ -518,6 +529,7 @@ export async function processFollowUpJob(
       if (skipReason === "customer_replied") {
         await recordEvent(client, "customer_replied", {
           ...commonEventParams,
+          followUpActive: settings.ativo,
           leadId: lead?.id,
           payload: {},
         });
@@ -536,6 +548,7 @@ export async function processFollowUpJob(
 
       await recordEvent(client, "follow_up_skipped", {
         ...commonEventParams,
+        followUpActive: settings.ativo,
         leadId: lead?.id,
         payload: { reason: skipReason },
       });
@@ -550,6 +563,7 @@ export async function processFollowUpJob(
         .eq("id", lead.id);
       await recordEvent(client, "sla_breached", {
         ...commonEventParams,
+        followUpActive: settings.ativo,
         leadId: lead.id,
         payload: {
           sla_hours: settings.slaHorasResposta,
@@ -558,14 +572,15 @@ export async function processFollowUpJob(
       });
     }
 
-    // ── automation gate ───────────────────────────────────────────────────────
-    const automationAllowed = await isAgentAutomationAllowed({
-      sb: client,
-      tenantId: job.tenant_id,
-      remoteJid: job.remote_jid,
-      agentId: job.agent_id,
-    });
-    if (!automationAllowed.ok) {
+    // ── automation gate (só quando respeitar humano ativo) ───────────────────
+    if (settings.respeitarHumanoAtivo) {
+      const automationAllowed = await isAgentAutomationAllowed({
+        sb: client,
+        tenantId: job.tenant_id,
+        remoteJid: job.remote_jid,
+        agentId: job.agent_id,
+      });
+      if (!automationAllowed.ok) {
       await client
         .from("follow_up_jobs")
         .update({
@@ -576,6 +591,7 @@ export async function processFollowUpJob(
         .eq("id", job.id);
       await recordEvent(client, "follow_up_blocked_by_human", {
         ...commonEventParams,
+        followUpActive: settings.ativo,
         leadId: lead?.id,
         payload: { reason: automationAllowed.reason },
       });
@@ -584,23 +600,23 @@ export async function processFollowUpJob(
         reason: automationAllowed.reason,
       });
       return "cancelled";
+      }
     }
 
     // ── build AI prompt ───────────────────────────────────────────────────────
-    const history = await getRecentConversationMessages({
-      sb: client,
-      tenantId: job.tenant_id,
-      remoteJid: job.remote_jid,
-      limit: 20,
-    });
+    const history = settings.usarHistoricoWhatsapp
+      ? await getRecentConversationMessages({
+          sb: client,
+          tenantId: job.tenant_id,
+          remoteJid: job.remote_jid,
+          limit: 20,
+        })
+      : [];
 
     const followUpInstruction = buildFollowUpAiInstruction({
       decision,
       leadName: lead?.name ?? null,
-      settings: {
-        modo: settings.modo,
-        slaHorasResposta: settings.slaHorasResposta,
-      },
+      settings,
       attemptNumber: job.attempts,
     });
 
@@ -610,8 +626,13 @@ export async function processFollowUpJob(
       conversationId: job.remote_jid,
       customerId: job.remote_jid,
       feature: "agent_chat",
+      contextSources: {
+        whatsappHistory: settings.usarHistoricoWhatsapp,
+        includeCrm: settings.usarHistoricoCrm,
+        includeMetaForm: settings.usarDadosFormularioMeta,
+      },
       messages: [
-        ...conversationMessagesToAi(history),
+        ...(settings.usarHistoricoWhatsapp ? conversationMessagesToAi(history) : []),
         { role: "user", content: followUpInstruction },
       ],
     });
@@ -633,6 +654,7 @@ export async function processFollowUpJob(
         .eq("id", job.id);
       await recordEvent(client, "follow_up_failed", {
         ...commonEventParams,
+        followUpActive: settings.ativo,
         leadId: lead?.id,
         payload: { reason: "missing_evolution_instance" },
       });
@@ -665,6 +687,7 @@ export async function processFollowUpJob(
         .eq("id", job.id);
       await recordEvent(client, "follow_up_failed", {
         ...commonEventParams,
+        followUpActive: settings.ativo,
         leadId: lead?.id,
         payload: { error: send.error },
       });
@@ -694,7 +717,9 @@ export async function processFollowUpJob(
           follow_up_count: (lead.follow_up_count ?? 0) + 1,
           last_follow_up_at: now.toISOString(),
           follow_up_status: nextAttempts >= job.max_attempts ? "exhausted" : "active",
-          follow_up_cooldown_until: cooldownUntil.toISOString(),
+          follow_up_blocked_reason: null,
+          follow_up_cooldown_until:
+            settings.cooldownAtivo ? cooldownUntil.toISOString() : null,
           updated_at: now.toISOString(),
         })
         .eq("id", lead.id);
@@ -702,6 +727,7 @@ export async function processFollowUpJob(
 
     await recordEvent(client, "follow_up_sent", {
       ...commonEventParams,
+      followUpActive: settings.ativo,
       leadId: lead?.id,
       payload: {
         attempt: nextAttempts,
@@ -730,13 +756,15 @@ export async function processFollowUpJob(
           .from("leads")
           .update({
             follow_up_scheduled_at: null,
-            follow_up_status: "exhausted",
+            follow_up_status: settings.desativarAposEncerrar ? "inactive" : "exhausted",
+            follow_up_blocked_reason: null,
             updated_at: now.toISOString(),
           })
           .eq("id", lead.id);
       }
       await recordEvent(client, "follow_up_exhausted", {
         ...commonEventParams,
+        followUpActive: settings.ativo,
         leadId: lead?.id,
         payload: { attempts: nextAttempts },
       });
@@ -805,6 +833,7 @@ export async function processFollowUpJob(
       .eq("id", jobId);
     await recordEvent(client, "follow_up_failed", {
       ...commonEventParams,
+      followUpActive: false,
       payload: { error: message },
     });
     logFollowUp("process_error", { job_id: jobId, error: message });

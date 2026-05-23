@@ -12,6 +12,7 @@ import { transcribeAudio, describeImage } from "@/lib/ai/media-processor";
 import { buildAgentSystemPrompt } from "@/lib/ai/agent-system-prompt";
 import {
   buildLeadConversationMemory,
+  type LeadMemorySourceOptions,
 } from "@/lib/server/lead-conversation-memory";
 import type { BurstResponseStrategy } from "@/lib/conversas/normalize-conversation-burst";
 import type { Agent } from "@/lib/types";
@@ -226,6 +227,8 @@ export async function generateAgentResponse(params: {
   simulation?: boolean;
   /** Sobrescreve metadados do agente (ex.: rascunho no simulador). */
   agentOverride?: Partial<Agent> & { nome?: string; systemPrompt?: string };
+  /** Controla quais fontes entram no prompt (ex.: follow-up com toggles do agente). */
+  contextSources?: LeadMemorySourceOptions & { whatsappHistory?: boolean };
   /** IDs de mensagens inbound já representadas no burst atual — omitir do histórico. */
   excludeMessageIds?: string[];
   /** Sinais do burst para humanização no system prompt. */
@@ -312,17 +315,45 @@ export async function generateAgentResponse(params: {
   });
   if (!resolved.ok) return resolved.result;
   const { profile, baseAgent } = resolved;
+  const includeWhatsapp = params.contextSources?.whatsappHistory !== false;
   const memory = await buildLeadConversationMemory({
     tenantId: params.tenantId,
     agentId: params.agentId,
     remoteJid: params.conversationId,
     excludeMessageIds: params.excludeMessageIds,
+    sourceOptions: {
+      includeCrm: params.contextSources?.includeCrm,
+      includeMetaForm: params.contextSources?.includeMetaForm,
+    },
   });
+  const includeCrm = params.contextSources?.includeCrm !== false;
+  const includeMetaForm = params.contextSources?.includeMetaForm !== false;
+  const runtimeForPrompt = {
+    ...memory,
+    lead:
+      memory.lead && includeCrm
+        ? includeMetaForm
+          ? memory.lead
+          : { ...memory.lead, profileMetadata: {} }
+        : includeMetaForm && memory.lead
+          ? {
+              ...memory.lead,
+              aiSummary: null,
+              suggestedNextAction: null,
+              leadTemperature: null,
+              crmFunnelId: null,
+              notes: null,
+              status: null,
+            }
+          : null,
+    summary: includeCrm ? memory.summary : null,
+    state: includeCrm ? memory.state : null,
+  };
   const systemPrompt = buildAgentSystemPrompt({
     agent: baseAgent,
-    runtimeContext: memory,
+    runtimeContext: runtimeForPrompt,
     languageInstruction: buildLanguageInstruction(detectedLanguageName, baseAgent.idioma),
-    recognitionHint: memory.recognitionHint,
+    recognitionHint: includeWhatsapp ? memory.recognitionHint : null,
     condensedContext: memory.condensedContext,
     burstContext: params.burstContext,
   });
@@ -333,7 +364,7 @@ export async function generateAgentResponse(params: {
   const model = params.model?.trim() || profile?.model?.trim() || undefined;
   const temperature = typeof baseAgent.temperatura === "number" ? baseAgent.temperatura : undefined;
   const systemMessage: AiMessage = { role: "system", content: systemPrompt };
-  const historyMessages = memory.aiMessages;
+  const historyMessages = includeWhatsapp ? memory.aiMessages : [];
   const tailMessages = withoutTrailingDuplicateUserMessages(historyMessages, [
     ...conversationOnly,
     ...(mediaUserMessage ? [mediaUserMessage] : []),

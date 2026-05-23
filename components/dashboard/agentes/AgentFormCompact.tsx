@@ -262,7 +262,11 @@ export function AgentFormCompact({
                 description="Retomada contextual a partir do histórico completo — sem templates fixos."
                 titleIcon={<Timer strokeWidth={1.75} />}
               >
-                <WizardStepFollowUpInteligente draft={draft} onChange={setDraft} />
+                <WizardStepFollowUpInteligente
+                  draft={draft}
+                  onChange={setDraft}
+                  agentId={initialAgent?.id ?? (initialAgent as { agent_id?: string } | undefined)?.agent_id}
+                />
               </AdvancedSection>
               <AdvancedSection
                 title="Modo de Resposta"

@@ -1,4 +1,5 @@
 import { BRAND } from "@/lib/brand";
+import { DEFAULT_FOLLOW_UP_INTELIGENTE } from "@/lib/server/follow-up-settings";
 import type { Agent } from "@/lib/types";
 
 function buildMockQrData(keyword: string) {
@@ -120,7 +121,7 @@ export function buildTemplateAgentsForTenant(clientId: string): Agent[] {
       ],
       funil: { ...funilBase, tagsEntrada: ["inbound", "qualificacao"] },
       followUps: [],
-      followUpInteligente: { ativo: false, tentativasContato: 3, intervaloVerificacaoMinutos: 60, modo: "moderado" as const, cooldownMinutos: 60, slaHorasResposta: null, horaInicio: 8, horaFim: 18, diasAtivos: [1, 2, 3, 4, 5], retomadaApenasSeHumanoAbandonou: false },
+      followUpInteligente: { ...DEFAULT_FOLLOW_UP_INTELIGENTE },
       metricas: {
         conversasHoje: 14,
         leadsConvertidos: 5,
@@ -204,7 +205,7 @@ export function buildTemplateAgentsForTenant(clientId: string): Agent[] {
       ],
       funil: { ...funilBase, tagsEntrada: ["demo", "vendas"], valorEstimado: 12000 },
       followUps: [],
-      followUpInteligente: { ativo: false, tentativasContato: 3, intervaloVerificacaoMinutos: 60, modo: "moderado" as const, cooldownMinutos: 60, slaHorasResposta: null, horaInicio: 8, horaFim: 18, diasAtivos: [1, 2, 3, 4, 5], retomadaApenasSeHumanoAbandonou: false },
+      followUpInteligente: { ...DEFAULT_FOLLOW_UP_INTELIGENTE },
       metricas: {
         conversasHoje: 9,
         leadsConvertidos: 3,
@@ -291,7 +292,7 @@ export function buildTemplateAgentsForTenant(clientId: string): Agent[] {
       ],
       funil: { ...funilBase, tagsEntrada: ["suporte", "pos-venda"], valorEstimado: 0, slaHoras: 2 },
       followUps: [],
-      followUpInteligente: { ativo: false, tentativasContato: 3, intervaloVerificacaoMinutos: 60, modo: "moderado" as const, cooldownMinutos: 60, slaHorasResposta: null, horaInicio: 8, horaFim: 18, diasAtivos: [1, 2, 3, 4, 5], retomadaApenasSeHumanoAbandonou: false },
+      followUpInteligente: { ...DEFAULT_FOLLOW_UP_INTELIGENTE },
       metricas: {
         conversasHoje: 21,
         leadsConvertidos: 1,

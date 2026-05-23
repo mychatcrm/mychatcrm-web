@@ -73,15 +73,28 @@ export function buildRecognitionHint(params: {
   );
 }
 
-export function buildCondensedMemoryContext(memory: {
-  lead: LeadRuntimeContext | null;
-  state: ConversationState | null;
-  summary: ConversationSummary | null;
-  lastInteractionAt: string | null;
-}): string {
+export type LeadMemorySourceOptions = {
+  includeCrm?: boolean;
+  includeMetaForm?: boolean;
+};
+
+export function buildCondensedMemoryContext(
+  memory: {
+    lead: LeadRuntimeContext | null;
+    state: ConversationState | null;
+    summary: ConversationSummary | null;
+    lastInteractionAt: string | null;
+  },
+  sources?: LeadMemorySourceOptions,
+): string {
+  const includeCrm = sources?.includeCrm !== false;
+  const includeMetaForm = sources?.includeMetaForm !== false;
+
+  if (!includeCrm && !includeMetaForm) return "";
+
   const parts: string[] = ["Memória central do CRM (fonte canônica):"];
 
-  if (memory.lead) {
+  if (memory.lead && includeCrm) {
     parts.push(
       `Lead: ${memory.lead.name ?? "sem nome"} | status ${memory.lead.status ?? "—"} | funil ${memory.lead.crmFunnelId ?? "—"} | temperatura ${memory.lead.leadTemperature ?? "—"}`,
     );
@@ -89,11 +102,14 @@ export function buildCondensedMemoryContext(memory: {
     if (memory.lead.suggestedNextAction) {
       parts.push(`Próxima ação sugerida: ${memory.lead.suggestedNextAction}`);
     }
+  }
+
+  if (memory.lead && includeMetaForm) {
     const formMemory = buildMetaFormMemorySummary(memory.lead.profileMetadata);
     if (formMemory) parts.push(formMemory);
   }
 
-  if (memory.summary) {
+  if (includeCrm && memory.summary) {
     parts.push(
       `Último resumo da conversa: ${memory.summary.summary}`,
       `Intenção: ${memory.summary.customerIntent ?? "—"}`,
@@ -101,17 +117,17 @@ export function buildCondensedMemoryContext(memory: {
     );
   }
 
-  if (memory.state) {
+  if (includeCrm && memory.state) {
     parts.push(
       `Automação: ${memory.state.humanPaused ? "pausada" : "ativa"} | handoff: ${memory.state.handoffSuggested ? "sim" : "não"}`,
     );
   }
 
-  if (memory.lastInteractionAt) {
+  if (includeCrm && memory.lastInteractionAt) {
     parts.push(`Última interação registrada: ${memory.lastInteractionAt}`);
   }
 
-  return parts.join("\n");
+  return parts.length > 1 ? parts.join("\n") : "";
 }
 
 async function getLatestSummaryForLead(params: {
@@ -181,6 +197,7 @@ export async function buildLeadConversationMemory(params: {
   leadId?: string | null;
   messageLimit?: number;
   excludeMessageIds?: string[];
+  sourceOptions?: LeadMemorySourceOptions;
 }): Promise<LeadConversationMemory> {
   if (!params.remoteJid && !params.leadId) {
     let sb: ReturnType<typeof createSupabaseServiceClient>;
@@ -304,12 +321,15 @@ export async function buildLeadConversationMemory(params: {
     : recentMessages;
 
   const aiMessages = conversationMessagesToAi(filteredMessages);
-  const condensedContext = buildCondensedMemoryContext({
-    lead,
-    state,
-    summary,
-    lastInteractionAt,
-  });
+  const condensedContext = buildCondensedMemoryContext(
+    {
+      lead,
+      state,
+      summary,
+      lastInteractionAt,
+    },
+    params.sourceOptions,
+  );
   const recognitionHint = buildRecognitionHint({
     lastInteractionAt,
     summary,

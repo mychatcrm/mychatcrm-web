@@ -20,6 +20,7 @@ import { normalizeInstructionMode } from "./instruction-mode";
 import { normalizeAgentCrmDestination } from "./crm-destination";
 import { normalizeAgentResponseMode, normalizeAgentVoiceId, validateAgentResponseSettings } from "./response-settings";
 import { DEFAULT_AGENT_SMART_WAIT, sanitizeAgentSmartWaitSettings } from "./smart-wait-settings";
+import { DEFAULT_FOLLOW_UP_INTELIGENTE } from "@/lib/server/follow-up-settings";
 
 export type AgentWizardDraft = {
   nome: string;
@@ -158,18 +159,9 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     origens: normalizeOrigensForWizard(agent.origens),
     fluxo: agent.fluxo,
     followUps: agent.followUps,
-    followUpInteligente: agent.followUpInteligente ?? {
-      ativo: false,
-      tentativasContato: 3,
-      intervaloVerificacaoMinutos: 60,
-      modo: "moderado" as const,
-      cooldownMinutos: 60,
-      slaHorasResposta: null,
-      horaInicio: 8,
-      horaFim: 18,
-      diasAtivos: [1, 2, 3, 4, 5],
-      retomadaApenasSeHumanoAbandonou: false,
-    },
+    followUpInteligente: agent.followUpInteligente
+      ? { ...DEFAULT_FOLLOW_UP_INTELIGENTE, ...agent.followUpInteligente }
+      : { ...DEFAULT_FOLLOW_UP_INTELIGENTE },
     funil: { ...legacyFunil },
     whatsappSlotIndex,
     ctaHandoffAtivo: agent.ctaHandoffAtivo ?? false,
@@ -299,18 +291,7 @@ export const defaultWizardDraft: AgentWizardDraft = {
     },
   ],
   followUps: [],
-  followUpInteligente: {
-    ativo: false,
-    tentativasContato: 3,
-    intervaloVerificacaoMinutos: 60,
-    modo: "moderado" as const,
-    cooldownMinutos: 60,
-    slaHorasResposta: null,
-    horaInicio: 8,
-    horaFim: 18,
-    diasAtivos: [1, 2, 3, 4, 5],
-    retomadaApenasSeHumanoAbandonou: false,
-  },
+  followUpInteligente: { ...DEFAULT_FOLLOW_UP_INTELIGENTE },
   funil: {
     funilId: DEFAULT_CRM_FUNNELS[0]!.id,
     nomeFunil: DEFAULT_CRM_FUNNELS[0]!.nome,

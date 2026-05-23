@@ -1,6 +1,8 @@
-/** Pure, side-effect-free follow-up decision engine. No DB calls; fully unit-testable. */
+/** Pure follow-up decision engine — obedece 100% às configurações do agente. */
 
-export type FollowUpMode = "agressivo" | "moderado" | "suave";
+import type { AgentFollowUpInteligente } from "@/lib/types";
+
+export type FollowUpMode = AgentFollowUpInteligente["modo"];
 
 export type FollowUpType =
   | "silence"
@@ -10,22 +12,9 @@ export type FollowUpType =
 
 export type FollowUpUrgency = "critical" | "high" | "medium" | "low";
 
-export type FollowUpEvalSettings = {
-  ativo: boolean;
-  tentativasContato: number;
-  intervaloVerificacaoMinutos: number;
-  modo: FollowUpMode;
-  cooldownMinutos: number;
-  slaHorasResposta: number | null;
-  horaInicio: number;
-  horaFim: number;
-  diasAtivos: number[];
-  retomadaApenasSeHumanoAbandonou: boolean;
-};
-
 export type FollowUpEvalContext = {
   now: Date;
-  settings: FollowUpEvalSettings;
+  settings: AgentFollowUpInteligente;
   job: {
     id: string;
     attempts: number;
@@ -51,6 +40,7 @@ export type FollowUpEvalContext = {
   lastCustomerMessageAt: Date | null;
   lastAgentMessageAt: Date | null;
   lastHumanOutboundAt: Date | null;
+  hasFutureTask: boolean;
 };
 
 export type FollowUpDecision = {
@@ -68,7 +58,6 @@ export type FollowUpDecision = {
 };
 
 const LOST_STATUSES = new Set(["perdido", "inativo", "cancelado", "arquivado"]);
-const MIN_GLOBAL_COOLDOWN_MINUTES = 30;
 
 function clampPriority(n: number): 1 | 2 | 3 | 4 | 5 {
   return Math.max(1, Math.min(5, Math.round(n))) as 1 | 2 | 3 | 4 | 5;
@@ -76,7 +65,7 @@ function clampPriority(n: number): 1 | 2 | 3 | 4 | 5 {
 
 export function isWithinBusinessHours(
   now: Date,
-  settings: Pick<FollowUpEvalSettings, "horaInicio" | "horaFim" | "diasAtivos">,
+  settings: Pick<AgentFollowUpInteligente, "horaInicio" | "horaFim" | "diasAtivos">,
 ): boolean {
   const hour = now.getUTCHours();
   const day = now.getUTCDay();
@@ -86,7 +75,7 @@ export function isWithinBusinessHours(
 
 export function nextBusinessHourStart(
   now: Date,
-  settings: Pick<FollowUpEvalSettings, "horaInicio" | "horaFim" | "diasAtivos">,
+  settings: Pick<AgentFollowUpInteligente, "horaInicio" | "horaFim" | "diasAtivos">,
 ): Date {
   for (let dayOffset = 0; dayOffset <= 7; dayOffset++) {
     const candidate = new Date(now.getTime() + dayOffset * 24 * 60 * 60_000);
@@ -119,40 +108,63 @@ export function evaluateFollowUpNeed(ctx: FollowUpEvalContext): FollowUpDecision
 
   if (!settings.ativo) return { ...base, skipReason: "follow_up_disabled" };
 
-  if (job.attempts >= job.maxAttempts) return { ...base, skipReason: "max_attempts_reached" };
-
-  const leadStatus = lead?.status?.toLowerCase() ?? "";
-  if (leadStatus && LOST_STATUSES.has(leadStatus)) {
-    return { ...base, skipReason: `lead_status_${leadStatus}` };
+  if (job.attempts >= job.maxAttempts) {
+    return { ...base, skipReason: "max_attempts_reached" };
   }
 
-  if (conversationState?.humanPaused) {
-    return { ...base, humanBlocked: true, skipReason: "human_paused" };
+  if (settings.bloquearStatusPerdido) {
+    const leadStatus = lead?.status?.toLowerCase() ?? "";
+    if (leadStatus && LOST_STATUSES.has(leadStatus)) {
+      return { ...base, skipReason: `lead_status_${leadStatus}` };
+    }
   }
-  if (conversationState?.conversationMode === "human") {
-    return { ...base, humanBlocked: true, skipReason: "conversation_mode_human" };
+
+  if (settings.respeitarHumanoAtivo) {
+    if (conversationState?.humanPaused) {
+      return { ...base, humanBlocked: true, skipReason: "human_paused" };
+    }
+    if (conversationState?.conversationMode === "human") {
+      return { ...base, humanBlocked: true, skipReason: "conversation_mode_human" };
+    }
+    if (ctx.lastHumanOutboundAt) {
+      const twoIntervalsMs = settings.intervaloVerificacaoMinutos * 2 * 60_000;
+      const timeSinceHuman = now.getTime() - ctx.lastHumanOutboundAt.getTime();
+      if (timeSinceHuman < twoIntervalsMs) {
+        return { ...base, humanBlocked: true, skipReason: "human_recently_active" };
+      }
+    }
   }
+
   if (conversationState?.archivedAt) {
     return { ...base, skipReason: "conversation_archived" };
   }
 
-  if (ctx.lastCustomerMessageAt && ctx.lastCustomerMessageAt > job.createdAt) {
+  if (
+    settings.bloquearSeLeadRespondeu &&
+    ctx.lastCustomerMessageAt &&
+    ctx.lastCustomerMessageAt > job.createdAt
+  ) {
     return { ...base, skipReason: "customer_replied" };
   }
 
-  const effectiveCooldownMs =
-    Math.max(settings.cooldownMinutos, MIN_GLOBAL_COOLDOWN_MINUTES) * 60_000;
-  if (lead?.lastFollowUpAt) {
-    const timeSinceLast = now.getTime() - lead.lastFollowUpAt.getTime();
-    if (timeSinceLast < effectiveCooldownMs) {
-      return { ...base, cooldownActive: true, spamRisk: true, skipReason: "cooldown_active" };
-    }
-  }
-  if (lead?.followUpCooldownUntil && lead.followUpCooldownUntil > now) {
-    return { ...base, cooldownActive: true, skipReason: "cooldown_until" };
+  if (settings.bloquearTarefaFutura && ctx.hasFutureTask) {
+    return { ...base, skipReason: "future_task_scheduled" };
   }
 
-  if (!isWithinBusinessHours(now, settings)) {
+  if (settings.cooldownAtivo) {
+    const cooldownMs = settings.cooldownMinutos * 60_000;
+    if (lead?.lastFollowUpAt) {
+      const timeSinceLast = now.getTime() - lead.lastFollowUpAt.getTime();
+      if (timeSinceLast < cooldownMs) {
+        return { ...base, cooldownActive: true, spamRisk: true, skipReason: "cooldown_active" };
+      }
+    }
+    if (lead?.followUpCooldownUntil && lead.followUpCooldownUntil > now) {
+      return { ...base, cooldownActive: true, skipReason: "cooldown_until" };
+    }
+  }
+
+  if (settings.usarHorarioComercial && !isWithinBusinessHours(now, settings)) {
     const nextSlot = nextBusinessHourStart(now, settings);
     return {
       ...base,
@@ -160,14 +172,6 @@ export function evaluateFollowUpNeed(ctx: FollowUpEvalContext): FollowUpDecision
       nextRetryAt: nextSlot,
       skipReason: "outside_business_hours",
     };
-  }
-
-  if (ctx.lastHumanOutboundAt) {
-    const twoIntervalsMs = settings.intervaloVerificacaoMinutos * 2 * 60_000;
-    const timeSinceHuman = now.getTime() - ctx.lastHumanOutboundAt.getTime();
-    if (timeSinceHuman < twoIntervalsMs) {
-      return { ...base, humanBlocked: true, skipReason: "human_recently_active" };
-    }
   }
 
   if (settings.retomadaApenasSeHumanoAbandonou) {
@@ -186,7 +190,7 @@ export function evaluateFollowUpNeed(ctx: FollowUpEvalContext): FollowUpDecision
   let urgency: FollowUpUrgency = "medium";
   let reason = "customer_silence";
 
-  if (settings.slaHorasResposta) {
+  if (settings.permitirSlaVencido && settings.slaHorasResposta) {
     const slaMs = settings.slaHorasResposta * 3_600_000;
     const lastActivity =
       ctx.lastCustomerMessageAt?.getTime() ?? job.createdAt.getTime();
@@ -198,8 +202,14 @@ export function evaluateFollowUpNeed(ctx: FollowUpEvalContext): FollowUpDecision
     }
   }
 
-  if (followUpType === "silence" && ctx.lastHumanOutboundAt) {
-    const slaMs = (settings.slaHorasResposta ?? 24) * 3_600_000;
+  if (
+    followUpType === "silence" &&
+    settings.retomadaApenasSeHumanoAbandonou &&
+    ctx.lastHumanOutboundAt &&
+    settings.permitirSlaVencido &&
+    settings.slaHorasResposta
+  ) {
+    const slaMs = settings.slaHorasResposta * 3_600_000;
     const timeHumanSilent = now.getTime() - ctx.lastHumanOutboundAt.getTime();
     if (timeHumanSilent > slaMs && !ctx.lastCustomerMessageAt) {
       followUpType = "human_abandoned";
@@ -216,10 +226,12 @@ export function evaluateFollowUpNeed(ctx: FollowUpEvalContext): FollowUpDecision
     reason = "lead_cooling";
   }
 
-  if (job.attempts === 0 && followUpType !== "sla_breach") priority = Math.min(5, priority + 1);
+  if (job.attempts === 0 && followUpType !== "sla_breach") {
+    priority = Math.min(5, priority + 1);
+  }
   if (job.attempts >= 2 && priority > 2) priority = priority - 1;
 
-  let adjustedUrgency: FollowUpUrgency = urgency as FollowUpUrgency;
+  let adjustedUrgency: FollowUpUrgency = urgency;
   if (settings.modo === "agressivo") {
     const order: FollowUpUrgency[] = ["low", "medium", "high", "critical"];
     const idx = order.indexOf(adjustedUrgency);
@@ -268,7 +280,10 @@ const TYPE_MAP: Record<FollowUpType, (name: string) => string> = {
 export function buildFollowUpAiInstruction(params: {
   decision: FollowUpDecision;
   leadName: string | null;
-  settings: Pick<FollowUpEvalSettings, "modo" | "slaHorasResposta">;
+  settings: Pick<
+    AgentFollowUpInteligente,
+    "modo" | "usarDadosFormularioMeta" | "usarHistoricoCrm" | "usarHistoricoWhatsapp"
+  >;
   attemptNumber: number;
 }): string {
   const { decision, leadName, settings, attemptNumber } = params;
@@ -285,6 +300,21 @@ export function buildFollowUpAiInstruction(params: {
         ? "Segunda tentativa — varie a abordagem; não repita a mensagem anterior."
         : "Varie completamente a abordagem em relação às tentativas anteriores.";
 
+  const sourceLines: string[] = [];
+  if (settings.usarHistoricoWhatsapp) {
+    sourceLines.push("- Use o histórico do WhatsApp acima para personalizar.");
+  } else {
+    sourceLines.push("- Não há histórico de WhatsApp incluído; use apenas o contexto abaixo.");
+  }
+  if (settings.usarHistoricoCrm) {
+    sourceLines.push("- Use dados do CRM/memória do lead quando disponíveis no system prompt.");
+  }
+  if (settings.usarDadosFormularioMeta) {
+    sourceLines.push("- Use dados do formulário Meta Lead Ads quando disponíveis no system prompt.");
+  } else {
+    sourceLines.push("- Não mencione campos de formulário Meta (desativado nas configurações).");
+  }
+
   return [
     typeCtx,
     "",
@@ -292,7 +322,7 @@ export function buildFollowUpAiInstruction(params: {
     "",
     attemptNote,
     "Regras obrigatórias:",
-    "- Use o histórico real da conversa para personalizar.",
+    ...sourceLines,
     "- Nunca use templates genéricos como «Olá, tudo bem?» sem contexto.",
     "- Não revele que é um sistema automático de follow-up.",
     "- Seja breve, natural e humano.",

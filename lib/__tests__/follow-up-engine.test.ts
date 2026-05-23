@@ -1,25 +1,14 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_FOLLOW_UP_INTELIGENTE } from "@/lib/server/follow-up-settings";
 import {
   evaluateFollowUpNeed,
   isWithinBusinessHours,
   nextBusinessHourStart,
   buildFollowUpAiInstruction,
   type FollowUpEvalContext,
-  type FollowUpEvalSettings,
 } from "@/lib/server/follow-up-engine";
 
-const BASE_SETTINGS: FollowUpEvalSettings = {
-  ativo: true,
-  tentativasContato: 3,
-  intervaloVerificacaoMinutos: 60,
-  modo: "moderado",
-  cooldownMinutos: 30,
-  slaHorasResposta: null,
-  horaInicio: 8,
-  horaFim: 18,
-  diasAtivos: [1, 2, 3, 4, 5],
-  retomadaApenasSeHumanoAbandonou: false,
-};
+const BASE_SETTINGS = { ...DEFAULT_FOLLOW_UP_INTELIGENTE, ativo: true };
 
 function makeCtx(overrides: Partial<FollowUpEvalContext> = {}): FollowUpEvalContext {
   const now = new Date("2026-05-22T12:00:00.000Z"); // Friday UTC noon
@@ -47,6 +36,7 @@ function makeCtx(overrides: Partial<FollowUpEvalContext> = {}): FollowUpEvalCont
     lastCustomerMessageAt: null,
     lastAgentMessageAt: null,
     lastHumanOutboundAt: null,
+    hasFutureTask: false,
     ...overrides,
   };
 }
@@ -165,16 +155,16 @@ describe("evaluateFollowUpNeed", () => {
     expect(d.spamRisk).toBe(true);
   });
 
-  it("blocks outside business hours and sets nextRetryAt", () => {
-    const now = new Date("2026-05-22T22:00:00.000Z"); // 10 PM UTC, outside 8-18
-    const d = evaluateFollowUpNeed(makeCtx({ now }));
+  it("blocks outside business hours when usarHorarioComercial is on", () => {
+    const now = new Date("2026-05-22T22:00:00.000Z");
+    const d = evaluateFollowUpNeed(makeCtx({ now, settings: { ...BASE_SETTINGS, usarHorarioComercial: true } }));
     expect(d.shouldSend).toBe(false);
     expect(d.businessHoursBlocked).toBe(true);
     expect(d.nextRetryAt).not.toBeNull();
   });
 
   it("blocks on weekend when diasAtivos is Mon-Fri", () => {
-    const now = new Date("2026-05-23T10:00:00.000Z"); // Saturday UTC
+    const now = new Date("2026-05-23T10:00:00.000Z");
     const d = evaluateFollowUpNeed(makeCtx({ now }));
     expect(d.shouldSend).toBe(false);
     expect(d.businessHoursBlocked).toBe(true);
@@ -182,11 +172,11 @@ describe("evaluateFollowUpNeed", () => {
 
   it("flags sla_breach type when SLA is configured and exceeded", () => {
     const now = new Date("2026-05-22T12:00:00.000Z");
-    const jobCreated = new Date(now.getTime() - 26 * 60 * 60_000); // 26h ago
+    const jobCreated = new Date(now.getTime() - 26 * 60 * 60_000);
     const d = evaluateFollowUpNeed(
       makeCtx({
         now,
-        settings: { ...BASE_SETTINGS, slaHorasResposta: 24 },
+        settings: { ...BASE_SETTINGS, permitirSlaVencido: true, slaHorasResposta: 24 },
         job: { id: "j", attempts: 0, maxAttempts: 3, createdAt: jobCreated },
         lastCustomerMessageAt: null,
       }),
@@ -324,7 +314,7 @@ describe("buildFollowUpAiInstruction", () => {
         businessHoursBlocked: false,
       },
       leadName: "Renato",
-      settings: { modo: "moderado", slaHorasResposta: null },
+      settings: DEFAULT_FOLLOW_UP_INTELIGENTE,
       attemptNumber: 0,
     });
     expect(instr).toContain("Renato");
