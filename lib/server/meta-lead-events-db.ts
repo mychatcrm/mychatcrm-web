@@ -22,6 +22,7 @@ export const META_LEAD_EVENT_STEPS = [
   "skipped_duplicate",
   "skipped_initial_outreach",
   "skipped_human_attending",
+  "blocked_unauthorized_form",
 ] as const;
 
 export type MetaLeadEventStep = (typeof META_LEAD_EVENT_STEPS)[number];

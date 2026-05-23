@@ -30,12 +30,12 @@ describe("meta-lead-graph", () => {
       campaignName: "Campanha A",
       adsetName: null,
       adName: "Anúncio 1",
-      agentResolutionSource: "routing",
+      agentResolutionSource: "rule",
       questionLabels: new Map(),
     });
     expect(meta.meta_leadgen_id).toBe("lg-1");
     expect(meta.meta_form_id).toBe("form-1");
-    expect(meta.meta_agent_resolution_source).toBe("routing");
+    expect(meta.meta_agent_resolution_source).toBe("rule");
     expect(Array.isArray(meta.form_fields)).toBe(true);
   });
 

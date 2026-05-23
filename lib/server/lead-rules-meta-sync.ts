@@ -1,32 +1,107 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { LeadDistributionRuleRow } from "@/lib/server/lead-distribution-rules";
+import { stringArray } from "@/lib/server/meta-form-authorization";
 
-const GRAPH = "https://graph.facebook.com/v19.0";
-
-type MetaLeadgenFormsResponse = {
-  data?: Array<{ id?: string; name?: string }>;
-  paging?: { next?: string };
-};
-
-async function listLeadgenForms(pageId: string, pageAccessToken: string): Promise<Array<{ id: string; name: string | null }>> {
-  const forms: Array<{ id: string; name: string | null }> = [];
-  let nextUrl: string | undefined = `${GRAPH}/${encodeURIComponent(pageId)}/leadgen_forms?fields=id,name&access_token=${encodeURIComponent(pageAccessToken)}`;
-
-  while (nextUrl && forms.length < 500) {
-    const res = await fetch(nextUrl, { signal: AbortSignal.timeout(10_000) });
-    if (!res.ok) return forms;
-    const data = (await res.json()) as MetaLeadgenFormsResponse;
-    for (const form of data.data ?? []) {
-      if (form.id) forms.push({ id: form.id, name: form.name ?? null });
-    }
-    nextUrl = data.paging?.next;
+export async function deleteMetaFormAgentMapping(
+  sb: SupabaseClient,
+  tenantId: string,
+  formId: string,
+): Promise<void> {
+  const id = formId.trim();
+  if (!id) return;
+  const { error } = await sb
+    .from("meta_form_agent_mapping")
+    .delete()
+    .eq("tenant_id", tenantId)
+    .eq("form_id", id);
+  if (error) {
+    console.warn("[lead-rules] meta_form_agent_mapping delete failed", {
+      tenant_id: tenantId,
+      form_id: id,
+      error: error.message,
+    });
   }
-
-  return forms;
 }
 
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+export async function deleteMetaFormMappingsForRule(
+  sb: SupabaseClient,
+  rule: Pick<LeadDistributionRuleRow, "tenant_id" | "included_form_ids" | "agent_ids">,
+): Promise<void> {
+  const tenantId = rule.tenant_id;
+  const formIds = stringArray(rule.included_form_ids);
+  const agentIds = new Set(stringArray(rule.agent_ids));
+  if (formIds.length === 0 || agentIds.size === 0) return;
+
+  for (const formId of formIds) {
+    const { data: row } = await sb
+      .from("meta_form_agent_mapping")
+      .select("agent_id")
+      .eq("tenant_id", tenantId)
+      .eq("form_id", formId)
+      .maybeSingle();
+    if (row?.agent_id && agentIds.has(row.agent_id)) {
+      await deleteMetaFormAgentMapping(sb, tenantId, formId);
+    }
+  }
+}
+
+/**
+ * Removes mappings that are not backed by an active explicit meta_form rule (form_id + agent_id).
+ */
+export async function reconcileMetaFormMappingsWithRules(
+  sb: SupabaseClient,
+  tenantId: string,
+): Promise<{ removedFormIds: string[] }> {
+  const { data: rules, error: rulesError } = await sb
+    .from("lead_distribution_rules")
+    .select("included_form_ids, agent_ids, page_id, use_all_forms, distribution_type, active, source")
+    .eq("tenant_id", tenantId)
+    .eq("source", "meta_form")
+    .eq("active", true);
+
+  if (rulesError) {
+    console.warn("[lead-rules] reconcile rules query failed", rulesError.message);
+    return { removedFormIds: [] };
+  }
+
+  const authorized = new Set<string>();
+  for (const rule of rules ?? []) {
+    if (rule.use_all_forms === true) continue;
+    const formIds = stringArray(rule.included_form_ids);
+    const agentIds = stringArray(rule.agent_ids);
+    for (const formId of formIds) {
+      for (const agentId of agentIds) {
+        authorized.add(`${formId}:${agentId}`);
+      }
+    }
+  }
+
+  const { data: mappings, error: mapError } = await sb
+    .from("meta_form_agent_mapping")
+    .select("form_id, agent_id")
+    .eq("tenant_id", tenantId);
+
+  if (mapError) {
+    console.warn("[lead-rules] reconcile mappings query failed", mapError.message);
+    return { removedFormIds: [] };
+  }
+
+  const removedFormIds: string[] = [];
+  for (const row of mappings ?? []) {
+    const formId = typeof row.form_id === "string" ? row.form_id : "";
+    const agentId = typeof row.agent_id === "string" ? row.agent_id : "";
+    if (!formId || !agentId) continue;
+    if (authorized.has(`${formId}:${agentId}`)) continue;
+    await deleteMetaFormAgentMapping(sb, tenantId, formId);
+    removedFormIds.push(formId);
+    console.info("[lead-rules] removed orphan meta_form_agent_mapping", {
+      tenant_id: tenantId,
+      form_id: formId,
+      agent_id: agentId,
+    });
+  }
+
+  return { removedFormIds };
 }
 
 export async function syncMetaFormAgentMappingForRule(
@@ -35,40 +110,24 @@ export async function syncMetaFormAgentMappingForRule(
 ): Promise<void> {
   if (rule.source !== "meta_form") return;
   if (rule.distribution_type !== "automation_agent" && rule.distribution_type !== "specific_agents") return;
+  if (rule.use_all_forms === true) {
+    console.warn("[lead-rules] use_all_forms sync skipped — explicit forms only", { rule_id: rule.id });
+    return;
+  }
 
   const [agentId] = stringArray(rule.agent_ids);
   if (!agentId) return;
 
   const tenantId = rule.tenant_id;
   const pageId = rule.page_id?.trim() || null;
-  let formRows: Array<{ form_id: string; form_name?: string | null }> = [];
-
-  if (rule.use_all_forms === false) {
-    formRows = stringArray(rule.included_form_ids).map((formId) => ({ form_id: formId }));
-  } else if (pageId) {
-    const { data: connection } = await sb
-      .from("meta_connections")
-      .select("page_access_token")
-      .eq("tenant_id", tenantId)
-      .eq("page_id", pageId)
-      .maybeSingle();
-
-    const pageAccessToken = typeof connection?.page_access_token === "string" ? connection.page_access_token : "";
-    if (!pageAccessToken) return;
-
-    const excluded = new Set(stringArray(rule.excluded_form_ids));
-    const forms = await listLeadgenForms(pageId, pageAccessToken);
-    formRows = forms
-      .filter((form) => !excluded.has(form.id))
-      .map((form) => ({ form_id: form.id, form_name: form.name }));
-  }
+  const formRows = stringArray(rule.included_form_ids).map((formId) => ({ form_id: formId }));
 
   if (!formRows.length) return;
 
   const rows = formRows.map((form) => ({
     tenant_id: tenantId,
     form_id: form.form_id,
-    form_name: form.form_name ?? null,
+    form_name: null as string | null,
     agent_id: agentId,
     page_id: pageId,
   }));
@@ -82,4 +141,6 @@ export async function syncMetaFormAgentMappingForRule(
       error: error.message,
     });
   }
+
+  await reconcileMetaFormMappingsWithRules(sb, tenantId);
 }

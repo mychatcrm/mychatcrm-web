@@ -44,8 +44,24 @@ function stepLabel(step: string): string {
     ai_response_generated: "IA gerada",
     whatsapp_sent: "WhatsApp enviado",
     whatsapp_failed: "WhatsApp falhou",
+    blocked_unauthorized_form: "Formulário não autorizado",
   };
   return map[step] ?? step;
+}
+
+function resolutionSourceLabel(source: string | null): string {
+  const map: Record<string, string> = {
+    rule: "regra ativa",
+    mapping_current: "mapeamento sincronizado",
+    unauthorized_form: "não autorizado",
+    no_matching_rule: "sem regra",
+    invalid_agent: "agente inválido",
+    none: "sem agente",
+    routing: "roteamento (legado)",
+    instance_default: "padrão instância (legado)",
+    tenant_active: "agente ativo tenant (legado)",
+  };
+  return source ? (map[source] ?? source) : "";
 }
 
 function crmBadge(status: string) {
@@ -57,6 +73,24 @@ function crmBadge(status: string) {
 function waBadge(status: string, errorMessage: string | null) {
   if (status === "sent") return { label: "WhatsApp OK", className: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" };
   if (status === "failed") return { label: "WhatsApp erro", className: "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300" };
+  if (status === "blocked") {
+    if (errorMessage === "form_not_authorized_for_agent") {
+      return {
+        label: "Bloqueado: form não autorizado para agente",
+        className: "border-orange-500/40 bg-orange-500/10 text-orange-800 dark:text-orange-200",
+      };
+    }
+    if (errorMessage === "orphan_mapping_without_active_rule") {
+      return {
+        label: "Bloqueado: mapeamento desatualizado",
+        className: "border-orange-500/40 bg-orange-500/10 text-orange-800 dark:text-orange-200",
+      };
+    }
+    return {
+      label: "Bloqueado: formulário não vinculado",
+      className: "border-orange-500/40 bg-orange-500/10 text-orange-800 dark:text-orange-200",
+    };
+  }
   if (status === "skipped") {
     if (errorMessage === "same_leadgen_already_sent") {
       return { label: "WA: mesmo leadgen", className: "border-line bg-surface-elevated/80 text-content-muted" };
@@ -79,6 +113,10 @@ function errorMessageHint(message: string | null): string | null {
     initial_outreach_already_sent: "Regra antiga bloqueou por telefone — corrigido no deploy mais recente.",
     human_attending_today: "Atendimento humano ativo hoje nesta conversa.",
     initial_message_already_exists: "Mensagem meta:{leadgen_id}:initial já existe.",
+    no_active_rule_for_form: "Formulário não vinculado a nenhum agente.",
+    orphan_mapping_without_active_rule: "Mapeamento desatualizado — formulário não vinculado a regra ativa.",
+    form_not_authorized_for_agent: "Formulário não autorizado para este agente.",
+    missing_form_id: "Lead sem form_id — não é possível autorizar atendimento automático.",
   };
   return map[message] ?? message;
 }
@@ -276,7 +314,10 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
                   <dd className="truncate">
                     {ev.agent_id || "—"}
                     {ev.agent_resolution_source ? (
-                      <span className="text-content-muted"> ({ev.agent_resolution_source})</span>
+                      <span className="text-content-muted">
+                        {" "}
+                        ({resolutionSourceLabel(ev.agent_resolution_source)})
+                      </span>
                     ) : null}
                   </dd>
                 </div>

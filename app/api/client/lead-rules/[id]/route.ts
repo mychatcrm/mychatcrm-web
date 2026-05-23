@@ -6,7 +6,12 @@ import {
   leadRuleRowToClient,
   type LeadDistributionRuleRow,
 } from "@/lib/server/lead-distribution-rules";
-import { syncMetaFormAgentMappingForRule } from "@/lib/server/lead-rules-meta-sync";
+import { stringArray } from "@/lib/server/meta-form-authorization";
+import {
+  deleteMetaFormMappingsForRule,
+  reconcileMetaFormMappingsWithRules,
+  syncMetaFormAgentMappingForRule,
+} from "@/lib/server/lead-rules-meta-sync";
 
 export const dynamic = "force-dynamic";
 
@@ -64,10 +69,10 @@ export async function PUT(req: NextRequest, { params }: RouteContext): Promise<N
   const sb = createSupabaseServiceClient();
   const { data: existing, error: existingError } = await sb
     .from("lead_distribution_rules")
-    .select("id, order_index")
+    .select("*")
     .eq("tenant_id", session.tenantId)
     .eq("id", params.id)
-    .maybeSingle();
+    .maybeSingle<LeadDistributionRuleRow>();
 
   if (existingError) return NextResponse.json({ error: existingError.message }, { status: 500 });
   if (!existing) return NextResponse.json({ error: "Rule not found" }, { status: 404 });
@@ -111,7 +116,16 @@ export async function PUT(req: NextRequest, { params }: RouteContext): Promise<N
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  await syncMetaFormAgentMappingForRule(sb, data);
+  if (data.source === "meta_form") {
+    if (stringArray(data.agent_ids).length === 0) {
+      await deleteMetaFormMappingsForRule(sb, data);
+      await sb.from("lead_distribution_rules").delete().eq("tenant_id", session.tenantId).eq("id", params.id);
+      await reconcileMetaFormMappingsWithRules(sb, session.tenantId);
+      return NextResponse.json({ deleted: true, ruleId: params.id });
+    }
+    await syncMetaFormAgentMappingForRule(sb, data);
+    await reconcileMetaFormMappingsWithRules(sb, session.tenantId);
+  }
 
   // Keep organic_agent_id in sync for organic WhatsApp rules
   if (data.source === "whatsapp_organico") {
@@ -129,13 +143,17 @@ export async function DELETE(_req: NextRequest, { params }: RouteContext): Promi
   const sb = createSupabaseServiceClient();
   const { data: existing, error: existingError } = await sb
     .from("lead_distribution_rules")
-    .select("id")
+    .select("*")
     .eq("tenant_id", session.tenantId)
     .eq("id", params.id)
-    .maybeSingle();
+    .maybeSingle<LeadDistributionRuleRow>();
 
   if (existingError) return NextResponse.json({ error: existingError.message }, { status: 500 });
   if (!existing) return NextResponse.json({ error: "Rule not found" }, { status: 404 });
+
+  if (existing.source === "meta_form") {
+    await deleteMetaFormMappingsForRule(sb, existing);
+  }
 
   const { error } = await sb
     .from("lead_distribution_rules")
@@ -144,6 +162,10 @@ export async function DELETE(_req: NextRequest, { params }: RouteContext): Promi
     .eq("id", params.id);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  if (existing.source === "meta_form") {
+    await reconcileMetaFormMappingsWithRules(sb, session.tenantId);
+  }
 
   return NextResponse.json({ success: true });
 }

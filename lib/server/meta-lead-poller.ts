@@ -1,5 +1,6 @@
 import { createHmac } from "crypto";
 import type { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { isAnyAgentAuthorizedForMetaForm } from "@/lib/server/meta-form-authorization";
 import { processMetaLeadgenEvent } from "@/lib/server/meta-lead-ingest";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
@@ -10,15 +11,6 @@ type MetaConnectionRow = {
   page_access_token: string;
 };
 
-type LeadDistributionRuleRow = {
-  use_all_forms: boolean | null;
-  included_form_ids: unknown;
-  excluded_form_ids: unknown;
-};
-
-type MetaFormMappingRow = {
-  form_id: string;
-};
 
 type GraphLeadRef = {
   id?: string;
@@ -58,10 +50,6 @@ export type MetaLeadPollerResult = {
 const DEFAULT_POLL_WINDOW_MINUTES = 120;
 const MAX_GRAPH_FORM_PAGES = 10;
 
-function asStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
-}
-
 export function metaLeadCreatedAtMs(createdTime: string | undefined): number | null {
   if (!createdTime) return null;
   const ms = Date.parse(createdTime);
@@ -85,25 +73,6 @@ export function buildSignedMetaWebhookHeaders(rawBody: string, appSecret: string
 function getPollWindowMinutes(): number {
   const raw = Number(process.env.META_LEAD_POLL_WINDOW_MINUTES);
   return Number.isFinite(raw) && raw > 0 ? Math.min(raw, 24 * 60) : DEFAULT_POLL_WINDOW_MINUTES;
-}
-
-function shouldIncludeForm(params: {
-  formId: string;
-  rules: LeadDistributionRuleRow[];
-  mappings: MetaFormMappingRow[];
-}): boolean {
-  const mappingFormIds = new Set(params.mappings.map((row) => row.form_id).filter(Boolean));
-  if (mappingFormIds.has(params.formId)) return true;
-
-  for (const rule of params.rules) {
-    const excluded = new Set(asStringArray(rule.excluded_form_ids));
-    if (excluded.has(params.formId)) continue;
-    if (rule.use_all_forms) return true;
-    const included = new Set(asStringArray(rule.included_form_ids));
-    if (included.has(params.formId)) return true;
-  }
-
-  return false;
 }
 
 async function fetchGraphLeadFormsWithRecentLeads(pageId: string, pageAccessToken: string): Promise<GraphLeadForm[]> {
@@ -174,43 +143,19 @@ async function processConnection(params: {
     errors: 0,
   };
 
-  const [rulesRes, mappingsRes] = await Promise.all([
-    params.sb
-      .from("lead_distribution_rules")
-      .select("use_all_forms, included_form_ids, excluded_form_ids")
-      .eq("tenant_id", params.connection.tenant_id)
-      .eq("page_id", params.connection.page_id)
-      .eq("source", "meta_form")
-      .eq("active", true)
-      .returns<LeadDistributionRuleRow[]>(),
-    params.sb
-      .from("meta_form_agent_mapping")
-      .select("form_id")
-      .eq("tenant_id", params.connection.tenant_id)
-      .eq("page_id", params.connection.page_id)
-      .returns<MetaFormMappingRow[]>(),
-  ]);
-
-  if (rulesRes.error) {
-    throw new Error(`rules_query_failed: ${rulesRes.error.message}`);
-  }
-  if (mappingsRes.error) {
-    throw new Error(`mappings_query_failed: ${mappingsRes.error.message}`);
-  }
-
-  const rules = rulesRes.data ?? [];
-  const mappings = mappingsRes.data ?? [];
-  if (rules.length === 0 && mappings.length === 0) {
-    result.skipped += 1;
-    return result;
-  }
-
   const forms = await fetchGraphLeadFormsWithRecentLeads(params.connection.page_id, params.connection.page_access_token);
   result.formsSeen = forms.length;
 
   for (const form of forms) {
     const formId = form.id?.trim();
-    if (!formId || !shouldIncludeForm({ formId, rules, mappings })) continue;
+    if (!formId) continue;
+    const authorized = await isAnyAgentAuthorizedForMetaForm({
+      sb: params.sb,
+      tenantId: params.connection.tenant_id,
+      pageId: params.connection.page_id,
+      formId,
+    });
+    if (!authorized) continue;
 
     for (const lead of form.leads?.data ?? []) {
       result.leadsSeen += 1;

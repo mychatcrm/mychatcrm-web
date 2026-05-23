@@ -245,12 +245,20 @@ function MetaFormsSelector({
           const body = (await res.json().catch(() => ({}))) as { error?: string };
           throw new Error(body.error ?? "Não foi possível actualizar a regra.");
         }
-        const data = (await res.json()) as { rule?: LeadDistributionRule };
-        const nextRules = data.rule
-          ? leadRules.map((r) => (r.id === data.rule!.id ? data.rule! : r))
-          : leadRules;
+        const data = (await res.json()) as { rule?: LeadDistributionRule; deleted?: boolean };
+        const nextRules = data.deleted
+          ? leadRules.filter((r) => r.id !== rule.id)
+          : data.rule
+            ? leadRules.map((r) => (r.id === data.rule!.id ? data.rule! : r))
+            : leadRules;
         setLeadRules(nextRules);
         updateDraftFormIdsFromRules(nextRules);
+        if (data.deleted) {
+          await fetch(`/api/client/meta/form-mapping?form_id=${encodeURIComponent(formId)}`, {
+            method: "DELETE",
+            credentials: "same-origin",
+          }).catch(() => undefined);
+        }
       } else {
         const existing = findRuleForAgentForm(leadRules, agentId, formId);
         if (existing) {

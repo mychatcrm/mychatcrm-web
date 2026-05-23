@@ -6,7 +6,10 @@ import {
   leadRuleRowToClient,
   type LeadDistributionRuleRow,
 } from "@/lib/server/lead-distribution-rules";
-import { syncMetaFormAgentMappingForRule } from "@/lib/server/lead-rules-meta-sync";
+import {
+  reconcileMetaFormMappingsWithRules,
+  syncMetaFormAgentMappingForRule,
+} from "@/lib/server/lead-rules-meta-sync";
 
 export const dynamic = "force-dynamic";
 
@@ -121,7 +124,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  await syncMetaFormAgentMappingForRule(sb, data);
+  if (data.source === "meta_form") {
+    await syncMetaFormAgentMappingForRule(sb, data);
+    await reconcileMetaFormMappingsWithRules(sb, session.tenantId);
+  }
 
   // Keep organic_agent_id in sync for organic WhatsApp rules
   if (data.source === "whatsapp_organico") {
