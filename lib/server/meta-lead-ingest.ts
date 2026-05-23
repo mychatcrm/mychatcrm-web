@@ -384,8 +384,10 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     formName,
     pageName: connPageName?.trim() || null,
     campaignName: adContext?.campaignName ?? null,
+    adsetName: adContext?.adsetName ?? null,
     adName: adContext?.adName ?? null,
     formFields: leadMetadata.form_fields,
+    profileMetadata: leadMetadata,
   });
 
   const aiResult = await generateAgentResponse({

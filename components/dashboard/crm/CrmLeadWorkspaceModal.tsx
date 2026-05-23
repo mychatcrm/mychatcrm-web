@@ -46,84 +46,15 @@ import { cn } from "@/lib/utils";
 import { typography } from "@/lib/typography";
 import { phoneToWhatsAppWebHref, WhatsAppGlyph } from "./crm-phone";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
+import {
+  collectKnownFormFieldRows,
+  formatMetaFormReceivedAt,
+  isLeadAdsProfile,
+  parseMetaLeadProfileMetadata,
+  type ParsedMetaLeadProfile,
+} from "@/lib/meta-leads/form-metadata";
 
 type Tab = "informacoes" | "historico" | "chatbot" | "tarefas" | "ia";
-
-type LeadFormFieldRow = { key: string; label: string; value: string };
-
-type LeadFormSubmissionRow = {
-  leadgen_id: string;
-  form_id?: string;
-  form_name?: string;
-  form_fields: LeadFormFieldRow[];
-  received_at?: string;
-};
-
-type LeadProfileMetadata = {
-  source?: string;
-  meta_form_name?: string;
-  form_fields?: LeadFormFieldRow[];
-  meta_form_submissions?: LeadFormSubmissionRow[];
-};
-
-function parseLeadProfileMetadata(raw: unknown): LeadProfileMetadata | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const o = raw as Record<string, unknown>;
-  const form_fields = Array.isArray(o.form_fields)
-    ? o.form_fields
-        .map((row) => {
-          if (!row || typeof row !== "object") return null;
-          const item = row as Record<string, unknown>;
-          const key = typeof item.key === "string" ? item.key.trim() : "";
-          const label = typeof item.label === "string" ? item.label.trim() : "";
-          const value = typeof item.value === "string" ? item.value.trim() : "";
-          if (!key || !value) return null;
-          return { key, label: label || key, value };
-        })
-        .filter((row): row is LeadFormFieldRow => row !== null)
-    : [];
-  const meta_form_submissions: LeadFormSubmissionRow[] = [];
-  if (Array.isArray(o.meta_form_submissions)) {
-    for (const row of o.meta_form_submissions) {
-      if (!row || typeof row !== "object") continue;
-      const item = row as Record<string, unknown>;
-      const leadgen_id = typeof item.leadgen_id === "string" ? item.leadgen_id.trim() : "";
-      if (!leadgen_id) continue;
-      const subFields: LeadFormFieldRow[] = [];
-      if (Array.isArray(item.form_fields)) {
-        for (const f of item.form_fields) {
-          if (!f || typeof f !== "object") continue;
-          const fr = f as Record<string, unknown>;
-          const key = typeof fr.key === "string" ? fr.key.trim() : "";
-          const label = typeof fr.label === "string" ? fr.label.trim() : "";
-          const value = typeof fr.value === "string" ? fr.value.trim() : "";
-          if (!key || !value) continue;
-          subFields.push({ key, label: label || key, value });
-        }
-      }
-      meta_form_submissions.push({
-        leadgen_id,
-        form_id: typeof item.form_id === "string" ? item.form_id : undefined,
-        form_name: typeof item.form_name === "string" ? item.form_name : undefined,
-        form_fields: subFields,
-        received_at: typeof item.received_at === "string" ? item.received_at : undefined,
-      });
-    }
-  }
-
-  return {
-    source: typeof o.source === "string" ? o.source : undefined,
-    meta_form_name: typeof o.meta_form_name === "string" ? o.meta_form_name : undefined,
-    form_fields,
-    meta_form_submissions,
-  };
-}
-
-function isLeadAdsSource(source: string | null | undefined, meta: LeadProfileMetadata | null): boolean {
-  if (source === "lead_ads") return true;
-  if (meta?.source === "lead_ads") return true;
-  return false;
-}
 
 const tabs: { id: Tab; label: string; icon: typeof MessageCircle }[] = [
   { id: "informacoes", label: "Informações", icon: MessageCircle },
@@ -161,7 +92,11 @@ function formatEntrada(iso: string) {
   });
 }
 
-function mergeOrigemDisplay(lead: ClientLead): {
+function mergeOrigemDisplay(
+  lead: ClientLead,
+  profileMeta: ParsedMetaLeadProfile | null,
+  leadSource: string | null,
+): {
   midia: string;
   campanha: string;
   pagina: string;
@@ -169,6 +104,16 @@ function mergeOrigemDisplay(lead: ClientLead): {
   tipoCliente: string;
 } {
   const om = lead.origemMarketing;
+  const fromMeta = isLeadAdsProfile(leadSource ?? lead.origem, profileMeta);
+  if (fromMeta && profileMeta) {
+    return {
+      midia: "Meta Lead Ads",
+      campanha: profileMeta.meta_campaign_name?.trim() || om?.campanha?.trim() || "—",
+      pagina: profileMeta.meta_page_name?.trim() || om?.pagina?.trim() || "—",
+      formulario: profileMeta.meta_form_name?.trim() || om?.formulario?.trim() || "—",
+      tipoCliente: om?.tipoCliente?.trim() ?? "",
+    };
+  }
   if (om) {
     return {
       midia: om.midia?.trim() || "—",
@@ -265,7 +210,7 @@ export function CrmLeadWorkspaceModal({
   const [store, setStore] = useState<CrmLeadExtrasStore>(() => loadLeadExtras());
   const [taskDraft, setTaskDraft] = useState("");
   const [followUpOpen, setFollowUpOpen] = useState(false);
-  const [profileMeta, setProfileMeta] = useState<LeadProfileMetadata | null>(null);
+  const [profileMeta, setProfileMeta] = useState<ParsedMetaLeadProfile | null>(null);
   const [leadSource, setLeadSource] = useState<string | null>(null);
 
   useEffect(() => {
@@ -282,7 +227,7 @@ export function CrmLeadWorkspaceModal({
       .then((data: { source?: string | null; profile_metadata?: unknown } | null) => {
         if (cancelled || !data) return;
         setLeadSource(typeof data.source === "string" ? data.source : null);
-        setProfileMeta(parseLeadProfileMetadata(data.profile_metadata));
+        setProfileMeta(parseMetaLeadProfileMetadata(data.profile_metadata));
       })
       .catch(() => {
         if (!cancelled) {
@@ -311,14 +256,30 @@ export function CrmLeadWorkspaceModal({
     [allFunnels, lead.funilId, funnel],
   );
 
-  const origemView = useMemo(() => mergeOrigemDisplay(lead), [lead]);
+  const origemView = useMemo(
+    () => mergeOrigemDisplay(lead, profileMeta, leadSource),
+    [lead, profileMeta, leadSource],
+  );
 
   const leadAdsFormFields = useMemo(() => {
-    if (!isLeadAdsSource(leadSource, profileMeta)) return [];
-    return profileMeta?.form_fields ?? [];
-  }, [leadSource, profileMeta]);
+    if (!isLeadAdsProfile(leadSource ?? lead.origem, profileMeta)) return [];
+    return collectKnownFormFieldRows(profileMeta);
+  }, [lead.origem, leadSource, profileMeta]);
 
-  const showLeadAdsFormSection = leadAdsFormFields.length > 0;
+  const showLeadAdsFormSection =
+    isLeadAdsProfile(leadSource ?? lead.origem, profileMeta) && leadAdsFormFields.length > 0;
+
+  const latestFormReceivedAt = useMemo(() => {
+    const submissions = profileMeta?.meta_form_submissions ?? [];
+    const latest = submissions[submissions.length - 1]?.received_at;
+    return formatMetaFormReceivedAt(latest, lead.dataEntradaISO);
+  }, [profileMeta, lead.dataEntradaISO]);
+
+  const formHistoryNames = useMemo(() => {
+    const rows = profileMeta?.meta_form_submissions ?? [];
+    if (rows.length <= 1) return [];
+    return [...rows].reverse().map((row) => row.form_name || row.form_id || "Formulário");
+  }, [profileMeta]);
 
   const timeline = useMemo(
     () => (store.timeline[lead.id] ?? []).filter((item) => item.tipo !== "whatsapp"),
@@ -491,6 +452,102 @@ export function CrmLeadWorkspaceModal({
         {tab === "informacoes" ? (
           <div className="space-y-4">
             <LeadThermometerPanel result={temperatura} />
+            {showLeadAdsFormSection ? (
+              <div className="space-y-4 rounded-xl border border-primary/25 bg-surface-deep/30 p-4 ring-1 ring-inset ring-primary/15">
+                <div className="flex items-start gap-2.5 border-b border-line/70 pb-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-primary/20">
+                    <FileText className="h-4 w-4" aria-hidden />
+                  </span>
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-semibold text-content">Informações do formulário</h3>
+                    <p className="mt-0.5 text-xs text-content-muted">
+                      Dados preenchidos no Meta Lead Ads — usados pelo agente e exibidos no CRM.
+                    </p>
+                  </div>
+                </div>
+                <dl className="grid gap-2 sm:grid-cols-2">
+                  <div className="rounded-lg border border-line/80 bg-surface-base/40 px-3 py-2">
+                    <dt className={typography.ui.overline}>Formulário</dt>
+                    <dd className="mt-0.5 text-sm font-medium text-content">
+                      {profileMeta?.meta_form_name ?? "—"}
+                    </dd>
+                  </div>
+                  <div className="rounded-lg border border-line/80 bg-surface-base/40 px-3 py-2">
+                    <dt className={typography.ui.overline}>Data do cadastro</dt>
+                    <dd className="mt-0.5 text-sm font-medium text-content">{latestFormReceivedAt ?? "—"}</dd>
+                  </div>
+                  <div className="rounded-lg border border-line/80 bg-surface-base/40 px-3 py-2">
+                    <dt className={typography.ui.overline}>Origem</dt>
+                    <dd className="mt-0.5 text-sm font-medium text-content">Meta Lead Ads</dd>
+                  </div>
+                  <div className="rounded-lg border border-line/80 bg-surface-base/40 px-3 py-2">
+                    <dt className={typography.ui.overline}>Página</dt>
+                    <dd className="mt-0.5 text-sm font-medium text-content">{profileMeta?.meta_page_name ?? "—"}</dd>
+                  </div>
+                  <div className="rounded-lg border border-line/80 bg-surface-base/40 px-3 py-2">
+                    <dt className={typography.ui.overline}>Campanha</dt>
+                    <dd className="mt-0.5 text-sm font-medium text-content">{profileMeta?.meta_campaign_name ?? "—"}</dd>
+                  </div>
+                  <div className="rounded-lg border border-line/80 bg-surface-base/40 px-3 py-2">
+                    <dt className={typography.ui.overline}>Conjunto de anúncios</dt>
+                    <dd className="mt-0.5 text-sm font-medium text-content">{profileMeta?.meta_adset_name ?? "—"}</dd>
+                  </div>
+                  <div className="rounded-lg border border-line/80 bg-surface-base/40 px-3 py-2 sm:col-span-2">
+                    <dt className={typography.ui.overline}>Anúncio</dt>
+                    <dd className="mt-0.5 text-sm font-medium text-content">{profileMeta?.meta_ad_name ?? "—"}</dd>
+                  </div>
+                </dl>
+                <ul className="grid gap-2 sm:grid-cols-2">
+                  {leadAdsFormFields.map((field) => (
+                    <li
+                      key={`${field.key}-${field.label}`}
+                      className="rounded-xl border border-line/80 bg-surface-base/40 px-3 py-2.5"
+                    >
+                      <p className={typography.ui.overline}>{field.label}</p>
+                      <p className="mt-0.5 break-words text-sm font-medium text-content">{field.value}</p>
+                    </li>
+                  ))}
+                </ul>
+                {formHistoryNames.length > 0 ? (
+                  <div className="space-y-2 border-t border-line/70 pt-3">
+                    <p className="text-xs font-semibold text-content">Histórico de formulários</p>
+                    <ul className="list-inside list-disc space-y-1 text-sm text-content-secondary">
+                      {formHistoryNames.map((name, index) => (
+                        <li key={`${name}-${index}`}>{name}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {(profileMeta?.meta_form_submissions?.length ?? 0) > 1 ? (
+                  <div className="space-y-3 border-t border-line/70 pt-3">
+                    <p className="text-xs font-semibold text-content">Detalhe por envio</p>
+                    {[...(profileMeta?.meta_form_submissions ?? [])]
+                      .reverse()
+                      .map((submission) => (
+                        <div
+                          key={submission.leadgen_id}
+                          className="rounded-lg border border-line/70 bg-surface-base/30 p-3"
+                        >
+                          <p className="text-xs font-medium text-content">
+                            {submission.form_name || submission.form_id || "Formulário"}
+                          </p>
+                          <p className="mt-0.5 text-[10px] text-content-faint">
+                            {formatMetaFormReceivedAt(submission.received_at) ?? submission.leadgen_id}
+                          </p>
+                          <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                            {submission.form_fields.map((field) => (
+                              <li key={`${submission.leadgen_id}-${field.key}`} className="text-xs">
+                                <span className="text-content-muted">{field.label}: </span>
+                                <span className="font-medium text-content">{field.value}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <div className="grid gap-4 lg:grid-cols-2">
             <div className="space-y-3 rounded-xl border border-line/90 bg-surface-deep/30 p-4 ring-1 ring-inset ring-line/25">
               <div className="flex items-center justify-between gap-2">
@@ -574,61 +631,6 @@ export function CrmLeadWorkspaceModal({
                 </p>
               </div>
             </div>
-            {showLeadAdsFormSection ? (
-              <div className="space-y-3 rounded-xl border border-line/90 bg-surface-deep/30 p-4 ring-1 ring-inset ring-line/25 lg:col-span-2">
-                <div className="flex items-start gap-2.5 border-b border-line/70 pb-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-primary/20">
-                    <FileText className="h-4 w-4" aria-hidden />
-                  </span>
-                  <div className="min-w-0">
-                    <h3 className="text-sm font-semibold text-content">Informações do formulário</h3>
-                    {profileMeta?.meta_form_name ? (
-                      <p className="mt-0.5 text-xs text-content-muted">{profileMeta.meta_form_name}</p>
-                    ) : (
-                      <p className="mt-0.5 text-xs text-content-muted">Respostas enviadas no Lead Ads da Meta</p>
-                    )}
-                  </div>
-                </div>
-                <ul className="grid gap-2 sm:grid-cols-2">
-                  {leadAdsFormFields.map((field) => (
-                    <li
-                      key={field.key}
-                      className="rounded-xl border border-line/80 bg-surface-base/40 px-3 py-2.5"
-                    >
-                      <p className={typography.ui.overline}>{field.label}</p>
-                      <p className="mt-0.5 break-words text-sm font-medium text-content">{field.value}</p>
-                      <p className="mt-1 text-[10px] text-content-faint">{field.key}</p>
-                    </li>
-                  ))}
-                </ul>
-                {(profileMeta?.meta_form_submissions?.length ?? 0) > 1 ? (
-                  <div className="mt-4 space-y-3 border-t border-line/70 pt-4">
-                    <p className="text-xs font-semibold text-content">Histórico de formulários preenchidos</p>
-                    {[...(profileMeta?.meta_form_submissions ?? [])]
-                      .reverse()
-                      .map((submission) => (
-                        <div
-                          key={submission.leadgen_id}
-                          className="rounded-lg border border-line/70 bg-surface-base/30 p-3"
-                        >
-                          <p className="text-xs font-medium text-content">
-                            {submission.form_name || submission.form_id || "Formulário"}
-                          </p>
-                          <p className="mt-0.5 font-mono text-[10px] text-content-faint">{submission.leadgen_id}</p>
-                          <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
-                            {submission.form_fields.map((field) => (
-                              <li key={`${submission.leadgen_id}-${field.key}`} className="text-xs">
-                                <span className="text-content-muted">{field.label}: </span>
-                                <span className="font-medium text-content">{field.value}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      ))}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
             </div>
           </div>
         ) : null}

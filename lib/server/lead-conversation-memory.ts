@@ -12,6 +12,7 @@ import {
   getConversationState,
   getRecentConversationMessages,
 } from "@/lib/server/conversation-memory";
+import { buildMetaFormMemorySummary } from "@/lib/meta-leads/form-metadata";
 import { getAgentOutboundMediaPromptLines } from "@/lib/server/agent-media-files";
 
 const DEFAULT_MESSAGE_LIMIT = 20;
@@ -88,6 +89,8 @@ export function buildCondensedMemoryContext(memory: {
     if (memory.lead.suggestedNextAction) {
       parts.push(`Próxima ação sugerida: ${memory.lead.suggestedNextAction}`);
     }
+    const formMemory = buildMetaFormMemorySummary(memory.lead.profileMetadata);
+    if (formMemory) parts.push(formMemory);
   }
 
   if (memory.summary) {

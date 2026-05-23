@@ -1,3 +1,5 @@
+import { buildMetaInitialOutreachUserPrompt } from "@/lib/meta-leads/form-metadata";
+
 export type GraphLeadFieldData = {
   name: string;
   values: string[];
@@ -146,35 +148,26 @@ export function buildMetaInitialAgentPrompt(params: {
   pageName: string | null;
   campaignName: string | null;
   adName: string | null;
+  adsetName?: string | null;
   formFields: unknown;
+  profileMetadata?: Record<string, unknown>;
 }): string {
-  const fields = Array.isArray(params.formFields)
-    ? params.formFields
-        .map((item) => {
-          if (!item || typeof item !== "object") return null;
-          const row = item as Record<string, unknown>;
-          const label = typeof row.label === "string" ? row.label.trim() : typeof row.key === "string" ? row.key.trim() : "";
-          const value = typeof row.value === "string" ? row.value.trim() : "";
-          return label && value ? `- ${label}: ${value}` : null;
-        })
-        .filter((item): item is string => Boolean(item))
-    : [];
-  return [
-    "Um novo lead acabou de preencher um formulário Meta Lead Ads e deve receber o primeiro atendimento agora pelo WhatsApp.",
-    "Responda como o agente configurado, com uma primeira mensagem curta, útil e contextual.",
-    "Não diga que é uma simulação. Não invente dados além do contexto abaixo.",
-    "",
-    `Nome do lead: ${params.leadName}`,
-    `Telefone: ${params.phone}`,
-    params.email ? `E-mail: ${params.email}` : null,
-    params.pageName ? `Página Meta: ${params.pageName}` : null,
-    params.formName ? `Formulário: ${params.formName}` : null,
-    params.campaignName ? `Campanha: ${params.campaignName}` : null,
-    params.adName ? `Anúncio: ${params.adName}` : null,
-    fields.length ? `Campos preenchidos:\n${fields.join("\n")}` : null,
-  ]
-    .filter((line): line is string => Boolean(line))
-    .join("\n");
+  const profileMetadata: Record<string, unknown> = {
+    ...(params.profileMetadata ?? {}),
+    source: "lead_ads",
+    meta_form_name: params.formName ?? params.profileMetadata?.meta_form_name,
+    meta_page_name: params.pageName ?? params.profileMetadata?.meta_page_name,
+    meta_campaign_name: params.campaignName ?? params.profileMetadata?.meta_campaign_name,
+    meta_adset_name: params.adsetName ?? params.profileMetadata?.meta_adset_name,
+    meta_ad_name: params.adName ?? params.profileMetadata?.meta_ad_name,
+    form_fields: params.formFields ?? params.profileMetadata?.form_fields,
+  };
+  return buildMetaInitialOutreachUserPrompt({
+    leadName: params.leadName,
+    phone: params.phone,
+    email: params.email,
+    profileMetadata,
+  });
 }
 
 export function buildFallbackInitialMessage(fullName: string): string {

@@ -1,4 +1,5 @@
 import { agentUsesSimpleInstructions } from "@/lib/agents/instruction-mode";
+import { buildMetaFormKnownFactsPromptBlock } from "@/lib/meta-leads/form-metadata";
 import type { Agent } from "@/lib/types";
 import type { AgentRuntimeContext } from "@/lib/server/conversation-memory";
 
@@ -175,6 +176,8 @@ Próxima ação: ${ctx.summary.suggestedNextAction ?? "não informada"}`);
     parts.push(`Materiais de apoio disponíveis:
 ${ctx.knowledgeSnippets.map((item, index) => `${index + 1}. ${item}`).join("\n\n")}`);
   }
+  const formFacts = buildMetaFormKnownFactsPromptBlock(ctx.lead?.profileMetadata ?? null);
+  if (formFacts) parts.push(formFacts);
   return parts;
 }
 

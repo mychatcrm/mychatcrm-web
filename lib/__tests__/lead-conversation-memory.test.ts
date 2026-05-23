@@ -62,6 +62,33 @@ describe("lead conversation memory", () => {
     expect(text).toContain("Interessada em visita");
   });
 
+  it("includes Meta form facts in condensed CRM memory", () => {
+    const text = buildCondensedMemoryContext({
+      lead: {
+        id: "lead-1",
+        name: "Renato",
+        phone: "5562993580574",
+        source: "lead_ads",
+        status: "contato",
+        crmFunnelId: null,
+        notes: null,
+        agentId: "ag-1",
+        aiSummary: null,
+        leadTemperature: null,
+        suggestedNextAction: null,
+        profileMetadata: {
+          source: "lead_ads",
+          form_fields: [{ key: "interesse", label: "Interesse", value: "Apartamento" }],
+        },
+      },
+      state: null,
+      summary: null,
+      lastInteractionAt: null,
+    });
+    expect(text).toContain("FORMULÁRIO META");
+    expect(text).toContain("Interesse");
+  });
+
   it("calculates days since last interaction", () => {
     const days = daysSince(new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString());
     expect(days).toBeGreaterThanOrEqual(9);

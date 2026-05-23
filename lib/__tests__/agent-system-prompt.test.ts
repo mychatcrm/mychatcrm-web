@@ -121,4 +121,43 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("inclua [[HANDOFF]] no final da resposta. Nada mais.");
     expect(prompt).not.toContain("Mesmo que você precise enviar arquivos na mesma resposta");
   });
+
+  it("injects Meta Lead Ads form memory so the agent does not re-ask", () => {
+    const prompt = buildAgentSystemPrompt({
+      languageInstruction: "Responda em português.",
+      agent: {
+        nome: "Agente",
+        objetivo: "vender",
+        systemPrompt: "Atenda leads.",
+      },
+      runtimeContext: {
+        state: null,
+        lead: {
+          id: "lead-1",
+          name: "Renato",
+          phone: "5562993580574",
+          source: "lead_ads",
+          status: "contato",
+          crmFunnelId: null,
+          notes: null,
+          agentId: "ag-1",
+          aiSummary: null,
+          leadTemperature: null,
+          suggestedNextAction: null,
+          profileMetadata: {
+            source: "lead_ads",
+            form_fields: [{ key: "renda", label: "Renda bruta", value: "R$ 8.000" }],
+          },
+        },
+        summary: null,
+        recentMessages: [],
+        knowledgeSnippets: [],
+        outboundMediaLines: [],
+      },
+    });
+
+    expect(prompt).toContain("DADOS JÁ INFORMADOS PELO LEAD NO FORMULÁRIO META");
+    expect(prompt).toContain("Renda bruta: R$ 8.000");
+    expect(prompt).toContain("NUNCA pergunte de novo");
+  });
 });

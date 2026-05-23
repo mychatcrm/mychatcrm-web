@@ -85,5 +85,6 @@ describe("meta-lead-graph", () => {
     expect(prompt).toContain("Renato");
     expect(prompt).toContain("Formulário X");
     expect(prompt).toContain("Apartamento no Bueno");
+    expect(prompt).toContain("NUNCA pergunte");
   });
 });
