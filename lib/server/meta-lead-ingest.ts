@@ -410,6 +410,8 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     status: "active",
     humanPaused: false,
     lastMessageAt: new Date().toISOString(),
+    isHidden: false,
+    archivedAt: null,
   });
   await eventRecorder.step("conversation_state_created", { state_id: state?.id ?? null });
   console.info("[meta-webhook] Conversation state upserted", {
