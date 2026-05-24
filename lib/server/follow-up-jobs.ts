@@ -9,6 +9,7 @@ import {
 } from "@/lib/server/conversation-memory";
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
+import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
   buildFollowUpAiInstruction,
@@ -321,6 +322,26 @@ export async function scheduleFollowUpAfterInbound(params: {
     reason: "inbound_reset",
   });
 
+  const guard = await canAgentAutoContactLead({
+    sb,
+    tenantId: params.tenantId,
+    agentId: params.agentId,
+    leadId: params.leadId,
+    phone: phoneFromRemoteJid(params.remoteJid),
+    triggerSource: "follow_up_schedule",
+  });
+  if (!guard.ok) {
+    logFollowUp("schedule_blocked", {
+      tenant_id: params.tenantId,
+      remote_jid: params.remoteJid.replace(/\D/g, "").slice(-4),
+      agent_id: params.agentId,
+      lead_id: guard.leadId,
+      form_id: guard.formId,
+      reason: guard.reason,
+    });
+    return null;
+  }
+
   const { data, error } = await sb
     .from("follow_up_jobs")
     .insert({
@@ -438,6 +459,50 @@ export async function processFollowUpJob(
 
     const now = new Date();
     const lead = await loadLeadForFollowUp(client, job.tenant_id, job.remote_jid, job.lead_id);
+
+    const guard = await canAgentAutoContactLead({
+      sb: client,
+      tenantId: job.tenant_id,
+      agentId: job.agent_id,
+      leadId: lead?.id ?? job.lead_id,
+      phone: phoneFromRemoteJid(job.remote_jid),
+      triggerSource: "follow_up_job",
+    });
+    if (!guard.ok) {
+      await client
+        .from("follow_up_jobs")
+        .update({
+          status: "cancelled",
+          last_error: guard.reason,
+          updated_at: now.toISOString(),
+        })
+        .eq("id", job.id);
+      if (lead?.id) {
+        await client
+          .from("leads")
+          .update({
+            follow_up_status: "blocked",
+            follow_up_blocked_reason: guard.reason,
+            updated_at: now.toISOString(),
+          })
+          .eq("id", lead.id);
+      }
+      await recordEvent(client, "follow_up_skipped", {
+        ...commonEventParams,
+        followUpActive: settings.ativo,
+        leadId: lead?.id ?? guard.leadId,
+        payload: { reason: guard.reason, form_id: guard.formId },
+      });
+      logFollowUp("blocked_auto_contact_guard", {
+        job_id: job.id,
+        tenant_id: job.tenant_id,
+        agent_id: job.agent_id,
+        lead_id: lead?.id ?? guard.leadId,
+        form_id: guard.formId,
+        reason: guard.reason,
+      });
+      return "cancelled";
+    }
 
     const evalCtx = await buildFollowUpEvalContext({
       sb: client,

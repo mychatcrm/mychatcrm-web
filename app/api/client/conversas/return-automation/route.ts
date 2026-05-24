@@ -12,6 +12,7 @@ import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { returnConversationToAutomation } from "@/lib/server/conversation-operation";
 import { remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
+import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +41,7 @@ export async function POST(request: Request) {
   if (phone) {
     const { data: leadRaw } = await sb
       .from("leads")
-      .select("campaign_agent_id, campaign_active")
+      .select("id, source, campaign_agent_id, campaign_active")
       .eq("tenant_id", session.tenantId)
       .eq("phone", phone)
       .maybeSingle();
@@ -48,10 +49,23 @@ export async function POST(request: Request) {
     const lead = leadRaw as {
       campaign_agent_id: string | null;
       campaign_active: boolean;
+      id?: string | null;
+      source?: string | null;
     } | null;
 
     if (lead?.campaign_active && lead.campaign_agent_id) {
-      agentId = lead.campaign_agent_id;
+      const guard = await canAgentAutoContactLead({
+        sb,
+        tenantId: session.tenantId,
+        agentId: lead.campaign_agent_id,
+        leadId: lead.id,
+        phone,
+        source: lead.source,
+        triggerSource: "return_automation_campaign",
+      });
+      if (guard.ok) {
+        agentId = lead.campaign_agent_id;
+      }
     }
   }
 

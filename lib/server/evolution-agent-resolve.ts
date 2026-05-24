@@ -1,5 +1,6 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { buildTemplateAgentsForTenant } from "@/lib/agents/template-agents";
+import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 
 /**
  * Resolve o agente para respostas automáticas Evolution com o seguinte sistema
@@ -37,20 +38,40 @@ export async function resolveEvolutionAgentId(
   if (leadPhone) {
     const { data: leadRaw } = await sb
       .from("leads")
-      .select("agent_id, campaign_agent_id, campaign_active")
+      .select("id, agent_id, campaign_agent_id, campaign_active, source")
       .eq("tenant_id", tenantId)
       .eq("phone", leadPhone)
       .maybeSingle();
 
     const lead = leadRaw as {
       agent_id: string | null;
+      id: string | null;
       campaign_agent_id: string | null;
       campaign_active: boolean;
+      source: string | null;
     } | null;
 
     if (lead?.campaign_active && lead.campaign_agent_id) {
-      // Active campaign: the campaign agent has maximum priority
-      return lead.campaign_agent_id;
+      const guard = await canAgentAutoContactLead({
+        sb,
+        tenantId,
+        agentId: lead.campaign_agent_id,
+        leadId: lead.id,
+        phone: leadPhone,
+        source: lead.source,
+        triggerSource: "evolution_agent_resolve_campaign",
+      });
+      if (guard.ok) {
+        // Active campaign: the campaign agent has maximum priority only while currently authorized.
+        return lead.campaign_agent_id;
+      }
+      console.warn("[evolution-agent-resolve] campaign agent blocked", {
+        tenant_id: tenantId,
+        agent_id: lead.campaign_agent_id,
+        lead_id: lead.id,
+        form_id: guard.formId,
+        reason: guard.reason,
+      });
     }
 
     if (lead?.agent_id && !lead.campaign_active) {

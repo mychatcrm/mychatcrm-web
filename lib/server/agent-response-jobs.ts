@@ -12,6 +12,7 @@ import {
 import {
   isAgentAutomationAllowed,
 } from "@/lib/server/conversation-operation";
+import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { processAgentResponseJob } from "@/lib/server/evolution-agent-reply";
 import { getInternalApiToken, internalApiAuthHeaders } from "@/lib/server/internal-api-auth";
 
@@ -281,6 +282,26 @@ export async function scheduleAgentResponseJob(params: {
       tenant_id: params.tenantId,
       remote_jid: maskRemoteJidForLog(params.remoteJid),
       reason: eligible.reason,
+    });
+    return null;
+  }
+
+  const autoContactGuard = await canAgentAutoContactLead({
+    sb,
+    tenantId: params.tenantId,
+    agentId: params.agentId,
+    leadId: params.leadId,
+    phone: params.remoteJid,
+    triggerSource: "agent_response_job_schedule",
+  });
+  if (!autoContactGuard.ok) {
+    logJobEvent("schedule_blocked", {
+      tenant_id: params.tenantId,
+      remote_jid: maskRemoteJidForLog(params.remoteJid),
+      agent_id: params.agentId,
+      lead_id: autoContactGuard.leadId,
+      form_id: autoContactGuard.formId,
+      reason: autoContactGuard.reason,
     });
     return null;
   }

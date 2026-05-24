@@ -14,6 +14,7 @@ import { textToSpeechElevenLabs } from "@/lib/integrations/elevenlabs";
 import { uploadMediaToR2 } from "@/lib/integrations/r2-storage";
 import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 import { resolveOutboundMediaForAgentResponse } from "@/lib/server/agent-media-files";
+import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import type { AgentResponseJobRow } from "@/lib/server/agent-response-jobs";
 import {
   buildDeterministicHandoffSummary,
@@ -176,6 +177,35 @@ export async function processAgentResponseJob(
 ): Promise<{ ok: true; dedupedCount: number } | { ok: false; error: string; dedupedCount?: number }> {
   const generation = claimedGeneration ?? job.burst_generation;
   const skipGenerationCheck = options?.skipGenerationCheck === true;
+
+  const autoContactGuard = await canAgentAutoContactLead({
+    sb,
+    tenantId: job.tenant_id,
+    agentId: job.agent_id,
+    leadId: job.lead_id,
+    phone: job.remote_jid,
+    triggerSource: "agent_response_job",
+  });
+  if (!autoContactGuard.ok) {
+    await sb
+      .from("agent_response_jobs")
+      .update({
+        status: "cancelled",
+        failed_reason: autoContactGuard.reason,
+        completed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", job.id);
+    console.warn("[agent-response-jobs] auto contact blocked", {
+      job_id: job.id,
+      tenant_id: job.tenant_id,
+      agent_id: job.agent_id,
+      lead_id: autoContactGuard.leadId,
+      form_id: autoContactGuard.formId,
+      reason: autoContactGuard.reason,
+    });
+    return { ok: false, error: autoContactGuard.reason, dedupedCount: 0 };
+  }
 
   // Bug 1 fix: add 1ms buffer to last_message_at to compensate for JS Date microsecond
   // truncation. PostgreSQL stores created_at with µs precision (e.g. "14:15:51.051645");

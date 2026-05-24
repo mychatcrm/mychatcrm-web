@@ -2,6 +2,7 @@ import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
 import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import { upsertConversationState } from "@/lib/server/conversation-memory";
 import { resolveAgentCrmFieldsForLeadInsert } from "@/lib/server/auto-lead-upsert";
+import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
 import { MetaLeadEventRecorder } from "@/lib/server/meta-lead-events-db";
 import {
@@ -318,6 +319,39 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     console.warn("[meta-webhook] Invalid remoteJid after phone normalization — skipping", {
       tenant_id,
       lead_id: leadId,
+      phone_last4: maskPhoneLast4(phone),
+    });
+    return;
+  }
+
+  const autoContactGuard = await canAgentAutoContactLead({
+    sb,
+    tenantId: tenant_id,
+    agentId,
+    leadId,
+    phone,
+    source: "lead_ads",
+    formId: resolvedFormId,
+    pageId: page_id,
+    leadgenId: leadgen_id,
+    triggerSource: "meta_lead_ingest",
+  });
+  if (!autoContactGuard.ok) {
+    await eventRecorder.step("blocked_unauthorized_form", {
+      reason: autoContactGuard.reason,
+      form_id: autoContactGuard.formId,
+    });
+    await eventRecorder.patch({
+      whatsapp_status: "blocked",
+      error_message: autoContactGuard.reason,
+      current_step: "blocked_unauthorized_form",
+    });
+    console.warn("[meta-webhook] Auto contact guard blocked outreach", {
+      tenant_id,
+      lead_id: leadId,
+      agent_id: agentId,
+      form_id: autoContactGuard.formId,
+      reason: autoContactGuard.reason,
       phone_last4: maskPhoneLast4(phone),
     });
     return;

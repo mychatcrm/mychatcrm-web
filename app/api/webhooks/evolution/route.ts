@@ -30,6 +30,7 @@ import {
 import { applyHumanConversationCommand } from "@/lib/server/conversation-human-control";
 import { revealConversationOnInbound } from "@/lib/server/conversation-visibility";
 import { isAgentAutomationAllowed, markWaitingForHuman } from "@/lib/server/conversation-operation";
+import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { isSmartWaitGloballyDisabled, runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
 import { scheduleFollowUpAfterInbound } from "@/lib/server/follow-up-jobs";
@@ -658,6 +659,26 @@ export async function POST(request: Request) {
           const handoffCheck = handoffEnabled
             ? await shouldTriggerHandoffAI(inboundLanguageSource(msg), handoffKeywords)
             : { trigger: false, reason: null };
+
+          const autoContactGuard = await canAgentAutoContactLead({
+            sb: sbState,
+            tenantId: row.tenant_id,
+            agentId,
+            leadId,
+            phone: msg.remoteJid,
+            triggerSource: "evolution_inbound_auto_reply",
+          });
+          if (!autoContactGuard.ok) {
+            console.warn("[webhooks/evolution] auto contact blocked", {
+              tenant_id: row.tenant_id,
+              agent_id: agentId,
+              lead_id: autoContactGuard.leadId,
+              form_id: autoContactGuard.formId,
+              reason: autoContactGuard.reason,
+              remote_jid_last4: msg.remoteJid.replace(/\D/g, "").slice(-4),
+            });
+            return;
+          }
 
           const result = await generateAgentResponse({
             tenantId: row.tenant_id,

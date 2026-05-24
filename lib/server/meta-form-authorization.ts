@@ -48,6 +48,19 @@ function ruleMatchesExplicitForm(rule: MetaFormAuthRule, formId: string, pageId:
   return included.includes(formId);
 }
 
+export function metaRuleExplicitlyAuthorizesAgent(params: {
+  rule: MetaFormAuthRule;
+  formId: string;
+  pageId: string;
+  agentId: string;
+}): boolean {
+  return (
+    ruleMatchesExplicitForm(params.rule, params.formId.trim(), params.pageId.trim()) &&
+    AUTOMATION_DISTRIBUTION_TYPES.has(params.rule.distribution_type) &&
+    stringArray(params.rule.agent_ids).includes(params.agentId.trim())
+  );
+}
+
 function isMappingBackedByActiveRule(
   rules: MetaFormAuthRule[],
   formId: string,
@@ -310,6 +323,45 @@ export async function isAnyAgentAuthorizedForMetaForm(params: {
 }): Promise<boolean> {
   const result = await resolveMetaFormAuthorization(params);
   return result.authorized;
+}
+
+export async function isAgentExplicitlyAuthorizedForMetaForm(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  pageId: string;
+  formId: string;
+  agentId: string;
+}): Promise<MetaFormAuthorizationResult> {
+  const formId = params.formId.trim();
+  const pageId = params.pageId.trim();
+  const agentId = params.agentId.trim();
+
+  if (!formId) {
+    return { authorized: false, agentId: null, ruleId: null, source: "no_matching_rule", reason: "missing_form_id" };
+  }
+  if (!agentId) {
+    return { authorized: false, agentId: null, ruleId: null, source: "invalid_agent", reason: "empty_agent_id" };
+  }
+
+  const rules = await loadActiveMetaFormRules(params.sb, params.tenantId);
+  const match = rules.find((rule) => metaRuleExplicitlyAuthorizesAgent({ rule, formId, pageId, agentId }));
+  if (!match) {
+    return {
+      authorized: false,
+      agentId: null,
+      ruleId: null,
+      source: "unauthorized_form",
+      reason: "form_not_explicitly_authorized_for_agent",
+    };
+  }
+
+  return {
+    authorized: true,
+    agentId,
+    ruleId: match.id,
+    source: "rule",
+    reason: "active_rule_explicit_form",
+  };
 }
 
 export function unauthorizedUserMessage(reason: string, source: MetaFormAuthorizationSource): string {
