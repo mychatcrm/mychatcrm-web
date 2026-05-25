@@ -44,6 +44,31 @@ function maskPhoneLast4(value: string): string {
   return digits.slice(-4) || "empty";
 }
 
+async function revealMetaConversation(params: {
+  sb: ReturnType<typeof createSupabaseServiceClient>;
+  tenantId: string;
+  remoteJid: string;
+  leadId: string;
+  agentId: string;
+  lastMessageAt: string;
+}) {
+  return upsertConversationState({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    leadId: params.leadId,
+    agentId: params.agentId,
+    channel: "whatsapp",
+    status: "active",
+    humanPaused: false,
+    lastMessageAt: params.lastMessageAt,
+    isHidden: false,
+    archivedAt: null,
+    hiddenAt: null,
+    hiddenBy: null,
+  });
+}
+
 export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void> {
   const { leadgen_id, page_id, form_id, ad_id, ad_group_id } = value;
   if (!leadgen_id || !page_id) {
@@ -362,12 +387,27 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
   const initialMessageExternalId = `meta:${leadgen_id}:initial`;
   const { data: existingInitialMessage } = await sb
     .from("whatsapp_messages")
-    .select("id, delivery_status")
+    .select("id, delivery_status, sent_at, created_at")
     .eq("tenant_id", tenant_id)
     .eq("message_id", initialMessageExternalId)
     .maybeSingle();
   if (existingInitialMessage?.id) {
     const alreadySent = existingInitialMessage.delivery_status === "sent";
+    if (alreadySent) {
+      await revealMetaConversation({
+        sb,
+        tenantId: tenant_id,
+        remoteJid,
+        leadId,
+        agentId,
+        lastMessageAt:
+          typeof existingInitialMessage.sent_at === "string"
+            ? existingInitialMessage.sent_at
+            : typeof existingInitialMessage.created_at === "string"
+              ? existingInitialMessage.created_at
+              : new Date().toISOString(),
+      });
+    }
     if (alreadySent) {
       await eventRecorder.step("whatsapp_sent", { reason: "same_leadgen_already_sent", message_id: existingInitialMessage.id });
       await eventRecorder.patch({ whatsapp_status: "sent", error_message: null, current_step: "whatsapp_sent" });
@@ -402,18 +442,13 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     return;
   }
 
-  const state = await upsertConversationState({
+  const state = await revealMetaConversation({
     sb,
     tenantId: tenant_id,
     remoteJid,
     leadId,
     agentId,
-    channel: "whatsapp",
-    status: "active",
-    humanPaused: false,
     lastMessageAt: new Date().toISOString(),
-    isHidden: false,
-    archivedAt: null,
   });
   await eventRecorder.step("conversation_state_created", { state_id: state?.id ?? null });
   console.info("[meta-webhook] Conversation state upserted", {
@@ -548,7 +583,13 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         leadId,
         agentId,
         channel: "whatsapp",
+        status: "active",
+        humanPaused: false,
         lastMessageAt: sentAt,
+        isHidden: false,
+        archivedAt: null,
+        hiddenAt: null,
+        hiddenBy: null,
       }),
       promoteLeadToContatoOnAgentEngagement({ sb, tenantId: tenant_id, leadId }),
     ]);

@@ -16,14 +16,14 @@ function lead(patch: Partial<ClientLead>): ClientLead {
     email: "—",
     valor: 0,
     status: patch.status ?? "contato",
-    tag: "WhatsApp",
+    tag: patch.tag ?? "WhatsApp",
     agenteEntrada: "ag-max-vendas",
     agenteAtendendo: "ag-max-vendas",
     responsavel: "Equipe",
     ultimoContato: "Agora",
     proximaAcao: "Qualificar interesse",
     origem: patch.origem ?? "WhatsApp",
-    tags: ["WhatsApp"],
+    tags: patch.tags ?? ["WhatsApp"],
     ownerEmployeeId: patch.ownerEmployeeId,
   };
 }
@@ -80,5 +80,31 @@ describe("CRM visible leads", () => {
   it("does not hide unassigned WhatsApp leads for hierarchy-scoped CRM sessions", () => {
     const visible = filterLeadsForSession(directorSession, [], [lead({ ownerEmployeeId: undefined })]);
     expect(visible).toHaveLength(1);
+  });
+
+  it("does not hide unassigned Meta Lead Ads leads for hierarchy-scoped CRM sessions", () => {
+    const visible = filterLeadsForSession(directorSession, [], [
+      lead({
+        id: "d5995060-8fac-4bcc-87e5-0c5d9f3d9e51",
+        nome: "Renato Lagares",
+        origem: "Meta / Facebook",
+        tag: "Meta",
+        tags: ["Meta", "Formulário"],
+        ownerEmployeeId: undefined,
+      }),
+    ]);
+    expect(visible).toHaveLength(1);
+  });
+
+  it("still hides manual unassigned leads for hierarchy-scoped CRM sessions", () => {
+    const visible = filterLeadsForSession(directorSession, [], [
+      lead({
+        origem: "Entrada manual",
+        tag: "Manual",
+        tags: ["Manual"],
+        ownerEmployeeId: undefined,
+      }),
+    ]);
+    expect(visible).toHaveLength(0);
   });
 });

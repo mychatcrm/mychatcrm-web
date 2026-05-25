@@ -1442,7 +1442,12 @@ function CrmPage({
 
     const request = ids.length === 1 ? deleteCrmLeadInApi(ids[0]!) : deleteCrmLeadsInApi(ids).then(() => undefined);
     void request
-      .then(() => {
+      .then(async () => {
+        const remoteLeads = await fetchCrmLeadsFromApi();
+        const visibleLeads = normalizeLeadsForVisibleCrmFunnel(remoteLeads, funnels);
+        setLastCrmApiLeadCount(remoteLeads.length);
+        setLeads(visibleLeads);
+        persistCrmLeadsSnapshot(dataset.tenantId, visibleLeads);
         setDeleteLeadConfirm(null);
         setDeleteLeadBusy(false);
       })
@@ -1451,7 +1456,7 @@ function CrmPage({
         setDeleteLeadError("Não foi possível apagar agora. Tente novamente em instantes.");
         setDeleteLeadBusy(false);
       });
-  }, [deleteLeadBusy, deleteLeadConfirm, leads]);
+  }, [dataset.tenantId, deleteLeadBusy, deleteLeadConfirm, funnels, leads]);
 
   const activeTeamEmployees = useMemo(
     () => teamEmployees.filter((employee) => employee.ativo && !employee.accountSuspended),

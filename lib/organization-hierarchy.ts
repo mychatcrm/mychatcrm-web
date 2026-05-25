@@ -70,12 +70,38 @@ export function crmOwnerIdScopeForSession(
 
 export function leadMatchesOwnerScope(lead: ClientLead, scope: Set<string> | null): boolean {
   if (scope === null) return true;
-  // Leads criados automaticamente pelo WhatsApp ainda podem não ter responsável
+  // Leads criados automaticamente ainda podem não ter responsável
   // humano. Mantê-los visíveis no CRM do tenant evita que oportunidades novas
   // sumam antes de alguém assumir/atribuir o atendimento.
-  if (!lead.ownerEmployeeId && lead.origem === "WhatsApp") return true;
+  if (!lead.ownerEmployeeId && isAutomaticInboundLead(lead)) return true;
   if (lead.ownerEmployeeId && scope.has(lead.ownerEmployeeId)) return true;
   return false;
+}
+
+function normalizeLeadSource(value: string | null | undefined): string {
+  return (value ?? "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+}
+
+export function isAutomaticInboundLead(lead: ClientLead): boolean {
+  const haystack = [
+    lead.origem,
+    lead.tag,
+    lead.agenteEntrada,
+    lead.agenteAtendendo,
+    ...lead.tags,
+  ]
+    .map(normalizeLeadSource)
+    .join(" ");
+
+  return (
+    haystack.includes("whatsapp") ||
+    haystack.includes("meta") ||
+    haystack.includes("facebook") ||
+    haystack.includes("lead ads") ||
+    haystack.includes("lead_ads") ||
+    haystack.includes("formulario") ||
+    haystack.includes("form")
+  );
 }
 
 export function filterLeadsForSession(session: ClientSession, employees: TeamEmployee[], leads: ClientLead[]): ClientLead[] {
