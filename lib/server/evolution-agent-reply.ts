@@ -1,21 +1,17 @@
 import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
 import { detectSupportedLanguageCode, type SupportedLanguageCode } from "@/lib/ai/language-detect";
 import {
+  canUseTts,
   resolveAgentResponseSettingsFromStorage,
-  resolveLastInboundKind,
-  shouldReplyWithAudio,
+  resolveTriggeringInboundKind,
 } from "@/lib/agents";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { buildTextualReplyFallbackTopics } from "@/lib/conversas/inbound-message-dedupe";
 import { buildReplyUnitPrompt, normalizeConversationBurst } from "@/lib/conversas/normalize-conversation-burst";
 import { detectOutboundRepetition } from "@/lib/conversas/outbound-repetition-guard";
-import {
-  evolutionSendAudio,
-  evolutionSendText,
-  remoteJidToEvoNumber,
-} from "@/lib/integrations/evolution-api";
-import { textToSpeechElevenLabs } from "@/lib/integrations/elevenlabs";
-import { uploadMediaToR2 } from "@/lib/integrations/r2-storage";
+import { isElevenlabsConfigured } from "@/lib/integrations/elevenlabs";
+import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
+import { deliverAgentReplyWithOptionalTts } from "@/lib/server/agent-tts-outbound";
 import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 import { promoteLeadToContatoOnAgentEngagement } from "@/lib/server/crm-lead-lifecycle";
 import { resolveOutboundMediaForAgentResponse } from "@/lib/server/agent-media-files";
@@ -428,7 +424,9 @@ export async function processAgentResponseJob(
     voice_id: agentRow?.voice_id,
     metadata: agentRow?.metadata,
   });
-  const burstLastInboundKind = resolveLastInboundKind(inboundRows);
+  const triggeringMessageId = job.message_ids[job.message_ids.length - 1] ?? null;
+  const triggeringInboundKind = resolveTriggeringInboundKind(inboundRows, triggeringMessageId);
+  const elevenLabsAvailable = isElevenlabsConfigured();
 
   let handoffTriggered = false;
   let handoffReason: string | undefined;
@@ -541,11 +539,11 @@ export async function processAgentResponseJob(
       : null;
 
     const languageCode = detectSupportedLanguageCode(unitPrompt);
-    const unitLastInboundKind = resolveLastInboundKind(unit);
-    const useAudioForUnit = shouldReplyWithAudio({
-      responseMode,
+    const useTts = canUseTts({
+      agentResponseMode: responseMode,
+      inboundKind: triggeringInboundKind,
       voiceId,
-      lastInboundKind: unitLastInboundKind,
+      elevenLabsAvailable,
       handoffTriggered,
     });
 
@@ -554,74 +552,56 @@ export async function processAgentResponseJob(
       job_id: job.id,
       unit_index: unitIndex + 1,
       response_mode: responseMode,
-      burst_last_inbound_kind: burstLastInboundKind,
-      unit_last_inbound_kind: unitLastInboundKind,
-      use_audio: useAudioForUnit,
+      triggering_message_id: triggeringMessageId,
+      triggering_inbound_kind: triggeringInboundKind,
+      elevenlabs_available: elevenLabsAvailable,
+      use_tts: useTts,
     });
 
-    if (useAudioForUnit) {
-      try {
-        const audioBuffer = await textToSpeechElevenLabs(textToSend.slice(0, 5000), voiceId!, {
-          languageCode,
-        });
-        const ttsKey = `whatsapp/${job.tenant_id}/tts/${Date.now()}_reply.mp3`;
-        const r2Key = await uploadMediaToR2(audioBuffer, ttsKey, "audio/mpeg");
-        const mediaUrl = r2Key ? `/api/client/media/${ttsKey}` : null;
-        await sendPresence(job.instance_name, number, "recording", 3000);
-        const send = await evolutionSendAudio({
-          instanceName: job.instance_name,
-          number,
-          audio: audioBuffer.toString("base64"),
-        });
-        if (!send.ok) return { ok: false, error: send.error, dedupedCount: burst.dedupedCount };
-        await saveOutboundMessage({
-          tenantId: job.tenant_id,
-          remoteJid: job.remote_jid,
-          kind: "audio",
-          content: textToSend.slice(0, 4000),
-          agentId: job.agent_id,
-          leadId: job.lead_id,
-          mediaUrl,
-        });
-        await sendOutboundMediaSafe();
-      } catch {
-        await sendPresence(job.instance_name, number, "composing", typingDelayMs(textToSend));
-        const send = await evolutionSendText({
+    if (useTts) {
+      await sendPresence(job.instance_name, number, "recording", 3000);
+    } else {
+      await sendPresence(job.instance_name, number, "composing", typingDelayMs(textToSend));
+    }
+
+    const delivery = await deliverAgentReplyWithOptionalTts({
+      instanceName: job.instance_name,
+      number,
+      text: textToSend,
+      voiceId: voiceId!,
+      languageCode,
+      tenantId: job.tenant_id,
+      useTts,
+      logScope: "agent-response-jobs",
+      logContext: {
+        job_id: job.id,
+        tenant_id: job.tenant_id,
+        agent_id: job.agent_id,
+        triggering_inbound_kind: triggeringInboundKind,
+      },
+      sendText: () =>
+        evolutionSendText({
           instanceName: job.instance_name,
           number,
           text: textToSend.slice(0, 4000),
           quoted,
-        });
-        if (!send.ok) return { ok: false, error: send.error, dedupedCount: burst.dedupedCount };
-        await saveOutboundMessage({
-          tenantId: job.tenant_id,
-          remoteJid: job.remote_jid,
-          kind: "text",
-          content: textToSend.slice(0, 4000),
-          agentId: job.agent_id,
-          leadId: job.lead_id,
-        });
-        await sendOutboundMediaSafe();
-      }
-    } else {
-      await sendPresence(job.instance_name, number, "composing", typingDelayMs(textToSend));
-      const send = await evolutionSendText({
-        instanceName: job.instance_name,
-        number,
-        text: textToSend.slice(0, 4000),
-        quoted,
-      });
-      if (!send.ok) return { ok: false, error: send.error, dedupedCount: burst.dedupedCount };
-      await saveOutboundMessage({
-        tenantId: job.tenant_id,
-        remoteJid: job.remote_jid,
-        kind: "text",
-        content: textToSend.slice(0, 4000),
-        agentId: job.agent_id,
-        leadId: job.lead_id,
-      });
-      await sendOutboundMediaSafe();
+        }),
+    });
+
+    if (!delivery.sent) {
+      return { ok: false, error: "outbound_send_failed", dedupedCount: burst.dedupedCount };
     }
+
+    await saveOutboundMessage({
+      tenantId: job.tenant_id,
+      remoteJid: job.remote_jid,
+      kind: delivery.channel === "audio" ? "audio" : "text",
+      content: textToSend.slice(0, 4000),
+      agentId: job.agent_id,
+      leadId: job.lead_id,
+      mediaUrl: delivery.mediaUrl,
+    });
+    await sendOutboundMediaSafe();
 
     repliesSent += 1;
     console.info("[agent-response-jobs]", {

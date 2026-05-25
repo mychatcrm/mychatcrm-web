@@ -14,6 +14,53 @@ export function isElevenlabsConfigured(): boolean {
   return Boolean(elevenlabsApiKey());
 }
 
+export class ElevenLabsTtsError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+
+  constructor(message: string, status: number, code: string | null) {
+    super(message);
+    this.name = "ElevenLabsTtsError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+function parseElevenLabsErrorBody(body: string): { code: string | null } {
+  try {
+    const parsed = JSON.parse(body) as { detail?: { status?: string }; code?: string };
+    const code =
+      (typeof parsed.detail === "object" && parsed.detail?.status
+        ? String(parsed.detail.status)
+        : null) ??
+      (typeof parsed.code === "string" ? parsed.code : null);
+    return { code };
+  } catch {
+    if (body.includes("quota_exceeded")) return { code: "quota_exceeded" };
+    return { code: null };
+  }
+}
+
+export function isElevenLabsQuotaOrAuthError(err: unknown): boolean {
+  if (!(err instanceof ElevenLabsTtsError)) return false;
+  if (err.status === 401 || err.status === 402 || err.status === 429) return true;
+  const code = err.code?.toLowerCase() ?? "";
+  return (
+    code.includes("quota") ||
+    code.includes("unauthorized") ||
+    code.includes("invalid_api_key") ||
+    code.includes("payment")
+  );
+}
+
+/** User-facing copy for dashboard voice preview only. */
+export function elevenLabsPreviewErrorMessage(err: unknown): string {
+  if (isElevenLabsQuotaOrAuthError(err)) {
+    return "Créditos da ElevenLabs insuficientes para gerar áudio.";
+  }
+  return err instanceof Error ? err.message : "Erro ao gerar preview de voz.";
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -120,7 +167,12 @@ export async function textToSpeechElevenLabs(
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`ElevenLabs TTS ${res.status}: ${body.slice(0, 300)}`);
+      const { code } = parseElevenLabsErrorBody(body);
+      throw new ElevenLabsTtsError(
+        `ElevenLabs TTS ${res.status}: ${body.slice(0, 300)}`,
+        res.status,
+        code,
+      );
     }
 
     const arrayBuf = await res.arrayBuffer();

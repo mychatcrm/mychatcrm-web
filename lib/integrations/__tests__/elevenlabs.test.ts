@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { textToSpeechElevenLabs } from "@/lib/integrations/elevenlabs";
+import {
+  ElevenLabsTtsError,
+  isElevenLabsQuotaOrAuthError,
+  textToSpeechElevenLabs,
+} from "@/lib/integrations/elevenlabs";
 
 describe("textToSpeechElevenLabs", () => {
   const originalApiKey = process.env.ELEVENLABS_API_KEY;
@@ -29,6 +33,20 @@ describe("textToSpeechElevenLabs", () => {
         stability: 0.5,
         similarity_boost: 0.75,
       },
+    });
+  });
+
+  it("throws ElevenLabsTtsError with quota code on 401", async () => {
+    process.env.ELEVENLABS_API_KEY = "test-key";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response('{"detail":{"status":"quota_exceeded"}}', { status: 401 })),
+    );
+
+    await expect(textToSpeechElevenLabs("Oi", "voice-123")).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(ElevenLabsTtsError);
+      expect(isElevenLabsQuotaOrAuthError(err)).toBe(true);
+      return true;
     });
   });
 });

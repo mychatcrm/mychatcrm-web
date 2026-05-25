@@ -41,6 +41,12 @@ export {
   type AgentResponseMode,
 } from "./response-settings";
 export {
+  canUseTts,
+  inboundKindFromEvolutionType,
+  resolveTriggeringInboundKind,
+  type InboundKind,
+} from "./tts-gate";
+export {
   agentCrmDestinationDbFields,
   normalizeAgentCrmDestination,
   validateAgentCrmDestination,

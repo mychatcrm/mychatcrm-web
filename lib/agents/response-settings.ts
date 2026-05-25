@@ -1,3 +1,5 @@
+import { canUseTts, type InboundKind } from "./tts-gate";
+
 export type AgentResponseMode = "text" | "audio";
 
 export function normalizeAgentResponseMode(value: unknown): AgentResponseMode {
@@ -54,20 +56,19 @@ export function resolveLastInboundKind(
   return "text";
 }
 
-/**
- * TTS/audio outbound only when the client sent audio and the agent is in audio mode.
- * Text inbound always yields false (never auto-convert to audio).
- */
+/** @deprecated Prefer {@link canUseTts}. */
 export function shouldReplyWithAudio(params: {
   responseMode: AgentResponseMode;
   voiceId: string | null;
-  lastInboundKind: "text" | "audio";
+  lastInboundKind: InboundKind;
   handoffTriggered?: boolean;
 }): boolean {
-  if (params.handoffTriggered) return false;
-  if (params.lastInboundKind !== "audio") return false;
-  if (params.responseMode !== "audio") return false;
-  return Boolean(params.voiceId);
+  return canUseTts({
+    agentResponseMode: params.responseMode,
+    inboundKind: params.lastInboundKind,
+    voiceId: params.voiceId,
+    handoffTriggered: params.handoffTriggered,
+  });
 }
 
 /** DB columns + metadata (legacy toggles) for runtime reply pipeline. */

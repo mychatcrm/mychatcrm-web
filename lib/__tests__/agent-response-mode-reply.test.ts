@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  canUseTts,
   isInboundAudioKind,
   resolveAgentResponseSettingsFromStorage,
   resolveLastInboundKind,
+  resolveTriggeringInboundKind,
   shouldReplyWithAudio,
 } from "@/lib/agents";
 
@@ -52,12 +54,29 @@ describe("agent response mode reply", () => {
 
   it("audio inbound with audio mode and voice uses TTS path", () => {
     expect(
-      shouldReplyWithAudio({
-        responseMode: "audio",
+      canUseTts({
+        agentResponseMode: "audio",
+        inboundKind: "audio",
         voiceId: "voice_1",
-        lastInboundKind: "audio",
+        elevenLabsAvailable: true,
       }),
     ).toBe(true);
+  });
+
+  it("text trigger message blocks TTS even if burst had earlier audio", () => {
+    const rows = [
+      { id: "audio-1", kind: "audio" },
+      { id: "text-2", kind: "text" },
+    ];
+    expect(resolveTriggeringInboundKind(rows, "text-2")).toBe("text");
+    expect(
+      canUseTts({
+        agentResponseMode: "audio",
+        inboundKind: resolveTriggeringInboundKind(rows, "text-2"),
+        voiceId: "voice_1",
+        elevenLabsAvailable: true,
+      }),
+    ).toBe(false);
   });
 
   it("audio mode without voice id does not use TTS", () => {

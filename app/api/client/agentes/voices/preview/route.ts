@@ -4,7 +4,11 @@
  */
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
-import { textToSpeechElevenLabs } from "@/lib/integrations/elevenlabs";
+import {
+  elevenLabsPreviewErrorMessage,
+  isElevenLabsQuotaOrAuthError,
+  textToSpeechElevenLabs,
+} from "@/lib/integrations/elevenlabs";
 
 export const dynamic = "force-dynamic";
 
@@ -50,8 +54,9 @@ export async function POST(request: Request) {
       },
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Erro ao gerar preview de voz.";
-    console.error("[api/client/agentes/voices/preview] POST", msg);
-    return NextResponse.json({ error: msg }, { status: 502 });
+    const friendly = elevenLabsPreviewErrorMessage(e);
+    console.error("[api/client/agentes/voices/preview] POST", e instanceof Error ? e.message : e);
+    const status = isElevenLabsQuotaOrAuthError(e) ? 402 : 502;
+    return NextResponse.json({ error: friendly }, { status });
   }
 }

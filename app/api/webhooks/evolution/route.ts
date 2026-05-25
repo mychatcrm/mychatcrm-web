@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
 import { detectSupportedLanguageCode, type SupportedLanguageCode } from "@/lib/ai/language-detect";
-import { resolveAgentResponseSettingsFromStorage, shouldReplyWithAudio } from "@/lib/agents";
+import {
+  canUseTts,
+  inboundKindFromEvolutionType,
+  resolveAgentResponseSettingsFromStorage,
+} from "@/lib/agents";
 import {
   extractConnectionState,
   extractInboundMessagesFromEvolutionPayload,
@@ -10,7 +14,9 @@ import {
   normalizeEvolutionEventName,
   type EvolutionInboundMessage,
 } from "@/lib/integrations/evolution-webhook-parse";
-import { evolutionSendAudio, evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
+import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
+import { isElevenlabsConfigured } from "@/lib/integrations/elevenlabs";
+import { deliverAgentReplyWithOptionalTts } from "@/lib/server/agent-tts-outbound";
 import { resolveOutboundMediaForAgentResponse } from "@/lib/server/agent-media-files";
 import { sendAgentOutboundMediaViaEvolution } from "@/lib/server/send-agent-outbound-media-evolution";
 import { resolveEvolutionAgentId } from "@/lib/server/evolution-agent-resolve";
@@ -18,7 +24,6 @@ import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 import { getEvolutionInstanceByName, updateEvolutionInstanceStateByName } from "@/lib/server/tenant-evolution-instance-db";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { uploadMediaToR2 } from "@/lib/integrations/r2-storage";
-import { textToSpeechElevenLabs } from "@/lib/integrations/elevenlabs";
 import {
   buildDeterministicHandoffSummary,
   getConversationState,
@@ -809,11 +814,12 @@ export async function POST(request: Request) {
             voice_id: agentConfig.data?.voice_id,
             metadata,
           });
-          const lastInboundKind = msg.type === "audio" ? "audio" : ("text" as const);
-          const useAudio = shouldReplyWithAudio({
-            responseMode,
+          const inboundKind = inboundKindFromEvolutionType(msg.type);
+          const useTts = canUseTts({
+            agentResponseMode: responseMode,
+            inboundKind,
             voiceId,
-            lastInboundKind,
+            elevenLabsAvailable: isElevenlabsConfigured(),
             handoffTriggered: finalHandoffCheck,
           });
 
@@ -823,109 +829,56 @@ export async function POST(request: Request) {
             agent_id: agentId,
             response_mode: responseMode,
             inbound_type: msg.type,
-            last_inbound_kind: lastInboundKind,
-            use_audio: useAudio,
+            inbound_kind: inboundKind,
+            use_tts: useTts,
           });
 
-          if (useAudio) {
-            // ── TTS via ElevenLabs → R2 → Evolution WhatsApp Audio ──────────
-            try {
-              const languageCode = detectSupportedLanguageCode(inboundLanguageSource(msg, replyText));
-              const audioBuffer = await textToSpeechElevenLabs(replyText.slice(0, 5000), voiceId!, {
-                languageCode,
-              });
-              const ttsKey = `whatsapp/${row.tenant_id}/tts/${Date.now()}_reply.mp3`;
-              const r2Key = await uploadMediaToR2(audioBuffer, ttsKey, "audio/mpeg");
-              const mediaUrl = r2Key ? `/api/client/media/${ttsKey}` : null;
-
-              const audioB64 = audioBuffer.toString("base64");
-              const send = await evolutionSendAudio({
+          const languageCode = detectSupportedLanguageCode(inboundLanguageSource(msg, replyText));
+          const delivery = await deliverAgentReplyWithOptionalTts({
+            instanceName,
+            number,
+            text: replyText,
+            voiceId: voiceId ?? "",
+            languageCode,
+            tenantId: row.tenant_id,
+            useTts: useTts && Boolean(voiceId),
+            logScope: "webhooks/evolution",
+            logContext: {
+              tenant_id: row.tenant_id,
+              agent_id: agentId,
+              inbound_kind: inboundKind,
+            },
+            sendText: () =>
+              evolutionSendText({
                 instanceName,
                 number,
-                audio: audioB64,
-              });
+                text: replyText.slice(0, 4000),
+              }),
+          });
 
-              if (!send.ok) {
-                console.error("[webhooks/evolution] sendAudio (TTS)", send.status, send.error);
-              } else {
-                await saveMessage({
-                  tenantId: row.tenant_id,
-                  remoteJid: msg.remoteJid,
-                  direction: "outbound",
-                  kind: "audio",
-                  content: replyText.slice(0, 4000),
-                  agentId,
-                  mediaUrl,
-                });
-                await upsertLeadFromWhatsAppContact({
-                  tenantId: row.tenant_id,
-                  remoteJid: msg.remoteJid,
-                  recipientJid: msg.remoteJid,
-                  instanceJid,
-                  contactName,
-                  direction: "outbound",
-                  agentId,
-                  conversationId: msg.remoteJid,
-                });
-                await sendOutboundMediaSafe();
-              }
-            } catch (ttsErr) {
-              console.error("[webhooks/evolution] TTS error — fallback to text", ttsErr instanceof Error ? ttsErr.message : ttsErr);
-              // Fallback: envia como texto se TTS falhar
-              const fallback = await evolutionSendText({ instanceName, number, text: replyText.slice(0, 4000) });
-              if (fallback.ok) {
-                await saveMessage({
-                  tenantId: row.tenant_id,
-                  remoteJid: msg.remoteJid,
-                  direction: "outbound",
-                  kind: "text",
-                  content: replyText.slice(0, 4000),
-                  agentId,
-                });
-                await upsertLeadFromWhatsAppContact({
-                  tenantId: row.tenant_id,
-                  remoteJid: msg.remoteJid,
-                  recipientJid: msg.remoteJid,
-                  instanceJid,
-                  contactName,
-                  direction: "outbound",
-                  agentId,
-                  conversationId: msg.remoteJid,
-                });
-                await sendOutboundMediaSafe();
-              }
-            }
-          } else {
-            // ── Envio de texto padrão ─────────────────────────────────────────
-            const send = await evolutionSendText({
-              instanceName,
-              number,
-              text: replyText.slice(0, 4000),
+          if (delivery.sent) {
+            await saveMessage({
+              tenantId: row.tenant_id,
+              remoteJid: msg.remoteJid,
+              direction: "outbound",
+              kind: delivery.channel === "audio" ? "audio" : "text",
+              content: replyText.slice(0, 4000),
+              agentId,
+              mediaUrl: delivery.mediaUrl,
             });
-
-            if (!send.ok) {
-              console.error("[webhooks/evolution] sendText", send.status, send.error);
-            } else {
-              await saveMessage({
-                tenantId: row.tenant_id,
-                remoteJid: msg.remoteJid,
-                direction: "outbound",
-                kind: "text",
-                content: replyText.slice(0, 4000),
-                agentId,
-              });
-              await upsertLeadFromWhatsAppContact({
-                tenantId: row.tenant_id,
-                remoteJid: msg.remoteJid,
-                recipientJid: msg.remoteJid,
-                instanceJid,
-                contactName,
-                direction: "outbound",
-                agentId,
-                conversationId: msg.remoteJid,
-              });
-              await sendOutboundMediaSafe();
-            }
+            await upsertLeadFromWhatsAppContact({
+              tenantId: row.tenant_id,
+              remoteJid: msg.remoteJid,
+              recipientJid: msg.remoteJid,
+              instanceJid,
+              contactName,
+              direction: "outbound",
+              agentId,
+              conversationId: msg.remoteJid,
+            });
+            await sendOutboundMediaSafe();
+          } else {
+            console.error("[webhooks/evolution] outbound send failed after TTS gate");
           }
         } catch (e) {
           console.warn("[webhooks/evolution] Phase 2 flow error", e instanceof Error ? e.message : e);
