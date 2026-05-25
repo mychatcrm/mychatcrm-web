@@ -261,11 +261,98 @@ export type GraphLeadResponse = {
   id: string;
   created_time?: string;
   field_data?: GraphLeadFieldData[];
+  ad_id?: string;
+  form_id?: string;
 };
+
+function graphIdField(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
+}
+
+/** IDs de anúncio/conjunto vindos do webhook Meta (nomes de campo variam). */
+export function extractLeadgenAttributionFromWebhook(raw: Record<string, unknown> | undefined): {
+  adId: string | null;
+  adsetId: string | null;
+} {
+  if (!raw || typeof raw !== "object") {
+    return { adId: null, adsetId: null };
+  }
+  return {
+    adId: graphIdField(raw.ad_id) ?? graphIdField(raw.adid) ?? null,
+    adsetId:
+      graphIdField(raw.ad_group_id) ??
+      graphIdField(raw.adgroup_id) ??
+      graphIdField(raw.adset_id) ??
+      null,
+  };
+}
+
+export type ResolvedMetaLeadAdAttribution = MetaAdContext & {
+  adId: string | null;
+  formId: string | null;
+};
+
+/**
+ * Resolve campanha/conjunto/anúncio: leadgen Graph (ad_id) → webhook → expand ad node.
+ * Preenche nomes via ad{campaign,adset} ou fetch pontual por ID quando só houver ID.
+ */
+export async function resolveMetaLeadAdAttribution(params: {
+  pageAccessToken: string;
+  graphLead?: GraphLeadResponse | null;
+  webhook?: Record<string, unknown>;
+  webhookAdId?: string | null;
+  webhookAdsetId?: string | null;
+  webhookFormId?: string | null;
+}): Promise<ResolvedMetaLeadAdAttribution> {
+  const fromWebhook = extractLeadgenAttributionFromWebhook(params.webhook);
+  const adId =
+    graphIdField(params.graphLead?.ad_id) ??
+    graphIdField(params.webhookAdId) ??
+    fromWebhook.adId ??
+    null;
+  const adsetId =
+    graphIdField(params.webhookAdsetId) ??
+    fromWebhook.adsetId ??
+    null;
+  const formId =
+    graphIdField(params.graphLead?.form_id) ??
+    graphIdField(params.webhookFormId) ??
+    null;
+
+  let ctx: MetaAdContext = emptyAdContext();
+  if (adId) {
+    ctx = await fetchGraphAdContext(adId, params.pageAccessToken);
+  }
+
+  const resolvedAdsetId = ctx.adsetId ?? adsetId;
+  const resolvedCampaignId = ctx.campaignId;
+  let adsetName = ctx.adsetName;
+  let campaignName = ctx.campaignName;
+  const adName = ctx.adName;
+
+  if (resolvedAdsetId && !adsetName) {
+    adsetName = await fetchGraphObjectField(resolvedAdsetId, "name", params.pageAccessToken);
+  }
+  if (resolvedCampaignId && !campaignName) {
+    campaignName = await fetchGraphObjectField(resolvedCampaignId, "name", params.pageAccessToken);
+  }
+
+  return {
+    adId,
+    formId,
+    adName,
+    adsetId: resolvedAdsetId,
+    adsetName,
+    campaignId: resolvedCampaignId,
+    campaignName,
+  };
+}
 
 export async function fetchGraphLead(leadgenId: string, pageAccessToken: string): Promise<GraphLeadResponse | null> {
   try {
-    const url = `https://graph.facebook.com/v19.0/${leadgenId}?fields=field_data,created_time&access_token=${encodeURIComponent(pageAccessToken)}`;
+    const url = `https://graph.facebook.com/v19.0/${leadgenId}?fields=field_data,created_time,ad_id,form_id&access_token=${encodeURIComponent(pageAccessToken)}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
     if (!res.ok) {
       const body = await res.text().catch(() => "");

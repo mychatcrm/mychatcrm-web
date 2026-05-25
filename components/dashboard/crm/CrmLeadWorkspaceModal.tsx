@@ -48,6 +48,9 @@ import { phoneToWhatsAppWebHref, WhatsAppGlyph } from "./crm-phone";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 import {
   collectKnownFormFieldRows,
+  formatMetaAdDisplay,
+  formatMetaAdsetDisplay,
+  formatMetaCampaignDisplay,
   formatMetaFormReceivedAt,
   isLeadAdsProfile,
   parseMetaLeadProfileMetadata,
@@ -106,9 +109,10 @@ function mergeOrigemDisplay(
   const om = lead.origemMarketing;
   const fromMeta = isLeadAdsProfile(leadSource ?? lead.origem, profileMeta);
   if (fromMeta && profileMeta) {
+    const campanhaLabel = formatMetaCampaignDisplay(profileMeta);
     return {
       midia: "Meta Lead Ads",
-      campanha: profileMeta.meta_campaign_name?.trim() || om?.campanha?.trim() || "—",
+      campanha: campanhaLabel !== "—" ? campanhaLabel : om?.campanha?.trim() || "—",
       pagina: profileMeta.meta_page_name?.trim() || om?.pagina?.trim() || "—",
       formulario: profileMeta.meta_form_name?.trim() || om?.formulario?.trim() || "—",
       tipoCliente: om?.tipoCliente?.trim() ?? "",
@@ -486,15 +490,15 @@ export function CrmLeadWorkspaceModal({
                   </div>
                   <div className="rounded-lg border border-line/80 bg-surface-base/40 px-3 py-2">
                     <dt className={typography.ui.overline}>Campanha</dt>
-                    <dd className="mt-0.5 text-sm font-medium text-content">{profileMeta?.meta_campaign_name ?? "—"}</dd>
+                    <dd className="mt-0.5 text-sm font-medium text-content">{formatMetaCampaignDisplay(profileMeta)}</dd>
                   </div>
                   <div className="rounded-lg border border-line/80 bg-surface-base/40 px-3 py-2">
                     <dt className={typography.ui.overline}>Conjunto de anúncios</dt>
-                    <dd className="mt-0.5 text-sm font-medium text-content">{profileMeta?.meta_adset_name ?? "—"}</dd>
+                    <dd className="mt-0.5 text-sm font-medium text-content">{formatMetaAdsetDisplay(profileMeta)}</dd>
                   </div>
                   <div className="rounded-lg border border-line/80 bg-surface-base/40 px-3 py-2 sm:col-span-2">
                     <dt className={typography.ui.overline}>Anúncio</dt>
-                    <dd className="mt-0.5 text-sm font-medium text-content">{profileMeta?.meta_ad_name ?? "—"}</dd>
+                    <dd className="mt-0.5 text-sm font-medium text-content">{formatMetaAdDisplay(profileMeta)}</dd>
                   </div>
                 </dl>
                 <ul className="grid gap-2 sm:grid-cols-2">

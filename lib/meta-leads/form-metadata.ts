@@ -110,6 +110,30 @@ export function collectKnownFormFieldRows(meta: ParsedMetaLeadProfile | null): L
   return [...byLabel.values()];
 }
 
+/** Exibição CRM: nome da Meta → ID → travessão. */
+export function formatMetaAttributionLabel(
+  name?: string | null,
+  id?: string | null,
+): string {
+  const label = name?.trim();
+  if (label) return label;
+  const fallbackId = id?.trim();
+  if (fallbackId) return fallbackId;
+  return "—";
+}
+
+export function formatMetaCampaignDisplay(meta: ParsedMetaLeadProfile | null): string {
+  return formatMetaAttributionLabel(meta?.meta_campaign_name, meta?.meta_campaign_id);
+}
+
+export function formatMetaAdsetDisplay(meta: ParsedMetaLeadProfile | null): string {
+  return formatMetaAttributionLabel(meta?.meta_adset_name, meta?.meta_adset_id);
+}
+
+export function formatMetaAdDisplay(meta: ParsedMetaLeadProfile | null): string {
+  return formatMetaAttributionLabel(meta?.meta_ad_name, meta?.meta_ad_id);
+}
+
 export function formatMetaFormReceivedAt(iso: string | undefined, fallback?: string | null): string | null {
   const raw = iso?.trim() || fallback?.trim();
   if (!raw) return null;
@@ -129,9 +153,12 @@ export function buildMetaFormAttributionLines(meta: ParsedMetaLeadProfile | null
   const lines: string[] = [];
   if (meta.meta_form_name) lines.push(`Formulário: ${meta.meta_form_name}`);
   if (meta.meta_page_name) lines.push(`Página Meta: ${meta.meta_page_name}`);
-  if (meta.meta_campaign_name) lines.push(`Campanha: ${meta.meta_campaign_name}`);
-  if (meta.meta_adset_name) lines.push(`Conjunto de anúncios: ${meta.meta_adset_name}`);
-  if (meta.meta_ad_name) lines.push(`Anúncio: ${meta.meta_ad_name}`);
+  const campaign = formatMetaCampaignDisplay(meta);
+  const adset = formatMetaAdsetDisplay(meta);
+  const ad = formatMetaAdDisplay(meta);
+  if (campaign !== "—") lines.push(`Campanha: ${campaign}`);
+  if (adset !== "—") lines.push(`Conjunto de anúncios: ${adset}`);
+  if (ad !== "—") lines.push(`Anúncio: ${ad}`);
   if (meta.meta_leadgen_id) lines.push(`ID do lead Meta: ${meta.meta_leadgen_id}`);
   return lines;
 }

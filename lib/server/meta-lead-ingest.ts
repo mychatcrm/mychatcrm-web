@@ -15,11 +15,11 @@ import {
   buildLeadProfileMetadata,
   buildMetaInitialAgentPrompt,
   fetchFormQuestionLabels,
-  fetchGraphAdContext,
   fetchGraphLead,
   fetchGraphObjectField,
   mergeLeadProfileMetadata,
   parseFieldData,
+  resolveMetaLeadAdAttribution,
   sanitizeInitialReply,
 } from "@/lib/server/meta-lead-graph";
 import {
@@ -236,28 +236,37 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     return;
   }
 
-  const [formName, adContext] = await Promise.all([
-    resolvedFormId ? fetchGraphObjectField(resolvedFormId, "name", page_access_token) : Promise.resolve(null),
-    ad_id ? fetchGraphAdContext(ad_id, page_access_token) : Promise.resolve(null),
-  ]);
+  const attribution = await resolveMetaLeadAdAttribution({
+    pageAccessToken: page_access_token,
+    graphLead: lead,
+    webhook: value as Record<string, unknown>,
+    webhookAdId: ad_id ?? null,
+    webhookAdsetId: ad_group_id ?? null,
+    webhookFormId: form_id ?? null,
+  });
 
-  const questionLabels = resolvedFormId
-    ? await fetchFormQuestionLabels(resolvedFormId, page_access_token)
+  const effectiveFormId = resolvedFormId || attribution.formId || undefined;
+  const formName = effectiveFormId
+    ? await fetchGraphObjectField(effectiveFormId, "name", page_access_token)
+    : null;
+
+  const questionLabels = effectiveFormId
+    ? await fetchFormQuestionLabels(effectiveFormId, page_access_token)
     : new Map<string, string>();
 
   const leadMetadata = buildLeadProfileMetadata({
     leadgenId: leadgen_id,
     fieldData: lead.field_data ?? [],
-    formId: form_id,
+    formId: effectiveFormId ?? form_id,
     formName,
-    adId: ad_id,
-    adsetId: ad_group_id ?? adContext?.adsetId ?? undefined,
+    adId: attribution.adId ?? undefined,
+    adsetId: attribution.adsetId ?? undefined,
     pageId: page_id,
     pageName: connPageName?.trim() || null,
-    campaignId: adContext?.campaignId ?? undefined,
-    campaignName: adContext?.campaignName ?? null,
-    adsetName: adContext?.adsetName ?? null,
-    adName: adContext?.adName ?? null,
+    campaignId: attribution.campaignId ?? undefined,
+    campaignName: attribution.campaignName,
+    adsetName: attribution.adsetName,
+    adName: attribution.adName,
     agentResolutionSource: agentResolution.source,
     invalidAgentId: agentResolution.invalidAgentId ?? null,
     rawWebhook: value as Record<string, unknown>,
@@ -269,10 +278,12 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     form_name: formName,
     form_fields: leadMetadata.form_fields ?? [],
     profile_metadata: leadMetadata,
-    campaign_id: adContext?.campaignId ?? null,
-    campaign_name: adContext?.campaignName ?? null,
-    adset_name: adContext?.adsetName ?? null,
-    ad_name: adContext?.adName ?? null,
+    campaign_id: attribution.campaignId ?? null,
+    campaign_name: attribution.campaignName ?? null,
+    adset_id: attribution.adsetId ?? null,
+    adset_name: attribution.adsetName ?? null,
+    ad_id: attribution.adId ?? null,
+    ad_name: attribution.adName ?? null,
   });
 
   const crmFunnel = await resolveAgentCrmFieldsForLeadInsert(sb, {
@@ -523,9 +534,9 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     email,
     formName,
     pageName: connPageName?.trim() || null,
-    campaignName: adContext?.campaignName ?? null,
-    adsetName: adContext?.adsetName ?? null,
-    adName: adContext?.adName ?? null,
+    campaignName: attribution.campaignName,
+    adsetName: attribution.adsetName,
+    adName: attribution.adName,
     formFields: leadMetadata.form_fields,
     profileMetadata: leadMetadata,
   });
