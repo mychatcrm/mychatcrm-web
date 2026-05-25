@@ -195,6 +195,8 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     tenantId: tenant_id,
     agentId,
   });
+  // Para leads existentes, não sobrescrever o status atual — apenas crm_funnel_id pode ser herdado.
+  const { status: _crmStatus, ...crmExtrasWithoutStatus } = crmExtras;
 
   const { data: existingLead } = await sb
     .from("leads")
@@ -221,7 +223,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         profile_metadata: leadMetadata,
         last_seen: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-        ...crmExtras,
+        ...crmExtras,            // novo lead: aplica status + crm_funnel_id do agente
       }
     : {
         tenant_id,
@@ -238,7 +240,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         profile_metadata: mergeLeadProfileMetadata(existingLead?.profile_metadata, leadMetadata),
         last_seen: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-        ...crmExtras,
+        ...crmExtrasWithoutStatus, // lead existente: preserva status atual, só herda crm_funnel_id
       };
 
   const { data: upsertedLead, error: upsertErr } = await sb

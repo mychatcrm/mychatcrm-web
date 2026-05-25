@@ -171,7 +171,7 @@ export const FAQ_ITEMS = [
 
 export const KANBAN_COLUMNS = [
   { id: "novo", title: "Novo Lead" },
-  { id: "contato", title: "Em Contato" },
+  { id: "contato", title: "Em atendimento" },
   { id: "proposta", title: "Proposta Enviada" },
   { id: "negociacao", title: "Negociação" },
   { id: "fechado", title: "Fechado ✓" },
