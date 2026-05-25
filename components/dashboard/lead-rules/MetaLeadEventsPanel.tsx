@@ -45,6 +45,8 @@ function stepLabel(step: string): string {
     whatsapp_sent: "WhatsApp enviado",
     whatsapp_failed: "WhatsApp falhou",
     blocked_unauthorized_form: "Formulário não autorizado",
+    blocked_form_not_in_rules: "Formulário não cadastrado nas regras",
+    blocked_historical_lead: "Lead anterior à regra",
   };
   return map[step] ?? step;
 }
@@ -64,9 +66,21 @@ function resolutionSourceLabel(source: string | null): string {
   return source ? (map[source] ?? source) : "";
 }
 
-function crmBadge(status: string) {
+function crmBadge(status: string, errorMessage: string | null) {
   if (status === "synced") return { label: "CRM OK", className: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" };
   if (status === "failed") return { label: "CRM erro", className: "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300" };
+  if (status === "blocked") {
+    if (errorMessage === "form_not_registered_in_lead_rules") {
+      return {
+        label: "CRM: form não cadastrado nas regras",
+        className: "border-orange-500/40 bg-orange-500/10 text-orange-800 dark:text-orange-200",
+      };
+    }
+    return {
+      label: "CRM bloqueado",
+      className: "border-orange-500/40 bg-orange-500/10 text-orange-800 dark:text-orange-200",
+    };
+  }
   return { label: "CRM pendente", className: "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200" };
 }
 
@@ -74,6 +88,12 @@ function waBadge(status: string, errorMessage: string | null) {
   if (status === "sent") return { label: "WhatsApp OK", className: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" };
   if (status === "failed") return { label: "WhatsApp erro", className: "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300" };
   if (status === "blocked") {
+    if (errorMessage === "form_not_registered_in_lead_rules") {
+      return {
+        label: "Bloqueado: form não cadastrado nas regras",
+        className: "border-orange-500/40 bg-orange-500/10 text-orange-800 dark:text-orange-200",
+      };
+    }
     if (errorMessage === "form_not_authorized_for_agent") {
       return {
         label: "Bloqueado: form não autorizado para agente",
@@ -114,9 +134,12 @@ function errorMessageHint(message: string | null): string | null {
     human_attending_today: "Atendimento humano ativo hoje nesta conversa.",
     initial_message_already_exists: "Mensagem meta:{leadgen_id}:initial já existe.",
     no_active_rule_for_form: "Formulário não vinculado a nenhum agente.",
+    form_not_registered_in_lead_rules:
+      "Formulário não cadastrado em Integrações → Leads. Lead não foi enviado ao CRM.",
     orphan_mapping_without_active_rule: "Mapeamento desatualizado — formulário não vinculado a regra ativa.",
-    form_not_authorized_for_agent: "Formulário não autorizado para este agente.",
-    missing_form_id: "Lead sem form_id — não é possível autorizar atendimento automático.",
+    form_not_authorized_for_agent: "Formulário no CRM, mas agente não autorizado para WhatsApp automático.",
+    missing_form_id: "Lead sem form_id — não entra no CRM nem no atendimento automático.",
+    historical_meta_lead_before_rule_activation: "Lead anterior à ativação da regra — não entra no CRM.",
   };
   return map[message] ?? message;
 }
@@ -241,7 +264,7 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
 
       <ul className="space-y-3">
         {events.map((ev) => {
-          const crm = crmBadge(ev.crm_sync_status);
+          const crm = crmBadge(ev.crm_sync_status, ev.error_message);
           const wa = waBadge(ev.whatsapp_status, ev.error_message);
           const hint = errorMessageHint(ev.error_message);
           const lastSteps = Array.isArray(ev.steps_log) ? ev.steps_log.slice(-4) : [];

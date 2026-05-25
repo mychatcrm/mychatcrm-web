@@ -59,27 +59,14 @@ describe("meta-form-authorization", () => {
     expect(result.source).toBe("no_matching_rule");
   });
 
-  it("does not authorize orphan mapping without active rule", () => {
+  it("does not authorize via orphan mapping without active rule", () => {
     const result = evaluateMetaFormAuthorizationFromSnapshot({
       pageId: PAGE,
       formId: FORM_OTHER,
       rules: [],
-      mappingAgentId: AGENT,
     });
     expect(result.authorized).toBe(false);
-    expect(result.source).toBe("unauthorized_form");
-    expect(result.reason).toBe("orphan_mapping_without_active_rule");
-  });
-
-  it("authorizes mapping_current when mapping matches active rule", () => {
-    const result = evaluateMetaFormAuthorizationFromSnapshot({
-      pageId: PAGE,
-      formId: FORM_AUTHORIZED,
-      rules: [rule()],
-      mappingAgentId: AGENT,
-    });
-    expect(result.authorized).toBe(true);
-    expect(result.source).toBe("rule");
+    expect(result.source).toBe("no_matching_rule");
   });
 
   it("rejects wrong agent for authorized form", () => {
@@ -124,14 +111,13 @@ describe("meta-form-authorization", () => {
     expect(result.authorized).toBe(false);
   });
 
-  it("after rule deleted (empty rules), mapping alone is orphan", () => {
+  it("after rule deleted (empty rules), form is not authorized for agent", () => {
     const result = evaluateMetaFormAuthorizationFromSnapshot({
       pageId: PAGE,
       formId: FORM_AUTHORIZED,
       rules: [],
-      mappingAgentId: AGENT,
     });
     expect(result.authorized).toBe(false);
-    expect(result.reason).toBe("orphan_mapping_without_active_rule");
+    expect(result.reason).toBe("no_active_rule_for_form");
   });
 });

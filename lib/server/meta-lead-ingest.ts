@@ -7,6 +7,8 @@ import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
 import { MetaLeadEventRecorder } from "@/lib/server/meta-lead-events-db";
 import {
+  crmBlockedUserMessage,
+  isMetaFormAllowedForCrm,
   resolveAuthorizedMetaLeadAgent,
   unauthorizedUserMessage,
 } from "@/lib/server/meta-form-authorization";
@@ -165,48 +167,37 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     return;
   }
 
-  const resolvedFormId = (form_id ?? "").trim();
-  const agentResolution = await resolveAuthorizedMetaLeadAgent({
+  const resolvedFormId = (form_id ?? lead.form_id ?? "").trim();
+  const crmAllowance = await isMetaFormAllowedForCrm({
     sb,
     tenantId: tenant_id,
     pageId: page_id,
     formId: resolvedFormId,
   });
-  const agentId = agentResolution.authorized ? agentResolution.agentId : null;
-  const ruleId = agentResolution.ruleId;
 
-  await eventRecorder.step("agent_resolved", {
-    agent_id: agentId,
-    source: agentResolution.source,
-    rule_id: ruleId,
-    authorized: agentResolution.authorized,
-    reason: agentResolution.reason,
-  });
-  await eventRecorder.patch({
-    agent_id: agentId,
-    agent_resolution_source: agentResolution.source,
-  });
-
-  if (!agentResolution.authorized) {
-    const userMessage = unauthorizedUserMessage(agentResolution.reason, agentResolution.source);
-    await eventRecorder.step("blocked_unauthorized_form", {
-      reason: agentResolution.reason,
-      source: agentResolution.source,
+  if (!crmAllowance.allowed) {
+    const userMessage = crmBlockedUserMessage(crmAllowance.reason);
+    await eventRecorder.step("blocked_form_not_in_rules", {
+      reason: crmAllowance.reason,
     });
     await eventRecorder.patch({
+      crm_sync_status: "blocked",
       whatsapp_status: "blocked",
-      error_message: agentResolution.reason,
-      current_step: "blocked_unauthorized_form",
+      error_message: crmAllowance.reason,
+      current_step: "blocked_form_not_in_rules",
     });
-    console.warn("[meta-webhook] Meta form not authorized — outreach blocked", {
+    console.warn("[meta-webhook] Meta form blocked before CRM — not in lead rules", {
       tenant_id,
       page_id,
       form_id: resolvedFormId || null,
-      source: agentResolution.source,
-      reason: agentResolution.reason,
+      leadgen_id,
+      reason: crmAllowance.reason,
       user_message: userMessage,
     });
+    return;
   }
+
+  const ruleId = crmAllowance.ruleId;
 
   const leadCreatedAtMs = timestampMsFromSeconds(value.created_time);
   const activationStartedAtMs = await loadRuleActivationStartedAtMs({
@@ -214,17 +205,18 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     tenantId: tenant_id,
     ruleId,
   });
-  if (agentResolution.authorized && (!leadCreatedAtMs || !activationStartedAtMs || leadCreatedAtMs < activationStartedAtMs)) {
+  if (!leadCreatedAtMs || !activationStartedAtMs || leadCreatedAtMs < activationStartedAtMs) {
     await eventRecorder.step("blocked_historical_lead", {
       rule_id: ruleId,
       lead_created_time: value.created_time ?? null,
     });
     await eventRecorder.patch({
+      crm_sync_status: "blocked",
       whatsapp_status: "blocked",
       error_message: "historical_meta_lead_before_rule_activation",
       current_step: "blocked_historical_lead",
     });
-    console.warn("[meta-webhook] Historical Meta lead blocked before CRM import/outreach", {
+    console.warn("[meta-webhook] Historical Meta lead blocked before CRM import", {
       tenant_id,
       page_id,
       form_id: resolvedFormId || null,
@@ -235,6 +227,26 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     });
     return;
   }
+
+  const agentResolution = await resolveAuthorizedMetaLeadAgent({
+    sb,
+    tenantId: tenant_id,
+    pageId: page_id,
+    formId: resolvedFormId,
+  });
+  const agentId = agentResolution.authorized ? agentResolution.agentId : null;
+
+  await eventRecorder.step("agent_resolved", {
+    agent_id: agentId,
+    source: agentResolution.source,
+    rule_id: agentResolution.ruleId ?? ruleId,
+    authorized: agentResolution.authorized,
+    reason: agentResolution.reason,
+  });
+  await eventRecorder.patch({
+    agent_id: agentId,
+    agent_resolution_source: agentResolution.source,
+  });
 
   const attribution = await resolveMetaLeadAdAttribution({
     pageAccessToken: page_access_token,

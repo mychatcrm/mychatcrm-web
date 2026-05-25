@@ -18,6 +18,12 @@ export type MetaFormAuthorizationResult = {
   reason: string;
 };
 
+export type MetaFormCrmAllowanceResult = {
+  allowed: boolean;
+  ruleId: string | null;
+  reason: string;
+};
+
 export type MetaFormAuthRule = {
   id: string;
   page_id: string | null;
@@ -61,20 +67,6 @@ export function metaRuleExplicitlyAuthorizesAgent(params: {
   );
 }
 
-function isMappingBackedByActiveRule(
-  rules: MetaFormAuthRule[],
-  formId: string,
-  pageId: string,
-  agentId: string,
-): boolean {
-  return rules.some(
-    (rule) =>
-      ruleMatchesExplicitForm(rule, formId, pageId) &&
-      stringArray(rule.agent_ids).includes(agentId) &&
-      AUTOMATION_DISTRIBUTION_TYPES.has(rule.distribution_type),
-  );
-}
-
 function pickAgentFromRule(
   rule: MetaFormAuthRule,
   preferredAgentId?: string | null,
@@ -88,6 +80,56 @@ function pickAgentFromRule(
 }
 
 /**
+ * CRM gate: formulário precisa estar em regra meta_form ativa com included_form_ids explícito.
+ * Não usa mapeamento, use_all_forms, default_agent_id nem fallbacks de tenant.
+ */
+export function evaluateMetaFormAllowedForCrmFromSnapshot(params: {
+  pageId: string;
+  formId: string;
+  rules: MetaFormAuthRule[];
+}): MetaFormCrmAllowanceResult {
+  const formId = params.formId.trim();
+  const pageId = params.pageId.trim();
+
+  if (!formId) {
+    return { allowed: false, ruleId: null, reason: "missing_form_id" };
+  }
+
+  const sortedRules = [...params.rules].sort(
+    (a, b) => (a.order_index ?? 999) - (b.order_index ?? 999),
+  );
+
+  for (const rule of sortedRules) {
+    if (!ruleMatchesExplicitForm(rule, formId, pageId)) continue;
+    return {
+      allowed: true,
+      ruleId: rule.id,
+      reason: "active_rule_explicit_form",
+    };
+  }
+
+  return {
+    allowed: false,
+    ruleId: null,
+    reason: "form_not_registered_in_lead_rules",
+  };
+}
+
+export async function isMetaFormAllowedForCrm(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  pageId: string;
+  formId: string;
+}): Promise<MetaFormCrmAllowanceResult> {
+  const rules = await loadActiveMetaFormRules(params.sb, params.tenantId);
+  return evaluateMetaFormAllowedForCrmFromSnapshot({
+    pageId: params.pageId,
+    formId: params.formId,
+    rules,
+  });
+}
+
+/**
  * Pure evaluation for tests and ingest — no DB fallbacks.
  */
 export function evaluateMetaFormAuthorizationFromSnapshot(params: {
@@ -95,7 +137,6 @@ export function evaluateMetaFormAuthorizationFromSnapshot(params: {
   formId: string;
   agentId?: string | null;
   rules: MetaFormAuthRule[];
-  mappingAgentId?: string | null;
 }): MetaFormAuthorizationResult {
   const formId = params.formId.trim();
   const pageId = params.pageId.trim();
@@ -138,35 +179,6 @@ export function evaluateMetaFormAuthorizationFromSnapshot(params: {
         reason: "active_rule_explicit_form",
       };
     }
-  }
-
-  const mappingAgentId = params.mappingAgentId?.trim() || null;
-  if (mappingAgentId) {
-    if (preferredAgentId && mappingAgentId !== preferredAgentId) {
-      return {
-        authorized: false,
-        agentId: null,
-        ruleId: null,
-        source: "unauthorized_form",
-        reason: "mapping_points_to_other_agent",
-      };
-    }
-    if (isMappingBackedByActiveRule(sortedRules, formId, pageId, mappingAgentId)) {
-      return {
-        authorized: true,
-        agentId: mappingAgentId,
-        ruleId: null,
-        source: "mapping_current",
-        reason: "mapping_synced_with_active_rule",
-      };
-    }
-    return {
-      authorized: false,
-      agentId: null,
-      ruleId: null,
-      source: "unauthorized_form",
-      reason: "orphan_mapping_without_active_rule",
-    };
   }
 
   if (preferredAgentId) {
@@ -278,23 +290,11 @@ export async function resolveMetaFormAuthorization(params: {
     }
   }
 
-  let mappingAgentId: string | null = null;
-  if (formId) {
-    const { data: mapping } = await params.sb
-      .from("meta_form_agent_mapping")
-      .select("agent_id")
-      .eq("tenant_id", params.tenantId)
-      .eq("form_id", formId)
-      .maybeSingle();
-    mappingAgentId = typeof mapping?.agent_id === "string" ? mapping.agent_id : null;
-  }
-
   return evaluateMetaFormAuthorizationFromSnapshot({
     pageId,
     formId,
     agentId: params.agentId,
     rules,
-    mappingAgentId,
   });
 }
 
@@ -364,8 +364,18 @@ export async function isAgentExplicitlyAuthorizedForMetaForm(params: {
   };
 }
 
+export function crmBlockedUserMessage(reason: string): string {
+  if (reason === "form_not_registered_in_lead_rules") {
+    return "Formulário não cadastrado nas regras de integração";
+  }
+  if (reason === "missing_form_id") {
+    return "Lead sem form_id — não entra no CRM";
+  }
+  return "Formulário não permitido no CRM";
+}
+
 export function unauthorizedUserMessage(reason: string, source: MetaFormAuthorizationSource): string {
-  if (reason === "form_not_authorized_for_agent" || reason === "mapping_points_to_other_agent") {
+  if (reason === "form_not_authorized_for_agent") {
     return "Formulário não autorizado para este agente";
   }
   if (source === "unauthorized_form" && reason === "orphan_mapping_without_active_rule") {

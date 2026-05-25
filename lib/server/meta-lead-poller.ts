@@ -1,6 +1,6 @@
 import { createHmac } from "crypto";
 import type { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { resolveMetaFormAuthorization } from "@/lib/server/meta-form-authorization";
+import { isMetaFormAllowedForCrm } from "@/lib/server/meta-form-authorization";
 import { processMetaLeadgenEvent } from "@/lib/server/meta-lead-ingest";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
@@ -182,18 +182,18 @@ async function processConnection(params: {
   for (const form of forms) {
     const formId = form.id?.trim();
     if (!formId) continue;
-    const authorization = await resolveMetaFormAuthorization({
+    const crmAllowance = await isMetaFormAllowedForCrm({
       sb: params.sb,
       tenantId: params.connection.tenant_id,
       pageId: params.connection.page_id,
       formId,
     });
-    if (!authorization.authorized) continue;
+    if (!crmAllowance.allowed) continue;
 
     const activationStartedAtMs = await loadRuleActivationStartedAtMs({
       sb: params.sb,
       tenantId: params.connection.tenant_id,
-      ruleId: authorization.ruleId,
+      ruleId: crmAllowance.ruleId,
     });
 
     for (const lead of form.leads?.data ?? []) {
@@ -209,7 +209,7 @@ async function processConnection(params: {
           page_id: params.connection.page_id,
           form_id: formId,
           leadgen_id: lead.id,
-          rule_id: authorization.ruleId,
+          rule_id: crmAllowance.ruleId,
         });
         continue;
       }
