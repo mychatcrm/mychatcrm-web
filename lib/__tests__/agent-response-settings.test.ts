@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeAgentResponseMode,
   normalizeAgentVoiceId,
+  resolveAgentResponseSettingsFromStorage,
   sanitizeAgentResponseSettings,
   validateAgentResponseSettings,
 } from "@/lib/agents";
@@ -48,5 +49,13 @@ describe("agent response settings", () => {
         voiceId: "",
       }),
     ).toBe("Selecione uma voz do ElevenLabs para ativar respostas em áudio.");
+  });
+
+  it("reads modo_resposta from metadata when DB column is unset", () => {
+    expect(
+      resolveAgentResponseSettingsFromStorage({
+        metadata: { modo_resposta: "audio", voiceId: "v1" },
+      }),
+    ).toEqual({ responseMode: "audio", voiceId: "v1" });
   });
 });

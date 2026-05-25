@@ -34,6 +34,10 @@ export {
   normalizeAgentVoiceId,
   sanitizeAgentResponseSettings,
   validateAgentResponseSettings,
+  isInboundAudioKind,
+  resolveLastInboundKind,
+  shouldReplyWithAudio,
+  resolveAgentResponseSettingsFromStorage,
   type AgentResponseMode,
 } from "./response-settings";
 export {

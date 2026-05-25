@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
 import { detectSupportedLanguageCode, type SupportedLanguageCode } from "@/lib/ai/language-detect";
-import { sanitizeAgentResponseSettings } from "@/lib/agents";
+import { resolveAgentResponseSettingsFromStorage, shouldReplyWithAudio } from "@/lib/agents";
 import {
   extractConnectionState,
   extractInboundMessagesFromEvolutionPayload,
@@ -601,7 +601,7 @@ export async function POST(request: Request) {
 
           const agentConfig = await sbState
             .from("tenant_agents")
-            .select("metadata")
+            .select("metadata, voice_id, response_mode")
             .eq("tenant_id", row.tenant_id)
             .eq("agent_id", agentId)
             .maybeSingle();
@@ -803,21 +803,29 @@ export async function POST(request: Request) {
             }
           };
 
-          // ── Verifica se o agente tem resposta em áudio (ElevenLabs TTS) ──────
-          const sb2 = createSupabaseServiceClient();
-          const { data: agentRow } = await sb2
-            .from("tenant_agents")
-            .select("voice_id, response_mode")
-            .eq("tenant_id", row.tenant_id)
-            .eq("agent_id", agentId)
-            .maybeSingle();
-
-          const { responseMode, voiceId } = sanitizeAgentResponseSettings({
-            responseMode: agentRow?.response_mode,
-            voiceId: agentRow?.voice_id,
+          // ── Modo de resposta: áudio só se inbound for áudio e agente em modo áudio ──
+          const { responseMode, voiceId } = resolveAgentResponseSettingsFromStorage({
+            response_mode: agentConfig.data?.response_mode,
+            voice_id: agentConfig.data?.voice_id,
+            metadata,
           });
-          const useAudio =
-            !finalHandoffCheck && msg.type === "audio" && responseMode === "audio" && Boolean(voiceId);
+          const lastInboundKind = msg.type === "audio" ? "audio" : ("text" as const);
+          const useAudio = shouldReplyWithAudio({
+            responseMode,
+            voiceId,
+            lastInboundKind,
+            handoffTriggered: finalHandoffCheck,
+          });
+
+          console.info("[webhooks/evolution]", {
+            event: "response_mode_decision",
+            tenant_id: row.tenant_id,
+            agent_id: agentId,
+            response_mode: responseMode,
+            inbound_type: msg.type,
+            last_inbound_kind: lastInboundKind,
+            use_audio: useAudio,
+          });
 
           if (useAudio) {
             // ── TTS via ElevenLabs → R2 → Evolution WhatsApp Audio ──────────

@@ -1,6 +1,10 @@
 import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
 import { detectSupportedLanguageCode, type SupportedLanguageCode } from "@/lib/ai/language-detect";
-import { sanitizeAgentResponseSettings } from "@/lib/agents";
+import {
+  resolveAgentResponseSettingsFromStorage,
+  resolveLastInboundKind,
+  shouldReplyWithAudio,
+} from "@/lib/agents";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { buildTextualReplyFallbackTopics } from "@/lib/conversas/inbound-message-dedupe";
 import { buildReplyUnitPrompt, normalizeConversationBurst } from "@/lib/conversas/normalize-conversation-burst";
@@ -419,16 +423,12 @@ export async function processAgentResponseJob(
     }
   }
 
-  const { responseMode, voiceId } = sanitizeAgentResponseSettings({
-    responseMode: agentRow?.response_mode,
-    voiceId: agentRow?.voice_id,
+  const { responseMode, voiceId } = resolveAgentResponseSettingsFromStorage({
+    response_mode: agentRow?.response_mode,
+    voice_id: agentRow?.voice_id,
+    metadata: agentRow?.metadata,
   });
-  const lastKind = inboundRows[inboundRows.length - 1]?.kind;
-  const useAudio =
-    burst.replyUnits.length === 1 &&
-    lastKind === "audio" &&
-    responseMode === "audio" &&
-    Boolean(voiceId);
+  const burstLastInboundKind = resolveLastInboundKind(inboundRows);
 
   let handoffTriggered = false;
   let handoffReason: string | undefined;
@@ -541,8 +541,25 @@ export async function processAgentResponseJob(
       : null;
 
     const languageCode = detectSupportedLanguageCode(unitPrompt);
+    const unitLastInboundKind = resolveLastInboundKind(unit);
+    const useAudioForUnit = shouldReplyWithAudio({
+      responseMode,
+      voiceId,
+      lastInboundKind: unitLastInboundKind,
+      handoffTriggered,
+    });
 
-    if (useAudio && !handoffTriggered && unitIndex === 0) {
+    console.info("[agent-response-jobs]", {
+      event: "response_mode_decision",
+      job_id: job.id,
+      unit_index: unitIndex + 1,
+      response_mode: responseMode,
+      burst_last_inbound_kind: burstLastInboundKind,
+      unit_last_inbound_kind: unitLastInboundKind,
+      use_audio: useAudioForUnit,
+    });
+
+    if (useAudioForUnit) {
       try {
         const audioBuffer = await textToSpeechElevenLabs(textToSend.slice(0, 5000), voiceId!, {
           languageCode,
