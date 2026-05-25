@@ -41,6 +41,12 @@ describe("CRM lead deletion helpers", () => {
       mediaDeleted: 2,
       mediaFailed: [],
       relatedRecordsDeleted: 0,
+      metaEventsDeleted: 0,
+      followUpJobsDeleted: 0,
+      followUpEventsDeleted: 0,
+      agentJobsDeleted: 0,
+      conversationEventsDeleted: 0,
+      timelineDeleted: 0,
     });
 
     const result = await deleteCrmLeadsForTenant({
@@ -69,6 +75,12 @@ describe("CRM lead deletion helpers", () => {
       mediaDeleted: 0,
       mediaFailed: [],
       relatedRecordsDeleted: 0,
+      metaEventsDeleted: 0,
+      followUpJobsDeleted: 0,
+      followUpEventsDeleted: 0,
+      agentJobsDeleted: 0,
+      conversationEventsDeleted: 0,
+      timelineDeleted: 0,
     });
 
     const result = await deleteCrmLeadsForTenant({

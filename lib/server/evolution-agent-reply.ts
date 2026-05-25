@@ -13,6 +13,7 @@ import {
 import { textToSpeechElevenLabs } from "@/lib/integrations/elevenlabs";
 import { uploadMediaToR2 } from "@/lib/integrations/r2-storage";
 import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
+import { promoteLeadToContatoOnAgentEngagement } from "@/lib/server/crm-lead-lifecycle";
 import { resolveOutboundMediaForAgentResponse } from "@/lib/server/agent-media-files";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import type { AgentResponseJobRow } from "@/lib/server/agent-response-jobs";
@@ -662,13 +663,18 @@ export async function processAgentResponseJob(
     });
   }
 
-  await upsertLeadFromWhatsAppContact({
+  const leadUpsert = await upsertLeadFromWhatsAppContact({
     tenantId: job.tenant_id,
     remoteJid: job.remote_jid,
     recipientJid: job.remote_jid,
     direction: "outbound",
     agentId: job.agent_id,
     conversationId: job.remote_jid,
+  });
+  await promoteLeadToContatoOnAgentEngagement({
+    sb,
+    tenantId: job.tenant_id,
+    leadId: job.lead_id ?? leadUpsert.lead?.id ?? null,
   });
 
   console.info("[agent-response-jobs]", {

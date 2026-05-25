@@ -11,13 +11,22 @@ import { deriveConversationMode } from "@/lib/server/conversation-operation";
 
 export const dynamic = "force-dynamic";
 
+function digitsOnly(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+function phoneFromRemoteJid(remoteJid: string): string | null {
+  const digits = digitsOnly(remoteJid.split("@")[0] ?? remoteJid);
+  return digits.length >= 10 ? digits : null;
+}
+
 export async function GET() {
   const session = await getClientSessionFromCookies();
   if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
   const sb = createSupabaseServiceClient();
 
-  const [{ data, error }, { data: states }] = await Promise.all([
+  const [{ data, error }, { data: states }, { data: leads }] = await Promise.all([
     sb
       .from("whatsapp_messages")
       .select("remote_jid, content, kind, direction, created_at")
@@ -26,10 +35,11 @@ export async function GET() {
     sb
       .from("conversation_states")
       .select(
-        "remote_jid, is_hidden, archived_at, conversation_mode, human_paused, handoff_suggested, paused_reason, assigned_human_name, agent_id",
+        "remote_jid, lead_id, is_hidden, archived_at, conversation_mode, human_paused, handoff_suggested, paused_reason, assigned_human_name, agent_id",
       )
       .eq("tenant_id", session.tenantId)
       .eq("channel", "whatsapp"),
+    sb.from("leads").select("id, phone, name").eq("tenant_id", session.tenantId),
   ]);
 
   if (error) {
@@ -37,7 +47,16 @@ export async function GET() {
     return NextResponse.json({ error: "Erro ao carregar conversas." }, { status: 503 });
   }
 
-  // Agrupa por remote_jid — mantém só a mais recente por conversa
+  const phoneToLead = new Map<string, { id: string; name: string | null }>();
+  const leadById = new Map<string, { id: string; name: string | null }>();
+  for (const row of leads ?? []) {
+    const id = String(row.id ?? "");
+    const name = typeof row.name === "string" ? row.name.trim() || null : null;
+    leadById.set(id, { id, name });
+    const phone = digitsOnly(String(row.phone ?? ""));
+    if (phone) phoneToLead.set(phone, { id, name });
+  }
+
   const hiddenJids = new Set(
     (states ?? [])
       .filter((row) => !isConversationVisibleInInbox({
@@ -64,8 +83,11 @@ export async function GET() {
       assigned_human_name: string | null;
       agent_id: string | null;
       handoff_suggested: boolean;
+      lead_id: string | null;
+      lead_name: string | null;
     }
   >();
+
   for (const row of data ?? []) {
     if (hiddenJids.has(row.remote_jid)) continue;
     const stateRow = stateByJid.get(row.remote_jid);
@@ -75,6 +97,15 @@ export async function GET() {
       handoffSuggested: stateRow?.handoff_suggested === true,
       pausedReason: typeof stateRow?.paused_reason === "string" ? stateRow.paused_reason : null,
     });
+
+    let leadId = typeof stateRow?.lead_id === "string" ? stateRow.lead_id : null;
+    if (!leadId) {
+      const phone = phoneFromRemoteJid(row.remote_jid);
+      if (phone) leadId = phoneToLead.get(phone)?.id ?? null;
+    }
+    const leadRecord = leadId ? leadById.get(leadId) ?? phoneToLead.get(phoneFromRemoteJid(row.remote_jid) ?? "") : null;
+    const leadName = leadRecord?.name ?? null;
+
     if (!seen.has(row.remote_jid)) {
       seen.set(row.remote_jid, {
         remoteJid: row.remote_jid,
@@ -88,6 +119,8 @@ export async function GET() {
           typeof stateRow?.assigned_human_name === "string" ? stateRow.assigned_human_name : null,
         agent_id: typeof stateRow?.agent_id === "string" ? stateRow.agent_id : null,
         handoff_suggested: stateRow?.handoff_suggested === true,
+        lead_id: leadId,
+        lead_name: leadName,
       });
     } else if (row.direction === "inbound") {
       const existing = seen.get(row.remote_jid)!;

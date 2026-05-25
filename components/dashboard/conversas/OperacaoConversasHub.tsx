@@ -22,6 +22,10 @@ import {
 } from "@/lib/conversas/inbox-filters";
 import type { ConversationMode } from "@/lib/server/conversation-operation";
 import {
+  resolveConversationDisplayName,
+  shouldFetchEvolutionContactName,
+} from "@/lib/conversas/display-name";
+import {
   appendMessageDeduped,
   createClientTempId,
   createOptimisticOutboundMessage,
@@ -122,9 +126,19 @@ type WaConversation = {
   assigned_human_name?: string | null;
   agent_id?: string | null;
   handoff_suggested?: boolean;
+  lead_id?: string | null;
+  lead_name?: string | null;
   messages: WaMessage[];
   messagesLoaded: boolean;
 };
+
+function convDisplayName(conv: WaConversation, pushName?: string | null): string {
+  return resolveConversationDisplayName({
+    leadName: conv.lead_name,
+    pushName,
+    phoneLabel: jidToPhone(conv.remoteJid),
+  });
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Supabase browser singleton
@@ -924,7 +938,8 @@ function ConversationItem({
   const initials = jidToInitials(conv.remoteJid);
   const bg = avatarColor(conv.remoteJid);
   const showPhoto = photoUrl && !imgError;
-  const displayName = name ?? phone;
+  const displayName = name?.trim() ? name : phone;
+  const showPhoneSubtitle = Boolean(name?.trim()) && name !== phone;
 
   return (
     <button
@@ -1012,7 +1027,7 @@ function ConversationItem({
         </div>
 
         {/* Row 1.5: número abaixo do nome (só quando há nome) */}
-        {name && (
+        {showPhoneSubtitle && (
           <span style={{
             color: "#8696a0", fontSize: 12,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
@@ -1465,7 +1480,8 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   }, []);
 
   // ── Fetch contact name (cached) ───────────────────────────────────────────
-  const fetchName = useCallback(async (jid: string) => {
+  const fetchName = useCallback(async (jid: string, leadName?: string | null) => {
+    if (!shouldFetchEvolutionContactName({ leadName })) return;
     if (nameCacheRef.current.has(jid)) return;
     nameCacheRef.current.add(jid);
     try {
@@ -1531,10 +1547,9 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
       setConversations((prev) => prev.map((c) => (c.remoteJid === jid ? { ...c, unreadCount: 0 } : c)));
 
       // Busca foto e nome do contato (não bloqueia a abertura da conversa)
-      void fetchPhoto(jid);
-      void fetchName(jid);
-
       const conv = conversations.find((c) => c.remoteJid === jid);
+      void fetchPhoto(jid);
+      void fetchName(jid, conv?.lead_name);
       try {
         const { messages, automation } = await apiLoadMessages(jid);
         setAutomationByJid((prev) => ({ ...prev, [jid]: automation }));
@@ -2053,8 +2068,9 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
       const digits = (c.remoteJid.split("@")[0] ?? "").replace(/\D/g, "");
       if (digits.includes(q.replace(/\D/g, ""))) return true;
       // Nome cacheado (pushName/name)
-      const name = contactNames[c.remoteJid];
-      if (name && name.toLowerCase().includes(q)) return true;
+      const label = convDisplayName(c, contactNames[c.remoteJid]);
+      if (label.toLowerCase().includes(q)) return true;
+      if (c.lead_name && c.lead_name.toLowerCase().includes(q)) return true;
       // Conteúdo da última mensagem
       if (c.lastContent.toLowerCase().includes(q)) return true;
       return false;
@@ -2491,7 +2507,8 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
             filtered.map((c) => {
               // Pré-carrega foto e nome dos itens visíveis na sidebar
               fetchPhoto(c.remoteJid);
-              void fetchName(c.remoteJid);
+              void fetchName(c.remoteJid, c.lead_name);
+              const listLabel = convDisplayName(c, contactNames[c.remoteJid]);
               return (
                 <ConversationItem
                   key={c.remoteJid}
@@ -2499,7 +2516,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                   selected={c.remoteJid === selectedJid}
                   onSelect={() => void handleSelect(c.remoteJid)}
                   photoUrl={contactPhotos[c.remoteJid]}
-                  name={contactNames[c.remoteJid]}
+                  name={listLabel}
                   onPhotoClick={contactPhotos[c.remoteJid]
                     ? () => setPhotoOverlay(contactPhotos[c.remoteJid]!)
                     : undefined}
@@ -2616,7 +2633,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
               {/* Contact info */}
               {(() => {
                 const phone = jidToPhone(active.remoteJid);
-                const name = contactNames[active.remoteJid];
+                const headerLabel = convDisplayName(active, contactNames[active.remoteJid]);
                 const waNumber = (active.remoteJid.split("@")[0] ?? "").replace(/\D/g, "");
                 const waUrl = `https://wa.me/${waNumber}`;
                 return (
@@ -2634,14 +2651,14 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                       }}
                     >
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {name ?? phone}
+                        {headerLabel}
                       </span>
                       <svg viewBox="0 0 24 24" width="13" height="13" fill="#25D366" style={{ flexShrink: 0, opacity: 0.85 }}>
                         <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
                         <path d="M12 0C5.373 0 0 5.373 0 12c0 2.122.558 4.116 1.535 5.845L.057 23.57a.75.75 0 0 0 .92.92l5.725-1.478A11.955 11.955 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-1.93 0-3.732-.51-5.29-1.4l-.38-.22-3.945 1.018 1.018-3.946-.22-.38A9.956 9.956 0 0 1 2 12C2 6.477 6.477 2 12 2s10 4.477 10 10-4.477 10-10 10z"/>
                       </svg>
                     </a>
-                    {name && (
+                    {headerLabel !== phone && (
                       <p style={{ margin: 0, fontSize: 12, color: "#8696a0" }}>{phone}</p>
                     )}
                   </div>

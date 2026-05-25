@@ -416,7 +416,7 @@ describe("phoneFromRemoteJid", () => {
       payload: expect.objectContaining({
         tenant_id: "tenant-a",
         phone: "5511999990000",
-        status: "qualificado",
+        status: "novo",
         crm_funnel_id: "funil-vendas",
         agent_id: "ag-vendas",
       }),

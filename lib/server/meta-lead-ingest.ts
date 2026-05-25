@@ -2,6 +2,7 @@ import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
 import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import { upsertConversationState } from "@/lib/server/conversation-memory";
 import { resolveAgentCrmFieldsForLeadInsert } from "@/lib/server/auto-lead-upsert";
+import { buildNewLeadCrmFields, promoteLeadToContatoOnAgentEngagement } from "@/lib/server/crm-lead-lifecycle";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
 import { MetaLeadEventRecorder } from "@/lib/server/meta-lead-events-db";
@@ -191,12 +192,11 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     ad_name: adContext?.adName ?? null,
   });
 
-  const crmExtras = await resolveAgentCrmFieldsForLeadInsert(sb, {
+  const crmFunnel = await resolveAgentCrmFieldsForLeadInsert(sb, {
     tenantId: tenant_id,
     agentId,
   });
-  // Para leads existentes, não sobrescrever o status atual — apenas crm_funnel_id pode ser herdado.
-  const { status: _crmStatus, ...crmExtrasWithoutStatus } = crmExtras;
+  const newLeadCrm = buildNewLeadCrmFields(crmFunnel.crm_funnel_id);
 
   const { data: existingLead } = await sb
     .from("leads")
@@ -223,7 +223,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         profile_metadata: leadMetadata,
         last_seen: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-        ...crmExtras,            // novo lead: aplica status + crm_funnel_id do agente
+        ...newLeadCrm,
       }
     : {
         tenant_id,
@@ -240,7 +240,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         profile_metadata: mergeLeadProfileMetadata(existingLead?.profile_metadata, leadMetadata),
         last_seen: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-        ...crmExtrasWithoutStatus, // lead existente: preserva status atual, só herda crm_funnel_id
+        ...crmFunnel,
       };
 
   const { data: upsertedLead, error: upsertErr } = await sb
@@ -550,6 +550,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         channel: "whatsapp",
         lastMessageAt: sentAt,
       }),
+      promoteLeadToContatoOnAgentEngagement({ sb, tenantId: tenant_id, leadId }),
     ]);
 
     await eventRecorder.step("whatsapp_sent", { message_id: savedMessage.id });

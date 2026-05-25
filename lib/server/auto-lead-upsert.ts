@@ -283,7 +283,7 @@ async function resolveSelfInstancePhones(
   return phones;
 }
 
-async function resolveAgentCrmMoveTarget(
+export async function resolveAgentCrmMoveTarget(
   sb: SupabaseServiceClient,
   params: { tenantId: string; agentId?: string | null },
 ): Promise<AgentCrmMoveTarget> {
@@ -337,14 +337,14 @@ async function resolveAgentCrmMoveTarget(
   return { enabled: true, funnelId, columnId };
 }
 
-/** CRM funnel/status for new leads (e.g. Meta Lead Ads) when agent has auto-move enabled. */
+/** Funil CRM do agente (status inicial é sempre "novo" — ver crm-lead-lifecycle). */
 export async function resolveAgentCrmFieldsForLeadInsert(
   sb: SupabaseServiceClient,
   params: { tenantId: string; agentId: string | null },
-): Promise<{ crm_funnel_id?: string; status?: string }> {
+): Promise<{ crm_funnel_id?: string }> {
   const target = await resolveAgentCrmMoveTarget(sb, params);
-  if (!target.enabled || !target.funnelId || !target.columnId) return {};
-  return { crm_funnel_id: target.funnelId, status: target.columnId };
+  if (!target.enabled || !target.funnelId) return {};
+  return { crm_funnel_id: target.funnelId };
 }
 
 function isUsefulExistingName(row: LeadRow, phone: string): boolean {
@@ -618,8 +618,7 @@ export async function upsertLeadFromWhatsAppContact(params: {
     return leadResult(updated ? "updated" : "skipped", existing, phone, updated ? crmMoveTarget.reason : (crmMoveTarget.reason ?? "no_update_fields"));
   }
 
-  const fallbackStatus = await resolveFirstKanbanStatus(sb, params.tenantId);
-  const status = crmMoveTarget.enabled ? crmMoveTarget.columnId! : fallbackStatus;
+  const status = "novo";
   const payload = buildWhatsAppLeadInsertPayload({
     tenantId: params.tenantId,
     phone,

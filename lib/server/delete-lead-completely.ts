@@ -13,7 +13,16 @@ export type DeleteLeadCompletelyReport = {
   mediaDeleted: number;
   mediaFailed: string[];
   relatedRecordsDeleted: number;
+  metaEventsDeleted: number;
+  followUpJobsDeleted: number;
+  followUpEventsDeleted: number;
+  agentJobsDeleted: number;
+  conversationEventsDeleted: number;
+  timelineDeleted: number;
 };
+
+/** Alias público — CRM é fonte de verdade; exclusão em cascata total. */
+export const deleteLeadCascade = deleteLeadCompletely;
 
 function normalizePhone(value: unknown): string {
   return typeof value === "string" ? value.replace(/\D/g, "") : "";
@@ -21,6 +30,38 @@ function normalizePhone(value: unknown): string {
 
 function isTenantMediaKey(tenantId: string, key: string): boolean {
   return key.startsWith(`whatsapp/${tenantId}/`);
+}
+
+async function deleteByLeadOrJids(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  table: string;
+  leadIds: string[];
+  jidList: string[];
+  jidColumn?: string;
+}): Promise<number> {
+  let total = 0;
+  const jidColumn = params.jidColumn ?? "remote_jid";
+
+  if (params.leadIds.length) {
+    const { count } = await params.sb
+      .from(params.table)
+      .delete({ count: "exact" })
+      .eq("tenant_id", params.tenantId)
+      .in("lead_id", params.leadIds);
+    total += count ?? 0;
+  }
+
+  if (params.jidList.length) {
+    const { count } = await params.sb
+      .from(params.table)
+      .delete({ count: "exact" })
+      .eq("tenant_id", params.tenantId)
+      .in(jidColumn, params.jidList);
+    total += count ?? 0;
+  }
+
+  return total;
 }
 
 export async function deleteLeadCompletely(params: {
@@ -33,9 +74,14 @@ export async function deleteLeadCompletely(params: {
   const validationError = validateCrmLeadIds(leadIds);
   if (validationError) throw new Error(validationError);
 
+  console.info("[delete-lead-cascade] start", {
+    tenant_id: params.tenantId,
+    lead_ids: leadIds,
+  });
+
   const { data: leads, error: leadsError } = await sb
     .from("leads")
-    .select("id, phone")
+    .select("id, phone, name")
     .eq("tenant_id", params.tenantId)
     .in("id", leadIds);
 
@@ -51,6 +97,12 @@ export async function deleteLeadCompletely(params: {
       mediaDeleted: 0,
       mediaFailed: [],
       relatedRecordsDeleted: 0,
+      metaEventsDeleted: 0,
+      followUpJobsDeleted: 0,
+      followUpEventsDeleted: 0,
+      agentJobsDeleted: 0,
+      conversationEventsDeleted: 0,
+      timelineDeleted: 0,
     };
   }
 
@@ -122,28 +174,79 @@ export async function deleteLeadCompletely(params: {
     messagesDeleted = count ?? messageIds.length;
   }
 
-  const { count: summariesDeleted = 0 } = await sb
-    .from("conversation_summaries")
-    .delete({ count: "exact" })
-    .eq("tenant_id", params.tenantId)
-    .in("lead_id", resolvedIds);
-
-  let statesDeleted = 0;
-  const byLeadStates = await sb
-    .from("conversation_states")
-    .delete({ count: "exact" })
-    .eq("tenant_id", params.tenantId)
-    .in("lead_id", resolvedIds);
-  statesDeleted += byLeadStates.count ?? 0;
-
   const jidList = [...remoteJids];
-  if (jidList.length) {
-    const byJidStates = await sb
-      .from("conversation_states")
+
+  const summariesDeleted = await deleteByLeadOrJids({
+    sb,
+    tenantId: params.tenantId,
+    table: "conversation_summaries",
+    leadIds: resolvedIds,
+    jidList,
+  });
+
+  const statesDeleted = await deleteByLeadOrJids({
+    sb,
+    tenantId: params.tenantId,
+    table: "conversation_states",
+    leadIds: resolvedIds,
+    jidList,
+  });
+
+  const followUpJobsDeleted = await deleteByLeadOrJids({
+    sb,
+    tenantId: params.tenantId,
+    table: "follow_up_jobs",
+    leadIds: resolvedIds,
+    jidList,
+  });
+
+  const followUpEventsDeleted = await deleteByLeadOrJids({
+    sb,
+    tenantId: params.tenantId,
+    table: "agent_followup_events",
+    leadIds: resolvedIds,
+    jidList,
+  });
+
+  const agentJobsDeleted = await deleteByLeadOrJids({
+    sb,
+    tenantId: params.tenantId,
+    table: "agent_response_jobs",
+    leadIds: resolvedIds,
+    jidList,
+  });
+
+  const conversationEventsDeleted = await deleteByLeadOrJids({
+    sb,
+    tenantId: params.tenantId,
+    table: "conversation_events",
+    leadIds: resolvedIds,
+    jidList,
+  });
+
+  const timelineDeleted = await deleteByLeadOrJids({
+    sb,
+    tenantId: params.tenantId,
+    table: "crm_follow_up_timeline",
+    leadIds: resolvedIds,
+    jidList: [],
+  });
+
+  let metaEventsDeleted = 0;
+  const { count: metaByLead = 0 } = await sb
+    .from("meta_lead_events")
+    .delete({ count: "exact" })
+    .eq("tenant_id", params.tenantId)
+    .in("lead_id", resolvedIds);
+  metaEventsDeleted += metaByLead ?? 0;
+
+  for (const phone of phones) {
+    const { count } = await sb
+      .from("meta_lead_events")
       .delete({ count: "exact" })
       .eq("tenant_id", params.tenantId)
-      .in("remote_jid", jidList);
-    statesDeleted += byJidStates.count ?? 0;
+      .ilike("phone", `%${phone}%`);
+    metaEventsDeleted += count ?? 0;
   }
 
   const { count: offerLinksDeleted = 0 } = await sb
@@ -158,14 +261,38 @@ export async function deleteLeadCompletely(params: {
     .eq("tenant_id", params.tenantId)
     .in("id", resolvedIds);
 
+  const relatedRecordsDeleted =
+    (offerLinksDeleted ?? 0) +
+    metaEventsDeleted +
+    followUpJobsDeleted +
+    followUpEventsDeleted +
+    agentJobsDeleted +
+    conversationEventsDeleted +
+    timelineDeleted;
+
+  console.info("[delete-lead-cascade] done", {
+    tenant_id: params.tenantId,
+    lead_ids: resolvedIds,
+    lead_deleted: leadDeleted,
+    messages_deleted: messagesDeleted,
+    states_deleted: statesDeleted,
+    related_records_deleted: relatedRecordsDeleted,
+  });
+
   return {
     leadIds: resolvedIds,
     leadDeleted: leadDeleted ?? resolvedIds.length,
     messagesDeleted,
-    summariesDeleted: summariesDeleted ?? 0,
+    summariesDeleted,
     statesDeleted,
     mediaDeleted,
     mediaFailed,
-    relatedRecordsDeleted: offerLinksDeleted ?? 0,
+    relatedRecordsDeleted,
+    metaEventsDeleted,
+    followUpJobsDeleted,
+    followUpEventsDeleted,
+    agentJobsDeleted,
+    conversationEventsDeleted,
+    timelineDeleted,
   };
 }
