@@ -1,4 +1,9 @@
-import { normalizeColunaInicialForFunnel, type CrmFunnel } from "@/lib/crm-funnels";
+import {
+  migrateCrmFunnelsFromLocalStorage,
+  migrateCrmFunnelRow,
+  resolveLeadStatusForFunnelColumns,
+} from "@/lib/crm-funnel-migration";
+import type { CrmFunnel } from "@/lib/crm-funnels";
 import type { ClientLead } from "@/lib/dashboard-data";
 
 export type CrmVisibilityDiagnostics = {
@@ -21,18 +26,26 @@ export function preferredDefaultCrmFunnelId(funnels: readonly CrmFunnel[]): stri
   return funnels.find((f) => f.id === "funil-default")?.id ?? funnels[0]?.id ?? "";
 }
 
+function ensureSafeFunnels(funnels: readonly CrmFunnel[]): CrmFunnel[] {
+  return migrateCrmFunnelsFromLocalStorage([...funnels]).funnels;
+}
+
 export function normalizeLeadsForVisibleCrmFunnel(
   leads: ClientLead[],
   funnels: readonly CrmFunnel[],
 ): ClientLead[] {
-  const fallbackFunnel = funnels.find((f) => f.id === "funil-default") ?? funnels[0];
+  const safeFunnels = ensureSafeFunnels(funnels);
+  const fallbackFunnel =
+    safeFunnels.find((f) => f.id === "funil-default") ?? safeFunnels[0];
   if (!fallbackFunnel) return leads.map((lead) => ({ ...lead }));
 
   return leads.map((lead) => {
-    const funnel = funnels.find((f) => f.id === lead.funilId) ?? fallbackFunnel;
-    const status = normalizeColunaInicialForFunnel(lead.status, funnel);
-    if (lead.funilId === funnel.id && lead.status === status) return { ...lead };
-    return { ...lead, funilId: funnel.id, status };
+    const funnel =
+      safeFunnels.find((f) => f.id === lead.funilId) ?? fallbackFunnel;
+    const normalizedFunnel = migrateCrmFunnelRow(funnel);
+    const status = resolveLeadStatusForFunnelColumns(lead.status, normalizedFunnel.columns);
+    if (lead.funilId === normalizedFunnel.id && lead.status === status) return { ...lead };
+    return { ...lead, funilId: normalizedFunnel.id, status };
   });
 }
 

@@ -52,8 +52,24 @@ describe("CRM visible leads", () => {
     });
   });
 
-  it("falls back unknown statuses to the first Kanban stage", () => {
+  it("falls back unknown statuses to novo when available", () => {
     const [normalized] = normalizeLeadsForVisibleCrmFunnel([lead({ status: "etapa-inexistente" })], DEFAULT_CRM_FUNNELS);
+    expect(normalized?.status).toBe("novo");
+  });
+
+  it('keeps lead with status "novo" on the novo column after stale funnel migration', () => {
+    const staleFunnel = {
+      id: "funil-default",
+      nome: "Principal",
+      columns: [
+        { id: "contato", title: "Em Contato" },
+        { id: "proposta", title: "Proposta Enviada" },
+      ],
+    };
+    const [normalized] = normalizeLeadsForVisibleCrmFunnel(
+      [lead({ id: "d5995060", nome: "Renato Lagares", status: "novo" })],
+      [staleFunnel],
+    );
     expect(normalized?.status).toBe("novo");
   });
 

@@ -6,9 +6,11 @@ import type { PlanLimits } from "@/lib/plan-policy";
 import {
   CRM_FUNNELS_STORAGE_KEY,
   getCrmFunnelsSnapshot,
+  migrateFunnelColumns,
   newCrmFunnelId,
   newFunnelColumnId,
   persistCrmFunnels,
+  resetCrmFunnelsToSafeDefaults,
   templateColumnsFromGlobalKanban,
   type CrmFunnel,
 } from "@/lib/crm-funnels";
@@ -22,6 +24,7 @@ type CrmFunnelsContextValue = {
   appendFunnelColumn: (funnelId: string) => void;
   removeFunnelColumn: (funnelId: string, columnId: string) => void;
   reload: () => void;
+  resetToSafeDefaults: () => void;
 };
 
 const CrmFunnelsContext = createContext<CrmFunnelsContextValue | null>(null);
@@ -82,7 +85,11 @@ export function CrmFunnelsProvider({
 
   const updateFunnel = useCallback((funnelId: string, patch: Partial<Pick<CrmFunnel, "nome" | "columns">>) => {
     setFunnels((prev) => {
-      const next = prev.map((f) => (f.id === funnelId ? { ...f, ...patch, columns: patch.columns ?? f.columns } : f));
+      const next = prev.map((f) => {
+        if (f.id !== funnelId) return f;
+        const columns = patch.columns ? migrateFunnelColumns(patch.columns) : migrateFunnelColumns(f.columns);
+        return { ...f, ...patch, columns };
+      });
       persistCrmFunnels(next);
       return next;
     });
@@ -122,9 +129,23 @@ export function CrmFunnelsProvider({
     });
   }, []);
 
+  const resetToSafeDefaults = useCallback(() => {
+    const next = resetCrmFunnelsToSafeDefaults();
+    setFunnels(next);
+  }, []);
+
   const value = useMemo(
-    () => ({ funnels, addFunnel, updateFunnel, deleteFunnel, appendFunnelColumn, removeFunnelColumn, reload }),
-    [funnels, addFunnel, updateFunnel, deleteFunnel, appendFunnelColumn, removeFunnelColumn, reload],
+    () => ({
+      funnels,
+      addFunnel,
+      updateFunnel,
+      deleteFunnel,
+      appendFunnelColumn,
+      removeFunnelColumn,
+      reload,
+      resetToSafeDefaults,
+    }),
+    [funnels, addFunnel, updateFunnel, deleteFunnel, appendFunnelColumn, removeFunnelColumn, reload, resetToSafeDefaults],
   );
 
   return <CrmFunnelsContext.Provider value={value}>{children}</CrmFunnelsContext.Provider>;

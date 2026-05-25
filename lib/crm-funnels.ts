@@ -1,5 +1,13 @@
 import type { AgentFunnel } from "./types";
 import { isValidCrmKanbanColumnId, listCrmKanbanColumns, normalizeColunaInicialToCrmColumnId } from "./crm-kanban-columns";
+import {
+  CRM_FUNNELS_MIGRATION_VERSION,
+  migrateCrmFunnelRow,
+  migrateCrmFunnelsFromLocalStorage,
+  migrateFunnelColumns,
+  pickDefaultKanbanColumnId,
+  resolveLeadStatusForFunnelColumns,
+} from "./crm-funnel-migration";
 
 export type CrmFunnelColumn = { id: string; title: string };
 
@@ -7,8 +15,10 @@ export type CrmFunnel = { id: string; nome: string; columns: CrmFunnelColumn[] }
 
 export const CRM_FUNNELS_STORAGE_KEY = "mychatcrm-crm-funnels-v1";
 
+export { CRM_FUNNELS_MIGRATION_VERSION, migrateCrmFunnelsFromLocalStorage, migrateFunnelColumns };
+
 export function templateColumnsFromGlobalKanban(): CrmFunnelColumn[] {
-  return listCrmKanbanColumns().map((c) => ({ id: c.id, title: c.title }));
+  return migrateFunnelColumns(listCrmKanbanColumns().map((c) => ({ id: c.id, title: c.title })));
 }
 
 /** Funil inicial com pipeline próprio (colunas copiadas do modelo global na primeira instalação). */
@@ -44,8 +54,7 @@ function isCrmFunnelRow(value: unknown): value is CrmFunnel {
 }
 
 export function normalizeCrmFunnelRow(row: CrmFunnel): CrmFunnel {
-  if (row.columns?.length) return { ...row, columns: row.columns.map((c) => ({ ...c })) };
-  return { ...row, columns: templateColumnsFromGlobalKanban() };
+  return migrateCrmFunnelRow(row);
 }
 
 export function parseCrmFunnelsJson(raw: string | null): CrmFunnel[] | null {
@@ -64,22 +73,42 @@ export function cloneFunnels(funnels: readonly CrmFunnel[]): CrmFunnel[] {
   return funnels.map((f) => ({ ...f, columns: f.columns.map((c) => ({ ...c })) }));
 }
 
-/** Lista completa para o painel e formulários (SSR: só defaults). */
-export function getCrmFunnelsSnapshot(): CrmFunnel[] {
+function loadAndMigrateStoredFunnels(): CrmFunnel[] {
   if (typeof window === "undefined") return cloneFunnels(DEFAULT_CRM_FUNNELS);
+
   const fromStorage = parseCrmFunnelsJson(window.localStorage.getItem(CRM_FUNNELS_STORAGE_KEY));
-  if (!fromStorage) return cloneFunnels(DEFAULT_CRM_FUNNELS);
-  if (isLegacyFourPack(fromStorage)) {
+  if (fromStorage && isLegacyFourPack(fromStorage)) {
     const next = cloneFunnels(DEFAULT_CRM_FUNNELS);
     persistCrmFunnels(next);
     return next;
   }
-  return fromStorage;
+
+  const { funnels, changed } = migrateCrmFunnelsFromLocalStorage(fromStorage);
+  const next = cloneFunnels(funnels);
+  if (changed || !fromStorage) {
+    persistCrmFunnels(next);
+  }
+  return next;
+}
+
+/** Lista completa para o painel e formulários (SSR: só defaults). */
+export function getCrmFunnelsSnapshot(): CrmFunnel[] {
+  if (typeof window === "undefined") return cloneFunnels(DEFAULT_CRM_FUNNELS);
+  return loadAndMigrateStoredFunnels();
 }
 
 export function persistCrmFunnels(funnels: CrmFunnel[]): void {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(CRM_FUNNELS_STORAGE_KEY, JSON.stringify(funnels));
+  const migrated = migrateCrmFunnelsFromLocalStorage(funnels).funnels;
+  window.localStorage.setItem(CRM_FUNNELS_STORAGE_KEY, JSON.stringify(migrated));
+}
+
+/** Recria funis locais a partir do modelo oficial (preserva outros funis customizados quando possível). */
+export function resetCrmFunnelsToSafeDefaults(): CrmFunnel[] {
+  const { funnels } = migrateCrmFunnelsFromLocalStorage(null);
+  const next = cloneFunnels(funnels);
+  persistCrmFunnels(next);
+  return next;
 }
 
 export function newCrmFunnelId(): string {
@@ -111,21 +140,24 @@ export function resolveAgentFunnelFromCrm(funil: AgentFunnel, funnels: readonly 
 }
 
 export function funnelColumnTitle(funnel: CrmFunnel | undefined, columnId: string): string {
-  return funnel?.columns.find((c) => c.id === columnId)?.title ?? columnId;
+  const normalized = funnel ? migrateCrmFunnelRow(funnel) : undefined;
+  return normalized?.columns.find((c) => c.id === columnId)?.title ?? columnId;
 }
 
 /** Normaliza `colunaInicial` (id da etapa) para o pipeline do funil indicado. */
 export function normalizeColunaInicialForFunnel(raw: string, funnel: CrmFunnel | undefined): string {
   if (!funnel?.columns?.length) return normalizeColunaInicialToCrmColumnId(raw);
-  const cols = funnel.columns;
-  if (cols.some((c) => c.id === raw)) return raw;
-  const t = raw.trim().toLowerCase();
-  const byTitle = cols.find((c) => c.title.toLowerCase() === t);
-  if (byTitle) return byTitle.id;
-  return cols[0]!.id;
+  const cols = migrateFunnelColumns(funnel.columns);
+  return resolveLeadStatusForFunnelColumns(raw, cols);
 }
 
 export function isValidColunaForFunnel(columnId: string, funnel: CrmFunnel | undefined): boolean {
   if (!funnel?.columns?.length) return isValidCrmKanbanColumnId(columnId);
-  return funnel.columns.some((c) => c.id === columnId);
+  const cols = migrateFunnelColumns(funnel.columns);
+  return cols.some((c) => c.id === columnId);
+}
+
+export function getFunnelInitialColumnId(funnel: CrmFunnel | undefined): string {
+  const cols = funnel?.columns?.length ? migrateFunnelColumns(funnel.columns) : templateColumnsFromGlobalKanban();
+  return pickDefaultKanbanColumnId(cols);
 }

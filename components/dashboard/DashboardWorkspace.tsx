@@ -55,6 +55,7 @@ import {
   Phone,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   Shield,
@@ -1079,7 +1080,15 @@ function CrmPage({
   session: ClientSession;
 }) {
   const { isLight } = usePanelAppearance();
-  const { funnels, addFunnel, deleteFunnel, updateFunnel, appendFunnelColumn, removeFunnelColumn } = useCrmFunnels();
+  const {
+    funnels,
+    addFunnel,
+    deleteFunnel,
+    updateFunnel,
+    appendFunnelColumn,
+    removeFunnelColumn,
+    resetToSafeDefaults,
+  } = useCrmFunnels();
   const [view, setView] = useState<"kanban" | "lista">("kanban");
   const [pipelineFunilId, setPipelineFunilId] = useState<string>("");
   const [addLeadOpen, setAddLeadOpen] = useState(false);
@@ -2074,6 +2083,23 @@ function CrmPage({
                   >
                     <Trash2 className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
                     <span className="hidden sm:inline">Apagar</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="shrink-0 gap-1.5"
+                    title="Recria colunas oficiais (Novo Lead, Em atendimento…) e corrige funil salvo no navegador"
+                    onClick={() => {
+                      const ok = window.confirm(
+                        "Restaurar colunas padrão do CRM?\n\nCustomizações de título das etapas oficiais serão sincronizadas. Etapas personalizadas (col-*) são mantidas.",
+                      );
+                      if (!ok) return;
+                      resetToSafeDefaults();
+                    }}
+                  >
+                    <RefreshCw className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
+                    <span className="hidden sm:inline">Sincronizar colunas</span>
                   </Button>
                 </div>
               </div>
