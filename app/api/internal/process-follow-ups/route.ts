@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     const result = await processDueFollowUpJobs();
 
     let metaLeadPoll: Awaited<ReturnType<typeof processRecentMetaLeadAds>> | null = null;
-    if (process.env.META_LEAD_POLLER_DISABLED !== "true") {
+    if (process.env.META_LEAD_POLLER_ENABLED === "true") {
       try {
         metaLeadPoll = await processRecentMetaLeadAds({ sb: createSupabaseServiceClient() });
         console.info("[meta-lead-poller]", { event: "follow_up_hook_completed", ...metaLeadPoll });
@@ -31,6 +31,8 @@ export async function POST(request: Request) {
         const message = pollErr instanceof Error ? pollErr.message : String(pollErr);
         console.warn("[meta-lead-poller]", { event: "follow_up_hook_failed", error: message });
       }
+    } else {
+      console.info("[meta-lead-poller]", { event: "follow_up_hook_skipped", reason: "poller_disabled_by_default" });
     }
 
     console.info("[follow-up-jobs]", { event: "process_completed", ...result });

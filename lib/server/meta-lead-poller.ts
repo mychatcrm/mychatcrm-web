@@ -1,6 +1,6 @@
 import { createHmac } from "crypto";
 import type { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { isAnyAgentAuthorizedForMetaForm } from "@/lib/server/meta-form-authorization";
+import { resolveMetaFormAuthorization } from "@/lib/server/meta-form-authorization";
 import { processMetaLeadgenEvent } from "@/lib/server/meta-lead-ingest";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
@@ -47,7 +47,7 @@ export type MetaLeadPollerResult = {
   details: PollerConnectionResult[];
 };
 
-const DEFAULT_POLL_WINDOW_MINUTES = 120;
+const DEFAULT_POLL_WINDOW_MINUTES = 10;
 const MAX_GRAPH_FORM_PAGES = 10;
 
 export function metaLeadCreatedAtMs(createdTime: string | undefined): number | null {
@@ -72,7 +72,40 @@ export function buildSignedMetaWebhookHeaders(rawBody: string, appSecret: string
 
 function getPollWindowMinutes(): number {
   const raw = Number(process.env.META_LEAD_POLL_WINDOW_MINUTES);
-  return Number.isFinite(raw) && raw > 0 ? Math.min(raw, 24 * 60) : DEFAULT_POLL_WINDOW_MINUTES;
+  return Number.isFinite(raw) && raw > 0 ? Math.min(raw, 10) : DEFAULT_POLL_WINDOW_MINUTES;
+}
+
+function getRuleActivationMs(value: unknown): number | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+async function loadRuleActivationStartedAtMs(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  ruleId: string | null;
+}): Promise<number | null> {
+  if (!params.ruleId) return null;
+  const { data, error } = await params.sb
+    .from("lead_distribution_rules")
+    .select("created_at, updated_at")
+    .eq("tenant_id", params.tenantId)
+    .eq("id", params.ruleId)
+    .maybeSingle();
+  if (error || !data) return null;
+
+  // Use updated_at as the safe activation boundary: editing the included forms
+  // must not backfill older leads already sitting in Meta.
+  return getRuleActivationMs((data as { updated_at?: unknown }).updated_at)
+    ?? getRuleActivationMs((data as { created_at?: unknown }).created_at);
+}
+
+export function isMetaLeadAfterActivation(createdTime: string | undefined, activationStartedAtMs: number | null): boolean {
+  if (!activationStartedAtMs) return false;
+  const createdAtMs = metaLeadCreatedAtMs(createdTime);
+  if (!createdAtMs) return false;
+  return createdAtMs >= activationStartedAtMs;
 }
 
 async function fetchGraphLeadFormsWithRecentLeads(pageId: string, pageAccessToken: string): Promise<GraphLeadForm[]> {
@@ -149,18 +182,35 @@ async function processConnection(params: {
   for (const form of forms) {
     const formId = form.id?.trim();
     if (!formId) continue;
-    const authorized = await isAnyAgentAuthorizedForMetaForm({
+    const authorization = await resolveMetaFormAuthorization({
       sb: params.sb,
       tenantId: params.connection.tenant_id,
       pageId: params.connection.page_id,
       formId,
     });
-    if (!authorized) continue;
+    if (!authorization.authorized) continue;
+
+    const activationStartedAtMs = await loadRuleActivationStartedAtMs({
+      sb: params.sb,
+      tenantId: params.connection.tenant_id,
+      ruleId: authorization.ruleId,
+    });
 
     for (const lead of form.leads?.data ?? []) {
       result.leadsSeen += 1;
       if (!lead.id || !isRecentMetaLead(lead.created_time, params.nowMs, params.windowMinutes)) {
         result.skipped += 1;
+        continue;
+      }
+      if (!isMetaLeadAfterActivation(lead.created_time, activationStartedAtMs)) {
+        result.skipped += 1;
+        console.info("[meta-lead-poller] skipped_before_rule_activation", {
+          tenant_id: params.connection.tenant_id,
+          page_id: params.connection.page_id,
+          form_id: formId,
+          leadgen_id: lead.id,
+          rule_id: authorization.ruleId,
+        });
         continue;
       }
 

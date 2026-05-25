@@ -69,6 +69,36 @@ async function revealMetaConversation(params: {
   });
 }
 
+function timestampMsFromSeconds(value: number | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return value * 1000;
+}
+
+function timestampMsFromDb(value: unknown): number | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+async function loadRuleActivationStartedAtMs(params: {
+  sb: ReturnType<typeof createSupabaseServiceClient>;
+  tenantId: string;
+  ruleId: string | null;
+}): Promise<number | null> {
+  if (!params.ruleId) return null;
+  const { data, error } = await params.sb
+    .from("lead_distribution_rules")
+    .select("created_at, updated_at")
+    .eq("tenant_id", params.tenantId)
+    .eq("id", params.ruleId)
+    .maybeSingle();
+  if (error || !data) return null;
+  const row = data as { created_at?: unknown; updated_at?: unknown };
+  // Editing a rule/form selection starts a new safe boundary. Do not import
+  // leads created before that configuration moment.
+  return timestampMsFromDb(row.updated_at) ?? timestampMsFromDb(row.created_at);
+}
+
 export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void> {
   const { leadgen_id, page_id, form_id, ad_id, ad_group_id } = value;
   if (!leadgen_id || !page_id) {
@@ -176,6 +206,34 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       reason: agentResolution.reason,
       user_message: userMessage,
     });
+  }
+
+  const leadCreatedAtMs = timestampMsFromSeconds(value.created_time);
+  const activationStartedAtMs = await loadRuleActivationStartedAtMs({
+    sb,
+    tenantId: tenant_id,
+    ruleId,
+  });
+  if (agentResolution.authorized && (!leadCreatedAtMs || !activationStartedAtMs || leadCreatedAtMs < activationStartedAtMs)) {
+    await eventRecorder.step("blocked_historical_lead", {
+      rule_id: ruleId,
+      lead_created_time: value.created_time ?? null,
+    });
+    await eventRecorder.patch({
+      whatsapp_status: "blocked",
+      error_message: "historical_meta_lead_before_rule_activation",
+      current_step: "blocked_historical_lead",
+    });
+    console.warn("[meta-webhook] Historical Meta lead blocked before CRM import/outreach", {
+      tenant_id,
+      page_id,
+      form_id: resolvedFormId || null,
+      leadgen_id,
+      rule_id: ruleId,
+      lead_created_time: value.created_time ?? null,
+      activation_started_at_ms: activationStartedAtMs,
+    });
+    return;
   }
 
   const [formName, adContext] = await Promise.all([

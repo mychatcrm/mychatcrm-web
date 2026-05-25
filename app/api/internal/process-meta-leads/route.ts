@@ -17,6 +17,15 @@ export async function POST(request: Request) {
     console.info("[meta-lead-poller]", { event: "auth_failed" });
     return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
   }
+  if (process.env.META_LEAD_POLLER_ENABLED !== "true") {
+    console.info("[meta-lead-poller]", { event: "process_skipped", reason: "poller_disabled_by_default" });
+    return NextResponse.json({
+      ok: true,
+      skipped: true,
+      reason: "poller_disabled_by_default",
+      message: "Meta Lead Ads poller is disabled by default to prevent historical backfill.",
+    });
+  }
 
   try {
     const result = await processRecentMetaLeadAds({ sb: createSupabaseServiceClient() });

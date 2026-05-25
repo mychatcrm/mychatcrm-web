@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSignedMetaWebhookHeaders,
+  isMetaLeadAfterActivation,
   isRecentMetaLead,
   metaLeadCreatedAtMs,
 } from "@/lib/server/meta-lead-poller";
@@ -18,6 +19,18 @@ describe("Meta lead poller helpers", () => {
 
     expect(metaLeadCreatedAtMs(undefined)).toBeNull();
     expect(isRecentMetaLead("not-a-date", now, 120)).toBe(false);
+  });
+
+  it("blocks Meta leads created before rule activation", () => {
+    const activation = Date.parse("2026-05-25T18:30:00.000Z");
+
+    expect(isMetaLeadAfterActivation("2026-05-25T18:29:59+0000", activation)).toBe(false);
+    expect(isMetaLeadAfterActivation("2026-05-25T18:30:00+0000", activation)).toBe(true);
+    expect(isMetaLeadAfterActivation("2026-05-25T18:35:00+0000", activation)).toBe(true);
+  });
+
+  it("does not allow polling without a known activation boundary", () => {
+    expect(isMetaLeadAfterActivation("2026-05-25T18:35:00+0000", null)).toBe(false);
   });
 
   it("builds a valid Meta signature header for forwarded webhook payloads", () => {
