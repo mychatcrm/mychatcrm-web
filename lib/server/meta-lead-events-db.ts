@@ -23,6 +23,7 @@ export const META_LEAD_EVENT_STEPS = [
   "skipped_initial_outreach",
   "skipped_human_attending",
   "blocked_unauthorized_form",
+  "blocked_form_not_in_rules",
   "blocked_historical_lead",
 ] as const;
 
