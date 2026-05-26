@@ -746,17 +746,24 @@ export async function processFollowUpJob(
     });
 
     if (!send.ok) {
+      const failedAttempts = job.attempts + 1;
+      const isExhausted = failedAttempts >= job.max_attempts;
       await client
         .from("follow_up_jobs")
-        .update({ status: "pending", last_error: send.error, updated_at: now.toISOString() })
+        .update({
+          status: isExhausted ? "exhausted" : "pending",
+          attempts: failedAttempts,
+          last_error: send.error,
+          updated_at: now.toISOString(),
+        })
         .eq("id", job.id);
       await recordEvent(client, "follow_up_failed", {
         ...commonEventParams,
         followUpActive: settings.ativo,
         leadId: lead?.id,
-        payload: { error: send.error },
+        payload: { error: send.error, attempts: failedAttempts, exhausted: isExhausted },
       });
-      logFollowUp("send_failed", { job_id: job.id, error: send.error });
+      logFollowUp("send_failed", { job_id: job.id, error: send.error, attempts: failedAttempts, exhausted: isExhausted });
       return "failed";
     }
 
@@ -892,16 +899,23 @@ export async function processFollowUpJob(
     return "sent";
   } catch (error) {
     const message = error instanceof Error ? error.message : "process_failed";
+    const failedAttempts = job.attempts + 1;
+    const isExhausted = failedAttempts >= job.max_attempts;
     await client
       .from("follow_up_jobs")
-      .update({ status: "pending", last_error: message, updated_at: nowIso })
+      .update({
+        status: isExhausted ? "exhausted" : "pending",
+        attempts: failedAttempts,
+        last_error: message,
+        updated_at: nowIso,
+      })
       .eq("id", jobId);
     await recordEvent(client, "follow_up_failed", {
       ...commonEventParams,
       followUpActive: false,
-      payload: { error: message },
+      payload: { error: message, attempts: failedAttempts, exhausted: isExhausted },
     });
-    logFollowUp("process_error", { job_id: jobId, error: message });
+    logFollowUp("process_error", { job_id: jobId, error: message, attempts: failedAttempts, exhausted: isExhausted });
     return "failed";
   }
 }
