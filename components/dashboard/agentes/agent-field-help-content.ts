@@ -1,74 +1,183 @@
 /** Textos dos tooltips (?) dos campos do wizard/modal de agente. */
 export const AGENT_FIELD_HELP = {
-  nome: 'Como seu agente será identificado internamente. Ex.: "Ana - Atendimento" ou "Bot Vendas"',
-  cor: 'Cor usada no painel para identificar o agente. Ex.: laranja da marca da sua empresa',
-  avatar: 'Ícone exibido na lista de agentes. Escolha o que melhor representa o papel do bot.',
+  // ── Identidade ──────────────────────────────────────────────────────────────
+  nome: 'Como o agente é identificado no painel. Escolha um nome fácil de reconhecer pela equipe. Ex.: "Ana – Vendas" ou "Bot Suporte RH"',
+
+  cor: 'Cor que representa este agente na lista e nos cards do painel. Use a cor da sua marca para manter consistência visual. Ex.: laranja para o time comercial, azul para suporte',
+
+  avatar: 'Ícone visual do agente. Facilita identificar rapidamente qual bot é qual quando há vários agentes criados. Ex.: ícone de casa para um agente imobiliário',
+
   whatsappLinha:
-    'Linha WhatsApp que este agente usa para responder. Configure cada linha em Integrações → WhatsApp (QR ou API oficial). Ex.: "Linha 1" para vendas',
+    'Número do WhatsApp que este agente usa para responder. Cada agente pode usar uma linha diferente. Configure as linhas em Integrações → WhatsApp. Ex.: Linha 1 = vendas, Linha 2 = suporte técnico',
+
+  // ── SmartWait ───────────────────────────────────────────────────────────────
   smartWaitAtivar:
-    'Aguarda o cliente terminar de digitar antes de responder. Ex.: se mandar 3 mensagens seguidas, o agente responde tudo de uma vez',
-  smartWaitInicial: 'Segundos de espera após a primeira mensagem do cliente. Ex.: 7 segundos',
-  smartWaitNovaMsg: 'Se o cliente mandar outra mensagem nesse intervalo, o timer reinicia. Ex.: 10 segundos',
-  smartWaitMaxima: 'Tempo máximo total de espera antes de responder. Ex.: 30 segundos',
-  smartWaitDedupe: 'Ignora mensagens repetidas iguais antes de montar a resposta.',
-  tom: 'Como o agente se comunica. Ex.: Formal para empresas, Casual para lojas, Técnico para suporte',
-  velocidade: 'Atraso simulado antes de enviar a resposta, para parecer mais humano. Ex.: 1–3 segundos',
-  idioma: 'Idioma preferencial das respostas. "Automático" detecta o idioma do cliente.',
-  modoInstrucoes:
-    'Simples = um único texto; Pro = campos separados (identidade, objetivo, instruções). Ex.: comece no Simples e migre para Pro depois',
-  promptSimples:
-    'Tudo sobre o agente num só lugar: quem é, como fala, o que pode e não pode fazer. Ex.: "Sou consultor da loja X, tom amigável..."',
-  identidade:
-    'Como o agente se apresenta. Ex.: "Sou a assistente virtual da empresa X; falo em português claro"',
-  objetivo:
-    'Meta do agente em texto livre. Ex.: "Converter visitantes do WhatsApp em reuniões com o time comercial"',
-  instrucoes:
-    'Comportamento principal: passos, tom, quando pedir humano. Pode apagar o modelo e colar o seu.',
-  regrasAdicionais:
-    'Políticas extras opcionais. Ex.: "Confirmar cidade antes de passar preço; listas com no máximo 3 itens"',
-  respostasProibidas:
-    'O que o agente não deve dizer. Ex.: "Não mencionar concorrentes nem prometer desconto acima de 5%"',
+    'Faz o agente esperar o cliente terminar de digitar antes de responder — como uma pessoa faria. Evita respostas fragmentadas quando o cliente envia várias mensagens em sequência. Ex.: cliente manda 3 mensagens em 5 segundos; o agente espera tudo e responde de uma vez',
+
+  smartWaitInicial:
+    'Tempo de espera após a primeira mensagem do cliente. Dá espaço para o cliente continuar digitando antes do agente começar a processar. Ex.: 7 segundos — o agente aguarda 7s após a primeira mensagem',
+
+  smartWaitNovaMsg:
+    'Se o cliente mandar outra mensagem durante a espera, o temporizador reinicia. Garante que o agente sempre leia tudo antes de responder. Ex.: com 10 segundos, cada nova mensagem reinicia a contagem do zero',
+
+  smartWaitMaxima:
+    'Limite máximo de espera, independente de quantas mensagens o cliente enviar. Evita que o agente espere indefinidamente. Ex.: 30 segundos — após esse tempo, o agente responde mesmo que o cliente ainda esteja digitando',
+
+  smartWaitDedupe:
+    'Ignora mensagens idênticas enviadas em sequência antes do agente responder. Evita processar a mesma mensagem duas vezes por cliques acidentais. Ex.: cliente aperta "Enviar" duas vezes com a mesma frase — o agente trata como uma só',
+
+  // ── Tom e comportamento ──────────────────────────────────────────────────────
+  tom: 'Estilo de linguagem que o agente usa ao se comunicar. Afeta o vocabulário, o nível de formalidade e o calor humano das respostas. Ex.: "Formal" para advocacia, "Casual" para e-commerce de moda, "Técnico" para suporte de TI',
+
+  velocidade:
+    'Atraso simulado antes do agente enviar a resposta, para parecer mais humano e menos robótico. O cliente verá "digitando…" antes da mensagem aparecer. Ex.: 2 segundos de delay — mais natural em atendimentos comerciais',
+
+  idioma:
+    'Idioma preferencial das respostas do agente. "Automático" detecta e responde no idioma que o cliente estiver usando. Ex.: configure "Português" se quiser garantir respostas sempre em PT-BR, mesmo que o cliente escreva em outro idioma',
+
   temperatura:
-    'Criatividade das respostas. Baixo = mais direto e previsível. Alto = mais variado. Ex.: 0,2 para suporte, 0,7 para vendas',
+    'Controla o quanto a IA varia suas respostas. Baixo = mais direto, consistente e previsível. Alto = mais criativo e variado a cada resposta. Ex.: 0,2 para atendimento ao cliente (consistência); 0,7 para follow-ups e copywriting (variedade)',
+
+  // ── Instruções ──────────────────────────────────────────────────────────────
+  modoInstrucoes:
+    'Escolha como configurar as instruções do agente. Simples = um único bloco de texto; Pro = campos separados (identidade, objetivo, regras). Ex.: comece no Simples para ir rápido e migre para Pro quando precisar de mais controle',
+
+  promptSimples:
+    'Escreva tudo sobre o agente em um único texto livre: quem ele é, como fala, o que pode e não pode fazer. É o campo mais importante do agente. Ex.: "Sou a assistente da Clínica Saúde Plena. Respondo sobre consultas, planos e valores com tom gentil e objetivo"',
+
+  identidade:
+    'Como o agente se apresenta ao cliente. Inclua nome, empresa e estilo de comunicação. Ex.: "Sou a Sofia, assistente virtual da Construtora XYZ. Me comunico de forma objetiva e amigável em português"',
+
+  objetivo:
+    'Meta do agente em texto livre. Descreve o resultado que ele deve buscar em cada conversa. Ex.: "Qualificar leads que chegam pelo Instagram e agendar visitas ao imóvel com o corretor"',
+
+  instrucoes:
+    'Comportamento principal do agente: quais perguntas fazer, como conduzir a conversa, quando pedir para um humano assumir. É o campo mais importante para definir a qualidade das respostas. Pode apagar o modelo e colar o seu próprio texto.',
+
+  regrasAdicionais:
+    'Políticas e preferências específicas do seu negócio que complementam as instruções principais. Ex.: "Confirmar a cidade antes de informar preços; não listar mais de 3 opções por resposta; sempre se despedir pelo primeiro nome"',
+
+  respostasProibidas:
+    'Lista do que o agente nunca deve dizer ou fazer. Quanto mais claro, melhor. Ex.: "Não mencionar a empresa concorrente X; não prometer desconto acima de 10%; não dar informações de prazo de entrega sem confirmar com a equipe"',
+
+  // ── Materiais ───────────────────────────────────────────────────────────────
   materiaisApoio:
-    'PDFs e documentos que o agente lê para responder. Ex.: tabela de preços, manual do produto. Até 5 ficheiros, 1 GB no total',
+    'Documentos que o agente lê para responder com precisão e consistência. Ideal para tabelas de preços, manuais e FAQs. Ex.: tabela de preços em PDF, catálogo de produtos, perguntas frequentes. Suporta PDF, Word, Excel e outros. Até 5 arquivos',
+
   arquivosEnvio:
-    'Fotos, vídeos e ficheiros que o agente envia no WhatsApp. Ex.: fotos do produto, contrato em PDF. Até 50 ficheiros por agente',
-  handoffAtivar: 'Detecta quando o cliente quer falar com uma pessoa e avisa a equipe.',
-  handoffKeywords: 'Palavras que disparam a transferência. Ex.: "humano", "atendente", "falar com pessoa"',
-  handoffNumero: 'WhatsApp do atendente (com DDI). Ex.: 5562999999999',
-  handoffMensagem: 'O que o agente diz antes de passar para o humano. Ex.: "Vou te conectar com nosso especialista"',
-  ctaFinal: 'Ação principal que o agente deve buscar na conversa. Ex.: agendar reunião ou transferir para humano',
-  crmModo: 'Define se leads deste agente são movidos automaticamente no funil do CRM.',
-  crmFunil: 'Funil onde o lead será colocado quando a regra automática estiver ativa.',
-  crmColuna: 'Coluna/etapa do funil para posicionar o lead. Ex.: "Qualificado"',
-  followUpAtivar:
-    'Retoma conversas sem resposta usando o histórico — sem mensagens genéricas fixas. Respeita horário comercial, cooldown e atendimento humano ativo.',
-  followUpTentativas: 'Quantas vezes tentar contato de novo antes de parar. Ex.: 3 tentativas',
-  followUpIntervalo: 'Tempo mínimo entre cada tentativa. Ex.: 60 minutos = verifica a cada hora',
-  followUpModo: 'Suave = gentil sem pressão; Moderado = contextual equilibrado; Agressivo = urgência e pedido de decisão',
-  followUpCooldownAtivo: 'Ativa o intervalo mínimo entre dois follow-ups para o mesmo lead (anti-spam).',
-  followUpCooldown: 'Minutos mínimos entre follow-ups consecutivos. Padrão seguro: 1440 (24 horas).',
-  followUpHorarioComercial: 'Restringe envios à janela de horário e dias configurados abaixo.',
-  followUpSlaAtivo: 'Prioriza retomada quando o lead ficou sem resposta além do SLA em horas.',
-  followUpSla: 'Horas sem resposta do lead que disparam prioridade de SLA.',
-  followUpHorario: 'Hora inicial e final (UTC) da janela permitida.',
-  followUpDias: 'Dias da semana permitidos (quando horário comercial está ativo).',
-  followUpRespeitarHumano: 'Bloqueia follow-up quando humano pausou, está no modo humano ou respondeu recentemente.',
-  followUpSoHumano: 'Só retoma se um humano estava atendendo e abandonou a conversa.',
-  followUpBloquearRespondeu: 'Cancela follow-up se o cliente respondeu após o job ter sido agendado.',
-  followUpBloquearTarefa: 'Não envia se existir follow-up manual agendado no futuro no CRM.',
-  followUpBloquearPerdido: 'Não envia para leads com status perdido, inativo, cancelado ou arquivado.',
-  followUpDesativarAposEncerrar: 'Após esgotar tentativas, marca follow-up inativo e remove próximo agendamento.',
-  followUpHistoricoWhatsapp: 'Inclui mensagens do WhatsApp no contexto da IA.',
-  followUpHistoricoCrm: 'Inclui memória/resumo do CRM no prompt.',
-  followUpMetaForm: 'Inclui campos preenchidos no formulário Meta Lead Ads.',
-  modoResposta: 'Texto = mensagens normais; Áudio = resposta falada via ElevenLabs.',
-  vozAgente: 'Voz usada no TTS quando o modo Áudio está ativo. Ouça a prévia antes de salvar.',
-  simulacao: 'Testa a resposta do agente sem enviar WhatsApp nem criar lead real.',
-  crmNaoMover: 'Cria ou atualiza o lead sem mudar funil nem coluna automaticamente.',
-  crmMover: 'Sempre posiciona o lead na funil e coluna escolhidas abaixo.',
+    'Arquivos que o agente envia diretamente no WhatsApp quando o cliente pede ou quando faz sentido na conversa. Ex.: foto do produto, planta do imóvel, contrato em PDF, vídeo de apresentação. Até 50 arquivos por agente',
+
+  // ── Handoff ─────────────────────────────────────────────────────────────────
+  handoffAtivar:
+    'Quando ativo, o agente detecta quando o cliente quer falar com uma pessoa real e inicia a transferência automaticamente — sem precisar de intervenção manual. Ex.: cliente digita "quero falar com um humano" → agente avisa a equipe e passa o atendimento',
+
+  handoffKeywords:
+    'Palavras ou frases que disparam a transferência para um atendente humano. Separe por vírgulas. Ex.: "humano, atendente, falar com alguém, quero uma pessoa, responsável, gerente"',
+
+  handoffNumero:
+    'WhatsApp do atendente que receberá a notificação quando houver uma transferência. Inclua o código do país. Ex.: 5562999999999 (Brasil, Goiás)',
+
+  handoffMensagem:
+    'Mensagem que o agente envia ao cliente no momento da transferência. Deve ser acolhedora e clara. Ex.: "Perfeito! Vou te conectar agora com um dos nossos especialistas. Um momento 😊"',
+
+  ctaFinal:
+    'Ação principal que o agente deve buscar ao longo da conversa. Define o objetivo final de cada atendimento. Ex.: "Agendar uma visita", "Solicitar uma proposta", "Transferir para o time comercial"',
+
+  // ── CRM ─────────────────────────────────────────────────────────────────────
+  crmModo:
+    'Define se leads atendidos por este agente são movidos automaticamente para uma etapa do funil do CRM. Mantém o pipeline atualizado sem trabalho manual.',
+
+  crmFunil:
+    'Funil do CRM onde o lead será posicionado quando a regra automática estiver ativa. Ex.: funil "Vendas Residencial" ou "Imóveis Comerciais"',
+
+  crmColuna:
+    'Etapa dentro do funil escolhido onde o lead será colocado. Ex.: "Qualificado" — o lead entra automaticamente nesta etapa ao interagir com o agente',
+
+  crmNaoMover:
+    'O lead é criado ou atualizado no CRM normalmente, mas não é movido de funil nem de etapa automaticamente. Útil quando você quer registrar o contato sem alterar o estágio atual do lead.',
+
+  crmMover:
+    'Todo lead que interagir com este agente é posicionado automaticamente no funil e etapa escolhidos abaixo. Ex.: novos leads do WhatsApp vão direto para a etapa "Qualificado" no funil de vendas',
+
   crmRegraBackend:
-    'A regra só vale para leads do seu tenant quando a conversa tiver este agente identificado.',
-  previewIdioma: 'Idioma usado só na prévia de voz no painel — não altera o idioma das respostas no WhatsApp.',
+    'Esta configuração se aplica apenas aos leads do seu espaço de trabalho vinculados a este agente. Não afeta outros agentes nem outras contas.',
+
+  // ── Follow-up A) Ativação ────────────────────────────────────────────────────
+  followUpAtivar:
+    'Ativa o sistema de retomada automática de conversas sem resposta. O agente cria mensagens personalizadas com base no histórico real da conversa — sem textos genéricos. Respeita horário comercial, cooldown anti-spam e atendimento humano ativo. Ex.: cliente não responde há 2 horas → agente retoma citando exatamente o que foi discutido',
+
+  // ── Follow-up B) Frequência ──────────────────────────────────────────────────
+  followUpTentativas:
+    'Quantas vezes o agente tentará retomar a conversa antes de parar completamente. Após esgotar as tentativas, o follow-up encerra para este lead. Ex.: 3 tentativas — se o cliente não responder após 3 follow-ups, o agente para automaticamente',
+
+  followUpIntervalo:
+    'Tempo mínimo que o agente aguarda entre cada verificação de follow-up. O agente não envia mensagens com mais frequência do que este intervalo. Ex.: 60 minutos — o agente verifica a cada hora se o cliente ainda não respondeu',
+
+  followUpModo:
+    'Tom das mensagens de retomada. Suave = gentil e sem pressão, deixa o cliente no comando. Moderado = contextual e equilibrado, retoma de forma natural. Agressivo = cria urgência legítima e pede uma decisão. Ex.: use Suave para clientes frios e Agressivo para negociações avançadas próximas do fechamento',
+
+  followUpCooldownAtivo:
+    'Ativa um intervalo mínimo obrigatório entre dois follow-ups enviados para o mesmo lead. Evita que o agente apareça como insistente ou spam. Ex.: com cooldown ativo de 24 horas, o agente nunca manda dois follow-ups para a mesma pessoa no mesmo dia',
+
+  followUpCooldown:
+    'Tempo mínimo em minutos entre follow-ups consecutivos para o mesmo lead. Valor padrão recomendado: 1440 (24 horas). Ex.: 1440 minutos = 1 dia entre cada tentativa de retomada',
+
+  followUpDesativarAposEncerrar:
+    'Após esgotar todas as tentativas, marca o follow-up como inativo para este lead e remove o próximo agendamento. Garante que o agente não reinicie o ciclo automaticamente. Ex.: 3 tentativas sem resposta → ciclo de follow-up encerrado e não reiniciado para este lead',
+
+  // ── Follow-up C) Horários ────────────────────────────────────────────────────
+  followUpHorarioComercial:
+    'Restringe o envio de follow-ups à janela de horário e dias configurados abaixo. Fora do horário, o agente aguarda e reagenda automaticamente para o próximo slot permitido. Ex.: configurado para 08:00–22:00 → follow-up das 23:00 é enviado somente no dia seguinte às 08:00',
+
+  followUpHorario:
+    'Horário de início e fim da janela em que os follow-ups podem ser enviados. Use hora e minuto. Se o horário final for menor que o inicial, a janela atravessa a meia-noite. Ex.: 08:00 às 22:00 para horário comercial; 22:00 às 08:00 para janela noturna',
+
+  followUpDias:
+    'Dias da semana em que os follow-ups podem ser enviados, quando a restrição de horário comercial está ativa. Ex.: marcar Seg–Sex para evitar contato automático no fim de semana',
+
+  // ── Follow-up D) Regras de segurança ────────────────────────────────────────
+  followUpSlaAtivo:
+    'Quando ativo, o agente prioriza a retomada de leads que ficaram sem resposta por mais tempo do que o SLA configurado. Garante que nenhum cliente espere além do prazo acordado. Ex.: SLA de 4 horas — qualquer lead sem resposta há mais de 4h recebe prioridade máxima no follow-up',
+
+  followUpSla:
+    'Horas sem resposta que caracterizam uma violação de SLA para este agente. Após esse tempo, a tentativa de retomada recebe prioridade máxima. Ex.: 4 horas — cliente sem resposta por mais de 4h é tratado como urgente',
+
+  followUpRespeitarHumano:
+    'Bloqueia o follow-up automático quando um atendente humano está ativo na conversa — seja porque pausou o agente, está no modo humano ou respondeu recentemente. Evita interferência em atendimentos manuais em andamento. Ex.: corretor está respondendo o cliente no WhatsApp → agente pausa e aguarda',
+
+  followUpSoHumano:
+    'O agente só retoma automaticamente se um atendente humano estava respondendo e parou sem concluir. Ideal para recuperar leads abandonados após transferências. Ex.: atendente respondeu uma mensagem e desapareceu por horas — o agente volta para não perder o lead',
+
+  followUpBloquearRespondeu:
+    'Cancela o follow-up automaticamente se o cliente já respondeu depois que o job foi agendado. Evita que o agente envie uma mensagem desnecessária quando o cliente voltou por conta própria. Ex.: agente estava prestes a enviar o follow-up mas o cliente acabou de mandar "oi" — o job é cancelado',
+
+  followUpBloquearTarefa:
+    'Não envia follow-up se já houver uma tarefa manual de follow-up agendada no CRM para este lead. Evita duplicidade com ações manuais da equipe. Ex.: vendedor agendou uma ligação no CRM para amanhã → o agente não envia mensagem automática neste período',
+
+  followUpBloquearPerdido:
+    'Não envia follow-up para leads com status perdido, inativo, cancelado ou arquivado. Evita contato desnecessário com clientes que já saíram do funil. Ex.: lead marcado como "Perdido" → agente para de tentar retomá-lo automaticamente',
+
+  // ── Follow-up E) Inteligência ────────────────────────────────────────────────
+  followUpHistoricoWhatsapp:
+    'Inclui as mensagens anteriores do WhatsApp no contexto usado pela IA para gerar o follow-up. Torna as mensagens muito mais personalizadas e relevantes. Ex.: IA lembra que o cliente perguntou sobre o imóvel de 3 quartos e usa isso ao retomar a conversa',
+
+  followUpHistoricoCrm:
+    'Inclui informações do CRM — resumo do lead, notas, estágio no funil — no contexto da IA. Permite que o agente retome com inteligência sobre o histórico completo do cliente. Ex.: CRM registra que o cliente tem orçamento de R$ 500k → agente usa essa informação ao retomar',
+
+  followUpMetaForm:
+    'Inclui os dados preenchidos no formulário do Meta Lead Ads no contexto da IA. Permite personalizar o follow-up com o que o lead informou ao se cadastrar. Ex.: lead informou interesse em "apartamento 2 quartos" no formulário → agente menciona isso na retomada',
+
+  // ── Modo de resposta e voz ───────────────────────────────────────────────────
+  modoResposta:
+    'Define como o agente responde no WhatsApp. Texto = mensagens escritas normais. Áudio = o agente grava um áudio usando a voz configurada via ElevenLabs. Ex.: use Áudio para atendimentos mais pessoais, como consultoria ou vendas de alto valor',
+
+  vozAgente:
+    'Voz usada quando o modo Áudio está ativo. Ouça a prévia antes de salvar para garantir que soa natural para o seu negócio. Ex.: voz feminina formal para atendimento jurídico; voz masculina descontraída para suporte de TI',
+
+  previewIdioma:
+    'Idioma da prévia de voz exibida nesta tela. Não altera o idioma das respostas reais no WhatsApp — serve apenas para testar como a voz soa em diferentes idiomas.',
+
+  // ── Outros ──────────────────────────────────────────────────────────────────
+  simulacao:
+    'Testa como o agente responderia a uma conversa real, sem enviar nada no WhatsApp nem criar lead algum. Ideal para validar prompts e fluxos antes de ativar o agente. Ex.: simule uma conversa de compra para verificar se o agente está seguindo as instruções corretamente',
 } as const;

@@ -318,7 +318,7 @@ export function WizardStepFollowUpInteligente({
           onChange={(usarHorarioComercial) => setF({ usarHorarioComercial })}
         />
         <div className="px-3 py-4 sm:px-4">
-          <FieldTitle title="Fuso horário" help="Define como horaInicio e horaFim são interpretados. Padrão: UTC." className="mb-3" />
+          <FieldTitle title="Fuso horário" help="Define o fuso horário usado para interpretar os horários de início e fim da janela. Padrão: UTC. Ex.: selecione 'América/São Paulo' para que 08:00 signifique 8h no horário de Brasília" className="mb-3" />
           <PanelSelect
             disabled={!f.ativo || !f.usarHorarioComercial}
             value={f.timezone ?? "UTC"}

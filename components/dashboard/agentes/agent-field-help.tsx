@@ -86,7 +86,7 @@ export function FieldHelp({ content, className }: { content: string; className?:
         aria-label="Ajuda sobre este campo"
         aria-expanded={open}
         aria-describedby={open ? tooltipId : undefined}
-        className="inline-flex h-4 w-4 cursor-pointer items-center justify-center rounded-full bg-[#f24400] text-[9px] font-bold leading-none text-white transition-colors duration-150 hover:bg-[#c93800] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#f24400]/40"
+        className="inline-flex h-4 w-4 cursor-pointer items-center justify-center rounded-full bg-[#f24400] text-[9px] font-bold leading-none text-white transition-all duration-150 hover:scale-110 hover:bg-[#d93e00] hover:shadow-[0_0_0_3px_rgba(242,68,0,0.2)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#f24400]/40"
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -102,16 +102,23 @@ export function FieldHelp({ content, className }: { content: string; className?:
           id={tooltipId}
           role="tooltip"
           data-placement={placement}
-          className="field-help-tooltip fixed z-[200] max-w-[260px] rounded-[10px] border border-[rgba(242,68,0,0.3)] bg-[#1a1a1a] px-[14px] py-3 text-white opacity-0 shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
+          className="field-help-tooltip fixed z-[200] max-w-[290px] overflow-hidden rounded-xl border border-white/[0.08] bg-[#1c1c1c] px-4 py-3.5 opacity-0 shadow-[0_16px_40px_rgba(0,0,0,0.7),0_4px_16px_rgba(0,0,0,0.5)]"
           style={tooltipStyle ?? { left: -9999, top: -9999 }}
         >
-          <span className="block text-xs leading-[1.5] text-white">{description}</span>
-          {example ? <span className="mt-1.5 block text-[11px] italic leading-[1.5] text-[#f24400]">Ex.: {example}</span> : null}
+          {/* accent bar */}
+          <span aria-hidden className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-[#f24400] via-[#f24400]/50 to-transparent" />
+          <span className="block text-[12.5px] leading-relaxed text-[#e0e0e0]">{description}</span>
+          {example ? (
+            <span className="mt-2.5 block border-t border-white/[0.07] pt-2">
+              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#f24400]/70">Exemplo</span>
+              <span className="mt-0.5 block text-[11.5px] leading-[1.5] text-[#b0b0b0]">{example}</span>
+            </span>
+          ) : null}
         </span>
       ) : null}
       <style jsx>{`
         .field-help-tooltip {
-          animation: field-help-fade-slide 150ms ease-out forwards;
+          animation: field-help-fade-slide 160ms ease-out forwards;
         }
 
         .field-help-tooltip::before,
@@ -128,34 +135,34 @@ export function FieldHelp({ content, className }: { content: string; className?:
           top: -7px;
           border-left: 6px solid transparent;
           border-right: 6px solid transparent;
-          border-bottom: 6px solid rgba(242, 68, 0, 0.3);
+          border-bottom: 6px solid rgba(255, 255, 255, 0.08);
         }
 
         .field-help-tooltip[data-placement="bottom"]::after {
           top: -5px;
           border-left: 5px solid transparent;
           border-right: 5px solid transparent;
-          border-bottom: 5px solid #1a1a1a;
+          border-bottom: 5px solid #1c1c1c;
         }
 
         .field-help-tooltip[data-placement="top"]::before {
           bottom: -7px;
           border-left: 6px solid transparent;
           border-right: 6px solid transparent;
-          border-top: 6px solid rgba(242, 68, 0, 0.3);
+          border-top: 6px solid rgba(255, 255, 255, 0.08);
         }
 
         .field-help-tooltip[data-placement="top"]::after {
           bottom: -5px;
           border-left: 5px solid transparent;
           border-right: 5px solid transparent;
-          border-top: 5px solid #1a1a1a;
+          border-top: 5px solid #1c1c1c;
         }
 
         @keyframes field-help-fade-slide {
           from {
             opacity: 0;
-            transform: translateY(4px);
+            transform: translateY(5px);
           }
           to {
             opacity: 1;
