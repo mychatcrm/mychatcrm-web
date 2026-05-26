@@ -86,7 +86,7 @@ export function FieldHelp({ content, className }: { content: string; className?:
         aria-label="Ajuda sobre este campo"
         aria-expanded={open}
         aria-describedby={open ? tooltipId : undefined}
-        className="inline-flex h-[15px] w-[15px] cursor-pointer items-center justify-center rounded-full border border-[#f24400] bg-transparent text-[9px] font-semibold leading-none text-[#f24400] transition-all duration-200 hover:scale-110 hover:bg-[#f24400]/10 hover:shadow-[0_0_0_3px_rgba(242,68,0,0.15)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#f24400]/40"
+        className="inline-flex h-[15px] w-[15px] cursor-pointer items-center justify-center rounded-full border-2 border-[#f24400] !bg-transparent text-[9px] font-semibold leading-none !text-[#f24400] transition-all duration-200 hover:scale-110 hover:bg-[#f24400]/10 hover:shadow-[0_0_0_3px_rgba(242,68,0,0.15)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#f24400]/40"
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
