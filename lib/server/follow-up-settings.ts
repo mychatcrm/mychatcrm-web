@@ -9,7 +9,9 @@ export const DEFAULT_FOLLOW_UP_INTELIGENTE: AgentFollowUpInteligente = {
   cooldownMinutos: 24 * 60,
   usarHorarioComercial: true,
   horaInicio: 8,
+  minutoInicio: 0,
   horaFim: 18,
+  minutoFim: 0,
   diasAtivos: [1, 2, 3, 4, 5],
   respeitarHumanoAtivo: true,
   retomadaApenasSeHumanoAbandonou: false,
@@ -49,6 +51,8 @@ export function followUpInteligenteFromMetadata(
       : Number(slaRaw);
   const horaInicio = Number(src.horaInicio);
   const horaFim = Number(src.horaFim);
+  const minutoInicio = Number(src.minutoInicio ?? 0);
+  const minutoFim = Number(src.minutoFim ?? 0);
 
   const validModos = new Set<string>(["agressivo", "moderado", "suave"]);
   const modo =
@@ -81,10 +85,18 @@ export function followUpInteligenteFromMetadata(
       Number.isFinite(horaInicio) && horaInicio >= 0 && horaInicio <= 23
         ? Math.round(horaInicio)
         : defaults.horaInicio,
+    minutoInicio:
+      Number.isFinite(minutoInicio) && minutoInicio >= 0 && minutoInicio <= 59
+        ? Math.round(minutoInicio)
+        : 0,
     horaFim:
       Number.isFinite(horaFim) && horaFim >= 0 && horaFim <= 23
         ? Math.round(horaFim)
         : defaults.horaFim,
+    minutoFim:
+      Number.isFinite(minutoFim) && minutoFim >= 0 && minutoFim <= 59
+        ? Math.round(minutoFim)
+        : 0,
     diasAtivos,
     respeitarHumanoAtivo: bool(src, "respeitarHumanoAtivo", defaults.respeitarHumanoAtivo),
     retomadaApenasSeHumanoAbandonou: bool(

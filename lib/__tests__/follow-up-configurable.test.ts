@@ -4,6 +4,7 @@ import {
   buildFollowUpAiInstruction,
   evaluateFollowUpNeed,
   isWithinBusinessHours,
+  nextBusinessHourStart,
   type FollowUpEvalContext,
 } from "@/lib/server/follow-up-engine";
 import type { AgentFollowUpInteligente } from "@/lib/types";
@@ -433,5 +434,111 @@ describe("business hours bypass — cron roda depois do slot agendado", () => {
     const d = evaluateFollowUpNeed(ctx);
     expect(d.shouldSend).toBe(false);
     expect(d.humanBlocked).toBe(true);
+  });
+});
+
+// ─── Janela de envio com minutos ─────────────────────────────────────────────
+//
+// horaInicio/horaFim mantêm compatibilidade como inteiros (0-23).
+// Novos campos opcionais minutoInicio/minutoFim (0-59, fallback 0) permitem
+// configurar e.g. 08:30 às 22:45.
+
+describe("janela de envio com minutos", () => {
+  // Janela: 08:30–22:45 UTC, seg-sex
+  const settingsMin = {
+    horaInicio: 8,
+    minutoInicio: 30,
+    horaFim: 22,
+    minutoFim: 45,
+    diasAtivos: [1, 2, 3, 4, 5] as number[],
+    timezone: "UTC",
+  };
+
+  it("08:29 UTC → antes do início (08:30) → bloqueado", () => {
+    const date = new Date("2026-05-22T08:29:00.000Z"); // sexta 08:29
+    expect(isWithinBusinessHours(date, settingsMin)).toBe(false);
+  });
+
+  it("08:30 UTC → exatamente no início → permitido", () => {
+    const date = new Date("2026-05-22T08:30:00.000Z"); // sexta 08:30
+    expect(isWithinBusinessHours(date, settingsMin)).toBe(true);
+  });
+
+  it("08:31 UTC → depois do início → permitido", () => {
+    const date = new Date("2026-05-22T08:31:00.000Z");
+    expect(isWithinBusinessHours(date, settingsMin)).toBe(true);
+  });
+
+  it("22:44 UTC → antes do fim (22:45) → permitido", () => {
+    const date = new Date("2026-05-22T22:44:00.000Z"); // sexta 22:44
+    expect(isWithinBusinessHours(date, settingsMin)).toBe(true);
+  });
+
+  it("22:45 UTC → exatamente no fim → bloqueado (exclusivo)", () => {
+    const date = new Date("2026-05-22T22:45:00.000Z"); // sexta 22:45
+    expect(isWithinBusinessHours(date, settingsMin)).toBe(false);
+  });
+
+  it("22:46 UTC → depois do fim → bloqueado", () => {
+    const date = new Date("2026-05-22T22:46:00.000Z");
+    expect(isWithinBusinessHours(date, settingsMin)).toBe(false);
+  });
+
+  it("backward compat: sem minutoInicio/minutoFim → fallback 0, comportamento igual ao anterior", () => {
+    // { horaInicio: 8, horaFim: 18 } sem minutos → equivale a 08:00–18:00
+    const inside = new Date("2026-05-22T10:00:00.000Z"); // 10:00 UTC sexta
+    const atEnd = new Date("2026-05-22T18:00:00.000Z"); // 18:00 UTC (exclusivo)
+    const cfg = { horaInicio: 8, horaFim: 18, diasAtivos: [1, 2, 3, 4, 5] as number[] };
+    expect(isWithinBusinessHours(inside, cfg)).toBe(true);
+    expect(isWithinBusinessHours(atEnd, cfg)).toBe(false);
+  });
+
+  it("minutoInicio=0, minutoFim=0 explícitos → equivalente ao backward compat", () => {
+    const cfg = { horaInicio: 8, minutoInicio: 0, horaFim: 18, minutoFim: 0, diasAtivos: [1, 2, 3, 4, 5] as number[] };
+    const atStart = new Date("2026-05-22T08:00:00.000Z");
+    const beforeStart = new Date("2026-05-22T07:59:00.000Z");
+    expect(isWithinBusinessHours(atStart, cfg)).toBe(true);
+    expect(isWithinBusinessHours(beforeStart, cfg)).toBe(false);
+  });
+
+  it("nextBusinessHourStart retorna 08:30 quando now=08:25 e início é 08:30", () => {
+    const now = new Date("2026-05-22T08:25:00.000Z"); // sexta 08:25
+    const next = nextBusinessHourStart(now, settingsMin);
+    // Deve retornar exatamente 08:30 (5 passos de 1 minuto)
+    expect(next.getUTCHours()).toBe(8);
+    expect(next.getUTCMinutes()).toBe(30);
+  });
+
+  it("nextBusinessHourStart após fim da janela retorna 08:30 do dia seguinte útil", () => {
+    // 22:50 UTC sexta → próxima janela é segunda 08:30 UTC (sábado/domingo fora)
+    const now = new Date("2026-05-22T22:50:00.000Z"); // sexta 22:50
+    const next = nextBusinessHourStart(now, settingsMin);
+    expect(next.getUTCDay()).toBe(1); // segunda
+    expect(next.getUTCHours()).toBe(8);
+    expect(next.getUTCMinutes()).toBe(30);
+  });
+
+  it("America/Sao_Paulo: 11:25 UTC (= 08:25 BRT) com janela 08:30 BRT → bloqueado", () => {
+    // BRT = UTC-3; 11:25Z = 08:25 BRT → antes de 08:30 → false
+    const date = new Date("2026-05-22T11:25:00.000Z");
+    const cfg = {
+      horaInicio: 8, minutoInicio: 30,
+      horaFim: 22, minutoFim: 0,
+      diasAtivos: [1, 2, 3, 4, 5] as number[],
+      timezone: "America/Sao_Paulo",
+    };
+    expect(isWithinBusinessHours(date, cfg)).toBe(false);
+  });
+
+  it("America/Sao_Paulo: 11:35 UTC (= 08:35 BRT) com janela 08:30 BRT → permitido", () => {
+    // BRT = UTC-3; 11:35Z = 08:35 BRT → depois de 08:30 → true
+    const date = new Date("2026-05-22T11:35:00.000Z");
+    const cfg = {
+      horaInicio: 8, minutoInicio: 30,
+      horaFim: 22, minutoFim: 0,
+      diasAtivos: [1, 2, 3, 4, 5] as number[],
+      timezone: "America/Sao_Paulo",
+    };
+    expect(isWithinBusinessHours(date, cfg)).toBe(true);
   });
 });

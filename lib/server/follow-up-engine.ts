@@ -63,15 +63,16 @@ function clampPriority(n: number): 1 | 2 | 3 | 4 | 5 {
   return Math.max(1, Math.min(5, Math.round(n))) as 1 | 2 | 3 | 4 | 5;
 }
 
-/** Returns the local hour (0-23) and weekday (0=Sun … 6=Sat) in the given IANA timezone. */
-function getLocalHourAndDay(date: Date, timezone: string): { hour: number; day: number } {
+/** Returns the local hour (0-23), minute (0-59) and weekday (0=Sun … 6=Sat) in the given IANA timezone. */
+function getLocalTimeComponents(date: Date, timezone: string): { hour: number; minute: number; day: number } {
   if (timezone === "UTC") {
-    return { hour: date.getUTCHours(), day: date.getUTCDay() };
+    return { hour: date.getUTCHours(), minute: date.getUTCMinutes(), day: date.getUTCDay() };
   }
   try {
     const parts = new Intl.DateTimeFormat("en-US", {
       timeZone: timezone,
       hour: "numeric",
+      minute: "2-digit",
       hour12: false,
       year: "numeric",
       month: "2-digit",
@@ -79,43 +80,55 @@ function getLocalHourAndDay(date: Date, timezone: string): { hour: number; day: 
     }).formatToParts(date);
 
     const hourStr = parts.find((p) => p.type === "hour")?.value ?? "";
+    const minuteStr = parts.find((p) => p.type === "minute")?.value ?? "";
     const monthStr = parts.find((p) => p.type === "month")?.value ?? "";
     const dayStr = parts.find((p) => p.type === "day")?.value ?? "";
     const yearStr = parts.find((p) => p.type === "year")?.value ?? "";
 
     let hour = parseInt(hourStr, 10);
-    if (isNaN(hour)) return { hour: date.getUTCHours(), day: date.getUTCDay() };
+    if (isNaN(hour)) return { hour: date.getUTCHours(), minute: date.getUTCMinutes(), day: date.getUTCDay() };
     if (hour === 24) hour = 0; // some runtimes return 24 for midnight
+
+    const minute = parseInt(minuteStr, 10);
+    const localMinute = isNaN(minute) ? date.getUTCMinutes() : minute;
 
     // Build the calendar date string (ISO format → always parsed as UTC midnight)
     const localDate = new Date(`${yearStr}-${monthStr}-${dayStr}`);
     const weekday = isNaN(localDate.getTime()) ? date.getUTCDay() : localDate.getUTCDay();
 
-    return { hour, day: weekday };
+    return { hour, minute: localMinute, day: weekday };
   } catch {
     // Invalid timezone — fall back to UTC
-    return { hour: date.getUTCHours(), day: date.getUTCDay() };
+    return { hour: date.getUTCHours(), minute: date.getUTCMinutes(), day: date.getUTCDay() };
   }
+}
+
+/** Converts hours + minutes to total minutes since midnight for range comparisons. */
+function toTotalMinutes(hour: number, minute: number): number {
+  return hour * 60 + minute;
 }
 
 export function isWithinBusinessHours(
   now: Date,
-  settings: Pick<AgentFollowUpInteligente, "horaInicio" | "horaFim" | "diasAtivos" | "timezone">,
+  settings: Pick<AgentFollowUpInteligente, "horaInicio" | "minutoInicio" | "horaFim" | "minutoFim" | "diasAtivos" | "timezone">,
 ): boolean {
   const tz = settings.timezone ?? "UTC";
-  const { hour, day } = getLocalHourAndDay(now, tz);
+  const { hour, minute, day } = getLocalTimeComponents(now, tz);
   if (settings.diasAtivos.length > 0 && !settings.diasAtivos.includes(day)) return false;
-  return hour >= settings.horaInicio && hour < settings.horaFim;
+  const nowMinutes = toTotalMinutes(hour, minute);
+  const startMinutes = toTotalMinutes(settings.horaInicio, settings.minutoInicio ?? 0);
+  const endMinutes = toTotalMinutes(settings.horaFim, settings.minutoFim ?? 0);
+  return nowMinutes >= startMinutes && nowMinutes < endMinutes;
 }
 
 export function nextBusinessHourStart(
   now: Date,
-  settings: Pick<AgentFollowUpInteligente, "horaInicio" | "horaFim" | "diasAtivos" | "timezone">,
+  settings: Pick<AgentFollowUpInteligente, "horaInicio" | "minutoInicio" | "horaFim" | "minutoFim" | "diasAtivos" | "timezone">,
 ): Date {
-  // Iterate 1-hour steps (max 8 days) to find the next window that passes isWithinBusinessHours.
-  // This correctly handles DST transitions and day-boundary effects in any timezone.
-  for (let h = 1; h <= 192; h++) {
-    const candidate = new Date(now.getTime() + h * 3_600_000);
+  // Iterate 1-minute steps (max 8 days = 11 520 iterations) to find the next window.
+  // This correctly handles minute-level precision, DST transitions and timezone shifts.
+  for (let m = 1; m <= 8 * 24 * 60; m++) {
+    const candidate = new Date(now.getTime() + m * 60_000);
     if (isWithinBusinessHours(candidate, settings)) return candidate;
   }
   return new Date(now.getTime() + 24 * 3_600_000);

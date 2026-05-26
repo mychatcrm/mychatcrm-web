@@ -22,6 +22,12 @@ function parseHour(raw: string, fallback: number) {
   return n;
 }
 
+function parseMinute(raw: string, fallback: number) {
+  const n = parseInt(raw, 10);
+  if (Number.isNaN(n) || n < 0 || n > 59) return fallback;
+  return n;
+}
+
 const COMMON_TIMEZONES: { label: string; value: string }[] = [
   { label: "UTC (padrão)", value: "UTC" },
   { label: "América/São Paulo (BRT, UTC-3)", value: "America/Sao_Paulo" },
@@ -338,10 +344,21 @@ export function WizardStepFollowUpInteligente({
               onChange={(e) => setF({ horaInicio: parseHour(e.target.value, f.horaInicio) })}
               className="w-[4.5rem] min-h-10 shrink-0 py-2"
             />
-            <span className="text-sm text-content-muted">às</span>
+            <span className="text-sm text-content-muted">h</span>
             <Input
               type="number"
-              min={1}
+              min={0}
+              max={59}
+              step={5}
+              disabled={!f.ativo || !f.usarHorarioComercial}
+              value={f.minutoInicio ?? 0}
+              onChange={(e) => setF({ minutoInicio: parseMinute(e.target.value, f.minutoInicio ?? 0) })}
+              className="w-[4.5rem] min-h-10 shrink-0 py-2"
+            />
+            <span className="text-sm text-content-muted">min às</span>
+            <Input
+              type="number"
+              min={0}
               max={23}
               disabled={!f.ativo || !f.usarHorarioComercial}
               value={f.horaFim}
@@ -349,6 +366,17 @@ export function WizardStepFollowUpInteligente({
               className="w-[4.5rem] min-h-10 shrink-0 py-2"
             />
             <span className="text-sm text-content-muted">h</span>
+            <Input
+              type="number"
+              min={0}
+              max={59}
+              step={5}
+              disabled={!f.ativo || !f.usarHorarioComercial}
+              value={f.minutoFim ?? 0}
+              onChange={(e) => setF({ minutoFim: parseMinute(e.target.value, f.minutoFim ?? 0) })}
+              className="w-[4.5rem] min-h-10 shrink-0 py-2"
+            />
+            <span className="text-sm text-content-muted">min</span>
           </div>
         </div>
         <div className="px-3 py-4 sm:px-4">

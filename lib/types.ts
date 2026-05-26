@@ -176,7 +176,11 @@ export interface AgentFollowUpInteligente {
   /** Restringir envios à janela horária/dias configurados. */
   usarHorarioComercial: boolean;
   horaInicio: number;
+  /** Minutos do início da janela (0-59). Padrão: 0. */
+  minutoInicio?: number;
   horaFim: number;
+  /** Minutos do fim da janela (0-59). Padrão: 0. */
+  minutoFim?: number;
   diasAtivos: number[];
   /** Bloquear quando humano pausou, modo humano ou humano respondeu recentemente. */
   respeitarHumanoAtivo: boolean;
