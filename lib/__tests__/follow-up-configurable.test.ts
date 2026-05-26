@@ -702,3 +702,149 @@ describe("followUpIsActive — observabilidade de crash no processFollowUpJob", 
     expect(parsed.ativo).toBe(true); // followUpIsActive = true → crash registrado
   });
 });
+
+describe("retomadaHumanoTempoValor / retomadaHumanoTempoUnidade", () => {
+  const now = new Date("2026-05-22T12:00:00.000Z");
+
+  function makeSettings(overrides: Partial<AgentFollowUpInteligente> = {}): AgentFollowUpInteligente {
+    return {
+      ...DEFAULT_FOLLOW_UP_INTELIGENTE,
+      ativo: true,
+      cooldownAtivo: false,
+      usarHorarioComercial: false,
+      bloquearSeLeadRespondeu: false,
+      respeitarHumanoAtivo: false,
+      ...overrides,
+    };
+  }
+
+  function makeHumanCtx(
+    settings: AgentFollowUpInteligente,
+    lastHumanSilentMs: number,
+  ): FollowUpEvalContext {
+    const lastHumanOutboundAt = new Date(now.getTime() - lastHumanSilentMs);
+    return makeCtx(settings, { now, lastHumanOutboundAt });
+  }
+
+  // 1. Toggle desativado → comportamento normal (shouldSend=true)
+  it("retomadaApenasSeHumanoAbandonou=false → shouldSend=true (comportamento inalterado)", () => {
+    const s = makeSettings({ retomadaApenasSeHumanoAbandonou: false });
+    const d = evaluateFollowUpNeed(makeCtx(s, { now }));
+    expect(d.shouldSend).toBe(true);
+  });
+
+  // 2. Toggle ativo + retomadaHumanoTempoValor=null → sem bloqueio por timeout
+  it("ON + retomadaHumanoTempoValor=null → shouldSend=true (sem restrição de tempo)", () => {
+    const s = makeSettings({
+      retomadaApenasSeHumanoAbandonou: true,
+      retomadaHumanoTempoValor: null,
+    });
+    const d = evaluateFollowUpNeed(makeHumanCtx(s, 30 * 60_000)); // humano silente há 30 min
+    expect(d.shouldSend).toBe(true);
+    expect(d.skipReason).toBeNull();
+  });
+
+  // 3. ON + 2h, humano silente há 1h → bloqueado
+  it("ON + 2h, humano silente 1h → skipReason='humano_nao_abandonou_ainda'", () => {
+    const s = makeSettings({
+      retomadaApenasSeHumanoAbandonou: true,
+      retomadaHumanoTempoValor: 2,
+      retomadaHumanoTempoUnidade: "horas",
+    });
+    const d = evaluateFollowUpNeed(makeHumanCtx(s, 1 * 3_600_000)); // 1h
+    expect(d.shouldSend).toBe(false);
+    expect(d.skipReason).toBe("humano_nao_abandonou_ainda");
+  });
+
+  // 4. ON + 2h, humano silente há 3h → permitido
+  it("ON + 2h, humano silente 3h → shouldSend=true", () => {
+    const s = makeSettings({
+      retomadaApenasSeHumanoAbandonou: true,
+      retomadaHumanoTempoValor: 2,
+      retomadaHumanoTempoUnidade: "horas",
+    });
+    const d = evaluateFollowUpNeed(makeHumanCtx(s, 3 * 3_600_000)); // 3h
+    expect(d.shouldSend).toBe(true);
+    expect(d.skipReason).toBeNull();
+  });
+
+  // 5. ON + 1 dia, silente 23h → bloqueado
+  it("ON + 1 dia, humano silente 23h → skipReason='humano_nao_abandonou_ainda'", () => {
+    const s = makeSettings({
+      retomadaApenasSeHumanoAbandonou: true,
+      retomadaHumanoTempoValor: 1,
+      retomadaHumanoTempoUnidade: "dias",
+    });
+    const d = evaluateFollowUpNeed(makeHumanCtx(s, 23 * 3_600_000)); // 23h
+    expect(d.shouldSend).toBe(false);
+    expect(d.skipReason).toBe("humano_nao_abandonou_ainda");
+  });
+
+  // 6. ON + 1 dia, silente 25h → permitido
+  it("ON + 1 dia, humano silente 25h → shouldSend=true", () => {
+    const s = makeSettings({
+      retomadaApenasSeHumanoAbandonou: true,
+      retomadaHumanoTempoValor: 1,
+      retomadaHumanoTempoUnidade: "dias",
+    });
+    const d = evaluateFollowUpNeed(makeHumanCtx(s, 25 * 3_600_000)); // 25h
+    expect(d.shouldSend).toBe(true);
+    expect(d.skipReason).toBeNull();
+  });
+
+  // 7. ON + 30min, silente 29min → bloqueado
+  it("ON + 30min, humano silente 29min → skipReason='humano_nao_abandonou_ainda'", () => {
+    const s = makeSettings({
+      retomadaApenasSeHumanoAbandonou: true,
+      retomadaHumanoTempoValor: 30,
+      retomadaHumanoTempoUnidade: "minutos",
+    });
+    const d = evaluateFollowUpNeed(makeHumanCtx(s, 29 * 60_000)); // 29min
+    expect(d.shouldSend).toBe(false);
+    expect(d.skipReason).toBe("humano_nao_abandonou_ainda");
+  });
+
+  // 8. ON + 30min, silente 31min → permitido
+  it("ON + 30min, humano silente 31min → shouldSend=true", () => {
+    const s = makeSettings({
+      retomadaApenasSeHumanoAbandonou: true,
+      retomadaHumanoTempoValor: 30,
+      retomadaHumanoTempoUnidade: "minutos",
+    });
+    const d = evaluateFollowUpNeed(makeHumanCtx(s, 31 * 60_000)); // 31min
+    expect(d.shouldSend).toBe(true);
+    expect(d.skipReason).toBeNull();
+  });
+
+  // 9. Config antiga sem os novos campos → parser retorna null → sem bloqueio
+  it("config antiga (sem retomadaHumanoTempoValor) → parser retorna null → shouldSend=true", () => {
+    const parsed = followUpInteligenteFromMetadata({
+      followUpInteligente: {
+        ativo: true,
+        retomadaApenasSeHumanoAbandonou: true,
+        cooldownAtivo: false,
+        usarHorarioComercial: false,
+        bloquearSeLeadRespondeu: false,
+        respeitarHumanoAtivo: false,
+        // retomadaHumanoTempoValor ausente intencionalmente
+      },
+    });
+    expect(parsed.retomadaHumanoTempoValor).toBeNull();
+    const d = evaluateFollowUpNeed(makeHumanCtx(parsed, 30 * 60_000)); // 30min de silêncio
+    expect(d.shouldSend).toBe(true); // null → sem bloqueio
+  });
+
+  // 10. SLA desligado + toggle ON + timeout passou → shouldSend=true, sem conflito
+  it("SLA desligado + ON + timeout 2h passado (silente 3h) → shouldSend=true, sem conflito com SLA", () => {
+    const s = makeSettings({
+      retomadaApenasSeHumanoAbandonou: true,
+      retomadaHumanoTempoValor: 2,
+      retomadaHumanoTempoUnidade: "horas",
+      permitirSlaVencido: false,
+      slaHorasResposta: null,
+    });
+    const d = evaluateFollowUpNeed(makeHumanCtx(s, 3 * 3_600_000)); // silente 3h
+    expect(d.shouldSend).toBe(true);
+    expect(d.skipReason).toBeNull();
+  });
+});

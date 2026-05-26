@@ -25,6 +25,8 @@ export const DEFAULT_FOLLOW_UP_INTELIGENTE: AgentFollowUpInteligente = {
   usarHistoricoCrm: true,
   usarHistoricoWhatsapp: true,
   timezone: "UTC",
+  retomadaHumanoTempoValor: null,   // null = sem restrição (retrocompatível)
+  retomadaHumanoTempoUnidade: "horas" as const,
 };
 
 function bool(src: Record<string, unknown>, key: string, fallback: boolean): boolean {
@@ -118,6 +120,16 @@ export function followUpInteligenteFromMetadata(
     usarHistoricoCrm: bool(src, "usarHistoricoCrm", defaults.usarHistoricoCrm),
     usarHistoricoWhatsapp: bool(src, "usarHistoricoWhatsapp", defaults.usarHistoricoWhatsapp),
     timezone: parseTimezone(src.timezone),
+    // null = sem restrição de tempo para abandono humano (retrocompatível com configs antigas).
+    retomadaHumanoTempoValor:
+      typeof src.retomadaHumanoTempoValor === "number" && Number.isFinite(src.retomadaHumanoTempoValor)
+        ? Math.max(1, Math.round(src.retomadaHumanoTempoValor))
+        : null,
+    retomadaHumanoTempoUnidade: (["minutos", "horas", "dias"] as const).includes(
+      src.retomadaHumanoTempoUnidade as "minutos" | "horas" | "dias",
+    )
+      ? (src.retomadaHumanoTempoUnidade as "minutos" | "horas" | "dias")
+      : "horas",
   };
 }
 

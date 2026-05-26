@@ -63,6 +63,13 @@ function clampPriority(n: number): 1 | 2 | 3 | 4 | 5 {
   return Math.max(1, Math.min(5, Math.round(n))) as 1 | 2 | 3 | 4 | 5;
 }
 
+/** Converts retomadaHumanoTempoValor + unidade to milliseconds. */
+function retomadaHumanoMs(valor: number, unidade: "minutos" | "horas" | "dias"): number {
+  if (unidade === "minutos") return valor * 60_000;
+  if (unidade === "dias") return valor * 86_400_000;
+  return valor * 3_600_000; // horas (default)
+}
+
 /** Returns the local hour (0-23), minute (0-59) and weekday (0=Sun … 6=Sat) in the given IANA timezone. */
 function getLocalTimeComponents(date: Date, timezone: string): { hour: number; minute: number; day: number } {
   if (timezone === "UTC") {
@@ -243,6 +250,13 @@ export function evaluateFollowUpNeed(ctx: FollowUpEvalContext): FollowUpDecision
     const lastHumanTs = ctx.lastHumanOutboundAt.getTime();
     if (lastAgentTs > lastHumanTs) {
       return { ...base, skipReason: "agent_responded_after_human" };
+    }
+    // Only applies when user explicitly configured a timeout (null = no restriction, backward-compatible):
+    if (settings.retomadaHumanoTempoValor != null) {
+      const timeoutMs = retomadaHumanoMs(settings.retomadaHumanoTempoValor, settings.retomadaHumanoTempoUnidade ?? "horas");
+      if (now.getTime() - lastHumanTs < timeoutMs) {
+        return { ...base, skipReason: "humano_nao_abandonou_ainda" };
+      }
     }
   }
 

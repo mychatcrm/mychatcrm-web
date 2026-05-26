@@ -28,6 +28,8 @@ function parseMinute(raw: string, fallback: number) {
   return n;
 }
 
+const maxRetomada = { minutos: 10080, horas: 168, dias: 30 } as const;
+
 const COMMON_TIMEZONES: { label: string; value: string }[] = [
   { label: "UTC (padrão)", value: "UTC" },
   { label: "América/São Paulo (BRT, UTC-3)", value: "America/Sao_Paulo" },
@@ -428,6 +430,47 @@ export function WizardStepFollowUpInteligente({
           disabled={!f.ativo}
           onChange={(retomadaApenasSeHumanoAbandonou) => setF({ retomadaApenasSeHumanoAbandonou })}
         />
+        {f.retomadaApenasSeHumanoAbandonou && f.ativo ? (
+          <div className="px-3 py-4 sm:px-4">
+            <FieldTitle title="Retomar após" help={AGENT_FIELD_HELP.followUpRetomadaApos} className="mb-3" />
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                type="number"
+                min={1}
+                max={maxRetomada[f.retomadaHumanoTempoUnidade ?? "horas"]}
+                placeholder="ex: 2"
+                value={f.retomadaHumanoTempoValor ?? ""}
+                onChange={(e) =>
+                  setF({
+                    retomadaHumanoTempoValor:
+                      e.target.value === ""
+                        ? null
+                        : parsePositiveInt(
+                            e.target.value,
+                            f.retomadaHumanoTempoValor ?? 2,
+                            maxRetomada[f.retomadaHumanoTempoUnidade ?? "horas"],
+                          ),
+                  })
+                }
+                className="w-[5.75rem] min-h-10 shrink-0 py-2"
+              />
+              <PanelSelect
+                value={f.retomadaHumanoTempoUnidade ?? "horas"}
+                onChange={(e) =>
+                  setF({ retomadaHumanoTempoUnidade: e.target.value as "minutos" | "horas" | "dias" })
+                }
+                className="w-28"
+              >
+                <option value="minutos">minutos</option>
+                <option value="horas">horas</option>
+                <option value="dias">dias</option>
+              </PanelSelect>
+            </div>
+            <p className="mt-2 text-xs text-content-muted">
+              Deixe em branco para não aplicar restrição de tempo.
+            </p>
+          </div>
+        ) : null}
         <ToggleRow
           title="Bloquear se o lead respondeu"
           help={AGENT_FIELD_HELP.followUpBloquearRespondeu}
