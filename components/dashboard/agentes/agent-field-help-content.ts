@@ -146,7 +146,10 @@ export const AGENT_FIELD_HELP = {
     'Bloqueia o follow-up automático quando um atendente humano está ativo na conversa — seja porque pausou o agente, está no modo humano ou respondeu recentemente. Evita interferência em atendimentos manuais em andamento. Ex.: corretor está respondendo o cliente no WhatsApp → agente pausa e aguarda',
 
   followUpSoHumano:
-    'O agente só retoma automaticamente se um atendente humano estava respondendo e parou sem concluir. Ideal para recuperar leads abandonados após transferências. Ex.: atendente respondeu uma mensagem e desapareceu por horas — o agente volta para não perder o lead',
+    'O agente só retoma automaticamente se um atendente humano estava respondendo e ficou sem responder pelo tempo configurado abaixo. Ideal para recuperar leads abandonados após transferências. Ex.: atendente assumiu o chat e desapareceu — o agente volta após o tempo configurado',
+
+  followUpRetomadaApos:
+    'Tempo mínimo sem resposta do atendente para o agente retomar a conversa. Só vale quando "Retomar só se humano abandonou" está ativo. Ex.: 2 horas — se o atendente não responder em 2 horas, o agente volta a falar com o cliente',
 
   followUpBloquearRespondeu:
     'Cancela o follow-up automaticamente se o cliente já respondeu depois que o job foi agendado. Evita que o agente envie uma mensagem desnecessária quando o cliente voltou por conta própria. Ex.: agente estava prestes a enviar o follow-up mas o cliente acabou de mandar "oi" — o job é cancelado',

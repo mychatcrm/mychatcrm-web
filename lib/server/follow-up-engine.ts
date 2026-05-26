@@ -63,6 +63,13 @@ function clampPriority(n: number): 1 | 2 | 3 | 4 | 5 {
   return Math.max(1, Math.min(5, Math.round(n))) as 1 | 2 | 3 | 4 | 5;
 }
 
+/** Converts a human-abandonment threshold (value + unit) to milliseconds. */
+function humanAbandonedMs(valor: number, unidade: "minutos" | "horas" | "dias"): number {
+  if (unidade === "minutos") return valor * 60_000;
+  if (unidade === "dias") return valor * 86_400_000;
+  return valor * 3_600_000; // horas (default)
+}
+
 /** Returns the local hour (0-23), minute (0-59) and weekday (0=Sun … 6=Sat) in the given IANA timezone. */
 function getLocalTimeComponents(date: Date, timezone: string): { hour: number; minute: number; day: number } {
   if (timezone === "UTC") {
@@ -239,10 +246,22 @@ export function evaluateFollowUpNeed(ctx: FollowUpEvalContext): FollowUpDecision
     if (!ctx.lastHumanOutboundAt) {
       return { ...base, skipReason: "retomada_apenas_humano_sem_historico" };
     }
-    const lastAgentTs = ctx.lastAgentMessageAt?.getTime() ?? 0;
     const lastHumanTs = ctx.lastHumanOutboundAt.getTime();
+    const lastAgentTs = ctx.lastAgentMessageAt?.getTime() ?? 0;
     if (lastAgentTs > lastHumanTs) {
       return { ...base, skipReason: "agent_responded_after_human" };
+    }
+    // Cliente respondeu DEPOIS do humano → humano não abandonou
+    if (ctx.lastCustomerMessageAt && ctx.lastCustomerMessageAt.getTime() > lastHumanTs) {
+      return { ...base, skipReason: "cliente_respondeu_apos_humano" };
+    }
+    // Timeout de abandono ainda não passou
+    const abandonadoMs = humanAbandonedMs(
+      settings.retomadaAposValor ?? 2,
+      settings.retomadaAposUnidade ?? "horas",
+    );
+    if (now.getTime() - lastHumanTs < abandonadoMs) {
+      return { ...base, skipReason: "humano_nao_abandonou_ainda" };
     }
   }
 
@@ -266,18 +285,14 @@ export function evaluateFollowUpNeed(ctx: FollowUpEvalContext): FollowUpDecision
   if (
     followUpType === "silence" &&
     settings.retomadaApenasSeHumanoAbandonou &&
-    ctx.lastHumanOutboundAt &&
-    settings.permitirSlaVencido &&
-    settings.slaHorasResposta
+    ctx.lastHumanOutboundAt
   ) {
-    const slaMs = settings.slaHorasResposta * 3_600_000;
-    const timeHumanSilent = now.getTime() - ctx.lastHumanOutboundAt.getTime();
-    if (timeHumanSilent > slaMs && !ctx.lastCustomerMessageAt) {
-      followUpType = "human_abandoned";
-      priority = 2;
-      urgency = "high";
-      reason = "human_abandoned_customer";
-    }
+    // Gate above already confirmed: human has history, agent hasn't responded after human,
+    // customer hasn't replied after human, and abandonment timeout has elapsed.
+    followUpType = "human_abandoned";
+    priority = 2;
+    urgency = "high";
+    reason = "human_abandoned_customer";
   }
 
   if (followUpType === "silence" && job.attempts >= 1) {

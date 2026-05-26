@@ -10,6 +10,8 @@ import { cn } from "@/lib/utils";
 import { AGENT_FIELD_HELP } from "./agent-field-help-content";
 import { FieldTitle, InlineFieldTitle } from "./agent-field-help";
 
+const maxRetomada = { minutos: 10080, horas: 168, dias: 30 } as const;
+
 function parsePositiveInt(raw: string, fallback: number, max: number) {
   const n = parseInt(raw, 10);
   if (Number.isNaN(n) || n < 1) return Math.min(max, Math.max(1, fallback));
@@ -428,6 +430,49 @@ export function WizardStepFollowUpInteligente({
           disabled={!f.ativo}
           onChange={(retomadaApenasSeHumanoAbandonou) => setF({ retomadaApenasSeHumanoAbandonou })}
         />
+        {f.retomadaApenasSeHumanoAbandonou && f.ativo ? (
+          <div className="px-3 py-4 sm:px-4">
+            <FieldTitle
+              title="Retomar após"
+              help={AGENT_FIELD_HELP.followUpRetomadaApos}
+              className="mb-3"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                type="number"
+                min={1}
+                max={maxRetomada[f.retomadaAposUnidade ?? "horas"]}
+                disabled={!f.ativo || !f.retomadaApenasSeHumanoAbandonou}
+                value={f.retomadaAposValor ?? 2}
+                onChange={(e) =>
+                  setF({
+                    retomadaAposValor: parsePositiveInt(
+                      e.target.value,
+                      f.retomadaAposValor ?? 2,
+                      maxRetomada[f.retomadaAposUnidade ?? "horas"],
+                    ),
+                  })
+                }
+                className="w-[5.75rem] min-h-10 shrink-0 py-2"
+              />
+              <PanelSelect
+                disabled={!f.ativo || !f.retomadaApenasSeHumanoAbandonou}
+                value={f.retomadaAposUnidade ?? "horas"}
+                onChange={(e) =>
+                  setF({ retomadaAposUnidade: e.target.value as "minutos" | "horas" | "dias" })
+                }
+                className="w-28"
+              >
+                <option value="minutos">minutos</option>
+                <option value="horas">horas</option>
+                <option value="dias">dias</option>
+              </PanelSelect>
+            </div>
+            <p className="mt-2 text-xs text-content-muted">
+              O agente só volta a falar se o atendente humano ficar esse tempo sem responder.
+            </p>
+          </div>
+        ) : null}
         <ToggleRow
           title="Bloquear se o lead respondeu"
           help={AGENT_FIELD_HELP.followUpBloquearRespondeu}

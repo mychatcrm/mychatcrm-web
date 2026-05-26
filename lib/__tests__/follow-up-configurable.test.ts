@@ -702,3 +702,125 @@ describe("followUpIsActive — observabilidade de crash no processFollowUpJob", 
     expect(parsed.ativo).toBe(true); // followUpIsActive = true → crash registrado
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// retomadaAposValor / retomadaAposUnidade — tempo configurável de abandono
+// ─────────────────────────────────────────────────────────────────────────────
+describe("retomadaAposValor / retomadaAposUnidade", () => {
+  const now = new Date("2026-05-22T12:00:00.000Z");
+
+  /** Base com retomadaApenasSeHumanoAbandonou=true, cooldown off, SLA off, sem horário comercial. */
+  function baseSettings(
+    overrides: Partial<AgentFollowUpInteligente> = {},
+  ): AgentFollowUpInteligente {
+    return {
+      ...DEFAULT_FOLLOW_UP_INTELIGENTE,
+      ativo: true,
+      respeitarHumanoAtivo: false,
+      retomadaApenasSeHumanoAbandonou: true,
+      cooldownAtivo: false,
+      usarHorarioComercial: false,
+      permitirSlaVencido: false,
+      slaHorasResposta: null,
+      retomadaAposValor: 2,
+      retomadaAposUnidade: "horas",
+      ...overrides,
+    };
+  }
+
+  it("1. retomadaApenasSeHumanoAbandonou=false → comportamento normal, shouldSend=true", () => {
+    const s = baseSettings({ retomadaApenasSeHumanoAbandonou: false });
+    const d = evaluateFollowUpNeed(makeCtx(s, { now }));
+    expect(d.shouldSend).toBe(true);
+  });
+
+  it("2. ON + 2h, humano silente há 1h → bloqueia (timeout não passou)", () => {
+    const s = baseSettings({ retomadaAposValor: 2, retomadaAposUnidade: "horas" });
+    // Humano falou 1 hora atrás = timeout de 2h ainda não passou
+    const lastHumanOutboundAt = new Date(now.getTime() - 1 * 3_600_000);
+    const d = evaluateFollowUpNeed(makeCtx(s, { now, lastHumanOutboundAt }));
+    expect(d.shouldSend).toBe(false);
+    expect(d.skipReason).toBe("humano_nao_abandonou_ainda");
+  });
+
+  it("3. ON + 2h, humano silente há 3h → permite e tipo = human_abandoned", () => {
+    const s = baseSettings({ retomadaAposValor: 2, retomadaAposUnidade: "horas" });
+    const lastHumanOutboundAt = new Date(now.getTime() - 3 * 3_600_000);
+    const d = evaluateFollowUpNeed(makeCtx(s, { now, lastHumanOutboundAt }));
+    expect(d.shouldSend).toBe(true);
+    expect(d.followUpType).toBe("human_abandoned");
+  });
+
+  it("4. unidade 'dias': 1 dia, humano silente 23h → bloqueia", () => {
+    const s = baseSettings({ retomadaAposValor: 1, retomadaAposUnidade: "dias" });
+    const lastHumanOutboundAt = new Date(now.getTime() - 23 * 3_600_000);
+    const d = evaluateFollowUpNeed(makeCtx(s, { now, lastHumanOutboundAt }));
+    expect(d.shouldSend).toBe(false);
+    expect(d.skipReason).toBe("humano_nao_abandonou_ainda");
+  });
+
+  it("5. unidade 'dias': 1 dia, humano silente 25h → permite", () => {
+    const s = baseSettings({ retomadaAposValor: 1, retomadaAposUnidade: "dias" });
+    const lastHumanOutboundAt = new Date(now.getTime() - 25 * 3_600_000);
+    const d = evaluateFollowUpNeed(makeCtx(s, { now, lastHumanOutboundAt }));
+    expect(d.shouldSend).toBe(true);
+    expect(d.followUpType).toBe("human_abandoned");
+  });
+
+  it("6. unidade 'minutos': 30min, humano silente 29min → bloqueia", () => {
+    const s = baseSettings({ retomadaAposValor: 30, retomadaAposUnidade: "minutos" });
+    const lastHumanOutboundAt = new Date(now.getTime() - 29 * 60_000);
+    const d = evaluateFollowUpNeed(makeCtx(s, { now, lastHumanOutboundAt }));
+    expect(d.shouldSend).toBe(false);
+    expect(d.skipReason).toBe("humano_nao_abandonou_ainda");
+  });
+
+  it("7. unidade 'minutos': 30min, humano silente 31min → permite", () => {
+    const s = baseSettings({ retomadaAposValor: 30, retomadaAposUnidade: "minutos" });
+    const lastHumanOutboundAt = new Date(now.getTime() - 31 * 60_000);
+    const d = evaluateFollowUpNeed(makeCtx(s, { now, lastHumanOutboundAt }));
+    expect(d.shouldSend).toBe(true);
+    expect(d.followUpType).toBe("human_abandoned");
+  });
+
+  it("8. config antiga sem campos novos → default 2h; silente 3h → permite", () => {
+    const parsed = followUpInteligenteFromMetadata({
+      followUpInteligente: {
+        ativo: true,
+        retomadaApenasSeHumanoAbandonou: true,
+        respeitarHumanoAtivo: false,
+        cooldownAtivo: false,
+        usarHorarioComercial: false,
+        permitirSlaVencido: false,
+        // retomadaAposValor e retomadaAposUnidade ausentes — deve usar default 2h
+      },
+    });
+    expect(parsed.retomadaAposValor).toBe(2);
+    expect(parsed.retomadaAposUnidade).toBe("horas");
+    const lastHumanOutboundAt = new Date(now.getTime() - 3 * 3_600_000);
+    const d = evaluateFollowUpNeed(makeCtx(parsed, { now, lastHumanOutboundAt }));
+    expect(d.shouldSend).toBe(true);
+  });
+
+  it("9. sem histórico humano → bloqueia (retomada_apenas_humano_sem_historico)", () => {
+    const s = baseSettings();
+    const d = evaluateFollowUpNeed(makeCtx(s, { now, lastHumanOutboundAt: null }));
+    expect(d.shouldSend).toBe(false);
+    expect(d.skipReason).toBe("retomada_apenas_humano_sem_historico");
+  });
+
+  it("10. cliente respondeu DEPOIS do humano → não considera abandono (cliente_respondeu_apos_humano)", () => {
+    // bloquearSeLeadRespondeu=false para isolar o gate específico do humano abandonou
+    const s = baseSettings({
+      retomadaAposValor: 2,
+      retomadaAposUnidade: "horas",
+      bloquearSeLeadRespondeu: false,
+    });
+    // Humano falou 3h atrás (timeout passado), mas cliente respondeu 30min atrás
+    const lastHumanOutboundAt = new Date(now.getTime() - 3 * 3_600_000);
+    const lastCustomerMessageAt = new Date(now.getTime() - 30 * 60_000);
+    const d = evaluateFollowUpNeed(makeCtx(s, { now, lastHumanOutboundAt, lastCustomerMessageAt }));
+    expect(d.shouldSend).toBe(false);
+    expect(d.skipReason).toBe("cliente_respondeu_apos_humano");
+  });
+});
