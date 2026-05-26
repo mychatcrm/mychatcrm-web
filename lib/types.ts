@@ -198,9 +198,6 @@ export interface AgentFollowUpInteligente {
   usarHistoricoWhatsapp: boolean;
   /** Fuso horário IANA usado para interpretar horaInicio/horaFim/diasAtivos. Padrão: "UTC". */
   timezone?: string;
-  /** Tempo sem resposta do humano para considerar abandono (usado com retomadaApenasSeHumanoAbandonou). */
-  retomadaAposValor?: number;
-  retomadaAposUnidade?: "minutos" | "horas" | "dias";
 }
 
 export interface AgentSchedule {
