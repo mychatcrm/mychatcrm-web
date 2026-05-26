@@ -14,6 +14,7 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
   buildFollowUpAiInstruction,
   evaluateFollowUpNeed,
+  isWithinBusinessHours,
   type FollowUpDecision,
 } from "@/lib/server/follow-up-engine";
 import { buildFollowUpEvalContext } from "@/lib/server/follow-up-evaluate";
@@ -444,6 +445,17 @@ export async function processFollowUpJob(
         : {};
     const settings = followUpInteligenteFromMetadata(metadata);
 
+    // Quando o cron roda fora da janela comercial (ex: 4 AM UTC) e pega um job
+    // que foi agendado para dentro da janela (ex: scheduled_at = 8 AM UTC do dia
+    // anterior), o job deve ser processado normalmente — ele já foi "pré-qualificado"
+    // para o horário correto. Sem esse bypass, o job entra em loop infinito:
+    // o cron sempre rebloqueia e reagenda, nunca executando de fato.
+    const jobScheduledAt = new Date(job.scheduled_at);
+    const settingsForEval: typeof settings =
+      settings.usarHorarioComercial && isWithinBusinessHours(jobScheduledAt, settings)
+        ? { ...settings, usarHorarioComercial: false }
+        : settings;
+
     if (!settings.ativo) {
       await client
         .from("follow_up_jobs")
@@ -509,7 +521,7 @@ export async function processFollowUpJob(
       tenantId: job.tenant_id,
       agentId: job.agent_id,
       remoteJid: job.remote_jid,
-      settings,
+      settings: settingsForEval,
       job: {
         id: job.id,
         attempts: job.attempts,

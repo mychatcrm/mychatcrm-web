@@ -298,3 +298,140 @@ describe("timezone-aware business hours", () => {
     ).toBe(true);
   });
 });
+
+// ─── Bypass de horário comercial quando cron roda após o slot agendado ────────
+//
+// Cenário do bug: cron roda às 04:00 UTC (fora da janela 08-22).
+// O job foi agendado para 08:00 UTC (dentro da janela).
+// O cron pega o job (scheduled_at <= now) e rebloqueia por horário → loop infinito.
+//
+// Correção: usar scheduled_at como referência para isWithinBusinessHours.
+// Se scheduled_at está dentro da janela, usar settingsForEval = { ...settings, usarHorarioComercial: false }.
+//
+// Os testes abaixo simulam exatamente essa lógica aplicada em processFollowUpJob.
+
+describe("business hours bypass — cron roda depois do slot agendado", () => {
+  const base = { ...DEFAULT_FOLLOW_UP_INTELIGENTE, ativo: true };
+
+  function effectiveSettings(
+    scheduledAt: Date,
+    settings: AgentFollowUpInteligente,
+  ): AgentFollowUpInteligente {
+    return settings.usarHorarioComercial && isWithinBusinessHours(scheduledAt, settings)
+      ? { ...settings, usarHorarioComercial: false }
+      : settings;
+  }
+
+  it("agendado 08:00 UTC sexta + cron 04:00 UTC sábado → bypass, shouldSend=true", () => {
+    // Job agendado para sexta 08:00 UTC (dentro da janela 08-22, seg-sex).
+    // Cron roda sábado 04:00 UTC (fora da janela). Deve processar.
+    const scheduledAt = new Date("2026-05-22T08:00:00.000Z"); // sexta 08:00 UTC
+    const eff = effectiveSettings(scheduledAt, base);
+    expect(eff.usarHorarioComercial).toBe(false); // bypass ativado
+
+    const ctx = makeCtx(eff, { now: new Date("2026-05-23T04:00:00.000Z") }); // sábado 04:00 UTC
+    const d = evaluateFollowUpNeed(ctx);
+    expect(d.businessHoursBlocked).toBe(false);
+    expect(d.shouldSend).toBe(true);
+  });
+
+  it("agendado 03:00 UTC (fora da janela) + cron 04:00 UTC → sem bypass, rebloqueia", () => {
+    // Job agendado fora da janela → nenhum bypass → cron rebloqueia corretamente.
+    const scheduledAt = new Date("2026-05-22T03:00:00.000Z"); // sexta 03:00 UTC
+    const eff = effectiveSettings(scheduledAt, base);
+    expect(eff.usarHorarioComercial).toBe(true); // sem bypass
+
+    const ctx = makeCtx(eff, { now: new Date("2026-05-22T04:00:00.000Z") }); // sexta 04:00 UTC
+    const d = evaluateFollowUpNeed(ctx);
+    expect(d.businessHoursBlocked).toBe(true);
+    expect(d.shouldSend).toBe(false);
+    expect(d.skipReason).toBe("outside_business_hours");
+  });
+
+  it("agendado segunda 08:00 UTC + cron terça 04:00 UTC → bypass, shouldSend=true", () => {
+    // Saiu da janela sexta à noite → reagendado para segunda 08:00 UTC.
+    // Cron roda terça 04:00 UTC: scheduled_at <= now, deve processar.
+    const scheduledAt = new Date("2026-05-25T08:00:00.000Z"); // segunda 08:00 UTC
+    const eff = effectiveSettings(scheduledAt, base);
+    expect(eff.usarHorarioComercial).toBe(false);
+
+    const ctx = makeCtx(eff, { now: new Date("2026-05-26T04:00:00.000Z") }); // terça 04:00 UTC
+    const d = evaluateFollowUpNeed(ctx);
+    expect(d.shouldSend).toBe(true);
+  });
+
+  it("10 tentativas máximas, já usou 5: continua com 5 restantes após bypass", () => {
+    // Verifica que attempts=5 de maxAttempts=10 → ainda envia (5 restantes).
+    const scheduledAt = new Date("2026-05-25T08:00:00.000Z"); // segunda 08:00 UTC
+    const eff = effectiveSettings(scheduledAt, base);
+
+    const ctx = makeCtx(eff, {
+      now: new Date("2026-05-26T04:00:00.000Z"), // terça 04:00 UTC
+      job: { id: "j", attempts: 5, maxAttempts: 10, createdAt: new Date("2026-05-20T00:00:00.000Z") },
+    });
+    const d = evaluateFollowUpNeed(ctx);
+    expect(d.shouldSend).toBe(true);
+    expect(d.skipReason).toBeNull();
+  });
+
+  it("America/Sao_Paulo: agendado 11:00 UTC (= 08:00 BRT) + cron 04:00 UTC → bypass, shouldSend=true", () => {
+    // BRT = UTC-3. 11:00 UTC = 08:00 BRT (dentro da janela 08-20 BRT).
+    const scheduledAt = new Date("2026-05-22T11:00:00.000Z"); // sexta 08:00 BRT
+    const settings: AgentFollowUpInteligente = {
+      ...base,
+      timezone: "America/Sao_Paulo",
+      horaInicio: 8,
+      horaFim: 20,
+    };
+    const eff = effectiveSettings(scheduledAt, settings);
+    expect(eff.usarHorarioComercial).toBe(false);
+
+    const ctx = makeCtx(eff, { now: new Date("2026-05-23T04:00:00.000Z") }); // sábado 01:00 BRT
+    const d = evaluateFollowUpNeed(ctx);
+    expect(d.businessHoursBlocked).toBe(false);
+    expect(d.shouldSend).toBe(true);
+  });
+
+  it("cooldown ativo no bypass: ainda respeita cooldown mesmo com usarHorarioComercial=false", () => {
+    // O bypass desativa apenas horário comercial. Cooldown continua funcionando.
+    const now = new Date("2026-05-26T04:00:00.000Z");
+    const scheduledAt = new Date("2026-05-25T08:00:00.000Z");
+    const eff = effectiveSettings(scheduledAt, base);
+
+    const recentFollowUp = new Date(now.getTime() - 5 * 60_000); // 5 min atrás
+    const ctx = makeCtx(eff, {
+      now,
+      lead: {
+        id: "l",
+        name: null,
+        status: null,
+        lastMessageAt: null,
+        lastFollowUpAt: recentFollowUp,
+        followUpCount: 1,
+        followUpCooldownUntil: null,
+      },
+    });
+    const d = evaluateFollowUpNeed(ctx);
+    expect(d.shouldSend).toBe(false);
+    expect(d.cooldownActive).toBe(true);
+  });
+
+  it("humano ativo no bypass: ainda respeita respeitarHumanoAtivo mesmo com bypass", () => {
+    const scheduledAt = new Date("2026-05-25T08:00:00.000Z");
+    const eff = effectiveSettings(scheduledAt, base);
+
+    const ctx = makeCtx(eff, {
+      now: new Date("2026-05-26T04:00:00.000Z"),
+      conversationState: {
+        humanPaused: true,
+        pausedReason: "manual",
+        handoffSuggested: false,
+        conversationMode: null,
+        archivedAt: null,
+      },
+    });
+    const d = evaluateFollowUpNeed(ctx);
+    expect(d.shouldSend).toBe(false);
+    expect(d.humanBlocked).toBe(true);
+  });
+});
