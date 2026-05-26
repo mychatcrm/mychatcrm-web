@@ -192,6 +192,8 @@ export interface AgentFollowUpInteligente {
   usarDadosFormularioMeta: boolean;
   usarHistoricoCrm: boolean;
   usarHistoricoWhatsapp: boolean;
+  /** Fuso horário IANA usado para interpretar horaInicio/horaFim/diasAtivos. Padrão: "UTC". */
+  timezone?: string;
 }
 
 export interface AgentSchedule {

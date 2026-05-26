@@ -22,6 +22,7 @@ export const DEFAULT_FOLLOW_UP_INTELIGENTE: AgentFollowUpInteligente = {
   usarDadosFormularioMeta: true,
   usarHistoricoCrm: true,
   usarHistoricoWhatsapp: true,
+  timezone: "UTC",
 };
 
 function bool(src: Record<string, unknown>, key: string, fallback: boolean): boolean {
@@ -104,5 +105,21 @@ export function followUpInteligenteFromMetadata(
     usarDadosFormularioMeta: bool(src, "usarDadosFormularioMeta", defaults.usarDadosFormularioMeta),
     usarHistoricoCrm: bool(src, "usarHistoricoCrm", defaults.usarHistoricoCrm),
     usarHistoricoWhatsapp: bool(src, "usarHistoricoWhatsapp", defaults.usarHistoricoWhatsapp),
+    timezone: parseTimezone(src.timezone),
   };
+}
+
+const VALID_IANA_RE = /^[A-Za-z]+(?:\/[A-Za-z_]+){0,2}$/;
+
+function parseTimezone(raw: unknown): string {
+  if (typeof raw !== "string" || !raw.trim()) return "UTC";
+  const tz = raw.trim();
+  if (!VALID_IANA_RE.test(tz)) return "UTC";
+  try {
+    // Validate that the timezone is supported by the runtime
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return tz;
+  } catch {
+    return "UTC";
+  }
 }

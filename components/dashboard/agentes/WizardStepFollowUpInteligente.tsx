@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
+import { PanelSelect } from "@/components/panel/ui/PanelSelect";
 import type { AgentWizardDraft } from "@/lib/agents";
 import { DEFAULT_FOLLOW_UP_INTELIGENTE } from "@/lib/server/follow-up-settings";
 import type { AgentFollowUpInteligente } from "@/lib/types";
@@ -20,6 +21,32 @@ function parseHour(raw: string, fallback: number) {
   if (Number.isNaN(n) || n < 0 || n > 23) return fallback;
   return n;
 }
+
+const COMMON_TIMEZONES: { label: string; value: string }[] = [
+  { label: "UTC (padrão)", value: "UTC" },
+  { label: "América/São Paulo (BRT, UTC-3)", value: "America/Sao_Paulo" },
+  { label: "América/Manaus (AMT, UTC-4)", value: "America/Manaus" },
+  { label: "América/Belém (BRT, UTC-3)", value: "America/Belem" },
+  { label: "América/Fortaleza (BRT, UTC-3)", value: "America/Fortaleza" },
+  { label: "América/Recife (BRT, UTC-3)", value: "America/Recife" },
+  { label: "América/New York (EST/EDT)", value: "America/New_York" },
+  { label: "América/Chicago (CST/CDT)", value: "America/Chicago" },
+  { label: "América/Denver (MST/MDT)", value: "America/Denver" },
+  { label: "América/Los Angeles (PST/PDT)", value: "America/Los_Angeles" },
+  { label: "América/Mexico City (CST, UTC-6)", value: "America/Mexico_City" },
+  { label: "América/Bogotá (COT, UTC-5)", value: "America/Bogota" },
+  { label: "América/Lima (PET, UTC-5)", value: "America/Lima" },
+  { label: "América/Buenos Aires (ART, UTC-3)", value: "America/Argentina/Buenos_Aires" },
+  { label: "América/Santiago (CLT/CLST)", value: "America/Santiago" },
+  { label: "Europa/Lisboa (WET/WEST)", value: "Europe/Lisbon" },
+  { label: "Europa/Londres (GMT/BST)", value: "Europe/London" },
+  { label: "Europa/Madrid (CET/CEST)", value: "Europe/Madrid" },
+  { label: "Europa/Paris (CET/CEST)", value: "Europe/Paris" },
+  { label: "Ásia/Dubai (GST, UTC+4)", value: "Asia/Dubai" },
+  { label: "Ásia/Tóquio (JST, UTC+9)", value: "Asia/Tokyo" },
+  { label: "Austrália/Sydney (AEST/AEDT)", value: "Australia/Sydney" },
+  { label: "África/Luanda (WAT, UTC+1)", value: "Africa/Luanda" },
+];
 
 const WEEK_DAYS = [
   { label: "Dom", value: 0 },
@@ -275,7 +302,7 @@ export function WizardStepFollowUpInteligente({
 
       <SectionBlock
         title="C) Horários"
-        description="Só envia follow-up dentro da janela configurada (UTC)."
+        description="Só envia follow-up dentro da janela configurada. Escolha o fuso horário e os horários serão interpretados nele."
       >
         <ToggleRow
           title="Usar horário comercial"
@@ -285,7 +312,22 @@ export function WizardStepFollowUpInteligente({
           onChange={(usarHorarioComercial) => setF({ usarHorarioComercial })}
         />
         <div className="px-3 py-4 sm:px-4">
-          <FieldTitle title="Janela (UTC)" help={AGENT_FIELD_HELP.followUpHorario} className="mb-3" />
+          <FieldTitle title="Fuso horário" help="Define como horaInicio e horaFim são interpretados. Padrão: UTC." className="mb-3" />
+          <PanelSelect
+            disabled={!f.ativo || !f.usarHorarioComercial}
+            value={f.timezone ?? "UTC"}
+            onChange={(e) => setF({ timezone: e.target.value })}
+            className="max-w-xs"
+          >
+            {COMMON_TIMEZONES.map((tz) => (
+              <option key={tz.value} value={tz.value}>
+                {tz.label}
+              </option>
+            ))}
+          </PanelSelect>
+        </div>
+        <div className="px-3 py-4 sm:px-4">
+          <FieldTitle title="Janela de envio" help={AGENT_FIELD_HELP.followUpHorario} className="mb-3" />
           <div className="flex flex-wrap items-center gap-2">
             <Input
               type="number"

@@ -63,30 +63,62 @@ function clampPriority(n: number): 1 | 2 | 3 | 4 | 5 {
   return Math.max(1, Math.min(5, Math.round(n))) as 1 | 2 | 3 | 4 | 5;
 }
 
+/** Returns the local hour (0-23) and weekday (0=Sun … 6=Sat) in the given IANA timezone. */
+function getLocalHourAndDay(date: Date, timezone: string): { hour: number; day: number } {
+  if (timezone === "UTC") {
+    return { hour: date.getUTCHours(), day: date.getUTCDay() };
+  }
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hour: "numeric",
+      hour12: false,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date);
+
+    const hourStr = parts.find((p) => p.type === "hour")?.value ?? "";
+    const monthStr = parts.find((p) => p.type === "month")?.value ?? "";
+    const dayStr = parts.find((p) => p.type === "day")?.value ?? "";
+    const yearStr = parts.find((p) => p.type === "year")?.value ?? "";
+
+    let hour = parseInt(hourStr, 10);
+    if (isNaN(hour)) return { hour: date.getUTCHours(), day: date.getUTCDay() };
+    if (hour === 24) hour = 0; // some runtimes return 24 for midnight
+
+    // Build the calendar date string (ISO format → always parsed as UTC midnight)
+    const localDate = new Date(`${yearStr}-${monthStr}-${dayStr}`);
+    const weekday = isNaN(localDate.getTime()) ? date.getUTCDay() : localDate.getUTCDay();
+
+    return { hour, day: weekday };
+  } catch {
+    // Invalid timezone — fall back to UTC
+    return { hour: date.getUTCHours(), day: date.getUTCDay() };
+  }
+}
+
 export function isWithinBusinessHours(
   now: Date,
-  settings: Pick<AgentFollowUpInteligente, "horaInicio" | "horaFim" | "diasAtivos">,
+  settings: Pick<AgentFollowUpInteligente, "horaInicio" | "horaFim" | "diasAtivos" | "timezone">,
 ): boolean {
-  const hour = now.getUTCHours();
-  const day = now.getUTCDay();
+  const tz = settings.timezone ?? "UTC";
+  const { hour, day } = getLocalHourAndDay(now, tz);
   if (settings.diasAtivos.length > 0 && !settings.diasAtivos.includes(day)) return false;
   return hour >= settings.horaInicio && hour < settings.horaFim;
 }
 
 export function nextBusinessHourStart(
   now: Date,
-  settings: Pick<AgentFollowUpInteligente, "horaInicio" | "horaFim" | "diasAtivos">,
+  settings: Pick<AgentFollowUpInteligente, "horaInicio" | "horaFim" | "diasAtivos" | "timezone">,
 ): Date {
-  for (let dayOffset = 0; dayOffset <= 7; dayOffset++) {
-    const candidate = new Date(now.getTime() + dayOffset * 24 * 60 * 60_000);
-    const day = candidate.getUTCDay();
-    if (settings.diasAtivos.length === 0 || settings.diasAtivos.includes(day)) {
-      const startOfDay = new Date(candidate);
-      startOfDay.setUTCHours(settings.horaInicio, 0, 0, 0);
-      if (startOfDay > now) return startOfDay;
-    }
+  // Iterate 1-hour steps (max 8 days) to find the next window that passes isWithinBusinessHours.
+  // This correctly handles DST transitions and day-boundary effects in any timezone.
+  for (let h = 1; h <= 192; h++) {
+    const candidate = new Date(now.getTime() + h * 3_600_000);
+    if (isWithinBusinessHours(candidate, settings)) return candidate;
   }
-  return new Date(now.getTime() + 24 * 60 * 60_000);
+  return new Date(now.getTime() + 24 * 3_600_000);
 }
 
 export function evaluateFollowUpNeed(ctx: FollowUpEvalContext): FollowUpDecision {
