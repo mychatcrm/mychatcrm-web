@@ -378,6 +378,13 @@ export function WizardStepFollowUpInteligente({
             />
             <span className="text-sm text-content-muted">min</span>
           </div>
+          {f.usarHorarioComercial &&
+            (f.horaFim < f.horaInicio ||
+              (f.horaFim === f.horaInicio && (f.minutoFim ?? 0) < (f.minutoInicio ?? 0))) && (
+            <p className="mt-2 text-xs text-content-muted">
+              Se o horário final for menor que o inicial, a janela atravessa a meia-noite.
+            </p>
+          )}
         </div>
         <div className="px-3 py-4 sm:px-4">
           <FieldTitle title="Dias permitidos" help={AGENT_FIELD_HELP.followUpDias} className="mb-3" />

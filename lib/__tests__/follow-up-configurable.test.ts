@@ -542,3 +542,112 @@ describe("janela de envio com minutos", () => {
     expect(isWithinBusinessHours(date, cfg)).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Janela overnight (horaInicio > horaFim)
+// ---------------------------------------------------------------------------
+describe("janela overnight (horaInicio > horaFim)", () => {
+  // Window: 22:00–08:00 UTC, Mon-Fri (days 1-5)
+  const overnightCfg = {
+    horaInicio: 22, minutoInicio: 0,
+    horaFim: 8, minutoFim: 0,
+    diasAtivos: [1, 2, 3, 4, 5] as number[],
+    timezone: "UTC",
+  };
+
+  it("23:30 sexta (dentro de 22:00-08:00) → permitido", () => {
+    // 2026-05-22 is a Friday (day 5)
+    const date = new Date("2026-05-22T23:30:00.000Z");
+    expect(isWithinBusinessHours(date, overnightCfg)).toBe(true);
+  });
+
+  it("00:30 sexta UTC (00:30 dentro de 22:00-08:00) → permitido (sexta=5)", () => {
+    // 2026-05-22 00:30 UTC — still Friday (day 5 in UTC)
+    const date = new Date("2026-05-22T00:30:00.000Z");
+    expect(isWithinBusinessHours(date, overnightCfg)).toBe(true);
+  });
+
+  it("02:00 sábado UTC (dentro de 22:00-08:00 por hora) mas sábado fora de dias → bloqueado", () => {
+    // 2026-05-23 is a Saturday (day 6) — not in diasAtivos
+    const date = new Date("2026-05-23T02:00:00.000Z");
+    expect(isWithinBusinessHours(date, overnightCfg)).toBe(false);
+  });
+
+  it("02:00 sábado UTC com diasAtivos inclui sábado → permitido", () => {
+    const date = new Date("2026-05-23T02:00:00.000Z");
+    const cfg = { ...overnightCfg, diasAtivos: [1, 2, 3, 4, 5, 6] as number[] };
+    expect(isWithinBusinessHours(date, cfg)).toBe(true);
+  });
+
+  it("10:00 sexta (fora de 22:00-08:00) → bloqueado", () => {
+    const date = new Date("2026-05-22T10:00:00.000Z");
+    expect(isWithinBusinessHours(date, overnightCfg)).toBe(false);
+  });
+
+  it("08:00 exato (= fim da janela) → bloqueado (fim exclusivo)", () => {
+    const date = new Date("2026-05-22T08:00:00.000Z");
+    expect(isWithinBusinessHours(date, overnightCfg)).toBe(false);
+  });
+
+  it("22:00 exato (= início da janela) → permitido", () => {
+    const date = new Date("2026-05-22T22:00:00.000Z");
+    expect(isWithinBusinessHours(date, overnightCfg)).toBe(true);
+  });
+
+  it("janela 24h (start === end) → sempre permitido quando dia válido", () => {
+    const cfg = {
+      horaInicio: 8, minutoInicio: 0,
+      horaFim: 8, minutoFim: 0,
+      diasAtivos: [1, 2, 3, 4, 5] as number[],
+      timezone: "UTC",
+    };
+    const date = new Date("2026-05-22T03:00:00.000Z"); // sexta, 03:00
+    expect(isWithinBusinessHours(date, cfg)).toBe(true);
+  });
+
+  it("nextBusinessHourStart após 10:00 UTC com janela 22:00-08:00 → retorna 22:00 mesmo dia", () => {
+    const now = new Date("2026-05-22T10:00:00.000Z"); // sexta 10:00 UTC
+    const next = nextBusinessHourStart(now, overnightCfg);
+    expect(next.getUTCHours()).toBe(22);
+    expect(next.getUTCMinutes()).toBe(0);
+    // Should be same day (Friday)
+    expect(next.getUTCDate()).toBe(22);
+  });
+
+  it("evaluateFollowUpNeed: agora dentro da janela overnight → shouldSend=true", () => {
+    const settings: AgentFollowUpInteligente = {
+      ...DEFAULT_FOLLOW_UP_INTELIGENTE,
+      ativo: true,
+      usarHorarioComercial: true,
+      horaInicio: 22, minutoInicio: 0,
+      horaFim: 8, minutoFim: 0,
+      diasAtivos: [1, 2, 3, 4, 5],
+      timezone: "UTC",
+      cooldownAtivo: false,
+    };
+    // Friday 23:30 UTC — inside overnight window
+    const ctx = makeCtx(settings, { now: new Date("2026-05-22T23:30:00.000Z") });
+    const dec = evaluateFollowUpNeed(ctx);
+    expect(dec.shouldSend).toBe(true);
+    expect(dec.businessHoursBlocked).toBe(false);
+  });
+
+  it("evaluateFollowUpNeed: agora fora da janela overnight → businessHoursBlocked=true", () => {
+    const settings: AgentFollowUpInteligente = {
+      ...DEFAULT_FOLLOW_UP_INTELIGENTE,
+      ativo: true,
+      usarHorarioComercial: true,
+      horaInicio: 22, minutoInicio: 0,
+      horaFim: 8, minutoFim: 0,
+      diasAtivos: [1, 2, 3, 4, 5],
+      timezone: "UTC",
+      cooldownAtivo: false,
+    };
+    // Friday 10:00 UTC — outside overnight window
+    const ctx = makeCtx(settings, { now: new Date("2026-05-22T10:00:00.000Z") });
+    const dec = evaluateFollowUpNeed(ctx);
+    expect(dec.shouldSend).toBe(false);
+    expect(dec.businessHoursBlocked).toBe(true);
+    expect(dec.nextRetryAt).not.toBeNull();
+  });
+});

@@ -118,7 +118,23 @@ export function isWithinBusinessHours(
   const nowMinutes = toTotalMinutes(hour, minute);
   const startMinutes = toTotalMinutes(settings.horaInicio, settings.minutoInicio ?? 0);
   const endMinutes = toTotalMinutes(settings.horaFim, settings.minutoFim ?? 0);
-  return nowMinutes >= startMinutes && nowMinutes < endMinutes;
+
+  // start === end → 24h free window (always allowed once diasAtivos passes)
+  if (startMinutes === endMinutes) return true;
+
+  if (startMinutes < endMinutes) {
+    // Normal window (e.g. 08:00–22:00)
+    return nowMinutes >= startMinutes && nowMinutes < endMinutes;
+  }
+
+  // Overnight window (e.g. 22:00–08:00 wraps midnight).
+  // NOTE: diasAtivos is evaluated against the actual calendar day of `now`.
+  // Example: window 22:00 Fri → 08:00 Sat with diasAtivos=[1-5] (Mon-Fri):
+  //   Fri 23:00 → day=5 (Fri) ✓ allowed.
+  //   Sat 02:00 → day=6 (Sat) ✗ blocked by diasAtivos.
+  // If you need the "continuation of Friday's window" semantics, that would
+  // require a more complex day-rollback check — not implemented here.
+  return nowMinutes >= startMinutes || nowMinutes < endMinutes;
 }
 
 export function nextBusinessHourStart(
