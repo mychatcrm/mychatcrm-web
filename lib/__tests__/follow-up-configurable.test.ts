@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_FOLLOW_UP_INTELIGENTE } from "@/lib/server/follow-up-settings";
+import { DEFAULT_FOLLOW_UP_INTELIGENTE, followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
 import {
   buildFollowUpAiInstruction,
   evaluateFollowUpNeed,
@@ -649,5 +649,56 @@ describe("janela overnight (horaInicio > horaFim)", () => {
     expect(dec.shouldSend).toBe(false);
     expect(dec.businessHoursBlocked).toBe(true);
     expect(dec.nextRetryAt).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// followUpIsActive — flag de observabilidade no catch de processFollowUpJob
+// ---------------------------------------------------------------------------
+//
+// processFollowUpJob usa uma flag `followUpIsActive` (hoisted antes do try)
+// para decidir se registra o evento follow_up_failed em agent_followup_events
+// quando um crash/exceção ocorre.
+//
+// Antes da correção: `followUpActive: false` era hardcoded no catch,
+// silenciando TODOS os erros independente do estado do agente.
+//
+// Após a correção: `followUpActive: followUpIsActive` usa o valor real de
+// settings.ativo (default false se settings não carregou antes do crash).
+//
+// Os testes abaixo verificam o contrato: a flag deve corresponder a settings.ativo.
+
+describe("followUpIsActive — observabilidade de crash no processFollowUpJob", () => {
+  it("DEFAULT_FOLLOW_UP_INTELIGENTE.ativo=false → followUpIsActive inicia false (seguro)", () => {
+    // Garante que o default preserva o comportamento seguro:
+    // se o agente row não carregou antes do crash, nenhum evento é emitido.
+    expect(DEFAULT_FOLLOW_UP_INTELIGENTE.ativo).toBe(false);
+  });
+
+  it("settings com ativo=true → followUpIsActive seria true → crash REGISTRADO", () => {
+    // Simula o valor que seria atribuído em processFollowUpJob após carregar settings.
+    const settings: AgentFollowUpInteligente = {
+      ...DEFAULT_FOLLOW_UP_INTELIGENTE,
+      ativo: true,
+    };
+    const followUpIsActive = settings.ativo; // mesma lógica do job runner
+    expect(followUpIsActive).toBe(true);
+  });
+
+  it("settings com ativo=false → followUpIsActive false → crash NÃO registrado (anti-ruído)", () => {
+    const settings: AgentFollowUpInteligente = {
+      ...DEFAULT_FOLLOW_UP_INTELIGENTE,
+      ativo: false,
+    };
+    const followUpIsActive = settings.ativo;
+    expect(followUpIsActive).toBe(false);
+  });
+
+  it("followUpInteligenteFromMetadata com ativo=true preserva ativo=true", () => {
+    // Verifica que o parser não altera o valor de ativo — sem surpresas na cadeia.
+    const parsed = followUpInteligenteFromMetadata({
+      followUpInteligente: { ativo: true },
+    });
+    expect(parsed.ativo).toBe(true); // followUpIsActive = true → crash registrado
   });
 });

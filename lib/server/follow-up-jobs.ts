@@ -431,6 +431,10 @@ export async function processFollowUpJob(
     jobId: job.id,
   };
 
+  // Hoisted so the catch block can record events with the real activation state.
+  // Starts false (safe default) and is set to settings.ativo once the agent row loads.
+  let followUpIsActive = false;
+
   try {
     // ── check settings ───────────────────────────────────────────────────────
     const { data: agentRow } = await client
@@ -444,6 +448,7 @@ export async function processFollowUpJob(
         ? (agentRow.metadata as Record<string, unknown>)
         : {};
     const settings = followUpInteligenteFromMetadata(metadata);
+    followUpIsActive = settings.ativo;
 
     // Quando o cron roda fora da janela comercial (ex: 4 AM UTC) e pega um job
     // que foi agendado para dentro da janela (ex: scheduled_at = 8 AM UTC do dia
@@ -924,7 +929,7 @@ export async function processFollowUpJob(
       .eq("id", jobId);
     await recordEvent(client, "follow_up_failed", {
       ...commonEventParams,
-      followUpActive: false,
+      followUpActive: followUpIsActive,
       payload: { error: message, attempts: failedAttempts, exhausted: isExhausted },
     });
     logFollowUp("process_error", { job_id: jobId, error: message, attempts: failedAttempts, exhausted: isExhausted });
