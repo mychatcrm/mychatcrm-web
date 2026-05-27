@@ -234,10 +234,11 @@ export async function loadMessageTimestamps(
     if (row.direction === "inbound") {
       if (!lastCustomerMessageAt) lastCustomerMessageAt = ts;
     } else if (row.direction === "outbound") {
-      if (row.agent_id) {
-        if (!lastAgentMessageAt) lastAgentMessageAt = ts;
-      } else {
+      const isHumanOutbound = !row.agent_id || row.agent_id === "human";
+      if (isHumanOutbound) {
         if (!lastHumanOutboundAt) lastHumanOutboundAt = ts;
+      } else {
+        if (!lastAgentMessageAt) lastAgentMessageAt = ts;
       }
     }
     if (lastCustomerMessageAt && lastAgentMessageAt && lastHumanOutboundAt) break;
@@ -571,7 +572,6 @@ export async function processFollowUpJob(
       loadMessageTimestamps,
     });
 
-    const decision: FollowUpDecision = evaluateFollowUpNeed(evalCtx);
     const retomadaTimeoutMs =
       settingsForEval.retomadaHumanoTempoValor != null
         ? retomadaHumanoMs(
@@ -585,6 +585,31 @@ export async function processFollowUpJob(
       evalCtx.lastHumanOutboundAt != null &&
       retomadaTimeoutMs != null &&
       now.getTime() - evalCtx.lastHumanOutboundAt.getTime() >= retomadaTimeoutMs;
+
+    if (retomadaTimeoutEsgotado) {
+      await returnConversationToAutomation({
+        sb: client,
+        tenantId: job.tenant_id,
+        remoteJid: job.remote_jid,
+        actorId: "system",
+        actorName: "Retomada automática",
+        agentId: job.agent_id,
+        leadId: lead?.id ?? job.lead_id,
+      });
+      evalCtx.conversationState = await loadConversationStateForJob(
+        client,
+        job.tenant_id,
+        job.remote_jid,
+      );
+      logFollowUp("retomada_returned_to_automation", {
+        job_id: job.id,
+        tenant_id: job.tenant_id,
+        agent_id: job.agent_id,
+        phase: "pre_evaluate",
+      });
+    }
+
+    const decision: FollowUpDecision = evaluateFollowUpNeed(evalCtx);
     logFollowUp("retomada_debug", {
       job_id: job.id,
       humanPaused: evalCtx.conversationState?.humanPaused ?? false,
@@ -699,11 +724,11 @@ export async function processFollowUpJob(
       }
 
       // Reagendar para o momento exato do timeout em vez de cancelar.
-      // Quando Gate 5 bloqueia com "human_paused" mas o timeout ainda não esgotou,
+      // Quando Gate 5 ou Gate 10 bloqueiam mas o timeout ainda não esgotou,
       // reancoramos o job a lastHumanOutboundAt + timeoutMs para garantir que o
       // engine reavalie no momento correto, independente do caminho de handoff.
       if (
-        skipReason === "human_paused" &&
+        (skipReason === "human_paused" || skipReason === "humano_nao_abandonou_ainda") &&
         settingsForEval.retomadaApenasSeHumanoAbandonou &&
         settingsForEval.retomadaHumanoTempoValor != null &&
         evalCtx.lastHumanOutboundAt != null
@@ -769,23 +794,6 @@ export async function processFollowUpJob(
           sla_hours: settings.slaHorasResposta,
           follow_up_type: decision.followUpType,
         },
-      });
-    }
-
-    if (retomadaTimeoutEsgotado) {
-      await returnConversationToAutomation({
-        sb: client,
-        tenantId: job.tenant_id,
-        remoteJid: job.remote_jid,
-        actorId: "system",
-        actorName: "Retomada automática",
-        agentId: job.agent_id,
-        leadId: lead?.id ?? job.lead_id,
-      });
-      logFollowUp("retomada_returned_to_automation", {
-        job_id: job.id,
-        tenant_id: job.tenant_id,
-        agent_id: job.agent_id,
       });
     }
 
