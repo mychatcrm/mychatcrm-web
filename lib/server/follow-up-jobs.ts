@@ -2,7 +2,7 @@ import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
 import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import type { AgentFollowUpInteligente } from "@/lib/types";
 import { phoneFromRemoteJid } from "@/lib/server/auto-lead-upsert";
-import { isAgentAutomationAllowed } from "@/lib/server/conversation-operation";
+import { isAgentAutomationAllowed, returnConversationToAutomation } from "@/lib/server/conversation-operation";
 import {
   conversationMessagesToAi,
   getRecentConversationMessages,
@@ -41,6 +41,12 @@ export type FollowUpJobRow = {
 
 function logFollowUp(event: string, payload: Record<string, unknown>): void {
   console.info("[follow-up-jobs]", { event, ...payload });
+}
+
+function retomadaHumanoMs(value: number, unit: AgentFollowUpInteligente["retomadaHumanoTempoUnidade"]): number {
+  if (unit === "minutos") return value * 60_000;
+  if (unit === "dias") return value * 86_400_000;
+  return value * 3_600_000;
 }
 
 function rowFromDb(data: Record<string, unknown>): FollowUpJobRow {
@@ -320,6 +326,8 @@ export async function scheduleRetomadaJob(params: {
     status: "pending",
     attempts: 0,
     max_attempts: params.maxAttempts ?? 3,
+    follow_up_type: "human_abandoned",
+    priority: 2,
   });
 }
 
@@ -439,6 +447,7 @@ export async function processFollowUpJob(
   if (!claimed) return "skipped";
 
   const job = rowFromDb(claimed as Record<string, unknown>);
+  const isHumanAbandonedJob = job.follow_up_type === "human_abandoned";
   logFollowUp("processing", {
     job_id: job.id,
     tenant_id: job.tenant_id,
@@ -563,6 +572,31 @@ export async function processFollowUpJob(
     });
 
     const decision: FollowUpDecision = evaluateFollowUpNeed(evalCtx);
+    const retomadaTimeoutMs =
+      settingsForEval.retomadaHumanoTempoValor != null
+        ? retomadaHumanoMs(
+            settingsForEval.retomadaHumanoTempoValor,
+            settingsForEval.retomadaHumanoTempoUnidade ?? "horas",
+          )
+        : null;
+    const retomadaTimeoutEsgotado =
+      isHumanAbandonedJob &&
+      settingsForEval.retomadaApenasSeHumanoAbandonou &&
+      evalCtx.lastHumanOutboundAt != null &&
+      retomadaTimeoutMs != null &&
+      now.getTime() - evalCtx.lastHumanOutboundAt.getTime() >= retomadaTimeoutMs;
+    logFollowUp("retomada_debug", {
+      job_id: job.id,
+      humanPaused: evalCtx.conversationState?.humanPaused ?? false,
+      lastHumanOutboundAt: evalCtx.lastHumanOutboundAt?.toISOString() ?? null,
+      timeoutMs: retomadaTimeoutMs,
+      retomadaTimeoutEsgotado,
+      decision: {
+        shouldSend: decision.shouldSend,
+        reason: decision.reason,
+        skipReason: decision.skipReason,
+      },
+    });
 
     await recordEvent(client, "follow_up_evaluated", {
       ...commonEventParams,
@@ -582,6 +616,30 @@ export async function processFollowUpJob(
     // ── handle skips ─────────────────────────────────────────────────────────
     if (!decision.shouldSend) {
       const skipReason = decision.skipReason ?? "engine_skip";
+      if (
+        isHumanAbandonedJob &&
+        settingsForEval.retomadaApenasSeHumanoAbandonou &&
+        evalCtx.lastHumanOutboundAt == null
+      ) {
+        const retryAt = new Date(
+          now.getTime() + Math.max(1, settingsForEval.intervaloVerificacaoMinutos) * 60_000,
+        );
+        await client
+          .from("follow_up_jobs")
+          .update({
+            status: "pending",
+            scheduled_at: retryAt.toISOString(),
+            last_error: "waiting_human_outbound",
+            updated_at: now.toISOString(),
+          })
+          .eq("id", job.id);
+        logFollowUp("waiting_human_outbound", {
+          job_id: job.id,
+          tenant_id: job.tenant_id,
+          retry_at: retryAt.toISOString(),
+        });
+        return "skipped";
+      }
 
       if (lead?.id) {
         await client
@@ -652,12 +710,7 @@ export async function processFollowUpJob(
       ) {
         const rawValor = settingsForEval.retomadaHumanoTempoValor;
         const rawUnidade = settingsForEval.retomadaHumanoTempoUnidade ?? "horas";
-        const ms =
-          rawUnidade === "minutos"
-            ? rawValor * 60_000
-            : rawUnidade === "dias"
-              ? rawValor * 86_400_000
-              : rawValor * 3_600_000;
+        const ms = retomadaHumanoMs(rawValor, rawUnidade);
         const retomadaAt = new Date(evalCtx.lastHumanOutboundAt.getTime() + ms);
         await client
           .from("follow_up_jobs")
@@ -716,6 +769,23 @@ export async function processFollowUpJob(
           sla_hours: settings.slaHorasResposta,
           follow_up_type: decision.followUpType,
         },
+      });
+    }
+
+    if (retomadaTimeoutEsgotado) {
+      await returnConversationToAutomation({
+        sb: client,
+        tenantId: job.tenant_id,
+        remoteJid: job.remote_jid,
+        actorId: "system",
+        actorName: "Retomada automática",
+        agentId: job.agent_id,
+        leadId: lead?.id ?? job.lead_id,
+      });
+      logFollowUp("retomada_returned_to_automation", {
+        job_id: job.id,
+        tenant_id: job.tenant_id,
+        agent_id: job.agent_id,
       });
     }
 

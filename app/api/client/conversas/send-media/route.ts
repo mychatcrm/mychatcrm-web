@@ -21,6 +21,8 @@ import {
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
 import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 import { upsertConversationState } from "@/lib/server/conversation-memory";
+import { cancelPendingFollowUpJobs, scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
+import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
 import {
   canHumanSendMessage,
   deriveConversationMode,
@@ -52,6 +54,68 @@ const ALLOWED_MIME = new Set([
   // documents
   "application/pdf",
 ]);
+
+function retomadaHumanoMs(value: number, unit: "minutos" | "horas" | "dias"): number {
+  if (unit === "minutos") return value * 60_000;
+  if (unit === "dias") return value * 86_400_000;
+  return value * 3_600_000;
+}
+
+async function scheduleRetomadaAfterHumanOutbound(params: {
+  sb: ReturnType<typeof createSupabaseServiceClient>;
+  tenantId: string;
+  remoteJid: string;
+  leadId?: string | null;
+  agentId?: string | null;
+  stateRow: Record<string, unknown> | null;
+}): Promise<void> {
+  const humanPaused = params.stateRow?.human_paused === true;
+  const mode = typeof params.stateRow?.conversation_mode === "string" ? params.stateRow.conversation_mode : null;
+  if (!humanPaused && mode !== "waiting_human") return;
+
+  const agentId = params.agentId?.trim();
+  if (!agentId) return;
+
+  const { data } = await params.sb
+    .from("tenant_agents")
+    .select("metadata")
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", agentId)
+    .maybeSingle();
+  const metadata = data?.metadata && typeof data.metadata === "object"
+    ? (data.metadata as Record<string, unknown>)
+    : {};
+  const settings = followUpInteligenteFromMetadata(metadata);
+  if (
+    !settings.ativo ||
+    !settings.retomadaApenasSeHumanoAbandonou ||
+    settings.retomadaHumanoTempoValor == null
+  ) {
+    return;
+  }
+
+  await cancelPendingFollowUpJobs({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    reason: "human_outbound_reset_retomada",
+  });
+  await scheduleRetomadaJob({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    agentId,
+    remoteJid: params.remoteJid,
+    leadId: params.leadId,
+    scheduledAt: new Date(
+      Date.now() +
+        retomadaHumanoMs(
+          settings.retomadaHumanoTempoValor,
+          settings.retomadaHumanoTempoUnidade ?? "horas",
+        ),
+    ),
+    maxAttempts: settings.tentativasContato,
+  });
+}
 
 // ── Route handler ─────────────────────────────────────────────────────────────
 
@@ -192,6 +256,16 @@ export async function POST(request: Request) {
     leadId: leadResult.lead?.id ?? null,
     agentId: linkedAgentId,
     lastMessageAt: occurredAt,
+  });
+  await scheduleRetomadaAfterHumanOutbound({
+    sb,
+    tenantId: session.tenantId,
+    remoteJid,
+    leadId: leadResult.lead?.id ?? null,
+    agentId:
+      (typeof stateRow?.agent_id === "string" && stateRow.agent_id.trim() ? stateRow.agent_id : null) ??
+      linkedAgentId,
+    stateRow,
   });
 
   // ── Send via Evolution API ────────────────────────────────────────────────
