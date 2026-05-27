@@ -189,7 +189,20 @@ export function evaluateFollowUpNeed(ctx: FollowUpEvalContext): FollowUpDecision
 
   if (settings.respeitarHumanoAtivo) {
     if (conversationState?.humanPaused) {
-      return { ...base, humanBlocked: true, skipReason: "human_paused" };
+      // Escape: retomadaApenasSeHumanoAbandonou ativo + timeout esgotado → cai para Gate 10
+      const retomadaTimeoutEsgotado =
+        settings.retomadaApenasSeHumanoAbandonou &&
+        ctx.lastHumanOutboundAt != null &&
+        settings.retomadaHumanoTempoValor != null &&
+        now.getTime() - ctx.lastHumanOutboundAt.getTime() >=
+          retomadaHumanoMs(
+            settings.retomadaHumanoTempoValor,
+            settings.retomadaHumanoTempoUnidade ?? "horas",
+          );
+      if (!retomadaTimeoutEsgotado) {
+        return { ...base, humanBlocked: true, skipReason: "human_paused" };
+      }
+      // timeout esgotado → não bloqueia aqui, Gate 10 decide
     }
     if (conversationState?.conversationMode === "human") {
       return { ...base, humanBlocked: true, skipReason: "conversation_mode_human" };
@@ -198,7 +211,18 @@ export function evaluateFollowUpNeed(ctx: FollowUpEvalContext): FollowUpDecision
       const twoIntervalsMs = settings.intervaloVerificacaoMinutos * 2 * 60_000;
       const timeSinceHuman = now.getTime() - ctx.lastHumanOutboundAt.getTime();
       if (timeSinceHuman < twoIntervalsMs) {
-        return { ...base, humanBlocked: true, skipReason: "human_recently_active" };
+        // Escape: mesmo critério — não bloquear se timeout de retomada já esgotou
+        const retomadaTimeoutEsgotado =
+          settings.retomadaApenasSeHumanoAbandonou &&
+          settings.retomadaHumanoTempoValor != null &&
+          timeSinceHuman >=
+            retomadaHumanoMs(
+              settings.retomadaHumanoTempoValor,
+              settings.retomadaHumanoTempoUnidade ?? "horas",
+            );
+        if (!retomadaTimeoutEsgotado) {
+          return { ...base, humanBlocked: true, skipReason: "human_recently_active" };
+        }
       }
     }
   }

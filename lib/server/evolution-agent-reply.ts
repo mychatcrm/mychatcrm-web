@@ -25,6 +25,7 @@ import {
   shouldTriggerHandoffAI,
 } from "@/lib/server/conversation-memory";
 import { markWaitingForHuman } from "@/lib/server/conversation-operation";
+import { scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
 import { sleep } from "@/lib/server/agent-response-schedule";
 import { sendAgentOutboundMediaViaEvolution } from "@/lib/server/send-agent-outbound-media-evolution";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
@@ -658,6 +659,38 @@ export async function processAgentResponseJob(
       handoffNumero: typeof metadata.handoffNumero === "string" ? metadata.handoffNumero : null,
       lastMessage: handoffLastMessage ?? null,
     });
+
+    // Se o agente tem "Retomar só se humano abandonou" configurado, agenda um job
+    // futuro para checar o timeout de retomada — evita que o follow-up fique preso
+    // indefinidamente após o handoff cancelar todos os jobs pendentes.
+    const fuMeta = metadata?.followUpInteligente;
+    if (fuMeta && typeof fuMeta === "object") {
+      const fu = fuMeta as Record<string, unknown>;
+      if (
+        fu.ativo === true &&
+        fu.retomadaApenasSeHumanoAbandonou === true &&
+        typeof fu.retomadaHumanoTempoValor === "number"
+      ) {
+        const rawValor = fu.retomadaHumanoTempoValor as number;
+        const rawUnidade = fu.retomadaHumanoTempoUnidade;
+        const unidade =
+          rawUnidade === "minutos" || rawUnidade === "dias" ? rawUnidade : "horas";
+        const ms =
+          unidade === "minutos"
+            ? rawValor * 60_000
+            : unidade === "dias"
+              ? rawValor * 86_400_000
+              : rawValor * 3_600_000;
+        await scheduleRetomadaJob({
+          sb,
+          tenantId: job.tenant_id,
+          agentId: job.agent_id,
+          remoteJid: job.remote_jid,
+          leadId: job.lead_id,
+          scheduledAt: new Date(Date.now() + ms),
+        });
+      }
+    }
   }
 
   const leadUpsert = await upsertLeadFromWhatsAppContact({

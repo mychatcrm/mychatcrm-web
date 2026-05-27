@@ -300,6 +300,28 @@ export async function cancelPendingFollowUpJobs(params: {
   return count;
 }
 
+export async function scheduleRetomadaJob(params: {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  agentId: string;
+  remoteJid: string;
+  leadId?: string | null;
+  scheduledAt: Date;
+  maxAttempts?: number;
+}): Promise<void> {
+  const sb = params.sb ?? createSupabaseServiceClient();
+  await sb.from("follow_up_jobs").insert({
+    tenant_id: params.tenantId,
+    agent_id: params.agentId,
+    remote_jid: params.remoteJid,
+    lead_id: params.leadId ?? null,
+    scheduled_at: params.scheduledAt.toISOString(),
+    status: "pending",
+    attempts: 0,
+    max_attempts: params.maxAttempts ?? 3,
+  });
+}
+
 export async function scheduleFollowUpAfterInbound(params: {
   sb?: SupabaseServiceClient;
   tenantId: string;
