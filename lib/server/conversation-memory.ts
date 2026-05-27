@@ -411,7 +411,7 @@ export async function shouldTriggerHandoffAI(
             },
             {
               role: "user",
-              content: `O cliente quer falar com uma pessoa humana real (atendente, responsável, especialista, corretor, gerente ou qualquer cargo/função)? Mensagem: "${text.slice(0, 500)}"`,
+              content: `O cliente está EXPLICITAMENTE pedindo para PARAR de falar com o atendimento automático e ser transferido AGORA para um atendente humano? Responda 'sim' APENAS se o cliente claramente quer encerrar o atendimento do bot. Responda 'nao' se o cliente está apenas: fazendo pergunta sobre produto, pedindo proposta, demonstrando interesse em comprar, perguntando sobre preço, ou qualquer outra intenção de compra ou informação. Mensagem: "${text.slice(0, 500)}"`,
             },
           ],
         }),
