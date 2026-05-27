@@ -95,12 +95,10 @@ function MaterialExtractionBadge({ status }: { status: KnowledgeExtractStatus })
 export function WizardStep2Treinamento({
   draft,
   onChange,
-  onGeneratePrompt,
   agentId,
 }: {
   draft: AgentWizardDraft;
   onChange: (next: AgentWizardDraft) => void;
-  onGeneratePrompt: () => void;
   agentId?: string;
 }) {
   const { isLight } = usePanelAppearance();
@@ -473,7 +471,6 @@ export function WizardStep2Treinamento({
       <WizardStep2Instructions
         draft={draft}
         onChange={onChange}
-        onGeneratePrompt={onGeneratePrompt}
         promptSizeUnits={promptSizeUnits}
         temperaturaClamped={temperaturaClamped}
         temperaturaPct={temperaturaPct}

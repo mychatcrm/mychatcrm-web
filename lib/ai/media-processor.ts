@@ -290,31 +290,25 @@ export async function transcribeAudioFromBuffer(
 // Image → text via GPT-4o vision
 // ---------------------------------------------------------------------------
 
-/**
- * Descreve uma imagem do WhatsApp usando GPT-4o (vision).
- * Retorna uma descrição em texto, ou null em caso de falha.
- */
-export async function describeImage(
-  content: EvolutionImageContent,
-  instanceName: string,
-  msgKey: MsgKey = {},
-): Promise<string | null> {
+/** Descreve imagem a partir de buffer (upload wizard, etc.). */
+export async function describeImageFromBuffer(buffer: Buffer, mimeType: string): Promise<string | null> {
   const apiKey = await resolveOpenAiApiKey();
   if (!apiKey) return null;
 
-  const media = await downloadMediaBuffer(content, instanceName, msgKey);
-  if (!media) return null;
-
-  const dataUrl = `data:${media.mimeType};base64,${media.buffer.toString("base64")}`;
+  const normalizedMime = mimeType.split(";")[0]!.trim().toLowerCase() || "image/jpeg";
+  const dataUrl = `data:${normalizedMime};base64,${buffer.toString("base64")}`;
 
   const body = {
     model: "gpt-4o",
-    max_tokens: 300,
+    max_tokens: 400,
     messages: [
       {
         role: "user",
         content: [
-          { type: "text", text: "Descreva o conteúdo desta imagem em português de forma concisa e objetiva." },
+          {
+            type: "text",
+            text: "Descreva o conteúdo desta imagem em português de forma concisa e objetiva, incluindo textos visíveis se houver.",
+          },
           { type: "image_url", image_url: { url: dataUrl, detail: "low" } },
         ],
       },
@@ -327,21 +321,25 @@ export async function describeImage(
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(45_000),
     });
   } catch (e) {
-    console.warn("[media-processor] vision fetch error", e);
+    console.warn("[media-processor] vision buffer fetch error", e);
     return null;
   }
 
   if (!res.ok) {
     const errBody = await res.text().catch(() => "");
-    console.warn("[media-processor] vision non-ok", res.status, errBody.slice(0, 200));
+    console.warn("[media-processor] vision buffer non-ok", res.status, errBody.slice(0, 200));
     return null;
   }
 
   let json: unknown;
-  try { json = await res.json(); } catch { return null; }
+  try {
+    json = await res.json();
+  } catch {
+    return null;
+  }
 
   try {
     const j = json as { choices: { message: { content: string } }[] };
@@ -349,4 +347,19 @@ export async function describeImage(
   } catch {
     return null;
   }
+}
+
+/**
+ * Descreve uma imagem do WhatsApp usando GPT-4o (vision).
+ * Retorna uma descrição em texto, ou null em caso de falha.
+ */
+export async function describeImage(
+  content: EvolutionImageContent,
+  instanceName: string,
+  msgKey: MsgKey = {},
+): Promise<string | null> {
+  const media = await downloadMediaBuffer(content, instanceName, msgKey);
+  if (!media) return null;
+
+  return describeImageFromBuffer(media.buffer, media.mimeType);
 }

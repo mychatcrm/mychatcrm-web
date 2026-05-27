@@ -5,6 +5,7 @@ export type AiFeature =
   | "agent_chat"
   | "agent_completion"
   | "agent_embedding"
+  | "agent_wizard_instructions"
   | "admin_tool";
 
 export type AiRole = "user" | "assistant" | "system";

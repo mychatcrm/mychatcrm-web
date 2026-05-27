@@ -36,6 +36,7 @@
     "@supabase/supabase-js": "^2.105.0",
     "clsx": "^2.1.1",
     "framer-motion": "^11.11.17",
+    "jszip": "^3.10.1",
     "lucide-react": "^1.8.0",
     "mammoth": "^1.12.0",
     "next": "14.2.35",
@@ -47,7 +48,8 @@
     "server-only": "^0.0.1",
     "stripe": "^22.1.0",
     "tailwind-merge": "^3.5.0",
-    "unpdf": "^1.6.2"
+    "unpdf": "^1.6.2",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/node": "^20.17.6",

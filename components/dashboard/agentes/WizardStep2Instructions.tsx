@@ -2,7 +2,6 @@
 
 import { CheckCircle2 } from "lucide-react";
 import { buildSimplePromptFromProFields, type AgentWizardDraft, type InstructionMode } from "@/lib/agents";
-import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { cn } from "@/lib/utils";
 import { AGENT_FIELD_HELP } from "./agent-field-help-content";
 import { FieldLabel, FieldTitle } from "./agent-field-help";
@@ -13,7 +12,6 @@ const TEMP_MAX = 1;
 export function WizardStep2Instructions({
   draft,
   onChange,
-  onGeneratePrompt,
   promptSizeUnits,
   temperaturaClamped,
   temperaturaPct,
@@ -21,7 +19,6 @@ export function WizardStep2Instructions({
 }: {
   draft: AgentWizardDraft;
   onChange: (next: AgentWizardDraft) => void;
-  onGeneratePrompt: () => void;
   promptSizeUnits: number;
   temperaturaClamped: number;
   temperaturaPct: number;
@@ -118,14 +115,9 @@ export function WizardStep2Instructions({
           </div>
 
           <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+            <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
               <FieldTitle title="Instruções" help={AGENT_FIELD_HELP.instrucoes} />
-              <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-                <span className="text-xs text-content-faint">Tamanho do prompt (aprox.): {promptSizeUnits} unidades</span>
-                <Button variant="secondary" size="sm" className="w-full sm:w-auto" onClick={onGeneratePrompt}>
-                  Gerar com IA
-                </Button>
-              </div>
+              <span className="text-xs text-content-faint">Tamanho do prompt (aprox.): {promptSizeUnits} unidades</span>
             </div>
             <textarea
               value={draft.systemPrompt}

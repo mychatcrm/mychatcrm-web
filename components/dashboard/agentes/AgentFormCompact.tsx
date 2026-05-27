@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Handshake, Kanban, RadioTower, Timer, Volume2 } from "lucide-react";
+import { Bot, Handshake, Kanban, RadioTower, Sparkles, Timer, Volume2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useCrmFunnels } from "@/components/dashboard/CrmFunnelsContext";
@@ -9,13 +9,8 @@ import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
 import { Modal } from "@/components/ui/Modal";
 import type { Agent } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import {
-  createPromptFromBusiness,
-  defaultWizardDraft,
-  draftFromAgent,
-  type AgentWizardDraft,
-  validateCompactAgentDraft,
-} from "@/lib/agents";
+import { defaultWizardDraft, draftFromAgent, type AgentWizardDraft, validateCompactAgentDraft } from "@/lib/agents";
+import { AgentWizardPromptModal } from "./AgentWizardPromptModal";
 import { WizardStep1Identidade } from "./WizardStep1Identidade";
 import { WizardStep2Treinamento } from "./WizardStep2Treinamento";
 import { WizardStep3Ativacao } from "./WizardStep3Ativacao";
@@ -107,7 +102,7 @@ export function AgentFormCompact({
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [openPromptModal, setOpenPromptModal] = useState(false);
-  const [promptContext, setPromptContext] = useState("");
+  const [generateNotice, setGenerateNotice] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deletePhrase, setDeletePhrase] = useState("");
   const [simulationMessage, setSimulationMessage] = useState("");
@@ -201,6 +196,35 @@ export function AgentFormCompact({
           </div>
         ) : null}
 
+        <div
+          className={cn(
+            "mb-4 flex flex-col gap-3 rounded-xl border border-primary/25 bg-primary/5 p-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between sm:p-4",
+            embedded && "mb-5",
+          )}
+        >
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-content">Preencher instruções com IA</p>
+            <p className="mt-0.5 text-xs text-content-muted">
+              Descreva o negócio e anexe arquivos para gerar identidade, objetivo, instruções e regras automaticamente.
+            </p>
+          </div>
+          <Button
+            type="button"
+            className="w-full shrink-0 sm:w-auto"
+            onClick={() => {
+              setGenerateNotice("");
+              setOpenPromptModal(true);
+            }}
+          >
+            <Sparkles className="mr-2 h-4 w-4" aria-hidden />
+            Gerar com IA
+          </Button>
+        </div>
+
+        {generateNotice ? (
+          <p className="-mt-2 mb-2 text-sm text-amber-600 dark:text-amber-400">{generateNotice}</p>
+        ) : null}
+
         <div className="space-y-6 sm:space-y-8">
           <section className="space-y-3">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Identidade</h3>
@@ -221,12 +245,7 @@ export function AgentFormCompact({
 
           <section className="space-y-3">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Treinamento</h3>
-            <WizardStep2Treinamento
-              draft={draft}
-              onChange={setDraft}
-              onGeneratePrompt={() => setOpenPromptModal(true)}
-              agentId={initialAgent?.id}
-            />
+            <WizardStep2Treinamento draft={draft} onChange={setDraft} agentId={initialAgent?.id} />
           </section>
 
           <div className="space-y-3">
@@ -413,38 +432,20 @@ export function AgentFormCompact({
         </div>
       </Modal>
 
-      <Modal
+      <AgentWizardPromptModal
         open={openPromptModal}
         onClose={() => setOpenPromptModal(false)}
-        title="Gerar prompt com IA"
-        footer={
-          <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
-            <Button variant="secondary" className="w-full sm:w-auto" onClick={() => setOpenPromptModal(false)}>
-              Cancelar
-            </Button>
-            <Button
-              className="w-full sm:w-auto"
-              onClick={() => {
-                setDraft({ ...draft, systemPrompt: createPromptFromBusiness(promptContext, draft) });
-                setOpenPromptModal(false);
-                setPromptContext("");
-              }}
-            >
-              Gerar prompt
-            </Button>
-          </div>
-        }
-      >
-        <p className="text-sm text-content-secondary">
-          Descreva o negócio em linguagem simples e geramos um prompt inicial completo para o agente.
-        </p>
-        <textarea
-          value={promptContext}
-          onChange={(event) => setPromptContext(event.target.value)}
-          className="mt-3 min-h-[140px] w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-3 text-sm text-content outline-none"
-          placeholder="Ex: Somos uma imobiliária focada em apartamentos de médio padrão na Zona Sul de Goiânia..."
-        />
-      </Modal>
+        draft={draft}
+        onApply={(next, fileWarnings) => {
+          setDraft(next);
+          setError("");
+          if (fileWarnings.length) {
+            setGenerateNotice(`Instruções geradas. Avisos: ${fileWarnings.join(" · ")}`);
+          } else {
+            setGenerateNotice("Instruções geradas com sucesso. Revise os campos antes de salvar.");
+          }
+        }}
+      />
     </div>
   );
 }
