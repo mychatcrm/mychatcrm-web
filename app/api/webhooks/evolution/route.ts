@@ -38,7 +38,7 @@ import { isAgentAutomationAllowed, markWaitingForHuman } from "@/lib/server/conv
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { isSmartWaitGloballyDisabled, runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
-import { scheduleFollowUpAfterInbound } from "@/lib/server/follow-up-jobs";
+import { scheduleFollowUpAfterInbound, scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
 
 
@@ -765,6 +765,38 @@ export async function POST(request: Request) {
                 typeof metadata.handoffNumero === "string" ? metadata.handoffNumero : null,
               lastMessage: inboundLanguageSource(msg),
             });
+
+            // Se o agente tem "Retomar só se humano abandonou" configurado, agenda um job
+            // futuro para o momento do timeout — safety net para quando não há mensagens
+            // inbound após o handoff (espelho do bloco em evolution-agent-reply.ts).
+            const fuMeta = metadata?.followUpInteligente;
+            if (fuMeta && typeof fuMeta === "object") {
+              const fu = fuMeta as Record<string, unknown>;
+              if (
+                fu.ativo === true &&
+                fu.retomadaApenasSeHumanoAbandonou === true &&
+                typeof fu.retomadaHumanoTempoValor === "number"
+              ) {
+                const rawValor = fu.retomadaHumanoTempoValor as number;
+                const rawUnidade = fu.retomadaHumanoTempoUnidade;
+                const unidade =
+                  rawUnidade === "minutos" || rawUnidade === "dias" ? rawUnidade : "horas";
+                const ms =
+                  unidade === "minutos"
+                    ? rawValor * 60_000
+                    : unidade === "dias"
+                      ? rawValor * 86_400_000
+                      : rawValor * 3_600_000;
+                await scheduleRetomadaJob({
+                  sb: sbState,
+                  tenantId: row.tenant_id,
+                  agentId,
+                  remoteJid: msg.remoteJid,
+                  leadId,
+                  scheduledAt: new Date(Date.now() + ms),
+                });
+              }
+            }
           }
 
           const outboundMediaParse = await resolveOutboundMediaForAgentResponse({

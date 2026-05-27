@@ -77,6 +77,7 @@ type FollowUpEventType =
   | "follow_up_closed"
   | "business_hours_skipped"
   | "customer_replied"
+  | "follow_up_rescheduled_retomada"
   | "follow_up_exhausted";
 
 async function recordEvent(
@@ -637,6 +638,48 @@ export async function processFollowUpJob(
           leadId: lead?.id,
           payload: {},
         });
+      }
+
+      // Reagendar para o momento exato do timeout em vez de cancelar.
+      // Quando Gate 5 bloqueia com "human_paused" mas o timeout ainda não esgotou,
+      // reancoramos o job a lastHumanOutboundAt + timeoutMs para garantir que o
+      // engine reavalie no momento correto, independente do caminho de handoff.
+      if (
+        skipReason === "human_paused" &&
+        settingsForEval.retomadaApenasSeHumanoAbandonou &&
+        settingsForEval.retomadaHumanoTempoValor != null &&
+        evalCtx.lastHumanOutboundAt != null
+      ) {
+        const rawValor = settingsForEval.retomadaHumanoTempoValor;
+        const rawUnidade = settingsForEval.retomadaHumanoTempoUnidade ?? "horas";
+        const ms =
+          rawUnidade === "minutos"
+            ? rawValor * 60_000
+            : rawUnidade === "dias"
+              ? rawValor * 86_400_000
+              : rawValor * 3_600_000;
+        const retomadaAt = new Date(evalCtx.lastHumanOutboundAt.getTime() + ms);
+        await client
+          .from("follow_up_jobs")
+          .update({
+            status: "pending",
+            scheduled_at: retomadaAt.toISOString(),
+            last_error: "rescheduled_retomada_humano",
+            updated_at: now.toISOString(),
+          })
+          .eq("id", job.id);
+        await recordEvent(client, "follow_up_rescheduled_retomada", {
+          ...commonEventParams,
+          followUpActive: settings.ativo,
+          leadId: lead?.id,
+          payload: { retomadaAt: retomadaAt.toISOString(), reason: skipReason },
+        });
+        logFollowUp("rescheduled_retomada_humano", {
+          job_id: job.id,
+          tenant_id: job.tenant_id,
+          retomada_at: retomadaAt.toISOString(),
+        });
+        return "skipped";
       }
 
       await client
