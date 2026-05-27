@@ -224,7 +224,7 @@ CTA final: ${clean(agent.ctaFinal) || "não configurado"}
 Mensagem de handoff: ${clean(agent.handoffMensagem) || "não configurada"}
 Palavras de handoff: ${handoffKeywords.length ? handoffKeywords.join(", ") : "padrão do sistema"}
 Número para transferência: ${clean(agent.handoffNumero) || "não configurado"}
-Se o usuário pedir humano, ligação, proposta, reclamar ou demonstrar alta intenção, responda de forma breve avisando que um atendente humano dará continuidade.${agent.ctaHandoffAtivo === true ? "\nREGRA CRÍTICA DE TRANSFERÊNCIA: Quando o cliente quiser falar com uma pessoa real (humano, atendente, responsável, especialista, vendedor, gerente, ou qualquer cargo), responda confirmando a transferência e inclua [[HANDOFF]] no final da resposta. Nada mais." : ""}`,
+Se o usuário pedir explicitamente um humano, atendente, ou reclamar, responda de forma breve avisando que um atendente humano dará continuidade.${agent.ctaHandoffAtivo === true ? "\nREGRA CRÍTICA DE TRANSFERÊNCIA: Quando o cliente quiser falar com uma pessoa real (humano, atendente, responsável, especialista, vendedor, gerente, ou qualquer cargo), responda confirmando a transferência e inclua [[HANDOFF]] no final da resposta. Nada mais." : ""}`,
     `CONFIGURAÇÕES AVANÇADAS DO AGENTE
 Modo de resposta configurado: ${clean((agent as { responseMode?: unknown }).responseMode) || "text"}
 Origens/ativação: ${compactJson((agent as { origens?: unknown }).origens)}

@@ -359,12 +359,8 @@ export function shouldTriggerHandoff(text: string, keywords: string[] = []): { t
     "ligacao",
     "me liga",
     "telefone",
-    "proposta",
     "reclamacao",
     "reclamar",
-    "urgente",
-    "quero contratar",
-    "fechar agora",
   ];
   const all = [...defaults, ...keywords.map((k) => k.toLowerCase())].filter(Boolean);
   const found = all.find((keyword) => normalized.includes(keyword.normalize("NFD").replace(/\p{Diacritic}/gu, "")));
