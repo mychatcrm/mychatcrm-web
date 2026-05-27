@@ -242,18 +242,16 @@ export function evaluateFollowUpNeed(ctx: FollowUpEvalContext): FollowUpDecision
     };
   }
 
-  if (settings.retomadaApenasSeHumanoAbandonou) {
-    if (!ctx.lastHumanOutboundAt) {
-      return { ...base, skipReason: "retomada_apenas_humano_sem_historico" };
-    }
-    const lastAgentTs = ctx.lastAgentMessageAt?.getTime() ?? 0;
+  if (settings.retomadaApenasSeHumanoAbandonou && ctx.lastHumanOutboundAt) {
     const lastHumanTs = ctx.lastHumanOutboundAt.getTime();
-    if (lastAgentTs > lastHumanTs) {
-      return { ...base, skipReason: "agent_responded_after_human" };
-    }
-    // Only applies when user explicitly configured a timeout (null = no restriction, backward-compatible):
-    if (settings.retomadaHumanoTempoValor != null) {
-      const timeoutMs = retomadaHumanoMs(settings.retomadaHumanoTempoValor, settings.retomadaHumanoTempoUnidade ?? "horas");
+    const lastAgentTs = ctx.lastAgentMessageAt?.getTime() ?? 0;
+    // Only blocks when human was most recent outbound AND timeout is configured AND not yet elapsed.
+    // Falls through (normal follow-up) when: no human history, agent responded after human, or no timeout.
+    if (lastHumanTs > lastAgentTs && settings.retomadaHumanoTempoValor != null) {
+      const timeoutMs = retomadaHumanoMs(
+        settings.retomadaHumanoTempoValor,
+        settings.retomadaHumanoTempoUnidade ?? "horas",
+      );
       if (now.getTime() - lastHumanTs < timeoutMs) {
         return { ...base, skipReason: "humano_nao_abandonou_ainda" };
       }

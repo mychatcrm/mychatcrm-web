@@ -187,18 +187,20 @@ describe("evaluateFollowUpNeed", () => {
     expect(d.priority).toBe(1);
   });
 
-  it("blocks when retomadaApenasSeHumanoAbandonou=true and no human outbound", () => {
+  it("allows (falls through) when retomadaApenasSeHumanoAbandonou=true and no human outbound", () => {
+    // No human history → gate does not enter → normal follow-up proceeds.
     const d = evaluateFollowUpNeed(
       makeCtx({
         settings: { ...BASE_SETTINGS, retomadaApenasSeHumanoAbandonou: true },
         lastHumanOutboundAt: null,
       }),
     );
-    expect(d.shouldSend).toBe(false);
-    expect(d.skipReason).toBe("retomada_apenas_humano_sem_historico");
+    expect(d.shouldSend).toBe(true);
+    expect(d.skipReason).toBeNull();
   });
 
-  it("blocks when agent responded after human (retomadaApenasSeHumanoAbandonou=true)", () => {
+  it("allows (falls through) when agent responded after human (retomadaApenasSeHumanoAbandonou=true)", () => {
+    // Agent is most recent outbound → timeout restriction does not apply → normal follow-up proceeds.
     const now = new Date("2026-05-22T12:00:00.000Z");
     const humanAt = new Date(now.getTime() - 3 * 60 * 60_000);
     const agentAt = new Date(now.getTime() - 1 * 60 * 60_000);
@@ -210,8 +212,8 @@ describe("evaluateFollowUpNeed", () => {
         lastAgentMessageAt: agentAt,
       }),
     );
-    expect(d.shouldSend).toBe(false);
-    expect(d.skipReason).toBe("agent_responded_after_human");
+    expect(d.shouldSend).toBe(true);
+    expect(d.skipReason).toBeNull();
   });
 
   it("sets lead_cooling type on attempt >= 1", () => {

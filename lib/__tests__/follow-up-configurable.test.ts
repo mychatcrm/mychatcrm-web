@@ -847,4 +847,43 @@ describe("retomadaHumanoTempoValor / retomadaHumanoTempoUnidade", () => {
     expect(d.shouldSend).toBe(true);
     expect(d.skipReason).toBeNull();
   });
+
+  // 11. CENÁRIO DE PRODUÇÃO: sem histórico humano → gate não entra → shouldSend=true
+  it("ON + lastHumanOutboundAt=null (workflow AI-first) → shouldSend=true (fluxo normal)", () => {
+    const s = makeSettings({
+      retomadaApenasSeHumanoAbandonou: true,
+      retomadaHumanoTempoValor: 2,
+      retomadaHumanoTempoUnidade: "horas",
+    });
+    // makeCtx sem override de lastHumanOutboundAt → fica null (padrão)
+    const d = evaluateFollowUpNeed(makeCtx(s, { now }));
+    expect(d.shouldSend).toBe(true);
+    expect(d.skipReason).toBeNull();
+  });
+
+  // 12. Agente respondeu DEPOIS do humano + timeout configurado → shouldSend=true (2ª tentativa)
+  it("ON + agente mais recente que humano + timeout 2h → shouldSend=true (não bloqueia 2ª tentativa)", () => {
+    const s = makeSettings({
+      retomadaApenasSeHumanoAbandonou: true,
+      retomadaHumanoTempoValor: 2,
+      retomadaHumanoTempoUnidade: "horas",
+    });
+    const lastHumanOutboundAt = new Date(now.getTime() - 5 * 3_600_000); // humano: 5h atrás
+    const lastAgentMessageAt = new Date(now.getTime() - 1 * 3_600_000);  // agente: 1h atrás (mais recente)
+    const d = evaluateFollowUpNeed(makeCtx(s, { now, lastHumanOutboundAt, lastAgentMessageAt }));
+    expect(d.shouldSend).toBe(true);
+    expect(d.skipReason).toBeNull();
+  });
+
+  // 13. Humano foi o último, timeout=null → shouldSend=true (sem restrição de tempo)
+  it("ON + humano mais recente + retomadaHumanoTempoValor=null → shouldSend=true (sem bloqueio)", () => {
+    const s = makeSettings({
+      retomadaApenasSeHumanoAbandonou: true,
+      retomadaHumanoTempoValor: null,
+    });
+    const lastHumanOutboundAt = new Date(now.getTime() - 30 * 60_000); // humano: 30min atrás
+    const d = evaluateFollowUpNeed(makeCtx(s, { now, lastHumanOutboundAt }));
+    expect(d.shouldSend).toBe(true);
+    expect(d.skipReason).toBeNull();
+  });
 });
