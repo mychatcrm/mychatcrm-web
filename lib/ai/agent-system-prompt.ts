@@ -188,6 +188,7 @@ export function buildAgentSystemPrompt(params: {
   languageInstruction: string;
   recognitionHint?: string | null;
   condensedContext?: string | null;
+  schedulingContextBlock?: string | null;
   burstContext?: {
     groupedIntent?: string;
     urgencyLevel?: string;
@@ -266,6 +267,7 @@ ${
     ...formatRuntimeContext(params.runtimeContext),
     params.condensedContext?.trim() ? params.condensedContext.trim() : null,
     params.recognitionHint?.trim() ? params.recognitionHint.trim() : null,
+    params.schedulingContextBlock?.trim() ? params.schedulingContextBlock.trim() : null,
     formatSystemDateTimeContextBlock(resolveAgentTimezone(agent)),
   ].filter((item): item is string => Boolean(item && item.trim()));
 

@@ -238,6 +238,8 @@ export async function generateAgentResponse(params: {
     responseStrategy?: BurstResponseStrategy;
     dominantIntent?: string;
   };
+  /** Bloco injetado quando o lead já tem agendamento ativo (CTA agenda). */
+  schedulingContextBlock?: string | null;
 }): Promise<AiGenerateResult> {
   // -------------------------------------------------------------------------
   // Media pre-processing — convert audio/image to user text message
@@ -355,6 +357,7 @@ export async function generateAgentResponse(params: {
     languageInstruction: buildLanguageInstruction(detectedLanguageName, baseAgent.idioma),
     recognitionHint: includeWhatsapp ? memory.recognitionHint : null,
     condensedContext: memory.condensedContext,
+    schedulingContextBlock: params.schedulingContextBlock,
     burstContext: params.burstContext,
   });
 

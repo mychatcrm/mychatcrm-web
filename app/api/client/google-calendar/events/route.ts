@@ -106,6 +106,8 @@ export async function POST(request: Request) {
     attendee_email: body.attendeeEmail?.trim() || null,
     status: "confirmed",
     created_by: "user",
+    lead_id: null,
+    agent_id: null,
   });
 
   await broadcastAgendaChange(session.tenantId, "insert");

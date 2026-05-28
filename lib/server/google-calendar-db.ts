@@ -28,6 +28,8 @@ export type AgendaEventRow = {
   attendee_email: string | null;
   status: "confirmed" | "cancelled" | "pending";
   created_by: "system" | "user" | "agent";
+  lead_id: string | null;
+  agent_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -193,6 +195,8 @@ export async function upsertAgendaEventFromGoogle(
     attendee_email: null,
     status: event.status,
     created_by: "system",
+    lead_id: null,
+    agent_id: null,
   });
   return inserted.id;
 }

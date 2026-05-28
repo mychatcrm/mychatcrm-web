@@ -32,11 +32,17 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { transcribeAudioFromBuffer } from "@/lib/ai/media-processor";
 import { getMediaBufferFromR2 } from "@/lib/integrations/r2-storage";
 import { sendPresence, typingDelayMs } from "@/lib/server/evolution-presence";
+import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import {
+  assistantTextForSchedulingConfirmation,
   createAgendaEventForSchedulingCta,
+  detectRescheduleConfirmation,
   detectSchedulingConfirmation,
+  findActiveAgendaEventForScheduling,
+  formatExistingAppointmentSchedulingBlock,
   isSchedulingCta,
 } from "@/lib/server/agent-cta-scheduler";
+import type { AgentFollowUpInteligente } from "@/lib/types";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -108,6 +114,7 @@ async function generateReplyForUnit(params: {
   /** Sobrescreve o prompt calculado via buildReplyUnitPrompt. Usado para passar
    *  burst.userPrompt quando todas as mensagens estão numa única unidade. */
   promptOverride?: string;
+  schedulingContextBlock?: string;
 }): Promise<string> {
   const unitPrompt = params.promptOverride ?? buildReplyUnitPrompt(params.unit);
   const languageCode = detectSupportedLanguageCode(unitPrompt);
@@ -128,6 +135,7 @@ async function generateReplyForUnit(params: {
       responseStrategy: params.burst.responseStrategy,
       dominantIntent: params.burst.signals.dominantIntent,
     },
+    schedulingContextBlock: params.schedulingContextBlock,
   });
 
   let replyText = result.ok
@@ -378,6 +386,21 @@ export async function processAgentResponseJob(
     : [];
   const handoffEnabled = metadata.ctaHandoffAtivo === true;
   const schedulingCtaEnabled = isSchedulingCta(metadata.ctaFinal);
+  const schedulingTimezone = resolveAgentTimezone({
+    timezone: typeof metadata.timezone === "string" ? metadata.timezone : undefined,
+    followUpInteligente: metadata.followUpInteligente as AgentFollowUpInteligente | undefined,
+  });
+  const activeAgendaEvent = schedulingCtaEnabled
+    ? await findActiveAgendaEventForScheduling({
+        sb,
+        tenantId: job.tenant_id,
+        remoteJid: job.remote_jid,
+      })
+    : null;
+  const schedulingContextBlock =
+    activeAgendaEvent != null
+      ? formatExistingAppointmentSchedulingBlock(activeAgendaEvent, schedulingTimezone)
+      : undefined;
   const handoffMessage =
     handoffEnabled && typeof metadata.handoffMensagem === "string" && metadata.handoffMensagem.trim()
       ? metadata.handoffMensagem.trim()
@@ -457,9 +480,12 @@ export async function processAgentResponseJob(
     const handoffCheck = handoffEnabled
       ? await shouldTriggerHandoffAI(unitPrompt, handoffKeywords)
       : { trigger: false, reason: null };
-    const schedulingConfirmed =
+    const schedulingConfirmationDetected =
       schedulingCtaEnabled &&
       detectSchedulingConfirmation(unitPrompt, lastAssistantMessage ?? undefined);
+    const wantsReschedule =
+      !!activeAgendaEvent &&
+      detectRescheduleConfirmation(unitPrompt, lastAssistantMessage ?? undefined, true);
 
     const replyText = await generateReplyForUnit({
       job,
@@ -470,6 +496,7 @@ export async function processAgentResponseJob(
       // Sempre usa o prompt consolidado do burst (buildHumanPrompt),
       // que já lida com urgência, intent dominante e filtragem de saudações.
       promptOverride: burst.userPrompt,
+      schedulingContextBlock,
     });
 
     console.info("[agent-response-jobs]", {
@@ -486,7 +513,7 @@ export async function processAgentResponseJob(
       handoffReason = handoffCheck.reason ?? "handoff";
       handoffLastMessage = unitPrompt;
     }
-    if (schedulingConfirmed && !handoffTriggered) {
+    if (schedulingConfirmationDetected && (!activeAgendaEvent || wantsReschedule) && !handoffTriggered) {
       handoffTriggered = true;
       handoffReason = "cta_schedule_confirmed";
       handoffLastMessage = unitPrompt;
@@ -636,14 +663,37 @@ export async function processAgentResponseJob(
   if (handoffTriggered) {
     if (schedulingCtaEnabled && schedulingConfirmationMessage) {
       try {
-        await createAgendaEventForSchedulingCta({
+        const assistantForCreate = assistantTextForSchedulingConfirmation(
+          lastAssistantMessage ?? "",
+          undefined,
+        );
+        const wantsReschedule =
+          !!activeAgendaEvent &&
+          detectRescheduleConfirmation(
+            schedulingConfirmationMessage,
+            assistantForCreate || undefined,
+            true,
+          );
+        const createResult = await createAgendaEventForSchedulingCta({
           sb,
           tenantId: job.tenant_id,
           remoteJid: job.remote_jid,
           contactName: null,
           userMessage: schedulingConfirmationMessage,
-          assistantMessage: lastAssistantMessage ?? "",
+          assistantMessage: assistantForCreate,
+          timezone: schedulingTimezone,
+          leadId: job.lead_id,
+          agentId: job.agent_id,
+          rescheduleOfEventId:
+            wantsReschedule && activeAgendaEvent ? activeAgendaEvent.id : undefined,
         });
+        if (!createResult.created) {
+          console.warn("[agent-response-jobs] agenda CTA not created", {
+            job_id: job.id,
+            tenant_id: job.tenant_id,
+            reason: createResult.reason,
+          });
+        }
       } catch (error) {
         console.warn("[agent-response-jobs] failed to create agenda event for CTA scheduling", {
           job_id: job.id,
