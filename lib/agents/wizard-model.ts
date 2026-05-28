@@ -39,8 +39,6 @@ export type AgentWizardDraft = {
   promptRegrasAdicionais: string;
   respostasProibidas: string;
   idioma: string;
-  /** Fuso IANA (metadata.timezone na raiz; espelhado em followUpInteligente ao salvar). */
-  timezone: string;
   arquivosTreinamento: Agent["arquivosTreinamento"];
   origens: AgentOrigin[];
   fluxo: FlowStep[];
@@ -142,14 +140,6 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     maxSeconds: agent.smartWaitMaxSeconds,
     dedupeRepeated: agent.smartWaitDedupeRepeated,
   });
-  const timezone =
-    (typeof agent.timezone === "string" && agent.timezone.trim()) ||
-    agent.followUpInteligente?.timezone ||
-    DEFAULT_FOLLOW_UP_INTELIGENTE.timezone ||
-    "UTC";
-  const followUpInteligente = agent.followUpInteligente
-    ? { ...DEFAULT_FOLLOW_UP_INTELIGENTE, ...agent.followUpInteligente, timezone }
-    : { ...DEFAULT_FOLLOW_UP_INTELIGENTE, timezone };
   return {
     nome: agent.nome,
     avatar: agent.avatar ?? "bot",
@@ -169,8 +159,9 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     origens: normalizeOrigensForWizard(agent.origens),
     fluxo: agent.fluxo,
     followUps: agent.followUps,
-    timezone,
-    followUpInteligente,
+    followUpInteligente: agent.followUpInteligente
+      ? { ...DEFAULT_FOLLOW_UP_INTELIGENTE, ...agent.followUpInteligente }
+      : { ...DEFAULT_FOLLOW_UP_INTELIGENTE },
     funil: { ...legacyFunil },
     whatsappSlotIndex,
     ctaHandoffAtivo: agent.ctaHandoffAtivo ?? false,
@@ -277,7 +268,6 @@ export const defaultWizardDraft: AgentWizardDraft = {
   promptRegrasAdicionais: "",
   respostasProibidas: "",
   idioma: "Português BR",
-  timezone: DEFAULT_FOLLOW_UP_INTELIGENTE.timezone ?? "UTC",
   arquivosTreinamento: [],
   origens: [
     { tipo: "lead_ads", ativo: false, config: { formIds: [], enviarPrimeiro: true, delayPrimeiro: 0, mensagemInicial: "" } },

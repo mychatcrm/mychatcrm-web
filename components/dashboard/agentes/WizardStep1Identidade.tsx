@@ -1,9 +1,7 @@
 "use client";
 
 import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
-import { PanelSelect } from "@/components/panel/ui/PanelSelect";
 import type { AgentWizardDraft } from "@/lib/agents";
-import { COMMON_TIMEZONES } from "@/lib/agents/common-timezones";
 import { cn } from "@/lib/utils";
 import { AGENT_FIELD_HELP } from "./agent-field-help-content";
 import { FieldLabel } from "./agent-field-help";
@@ -52,30 +50,6 @@ export function WizardStep1Identidade({
             </button>
           ))}
         </div>
-      </div>
-      <div className="md:col-span-2">
-        <FieldLabel
-          label="Fuso horário"
-          help="Define o fuso usado na data/hora do prompt do agente e na janela de horário do follow-up."
-        />
-        <PanelSelect
-          value={draft.timezone ?? "UTC"}
-          onChange={(e) => {
-            const timezone = e.target.value;
-            onChange({
-              ...draft,
-              timezone,
-              followUpInteligente: { ...draft.followUpInteligente, timezone },
-            });
-          }}
-          className="max-w-xs"
-        >
-          {COMMON_TIMEZONES.map((tz) => (
-            <option key={tz.value} value={tz.value}>
-              {tz.label}
-            </option>
-          ))}
-        </PanelSelect>
       </div>
     </div>
   );

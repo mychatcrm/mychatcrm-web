@@ -1,4 +1,3 @@
-import { parseTimezone } from "@/lib/agents/agent-datetime";
 import type { AgentFollowUpInteligente } from "@/lib/types";
 
 export const DEFAULT_FOLLOW_UP_INTELIGENTE: AgentFollowUpInteligente = {
@@ -40,10 +39,7 @@ export function followUpInteligenteFromMetadata(
   metadata: Record<string, unknown> | null | undefined,
 ): AgentFollowUpInteligente {
   const raw = metadata?.followUpInteligente;
-  if (!raw || typeof raw !== "object") {
-    const timezone = parseTimezone(metadata?.timezone);
-    return { ...DEFAULT_FOLLOW_UP_INTELIGENTE, timezone };
-  }
+  if (!raw || typeof raw !== "object") return { ...DEFAULT_FOLLOW_UP_INTELIGENTE };
   const src = raw as Record<string, unknown>;
   const defaults = DEFAULT_FOLLOW_UP_INTELIGENTE;
 
@@ -123,9 +119,7 @@ export function followUpInteligenteFromMetadata(
     usarDadosFormularioMeta: bool(src, "usarDadosFormularioMeta", defaults.usarDadosFormularioMeta),
     usarHistoricoCrm: bool(src, "usarHistoricoCrm", defaults.usarHistoricoCrm),
     usarHistoricoWhatsapp: bool(src, "usarHistoricoWhatsapp", defaults.usarHistoricoWhatsapp),
-    timezone: parseTimezone(
-      typeof metadata?.timezone === "string" ? metadata.timezone : src.timezone,
-    ),
+    timezone: parseTimezone(src.timezone),
     // null = sem restrição de tempo para abandono humano (retrocompatível com configs antigas).
     retomadaHumanoTempoValor:
       typeof src.retomadaHumanoTempoValor === "number" && Number.isFinite(src.retomadaHumanoTempoValor)
@@ -137,4 +131,19 @@ export function followUpInteligenteFromMetadata(
       ? (src.retomadaHumanoTempoUnidade as "minutos" | "horas" | "dias")
       : "horas",
   };
+}
+
+const VALID_IANA_RE = /^[A-Za-z]+(?:\/[A-Za-z_]+){0,2}$/;
+
+function parseTimezone(raw: unknown): string {
+  if (typeof raw !== "string" || !raw.trim()) return "UTC";
+  const tz = raw.trim();
+  if (!VALID_IANA_RE.test(tz)) return "UTC";
+  try {
+    // Validate that the timezone is supported by the runtime
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return tz;
+  } catch {
+    return "UTC";
+  }
 }

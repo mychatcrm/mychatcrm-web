@@ -275,8 +275,6 @@ export interface Agent {
   /** Texto exato que reativa o agente na mesma conversa após pausa manual. */
   comandoRetomaConversa?: string;
   idioma: string;
-  /** Fuso IANA do agente (prompt, horários de follow-up). Padrão: UTC. */
-  timezone?: string;
   /**
    * Linha WhatsApp (0 = numero incluido no plano; 1+ = extras contratados).
    * O metodo QR/API define-se em Integracoes; o agente fica associado a este indice.

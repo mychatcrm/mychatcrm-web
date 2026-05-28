@@ -1,4 +1,3 @@
-import { formatCurrentDateTimeLine, resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import { agentUsesSimpleInstructions } from "@/lib/agents/instruction-mode";
 import { buildMetaFormKnownFactsPromptBlock } from "@/lib/meta-leads/form-metadata";
 import type { Agent } from "@/lib/types";
@@ -211,7 +210,6 @@ export function buildAgentSystemPrompt(params: {
       ];
   const parts = [
     params.languageInstruction,
-    formatCurrentDateTimeLine(resolveAgentTimezone(agent)),
     "Ao confirmar um agendamento, sempre repita a data, horário e local na sua resposta de confirmação.",
     `IDENTIDADE DO AGENTE
 Nome: ${clean(agent.nome) || "Agente de atendimento"}
