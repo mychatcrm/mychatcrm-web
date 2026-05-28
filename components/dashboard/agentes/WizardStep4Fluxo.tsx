@@ -26,12 +26,24 @@ export function WizardStep4Fluxo({
   const ctaValue = CTA_OPTIONS.some((opt) => opt.value === draft.ctaFinal)
     ? draft.ctaFinal
     : CTA_OPTIONS[2]!.value;
+  const handoffSectionTitle =
+    ctaValue === "Agendar no Google Agenda"
+      ? "Configuração de Agendamento"
+      : ctaValue === "Enviar link de pagamento"
+        ? "Configuração de Pagamento"
+        : ctaValue === "Transferir para humano"
+          ? "Transferência para Atendente Humano"
+          : ctaValue === "Adicionar ao grupo"
+            ? "Configuração de Grupo WhatsApp"
+            : ctaValue === "Enviar contrato"
+              ? "Configuração de Contrato"
+              : "Objetivo Final do Agente";
 
   return (
     <div className="min-w-0 space-y-4">
       <section className="min-w-0 divide-y divide-line rounded-xl border border-line bg-surface-elevated/20">
         <div className="px-3 py-4 sm:px-4">
-          <FieldTitle title="Transferência para Atendente Humano" help={AGENT_FIELD_HELP.handoffAtivar} className="mb-4" />
+          <FieldTitle title={handoffSectionTitle} help={AGENT_FIELD_HELP.handoffAtivar} className="mb-4" />
           <Toggle
             id="handoff-ativo"
             checked={handoffActive}

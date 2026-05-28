@@ -40,6 +40,11 @@ import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { isSmartWaitGloballyDisabled, runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
 import { scheduleFollowUpAfterInbound, scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
+import {
+  createAgendaEventForSchedulingCta,
+  detectSchedulingConfirmation,
+  isSchedulingCta,
+} from "@/lib/server/agent-cta-scheduler";
 
 
 export const dynamic = "force-dynamic";
@@ -656,6 +661,7 @@ export async function POST(request: Request) {
             ? metadata.handoffKeywords.filter((item): item is string => typeof item === "string")
             : [];
           const handoffEnabled = metadata.ctaHandoffAtivo === true;
+          const schedulingCtaEnabled = isSchedulingCta(metadata.ctaFinal);
           const handoffMessage =
             handoffEnabled && typeof metadata.handoffMensagem === "string" && metadata.handoffMensagem.trim()
               ? metadata.handoffMensagem.trim()
@@ -715,13 +721,35 @@ export async function POST(request: Request) {
           // o modelo esquecer [[HANDOFF]] ao combinar transferência + mídia.
           const userRequestedHandoff = handoffCheck.trigger;
           const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
+          const scheduleConfirmed = schedulingCtaEnabled && detectSchedulingConfirmation(inboundLanguageSource(msg));
           const modelTextWithoutHandoff = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
-          const finalHandoffCheck = userRequestedHandoff || aiMarkerHandoff;
-          const finalHandoffReason = handoffCheck.trigger
-            ? (handoffCheck.reason ?? "handoff")
-            : "ai_handoff";
+          const finalHandoffCheck = userRequestedHandoff || aiMarkerHandoff || scheduleConfirmed;
+          const finalHandoffReason = scheduleConfirmed
+            ? "cta_schedule_confirmed"
+            : handoffCheck.trigger
+              ? (handoffCheck.reason ?? "handoff")
+              : "ai_handoff";
 
           if (finalHandoffCheck) {
+            if (scheduleConfirmed) {
+              try {
+                await createAgendaEventForSchedulingCta({
+                  sb: sbState,
+                  tenantId: row.tenant_id,
+                  remoteJid: msg.remoteJid,
+                  contactName,
+                  userMessage: inboundLanguageSource(msg),
+                  assistantMessage: modelTextWithoutHandoff,
+                });
+              } catch (error) {
+                console.warn("[webhooks/evolution] failed to create agenda event for scheduling CTA", {
+                  tenant_id: row.tenant_id,
+                  agent_id: agentId,
+                  message: error instanceof Error ? error.message : String(error),
+                });
+              }
+            }
+
             const messages = await getRecentConversationMessages({
               sb: sbState,
               tenantId: row.tenant_id,

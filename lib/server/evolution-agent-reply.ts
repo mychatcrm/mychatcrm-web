@@ -32,6 +32,11 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { transcribeAudioFromBuffer } from "@/lib/ai/media-processor";
 import { getMediaBufferFromR2 } from "@/lib/integrations/r2-storage";
 import { sendPresence, typingDelayMs } from "@/lib/server/evolution-presence";
+import {
+  createAgendaEventForSchedulingCta,
+  detectSchedulingConfirmation,
+  isSchedulingCta,
+} from "@/lib/server/agent-cta-scheduler";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -372,6 +377,7 @@ export async function processAgentResponseJob(
     ? metadata.handoffKeywords.filter((item): item is string => typeof item === "string")
     : [];
   const handoffEnabled = metadata.ctaHandoffAtivo === true;
+  const schedulingCtaEnabled = isSchedulingCta(metadata.ctaFinal);
   const handoffMessage =
     handoffEnabled && typeof metadata.handoffMensagem === "string" && metadata.handoffMensagem.trim()
       ? metadata.handoffMensagem.trim()
@@ -432,6 +438,8 @@ export async function processAgentResponseJob(
   let handoffTriggered = false;
   let handoffReason: string | undefined;
   let handoffLastMessage: string | undefined;
+  let schedulingConfirmationMessage: string | null = null;
+  let lastAssistantMessage: string | null = null;
   let repliesSent = 0;
 
   for (let unitIndex = 0; unitIndex < burst.replyUnits.length; unitIndex++) {
@@ -449,6 +457,7 @@ export async function processAgentResponseJob(
     const handoffCheck = handoffEnabled
       ? await shouldTriggerHandoffAI(unitPrompt, handoffKeywords)
       : { trigger: false, reason: null };
+    const schedulingConfirmed = schedulingCtaEnabled && detectSchedulingConfirmation(unitPrompt);
 
     const replyText = await generateReplyForUnit({
       job,
@@ -474,6 +483,12 @@ export async function processAgentResponseJob(
       handoffTriggered = true;
       handoffReason = handoffCheck.reason ?? "handoff";
       handoffLastMessage = unitPrompt;
+    }
+    if (schedulingConfirmed && !handoffTriggered) {
+      handoffTriggered = true;
+      handoffReason = "cta_schedule_confirmed";
+      handoffLastMessage = unitPrompt;
+      schedulingConfirmationMessage = unitPrompt;
     }
 
     // Strip [[HANDOFF]] marker from AI reply (always safe to remove)
@@ -503,6 +518,7 @@ export async function processAgentResponseJob(
     if (!textToSend && outboundFilenames.length) {
       textToSend = "Segue o envio solicitado.";
     }
+    lastAssistantMessage = textToSend;
 
     console.info("[evolution-agent-reply]", {
       event: "outbound_media_resolved",
@@ -616,6 +632,25 @@ export async function processAgentResponseJob(
   }
 
   if (handoffTriggered) {
+    if (schedulingCtaEnabled && schedulingConfirmationMessage) {
+      try {
+        await createAgendaEventForSchedulingCta({
+          sb,
+          tenantId: job.tenant_id,
+          remoteJid: job.remote_jid,
+          contactName: null,
+          userMessage: schedulingConfirmationMessage,
+          assistantMessage: lastAssistantMessage ?? "",
+        });
+      } catch (error) {
+        console.warn("[agent-response-jobs] failed to create agenda event for CTA scheduling", {
+          job_id: job.id,
+          tenant_id: job.tenant_id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     const messages = await getRecentConversationMessages({
       sb,
       tenantId: job.tenant_id,
