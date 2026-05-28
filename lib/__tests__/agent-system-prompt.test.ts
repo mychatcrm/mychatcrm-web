@@ -46,6 +46,8 @@ describe("buildAgentSystemPrompt", () => {
     });
 
     expect(prompt.startsWith("CRITICAL INSTRUCTION - LANGUAGE")).toBe(true);
+    expect(prompt).toContain("Data e hora atual:");
+    expect(prompt).toMatch(/Data e hora atual: .+, \d{2} de .+ de \d{4}, \d{2}:\d{2} \(UTC\)/);
     expect(prompt).toContain("Max Vendas");
     expect(prompt).toContain("Tom de voz: Consultivo");
     expect(prompt).toContain("Não fale de concorrentes.");
@@ -54,6 +56,18 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("Dados do lead:");
     expect(prompt).toContain("Material: FAQ");
     expect(prompt).toContain("vídeo");
+  });
+
+  it("uses agent timezone for the current datetime line", () => {
+    const prompt = buildAgentSystemPrompt({
+      languageInstruction: "Responda em português.",
+      agent: {
+        nome: "Agente BR",
+        timezone: "America/Sao_Paulo",
+      },
+    });
+    expect(prompt).toContain("Data e hora atual:");
+    expect(prompt).toContain("(America/Sao_Paulo)");
   });
 
   it("uses simplePrompt as the main instruction block in simple mode", () => {

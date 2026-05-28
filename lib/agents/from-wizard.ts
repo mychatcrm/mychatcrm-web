@@ -4,11 +4,23 @@ import { sanitizeAgentResponseSettings } from "./response-settings";
 import { sanitizeAgentSmartWaitSettings } from "./smart-wait-settings";
 import type { AgentWizardDraft } from "./wizard-model";
 
+function followUpAndTimezoneFromDraft(draft: AgentWizardDraft) {
+  const timezone =
+    (typeof draft.timezone === "string" && draft.timezone.trim()) ||
+    draft.followUpInteligente?.timezone ||
+    "UTC";
+  return {
+    timezone,
+    followUpInteligente: { ...draft.followUpInteligente, timezone },
+  };
+}
+
 /** Aplica o rascunho do wizard a um agente existente (mantém id, métricas, status, horário, etc.). */
 export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDraft): Agent {
   const stamp = new Date().toISOString();
   const responseSettings = sanitizeAgentResponseSettings(draft);
   const smartWait = sanitizeAgentSmartWaitSettings(draft);
+  const { timezone, followUpInteligente } = followUpAndTimezoneFromDraft(draft);
   return {
     ...existing,
     whatsappSlotIndex: draft.whatsappSlotIndex ?? 0,
@@ -26,12 +38,13 @@ export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDr
     promptRegrasAdicionais: draft.promptRegrasAdicionais,
     respostasProibidas: draft.respostasProibidas,
     idioma: draft.idioma,
+    timezone,
     arquivosTreinamento: draft.arquivosTreinamento,
     origens: draft.origens,
     fluxo: draft.fluxo,
     funil: { ...draft.funil },
     followUps: draft.followUps,
-    followUpInteligente: draft.followUpInteligente,
+    followUpInteligente,
     atualizadoEm: stamp,
     voiceId: responseSettings.voiceId,
     responseMode: responseSettings.responseMode,
@@ -65,6 +78,7 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
   const stamp = new Date().toISOString();
   const responseSettings = sanitizeAgentResponseSettings(draft);
   const smartWait = sanitizeAgentSmartWaitSettings(draft);
+  const { timezone, followUpInteligente } = followUpAndTimezoneFromDraft(draft);
   return {
     ...base,
     id: `ag-novo-${Date.now()}`,
@@ -85,12 +99,13 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
     promptRegrasAdicionais: draft.promptRegrasAdicionais,
     respostasProibidas: draft.respostasProibidas,
     idioma: draft.idioma,
+    timezone,
     arquivosTreinamento: draft.arquivosTreinamento,
     origens: draft.origens,
     fluxo: draft.fluxo,
     funil: { ...draft.funil },
     followUps: draft.followUps,
-    followUpInteligente: draft.followUpInteligente,
+    followUpInteligente,
     metricas: {
       ...base.metricas,
       conversasHoje: 0,
