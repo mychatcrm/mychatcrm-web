@@ -15,13 +15,29 @@ export function isSchedulingCta(ctaFinal: unknown): boolean {
   return typeof ctaFinal === "string" && ctaFinal.trim() === SCHEDULE_CTA_VALUE;
 }
 
+export function textHasSchedulingContext(text: string): boolean {
+  return SCHEDULING_RE.test(text.trim().toLowerCase());
+}
+
+/** Prioriza o texto atual se já tiver contexto de agenda; senão usa o outbound anterior do agente. */
+export function assistantTextForSchedulingConfirmation(
+  currentAssistantText: string,
+  priorAssistantText?: string | null,
+): string {
+  const current = currentAssistantText.trim();
+  if (current && textHasSchedulingContext(current)) return current;
+  const prior = priorAssistantText?.trim();
+  if (prior) return prior;
+  return current;
+}
+
 export function detectSchedulingConfirmation(userText: string, assistantText?: string): boolean {
   const text = userText.trim().toLowerCase();
   if (!text) return false;
   if (!CONFIRMATION_RE.test(text)) return false;
   // Scheduling context can come from the lead's message OR from the agent's previous message
   // (the agent typically summarises date/time/location in the confirmation prompt).
-  return SCHEDULING_RE.test(text) || (!!assistantText && SCHEDULING_RE.test(assistantText.toLowerCase()));
+  return textHasSchedulingContext(text) || (!!assistantText && textHasSchedulingContext(assistantText));
 }
 
 function extractPhone(remoteJid: string): string | null {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  assistantTextForSchedulingConfirmation,
   createAgendaEventForSchedulingCta,
   detectSchedulingConfirmation,
   isSchedulingCta,
@@ -44,6 +45,24 @@ describe("agent-cta-scheduler", () => {
   it("detects confirmation intent with scheduling context", () => {
     expect(detectSchedulingConfirmation("Perfeito, pode agendar para amanhã às 14:30")).toBe(true);
     expect(detectSchedulingConfirmation("Quero saber mais sobre o serviço")).toBe(false);
+  });
+
+  it("detects short confirmation when prior assistant message had scheduling context", () => {
+    expect(
+      detectSchedulingConfirmation(
+        "Está sim!",
+        assistantTextForSchedulingConfirmation("Ótimo, confirmado!", "Visita amanhã às 14h no stand"),
+      ),
+    ).toBe(true);
+  });
+
+  it("prefers current assistant text when it already has scheduling context", () => {
+    expect(
+      assistantTextForSchedulingConfirmation(
+        "Agendamento confirmado para amanhã às 14:30",
+        "Visita na segunda",
+      ),
+    ).toBe("Agendamento confirmado para amanhã às 14:30");
   });
 
   it("creates agenda event when no recent duplicate exists", async () => {

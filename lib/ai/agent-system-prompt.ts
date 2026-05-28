@@ -212,6 +212,7 @@ export function buildAgentSystemPrompt(params: {
   const parts = [
     params.languageInstruction,
     formatCurrentDateTimeLine(resolveAgentTimezone(agent)),
+    "Ao confirmar um agendamento, sempre repita a data, horário e local na sua resposta de confirmação.",
     `IDENTIDADE DO AGENTE
 Nome: ${clean(agent.nome) || "Agente de atendimento"}
 Tom de voz: ${clean(agent.tom) || "profissional"}

@@ -48,6 +48,9 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt.startsWith("CRITICAL INSTRUCTION - LANGUAGE")).toBe(true);
     expect(prompt).toContain("Data e hora atual:");
     expect(prompt).toMatch(/Data e hora atual: .+, \d{2} de .+ de \d{4}, \d{2}:\d{2} \(UTC\)/);
+    expect(prompt).toContain(
+      "Ao confirmar um agendamento, sempre repita a data, horário e local na sua resposta de confirmação.",
+    );
     expect(prompt).toContain("Max Vendas");
     expect(prompt).toContain("Tom de voz: Consultivo");
     expect(prompt).toContain("Não fale de concorrentes.");

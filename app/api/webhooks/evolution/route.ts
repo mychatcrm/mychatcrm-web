@@ -41,10 +41,12 @@ import { isSmartWaitGloballyDisabled, runInboundSmartWaitFlow } from "@/lib/serv
 import { scheduleFollowUpAfterInbound, scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
 import {
+  assistantTextForSchedulingConfirmation,
   createAgendaEventForSchedulingCta,
   detectSchedulingConfirmation,
   isSchedulingCta,
 } from "@/lib/server/agent-cta-scheduler";
+import type { ConversationMessageContext } from "@/lib/server/conversation-memory";
 
 
 export const dynamic = "force-dynamic";
@@ -62,6 +64,20 @@ function verifyWebhookToken(request: Request): boolean {
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+/** Último outbound do agente (não humano) antes da mensagem inbound atual no histórico. */
+function findLastAgentOutboundBeforeCurrentTail(
+  messages: ConversationMessageContext[],
+): string | null {
+  let i = messages.length - 1;
+  while (i >= 0 && messages[i]?.role === "user") i -= 1;
+  while (i >= 0 && messages[i]?.role === "human") i -= 1;
+  if (i >= 0 && messages[i]?.role === "assistant") {
+    const content = messages[i]!.content.trim();
+    return content || null;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -722,9 +738,23 @@ export async function POST(request: Request) {
           const userRequestedHandoff = handoffCheck.trigger;
           const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
           const modelTextWithoutHandoff = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
+          let priorAgentOutboundForSchedule: string | null = null;
+          if (schedulingCtaEnabled) {
+            const recentForSchedule = await getRecentConversationMessages({
+              sb: sbState,
+              tenantId: row.tenant_id,
+              remoteJid: msg.remoteJid,
+              limit: 30,
+            });
+            priorAgentOutboundForSchedule = findLastAgentOutboundBeforeCurrentTail(recentForSchedule);
+          }
+          const assistantTextForSchedule = assistantTextForSchedulingConfirmation(
+            modelTextWithoutHandoff,
+            priorAgentOutboundForSchedule,
+          );
           const scheduleConfirmed =
             schedulingCtaEnabled &&
-            detectSchedulingConfirmation(inboundLanguageSource(msg), modelTextWithoutHandoff);
+            detectSchedulingConfirmation(inboundLanguageSource(msg), assistantTextForSchedule);
           const finalHandoffCheck = userRequestedHandoff || aiMarkerHandoff || scheduleConfirmed;
           const finalHandoffReason = scheduleConfirmed
             ? "cta_schedule_confirmed"
