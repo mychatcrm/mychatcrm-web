@@ -721,8 +721,10 @@ export async function POST(request: Request) {
           // o modelo esquecer [[HANDOFF]] ao combinar transferência + mídia.
           const userRequestedHandoff = handoffCheck.trigger;
           const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
-          const scheduleConfirmed = schedulingCtaEnabled && detectSchedulingConfirmation(inboundLanguageSource(msg));
           const modelTextWithoutHandoff = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
+          const scheduleConfirmed =
+            schedulingCtaEnabled &&
+            detectSchedulingConfirmation(inboundLanguageSource(msg), modelTextWithoutHandoff);
           const finalHandoffCheck = userRequestedHandoff || aiMarkerHandoff || scheduleConfirmed;
           const finalHandoffReason = scheduleConfirmed
             ? "cta_schedule_confirmed"

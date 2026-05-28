@@ -7,17 +7,21 @@ import { insertAgendaEvent } from "@/lib/server/google-calendar-db";
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
 const SCHEDULE_CTA_VALUE = "Agendar no Google Agenda";
-const CONFIRMATION_RE = /\b(confirm|confirmo|confirmada|confirmado|fechou|fechado|combinado|perfeito|ok|pode ser|marcar|marcado)\b/i;
+const CONFIRMATION_RE =
+  /\b(sim|t[aá]\s*bom|t[aá]|pode|claro|com\s*certeza|[oó]timo|certo|isso|exato|confirm|confirmo|confirmada|confirmado|fechou|fechado|combinado|perfeito|ok|pode\s*ser|marcar|marcado)\b/i;
 const SCHEDULING_RE = /\b(agend|reuni[aã]o|visita|hor[aá]rio|amanh[ãa]|hoje|segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo|\d{1,2}[:h]\d{2}|\d{1,2}\/\d{1,2})\b/i;
 
 export function isSchedulingCta(ctaFinal: unknown): boolean {
   return typeof ctaFinal === "string" && ctaFinal.trim() === SCHEDULE_CTA_VALUE;
 }
 
-export function detectSchedulingConfirmation(userText: string): boolean {
+export function detectSchedulingConfirmation(userText: string, assistantText?: string): boolean {
   const text = userText.trim().toLowerCase();
   if (!text) return false;
-  return CONFIRMATION_RE.test(text) && SCHEDULING_RE.test(text);
+  if (!CONFIRMATION_RE.test(text)) return false;
+  // Scheduling context can come from the lead's message OR from the agent's previous message
+  // (the agent typically summarises date/time/location in the confirmation prompt).
+  return SCHEDULING_RE.test(text) || (!!assistantText && SCHEDULING_RE.test(assistantText.toLowerCase()));
 }
 
 function extractPhone(remoteJid: string): string | null {

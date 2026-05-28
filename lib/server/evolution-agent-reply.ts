@@ -457,7 +457,9 @@ export async function processAgentResponseJob(
     const handoffCheck = handoffEnabled
       ? await shouldTriggerHandoffAI(unitPrompt, handoffKeywords)
       : { trigger: false, reason: null };
-    const schedulingConfirmed = schedulingCtaEnabled && detectSchedulingConfirmation(unitPrompt);
+    const schedulingConfirmed =
+      schedulingCtaEnabled &&
+      detectSchedulingConfirmation(unitPrompt, lastAssistantMessage ?? undefined);
 
     const replyText = await generateReplyForUnit({
       job,
