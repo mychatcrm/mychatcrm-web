@@ -23,6 +23,7 @@ import {
   saveConversationSummary,
   shouldTriggerHandoff,
   shouldTriggerHandoffAI,
+  type ConversationMessageContext,
 } from "@/lib/server/conversation-memory";
 import { markWaitingForHuman } from "@/lib/server/conversation-operation";
 import { scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
@@ -41,6 +42,7 @@ import {
   findActiveAgendaEventForScheduling,
   formatExistingAppointmentSchedulingBlock,
   isSchedulingCta,
+  textHasSchedulingContext,
 } from "@/lib/server/agent-cta-scheduler";
 import type { AgentFollowUpInteligente } from "@/lib/types";
 
@@ -103,6 +105,23 @@ async function isGenerationStale(
 
 function humanTypingDelayMs(): number {
   return 1000 + Math.floor(Math.random() * 1001);
+}
+
+function logFollowUp(event: string, payload: Record<string, unknown>): void {
+  console.info("[agent-response-jobs]", { event, ...payload });
+}
+
+/** Último outbound do agente (não humano) com data/hora no texto — para parse de agendamento. */
+function findLastSchedulingOutboundFromHistory(
+  messages: ConversationMessageContext[],
+): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role !== "assistant") continue;
+    const content = m.content.trim();
+    if (content && textHasSchedulingContext(content)) return content;
+  }
+  return null;
 }
 
 async function generateReplyForUnit(params: {
@@ -176,6 +195,7 @@ async function generateReplyForUnit(params: {
           responseStrategy: params.burst.responseStrategy,
           dominantIntent: params.burst.signals.dominantIntent,
         },
+        schedulingContextBlock: params.schedulingContextBlock,
       });
       if (retry.ok) replyText = retry.text;
     }
@@ -401,6 +421,11 @@ export async function processAgentResponseJob(
     activeAgendaEvent != null
       ? formatExistingAppointmentSchedulingBlock(activeAgendaEvent, schedulingTimezone)
       : undefined;
+  logFollowUp("scheduling_context_injected", {
+    job_id: job.id,
+    hasBlock: !!schedulingContextBlock,
+    active_event_id: activeAgendaEvent?.id ?? null,
+  });
   const handoffMessage =
     handoffEnabled && typeof metadata.handoffMensagem === "string" && metadata.handoffMensagem.trim()
       ? metadata.handoffMensagem.trim()
@@ -663,36 +688,51 @@ export async function processAgentResponseJob(
   if (handoffTriggered) {
     if (schedulingCtaEnabled && schedulingConfirmationMessage) {
       try {
-        const assistantForCreate = assistantTextForSchedulingConfirmation(
-          lastAssistantMessage ?? "",
-          undefined,
-        );
-        const wantsReschedule =
-          !!activeAgendaEvent &&
-          detectRescheduleConfirmation(
-            schedulingConfirmationMessage,
-            assistantForCreate || undefined,
-            true,
-          );
-        const createResult = await createAgendaEventForSchedulingCta({
+        const historyForSchedule = await getRecentConversationMessages({
           sb,
           tenantId: job.tenant_id,
           remoteJid: job.remote_jid,
-          contactName: null,
-          userMessage: schedulingConfirmationMessage,
-          assistantMessage: assistantForCreate,
-          timezone: schedulingTimezone,
-          leadId: job.lead_id,
-          agentId: job.agent_id,
-          rescheduleOfEventId:
-            wantsReschedule && activeAgendaEvent ? activeAgendaEvent.id : undefined,
+          limit: 30,
         });
-        if (!createResult.created) {
-          console.warn("[agent-response-jobs] agenda CTA not created", {
+        const schedulingOutboundFromHistory =
+          findLastSchedulingOutboundFromHistory(historyForSchedule);
+        if (!schedulingOutboundFromHistory) {
+          logFollowUp("no_datetime_found_in_history", {
             job_id: job.id,
             tenant_id: job.tenant_id,
-            reason: createResult.reason,
           });
+        } else {
+          const assistantForCreate = assistantTextForSchedulingConfirmation(
+            schedulingOutboundFromHistory,
+            undefined,
+          );
+          const wantsReschedule =
+            !!activeAgendaEvent &&
+            detectRescheduleConfirmation(
+              schedulingConfirmationMessage,
+              assistantForCreate || undefined,
+              true,
+            );
+          const createResult = await createAgendaEventForSchedulingCta({
+            sb,
+            tenantId: job.tenant_id,
+            remoteJid: job.remote_jid,
+            contactName: null,
+            userMessage: schedulingConfirmationMessage,
+            assistantMessage: assistantForCreate,
+            timezone: schedulingTimezone,
+            leadId: job.lead_id,
+            agentId: job.agent_id,
+            rescheduleOfEventId:
+              wantsReschedule && activeAgendaEvent ? activeAgendaEvent.id : undefined,
+          });
+          if (!createResult.created) {
+            console.warn("[agent-response-jobs] agenda CTA not created", {
+              job_id: job.id,
+              tenant_id: job.tenant_id,
+              reason: createResult.reason,
+            });
+          }
         }
       } catch (error) {
         console.warn("[agent-response-jobs] failed to create agenda event for CTA scheduling", {
