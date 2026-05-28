@@ -47,6 +47,17 @@ describe("agent-cta-scheduler", () => {
     expect(detectSchedulingConfirmation("Quero saber mais sobre o serviço")).toBe(false);
   });
 
+  it("webhook scenario: lead says sim after agent proposed a schedule", () => {
+    const priorProposal = "Posso agendar sua visita para amanhã às 14h no nosso stand?";
+    const modelReply = "Ótimo, confirmado!";
+    expect(
+      detectSchedulingConfirmation(
+        "sim",
+        assistantTextForSchedulingConfirmation(modelReply, priorProposal),
+      ),
+    ).toBe(true);
+  });
+
   it("detects short confirmation when prior assistant message had scheduling context", () => {
     expect(
       detectSchedulingConfirmation(

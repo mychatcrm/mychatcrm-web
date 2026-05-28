@@ -1,3 +1,4 @@
+import { formatSystemDateTimeContextBlock, resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import { agentUsesSimpleInstructions } from "@/lib/agents/instruction-mode";
 import { buildMetaFormKnownFactsPromptBlock } from "@/lib/meta-leads/form-metadata";
 import type { Agent } from "@/lib/types";
@@ -265,6 +266,7 @@ ${
     ...formatRuntimeContext(params.runtimeContext),
     params.condensedContext?.trim() ? params.condensedContext.trim() : null,
     params.recognitionHint?.trim() ? params.recognitionHint.trim() : null,
+    formatSystemDateTimeContextBlock(resolveAgentTimezone(agent)),
   ].filter((item): item is string => Boolean(item && item.trim()));
 
   return parts.join("\n\n");

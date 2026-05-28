@@ -59,4 +59,35 @@ describe("followUpInteligenteFromMetadata", () => {
     expect(result.permitirSlaVencido).toBe(true);
     expect(result.slaHorasResposta).toBe(4);
   });
+
+  it("uses root timezone when followUpInteligente is absent", () => {
+    const result = followUpInteligenteFromMetadata({
+      timezone: "America/Sao_Paulo",
+    });
+    expect(result.timezone).toBe("America/Sao_Paulo");
+    expect(result.ativo).toBe(false);
+  });
+
+  it("uses metadata.timezone at root when set", () => {
+    const result = followUpInteligenteFromMetadata({
+      timezone: "America/Sao_Paulo",
+      followUpInteligente: { ativo: true },
+    });
+    expect(result.timezone).toBe("America/Sao_Paulo");
+  });
+
+  it("prefers root timezone over nested followUpInteligente.timezone", () => {
+    const result = followUpInteligenteFromMetadata({
+      timezone: "Europe/Lisbon",
+      followUpInteligente: { ativo: true, timezone: "UTC" },
+    });
+    expect(result.timezone).toBe("Europe/Lisbon");
+  });
+
+  it("falls back to nested timezone for legacy agents", () => {
+    const result = followUpInteligenteFromMetadata({
+      followUpInteligente: { ativo: true, timezone: "America/New_York" },
+    });
+    expect(result.timezone).toBe("America/New_York");
+  });
 });

@@ -49,6 +49,11 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain(
       "Ao confirmar um agendamento, sempre repita a data, horário e local na sua resposta de confirmação.",
     );
+    expect(prompt).toContain("[CONTEXTO DO SISTEMA: Data e hora atual:");
+    expect(prompt).toMatch(
+      /\[CONTEXTO DO SISTEMA: Data e hora atual: .+, \d{2} de .+ de \d{4}, \d{2}:\d{2} \(.+\)\. Use esta informação apenas quando o usuário perguntar sobre datas ou para calcular prazos\.\]$/,
+    );
+    expect(prompt.indexOf("[CONTEXTO DO SISTEMA")).toBeGreaterThan(prompt.indexOf("IDENTIDADE DO AGENTE"));
     expect(prompt).toContain("Max Vendas");
     expect(prompt).toContain("Tom de voz: Consultivo");
     expect(prompt).toContain("Não fale de concorrentes.");
