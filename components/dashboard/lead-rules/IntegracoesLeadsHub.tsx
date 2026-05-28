@@ -17,7 +17,7 @@ export function IntegracoesLeadsHub({ session }: { session: ClientSession }) {
     <div className="space-y-6">
       <div
         className={cn(
-          "inline-flex rounded-lg border p-1",
+          "flex w-full flex-col gap-1 rounded-lg border p-1 sm:inline-flex sm:w-auto sm:flex-row",
           isLight ? "border-slate-200 bg-surface-deep" : "border-line/80 bg-surface-card/60",
         )}
         role="tablist"
@@ -35,7 +35,7 @@ export function IntegracoesLeadsHub({ session }: { session: ClientSession }) {
             role="tab"
             aria-selected={tab === item.id}
             className={cn(
-              "rounded-md px-4 py-2 text-sm font-medium transition-colors",
+              "flex-1 rounded-md px-3 py-2.5 text-center text-sm font-medium transition-colors sm:flex-none sm:px-4",
               tab === item.id
                 ? "bg-primary text-primary-foreground shadow-sm"
                 : "text-content-muted hover:text-content",

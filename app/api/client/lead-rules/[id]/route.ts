@@ -155,11 +155,30 @@ export async function DELETE(_req: NextRequest, { params }: RouteContext): Promi
     await deleteMetaFormMappingsForRule(sb, existing);
   }
 
+  const ruleId = params.id;
+  const { error: clearRuleIdError } = await sb
+    .from("leads")
+    .update({ rule_id: null })
+    .eq("tenant_id", session.tenantId)
+    .eq("rule_id", ruleId);
+  if (clearRuleIdError) {
+    return NextResponse.json({ error: clearRuleIdError.message }, { status: 500 });
+  }
+
+  const { error: clearCampaignRuleError } = await sb
+    .from("leads")
+    .update({ campaign_rule_id: null, campaign_active: false })
+    .eq("tenant_id", session.tenantId)
+    .eq("campaign_rule_id", ruleId);
+  if (clearCampaignRuleError) {
+    return NextResponse.json({ error: clearCampaignRuleError.message }, { status: 500 });
+  }
+
   const { error } = await sb
     .from("lead_distribution_rules")
     .delete()
     .eq("tenant_id", session.tenantId)
-    .eq("id", params.id);
+    .eq("id", ruleId);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 

@@ -151,6 +151,7 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [tableReady, setTableReady] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
 
   const removeFromInbox = useCallback(
     async (eventId: string, leadName: string) => {
@@ -159,13 +160,14 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
       );
       if (!ok) return;
       setDeletingId(eventId);
+      setRemoveError(null);
       try {
         const res = await fetch(`/api/client/meta/lead-events/${encodeURIComponent(eventId)}`, { method: "DELETE" });
         const json = (await res.json()) as { error?: string };
         if (!res.ok) throw new Error(json.error ?? "Falha ao remover");
         setEvents((prev) => prev.filter((e) => e.id !== eventId));
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Erro ao remover");
+        setRemoveError(e instanceof Error ? e.message : "Erro ao remover");
       } finally {
         setDeletingId(null);
       }
@@ -229,11 +231,25 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
             Formulários Meta Lead Ads em tempo real — CRM, agente e WhatsApp automático.
           </p>
         </div>
-        <Button type="button" variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          className="w-full sm:w-auto"
+          onClick={() => void refresh()}
+          disabled={loading}
+        >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <RefreshCw className="h-4 w-4" aria-hidden />}
           Atualizar
         </Button>
       </div>
+
+      {removeError ? (
+        <p className="mb-3 flex items-center gap-2 text-sm text-red-600 dark:text-red-400">
+          <AlertCircle className="h-4 w-4 shrink-0" aria-hidden />
+          {removeError}
+        </p>
+      ) : null}
 
       {!tableReady ? (
         <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
@@ -276,14 +292,14 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
                 isLight ? "border-slate-200/70 bg-white/60" : "border-line/70 bg-surface-deep/40",
               )}
             >
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0">
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+                <div className="min-w-0 flex-1">
                   <p className="truncate font-semibold text-content">{ev.name || "Lead sem nome"}</p>
-                  <p className="mt-0.5 text-xs text-content-muted">
+                  <p className="mt-0.5 break-all text-xs text-content-muted sm:break-normal">
                     {ev.phone || "—"} {ev.email ? `· ${ev.email}` : ""}
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-1.5">
+                <div className="flex w-full flex-wrap items-center gap-1.5 sm:w-auto sm:justify-end">
                   <Badge className={cn("text-[10px]", crm.className)} title={ev.lead_id ? `Lead CRM: ${ev.lead_id}` : undefined}>
                     {crm.label}
                   </Badge>
@@ -292,7 +308,7 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
                     type="button"
                     variant="secondary"
                     size="sm"
-                    className="h-7 px-2 text-[11px]"
+                    className="h-7 w-full px-2 text-[11px] sm:w-auto"
                     disabled={deletingId === ev.id}
                     onClick={() => void removeFromInbox(ev.id, ev.name || ev.phone || "lead")}
                     title="Remover só desta lista (mantém no CRM)"
