@@ -149,7 +149,7 @@ export async function findActiveAgendaEventForScheduling(params: {
     .select("id, title, start_at, end_at, status, attendee_name, location, description")
     .eq("tenant_id", params.tenantId)
     .eq("created_by", "agent")
-    .eq("attendee_phone", params.attendeePhone)
+    .eq("attendee_phone", attendeePhone)
     .neq("status", "cancelled")
     .gte("created_at", sinceIso)
     .ilike("title", "Agendamento via WhatsApp%")
@@ -216,7 +216,7 @@ export async function createAgendaEventForSchedulingCta(params: {
     const existing = await findActiveAgendaEventForScheduling({
       sb: params.sb,
       tenantId: params.tenantId,
-      attendeePhone,
+      attendeePhone: attendeePhone,
     });
     if (existing) return { created: false, reason: "active_exists", existing };
   }
