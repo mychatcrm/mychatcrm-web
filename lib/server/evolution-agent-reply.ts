@@ -490,6 +490,17 @@ export async function processAgentResponseJob(
   let lastAssistantMessage: string | null = null;
   let repliesSent = 0;
 
+  const schedulingOutboundForDetection = schedulingCtaEnabled
+    ? findLastSchedulingOutboundFromHistory(
+        await getRecentConversationMessages({
+          sb,
+          tenantId: job.tenant_id,
+          remoteJid: job.remote_jid,
+          limit: 8,
+        }),
+      )
+    : null;
+
   for (let unitIndex = 0; unitIndex < burst.replyUnits.length; unitIndex++) {
     if (!skipGenerationCheck && (await isGenerationStale(sb, job.id, generation))) {
       return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
@@ -507,7 +518,10 @@ export async function processAgentResponseJob(
       : { trigger: false, reason: null };
     const schedulingConfirmationDetected =
       schedulingCtaEnabled &&
-      detectSchedulingConfirmation(unitPrompt, lastAssistantMessage ?? undefined);
+      detectSchedulingConfirmation(
+        unitPrompt,
+        lastAssistantMessage ?? schedulingOutboundForDetection ?? undefined,
+      );
     const wantsReschedule =
       !!activeAgendaEvent &&
       detectRescheduleConfirmation(unitPrompt, lastAssistantMessage ?? undefined, true);
@@ -688,14 +702,16 @@ export async function processAgentResponseJob(
   if (handoffTriggered) {
     if (schedulingCtaEnabled && schedulingConfirmationMessage) {
       try {
-        const historyForSchedule = await getRecentConversationMessages({
-          sb,
-          tenantId: job.tenant_id,
-          remoteJid: job.remote_jid,
-          limit: 30,
-        });
         const schedulingOutboundFromHistory =
-          findLastSchedulingOutboundFromHistory(historyForSchedule);
+          schedulingOutboundForDetection ??
+          findLastSchedulingOutboundFromHistory(
+            await getRecentConversationMessages({
+              sb,
+              tenantId: job.tenant_id,
+              remoteJid: job.remote_jid,
+              limit: 30,
+            }),
+          );
         if (!schedulingOutboundFromHistory) {
           logFollowUp("no_datetime_found_in_history", {
             job_id: job.id,
