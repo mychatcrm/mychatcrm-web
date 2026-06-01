@@ -204,12 +204,7 @@ ${context || "Sem contexto adicional."}
 Regras base:
 - Responder em ${draft.idioma}.
 - Nunca falar sobre: ${draft.respostasProibidas || "sem restrições explícitas"}.
-${
-  draft.ctaHandoffAtivo
-    ? `- Conduzir para CTA final: ${draft.ctaFinal}.
-- Se pedir humano, usar transição: "${draft.handoffMensagem}" e transferir para ${draft.handoffNumero || "equipe responsável"}.`
-    : `- CTA final e transferência para humano: seguir as instruções do agente e as regras do negócio acima.`
-}
+- Objetivo final e transferência humana: seguir as instruções específicas escritas pelo gestor para este agente.
 ${
   draft.followUpInteligente.ativo
     ? `
@@ -310,7 +305,7 @@ export const defaultWizardDraft: AgentWizardDraft = {
     maxFollowUps: 0,
   },
   whatsappSlotIndex: 0,
-  ctaHandoffAtivo: false,
+  ctaHandoffAtivo: true,
   ctaFinal: "Transferir para humano",
   handoffKeywords: ["humano", "atendente", "falar com pessoa"],
   handoffMensagem: "Perfeito! Vou te conectar com nosso especialista agora. Um momento.",

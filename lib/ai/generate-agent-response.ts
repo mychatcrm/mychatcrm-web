@@ -14,6 +14,8 @@ import {
   buildLeadConversationMemory,
   type LeadMemorySourceOptions,
 } from "@/lib/server/lead-conversation-memory";
+import { buildAgentAgendaContextBlock } from "@/lib/server/agent-agenda-context";
+import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import type { BurstResponseStrategy } from "@/lib/conversas/normalize-conversation-burst";
 import type { Agent } from "@/lib/types";
 
@@ -175,17 +177,25 @@ export async function buildAgentDebugSystemPrompt(params: {
   const probeMessage = params.message?.trim() || "Quero ver fotos e materiais disponíveis.";
   const detectedLanguageCode = detectSupportedLanguageCode(probeMessage);
   const detectedLanguageName = supportedLanguageName(detectedLanguageCode);
-  const memory = await buildLeadConversationMemory({
-    tenantId: params.tenantId,
-    agentId: params.agentId,
-    remoteJid: params.conversationId ?? null,
-  });
+  const [memory, agendaContextBlock] = await Promise.all([
+    buildLeadConversationMemory({
+      tenantId: params.tenantId,
+      agentId: params.agentId,
+      remoteJid: params.conversationId ?? null,
+    }),
+    buildAgentAgendaContextBlock({
+      tenantId: params.tenantId,
+      remoteJid: params.conversationId ?? null,
+      timezone: resolveAgentTimezone(resolved.baseAgent),
+    }),
+  ]);
   const systemPrompt = buildAgentSystemPrompt({
     agent: resolved.baseAgent,
     runtimeContext: memory,
     languageInstruction: buildLanguageInstruction(detectedLanguageName, resolved.baseAgent.idioma),
     recognitionHint: memory.recognitionHint,
     condensedContext: memory.condensedContext,
+    schedulingContextBlock: agendaContextBlock,
   });
 
   return {
@@ -318,16 +328,23 @@ export async function generateAgentResponse(params: {
   if (!resolved.ok) return resolved.result;
   const { profile, baseAgent } = resolved;
   const includeWhatsapp = params.contextSources?.whatsappHistory !== false;
-  const memory = await buildLeadConversationMemory({
-    tenantId: params.tenantId,
-    agentId: params.agentId,
-    remoteJid: params.conversationId,
-    excludeMessageIds: params.excludeMessageIds,
-    sourceOptions: {
-      includeCrm: params.contextSources?.includeCrm,
-      includeMetaForm: params.contextSources?.includeMetaForm,
-    },
-  });
+  const [memory, agendaContextBlock] = await Promise.all([
+    buildLeadConversationMemory({
+      tenantId: params.tenantId,
+      agentId: params.agentId,
+      remoteJid: params.conversationId,
+      excludeMessageIds: params.excludeMessageIds,
+      sourceOptions: {
+        includeCrm: params.contextSources?.includeCrm,
+        includeMetaForm: params.contextSources?.includeMetaForm,
+      },
+    }),
+    buildAgentAgendaContextBlock({
+      tenantId: params.tenantId,
+      remoteJid: params.conversationId,
+      timezone: resolveAgentTimezone(baseAgent),
+    }),
+  ]);
   const includeCrm = params.contextSources?.includeCrm !== false;
   const includeMetaForm = params.contextSources?.includeMetaForm !== false;
   const runtimeForPrompt = {
@@ -357,7 +374,7 @@ export async function generateAgentResponse(params: {
     languageInstruction: buildLanguageInstruction(detectedLanguageName, baseAgent.idioma),
     recognitionHint: includeWhatsapp ? memory.recognitionHint : null,
     condensedContext: memory.condensedContext,
-    schedulingContextBlock: params.schedulingContextBlock,
+    schedulingContextBlock: agendaContextBlock ?? params.schedulingContextBlock,
     burstContext: params.burstContext,
   });
 

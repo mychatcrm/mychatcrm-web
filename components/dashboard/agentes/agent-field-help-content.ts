@@ -68,20 +68,8 @@ export const AGENT_FIELD_HELP = {
     'Arquivos que o agente envia diretamente no WhatsApp quando o cliente pede ou quando faz sentido na conversa. Ex.: foto do produto, planta do imóvel, contrato em PDF, vídeo de apresentação. Até 50 arquivos por agente',
 
   // ── Handoff ─────────────────────────────────────────────────────────────────
-  handoffAtivar:
-    'Quando ativo, o agente detecta quando o cliente quer falar com uma pessoa real e inicia a transferência automaticamente — sem precisar de intervenção manual. Ex.: cliente digita "quero falar com um humano" → agente avisa a equipe e passa o atendimento',
-
-  handoffKeywords:
-    'Palavras ou frases que disparam a transferência para um atendente humano. Separe por vírgulas. Ex.: "humano, atendente, falar com alguém, quero uma pessoa, responsável, gerente"',
-
   handoffNumero:
     'WhatsApp do atendente que receberá a notificação quando houver uma transferência. Inclua o código do país. Ex.: 5562999999999 (Brasil, Goiás)',
-
-  handoffMensagem:
-    'Mensagem que o agente envia ao cliente no momento da transferência. Deve ser acolhedora e clara. Ex.: "Perfeito! Vou te conectar agora com um dos nossos especialistas. Um momento 😊"',
-
-  ctaFinal:
-    'Ação principal que o agente deve buscar ao longo da conversa. Define o objetivo final de cada atendimento. Ex.: "Agendar uma visita", "Solicitar uma proposta", "Transferir para o time comercial"',
 
   // ── CRM ─────────────────────────────────────────────────────────────────────
   crmModo:

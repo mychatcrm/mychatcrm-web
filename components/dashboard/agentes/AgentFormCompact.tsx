@@ -263,8 +263,8 @@ export function AgentFormCompact({
                 />
               </AdvancedSection>
               <AdvancedSection
-                title="Transferência humana e objetivo final"
-                description="Configure quando o agente passa o atendimento para uma pessoa real e qual ação ele deve buscar na conversa."
+                title="Transferência humana"
+                description="Informe o WhatsApp do atendente responsável por receber notificações de transferência."
                 titleIcon={<Handshake strokeWidth={1.75} />}
               >
                 <WizardStep4Fluxo draft={draft} onChange={setDraft} />
