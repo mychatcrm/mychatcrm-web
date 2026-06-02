@@ -57,6 +57,7 @@ describe("agent agenda context", () => {
       timezone: "America/Sao_Paulo",
       futureEvents: [
         {
+          id: "event-future",
           title: "Reunião comercial",
           start_at: "2026-06-02T15:00:00.000Z",
           end_at: "2026-06-02T16:00:00.000Z",
@@ -66,6 +67,7 @@ describe("agent agenda context", () => {
       ],
       pastEvents: [
         {
+          id: "event-past",
           title: "Primeiro contato",
           start_at: "2026-05-20T15:00:00.000Z",
           end_at: "2026-05-20T16:00:00.000Z",
@@ -77,6 +79,7 @@ describe("agent agenda context", () => {
 
     expect(block).toContain("CONTEXTO DE AGENDA DO CONTATO");
     expect(block).toContain("Reunião comercial");
+    expect(block).toContain("event_id: event-future");
     expect(block).toContain("Sala 2");
     expect(block).toContain("Agendamentos anteriores");
     expect(block).toContain("Primeiro contato");

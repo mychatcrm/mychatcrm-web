@@ -1,9 +1,23 @@
 import "server-only";
 
 import type { PostgrestSingleResponse } from "@supabase/supabase-js";
+import { localWallClockToUtc } from "@/lib/server/agenda-datetime-parse";
+import { parseTimezone } from "@/lib/agents/agent-datetime";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { parseAppointmentDateTime } from "@/lib/server/agenda-datetime-parse";
-import { insertAgendaEvent, updateAgendaEvent } from "@/lib/server/google-calendar-db";
+import { broadcastAgendaChange } from "@/lib/server/agenda-realtime";
+import {
+  cancelGoogleCalendarEvent,
+  createGoogleCalendarEvent,
+} from "@/lib/server/google-calendar";
+import {
+  cancelAgendaEvent,
+  getAgendaEventById,
+  getGoogleCalendarToken,
+  insertAgendaEvent,
+  updateAgendaEvent,
+  type AgendaEventRow,
+} from "@/lib/server/google-calendar-db";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -14,6 +28,10 @@ const CONFIRMATION_RE =
 const RESCHEDULE_RE =
   /\b(remarcar|reagendar|trocar\s+(o\s+)?hor[aá]rio|mudar\s+(a\s+)?data|outro\s+hor[aá]rio|alterar\s+agendamento)\b/i;
 const SCHEDULING_RE = /\b(agend|reuni[aã]o|visita|hor[aá]rio|amanh[ãa]|hoje|segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo|\d{1,2}[:h]\d{2}|\d{1,2}\/\d{1,2})\b/i;
+const AGENDA_DIRECTIVE_RE = /\[\[\s*(AGENDAR|CANCELAR_AGENDA)\s*:\s*([^\]]*)\]\]/gi;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const AGENDA_FAILURE_REPLY =
+  "Não consegui confirmar essa alteração na agenda agora. Nossa equipe vai conferir e te retornar em breve.";
 
 export type AgendaEventSummary = {
   id: string;
@@ -30,6 +48,21 @@ export type CreateAgendaEventResult =
   | { created: true; eventId: string }
   | { created: false; reason: "active_exists"; existing: AgendaEventSummary }
   | { created: false; reason: "unparsed_datetime" };
+
+export type AgendaDirective =
+  | { type: "schedule"; date: string; time: string; location: string | null }
+  | { type: "cancel"; eventId: string };
+
+export type ParsedAgendaDirectives = {
+  directives: AgendaDirective[];
+  invalid: boolean;
+};
+
+export type ProcessAgendaDirectivesResult = {
+  text: string;
+  action: "none" | "scheduled" | "rescheduled" | "cancelled" | "failed";
+  eventId?: string;
+};
 
 export function isSchedulingCta(ctaFinal: unknown): boolean {
   return typeof ctaFinal === "string" && ctaFinal.trim() === SCHEDULE_CTA_VALUE;
@@ -269,4 +302,269 @@ export async function createAgendaEventForSchedulingCta(params: {
   });
 
   return { created: true, eventId: inserted.id };
+}
+
+function parseDirectiveParams(raw: string): Record<string, string> | null {
+  const params: Record<string, string> = {};
+  for (const chunk of raw.split(",")) {
+    const match = chunk.trim().match(/^([a-z_]+)\s*=\s*(.+)$/i);
+    if (!match) return null;
+    const key = match[1]!.toLowerCase();
+    const value = match[2]!.trim();
+    if (!value || params[key]) return null;
+    params[key] = value;
+  }
+  return params;
+}
+
+function isValidDate(value: string): boolean {
+  const match = value.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return false;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+function isValidTime(value: string): boolean {
+  const match = value.match(/^(\d{2}):(\d{2})$/);
+  return Boolean(match && Number(match[1]) <= 23 && Number(match[2]) <= 59);
+}
+
+export function parseAgendaDirectives(text: string): ParsedAgendaDirectives {
+  const directives: AgendaDirective[] = [];
+  let invalid = false;
+  let match: RegExpExecArray | null;
+  AGENDA_DIRECTIVE_RE.lastIndex = 0;
+  while ((match = AGENDA_DIRECTIVE_RE.exec(text)) !== null) {
+    const name = match[1]!.toUpperCase();
+    const values = parseDirectiveParams(match[2] ?? "");
+    if (!values) {
+      invalid = true;
+      continue;
+    }
+    if (name === "AGENDAR") {
+      const keys = Object.keys(values);
+      const allowed = keys.every((key) => key === "data" || key === "hora" || key === "local");
+      const location = values.local?.trim() || null;
+      if (
+        !allowed ||
+        !values.data ||
+        !values.hora ||
+        !isValidDate(values.data) ||
+        !isValidTime(values.hora) ||
+        (location != null && location.length > 200)
+      ) {
+        invalid = true;
+        continue;
+      }
+      directives.push({ type: "schedule", date: values.data, time: values.hora, location });
+      continue;
+    }
+    if (Object.keys(values).length !== 1 || !values.id || !UUID_RE.test(values.id)) {
+      invalid = true;
+      continue;
+    }
+    directives.push({ type: "cancel", eventId: values.id });
+  }
+  const markerCount = text.match(/\[\[\s*(?:AGENDAR|CANCELAR_AGENDA)\b/gi)?.length ?? 0;
+  if (markerCount !== directives.length) invalid = true;
+  if (directives.length > 1) invalid = true;
+  return { directives, invalid };
+}
+
+export function stripAgendaDirectives(text: string): string {
+  return text
+    .replace(/\[\[\s*(?:AGENDAR|CANCELAR_AGENDA)\b[^\]]*\]\]/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function directiveStartAt(directive: Extract<AgendaDirective, { type: "schedule" }>, timezone: string): Date {
+  const [day, month, year] = directive.date.split("/").map(Number);
+  const [hour, minute] = directive.time.split(":").map(Number);
+  return localWallClockToUtc({ year: year!, month: month!, day: day!, hour: hour!, minute: minute! }, parseTimezone(timezone));
+}
+
+export async function findNextActiveAgendaEvent(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  now?: Date;
+}): Promise<AgendaEventRow | null> {
+  const attendeePhone = extractPhone(params.remoteJid);
+  if (!attendeePhone) return null;
+  const { data, error } = await params.sb
+    .from("agenda_events")
+    .select("*")
+    .eq("tenant_id", params.tenantId)
+    .eq("attendee_phone", attendeePhone)
+    .neq("status", "cancelled")
+    .gte("start_at", (params.now ?? new Date()).toISOString())
+    .order("start_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as AgendaEventRow | null) ?? null;
+}
+
+async function cancelStructuredAgendaEvent(params: {
+  tenantId: string;
+  remoteJid: string;
+  event: AgendaEventRow;
+}): Promise<void> {
+  const attendeePhone = extractPhone(params.remoteJid);
+  if (!attendeePhone || params.event.attendee_phone !== attendeePhone) {
+    throw new Error("agenda_event_contact_mismatch");
+  }
+  if (params.event.google_event_id) {
+    await cancelGoogleCalendarEvent(params.tenantId, params.event.google_event_id);
+  }
+  await cancelAgendaEvent(params.tenantId, params.event.id);
+  await broadcastAgendaChange(params.tenantId, "delete");
+}
+
+async function insertStructuredAgendaEvent(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  leadId?: string | null;
+  agentId?: string | null;
+  contactName?: string | null;
+  timezone: string;
+  directive: Extract<AgendaDirective, { type: "schedule" }>;
+}): Promise<AgendaEventRow> {
+  const attendeePhone = extractPhone(params.remoteJid);
+  if (!attendeePhone) throw new Error("invalid_remote_jid");
+  const startAt = directiveStartAt(params.directive, params.timezone);
+  if (Number.isNaN(startAt.getTime()) || startAt.getTime() <= Date.now()) {
+    throw new Error("invalid_or_past_agenda_datetime");
+  }
+  const endAt = new Date(startAt.getTime() + 60 * 60_000);
+  const attendeeName = await resolveAttendeeName({
+    sb: params.sb,
+    contactName: params.contactName ?? null,
+    leadId: params.leadId,
+  });
+  const displayName = attendeeName?.trim() || attendeePhone;
+  const title = `Agendamento via WhatsApp - ${displayName}`;
+  const description = formatAgendaDescription({
+    displayName,
+    phone: attendeePhone,
+    startAt,
+    timezone: params.timezone,
+    location: params.directive.location,
+    userMessage: "Agendamento confirmado via diretiva estruturada.",
+    assistantMessage: `Data ${params.directive.date} às ${params.directive.time}.`,
+  });
+  const googleToken = await getGoogleCalendarToken(params.tenantId);
+  let googleEventId: string | null = null;
+  if (googleToken) {
+    const googleEvent = await createGoogleCalendarEvent(params.tenantId, {
+      title,
+      description,
+      location: params.directive.location,
+      startAt: startAt.toISOString(),
+      endAt: endAt.toISOString(),
+      attendeeEmail: null,
+    });
+    googleEventId = googleEvent.id;
+  }
+  try {
+    const inserted = await insertAgendaEvent({
+      tenant_id: params.tenantId,
+      google_event_id: googleEventId,
+      title,
+      description,
+      location: params.directive.location,
+      color: "#f24400",
+      start_at: startAt.toISOString(),
+      end_at: endAt.toISOString(),
+      all_day: false,
+      attendee_name: attendeeName,
+      attendee_phone: attendeePhone,
+      attendee_email: null,
+      status: "pending",
+      created_by: "agent",
+      lead_id: params.leadId ?? null,
+      agent_id: params.agentId ?? null,
+    });
+    await broadcastAgendaChange(params.tenantId, "insert");
+    return inserted;
+  } catch (error) {
+    if (googleEventId) await cancelGoogleCalendarEvent(params.tenantId, googleEventId).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function executeAgendaDirective(params: {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  leadId?: string | null;
+  agentId?: string | null;
+  contactName?: string | null;
+  timezone: string;
+  directive: AgendaDirective;
+}): Promise<{ action: "scheduled" | "rescheduled" | "cancelled"; eventId: string }> {
+  const sb = params.sb ?? createSupabaseServiceClient();
+  if (params.directive.type === "cancel") {
+    const event = await getAgendaEventById(params.tenantId, params.directive.eventId);
+    if (!event) throw new Error("agenda_event_not_found");
+    await cancelStructuredAgendaEvent({ tenantId: params.tenantId, remoteJid: params.remoteJid, event });
+    return { action: "cancelled", eventId: event.id };
+  }
+
+  const directive = params.directive;
+  const existing = await findNextActiveAgendaEvent({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+  });
+  const requestedStartAt = directiveStartAt(directive, params.timezone);
+  if (existing?.start_at === requestedStartAt.toISOString()) {
+    return { action: "scheduled", eventId: existing.id };
+  }
+  const inserted = await insertStructuredAgendaEvent({ ...params, sb, directive });
+  if (!existing) return { action: "scheduled", eventId: inserted.id };
+  try {
+    await cancelStructuredAgendaEvent({ tenantId: params.tenantId, remoteJid: params.remoteJid, event: existing });
+  } catch (error) {
+    await cancelStructuredAgendaEvent({ tenantId: params.tenantId, remoteJid: params.remoteJid, event: inserted }).catch(() => undefined);
+    throw error;
+  }
+  return { action: "rescheduled", eventId: inserted.id };
+}
+
+export async function processAgendaDirectivesInReply(params: {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  leadId?: string | null;
+  agentId?: string | null;
+  contactName?: string | null;
+  timezone: string;
+  text: string;
+}): Promise<ProcessAgendaDirectivesResult> {
+  const parsed = parseAgendaDirectives(params.text);
+  const text = stripAgendaDirectives(params.text);
+  if (!parsed.invalid && parsed.directives.length === 0) return { text, action: "none" };
+  if (parsed.invalid || parsed.directives.length !== 1) {
+    console.warn("[agent-agenda-directive]", { tenant_id: params.tenantId, agent_id: params.agentId, action: "failed", reason: "invalid_directive" });
+    return { text: AGENDA_FAILURE_REPLY, action: "failed" };
+  }
+  try {
+    const result = await executeAgendaDirective({ ...params, directive: parsed.directives[0]! });
+    console.info("[agent-agenda-directive]", { tenant_id: params.tenantId, agent_id: params.agentId, action: result.action, event_id: result.eventId });
+    return { text, ...result };
+  } catch (error) {
+    console.warn("[agent-agenda-directive]", {
+      tenant_id: params.tenantId,
+      agent_id: params.agentId,
+      action: "failed",
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    return { text: AGENDA_FAILURE_REPLY, action: "failed" };
+  }
 }

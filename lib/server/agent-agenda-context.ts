@@ -5,10 +5,11 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
-const EVENT_SELECT = "title, start_at, end_at, status, location";
+const EVENT_SELECT = "id, title, start_at, end_at, status, location";
 const DEFAULT_EVENT_LIMIT = 3;
 
 export type AgentAgendaContextEvent = {
+  id: string;
   title: string;
   start_at: string;
   end_at: string;
@@ -32,7 +33,7 @@ function formatEvent(event: AgentAgendaContextEvent, timezone: string): string {
     hour12: false,
   }).format(new Date(event.start_at));
   const location = event.location?.trim() ? ` | local: ${event.location.trim()}` : "";
-  return `- ${when} | ${event.title} | status: ${event.status}${location}`;
+  return `- event_id: ${event.id} | ${when} | ${event.title} | status: ${event.status}${location}`;
 }
 
 export function formatAgentAgendaContextBlock(params: {

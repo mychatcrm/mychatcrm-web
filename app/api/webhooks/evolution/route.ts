@@ -41,17 +41,8 @@ import { isSmartWaitGloballyDisabled, runInboundSmartWaitFlow } from "@/lib/serv
 import { scheduleFollowUpAfterInbound, scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
-import {
-  assistantTextForSchedulingConfirmation,
-  createAgendaEventForSchedulingCta,
-  detectRescheduleConfirmation,
-  detectSchedulingConfirmation,
-  findActiveAgendaEventForScheduling,
-  formatExistingAppointmentSchedulingBlock,
-  isSchedulingCta,
-} from "@/lib/server/agent-cta-scheduler";
+import { processAgendaDirectivesInReply } from "@/lib/server/agent-cta-scheduler";
 import type { AgentFollowUpInteligente } from "@/lib/types";
-import type { ConversationMessageContext } from "@/lib/server/conversation-memory";
 
 
 export const dynamic = "force-dynamic";
@@ -69,20 +60,6 @@ function verifyWebhookToken(request: Request): boolean {
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
-}
-
-/** Último outbound do agente (não humano) antes da mensagem inbound atual no histórico. */
-function findLastAgentOutboundBeforeCurrentTail(
-  messages: ConversationMessageContext[],
-): string | null {
-  let i = messages.length - 1;
-  while (i >= 0 && messages[i]?.role === "user") i -= 1;
-  while (i >= 0 && messages[i]?.role === "human") i -= 1;
-  if (i >= 0 && messages[i]?.role === "assistant") {
-    const content = messages[i]!.content.trim();
-    return content || null;
-  }
-  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -682,7 +659,6 @@ export async function POST(request: Request) {
             ? metadata.handoffKeywords.filter((item): item is string => typeof item === "string")
             : [];
           const handoffEnabled = metadata.ctaHandoffAtivo === true;
-          const schedulingCtaEnabled = isSchedulingCta(metadata.ctaFinal);
           const handoffMessage =
             handoffEnabled && typeof metadata.handoffMensagem === "string" && metadata.handoffMensagem.trim()
               ? metadata.handoffMensagem.trim()
@@ -716,22 +692,6 @@ export async function POST(request: Request) {
             timezone: typeof metadata.timezone === "string" ? metadata.timezone : undefined,
             followUpInteligente: metadata.followUpInteligente as AgentFollowUpInteligente | undefined,
           });
-          let schedulingContextBlock: string | undefined;
-          let activeAgendaEvent: Awaited<ReturnType<typeof findActiveAgendaEventForScheduling>> = null;
-          if (schedulingCtaEnabled) {
-            activeAgendaEvent = await findActiveAgendaEventForScheduling({
-              sb: sbState,
-              tenantId: row.tenant_id,
-              remoteJid: msg.remoteJid,
-            });
-            if (activeAgendaEvent) {
-              schedulingContextBlock = formatExistingAppointmentSchedulingBlock(
-                activeAgendaEvent,
-                schedulingTimezone,
-              );
-            }
-          }
-
           const result = await generateAgentResponse({
             tenantId: row.tenant_id,
             agentId,
@@ -742,7 +702,6 @@ export async function POST(request: Request) {
             mediaContent:
               msg.type === "audio" || msg.type === "image" || msg.type === "video" ? msg : undefined,
             instanceName: msg.type !== "text" ? instanceName : undefined,
-            schedulingContextBlock,
           });
 
           let replyText: string;
@@ -764,71 +723,18 @@ export async function POST(request: Request) {
           const userRequestedHandoff = handoffCheck.trigger;
           const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
           const modelTextWithoutHandoff = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
-          let priorAgentOutboundForSchedule: string | null = null;
-          if (schedulingCtaEnabled) {
-            const recentForSchedule = await getRecentConversationMessages({
-              sb: sbState,
-              tenantId: row.tenant_id,
-              remoteJid: msg.remoteJid,
-              limit: 30,
-            });
-            priorAgentOutboundForSchedule = findLastAgentOutboundBeforeCurrentTail(recentForSchedule);
-          }
-          const inboundScheduleText = inboundLanguageSource(msg);
-          const assistantTextForSchedule = assistantTextForSchedulingConfirmation(
-            modelTextWithoutHandoff,
-            priorAgentOutboundForSchedule,
-          );
-          const schedulingConfirmationDetected =
-            schedulingCtaEnabled &&
-            detectSchedulingConfirmation(inboundScheduleText, assistantTextForSchedule);
-          let scheduleConfirmed = false;
-          if (schedulingConfirmationDetected) {
-            const wantsReschedule =
-              !!activeAgendaEvent &&
-              detectRescheduleConfirmation(
-                inboundScheduleText,
-                assistantTextForSchedule,
-                true,
-              );
-            if (!activeAgendaEvent || wantsReschedule) {
-              try {
-                const createResult = await createAgendaEventForSchedulingCta({
-                  sb: sbState,
-                  tenantId: row.tenant_id,
-                  remoteJid: msg.remoteJid,
-                  contactName,
-                  userMessage: inboundScheduleText,
-                  assistantMessage: assistantTextForSchedule,
-                  timezone: schedulingTimezone,
-                  leadId,
-                  agentId,
-                  rescheduleOfEventId:
-                    wantsReschedule && activeAgendaEvent ? activeAgendaEvent.id : undefined,
-                });
-                scheduleConfirmed = createResult.created;
-                if (!createResult.created) {
-                  console.warn("[webhooks/evolution] agenda CTA not created", {
-                    tenant_id: row.tenant_id,
-                    agent_id: agentId,
-                    reason: createResult.reason,
-                    existing_id:
-                      createResult.reason === "active_exists" ? createResult.existing.id : undefined,
-                  });
-                }
-              } catch (error) {
-                console.warn("[webhooks/evolution] failed to create agenda event for scheduling CTA", {
-                  tenant_id: row.tenant_id,
-                  agent_id: agentId,
-                  message: error instanceof Error ? error.message : String(error),
-                });
-              }
-            }
-          }
-          const finalHandoffCheck = userRequestedHandoff || aiMarkerHandoff || scheduleConfirmed;
-          const finalHandoffReason = scheduleConfirmed
-            ? "cta_schedule_confirmed"
-            : handoffCheck.trigger
+          const agendaResult = await processAgendaDirectivesInReply({
+            sb: sbState,
+            tenantId: row.tenant_id,
+            remoteJid: msg.remoteJid,
+            leadId,
+            agentId,
+            contactName,
+            timezone: schedulingTimezone,
+            text: modelTextWithoutHandoff,
+          });
+          const finalHandoffCheck = userRequestedHandoff || aiMarkerHandoff;
+          const finalHandoffReason = handoffCheck.trigger
               ? (handoffCheck.reason ?? "handoff")
               : "ai_handoff";
 
@@ -915,7 +821,7 @@ export async function POST(request: Request) {
             sb: sbState,
             tenantId: row.tenant_id,
             agentId,
-            responseText: modelTextWithoutHandoff,
+            responseText: agendaResult.text,
             userRequestText: inboundLanguageSource(msg),
           });
           const outboundFilenames = outboundMediaParse.filenames;

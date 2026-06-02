@@ -130,6 +130,30 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).not.toContain("Mesmo que você precise enviar arquivos na mesma resposta");
   });
 
+  it("forbids handoff marker when human transfer is disabled", () => {
+    const prompt = buildAgentSystemPrompt({
+      languageInstruction: "Responda em português.",
+      agent: {
+        nome: "Max Vendas",
+        ctaHandoffAtivo: false,
+        systemPrompt: "Ajude o cliente.",
+      },
+    });
+
+    expect(prompt).toContain("Nunca inclua [[HANDOFF]]");
+    expect(prompt).toContain("não há atendimento humano disponível no momento");
+  });
+
+  it("instructs the model to use structured agenda directives", () => {
+    const prompt = buildAgentSystemPrompt({
+      languageInstruction: "Responda em português.",
+      agent: { nome: "Max Vendas", systemPrompt: "Ajude o cliente." },
+    });
+
+    expect(prompt).toContain("[[AGENDAR: data=DD/MM/AAAA, hora=HH:MM");
+    expect(prompt).toContain("[[CANCELAR_AGENDA: id=EVENT_ID]]");
+  });
+
   it("injects Meta Lead Ads form memory so the agent does not re-ask", () => {
     const prompt = buildAgentSystemPrompt({
       languageInstruction: "Responda em português.",

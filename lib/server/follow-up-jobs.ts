@@ -18,6 +18,7 @@ import {
   type FollowUpDecision,
 } from "@/lib/server/follow-up-engine";
 import { buildFollowUpEvalContext } from "@/lib/server/follow-up-evaluate";
+import { findNextActiveAgendaEvent } from "@/lib/server/agent-cta-scheduler";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -825,6 +826,37 @@ export async function processFollowUpJob(
         reason: automationAllowed.reason,
       });
       return "cancelled";
+      }
+    }
+
+    // Follow-up convencional aguarda enquanto houver compromisso futuro ativo.
+    // Jobs de retomada humana possuem lifecycle próprio e não passam por este gate.
+    if (!isHumanAbandonedJob) {
+      const activeAgendaEvent = await findNextActiveAgendaEvent({
+        sb: client,
+        tenantId: job.tenant_id,
+        remoteJid: job.remote_jid,
+      });
+      if (activeAgendaEvent) {
+        const retryAt = new Date(
+          now.getTime() + Math.max(1, settings.intervaloVerificacaoMinutos) * 60_000,
+        );
+        await client
+          .from("follow_up_jobs")
+          .update({
+            status: "pending",
+            scheduled_at: retryAt.toISOString(),
+            last_error: "active_agenda_event",
+            updated_at: now.toISOString(),
+          })
+          .eq("id", job.id);
+        logFollowUp("rescheduled_active_agenda_event", {
+          job_id: job.id,
+          tenant_id: job.tenant_id,
+          event_id: activeAgendaEvent.id,
+          retry_at: retryAt.toISOString(),
+        });
+        return "skipped";
       }
     }
 

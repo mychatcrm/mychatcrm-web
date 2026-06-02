@@ -264,7 +264,7 @@ export function AgentFormCompact({
               </AdvancedSection>
               <AdvancedSection
                 title="Transferência humana"
-                description="Informe o WhatsApp do atendente responsável por receber notificações de transferência."
+                description="Ative quando o agente puder transferir a conversa e informe o WhatsApp do atendente responsável."
                 titleIcon={<Handshake strokeWidth={1.75} />}
               >
                 <WizardStep4Fluxo draft={draft} onChange={setDraft} />

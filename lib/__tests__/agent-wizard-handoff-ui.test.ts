@@ -14,13 +14,14 @@ describe("agent wizard handoff simplification", () => {
     expect(prompt).not.toContain("Conduzir para CTA final");
   });
 
-  it("renders only the attendant phone field in the handoff wizard step", () => {
+  it("renders the handoff toggle and attendant phone without legacy fields", () => {
     const source = readFileSync(
       join(process.cwd(), "components/dashboard/agentes/WizardStep4Fluxo.tsx"),
       "utf8",
     );
     expect(source).toContain("Número do atendente responsável");
-    expect(source).not.toContain("Ativar transferência para humano");
+    expect(source).toContain("Ativar transferência para humano");
+    expect(source).toContain("disabled={!draft.ctaHandoffAtivo}");
     expect(source).not.toContain("Palavras que ativam a transferência");
     expect(source).not.toContain("Mensagem enviada ao cliente na transferência");
     expect(source).not.toContain("Objetivo Final do Agente (CTA)");

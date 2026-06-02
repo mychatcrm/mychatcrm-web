@@ -68,6 +68,9 @@ export const AGENT_FIELD_HELP = {
     'Arquivos que o agente envia diretamente no WhatsApp quando o cliente pede ou quando faz sentido na conversa. Ex.: foto do produto, planta do imóvel, contrato em PDF, vídeo de apresentação. Até 50 arquivos por agente',
 
   // ── Handoff ─────────────────────────────────────────────────────────────────
+  handoffAtivar:
+    "Define se o agente pode transferir a conversa para atendimento humano. Quando desativado, o agente informa que não há atendimento humano disponível no momento.",
+
   handoffNumero:
     'WhatsApp do atendente que receberá a notificação quando houver uma transferência. Inclua o código do país. Ex.: 5562999999999 (Brasil, Goiás)',
 
