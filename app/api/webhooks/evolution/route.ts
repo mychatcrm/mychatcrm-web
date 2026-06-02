@@ -708,6 +708,19 @@ export async function POST(request: Request) {
             mediaContent:
               msg.type === "audio" || msg.type === "image" || msg.type === "video" ? msg : undefined,
             instanceName: msg.type !== "text" ? instanceName : undefined,
+            // Contexto do servidor para tool calling de agenda (tenant/jid nunca vêm do modelo)
+            agendaToolContext: metadata.agendaAutomationEnabled === true
+              ? {
+                  sb: sbState,
+                  tenantId: row.tenant_id,
+                  remoteJid: msg.remoteJid,
+                  leadId: leadId ?? null,
+                  agentId,
+                  contactName: contactName ?? null,
+                  timezone: schedulingTimezone,
+                  followUpInteligente: metadata.followUpInteligente as AgentFollowUpInteligente | null ?? null,
+                }
+              : null,
           });
 
           let replyText: string;
@@ -729,11 +742,18 @@ export async function POST(request: Request) {
           const userRequestedHandoff = handoffCheck.trigger;
           const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
           const modelTextWithoutHandoff = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
-          const preparedAgenda = prepareAgendaDirectiveInReply({
-            text: modelTextWithoutHandoff,
-            enabled: metadata.agendaAutomationEnabled === true,
-          });
-          if (preparedAgenda.action === "blocked" || preparedAgenda.action === "failed") {
+
+          // Se o loop de tool calling de agenda já executou uma ação neste turno,
+          // pular o processamento de diretivas [[AGENDAR]]/[[CANCELAR_AGENDA]] —
+          // os dois caminhos nunca agem no mesmo turno.
+          const toolCallingAlreadyActed = result.ok && result.agendaActionCompleted === true;
+          const preparedAgenda = toolCallingAlreadyActed
+            ? { action: "none" as const, text: modelTextWithoutHandoff, directive: null }
+            : prepareAgendaDirectiveInReply({
+                text: modelTextWithoutHandoff,
+                enabled: metadata.agendaAutomationEnabled === true,
+              });
+          if (!toolCallingAlreadyActed && (preparedAgenda.action === "blocked" || preparedAgenda.action === "failed")) {
             console.info("[agent-agenda-directive]", {
               tenant_id: row.tenant_id,
               agent_id: agentId,
@@ -742,7 +762,7 @@ export async function POST(request: Request) {
             });
           }
           const preparedAgendaResponseText =
-            preparedAgenda.action === "blocked"
+            !toolCallingAlreadyActed && preparedAgenda.action === "blocked"
               ? AGENDA_AUTOMATION_DISABLED_REPLY
               : preparedAgenda.text;
           const finalHandoffCheck = userRequestedHandoff || aiMarkerHandoff;
@@ -941,17 +961,20 @@ export async function POST(request: Request) {
               agentId,
               conversationId: msg.remoteJid,
             });
-            const agendaResult = await executePreparedAgendaDirective({
-              sb: sbState,
-              tenantId: row.tenant_id,
-              remoteJid: msg.remoteJid,
-              leadId,
-              agentId,
-              contactName,
-              timezone: schedulingTimezone,
-              prepared: preparedAgenda,
-            });
-            if (preparedAgenda.action === "pending" && agendaResult.action === "failed") {
+            // Pular executePreparedAgendaDirective se tool calling já agiu neste turno
+            const agendaResult = toolCallingAlreadyActed
+              ? { text: preparedAgenda.text, action: "none" as const }
+              : await executePreparedAgendaDirective({
+                  sb: sbState,
+                  tenantId: row.tenant_id,
+                  remoteJid: msg.remoteJid,
+                  leadId,
+                  agentId,
+                  contactName,
+                  timezone: schedulingTimezone,
+                  prepared: preparedAgenda,
+                });
+            if (!toolCallingAlreadyActed && preparedAgenda.action === "pending" && agendaResult.action === "failed") {
               const agendaFailure = agendaResult.text.slice(0, 4000);
               const agendaFailureDelivery = await evolutionSendText({
                 instanceName,

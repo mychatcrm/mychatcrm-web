@@ -1,0 +1,620 @@
+import "server-only";
+
+import { localWallClockToUtc } from "@/lib/server/agenda-datetime-parse";
+import { parseTimezone } from "@/lib/agents/agent-datetime";
+import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { isWithinBusinessHours, nextBusinessHourStart } from "@/lib/server/follow-up-engine";
+import {
+  executeAgendaDirective,
+  findNextActiveAgendaEvent,
+  type AgendaDirective,
+} from "@/lib/server/agent-cta-scheduler";
+import {
+  getAgendaEventById,
+  listAgendaEvents,
+} from "@/lib/server/google-calendar-db";
+import type { AgentFollowUpInteligente } from "@/lib/types";
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
+
+function extractPhone(remoteJid: string): string | null {
+  const digits = remoteJid.split("@")[0]?.replace(/\D/g, "") ?? "";
+  return digits.length >= 8 ? digits : null;
+}
+
+function isValidDate(value: string): boolean {
+  const match = value.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return false;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+function isValidTime(value: string): boolean {
+  const match = value.match(/^(\d{2}):(\d{2})$/);
+  return Boolean(match && Number(match[1]) <= 23 && Number(match[2]) <= 59);
+}
+
+function parseDirectiveDatetime(
+  date: string,
+  time: string,
+  timezone: string,
+): Date | null {
+  const [day, month, year] = date.split("/").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  if (!day || !month || !year || hour == null || minute == null) return null;
+  const tz = parseTimezone(timezone);
+  return localWallClockToUtc({ year, month, day, hour, minute }, tz);
+}
+
+/**
+ * Verifica se [newStart, newEnd) se sobrepõe a qualquer evento não cancelado do tenant.
+ * Grão: tenant-level (todo o tenant, independente de attendee_phone).
+ */
+async function hasOverlappingEvent(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  newStart: Date;
+  newEnd: Date;
+  excludeEventId?: string | null;
+}): Promise<boolean> {
+  let q = params.sb
+    .from("agenda_events")
+    .select("id")
+    .eq("tenant_id", params.tenantId)
+    .neq("status", "cancelled")
+    // Overlap: novo começa antes de evento terminar E novo termina depois de evento começar
+    .lt("start_at", params.newEnd.toISOString())
+    .gt("end_at", params.newStart.toISOString())
+    .limit(1);
+
+  if (params.excludeEventId) {
+    q = q.neq("id", params.excludeEventId);
+  }
+
+  const { data, error } = await q;
+  if (error) {
+    console.warn("[agenda-tool-executors] overlap_check_failed", { error: error.message });
+    return false; // Falhar aberto — melhor criar duplicata que bloquear tudo
+  }
+  return (data ?? []).length > 0;
+}
+
+/**
+ * Desbloqueio imediato do follow-up após cancelamento de agenda.
+ * SEMPRE escopado ao tenant_id + remote_jid do contato do agendamento.
+ * Fire-and-forget: erros são logados mas não propagam.
+ */
+async function unblockFollowUpForContact(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+}): Promise<void> {
+  try {
+    const now = new Date().toISOString();
+    const { error } = await params.sb
+      .from("follow_up_jobs")
+      .update({ scheduled_at: now, updated_at: now })
+      .eq("tenant_id", params.tenantId) // ← SEMPRE escopado ao tenant
+      .eq("remote_jid", params.remoteJid) // ← E ao contato específico
+      .eq("status", "pending");
+
+    if (error) {
+      console.warn("[agenda-tool-executors] followup_unblock_failed", {
+        tenant_id: params.tenantId,
+        remote_jid_last4: params.remoteJid.slice(-8),
+        error: error.message,
+      });
+      return;
+    }
+
+    // Fire-and-forget para o processador de follow-ups (não bloqueia o retorno da tool)
+    const baseUrl =
+      process.env.MYCHATCRM_PUBLIC_BASE_URL?.trim() ||
+      process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
+      "";
+    const internalToken = process.env.INTERNAL_API_TOKEN?.trim();
+    if (baseUrl && internalToken) {
+      void fetch(`${baseUrl}/api/internal/process-follow-ups`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-token": internalToken,
+        },
+        signal: AbortSignal.timeout(5_000),
+      }).catch((err) => {
+        console.warn("[agenda-tool-executors] followup_trigger_failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
+  } catch (err) {
+    console.warn("[agenda-tool-executors] unblock_followup_exception", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+// ── Contexto da conversa (injetado pelo servidor, nunca pelo modelo) ──────────
+
+export type AgendaToolContext = {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  leadId: string | null;
+  agentId: string;
+  contactName: string | null;
+  timezone: string;
+  /** Configurações do follow-up do agente — usadas para validar horário comercial. */
+  followUpInteligente: AgentFollowUpInteligente | null;
+};
+
+// ── Tipo de retorno das tools ─────────────────────────────────────────────────
+
+export type AgendaToolResult =
+  | { ok: true; data: Record<string, unknown> }
+  | { ok: false; reason: string; sugestao?: string };
+
+// ── 1. consultar_agendamentos ─────────────────────────────────────────────────
+
+export async function executarConsultarAgendamentos(
+  ctx: AgendaToolContext,
+): Promise<AgendaToolResult> {
+  try {
+    const sb = ctx.sb ?? createSupabaseServiceClient();
+    const attendeePhone = extractPhone(ctx.remoteJid);
+    if (!attendeePhone) {
+      return { ok: false, reason: "remote_jid_invalido" };
+    }
+
+    const nowIso = new Date().toISOString();
+    const { data, error } = await sb
+      .from("agenda_events")
+      .select("id, title, start_at, end_at, status, location, attendee_name")
+      .eq("tenant_id", ctx.tenantId)
+      .eq("attendee_phone", attendeePhone)
+      .neq("status", "cancelled")
+      .gte("start_at", nowIso)
+      .order("start_at", { ascending: true })
+      .limit(25);
+
+    if (error) {
+      return { ok: false, reason: "erro_ao_consultar_agenda" };
+    }
+
+    const events = (data ?? []) as Array<{
+      id: string;
+      title: string;
+      start_at: string;
+      end_at: string;
+      status: string;
+      location: string | null;
+      attendee_name: string | null;
+    }>;
+
+    return {
+      ok: true,
+      data: {
+        total: events.length,
+        agendamentos: events.map((e) => ({
+          event_id: e.id,
+          titulo: e.title,
+          inicio: e.start_at,
+          fim: e.end_at,
+          status: e.status,
+          local: e.location ?? null,
+          nome: e.attendee_name ?? null,
+        })),
+      },
+    };
+  } catch (err) {
+    console.warn("[agenda-tool-executors] consultar_agendamentos_error", {
+      tenant_id: ctx.tenantId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return { ok: false, reason: "erro_interno" };
+  }
+}
+
+// ── 2. verificar_disponibilidade ─────────────────────────────────────────────
+
+export async function executarVerificarDisponibilidade(
+  ctx: AgendaToolContext,
+  params: { data: string; hora: string; duracao_min?: string },
+): Promise<AgendaToolResult> {
+  if (!isValidDate(params.data) || !isValidTime(params.hora)) {
+    return { ok: false, reason: "data_ou_hora_invalida", sugestao: "Use DD/MM/AAAA para data e HH:MM para hora." };
+  }
+
+  const duracaoMin = Math.max(15, Math.min(480, Number(params.duracao_min ?? "60") || 60));
+  const startAt = parseDirectiveDatetime(params.data, params.hora, ctx.timezone);
+  if (!startAt || Number.isNaN(startAt.getTime())) {
+    return { ok: false, reason: "erro_ao_converter_data_hora" };
+  }
+  if (startAt.getTime() <= Date.now()) {
+    return { ok: false, reason: "horario_no_passado", sugestao: "Informe uma data e hora futuras." };
+  }
+  const endAt = new Date(startAt.getTime() + duracaoMin * 60_000);
+
+  // Validar horário comercial
+  const fu = ctx.followUpInteligente;
+  if (fu?.usarHorarioComercial) {
+    const dentroDoHorario = isWithinBusinessHours(startAt, fu);
+    if (!dentroDoHorario) {
+      const proxSlot = nextBusinessHourStart(startAt, fu);
+      return {
+        ok: false,
+        reason: "fora_horario_comercial",
+        sugestao: `O horário solicitado está fora do horário comercial. Próximo horário disponível: ${proxSlot.toISOString()}.`,
+      };
+    }
+  }
+
+  // Verificar conflito (tenant-level)
+  const sb = ctx.sb ?? createSupabaseServiceClient();
+  const temConflito = await hasOverlappingEvent({
+    sb,
+    tenantId: ctx.tenantId,
+    newStart: startAt,
+    newEnd: endAt,
+  });
+
+  if (temConflito) {
+    return {
+      ok: false,
+      reason: "conflito_de_horario",
+      sugestao: "Já existe um agendamento neste horário. Sugira outro horário ao cliente.",
+    };
+  }
+
+  return {
+    ok: true,
+    data: {
+      disponivel: true,
+      inicio: startAt.toISOString(),
+      fim: endAt.toISOString(),
+    },
+  };
+}
+
+// ── 3. criar_agendamento ─────────────────────────────────────────────────────
+
+export async function executarCriarAgendamento(
+  ctx: AgendaToolContext,
+  params: { data: string; hora: string; duracao_min?: string; titulo?: string; local?: string },
+): Promise<AgendaToolResult> {
+  if (!isValidDate(params.data) || !isValidTime(params.hora)) {
+    return { ok: false, reason: "data_ou_hora_invalida", sugestao: "Use DD/MM/AAAA e HH:MM." };
+  }
+
+  const duracaoMin = Math.max(15, Math.min(480, Number(params.duracao_min ?? "60") || 60));
+  const startAt = parseDirectiveDatetime(params.data, params.hora, ctx.timezone);
+  if (!startAt || Number.isNaN(startAt.getTime())) {
+    return { ok: false, reason: "erro_ao_converter_data_hora" };
+  }
+  if (startAt.getTime() <= Date.now()) {
+    return { ok: false, reason: "horario_no_passado", sugestao: "Informe uma data e hora futuras." };
+  }
+  const endAt = new Date(startAt.getTime() + duracaoMin * 60_000);
+
+  // Validar horário comercial
+  const fu = ctx.followUpInteligente;
+  if (fu?.usarHorarioComercial) {
+    const dentroDoHorario = isWithinBusinessHours(startAt, fu);
+    if (!dentroDoHorario) {
+      const proxSlot = nextBusinessHourStart(startAt, fu);
+      return {
+        ok: false,
+        reason: "fora_horario_comercial",
+        sugestao: `Fora do horário comercial. Próximo disponível: ${proxSlot.toISOString()}.`,
+      };
+    }
+  }
+
+  const sb = ctx.sb ?? createSupabaseServiceClient();
+
+  // Verificar conflito (tenant-level)
+  const temConflito = await hasOverlappingEvent({ sb, tenantId: ctx.tenantId, newStart: startAt, newEnd: endAt });
+  if (temConflito) {
+    return {
+      ok: false,
+      reason: "conflito_de_horario",
+      sugestao: "Horário ocupado. Ofereça um horário alternativo ao cliente.",
+    };
+  }
+
+  // Criar via executeAgendaDirective (reutiliza dedup + Google sync)
+  const directive: AgendaDirective = {
+    type: "schedule",
+    date: params.data,
+    time: params.hora,
+    location: params.local?.trim() || null,
+  };
+
+  try {
+    const result = await executeAgendaDirective({
+      sb,
+      tenantId: ctx.tenantId,
+      remoteJid: ctx.remoteJid,
+      leadId: ctx.leadId,
+      agentId: ctx.agentId,
+      contactName: ctx.contactName,
+      timezone: ctx.timezone,
+      directive,
+    });
+    return {
+      ok: true,
+      data: {
+        acao: result.action,
+        event_id: result.eventId,
+        inicio: startAt.toISOString(),
+        fim: endAt.toISOString(),
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn("[agenda-tool-executors] criar_agendamento_error", { tenant_id: ctx.tenantId, error: msg });
+    return { ok: false, reason: msg === "invalid_or_past_agenda_datetime" ? "horario_no_passado" : "erro_ao_criar_agendamento" };
+  }
+}
+
+// ── 4. remarcar_agendamento ──────────────────────────────────────────────────
+
+export async function executarRemarcarAgendamento(
+  ctx: AgendaToolContext,
+  params: {
+    event_id: string;
+    nova_data: string;
+    nova_hora: string;
+    duracao_min?: string;
+    confirmacao_do_cliente: string;
+  },
+): Promise<AgendaToolResult> {
+  // Guarda de confirmação obrigatória
+  if (params.confirmacao_do_cliente !== "true") {
+    return {
+      ok: false,
+      reason: "confirmacao_obrigatoria",
+      sugestao:
+        "Antes de remarcar, confirme com o cliente o agendamento específico (data, hora e título) " +
+        "e aguarde um 'sim' explícito. Só então chame esta tool com confirmacao_do_cliente='true'.",
+    };
+  }
+
+  if (!isValidDate(params.nova_data) || !isValidTime(params.nova_hora)) {
+    return { ok: false, reason: "data_ou_hora_invalida", sugestao: "Use DD/MM/AAAA e HH:MM." };
+  }
+
+  const sb = ctx.sb ?? createSupabaseServiceClient();
+  const attendeePhone = extractPhone(ctx.remoteJid);
+
+  // Validar posse: evento pertence ao tenant E ao attendee_phone do contato atual
+  const event = await getAgendaEventById(ctx.tenantId, params.event_id);
+  if (!event) {
+    return { ok: false, reason: "agendamento_nao_encontrado" };
+  }
+  if (event.status === "cancelled") {
+    return { ok: false, reason: "agendamento_ja_cancelado" };
+  }
+  if (attendeePhone && event.attendee_phone !== attendeePhone) {
+    return {
+      ok: false,
+      reason: "agendamento_nao_pertence_ao_contato",
+      sugestao: "Este agendamento não pertence ao contato desta conversa.",
+    };
+  }
+
+  const duracaoMin = Math.max(15, Math.min(480, Number(params.duracao_min ?? "60") || 60));
+  const novoStart = parseDirectiveDatetime(params.nova_data, params.nova_hora, ctx.timezone);
+  if (!novoStart || Number.isNaN(novoStart.getTime())) {
+    return { ok: false, reason: "erro_ao_converter_data_hora" };
+  }
+  if (novoStart.getTime() <= Date.now()) {
+    return { ok: false, reason: "horario_no_passado", sugestao: "Informe uma data e hora futuras." };
+  }
+  const novoEnd = new Date(novoStart.getTime() + duracaoMin * 60_000);
+
+  // Validar horário comercial
+  const fu = ctx.followUpInteligente;
+  if (fu?.usarHorarioComercial) {
+    const dentroDoHorario = isWithinBusinessHours(novoStart, fu);
+    if (!dentroDoHorario) {
+      const proxSlot = nextBusinessHourStart(novoStart, fu);
+      return {
+        ok: false,
+        reason: "fora_horario_comercial",
+        sugestao: `Fora do horário comercial. Próximo disponível: ${proxSlot.toISOString()}.`,
+      };
+    }
+  }
+
+  // Verificar conflito excluindo o próprio evento que será remarcado
+  const temConflito = await hasOverlappingEvent({
+    sb,
+    tenantId: ctx.tenantId,
+    newStart: novoStart,
+    newEnd: novoEnd,
+    excludeEventId: params.event_id,
+  });
+  if (temConflito) {
+    return {
+      ok: false,
+      reason: "conflito_de_horario",
+      sugestao: "Horário ocupado. Ofereça outro horário ao cliente.",
+    };
+  }
+
+  // Usar executeAgendaDirective: insere novo e cancela o existente automaticamente
+  const directive: AgendaDirective = {
+    type: "schedule",
+    date: params.nova_data,
+    time: params.nova_hora,
+    location: event.location ?? null,
+  };
+
+  try {
+    const result = await executeAgendaDirective({
+      sb,
+      tenantId: ctx.tenantId,
+      remoteJid: ctx.remoteJid,
+      leadId: ctx.leadId ?? event.lead_id,
+      agentId: ctx.agentId,
+      contactName: ctx.contactName,
+      timezone: ctx.timezone,
+      directive,
+    });
+    return {
+      ok: true,
+      data: {
+        acao: result.action,
+        event_id: result.eventId,
+        inicio: novoStart.toISOString(),
+        fim: novoEnd.toISOString(),
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn("[agenda-tool-executors] remarcar_agendamento_error", { tenant_id: ctx.tenantId, error: msg });
+    return { ok: false, reason: "erro_ao_remarcar_agendamento" };
+  }
+}
+
+// ── 5. cancelar_agendamento ──────────────────────────────────────────────────
+
+export async function executarCancelarAgendamento(
+  ctx: AgendaToolContext,
+  params: { event_id: string; confirmacao_do_cliente: string },
+): Promise<AgendaToolResult> {
+  // Guarda de confirmação obrigatória
+  if (params.confirmacao_do_cliente !== "true") {
+    return {
+      ok: false,
+      reason: "confirmacao_obrigatoria",
+      sugestao:
+        "Antes de cancelar, reafirme o agendamento específico (data, hora e título) para o cliente " +
+        "e aguarde um 'sim' explícito ao cancelamento. Só então chame esta tool com confirmacao_do_cliente='true'.",
+    };
+  }
+
+  const sb = ctx.sb ?? createSupabaseServiceClient();
+  const attendeePhone = extractPhone(ctx.remoteJid);
+
+  // Validar posse: evento pertence ao tenant E ao attendee_phone do contato atual
+  const event = await getAgendaEventById(ctx.tenantId, params.event_id);
+  if (!event) {
+    return { ok: false, reason: "agendamento_nao_encontrado" };
+  }
+  if (event.status === "cancelled") {
+    return { ok: false, reason: "agendamento_ja_cancelado" };
+  }
+  if (attendeePhone && event.attendee_phone !== attendeePhone) {
+    return {
+      ok: false,
+      reason: "agendamento_nao_pertence_ao_contato",
+      sugestao: "Este agendamento não pertence ao contato desta conversa.",
+    };
+  }
+
+  // Cancelar via executeAgendaDirective (cancela no banco + Google Calendar)
+  const directive: AgendaDirective = { type: "cancel", eventId: params.event_id };
+
+  try {
+    const result = await executeAgendaDirective({
+      sb,
+      tenantId: ctx.tenantId,
+      remoteJid: ctx.remoteJid,
+      leadId: ctx.leadId ?? event.lead_id,
+      agentId: ctx.agentId,
+      contactName: ctx.contactName,
+      timezone: ctx.timezone,
+      directive,
+    });
+
+    // Desbloquear follow-up imediatamente após cancelamento —
+    // escopado SEMPRE ao tenant_id + remote_jid deste contato
+    await unblockFollowUpForContact({ sb, tenantId: ctx.tenantId, remoteJid: ctx.remoteJid });
+
+    return {
+      ok: true,
+      data: {
+        acao: result.action,
+        event_id: result.eventId,
+        titulo: event.title,
+        inicio: event.start_at,
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn("[agenda-tool-executors] cancelar_agendamento_error", { tenant_id: ctx.tenantId, error: msg });
+    return { ok: false, reason: msg === "agenda_event_contact_mismatch" ? "agendamento_nao_pertence_ao_contato" : "erro_ao_cancelar_agendamento" };
+  }
+}
+
+// ── Dispatcher ────────────────────────────────────────────────────────────────
+
+/**
+ * Executa uma tool de agenda pelo nome, parseando os argumentos JSON.
+ * Nunca lança: retorna AgendaToolResult com ok=false em qualquer exceção.
+ */
+export async function dispatchAgendaTool(
+  toolName: string,
+  argumentsRaw: string,
+  ctx: AgendaToolContext,
+): Promise<AgendaToolResult> {
+  let args: Record<string, string> = {};
+  try {
+    const parsed = JSON.parse(argumentsRaw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      args = parsed as Record<string, string>;
+    }
+  } catch {
+    return { ok: false, reason: "argumentos_invalidos" };
+  }
+
+  switch (toolName) {
+    case "consultar_agendamentos":
+      return executarConsultarAgendamentos(ctx);
+
+    case "verificar_disponibilidade":
+      return executarVerificarDisponibilidade(ctx, {
+        data: String(args.data ?? ""),
+        hora: String(args.hora ?? ""),
+        duracao_min: args.duracao_min,
+      });
+
+    case "criar_agendamento":
+      return executarCriarAgendamento(ctx, {
+        data: String(args.data ?? ""),
+        hora: String(args.hora ?? ""),
+        duracao_min: args.duracao_min,
+        titulo: args.titulo,
+        local: args.local,
+      });
+
+    case "remarcar_agendamento":
+      return executarRemarcarAgendamento(ctx, {
+        event_id: String(args.event_id ?? ""),
+        nova_data: String(args.nova_data ?? ""),
+        nova_hora: String(args.nova_hora ?? ""),
+        duracao_min: args.duracao_min,
+        confirmacao_do_cliente: String(args.confirmacao_do_cliente ?? "false"),
+      });
+
+    case "cancelar_agendamento":
+      return executarCancelarAgendamento(ctx, {
+        event_id: String(args.event_id ?? ""),
+        confirmacao_do_cliente: String(args.confirmacao_do_cliente ?? "false"),
+      });
+
+    default:
+      return { ok: false, reason: `tool_desconhecida:${toolName}` };
+  }
+}

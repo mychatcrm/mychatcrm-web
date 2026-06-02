@@ -232,10 +232,15 @@ ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o c
 - Consulte o contexto de agenda do contato antes de responder. Não invente compromissos.
 - Não crie um evento apenas porque o cliente perguntou sobre um agendamento.
 ${agent.agendaAutomationEnabled === true ? `- A automação de agenda está ativa para este agente.
-- Quando data e hora estiverem explicitamente confirmadas, inclua [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]] no final da resposta.
-- Para cancelar, use somente um event_id listado no contexto e inclua [[CANCELAR_AGENDA: id=EVENT_ID]] no final da resposta.
-- Para remarcar, confirme a nova data e hora e use [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]]. O sistema substituirá o próximo compromisso futuro.
-- As diretivas são internas e removidas antes do cliente receber a mensagem.` : "- A automação de agenda está desativada. Você pode informar compromissos existentes, mas nunca inclua [[AGENDAR: ...]] nem [[CANCELAR_AGENDA: ...]]."}`,
+- Use as tools de agenda (criar_agendamento, remarcar_agendamento, cancelar_agendamento, consultar_agendamentos, verificar_disponibilidade) quando disponíveis — elas têm prioridade sobre as diretivas de texto.
+- REGRA OBRIGATÓRIA PARA CANCEL E REMARCAÇÃO: Antes de chamar cancelar_agendamento ou remarcar_agendamento, você DEVE:
+  1. Reafirmar para o cliente o agendamento específico (data, hora e título).
+  2. Perguntar explicitamente se confirma o cancelamento ou a remarcação.
+  3. Aguardar um 'sim' explícito do cliente.
+  Só então chame a tool com confirmacao_do_cliente='true'. Se o cliente ainda não confirmou, use 'false' — a operação será bloqueada com orientação para confirmar primeiro.
+- Para criar agendamento: somente quando data E hora estiverem explicitamente confirmadas pelo cliente.
+- Fallback (se tools não disponíveis): inclua [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]] ou [[CANCELAR_AGENDA: id=EVENT_ID]] no final da resposta (diretivas são removidas antes do cliente ver).
+- Os event_id no contexto de agenda são os únicos IDs válidos — nunca invente um UUID.` : "- A automação de agenda está desativada. Você pode informar compromissos existentes, mas nunca inclua [[AGENDAR: ...]] nem [[CANCELAR_AGENDA: ...]] e não use tools de agenda."}`,
     `CONFIGURAÇÕES AVANÇADAS DO AGENTE
 Modo de resposta configurado: ${clean((agent as { responseMode?: unknown }).responseMode) || "text"}
 Origens/ativação: ${compactJson((agent as { origens?: unknown }).origens)}
