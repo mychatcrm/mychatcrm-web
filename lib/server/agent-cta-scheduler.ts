@@ -64,6 +64,12 @@ export type ProcessAgendaDirectivesResult = {
   eventId?: string;
 };
 
+export type PreparedAgendaDirectiveResult = {
+  text: string;
+  directive: AgendaDirective | null;
+  action: "none" | "pending" | "blocked" | "failed";
+};
+
 export function isSchedulingCta(ctaFinal: unknown): boolean {
   return typeof ctaFinal === "string" && ctaFinal.trim() === SCHEDULE_CTA_VALUE;
 }
@@ -547,17 +553,47 @@ export async function processAgendaDirectivesInReply(params: {
   timezone: string;
   text: string;
 }): Promise<ProcessAgendaDirectivesResult> {
+  const prepared = prepareAgendaDirectiveInReply({ text: params.text, enabled: true });
+  if (prepared.action === "none") return { text: prepared.text, action: "none" };
+  if (!prepared.directive) return { text: prepared.text, action: "failed" };
+  return executePreparedAgendaDirective({ ...params, prepared });
+}
+
+export function prepareAgendaDirectiveInReply(params: {
+  text: string;
+  enabled: boolean;
+}): PreparedAgendaDirectiveResult {
   const parsed = parseAgendaDirectives(params.text);
   const text = stripAgendaDirectives(params.text);
-  if (!parsed.invalid && parsed.directives.length === 0) return { text, action: "none" };
+  if (!parsed.invalid && parsed.directives.length === 0) {
+    return { text, directive: null, action: "none" };
+  }
   if (parsed.invalid || parsed.directives.length !== 1) {
-    console.warn("[agent-agenda-directive]", { tenant_id: params.tenantId, agent_id: params.agentId, action: "failed", reason: "invalid_directive" });
-    return { text: AGENDA_FAILURE_REPLY, action: "failed" };
+    return { text: AGENDA_FAILURE_REPLY, directive: null, action: "failed" };
+  }
+  if (!params.enabled) {
+    return { text, directive: null, action: "blocked" };
+  }
+  return { text, directive: parsed.directives[0]!, action: "pending" };
+}
+
+export async function executePreparedAgendaDirective(params: {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  leadId?: string | null;
+  agentId?: string | null;
+  contactName?: string | null;
+  timezone: string;
+  prepared: PreparedAgendaDirectiveResult;
+}): Promise<ProcessAgendaDirectivesResult> {
+  if (!params.prepared.directive) {
+    return { text: params.prepared.text, action: params.prepared.action === "failed" ? "failed" : "none" };
   }
   try {
-    const result = await executeAgendaDirective({ ...params, directive: parsed.directives[0]! });
+    const result = await executeAgendaDirective({ ...params, directive: params.prepared.directive });
     console.info("[agent-agenda-directive]", { tenant_id: params.tenantId, agent_id: params.agentId, action: result.action, event_id: result.eventId });
-    return { text, ...result };
+    return { text: params.prepared.text, ...result };
   } catch (error) {
     console.warn("[agent-agenda-directive]", {
       tenant_id: params.tenantId,

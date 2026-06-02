@@ -8,6 +8,7 @@ import {
   formatExistingAppointmentSchedulingBlock,
   isSchedulingCta,
   parseAgendaDirectives,
+  prepareAgendaDirectiveInReply,
   stripAgendaDirectives,
   executeAgendaDirective,
 } from "@/lib/server/agent-cta-scheduler";
@@ -140,6 +141,30 @@ describe("agent-cta-scheduler", () => {
       invalid: false,
     });
     expect(stripAgendaDirectives(text)).toBe("Combinado!");
+  });
+
+  it("prepares a directive without persisting it before delivery", () => {
+    expect(
+      prepareAgendaDirectiveInReply({
+        text: "Combinado! [[AGENDAR: data=02/06/2099, hora=14:30]]",
+        enabled: true,
+      }),
+    ).toEqual({
+      text: "Combinado!",
+      directive: { type: "schedule", date: "02/06/2099", time: "14:30", location: null },
+      action: "pending",
+    });
+    expect(insertAgendaEventMock).not.toHaveBeenCalled();
+  });
+
+  it("strips but blocks agenda directives when automation is disabled", () => {
+    expect(
+      prepareAgendaDirectiveInReply({
+        text: "Combinado! [[AGENDAR: data=02/06/2099, hora=14:30]]",
+        enabled: false,
+      }),
+    ).toEqual({ text: "Combinado!", directive: null, action: "blocked" });
+    expect(insertAgendaEventMock).not.toHaveBeenCalled();
   });
 
   it("parses cancellation only with a valid UUID", () => {

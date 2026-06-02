@@ -311,6 +311,8 @@ export interface Agent {
   crmTargetStatus?: string | null;
   /** Se true, CTA/handoff estruturado está ativo para este agente. */
   ctaHandoffAtivo?: boolean;
+  /** Se true, o agente pode criar, remarcar e cancelar compromissos pela conversa. */
+  agendaAutomationEnabled?: boolean;
   /** CTA final configurado no wizard (ex.: transferir para humano). */
   ctaFinal?: string;
   /** Palavras-chave adicionais que disparam handoff automático. */

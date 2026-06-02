@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Handshake, Kanban, RadioTower, Sparkles, Timer, Volume2 } from "lucide-react";
+import { Bot, CalendarClock, Handshake, Kanban, RadioTower, Sparkles, Timer, Volume2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useCrmFunnels } from "@/components/dashboard/CrmFunnelsContext";
@@ -15,6 +15,7 @@ import { WizardStep1Identidade } from "./WizardStep1Identidade";
 import { WizardStep2Treinamento } from "./WizardStep2Treinamento";
 import { WizardStep3Ativacao } from "./WizardStep3Ativacao";
 import { WizardStep4Fluxo } from "./WizardStep4Fluxo";
+import { WizardStepAgendaAutomation } from "./WizardStepAgendaAutomation";
 import { WizardStepFollowUpInteligente } from "./WizardStepFollowUpInteligente";
 import { WizardStepWhatsappLinha } from "./WizardStepWhatsappLinha";
 import { WizardStepVoz } from "./WizardStepVoz";
@@ -275,6 +276,13 @@ export function AgentFormCompact({
                 titleIcon={<Kanban strokeWidth={1.75} />}
               >
                 <WizardStepCrmLeadDestination draft={draft} onChange={setDraft} />
+              </AdvancedSection>
+              <AdvancedSection
+                title="Agenda"
+                description="O agente consulta compromissos existentes. Ative se ele também puder criar, remarcar e cancelar."
+                titleIcon={<CalendarClock strokeWidth={1.75} />}
+              >
+                <WizardStepAgendaAutomation draft={draft} onChange={setDraft} />
               </AdvancedSection>
               <AdvancedSection
                 title="Configurações de Follow-up"

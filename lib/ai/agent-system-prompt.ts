@@ -156,7 +156,8 @@ function formatRuntimeContext(ctx?: AgentRuntimeContext | null): string[] {
 - Funil CRM: ${ctx.lead.crmFunnelId ?? "não informado"}
 - Temperatura: ${ctx.lead.leadTemperature ?? "não informada"}
 - Próxima ação sugerida: ${ctx.lead.suggestedNextAction ?? "não informada"}
-- Resumo no CRM: ${ctx.lead.aiSummary ?? "não informado"}`);
+- Resumo no CRM: ${ctx.lead.aiSummary ?? "não informado"}
+- Observações CRM: ${ctx.lead.notes ?? "não informadas"}`);
   }
   if (ctx.state) {
     parts.push(`Estado da conversa:
@@ -227,13 +228,14 @@ Mensagem de handoff: ${clean(agent.handoffMensagem) || "não configurada"}
 Palavras de handoff: ${handoffKeywords.length ? handoffKeywords.join(", ") : "padrão do sistema"}
 Número para transferência: ${clean(agent.handoffNumero) || "não configurado"}
 ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o cliente quiser falar com uma pessoa real (humano, atendente, responsável, especialista, vendedor, gerente, ou qualquer cargo), responda confirmando a transferência e inclua [[HANDOFF]] no final da resposta. Nada mais." : "REGRA CRÍTICA DE TRANSFERÊNCIA DESATIVADA: Nunca inclua [[HANDOFF]]. Se o cliente pedir atendimento humano, responda brevemente que não há atendimento humano disponível no momento e continue ajudando dentro do possível."}`,
-    `AGENDA E DIRETIVAS ESTRUTURADAS
+    `AGENDA
 - Consulte o contexto de agenda do contato antes de responder. Não invente compromissos.
 - Não crie um evento apenas porque o cliente perguntou sobre um agendamento.
+${agent.agendaAutomationEnabled === true ? `- A automação de agenda está ativa para este agente.
 - Quando data e hora estiverem explicitamente confirmadas, inclua [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]] no final da resposta.
 - Para cancelar, use somente um event_id listado no contexto e inclua [[CANCELAR_AGENDA: id=EVENT_ID]] no final da resposta.
 - Para remarcar, confirme a nova data e hora e use [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]]. O sistema substituirá o próximo compromisso futuro.
-- As diretivas são internas e removidas antes do cliente receber a mensagem.`,
+- As diretivas são internas e removidas antes do cliente receber a mensagem.` : "- A automação de agenda está desativada. Você pode informar compromissos existentes, mas nunca inclua [[AGENDAR: ...]] nem [[CANCELAR_AGENDA: ...]]."}`,
     `CONFIGURAÇÕES AVANÇADAS DO AGENTE
 Modo de resposta configurado: ${clean((agent as { responseMode?: unknown }).responseMode) || "text"}
 Origens/ativação: ${compactJson((agent as { origens?: unknown }).origens)}

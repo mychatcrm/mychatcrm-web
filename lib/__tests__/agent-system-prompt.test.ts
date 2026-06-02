@@ -147,11 +147,21 @@ describe("buildAgentSystemPrompt", () => {
   it("instructs the model to use structured agenda directives", () => {
     const prompt = buildAgentSystemPrompt({
       languageInstruction: "Responda em português.",
-      agent: { nome: "Max Vendas", systemPrompt: "Ajude o cliente." },
+      agent: { nome: "Max Vendas", systemPrompt: "Ajude o cliente.", agendaAutomationEnabled: true },
     });
 
     expect(prompt).toContain("[[AGENDAR: data=DD/MM/AAAA, hora=HH:MM");
     expect(prompt).toContain("[[CANCELAR_AGENDA: id=EVENT_ID]]");
+  });
+
+  it("keeps agenda read-only when agenda automation is disabled", () => {
+    const prompt = buildAgentSystemPrompt({
+      languageInstruction: "Responda em português.",
+      agent: { nome: "Max Vendas", systemPrompt: "Ajude o cliente.", agendaAutomationEnabled: false },
+    });
+
+    expect(prompt).toContain("automação de agenda está desativada");
+    expect(prompt).toContain("nunca inclua [[AGENDAR: ...]]");
   });
 
   it("injects Meta Lead Ads form memory so the agent does not re-ask", () => {

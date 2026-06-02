@@ -51,6 +51,8 @@ export type AgentWizardDraft = {
   whatsappSlotIndex: number;
   /** Se falso, CTA/handoff ficam só nas instruções (campos abaixo ocultos). */
   ctaHandoffAtivo: boolean;
+  /** Se true, o agente pode alterar a agenda usando diretivas estruturadas. */
+  agendaAutomationEnabled: boolean;
   ctaFinal: string;
   handoffKeywords: string[];
   handoffMensagem: string;
@@ -174,6 +176,7 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     funil: { ...legacyFunil },
     whatsappSlotIndex,
     ctaHandoffAtivo: agent.ctaHandoffAtivo ?? false,
+    agendaAutomationEnabled: agent.agendaAutomationEnabled ?? false,
     ctaFinal: agent.ctaFinal ?? "Transferir para humano",
     handoffKeywords: agent.handoffKeywords ?? ["humano", "especialista"],
     handoffMensagem: agent.handoffMensagem ?? "",
@@ -306,6 +309,7 @@ export const defaultWizardDraft: AgentWizardDraft = {
   },
   whatsappSlotIndex: 0,
   ctaHandoffAtivo: true,
+  agendaAutomationEnabled: false,
   ctaFinal: "Transferir para humano",
   handoffKeywords: ["humano", "atendente", "falar com pessoa"],
   handoffMensagem: "Perfeito! Vou te conectar com nosso especialista agora. Um momento.",

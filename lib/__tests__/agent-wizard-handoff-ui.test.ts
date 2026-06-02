@@ -8,6 +8,10 @@ describe("agent wizard handoff simplification", () => {
     expect(defaultWizardDraft.ctaHandoffAtivo).toBe(true);
   });
 
+  it("keeps agenda mutations disabled by default for new agents", () => {
+    expect(defaultWizardDraft.agendaAutomationEnabled).toBe(false);
+  });
+
   it("keeps hidden CTA out of the generated business prompt", () => {
     const prompt = createPromptFromBusiness("Atenda com atenção.", defaultWizardDraft);
     expect(prompt).toContain("seguir as instruções específicas escritas pelo gestor");
@@ -25,5 +29,14 @@ describe("agent wizard handoff simplification", () => {
     expect(source).not.toContain("Palavras que ativam a transferência");
     expect(source).not.toContain("Mensagem enviada ao cliente na transferência");
     expect(source).not.toContain("Objetivo Final do Agente (CTA)");
+  });
+
+  it("renders an independent agenda automation toggle", () => {
+    const source = readFileSync(
+      join(process.cwd(), "components/dashboard/agentes/WizardStepAgendaAutomation.tsx"),
+      "utf8",
+    );
+    expect(source).toContain("agendaAutomationEnabled");
+    expect(source).toContain("Permitir criar, remarcar e cancelar agendamentos");
   });
 });
