@@ -42,15 +42,17 @@ import { scheduleFollowUpAfterInbound, scheduleRetomadaJob } from "@/lib/server/
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import {
-  AGENDA_AUTOMATION_DISABLED_REPLY,
-  isAgendaAutomationEnabled,
-  prepareAndExecuteAgendaBeforeOutbound,
+  executePreparedAgendaDirective,
+  prepareAgendaDirectiveInReply,
 } from "@/lib/server/agent-cta-scheduler";
 import type { AgentFollowUpInteligente } from "@/lib/types";
 
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+const AGENDA_AUTOMATION_DISABLED_REPLY =
+  "Posso consultar seus compromissos existentes, mas não consigo criar, remarcar ou cancelar agendamentos por aqui no momento.";
 
 function verifyWebhookToken(request: Request): boolean {
   const expected = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
@@ -727,28 +729,22 @@ export async function POST(request: Request) {
           const userRequestedHandoff = handoffCheck.trigger;
           const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
           const modelTextWithoutHandoff = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
-          const agendaPrep = await prepareAndExecuteAgendaBeforeOutbound({
-            sb: sbState,
-            tenantId: row.tenant_id,
-            remoteJid: msg.remoteJid,
-            leadId,
-            agentId,
-            contactName,
-            timezone: schedulingTimezone,
-            userMessage: inboundLanguageSource(msg),
-            modelTextWithoutHandoff,
-            agendaAutomationEnabled: isAgendaAutomationEnabled(metadata),
+          const preparedAgenda = prepareAgendaDirectiveInReply({
+            text: modelTextWithoutHandoff,
+            enabled: metadata.agendaAutomationEnabled === true,
           });
-          if (agendaPrep.prepared.action === "blocked" || agendaPrep.prepared.action === "failed") {
+          if (preparedAgenda.action === "blocked" || preparedAgenda.action === "failed") {
             console.info("[agent-agenda-directive]", {
               tenant_id: row.tenant_id,
               agent_id: agentId,
-              action: agendaPrep.prepared.action,
-              agenda_result: agendaPrep.agendaAction,
-              reason: agendaPrep.prepared.action === "blocked" ? "automation_disabled" : "invalid_directive",
+              action: preparedAgenda.action,
+              reason: preparedAgenda.action === "blocked" ? "automation_disabled" : "invalid_directive",
             });
           }
-          const preparedAgendaResponseText = agendaPrep.outboundText;
+          const preparedAgendaResponseText =
+            preparedAgenda.action === "blocked"
+              ? AGENDA_AUTOMATION_DISABLED_REPLY
+              : preparedAgenda.text;
           const finalHandoffCheck = userRequestedHandoff || aiMarkerHandoff;
           const finalHandoffReason = handoffCheck.trigger
               ? (handoffCheck.reason ?? "handoff")
@@ -845,7 +841,7 @@ export async function POST(request: Request) {
           if (finalHandoffCheck && handoffMessage) {
             replyText = handoffMessage;
           }
-          if (agendaPrep.prepared.action === "blocked") {
+          if (preparedAgenda.action === "blocked") {
             replyText = AGENDA_AUTOMATION_DISABLED_REPLY;
           }
           if (!replyText && outboundFilenames.length) {
@@ -945,6 +941,34 @@ export async function POST(request: Request) {
               agentId,
               conversationId: msg.remoteJid,
             });
+            const agendaResult = await executePreparedAgendaDirective({
+              sb: sbState,
+              tenantId: row.tenant_id,
+              remoteJid: msg.remoteJid,
+              leadId,
+              agentId,
+              contactName,
+              timezone: schedulingTimezone,
+              prepared: preparedAgenda,
+            });
+            if (preparedAgenda.action === "pending" && agendaResult.action === "failed") {
+              const agendaFailure = agendaResult.text.slice(0, 4000);
+              const agendaFailureDelivery = await evolutionSendText({
+                instanceName,
+                number,
+                text: agendaFailure,
+              });
+              if (agendaFailureDelivery.ok) {
+                await saveMessage({
+                  tenantId: row.tenant_id,
+                  remoteJid: msg.remoteJid,
+                  direction: "outbound",
+                  kind: "text",
+                  content: agendaFailure,
+                  agentId,
+                });
+              }
+            }
             await sendOutboundMediaSafe();
           } else {
             console.error("[webhooks/evolution] outbound send failed after TTS gate");

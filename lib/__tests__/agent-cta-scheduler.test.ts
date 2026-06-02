@@ -9,11 +9,8 @@ import {
   isSchedulingCta,
   parseAgendaDirectives,
   prepareAgendaDirectiveInReply,
-  prepareAndExecuteAgendaBeforeOutbound,
   stripAgendaDirectives,
   executeAgendaDirective,
-  isAgendaAutomationEnabled,
-  AGENDA_FAILURE_REPLY,
 } from "@/lib/server/agent-cta-scheduler";
 
 const insertAgendaEventMock = vi.fn();
@@ -403,52 +400,5 @@ describe("agent-cta-scheduler", () => {
 
     expect(result).toEqual({ action: "rescheduled", eventId: "evt-new" });
     expect(cancelAgendaEventMock).toHaveBeenCalledWith("t1", "evt-old");
-  });
-
-  it("isAgendaAutomationEnabled when toggle or scheduling CTA", () => {
-    expect(isAgendaAutomationEnabled({ agendaAutomationEnabled: true })).toBe(true);
-    expect(isAgendaAutomationEnabled({ ctaFinal: "Agendar no Google Agenda" })).toBe(true);
-    expect(isAgendaAutomationEnabled({ agendaAutomationEnabled: false, ctaFinal: "Transferir para humano" })).toBe(
-      false,
-    );
-  });
-
-  it("prepareAndExecuteAgendaBeforeOutbound runs directive before returning outbound text", async () => {
-    insertAgendaEventMock.mockResolvedValueOnce({ id: "evt-new" });
-    const result = await prepareAndExecuteAgendaBeforeOutbound({
-      sb: makeStructuredSb() as never,
-      tenantId: "t1",
-      remoteJid: "5562999999999@s.whatsapp.net",
-      timezone: "America/Sao_Paulo",
-      userMessage: "sim",
-      modelTextWithoutHandoff: "Perfeito! [[AGENDAR: data=02/06/2099, hora=14:30]]",
-      agendaAutomationEnabled: true,
-    });
-
-    expect(result.outboundText).toBe("Perfeito!");
-    expect(result.agendaAction).toBe("scheduled");
-    expect(insertAgendaEventMock).toHaveBeenCalled();
-  });
-
-  it("prepareAndExecuteAgendaBeforeOutbound returns failure text when directive execution fails", async () => {
-    getAgendaEventByIdMock.mockResolvedValueOnce({
-      id: "123e4567-e89b-42d3-a456-426614174000",
-      attendee_phone: "5562888888888",
-      google_event_id: null,
-    });
-
-    const result = await prepareAndExecuteAgendaBeforeOutbound({
-      sb: makeStructuredSb() as never,
-      tenantId: "t1",
-      remoteJid: "5562999999999@s.whatsapp.net",
-      timezone: "America/Sao_Paulo",
-      userMessage: "ok",
-      modelTextWithoutHandoff:
-        "Cancelado. [[CANCELAR_AGENDA: id=123e4567-e89b-42d3-a456-426614174000]]",
-      agendaAutomationEnabled: true,
-    });
-
-    expect(result.outboundText).toBe(AGENDA_FAILURE_REPLY);
-    expect(result.agendaAction).toBe("failed");
   });
 });

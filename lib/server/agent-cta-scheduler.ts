@@ -30,14 +30,8 @@ const RESCHEDULE_RE =
 const SCHEDULING_RE = /\b(agend|reuni[aã]o|visita|hor[aá]rio|amanh[ãa]|hoje|segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo|\d{1,2}[:h]\d{2}|\d{1,2}\/\d{1,2})\b/i;
 const AGENDA_DIRECTIVE_RE = /\[\[\s*(AGENDAR|CANCELAR_AGENDA)\s*:\s*([^\]]*)\]\]/gi;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-export const AGENDA_FAILURE_REPLY =
+const AGENDA_FAILURE_REPLY =
   "Não consegui confirmar essa alteração na agenda agora. Nossa equipe vai conferir e te retornar em breve.";
-
-export const AGENDA_AUTOMATION_DISABLED_REPLY =
-  "Posso consultar seus compromissos existentes, mas não consigo criar, remarcar ou cancelar agendamentos por aqui no momento.";
-
-const CANCEL_RE =
-  /\b(cancelar|cancela|desmarcar|desmarca|n[aã]o\s+vou\s+poder|n[aã]o\s+consigo\s+ir|n[aã]o\s+poderei)\b/i;
 
 export type AgendaEventSummary = {
   id: string;
@@ -122,30 +116,6 @@ export function detectRescheduleConfirmation(
   if (!hasActiveEvent) return false;
   if (detectRescheduleIntent(userText, assistantText)) return true;
   return detectSchedulingConfirmation(userText, assistantText);
-}
-
-export function detectCancellationIntent(userText: string): boolean {
-  return CANCEL_RE.test(userText.trim().toLowerCase());
-}
-
-export function detectCancellationConfirmation(
-  userText: string,
-  assistantText: string | undefined,
-  hasActiveEvent: boolean,
-): boolean {
-  if (!hasActiveEvent) return false;
-  const text = userText.trim().toLowerCase();
-  if (CANCEL_RE.test(text)) return true;
-  return (
-    CONFIRMATION_RE.test(text) &&
-    !!assistantText &&
-    /\b(cancelar|desmarcar|cancelad|desmarcad)\b/i.test(assistantText)
-  );
-}
-
-export function isAgendaAutomationEnabled(metadata: Record<string, unknown>): boolean {
-  if (metadata.agendaAutomationEnabled === true) return true;
-  return isSchedulingCta(metadata.ctaFinal);
 }
 
 function extractPhone(remoteJid: string): string | null {
@@ -633,154 +603,4 @@ export async function executePreparedAgendaDirective(params: {
     });
     return { text: AGENDA_FAILURE_REPLY, action: "failed" };
   }
-}
-
-async function tryAgendaKeywordFallback(params: {
-  sb: SupabaseServiceClient;
-  tenantId: string;
-  remoteJid: string;
-  leadId?: string | null;
-  agentId?: string | null;
-  contactName?: string | null;
-  timezone: string;
-  userMessage: string;
-  modelTextWithoutHandoff: string;
-}): Promise<ProcessAgendaDirectivesResult> {
-  const assistantText = assistantTextForSchedulingConfirmation(params.modelTextWithoutHandoff, undefined);
-  const activeEvent = await findActiveAgendaEventForScheduling({
-    sb: params.sb,
-    tenantId: params.tenantId,
-    remoteJid: params.remoteJid,
-  });
-
-  if (activeEvent && detectCancellationConfirmation(params.userMessage, assistantText, true)) {
-    try {
-      await cancelStructuredAgendaEvent({
-        tenantId: params.tenantId,
-        remoteJid: params.remoteJid,
-        event: activeEvent as AgendaEventRow,
-      });
-      console.info("[agent-agenda-keyword]", {
-        tenant_id: params.tenantId,
-        agent_id: params.agentId,
-        action: "cancelled",
-        event_id: activeEvent.id,
-      });
-      return {
-        text: stripAgendaDirectives(params.modelTextWithoutHandoff),
-        action: "cancelled",
-        eventId: activeEvent.id,
-      };
-    } catch (error) {
-      console.warn("[agent-agenda-keyword]", {
-        tenant_id: params.tenantId,
-        action: "cancel_failed",
-        reason: error instanceof Error ? error.message : String(error),
-      });
-      return { text: AGENDA_FAILURE_REPLY, action: "failed" };
-    }
-  }
-
-  const wantsReschedule =
-    !!activeEvent && detectRescheduleConfirmation(params.userMessage, assistantText, true);
-  const wantsSchedule =
-    !activeEvent && detectSchedulingConfirmation(params.userMessage, assistantText);
-
-  if (wantsReschedule || wantsSchedule) {
-    const createResult = await createAgendaEventForSchedulingCta({
-      sb: params.sb,
-      tenantId: params.tenantId,
-      remoteJid: params.remoteJid,
-      contactName: params.contactName ?? null,
-      userMessage: params.userMessage,
-      assistantMessage: assistantText,
-      timezone: params.timezone,
-      leadId: params.leadId,
-      agentId: params.agentId,
-      rescheduleOfEventId: wantsReschedule && activeEvent ? activeEvent.id : undefined,
-    });
-    if (createResult.created) {
-      console.info("[agent-agenda-keyword]", {
-        tenant_id: params.tenantId,
-        agent_id: params.agentId,
-        action: wantsReschedule ? "rescheduled" : "scheduled",
-        event_id: createResult.eventId,
-      });
-      return {
-        text: stripAgendaDirectives(params.modelTextWithoutHandoff),
-        action: wantsReschedule ? "rescheduled" : "scheduled",
-        eventId: createResult.eventId,
-      };
-    }
-    console.warn("[agent-agenda-keyword]", {
-      tenant_id: params.tenantId,
-      agent_id: params.agentId,
-      action: "schedule_failed",
-      reason: createResult.reason,
-    });
-    return { text: AGENDA_FAILURE_REPLY, action: "failed" };
-  }
-
-  return { text: stripAgendaDirectives(params.modelTextWithoutHandoff), action: "none" };
-}
-
-export type AgendaBeforeOutboundResult = {
-  prepared: PreparedAgendaDirectiveResult;
-  outboundText: string;
-  agendaAction: ProcessAgendaDirectivesResult["action"];
-};
-
-/** Executa mutações de agenda antes de enviar texto ao lead. */
-export async function prepareAndExecuteAgendaBeforeOutbound(params: {
-  sb: SupabaseServiceClient;
-  tenantId: string;
-  remoteJid: string;
-  leadId?: string | null;
-  agentId?: string | null;
-  contactName?: string | null;
-  timezone: string;
-  userMessage: string;
-  modelTextWithoutHandoff: string;
-  agendaAutomationEnabled: boolean;
-}): Promise<AgendaBeforeOutboundResult> {
-  const prepared = prepareAgendaDirectiveInReply({
-    text: params.modelTextWithoutHandoff,
-    enabled: params.agendaAutomationEnabled,
-  });
-
-  if (prepared.action === "blocked") {
-    return { prepared, outboundText: AGENDA_AUTOMATION_DISABLED_REPLY, agendaAction: "none" };
-  }
-  if (prepared.action === "failed") {
-    return { prepared, outboundText: AGENDA_FAILURE_REPLY, agendaAction: "failed" };
-  }
-
-  if (prepared.action === "pending") {
-    const executed = await executePreparedAgendaDirective({
-      sb: params.sb,
-      tenantId: params.tenantId,
-      remoteJid: params.remoteJid,
-      leadId: params.leadId,
-      agentId: params.agentId,
-      contactName: params.contactName,
-      timezone: params.timezone,
-      prepared,
-    });
-    if (executed.action === "failed") {
-      return { prepared, outboundText: AGENDA_FAILURE_REPLY, agendaAction: "failed" };
-    }
-    return { prepared, outboundText: prepared.text, agendaAction: executed.action };
-  }
-
-  if (params.agendaAutomationEnabled) {
-    const fallback = await tryAgendaKeywordFallback(params);
-    if (fallback.action !== "none") {
-      if (fallback.action === "failed") {
-        return { prepared, outboundText: AGENDA_FAILURE_REPLY, agendaAction: "failed" };
-      }
-      return { prepared, outboundText: fallback.text, agendaAction: fallback.action };
-    }
-  }
-
-  return { prepared, outboundText: prepared.text, agendaAction: "none" };
 }
