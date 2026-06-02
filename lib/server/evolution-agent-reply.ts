@@ -34,15 +34,13 @@ import { getMediaBufferFromR2 } from "@/lib/integrations/r2-storage";
 import { sendPresence, typingDelayMs } from "@/lib/server/evolution-presence";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import {
-  executePreparedAgendaDirective,
-  prepareAgendaDirectiveInReply,
+  AGENDA_AUTOMATION_DISABLED_REPLY,
+  isAgendaAutomationEnabled,
+  prepareAndExecuteAgendaBeforeOutbound,
 } from "@/lib/server/agent-cta-scheduler";
 import type { AgentFollowUpInteligente } from "@/lib/types";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
-
-const AGENDA_AUTOMATION_DISABLED_REPLY =
-  "Posso consultar seus compromissos existentes, mas não consigo criar, remarcar ou cancelar agendamentos por aqui no momento.";
 
 type PendingInboundRow = {
   id: string;
@@ -497,22 +495,27 @@ export async function processAgentResponseJob(
     // Strip [[HANDOFF]] marker from AI reply (always safe to remove)
     const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
     const modelTextWithoutHandoff = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
-    const preparedAgenda = prepareAgendaDirectiveInReply({
-      text: modelTextWithoutHandoff,
-      enabled: metadata.agendaAutomationEnabled === true,
+    const agendaPrep = await prepareAndExecuteAgendaBeforeOutbound({
+      sb,
+      tenantId: job.tenant_id,
+      remoteJid: job.remote_jid,
+      leadId: job.lead_id,
+      agentId: job.agent_id,
+      timezone: schedulingTimezone,
+      userMessage: unitPrompt,
+      modelTextWithoutHandoff,
+      agendaAutomationEnabled: isAgendaAutomationEnabled(metadata),
     });
-    if (preparedAgenda.action === "blocked" || preparedAgenda.action === "failed") {
+    if (agendaPrep.prepared.action === "blocked" || agendaPrep.prepared.action === "failed") {
       console.info("[agent-agenda-directive]", {
         tenant_id: job.tenant_id,
         agent_id: job.agent_id,
-        action: preparedAgenda.action,
-        reason: preparedAgenda.action === "blocked" ? "automation_disabled" : "invalid_directive",
+        action: agendaPrep.prepared.action,
+        agenda_result: agendaPrep.agendaAction,
+        reason: agendaPrep.prepared.action === "blocked" ? "automation_disabled" : "invalid_directive",
       });
     }
-    const preparedAgendaResponseText =
-      preparedAgenda.action === "blocked"
-        ? AGENDA_AUTOMATION_DISABLED_REPLY
-        : preparedAgenda.text;
+    const preparedAgendaResponseText = agendaPrep.outboundText;
 
     // Secondary: LLM included [[HANDOFF]] marker (catches "alta intenção" cases
     // where keywords don't match but LLM correctly decided to transfer)
@@ -534,7 +537,7 @@ export async function processAgentResponseJob(
     if (handoffTriggered && handoffMessage) {
       textToSend = handoffMessage;
     }
-    if (preparedAgenda.action === "blocked") {
+    if (agendaPrep.prepared.action === "blocked") {
       textToSend = AGENDA_AUTOMATION_DISABLED_REPLY;
     }
     if (!textToSend && outboundFilenames.length) {
@@ -638,33 +641,6 @@ export async function processAgentResponseJob(
       leadId: job.lead_id,
       mediaUrl: delivery.mediaUrl,
     });
-    const agendaResult = await executePreparedAgendaDirective({
-      sb,
-      tenantId: job.tenant_id,
-      remoteJid: job.remote_jid,
-      leadId: job.lead_id,
-      agentId: job.agent_id,
-      timezone: schedulingTimezone,
-      prepared: preparedAgenda,
-    });
-    if (preparedAgenda.action === "pending" && agendaResult.action === "failed") {
-      const agendaFailure = agendaResult.text.slice(0, 4000);
-      const agendaFailureDelivery = await evolutionSendText({
-        instanceName: job.instance_name,
-        number,
-        text: agendaFailure,
-      });
-      if (agendaFailureDelivery.ok) {
-        await saveOutboundMessage({
-          tenantId: job.tenant_id,
-          remoteJid: job.remote_jid,
-          kind: "text",
-          content: agendaFailure,
-          agentId: job.agent_id,
-          leadId: job.lead_id,
-        });
-      }
-    }
     await sendOutboundMediaSafe();
 
     repliesSent += 1;
