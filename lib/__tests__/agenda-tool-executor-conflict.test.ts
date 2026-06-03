@@ -57,7 +57,11 @@ describe("conflict guard (tenant-level)", () => {
 
   it("bloqueia quando há evento sobreposto no tenant", async () => {
     makeSupabaseMock([{ id: "conflicting-evt" }]);
-    const result = await executarCriarAgendamento(ctx, { data: "15/07/2026", hora: "14:00" });
+    const result = await executarCriarAgendamento(ctx, {
+      data: "15/07/2026",
+      hora: "14:00",
+      confirmacao_do_cliente: "true",
+    });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.reason).toBe("conflito_de_horario");
@@ -70,7 +74,11 @@ describe("conflict guard (tenant-level)", () => {
     const { executeAgendaDirective } = await import("@/lib/server/agent-cta-scheduler");
     vi.mocked(executeAgendaDirective).mockResolvedValue({ action: "scheduled", eventId: "new-evt" });
 
-    const result = await executarCriarAgendamento(ctx, { data: "15/07/2026", hora: "14:00" });
+    const result = await executarCriarAgendamento(ctx, {
+      data: "15/07/2026",
+      hora: "14:00",
+      confirmacao_do_cliente: "true",
+    });
     expect(result.ok).toBe(true);
   });
 });

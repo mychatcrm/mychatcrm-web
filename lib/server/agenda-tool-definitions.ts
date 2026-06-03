@@ -61,8 +61,7 @@ const criarAgendamento: AiToolDefinition = {
     name: "criar_agendamento",
     description:
       "Cria um agendamento para o contato atual após confirmação explícita de data e hora. " +
-      "Valida horário comercial e conflito de horário antes de criar. " +
-      "Use SOMENTE quando o cliente confirmou explicitamente a data e o horário desejados.",
+      "OBRIGATÓRIO: pergunte «Posso confirmar seu agendamento para [data] às [hora] em [local]?» e aguarde 'sim' antes de chamar com confirmacao_do_cliente=true.",
     parameters: {
       type: "object",
       properties: {
@@ -86,8 +85,15 @@ const criarAgendamento: AiToolDefinition = {
           type: "string",
           description: "Local ou endereço do agendamento. Opcional.",
         },
+        confirmacao_do_cliente: {
+          type: "string",
+          description:
+            "Deve ser 'true' SOMENTE após o cliente confirmar explicitamente o agendamento. " +
+            "Se ainda não confirmou, passe 'false' — a operação será bloqueada.",
+          enum: ["true", "false"],
+        },
       },
-      required: ["data", "hora"],
+      required: ["data", "hora", "confirmacao_do_cliente"],
     },
   },
 };

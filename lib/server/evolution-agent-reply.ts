@@ -38,6 +38,7 @@ import {
   AGENDA_FAILURE_REPLY,
   executeAgendaDirectivesBeforeOutbound,
 } from "@/lib/server/agent-cta-scheduler";
+import { shouldDeferHandoffForPendingAgenda } from "@/lib/server/agenda-handoff-gate";
 import {
   applyAgendaPostSuccessEffects,
   buildAgendaPostSuccessParams,
@@ -528,9 +529,15 @@ export async function processAgentResponseJob(
       ok: true,
     });
 
-    const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
-    const modelTextWithoutHandoff = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
     const toolCallingAlreadyActed = replyResult.agendaActionCompleted === true;
+    const deferAgendaHandoff = shouldDeferHandoffForPendingAgenda({
+      agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,
+      agendaActionCompleted: toolCallingAlreadyActed,
+      inboundText: unitPrompt,
+    });
+    const aiMarkerHandoff =
+      handoffEnabled && replyText.includes("[[HANDOFF]]") && !deferAgendaHandoff;
+    const modelTextWithoutHandoff = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
     let scheduleHandoffFromAgenda = false;
 
     let agendaBeforeSend: Awaited<ReturnType<typeof executeAgendaDirectivesBeforeOutbound>> | null =
@@ -545,6 +552,7 @@ export async function processAgentResponseJob(
         timezone: schedulingTimezone,
         modelTextWithoutHandoff,
         agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,
+        lastInboundMessage: unitPrompt,
         onMutationSuccess: async (executed) => {
           if (
             executed.action !== "scheduled" &&
@@ -587,7 +595,7 @@ export async function processAgentResponseJob(
       preparedAgendaResponseText = AGENDA_FAILURE_REPLY;
     }
 
-    if (handoffCheck.trigger) {
+    if (handoffCheck.trigger && !deferAgendaHandoff) {
       handoffTriggered = true;
       handoffReason = handoffCheck.reason ?? "handoff";
       handoffLastMessage = unitPrompt;

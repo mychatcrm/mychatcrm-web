@@ -74,6 +74,7 @@ describe("executeAgendaDirectivesBeforeOutbound", () => {
       timezone: "America/Sao_Paulo",
       modelTextWithoutHandoff: "Confirmado! [[AGENDAR: data=02/06/2099, hora=14:30]]",
       agendaAutomationEnabled: true,
+      lastInboundMessage: "sim, pode confirmar",
       onMutationSuccess,
     });
 
@@ -94,6 +95,7 @@ describe("executeAgendaDirectivesBeforeOutbound", () => {
       timezone: "America/Sao_Paulo",
       modelTextWithoutHandoff: "Ok! [[AGENDAR: data=02/06/2099, hora=14:30]]",
       agendaAutomationEnabled: true,
+      lastInboundMessage: "sim confirmo",
     });
 
     expect(result.outboundText).toBe(AGENDA_FAILURE_REPLY);
@@ -134,6 +136,7 @@ describe("executeAgendaDirectivesBeforeOutbound", () => {
       timezone: "America/Sao_Paulo",
       modelTextWithoutHandoff: "Remarcado! [[AGENDAR: data=02/06/2099, hora=15:00]]",
       agendaAutomationEnabled: true,
+      lastInboundMessage: "sim confirmo",
       onMutationSuccess,
     });
 
@@ -144,5 +147,26 @@ describe("executeAgendaDirectivesBeforeOutbound", () => {
         previousEventId: "evt-old",
       }),
     );
+  });
+
+  it("skips directive execution without inbound confirmation", async () => {
+    const executeSpy = vi.spyOn(
+      await import("@/lib/server/agent-cta-scheduler"),
+      "executePreparedAgendaDirective",
+    );
+
+    const result = await executeAgendaDirectivesBeforeOutbound({
+      sb: makeStructuredSb(null),
+      tenantId: "t1",
+      remoteJid: "5511999990000@s.whatsapp.net",
+      timezone: "America/Sao_Paulo",
+      modelTextWithoutHandoff: "Ok! [[AGENDAR: data=02/06/2099, hora=14:30]]",
+      agendaAutomationEnabled: true,
+      lastInboundMessage: "quero agendar para amanhã às 10h",
+    });
+
+    expect(result.agendaAction).toBe("none");
+    expect(executeSpy).not.toHaveBeenCalled();
+    executeSpy.mockRestore();
   });
 });

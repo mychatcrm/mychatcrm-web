@@ -72,6 +72,7 @@ describe("criar_agendamento rescheduled previousEventId", () => {
     const result = await executarCriarAgendamento(ctx, {
       data: "02/06/2099",
       hora: "14:30",
+      confirmacao_do_cliente: "true",
     });
 
     expect(result.ok).toBe(true);
@@ -94,6 +95,7 @@ describe("criar_agendamento rescheduled previousEventId", () => {
     const result = await executarCriarAgendamento(ctx, {
       data: "02/06/2099",
       hora: "14:30",
+      confirmacao_do_cliente: "true",
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -101,7 +103,11 @@ describe("criar_agendamento rescheduled previousEventId", () => {
   });
 
   it("allows post-success to cancel reminders for the previous event", async () => {
-    await executarCriarAgendamento(ctx, { data: "02/06/2099", hora: "14:30" });
+    await executarCriarAgendamento(ctx, {
+      data: "02/06/2099",
+      hora: "14:30",
+      confirmacao_do_cliente: "true",
+    });
 
     const call = applyAgendaPostSuccessEffectsMock.mock.calls[0]?.[0] as {
       action: string;
@@ -111,5 +117,17 @@ describe("criar_agendamento rescheduled previousEventId", () => {
     expect(call.action).toBe("rescheduled");
     expect(call.previousEventId).toBe("evt-old");
     expect(call.metadata.agendaLembretes.ativo).toBe(true);
+  });
+
+  it("blocks criar without confirmacao_do_cliente", async () => {
+    const result = await executarCriarAgendamento(ctx, {
+      data: "02/06/2099",
+      hora: "14:30",
+      confirmacao_do_cliente: "false",
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("confirmacao_obrigatoria");
+    expect(executeAgendaDirectiveMock).not.toHaveBeenCalled();
   });
 });

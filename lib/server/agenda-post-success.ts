@@ -130,7 +130,20 @@ export async function applyAgendaPostSuccessEffects(
       tenantId: params.tenantId,
       remoteJid: params.remoteJid,
     });
-    return { scheduleHandoffTriggered: false };
+    if (params.ctaHandoffAtivo === true && !params.handoffAlreadyTriggered) {
+      await markWaitingForHuman({
+        sb,
+        tenantId: params.tenantId,
+        remoteJid: params.remoteJid,
+        leadId: params.leadId,
+        agentId: params.agentId,
+        reason: "schedule_confirmed",
+        handoffNumero: params.handoffNumero,
+        lastMessage: params.lastMessage ?? null,
+      });
+      scheduleHandoffTriggered = true;
+    }
+    return { scheduleHandoffTriggered };
   }
 
   if (params.action === "scheduled" || params.action === "rescheduled") {

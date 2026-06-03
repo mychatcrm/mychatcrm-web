@@ -27,7 +27,8 @@ const CONFIRMATION_RE =
   /\b(sim|t[aá]\s*bom|t[aá]|pode|claro|com\s*certeza|[oó]timo|certo|isso|exato|confirm|confirmo|confirmada|confirmado|fechou|fechado|combinado|perfeito|ok|pode\s*ser|marcar|marcado)\b/i;
 const RESCHEDULE_RE =
   /\b(remarcar|reagendar|trocar\s+(o\s+)?hor[aá]rio|mudar\s+(a\s+)?data|outro\s+hor[aá]rio|alterar\s+agendamento)\b/i;
-const SCHEDULING_RE = /\b(agend|reuni[aã]o|visita|hor[aá]rio|amanh[ãa]|hoje|segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo|\d{1,2}[:h]\d{2}|\d{1,2}\/\d{1,2})\b/i;
+const SCHEDULING_RE =
+  /\b(agendamento|agend|cancelamento|cancelar|remarcar|reagendar|reuni[aã]o|visita|hor[aá]rio|amanh[ãa]|hoje|segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo|\d{1,2}[:h]\d{2}|\d{1,2}\/\d{1,2})\b/i;
 const AGENDA_DIRECTIVE_RE = /\[\[\s*(AGENDAR|CANCELAR_AGENDA)\s*:\s*([^\]]*)\]\]/gi;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const AGENDA_FAILURE_REPLY =
@@ -632,6 +633,7 @@ export async function executeAgendaDirectivesBeforeOutbound(params: {
   timezone: string;
   modelTextWithoutHandoff: string;
   agendaAutomationEnabled: boolean;
+  lastInboundMessage?: string;
   onMutationSuccess?: (result: ProcessAgendaDirectivesResult) => Promise<void>;
 }): Promise<AgendaBeforeOutboundResult> {
   const prepared = prepareAgendaDirectiveInReply({
@@ -646,6 +648,15 @@ export async function executeAgendaDirectivesBeforeOutbound(params: {
     return { prepared, outboundText: AGENDA_FAILURE_REPLY, agendaAction: "failed" };
   }
   if (prepared.action === "pending") {
+    if (
+      params.lastInboundMessage !== undefined &&
+      !detectSchedulingConfirmation(
+        params.lastInboundMessage,
+        assistantTextForSchedulingConfirmation(prepared.text, params.modelTextWithoutHandoff),
+      )
+    ) {
+      return { prepared, outboundText: prepared.text, agendaAction: "none" };
+    }
     const executed = await executePreparedAgendaDirective({ ...params, prepared });
     if (executed.action === "failed") {
       return { prepared, outboundText: AGENDA_FAILURE_REPLY, agendaAction: "failed" };

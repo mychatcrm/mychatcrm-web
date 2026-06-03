@@ -1,6 +1,6 @@
 import "server-only";
 
-import { localWallClockToUtc } from "@/lib/server/agenda-datetime-parse";
+import { localWallClockToUtc, addDaysInTimezone, parseRelativeDaysOffset } from "@/lib/server/agenda-datetime-parse";
 import { parseTimezone } from "@/lib/agents/agent-datetime";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { isWithinBusinessHours, nextBusinessHourStart } from "@/lib/server/follow-up-engine";
@@ -281,8 +281,24 @@ export async function executarVerificarDisponibilidade(
 
 export async function executarCriarAgendamento(
   ctx: AgendaToolContext,
-  params: { data: string; hora: string; duracao_min?: string; titulo?: string; local?: string },
+  params: {
+    data: string;
+    hora: string;
+    duracao_min?: string;
+    titulo?: string;
+    local?: string;
+    confirmacao_do_cliente: string;
+  },
 ): Promise<AgendaToolResult> {
+  if (params.confirmacao_do_cliente !== "true") {
+    return {
+      ok: false,
+      reason: "confirmacao_obrigatoria",
+      sugestao:
+        "Antes de criar, pergunte: «Posso confirmar seu agendamento para [data] às [hora] em [local]?» " +
+        "e aguarde um 'sim' explícito. Só então chame esta tool com confirmacao_do_cliente='true'.",
+    };
+  }
   if (!isValidDate(params.data) || !isValidTime(params.hora)) {
     return { ok: false, reason: "data_ou_hora_invalida", sugestao: "Use DD/MM/AAAA e HH:MM." };
   }
@@ -419,7 +435,12 @@ export async function executarRemarcarAgendamento(
   }
 
   const duracaoMin = Math.max(15, Math.min(480, Number(params.duracao_min ?? "60") || 60));
-  const novoStart = parseDirectiveDatetime(params.nova_data, params.nova_hora, ctx.timezone);
+  let novaData = params.nova_data;
+  const relativeDays = ctx.lastMessage ? parseRelativeDaysOffset(ctx.lastMessage) : null;
+  if (relativeDays != null) {
+    novaData = addDaysInTimezone(ctx.timezone, relativeDays);
+  }
+  const novoStart = parseDirectiveDatetime(novaData, params.nova_hora, ctx.timezone);
   if (!novoStart || Number.isNaN(novoStart.getTime())) {
     return { ok: false, reason: "erro_ao_converter_data_hora" };
   }
@@ -616,6 +637,7 @@ export async function dispatchAgendaTool(
         duracao_min: args.duracao_min,
         titulo: args.titulo,
         local: args.local,
+        confirmacao_do_cliente: String(args.confirmacao_do_cliente ?? "false"),
       });
 
     case "remarcar_agendamento":

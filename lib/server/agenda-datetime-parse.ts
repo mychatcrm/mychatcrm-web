@@ -141,6 +141,11 @@ function parseDateAnchor(text: string, today: WallClock): WallClock | null {
   if (/\bamanha\b/.test(normalized)) return addDays(today, 1);
   if (/\bhoje\b/.test(normalized)) return { ...today };
 
+  const inDays = normalized.match(/\b(?:daqui a|em|depois de)\s+(\d+)\s+dias?\b/);
+  if (inDays) return addDays(today, Number(inDays[1]));
+
+  if (/\bem alguns dias\b/.test(normalized)) return addDays(today, 3);
+
   const fullDate = normalized.match(/\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b/);
   if (fullDate) {
     const day = Number(fullDate[1]);
@@ -190,6 +195,25 @@ function parseDateTimeInText(text: string, today: WallClock, timeZone: string): 
   }
 
   return null;
+}
+
+export function parseRelativeDaysOffset(text: string): number | null {
+  const normalized = foldAccents(text.trim().toLowerCase());
+  if (!normalized) return null;
+  const inDays = normalized.match(/\b(?:daqui a|em|depois de)\s+(\d+)\s+dias?\b/);
+  if (inDays) return Number(inDays[1]);
+  if (/\bem alguns dias\b/.test(normalized)) return 3;
+  return null;
+}
+
+export function formatWallDate(wall: WallClock): string {
+  return `${String(wall.day).padStart(2, "0")}/${String(wall.month).padStart(2, "0")}/${wall.year}`;
+}
+
+export function addDaysInTimezone(timezone: string, days: number, now = new Date()): string {
+  const timeZone = parseTimezone(timezone);
+  const today = getZonedParts(now, timeZone);
+  return formatWallDate(addDays(today, days));
 }
 
 export function parseAppointmentDateTime(params: {

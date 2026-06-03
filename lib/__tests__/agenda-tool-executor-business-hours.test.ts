@@ -58,7 +58,11 @@ const ctx: AgendaToolContext = {
 
 describe("business hours guard", () => {
   it("criar_agendamento bloqueia fora do horário", async () => {
-    const result = await executarCriarAgendamento(ctx, { data: "15/07/2026", hora: "23:00" });
+    const result = await executarCriarAgendamento(ctx, {
+      data: "15/07/2026",
+      hora: "23:00",
+      confirmacao_do_cliente: "true",
+    });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.reason).toBe("fora_horario_comercial");
