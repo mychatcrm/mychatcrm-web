@@ -14,9 +14,13 @@ vi.mock("@/lib/server/agenda-datetime-parse", () => ({
 }));
 
 const executeAgendaDirectiveMock = vi.fn();
-vi.mock("@/lib/server/agent-cta-scheduler", () => ({
-  executeAgendaDirective: (...args: unknown[]) => executeAgendaDirectiveMock(...args),
-}));
+vi.mock("@/lib/server/agent-cta-scheduler", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/server/agent-cta-scheduler")>();
+  return {
+    ...actual,
+    executeAgendaDirective: (...args: unknown[]) => executeAgendaDirectiveMock(...args),
+  };
+});
 
 const applyAgendaPostSuccessEffectsMock = vi.fn();
 vi.mock("@/lib/server/agenda-post-success", () => ({
@@ -51,6 +55,7 @@ const ctx: AgendaToolContext = {
   contactName: "Maria",
   timezone: "America/Sao_Paulo",
   followUpInteligente: null,
+  lastMessage: "sim, pode confirmar",
   agentMetadata: {
     ctaHandoffAtivo: false,
     agendaLembretes: { ativo: true, regras: [{ offsetValor: 1, offsetUnidade: "dias" }] },

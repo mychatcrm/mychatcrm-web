@@ -5,6 +5,7 @@ import { parseTimezone } from "@/lib/agents/agent-datetime";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { isWithinBusinessHours, nextBusinessHourStart } from "@/lib/server/follow-up-engine";
 import {
+  clientConfirmedAgendaMutation,
   executeAgendaDirective,
   findNextActiveAgendaEvent,
   type AgendaDirective,
@@ -75,16 +76,14 @@ async function hasOverlappingEvent(params: {
     .select("id")
     .eq("tenant_id", params.tenantId)
     .neq("status", "cancelled")
-    // Overlap: novo começa antes de evento terminar E novo termina depois de evento começar
     .lt("start_at", params.newEnd.toISOString())
-    .gt("end_at", params.newStart.toISOString())
-    .limit(1);
+    .gt("end_at", params.newStart.toISOString());
 
   if (params.excludeEventId) {
     q = q.neq("id", params.excludeEventId);
   }
 
-  const { data, error } = await q;
+  const { data, error } = await q.limit(1);
   if (error) {
     console.warn("[agenda-tool-executors] overlap_check_failed", { error: error.message });
     return false; // Falhar aberto — melhor criar duplicata que bloquear tudo
@@ -154,6 +153,27 @@ export type AgendaToolContext = {
 export type AgendaToolResult =
   | { ok: true; data: Record<string, unknown> }
   | { ok: false; reason: string; sugestao?: string };
+
+const CONFIRMACAO_SUGESTAO_PADRAO =
+  "Pergunte ao cliente com data/hora/local e aguarde 'sim', 'ok' ou 'confirmo' antes de executar.";
+
+function requireAgendaClientConfirmation(
+  confirmacaoDoCliente: string,
+  ctx: AgendaToolContext,
+): AgendaToolResult | null {
+  if (confirmacaoDoCliente !== "true") {
+    return { ok: false, reason: "confirmacao_obrigatoria", sugestao: CONFIRMACAO_SUGESTAO_PADRAO };
+  }
+  if (!clientConfirmedAgendaMutation(ctx.lastMessage)) {
+    return {
+      ok: false,
+      reason: "confirmacao_obrigatoria",
+      sugestao:
+        "O cliente ainda não confirmou explicitamente. Use uma pergunta do tipo «Posso confirmar…?» e só execute após 'sim'.",
+    };
+  }
+  return null;
+}
 
 // ── 1. consultar_agendamentos ─────────────────────────────────────────────────
 
@@ -290,15 +310,9 @@ export async function executarCriarAgendamento(
     confirmacao_do_cliente: string;
   },
 ): Promise<AgendaToolResult> {
-  if (params.confirmacao_do_cliente !== "true") {
-    return {
-      ok: false,
-      reason: "confirmacao_obrigatoria",
-      sugestao:
-        "Antes de criar, pergunte: «Posso confirmar seu agendamento para [data] às [hora] em [local]?» " +
-        "e aguarde um 'sim' explícito. Só então chame esta tool com confirmacao_do_cliente='true'.",
-    };
-  }
+  const blocked = requireAgendaClientConfirmation(params.confirmacao_do_cliente, ctx);
+  if (blocked) return blocked;
+
   if (!isValidDate(params.data) || !isValidTime(params.hora)) {
     return { ok: false, reason: "data_ou_hora_invalida", sugestao: "Use DD/MM/AAAA e HH:MM." };
   }
@@ -400,16 +414,8 @@ export async function executarRemarcarAgendamento(
     confirmacao_do_cliente: string;
   },
 ): Promise<AgendaToolResult> {
-  // Guarda de confirmação obrigatória
-  if (params.confirmacao_do_cliente !== "true") {
-    return {
-      ok: false,
-      reason: "confirmacao_obrigatoria",
-      sugestao:
-        "Antes de remarcar, confirme com o cliente o agendamento específico (data, hora e título) " +
-        "e aguarde um 'sim' explícito. Só então chame esta tool com confirmacao_do_cliente='true'.",
-    };
-  }
+  const blocked = requireAgendaClientConfirmation(params.confirmacao_do_cliente, ctx);
+  if (blocked) return blocked;
 
   if (!isValidDate(params.nova_data) || !isValidTime(params.nova_hora)) {
     return { ok: false, reason: "data_ou_hora_invalida", sugestao: "Use DD/MM/AAAA e HH:MM." };
@@ -482,7 +488,7 @@ export async function executarRemarcarAgendamento(
   // Usar executeAgendaDirective: insere novo e cancela o existente automaticamente
   const directive: AgendaDirective = {
     type: "schedule",
-    date: params.nova_data,
+    date: novaData,
     time: params.nova_hora,
     location: event.location ?? null,
   };
@@ -497,6 +503,7 @@ export async function executarRemarcarAgendamento(
       contactName: ctx.contactName,
       timezone: ctx.timezone,
       directive,
+      replaceEventId: params.event_id,
     });
     let scheduleHandoffTriggered = false;
     if (result.action === "rescheduled" || result.action === "scheduled") {
@@ -531,16 +538,8 @@ export async function executarCancelarAgendamento(
   ctx: AgendaToolContext,
   params: { event_id: string; confirmacao_do_cliente: string },
 ): Promise<AgendaToolResult> {
-  // Guarda de confirmação obrigatória
-  if (params.confirmacao_do_cliente !== "true") {
-    return {
-      ok: false,
-      reason: "confirmacao_obrigatoria",
-      sugestao:
-        "Antes de cancelar, reafirme o agendamento específico (data, hora e título) para o cliente " +
-        "e aguarde um 'sim' explícito ao cancelamento. Só então chame esta tool com confirmacao_do_cliente='true'.",
-    };
-  }
+  const blocked = requireAgendaClientConfirmation(params.confirmacao_do_cliente, ctx);
+  if (blocked) return blocked;
 
   const sb = ctx.sb ?? createSupabaseServiceClient();
   const attendeePhone = extractPhone(ctx.remoteJid);

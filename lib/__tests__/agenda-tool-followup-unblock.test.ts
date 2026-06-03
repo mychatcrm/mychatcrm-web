@@ -15,10 +15,14 @@ vi.mock("@/lib/server/agenda-datetime-parse", () => ({
 }));
 vi.mock("@/lib/agents/agent-datetime", () => ({ parseTimezone: vi.fn().mockReturnValue("America/Sao_Paulo") }));
 
-vi.mock("@/lib/server/agent-cta-scheduler", () => ({
-  executeAgendaDirective: vi.fn().mockResolvedValue({ action: "cancelled", eventId: "evt-1" }),
-  findNextActiveAgendaEvent: vi.fn(),
-}));
+vi.mock("@/lib/server/agent-cta-scheduler", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/server/agent-cta-scheduler")>();
+  return {
+    ...actual,
+    executeAgendaDirective: vi.fn().mockResolvedValue({ action: "cancelled", eventId: "evt-1" }),
+    findNextActiveAgendaEvent: vi.fn(),
+  };
+});
 
 vi.mock("@/lib/server/google-calendar-db", () => ({
   getAgendaEventById: vi.fn(),
@@ -80,6 +84,7 @@ const ctx: AgendaToolContext = {
   contactName: null,
   timezone: "America/Sao_Paulo",
   followUpInteligente: null,
+  lastMessage: "sim, pode cancelar",
 };
 
 describe("follow-up unblock on cancel", () => {

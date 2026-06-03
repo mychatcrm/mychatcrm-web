@@ -7,7 +7,10 @@ import type { AgendaToolContext } from "@/lib/server/agenda-tool-executors";
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase/server", () => ({ createSupabaseServiceClient: vi.fn() }));
 vi.mock("@/lib/server/google-calendar-db", () => ({ getAgendaEventById: vi.fn(), listAgendaEvents: vi.fn() }));
-vi.mock("@/lib/server/agent-cta-scheduler", () => ({ executeAgendaDirective: vi.fn(), findNextActiveAgendaEvent: vi.fn() }));
+vi.mock("@/lib/server/agent-cta-scheduler", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/server/agent-cta-scheduler")>();
+  return { ...actual, executeAgendaDirective: vi.fn(), findNextActiveAgendaEvent: vi.fn() };
+});
 vi.mock("@/lib/server/follow-up-engine", () => ({ isWithinBusinessHours: vi.fn().mockReturnValue(true), nextBusinessHourStart: vi.fn() }));
 vi.mock("@/lib/server/agenda-datetime-parse", () => ({ localWallClockToUtc: vi.fn().mockReturnValue(new Date(Date.now() + 86400000)) }));
 vi.mock("@/lib/agents/agent-datetime", () => ({ parseTimezone: vi.fn().mockReturnValue("America/Sao_Paulo") }));

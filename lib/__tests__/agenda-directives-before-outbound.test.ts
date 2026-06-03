@@ -149,6 +149,32 @@ describe("executeAgendaDirectivesBeforeOutbound", () => {
     );
   });
 
+  it("skips CANCELAR_AGENDA directive without inbound confirmation", async () => {
+    const cancelSpy = vi.spyOn(
+      await import("@/lib/server/agent-cta-scheduler"),
+      "executePreparedAgendaDirective",
+    );
+
+    const result = await executeAgendaDirectivesBeforeOutbound({
+      sb: makeStructuredSb({
+        id: "evt-1",
+        attendee_phone: "5511999990000",
+        start_at: "2099-06-09T22:00:00.000Z",
+      }),
+      tenantId: "t1",
+      remoteJid: "5511999990000@s.whatsapp.net",
+      timezone: "America/Sao_Paulo",
+      modelTextWithoutHandoff:
+        "Entendido! [[CANCELAR_AGENDA: id=123e4567-e89b-42d3-a456-426614174000]]",
+      agendaAutomationEnabled: true,
+      lastInboundMessage: "quero cancelar meu agendamento",
+    });
+
+    expect(result.agendaAction).toBe("none");
+    expect(cancelSpy).not.toHaveBeenCalled();
+    cancelSpy.mockRestore();
+  });
+
   it("skips directive execution without inbound confirmation", async () => {
     const executeSpy = vi.spyOn(
       await import("@/lib/server/agent-cta-scheduler"),

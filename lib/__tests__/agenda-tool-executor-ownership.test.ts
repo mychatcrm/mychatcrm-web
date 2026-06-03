@@ -13,10 +13,10 @@ vi.mock("@/lib/server/google-calendar-db", () => ({
   getAgendaEventById: vi.fn(),
   listAgendaEvents: vi.fn(),
 }));
-vi.mock("@/lib/server/agent-cta-scheduler", () => ({
-  executeAgendaDirective: vi.fn(),
-  findNextActiveAgendaEvent: vi.fn(),
-}));
+vi.mock("@/lib/server/agent-cta-scheduler", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/server/agent-cta-scheduler")>();
+  return { ...actual, executeAgendaDirective: vi.fn(), findNextActiveAgendaEvent: vi.fn() };
+});
 vi.mock("@/lib/server/follow-up-engine", () => ({
   isWithinBusinessHours: vi.fn().mockReturnValue(true),
   nextBusinessHourStart: vi.fn(),
@@ -39,6 +39,7 @@ const makeCtx = (remoteJid = "5511999990000@s.whatsapp.net"): AgendaToolContext 
   contactName: "João",
   timezone: "America/Sao_Paulo",
   followUpInteligente: null,
+  lastMessage: "sim confirmo",
 });
 
 describe("executor ownership guard", () => {

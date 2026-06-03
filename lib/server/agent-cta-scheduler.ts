@@ -103,6 +103,45 @@ export function detectSchedulingConfirmation(userText: string, assistantText?: s
   return textHasSchedulingContext(text) || (!!assistantText && textHasSchedulingContext(assistantText));
 }
 
+/** Pedido inicial de criar/remarcar/cancelar — não é confirmação explícita do cliente. */
+export function isInitialAgendaMutationRequest(userText: string): boolean {
+  const text = userText.trim().toLowerCase();
+  if (!text) return false;
+  if (
+    /^\s*(sim|ok|pode|confirmo|confirmado|claro|perfeito|fechado|combinado|t[aá]\s*bom)\s*[!.?]*\s*$/i.test(
+      text,
+    )
+  ) {
+    return false;
+  }
+  if (/^\s*(sim|ok|pode|confirmo)\b/i.test(text) && CONFIRMATION_RE.test(text)) {
+    return false;
+  }
+  return /\b(quero|preciso|gostaria|desejo|vou)\s+(cancelar|remarcar|reagendar|agendar|marcar|desmarcar)\b/i.test(
+      text,
+    ) ||
+    /\b(cancelar|remarcar|reagendar|desmarcar)\s+(meu|minha|o|a)?\s*agendamento/i.test(text) ||
+    /^(cancelar|remarcar|reagendar|desmarcar|agendar)\b/i.test(text);
+}
+
+/** Confirmação válida no inbound do lead (backend — não confiar só no flag do modelo). */
+export function clientConfirmedAgendaMutation(
+  userText: string | null | undefined,
+  assistantText?: string,
+): boolean {
+  if (!userText?.trim()) return false;
+  if (isInitialAgendaMutationRequest(userText)) return false;
+  const text = userText.trim().toLowerCase();
+  if (
+    /^\s*(sim|ok|pode|confirmo|confirmado|claro|perfeito|fechado|combinado|t[aá]\s*bom)\b/i.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+  return detectSchedulingConfirmation(userText, assistantText);
+}
+
 export function detectRescheduleIntent(userText: string, assistantText?: string): boolean {
   const text = userText.trim().toLowerCase();
   if (!text) return false;
@@ -519,6 +558,8 @@ export async function executeAgendaDirective(params: {
   contactName?: string | null;
   timezone: string;
   directive: AgendaDirective;
+  /** Remarcação: cancela este evento após criar o novo (em vez de findNextActive). */
+  replaceEventId?: string | null;
 }): Promise<{
   action: "scheduled" | "rescheduled" | "cancelled";
   eventId: string;
@@ -533,11 +574,24 @@ export async function executeAgendaDirective(params: {
   }
 
   const directive = params.directive;
-  const existing = await findNextActiveAgendaEvent({
-    sb,
-    tenantId: params.tenantId,
-    remoteJid: params.remoteJid,
-  });
+  let existing: AgendaEventRow | null = null;
+  if (params.replaceEventId) {
+    const targeted = await getAgendaEventById(params.tenantId, params.replaceEventId);
+    if (!targeted || targeted.status === "cancelled") {
+      throw new Error("agenda_event_not_found");
+    }
+    const attendeePhone = extractPhone(params.remoteJid);
+    if (attendeePhone && targeted.attendee_phone !== attendeePhone) {
+      throw new Error("agenda_event_contact_mismatch");
+    }
+    existing = targeted;
+  } else {
+    existing = await findNextActiveAgendaEvent({
+      sb,
+      tenantId: params.tenantId,
+      remoteJid: params.remoteJid,
+    });
+  }
   const requestedStartAt = directiveStartAt(directive, params.timezone);
   if (existing?.start_at === requestedStartAt.toISOString()) {
     return { action: "scheduled", eventId: existing.id };
@@ -648,12 +702,13 @@ export async function executeAgendaDirectivesBeforeOutbound(params: {
     return { prepared, outboundText: AGENDA_FAILURE_REPLY, agendaAction: "failed" };
   }
   if (prepared.action === "pending") {
+    const assistantForConfirm = assistantTextForSchedulingConfirmation(
+      prepared.text,
+      params.modelTextWithoutHandoff,
+    );
     if (
-      params.lastInboundMessage !== undefined &&
-      !detectSchedulingConfirmation(
-        params.lastInboundMessage,
-        assistantTextForSchedulingConfirmation(prepared.text, params.modelTextWithoutHandoff),
-      )
+      !params.lastInboundMessage?.trim() ||
+      !clientConfirmedAgendaMutation(params.lastInboundMessage, assistantForConfirm)
     ) {
       return { prepared, outboundText: prepared.text, agendaAction: "none" };
     }

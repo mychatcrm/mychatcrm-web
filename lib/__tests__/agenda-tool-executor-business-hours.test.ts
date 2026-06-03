@@ -8,7 +8,14 @@ import type { AgentFollowUpInteligente } from "@/lib/types";
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase/server", () => ({ createSupabaseServiceClient: vi.fn() }));
 vi.mock("@/lib/server/google-calendar-db", () => ({ getAgendaEventById: vi.fn(), listAgendaEvents: vi.fn(), insertAgendaEvent: vi.fn() }));
-vi.mock("@/lib/server/agent-cta-scheduler", () => ({ executeAgendaDirective: vi.fn(), findNextActiveAgendaEvent: vi.fn() }));
+vi.mock("@/lib/server/agent-cta-scheduler", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/server/agent-cta-scheduler")>();
+  return {
+    ...actual,
+    executeAgendaDirective: vi.fn(),
+    findNextActiveAgendaEvent: vi.fn(),
+  };
+});
 vi.mock("@/lib/server/agenda-datetime-parse", () => ({
   localWallClockToUtc: vi.fn().mockReturnValue(new Date(Date.now() + 86400000)),
 }));
@@ -54,6 +61,7 @@ const ctx: AgendaToolContext = {
   contactName: null,
   timezone: "America/Sao_Paulo",
   followUpInteligente: followUpCom,
+  lastMessage: "sim confirmo",
 };
 
 describe("business hours guard", () => {
