@@ -7,7 +7,6 @@ import {
 } from "@/lib/crm-funnels";
 import type {
   Agent,
-  AgentAgendaLembretes,
   AgentFollowUpInteligente,
   AgentOrigin,
   FollowUp,
@@ -22,15 +21,6 @@ import { normalizeAgentCrmDestination } from "./crm-destination";
 import { normalizeAgentResponseMode, normalizeAgentVoiceId, validateAgentResponseSettings } from "./response-settings";
 import { DEFAULT_AGENT_SMART_WAIT, sanitizeAgentSmartWaitSettings } from "./smart-wait-settings";
 import { DEFAULT_FOLLOW_UP_INTELIGENTE } from "@/lib/server/follow-up-settings";
-
-export const DEFAULT_AGENDA_LEMBRETES: AgentAgendaLembretes = {
-  ativo: false,
-  regras: [
-    { offsetValor: 1, offsetUnidade: "dias" },
-    { offsetValor: 3, offsetUnidade: "horas" },
-    { offsetValor: 30, offsetUnidade: "minutos" },
-  ],
-};
 
 export type AgentWizardDraft = {
   nome: string;
@@ -63,7 +53,6 @@ export type AgentWizardDraft = {
   ctaHandoffAtivo: boolean;
   /** Se true, o agente pode alterar a agenda usando diretivas estruturadas. */
   agendaAutomationEnabled: boolean;
-  agendaLembretes: AgentAgendaLembretes;
   ctaFinal: string;
   handoffKeywords: string[];
   handoffMensagem: string;
@@ -188,9 +177,6 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     whatsappSlotIndex,
     ctaHandoffAtivo: agent.ctaHandoffAtivo ?? false,
     agendaAutomationEnabled: agent.agendaAutomationEnabled ?? false,
-    agendaLembretes: agent.agendaLembretes
-      ? { ...DEFAULT_AGENDA_LEMBRETES, ...agent.agendaLembretes, regras: agent.agendaLembretes.regras?.length ? agent.agendaLembretes.regras : DEFAULT_AGENDA_LEMBRETES.regras }
-      : { ...DEFAULT_AGENDA_LEMBRETES },
     ctaFinal: agent.ctaFinal ?? "Transferir para humano",
     handoffKeywords: agent.handoffKeywords ?? ["humano", "especialista"],
     handoffMensagem: agent.handoffMensagem ?? "",
@@ -324,7 +310,6 @@ export const defaultWizardDraft: AgentWizardDraft = {
   whatsappSlotIndex: 0,
   ctaHandoffAtivo: true,
   agendaAutomationEnabled: false,
-  agendaLembretes: { ...DEFAULT_AGENDA_LEMBRETES },
   ctaFinal: "Transferir para humano",
   handoffKeywords: ["humano", "atendente", "falar com pessoa"],
   handoffMensagem: "Perfeito! Vou te conectar com nosso especialista agora. Um momento.",

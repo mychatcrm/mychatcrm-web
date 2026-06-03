@@ -1,7 +1,7 @@
 import { getAgentByIdForTenant } from "@/lib/agents/registry";
 import { getInferenceProfileByTenantAgent } from "@/lib/agents/inference-store";
 import { generateAIResponse } from "@/lib/ai/gateway";
-import type { AiFeature, AiGenerateResult, AiMessage, AiToolResultMessage } from "@/lib/ai/types";
+import type { AiFeature, AiGenerateResult, AiMessage } from "@/lib/ai/types";
 import { detectSupportedLanguageCode, supportedLanguageName } from "@/lib/ai/language-detect";
 import type {
   EvolutionAudioContent,
@@ -18,8 +18,6 @@ import { buildAgentAgendaContextBlock } from "@/lib/server/agent-agenda-context"
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import type { BurstResponseStrategy } from "@/lib/conversas/normalize-conversation-burst";
 import type { Agent } from "@/lib/types";
-import { AGENDA_TOOL_DEFINITIONS, AGENDA_TOOL_NAMES } from "@/lib/server/agenda-tool-definitions";
-import { dispatchAgendaTool, type AgendaToolContext } from "@/lib/server/agenda-tool-executors";
 
 type AiGenerateFailureResult = Extract<AiGenerateResult, { ok: false }>;
 
@@ -252,12 +250,6 @@ export async function generateAgentResponse(params: {
   };
   /** Bloco injetado quando o lead já tem agendamento ativo (CTA agenda). */
   schedulingContextBlock?: string | null;
-  /**
-   * Contexto do servidor para executar tools de agenda (tool calling nativo).
-   * Quando presente e agendaAutomationEnabled=true, as tools são expostas ao modelo.
-   * tenant_id, remote_jid, leadId etc. são injetados aqui — NUNCA pelo modelo.
-   */
-  agendaToolContext?: AgendaToolContext | null;
 }): Promise<AiGenerateResult> {
   // -------------------------------------------------------------------------
   // Media pre-processing — convert audio/image to user text message
@@ -398,149 +390,21 @@ export async function generateAgentResponse(params: {
     ...(mediaUserMessage ? [mediaUserMessage] : []),
   ]);
 
-  const baseMessages: (AiMessage | AiToolResultMessage)[] = [systemMessage, ...historyMessages, ...tailMessages];
+  const messages: AiMessage[] = [systemMessage, ...historyMessages, ...tailMessages];
 
-  // ── Determinar se expõe tools de agenda ──────────────────────────────────────
-  const agendaEnabled =
-    params.agendaToolContext != null &&
-    (baseAgent as { agendaAutomationEnabled?: unknown }).agendaAutomationEnabled === true;
-
-  const gatewayInput = {
+  return generateAIResponse({
     tenantId: params.tenantId.trim(),
     agentId: params.agentId.trim(),
     customerId: params.customerId ?? params.conversationId ?? null,
     feature: params.feature,
     model,
     temperature,
-    messages: baseMessages,
+    messages,
     metadata: {
       conversationId: params.conversationId ?? null,
       accountId: params.accountId ?? null,
       userId: params.userId ?? null,
       simulation: params.simulation === true,
     },
-    tools: agendaEnabled ? AGENDA_TOOL_DEFINITIONS : undefined,
-  };
-
-  // ── Chamada inicial ao gateway ───────────────────────────────────────────────
-  let result = await generateAIResponse(gatewayInput);
-
-  // ── Loop de tool use (máximo MAX_TOOL_ITERATIONS iterações) ─────────────────
-  const MAX_TOOL_ITERATIONS = 3;
-  let toolIterations = 0;
-  let agendaActionCompleted = false;
-  let agendaMutation:
-    | {
-        action: "scheduled" | "rescheduled" | "cancelled";
-        eventId?: string;
-        previousEventId?: string;
-        scheduleHandoffTriggered?: boolean;
-      }
-    | undefined;
-
-  while (
-    agendaEnabled &&
-    result.ok &&
-    result.tool_calls &&
-    result.tool_calls.length > 0 &&
-    toolIterations < MAX_TOOL_ITERATIONS
-  ) {
-    toolIterations++;
-    const toolCallsThisTurn = result.tool_calls;
-
-    // Montar mensagem do assistente com tool_calls (exigida pelo OpenAI no histórico)
-    const assistantToolMessage = {
-      role: "assistant" as const,
-      content: "",
-      // O OpenAI exige que o histórico inclua a mensagem do assistente com tool_calls
-      // Armazenamos como campo extra no objeto — o gateway os serializa corretamente
-      tool_calls: toolCallsThisTurn.map((tc) => ({
-        id: tc.id,
-        type: "function" as const,
-        function: { name: tc.function.name, arguments: tc.function.argumentsRaw },
-      })),
-    };
-
-    // Executar cada tool e acumular resultados
-    const toolResultMessages: AiToolResultMessage[] = [];
-    for (const tc of toolCallsThisTurn) {
-      if (!AGENDA_TOOL_NAMES.has(tc.function.name)) {
-        // Tool desconhecida — retorna erro estruturado para o modelo
-        toolResultMessages.push({
-          role: "tool",
-          tool_call_id: tc.id,
-          content: JSON.stringify({ ok: false, reason: `tool_desconhecida:${tc.function.name}` }),
-        });
-        continue;
-      }
-
-      const toolResult = await dispatchAgendaTool(
-        tc.function.name,
-        tc.function.argumentsRaw,
-        params.agendaToolContext!,
-      );
-
-      if (toolResult.ok && ["criar_agendamento", "remarcar_agendamento", "cancelar_agendamento"].includes(tc.function.name)) {
-        agendaActionCompleted = true;
-        const acao = toolResult.data.acao;
-        if (acao === "scheduled" || acao === "rescheduled" || acao === "cancelled") {
-          const scheduleHandoffTriggered =
-            toolResult.data.schedule_handoff_triggered === true ||
-            agendaMutation?.scheduleHandoffTriggered === true;
-          agendaMutation = {
-            action: acao,
-            eventId: typeof toolResult.data.event_id === "string" ? toolResult.data.event_id : undefined,
-            previousEventId:
-              typeof toolResult.data.event_id_anterior === "string"
-                ? toolResult.data.event_id_anterior
-                : agendaMutation?.previousEventId,
-            scheduleHandoffTriggered,
-          };
-        }
-      }
-
-      toolResultMessages.push({
-        role: "tool",
-        tool_call_id: tc.id,
-        content: JSON.stringify(toolResult),
-      });
-    }
-
-    // Re-chamar o modelo com os resultados das tools (sem expor tools novamente — só texto)
-    const messagesWithToolResults: (AiMessage | AiToolResultMessage | typeof assistantToolMessage)[] = [
-      ...baseMessages,
-      assistantToolMessage,
-      ...toolResultMessages,
-    ];
-
-    result = await generateAIResponse({
-      ...gatewayInput,
-      messages: messagesWithToolResults as Parameters<typeof generateAIResponse>[0]["messages"],
-      tools: undefined, // Não expor tools na segunda chamada — resposta de texto final
-    });
-  }
-
-  // ── Fallback gracioso se estourou o cap de iterações ────────────────────────
-  if (result.ok && result.tool_calls && result.tool_calls.length > 0) {
-    console.warn("[generate-agent-response] tool_loop_cap_exceeded", {
-      tenant_id: params.tenantId,
-      agent_id: params.agentId,
-      iterations: toolIterations,
-    });
-    // Retorna resultado vazio — o webhook usará o fallback de texto genérico
-    return {
-      ok: false,
-      code: "EMPTY_REPLY",
-      provider: "openai",
-      model: result.model,
-      latencyMs: result.latencyMs,
-    };
-  }
-
-  // Propagar o flag de ação de agenda completada para o webhook pular diretivas
-  if (result.ok && agendaActionCompleted) {
-    return { ...result, agendaActionCompleted: true, agendaMutation };
-  }
-
-  return result;
+  });
 }

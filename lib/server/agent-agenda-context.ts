@@ -6,9 +6,7 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
 const EVENT_SELECT = "id, title, start_at, end_at, status, location";
-/** Eventos futuros: 25 para cobrir horizon de agendamentos do agente. Eventos passados mantidos em 3. */
-const DEFAULT_FUTURE_EVENT_LIMIT = 25;
-const DEFAULT_PAST_EVENT_LIMIT = 3;
+const DEFAULT_EVENT_LIMIT = 3;
 
 export type AgentAgendaContextEvent = {
   id: string;
@@ -25,7 +23,7 @@ export function normalizeAgendaAttendeePhone(value: string | null | undefined): 
 }
 
 function formatEvent(event: AgentAgendaContextEvent, timezone: string): string {
-  const fmt = new Intl.DateTimeFormat("pt-BR", {
+  const when = new Intl.DateTimeFormat("pt-BR", {
     timeZone: parseTimezone(timezone),
     day: "2-digit",
     month: "2-digit",
@@ -33,11 +31,9 @@ function formatEvent(event: AgentAgendaContextEvent, timezone: string): string {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  });
-  const when = fmt.format(new Date(event.start_at));
-  const endStr = fmt.format(new Date(event.end_at));
+  }).format(new Date(event.start_at));
   const location = event.location?.trim() ? ` | local: ${event.location.trim()}` : "";
-  return `- event_id: ${event.id} | ${when}–${endStr} | ${event.title} | status: ${event.status}${location}`;
+  return `- event_id: ${event.id} | ${when} | ${event.title} | status: ${event.status}${location}`;
 }
 
 export function formatAgentAgendaContextBlock(params: {
@@ -85,8 +81,8 @@ export async function buildAgentAgendaContextBlock(params: {
       .neq("status", "cancelled");
 
   const [futureResult, pastResult] = await Promise.all([
-    baseQuery().gte("start_at", nowIso).order("start_at", { ascending: true }).limit(DEFAULT_FUTURE_EVENT_LIMIT),
-    baseQuery().lt("start_at", nowIso).order("start_at", { ascending: false }).limit(DEFAULT_PAST_EVENT_LIMIT),
+    baseQuery().gte("start_at", nowIso).order("start_at", { ascending: true }).limit(DEFAULT_EVENT_LIMIT),
+    baseQuery().lt("start_at", nowIso).order("start_at", { ascending: false }).limit(DEFAULT_EVENT_LIMIT),
   ]);
 
   if (futureResult.error || pastResult.error) {

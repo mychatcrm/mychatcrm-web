@@ -34,29 +34,15 @@ import { getMediaBufferFromR2 } from "@/lib/integrations/r2-storage";
 import { sendPresence, typingDelayMs } from "@/lib/server/evolution-presence";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import {
-  AGENDA_AUTOMATION_DISABLED_REPLY,
-  AGENDA_FAILURE_REPLY,
-  executeAgendaDirectivesBeforeOutbound,
+  executePreparedAgendaDirective,
+  prepareAgendaDirectiveInReply,
 } from "@/lib/server/agent-cta-scheduler";
-import { shouldDeferHandoffForPendingAgenda } from "@/lib/server/agenda-handoff-gate";
-import {
-  applyAgendaPostSuccessEffects,
-  buildAgendaPostSuccessParams,
-} from "@/lib/server/agenda-post-success";
 import type { AgentFollowUpInteligente } from "@/lib/types";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
-type ReplyUnitResult = {
-  text: string;
-  agendaActionCompleted?: boolean;
-  agendaMutation?: {
-    action: "scheduled" | "rescheduled" | "cancelled";
-    eventId?: string;
-    previousEventId?: string;
-    scheduleHandoffTriggered?: boolean;
-  };
-};
+const AGENDA_AUTOMATION_DISABLED_REPLY =
+  "Posso consultar seus compromissos existentes, mas não consigo criar, remarcar ou cancelar agendamentos por aqui no momento.";
 
 type PendingInboundRow = {
   id: string;
@@ -127,13 +113,11 @@ async function generateReplyForUnit(params: {
   burst: ReturnType<typeof normalizeConversationBurst>;
   suppressedHistoryIds: string[];
   sb: SupabaseServiceClient;
+  /** Sobrescreve o prompt calculado via buildReplyUnitPrompt. Usado para passar
+   *  burst.userPrompt quando todas as mensagens estão numa única unidade. */
   promptOverride?: string;
   schedulingContextBlock?: string;
-  metadata: Record<string, unknown>;
-  schedulingTimezone: string;
-  handoffAlreadyTriggered: boolean;
-  lastMessage: string;
-}): Promise<ReplyUnitResult> {
+}): Promise<string> {
   const unitPrompt = params.promptOverride ?? buildReplyUnitPrompt(params.unit);
   const languageCode = detectSupportedLanguageCode(unitPrompt);
   const unitIds = new Set(params.unit.map((m) => m.id));
@@ -154,23 +138,6 @@ async function generateReplyForUnit(params: {
       dominantIntent: params.burst.signals.dominantIntent,
     },
     schedulingContextBlock: params.schedulingContextBlock,
-    agendaToolContext:
-      params.metadata.agendaAutomationEnabled === true
-        ? {
-            sb: params.sb,
-            tenantId: params.job.tenant_id,
-            remoteJid: params.job.remote_jid,
-            leadId: params.job.lead_id ?? null,
-            agentId: params.job.agent_id,
-            contactName: null,
-            timezone: params.schedulingTimezone,
-            followUpInteligente:
-              (params.metadata.followUpInteligente as AgentFollowUpInteligente | null) ?? null,
-            agentMetadata: params.metadata,
-            lastMessage: params.lastMessage,
-            handoffAlreadyTriggered: params.handoffAlreadyTriggered,
-          }
-        : null,
   });
 
   let replyText = result.ok
@@ -217,11 +184,7 @@ async function generateReplyForUnit(params: {
     }
   }
 
-  return {
-    text: replyText,
-    agendaActionCompleted: result.ok ? result.agendaActionCompleted : undefined,
-    agendaMutation: result.ok ? result.agendaMutation : undefined,
-  };
+  return replyText;
 }
 
 export async function processAgentResponseJob(
@@ -489,7 +452,6 @@ export async function processAgentResponseJob(
   let handoffTriggered = false;
   let handoffReason: string | undefined;
   let handoffLastMessage: string | undefined;
-  let handoffMarkedInAgenda = false;
   let repliesSent = 0;
 
   for (let unitIndex = 0; unitIndex < burst.replyUnits.length; unitIndex++) {
@@ -507,19 +469,16 @@ export async function processAgentResponseJob(
     const handoffCheck = handoffEnabled
       ? await shouldTriggerHandoffAI(unitPrompt, handoffKeywords)
       : { trigger: false, reason: null };
-    const replyResult = await generateReplyForUnit({
+    const replyText = await generateReplyForUnit({
       job,
       unit,
       burst,
       suppressedHistoryIds: burst.suppressedHistoryIds,
       sb,
+      // Sempre usa o prompt consolidado do burst (buildHumanPrompt),
+      // que já lida com urgência, intent dominante e filtragem de saudações.
       promptOverride: burst.userPrompt,
-      metadata,
-      schedulingTimezone,
-      handoffAlreadyTriggered: false,
-      lastMessage: unitPrompt,
     });
-    const replyText = replyResult.text;
 
     console.info("[agent-response-jobs]", {
       event: "generated_response",
@@ -529,89 +488,38 @@ export async function processAgentResponseJob(
       ok: true,
     });
 
-    const toolCallingAlreadyActed = replyResult.agendaActionCompleted === true;
-    const deferAgendaHandoff = shouldDeferHandoffForPendingAgenda({
-      agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,
-      agendaActionCompleted: toolCallingAlreadyActed,
-      inboundText: unitPrompt,
-    });
-    const aiMarkerHandoff =
-      handoffEnabled && replyText.includes("[[HANDOFF]]") && !deferAgendaHandoff;
-    const modelTextWithoutHandoff = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
-    let scheduleHandoffFromAgenda = false;
-
-    let agendaBeforeSend: Awaited<ReturnType<typeof executeAgendaDirectivesBeforeOutbound>> | null =
-      null;
-    if (!toolCallingAlreadyActed) {
-      agendaBeforeSend = await executeAgendaDirectivesBeforeOutbound({
-        sb,
-        tenantId: job.tenant_id,
-        remoteJid: job.remote_jid,
-        leadId: job.lead_id,
-        agentId: job.agent_id,
-        timezone: schedulingTimezone,
-        modelTextWithoutHandoff,
-        agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,
-        lastInboundMessage: unitPrompt,
-        onMutationSuccess: async (executed) => {
-          if (
-            executed.action !== "scheduled" &&
-            executed.action !== "rescheduled" &&
-            executed.action !== "cancelled"
-          ) {
-            return;
-          }
-          const effects = await applyAgendaPostSuccessEffects(
-            buildAgendaPostSuccessParams({
-              sb,
-              tenantId: job.tenant_id,
-              remoteJid: job.remote_jid,
-              leadId: job.lead_id ?? null,
-              agentId: job.agent_id,
-              timezone: schedulingTimezone,
-              metadata,
-              action: executed.action,
-              eventId: executed.eventId,
-              previousEventId: executed.previousEventId,
-              lastMessage: unitPrompt,
-              handoffAlreadyTriggered: false,
-            }),
-          );
-          scheduleHandoffFromAgenda = effects.scheduleHandoffTriggered;
-        },
-      });
-    } else if (toolCallingAlreadyActed && replyResult.agendaMutation) {
-      scheduleHandoffFromAgenda = replyResult.agendaMutation.scheduleHandoffTriggered === true;
-    }
-
-    const preparedAgenda = toolCallingAlreadyActed
-      ? { action: "none" as const, text: modelTextWithoutHandoff, directive: null }
-      : agendaBeforeSend!.prepared;
-
-    let preparedAgendaResponseText = preparedAgenda.text;
-    if (!toolCallingAlreadyActed && preparedAgenda.action === "blocked") {
-      preparedAgendaResponseText = AGENDA_AUTOMATION_DISABLED_REPLY;
-    } else if (!toolCallingAlreadyActed && agendaBeforeSend!.agendaAction === "failed") {
-      preparedAgendaResponseText = AGENDA_FAILURE_REPLY;
-    }
-
-    if (handoffCheck.trigger && !deferAgendaHandoff) {
+    // Primary: keyword-based detection on user's message
+    if (handoffCheck.trigger) {
       handoffTriggered = true;
       handoffReason = handoffCheck.reason ?? "handoff";
       handoffLastMessage = unitPrompt;
     }
+    // Strip [[HANDOFF]] marker from AI reply (always safe to remove)
+    const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
+    const modelTextWithoutHandoff = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
+    const preparedAgenda = prepareAgendaDirectiveInReply({
+      text: modelTextWithoutHandoff,
+      enabled: metadata.agendaAutomationEnabled === true,
+    });
+    if (preparedAgenda.action === "blocked" || preparedAgenda.action === "failed") {
+      console.info("[agent-agenda-directive]", {
+        tenant_id: job.tenant_id,
+        agent_id: job.agent_id,
+        action: preparedAgenda.action,
+        reason: preparedAgenda.action === "blocked" ? "automation_disabled" : "invalid_directive",
+      });
+    }
+    const preparedAgendaResponseText =
+      preparedAgenda.action === "blocked"
+        ? AGENDA_AUTOMATION_DISABLED_REPLY
+        : preparedAgenda.text;
 
-    if (aiMarkerHandoff && !handoffTriggered && !scheduleHandoffFromAgenda) {
+    // Secondary: LLM included [[HANDOFF]] marker (catches "alta intenção" cases
+    // where keywords don't match but LLM correctly decided to transfer)
+    if (aiMarkerHandoff && !handoffTriggered) {
       handoffTriggered = true;
       handoffReason = "ai_handoff";
       handoffLastMessage = unitPrompt;
-    }
-
-    if (scheduleHandoffFromAgenda) {
-      handoffTriggered = true;
-      handoffReason = "schedule_confirmed";
-      handoffLastMessage = unitPrompt;
-      handoffMarkedInAgenda = true;
     }
 
     const outboundMediaParse = await resolveOutboundMediaForAgentResponse({
@@ -628,8 +536,6 @@ export async function processAgentResponseJob(
     }
     if (preparedAgenda.action === "blocked") {
       textToSend = AGENDA_AUTOMATION_DISABLED_REPLY;
-    } else if (!toolCallingAlreadyActed && agendaBeforeSend?.agendaAction === "failed") {
-      textToSend = AGENDA_FAILURE_REPLY;
     }
     if (!textToSend && outboundFilenames.length) {
       textToSend = "Segue o envio solicitado.";
@@ -732,6 +638,33 @@ export async function processAgentResponseJob(
       leadId: job.lead_id,
       mediaUrl: delivery.mediaUrl,
     });
+    const agendaResult = await executePreparedAgendaDirective({
+      sb,
+      tenantId: job.tenant_id,
+      remoteJid: job.remote_jid,
+      leadId: job.lead_id,
+      agentId: job.agent_id,
+      timezone: schedulingTimezone,
+      prepared: preparedAgenda,
+    });
+    if (preparedAgenda.action === "pending" && agendaResult.action === "failed") {
+      const agendaFailure = agendaResult.text.slice(0, 4000);
+      const agendaFailureDelivery = await evolutionSendText({
+        instanceName: job.instance_name,
+        number,
+        text: agendaFailure,
+      });
+      if (agendaFailureDelivery.ok) {
+        await saveOutboundMessage({
+          tenantId: job.tenant_id,
+          remoteJid: job.remote_jid,
+          kind: "text",
+          content: agendaFailure,
+          agentId: job.agent_id,
+          leadId: job.lead_id,
+        });
+      }
+    }
     await sendOutboundMediaSafe();
 
     repliesSent += 1;
@@ -779,18 +712,16 @@ export async function processAgentResponseJob(
       agentId: job.agent_id,
       summary,
     });
-    if (!handoffMarkedInAgenda) {
-      await markWaitingForHuman({
-        sb,
-        tenantId: job.tenant_id,
-        remoteJid: job.remote_jid,
-        leadId: job.lead_id,
-        agentId: job.agent_id,
-        reason: handoffReason ?? "handoff",
-        handoffNumero: typeof metadata.handoffNumero === "string" ? metadata.handoffNumero : null,
-        lastMessage: handoffLastMessage ?? null,
-      });
-    }
+    await markWaitingForHuman({
+      sb,
+      tenantId: job.tenant_id,
+      remoteJid: job.remote_jid,
+      leadId: job.lead_id,
+      agentId: job.agent_id,
+      reason: handoffReason ?? "handoff",
+      handoffNumero: typeof metadata.handoffNumero === "string" ? metadata.handoffNumero : null,
+      lastMessage: handoffLastMessage ?? null,
+    });
 
     // Se o agente tem "Retomar só se humano abandonou" configurado, agenda um job
     // futuro para checar o timeout de retomada — evita que o follow-up fique preso

@@ -232,18 +232,10 @@ ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o c
 - Consulte o contexto de agenda do contato antes de responder. Não invente compromissos.
 - Não crie um evento apenas porque o cliente perguntou sobre um agendamento.
 ${agent.agendaAutomationEnabled === true ? `- A automação de agenda está ativa para este agente.
-- Use as tools de agenda (criar_agendamento, remarcar_agendamento, cancelar_agendamento, consultar_agendamentos, verificar_disponibilidade) quando disponíveis — elas têm prioridade sobre as diretivas de texto.
-- NUNCA diga apenas "vou confirmar" e pare. Sempre PERGUNTE antes de executar qualquer ação na agenda:
-  • Novo agendamento: "Posso confirmar seu agendamento para [data] às [hora] em [local]?"
-  • Remarcação: "Posso confirmar a remarcação do seu agendamento para [nova data] às [nova hora]?"
-  • Cancelamento: "Posso confirmar o cancelamento do seu agendamento?"
-- REGRA OBRIGATÓRIA: NÃO chame criar_agendamento, remarcar_agendamento ou cancelar_agendamento até o cliente responder explicitamente "sim", "ok", "pode", "confirmo" ou equivalente.
-  Enquanto aguarda confirmação, use confirmacao_do_cliente='false' se precisar chamar a tool (será bloqueada) — prefira apenas perguntar sem chamar a tool.
-- Para criar, remarcar ou cancelar: só passe confirmacao_do_cliente='true' após confirmação explícita do cliente.
-- NUNCA inclua [[HANDOFF]] enquanto estiver aguardando confirmação de agenda ou antes de a ação (criar/remarcar/cancelar) ser concluída com sucesso.
-- Para criar agendamento: somente quando data E hora estiverem explicitamente acordadas e confirmadas pelo cliente.
-- Fallback (se tools não disponíveis): inclua [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]] ou [[CANCELAR_AGENDA: id=EVENT_ID]] no final da resposta SOMENTE após confirmação explícita (diretivas são removidas antes do cliente ver).
-- Os event_id no contexto de agenda são os únicos IDs válidos — nunca invente um UUID.` : "- A automação de agenda está desativada. Você pode informar compromissos existentes, mas nunca inclua [[AGENDAR: ...]] nem [[CANCELAR_AGENDA: ...]] e não use tools de agenda."}`,
+- Quando data e hora estiverem explicitamente confirmadas, inclua [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]] no final da resposta.
+- Para cancelar, use somente um event_id listado no contexto e inclua [[CANCELAR_AGENDA: id=EVENT_ID]] no final da resposta.
+- Para remarcar, confirme a nova data e hora e use [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]]. O sistema substituirá o próximo compromisso futuro.
+- As diretivas são internas e removidas antes do cliente receber a mensagem.` : "- A automação de agenda está desativada. Você pode informar compromissos existentes, mas nunca inclua [[AGENDAR: ...]] nem [[CANCELAR_AGENDA: ...]]."}`,
     `CONFIGURAÇÕES AVANÇADAS DO AGENTE
 Modo de resposta configurado: ${clean((agent as { responseMode?: unknown }).responseMode) || "text"}
 Origens/ativação: ${compactJson((agent as { origens?: unknown }).origens)}

@@ -3,7 +3,6 @@ import { listAgentsForTenant } from "./registry";
 import { sanitizeAgentResponseSettings } from "./response-settings";
 import { sanitizeAgentSmartWaitSettings } from "./smart-wait-settings";
 import type { AgentWizardDraft } from "./wizard-model";
-import { DEFAULT_AGENDA_LEMBRETES } from "./wizard-model";
 
 function followUpAndTimezoneFromDraft(draft: AgentWizardDraft) {
   const timezone =
@@ -60,7 +59,6 @@ export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDr
     crmTargetStatus: draft.crmAutoMoveEnabled ? draft.crmTargetColumnId : null,
     ctaHandoffAtivo: draft.ctaHandoffAtivo ?? false,
     agendaAutomationEnabled: draft.agendaAutomationEnabled ?? false,
-    agendaLembretes: draft.agendaLembretes ?? DEFAULT_AGENDA_LEMBRETES,
     ctaFinal: draft.ctaFinal ?? "Transferir para humano",
     handoffKeywords: draft.handoffKeywords ?? ["humano", "especialista"],
     handoffMensagem: draft.handoffMensagem ?? "",
@@ -131,7 +129,6 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
     crmTargetStatus: draft.crmAutoMoveEnabled ? draft.crmTargetColumnId : null,
     ctaHandoffAtivo: draft.ctaHandoffAtivo ?? false,
     agendaAutomationEnabled: draft.agendaAutomationEnabled ?? false,
-    agendaLembretes: draft.agendaLembretes ?? DEFAULT_AGENDA_LEMBRETES,
     ctaFinal: draft.ctaFinal ?? "Transferir para humano",
     handoffKeywords: draft.handoffKeywords ?? ["humano", "especialista"],
     handoffMensagem: draft.handoffMensagem ?? "",

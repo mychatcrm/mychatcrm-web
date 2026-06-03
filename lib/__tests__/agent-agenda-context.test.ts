@@ -102,12 +102,8 @@ describe("agent agenda context", () => {
       expect(call.filters).toContainEqual(["tenant_id", "tenant-1"]);
       expect(call.filters).toContainEqual(["attendee_phone", "5562999999999"]);
       expect(call.filters).toContainEqual(["status!=", "cancelled"]);
+      expect(call.limit).toBe(3);
     }
-    // Eventos futuros: 25 (para cobrir horizon de agendamentos); passados: 3
-    const futureCall = calls.find((c) => c.range === "future");
-    const pastCall = calls.find((c) => c.range === "past");
-    expect(futureCall?.limit).toBe(25);
-    expect(pastCall?.limit).toBe(3);
     expect(calls.map((call) => call.range).sort()).toEqual(["future", "past"]);
   });
 });

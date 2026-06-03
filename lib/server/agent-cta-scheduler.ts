@@ -27,15 +27,11 @@ const CONFIRMATION_RE =
   /\b(sim|t[aá]\s*bom|t[aá]|pode|claro|com\s*certeza|[oó]timo|certo|isso|exato|confirm|confirmo|confirmada|confirmado|fechou|fechado|combinado|perfeito|ok|pode\s*ser|marcar|marcado)\b/i;
 const RESCHEDULE_RE =
   /\b(remarcar|reagendar|trocar\s+(o\s+)?hor[aá]rio|mudar\s+(a\s+)?data|outro\s+hor[aá]rio|alterar\s+agendamento)\b/i;
-const SCHEDULING_RE =
-  /\b(agendamento|agend|cancelamento|cancelar|remarcar|reagendar|reuni[aã]o|visita|hor[aá]rio|amanh[ãa]|hoje|segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo|\d{1,2}[:h]\d{2}|\d{1,2}\/\d{1,2})\b/i;
+const SCHEDULING_RE = /\b(agend|reuni[aã]o|visita|hor[aá]rio|amanh[ãa]|hoje|segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo|\d{1,2}[:h]\d{2}|\d{1,2}\/\d{1,2})\b/i;
 const AGENDA_DIRECTIVE_RE = /\[\[\s*(AGENDAR|CANCELAR_AGENDA)\s*:\s*([^\]]*)\]\]/gi;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-export const AGENDA_FAILURE_REPLY =
+const AGENDA_FAILURE_REPLY =
   "Não consegui confirmar essa alteração na agenda agora. Nossa equipe vai conferir e te retornar em breve.";
-
-export const AGENDA_AUTOMATION_DISABLED_REPLY =
-  "Posso consultar seus compromissos existentes, mas não consigo criar, remarcar ou cancelar agendamentos por aqui no momento.";
 
 export type AgendaEventSummary = {
   id: string;
@@ -66,8 +62,6 @@ export type ProcessAgendaDirectivesResult = {
   text: string;
   action: "none" | "scheduled" | "rescheduled" | "cancelled" | "failed";
   eventId?: string;
-  /** Evento cancelado na remarcação (lembretes antigos). */
-  previousEventId?: string;
 };
 
 export type PreparedAgendaDirectiveResult = {
@@ -101,45 +95,6 @@ export function detectSchedulingConfirmation(userText: string, assistantText?: s
   if (!text) return false;
   if (!CONFIRMATION_RE.test(text)) return false;
   return textHasSchedulingContext(text) || (!!assistantText && textHasSchedulingContext(assistantText));
-}
-
-/** Pedido inicial de criar/remarcar/cancelar — não é confirmação explícita do cliente. */
-export function isInitialAgendaMutationRequest(userText: string): boolean {
-  const text = userText.trim().toLowerCase();
-  if (!text) return false;
-  if (
-    /^\s*(sim|ok|pode|confirmo|confirmado|claro|perfeito|fechado|combinado|t[aá]\s*bom)\s*[!.?]*\s*$/i.test(
-      text,
-    )
-  ) {
-    return false;
-  }
-  if (/^\s*(sim|ok|pode|confirmo)\b/i.test(text) && CONFIRMATION_RE.test(text)) {
-    return false;
-  }
-  return /\b(quero|preciso|gostaria|desejo|vou)\s+(cancelar|remarcar|reagendar|agendar|marcar|desmarcar)\b/i.test(
-      text,
-    ) ||
-    /\b(cancelar|remarcar|reagendar|desmarcar)\s+(meu|minha|o|a)?\s*agendamento/i.test(text) ||
-    /^(cancelar|remarcar|reagendar|desmarcar|agendar)\b/i.test(text);
-}
-
-/** Confirmação válida no inbound do lead (backend — não confiar só no flag do modelo). */
-export function clientConfirmedAgendaMutation(
-  userText: string | null | undefined,
-  assistantText?: string,
-): boolean {
-  if (!userText?.trim()) return false;
-  if (isInitialAgendaMutationRequest(userText)) return false;
-  const text = userText.trim().toLowerCase();
-  if (
-    /^\s*(sim|ok|pode|confirmo|confirmado|claro|perfeito|fechado|combinado|t[aá]\s*bom)\b/i.test(
-      text,
-    )
-  ) {
-    return true;
-  }
-  return detectSchedulingConfirmation(userText, assistantText);
 }
 
 export function detectRescheduleIntent(userText: string, assistantText?: string): boolean {
@@ -558,13 +513,7 @@ export async function executeAgendaDirective(params: {
   contactName?: string | null;
   timezone: string;
   directive: AgendaDirective;
-  /** Remarcação: cancela este evento após criar o novo (em vez de findNextActive). */
-  replaceEventId?: string | null;
-}): Promise<{
-  action: "scheduled" | "rescheduled" | "cancelled";
-  eventId: string;
-  previousEventId?: string;
-}> {
+}): Promise<{ action: "scheduled" | "rescheduled" | "cancelled"; eventId: string }> {
   const sb = params.sb ?? createSupabaseServiceClient();
   if (params.directive.type === "cancel") {
     const event = await getAgendaEventById(params.tenantId, params.directive.eventId);
@@ -574,32 +523,13 @@ export async function executeAgendaDirective(params: {
   }
 
   const directive = params.directive;
-  let existing: AgendaEventRow | null = null;
-  if (params.replaceEventId) {
-    const targeted = await getAgendaEventById(params.tenantId, params.replaceEventId);
-    if (!targeted || targeted.status === "cancelled") {
-      throw new Error("agenda_event_not_found");
-    }
-    const attendeePhone = extractPhone(params.remoteJid);
-    if (attendeePhone && targeted.attendee_phone !== attendeePhone) {
-      throw new Error("agenda_event_contact_mismatch");
-    }
-    existing = targeted;
-  } else {
-    existing = await findNextActiveAgendaEvent({
-      sb,
-      tenantId: params.tenantId,
-      remoteJid: params.remoteJid,
-    });
-  }
+  const existing = await findNextActiveAgendaEvent({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+  });
   const requestedStartAt = directiveStartAt(directive, params.timezone);
-  const sameStart =
-    existing != null &&
-    new Date(existing.start_at).getTime() === requestedStartAt.getTime();
-  if (sameStart && existing) {
-    if (params.replaceEventId) {
-      return { action: "rescheduled", eventId: existing.id, previousEventId: existing.id };
-    }
+  if (existing?.start_at === requestedStartAt.toISOString()) {
     return { action: "scheduled", eventId: existing.id };
   }
   const inserted = await insertStructuredAgendaEvent({ ...params, sb, directive });
@@ -610,7 +540,7 @@ export async function executeAgendaDirective(params: {
     await cancelStructuredAgendaEvent({ tenantId: params.tenantId, remoteJid: params.remoteJid, event: inserted }).catch(() => undefined);
     throw error;
   }
-  return { action: "rescheduled", eventId: inserted.id, previousEventId: existing.id };
+  return { action: "rescheduled", eventId: inserted.id };
 }
 
 export async function processAgendaDirectivesInReply(params: {
@@ -673,70 +603,4 @@ export async function executePreparedAgendaDirective(params: {
     });
     return { text: AGENDA_FAILURE_REPLY, action: "failed" };
   }
-}
-
-export type AgendaBeforeOutboundResult = {
-  prepared: PreparedAgendaDirectiveResult;
-  outboundText: string;
-  agendaAction: ProcessAgendaDirectivesResult["action"];
-  eventId?: string;
-};
-
-/** Executa diretivas [[AGENDAR]]/[[CANCELAR_AGENDA]] antes do envio ao lead (sem keyword fallback). */
-export async function executeAgendaDirectivesBeforeOutbound(params: {
-  sb?: SupabaseServiceClient;
-  tenantId: string;
-  remoteJid: string;
-  leadId?: string | null;
-  agentId?: string | null;
-  contactName?: string | null;
-  timezone: string;
-  modelTextWithoutHandoff: string;
-  agendaAutomationEnabled: boolean;
-  lastInboundMessage?: string;
-  onMutationSuccess?: (result: ProcessAgendaDirectivesResult) => Promise<void>;
-}): Promise<AgendaBeforeOutboundResult> {
-  const prepared = prepareAgendaDirectiveInReply({
-    text: params.modelTextWithoutHandoff,
-    enabled: params.agendaAutomationEnabled,
-  });
-
-  if (prepared.action === "blocked") {
-    return { prepared, outboundText: AGENDA_AUTOMATION_DISABLED_REPLY, agendaAction: "none" };
-  }
-  if (prepared.action === "failed") {
-    return { prepared, outboundText: AGENDA_FAILURE_REPLY, agendaAction: "failed" };
-  }
-  if (prepared.action === "pending") {
-    const assistantForConfirm = assistantTextForSchedulingConfirmation(
-      prepared.text,
-      params.modelTextWithoutHandoff,
-    );
-    if (
-      !params.lastInboundMessage?.trim() ||
-      !clientConfirmedAgendaMutation(params.lastInboundMessage, assistantForConfirm)
-    ) {
-      return { prepared, outboundText: prepared.text, agendaAction: "none" };
-    }
-    const executed = await executePreparedAgendaDirective({ ...params, prepared });
-    if (executed.action === "failed") {
-      return { prepared, outboundText: AGENDA_FAILURE_REPLY, agendaAction: "failed" };
-    }
-    if (
-      params.onMutationSuccess &&
-      (executed.action === "scheduled" ||
-        executed.action === "rescheduled" ||
-        executed.action === "cancelled")
-    ) {
-      await params.onMutationSuccess(executed);
-    }
-    return {
-      prepared,
-      outboundText: prepared.text,
-      agendaAction: executed.action,
-      eventId: executed.eventId,
-    };
-  }
-
-  return { prepared, outboundText: prepared.text, agendaAction: "none" };
 }

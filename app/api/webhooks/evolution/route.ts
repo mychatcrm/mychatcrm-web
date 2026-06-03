@@ -42,20 +42,17 @@ import { scheduleFollowUpAfterInbound, scheduleRetomadaJob } from "@/lib/server/
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import {
-  AGENDA_AUTOMATION_DISABLED_REPLY,
-  AGENDA_FAILURE_REPLY,
-  executeAgendaDirectivesBeforeOutbound,
+  executePreparedAgendaDirective,
+  prepareAgendaDirectiveInReply,
 } from "@/lib/server/agent-cta-scheduler";
-import { shouldDeferHandoffForPendingAgenda } from "@/lib/server/agenda-handoff-gate";
-import {
-  applyAgendaPostSuccessEffects,
-  buildAgendaPostSuccessParams,
-} from "@/lib/server/agenda-post-success";
 import type { AgentFollowUpInteligente } from "@/lib/types";
 
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+const AGENDA_AUTOMATION_DISABLED_REPLY =
+  "Posso consultar seus compromissos existentes, mas não consigo criar, remarcar ou cancelar agendamentos por aqui no momento.";
 
 function verifyWebhookToken(request: Request): boolean {
   const expected = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
@@ -711,21 +708,6 @@ export async function POST(request: Request) {
             mediaContent:
               msg.type === "audio" || msg.type === "image" || msg.type === "video" ? msg : undefined,
             instanceName: msg.type !== "text" ? instanceName : undefined,
-            // Contexto do servidor para tool calling de agenda (tenant/jid nunca vêm do modelo)
-            agendaToolContext: metadata.agendaAutomationEnabled === true
-              ? {
-                  sb: sbState,
-                  tenantId: row.tenant_id,
-                  remoteJid: msg.remoteJid,
-                  leadId: leadId ?? null,
-                  agentId,
-                  contactName: contactName ?? null,
-                  timezone: schedulingTimezone,
-                  followUpInteligente: metadata.followUpInteligente as AgentFollowUpInteligente | null ?? null,
-                  agentMetadata: metadata,
-                  lastMessage: inboundLanguageSource(msg),
-                }
-              : null,
           });
 
           let replyText: string;
@@ -742,104 +724,45 @@ export async function POST(request: Request) {
           const number = remoteJidToEvoNumber(msg.remoteJid);
           if (!number) return;
 
-          const inboundText = inboundLanguageSource(msg);
-          const toolCallingAlreadyActed = result.ok && result.agendaActionCompleted === true;
-          const deferAgendaHandoff = shouldDeferHandoffForPendingAgenda({
-            agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,
-            agendaActionCompleted: toolCallingAlreadyActed,
-            inboundText,
-          });
-          const userRequestedHandoff = handoffCheck.trigger && !deferAgendaHandoff;
-          const aiMarkerHandoff =
-            handoffEnabled && replyText.includes("[[HANDOFF]]") && !deferAgendaHandoff;
+          // Prioridade do backend: a intenção do cliente aciona handoff mesmo se
+          // o modelo esquecer [[HANDOFF]] ao combinar transferência + mídia.
+          const userRequestedHandoff = handoffCheck.trigger;
+          const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
           const modelTextWithoutHandoff = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
-          let scheduleHandoffFromAgenda = false;
-          let agendaBeforeSend:
-            | Awaited<ReturnType<typeof executeAgendaDirectivesBeforeOutbound>>
-            | null = null;
+          const preparedAgenda = prepareAgendaDirectiveInReply({
+            text: modelTextWithoutHandoff,
+            enabled: metadata.agendaAutomationEnabled === true,
+          });
+          if (preparedAgenda.action === "blocked" || preparedAgenda.action === "failed") {
+            console.info("[agent-agenda-directive]", {
+              tenant_id: row.tenant_id,
+              agent_id: agentId,
+              action: preparedAgenda.action,
+              reason: preparedAgenda.action === "blocked" ? "automation_disabled" : "invalid_directive",
+            });
+          }
+          const preparedAgendaResponseText =
+            preparedAgenda.action === "blocked"
+              ? AGENDA_AUTOMATION_DISABLED_REPLY
+              : preparedAgenda.text;
+          const finalHandoffCheck = userRequestedHandoff || aiMarkerHandoff;
+          const finalHandoffReason = handoffCheck.trigger
+              ? (handoffCheck.reason ?? "handoff")
+              : "ai_handoff";
 
-          if (!toolCallingAlreadyActed) {
-            agendaBeforeSend = await executeAgendaDirectivesBeforeOutbound({
+          if (finalHandoffCheck) {
+
+            const messages = await getRecentConversationMessages({
               sb: sbState,
               tenantId: row.tenant_id,
               remoteJid: msg.remoteJid,
-              leadId,
-              agentId,
-              contactName,
-              timezone: schedulingTimezone,
-              modelTextWithoutHandoff,
-              agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,
-              lastInboundMessage: inboundText,
-              onMutationSuccess: async (executed) => {
-                if (
-                  executed.action !== "scheduled" &&
-                  executed.action !== "rescheduled" &&
-                  executed.action !== "cancelled"
-                ) {
-                  return;
-                }
-                const effects = await applyAgendaPostSuccessEffects(
-                  buildAgendaPostSuccessParams({
-                    sb: sbState,
-                    tenantId: row.tenant_id,
-                    remoteJid: msg.remoteJid,
-                    leadId: leadId ?? null,
-                    agentId,
-                    timezone: schedulingTimezone,
-                    metadata,
-                    action: executed.action,
-                    eventId: executed.eventId,
-                    previousEventId: executed.previousEventId,
-                    lastMessage: inboundText,
-                    handoffAlreadyTriggered: false,
-                  }),
-                );
-                scheduleHandoffFromAgenda = effects.scheduleHandoffTriggered;
-              },
             });
-            if (
-              agendaBeforeSend.prepared.action === "blocked" ||
-              agendaBeforeSend.prepared.action === "failed"
-            ) {
-              console.info("[agent-agenda-directive]", {
-                tenant_id: row.tenant_id,
-                agent_id: agentId,
-                action: agendaBeforeSend.prepared.action,
-                reason:
-                  agendaBeforeSend.prepared.action === "blocked"
-                    ? "automation_disabled"
-                    : "invalid_directive",
-              });
-            }
-          } else if (result.ok && result.agendaActionCompleted && result.agendaMutation) {
-            scheduleHandoffFromAgenda = result.agendaMutation.scheduleHandoffTriggered === true;
-          }
-
-          const preparedAgenda = toolCallingAlreadyActed
-            ? { action: "none" as const, text: modelTextWithoutHandoff, directive: null }
-            : agendaBeforeSend!.prepared;
-
-          let preparedAgendaResponseText = preparedAgenda.text;
-          if (!toolCallingAlreadyActed && preparedAgenda.action === "blocked") {
-            preparedAgendaResponseText = AGENDA_AUTOMATION_DISABLED_REPLY;
-          } else if (!toolCallingAlreadyActed && agendaBeforeSend!.agendaAction === "failed") {
-            preparedAgendaResponseText = AGENDA_FAILURE_REPLY;
-          }
-
-          const manualHandoffCheck = (userRequestedHandoff || aiMarkerHandoff) && !scheduleHandoffFromAgenda;
-          const effectiveHandoff = manualHandoffCheck || scheduleHandoffFromAgenda;
-          const finalHandoffReason = handoffCheck.trigger
-            ? (handoffCheck.reason ?? "handoff")
-            : scheduleHandoffFromAgenda
-              ? "schedule_confirmed"
-              : "ai_handoff";
-
-          const handoffLeadSummary = leadId
-            ? {
+            const summary = buildDeterministicHandoffSummary({
+              lead: leadId ? {
                 id: leadId,
                 name: contactName,
                 phone: msg.remoteJid.split("@")[0]?.replace(/\D/g, "") ?? null,
-                source: "whatsapp" as const,
+                source: "whatsapp",
                 status: null,
                 crmFunnelId: null,
                 notes: null,
@@ -848,39 +771,7 @@ export async function POST(request: Request) {
                 leadTemperature: null,
                 suggestedNextAction: null,
                 profileMetadata: {},
-              }
-            : null;
-
-          if (scheduleHandoffFromAgenda) {
-            const messages = await getRecentConversationMessages({
-              sb: sbState,
-              tenantId: row.tenant_id,
-              remoteJid: msg.remoteJid,
-            });
-            const summary = buildDeterministicHandoffSummary({
-              lead: handoffLeadSummary,
-              messages,
-              reason: "schedule_confirmed",
-            });
-            await saveConversationSummary({
-              sb: sbState,
-              tenantId: row.tenant_id,
-              remoteJid: msg.remoteJid,
-              stateId: state?.id,
-              leadId,
-              agentId,
-              summary,
-            });
-          }
-
-          if (manualHandoffCheck) {
-            const messages = await getRecentConversationMessages({
-              sb: sbState,
-              tenantId: row.tenant_id,
-              remoteJid: msg.remoteJid,
-            });
-            const summary = buildDeterministicHandoffSummary({
-              lead: handoffLeadSummary,
+              } : null,
               messages,
               reason: finalHandoffReason,
             });
@@ -902,9 +793,12 @@ export async function POST(request: Request) {
               reason: finalHandoffReason,
               handoffNumero:
                 typeof metadata.handoffNumero === "string" ? metadata.handoffNumero : null,
-              lastMessage: inboundText,
+              lastMessage: inboundLanguageSource(msg),
             });
 
+            // Se o agente tem "Retomar só se humano abandonou" configurado, agenda um job
+            // futuro para o momento do timeout — safety net para quando não há mensagens
+            // inbound após o handoff (espelho do bloco em evolution-agent-reply.ts).
             const fuMeta = metadata?.followUpInteligente;
             if (fuMeta && typeof fuMeta === "object") {
               const fu = fuMeta as Record<string, unknown>;
@@ -940,17 +834,15 @@ export async function POST(request: Request) {
             tenantId: row.tenant_id,
             agentId,
             responseText: preparedAgendaResponseText,
-            userRequestText: inboundText,
+            userRequestText: inboundLanguageSource(msg),
           });
           const outboundFilenames = outboundMediaParse.filenames;
           replyText = outboundMediaParse.cleanedText.trim();
-          if (effectiveHandoff && handoffMessage) {
+          if (finalHandoffCheck && handoffMessage) {
             replyText = handoffMessage;
           }
           if (preparedAgenda.action === "blocked") {
             replyText = AGENDA_AUTOMATION_DISABLED_REPLY;
-          } else if (!toolCallingAlreadyActed && agendaBeforeSend?.agendaAction === "failed") {
-            replyText = AGENDA_FAILURE_REPLY;
           }
           if (!replyText && outboundFilenames.length) {
             replyText = "Segue o envio solicitado.";
@@ -993,7 +885,7 @@ export async function POST(request: Request) {
             inboundKind,
             voiceId,
             elevenLabsAvailable: isElevenlabsConfigured(),
-            handoffTriggered: effectiveHandoff,
+            handoffTriggered: finalHandoffCheck,
           });
 
           console.info("[webhooks/evolution]", {
@@ -1049,6 +941,34 @@ export async function POST(request: Request) {
               agentId,
               conversationId: msg.remoteJid,
             });
+            const agendaResult = await executePreparedAgendaDirective({
+              sb: sbState,
+              tenantId: row.tenant_id,
+              remoteJid: msg.remoteJid,
+              leadId,
+              agentId,
+              contactName,
+              timezone: schedulingTimezone,
+              prepared: preparedAgenda,
+            });
+            if (preparedAgenda.action === "pending" && agendaResult.action === "failed") {
+              const agendaFailure = agendaResult.text.slice(0, 4000);
+              const agendaFailureDelivery = await evolutionSendText({
+                instanceName,
+                number,
+                text: agendaFailure,
+              });
+              if (agendaFailureDelivery.ok) {
+                await saveMessage({
+                  tenantId: row.tenant_id,
+                  remoteJid: msg.remoteJid,
+                  direction: "outbound",
+                  kind: "text",
+                  content: agendaFailure,
+                  agentId,
+                });
+              }
+            }
             await sendOutboundMediaSafe();
           } else {
             console.error("[webhooks/evolution] outbound send failed after TTS gate");

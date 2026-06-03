@@ -321,17 +321,4 @@ export interface Agent {
   handoffMensagem?: string;
   /** Número WhatsApp do atendente humano para notificação de handoff. */
   handoffNumero?: string;
-  /** Lembretes automáticos de compromissos agendados pelo agente. */
-  agendaLembretes?: AgentAgendaLembretes;
 }
-
-export type AgentAgendaLembreteRegra = {
-  offsetValor: number;
-  offsetUnidade: "minutos" | "horas" | "dias";
-  mensagem?: string;
-};
-
-export type AgentAgendaLembretes = {
-  ativo: boolean;
-  regras: AgentAgendaLembreteRegra[];
-};
