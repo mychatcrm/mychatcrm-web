@@ -7,7 +7,11 @@ import {
 } from "@/lib/agents";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { buildTextualReplyFallbackTopics } from "@/lib/conversas/inbound-message-dedupe";
-import { buildReplyUnitPrompt, normalizeConversationBurst } from "@/lib/conversas/normalize-conversation-burst";
+import {
+  buildReplyUnitPrompt,
+  lastInboundTextFromUnit,
+  normalizeConversationBurst,
+} from "@/lib/conversas/normalize-conversation-burst";
 import { detectOutboundRepetition } from "@/lib/conversas/outbound-repetition-guard";
 import { isElevenlabsConfigured } from "@/lib/integrations/elevenlabs";
 import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
@@ -503,6 +507,7 @@ export async function processAgentResponseJob(
 
     const unit = burst.replyUnits[unitIndex]!;
     const unitPrompt = buildReplyUnitPrompt(unit);
+    const lastInboundText = lastInboundTextFromUnit(unit);
     // AI-based detection: universal, nicho-agnóstica, com fallback automático para keywords
     const handoffCheck = handoffEnabled
       ? await shouldTriggerHandoffAI(unitPrompt, handoffKeywords)
@@ -517,7 +522,7 @@ export async function processAgentResponseJob(
       metadata,
       schedulingTimezone,
       handoffAlreadyTriggered: false,
-      lastMessage: unitPrompt,
+      lastMessage: lastInboundText,
     });
     const replyText = replyResult.text;
 
@@ -533,7 +538,7 @@ export async function processAgentResponseJob(
     const deferAgendaHandoff = shouldDeferHandoffForPendingAgenda({
       agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,
       agendaActionCompleted: toolCallingAlreadyActed,
-      inboundText: unitPrompt,
+      inboundText: lastInboundText,
     });
     const aiMarkerHandoff =
       handoffEnabled && replyText.includes("[[HANDOFF]]") && !deferAgendaHandoff;
@@ -552,7 +557,7 @@ export async function processAgentResponseJob(
         timezone: schedulingTimezone,
         modelTextWithoutHandoff,
         agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,
-        lastInboundMessage: unitPrompt,
+        lastInboundMessage: lastInboundText,
         onMutationSuccess: async (executed) => {
           if (
             executed.action !== "scheduled" &&
@@ -573,7 +578,7 @@ export async function processAgentResponseJob(
               action: executed.action,
               eventId: executed.eventId,
               previousEventId: executed.previousEventId,
-              lastMessage: unitPrompt,
+              lastMessage: lastInboundText,
               handoffAlreadyTriggered: false,
             }),
           );

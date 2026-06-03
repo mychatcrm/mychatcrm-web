@@ -4,18 +4,23 @@ import { parseTimezone } from "@/lib/agents/agent-datetime";
 
 type WallClock = { year: number; month: number; day: number; hour: number; minute: number };
 
+/** Índices alinhados a Date.getUTCDay() (0=domingo … 6=sábado). */
 const WEEKDAY_INDEX: Record<string, number> = {
   domingo: 0,
   segunda: 1,
-  terca: 1,
-  terça: 1,
-  tercafeira: 1,
-  terçafeira: 1,
-  quarta: 2,
-  quinta: 3,
-  sexta: 4,
-  sabado: 5,
-  sábado: 5,
+  segundafeira: 1,
+  terca: 2,
+  terça: 2,
+  tercafeira: 2,
+  terçafeira: 2,
+  quarta: 3,
+  quartafeira: 3,
+  quinta: 4,
+  quintafeira: 4,
+  sexta: 5,
+  sextafeira: 5,
+  sabado: 6,
+  sábado: 6,
 };
 
 function foldAccents(value: string): string {
@@ -90,6 +95,52 @@ function nextWeekday(from: WallClock, targetDow: number): WallClock {
   return addDays(from, delta);
 }
 
+function startOfNextCalendarWeek(from: WallClock): WallClock {
+  const fromUtc = new Date(Date.UTC(from.year, from.month - 1, from.day));
+  const currentDow = fromUtc.getUTCDay();
+  let daysUntilMonday = (8 - currentDow) % 7;
+  if (daysUntilMonday === 0) daysUntilMonday = 7;
+  return addDays(from, daysUntilMonday);
+}
+
+const MONTH_INDEX: Record<string, number> = {
+  janeiro: 1,
+  fevereiro: 2,
+  marco: 3,
+  março: 3,
+  abril: 4,
+  maio: 5,
+  junho: 6,
+  julho: 7,
+  agosto: 8,
+  setembro: 9,
+  outubro: 10,
+  novembro: 11,
+  dezembro: 12,
+};
+
+function isWallDateBefore(a: WallClock, b: WallClock): boolean {
+  if (a.year !== b.year) return a.year < b.year;
+  if (a.month !== b.month) return a.month < b.month;
+  return a.day < b.day;
+}
+
+function bumpToFutureDayMonth(day: number, month: number, year: number, today: WallClock): WallClock {
+  let y = year;
+  let m = month;
+  let wall: WallClock = { year: y, month: m, day, hour: 9, minute: 0 };
+  for (let attempt = 0; attempt < 24; attempt++) {
+    if (!isWallDateBefore(wall, today)) return wall;
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+    wall = { year: y, month: m, day, hour: 9, minute: 0 };
+  }
+  return wall;
+}
+
 function parseWordHour(text: string): { hour: number; minute: number } | null {
   const m = text.match(
     /\b(uma|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|meia|meio)\b(?:\s*(?:e\s+)?meia)?(?:\s+da\s+(manh[ãa]|tarde|noite))?/i,
@@ -141,10 +192,11 @@ function parseDateAnchor(text: string, today: WallClock): WallClock | null {
   if (/\bamanha\b/.test(normalized)) return addDays(today, 1);
   if (/\bhoje\b/.test(normalized)) return { ...today };
 
-  const inDays = normalized.match(/\b(?:daqui a|em|depois de)\s+(\d+)\s+dias?\b/);
+  const inDays = normalized.match(/\b(?:daqui\s*(?:a)?|em|depois de)\s+(\d+)\s+dias?\b/);
   if (inDays) return addDays(today, Number(inDays[1]));
 
   if (/\bem alguns dias\b/.test(normalized)) return addDays(today, 3);
+  if (/\bsemana\s+que\s+vem\b/.test(normalized)) return startOfNextCalendarWeek(today);
 
   const fullDate = normalized.match(/\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b/);
   if (fullDate) {
@@ -154,7 +206,24 @@ function parseDateAnchor(text: string, today: WallClock): WallClock | null {
     const year = yearRaw
       ? Number(yearRaw.length === 2 ? `20${yearRaw}` : yearRaw)
       : today.year;
-    return { year, month, day, hour: 9, minute: 0 };
+    return bumpToFutureDayMonth(day, month, year, today);
+  }
+
+  const dayOnly = normalized.match(/\bdia\s+(\d{1,2})\b/);
+  if (dayOnly) {
+    const day = Number(dayOnly[1]);
+    return bumpToFutureDayMonth(day, today.month, today.year, today);
+  }
+
+  for (const [monthName, monthNum] of Object.entries(MONTH_INDEX)) {
+    const namedDayFirst = new RegExp(`\\b(\\d{1,2})\\s+de\\s+${monthName}\\b`, "i");
+    const namedDaySecond = new RegExp(`\\b${monthName}\\s+(\\d{1,2})\\b`, "i");
+    const m1 = normalized.match(namedDayFirst);
+    const m2 = normalized.match(namedDaySecond);
+    const day = m1 ? Number(m1[1]) : m2 ? Number(m2[1]) : null;
+    if (day != null) {
+      return bumpToFutureDayMonth(day, monthNum, today.year, today);
+    }
   }
 
   for (const [name, dow] of Object.entries(WEEKDAY_INDEX)) {
@@ -200,7 +269,7 @@ function parseDateTimeInText(text: string, today: WallClock, timeZone: string): 
 export function parseRelativeDaysOffset(text: string): number | null {
   const normalized = foldAccents(text.trim().toLowerCase());
   if (!normalized) return null;
-  const inDays = normalized.match(/\b(?:daqui a|em|depois de)\s+(\d+)\s+dias?\b/);
+  const inDays = normalized.match(/\b(?:daqui\s*(?:a)?|em|depois de)\s+(\d+)\s+dias?\b/);
   if (inDays) return Number(inDays[1]);
   if (/\bem alguns dias\b/.test(normalized)) return 3;
   return null;
@@ -214,6 +283,54 @@ export function addDaysInTimezone(timezone: string, days: number, now = new Date
   const timeZone = parseTimezone(timezone);
   const today = getZonedParts(now, timeZone);
   return formatWallDate(addDays(today, days));
+}
+
+export function formatScheduleFieldsFromDate(
+  dt: Date,
+  timezone: string,
+): { date: string; time: string } {
+  const timeZone = parseTimezone(timezone);
+  const zoned = getZonedParts(dt, timeZone);
+  return {
+    date: formatWallDate(zoned),
+    time: `${String(zoned.hour).padStart(2, "0")}:${String(zoned.minute).padStart(2, "0")}`,
+  };
+}
+
+/** Prioriza datas/horas do último inbound (relativas/absolutas) sobre o que o modelo enviou. */
+export function resolveAgendaScheduleFieldsFromInbound(params: {
+  date: string;
+  time: string;
+  lastMessage?: string | null;
+  timezone: string;
+  now?: Date;
+}): { date: string; time: string } {
+  const msg = params.lastMessage?.trim();
+  if (!msg) return { date: params.date, time: params.time };
+
+  const relativeDays = parseRelativeDaysOffset(msg);
+  if (relativeDays != null) {
+    const date = addDaysInTimezone(params.timezone, relativeDays, params.now);
+    const parsed = parseAppointmentDateTime({
+      userMessage: msg,
+      timezone: params.timezone,
+      now: params.now,
+    });
+    if (parsed) {
+      const fields = formatScheduleFieldsFromDate(parsed, params.timezone);
+      return { date, time: fields.time };
+    }
+    return { date, time: params.time };
+  }
+
+  const parsed = parseAppointmentDateTime({
+    userMessage: msg,
+    timezone: params.timezone,
+    now: params.now,
+  });
+  if (parsed) return formatScheduleFieldsFromDate(parsed, params.timezone);
+
+  return { date: params.date, time: params.time };
 }
 
 export function parseAppointmentDateTime(params: {

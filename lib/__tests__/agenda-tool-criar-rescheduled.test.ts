@@ -9,9 +9,13 @@ vi.mock("@/lib/server/follow-up-engine", () => ({
 vi.mock("@/lib/agents/agent-datetime", () => ({
   parseTimezone: vi.fn().mockReturnValue("America/Sao_Paulo"),
 }));
-vi.mock("@/lib/server/agenda-datetime-parse", () => ({
-  localWallClockToUtc: vi.fn().mockReturnValue(new Date("2099-06-02T17:00:00.000Z")),
-}));
+vi.mock("@/lib/server/agenda-datetime-parse", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/server/agenda-datetime-parse")>();
+  return {
+    ...actual,
+    localWallClockToUtc: vi.fn().mockReturnValue(new Date("2099-06-02T17:00:00.000Z")),
+  };
+});
 
 const executeAgendaDirectiveMock = vi.fn();
 vi.mock("@/lib/server/agent-cta-scheduler", async (importOriginal) => {

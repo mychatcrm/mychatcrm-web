@@ -1,6 +1,9 @@
 import "server-only";
 
-import { localWallClockToUtc, addDaysInTimezone, parseRelativeDaysOffset } from "@/lib/server/agenda-datetime-parse";
+import {
+  localWallClockToUtc,
+  resolveAgendaScheduleFieldsFromInbound,
+} from "@/lib/server/agenda-datetime-parse";
 import { parseTimezone } from "@/lib/agents/agent-datetime";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { isWithinBusinessHours, nextBusinessHourStart } from "@/lib/server/follow-up-engine";
@@ -313,12 +316,19 @@ export async function executarCriarAgendamento(
   const blocked = requireAgendaClientConfirmation(params.confirmacao_do_cliente, ctx);
   if (blocked) return blocked;
 
-  if (!isValidDate(params.data) || !isValidTime(params.hora)) {
+  const schedule = resolveAgendaScheduleFieldsFromInbound({
+    date: params.data,
+    time: params.hora,
+    lastMessage: ctx.lastMessage,
+    timezone: ctx.timezone,
+  });
+
+  if (!isValidDate(schedule.date) || !isValidTime(schedule.time)) {
     return { ok: false, reason: "data_ou_hora_invalida", sugestao: "Use DD/MM/AAAA e HH:MM." };
   }
 
   const duracaoMin = Math.max(15, Math.min(480, Number(params.duracao_min ?? "60") || 60));
-  const startAt = parseDirectiveDatetime(params.data, params.hora, ctx.timezone);
+  const startAt = parseDirectiveDatetime(schedule.date, schedule.time, ctx.timezone);
   if (!startAt || Number.isNaN(startAt.getTime())) {
     return { ok: false, reason: "erro_ao_converter_data_hora" };
   }
@@ -356,8 +366,8 @@ export async function executarCriarAgendamento(
   // Criar via executeAgendaDirective (reutiliza dedup + Google sync)
   const directive: AgendaDirective = {
     type: "schedule",
-    date: params.data,
-    time: params.hora,
+    date: schedule.date,
+    time: schedule.time,
     location: params.local?.trim() || null,
   };
 
@@ -417,7 +427,14 @@ export async function executarRemarcarAgendamento(
   const blocked = requireAgendaClientConfirmation(params.confirmacao_do_cliente, ctx);
   if (blocked) return blocked;
 
-  if (!isValidDate(params.nova_data) || !isValidTime(params.nova_hora)) {
+  const schedule = resolveAgendaScheduleFieldsFromInbound({
+    date: params.nova_data,
+    time: params.nova_hora,
+    lastMessage: ctx.lastMessage,
+    timezone: ctx.timezone,
+  });
+
+  if (!isValidDate(schedule.date) || !isValidTime(schedule.time)) {
     return { ok: false, reason: "data_ou_hora_invalida", sugestao: "Use DD/MM/AAAA e HH:MM." };
   }
 
@@ -441,12 +458,7 @@ export async function executarRemarcarAgendamento(
   }
 
   const duracaoMin = Math.max(15, Math.min(480, Number(params.duracao_min ?? "60") || 60));
-  let novaData = params.nova_data;
-  const relativeDays = ctx.lastMessage ? parseRelativeDaysOffset(ctx.lastMessage) : null;
-  if (relativeDays != null) {
-    novaData = addDaysInTimezone(ctx.timezone, relativeDays);
-  }
-  const novoStart = parseDirectiveDatetime(novaData, params.nova_hora, ctx.timezone);
+  const novoStart = parseDirectiveDatetime(schedule.date, schedule.time, ctx.timezone);
   if (!novoStart || Number.isNaN(novoStart.getTime())) {
     return { ok: false, reason: "erro_ao_converter_data_hora" };
   }
@@ -488,8 +500,8 @@ export async function executarRemarcarAgendamento(
   // Usar executeAgendaDirective: insere novo e cancela o existente automaticamente
   const directive: AgendaDirective = {
     type: "schedule",
-    date: novaData,
-    time: params.nova_hora,
+    date: schedule.date,
+    time: schedule.time,
     location: event.location ?? null,
   };
 

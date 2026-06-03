@@ -3,6 +3,7 @@ import { shouldDeferHandoffForPendingAgenda } from "@/lib/server/agenda-handoff-
 import {
   clientConfirmedAgendaMutation,
   isInitialAgendaMutationRequest,
+  isStandaloneAgendaConfirmation,
 } from "@/lib/server/agent-cta-scheduler";
 import { buildAgentSystemPrompt } from "@/lib/ai/agent-system-prompt";
 import type { Agent } from "@/lib/types";
@@ -50,6 +51,11 @@ describe("agenda confirmation flow", () => {
         "Posso confirmar o cancelamento do seu agendamento?",
       ),
     ).toBe(true);
+  });
+
+  it("rejects scheduling request disguised as confirmation", () => {
+    expect(isStandaloneAgendaConfirmation("sim, quero remarcar para sexta")).toBe(false);
+    expect(clientConfirmedAgendaMutation("sim, quero remarcar para sexta")).toBe(false);
   });
 
   it("agenda prompt includes confirmation questions only when automation enabled", () => {

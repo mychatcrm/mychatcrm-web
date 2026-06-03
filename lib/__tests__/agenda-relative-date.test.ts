@@ -11,6 +11,7 @@ describe("agenda relative dates", () => {
 
   it("parses em N dias offset", () => {
     expect(parseRelativeDaysOffset("quero remarcar para daqui a 3 dias")).toBe(3);
+    expect(parseRelativeDaysOffset("daqui 3 dias")).toBe(3);
     expect(addDaysInTimezone(tz, 3, now)).toBe("05/06/2026");
   });
 

@@ -16,9 +16,13 @@ vi.mock("@/lib/server/agent-cta-scheduler", async (importOriginal) => {
     findNextActiveAgendaEvent: vi.fn(),
   };
 });
-vi.mock("@/lib/server/agenda-datetime-parse", () => ({
-  localWallClockToUtc: vi.fn().mockReturnValue(new Date(Date.now() + 86400000)),
-}));
+vi.mock("@/lib/server/agenda-datetime-parse", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/server/agenda-datetime-parse")>();
+  return {
+    ...actual,
+    localWallClockToUtc: vi.fn().mockReturnValue(new Date(Date.now() + 86400000)),
+  };
+});
 vi.mock("@/lib/agents/agent-datetime", () => ({ parseTimezone: vi.fn().mockReturnValue("America/Sao_Paulo") }));
 
 // Simula horário fora do comercial

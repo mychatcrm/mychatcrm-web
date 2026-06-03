@@ -51,6 +51,12 @@ export function buildReplyUnitPrompt(unit: InboundTextMessage[]): string {
   return `O cliente enviou em sequência: ${lines.map((l) => `"${l}"`).join(" e ")}.`;
 }
 
+/** Última mensagem inbound do burst — usada para confirmação e parse de datas no backend. */
+export function lastInboundTextFromUnit(unit: InboundTextMessage[]): string {
+  const lines = unit.map((m) => m.content.trim()).filter(Boolean);
+  return lines.length ? lines[lines.length - 1]! : "";
+}
+
 /** Chave de dedupe: acentos, pontuação final e emojis removidos da comparação. */
 export function normalizeBurstDedupeKey(text: string, mode: "exact" | "relaxed" = "relaxed"): string {
   let value = text.trim().toLowerCase();

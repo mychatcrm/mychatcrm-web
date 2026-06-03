@@ -24,7 +24,10 @@ type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 const SCHEDULE_CTA_VALUE = "Agendar no Google Agenda";
 const SCHEDULING_DEDUPE_WINDOW_MS = 30 * 24 * 60 * 60_000;
 const CONFIRMATION_RE =
-  /\b(sim|t[aá]\s*bom|t[aá]|pode|claro|com\s*certeza|[oó]timo|certo|isso|exato|confirm|confirmo|confirmada|confirmado|fechou|fechado|combinado|perfeito|ok|pode\s*ser|marcar|marcado)\b/i;
+  /\b(sim|t[aá]\s*bom|t[aá]|pode|claro|com\s*certeza|[oó]timo|certo|isso|exato|confirm|confirmo|confirmada|confirmado|fechou|fechado|combinado|perfeito|ok|pode\s*ser)\b/i;
+/** Novo pedido de mutação na mesma mensagem — não conta como confirmação isolada. */
+const AGENDA_MUTATION_IN_MESSAGE_RE =
+  /\b(?:quero|preciso|gostaria|desejo|vou)\s+(?:cancelar|remarcar|reagendar|agendar|marcar|desmarcar)\b|\b(?:remarcar|reagendar|agendar|marcar)\s+(?:para|em|no|na)\b|\b\d{1,2}\s*[/-]\s*\d{1,2}\b|\bdaqui\s+(?:a\s+)?\d+\s+dias?\b|\bsemana\s+que\s+vem\b|\bproxim[ao]\s+\w{3,}/i;
 const RESCHEDULE_RE =
   /\b(remarcar|reagendar|trocar\s+(o\s+)?hor[aá]rio|mudar\s+(a\s+)?data|outro\s+hor[aá]rio|alterar\s+agendamento)\b/i;
 const SCHEDULING_RE =
@@ -124,6 +127,45 @@ export function isInitialAgendaMutationRequest(userText: string): boolean {
     /^(cancelar|remarcar|reagendar|desmarcar|agendar)\b/i.test(text);
 }
 
+const CONFIRMATION_ONLY_WORDS = new Set([
+  "sim",
+  "ok",
+  "pode",
+  "confirmo",
+  "confirmar",
+  "confirmado",
+  "confirmada",
+  "claro",
+  "perfeito",
+  "fechado",
+  "combinado",
+  "isso",
+  "certo",
+  "exato",
+  "ta",
+  "bom",
+  "ser",
+  "cancelar",
+  "desmarcar",
+]);
+
+/** Resposta curta só de confirmação (sem novo pedido de agenda na mesma mensagem). */
+export function isStandaloneAgendaConfirmation(userText: string): boolean {
+  const text = userText.trim();
+  if (!text || isInitialAgendaMutationRequest(text)) return false;
+  if (!CONFIRMATION_RE.test(text)) return false;
+  if (AGENDA_MUTATION_IN_MESSAGE_RE.test(text)) return false;
+  const tokens = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (tokens.length === 0 || tokens.length > 5) return false;
+  return tokens.every((token) => CONFIRMATION_ONLY_WORDS.has(token));
+}
+
 /** Confirmação válida no inbound do lead (backend — não confiar só no flag do modelo). */
 export function clientConfirmedAgendaMutation(
   userText: string | null | undefined,
@@ -131,15 +173,17 @@ export function clientConfirmedAgendaMutation(
 ): boolean {
   if (!userText?.trim()) return false;
   if (isInitialAgendaMutationRequest(userText)) return false;
-  const text = userText.trim().toLowerCase();
+  if (isStandaloneAgendaConfirmation(userText)) return true;
+  const text = userText.trim();
   if (
-    /^\s*(sim|ok|pode|confirmo|confirmado|claro|perfeito|fechado|combinado|t[aá]\s*bom)\b/i.test(
-      text,
-    )
+    assistantText?.trim() &&
+    text.length <= 48 &&
+    !AGENDA_MUTATION_IN_MESSAGE_RE.test(text) &&
+    detectSchedulingConfirmation(userText, assistantText)
   ) {
     return true;
   }
-  return detectSchedulingConfirmation(userText, assistantText);
+  return false;
 }
 
 export function detectRescheduleIntent(userText: string, assistantText?: string): boolean {
