@@ -39,4 +39,16 @@ describe("agent wizard handoff simplification", () => {
     expect(source).toContain("agendaAutomationEnabled");
     expect(source).toContain("Permitir criar, remarcar e cancelar agendamentos");
   });
+
+  it("shows agenda reminder follow-up only when automation is enabled in source", () => {
+    const source = readFileSync(
+      join(process.cwd(), "components/dashboard/agentes/WizardStepAgendaAutomation.tsx"),
+      "utf8",
+    );
+    expect(source).toContain("{draft.agendaAutomationEnabled ? (");
+    expect(source).toContain("Lembretes de agendamento");
+    expect(source).toContain("Ativar lembretes de agendamento");
+    expect(source).toContain("Lembrete {index + 1}");
+    expect(source).toContain("{nome}");
+  });
 });

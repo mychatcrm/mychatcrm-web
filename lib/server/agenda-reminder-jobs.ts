@@ -36,20 +36,26 @@ function formatEventLocal(iso: string, timezone: string): { data: string; hora: 
 
 function renderReminderMessage(
   template: string | undefined,
-  event: { title: string; start_at: string; location: string | null },
+  event: {
+    title: string;
+    start_at: string;
+    location: string | null;
+    attendee_name: string | null;
+  },
   timezone: string,
 ): string {
   const { data, hora } = formatEventLocal(event.start_at, timezone);
   const base =
     template?.trim() ||
-    "Olá! Lembrete: você tem o compromisso \"{titulo}\" em {data} às {hora}.{local}";
+    "Olá {nome}! Lembrete: você tem o compromisso \"{titulo}\" em {data} às {hora}.{local}";
   const localSuffix = event.location?.trim() ? ` Local: ${event.location.trim()}.` : "";
+  const nome = event.attendee_name?.trim() || "tudo bem";
   return base
+    .replace(/\{nome\}/g, nome)
     .replace(/\{titulo\}/g, event.title)
     .replace(/\{data\}/g, data)
     .replace(/\{hora\}/g, hora)
-    .replace(/\{local\}/g, localSuffix)
-    .replace(/\{titulo\}/g, event.title);
+    .replace(/\{local\}/g, localSuffix);
 }
 
 export async function cancelAgendaRemindersForEvent(params: {

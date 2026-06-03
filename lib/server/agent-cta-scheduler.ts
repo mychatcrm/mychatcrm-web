@@ -593,7 +593,13 @@ export async function executeAgendaDirective(params: {
     });
   }
   const requestedStartAt = directiveStartAt(directive, params.timezone);
-  if (existing?.start_at === requestedStartAt.toISOString()) {
+  const sameStart =
+    existing != null &&
+    new Date(existing.start_at).getTime() === requestedStartAt.getTime();
+  if (sameStart && existing) {
+    if (params.replaceEventId) {
+      return { action: "rescheduled", eventId: existing.id, previousEventId: existing.id };
+    }
     return { action: "scheduled", eventId: existing.id };
   }
   const inserted = await insertStructuredAgendaEvent({ ...params, sb, directive });

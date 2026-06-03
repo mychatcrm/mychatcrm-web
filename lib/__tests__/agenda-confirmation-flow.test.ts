@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { shouldDeferHandoffForPendingAgenda } from "@/lib/server/agenda-handoff-gate";
 import {
   clientConfirmedAgendaMutation,
-  detectSchedulingConfirmation,
   isInitialAgendaMutationRequest,
 } from "@/lib/server/agent-cta-scheduler";
 import { buildAgentSystemPrompt } from "@/lib/ai/agent-system-prompt";
@@ -47,12 +46,6 @@ describe("agenda confirmation flow", () => {
   it("accepts explicit confirmation for directive execution", () => {
     expect(
       clientConfirmedAgendaMutation(
-        "sim, pode confirmar",
-        "Posso confirmar o cancelamento do seu agendamento?",
-      ),
-    ).toBe(true);
-    expect(
-      detectSchedulingConfirmation(
         "sim, pode confirmar",
         "Posso confirmar o cancelamento do seu agendamento?",
       ),

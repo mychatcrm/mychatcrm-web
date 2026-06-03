@@ -405,4 +405,37 @@ describe("agent-cta-scheduler", () => {
     });
     expect(cancelAgendaEventMock).toHaveBeenCalledWith("t1", "evt-old");
   });
+
+  it("reschedules via replaceEventId even when another active event would be found first", async () => {
+    const targeted = {
+      id: "evt-target",
+      attendee_phone: "5562999999999",
+      google_event_id: null,
+      status: "pending",
+      start_at: "2099-06-01T13:00:00.000Z",
+    };
+    getAgendaEventByIdMock.mockResolvedValueOnce(targeted);
+    insertAgendaEventMock.mockResolvedValueOnce({
+      id: "evt-new",
+      attendee_phone: "5562999999999",
+      google_event_id: null,
+    });
+
+    const result = await executeAgendaDirective({
+      sb: makeStructuredSb(null),
+      tenantId: "t1",
+      remoteJid: "5562999999999@s.whatsapp.net",
+      timezone: "America/Sao_Paulo",
+      directive: { type: "schedule", date: "10/06/2099", time: "19:00", location: "MB Office" },
+      replaceEventId: "evt-target",
+    });
+
+    expect(result).toEqual({
+      action: "rescheduled",
+      eventId: "evt-new",
+      previousEventId: "evt-target",
+    });
+    expect(getAgendaEventByIdMock).toHaveBeenCalledWith("t1", "evt-target");
+    expect(cancelAgendaEventMock).toHaveBeenCalledWith("t1", "evt-target");
+  });
 });
