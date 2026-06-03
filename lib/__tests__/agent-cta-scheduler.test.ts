@@ -398,7 +398,11 @@ describe("agent-cta-scheduler", () => {
       directive: { type: "schedule", date: "02/06/2099", time: "14:30", location: null },
     });
 
-    expect(result).toEqual({ action: "rescheduled", eventId: "evt-new" });
+    expect(result).toEqual({
+      action: "rescheduled",
+      eventId: "evt-new",
+      previousEventId: "evt-old",
+    });
     expect(cancelAgendaEventMock).toHaveBeenCalledWith("t1", "evt-old");
   });
 });

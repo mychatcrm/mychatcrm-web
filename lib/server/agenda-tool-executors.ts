@@ -10,6 +10,10 @@ import {
   type AgendaDirective,
 } from "@/lib/server/agent-cta-scheduler";
 import {
+  applyAgendaPostSuccessEffects,
+  buildAgendaPostSuccessParams,
+} from "@/lib/server/agenda-post-success";
+import {
   getAgendaEventById,
   listAgendaEvents,
 } from "@/lib/server/google-calendar-db";
@@ -90,57 +94,41 @@ async function hasOverlappingEvent(params: {
 
 /**
  * Desbloqueio imediato do follow-up após cancelamento de agenda.
- * SEMPRE escopado ao tenant_id + remote_jid do contato do agendamento.
- * Fire-and-forget: erros são logados mas não propagam.
+ * @deprecated Prefer applyAgendaPostSuccessEffects from agenda-post-success.
  */
-async function unblockFollowUpForContact(params: {
+export async function unblockFollowUpForContact(params: {
   sb: SupabaseServiceClient;
   tenantId: string;
   remoteJid: string;
 }): Promise<void> {
-  try {
-    const now = new Date().toISOString();
-    const { error } = await params.sb
-      .from("follow_up_jobs")
-      .update({ scheduled_at: now, updated_at: now })
-      .eq("tenant_id", params.tenantId) // ← SEMPRE escopado ao tenant
-      .eq("remote_jid", params.remoteJid) // ← E ao contato específico
-      .eq("status", "pending");
+  const { unblockFollowUpForContact: unblock } = await import("@/lib/server/agenda-post-success");
+  await unblock(params);
+}
 
-    if (error) {
-      console.warn("[agenda-tool-executors] followup_unblock_failed", {
-        tenant_id: params.tenantId,
-        remote_jid_last4: params.remoteJid.slice(-8),
-        error: error.message,
-      });
-      return;
-    }
-
-    // Fire-and-forget para o processador de follow-ups (não bloqueia o retorno da tool)
-    const baseUrl =
-      process.env.MYCHATCRM_PUBLIC_BASE_URL?.trim() ||
-      process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
-      "";
-    const internalToken = process.env.INTERNAL_API_TOKEN?.trim();
-    if (baseUrl && internalToken) {
-      void fetch(`${baseUrl}/api/internal/process-follow-ups`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-internal-token": internalToken,
-        },
-        signal: AbortSignal.timeout(5_000),
-      }).catch((err) => {
-        console.warn("[agenda-tool-executors] followup_trigger_failed", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-    }
-  } catch (err) {
-    console.warn("[agenda-tool-executors] unblock_followup_exception", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
+async function runPostSuccessForMutation(
+  ctx: AgendaToolContext,
+  action: "scheduled" | "rescheduled" | "cancelled",
+  eventId?: string,
+  previousEventId?: string | null,
+): Promise<boolean> {
+  if (!ctx.agentMetadata) return false;
+  const effects = await applyAgendaPostSuccessEffects(
+    buildAgendaPostSuccessParams({
+      sb: ctx.sb,
+      tenantId: ctx.tenantId,
+      remoteJid: ctx.remoteJid,
+      leadId: ctx.leadId,
+      agentId: ctx.agentId,
+      timezone: ctx.timezone,
+      metadata: ctx.agentMetadata,
+      action,
+      eventId,
+      lastMessage: ctx.lastMessage ?? null,
+      handoffAlreadyTriggered: false,
+      previousEventId,
+    }),
+  );
+  return effects.scheduleHandoffTriggered;
 }
 
 // ── Contexto da conversa (injetado pelo servidor, nunca pelo modelo) ──────────
@@ -155,6 +143,10 @@ export type AgendaToolContext = {
   timezone: string;
   /** Configurações do follow-up do agente — usadas para validar horário comercial. */
   followUpInteligente: AgentFollowUpInteligente | null;
+  /** Metadata do agente para handoff/lembretes pós-agenda (injetado pelo servidor). */
+  agentMetadata?: Record<string, unknown>;
+  lastMessage?: string | null;
+  handoffAlreadyTriggered?: boolean;
 };
 
 // ── Tipo de retorno das tools ─────────────────────────────────────────────────
@@ -350,14 +342,28 @@ export async function executarCriarAgendamento(
       timezone: ctx.timezone,
       directive,
     });
+    let scheduleHandoffTriggered = false;
+    if (result.action === "scheduled" || result.action === "rescheduled") {
+      scheduleHandoffTriggered = await runPostSuccessForMutation(
+        ctx,
+        result.action,
+        result.eventId,
+        result.previousEventId,
+      );
+    }
+    const data: Record<string, unknown> = {
+      acao: result.action,
+      event_id: result.eventId,
+      inicio: startAt.toISOString(),
+      fim: endAt.toISOString(),
+      schedule_handoff_triggered: scheduleHandoffTriggered,
+    };
+    if (result.action === "rescheduled" && result.previousEventId) {
+      data.event_id_anterior = result.previousEventId;
+    }
     return {
       ok: true,
-      data: {
-        acao: result.action,
-        event_id: result.eventId,
-        inicio: startAt.toISOString(),
-        fim: endAt.toISOString(),
-      },
+      data,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -471,13 +477,24 @@ export async function executarRemarcarAgendamento(
       timezone: ctx.timezone,
       directive,
     });
+    let scheduleHandoffTriggered = false;
+    if (result.action === "rescheduled" || result.action === "scheduled") {
+      scheduleHandoffTriggered = await runPostSuccessForMutation(
+        ctx,
+        result.action,
+        result.eventId,
+        result.previousEventId ?? params.event_id,
+      );
+    }
     return {
       ok: true,
       data: {
         acao: result.action,
         event_id: result.eventId,
+        event_id_anterior: params.event_id,
         inicio: novoStart.toISOString(),
         fim: novoEnd.toISOString(),
+        schedule_handoff_triggered: scheduleHandoffTriggered,
       },
     };
   } catch (err) {
@@ -538,9 +555,10 @@ export async function executarCancelarAgendamento(
       directive,
     });
 
-    // Desbloquear follow-up imediatamente após cancelamento —
-    // escopado SEMPRE ao tenant_id + remote_jid deste contato
-    await unblockFollowUpForContact({ sb, tenantId: ctx.tenantId, remoteJid: ctx.remoteJid });
+    let scheduleHandoffTriggered = false;
+    if (result.action === "cancelled") {
+      scheduleHandoffTriggered = await runPostSuccessForMutation(ctx, "cancelled", params.event_id);
+    }
 
     return {
       ok: true,
@@ -549,6 +567,7 @@ export async function executarCancelarAgendamento(
         event_id: result.eventId,
         titulo: event.title,
         inicio: event.start_at,
+        schedule_handoff_triggered: scheduleHandoffTriggered,
       },
     };
   } catch (err) {

@@ -99,10 +99,15 @@ export type AiGenerateSuccess = {
   tool_calls?: AiToolCall[];
   /**
    * Sinaliza que o loop de tool calling de agenda já executou uma ação neste turno.
-   * O webhook usa esse flag para pular o processamento de diretivas [[AGENDAR]]/[[CANCELAR_AGENDA]],
-   * garantindo que os dois caminhos nunca ajam no mesmo turno.
    */
   agendaActionCompleted?: boolean;
+  /** Detalhe da mutação de agenda quando tools agiram neste turno. */
+  agendaMutation?: {
+    action: "scheduled" | "rescheduled" | "cancelled";
+    eventId?: string;
+    previousEventId?: string;
+    scheduleHandoffTriggered?: boolean;
+  };
 };
 
 export type AiErrorCode =

@@ -30,8 +30,11 @@ const RESCHEDULE_RE =
 const SCHEDULING_RE = /\b(agend|reuni[aã]o|visita|hor[aá]rio|amanh[ãa]|hoje|segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo|\d{1,2}[:h]\d{2}|\d{1,2}\/\d{1,2})\b/i;
 const AGENDA_DIRECTIVE_RE = /\[\[\s*(AGENDAR|CANCELAR_AGENDA)\s*:\s*([^\]]*)\]\]/gi;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const AGENDA_FAILURE_REPLY =
+export const AGENDA_FAILURE_REPLY =
   "Não consegui confirmar essa alteração na agenda agora. Nossa equipe vai conferir e te retornar em breve.";
+
+export const AGENDA_AUTOMATION_DISABLED_REPLY =
+  "Posso consultar seus compromissos existentes, mas não consigo criar, remarcar ou cancelar agendamentos por aqui no momento.";
 
 export type AgendaEventSummary = {
   id: string;
@@ -62,6 +65,8 @@ export type ProcessAgendaDirectivesResult = {
   text: string;
   action: "none" | "scheduled" | "rescheduled" | "cancelled" | "failed";
   eventId?: string;
+  /** Evento cancelado na remarcação (lembretes antigos). */
+  previousEventId?: string;
 };
 
 export type PreparedAgendaDirectiveResult = {
@@ -513,7 +518,11 @@ export async function executeAgendaDirective(params: {
   contactName?: string | null;
   timezone: string;
   directive: AgendaDirective;
-}): Promise<{ action: "scheduled" | "rescheduled" | "cancelled"; eventId: string }> {
+}): Promise<{
+  action: "scheduled" | "rescheduled" | "cancelled";
+  eventId: string;
+  previousEventId?: string;
+}> {
   const sb = params.sb ?? createSupabaseServiceClient();
   if (params.directive.type === "cancel") {
     const event = await getAgendaEventById(params.tenantId, params.directive.eventId);
@@ -540,7 +549,7 @@ export async function executeAgendaDirective(params: {
     await cancelStructuredAgendaEvent({ tenantId: params.tenantId, remoteJid: params.remoteJid, event: inserted }).catch(() => undefined);
     throw error;
   }
-  return { action: "rescheduled", eventId: inserted.id };
+  return { action: "rescheduled", eventId: inserted.id, previousEventId: existing.id };
 }
 
 export async function processAgendaDirectivesInReply(params: {
@@ -603,4 +612,59 @@ export async function executePreparedAgendaDirective(params: {
     });
     return { text: AGENDA_FAILURE_REPLY, action: "failed" };
   }
+}
+
+export type AgendaBeforeOutboundResult = {
+  prepared: PreparedAgendaDirectiveResult;
+  outboundText: string;
+  agendaAction: ProcessAgendaDirectivesResult["action"];
+  eventId?: string;
+};
+
+/** Executa diretivas [[AGENDAR]]/[[CANCELAR_AGENDA]] antes do envio ao lead (sem keyword fallback). */
+export async function executeAgendaDirectivesBeforeOutbound(params: {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  leadId?: string | null;
+  agentId?: string | null;
+  contactName?: string | null;
+  timezone: string;
+  modelTextWithoutHandoff: string;
+  agendaAutomationEnabled: boolean;
+  onMutationSuccess?: (result: ProcessAgendaDirectivesResult) => Promise<void>;
+}): Promise<AgendaBeforeOutboundResult> {
+  const prepared = prepareAgendaDirectiveInReply({
+    text: params.modelTextWithoutHandoff,
+    enabled: params.agendaAutomationEnabled,
+  });
+
+  if (prepared.action === "blocked") {
+    return { prepared, outboundText: AGENDA_AUTOMATION_DISABLED_REPLY, agendaAction: "none" };
+  }
+  if (prepared.action === "failed") {
+    return { prepared, outboundText: AGENDA_FAILURE_REPLY, agendaAction: "failed" };
+  }
+  if (prepared.action === "pending") {
+    const executed = await executePreparedAgendaDirective({ ...params, prepared });
+    if (executed.action === "failed") {
+      return { prepared, outboundText: AGENDA_FAILURE_REPLY, agendaAction: "failed" };
+    }
+    if (
+      params.onMutationSuccess &&
+      (executed.action === "scheduled" ||
+        executed.action === "rescheduled" ||
+        executed.action === "cancelled")
+    ) {
+      await params.onMutationSuccess(executed);
+    }
+    return {
+      prepared,
+      outboundText: prepared.text,
+      agendaAction: executed.action,
+      eventId: executed.eventId,
+    };
+  }
+
+  return { prepared, outboundText: prepared.text, agendaAction: "none" };
 }

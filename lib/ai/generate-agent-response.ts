@@ -429,6 +429,14 @@ export async function generateAgentResponse(params: {
   const MAX_TOOL_ITERATIONS = 3;
   let toolIterations = 0;
   let agendaActionCompleted = false;
+  let agendaMutation:
+    | {
+        action: "scheduled" | "rescheduled" | "cancelled";
+        eventId?: string;
+        previousEventId?: string;
+        scheduleHandoffTriggered?: boolean;
+      }
+    | undefined;
 
   while (
     agendaEnabled &&
@@ -474,6 +482,21 @@ export async function generateAgentResponse(params: {
 
       if (toolResult.ok && ["criar_agendamento", "remarcar_agendamento", "cancelar_agendamento"].includes(tc.function.name)) {
         agendaActionCompleted = true;
+        const acao = toolResult.data.acao;
+        if (acao === "scheduled" || acao === "rescheduled" || acao === "cancelled") {
+          const scheduleHandoffTriggered =
+            toolResult.data.schedule_handoff_triggered === true ||
+            agendaMutation?.scheduleHandoffTriggered === true;
+          agendaMutation = {
+            action: acao,
+            eventId: typeof toolResult.data.event_id === "string" ? toolResult.data.event_id : undefined,
+            previousEventId:
+              typeof toolResult.data.event_id_anterior === "string"
+                ? toolResult.data.event_id_anterior
+                : agendaMutation?.previousEventId,
+            scheduleHandoffTriggered,
+          };
+        }
       }
 
       toolResultMessages.push({
@@ -516,7 +539,7 @@ export async function generateAgentResponse(params: {
 
   // Propagar o flag de ação de agenda completada para o webhook pular diretivas
   if (result.ok && agendaActionCompleted) {
-    return { ...result, agendaActionCompleted: true };
+    return { ...result, agendaActionCompleted: true, agendaMutation };
   }
 
   return result;
