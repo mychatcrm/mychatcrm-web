@@ -529,8 +529,9 @@ export async function executeAgendaDirective(params: {
     remoteJid: params.remoteJid,
   });
   const requestedStartAt = directiveStartAt(directive, params.timezone);
-  if (existing?.start_at === requestedStartAt.toISOString()) {
-    return { action: "scheduled", eventId: existing.id };
+  const existingStartMs = existing ? new Date(existing.start_at).getTime() : NaN;
+  if (!Number.isNaN(existingStartMs) && existingStartMs === requestedStartAt.getTime()) {
+    return { action: "scheduled", eventId: existing!.id };
   }
   const inserted = await insertStructuredAgendaEvent({ ...params, sb, directive });
   if (!existing) return { action: "scheduled", eventId: inserted.id };

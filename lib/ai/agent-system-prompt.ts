@@ -234,7 +234,7 @@ ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o c
 ${agent.agendaAutomationEnabled === true ? `- A automação de agenda está ativa para este agente.
 - Quando data e hora estiverem explicitamente confirmadas, inclua [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]] no final da resposta.
 - Para cancelar, use somente um event_id listado no contexto e inclua [[CANCELAR_AGENDA: id=EVENT_ID]] no final da resposta.
-- Para remarcar, confirme a nova data e hora e use [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]]. O sistema substituirá o próximo compromisso futuro.
+- Para remarcar: quando o cliente informar ou confirmar a nova data e horário, inclua [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]] no final da sua resposta — exatamente igual ao agendamento inicial. O sistema cancela o compromisso anterior automaticamente. Nunca confirme uma remarcação verbalmente sem emitir [[AGENDAR:]] com a nova data e hora.
 - As diretivas são internas e removidas antes do cliente receber a mensagem.` : "- A automação de agenda está desativada. Você pode informar compromissos existentes, mas nunca inclua [[AGENDAR: ...]] nem [[CANCELAR_AGENDA: ...]]."}`,
     `CONFIGURAÇÕES AVANÇADAS DO AGENTE
 Modo de resposta configurado: ${clean((agent as { responseMode?: unknown }).responseMode) || "text"}
