@@ -32,7 +32,7 @@ function AdminShellInner({
   }, [pathname]);
 
   return (
-    <div className="panel-shell flex h-full min-h-0 w-full overflow-hidden bg-surface-base">
+    <div className="panel-shell flex h-full min-h-0 w-full overflow-hidden">
       <aside
         className="panel-sidebar hidden w-[260px] shrink-0 bg-surface-sidebar md:block"
         aria-label="Navegação admin"
@@ -45,7 +45,7 @@ function AdminShellInner({
       </Drawer>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="panel-topbar flex h-12 shrink-0 items-center justify-between gap-x-3 bg-surface-base px-4 sm:px-6 xl:px-8">
+        <header className="panel-topbar flex h-12 shrink-0 items-center justify-between gap-x-3 px-4 sm:px-6 xl:px-8">
           <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
@@ -73,8 +73,8 @@ function AdminShellInner({
           </div>
         </header>
 
-        <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface-base">
-          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-surface-base p-4 sm:p-6 lg:p-8">
+        <main className="flex min-h-0 flex-1 flex-col overflow-hidden [background:var(--panel-workspace-fill)]">
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden [background:var(--panel-workspace-fill)] p-4 sm:p-6 lg:p-8">
             <div className="panel-content-frame panel-content-frame--narrow min-h-0 min-w-0">
               {children}
             </div>

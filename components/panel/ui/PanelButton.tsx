@@ -23,7 +23,7 @@ const variants = {
   navy:
     "bg-brand-secondary text-white hover:bg-brand-dark",
   outline:
-    "border border-line/50 bg-surface-card/70 text-content-secondary hover:text-content hover:border-line/70 hover:bg-surface-elevated/45",
+    "border border-line/45 bg-surface-card/70 text-content-secondary hover:text-content hover:border-line/60 hover:bg-surface-elevated/45",
   ghost:
     "text-content-secondary hover:text-content hover:bg-surface-elevated/35 active:bg-surface-elevated/50",
   link:

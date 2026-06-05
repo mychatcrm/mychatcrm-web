@@ -57,7 +57,7 @@ function DashboardShellInner({
 
   return (
     <div
-      className="panel-shell flex h-full min-h-0 overflow-hidden bg-surface-base"
+      className="panel-shell flex h-full min-h-0 overflow-hidden"
       // data-sidebar-collapsed é consumido por @media+seletores em app/globals.css
       // para definir --mc-sidebar-w (240/64/0 conforme breakpoint+collapse).
       // Inline style aqui criaria specificity acima da media query e quebraria mobile.
@@ -77,7 +77,7 @@ function DashboardShellInner({
       </Drawer>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="panel-topbar flex h-12 shrink-0 items-center bg-surface-base px-4 sm:px-6 xl:px-8">
+        <header className="panel-topbar flex h-12 shrink-0 items-center px-4 sm:px-6 xl:px-8">
           <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
               <button
@@ -151,7 +151,7 @@ function DashboardShellInner({
           </div>
         </header>
 
-        <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface-base">
+        <main className="flex min-h-0 flex-1 flex-col overflow-hidden [background:var(--panel-workspace-fill)]">
           {/* Full-bleed routes (conversas, agenda) recebem o conteúdo directamente,
               sem padding nem panel-content-frame, para preencher toda a <main>.
               Dimensões explícitas (100% × calc(100dvh - 48px)) garantem o full-bleed
@@ -167,7 +167,7 @@ function DashboardShellInner({
               {children}
             </div>
           ) : (
-            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-surface-base p-4 sm:p-6 lg:p-8">
+            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden [background:var(--panel-workspace-fill)] p-4 sm:p-6 lg:p-8">
               <div className="panel-content-frame min-h-0 min-w-0">
                 {children}
               </div>

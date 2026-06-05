@@ -43,7 +43,7 @@ export function Drawer({ open, onClose, title, children, side = "left" }: Drawer
         aria-modal="true"
         aria-label={title || "Menu lateral"}
         className={cn(
-          "panel-drawer-surface absolute top-0 flex h-full w-[min(100%,320px)] flex-col bg-surface-sidebar",
+          "panel-drawer-surface absolute top-0 flex h-full w-[min(100%,320px)] flex-col",
           side === "left" ? "left-0" : "right-0",
         )}
       >

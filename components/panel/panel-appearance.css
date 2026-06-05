@@ -29,6 +29,9 @@
   --panel-topbar-fill: rgb(255 255 255 / 0.96);
   --panel-sidebar-fill: rgb(242 242 242 / 1);
   --panel-card-fill: rgb(255 255 255 / 1);
+  --panel-card-fill-alt: rgb(250 250 251 / 1);
+  --panel-workspace-fill: rgb(238 240 244 / 1);
+  --panel-section-fill: rgb(247 247 248 / 0.82);
   --panel-muted-fill: rgb(247 247 248 / 1);
   --panel-card-highlight: none;
   --panel-shadow-ambient: none;
@@ -37,10 +40,10 @@
   --panel-border-soft: rgb(14 29 41 / 0.09);
   --panel-border-subtle: rgb(14 29 41 / 0.055);
   --panel-border-control: rgb(14 29 41 / 0.105);
-  --panel-control-fill: rgb(255 255 255 / 0.64);
+  --panel-control-fill: rgb(250 250 251 / 0.72);
   --panel-control-hover: rgb(255 255 255 / 0.92);
   --panel-surface-hover: rgb(14 29 41 / 0.035);
-  --panel-surface-inset: rgb(14 29 41 / 0.028);
+  --panel-surface-inset: rgb(14 29 41 / 0.04);
   color-scheme: light;
 }
 
@@ -59,9 +62,12 @@
   --color-content-muted:     161 161 170;  /* #a1a1aa */
   --color-content-faint:     113 113 122;  /* #71717a */
   --panel-shell-glow: none;
-  --panel-topbar-fill: rgb(21 24 31 / 0.96);
+  --panel-topbar-fill: rgb(20 23 29 / 0.96);
   --panel-sidebar-fill: rgb(18 21 27 / 1);
   --panel-card-fill: rgb(24 27 35 / 1);
+  --panel-card-fill-alt: rgb(28 32 40 / 1);
+  --panel-workspace-fill: rgb(14 16 21 / 1);
+  --panel-section-fill: rgb(21 24 31 / 0.82);
   --panel-muted-fill: rgb(32 36 45 / 0.78);
   --panel-card-highlight: none;
   --panel-shadow-ambient: none;
@@ -70,10 +76,10 @@
   --panel-border-soft: rgb(255 255 255 / 0.085);
   --panel-border-subtle: rgb(255 255 255 / 0.052);
   --panel-border-control: rgb(255 255 255 / 0.11);
-  --panel-control-fill: rgb(32 36 45 / 0.44);
+  --panel-control-fill: rgb(32 36 45 / 0.58);
   --panel-control-hover: rgb(43 48 58 / 0.62);
   --panel-surface-hover: rgb(255 255 255 / 0.045);
-  --panel-surface-inset: rgb(255 255 255 / 0.032);
+  --panel-surface-inset: rgb(255 255 255 / 0.048);
 }
 
 /* Modo escuro: paleta zinc pura (Design System) */
@@ -94,6 +100,9 @@
   --panel-topbar-fill: rgb(10 10 10 / 0.96);
   --panel-sidebar-fill: rgb(0 0 0 / 1);
   --panel-card-fill: rgb(10 10 10 / 1);
+  --panel-card-fill-alt: rgb(18 18 20 / 1);
+  --panel-workspace-fill: rgb(3 3 4 / 1);
+  --panel-section-fill: rgb(18 18 20 / 0.72);
   --panel-muted-fill: rgb(24 24 27 / 0.78);
   --panel-card-highlight: none;
   --panel-shadow-ambient: none;
@@ -102,10 +111,10 @@
   --panel-border-soft: rgb(255 255 255 / 0.075);
   --panel-border-subtle: rgb(255 255 255 / 0.045);
   --panel-border-control: rgb(255 255 255 / 0.095);
-  --panel-control-fill: rgb(24 24 27 / 0.52);
+  --panel-control-fill: rgb(24 24 27 / 0.62);
   --panel-control-hover: rgb(39 39 42 / 0.68);
   --panel-surface-hover: rgb(255 255 255 / 0.04);
-  --panel-surface-inset: rgb(255 255 255 / 0.028);
+  --panel-surface-inset: rgb(255 255 255 / 0.044);
 }
 
 .panel-app[data-panel-theme="dark"],
@@ -145,7 +154,7 @@
 }
 
 .panel-shell {
-  background: transparent;
+  background: var(--panel-workspace-fill);
 }
 
 .panel-sidebar {
@@ -235,7 +244,7 @@
 }
 
 .panel-kpi-card {
-  background: var(--panel-card-fill) !important;
+  background: var(--panel-card-fill-alt) !important;
 }
 
 .panel-floating-card {
@@ -249,7 +258,7 @@
 .panel-profile-card {
   position: relative;
   overflow: hidden;
-  background: var(--panel-card-fill);
+  background: var(--panel-card-fill-alt);
   box-shadow: none;
 }
 
