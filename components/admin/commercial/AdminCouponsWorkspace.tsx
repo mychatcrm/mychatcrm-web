@@ -284,7 +284,7 @@ export function AdminCouponsWorkspace() {
         ) : null}
         {flash ? <p className="text-sm text-emerald-400">{flash}</p> : null}
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-          <div className="min-w-[200px] flex-1">
+          <div className="min-w-0 flex-1 sm:min-w-[200px]">
             <label className="text-xs font-semibold uppercase tracking-wider text-content-muted">Buscar</label>
             <Input
               value={filter}

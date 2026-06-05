@@ -215,7 +215,7 @@ export function DisparosMassaHub({ campaignItems }: { campaignItems: string[] })
               </div>
             </div>
           </div>
-          <div className="grid shrink-0 grid-cols-3 gap-2 sm:gap-3 lg:w-[min(100%,380px)]">
+          <div className="grid min-w-0 shrink-0 grid-cols-1 gap-2 min-[390px]:grid-cols-3 sm:gap-3 lg:w-[min(100%,380px)]">
             {[
               { icon: Users, label: "Alcance", value: audience.reach, tone: "text-primary/85" },
               { icon: Activity, label: "Throughput", value: throughput === "suave" ? "12/s" : throughput === "normal" ? "28/s" : "45/s", tone: "text-primary" },

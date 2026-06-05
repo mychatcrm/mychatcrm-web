@@ -57,7 +57,7 @@ export function PanelButton({
     <button
       type={type}
       className={cn(
-        "inline-flex touch-manipulation items-center justify-center gap-2 font-medium transition-colors duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base disabled:opacity-50 disabled:pointer-events-none",
+        "inline-flex min-w-0 max-w-full touch-manipulation items-center justify-center gap-2 font-medium transition-colors duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base disabled:opacity-50 disabled:pointer-events-none",
         !isLink && "rounded-xl",
         !isLink && PANEL_BUTTON_SIZES[size],
         variants[variant],

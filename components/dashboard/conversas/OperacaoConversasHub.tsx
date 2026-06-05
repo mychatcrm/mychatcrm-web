@@ -1121,6 +1121,9 @@ function SidebarPanel({
         flexDirection: "column",
         // Mobile: full width; Desktop: fixed breakpoint width
         width: isMobile ? "100%" : desktopWidth,
+        minWidth: 0,
+        maxWidth: "100vw",
+        overflow: "hidden",
         flexShrink: 0,
         background: W.bgSidebar,
         borderRight: `1px solid ${W.bgBorder}`,
@@ -2129,6 +2132,8 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
         display: "flex",
         background: W.bgApp,
         overflow: "hidden",
+        minWidth: 0,
+        maxWidth: "100vw",
         fontFamily: "Inter, system-ui, sans-serif",
         zIndex: 1,
       }}
@@ -2302,6 +2307,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                   right: 0,
                   zIndex: 30,
                   minWidth: 214,
+                  maxWidth: "calc(100vw - 24px)",
                   borderRadius: 8,
                   overflow: "hidden",
                   background: W.bgHeader,
@@ -2577,10 +2583,12 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
             <div
               style={{
                 background: W.bgHeader,
-                height: 59,
+                minHeight: 59,
                 display: "flex",
                 alignItems: "center",
+                flexWrap: "wrap",
                 padding: "0 12px",
+                rowGap: 6,
                 gap: 10,
                 flexShrink: 0,
                 borderBottom: `1px solid ${W.bgBorder}`,
@@ -2676,6 +2684,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 6,
+                  maxWidth: "min(100%, 10.5rem)",
                   padding: "6px 10px",
                   borderRadius: 16,
                   border: `1px solid ${activeAutomationEnabled ? "rgba(242,68,0,0.45)" : "rgba(113,113,122,0.3)"}`,
@@ -2697,10 +2706,10 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                   }}
                 />
                 {automationToggling
-                  ? "Salvando…"
+                  ? (mobileThread ? "Salvando" : "Salvando…")
                   : activeAutomationEnabled
-                    ? "Automação ativa"
-                    : "Automação pausada"}
+                    ? (mobileThread ? "Ativa" : "Automação ativa")
+                    : (mobileThread ? "Pausada" : "Automação pausada")}
               </button>
 
               {/* Header action: lupa para busca interna */}
@@ -2763,6 +2772,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                       right: 0,
                       zIndex: 30,
                       minWidth: 188,
+                      maxWidth: "calc(100vw - 24px)",
                       borderRadius: 8,
                       overflow: "hidden",
 	                    background: W.bgHeader,
@@ -3068,6 +3078,8 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                     left: 0,
                     zIndex: 50,
                     marginBottom: 4,
+                    maxWidth: "calc(100vw - 16px)",
+                    overflowX: "auto",
                   }}
                 >
                   <EmojiPicker
@@ -3087,6 +3099,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                   style={{
                     display: "flex",
                     alignItems: "center",
+                    flexWrap: "wrap",
                     gap: 10,
                     background: W.bgInput,
                     borderRadius: 10,
@@ -3128,7 +3141,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                     </div>
                   )}
                   {/* Filename */}
-                  <span style={{ flex: 1, fontSize: 13, color: W.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: W.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {attachment.file.name}
                     <span style={{ color: W.muted, marginLeft: 6, fontSize: 11 }}>
                       ({(attachment.file.size / 1024 / 1024).toFixed(1)} MB)
@@ -3186,6 +3199,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "space-between",
+                    flexWrap: "wrap",
                     gap: 12,
                   }}
                 >
@@ -3203,6 +3217,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                     disabled={operationBusy}
                     style={{
                       flexShrink: 0,
+                      marginLeft: "auto",
                       border: "none",
                       background: W.green,
                       color: "white",
@@ -3224,6 +3239,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "space-between",
+                    flexWrap: "wrap",
                     gap: 12,
                     background: "rgba(37,211,102,0.08)",
                     border: "1px solid rgba(37,211,102,0.22)",
@@ -3242,6 +3258,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                     disabled={operationBusy}
                     style={{
                       flexShrink: 0,
+                      marginLeft: "auto",
                       border: `1px solid ${W.bgBorder}`,
                       background: "transparent",
                       color: W.text,

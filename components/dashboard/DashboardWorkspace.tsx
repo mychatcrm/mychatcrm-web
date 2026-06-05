@@ -479,7 +479,7 @@ export function DashboardOverviewDateFilter() {
         type="button"
         className={cn(
           headerPeriodSurface,
-          "inline-flex min-h-[44px] max-w-[11rem] cursor-pointer items-center gap-2 px-3 py-2.5 sm:max-w-[13rem]",
+          "inline-flex min-h-9 max-w-[8.75rem] cursor-pointer items-center gap-1.5 px-2 py-1.5 sm:min-h-[44px] sm:max-w-[13rem] sm:gap-2 sm:px-3 sm:py-2.5",
         )}
         onClick={() => setPickerOpen(true)}
         aria-haspopup="dialog"
@@ -487,7 +487,7 @@ export function DashboardOverviewDateFilter() {
         aria-label={`Periodo das metricas: ${triggerLabel}. Abrir para alterar.`}
       >
         <Calendar className="h-4 w-4 shrink-0 text-content-faint" strokeWidth={1.75} aria-hidden />
-        <span className="min-w-0 flex-1 truncate text-left text-sm font-medium text-content-secondary">{triggerLabel}</span>
+        <span className="min-w-0 flex-1 truncate text-left text-xs font-medium text-content-secondary sm:text-sm">{triggerLabel}</span>
         <ChevronDown className="h-4 w-4 shrink-0 text-content-muted opacity-80" strokeWidth={1.75} aria-hidden />
       </button>
 
@@ -885,7 +885,7 @@ function CrmKanbanColumn({
       className={cn(
         "shrink-0 grow-0 rounded-xl border border-line bg-surface-card p-3 transition-[background-color,border-color]",
         /** Largura responsiva: ~5 colunas visíveis na área útil; scroll horizontal se houver mais etapas. */
-        "w-[clamp(10.5rem,calc((100%-4rem)/5),19rem)]",
+        "w-[min(82vw,19rem)] sm:w-[clamp(14rem,calc((100%_-_4rem)/5),19rem)]",
         isOver && "border-primary/50 bg-primary/[0.06]",
       )}
     >

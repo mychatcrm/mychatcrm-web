@@ -276,6 +276,7 @@ export function AgendaHub() {
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
+        minWidth: 0,
         zIndex: 1,
       }}
     >
@@ -358,7 +359,7 @@ export function AgendaHub() {
               aria-label="Fechar menu da agenda"
               onClick={() => setSidebarOpen(false)}
             />
-            <aside className="fixed inset-y-0 left-0 z-50 flex w-[min(100vw-2rem,280px)] shrink-0 flex-col gap-4 overflow-y-auto border-r border-line bg-surface-card p-4 md:static md:z-auto md:w-[256px]">
+            <aside className="fixed inset-y-0 left-0 z-50 flex w-[min(100vw,18rem)] max-w-full shrink-0 flex-col gap-4 overflow-y-auto overflow-x-hidden border-r border-line bg-surface-card p-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))] md:static md:z-auto md:w-[256px]">
             <button
               type="button"
               onClick={() => openCreateModal()}
@@ -748,7 +749,7 @@ export function AgendaHub() {
 
       {/* Quick create popover */}
       {quick ? (
-        <div className="fixed z-50 w-[280px] max-w-[calc(100vw-16px)] rounded-xl border border-line bg-surface-card p-3" style={{ left: Math.min(quick.x, window.innerWidth - 296), top: Math.min(quick.y, window.innerHeight - 200) }}>
+        <div className="fixed z-50 w-[280px] max-w-[calc(100vw-16px)] overflow-y-auto rounded-xl border border-line bg-surface-card p-3" style={{ left: Math.max(8, Math.min(quick.x, window.innerWidth - 296)), top: Math.max(8, Math.min(quick.y, window.innerHeight - 200)), maxHeight: "calc(100dvh - 16px)" }}>
           <input
             autoFocus
             value={quickTitle}
@@ -771,7 +772,7 @@ export function AgendaHub() {
 
       {/* Event detail popover */}
       {detail ? (
-        <div className="fixed z-50 w-[300px] max-w-[calc(100vw-16px)] rounded-xl border border-line bg-surface-card p-4" style={{ left: Math.min(detail.x, window.innerWidth - 316), top: Math.min(detail.y, window.innerHeight - 240) }}>
+        <div className="fixed z-50 w-[300px] max-w-[calc(100vw-16px)] overflow-y-auto rounded-xl border border-line bg-surface-card p-4" style={{ left: Math.max(8, Math.min(detail.x, window.innerWidth - 316)), top: Math.max(8, Math.min(detail.y, window.innerHeight - 240)), maxHeight: "calc(100dvh - 16px)" }}>
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <div className="flex items-center gap-2">

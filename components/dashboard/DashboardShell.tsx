@@ -125,7 +125,7 @@ function DashboardShellInner({
               {isOverview && (
                 <Suspense
                   fallback={
-                    <span className="inline-flex h-9 min-w-[10.5rem] animate-pulse rounded-xl border border-line/60 bg-surface-elevated/35 px-3" />
+                    <span className="inline-flex h-9 min-w-[8rem] max-w-[9rem] animate-pulse rounded-xl border border-line/60 bg-surface-elevated/35 px-3 sm:min-w-[10.5rem] sm:max-w-none" />
                   }
                 >
                   <DashboardOverviewDateFilter />

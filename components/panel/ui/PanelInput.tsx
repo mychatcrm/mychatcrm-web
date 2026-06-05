@@ -19,7 +19,7 @@ export const PanelInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLI
     return (
       <input
         ref={ref}
-        className={cn(PANEL_INPUT_BASE, className)}
+        className={cn(PANEL_INPUT_BASE, "min-w-0 max-w-full", className)}
         {...props}
       />
     );
