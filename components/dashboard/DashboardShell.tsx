@@ -57,7 +57,7 @@ function DashboardShellInner({
 
   return (
     <div
-      className="panel-shell flex h-full min-h-0 overflow-hidden"
+      className="panel-shell flex h-full min-h-0 w-full overflow-hidden"
       // data-sidebar-collapsed é consumido por @media+seletores em app/globals.css
       // para definir --mc-sidebar-w (240/64/0 conforme breakpoint+collapse).
       // Inline style aqui criaria specificity acima da media query e quebraria mobile.

@@ -139,7 +139,7 @@ async function apiDeleteAgent(agentId: string): Promise<void> {
 
 function AgentsGridSkeleton() {
   return (
-    <div className="grid min-w-0 auto-rows-fr gap-3 sm:grid-cols-2 xl:grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),24rem))]" aria-label="Carregando agentes">
+    <div className="grid min-w-0 auto-rows-fr gap-3 sm:grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))] xl:gap-4" aria-label="Carregando agentes">
       {Array.from({ length: 3 }).map((_, index) => (
         <div
           key={index}
@@ -369,7 +369,7 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
   }, []);
 
   return (
-    <div className="min-w-0 space-y-5 sm:space-y-6">
+    <div className="w-full min-w-0 max-w-full space-y-5 sm:space-y-6">
       <AgentCreateOverlay
         open={createOpen}
         onClose={closeCreateOverlay}
@@ -386,8 +386,8 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
         onDeleted={handleAgentDeleted}
       />
 
-      <div className="panel-surface-card overflow-hidden rounded-xl border border-line bg-surface-card p-4 sm:p-5 lg:p-6">
-        <div className="flex min-w-0 flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+      <div className="panel-surface-card w-full overflow-hidden rounded-xl border border-line bg-surface-card p-4 sm:p-5 lg:p-6">
+        <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)] lg:items-center">
           <div className="min-w-0">
             <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-primary">
               <Sparkles className="h-3.5 w-3.5" strokeWidth={1.9} aria-hidden />
@@ -401,7 +401,7 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
             </p>
           </div>
 
-          <div className="grid min-w-0 gap-3 sm:grid-cols-[auto_auto] lg:min-w-[20rem] lg:grid-cols-1">
+          <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:grid-cols-1">
             <div className="flex min-w-0 items-center justify-between gap-3 rounded-xl bg-surface-elevated/35 px-3 py-3">
               <div className="flex min-w-0 items-center gap-2">
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
@@ -445,7 +445,7 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleAgentsDragEnd}>
           <SortableContext items={agents.map((a) => a.id)} strategy={rectSortingStrategy}>
-            <div className="grid min-w-0 auto-rows-fr gap-3 sm:grid-cols-2 xl:grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),24rem))] 2xl:gap-4">
+            <div className="grid min-w-0 auto-rows-fr gap-3 sm:grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))] xl:gap-4">
               {agents.map((agent) => (
                 <SortableAgentCard
                   key={agent.id}
