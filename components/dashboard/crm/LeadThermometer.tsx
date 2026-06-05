@@ -9,13 +9,13 @@ import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 function fillClass(level: LeadTemperatureResult["level"]) {
   switch (level) {
     case 0:
-      return "bg-gradient-to-r from-[#1a3552] to-[#3d5a78]";
+      return "bg-brand-secondary";
     case 1:
-      return "bg-gradient-to-r from-amber-500 to-amber-400";
+      return "bg-primary/70";
     case 2:
-      return "bg-gradient-to-r from-primary to-primary-hover";
+      return "bg-primary";
     default:
-      return "bg-gradient-to-r from-rose-600 to-orange-500";
+      return "bg-primary-hover";
   }
 }
 

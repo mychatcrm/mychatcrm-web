@@ -21,7 +21,7 @@ export function VideoSection() {
           initial={{ opacity: 0, y: 10 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          className="flex aspect-video flex-col items-center justify-center gap-3 overflow-hidden rounded-2xl border border-line/80 bg-gradient-to-br from-primary/18 via-surface-base to-surface-brown shadow-elevation-3 ring-1 ring-inset ring-white/[0.04] transition duration-500 hover:border-primary/25 hover:shadow-card-hover-glow motion-reduce:hover:shadow-elevation-3"
+          className="flex aspect-video flex-col items-center justify-center gap-3 overflow-hidden rounded-2xl border border-line/80 bg-surface-card transition-colors duration-150 hover:border-primary/25"
           role="img"
           aria-label={t("placeholderLabel")}
         >
@@ -32,7 +32,7 @@ export function VideoSection() {
             {t("videoPlaceholder")}
           </p>
         </motion.div>
-        <aside className="rounded-2xl border border-line/80 bg-surface-card/80 p-6 shadow-elevation-1 backdrop-blur-md">
+        <aside className="rounded-2xl border border-line/80 bg-surface-card p-6">
           <h3 className="text-sm font-semibold uppercase tracking-wide text-primary">{t("whatYouWillSee")}</h3>
           <ul className="mt-4 space-y-3 text-sm text-content-secondary">
             {items.map((item) => (

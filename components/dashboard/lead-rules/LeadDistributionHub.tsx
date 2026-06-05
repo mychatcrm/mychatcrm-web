@@ -36,7 +36,7 @@ function LeadDistPanel({
         "min-w-0 rounded-xl border p-5 sm:p-6 transition-colors",
         isLight
           ? "border-slate-200/80 bg-surface-deep text-content"
-          : "border-line/80 bg-surface-card/80 ring-1 ring-white/[0.03] backdrop-blur-sm",
+          : "border-line/80 bg-surface-card text-content",
         className,
       )}
     >
@@ -384,7 +384,7 @@ export function LeadDistributionHub({ session }: { session: ClientSession }) {
                   {ruleMenuOpenId === rule.id ? (
                     <div
                       role="menu"
-                      className="absolute right-0 top-[calc(100%+4px)] z-50 min-w-[11rem] rounded-xl border border-line bg-surface-card py-1 shadow-lg"
+                      className="absolute right-0 top-[calc(100%+4px)] z-50 min-w-[11rem] rounded-xl border border-line bg-surface-card py-1"
                       onMouseDown={(e) => {
                         e.stopPropagation();
                         menuCloseSkipRef.current = true;

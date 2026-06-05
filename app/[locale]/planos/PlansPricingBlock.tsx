@@ -10,7 +10,7 @@ function PlansGridFallback() {
   return (
     <div className="mx-auto grid max-w-6xl gap-6 px-4 sm:grid-cols-2 sm:px-6 lg:grid-cols-3 lg:px-8">
       {Array.from({ length: 4 }).map((_, i) => (
-        <Skeleton key={i} className="h-[420px] rounded-3xl" />
+        <Skeleton key={i} className="h-[420px] rounded-2xl" />
       ))}
     </div>
   );

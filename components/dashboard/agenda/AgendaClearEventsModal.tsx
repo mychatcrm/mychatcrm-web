@@ -17,7 +17,7 @@ export function AgendaClearEventsModal({
 }) {
   return (
     <Modal open={open} onClose={onClose} title="Limpar agenda sincronizada">
-      <p className="text-sm leading-relaxed text-[#5f6368]">
+      <p className="text-sm leading-relaxed text-content-muted">
         Isso apagará todos os eventos sincronizados do Google. Eventos criados manualmente serão mantidos. Confirmar?
       </p>
       <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">

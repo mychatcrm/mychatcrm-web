@@ -8,7 +8,7 @@ export function SalesSiteHeader() {
   const whatsappHref = whatsappHandoffHref();
 
   return (
-    <header className="sticky top-0 z-50 border-b border-line bg-surface-deep/95 backdrop-blur-xl pt-[env(safe-area-inset-top,0px)]">
+    <header className="sticky top-0 z-50 border-b border-line bg-surface-deep pt-[env(safe-area-inset-top,0px)]">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:gap-4 sm:px-6 lg:px-8">
         <Link href="/" className="flex items-center gap-2" aria-label="MyChatCRM — início">
           <Image src={BRAND_LOGO.default} alt="Logotipo MyChatCRM" width={36} height={36} className="h-9 w-9" />

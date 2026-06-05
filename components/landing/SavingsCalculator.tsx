@@ -217,10 +217,6 @@ export function SavingsCalculator() {
       className="relative scroll-mt-24 border-y border-line/50 bg-surface-deep/80 py-16 sm:py-20"
       aria-labelledby="economia-titulo"
     >
-      <div
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_0%,rgba(242,68,0,0.05),transparent_55%)] motion-reduce:opacity-40"
-        aria-hidden
-      />
       <div className="relative mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-3xl text-center">
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">{t("eyebrow")}</p>
@@ -244,7 +240,7 @@ export function SavingsCalculator() {
           </p>
         </div>
 
-        <div className="mt-8 rounded-2xl border border-line/70 bg-surface-card/50 p-4 shadow-sm ring-1 ring-black/[0.03] dark:ring-white/[0.04] sm:p-5">
+        <div className="mt-8 rounded-2xl border border-line/70 bg-surface-card/50 p-4 sm:p-5">
           <div className="mx-auto max-w-xl text-center">
             <p id="economia-cenarios" className="text-sm font-semibold text-content">
               {t("shortcutHeading")}
@@ -271,7 +267,7 @@ export function SavingsCalculator() {
                   className={cn(
                     "flex min-h-[44px] flex-col gap-0.5 rounded-xl border px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-deep",
                     selected
-                      ? "border-primary/55 bg-primary/[0.12] shadow-[0_0_0_1px_rgba(242,68,0,0.2)]"
+                      ? "border-primary/55 bg-primary/[0.12]"
                       : "border-line/90 bg-surface-elevated/25 hover:border-primary/35 hover:bg-surface-elevated/40",
                   )}
                 >
@@ -297,7 +293,7 @@ export function SavingsCalculator() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, margin: "-8%" }}
               transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-              className="lg:col-span-7 flex h-full min-h-0 flex-col rounded-2xl border border-line/80 bg-surface-card p-4 shadow-elevation-1 ring-1 ring-inset ring-white/[0.03] dark:ring-white/[0.04] sm:p-5"
+              className="lg:col-span-7 flex h-full min-h-0 flex-col rounded-2xl border border-line/80 bg-surface-card p-4 sm:p-5"
             >
               <div className="border-b border-line/45 pb-2.5">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-content-muted">{t("paramsTitle")}</p>
@@ -391,7 +387,7 @@ export function SavingsCalculator() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, margin: "-8%" }}
               transition={{ duration: 0.4, delay: 0.05, ease: [0.22, 1, 0.36, 1] }}
-              className="lg:col-span-5 flex h-full min-h-0 flex-col rounded-3xl border border-primary/25 bg-gradient-to-b from-primary/[0.1] via-surface-card to-surface-card p-6 shadow-[0_0_0_1px_rgba(242,68,0,0.1),0_24px_48px_-24px_rgba(242,68,0,0.22)] sm:p-8"
+              className="lg:col-span-5 flex h-full min-h-0 flex-col rounded-2xl border border-primary/25 bg-surface-card p-6 sm:p-8"
             >
               <div className="flex items-start gap-3">
                 <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-primary/15 text-primary">
@@ -529,11 +525,11 @@ export function SavingsCalculator() {
 function RefCallout({ children }: { children: ReactNode }) {
   return (
     <div
-      className="relative mt-2 overflow-hidden rounded-lg border border-line/50 bg-surface-deep/45 pl-2 shadow-sm ring-1 ring-inset ring-white/[0.03] dark:bg-surface-deep/70"
+      className="relative mt-2 overflow-hidden rounded-lg border border-line/50 bg-surface-deep/45 pl-2 dark:bg-surface-deep/70"
       role="note"
     >
       <div
-        className="absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-full bg-gradient-to-b from-primary to-primary-hover"
+        className="absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-full bg-primary"
         aria-hidden
       />
       <div className="px-2.5 py-1.5 pl-3 text-[11px] leading-snug text-content-muted">{children}</div>

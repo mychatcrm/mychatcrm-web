@@ -207,7 +207,7 @@ function ProgressBar({ value }: { value: number }) {
       aria-valuemax={100}
     >
       <div
-        className="relative h-full rounded-full bg-gradient-to-r from-primary to-primary-hover transition-[width] duration-500 ease-out"
+        className="relative h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
         style={{ width: `${pct}%` }}
       />
     </div>
@@ -252,7 +252,7 @@ function SimulatedBars({ items }: { items: { label: string; value: number; secon
           </div>
           <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-surface-elevated/70 ring-1 ring-inset ring-line/30">
             <div
-              className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-primary via-primary to-primary-hover transition-all duration-500 ease-out"
+              className="absolute inset-y-0 left-0 rounded-full bg-primary transition-all duration-500 ease-out"
               style={{ width: `${Math.min(item.value, 100)}%` }}
             />
             {item.secondary ? (
@@ -863,26 +863,6 @@ function reorderLeadsForFunnelColumn(
   return out;
 }
 
-function crmLeadAccentSeed(lead: ClientLead) {
-  return `${lead.agenteAtendendo} ${lead.agenteEntrada} ${lead.origem} ${lead.tag}`;
-}
-
-function crmLeadCardAccentGradient(seed: string) {
-  const t = seed.toLowerCase();
-  if (t.includes("imovel") || t.includes("imóvel") || t.includes("duda")) return "from-violet-500 via-fuchsia-500 to-pink-400";
-  if (t.includes("veículo") || t.includes("veiculo") || t.includes("max")) return "from-emerald-500 to-teal-400";
-  if (t.includes("beleza") || t.includes("luma") || t.includes("estética") || t.includes("estetica"))
-    return "from-amber-500 to-orange-500";
-  if (t.includes("consultoria") || t.includes("axel")) return "from-[#1a3552] to-[#0e1d2f]";
-  if (t.includes("comercial") || t.includes("clara")) return "from-primary via-primary-hover to-amber-500";
-  if (t.includes("premium")) return "from-violet-500 via-fuchsia-500 to-pink-400";
-  if (t.includes("inbound") || t.includes("quente")) return "from-primary via-primary-hover to-amber-500";
-  if (t.includes("whatsapp")) return "from-emerald-500 to-teal-400";
-  if (t.includes("b2b")) return "from-[#1a3552] to-[#0e1d2f]";
-  if (t.includes("campanha")) return "from-amber-500 to-orange-500";
-  return "from-primary via-primary-hover to-[#0e1d2f]";
-}
-
 function CrmKanbanColumn({
   columnId,
   title,
@@ -954,8 +934,6 @@ function CrmKanbanLeadCard({
     zIndex: isDragging ? 40 : undefined,
   };
   const waWebHref = phoneToWhatsAppWebHref(lead.telefone);
-  const accentSeed = crmLeadAccentSeed(lead);
-  const accentBar = crmLeadCardAccentGradient(accentSeed);
 
   return (
     <div
@@ -985,7 +963,7 @@ function CrmKanbanLeadCard({
         }
       }}
     >
-      <div className={cn("h-1 w-full shrink-0 bg-gradient-to-r", accentBar)} aria-hidden />
+      <div className="h-1 w-full shrink-0 bg-primary" aria-hidden />
       <div className="relative p-3.5 pt-3">
         <div className="mb-2 flex items-center justify-between gap-2">
           <label
@@ -2627,7 +2605,7 @@ function CrmPage({
             {selectedLeadCount > 0 ? (
               <div
                 className={cn(
-                  "sticky bottom-3 z-30 mt-3 flex flex-col gap-2 rounded-xl border px-3 py-3 backdrop-blur sm:flex-row sm:items-center sm:justify-between",
+                  "sticky bottom-3 z-30 mt-3 flex flex-col gap-2 rounded-xl border px-3 py-3 sm:flex-row sm:items-center sm:justify-between",
                   isLight ? "border-primary/25 bg-white/95" : "border-primary/30 bg-surface-card/95",
                 )}
               >
@@ -2650,7 +2628,7 @@ function CrmPage({
                     {bulkActionsOpen ? (
                       <div
                         className={cn(
-                          "absolute bottom-full right-0 z-40 mb-2 w-64 overflow-hidden rounded-xl border p-1 shadow-2xl",
+                          "absolute bottom-full right-0 z-40 mb-2 w-64 overflow-hidden rounded-xl border p-1 ",
                           isLight ? "border-line bg-white" : "border-line bg-surface-elevated",
                         )}
                       >
@@ -3283,7 +3261,7 @@ const CONFIG_TAB_ICON: Record<string, LucideIcon> = {
 };
 
 const planosCtaClassName =
-  "inline-flex min-h-[44px] w-full items-center justify-center rounded-xl bg-gradient-primary px-4 text-center text-sm font-medium text-white transition hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-card sm:w-auto";
+  "inline-flex min-h-[44px] w-full items-center justify-center rounded-xl bg-primary px-4 text-center text-sm font-medium text-white transition hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-card sm:w-auto";
 
 function PlanLeadsBilling({ session }: { session: ClientSession }) {
   const [offerMode, setOfferMode] = useState<"plans" | "extraLeads" | null>(null);
@@ -3317,7 +3295,7 @@ function PlanLeadsBilling({ session }: { session: ClientSession }) {
         </div>
       </dl>
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-surface-deep ring-1 ring-inset ring-line/40">
-        <div className="h-full rounded-full bg-gradient-primary transition-[width] duration-300 ease-out" style={{ width: `${pctRemaining}%` }} />
+        <div className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out" style={{ width: `${pctRemaining}%` }} />
       </div>
       <div className="mt-4 flex flex-col gap-2 sm:flex-row">
         <button
@@ -3341,7 +3319,7 @@ function PlanLeadsBilling({ session }: { session: ClientSession }) {
           aria-haspopup="dialog"
           onClick={() => setOfferMode((m) => (m === "extraLeads" ? null : "extraLeads"))}
           className={cn(
-            "inline-flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-primary px-4 text-sm font-medium text-white transition hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-card",
+            "inline-flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-white transition hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-card",
             offerMode === "extraLeads" && "ring-2 ring-white/35 ring-offset-2 ring-offset-surface-card",
           )}
         >

@@ -421,7 +421,7 @@ function MetaFormsSelector({
                           blocked
                             ? "cursor-not-allowed bg-red-500/[0.06] text-red-800 dark:text-red-200"
                             : selected
-                              ? "bg-[rgba(242,68,0,0.08)] ring-1 ring-inset ring-[#f24400]/30"
+                              ? "bg-primary/10 ring-1 ring-inset ring-primary/30"
                               : "hover:bg-surface-card/70",
                           busy && "opacity-60",
                         )}
@@ -439,7 +439,7 @@ function MetaFormsSelector({
                           {busy ? <span className="mt-1 block text-[10px] text-content-muted">A guardar…</span> : null}
                         </span>
                         {selected && !blocked ? (
-                          <Check className="h-5 w-5 shrink-0 text-[#f24400]" strokeWidth={2.5} aria-hidden />
+                          <Check className="h-5 w-5 shrink-0 text-primary" strokeWidth={2.5} aria-hidden />
                         ) : null}
                       </button>
                     </li>
@@ -607,7 +607,7 @@ export function WizardStep3Ativacao({
     }
   };
 
-  const cardSelectedClass = "border-[#f24400] bg-[rgba(242,68,0,0.05)] ring-1 ring-inset ring-[#f24400]/30";
+  const cardSelectedClass = "border-primary bg-primary/10 ring-1 ring-inset ring-primary/30";
   const cardNeutralClass = "border-line/80 bg-surface-card hover:border-primary/30 hover:bg-surface-deep/40";
 
   return (

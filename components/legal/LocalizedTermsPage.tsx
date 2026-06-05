@@ -69,7 +69,7 @@ export async function LocalizedTermsPage() {
       footer={
         <p>
           {t("termsPage.footerBefore")}
-          <Link href={LEGAL_PRIVACY_PATHNAME} className="text-[#f24400] hover:underline">
+          <Link href={LEGAL_PRIVACY_PATHNAME} className="text-primary hover:underline">
             {t("termsPage.footerLink")}
           </Link>
           {t("termsPage.footerAfter")}
@@ -85,7 +85,7 @@ export async function LocalizedTermsPage() {
       <LegalSection title={sections.contact.title}>
         {renderParagraphs(sections.contact.paragraphs)}
         <p className="mt-3">
-          <a href={`mailto:${LEGAL_CONTACT_EMAIL}`} className="text-[#f24400] hover:underline">
+          <a href={`mailto:${LEGAL_CONTACT_EMAIL}`} className="text-primary hover:underline">
             {LEGAL_CONTACT_EMAIL}
           </a>
           .

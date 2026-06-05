@@ -74,7 +74,7 @@ export default async function BlogPage({ params, searchParams }: Props) {
       ))}
       <main className="bg-surface-base">
         <section className="relative overflow-hidden border-b border-line/80">
-          <div className="absolute inset-0 bg-gradient-hero" aria-hidden />
+          <div className="absolute inset-0 bg-surface-base" aria-hidden />
           <div className="landing-hero-noise pointer-events-none absolute inset-0 opacity-[0.06] mix-blend-screen" aria-hidden />
           <div className="relative mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:px-8 lg:py-24">
             <div className="max-w-4xl">
@@ -86,7 +86,7 @@ export default async function BlogPage({ params, searchParams }: Props) {
                 Conteúdo editorial profundo para transformar WhatsApp em atendimento inteligente, funil organizado e conversão previsível.
               </p>
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-                <Link href="#artigos" className="inline-flex min-h-[48px] items-center justify-center rounded-xl bg-gradient-primary px-6 text-base font-semibold text-white shadow-cta-glow transition hover:-translate-y-0.5">
+                <Link href="#artigos" className="inline-flex min-h-[48px] items-center justify-center rounded-xl bg-primary px-6 text-base font-semibold text-white transition-colors hover:bg-primary-hover">
                   Explorar 30 guias
                 </Link>
                 <Link href="/planos" className="inline-flex min-h-[48px] items-center justify-center rounded-xl border border-line/90 px-6 text-base font-semibold text-content-secondary transition hover:border-primary/40 hover:text-primary">
@@ -96,7 +96,7 @@ export default async function BlogPage({ params, searchParams }: Props) {
             </div>
             <div className="mt-12 grid gap-4 md:grid-cols-4">
               {["SEO + AEO", "GEO / LLMO", "CRO", "Local SEO"].map((item) => (
-                <div key={item} className="rounded-3xl border border-line/80 bg-surface-card/70 p-5">
+                <div key={item} className="rounded-2xl border border-line/80 bg-surface-card p-5">
                   <p className="font-display text-lg font-bold text-content">{item}</p>
                   <p className="mt-2 text-sm leading-6 text-content-muted">Estrutura clara para humanos, buscadores e IA generativa.</p>
                 </div>
@@ -115,7 +115,7 @@ export default async function BlogPage({ params, searchParams }: Props) {
               ))}
             </div>
           ) : (
-            <div className="mt-10 rounded-3xl border border-line/80 bg-surface-card/75 p-8 text-center">
+            <div className="mt-10 rounded-2xl border border-line/80 bg-surface-card p-8 text-center">
               <p className="font-display text-2xl font-bold text-content">Nenhum guia encontrado</p>
               <p className="mx-auto mt-3 max-w-xl text-content-secondary">
                 Tente buscar por outro nicho, por termos como CRM, chatbot, automação, atendimento ou conversão.

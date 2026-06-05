@@ -34,14 +34,7 @@ export function SocialProofBar() {
   const d = useAnimatedNumber(99.9, 1);
 
   return (
-    <section
-      className="relative border-y border-line/80 bg-surface-deep/60 py-12 motion-reduce:bg-surface-deep/50"
-      aria-label={t("ariaLabel")}
-    >
-      <div
-        className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,transparent,rgba(242,68,0,0.04)_50%,transparent)] opacity-90 motion-reduce:opacity-50"
-        aria-hidden
-      />
+    <section className="relative border-y border-line/80 bg-surface-deep/60 py-12" aria-label={t("ariaLabel")}>
       <div className="relative mx-auto grid max-w-6xl grid-cols-2 gap-8 px-4 sm:px-6 md:grid-cols-4 lg:px-8">
         <div ref={a.ref} className="text-center">
           <p className="font-display text-lg font-semibold leading-snug sm:text-xl">

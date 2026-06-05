@@ -30,26 +30,15 @@ function HeroPanel({ variant }: { variant: AuthSplitVariant }) {
       <div
         className={
           variant === "admin"
-            ? "absolute inset-0 bg-gradient-to-br from-surface-deep via-surface-brown to-surface-base"
-            : "absolute inset-0 bg-gradient-to-br from-surface-brown via-[#120804] to-surface-base"
+            ? "absolute inset-0 bg-surface-deep"
+            : "absolute inset-0 bg-surface-base"
         }
       />
-      <div className="pointer-events-none absolute inset-0 bg-gradient-hero opacity-90" />
-      <div
-        className="pointer-events-none absolute inset-0 opacity-[0.07]"
-        style={{
-          backgroundImage:
-            "linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)",
-          backgroundSize: "48px 48px",
-        }}
-      />
-      <div className="pointer-events-none absolute -left-32 top-1/4 h-[420px] w-[420px] rounded-full bg-primary/20 blur-[100px]" />
-      <div className="pointer-events-none absolute bottom-0 right-0 h-[380px] w-[380px] rounded-full bg-primary-hover/15 blur-[90px]" />
-
+      <div className="pointer-events-none absolute inset-0 border-l border-line/80" />
       <div className="relative z-10 flex w-full flex-col justify-center px-10 py-16 xl:px-16">
         <p className="max-w-md font-display text-2xl font-semibold leading-snug text-content xl:text-3xl">
           Atenda, venda e organize com{" "}
-          <span className="bg-gradient-primary bg-clip-text text-transparent">IA no WhatsApp</span>.
+          <span className="text-primary">IA no WhatsApp</span>.
         </p>
         <p className="mt-4 max-w-sm text-sm leading-relaxed text-content-muted">
           CRM Kanban e Agenda integrados — treinamento com especialistas para o seu segmento.
@@ -57,7 +46,7 @@ function HeroPanel({ variant }: { variant: AuthSplitVariant }) {
 
         <div className="relative mt-14 h-[min(52vh,420px)] w-full max-w-lg">
           <motion.div
-            className="absolute left-0 top-0 w-[58%] rounded-2xl border border-line/50 bg-surface-card/35 p-4 shadow-card-hover-glow backdrop-blur-md"
+            className="absolute left-0 top-0 w-[58%] rounded-2xl border border-line/80 bg-surface-card p-4"
             initial={reducedMotion ? false : { opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: reducedMotion ? 0 : 0.5, delay: reducedMotion ? 0 : 0.1 }}
@@ -79,7 +68,7 @@ function HeroPanel({ variant }: { variant: AuthSplitVariant }) {
               {[1, 2].map((i) => (
                 <div
                   key={i}
-                  className="h-2 rounded-full bg-gradient-to-r from-primary/80 to-primary-hover/40"
+                  className="h-2 rounded-full bg-primary/70"
                   style={{ width: `${78 - i * 12}%` }}
                 />
               ))}
@@ -87,7 +76,7 @@ function HeroPanel({ variant }: { variant: AuthSplitVariant }) {
           </motion.div>
 
           <motion.div
-            className="absolute right-0 top-[12%] w-[48%] rounded-2xl border border-primary/25 bg-surface-deep/60 p-4 backdrop-blur-md"
+            className="absolute right-0 top-[12%] w-[48%] rounded-2xl border border-primary/25 bg-surface-deep p-4"
             initial={reducedMotion ? false : { opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: reducedMotion ? 0 : 0.5, delay: reducedMotion ? 0 : 0.2 }}
@@ -96,7 +85,7 @@ function HeroPanel({ variant }: { variant: AuthSplitVariant }) {
               {[40, 65, 45, 80, 55, 90, 48].map((h, i) => (
                 <div
                   key={i}
-                  className="w-2.5 rounded-sm bg-gradient-to-t from-primary to-primary-hover/60"
+                  className="w-2.5 rounded-sm bg-primary"
                   style={{ height: `${h}px` }}
                 />
               ))}
@@ -105,7 +94,7 @@ function HeroPanel({ variant }: { variant: AuthSplitVariant }) {
           </motion.div>
 
           <motion.div
-            className="absolute bottom-[6%] left-[8%] w-[54%] rounded-2xl border border-line/50 bg-surface-card/40 p-4 backdrop-blur-md"
+            className="absolute bottom-[6%] left-[8%] w-[54%] rounded-2xl border border-line/80 bg-surface-card p-4"
             initial={reducedMotion ? false : { opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: reducedMotion ? 0 : 0.5, delay: reducedMotion ? 0 : 0.28 }}
@@ -123,7 +112,7 @@ function HeroPanel({ variant }: { variant: AuthSplitVariant }) {
           </motion.div>
 
           <motion.div
-            className="absolute bottom-[18%] right-[4%] flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/30 bg-primary/15 text-primary shadow-primary-glow"
+            className="absolute bottom-[18%] right-[4%] flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/30 bg-primary/10 text-primary"
             animate={reducedMotion ? false : { y: [0, -6, 0] }}
             transition={
               reducedMotion
@@ -160,8 +149,8 @@ export function AuthSplitLayout({
   return (
     <div className="min-h-dvh bg-surface-base pb-safe font-sans text-content">
       <div className="flex min-h-dvh flex-col lg:flex-row">
-        <section className="relative flex flex-1 flex-col justify-center border-line/40 px-4 py-10 sm:px-8 lg:max-w-[min(100%,540px)] lg:flex-none lg:border-r lg:bg-surface-deep lg:px-12 lg:shadow-[inset_-1px_0_0_0_rgb(var(--color-line)/0.4)] xl:px-16">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/35 to-transparent lg:hidden" />
+        <section className="relative flex flex-1 flex-col justify-center border-line/40 px-4 py-10 sm:px-8 lg:max-w-[min(100%,540px)] lg:flex-none lg:border-r lg:bg-surface-deep lg:px-12 xl:px-16">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-primary/35 lg:hidden" />
 
           <div className="absolute right-4 top-4 sm:right-6 sm:top-6 lg:right-8 lg:top-8">
             <Link
@@ -206,10 +195,9 @@ export function AuthSplitLayout({
             <div className="mt-8">{children}</div>
 
             <div
-              className="relative mt-10 overflow-hidden rounded-2xl border border-line/60 bg-surface-card/30 p-5 shadow-elevation-1 lg:hidden"
+              className="relative mt-10 overflow-hidden rounded-2xl border border-line/80 bg-surface-card p-5 lg:hidden"
               aria-hidden
             >
-              <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/12 via-transparent to-primary-hover/10" />
               <p className="relative font-display text-sm font-semibold tracking-tight text-content">
                 CRM Kanban + <span className="text-primary">IA</span> no WhatsApp
               </p>

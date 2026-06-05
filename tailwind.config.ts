@@ -58,36 +58,36 @@ const config: Config = {
         sans: ["var(--font-inter)", "system-ui", "sans-serif"],
       },
       backgroundImage: {
-        "gradient-primary": "linear-gradient(135deg, #f24400, #ff6a00)",
-        "gradient-dark": "linear-gradient(135deg, #1a0a00, #0f0f0f)",
-        "gradient-highlight": "linear-gradient(135deg, #f24400, #ff8c00)",
-        "gradient-glow": "radial-gradient(circle, rgba(242,68,0,0.2), transparent 70%)",
+        "gradient-primary": "linear-gradient(135deg, #F24400, #F24400)",
+        "gradient-dark": "linear-gradient(135deg, #0E1D29, #0E1D29)",
+        "gradient-highlight": "linear-gradient(135deg, #F24400, #F24400)",
+        "gradient-glow": "linear-gradient(135deg, transparent, transparent)",
         "gradient-hero":
           "radial-gradient(circle at 50% 20%, rgba(242,68,0,0.12) 0%, transparent 55%), radial-gradient(circle at 90% 0%, rgba(255,106,0,0.08) 0%, transparent 45%)",
       },
       boxShadow: {
-        "cta-glow": "0 0 30px rgba(242, 68, 0, 0.45), 0 4px 15px rgba(242, 68, 0, 0.28)",
-        "card-hover-glow": "0 0 20px rgba(242, 68, 0, 0.15)",
-        "primary-glow": "0 0 20px rgba(242, 68, 0, 0.4)",
+        "cta-glow": "none",
+        "card-hover-glow": "none",
+        "primary-glow": "none",
         /**
          * Escala neutra de elevação (inspiração Linear/Stripe). Mantém profundidade em temas claro/escuro
          * sem recorrer a `drop-shadow` de laranja, que poluía o look.
          */
-        "elevation-1": "0 1px 2px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.06)",
-        "elevation-2": "0 4px 12px rgba(0,0,0,0.10), 0 2px 4px rgba(0,0,0,0.06)",
-        "elevation-3": "0 12px 28px rgba(0,0,0,0.16), 0 4px 10px rgba(0,0,0,0.08)",
+        "elevation-1": "none",
+        "elevation-2": "none",
+        "elevation-3": "none",
         "inset-hairline": "inset 0 0 0 1px rgb(var(--color-line) / 0.65)",
         "focus-ring": "0 0 0 2px rgb(var(--color-surface-base)), 0 0 0 4px rgba(242,68,0,0.55)",
       },
       borderRadius: {
-        "2.5xl": "1.25rem",
-        /** Tailwind defaults restored — public areas (landing, login, checkout) rely on these */
+        "2.5xl": "0.75rem",
+        /** Radius oficial do DS: reduzido e consistente também nas áreas públicas. */
         sm:    "0.125rem",
-        md:    "0.375rem",
-        lg:    "0.5rem",
-        xl:    "0.75rem",
-        "2xl": "1rem",
-        "3xl": "1.5rem",
+        md:    "0.225rem",
+        lg:    "0.3rem",
+        xl:    "0.45rem",
+        "2xl": "0.6rem",
+        "3xl": "0.9rem",
         /** DS panel radii (40% reduction) — use ONLY inside /dashboard and /admin */
         "panel-sm":  "0.075rem",
         "panel-md":  "0.225rem",

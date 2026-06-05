@@ -15,23 +15,23 @@ import { PANEL_BUTTON_SIZES } from "@/lib/panel-component-tokens";
 
 const variants = {
   primary:
-    "bg-primary text-white hover:bg-primary-hover active:scale-[0.98]",
+    "bg-primary text-white hover:bg-primary-hover active:bg-primary-hover",
   gradient:
-    "bg-gradient-primary text-white hover:-translate-y-[0.5px] active:translate-y-0 active:scale-[0.98]",
+    "bg-primary text-white hover:bg-primary-hover active:bg-primary-hover",
   secondary:
-    "border border-primary/30 bg-primary/[0.08] text-primary hover:bg-primary/[0.14] hover:border-primary/45 active:scale-[0.98]",
+    "border border-primary/30 bg-primary/[0.08] text-primary hover:bg-primary/[0.14] hover:border-primary/45",
   navy:
-    "bg-brand-secondary text-white hover:bg-brand-dark active:scale-[0.98]",
+    "bg-brand-secondary text-white hover:bg-brand-dark",
   outline:
-    "border border-line/90 bg-surface-card/40 text-content-secondary hover:text-content hover:border-line hover:bg-surface-elevated/50 active:scale-[0.98]",
+    "border border-line/90 bg-surface-card text-content-secondary hover:text-content hover:border-line hover:bg-surface-elevated/50",
   ghost:
-    "text-content-secondary hover:text-content hover:bg-surface-elevated/40 active:bg-surface-elevated/55 active:scale-[0.98]",
+    "text-content-secondary hover:text-content hover:bg-surface-elevated/40 active:bg-surface-elevated/55",
   link:
     "bg-transparent text-primary hover:underline p-0 h-auto font-semibold",
   success:
-    "bg-success text-white hover:bg-[#008a44] active:scale-[0.98]",
+    "bg-success text-white hover:brightness-95",
   danger:
-    "bg-error text-white hover:bg-rose-600 active:scale-[0.98]",
+    "bg-error text-white hover:bg-rose-600",
 } as const;
 
 export interface PanelButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -57,7 +57,7 @@ export function PanelButton({
     <button
       type={type}
       className={cn(
-        "inline-flex touch-manipulation items-center justify-center gap-2 font-medium transition duration-200 ease-out will-change-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base disabled:opacity-50 disabled:pointer-events-none",
+        "inline-flex touch-manipulation items-center justify-center gap-2 font-medium transition-colors duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base disabled:opacity-50 disabled:pointer-events-none",
         !isLink && "rounded-xl",
         !isLink && PANEL_BUTTON_SIZES[size],
         variants[variant],

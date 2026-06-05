@@ -8,8 +8,7 @@ export function BlogArticleBody({ post }: { post: BlogPost }) {
   return (
     <article className="bg-surface-base">
       <header className="relative overflow-hidden border-b border-line/80">
-        <div className="absolute inset-0 bg-gradient-hero" aria-hidden />
-        <div className="absolute inset-x-0 top-0 h-64 bg-[radial-gradient(circle_at_50%_0%,rgba(242,68,0,0.2),transparent_60%)]" aria-hidden />
+        <div className="absolute inset-0 bg-surface-base" aria-hidden />
         <div className="relative mx-auto grid max-w-6xl gap-10 px-4 py-14 sm:px-6 lg:grid-cols-[1.02fr_0.98fr] lg:items-center lg:px-8 lg:py-20">
           <div>
             <Link href="/blog" className="landing-link-grow text-sm font-semibold text-primary">
@@ -28,7 +27,7 @@ export function BlogArticleBody({ post }: { post: BlogPost }) {
             </h1>
             <p className="mt-5 max-w-2xl text-lg leading-8 text-content-secondary">{post.subtitle}</p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Link href="#cta" className="inline-flex min-h-[48px] items-center justify-center rounded-xl bg-gradient-primary px-6 text-base font-semibold text-white shadow-cta-glow transition hover:-translate-y-0.5">
+              <Link href="#cta" className="inline-flex min-h-[48px] items-center justify-center rounded-xl bg-primary px-6 text-base font-semibold text-white transition-colors hover:bg-primary-hover">
                 Quero aplicar no meu negócio
               </Link>
               <Link href="#resposta-rapida" className="inline-flex min-h-[48px] items-center justify-center rounded-xl border border-line/90 px-6 text-base font-semibold text-content-secondary transition hover:border-primary/40 hover:text-primary">
@@ -36,7 +35,7 @@ export function BlogArticleBody({ post }: { post: BlogPost }) {
               </Link>
             </div>
           </div>
-          <div className="overflow-hidden rounded-[2rem] border border-line/80 bg-surface-card shadow-elevation-3">
+          <div className="overflow-hidden rounded-2xl border border-line/80 bg-surface-card">
             <BlogIllustration post={post} variant="hero" alt={`Hero visual sobre ${post.niche}`} priority />
           </div>
         </div>
@@ -44,13 +43,13 @@ export function BlogArticleBody({ post }: { post: BlogPost }) {
 
       <main className="mx-auto grid max-w-6xl gap-10 px-4 py-12 sm:px-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:px-8">
         <div className="min-w-0 space-y-10">
-          <section id="resposta-rapida" className="rounded-3xl border border-primary/30 bg-primary/10 p-6 sm:p-8">
+          <section id="resposta-rapida" className="rounded-2xl border border-primary/30 bg-primary/10 p-6 sm:p-8">
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">Resposta rápida (AEO)</p>
             <h2 className="mt-3 font-display text-2xl font-bold text-content">Qual é a melhor estratégia?</h2>
             <p className="mt-4 text-lg leading-8 text-content-secondary">{post.quickAnswer}</p>
           </section>
 
-          <section className="rounded-3xl border border-line/80 bg-surface-card/75 p-6 sm:p-8">
+          <section className="rounded-2xl border border-line/80 bg-surface-card p-6 sm:p-8">
             <h2 className="font-display text-2xl font-bold text-content">TL;DR</h2>
             <ul className="mt-5 grid gap-3">
               {post.tldr.map((item) => (
@@ -72,7 +71,7 @@ export function BlogArticleBody({ post }: { post: BlogPost }) {
                 ))}
               </div>
               {section.bullets ? (
-                <ul className="grid gap-3 rounded-3xl border border-line/80 bg-surface-card/60 p-5 sm:grid-cols-2">
+                <ul className="grid gap-3 rounded-2xl border border-line/80 bg-surface-card p-5 sm:grid-cols-2">
                   {section.bullets.map((bullet) => (
                     <li key={bullet} className="flex gap-3 text-sm leading-6 text-content-secondary">
                       <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-primary" aria-hidden />
@@ -84,7 +83,7 @@ export function BlogArticleBody({ post }: { post: BlogPost }) {
               {section.subsections ? (
                 <div className="grid gap-4 sm:grid-cols-2">
                   {section.subsections.map((subsection) => (
-                    <div key={subsection.title} className="rounded-3xl border border-line/80 bg-surface-card/60 p-5">
+                    <div key={subsection.title} className="rounded-2xl border border-line/80 bg-surface-card p-5">
                       <h3 className="font-display text-xl font-bold text-content">{subsection.title}</h3>
                       <p className="mt-3 text-sm leading-6 text-content-secondary">{subsection.body}</p>
                     </div>
@@ -92,7 +91,7 @@ export function BlogArticleBody({ post }: { post: BlogPost }) {
                 </div>
               ) : null}
               {section.image ? (
-                <figure className="overflow-hidden rounded-3xl border border-line/80 bg-surface-card shadow-elevation-2">
+                <figure className="overflow-hidden rounded-2xl border border-line/80 bg-surface-card">
                   <BlogIllustration post={post} variant={section.image.variant} alt={section.image.alt} />
                   <figcaption className="border-t border-line/80 px-5 py-3 text-sm text-content-muted">{section.image.caption}</figcaption>
                 </figure>
@@ -101,12 +100,12 @@ export function BlogArticleBody({ post }: { post: BlogPost }) {
             </section>
           ))}
 
-          <section className="rounded-3xl border border-line/80 bg-surface-card/75 p-6 sm:p-8">
+          <section className="rounded-2xl border border-line/80 bg-surface-card p-6 sm:p-8">
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">Exemplos reais</p>
             <h2 className="mt-3 font-display text-3xl font-bold text-content">Como isso aparece no dia a dia</h2>
             <div className="mt-6 grid gap-4">
               {post.examples.map((example) => (
-                <div key={example} className="rounded-2xl border border-line/80 bg-black/25 p-4 text-content-secondary">
+                <div key={example} className="rounded-2xl border border-line/80 bg-surface-deep p-4 text-content-secondary">
                   {example}
                 </div>
               ))}
@@ -114,7 +113,7 @@ export function BlogArticleBody({ post }: { post: BlogPost }) {
           </section>
 
           <section className="grid gap-5 lg:grid-cols-2">
-            <div className="rounded-3xl border border-line/80 bg-surface-card/75 p-6">
+            <div className="rounded-2xl border border-line/80 bg-surface-card p-6">
               <h2 className="font-display text-2xl font-bold text-content">Benefícios claros</h2>
               <ul className="mt-5 space-y-3">
                 {post.benefits.map((benefit) => (
@@ -125,17 +124,17 @@ export function BlogArticleBody({ post }: { post: BlogPost }) {
                 ))}
               </ul>
             </div>
-            <div className="rounded-3xl border border-line/80 bg-surface-card/75 p-6">
+            <div className="rounded-2xl border border-line/80 bg-surface-card p-6">
               <h2 className="font-display text-2xl font-bold text-content">Bloco de autoridade</h2>
               <p className="mt-5 text-sm leading-7 text-content-secondary">{post.authority}</p>
             </div>
           </section>
 
-          <section className="rounded-3xl border border-line/80 bg-surface-card/75 p-6 sm:p-8">
+          <section className="rounded-2xl border border-line/80 bg-surface-card p-6 sm:p-8">
             <h2 className="font-display text-3xl font-bold text-content">Objeções comuns</h2>
             <div className="mt-6 space-y-4">
               {post.objections.map((item) => (
-                <div key={item.objection} className="rounded-2xl border border-line/80 bg-black/25 p-5">
+                <div key={item.objection} className="rounded-2xl border border-line/80 bg-surface-deep p-5">
                   <h3 className="font-display text-lg font-bold text-content">{item.objection}</h3>
                   <p className="mt-2 text-sm leading-6 text-content-secondary">{item.answer}</p>
                 </div>
@@ -143,7 +142,7 @@ export function BlogArticleBody({ post }: { post: BlogPost }) {
             </div>
           </section>
 
-          <section className="rounded-3xl border border-line/80 bg-surface-card/75 p-6 sm:p-8">
+          <section className="rounded-2xl border border-line/80 bg-surface-card p-6 sm:p-8">
             <h2 className="font-display text-3xl font-bold text-content">FAQ otimizado</h2>
             <div className="mt-6 divide-y divide-line/80">
               {post.faqs.map((faq) => (
@@ -157,7 +156,7 @@ export function BlogArticleBody({ post }: { post: BlogPost }) {
             </div>
           </section>
 
-          <section className="rounded-3xl border border-line/80 bg-surface-card/75 p-6 sm:p-8">
+          <section className="rounded-2xl border border-line/80 bg-surface-card p-6 sm:p-8">
             <h2 className="font-display text-3xl font-bold text-content">Conclusão</h2>
             <p className="mt-4 text-lg leading-8 text-content-secondary">{post.conclusion}</p>
           </section>
@@ -170,7 +169,7 @@ export function BlogArticleBody({ post }: { post: BlogPost }) {
 
         <aside className="hidden lg:block">
           <div className="sticky top-28 space-y-5">
-            <div className="rounded-3xl border border-line/80 bg-surface-card/75 p-5">
+            <div className="rounded-2xl border border-line/80 bg-surface-card p-5">
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">Neste guia</p>
               <nav className="mt-4 space-y-2 text-sm text-content-secondary" aria-label="Sumário do artigo">
                 <a className="block transition hover:text-primary" href="#resposta-rapida">
@@ -183,7 +182,7 @@ export function BlogArticleBody({ post }: { post: BlogPost }) {
                 ))}
               </nav>
             </div>
-            <div className="rounded-3xl border border-primary/30 bg-primary/10 p-5">
+            <div className="rounded-2xl border border-primary/30 bg-primary/10 p-5">
               <p className="text-sm font-semibold text-primary">Resumo comercial</p>
               <p className="mt-3 text-sm leading-6 text-content-secondary">
                 Chatbot qualifica, CRM Kanban organiza, automação faz follow-up e o atendimento humano fecha com contexto.

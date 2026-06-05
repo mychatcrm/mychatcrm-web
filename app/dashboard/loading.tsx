@@ -13,16 +13,16 @@ export default function DashboardLoading() {
         {Array.from({ length: 4 }).map((_, i) => (
           <div
             key={i}
-            className="h-[88px] rounded-2xl border border-line/50 bg-surface-card/60"
+            className="h-[88px] rounded-xl border border-line/50 bg-surface-card/60"
           />
         ))}
       </div>
       {/* Bloco principal */}
-      <div className="h-[320px] rounded-2xl border border-line/50 bg-surface-card/60" />
+      <div className="h-[320px] rounded-xl border border-line/50 bg-surface-card/60" />
       {/* Bloco secundário */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="h-[200px] rounded-2xl border border-line/50 bg-surface-card/60" />
-        <div className="h-[200px] rounded-2xl border border-line/50 bg-surface-card/60" />
+        <div className="h-[200px] rounded-xl border border-line/50 bg-surface-card/60" />
+        <div className="h-[200px] rounded-xl border border-line/50 bg-surface-card/60" />
       </div>
     </div>
   );

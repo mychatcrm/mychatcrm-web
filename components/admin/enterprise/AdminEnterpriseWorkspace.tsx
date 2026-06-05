@@ -146,12 +146,9 @@ export function AdminEnterpriseWorkspace() {
       <div
         className={cn(
           "relative overflow-hidden rounded-xl border p-6 sm:p-8",
-          isLight
-            ? "border-slate-200 bg-gradient-to-br from-slate-50 via-white to-orange-50/40"
-            : "border-line bg-gradient-to-br from-surface-deep via-surface-card to-surface-deep/80",
+          isLight ? "border-line bg-surface-card" : "border-line bg-surface-card",
         )}
       >
-        <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-primary/10 blur-3xl" aria-hidden />
         <div className="relative flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 space-y-2">
             <div className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-primary">
@@ -187,7 +184,7 @@ export function AdminEnterpriseWorkspace() {
       ) : null}
 
       {error && !modalOpen ? (
-        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">{error}</div>
+        <div className="rounded-xl border border-error/30 bg-error/10 px-4 py-3 text-sm text-error">{error}</div>
       ) : null}
 
       <section className="rounded-xl border border-line bg-surface-card p-5 sm:p-6">

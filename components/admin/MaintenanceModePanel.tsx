@@ -105,7 +105,7 @@ export function MaintenanceModePanel() {
         "rounded-xl border p-5 sm:p-6",
         isLight
           ? "border-slate-200/80 bg-surface-deep text-content"
-          : "border-line/80 bg-surface-card/80 backdrop-blur-sm",
+          : "border-line/80 bg-surface-card text-content",
       )}
     >
       <div className="mb-5">

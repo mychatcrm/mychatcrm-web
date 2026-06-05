@@ -67,8 +67,7 @@ export default async function PlanosPage({ params }: Props) {
       ))}
       <SalesSiteHeader />
       <main className="bg-surface-base pb-20">
-        <section className="relative overflow-hidden border-b border-line bg-gradient-to-b from-surface-brown/40 to-surface-base px-4 py-16 sm:px-6 lg:px-8">
-          <div className="pointer-events-none absolute left-1/2 top-0 h-[320px] w-[min(100vw,720px)] -translate-x-1/2 rounded-full bg-primary/10 blur-[100px]" />
+        <section className="relative overflow-hidden border-b border-line bg-surface-base px-4 py-16 sm:px-6 lg:px-8">
           <div className="relative mx-auto max-w-3xl text-center">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">Vendas · Assinaturas</p>
             <h1 className="mt-3 font-display text-3xl font-bold tracking-tight text-content sm:text-4xl lg:text-5xl">
@@ -119,7 +118,7 @@ export default async function PlanosPage({ params }: Props) {
 
         <section
           id="especialista"
-          className="mx-auto mt-20 max-w-6xl scroll-mt-28 rounded-3xl border border-line bg-surface-card px-6 py-12 sm:px-10 lg:px-16"
+          className="mx-auto mt-20 max-w-6xl scroll-mt-28 rounded-2xl border border-line bg-surface-card px-6 py-12 sm:px-10 lg:px-16"
         >
           <div className="mx-auto max-w-2xl text-center">
             <h2 className="font-display text-2xl font-bold text-content">Fale com um especialista</h2>
@@ -131,7 +130,7 @@ export default async function PlanosPage({ params }: Props) {
                 href={whatsappHandoffHref()}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex min-h-[48px] items-center justify-center rounded-xl bg-gradient-primary px-6 text-base font-semibold text-white shadow-primary-glow transition hover:shadow-cta-glow"
+                className="inline-flex min-h-[48px] items-center justify-center rounded-xl bg-primary px-6 text-base font-semibold text-white transition-colors hover:bg-primary-hover"
               >
                 Conversar no WhatsApp
               </a>

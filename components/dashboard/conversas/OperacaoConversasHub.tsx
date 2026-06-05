@@ -64,27 +64,25 @@ const EmojiPicker = dynamic(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WhatsApp Web colour palette
+// MyChatCRM panel palette
 // ─────────────────────────────────────────────────────────────────────────────
 const W = {
-  bgApp:      "#111b21",
-  bgSidebar:  "#111b21",
-  bgHeader:   "#202c33",
-  bgBorder:   "#2a3942",
-  bgInput:    "#2a3942",
-  bgChat:     "#0b141a",
-  bubbleIn:   "#202c33",
-  bubbleOut:  "#005c4b",
-  text:       "#e9edef",
-  muted:      "#8696a0",
-  green:      "#00a884",
+  bgApp:      "#F2F2F2",
+  bgSidebar:  "#FFFFFF",
+  bgHeader:   "#FFFFFF",
+  bgBorder:   "#E2E8F0",
+  bgInput:    "#F8FAFC",
+  bgChat:     "#F2F2F2",
+  bubbleIn:   "#FFFFFF",
+  bubbleOut:  "#F24400",
+  text:       "#09090B",
+  muted:      "#71717A",
+  green:      "#F24400",
 } as const;
 
-// Chat background: dark base + subtle dot pattern
+// Chat background: flat surface from the design system.
 const CHAT_BG_STYLE: React.CSSProperties = {
   background: W.bgChat,
-  backgroundImage:
-    "url(\"data:image/svg+xml,%3Csvg width='20' height='20' viewBox='0 0 20 20' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='1' cy='1' r='1' fill='%23ffffff' fill-opacity='0.03'/%3E%3C/svg%3E\")",
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -745,6 +743,8 @@ function MessageBubble({
     .replace(/\[Documento\][^—]*/g, "")
     .trim();
   const hasMedia = Boolean(msg.media_url) && (msg.kind === "image" || msg.kind === "video");
+  const messageTextColor = out ? "#FFFFFF" : W.text;
+  const messageMutedColor = out ? "rgba(255,255,255,0.72)" : W.muted;
 
   // ── Spacer dinâmico para a técnica WhatsApp ──────────────────────────────
   // O spacer invisível no final do texto reserva espaço para o timestamp
@@ -765,12 +765,12 @@ function MessageBubble({
   const TimestampRow = (
     <div style={{ display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
       {showsIA && (
-        <span style={{ fontSize: 10, color: W.muted, opacity: 0.8 }}>🤖 IA</span>
+        <span style={{ fontSize: 10, color: messageMutedColor, opacity: 0.8 }}>🤖 IA</span>
       )}
       {showsHuman && (
-        <span style={{ fontSize: 10, color: W.muted, opacity: 0.8 }}>👤 Humano</span>
+        <span style={{ fontSize: 10, color: messageMutedColor, opacity: 0.8 }}>👤 Humano</span>
       )}
-      <span style={{ fontSize: 11, color: W.muted, whiteSpace: "nowrap" }}>
+      <span style={{ fontSize: 11, color: messageMutedColor, whiteSpace: "nowrap" }}>
         {tsText}
       </span>
       {out && (
@@ -778,8 +778,8 @@ function MessageBubble({
           <span style={{ fontSize: 11, color: "#f87171" }} title="Falha ao enviar">!</span>
         ) : msg.send_status === "sending" ? (
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-            <circle cx="12" cy="12" r="9" stroke={W.muted} strokeWidth="2" strokeOpacity="0.35" />
-            <path d="M12 3a9 9 0 0 1 9 9" stroke={W.muted} strokeWidth="2" strokeLinecap="round" />
+            <circle cx="12" cy="12" r="9" stroke={messageMutedColor} strokeWidth="2" strokeOpacity="0.35" />
+            <path d="M12 3a9 9 0 0 1 9 9" stroke={messageMutedColor} strokeWidth="2" strokeLinecap="round" />
           </svg>
         ) : (
         // Double tick ✓✓
@@ -798,9 +798,9 @@ function MessageBubble({
         style={{
           maxWidth: "85%",
           background: out ? W.bubbleOut : W.bubbleIn,
-          borderRadius: out ? "8px 8px 0 8px" : "8px 8px 8px 0",
+          borderRadius: out ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
           padding: hasMedia ? "4px 4px 0 4px" : "7px 10px 5px 10px",
-          boxShadow: "0 1px 1px rgba(0,0,0,0.25)",
+          border: out ? `1px solid ${W.green}` : `1px solid ${W.bgBorder}`,
           position: "relative",
         }}
       >
@@ -842,7 +842,7 @@ function MessageBubble({
         ) : msg.kind === "document" ? (
           <>
             <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "2px 2px 0" }}>
-              <span style={{ fontSize: 13, color: W.text }}>{msg.content}</span>
+              <span style={{ fontSize: 13, color: messageTextColor }}>{msg.content}</span>
               {msg.media_url ? (
                 <a
                   href={msg.media_url}
@@ -865,7 +865,7 @@ function MessageBubble({
                 margin: 0,
                 fontSize: 14.2,
                 lineHeight: 1.55,
-                color: W.text,
+                color: messageTextColor,
                 whiteSpace: "pre-wrap",
                 wordBreak: "break-word",
               }}
@@ -954,8 +954,8 @@ function ConversationItem({
         // da conversa ativa — caso contrário o usuário não consegue ver o
         // que marcou.
         background: selectionMode
-          ? (checked ? "rgba(37, 211, 102, 0.18)" : hovered ? "#1f2c34" : "transparent")
-          : (selected ? W.bgBorder : hovered ? "#1f2c34" : "transparent"),
+          ? (checked ? "rgba(242, 68, 0, 0.12)" : hovered ? "#F8FAFC" : "transparent")
+          : (selected ? "#F8FAFC" : hovered ? "#F8FAFC" : "transparent"),
         borderBottom: `1px solid ${W.bgBorder}`,
         transition: "background 0.1s",
         alignItems: "center",
@@ -970,7 +970,7 @@ function ConversationItem({
             width: 20,
             height: 20,
             borderRadius: "50%",
-            border: `2px solid ${checked ? W.green : "rgba(255,255,255,0.35)"}`,
+            border: `2px solid ${checked ? W.green : W.bgBorder}`,
             background: checked ? W.green : "transparent",
             display: "flex",
             alignItems: "center",
@@ -1029,7 +1029,7 @@ function ConversationItem({
         {/* Row 1.5: número abaixo do nome (só quando há nome) */}
         {showPhoneSubtitle && (
           <span style={{
-            color: "#8696a0", fontSize: 12,
+            color: W.muted, fontSize: 12,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
           }}>
             {phone}
@@ -1051,8 +1051,8 @@ function ConversationItem({
               fontWeight: 700,
               letterSpacing: 0.2,
               textTransform: "uppercase",
-              color: conv.conversation_mode === "automation" ? "#53bdeb" : conv.conversation_mode === "waiting_human" ? "#f0b429" : "#25d366",
-              border: `1px solid ${conv.conversation_mode === "automation" ? "rgba(83,189,235,0.35)" : conv.conversation_mode === "waiting_human" ? "rgba(240,180,41,0.35)" : "rgba(37,211,102,0.35)"}`,
+              color: conv.conversation_mode === "automation" ? W.green : conv.conversation_mode === "waiting_human" ? "#B45309" : "#0E1D29",
+              border: `1px solid ${conv.conversation_mode === "automation" ? "rgba(242,68,0,0.35)" : conv.conversation_mode === "waiting_human" ? "rgba(180,83,9,0.35)" : "rgba(14,29,41,0.25)"}`,
               borderRadius: 999,
               padding: "2px 7px",
             }}>
@@ -1172,7 +1172,6 @@ function ConfirmDeleteModal({
           borderRadius: 14,
           background: W.bgHeader,
           border: `1px solid ${W.bgBorder}`,
-          boxShadow: "0 18px 50px rgba(0,0,0,0.55)",
           padding: 20,
         }}
         onClick={(e) => e.stopPropagation()}
@@ -2130,7 +2129,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
         display: "flex",
         background: W.bgApp,
         overflow: "hidden",
-        fontFamily: "'Segoe UI', system-ui, sans-serif",
+        fontFamily: "Inter, system-ui, sans-serif",
         zIndex: 1,
       }}
     >
@@ -2154,7 +2153,6 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
             style={{
               maxWidth: "min(400px, 90vw)", maxHeight: "min(400px, 90vh)",
               borderRadius: "50%", objectFit: "cover",
-              boxShadow: "0 8px 40px rgba(0,0,0,0.8)",
             }}
           />
           <button
@@ -2234,7 +2232,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
           title="Assumir atendimento desta conversa?"
           description="A automação será pausada e você poderá responder manualmente. O evento ficará registrado no histórico do CRM."
           confirmLabel="Assumir atendimento"
-          confirmColor="#00a884"
+          confirmColor={W.green}
           busyLabel="Assumindo…"
           busy={operationBusy}
           onCancel={() => {
@@ -2249,7 +2247,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
           title="Retornar conversa para automação?"
           description="O agente IA voltará a responder automaticamente e o envio manual será bloqueado."
           confirmLabel="Retornar para automação"
-          confirmColor="#00a884"
+          confirmColor={W.green}
           busyLabel="Retornando…"
           busy={operationBusy}
           onCancel={() => {
@@ -2286,7 +2284,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 height: 34,
                 borderRadius: "50%",
                 border: "none",
-                background: sidebarMenuOpen ? "rgba(255,255,255,0.08)" : "transparent",
+                background: sidebarMenuOpen ? "rgba(242,68,0,0.08)" : "transparent",
                 color: W.muted,
                 cursor: "pointer",
                 fontSize: 20,
@@ -2306,9 +2304,8 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                   minWidth: 214,
                   borderRadius: 8,
                   overflow: "hidden",
-                  background: "#233138",
+                  background: W.bgHeader,
                   border: `1px solid ${W.bgBorder}`,
-                  boxShadow: "0 10px 28px rgba(0,0,0,0.35)",
                 }}
               >
                 <button
@@ -2369,7 +2366,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
               justifyContent: "space-between",
               gap: 10,
               padding: "10px 12px",
-              background: "#1f2c34",
+              background: "#F8FAFC",
               borderBottom: `1px solid ${W.bgBorder}`,
               flexShrink: 0,
             }}
@@ -2403,7 +2400,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 disabled={deleteBusy || selectedForDeletion.size === 0}
                 style={{
                   border: "none",
-                  background: "#d64d4d",
+                  background: "#DC2626",
                   color: "white",
                   borderRadius: 999,
                   padding: "6px 13px",
@@ -2475,9 +2472,9 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 onClick={() => setInboxTab(id)}
                 style={{
                   flex: 1,
-                  border: `1px solid ${inboxTab === id ? "rgba(0,168,132,0.45)" : W.bgBorder}`,
-                  background: inboxTab === id ? "rgba(0,168,132,0.15)" : "transparent",
-                  color: inboxTab === id ? "#25d366" : W.muted,
+                  border: `1px solid ${inboxTab === id ? "rgba(242,68,0,0.45)" : W.bgBorder}`,
+                  background: inboxTab === id ? "rgba(242,68,0,0.1)" : "transparent",
+                  color: inboxTab === id ? W.green : W.muted,
                   borderRadius: 999,
                   padding: "6px 8px",
                   fontSize: 11.5,
@@ -2555,7 +2552,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 width: 88,
                 height: 88,
                 borderRadius: "50%",
-                background: "#1f2c34",
+                background: "#FFFFFF",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -2653,13 +2650,13 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {headerLabel}
                       </span>
-                      <svg viewBox="0 0 24 24" width="13" height="13" fill="#25D366" style={{ flexShrink: 0, opacity: 0.85 }}>
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill={W.green} style={{ flexShrink: 0, opacity: 0.85 }}>
                         <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
                         <path d="M12 0C5.373 0 0 5.373 0 12c0 2.122.558 4.116 1.535 5.845L.057 23.57a.75.75 0 0 0 .92.92l5.725-1.478A11.955 11.955 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-1.93 0-3.732-.51-5.29-1.4l-.38-.22-3.945 1.018 1.018-3.946-.22-.38A9.956 9.956 0 0 1 2 12C2 6.477 6.477 2 12 2s10 4.477 10 10-4.477 10-10 10z"/>
                       </svg>
                     </a>
                     {headerLabel !== phone && (
-                      <p style={{ margin: 0, fontSize: 12, color: "#8696a0" }}>{phone}</p>
+                      <p style={{ margin: 0, fontSize: 12, color: W.muted }}>{phone}</p>
                     )}
                   </div>
                 );
@@ -2681,9 +2678,9 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                   gap: 6,
                   padding: "6px 10px",
                   borderRadius: 16,
-                  border: `1px solid ${activeAutomationEnabled ? "rgba(0,168,132,0.45)" : "rgba(134,150,160,0.35)"}`,
-                  background: activeAutomationEnabled ? "rgba(0,168,132,0.15)" : "rgba(134,150,160,0.12)",
-                  color: activeAutomationEnabled ? "#25d366" : W.muted,
+                  border: `1px solid ${activeAutomationEnabled ? "rgba(242,68,0,0.45)" : "rgba(113,113,122,0.3)"}`,
+                  background: activeAutomationEnabled ? "rgba(242,68,0,0.1)" : "rgba(113,113,122,0.08)",
+                  color: activeAutomationEnabled ? W.green : W.muted,
                   fontSize: 12,
                   fontWeight: 600,
                   cursor: automationToggling ? "wait" : "pointer",
@@ -2695,7 +2692,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                     width: 8,
                     height: 8,
                     borderRadius: "50%",
-                    background: activeAutomationEnabled ? "#25d366" : "#8696a0",
+                    background: activeAutomationEnabled ? W.green : W.muted,
                     flexShrink: 0,
                   }}
                 />
@@ -2717,7 +2714,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                   setInConvMatchIdx(0);
                 }}
                 style={{
-                  background: inConvSearch ? "rgba(255,255,255,0.1)" : "none",
+                  background: inConvSearch ? "rgba(242,68,0,0.08)" : "none",
                   border: "none",
                   cursor: "pointer",
                   padding: 6,
@@ -2768,9 +2765,8 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                       minWidth: 188,
                       borderRadius: 8,
                       overflow: "hidden",
-                      background: "#233138",
-                      border: `1px solid ${W.bgBorder}`,
-                      boxShadow: "0 10px 28px rgba(0,0,0,0.35)",
+	                    background: W.bgHeader,
+	                      border: `1px solid ${W.bgBorder}`,
                     }}
                   >
                     <button
@@ -2784,7 +2780,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                         width: "100%",
                         border: "none",
                         background: "transparent",
-                        color: "#ffb4b4",
+	                        color: "#DC2626",
                         cursor: "pointer",
                         padding: "11px 13px",
                         textAlign: "left",
@@ -3007,14 +3003,13 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                       width: 38,
                       height: 38,
                       borderRadius: "50%",
-                      background: "#202c33",
-                      border: "none",
+	                      background: W.bgHeader,
+	                      border: `1px solid ${W.bgBorder}`,
                       cursor: "pointer",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      boxShadow: "0 2px 8px rgba(0,0,0,0.45)",
-                      color: W.text,
+	                      color: W.text,
                       transition: "opacity 0.15s",
                     }}
                   >
@@ -3033,14 +3028,13 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                       width: 38,
                       height: 38,
                       borderRadius: "50%",
-                      background: "#202c33",
-                      border: "none",
+	                      background: W.bgHeader,
+	                      border: `1px solid ${W.bgBorder}`,
                       cursor: "pointer",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      boxShadow: "0 2px 8px rgba(0,0,0,0.45)",
-                      color: W.text,
+	                      color: W.text,
                       transition: "opacity 0.15s",
                     }}
                   >
@@ -3400,7 +3394,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                         void handleSend();
                       }
                     }}
-                    className="placeholder:text-[#8696a0]"
+	                    className="placeholder:text-content-muted"
                     style={{
                       flex: 1,
                       minHeight: 42,

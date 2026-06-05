@@ -7,7 +7,7 @@ type BlogSearchFormProps = {
 
 export function BlogSearchForm({ query = "", niche = "", niches, total }: BlogSearchFormProps) {
   return (
-    <section className="rounded-3xl border border-line/80 bg-surface-card/80 p-4 shadow-elevation-2 sm:p-6" aria-labelledby="blog-search-title">
+    <section className="rounded-2xl border border-line/80 bg-surface-card p-4 sm:p-6" aria-labelledby="blog-search-title">
       <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">Busca editorial</p>
@@ -27,7 +27,7 @@ export function BlogSearchForm({ query = "", niche = "", niches, total }: BlogSe
           type="search"
           defaultValue={query}
           placeholder="Busque por clínica, CRM, automação, conversão..."
-          className="min-h-[48px] rounded-2xl border border-line bg-black/35 px-4 text-sm text-content placeholder:text-content-muted transition focus:border-primary"
+          className="min-h-[48px] rounded-xl border border-line bg-surface-deep px-4 text-sm text-content placeholder:text-content-muted transition focus:border-primary"
         />
         <label className="sr-only" htmlFor="niche">
           Filtrar por nicho
@@ -36,7 +36,7 @@ export function BlogSearchForm({ query = "", niche = "", niches, total }: BlogSe
           id="niche"
           name="niche"
           defaultValue={niche}
-          className="min-h-[48px] rounded-2xl border border-line bg-black/35 px-4 text-sm text-content transition focus:border-primary"
+          className="min-h-[48px] rounded-xl border border-line bg-surface-deep px-4 text-sm text-content transition focus:border-primary"
         >
           <option value="">Todos os nichos</option>
           {niches.map((item) => (
@@ -47,7 +47,7 @@ export function BlogSearchForm({ query = "", niche = "", niches, total }: BlogSe
         </select>
         <button
           type="submit"
-          className="inline-flex min-h-[48px] items-center justify-center rounded-2xl bg-gradient-primary px-5 text-sm font-semibold text-white shadow-cta-glow transition hover:-translate-y-0.5 active:translate-y-0"
+          className="inline-flex min-h-[48px] items-center justify-center rounded-xl bg-primary px-5 text-sm font-semibold text-white transition-colors hover:bg-primary-hover"
         >
           Buscar
         </button>
@@ -60,4 +60,3 @@ export function BlogSearchForm({ query = "", niche = "", niches, total }: BlogSe
     </section>
   );
 }
-

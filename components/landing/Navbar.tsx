@@ -106,7 +106,7 @@ export function Navbar() {
 
   return (
     <>
-      <header className="fixed inset-x-0 top-0 z-50 border-b border-line/80 bg-[#0a0a0a]/92 backdrop-blur-md supports-[backdrop-filter]:bg-[#0a0a0a]/80">
+      <header className="fixed inset-x-0 top-0 z-50 border-b border-line/80 bg-surface-deep">
         <nav
           className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 pt-[max(1rem,env(safe-area-inset-top,0px))] pb-4 sm:gap-4 sm:px-6 lg:px-8"
           aria-label={t("navAriaLabel")}
@@ -142,7 +142,7 @@ export function Navbar() {
           </ul>
 
           <div className="hidden items-center gap-3 md:flex">
-            <div className="flex items-center gap-1 rounded-lg border border-line/80 bg-[#141414] p-1">
+            <div className="flex items-center gap-1 rounded-lg border border-line/80 bg-surface-card p-1">
               {LANGUAGE_OPTIONS.map((option) => {
                 const isActive = option.locale === locale;
                 return (
@@ -153,7 +153,7 @@ export function Navbar() {
                     className={`min-h-[32px] rounded-md px-2 text-xs font-semibold transition ${
                       isActive
                         ? "bg-primary text-white"
-                        : "text-content-secondary hover:bg-white/5 hover:text-content"
+                        : "text-content-secondary hover:bg-surface-elevated/60 hover:text-content"
                     }`}
                     aria-label={t("switchLanguageAria", { language: t(`languages.${option.locale}`) })}
                     aria-pressed={isActive}
@@ -180,7 +180,7 @@ export function Navbar() {
 
           <button
             type="button"
-            className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border border-line bg-[#141414] text-content md:hidden"
+            className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border border-line bg-surface-card text-content md:hidden"
             aria-expanded={open}
             aria-controls="mobile-menu"
             onClick={() => setOpen((v) => !v)}
@@ -198,10 +198,10 @@ export function Navbar() {
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: "auto", opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
-              className="border-t border-line/80 bg-[#0a0a0a] md:hidden"
+              className="border-t border-line/80 bg-surface-deep md:hidden"
             >
               <div className="flex flex-col gap-3 px-4 py-4">
-                <div className="rounded-lg border border-line/80 bg-[#141414] p-2">
+                <div className="rounded-lg border border-line/80 bg-surface-card p-2">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-content-faint">
                     {t("languageLabel")}
                   </p>
@@ -216,7 +216,7 @@ export function Navbar() {
                           className={`min-h-[40px] rounded-md px-2 text-sm font-semibold transition ${
                             isActive
                               ? "bg-primary text-white"
-                              : "text-content-secondary hover:bg-white/5 hover:text-content"
+                              : "text-content-secondary hover:bg-surface-elevated/60 hover:text-content"
                           }`}
                           aria-label={t("switchLanguageAria", { language: t(`languages.${option.locale}`) })}
                           aria-pressed={isActive}

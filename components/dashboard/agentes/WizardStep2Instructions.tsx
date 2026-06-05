@@ -49,7 +49,7 @@ export function WizardStep2Instructions({
             className={cn(
               "rounded-xl border px-4 py-3 text-left transition",
               isSimpleMode
-                ? "border-primary/60 bg-primary/10 shadow-[0_0_0_1px_rgba(255,255,255,0.04)]"
+                ? "border-primary/60 bg-primary/10"
                 : "border-line bg-surface-elevated/30 hover:border-line/80 hover:bg-surface-elevated/50",
             )}
           >
@@ -64,7 +64,7 @@ export function WizardStep2Instructions({
             className={cn(
               "rounded-xl border px-4 py-3 text-left transition",
               !isSimpleMode
-                ? "border-primary/60 bg-primary/10 shadow-[0_0_0_1px_rgba(255,255,255,0.04)]"
+                ? "border-primary/60 bg-primary/10"
                 : "border-line bg-surface-elevated/30 hover:border-line/80 hover:bg-surface-elevated/50",
             )}
           >

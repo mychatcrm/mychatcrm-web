@@ -30,7 +30,7 @@ export function MaintenancePublicClient({ locale }: { locale: string }) {
 
   if (status && !status.enabled) {
     return (
-      <div className="mt-8 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
+      <div className="mt-8 rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-sm text-success">
         <p>O sistema voltou ao normal.</p>
         <Link
           href="/"
@@ -47,7 +47,7 @@ export function MaintenancePublicClient({ locale }: { locale: string }) {
   return (
     <div className="mt-8 space-y-3 text-left text-sm text-content-muted">
       {status.message ? (
-        <p className="rounded-2xl border border-line bg-surface-card/60 px-4 py-3 leading-relaxed text-content">
+        <p className="rounded-xl border border-line bg-surface-card/60 px-4 py-3 leading-relaxed text-content">
           {status.message}
         </p>
       ) : null}
