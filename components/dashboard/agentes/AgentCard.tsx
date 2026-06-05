@@ -72,16 +72,16 @@ export function AgentCard({
   const isActive = agent.status === "ativo";
 
   return (
-    <article className="panel-surface-card group flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-surface-card p-3.5 transition-colors hover:bg-surface-card/95 sm:p-4">
+    <article className="panel-surface-card group flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-surface-card p-3.5 transition-colors hover:bg-surface-card/95">
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="flex min-w-0 flex-1 items-start gap-2 sm:gap-3">
           {dragHandle ? <div className="shrink-0">{dragHandle}</div> : null}
           <div
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-white"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white"
             style={{ backgroundColor: agent.cor }}
             aria-hidden
           >
-            <AgentAvatarGlyph avatar={agent.avatar} className="h-5 w-5 text-white sm:h-5 sm:w-5" />
+            <AgentAvatarGlyph avatar={agent.avatar} className="h-5 w-5 text-white" />
           </div>
           <div className="min-w-0 pt-0.5">
             <p className="truncate text-sm font-semibold leading-tight text-content sm:text-[15px]">{agent.nome}</p>
@@ -97,31 +97,31 @@ export function AgentCard({
         </div>
       </div>
 
-      <div className="mt-4 grid min-w-0 gap-2 min-[390px]:grid-cols-2">
-        <div className="min-w-0 rounded-xl bg-surface-elevated/35 p-3">
-          <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-amber-500/12", isLight ? "text-amber-600" : "text-amber-300")}>
+      <div className="mt-3.5 grid min-w-0 gap-2 min-[390px]:grid-cols-2">
+        <div className="min-w-0 rounded-xl bg-surface-elevated/35 p-2.5">
+          <span className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-amber-500/12", isLight ? "text-amber-600" : "text-amber-300")}>
             <Coins className="h-4 w-4" strokeWidth={1.75} aria-hidden />
           </span>
-          <div className="mt-3 min-w-0">
+          <div className="mt-2.5 min-w-0">
             <p className="truncate text-[11px] text-content-muted">Créditos utilizados</p>
             <p className="truncate text-lg font-semibold tabular-nums leading-tight text-content">{creditsDisplay}</p>
           </div>
         </div>
-        <div className="min-w-0 rounded-xl bg-surface-elevated/35 p-3">
-          <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-500/12", isLight ? "text-emerald-600" : "text-emerald-300")}>
+        <div className="min-w-0 rounded-xl bg-surface-elevated/35 p-2.5">
+          <span className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-emerald-500/12", isLight ? "text-emerald-600" : "text-emerald-300")}>
             <Users className="h-4 w-4" strokeWidth={1.75} aria-hidden />
           </span>
-          <div className="mt-3 min-w-0">
+          <div className="mt-2.5 min-w-0">
             <p className="truncate text-[11px] text-content-muted">Leads atendendo</p>
             <p className="text-lg font-semibold tabular-nums leading-tight text-content">{leadsAtendendo}</p>
           </div>
         </div>
       </div>
 
-      <div className="mt-auto flex min-w-0 flex-col gap-2 pt-4">
+      <div className="mt-auto flex min-w-0 flex-col gap-2 pt-3.5">
         <Link
           href={`/dashboard/integracoes?agente=${encodeURIComponent(agent.id)}`}
-          className="inline-flex min-h-10 min-w-0 items-center justify-center gap-2 rounded-xl bg-surface-elevated/45 px-3 text-xs font-medium text-content-secondary transition hover:bg-surface-elevated hover:text-content sm:text-[13px]"
+          className="inline-flex min-h-9 min-w-0 items-center justify-center gap-2 rounded-xl bg-surface-elevated/45 px-3 text-xs font-medium text-content-secondary transition hover:bg-surface-elevated hover:text-content sm:text-[13px]"
         >
           <Link2 className="h-3.5 w-3.5 shrink-0 opacity-80" strokeWidth={1.75} aria-hidden />
           <span className="truncate">Distribuições de leads</span>
@@ -131,7 +131,7 @@ export function AgentCard({
             <Button
               type="button"
               onClick={onManage}
-              className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-primary px-3 text-xs font-semibold text-white transition hover:bg-primary-hover sm:text-[13px]"
+              className="inline-flex min-h-9 w-full items-center justify-center gap-2 rounded-xl bg-primary px-3 text-xs font-semibold text-white transition hover:bg-primary-hover sm:text-[13px]"
             >
               <Settings className="h-3.5 w-3.5 shrink-0 opacity-95" strokeWidth={1.75} aria-hidden />
               Gerenciar
@@ -139,7 +139,7 @@ export function AgentCard({
           ) : (
             <Link
               href={`/dashboard/agentes/${agent.id}/editar`}
-              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-3 text-xs font-semibold text-white transition hover:bg-primary-hover sm:text-[13px]"
+              className="inline-flex min-h-9 items-center justify-center gap-2 rounded-xl bg-primary px-3 text-xs font-semibold text-white transition hover:bg-primary-hover sm:text-[13px]"
             >
               <Settings className="h-3.5 w-3.5 shrink-0 opacity-95" strokeWidth={1.75} aria-hidden />
               Gerenciar
@@ -148,7 +148,7 @@ export function AgentCard({
           <Button
             variant="secondary"
             type="button"
-            className="!min-h-10 w-full rounded-xl px-3 text-xs sm:text-[13px]"
+            className="!min-h-9 w-full rounded-xl px-3 text-xs sm:text-[13px]"
             onClick={() => onDuplicate(agent.id)}
           >
             <Copy className="mr-1.5 h-3.5 w-3.5 shrink-0 opacity-80" strokeWidth={1.75} aria-hidden />
