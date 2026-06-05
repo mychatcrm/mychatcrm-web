@@ -34,7 +34,7 @@ function AdminShellInner({
   return (
     <div className="panel-shell flex h-full min-h-0 w-full overflow-hidden bg-surface-base">
       <aside
-        className="panel-sidebar hidden w-[260px] shrink-0 border-r border-line bg-surface-sidebar md:block"
+        className="panel-sidebar hidden w-[260px] shrink-0 bg-surface-sidebar md:block"
         aria-label="Navegação admin"
       >
         <AdminSidebar session={session} />
@@ -45,11 +45,11 @@ function AdminShellInner({
       </Drawer>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="panel-topbar flex h-12 shrink-0 items-center justify-between gap-x-3 border-b border-line bg-surface-base px-4 sm:px-6 xl:px-8">
+        <header className="panel-topbar flex h-12 shrink-0 items-center justify-between gap-x-3 bg-surface-base px-4 sm:px-6 xl:px-8">
           <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
-              className="panel-topbar-control inline-flex h-8 w-8 items-center justify-center rounded-xl border border-line/70 bg-surface-card/70 text-content-secondary transition duration-200 hover:border-line hover:bg-surface-elevated/60 hover:text-content md:hidden"
+              className="panel-topbar-control inline-flex h-8 w-8 items-center justify-center rounded-xl border border-line/45 bg-surface-card/55 text-content-secondary transition duration-200 hover:border-line/60 hover:bg-surface-elevated/45 hover:text-content md:hidden"
               onClick={() => setDrawer(true)}
               aria-label="Abrir menu"
             >
@@ -66,7 +66,7 @@ function AdminShellInner({
           <div className="flex shrink-0 items-center gap-2">
             <Link
               href="/"
-              className="panel-topbar-control hidden h-8 items-center rounded-xl border border-line/70 bg-surface-card/70 px-3 text-[13px] text-content-secondary transition duration-200 hover:border-line hover:bg-surface-elevated/60 hover:text-content sm:inline-flex"
+              className="panel-topbar-control hidden h-8 items-center rounded-xl border border-line/45 bg-surface-card/55 px-3 text-[13px] text-content-secondary transition duration-200 hover:border-line/60 hover:bg-surface-elevated/45 hover:text-content sm:inline-flex"
             >
               Site público
             </Link>

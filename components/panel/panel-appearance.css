@@ -34,6 +34,13 @@
   --panel-shadow-ambient: none;
   --panel-shadow-float: none;
   --panel-shadow-edge: none;
+  --panel-border-soft: rgb(14 29 41 / 0.09);
+  --panel-border-subtle: rgb(14 29 41 / 0.055);
+  --panel-border-control: rgb(14 29 41 / 0.105);
+  --panel-control-fill: rgb(255 255 255 / 0.64);
+  --panel-control-hover: rgb(255 255 255 / 0.92);
+  --panel-surface-hover: rgb(14 29 41 / 0.035);
+  --panel-surface-inset: rgb(14 29 41 / 0.028);
   color-scheme: light;
 }
 
@@ -60,6 +67,13 @@
   --panel-shadow-ambient: none;
   --panel-shadow-float: none;
   --panel-shadow-edge: none;
+  --panel-border-soft: rgb(255 255 255 / 0.085);
+  --panel-border-subtle: rgb(255 255 255 / 0.052);
+  --panel-border-control: rgb(255 255 255 / 0.11);
+  --panel-control-fill: rgb(32 36 45 / 0.44);
+  --panel-control-hover: rgb(43 48 58 / 0.62);
+  --panel-surface-hover: rgb(255 255 255 / 0.045);
+  --panel-surface-inset: rgb(255 255 255 / 0.032);
 }
 
 /* Modo escuro: paleta zinc pura (Design System) */
@@ -85,6 +99,13 @@
   --panel-shadow-ambient: none;
   --panel-shadow-float: none;
   --panel-shadow-edge: none;
+  --panel-border-soft: rgb(255 255 255 / 0.075);
+  --panel-border-subtle: rgb(255 255 255 / 0.045);
+  --panel-border-control: rgb(255 255 255 / 0.095);
+  --panel-control-fill: rgb(24 24 27 / 0.52);
+  --panel-control-hover: rgb(39 39 42 / 0.68);
+  --panel-surface-hover: rgb(255 255 255 / 0.04);
+  --panel-surface-inset: rgb(255 255 255 / 0.028);
 }
 
 .panel-app[data-panel-theme="dark"],
@@ -101,6 +122,22 @@
   color: rgb(var(--color-content) / 1);
 }
 
+/* Modernização minimalista: linhas visíveis viram contornos suaves e discretos. */
+.panel-app [class*="border-line"] {
+  border-color: var(--panel-border-soft) !important;
+}
+
+.panel-app [class*="border-b"][class*="border-line"],
+.panel-app [class*="border-t"][class*="border-line"],
+.panel-app [class*="border-r"][class*="border-line"],
+.panel-app [class*="border-l"][class*="border-line"] {
+  border-color: var(--panel-border-subtle) !important;
+}
+
+.panel-app [class*="divide-line"] > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--panel-border-subtle) !important;
+}
+
 /* Só repõe tokens no portal: o fundo fica transparente para não tapar o overlay */
 .panel-app.panel-app--portal-root {
   background-color: transparent;
@@ -115,7 +152,8 @@
   position: relative;
   background: var(--panel-sidebar-fill);
   backdrop-filter: none;
-  box-shadow: inset -1px 0 0 rgb(var(--color-line) / 0.76);
+  border-color: transparent !important;
+  box-shadow: none;
 }
 
 .panel-sidebar::after {
@@ -132,7 +170,8 @@
   position: relative;
   background: var(--panel-topbar-fill);
   backdrop-filter: none;
-  box-shadow: inset 0 -1px 0 rgb(var(--color-line) / 0.72);
+  border-color: transparent !important;
+  box-shadow: none;
 }
 
 .panel-topbar::after {
@@ -145,14 +184,14 @@
 }
 
 .panel-topbar-control {
-  border: 1px solid rgb(var(--color-line) / 0.72);
-  background: var(--panel-muted-fill);
-  box-shadow: var(--panel-shadow-edge);
+  border: 1px solid var(--panel-border-control);
+  background: var(--panel-control-fill);
+  box-shadow: none;
 }
 
 .panel-topbar-control:hover {
-  border-color: rgb(var(--color-line) / 0.96);
-  background: rgb(var(--color-surface-deep) / 1);
+  border-color: var(--panel-border-control);
+  background: var(--panel-control-hover);
 }
 
 .panel-content-frame {
@@ -167,9 +206,9 @@
 .panel-surface-card {
   position: relative;
   overflow: hidden;
-  border-color: rgb(var(--color-line) / 0.82) !important;
+  border-color: var(--panel-border-soft) !important;
   background: var(--panel-card-fill) !important;
-  box-shadow: none;
+  box-shadow: inset 0 0 0 1px var(--panel-border-subtle);
 }
 
 .panel-surface-card::before,
@@ -202,9 +241,9 @@
 .panel-floating-card {
   position: relative;
   overflow: hidden;
-  border-color: rgb(var(--color-line) / 0.82) !important;
+  border-color: var(--panel-border-soft) !important;
   background: var(--panel-card-fill) !important;
-  box-shadow: none;
+  box-shadow: inset 0 0 0 1px var(--panel-border-subtle);
 }
 
 .panel-profile-card {
@@ -239,25 +278,25 @@
 .panel-data-table {
   position: relative;
   overflow: hidden;
-  border-color: rgb(var(--color-line) / 0.82) !important;
+  border-color: var(--panel-border-soft) !important;
   background: var(--panel-card-fill) !important;
-  box-shadow: none;
+  box-shadow: inset 0 0 0 1px var(--panel-border-subtle);
 }
 
 .panel-data-table thead {
-  background: rgb(var(--color-surface-elevated) / 0.72);
+  background: var(--panel-surface-inset);
 }
 
 .panel-data-table tbody tr:hover {
-  background: rgb(var(--color-surface-elevated) / 0.42);
+  background: var(--panel-surface-hover);
 }
 
 .panel-modal-surface {
   position: relative;
   overflow: hidden;
-  border-color: rgb(var(--color-line) / 0.82) !important;
+  border-color: var(--panel-border-soft) !important;
   background: var(--panel-card-fill) !important;
-  box-shadow: none;
+  box-shadow: inset 0 0 0 1px var(--panel-border-subtle);
 }
 
 .panel-drawer-surface {
@@ -265,6 +304,7 @@
   overflow: hidden;
   background: var(--panel-sidebar-fill);
   backdrop-filter: none;
+  border-color: transparent !important;
   box-shadow: none;
 }
 

@@ -46,9 +46,9 @@ function DashboardShellInner({
   /** Controles do shell — flat (design system): só cor/borda. */
   const shellControl = cn(
     "panel-topbar-control",
-    "rounded-xl border border-line/70 bg-surface-card/70 text-content-secondary",
+    "rounded-xl border border-line/45 bg-surface-card/55 text-content-secondary",
     "transition duration-200 ease-out",
-    "hover:bg-surface-elevated/60 hover:text-content hover:border-line",
+    "hover:bg-surface-elevated/45 hover:text-content hover:border-line/60",
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35",
   );
 
@@ -64,7 +64,7 @@ function DashboardShellInner({
       data-sidebar-collapsed={collapsed ? "true" : "false"}
     >
       <aside
-        className={`panel-sidebar hidden shrink-0 border-r border-line bg-surface-sidebar md:block ${
+        className={`panel-sidebar hidden shrink-0 bg-surface-sidebar md:block ${
           collapsed ? "w-16" : "w-[240px]"
         } transition-[width]`}
         aria-label="Navegação lateral do cliente"
@@ -77,7 +77,7 @@ function DashboardShellInner({
       </Drawer>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="panel-topbar flex h-12 shrink-0 items-center border-b border-line/80 bg-surface-base px-4 sm:px-6 xl:px-8">
+        <header className="panel-topbar flex h-12 shrink-0 items-center bg-surface-base px-4 sm:px-6 xl:px-8">
           <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
               <button

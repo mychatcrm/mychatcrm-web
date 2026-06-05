@@ -28,7 +28,7 @@ export function AdminSidebar({
 
   return (
     <div className="flex h-full flex-col bg-transparent">
-      <div className="flex h-16 items-center justify-between gap-2 border-b border-line px-4">
+      <div className="flex h-16 items-center justify-between gap-2 px-4">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <PanelBrandMark size={36} />
           <div className="min-w-0 flex-1">

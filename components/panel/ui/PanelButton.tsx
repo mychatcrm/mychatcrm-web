@@ -19,13 +19,13 @@ const variants = {
   gradient:
     "bg-primary text-white hover:bg-primary-hover active:bg-primary-hover",
   secondary:
-    "border border-primary/30 bg-primary/[0.08] text-primary hover:bg-primary/[0.14] hover:border-primary/45",
+    "border border-primary/20 bg-primary/[0.07] text-primary hover:bg-primary/[0.12] hover:border-primary/35",
   navy:
     "bg-brand-secondary text-white hover:bg-brand-dark",
   outline:
-    "border border-line/90 bg-surface-card text-content-secondary hover:text-content hover:border-line hover:bg-surface-elevated/50",
+    "border border-line/50 bg-surface-card/70 text-content-secondary hover:text-content hover:border-line/70 hover:bg-surface-elevated/45",
   ghost:
-    "text-content-secondary hover:text-content hover:bg-surface-elevated/40 active:bg-surface-elevated/55",
+    "text-content-secondary hover:text-content hover:bg-surface-elevated/35 active:bg-surface-elevated/50",
   link:
     "bg-transparent text-primary hover:underline p-0 h-auto font-semibold",
   success:

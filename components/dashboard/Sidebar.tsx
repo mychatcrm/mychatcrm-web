@@ -342,7 +342,7 @@ export function Sidebar({
   return (
     <>
       <div className="flex h-full flex-col bg-transparent">
-        <div className="flex h-auto min-h-16 flex-col justify-center gap-2 border-b border-line/80 px-4 py-3">
+        <div className="flex h-auto min-h-16 flex-col justify-center gap-2 px-4 py-3.5">
           <div className="flex items-center justify-between gap-2">
             <div className="flex min-w-0 flex-1 items-center gap-3">
               <PanelBrandMark size={collapsed ? 40 : 36} />
@@ -361,7 +361,7 @@ export function Sidebar({
               onClick={() => setMode(nextThemeMode)}
               className={cn(
                 "panel-topbar-control flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line/80 text-content-muted transition",
-                "hover:bg-surface-elevated/40 hover:text-content",
+                "hover:bg-surface-elevated/35 hover:text-content",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-sidebar",
               )}
               aria-label={`Tema atual: ${themeLabel}. Ativar tema ${nextThemeLabel}`}

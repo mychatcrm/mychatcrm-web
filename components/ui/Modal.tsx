@@ -51,14 +51,14 @@ export function Modal({ open, onClose, title, titleContent, children, footer, cl
           aria-modal="true"
           aria-labelledby={titleId}
           className={cn(
-            "panel-modal-surface relative z-[101] mx-auto grid w-full min-h-0 min-w-0 overflow-hidden rounded-xl border border-line/80 bg-surface-card",
+            "panel-modal-surface relative z-[101] mx-auto grid w-full min-h-0 min-w-0 overflow-hidden rounded-xl border border-line/50 bg-surface-card",
             "max-h-[min(calc(100dvh-1rem),calc(100svh-1rem))]",
             footer ? "grid-rows-[auto_minmax(0,1fr)_auto]" : "grid-rows-[auto_minmax(0,1fr)]",
             "p-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] sm:p-6 sm:pb-[max(1.5rem,env(safe-area-inset-bottom,0px))]",
             className ? className : "max-w-lg",
           )}
         >
-          <div className="flex min-h-0 min-w-0 items-start justify-between gap-2 border-b border-line/60 pb-3 sm:gap-3">
+          <div className="flex min-h-0 min-w-0 items-start justify-between gap-2 pb-2 sm:gap-3">
             {titleContent ? (
               <div
                 id={titleId}
@@ -88,7 +88,7 @@ export function Modal({ open, onClose, title, titleContent, children, footer, cl
             {children}
           </div>
           {footer ? (
-            <div className="flex min-h-0 flex-col gap-2 border-t border-line/70 pt-3 sm:flex-row sm:flex-wrap sm:justify-end sm:gap-2 sm:pt-4">
+            <div className="flex min-h-0 flex-col gap-2 pt-2 sm:flex-row sm:flex-wrap sm:justify-end sm:gap-2 sm:pt-3">
               {footer}
             </div>
           ) : null}
