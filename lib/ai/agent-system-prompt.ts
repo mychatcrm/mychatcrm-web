@@ -232,10 +232,17 @@ ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o c
 - Consulte o contexto de agenda do contato antes de responder. Não invente compromissos.
 - Não crie um evento apenas porque o cliente perguntou sobre um agendamento.
 ${agent.agendaAutomationEnabled === true ? `- A automação de agenda está ativa para este agente.
-- Quando data e hora estiverem explicitamente confirmadas, inclua [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]] no final da resposta.
-- Para cancelar, use somente um event_id listado no contexto e inclua [[CANCELAR_AGENDA: id=EVENT_ID]] no final da resposta.
-- Para remarcar: quando o cliente informar ou confirmar a nova data e horário, inclua [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]] no final da sua resposta — exatamente igual ao agendamento inicial. O sistema cancela o compromisso anterior automaticamente. Nunca confirme uma remarcação verbalmente sem emitir [[AGENDAR:]] com a nova data e hora.
-- As diretivas são internas e removidas antes do cliente receber a mensagem.` : "- A automação de agenda está desativada. Você pode informar compromissos existentes, mas nunca inclua [[AGENDAR: ...]] nem [[CANCELAR_AGENDA: ...]]."}`,
+- REGRA ABSOLUTA: Nunca emita [[AGENDAR:]] nem [[CANCELAR_AGENDA:]] sem confirmação explícita do cliente naquela mesma conversa.
+- FLUXO PARA NOVO AGENDAMENTO (2 turnos obrigatórios):
+  Turno 1 — quando o cliente mencionar data e hora: apresente o resumo ("Posso agendar para DD/MM às HH:MM [local]?") e aguarde confirmação. NÃO emita [[AGENDAR:]] neste turno.
+  Turno 2 — somente após o cliente confirmar explicitamente (sim, confirmo, pode fazer, etc.): inclua [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]] no final da resposta.
+- FLUXO PARA REMARCAÇÃO (2 turnos obrigatórios):
+  Turno 1 — quando o cliente pedir nova data/hora: apresente o resumo da nova data ("Posso remarcar para DD/MM às HH:MM?") e aguarde confirmação. NÃO emita [[AGENDAR:]] neste turno.
+  Turno 2 — somente após o cliente confirmar: inclua [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]] no final da resposta. O sistema cancela o compromisso anterior automaticamente.
+- FLUXO PARA CANCELAMENTO (2 turnos obrigatórios):
+  Turno 1 — quando o cliente pedir cancelamento: mostre os detalhes do evento existente (data, hora, local) e pergunte se confirma o cancelamento. NÃO emita [[CANCELAR_AGENDA:]] neste turno.
+  Turno 2 — somente após o cliente confirmar: use o event_id do contexto de agenda e inclua [[CANCELAR_AGENDA: id=EVENT_ID]] no final da resposta.
+- As diretivas [[AGENDAR:]] e [[CANCELAR_AGENDA:]] são internas e removidas antes do cliente receber a mensagem.` : "- A automação de agenda está desativada. Você pode informar compromissos existentes, mas nunca inclua [[AGENDAR: ...]] nem [[CANCELAR_AGENDA: ...]]."}`,
     `CONFIGURAÇÕES AVANÇADAS DO AGENTE
 Modo de resposta configurado: ${clean((agent as { responseMode?: unknown }).responseMode) || "text"}
 Origens/ativação: ${compactJson((agent as { origens?: unknown }).origens)}
