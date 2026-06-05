@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
-import { Moon, Sun } from "lucide-react";
+import { Circle, Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 import {
@@ -13,7 +13,7 @@ import {
 const STORAGE_KEY = PANEL_APPEARANCE_STORAGE_KEY;
 
 export type PanelKind = "dashboard" | "admin";
-export type PanelAppearanceMode = "dark" | "light";
+export type PanelAppearanceMode = "light" | "soft-dark" | "dark";
 
 type PanelAppearanceContextValue = {
   panel: PanelKind;
@@ -31,6 +31,22 @@ const PANEL_APPEARANCE_FALLBACK: PanelAppearanceContextValue = {
   setMode: () => {},
   isLight: false,
 };
+
+function isPanelAppearanceMode(value: unknown): value is PanelAppearanceMode {
+  return value === "light" || value === "soft-dark" || value === "dark";
+}
+
+export function getNextPanelAppearanceMode(mode: PanelAppearanceMode): PanelAppearanceMode {
+  if (mode === "light") return "soft-dark";
+  if (mode === "soft-dark") return "dark";
+  return "light";
+}
+
+function getPanelAppearanceLabel(mode: PanelAppearanceMode): string {
+  if (mode === "light") return "claro";
+  if (mode === "soft-dark") return "cinza escuro";
+  return "escuro";
+}
 
 /**
  * Conteúdo em `createPortal(..., document.body)` deixa de estar no DOM sob `.panel-app`,
@@ -71,7 +87,7 @@ export function PanelAppearanceProvider({
   initialMode?: PanelAppearanceMode;
 }) {
   const [mode, setModeState] = useState<PanelAppearanceMode>(() =>
-    initialMode === "light" || initialMode === "dark" ? initialMode : "dark",
+    isPanelAppearanceMode(initialMode) ? initialMode : "dark",
   );
 
   /**
@@ -82,10 +98,8 @@ export function PanelAppearanceProvider({
   useLayoutEffect(() => {
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
-      const ls: PanelAppearanceMode | null =
-        raw === "light" || raw === "dark" ? raw : null;
-      const hinted: PanelAppearanceMode | null =
-        initialMode === "light" || initialMode === "dark" ? initialMode : null;
+      const ls: PanelAppearanceMode | null = isPanelAppearanceMode(raw) ? raw : null;
+      const hinted: PanelAppearanceMode | null = isPanelAppearanceMode(initialMode) ? initialMode : null;
       const resolved: PanelAppearanceMode = ls ?? hinted ?? "dark";
 
       setModeState((prev) => (prev === resolved ? prev : resolved));
@@ -136,12 +150,14 @@ export function PanelAppearanceProvider({
  */
 export function PanelThemeToggle({ className }: { className?: string }) {
   const { mode, setMode } = usePanelAppearance();
-  const isDark = mode === "dark";
+  const nextMode = getNextPanelAppearanceMode(mode);
+  const currentLabel = getPanelAppearanceLabel(mode);
+  const nextLabel = getPanelAppearanceLabel(nextMode);
 
   return (
     <button
       type="button"
-      onClick={() => setMode(isDark ? "light" : "dark")}
+      onClick={() => setMode(nextMode)}
       className={cn(
         "inline-flex h-9 w-9 shrink-0 touch-manipulation items-center justify-center rounded-panel-xl",
         "text-content-faint hover:bg-surface-elevated/40 hover:text-content-secondary",
@@ -150,13 +166,15 @@ export function PanelThemeToggle({ className }: { className?: string }) {
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-sidebar",
         className,
       )}
-      aria-label={isDark ? "Ativar tema claro" : "Ativar tema escuro"}
-      title={isDark ? "Ativar tema claro" : "Ativar tema escuro"}
+      aria-label={`Tema atual: ${currentLabel}. Ativar tema ${nextLabel}`}
+      title={`Tema atual: ${currentLabel}. Ativar tema ${nextLabel}`}
     >
-      {isDark ? (
-        <Sun className="h-4 w-4" strokeWidth={2} aria-hidden />
-      ) : (
+      {mode === "light" ? (
         <Moon className="h-4 w-4" strokeWidth={2} aria-hidden />
+      ) : mode === "soft-dark" ? (
+        <Circle className="h-3.5 w-3.5 fill-current" strokeWidth={2} aria-hidden />
+      ) : (
+        <Sun className="h-4 w-4" strokeWidth={2} aria-hidden />
       )}
     </button>
   );

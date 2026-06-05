@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronRight, Cpu, Moon, Settings, Sun } from "lucide-react";
+import { ChevronDown, ChevronRight, Circle, Cpu, Moon, Settings, Sun } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { Badge } from "@/components/ui/Badge";
@@ -23,7 +23,7 @@ import {
 import { useLeadUsageSnapshot } from "@/lib/use-lead-usage-snapshot";
 import { dashboardNavPinnedItems, type DashboardNavItem } from "./navigation";
 import { PanelBrandMark } from "@/components/panel/PanelBrandMark";
-import { usePanelAppearance } from "@/components/panel/PanelAppearance";
+import { getNextPanelAppearanceMode, usePanelAppearance } from "@/components/panel/PanelAppearance";
 import { ProfileAvatar, useDashboardProfileAvatar } from "./ProfileAvatar";
 import { SidebarCollaboratorProfilePopover } from "./SidebarCollaboratorProfilePopover";
 import { PanelNavIcon } from "@/components/nav/panel-nav-icons";
@@ -55,7 +55,7 @@ export function Sidebar({
     [orgRole],
   );
   const [upgradeOpen, setUpgradeOpen] = useState(false);
-  const { isLight, setMode } = usePanelAppearance();
+  const { isLight, mode, setMode } = usePanelAppearance();
   const workspaceTriggerId = useId();
   const workspacePanelId = useId();
   const workspacePanelTitleId = useId();
@@ -333,6 +333,12 @@ export function Sidebar({
     [collapsed, isLight, onNavigate, orgRole, pathname, session],
   );
 
+  const nextThemeMode = getNextPanelAppearanceMode(mode);
+  const themeLabel =
+    mode === "light" ? "claro" : mode === "soft-dark" ? "cinza escuro" : "escuro";
+  const nextThemeLabel =
+    nextThemeMode === "light" ? "claro" : nextThemeMode === "soft-dark" ? "cinza escuro" : "escuro";
+
   return (
     <>
       <div className="flex h-full flex-col bg-transparent">
@@ -352,17 +358,19 @@ export function Sidebar({
             </div>
             <button
               type="button"
-              onClick={() => setMode(isLight ? "dark" : "light")}
+              onClick={() => setMode(nextThemeMode)}
               className={cn(
                 "panel-topbar-control flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line/80 text-content-muted transition",
                 "hover:bg-surface-elevated/40 hover:text-content",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-sidebar",
               )}
-              aria-label={isLight ? "Ativar tema escuro" : "Ativar tema claro"}
-              title={isLight ? "Ativar tema escuro" : "Ativar tema claro"}
+              aria-label={`Tema atual: ${themeLabel}. Ativar tema ${nextThemeLabel}`}
+              title={`Tema atual: ${themeLabel}. Ativar tema ${nextThemeLabel}`}
             >
-              {isLight ? (
+              {mode === "light" ? (
                 <Moon className="h-4 w-4" strokeWidth={2} aria-hidden />
+              ) : mode === "soft-dark" ? (
+                <Circle className="h-3.5 w-3.5 fill-current" strokeWidth={2} aria-hidden />
               ) : (
                 <Sun className="h-4 w-4" strokeWidth={2} aria-hidden />
               )}

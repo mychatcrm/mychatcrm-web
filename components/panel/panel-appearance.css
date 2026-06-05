@@ -9,6 +9,7 @@
  *   --brand-white        #FFFFFF
  *
  * Design System: paleta zinc para dark mode, DS light tokens para light mode.
+ * O tema `soft-dark` é um dark intermediário: cinza grafite confortável, sem preto puro.
  * Variáveis `--color-*` = componentes R G B (espaço) para `rgb(var(--color-*) / <alpha>)` no Tailwind.
  */
 
@@ -36,6 +37,31 @@
   color-scheme: light;
 }
 
+/* Modo cinza escuro: dark suave com superfície grafite, menos cansativo que preto puro. */
+.panel-app[data-panel="dashboard"][data-panel-theme="soft-dark"],
+.panel-app[data-panel="admin"][data-panel-theme="soft-dark"] {
+  --color-surface-base:      17  19  24;   /* #111318 */
+  --color-surface-deep:      21  24  31;   /* #15181f */
+  --color-surface-sidebar:   18  21  27;   /* #12151b */
+  --color-surface-card:      24  27  35;   /* #181b23 */
+  --color-surface-elevated:  32  36  45;   /* #20242d */
+  --color-surface-brown:     24  27  35;
+  --color-line:              43  48  58;   /* #2b303a */
+  --color-content:          244 244 245;   /* #f4f4f5 */
+  --color-content-secondary: 228 228 231;  /* #e4e4e7 */
+  --color-content-muted:     161 161 170;  /* #a1a1aa */
+  --color-content-faint:     113 113 122;  /* #71717a */
+  --panel-shell-glow: none;
+  --panel-topbar-fill: rgb(21 24 31 / 0.96);
+  --panel-sidebar-fill: rgb(18 21 27 / 1);
+  --panel-card-fill: rgb(24 27 35 / 1);
+  --panel-muted-fill: rgb(32 36 45 / 0.78);
+  --panel-card-highlight: none;
+  --panel-shadow-ambient: none;
+  --panel-shadow-float: none;
+  --panel-shadow-edge: none;
+}
+
 /* Modo escuro: paleta zinc pura (Design System) */
 .panel-app[data-panel="dashboard"][data-panel-theme="dark"],
 .panel-app[data-panel="admin"][data-panel-theme="dark"] {
@@ -61,7 +87,8 @@
   --panel-shadow-edge: none;
 }
 
-.panel-app[data-panel-theme="dark"] {
+.panel-app[data-panel-theme="dark"],
+.panel-app[data-panel-theme="soft-dark"] {
   color-scheme: dark;
 }
 
