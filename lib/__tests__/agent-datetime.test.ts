@@ -8,7 +8,7 @@ describe("formatSystemDateTimeContextBlock", () => {
       new Date("2026-05-28T15:30:00.000Z"),
     );
     expect(block).toMatch(
-      /^\[CONTEXTO DO SISTEMA: Data e hora atual: .+, \d{2} de .+ de \d{4}, \d{2}:\d{2} \(America\/Sao_Paulo\)\. Use esta informação apenas quando o usuário perguntar sobre datas ou para calcular prazos\.\]$/,
+      /^\[CONTEXTO DO SISTEMA: Data e hora atual: .+, \d{2} de .+ de \d{4}, \d{2}:\d{2} \(America\/Sao_Paulo\)\. Use SEMPRE esta data\/hora como referência para qualquer cálculo de data/,
     );
   });
 });

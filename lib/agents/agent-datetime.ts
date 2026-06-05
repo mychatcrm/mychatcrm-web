@@ -64,5 +64,5 @@ export function formatCurrentDateTimeLine(timezone: string, now = new Date()): s
 /** Bloco técnico no final do prompt — contexto de data/hora sem influenciar tom de confirmação. */
 export function formatSystemDateTimeContextBlock(timezone: string, now = new Date()): string {
   const { tz, weekday, day, month, year, hour, minute } = formatDateTimeParts(timezone, now);
-  return `[CONTEXTO DO SISTEMA: Data e hora atual: ${weekday}, ${day} de ${month} de ${year}, ${hour}:${minute} (${tz}). Use esta informação apenas quando o usuário perguntar sobre datas ou para calcular prazos.]`;
+  return `[CONTEXTO DO SISTEMA: Data e hora atual: ${weekday}, ${day} de ${month} de ${year}, ${hour}:${minute} (${tz}). Use SEMPRE esta data/hora como referência para qualquer cálculo de data — agendamentos, "amanhã", "semana que vem", "dia X" etc. devem ser calculados a partir desta data.]`;
 }

@@ -228,6 +228,7 @@ Mensagem de handoff: ${clean(agent.handoffMensagem) || "não configurada"}
 Palavras de handoff: ${handoffKeywords.length ? handoffKeywords.join(", ") : "padrão do sistema"}
 Número para transferência: ${clean(agent.handoffNumero) || "não configurado"}
 ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o cliente quiser falar com uma pessoa real (humano, atendente, responsável, especialista, vendedor, gerente, ou qualquer cargo), responda confirmando a transferência e inclua [[HANDOFF]] no final da resposta. Nada mais." : "REGRA CRÍTICA DE TRANSFERÊNCIA DESATIVADA: Nunca inclua [[HANDOFF]]. Se o cliente pedir atendimento humano, responda brevemente que não há atendimento humano disponível no momento e continue ajudando dentro do possível."}`,
+    formatSystemDateTimeContextBlock(resolveAgentTimezone(agent)),
     (() => {
       const agentTz = resolveAgentTimezone(agent as Parameters<typeof resolveAgentTimezone>[0]);
       const disp = (agent as { agendaDisponibilidade?: { ativo?: boolean; diasSemana?: number[]; horaInicio?: string; horaFim?: string } }).agendaDisponibilidade;
@@ -291,7 +292,6 @@ ${
     params.condensedContext?.trim() ? params.condensedContext.trim() : null,
     params.recognitionHint?.trim() ? params.recognitionHint.trim() : null,
     params.schedulingContextBlock?.trim() ? params.schedulingContextBlock.trim() : null,
-    formatSystemDateTimeContextBlock(resolveAgentTimezone(agent)),
   ].filter((item): item is string => Boolean(item && item.trim()));
 
   return parts.join("\n\n");
