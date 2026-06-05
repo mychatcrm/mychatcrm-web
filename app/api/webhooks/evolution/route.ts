@@ -950,6 +950,13 @@ export async function POST(request: Request) {
               contactName,
               timezone: schedulingTimezone,
               prepared: preparedAgenda,
+              agendaLembretes: typeof metadata.agendaLembretes === "object" && metadata.agendaLembretes !== null
+                ? metadata.agendaLembretes as import("@/lib/types").AgentAgendaLembretes
+                : null,
+              agendaDisponibilidade: typeof metadata.agendaDisponibilidade === "object" && metadata.agendaDisponibilidade !== null
+                ? metadata.agendaDisponibilidade as import("@/lib/types").AgentAgendaDisponibilidade
+                : null,
+              slotIndex: typeof metadata.whatsappSlotIndex === "number" ? metadata.whatsappSlotIndex : 0,
             });
             if (preparedAgenda.action === "pending" && agendaResult.action === "failed") {
               const agendaFailure = agendaResult.text.slice(0, 4000);

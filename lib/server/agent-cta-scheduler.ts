@@ -18,6 +18,11 @@ import {
   updateAgendaEvent,
   type AgendaEventRow,
 } from "@/lib/server/google-calendar-db";
+import {
+  cancelAgendaRemindersForEvent,
+  scheduleAgendaRemindersForEvent,
+} from "@/lib/server/agenda-reminder-jobs";
+import type { AgentAgendaDisponibilidade, AgentAgendaLembretes } from "@/lib/types";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -32,6 +37,41 @@ const AGENDA_DIRECTIVE_RE = /\[\[\s*(AGENDAR|CANCELAR_AGENDA)\s*:\s*([^\]]*)\]\]
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const AGENDA_FAILURE_REPLY =
   "Não consegui confirmar essa alteração na agenda agora. Nossa equipe vai conferir e te retornar em breve.";
+
+/**
+ * Verifica se uma data/hora está dentro da janela de disponibilidade configurada.
+ * @param date   Data do evento (UTC).
+ * @param disp   Configuração de disponibilidade do agente.
+ * @param tz     Fuso IANA do agente (a data é convertida para local antes de checar).
+ */
+function isWithinAgendaAvailability(
+  date: Date,
+  disp: AgentAgendaDisponibilidade,
+  tz: string,
+): boolean {
+  const resolved = parseTimezone(tz);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: resolved,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  const weekdayMap: Record<string, number> = {
+    Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+  };
+  const dow = weekdayMap[get("weekday")] ?? -1;
+  if (!disp.diasSemana.includes(dow)) return false;
+  const h = parseInt(get("hour"), 10);
+  const m = parseInt(get("minute"), 10);
+  const totalMin = h * 60 + m;
+  const [startH = 0, startM = 0] = disp.horaInicio.split(":").map(Number);
+  const [endH = 23, endM = 59] = disp.horaFim.split(":").map(Number);
+  const startMin = startH * 60 + startM;
+  const endMin = endH * 60 + endM;
+  return totalMin >= startMin && totalMin < endMin;
+}
 
 export type AgendaEventSummary = {
   id: string;
@@ -429,6 +469,8 @@ async function cancelStructuredAgendaEvent(params: {
   }
   await cancelAgendaEvent(params.tenantId, params.event.id);
   await broadcastAgendaChange(params.tenantId, "delete");
+  // Cancelar lembretes pendentes ligados a este evento (fire-and-forget)
+  cancelAgendaRemindersForEvent({ agendaEventId: params.event.id }).catch(() => undefined);
 }
 
 async function insertStructuredAgendaEvent(params: {
@@ -440,12 +482,21 @@ async function insertStructuredAgendaEvent(params: {
   contactName?: string | null;
   timezone: string;
   directive: Extract<AgendaDirective, { type: "schedule" }>;
+  agendaLembretes?: AgentAgendaLembretes | null;
+  agendaDisponibilidade?: AgentAgendaDisponibilidade | null;
+  slotIndex?: number;
 }): Promise<AgendaEventRow> {
   const attendeePhone = extractPhone(params.remoteJid);
   if (!attendeePhone) throw new Error("invalid_remote_jid");
   const startAt = directiveStartAt(params.directive, params.timezone);
   if (Number.isNaN(startAt.getTime()) || startAt.getTime() <= Date.now()) {
     throw new Error("invalid_or_past_agenda_datetime");
+  }
+  // Validar janela de disponibilidade
+  if (params.agendaDisponibilidade?.ativo) {
+    if (!isWithinAgendaAvailability(startAt, params.agendaDisponibilidade, params.timezone)) {
+      throw new Error("outside_agenda_availability");
+    }
   }
   const endAt = new Date(startAt.getTime() + 60 * 60_000);
   const attendeeName = await resolveAttendeeName({
@@ -497,6 +548,28 @@ async function insertStructuredAgendaEvent(params: {
       agent_id: params.agentId ?? null,
     });
     await broadcastAgendaChange(params.tenantId, "insert");
+    // Agendar lembretes se configurados
+    if (params.agendaLembretes?.ativo && params.agendaLembretes.regras.length > 0) {
+      scheduleAgendaRemindersForEvent({
+        sb: params.sb,
+        tenantId: params.tenantId,
+        agentId: params.agentId ?? null,
+        slotIndex: params.slotIndex ?? 0,
+        remoteJid: params.remoteJid,
+        agendaEventId: inserted.id,
+        eventStartAt: startAt,
+        attendeeName: attendeeName ?? null,
+        location: params.directive.location ?? null,
+        eventTitle: title,
+        agendaLembretes: params.agendaLembretes,
+        timezone: params.timezone,
+      }).catch((err) =>
+        console.warn("[agent-cta-scheduler] reminder_schedule_failed", {
+          event_id: inserted.id,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
     return inserted;
   } catch (error) {
     if (googleEventId) await cancelGoogleCalendarEvent(params.tenantId, googleEventId).catch(() => undefined);
@@ -513,6 +586,9 @@ export async function executeAgendaDirective(params: {
   contactName?: string | null;
   timezone: string;
   directive: AgendaDirective;
+  agendaLembretes?: AgentAgendaLembretes | null;
+  agendaDisponibilidade?: AgentAgendaDisponibilidade | null;
+  slotIndex?: number;
 }): Promise<{ action: "scheduled" | "rescheduled" | "cancelled"; eventId: string }> {
   const sb = params.sb ?? createSupabaseServiceClient();
   if (params.directive.type === "cancel") {
@@ -553,6 +629,9 @@ export async function processAgendaDirectivesInReply(params: {
   contactName?: string | null;
   timezone: string;
   text: string;
+  agendaLembretes?: AgentAgendaLembretes | null;
+  agendaDisponibilidade?: AgentAgendaDisponibilidade | null;
+  slotIndex?: number;
 }): Promise<ProcessAgendaDirectivesResult> {
   const prepared = prepareAgendaDirectiveInReply({ text: params.text, enabled: true });
   if (prepared.action === "none") return { text: prepared.text, action: "none" };
@@ -587,6 +666,9 @@ export async function executePreparedAgendaDirective(params: {
   contactName?: string | null;
   timezone: string;
   prepared: PreparedAgendaDirectiveResult;
+  agendaLembretes?: AgentAgendaLembretes | null;
+  agendaDisponibilidade?: AgentAgendaDisponibilidade | null;
+  slotIndex?: number;
 }): Promise<ProcessAgendaDirectivesResult> {
   if (!params.prepared.directive) {
     return { text: params.prepared.text, action: params.prepared.action === "failed" ? "failed" : "none" };

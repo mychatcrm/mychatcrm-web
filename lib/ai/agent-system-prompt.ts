@@ -228,16 +228,29 @@ Mensagem de handoff: ${clean(agent.handoffMensagem) || "não configurada"}
 Palavras de handoff: ${handoffKeywords.length ? handoffKeywords.join(", ") : "padrão do sistema"}
 Número para transferência: ${clean(agent.handoffNumero) || "não configurado"}
 ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o cliente quiser falar com uma pessoa real (humano, atendente, responsável, especialista, vendedor, gerente, ou qualquer cargo), responda confirmando a transferência e inclua [[HANDOFF]] no final da resposta. Nada mais." : "REGRA CRÍTICA DE TRANSFERÊNCIA DESATIVADA: Nunca inclua [[HANDOFF]]. Se o cliente pedir atendimento humano, responda brevemente que não há atendimento humano disponível no momento e continue ajudando dentro do possível."}`,
-    `AGENDA
-- Consulte o contexto de agenda do contato antes de responder. Não invente compromissos.
-- Não crie um evento apenas porque o cliente perguntou sobre um agendamento.
-${agent.agendaAutomationEnabled === true ? `- A automação de agenda está ativa para este agente.
+    (() => {
+      const agentTz = resolveAgentTimezone(agent as Parameters<typeof resolveAgentTimezone>[0]);
+      const disp = (agent as { agendaDisponibilidade?: { ativo?: boolean; diasSemana?: number[]; horaInicio?: string; horaFim?: string } }).agendaDisponibilidade;
+      const DIAS_PT = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
+      const dispLine =
+        disp?.ativo && Array.isArray(disp.diasSemana) && disp.diasSemana.length > 0
+          ? `- Disponibilidade para agendamentos: ${disp.diasSemana.map((d) => DIAS_PT[d] ?? d).join(", ")} das ${disp.horaInicio ?? "08:00"} às ${disp.horaFim ?? "18:00"} (${agentTz}). Proponha apenas horários dentro desta janela. Se o cliente pedir horário fora, informe a disponibilidade e sugira alternativas.`
+          : null;
+      const automationBlock = agent.agendaAutomationEnabled === true
+        ? `- A automação de agenda está ativa para este agente.
+- FUSO HORÁRIO: Use sempre o fuso horário ${agentTz}. Datas e horas no [[AGENDAR:]] devem estar no horário local (não UTC).
 - Para qualquer ação de agenda siga SEMPRE este fluxo de 2 passos:
-  Passo 1 — PROPOSTA: quando o cliente mencionar data/hora (criar) ou pedir remarcação/cancelamento, apresente o resumo com data, hora e local e pergunte se confirma. Não inclua nenhuma diretiva neste passo.
-  Passo 2 — EXECUÇÃO: quando o cliente responder confirmando (sim, ok, confirmo, pode, claro, etc.), responda confirmando E inclua a diretiva correspondente no final da mensagem:
+  Passo 1 — PROPOSTA: quando o cliente mencionar data/hora (criar) ou pedir remarcação/cancelamento, apresente o resumo com a data exata (DD/MM/AAAA) e hora (HH:MM) e o local, e pergunte se confirma. Não inclua nenhuma diretiva neste passo.
+  Passo 2 — EXECUÇÃO IMEDIATA: assim que o cliente confirmar (sim, ok, confirmo, pode, claro, etc.), inclua IMEDIATAMENTE a diretiva correspondente no final da mensagem — usando a exata data DD/MM/AAAA e hora HH:MM que você apresentou no Passo 1. Nunca recalcule a data. Nunca omita a diretiva após confirmação:
     • Criar ou remarcar: [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]] — o sistema cancela o compromisso anterior automaticamente ao remarcar.
     • Cancelar: [[CANCELAR_AGENDA: id=EVENT_ID]] — use o event_id do contexto de agenda.
-- As diretivas são internas e removidas antes do cliente receber a mensagem.` : "- A automação de agenda está desativada. Você pode informar compromissos existentes, mas nunca inclua [[AGENDAR: ...]] nem [[CANCELAR_AGENDA: ...]]."}`,
+- As diretivas são internas e removidas antes do cliente receber a mensagem.${dispLine ? `\n${dispLine}` : ""}`
+        : "- A automação de agenda está desativada. Você pode informar compromissos existentes, mas nunca inclua [[AGENDAR: ...]] nem [[CANCELAR_AGENDA: ...]].";
+      return `AGENDA
+- Consulte o contexto de agenda do contato antes de responder. Não invente compromissos.
+- Não crie um evento apenas porque o cliente perguntou sobre um agendamento.
+${automationBlock}`;
+    })(),
     `CONFIGURAÇÕES AVANÇADAS DO AGENTE
 Modo de resposta configurado: ${clean((agent as { responseMode?: unknown }).responseMode) || "text"}
 Origens/ativação: ${compactJson((agent as { origens?: unknown }).origens)}

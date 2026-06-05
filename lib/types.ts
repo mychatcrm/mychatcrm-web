@@ -239,6 +239,34 @@ export interface AgentMetrics {
   ultimaAtividade: string;
 }
 
+/** Uma regra de lembrete automático para agendamentos (ex.: "1 dia antes"). */
+export type AgentAgendaLembreteRegra = {
+  /** Quantidade de tempo antes do evento para enviar o lembrete. */
+  offsetValor: number;
+  /** Unidade do offset. */
+  offsetUnidade: "minutos" | "horas" | "dias";
+  /** Template da mensagem. Variáveis: {nome}, {data}, {hora}, {local}, {titulo}. */
+  mensagem?: string;
+};
+
+/** Configuração de lembretes automáticos de agendamento por agente. */
+export type AgentAgendaLembretes = {
+  ativo: boolean;
+  /** Até 3 regras de lembrete. */
+  regras: AgentAgendaLembreteRegra[];
+};
+
+/** Janela de disponibilidade para aceitar agendamentos via agente. */
+export type AgentAgendaDisponibilidade = {
+  ativo: boolean;
+  /** Dias da semana aceitos: 0=Dom, 1=Seg, …, 6=Sáb. */
+  diasSemana: number[];
+  /** Horário de início da janela, formato "HH:MM". */
+  horaInicio: string;
+  /** Horário de fim da janela, formato "HH:MM". */
+  horaFim: string;
+};
+
 export interface Agent {
   id: string;
   clientId: string;
@@ -313,6 +341,10 @@ export interface Agent {
   ctaHandoffAtivo?: boolean;
   /** Se true, o agente pode criar, remarcar e cancelar compromissos pela conversa. */
   agendaAutomationEnabled?: boolean;
+  /** Regras de lembrete automático ligadas a agendamentos criados pelo agente. */
+  agendaLembretes?: AgentAgendaLembretes;
+  /** Janela de disponibilidade para agendamentos (dias da semana + horários). */
+  agendaDisponibilidade?: AgentAgendaDisponibilidade;
   /** CTA final configurado no wizard (ex.: transferir para humano). */
   ctaFinal?: string;
   /** Palavras-chave adicionais que disparam handoff automático. */

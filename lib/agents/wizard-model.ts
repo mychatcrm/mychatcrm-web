@@ -7,6 +7,8 @@ import {
 } from "@/lib/crm-funnels";
 import type {
   Agent,
+  AgentAgendaDisponibilidade,
+  AgentAgendaLembretes,
   AgentFollowUpInteligente,
   AgentOrigin,
   FollowUp,
@@ -53,6 +55,10 @@ export type AgentWizardDraft = {
   ctaHandoffAtivo: boolean;
   /** Se true, o agente pode alterar a agenda usando diretivas estruturadas. */
   agendaAutomationEnabled: boolean;
+  /** Lembretes automáticos enviados antes do agendamento. */
+  agendaLembretes: AgentAgendaLembretes;
+  /** Janela de disponibilidade para agendamentos. */
+  agendaDisponibilidade: AgentAgendaDisponibilidade;
   ctaFinal: string;
   handoffKeywords: string[];
   handoffMensagem: string;
@@ -77,6 +83,24 @@ export type AgentWizardDraft = {
 };
 
 const WIZARD_ORIGIN_ORDER: readonly OriginType[] = ["lead_ads", "ctw", "keyword", "organico", "crm"];
+
+export const DEFAULT_AGENDA_LEMBRETES: AgentAgendaLembretes = {
+  ativo: false,
+  regras: [
+    {
+      offsetValor: 1,
+      offsetUnidade: "dias",
+      mensagem: "Olá {nome}, lembrete do seu agendamento amanhã às {hora}. Local: {local}.",
+    },
+  ],
+};
+
+export const DEFAULT_AGENDA_DISPONIBILIDADE: AgentAgendaDisponibilidade = {
+  ativo: false,
+  diasSemana: [1, 2, 3, 4, 5],
+  horaInicio: "08:00",
+  horaFim: "18:00",
+};
 
 function defaultWizardOriginRow(tipo: OriginType): AgentOrigin {
   switch (tipo) {
@@ -177,6 +201,8 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     whatsappSlotIndex,
     ctaHandoffAtivo: agent.ctaHandoffAtivo ?? false,
     agendaAutomationEnabled: agent.agendaAutomationEnabled ?? false,
+    agendaLembretes: agent.agendaLembretes ?? { ...DEFAULT_AGENDA_LEMBRETES, regras: [...DEFAULT_AGENDA_LEMBRETES.regras] },
+    agendaDisponibilidade: agent.agendaDisponibilidade ?? { ...DEFAULT_AGENDA_DISPONIBILIDADE, diasSemana: [...DEFAULT_AGENDA_DISPONIBILIDADE.diasSemana] },
     ctaFinal: agent.ctaFinal ?? "Transferir para humano",
     handoffKeywords: agent.handoffKeywords ?? ["humano", "especialista"],
     handoffMensagem: agent.handoffMensagem ?? "",
@@ -310,6 +336,8 @@ export const defaultWizardDraft: AgentWizardDraft = {
   whatsappSlotIndex: 0,
   ctaHandoffAtivo: true,
   agendaAutomationEnabled: false,
+  agendaLembretes: { ...DEFAULT_AGENDA_LEMBRETES, regras: [...DEFAULT_AGENDA_LEMBRETES.regras] },
+  agendaDisponibilidade: { ...DEFAULT_AGENDA_DISPONIBILIDADE, diasSemana: [...DEFAULT_AGENDA_DISPONIBILIDADE.diasSemana] },
   ctaFinal: "Transferir para humano",
   handoffKeywords: ["humano", "atendente", "falar com pessoa"],
   handoffMensagem: "Perfeito! Vou te conectar com nosso especialista agora. Um momento.",
