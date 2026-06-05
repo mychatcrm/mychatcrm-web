@@ -17,26 +17,26 @@ export function WizardStep1Identidade({
   onChange: (next: AgentWizardDraft) => void;
 }) {
   return (
-    <div className="grid min-w-0 gap-4 md:grid-cols-2">
+    <div className="grid min-w-0 gap-3 md:grid-cols-2 md:gap-4">
       <div className="md:col-span-2">
         <FieldLabel label="Nome do agente" help={AGENT_FIELD_HELP.nome} />
         <Input value={draft.nome} onChange={(event) => onChange({ ...draft, nome: event.target.value })} placeholder="Carlos - Suporte Técnico" />
       </div>
-      <div className="min-w-0">
+      <div className="min-w-0 rounded-xl bg-surface-elevated/25 p-3">
         <FieldLabel label="Cor do agente" help={AGENT_FIELD_HELP.cor} />
         <div className="flex min-w-0 flex-wrap items-center gap-3">
           <input
             type="color"
             value={draft.cor}
             onChange={(event) => onChange({ ...draft, cor: event.target.value })}
-            className="h-11 w-14 shrink-0 rounded-lg border border-line bg-transparent"
+            className="h-11 w-14 shrink-0 rounded-xl border border-line bg-transparent"
           />
           <span className="min-w-0 break-all text-xs text-content-muted">{draft.cor}</span>
         </div>
       </div>
-      <div>
+      <div className="min-w-0 rounded-xl bg-surface-elevated/25 p-3">
         <FieldLabel label="Avatar" help={AGENT_FIELD_HELP.avatar} />
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(2.75rem,2.75rem))] gap-2">
           {AGENT_AVATAR_OPTIONS.map(({ id, label, Icon }) => (
             <button
               key={id}
@@ -53,7 +53,7 @@ export function WizardStep1Identidade({
           ))}
         </div>
       </div>
-      <div className="md:col-span-2">
+      <div className="min-w-0 md:col-span-2">
         <FieldLabel
           label="Fuso horário"
           help="Define o fuso usado na data/hora do prompt do agente e na janela de horário do follow-up."
@@ -68,7 +68,7 @@ export function WizardStep1Identidade({
               followUpInteligente: { ...draft.followUpInteligente, timezone },
             });
           }}
-          className="max-w-xs"
+          className="w-full max-w-full sm:max-w-sm"
         >
           {COMMON_TIMEZONES.map((tz) => (
             <option key={tz.value} value={tz.value}>

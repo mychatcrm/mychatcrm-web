@@ -32,10 +32,10 @@ export function SortableAgentCard({
       type="button"
       ref={setActivatorNodeRef}
       className={cn(
-        "flex h-9 w-8 shrink-0 cursor-grab touch-none items-center justify-center rounded-lg border border-transparent text-content-muted transition",
-        "hover:border-line hover:bg-surface-elevated/50 hover:text-content-secondary",
+        "flex h-10 w-8 shrink-0 cursor-grab touch-none items-center justify-center rounded-xl text-content-muted transition",
+        "hover:bg-surface-elevated/55 hover:text-content-secondary",
         "active:cursor-grabbing",
-        isDragging && "border-primary/30 bg-primary/10 text-primary",
+        isDragging && "bg-primary/10 text-primary",
       )}
       aria-label="Arrastar para reordenar os agentes"
       {...listeners}
@@ -49,11 +49,11 @@ export function SortableAgentCard({
     <div
       ref={setNodeRef}
       style={style}
-      className={cn("h-full min-h-0", isDragging && "relative z-20")}
+      className={cn("h-full min-h-0 min-w-0", isDragging && "relative z-20")}
     >
       <div
         className={cn(
-          "h-full rounded-xl transition-colors",
+          "h-full min-w-0 rounded-xl transition-colors",
           isDragging && "ring-2 ring-primary/25 ring-offset-2 ring-offset-surface-base",
         )}
       >

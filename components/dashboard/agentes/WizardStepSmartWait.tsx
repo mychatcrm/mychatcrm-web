@@ -13,19 +13,19 @@ export function WizardStepSmartWait({
   onChange: (next: AgentWizardDraft) => void;
 }) {
   return (
-    <div className="space-y-4">
-      <label className="flex items-start gap-3 rounded-xl border border-line bg-surface-card px-3 py-3">
+    <div className="min-w-0 space-y-3">
+      <label className="flex min-w-0 items-start gap-3 rounded-xl bg-surface-elevated/30 px-3 py-3">
         <input
           type="checkbox"
-          className="mt-1"
+          className="mt-0.5 h-4 w-4 shrink-0"
           checked={draft.smartWaitEnabled}
           onChange={(event) => onChange({ ...draft, smartWaitEnabled: event.target.checked })}
         />
         <InlineFieldTitle title="Ativar espera inteligente" help={AGENT_FIELD_HELP.smartWaitAtivar} />
       </label>
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div>
+      <div className="grid min-w-0 gap-3 min-[560px]:grid-cols-3">
+        <div className="min-w-0">
           <FieldLabel label="Espera inicial (s)" help={AGENT_FIELD_HELP.smartWaitInicial} />
           <Input
             type="number"
@@ -38,7 +38,7 @@ export function WizardStepSmartWait({
             }
           />
         </div>
-        <div>
+        <div className="min-w-0">
           <FieldLabel label="Após nova mensagem (s)" help={AGENT_FIELD_HELP.smartWaitNovaMsg} />
           <Input
             type="number"
@@ -51,7 +51,7 @@ export function WizardStepSmartWait({
             }
           />
         </div>
-        <div>
+        <div className="min-w-0">
           <FieldLabel label="Espera máxima (s)" help={AGENT_FIELD_HELP.smartWaitMaxima} />
           <Input
             type="number"
@@ -66,9 +66,10 @@ export function WizardStepSmartWait({
         </div>
       </div>
 
-      <label className="flex items-center gap-3 text-sm text-content-secondary">
+      <label className="flex min-w-0 items-center gap-3 rounded-xl bg-surface-elevated/20 px-3 py-2.5 text-sm text-content-secondary">
         <input
           type="checkbox"
+          className="h-4 w-4 shrink-0"
           disabled={!draft.smartWaitEnabled}
           checked={draft.smartWaitDedupeRepeated}
           onChange={(event) => onChange({ ...draft, smartWaitDedupeRepeated: event.target.checked })}

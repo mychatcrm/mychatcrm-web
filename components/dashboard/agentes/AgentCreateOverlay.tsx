@@ -42,34 +42,34 @@ function AgentFormPortalOverlay({
   return createPortal(
     <PanelAppearancePortalBridge>
       <div
-        className="fixed inset-0 z-[90] flex flex-col sm:flex-row sm:items-center sm:justify-center sm:p-4"
+        className="fixed inset-0 z-[90] flex items-end justify-center p-0 sm:items-center sm:p-4"
         role="presentation"
         onMouseDown={(e) => {
           if (e.target === e.currentTarget) onClose();
         }}
       >
         <div
-          className="absolute inset-0 bg-surface-base/80"
+          className="absolute inset-0 bg-black/65 backdrop-blur-sm"
           aria-hidden
         />
         <div
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
-          className="relative z-[91] flex min-h-0 min-w-0 flex-1 flex-col border-line bg-surface-deep/95 sm:max-h-[min(92dvh,920px)] sm:max-w-3xl sm:flex-none sm:rounded-xl sm:border"
+          className="relative z-[91] flex max-h-[min(100dvh,100svh)] min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-t-2xl border border-line/70 bg-surface-deep/95 sm:h-auto sm:max-h-[min(92dvh,920px)] sm:w-[min(calc(100vw-2rem),980px)] sm:rounded-xl"
         >
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-4 py-3 sm:px-5 sm:pt-4">
+          <div className="flex shrink-0 items-center justify-between gap-3 bg-surface-deep/95 px-4 py-4 sm:px-5">
             <div className="min-w-0 pr-2">
               <h2 id={titleId} className="truncate text-lg font-semibold text-content">
                 {title}
               </h2>
-              <p className="mt-0.5 line-clamp-2 text-xs text-content-muted sm:line-clamp-1">{subtitle}</p>
+              <p className="mt-1 line-clamp-2 max-w-2xl text-xs leading-relaxed text-content-muted sm:line-clamp-1">{subtitle}</p>
             </div>
             <Button variant="ghost" size="sm" className="shrink-0 !min-h-9 !px-2" type="button" onClick={onClose} aria-label="Fechar">
               ✕
             </Button>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-2 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2 sm:px-4 sm:pb-5 sm:pt-3">
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2 sm:px-5 sm:pb-5 sm:pt-3">
             {children}
           </div>
         </div>

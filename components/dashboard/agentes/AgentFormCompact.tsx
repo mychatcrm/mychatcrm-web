@@ -39,10 +39,10 @@ function AdvancedSection({
   children: ReactNode;
 }) {
   return (
-    <details className="group min-w-0 rounded-xl border border-line bg-surface-card">
+    <details className="group min-w-0 overflow-hidden rounded-xl bg-surface-card/80">
       <summary
         className={cn(
-          "flex min-w-0 cursor-pointer list-none items-start justify-between gap-3 px-3 py-3.5 text-left text-sm font-semibold text-content sm:px-4",
+          "flex min-w-0 cursor-pointer list-none items-start justify-between gap-3 px-3 py-3.5 text-left text-sm font-semibold text-content transition-colors hover:bg-surface-elevated/35 sm:px-4",
           "[&::-webkit-details-marker]:hidden",
         )}
       >
@@ -66,8 +66,28 @@ function AdvancedSection({
           ▼
         </span>
       </summary>
-      <div className="min-w-0 border-t border-line px-3 py-4 sm:px-4">{children}</div>
+      <div className="min-w-0 bg-surface-elevated/20 px-3 py-4 sm:px-4">{children}</div>
     </details>
+  );
+}
+
+function FormSection({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="panel-surface-card min-w-0 rounded-xl bg-surface-card/80 p-3.5 sm:p-4">
+      <div className="mb-3 min-w-0">
+        <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-content-secondary">{title}</h3>
+        {description ? <p className="mt-1 text-xs leading-relaxed text-content-muted">{description}</p> : null}
+      </div>
+      <div className="min-w-0">{children}</div>
+    </section>
   );
 }
 
@@ -185,8 +205,8 @@ export function AgentFormCompact({
 
       <div
         className={cn(
-          "min-w-0 overflow-x-hidden rounded-xl border border-line bg-surface-deep/50 p-4 sm:p-6",
-          embedded && "rounded-xl sm:rounded-xl sm:border-line/80",
+          "min-w-0 overflow-x-hidden rounded-xl p-0",
+          !embedded && "border border-line bg-surface-deep/50 p-4 sm:p-6",
         )}
       >
         {!embedded ? (
@@ -199,7 +219,7 @@ export function AgentFormCompact({
 
         <div
           className={cn(
-            "mb-4 flex flex-col gap-3 rounded-xl border border-primary/25 bg-primary/5 p-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between sm:p-4",
+            "mb-4 flex min-w-0 flex-col gap-3 overflow-hidden rounded-xl bg-primary/10 p-3 sm:mb-5 sm:flex-row sm:items-center sm:justify-between sm:p-4",
             embedded && "mb-5",
           )}
         >
@@ -226,31 +246,30 @@ export function AgentFormCompact({
           <p className="-mt-2 mb-2 text-sm text-amber-600 dark:text-amber-400">{generateNotice}</p>
         ) : null}
 
-        <div className="space-y-6 sm:space-y-8">
-          <section className="space-y-3">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Identidade</h3>
+        <div className="space-y-3 sm:space-y-4">
+          <FormSection title="Identidade" description="Nome, cor, avatar e fuso horário usados pelo agente.">
             <WizardStep1Identidade draft={draft} onChange={setDraft} />
-          </section>
+          </FormSection>
 
           {tenantId ? (
-            <section className="space-y-3">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">WhatsApp</h3>
+            <FormSection title="WhatsApp" description="Linha usada para enviar e receber mensagens deste agente.">
               <WizardStepWhatsappLinha tenantId={tenantId} draft={draft} onChange={setDraft} />
-            </section>
+            </FormSection>
           ) : null}
 
-          <section className="space-y-3">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Tempo de resposta</h3>
+          <FormSection title="Tempo de resposta" description="Controle como o agente agrupa mensagens antes de responder.">
             <WizardStepSmartWait draft={draft} onChange={setDraft} />
-          </section>
+          </FormSection>
 
-          <section className="space-y-3">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Treinamento</h3>
+          <FormSection title="Treinamento" description="Instruções e materiais que definem a personalidade e conhecimento.">
             <WizardStep2Treinamento draft={draft} onChange={setDraft} agentId={initialAgent?.id} />
-          </section>
+          </FormSection>
 
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Avançado</h3>
+          <div className="panel-surface-card min-w-0 rounded-xl bg-surface-card/70 p-3.5 sm:p-4">
+            <div className="mb-3 min-w-0">
+              <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-content-secondary">Avançado</h3>
+              <p className="mt-1 text-xs leading-relaxed text-content-muted">Ajustes de ativação, CRM, agenda, follow-up e testes.</p>
+            </div>
             <div className="space-y-2">
               <AdvancedSection
                 title="Ativação e origens"
@@ -348,7 +367,12 @@ export function AgentFormCompact({
         {error ? <p className="mt-6 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</p> : null}
         {success ? <p className="mt-6 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">{success}</p> : null}
 
-        <div className="mt-8 flex flex-col-reverse gap-3 border-t border-line pt-6 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+        <div
+          className={cn(
+            "sticky bottom-0 z-10 mt-6 flex flex-col-reverse gap-3 bg-surface-deep/95 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end",
+            embedded && "-mx-3 px-3 sm:-mx-5 sm:px-5",
+          )}
+        >
           {embedded && onRequestClose ? (
             <Button
               type="button"

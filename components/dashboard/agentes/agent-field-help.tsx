@@ -102,7 +102,7 @@ export function FieldHelp({ content, className }: { content: string; className?:
           id={tooltipId}
           role="tooltip"
           data-placement={placement}
-          className="field-help-tooltip fixed z-[200] max-w-[290px] overflow-hidden rounded-xl border border-line/80 bg-surface-card px-4 py-3.5 opacity-0"
+          className="field-help-tooltip fixed z-[200] max-w-[min(18rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-line/80 bg-surface-card px-4 py-3.5 opacity-0"
           style={tooltipStyle ?? { left: -9999, top: -9999 }}
         >
           {/* accent bar */}

@@ -13,7 +13,7 @@ import { SortableContext, arrayMove, rectSortingStrategy, sortableKeyboardCoordi
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Plus } from "lucide-react";
+import { Activity, Bot, Plus, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
@@ -139,16 +139,16 @@ async function apiDeleteAgent(agentId: string): Promise<void> {
 
 function AgentsGridSkeleton() {
   return (
-    <div className="grid auto-rows-fr gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label="Carregando agentes">
+    <div className="grid min-w-0 auto-rows-fr gap-3 sm:grid-cols-2 xl:grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),24rem))]" aria-label="Carregando agentes">
       {Array.from({ length: 3 }).map((_, index) => (
         <div
           key={index}
-          className="min-h-[280px] rounded-xl border border-line bg-surface-card p-4"
+          className="panel-surface-card min-h-[320px] rounded-xl border border-line bg-surface-card p-4 sm:p-5"
         >
           <div className="animate-pulse space-y-4">
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3">
-                <div className="h-11 w-11 rounded-xl bg-surface-elevated" />
+                <div className="h-12 w-12 rounded-2xl bg-surface-elevated" />
                 <div className="space-y-2">
                   <div className="h-4 w-32 rounded bg-surface-elevated" />
                   <div className="h-3 w-24 rounded bg-surface-elevated/80" />
@@ -175,15 +175,18 @@ function AgentsGridSkeleton() {
 
 function AgentsEmptyState({ onCreate }: { onCreate: () => void }) {
   return (
-    <section className="rounded-xl border border-dashed border-line bg-surface-card px-6 py-10 text-center">
-      <h3 className="text-base font-semibold text-content">Nenhum agente criado ainda</h3>
+    <section className="panel-surface-card overflow-hidden rounded-xl border border-dashed border-line bg-surface-card px-5 py-10 text-center sm:px-8 sm:py-14">
+      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+        <Bot className="h-7 w-7" strokeWidth={1.75} aria-hidden />
+      </div>
+      <h3 className="mt-5 text-lg font-semibold text-content">Nenhum agente criado ainda</h3>
       <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-content-muted">
-        Crie seu primeiro agente para começar a automatizar atendimentos e configurar canais.
+        Crie seu primeiro agente para automatizar atendimentos, conectar canais e manter tudo sincronizado com o CRM.
       </p>
       <Button
         type="button"
         onClick={onCreate}
-        className="mt-5 inline-flex min-h-10 items-center gap-1.5 rounded-xl bg-primary px-4 text-sm font-semibold text-white hover:bg-primary-hover"
+        className="mt-6 inline-flex min-h-11 items-center gap-1.5 rounded-xl bg-primary px-5 text-sm font-semibold text-white hover:bg-primary-hover"
       >
         <Plus className="h-4 w-4 shrink-0" strokeWidth={2.25} aria-hidden />
         Criar primeiro agente
@@ -366,7 +369,7 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
   }, []);
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-5 sm:space-y-6">
       <AgentCreateOverlay
         open={createOpen}
         onClose={closeCreateOverlay}
@@ -383,37 +386,55 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
         onDeleted={handleAgentDeleted}
       />
 
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
-        <div className="min-w-0">
-          <h2 className="text-xl font-semibold text-content sm:text-2xl">Meus Agentes</h2>
-          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-content-muted">
-            {loadedFromDb
-              ? "Cada cartão mostra créditos utilizados e leads em atendimento. Arraste pela alça à esquerda do cartão para ordenar os agentes; a ordem fica salva neste navegador."
-              : "A carregar agentes…"}
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end">
-          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-            <Badge className="border-primary/25 bg-primary/10 text-xs font-semibold text-primary sm:text-[13px]">
-              {activeCount}/{limit} ativos
-            </Badge>
-            <Button
-              type="button"
-              onClick={openCreateOverlay}
-              disabled={atAgentCap}
-              title={atAgentCap ? `Limite de ${limit} agentes ativos no plano.` : undefined}
-              className="inline-flex min-h-10 items-center gap-1.5 rounded-xl bg-primary px-3.5 text-sm font-semibold text-white hover:bg-primary-hover enabled:cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9 sm:px-3"
-            >
-              <Plus className="h-4 w-4 shrink-0" strokeWidth={2.25} aria-hidden />
-              Novo agente
-            </Button>
+      <div className="panel-surface-card overflow-hidden rounded-xl border border-line bg-surface-card p-4 sm:p-5 lg:p-6">
+        <div className="flex min-w-0 flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-primary">
+              <Sparkles className="h-3.5 w-3.5" strokeWidth={1.9} aria-hidden />
+              Central de agentes IA
+            </div>
+            <h2 className="mt-4 text-2xl font-semibold tracking-tight text-content sm:text-3xl">Meus Agentes</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-content-muted sm:text-[15px]">
+              {loadedFromDb
+                ? "Organize seus agentes, acompanhe uso e conecte cada automação aos canais certos. Arraste pela alça do cartão para reorganizar."
+                : "A carregar agentes…"}
+            </p>
           </div>
-          <Link
-            href="/planos"
-            className="text-center text-xs font-semibold text-primary underline-offset-2 hover:underline sm:text-right"
-          >
-            Comprar mais agentes — {formatBRL(EXTRA_AGENT_MONTHLY_BRL)}/mês por agente além do incluído no plano (add-on)
-          </Link>
+
+          <div className="grid min-w-0 gap-3 sm:grid-cols-[auto_auto] lg:min-w-[20rem] lg:grid-cols-1">
+            <div className="flex min-w-0 items-center justify-between gap-3 rounded-xl bg-surface-elevated/35 px-3 py-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                  <Activity className="h-4 w-4" strokeWidth={1.85} aria-hidden />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-medium text-content-muted">Agentes ativos</p>
+                  <p className="text-sm font-semibold text-content">{activeCount} de {limit}</p>
+                </div>
+              </div>
+              <Badge className="shrink-0 border-primary/25 bg-primary/10 text-xs font-semibold text-primary">
+                {activeCount}/{limit}
+              </Badge>
+            </div>
+            <div className="flex min-w-0 flex-col gap-2">
+              <Button
+                type="button"
+                onClick={openCreateOverlay}
+                disabled={atAgentCap}
+                title={atAgentCap ? `Limite de ${limit} agentes ativos no plano.` : undefined}
+                className="inline-flex min-h-11 w-full items-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-white hover:bg-primary-hover enabled:cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Plus className="h-4 w-4 shrink-0" strokeWidth={2.25} aria-hidden />
+                Novo agente
+              </Button>
+              <Link
+                href="/planos"
+                className="text-balance text-center text-xs font-semibold leading-relaxed text-primary underline-offset-2 hover:underline"
+              >
+                Comprar mais agentes — {formatBRL(EXTRA_AGENT_MONTHLY_BRL)}/mês por agente extra
+              </Link>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -424,7 +445,7 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleAgentsDragEnd}>
           <SortableContext items={agents.map((a) => a.id)} strategy={rectSortingStrategy}>
-            <div className="grid auto-rows-fr gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid min-w-0 auto-rows-fr gap-3 sm:grid-cols-2 xl:grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),24rem))] 2xl:gap-4">
               {agents.map((agent) => (
                 <SortableAgentCard
                   key={agent.id}

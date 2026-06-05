@@ -63,11 +63,11 @@ export function WizardStepWhatsappLinha({
   );
 
   return (
-    <div>
+    <div className="min-w-0">
       <FieldLabel label="Número WhatsApp do agente" help={AGENT_FIELD_HELP.whatsappLinha} htmlFor="agent-wa-slot-select" />
       <Select
         id="agent-wa-slot-select"
-        className="mt-1.5 min-h-[44px]"
+        className="mt-1.5 min-h-[44px] w-full max-w-full"
         value={String(safeIdx)}
         onChange={(e) => {
           const v = Number.parseInt(e.target.value, 10);
