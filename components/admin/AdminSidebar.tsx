@@ -68,7 +68,7 @@ export function AdminSidebar({
                       "panel-nav-item group flex h-8 items-center gap-2 rounded-xl border px-2 text-sm font-medium transition duration-200",
                       active && "panel-nav-item--active",
                       active
-                        ? "border-transparent bg-[rgba(242,68,0,0.1)] text-primary"
+                        ? "border-transparent bg-primary/10 text-primary"
                         : "border-transparent text-content-secondary hover:bg-surface-elevated/50 hover:text-content",
                     )}
                     aria-current={active ? "page" : undefined}
@@ -95,7 +95,7 @@ export function AdminSidebar({
           <div
             className={cn(
               "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white",
-              isLight ? "bg-[#0E1D29]" : "bg-[#1a3552]",
+              isLight ? "bg-brand-secondary" : "bg-primary",
             )}
           >
             {session.initials}

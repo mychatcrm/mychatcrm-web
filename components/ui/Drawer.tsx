@@ -34,7 +34,7 @@ export function Drawer({ open, onClose, title, children, side = "left" }: Drawer
     <div className="fixed inset-0 z-[90] md:hidden" role="presentation">
       <button
         type="button"
-        className="absolute inset-0 bg-black/65 backdrop-blur-md"
+        className="absolute inset-0 bg-black/55"
         aria-label="Fechar menu"
         onClick={onClose}
       />

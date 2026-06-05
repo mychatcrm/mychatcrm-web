@@ -37,7 +37,7 @@ export function IntegracoesLeadsHub({ session }: { session: ClientSession }) {
             className={cn(
               "flex-1 rounded-md px-3 py-2.5 text-center text-sm font-medium transition-colors sm:flex-none sm:px-4",
               tab === item.id
-                ? "bg-primary text-primary-foreground shadow-sm"
+                ? "bg-primary text-primary-foreground"
                 : "text-content-muted hover:text-content",
             )}
             onClick={() => setTab(item.id)}

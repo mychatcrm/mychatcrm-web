@@ -408,7 +408,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                       className={cn(
                         "shrink-0 text-[10px]",
                         method === "qr"
-                          ? cn("border-sky-500/40 bg-sky-500/15", isLight ? "text-sky-800" : "text-sky-200")
+                          ? "border-info/35 bg-info/10 text-info"
                           : method === "meta"
                             ? cn("border-emerald-500/40 bg-emerald-500/15", isLight ? "text-emerald-700" : "text-emerald-300")
                             : "border-line bg-surface-elevated/50 text-content-secondary",
@@ -664,7 +664,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                 <li className="flex items-center gap-1.5"><Check className="size-3 shrink-0 text-primary" aria-hidden />Agente de IA responde o lead no WhatsApp na hora</li>
                 <li className="flex items-center gap-1.5"><Check className="size-3 shrink-0 text-primary" aria-hidden />Roteamento por formulário — cada formulário pode ter um agente diferente</li>
               </ul>
-              <a href="/api/meta/connect" className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-[#1877F2] px-5 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90">
+              <a href="/api/meta/connect" className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-hover">
                 <ExternalLink className="size-4" aria-hidden />
                 Conectar com Meta
               </a>
@@ -701,8 +701,8 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
         className={cn(
           "overflow-hidden rounded-xl border [&_summary::-webkit-details-marker]:hidden",
           isLight
-            ? "border-slate-200/90 bg-gradient-to-br from-white via-slate-50/80 to-primary/[0.06]"
-            : "border-line bg-gradient-to-br from-surface-card via-surface-deep/50 to-primary/[0.07]",
+            ? "border-slate-200/90 bg-surface-deep"
+            : "border-line bg-surface-card",
         )}
       >
         <summary className="cursor-pointer list-none px-5 py-4 text-sm font-semibold text-content sm:px-7 sm:py-5">

@@ -370,7 +370,7 @@ export default function ChatWidget() {
                 <motion.button
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="absolute bottom-16 right-0 max-w-[min(18rem,calc(100vw-2.5rem))] rounded-full border border-primary/20 bg-surface-card px-4 py-2 text-left text-sm text-content shadow-lg"
+                  className="absolute bottom-16 right-0 max-w-[min(18rem,calc(100vw-2.5rem))] rounded-xl border border-primary/20 bg-surface-card px-4 py-2 text-left text-sm text-content"
                   onClick={openChat}
                 >
                   <span className="mr-2 inline-flex h-2.5 w-2.5 animate-pulse rounded-full bg-primary" />
@@ -378,13 +378,13 @@ export default function ChatWidget() {
                 </motion.button>
               ) : null}
 
-              <span className="pointer-events-none absolute right-0 top-1/2 hidden -translate-y-1/2 translate-x-[calc(100%+12px)] rounded-lg border border-line bg-surface-card px-3 py-2 text-xs text-content-secondary opacity-0 shadow-xl transition group-hover:opacity-100 md:block">
+              <span className="pointer-events-none absolute right-0 top-1/2 hidden -translate-y-1/2 translate-x-[calc(100%+12px)] rounded-lg border border-line bg-surface-card px-3 py-2 text-xs text-content-secondary opacity-0 transition group-hover:opacity-100 md:block">
                 Falar com assistente MyChatCRM
               </span>
 
               <button
                 type="button"
-                className="flex h-[60px] w-[60px] items-center justify-center rounded-full bg-gradient-primary text-white shadow-primary-glow"
+                className="flex h-[60px] w-[60px] items-center justify-center rounded-xl bg-primary text-white transition-colors hover:bg-primary-hover"
                 onClick={openChat}
                 aria-label="Abrir assistente MyChatCRM"
               >
@@ -410,7 +410,7 @@ export default function ChatWidget() {
               aria-modal="true"
               aria-label="Assistente MyChatCRM"
               style={panelStyle}
-              className="flex max-h-[min(92dvh,720px)] w-full flex-col overflow-hidden rounded-t-3xl border border-line bg-surface-deep shadow-2xl sm:max-h-[560px] sm:h-[560px] sm:w-[380px] sm:rounded-3xl"
+              className="flex max-h-[min(92dvh,720px)] w-full flex-col overflow-hidden rounded-t-2xl border border-line bg-surface-deep sm:h-[560px] sm:max-h-[560px] sm:w-[380px] sm:rounded-2xl"
             >
               <ChatHeader assistantName={settings.assistantName} onClose={closeChat} />
 
@@ -442,7 +442,7 @@ export default function ChatWidget() {
                 ) : null}
 
                 {errorText ? (
-                  <div className="rounded-xl border border-error/30 bg-error/10 px-3 py-2 text-xs text-rose-100">
+                  <div className="rounded-xl border border-error/30 bg-error/10 px-3 py-2 text-xs text-error">
                     {errorText}
                   </div>
                 ) : null}

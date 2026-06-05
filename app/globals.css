@@ -14,47 +14,47 @@
 }
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
   /* Tokens usados pelo Tailwind fora do `.panel-app` (landing, login marketing, etc.) */
-  --color-surface-base: 0 0 0;
-  --color-surface-deep: 10 10 10;
-  --color-surface-sidebar: 0 0 0;
-  --color-surface-card: 9 9 11;
-  --color-surface-elevated: 24 24 27;
-  --color-surface-brown: 9 9 11;
-  --color-line: 39 39 42;
-  --color-content: 255 255 255;
-  --color-content-secondary: 224 224 224;
-  --color-content-muted: 136 136 136;
-  --color-content-faint: 85 85 85;
+  --color-surface-base: 242 242 242;
+  --color-surface-deep: 255 255 255;
+  --color-surface-sidebar: 242 242 242;
+  --color-surface-card: 255 255 255;
+  --color-surface-elevated: 247 247 248;
+  --color-surface-brown: 255 255 255;
+  --color-line: 226 232 240;
+  --color-content: 9 9 11;
+  --color-content-secondary: 14 29 41;
+  --color-content-muted: 113 113 122;
+  --color-content-faint: 161 161 170;
 
   --primary: #f24400;
   --primary-hover: #B22A00;
   --primary-light: rgba(242, 68, 0, 0.15);
   --primary-glow: rgba(242, 68, 0, 0.35);
 
-  --bg-base: #000000;
-  --bg-surface: #0a0a0a;
-  --bg-card: #09090b;
-  --bg-elevated: #18181b;
+  --bg-base: #F2F2F2;
+  --bg-surface: #FFFFFF;
+  --bg-card: #FFFFFF;
+  --bg-elevated: #f7f7f8;
 
-  --border: #27272a;
+  --border: #e2e8f0;
   --border-hover: #f24400;
 
-  --text-primary: #ffffff;
-  --text-secondary: #e0e0e0;
-  --text-muted: #888888;
-  --text-disabled: #555555;
+  --text-primary: #09090b;
+  --text-secondary: #0E1D29;
+  --text-muted: #71717a;
+  --text-disabled: #a1a1aa;
 
   --success: #00A650;
   --warning: #f59e0b;
   --error: #ef4444;
   --info: #3b82f6;
 
-  --gradient-primary: linear-gradient(135deg, #f24400, #ff6a00);
-  --gradient-dark: linear-gradient(135deg, #0a0a0a, #1a1a1a);
-  --gradient-glow: radial-gradient(circle, rgba(242, 68, 0, 0.2), transparent 70%);
+  --gradient-primary: linear-gradient(135deg, #F24400, #F24400);
+  --gradient-dark: linear-gradient(135deg, #0E1D29, #0E1D29);
+  --gradient-glow: linear-gradient(135deg, transparent, transparent);
 }
 
 html {
@@ -123,7 +123,7 @@ body {
 
   /** Cartão de superfície reutilizável (marketing / páginas públicas) */
   .ds-public-card {
-    @apply rounded-2xl border border-line/70 bg-surface-card/50 shadow-elevation-1 backdrop-blur-sm;
+    @apply rounded-2xl border border-line/80 bg-surface-card shadow-none;
   }
 }
 
@@ -162,19 +162,19 @@ body {
   --brand-body-line: clamp(1.45rem, 1.7vw, 1.8rem); /* 23px..29px */
   --brand-footer-size: clamp(0.84rem, 0.95vw, 0.95rem); /* 13.4px..15.2px */
   --brand-footer-line: clamp(1.12rem, 1.25vw, 1.3rem); /* 18px..21px */
-  font-family: var(--font-brand-body), var(--font-inter), ui-sans-serif, sans-serif;
+  font-family: var(--font-inter), ui-sans-serif, sans-serif;
 }
 
 .brand-marketing .font-display {
-  font-family: var(--font-brand-display), "BrandManropeDisplay", var(--font-brand-body), sans-serif;
-  font-weight: 600;
+  font-family: var(--font-inter), ui-sans-serif, sans-serif;
+  font-weight: 700;
 }
 
 .brand-marketing main h1 {
-  font-family: var(--font-brand-display), "BrandManropeDisplay", var(--font-brand-body), sans-serif;
+  font-family: var(--font-inter), ui-sans-serif, sans-serif;
   font-size: var(--brand-title-size);
   line-height: var(--brand-title-line);
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: -0.02em;
 }
 
@@ -183,6 +183,23 @@ body {
   font-size: var(--brand-subtitle-size);
   line-height: var(--brand-subtitle-line);
   font-weight: 500;
+}
+
+.brand-marketing .rounded-2xl {
+  border-radius: 0.6rem;
+}
+
+.brand-marketing .rounded-3xl {
+  border-radius: 0.9rem;
+}
+
+.brand-marketing .shadow-cta-glow,
+.brand-marketing .shadow-card-hover-glow,
+.brand-marketing .shadow-primary-glow,
+.brand-marketing .shadow-elevation-1,
+.brand-marketing .shadow-elevation-2,
+.brand-marketing .shadow-elevation-3 {
+  box-shadow: none !important;
 }
 
 .brand-marketing main p,
@@ -234,16 +251,14 @@ body {
 /** Ghost CTA: borda animada ao hover */
 .landing-ghost-cta {
   position: relative;
-  background: linear-gradient(rgb(var(--color-surface-card) / 0.45), rgb(var(--color-surface-card) / 0.45))
-      padding-box,
-    linear-gradient(135deg, rgba(242, 68, 0, 0.35), rgba(255, 106, 0, 0.15), rgba(242, 68, 0, 0.4)) border-box;
-  border: 1px solid transparent;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  background: rgb(var(--color-surface-card) / 1);
+  border: 1px solid rgb(var(--color-line) / 0.9);
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
 }
 
 .landing-ghost-cta:hover {
-  transform: translateY(-1px) scale(1.02);
-  box-shadow: 0 0 0 1px rgba(242, 68, 0, 0.35), 0 12px 28px rgba(0, 0, 0, 0.2);
+  border-color: rgba(242, 68, 0, 0.5);
+  box-shadow: none;
 }
 
 /** Links navegação / rodapé — sublinhado animado */

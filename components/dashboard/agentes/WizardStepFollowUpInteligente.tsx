@@ -61,7 +61,7 @@ function ToggleSwitch({
       onClick={onChange}
       className={cn(
         "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-        checked && !disabled ? "border-primary/40 bg-gradient-primary" : "border-line/80 bg-surface-deep",
+        checked && !disabled ? "border-primary/40 bg-primary" : "border-line/80 bg-surface-deep",
         disabled && "cursor-not-allowed opacity-50",
       )}
     >

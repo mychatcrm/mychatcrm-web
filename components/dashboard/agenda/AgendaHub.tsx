@@ -280,32 +280,32 @@ export function AgendaHub() {
       }}
     >
       {/* Topbar: título do período em linha própria no mobile para não competir com os controlos */}
-      <header className="flex shrink-0 flex-col gap-2 border-b border-[#dadce0] px-2 py-2 md:flex-row md:items-center md:gap-3 md:px-3">
+      <header className="flex shrink-0 flex-col gap-2 border-b border-line px-2 py-2 md:flex-row md:items-center md:gap-3 md:px-3">
         <div className="flex min-w-0 w-full flex-wrap items-center gap-x-1 gap-y-1 md:w-auto md:shrink-0 md:flex-nowrap md:gap-2">
-          <button type="button" className="shrink-0 rounded-full p-1.5 hover:bg-[#f1f3f4] md:p-2" onClick={() => setSidebarOpen((v) => !v)} aria-label="Menu">
+          <button type="button" className="shrink-0 rounded-full p-1.5 hover:bg-surface-elevated md:p-2" onClick={() => setSidebarOpen((v) => !v)} aria-label="Menu">
             <Menu className="size-5" />
           </button>
           <div className="flex shrink-0 items-center gap-1.5">
             <Calendar className="size-5 md:size-6" style={{ color: AGENDA_BRAND }} aria-hidden />
-            <span className="whitespace-nowrap text-[15px] font-medium leading-none text-[#3c4043] md:text-[22px] md:font-normal">Agenda</span>
+            <span className="whitespace-nowrap text-[15px] font-semibold leading-none text-content md:text-[22px]">Agenda</span>
           </div>
           <button
             type="button"
             onClick={goToday}
-            className="shrink-0 rounded border border-[#dadce0] px-2 py-1 text-xs font-medium hover:bg-[#f1f3f4] md:px-4 md:py-1.5 md:text-sm"
+            className="shrink-0 rounded-xl border border-line px-2 py-1 text-xs font-medium hover:bg-surface-elevated md:px-4 md:py-1.5 md:text-sm"
           >
             Hoje
           </button>
           <div className="flex shrink-0 items-center">
-            <button type="button" className="rounded-full p-1.5 hover:bg-[#f1f3f4] md:p-2" onClick={() => navigate(-1)} aria-label="Anterior">
+            <button type="button" className="rounded-full p-1.5 hover:bg-surface-elevated md:p-2" onClick={() => navigate(-1)} aria-label="Anterior">
               <ChevronLeft className="size-5" />
             </button>
-            <button type="button" className="rounded-full p-1.5 hover:bg-[#f1f3f4] md:p-2" onClick={() => navigate(1)} aria-label="Próximo">
+            <button type="button" className="rounded-full p-1.5 hover:bg-surface-elevated md:p-2" onClick={() => navigate(1)} aria-label="Próximo">
               <ChevronRight className="size-5" />
             </button>
           </div>
         </div>
-        <h1 className="min-w-0 w-full shrink-0 truncate px-0.5 text-sm font-normal capitalize text-[#3c4043] md:min-w-0 md:flex-1 md:text-xl">{periodTitle}</h1>
+        <h1 className="min-w-0 w-full shrink-0 truncate px-0.5 text-sm font-medium capitalize text-content md:min-w-0 md:flex-1 md:text-xl">{periodTitle}</h1>
         <div className="flex w-full min-w-0 shrink-0 flex-wrap items-center justify-end gap-x-1.5 gap-y-1.5 sm:flex-nowrap md:w-auto md:shrink-0 md:justify-end md:gap-2">
           {searchOpen ? (
             <div className="flex min-w-0 w-full flex-1 items-center gap-1.5 sm:max-w-md md:max-w-md">
@@ -314,20 +314,20 @@ export function AgendaHub() {
                 value={searchQ}
                 onChange={(e) => setSearchQ(e.target.value)}
                 placeholder="Pesquisar eventos"
-                className="h-9 min-w-0 flex-1 rounded-lg border border-[#dadce0] px-2 text-sm outline-none focus:border-[#f24400] sm:px-3"
+                className="h-9 min-w-0 flex-1 rounded-xl border border-line bg-surface-base px-2 text-sm outline-none focus:border-primary sm:px-3"
               />
-              <button type="button" className="shrink-0 rounded-full p-2 hover:bg-[#f1f3f4]" onClick={() => { setSearchOpen(false); setSearchQ(""); void data.refreshEvents(); }}>
+              <button type="button" className="shrink-0 rounded-full p-2 hover:bg-surface-elevated" onClick={() => { setSearchOpen(false); setSearchQ(""); void data.refreshEvents(); }}>
                 <X className="size-4" />
               </button>
             </div>
           ) : (
-            <button type="button" className="shrink-0 rounded-full p-2 hover:bg-[#f1f3f4]" onClick={() => setSearchOpen(true)} aria-label="Pesquisar">
+            <button type="button" className="shrink-0 rounded-full p-2 hover:bg-surface-elevated" onClick={() => setSearchOpen(true)} aria-label="Pesquisar">
               <Search className="size-5" />
             </button>
           )}
           <button
             type="button"
-            className="shrink-0 rounded-full p-2 hover:bg-[#f1f3f4]"
+            className="shrink-0 rounded-full p-2 hover:bg-surface-elevated"
             aria-label="Configurações"
             onClick={() => setSidebarOpen(true)}
           >
@@ -371,10 +371,10 @@ export function AgendaHub() {
               Criar
             </button>
             <div className="min-w-0">
-              <p className="mb-2 text-center text-xs font-medium text-[#70757a]">
+              <p className="mb-2 text-center text-xs font-medium text-content-muted">
                 {MONTHS_PT[anchor.getMonth()].slice(0, 3)} {anchor.getFullYear()}
               </p>
-              <div className={`${GRID_7} text-center text-[10px] text-[#70757a]`}>
+              <div className={`${GRID_7} text-center text-[10px] text-content-muted`}>
                 {WEEKDAYS_MINI.map((d, i) => (
                   <div key={`${d}-${i}`} className="min-w-0 truncate">{d}</div>
                 ))}
@@ -390,10 +390,10 @@ export function AgendaHub() {
                       onClick={() => { setSelected(cell.date); if (!cell.inMonth) setAnchor(new Date(cell.date.getFullYear(), cell.date.getMonth(), 1)); }}
                       className={cn(
                         "aspect-square rounded-full py-0.5",
-                        !cell.inMonth && "text-[#70757a]/50",
-                        isTod && !isSel && "font-bold text-[#f24400]",
-                        isSel && "bg-[#f24400] font-medium text-white",
-                        !isSel && "hover:bg-[#f1f3f4]",
+                        !cell.inMonth && "text-content-muted/50",
+                        isTod && !isSel && "font-bold text-primary",
+                        isSel && "bg-primary font-medium text-white",
+                        !isSel && "hover:bg-surface-elevated",
                       )}
                     >
                       {cell.label}
@@ -403,18 +403,18 @@ export function AgendaHub() {
               </div>
             </div>
             <div>
-              <p className="mb-2 text-xs font-medium text-[#70757a]">Outros calendários</p>
-              <div className="rounded-lg border border-[#dadce0] p-3 text-xs">
+              <p className="mb-2 text-xs font-medium text-content-muted">Outros calendários</p>
+              <div className="rounded-xl border border-line p-3 text-xs">
                 {data.google.connected ? (
                   <>
-                    <p className="font-medium text-[#3c4043]">{data.google.email || "Google Calendar"}</p>
+                    <p className="font-medium text-content">{data.google.email || "Google Calendar"}</p>
                     {data.google.lastSyncISO ? (
-                      <p className="mt-1 text-[10px] text-[#188038]">
+                      <p className="mt-1 text-[10px] text-emerald-600">
                         Sincronizado · {new Date(data.google.lastSyncISO).toLocaleString("pt-BR")}
                       </p>
                     ) : null}
                     <div className="mt-2 flex flex-wrap gap-2">
-                      <button type="button" onClick={() => void data.syncGoogle()} className="inline-flex items-center gap-1 rounded-full border border-[#dadce0] px-2 py-1 text-[11px] hover:bg-[#f1f3f4]">
+                      <button type="button" onClick={() => void data.syncGoogle()} className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-1 text-[11px] hover:bg-surface-elevated">
                         {data.syncing ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
                         Sincronizar
                       </button>
@@ -430,7 +430,7 @@ export function AgendaHub() {
                   </>
                 ) : (
                   <>
-                    <p className="text-[#70757a]">Conecte o Google Calendar para sincronizar eventos.</p>
+                    <p className="text-content-muted">Conecte o Google Calendar para sincronizar eventos.</p>
                     <button type="button" onClick={data.connectGoogle} className="mt-2 w-full rounded-full py-2 text-xs font-semibold text-white" style={{ backgroundColor: AGENDA_BRAND }}>
                       Conectar
                     </button>
@@ -445,7 +445,7 @@ export function AgendaHub() {
         {/* Main */}
         <main className="relative min-h-0 min-w-0 flex-[1_1_0%] overflow-y-auto overflow-x-auto" ref={gridRef}>
           {data.loading ? (
-            <div className="flex h-48 items-center justify-center text-sm text-[#70757a]">
+            <div className="flex h-48 items-center justify-center text-sm text-content-muted">
               <Loader2 className="mr-2 size-4 animate-spin" />
               Carregando eventos…
             </div>
@@ -454,13 +454,13 @@ export function AgendaHub() {
 
           {searchOpen && searchQ.trim() ? (
             <div className="min-w-0 max-w-full p-3 md:p-4">
-              <p className="mb-3 text-sm text-[#70757a]">{data.events.length} resultado(s)</p>
+              <p className="mb-3 text-sm text-content-muted">{data.events.length} resultado(s)</p>
               <ul className="space-y-2">
                 {data.events.map((ev) => (
                   <li key={ev.id}>
-                    <button type="button" className="w-full rounded-lg border border-[#dadce0] px-3 py-2 text-left hover:bg-[#f1f3f4]" onClick={(e) => setDetail({ event: ev, x: e.clientX, y: e.clientY })}>
+                    <button type="button" className="w-full rounded-xl border border-line px-3 py-2 text-left hover:bg-surface-elevated" onClick={(e) => setDetail({ event: ev, x: e.clientX, y: e.clientY })}>
                       <span className="font-medium">{ev.title}</span>
-                      <span className="mt-0.5 block text-xs text-[#70757a]">
+                      <span className="mt-0.5 block text-xs text-content-muted">
                         {new Date(ev.startISO).toLocaleString("pt-BR")}
                         {ev.location ? ` · ${ev.location}` : ""}
                       </span>
@@ -475,13 +475,13 @@ export function AgendaHub() {
             <>
               {view === "month" ? (
                 <div className="box-border w-full min-w-0 max-w-full p-1 sm:p-2">
-                  <div className={`${GRID_7} border-b border-[#dadce0]`}>
+                  <div className={`${GRID_7} border-b border-line`}>
                     {WEEKDAYS_SHORT.map((d, i) => (
                       <div
                         key={d}
                         className={cn(
-                          "min-w-0 truncate py-1.5 text-center text-[9px] font-medium uppercase text-[#70757a] sm:py-2 sm:text-[11px]",
-                          i < 6 && "border-r border-[#dadce0]",
+                          "min-w-0 truncate py-1.5 text-center text-[9px] font-medium uppercase text-content-muted sm:py-2 sm:text-[11px]",
+                          i < 6 && "border-r border-line",
                         )}
                       >
                         {d}
@@ -499,18 +499,18 @@ export function AgendaHub() {
                           type="button"
                           onClick={(e) => onCellClick(e, cell.date)}
                           className={cn(
-                            "min-h-0 min-w-0 border-b border-[#dadce0] p-0.5 text-left hover:bg-[#f1f3f4] sm:p-1",
-                            idx % 7 !== 6 && "border-r border-[#dadce0]",
+                            "min-h-0 min-w-0 border-b border-line p-0.5 text-left hover:bg-surface-elevated sm:p-1",
+                            idx % 7 !== 6 && "border-r border-line",
                             "min-h-[56px] sm:min-h-[120px]",
-                            !cell.inMonth && "bg-[#fafafa] text-[#70757a]",
-                            isSel && "bg-[#fef0eb]",
+                            !cell.inMonth && "bg-surface-deep/60 text-content-muted",
+                            isSel && "bg-primary/10",
                             isTod && "font-bold",
                           )}
                         >
                           <span
                             className={cn(
                               "inline-flex size-6 items-center justify-center rounded-full text-xs sm:size-7 sm:text-sm",
-                              isTod && "bg-[#f24400] text-white",
+                              isTod && "bg-primary text-white",
                             )}
                           >
                             {cell.label}
@@ -533,7 +533,7 @@ export function AgendaHub() {
                               </div>
                             ))}
                             {dayEvents.length > 3 ? (
-                              <div className="text-[8px] text-[#70757a] sm:text-[10px]">+{dayEvents.length - 3}</div>
+                              <div className="text-[8px] text-content-muted sm:text-[10px]">+{dayEvents.length - 3}</div>
                             ) : null}
                           </div>
                         </button>
@@ -564,12 +564,12 @@ export function AgendaHub() {
                         <div
                           key={d.toISOString()}
                           className={cn(
-                            "border-l border-[#dadce0] py-2 text-center text-xs",
+                            "border-l border-line py-2 text-center text-xs",
                             view === "day" ? "min-w-0" : "min-w-[100px]",
                           )}
                         >
-                          <div className="truncate uppercase text-[#70757a]">{WEEKDAYS_SHORT[d.getDay()]}</div>
-                          <div className={cn("mx-auto mt-1 flex size-8 items-center justify-center rounded-full text-base sm:size-9 sm:text-lg", sameDay(d, today) && "bg-[#f24400] font-bold text-white")}>
+                          <div className="truncate uppercase text-content-muted">{WEEKDAYS_SHORT[d.getDay()]}</div>
+                          <div className={cn("mx-auto mt-1 flex size-8 items-center justify-center rounded-full text-base sm:size-9 sm:text-lg", sameDay(d, today) && "bg-primary font-bold text-white")}>
                             {d.getDate()}
                           </div>
                         </div>
@@ -580,17 +580,17 @@ export function AgendaHub() {
                   {/* Faixa all-day — eventos de dia inteiro por coluna, alinhados com o header */}
                   {timeGridDays.some((d) => allDayEventsForDay(data.events, d).length > 0) ? (
                     <div
-                      className="overflow-x-hidden border-b border-[#dadce0] bg-[#f8f9fa]"
+                      className="overflow-x-hidden border-b border-line bg-surface-deep"
                     >
                       <div
                         className="grid"
                         style={{ gridTemplateColumns: timeGridTemplate, minWidth: timeGridMinWidth }}
                       >
-                        <div className="flex items-center justify-end pr-2 text-[9px] text-[#70757a]">dia int.</div>
+                        <div className="flex items-center justify-end pr-2 text-[9px] text-content-muted">dia int.</div>
                         {timeGridDays.map((d) => {
                           const allDay = allDayEventsForDay(data.events, d);
                           return (
-                            <div key={d.toISOString()} className="min-h-[24px] border-l border-[#dadce0] px-1 py-0.5">
+                            <div key={d.toISOString()} className="min-h-[24px] border-l border-line px-1 py-0.5">
                               {allDay.map((ev) => (
                                 <div
                                   key={ev.id}
@@ -625,7 +625,7 @@ export function AgendaHub() {
                     >
                       <div>
                         {Array.from({ length: GRID_HOURS }, (_, h) => (
-                          <div key={h} className="relative border-b border-[#dadce0] pr-2 text-right text-[10px] text-[#70757a]" style={{ height: HOUR_HEIGHT_PX }}>
+                          <div key={h} className="relative border-b border-line pr-2 text-right text-[10px] text-content-muted" style={{ height: HOUR_HEIGHT_PX }}>
                             <span className="absolute -top-2 right-2">{h === 0 ? "" : `${h}:00`}</span>
                           </div>
                         ))}
@@ -635,7 +635,7 @@ export function AgendaHub() {
                         return (
                           <div
                             key={day.toISOString()}
-                            className="relative border-l border-[#dadce0]"
+                            className="relative border-l border-line"
                             style={{ height: GRID_HOURS * HOUR_HEIGHT_PX }}
                             onClick={(e) => {
                               const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
@@ -651,12 +651,12 @@ export function AgendaHub() {
                             }}
                           >
                             {sameDay(day, today) ? (
-                              <div className="pointer-events-none absolute left-0 right-0 z-20 border-t-2 border-[#ea4335]" style={{ top: nowLineTop }}>
-                                <span className="absolute -left-1 -top-1.5 size-2.5 rounded-full bg-[#ea4335]" />
+                              <div className="pointer-events-none absolute left-0 right-0 z-20 border-t-2 border-primary" style={{ top: nowLineTop }}>
+                                <span className="absolute -left-1 -top-1.5 size-2.5 rounded-full bg-primary" />
                               </div>
                             ) : null}
                             {Array.from({ length: GRID_HOURS }, (_, h) => (
-                              <div key={h} className="border-b border-[#f1f3f4]" style={{ height: HOUR_HEIGHT_PX }} />
+                              <div key={h} className="border-b border-line/70" style={{ height: HOUR_HEIGHT_PX }} />
                             ))}
                             {positioned.map((ev) => (
                               <div
@@ -704,7 +704,7 @@ export function AgendaHub() {
                 <div className="w-full min-w-0 max-w-full box-border p-3 md:p-4">
                   {groupedList.map(([dayKey, items]) => (
                     <div key={dayKey} className="mb-6 min-w-0">
-                      <h3 className="mb-2 break-words text-sm font-medium text-[#70757a]">
+                      <h3 className="mb-2 break-words text-sm font-medium text-content-muted">
                         {new Date(items[0]!.startISO).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" })}
                       </h3>
                       <ul className="space-y-2">
@@ -712,21 +712,21 @@ export function AgendaHub() {
                           <li key={ev.id}>
                             <button
                               type="button"
-                              className="flex w-full min-w-0 max-w-full flex-col gap-1 rounded-lg border border-[#dadce0] px-3 py-3 text-left hover:bg-[#f1f3f4] md:flex-row md:items-start md:gap-4 md:border-0 md:px-2 md:py-2"
+                              className="flex w-full min-w-0 max-w-full flex-col gap-1 rounded-xl border border-line px-3 py-3 text-left hover:bg-surface-elevated md:flex-row md:items-start md:gap-4 md:border-0 md:px-2 md:py-2"
                               onClick={(e) => setDetail({ event: ev, x: e.clientX, y: e.clientY })}
                             >
-                              <span className="shrink-0 text-sm text-[#70757a] md:w-28">
+                              <span className="shrink-0 text-sm text-content-muted md:w-28">
                                 {ev.allDay
                                   ? "Dia inteiro"
                                   : `${new Date(ev.startISO).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} – ${new Date(ev.endISO).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`}
                               </span>
                               <span className="min-w-0 flex-1">
-                                <span className="flex min-w-0 items-start gap-2 font-medium text-[#3c4043]">
+                                <span className="flex min-w-0 items-start gap-2 font-medium text-content">
                                   <span className="mt-0.5 size-3 shrink-0 rounded-sm" style={{ backgroundColor: eventColor(ev) }} />
                                   <span className="min-w-0 break-words">{ev.title}</span>
                                 </span>
-                                {ev.location ? <span className="mt-0.5 block text-xs text-[#70757a]">{ev.location}</span> : null}
-                                <span className="mt-0.5 block text-[10px] text-[#70757a]">{ev.calendarLabel}</span>
+                                {ev.location ? <span className="mt-0.5 block text-xs text-content-muted">{ev.location}</span> : null}
+                                <span className="mt-0.5 block text-[10px] text-content-muted">{ev.calendarLabel}</span>
                               </span>
                             </button>
                           </li>
@@ -735,7 +735,7 @@ export function AgendaHub() {
                     </div>
                   ))}
                   {sortedListEvents.length > listLimit ? (
-                    <button type="button" className="text-sm font-medium text-[#f24400] hover:underline" onClick={() => setListLimit((n) => n + 30)}>
+                    <button type="button" className="text-sm font-medium text-primary hover:underline" onClick={() => setListLimit((n) => n + 30)}>
                       Carregar mais eventos
                     </button>
                   ) : null}
@@ -754,17 +754,17 @@ export function AgendaHub() {
             value={quickTitle}
             onChange={(e) => setQuickTitle(e.target.value)}
             placeholder="Adicionar título"
-            className="w-full border-b border-[#dadce0] pb-2 text-sm outline-none"
+            className="w-full border-b border-line bg-transparent pb-2 text-sm outline-none"
             onKeyDown={(e) => { if (e.key === "Enter") void onQuickSave(); }}
           />
-          <p className="mt-2 text-xs text-[#70757a]">
+          <p className="mt-2 text-xs text-content-muted">
             {quick.start.toLocaleString("pt-BR", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
           </p>
           <div className="mt-3 flex justify-between gap-2">
-            <button type="button" className="text-xs font-medium text-[#f24400] hover:underline" onClick={() => { openCreateModal({ title: quickTitle, startAt: toDatetimeLocalValue(quick.start), endAt: toDatetimeLocalValue(quick.end) }); }}>
+            <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => { openCreateModal({ title: quickTitle, startAt: toDatetimeLocalValue(quick.start), endAt: toDatetimeLocalValue(quick.end) }); }}>
               Mais opções
             </button>
-            <button type="button" className="rounded px-3 py-1 text-xs text-[#70757a] hover:bg-[#f1f3f4]" onClick={() => setQuick(null)}>Fechar</button>
+            <button type="button" className="rounded px-3 py-1 text-xs text-content-muted hover:bg-surface-elevated" onClick={() => setQuick(null)}>Fechar</button>
           </div>
         </div>
       ) : null}
@@ -776,22 +776,22 @@ export function AgendaHub() {
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="size-3 shrink-0 rounded-sm" style={{ backgroundColor: eventColor(detail.event) }} />
-                <h3 className="truncate font-medium text-[#3c4043]">{detail.event.title}</h3>
+                <h3 className="truncate font-medium text-content">{detail.event.title}</h3>
               </div>
-              <p className="mt-2 text-sm text-[#70757a]">
+              <p className="mt-2 text-sm text-content-muted">
                 {new Date(detail.event.startISO).toLocaleString("pt-BR")}
                 {" – "}
                 {new Date(detail.event.endISO).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
               </p>
-              {detail.event.location ? <p className="mt-1 text-sm text-[#70757a]">{detail.event.location}</p> : null}
+              {detail.event.location ? <p className="mt-1 text-sm text-content-muted">{detail.event.location}</p> : null}
             </div>
-            <button type="button" className="rounded-full p-1 hover:bg-[#f1f3f4]" onClick={() => setDetail(null)}><X className="size-4" /></button>
+            <button type="button" className="rounded-full p-1 hover:bg-surface-elevated" onClick={() => setDetail(null)}><X className="size-4" /></button>
           </div>
           <div className="mt-4 flex gap-2">
-            <button type="button" className="rounded-full p-2 hover:bg-[#f1f3f4]" onClick={() => openEditModal(detail.event)} aria-label="Editar">
+            <button type="button" className="rounded-full p-2 hover:bg-surface-elevated" onClick={() => openEditModal(detail.event)} aria-label="Editar">
               <Pencil className="size-4" />
             </button>
-            <button type="button" className="rounded-full p-2 hover:bg-[#f1f3f4]" onClick={() => void onDeleteEvent(detail.event)} aria-label="Excluir">
+            <button type="button" className="rounded-full p-2 hover:bg-surface-elevated" onClick={() => void onDeleteEvent(detail.event)} aria-label="Excluir">
               <Trash2 className="size-4 text-rose-600" />
             </button>
           </div>

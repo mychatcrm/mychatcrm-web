@@ -298,7 +298,7 @@ export function OmniChatIaHubPage() {
 
   const tenantColumns: Column<TenantRow>[] = useMemo(
     () => [
-      { key: "tenantId", header: "Tenant", render: (r) => <span className="text-zinc-200">{r.tenantId}</span> },
+      { key: "tenantId", header: "Tenant", render: (r) => <span className="text-content">{r.tenantId}</span> },
       { key: "requests", header: "Req", render: (r) => r.requests.toLocaleString("pt-BR") },
       { key: "totalTokens", header: "Tokens", render: (r) => r.totalTokens.toLocaleString("pt-BR") },
       { key: "estimatedCostUsd", header: "USD", render: (r) => formatUsd(r.estimatedCostUsd) },
@@ -333,12 +333,12 @@ export function OmniChatIaHubPage() {
     <div className={cn(hubPageBg, "p-4 sm:p-6 lg:p-8")}>
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} className="mx-auto max-w-7xl space-y-8">
         <header className="space-y-3">
-          <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-violet-300/90">OmniChat</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-primary">OmniChat</p>
           <h1 className={cn("text-3xl font-bold tracking-tight sm:text-4xl", hubGlowTitle)}>Centro de IA · Atendimento</h1>
-          <p className="max-w-3xl text-sm leading-relaxed text-zinc-400">
-            Gestão da credencial que alimenta <strong className="text-zinc-200">só os agentes de atendimento</strong> dos teus clientes
-            (inferência, <code className="rounded bg-white/5 px-1 text-[11px]">/api/chat</code>, canais). Prioridade:{" "}
-            <code className="text-[11px] text-sky-300/90">OPENAI_API_KEY</code> na Vercel, depois chave cifrada aqui.
+          <p className="max-w-3xl text-sm leading-relaxed text-content-muted">
+            Gestão da credencial que alimenta <strong className="text-content">só os agentes de atendimento</strong> dos teus clientes
+            (inferência, <code className="rounded bg-surface-elevated px-1 text-[11px]">/api/chat</code>, canais). Prioridade:{" "}
+            <code className="text-[11px] text-primary">OPENAI_API_KEY</code> na Vercel, depois chave cifrada aqui.
           </p>
         </header>
 
@@ -349,42 +349,42 @@ export function OmniChatIaHubPage() {
             transition={{ delay: 0.05 }}
             className={cn(hubGlass, "p-5 sm:p-6 lg:col-span-5")}
           >
-            <h2 className="text-sm font-semibold text-zinc-100">API Key · ligação</h2>
-            <p className="mt-1 text-xs text-zinc-500">Valor nunca exposto completo. Cifra no servidor.</p>
-            <div className="mt-3 rounded-xl border border-sky-500/25 bg-sky-500/[0.07] p-3 text-[11px] leading-relaxed text-zinc-300">
-              <p className="font-semibold text-sky-200/95">Porque o teste pode dar certo e guardar falhar</p>
-              <p className="mt-1.5 text-zinc-400">
-                <strong className="text-zinc-200">Testar conexão</strong> só valida a chave OpenAI na API pública. <strong className="text-zinc-200">Conectar / guardar</strong> grava no
-                armazenamento interno da plataforma — caminho diferente, com requisitos próprios. Use <strong className="text-zinc-200">Diagnóstico de ligação</strong> abaixo para ver o estado
+            <h2 className="text-sm font-semibold text-content">API Key · ligação</h2>
+            <p className="mt-1 text-xs text-content-muted">Valor nunca exposto completo. Cifra no servidor.</p>
+            <div className="mt-3 rounded-xl border border-primary/25 bg-primary/[0.07] p-3 text-[11px] leading-relaxed text-content-secondary">
+              <p className="font-semibold text-primary">Porque o teste pode dar certo e guardar falhar</p>
+              <p className="mt-1.5 text-content-muted">
+                <strong className="text-content">Testar conexão</strong> só valida a chave OpenAI na API pública. <strong className="text-content">Conectar / guardar</strong> grava no
+                armazenamento interno da plataforma — caminho diferente, com requisitos próprios. Use <strong className="text-content">Diagnóstico de ligação</strong> abaixo para ver o estado
                 seguro da infraestrutura (sem expor segredos).
               </p>
             </div>
             {credErr ? (
               <div className="mt-2 space-y-2" role="alert">
                 <p className="text-sm text-rose-400">{credErr}</p>
-                <p className="text-[11px] leading-relaxed text-zinc-500">
+                <p className="text-[11px] leading-relaxed text-content-muted">
                   Peça à equipa de infraestrutura para rever o ambiente de alojamento e a base de dados. Documentação interna do repositório descreve os passos.
                 </p>
               </div>
             ) : null}
-            {credLoading && !credentials ? <div className="mt-4 h-16 animate-pulse rounded-xl bg-white/5" /> : null}
+            {credLoading && !credentials ? <div className="mt-4 h-16 animate-pulse rounded-xl bg-surface-elevated" /> : null}
             {credentials ? (
-              <ul className="mt-4 space-y-1.5 text-xs text-zinc-400">
+              <ul className="mt-4 space-y-1.5 text-xs text-content-muted">
                 <li>
                   Painel Supabase:{" "}
-                  <strong className={credentials.databaseConfigured ? "text-emerald-400" : "text-zinc-500"}>
+                  <strong className={credentials.databaseConfigured ? "text-emerald-600" : "text-content-muted"}>
                     {credentials.databaseConfigured ? "chave guardada" : "vazio"}
                   </strong>
                 </li>
                 <li>
                   Vercel env:{" "}
-                  <strong className={credentials.envConfigured ? "text-sky-400" : "text-zinc-500"}>
+                  <strong className={credentials.envConfigured ? "text-primary" : "text-content-muted"}>
                     {credentials.envConfigured ? "OPENAI_API_KEY definida" : "não"}
                   </strong>
                 </li>
                 <li>
-                  Origem: <span className="text-zinc-200">{keySourceLabel(credentials.effectiveSource)}</span>{" "}
-                  {credentials.maskedSuffix ? <code className="text-[10px] text-zinc-500">{credentials.maskedSuffix}</code> : null}
+                  Origem: <span className="text-content">{keySourceLabel(credentials.effectiveSource)}</span>{" "}
+                  {credentials.maskedSuffix ? <code className="text-[10px] text-content-muted">{credentials.maskedSuffix}</code> : null}
                 </li>
               </ul>
             ) : null}
@@ -392,7 +392,7 @@ export function OmniChatIaHubPage() {
               <Button
                 variant="secondary"
                 type="button"
-                className="border-white/10 bg-white/5 text-zinc-200"
+                className="border-line bg-surface-card text-content"
                 disabled={testBusy}
                 onClick={() => void runTestConnection()}
               >
@@ -403,7 +403,7 @@ export function OmniChatIaHubPage() {
               <div
                 className={cn(
                   "mt-4 rounded-xl border p-3 text-xs",
-                  testResult.ok ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100" : "border-rose-500/40 bg-rose-500/10 text-rose-100",
+                  testResult.ok ? "border-success/35 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error",
                 )}
                 role="status"
               >
@@ -419,17 +419,17 @@ export function OmniChatIaHubPage() {
             transition={{ delay: 0.1 }}
             className={cn(hubGlass, "space-y-4 p-5 sm:p-6 lg:col-span-7")}
           >
-            <h2 className="text-sm font-semibold text-zinc-100">Estado em tempo real</h2>
+            <h2 className="text-sm font-semibold text-content">Estado em tempo real</h2>
             <div className="grid gap-3 sm:grid-cols-2">
               <StatusPill ok={Boolean(runtimeOk)} label="Chave resolvida" detail={integration ? keySourceLabel(integration.openAiKeySource) : "—"} />
               <StatusPill ok={Boolean(logsOk)} label="Telemetria" detail={integration?.aiUsageLogsError ?? "OK"} />
               <StatusPill ok={(integration?.requestsLast24h ?? 0) > 0} label="Pedidos 24h" detail={String(integration?.requestsLast24h ?? "0")} />
               <StatusPill ok={Boolean(integration?.lastSuccess)} label="Último sucesso" detail={integration?.lastSuccess ? `${integration.lastSuccess.tenantId} · ${integration.lastSuccess.agentId}` : "—"} />
             </div>
-            <Button variant="secondary" type="button" className="w-full border-white/10 bg-white/5 text-zinc-200" disabled={verificationBusy} onClick={() => void runSequentialVerification()}>
+            <Button variant="secondary" type="button" className="w-full border-line bg-surface-card text-content" disabled={verificationBusy} onClick={() => void runSequentialVerification()}>
               {verificationBusy ? "A sincronizar…" : "Revalidar integração"}
             </Button>
-            {lastVerificationAt ? <p className="text-[10px] text-zinc-500">Última revalidação: {lastVerificationAt}</p> : null}
+            {lastVerificationAt ? <p className="text-[10px] text-content-muted">Última revalidação: {lastVerificationAt}</p> : null}
           </motion.section>
         </div>
 
@@ -441,44 +441,44 @@ export function OmniChatIaHubPage() {
         >
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="text-sm font-semibold text-zinc-100">Diagnóstico de ligação</h2>
-              <p className="mt-1 max-w-2xl text-xs text-zinc-500">
+              <h2 className="text-sm font-semibold text-content">Diagnóstico de ligação</h2>
+              <p className="mt-1 max-w-2xl text-xs text-content-muted">
                 Verificação só no servidor: URL público, chave privilegiada e leitura de consumo / limites / cofre de credenciais. Não mostra segredos.
               </p>
             </div>
-            <Button type="button" variant="secondary" className="border-white/10 bg-white/5 text-zinc-200" disabled={infraBusy} onClick={() => void loadInfrastructureHealth()}>
+            <Button type="button" variant="secondary" className="border-line bg-surface-card text-content" disabled={infraBusy} onClick={() => void loadInfrastructureHealth()}>
               {infraBusy ? "A analisar…" : "Executar diagnóstico"}
             </Button>
           </div>
-          {infraErr ? <p className="text-xs text-rose-400">{infraErr}</p> : null}
+          {infraErr ? <p className="text-xs text-error">{infraErr}</p> : null}
           {infraHealth ? (
-            <div className="space-y-3 rounded-xl border border-white/[0.07] bg-black/25 p-4 text-xs text-zinc-300">
-              <p className="text-sm font-medium text-zinc-100">{infraHealth.summary}</p>
-              <p className="text-zinc-500">
-                Estado agregado: <span className="text-zinc-200">{connectivityLabelPt(infraHealth.connectivity)}</span>
+            <div className="space-y-3 rounded-xl border border-line bg-surface-elevated p-4 text-xs text-content-secondary">
+              <p className="text-sm font-medium text-content">{infraHealth.summary}</p>
+              <p className="text-content-muted">
+                Estado agregado: <span className="text-content">{connectivityLabelPt(infraHealth.connectivity)}</span>
               </p>
               <ul className="grid gap-2 sm:grid-cols-3">
-                <li className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
+                <li className="rounded-lg border border-line bg-surface-card px-3 py-2">
                   Consumo interno:{" "}
-                  <strong className={infraHealth.dataPlane.consumptionReadable ? "text-emerald-400" : "text-amber-400"}>
+                  <strong className={infraHealth.dataPlane.consumptionReadable ? "text-success" : "text-warning"}>
                     {infraHealth.dataPlane.consumptionReadable ? "legível" : "bloqueado"}
                   </strong>
                 </li>
-                <li className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
+                <li className="rounded-lg border border-line bg-surface-card px-3 py-2">
                   Limites:{" "}
-                  <strong className={infraHealth.dataPlane.limitsReadable ? "text-emerald-400" : "text-amber-400"}>
+                  <strong className={infraHealth.dataPlane.limitsReadable ? "text-success" : "text-warning"}>
                     {infraHealth.dataPlane.limitsReadable ? "legível" : "bloqueado"}
                   </strong>
                 </li>
-                <li className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
+                <li className="rounded-lg border border-line bg-surface-card px-3 py-2">
                   Cofre de chaves:{" "}
-                  <strong className={infraHealth.dataPlane.platformKeyStoreReadable ? "text-emerald-400" : "text-amber-400"}>
+                  <strong className={infraHealth.dataPlane.platformKeyStoreReadable ? "text-success" : "text-warning"}>
                     {infraHealth.dataPlane.platformKeyStoreReadable ? "legível" : "bloqueado"}
                   </strong>
                 </li>
               </ul>
-              <p className="text-[10px] text-zinc-600">
-                Referência para suporte interno: <code className="text-zinc-500">{infraHealth.requestId}</code>
+              <p className="text-[10px] text-content-muted">
+                Referência para suporte interno: <code className="text-content-muted">{infraHealth.requestId}</code>
               </p>
             </div>
           ) : null}
@@ -497,31 +497,31 @@ export function OmniChatIaHubPage() {
         />
 
         {loadError ? (
-          <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm text-rose-200" role="alert">
+          <div className="rounded-xl border border-error/30 bg-error/10 p-4 text-sm text-error" role="alert">
             {loadError}
           </div>
         ) : null}
 
         <section className={cn(hubGlass, "p-5 sm:p-6")}>
-          <h2 className="text-sm font-semibold text-zinc-100">Consumo OmniChat (interno)</h2>
-          <p className="mt-1 text-xs text-zinc-500">Fonte: registos de consumo da plataforma no intervalo seleccionado.</p>
+          <h2 className="text-sm font-semibold text-content">Consumo OmniChat (interno)</h2>
+          <p className="mt-1 text-xs text-content-muted">Fonte: registos de consumo da plataforma no intervalo seleccionado.</p>
           <div className="mt-4 flex flex-wrap gap-3">
-            <Input type="date" className="border-white/10 bg-black/30 text-zinc-100" value={from} onChange={(e) => setFrom(e.target.value)} />
-            <Input type="date" className="border-white/10 bg-black/30 text-zinc-100" value={to} onChange={(e) => setTo(e.target.value)} />
-            <Select className="border-white/10 bg-black/30 text-zinc-100" value={status} onChange={(e) => setStatus(e.target.value)}>
+            <Input type="date" className="border-line bg-surface-card text-content" value={from} onChange={(e) => setFrom(e.target.value)} />
+            <Input type="date" className="border-line bg-surface-card text-content" value={to} onChange={(e) => setTo(e.target.value)} />
+            <Select className="border-line bg-surface-card text-content" value={status} onChange={(e) => setStatus(e.target.value)}>
               <option value="all">Todos</option>
               <option value="success">success</option>
               <option value="error">error</option>
               <option value="blocked">blocked</option>
               <option value="timeout">timeout</option>
             </Select>
-            {loading ? <span className="text-xs text-zinc-500">A carregar…</span> : null}
+            {loading ? <span className="text-xs text-content-muted">A carregar…</span> : null}
           </div>
           {overviewHealth && !overviewHealth.aiUsageLogsReachable ? (
-            <div className="mt-4 rounded-xl border border-rose-500/35 bg-rose-500/10 p-4 text-xs text-rose-100">
+            <div className="mt-4 rounded-xl border border-error/30 bg-error/10 p-4 text-xs text-error">
               <p className="font-medium">Consumo da plataforma indisponível</p>
-              <p className="mt-1 text-rose-50/95">{overviewHealth.aiUsageLogsError}</p>
-              {overviewHealth.aiUsageLogsHint ? <p className="mt-2 text-amber-100/90">{overviewHealth.aiUsageLogsHint}</p> : null}
+              <p className="mt-1">{overviewHealth.aiUsageLogsError}</p>
+              {overviewHealth.aiUsageLogsHint ? <p className="mt-2 text-warning">{overviewHealth.aiUsageLogsHint}</p> : null}
             </div>
           ) : null}
           <div className="mt-4 grid gap-2 sm:grid-cols-5">
@@ -534,16 +534,16 @@ export function OmniChatIaHubPage() {
         </section>
 
         <section className={cn(hubGlass, "p-5 sm:p-6")}>
-          <h2 className="text-sm font-semibold text-zinc-100">Quotas · limites (preparação billing)</h2>
-          <p className="mt-1 text-xs text-zinc-500">Limites por tenant (preparação para políticas no gateway).</p>
+          <h2 className="text-sm font-semibold text-content">Quotas · limites (preparação billing)</h2>
+          <p className="mt-1 text-xs text-content-muted">Limites por tenant (preparação para políticas no gateway).</p>
           {limitsHint ? <p className="mt-2 text-xs text-amber-200/90">{limitsHint}</p> : null}
           {limits.length === 0 ? (
-            <p className="mt-4 text-sm text-zinc-500">Sem linhas activas.</p>
+            <p className="mt-4 text-sm text-content-muted">Sem linhas activas.</p>
           ) : (
-            <ul className="mt-4 max-h-48 space-y-2 overflow-auto text-xs text-zinc-400">
+            <ul className="mt-4 max-h-48 space-y-2 overflow-auto text-xs text-content-muted">
               {limits.map((row) => (
-                <li key={row.id} className="rounded-lg border border-white/5 bg-black/20 px-3 py-2">
-                  <span className="text-zinc-200">{row.tenant_id}</span>
+                <li key={row.id} className="rounded-lg border border-line bg-surface-elevated px-3 py-2">
+                  <span className="text-content">{row.tenant_id}</span>
                   {row.agent_id ? ` · ${row.agent_id}` : ""} · daily tok {row.daily_tokens_hard ?? "—"} · monthly tok {row.monthly_tokens_hard ?? "—"}
                 </li>
               ))}
@@ -551,25 +551,25 @@ export function OmniChatIaHubPage() {
           )}
         </section>
 
-        <div className="space-y-4 text-zinc-300 [&_.rounded-xl]:border-white/10 [&_th]:text-zinc-400 [&_td]:text-zinc-300">
+        <div className="space-y-4 text-content-secondary [&_.rounded-xl]:border-line [&_th]:text-content-muted [&_td]:text-content-secondary">
           <div className={hubGlass}>
-            <h3 className="border-b border-white/5 px-4 py-3 text-sm font-semibold text-zinc-100">Top tenants</h3>
+            <h3 className="border-b border-line px-4 py-3 text-sm font-semibold text-content">Top tenants</h3>
             <DataTable columns={tenantColumns} data={tenants} rowKey={(r) => r.tenantId} />
           </div>
           <div className={hubGlass}>
-            <h3 className="border-b border-white/5 px-4 py-3 text-sm font-semibold text-zinc-100">Top agentes</h3>
+            <h3 className="border-b border-line px-4 py-3 text-sm font-semibold text-content">Top agentes</h3>
             <DataTable columns={agentColumns} data={agents} rowKey={(r) => `${r.tenantId}:${r.agentId}`} />
           </div>
           <div className={hubGlass}>
-            <h3 className="border-b border-white/5 px-4 py-3 text-sm font-semibold text-zinc-100">Logs</h3>
+            <h3 className="border-b border-line px-4 py-3 text-sm font-semibold text-content">Logs</h3>
             <DataTable columns={logColumns} data={logs} rowKey={(r) => r.id} />
           </div>
           <div className={cn(hubGlass, "p-4")}>
-            <h3 className="text-sm font-semibold text-zinc-100">Alertas</h3>
+            <h3 className="text-sm font-semibold text-content">Alertas</h3>
             <div className="mt-2 space-y-2 text-xs">
-              {alerts.length === 0 ? <p className="text-zinc-500">Sem alertas.</p> : null}
+              {alerts.length === 0 ? <p className="text-content-muted">Sem alertas.</p> : null}
               {alerts.map((a, i) => (
-                <pre key={i} className="overflow-auto rounded-lg bg-black/30 p-2 text-[10px] text-zinc-400">
+                <pre key={i} className="overflow-auto rounded-lg border border-line bg-surface-elevated p-2 text-[10px] text-content-muted">
                   {JSON.stringify(a, null, 2)}
                 </pre>
               ))}
@@ -583,19 +583,19 @@ export function OmniChatIaHubPage() {
 
 function StatusPill({ ok, label, detail }: { ok: boolean; label: string; detail: string }) {
   return (
-    <div className={cn("rounded-xl border px-3 py-2", ok ? "border-emerald-500/30 bg-emerald-500/10" : "border-white/10 bg-black/25")}>
-      <p className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</p>
-      <p className={cn("mt-0.5 text-xs font-medium", ok ? "text-emerald-200" : "text-zinc-300")}>{ok ? "OK" : "Atenção"}</p>
-      <p className="mt-1 line-clamp-2 text-[10px] text-zinc-500">{detail}</p>
+    <div className={cn("rounded-xl border px-3 py-2", ok ? "border-emerald-500/30 bg-emerald-500/10" : "border-line bg-surface-elevated")}>
+      <p className="text-[10px] uppercase tracking-wide text-content-muted">{label}</p>
+      <p className={cn("mt-0.5 text-xs font-medium", ok ? "text-emerald-700" : "text-content")}>{ok ? "OK" : "Atenção"}</p>
+      <p className="mt-1 line-clamp-2 text-[10px] text-content-muted">{detail}</p>
     </div>
   );
 }
 
 function Kpi({ label, v }: { label: string; v: string }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-black/25 p-3">
-      <p className="text-[10px] uppercase text-zinc-500">{label}</p>
-      <p className="mt-1 text-lg font-semibold text-zinc-100">{v}</p>
+    <div className="rounded-xl border border-line bg-surface-elevated p-3">
+      <p className="text-[10px] uppercase text-content-muted">{label}</p>
+      <p className="mt-1 text-lg font-semibold text-content">{v}</p>
     </div>
   );
 }

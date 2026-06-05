@@ -313,7 +313,7 @@ export function TeamEmployeesHub({ session }: { session: ClientSession }) {
         "min-w-0 rounded-xl border p-5 sm:p-6",
         isLight
           ? "border-slate-200/80 bg-surface-deep text-content"
-          : "border-line/80 bg-surface-card/80 ring-1 ring-white/[0.03] backdrop-blur-sm",
+          : "border-line/80 bg-surface-card text-content",
       ),
     [isLight],
   );
@@ -325,8 +325,8 @@ export function TeamEmployeesHub({ session }: { session: ClientSession }) {
           className={cn(
             "rounded-xl border px-4 py-3 text-sm leading-relaxed",
             isLight
-              ? "border-sky-200 bg-sky-50 text-sky-950"
-              : "border-sky-500/30 bg-sky-500/10 text-sky-100",
+              ? "border-info/30 bg-info/10 text-content"
+              : "border-info/30 bg-info/10 text-info",
           )}
         >
           <p>

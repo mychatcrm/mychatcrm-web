@@ -14,10 +14,10 @@ const whatsappExtraLine = `Números WhatsApp: 1 incluído em todos os planos; ca
 
 function planAccentClass(plan: SalesPlan) {
   if (plan.accent === "popular") {
-    return "border-2 border-primary/60 bg-gradient-to-br from-surface-brown/50 to-surface-card";
+    return "border-2 border-primary/60 bg-surface-card";
   }
   if (plan.accent === "enterprise") {
-    return "border border-primary/35 bg-gradient-to-br from-surface-deep/80 to-surface-card";
+    return "border border-primary/35 bg-surface-deep";
   }
   return "border border-line bg-surface-deep/25 hover:border-primary/30";
 }
@@ -182,7 +182,7 @@ export function BillingOffersPopover({
                           )}
                         </div>
                       </div>
-                      <span className="mt-3 flex min-h-[40px] w-full items-center justify-center rounded-xl bg-gradient-primary text-center text-sm font-medium text-white">
+                      <span className="mt-3 flex min-h-[40px] w-full items-center justify-center rounded-xl bg-primary text-center text-sm font-medium text-white">
                         {hasCheckout ? "Continuar para pagamento" : "Agendar reunião comercial"}
                       </span>
                     </Link>
@@ -224,7 +224,7 @@ export function BillingOffersPopover({
             <div className="mt-4 flex flex-col gap-2">
               {footLink(
                 "/planos",
-                "flex min-h-[44px] items-center justify-center rounded-xl bg-gradient-primary text-center text-sm font-medium text-white transition hover:bg-primary-hover",
+                "flex min-h-[44px] items-center justify-center rounded-xl bg-primary text-center text-sm font-medium text-white transition hover:bg-primary-hover",
                 "Ver planos e checkout",
               )}
               {footLink(

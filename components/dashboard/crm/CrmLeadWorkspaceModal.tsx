@@ -316,7 +316,7 @@ export function CrmLeadWorkspaceModal({
   };
 
   const titleHero = (
-    <div className="rounded-xl border border-line/90 bg-gradient-to-br from-primary/[0.09] via-surface-deep/50 to-surface-card p-3 sm:p-4">
+    <div className="rounded-xl border border-line/90 bg-surface-card p-3 sm:p-4">
       <div className="flex min-w-0 gap-2 sm:gap-3">
         <div
           className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-sm font-bold tracking-tight text-primary ring-1 ring-primary/25"
@@ -665,7 +665,7 @@ export function CrmLeadWorkspaceModal({
               ) : (
                 <>
                   <div
-                    className="absolute bottom-2 left-[15px] top-2 w-px bg-gradient-to-b from-line via-line to-transparent"
+                    className="absolute bottom-2 left-[15px] top-2 w-px bg-line"
                     aria-hidden
                   />
                   <ul className="relative space-y-3">
@@ -762,7 +762,7 @@ export function CrmLeadWorkspaceModal({
         ) : null}
 
         {tab === "ia" ? (
-          <div className="relative overflow-hidden rounded-xl border border-primary/30 bg-gradient-to-br from-primary/[0.08] via-surface-deep/40 to-primary/[0.04] p-5 ring-1 ring-primary/10">
+          <div className="relative overflow-hidden rounded-xl border border-primary/30 bg-surface-card p-5">
             <Sparkles className="pointer-events-none absolute -right-2 -top-2 h-24 w-24 text-primary/10" aria-hidden />
             <div className="relative flex items-start gap-3">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary ring-1 ring-primary/25">

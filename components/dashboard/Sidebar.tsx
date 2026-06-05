@@ -316,7 +316,7 @@ export function Sidebar({
             "panel-nav-item group relative flex h-9 items-center rounded-xl px-2.5 text-[13px] font-medium transition duration-200 ease-out",
             active && "panel-nav-item--active",
             active
-              ? "bg-[rgba(242,68,0,0.1)] border border-transparent text-primary"
+              ? "border border-transparent bg-primary/10 text-primary"
               : "border border-transparent text-content-secondary hover:bg-surface-elevated/40 hover:text-content",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
             collapsed && "justify-center px-0",
@@ -435,7 +435,7 @@ export function Sidebar({
                         <button
                           type="button"
                           onClick={openWaAddFlow}
-                          className="mt-3 flex min-h-[44px] w-full items-center justify-center rounded-xl bg-gradient-primary px-3 text-center text-sm font-medium text-white transition hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-card"
+                          className="mt-3 flex min-h-[44px] w-full items-center justify-center rounded-xl bg-primary px-3 text-center text-sm font-medium text-white transition hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-card"
                         >
                           Adicionar outro WhatsApp
                         </button>
@@ -513,7 +513,7 @@ export function Sidebar({
                     <div className="flex items-center gap-1.5">
                       <div className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-deep ring-1 ring-inset ring-line/40">
                         <div
-                          className="h-full rounded-full bg-gradient-primary transition-[width] duration-300 ease-out"
+                          className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
                           style={{ width: `${pctRemaining}%` }}
                         />
                       </div>
@@ -525,7 +525,7 @@ export function Sidebar({
                     <Cpu className="h-4 w-4 text-primary" strokeWidth={2} aria-hidden />
                     <div className="h-0.5 w-6 overflow-hidden rounded-full bg-surface-deep ring-1 ring-inset ring-line/40">
                       <div
-                        className="h-full rounded-full bg-gradient-primary"
+                        className="h-full rounded-full bg-primary"
                         style={{ width: `${Math.max(8, pctRemaining)}%` }}
                       />
                     </div>
@@ -702,7 +702,7 @@ export function Sidebar({
                 </div>
               </dl>
               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-deep ring-1 ring-inset ring-line/50">
-                <div className="h-full rounded-full bg-gradient-primary" style={{ width: `${pctRemaining}%` }} />
+                <div className="h-full rounded-full bg-primary" style={{ width: `${pctRemaining}%` }} />
               </div>
               <p className="mt-2 text-[10px] leading-relaxed text-content-faint">
                 O limite mensal conta leads distintos atendidos no ciclo. Em produção, o consumo real seria validado no servidor de billing.
@@ -713,7 +713,7 @@ export function Sidebar({
                   setLeadsPopoverOpen(false);
                   onNavigate?.();
                 }}
-                className="mt-3 flex min-h-[44px] w-full items-center justify-center rounded-xl bg-gradient-primary px-3 text-center text-sm font-medium text-white transition hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-card"
+                className="mt-3 flex min-h-[44px] w-full items-center justify-center rounded-xl bg-primary px-3 text-center text-sm font-medium text-white transition hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-card"
               >
                 Ver planos e limites
               </Link>
@@ -900,7 +900,7 @@ export function Sidebar({
                 closeWaAddModal();
                 onNavigate?.();
               }}
-              className="flex min-h-[44px] w-full items-center justify-center rounded-xl bg-gradient-primary px-3 text-center text-sm font-medium text-white transition hover:bg-primary-hover"
+              className="flex min-h-[44px] w-full items-center justify-center rounded-xl bg-primary px-3 text-center text-sm font-medium text-white transition hover:bg-primary-hover"
             >
               Ir para Integrações — WhatsApp
             </Link>

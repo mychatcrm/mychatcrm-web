@@ -31,7 +31,7 @@ export default function TermosDeUsoPage() {
       footer={
         <p>
           Consulte também a{" "}
-          <Link href="/politica-de-privacidade" className="text-[#f24400] hover:underline">
+          <Link href="/politica-de-privacidade" className="text-primary hover:underline">
             Política de Privacidade
           </Link>
           .
@@ -105,7 +105,7 @@ export default function TermosDeUsoPage() {
       <LegalSection title="7. Contato">
         <p>
           Dúvidas sobre estes Termos:{" "}
-          <a href={`mailto:${LEGAL_CONTACT_EMAIL}`} className="text-[#f24400] hover:underline">
+          <a href={`mailto:${LEGAL_CONTACT_EMAIL}`} className="text-primary hover:underline">
             {LEGAL_CONTACT_EMAIL}
           </a>
           .

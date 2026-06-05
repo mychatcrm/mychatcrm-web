@@ -448,7 +448,7 @@ export function EvolutionQrSlotPanel({
 
       {/* ── Pairing code ── */}
       {pairingCode && connectionState !== "open" && !qrDataUrl ? (
-        <div className="rounded-lg border border-sky-500/35 bg-sky-500/10 px-3 py-3 text-sm text-sky-950 dark:text-sky-50">
+        <div className="rounded-lg border border-info/30 bg-info/10 px-3 py-3 text-sm text-content">
           <p className="font-semibold text-content">Código de emparelhamento</p>
           <p className="mt-1 text-xs leading-relaxed text-content-secondary">
             No WhatsApp no telemóvel:{" "}
@@ -475,9 +475,9 @@ export function EvolutionQrSlotPanel({
       {qrDataUrl && connectionState !== "open" ? (
         <div className="flex flex-col items-center gap-3 py-1">
           {/* Pulsing "waiting" badge */}
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/40 bg-sky-500/10 px-3 py-1 text-xs font-medium text-sky-700 dark:text-sky-300">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-info/35 bg-info/10 px-3 py-1 text-xs font-medium text-info">
             <span
-              className="h-1.5 w-1.5 rounded-full bg-sky-500 animate-pulse"
+              className="h-1.5 w-1.5 rounded-full bg-info animate-pulse"
               aria-hidden
             />
             Aguardando leitura…
@@ -490,7 +490,7 @@ export function EvolutionQrSlotPanel({
               isLight
                 ? "border-slate-200 bg-white"
                 : "border-line/60 bg-white",
-              qrSecondsLeft <= 15 && "border-amber-400/70 shadow-amber-400/20",
+              qrSecondsLeft <= 15 && "border-amber-400/70",
             )}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -504,7 +504,7 @@ export function EvolutionQrSlotPanel({
             />
             {/* Expiry overlay at ≤ 10 seconds */}
             {qrSecondsLeft <= 10 && qrSecondsLeft > 0 ? (
-              <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/55 backdrop-blur-[2px]">
+              <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/55">
                 <div className="rounded-xl bg-surface-card/95 px-5 py-4 text-center">
                   <p className="text-xs font-medium text-content-secondary">QR expira em</p>
                   <p className={cn("mt-0.5 text-3xl font-bold tabular-nums", countdownColor)}>

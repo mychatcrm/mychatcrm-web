@@ -77,7 +77,7 @@ function DashboardShellInner({
       </Drawer>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="panel-topbar flex h-12 shrink-0 items-center border-b border-line/80 bg-surface-base/80 px-4 backdrop-blur-md supports-[backdrop-filter]:bg-surface-base/65 sm:px-6 xl:px-8">
+        <header className="panel-topbar flex h-12 shrink-0 items-center border-b border-line/80 bg-surface-base px-4 sm:px-6 xl:px-8">
           <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
               <button

@@ -22,7 +22,7 @@ export function PublicLegalPageShell({
     <div className="min-h-screen bg-surface-base text-content">
       <header className="border-b border-line/80 bg-surface-deep/90">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-4 py-5 sm:px-6">
-          <Link href={homeHref} className="font-display text-lg font-semibold tracking-tight text-[#f24400] hover:text-[#c93800]">
+          <Link href={homeHref} className="font-display text-lg font-semibold tracking-tight text-primary hover:text-primary-hover">
             MyChatCRM
           </Link>
           <Link href={homeHref} className="text-sm text-content-muted transition hover:text-content">

@@ -116,7 +116,7 @@ export function CheckoutSuccessView({
 
   if (state.phase === "loading") {
     return (
-      <div className="mx-auto w-full max-w-lg rounded-3xl border border-line bg-surface-card px-5 py-10 text-center shadow-card-hover-glow sm:px-8 sm:py-12">
+      <div className="mx-auto w-full max-w-lg rounded-2xl border border-line bg-surface-card px-5 py-10 text-center sm:px-8 sm:py-12">
         <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-primary/20 border-t-primary" />
         <p className="mt-6 text-sm text-content-muted">Confirmando seu pagamento…</p>
       </div>
@@ -125,7 +125,7 @@ export function CheckoutSuccessView({
 
   if (state.phase === "error") {
     return (
-      <div className="mx-auto w-full max-w-lg rounded-3xl border border-line bg-surface-card px-5 py-10 text-center shadow-card-hover-glow sm:px-8 sm:py-12">
+      <div className="mx-auto w-full max-w-lg rounded-2xl border border-line bg-surface-card px-5 py-10 text-center sm:px-8 sm:py-12">
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-rose-500/10 text-3xl text-rose-500">
           ✕
         </div>
@@ -150,7 +150,7 @@ export function CheckoutSuccessView({
 
   if (state.phase === "done") {
     return (
-      <div className="mx-auto w-full max-w-lg rounded-3xl border border-line bg-surface-card px-5 py-10 text-center shadow-card-hover-glow sm:px-8 sm:py-12">
+      <div className="mx-auto w-full max-w-lg rounded-2xl border border-line bg-surface-card px-5 py-10 text-center sm:px-8 sm:py-12">
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-success/15 text-3xl text-success">
           ✓
         </div>
@@ -174,7 +174,7 @@ export function CheckoutSuccessView({
 
   // phase === "set-password"
   return (
-    <div className="mx-auto w-full max-w-lg rounded-3xl border border-line bg-surface-card px-5 py-10 shadow-card-hover-glow sm:px-8 sm:py-12">
+    <div className="mx-auto w-full max-w-lg rounded-2xl border border-line bg-surface-card px-5 py-10 sm:px-8 sm:py-12">
       <div className="text-center">
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-success/15 text-3xl text-success">
           ✓

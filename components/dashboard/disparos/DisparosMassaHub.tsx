@@ -181,20 +181,10 @@ export function DisparosMassaHub({ campaignItems }: { campaignItems: string[] })
         className={cn(
           "relative overflow-hidden rounded-xl border p-6 sm:p-8",
           isLight
-            ? "border-slate-200/90 bg-gradient-to-br from-surface-deep via-slate-50/90 to-emerald-50/40"
-            : "border-line/80 bg-gradient-to-br from-surface-deep/80 via-surface-card/30 to-emerald-950/20",
+            ? "border-slate-200/90 bg-surface-deep"
+            : "border-line/80 bg-surface-card",
         )}
       >
-        <div
-          className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full blur-3xl"
-          style={{ background: "radial-gradient(circle, rgba(37,211,102,0.22), transparent 68%)" }}
-          aria-hidden
-        />
-        <div
-          className="pointer-events-none absolute -bottom-20 left-1/3 h-56 w-56 rounded-full blur-3xl"
-          style={{ background: "radial-gradient(circle, rgba(242,68,0,0.18), transparent 70%)" }}
-          aria-hidden
-        />
         <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0 space-y-3">
             <div className="flex flex-wrap items-center gap-2">
@@ -219,7 +209,7 @@ export function DisparosMassaHub({ campaignItems }: { campaignItems: string[] })
               telemetria de entrega — tudo preparado para escalar conversas reais no WhatsApp.
             </p>
             <div className="flex flex-wrap gap-3 pt-1">
-              <div className="flex items-center gap-2 rounded-xl border border-line bg-surface-card/60 px-4 py-2 text-xs text-content-secondary backdrop-blur-sm">
+              <div className="flex items-center gap-2 rounded-xl border border-line bg-surface-card px-4 py-2 text-xs text-content-secondary">
                 <ShieldCheck className="size-4 shrink-0 text-emerald-500" aria-hidden />
                 Conformidade: opt-in e politica de bloqueio simulados neste ambiente.
               </div>
@@ -239,8 +229,8 @@ export function DisparosMassaHub({ campaignItems }: { campaignItems: string[] })
               <div
                 key={label}
                 className={cn(
-                  "rounded-xl border p-3 text-center backdrop-blur-sm sm:p-4",
-                  isLight ? "border-slate-200/80 bg-surface-deep/80" : "border-line/70 bg-surface-deep/50",
+                  "rounded-xl border p-3 text-center sm:p-4",
+                  isLight ? "border-slate-200/80 bg-surface-deep" : "border-line/70 bg-surface-deep",
                 )}
               >
                 <Icon className={cn("mx-auto mb-2 size-5 opacity-90", tone)} aria-hidden />
@@ -532,7 +522,7 @@ export function DisparosMassaHub({ campaignItems }: { campaignItems: string[] })
                 </div>
                 <span className="size-2 rounded-full bg-emerald-400 " aria-hidden />
               </div>
-              <div className="space-y-2 bg-[linear-gradient(180deg,rgba(15,23,42,0.3),rgba(15,23,42,0.85))] px-3 py-4">
+              <div className="space-y-2 bg-surface-deep px-3 py-4">
                 <div className="ml-auto max-w-[92%] rounded-xl rounded-tr-sm bg-emerald-700/90 px-3 py-2 text-[13px] leading-snug text-white ">
                   {preview || "Digite sua mensagem…"}
                 </div>

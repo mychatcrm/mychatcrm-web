@@ -45,7 +45,7 @@ export function Modal({ open, onClose, title, titleContent, children, footer, cl
           if (e.target === e.currentTarget) onClose();
         }}
       >
-        <div className="absolute inset-0 bg-black/65 backdrop-blur-md" aria-hidden />
+        <div className="absolute inset-0 bg-black/55" aria-hidden />
         <div
           role="dialog"
           aria-modal="true"

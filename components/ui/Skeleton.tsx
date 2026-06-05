@@ -4,7 +4,7 @@ export function Skeleton({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "animate-pulse rounded-lg bg-gradient-to-r from-line/50 via-line/70 to-line/50 bg-[length:200%_100%]",
+        "animate-pulse rounded-lg bg-line/60",
         className,
       )}
       aria-hidden

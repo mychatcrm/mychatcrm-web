@@ -35,10 +35,10 @@ function PlanCard({
     : "/planos#especialista";
 
   const cardClass = cn(
-    "group flex h-full flex-col rounded-3xl border bg-surface-card p-7 transition",
-    isPopular && "border-2 border-primary bg-gradient-to-br from-surface-brown to-surface-card shadow-primary-glow",
-    isEnterprise && "border-primary/40 bg-gradient-to-br from-surface-deep to-surface-card",
-    !isPopular && !isEnterprise && "border-line hover:border-primary hover:shadow-card-hover-glow",
+    "group flex h-full flex-col rounded-2xl border bg-surface-card p-7 transition-colors duration-150",
+    isPopular && "border-2 border-primary bg-surface-card",
+    isEnterprise && "border-primary/40 bg-surface-deep",
+    !isPopular && !isEnterprise && "border-line hover:border-primary",
     highlighted && "ring-2 ring-primary ring-offset-2 ring-offset-surface-base",
   );
 
@@ -124,7 +124,7 @@ function PlanCard({
         </p>
       )}
 
-      <span className="mt-8 inline-flex min-h-[48px] w-full items-center justify-center rounded-xl bg-gradient-primary text-center text-base font-semibold text-white transition group-hover:shadow-cta-glow">
+      <span className="mt-8 inline-flex min-h-[48px] w-full items-center justify-center rounded-xl bg-primary text-center text-base font-semibold text-white transition-colors group-hover:bg-primary-hover">
         {checkout ? "Continuar para pagamento" : "Agendar conversa comercial"}
       </span>
     </>

@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
-import { Inter, Space_Grotesk } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 import { BRAND_LOGO, BRAND_ORANGE } from "@/lib/brand";
 import { defaultMetadata } from "@/lib/seo";
@@ -10,12 +10,6 @@ import { ChromeThemeReset } from "@/components/ChromeThemeReset";
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
-  display: "swap",
-});
-
-const space = Space_Grotesk({
-  subsets: ["latin"],
-  variable: "--font-space-grotesk",
   display: "swap",
 });
 
@@ -42,8 +36,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html
       lang="pt-BR"
-      className={`${inter.variable} ${space.variable}`}
-      style={{ backgroundColor: "#000000" }}
+      className={inter.variable}
+      style={{ backgroundColor: "#F2F2F2" }}
     >
       <body className="min-h-[100dvh] min-w-0 bg-surface-base font-sans text-content antialiased">
         <ChromeThemeReset />

@@ -118,7 +118,7 @@ function Section({
   );
 }
 
-const CHART_COLORS = ["#f24400", "#38bdf8", "#a78bfa", "#34d399", "#fbbf24"];
+const CHART_COLORS = ["#F24400", "#0E1D29", "#B22A00", "#00A650", "#71717A"];
 
 export function PlatformIntelligenceDashboard({ session }: { session: AdminSession }) {
   const allowed = useMemo(() => canAccessPlatformMetricsApi(session.role), [session.role]);
@@ -317,7 +317,7 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
       </Section>
 
       {error ? (
-        <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div>
+        <div className="rounded-xl border border-error/30 bg-error/10 px-4 py-3 text-sm text-error">{error}</div>
       ) : null}
 
       {!data && !loading && !error ? (
@@ -366,8 +366,8 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
                     <XAxis dataKey="dateISO" tick={{ fontSize: 11 }} tickFormatter={(v) => String(v).slice(5)} />
                     <YAxis tick={{ fontSize: 11 }} width={44} />
                     <Tooltip
-                      contentStyle={{ background: "#0f0f10", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12 }}
-                      labelStyle={{ color: "#e5e7eb" }}
+                      contentStyle={{ background: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 12, color: "#09090B" }}
+                      labelStyle={{ color: "#09090B" }}
                     />
                     <Line type="monotone" dataKey="messages" name="Mensagens" stroke={CHART_COLORS[0]} strokeWidth={2} dot={false} />
                   </LineChart>
@@ -381,7 +381,7 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
                     <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                     <YAxis tick={{ fontSize: 11 }} width={44} />
                     <Tooltip
-                      contentStyle={{ background: "#0f0f10", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12 }}
+                      contentStyle={{ background: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 12, color: "#09090B" }}
                     />
                     <Legend />
                     <Area type="monotone" dataKey="entrada" name="Input (M)" stackId="1" stroke={CHART_COLORS[1]} fill={`${CHART_COLORS[1]}55`} />
@@ -418,8 +418,9 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
                       </Pie>
                       <Tooltip
                         contentStyle={{
-                          background: "#0f0f10",
-                          border: "1px solid rgba(255,255,255,0.08)",
+                          background: "#FFFFFF",
+                          border: "1px solid #E2E8F0",
+                          color: "#09090B",
                           borderRadius: 12,
                         }}
                       />
@@ -440,8 +441,9 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
                       <YAxis type="category" dataKey="label" width={120} tick={{ fontSize: 10 }} />
                       <Tooltip
                         contentStyle={{
-                          background: "#0f0f10",
-                          border: "1px solid rgba(255,255,255,0.08)",
+                          background: "#FFFFFF",
+                          border: "1px solid #E2E8F0",
+                          color: "#09090B",
                           borderRadius: 12,
                         }}
                       />
@@ -483,7 +485,7 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
                     <XAxis dataKey="date" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
                     <YAxis tick={{ fontSize: 11 }} width={48} />
                     <Tooltip
-                      contentStyle={{ background: "#0f0f10", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12 }}
+                      contentStyle={{ background: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 12, color: "#09090B" }}
                     />
                     <Legend />
                     <Bar dataKey="receita" name="Receita" fill={CHART_COLORS[3]} radius={[4, 4, 0, 0]} />

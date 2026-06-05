@@ -86,7 +86,7 @@ export function FieldHelp({ content, className }: { content: string; className?:
         aria-label="Ajuda sobre este campo"
         aria-expanded={open}
         aria-describedby={open ? tooltipId : undefined}
-        className="inline-flex h-[15px] w-[15px] cursor-pointer items-center justify-center rounded-full border-2 border-[#f24400] !bg-transparent text-[9px] font-semibold leading-none !text-[#f24400] transition-all duration-200 hover:scale-110 hover:bg-[#f24400]/10 hover:shadow-[0_0_0_3px_rgba(242,68,0,0.15)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#f24400]/40"
+        className="inline-flex h-4 w-4 cursor-pointer items-center justify-center rounded-full border-0 bg-primary text-[9px] font-bold leading-none text-white transition-colors duration-150 hover:bg-primary-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -102,16 +102,16 @@ export function FieldHelp({ content, className }: { content: string; className?:
           id={tooltipId}
           role="tooltip"
           data-placement={placement}
-          className="field-help-tooltip fixed z-[200] max-w-[290px] overflow-hidden rounded-xl border border-white/[0.08] bg-[#1c1c1c] px-4 py-3.5 opacity-0 shadow-[0_16px_40px_rgba(0,0,0,0.7),0_4px_16px_rgba(0,0,0,0.5)]"
+          className="field-help-tooltip fixed z-[200] max-w-[290px] overflow-hidden rounded-xl border border-line/80 bg-surface-card px-4 py-3.5 opacity-0"
           style={tooltipStyle ?? { left: -9999, top: -9999 }}
         >
           {/* accent bar */}
-          <span aria-hidden className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-[#f24400] via-[#f24400]/50 to-transparent" />
-          <span className="block text-[12.5px] leading-relaxed text-[#e0e0e0]">{description}</span>
+          <span aria-hidden className="absolute inset-x-0 top-0 h-[2px] bg-primary" />
+          <span className="block text-[12.5px] leading-relaxed text-content">{description}</span>
           {example ? (
-            <span className="mt-2.5 block border-t border-white/[0.07] pt-2">
-              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#f24400]/70">Exemplo</span>
-              <span className="mt-0.5 block text-[11.5px] leading-[1.5] text-[#b0b0b0]">{example}</span>
+            <span className="mt-2.5 block border-t border-line/70 pt-2">
+              <span className="block text-[10px] font-semibold uppercase tracking-wider text-primary/80">Exemplo</span>
+              <span className="mt-0.5 block text-[11.5px] leading-[1.5] text-content-muted">{example}</span>
             </span>
           ) : null}
         </span>

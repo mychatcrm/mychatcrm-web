@@ -32,7 +32,7 @@ export default function PoliticaDePrivacidadePage() {
       footer={
         <p>
           Esta política complementa os{" "}
-          <Link href="/termos-de-uso" className="text-[#f24400] hover:underline">
+          <Link href="/termos-de-uso" className="text-primary hover:underline">
             Termos de Uso
           </Link>
           . Em caso de conflito com a legislação brasileira, prevalece a lei aplicável.
@@ -125,7 +125,7 @@ export default function PoliticaDePrivacidadePage() {
       <LegalSection title="7. Contato">
         <p>
           Para dúvidas, solicitações de privacidade ou exercício de direitos, escreva para{" "}
-          <a href={`mailto:${LEGAL_CONTACT_EMAIL}`} className="text-[#f24400] hover:underline">
+          <a href={`mailto:${LEGAL_CONTACT_EMAIL}`} className="text-primary hover:underline">
             {LEGAL_CONTACT_EMAIL}
           </a>
           . Responderemos em prazo razoável, em geral até 15 dias úteis.

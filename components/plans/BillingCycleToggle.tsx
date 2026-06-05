@@ -13,12 +13,12 @@ type BillingCycleToggleProps = {
 export function BillingCycleToggle({ value, onChange, className }: BillingCycleToggleProps) {
   const inactiveTab =
     "text-content-muted hover:bg-surface-elevated/90 hover:text-content-secondary dark:hover:bg-surface-deep/80";
-  const activeTab = "bg-primary text-white shadow-sm ring-1 ring-primary/40 ring-inset";
+  const activeTab = "bg-primary text-white";
 
   return (
     <div
       className={cn(
-        "inline-flex rounded-full border border-line/80 bg-surface-card p-1 shadow-elevation-1 ring-1 ring-black/[0.03] dark:bg-surface-elevated dark:ring-white/[0.05]",
+        "inline-flex rounded-xl border border-line/80 bg-surface-card p-1 dark:bg-surface-elevated",
         className,
       )}
       role="tablist"
@@ -29,7 +29,7 @@ export function BillingCycleToggle({ value, onChange, className }: BillingCycleT
         role="tab"
         aria-selected={value === "monthly"}
         className={cn(
-          "relative rounded-full px-5 py-2.5 text-sm font-semibold transition-colors duration-200 sm:px-7",
+            "relative rounded-xl px-5 py-2.5 text-sm font-semibold transition-colors duration-150 sm:px-7",
           value === "monthly" ? activeTab : inactiveTab,
         )}
         onClick={() => onChange("monthly")}
@@ -41,7 +41,7 @@ export function BillingCycleToggle({ value, onChange, className }: BillingCycleT
         role="tab"
         aria-selected={value === "annual"}
         className={cn(
-          "relative flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold transition-colors duration-200 sm:px-7",
+            "relative flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold transition-colors duration-150 sm:px-7",
           value === "annual" ? activeTab : inactiveTab,
         )}
         onClick={() => onChange("annual")}

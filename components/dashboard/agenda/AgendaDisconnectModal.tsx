@@ -16,7 +16,7 @@ export function AgendaDisconnectModal({
 }) {
   return (
     <Modal open={open} onClose={onClose} title="Desconectar Google Calendar">
-      <p className="text-sm text-[#5f6368]">Deseja desligar a sincronização com o Google Calendar?</p>
+      <p className="text-sm text-content-muted">Deseja desligar a sincronização com o Google Calendar?</p>
       <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
         <Button type="button" variant="outline" disabled={loading} className="w-full sm:w-auto" onClick={onClose}>
           Cancelar

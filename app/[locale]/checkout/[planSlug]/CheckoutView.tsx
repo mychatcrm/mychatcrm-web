@@ -271,7 +271,7 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
 
   return (
     <div className="mx-auto grid min-w-0 max-w-5xl gap-10 px-1 sm:px-0 lg:grid-cols-[1fr_340px] lg:items-start">
-      <div className="order-2 min-w-0 rounded-3xl border border-line bg-surface-card p-6 sm:p-8 lg:order-1">
+      <div className="order-2 min-w-0 rounded-2xl border border-line bg-surface-card p-6 sm:p-8 lg:order-1">
         <h2 className="font-display text-xl font-bold text-content">Seus dados</h2>
         <p className="mt-1 text-sm text-content-muted">
           Preencha abaixo e você será encaminhado para o pagamento seguro via Stripe.
@@ -434,8 +434,8 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
         </form>
       </div>
 
-      <aside className="order-1 space-y-6 rounded-3xl border border-line bg-surface-deep p-6 sm:p-8 lg:order-2 lg:sticky lg:top-24">
-        <div className="rounded-2xl border border-line/80 bg-surface-card/60 p-4 shadow-inset-hairline sm:p-5">
+      <aside className="order-1 space-y-6 rounded-2xl border border-line bg-surface-deep p-6 sm:p-8 lg:order-2 lg:sticky lg:top-24">
+        <div className="rounded-2xl border border-line/80 bg-surface-card p-4 sm:p-5">
           <div className="flex flex-col gap-1">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">

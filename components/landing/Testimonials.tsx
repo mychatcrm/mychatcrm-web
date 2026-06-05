@@ -30,13 +30,10 @@ export function Testimonials() {
 
   return (
     <section
-      className="relative border-y border-line/80 bg-surface-deep/90 py-20 motion-reduce:bg-surface-deep/70"
+      className="relative border-y border-line/80 bg-surface-deep py-20 motion-reduce:bg-surface-deep"
       aria-label={t("ariaLabel")}
     >
-      <div
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_100%_60%_at_50%_0%,rgba(242,68,0,0.06),transparent_55%),linear-gradient(180deg,rgb(var(--color-surface-base)_/_0.35),transparent_40%)]"
-        aria-hidden
-      />
+      <div className="pointer-events-none absolute inset-0 bg-surface-deep" aria-hidden />
       <div className="relative mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="font-display text-3xl font-bold text-content sm:text-4xl">
@@ -54,7 +51,7 @@ export function Testimonials() {
             <article
               key={item.name + i}
               data-card="true"
-              className="min-w-[85vw] snap-center rounded-2xl border border-line/80 bg-surface-card/95 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-sm"
+              className="min-w-[85vw] snap-center rounded-2xl border border-line/80 bg-surface-card p-5"
             >
               <div className="flex items-center gap-3">
                 <Image
@@ -87,7 +84,7 @@ export function Testimonials() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, amount: 0.15 }}
               transition={{ delay: 0.04 * i }}
-              className="rounded-2xl border border-line/80 bg-surface-card/95 p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-sm transition duration-300 hover:border-primary/25 hover:shadow-card-hover-glow motion-reduce:hover:shadow-none"
+              className="rounded-2xl border border-line/80 bg-surface-card p-6 transition-colors duration-150 hover:border-primary/25"
             >
               <div className="flex items-center gap-3">
                 <Image

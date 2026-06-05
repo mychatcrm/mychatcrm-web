@@ -27,7 +27,7 @@ export const SITUATION_TEMPLATES: SituationTemplate[] = [
     title: "Boas-vindas",
     subtitle: "Lead novo ou primeiro contato",
     Icon: Handshake,
-    accent: "text-sky-400",
+    accent: "text-info",
     body: "Ola {{nome}}! Aqui e a equipe da {{empresa}}. Recebemos seu interesse e ja separamos um atendente para te ajudar. Posso te enviar um resumo em 1 minuto?",
   },
   {
@@ -35,7 +35,7 @@ export const SITUATION_TEMPLATES: SituationTemplate[] = [
     title: "Reativacao",
     subtitle: "Base fria ou sem resposta",
     Icon: Snowflake,
-    accent: "text-cyan-400",
+    accent: "text-info",
     body: "Oi {{nome}}, faz tempo que a gente nao conversa por aqui. Tenho uma novidade que pode valer para {{empresa}}. Se quiser retomar, responda EU QUERO e te mando os detalhes.",
   },
   {
@@ -43,7 +43,7 @@ export const SITUATION_TEMPLATES: SituationTemplate[] = [
     title: "Oferta limitada",
     subtitle: "Campanha com urgencia leve",
     Icon: Flame,
-    accent: "text-orange-400",
+    accent: "text-primary",
     body: "{{nome}}, liberamos uma condicao especial para {{empresa}} ate o fim da semana. Para receber o link com valores, responda SIM. Sem spam: se nao for o momento, responda DEPOIS.",
   },
   {
@@ -51,7 +51,7 @@ export const SITUATION_TEMPLATES: SituationTemplate[] = [
     title: "Consulta / reuniao",
     subtitle: "Lembrete e confirmacao",
     Icon: CalendarCheck,
-    accent: "text-emerald-400",
+    accent: "text-success",
     body: "Ola {{nome}}, passando para confirmar nosso horario com {{empresa}}. Responda OK para confirmar ou REAGENDAR se precisar mudar. Seu contato: {{telefone}}.",
   },
   {
@@ -59,7 +59,7 @@ export const SITUATION_TEMPLATES: SituationTemplate[] = [
     title: "Pos-venda",
     subtitle: "Onboarding e satisfacao",
     Icon: HeartPulse,
-    accent: "text-rose-400",
+    accent: "text-error",
     body: "Oi {{nome}}! Tudo certo com sua experiencia na {{empresa}}? Se precisar de suporte, estamos no {{telefone}}. Se estiver tudo ok, um feedback rapido nos ajuda muito — responda TUDO OK ou PRECISO DE AJUDA.",
   },
   {
@@ -67,7 +67,7 @@ export const SITUATION_TEMPLATES: SituationTemplate[] = [
     title: "Convite / evento",
     subtitle: "Webinar, loja ou lancamento",
     Icon: PartyPopper,
-    accent: "text-violet-400",
+    accent: "text-brand-secondary",
     body: "{{nome}}, voce esta convidado(a) a participar de um momento exclusivo com a {{empresa}}. Responda PARTICIPAR que envio data, horario e link. Se nao puder agora, responda FICA PARA PROXIMA.",
   },
   {
@@ -75,7 +75,7 @@ export const SITUATION_TEMPLATES: SituationTemplate[] = [
     title: "Data especial",
     subtitle: "Aniversario ou marco do cliente",
     Icon: Cake,
-    accent: "text-amber-400",
+    accent: "text-warning",
     body: "Feliz dia especial, {{nome}}! A {{empresa}} preparou um mimo simbolico para voce. Responda RESGATAR que te envio o cupom ou instrucoes. Aproveite!",
   },
   {

@@ -136,7 +136,7 @@ export function AgendaEventModal({
                 className="size-7 rounded-full border-2 transition-transform hover:scale-110"
                 style={{
                   backgroundColor: c.hex,
-                  borderColor: form.color === c.hex ? "#202124" : "transparent",
+                  borderColor: form.color === c.hex ? "#0E1D29" : "transparent",
                 }}
               />
             ))}

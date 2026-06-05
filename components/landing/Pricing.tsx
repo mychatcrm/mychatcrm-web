@@ -132,14 +132,14 @@ function PlanCard({ plan, delay = 0 }: { plan: SalesPlan; delay?: number }) {
       viewport={{ once: true, margin: "-8%", amount: 0.15 }}
       transition={{ duration: 0.45, delay, ease: [0.22, 1, 0.36, 1] }}
       className={cn(
-        "group relative flex h-full flex-col overflow-hidden rounded-3xl border p-7 sm:p-8",
+        "group relative flex h-full flex-col overflow-hidden rounded-2xl border p-7 sm:p-8",
         isFeatured &&
-          "border-primary/40 bg-gradient-to-b from-primary/[0.12] via-surface-card to-surface-card shadow-[0_0_0_1px_rgba(242,68,0,0.12),0_24px_48px_-24px_rgba(242,68,0,0.35)] ring-1 ring-inset ring-primary/15",
+          "border-primary/40 bg-surface-card",
         isEnterprise &&
-          "border-line/90 bg-surface-card/90 shadow-elevation-1 ring-1 ring-inset ring-white/[0.04] backdrop-blur-sm transition duration-300 hover:border-primary/30 hover:shadow-card-hover-glow",
+          "border-line/90 bg-surface-card transition-colors duration-150 hover:border-primary/30",
         !isFeatured &&
           !isEnterprise &&
-          "border-line/90 bg-surface-card/80 shadow-elevation-1 backdrop-blur-sm transition duration-300 hover:border-primary/25 hover:shadow-card-hover-glow",
+          "border-line/90 bg-surface-card transition-colors duration-150 hover:border-primary/25",
       )}
       style={
         {
@@ -154,23 +154,19 @@ function PlanCard({ plan, delay = 0 }: { plan: SalesPlan; delay?: number }) {
         el.style.setProperty("--spot-y", `${e.clientY - r.top}px`);
       }}
     >
-      {/* Spotlight que segue o rato (hover) — só composição GPU */}
+      {/* Mantém a área visual estável; o DS evita glow como recurso principal. */}
       <div
-        className="pointer-events-none absolute inset-0 z-[1] opacity-0 transition-opacity duration-300 group-hover:opacity-100 motion-reduce:opacity-[0.22] motion-reduce:group-hover:opacity-30"
-        style={{
-          background:
-            "radial-gradient(420px circle at var(--spot-x,50%) var(--spot-y,28%), rgba(242,68,0,0.14), transparent 58%)",
-        }}
+        className="pointer-events-none absolute inset-0 z-[1] opacity-0"
         aria-hidden
       />
       {isFeatured ? (
         <div
-          className="pointer-events-none absolute -right-20 -top-20 h-56 w-56 rounded-full bg-primary/20 blur-3xl"
+          className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-primary"
           aria-hidden
         />
       ) : (
         <div
-          className="pointer-events-none absolute -left-16 top-1/2 h-40 w-40 -translate-y-1/2 rounded-full bg-primary/[0.07] blur-3xl"
+          className="pointer-events-none absolute inset-x-0 top-0 h-px bg-line"
           aria-hidden
         />
       )}
@@ -279,10 +275,10 @@ export function Pricing() {
   return (
     <section
       id="planos"
-      className="relative scroll-mt-24 overflow-hidden border-y border-line/40 bg-[radial-gradient(ellipse_120%_80%_at_50%_-40%,rgba(242,68,0,0.14),transparent_55%),radial-gradient(ellipse_90%_50%_at_50%_100%,rgba(255,106,0,0.08),transparent_60%)] py-24 sm:py-28"
+      className="relative scroll-mt-24 overflow-hidden border-y border-line/40 bg-surface-base py-24 sm:py-28"
     >
       <div
-        className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,transparent_0%,rgb(var(--color-surface-base)_/_0.96)_95%)] motion-reduce:opacity-90"
+        className="pointer-events-none absolute inset-0 opacity-0"
         aria-hidden
       />
 

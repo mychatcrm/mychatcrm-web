@@ -27,7 +27,6 @@ export async function Footer() {
   return (
     <footer className="relative border-t border-line/80 bg-surface-base py-14">
       <div className="landing-footer-sep absolute inset-x-0 top-0" aria-hidden />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-[radial-gradient(ellipse_80%_80%_at_50%_100%,rgba(242,68,0,0.08),transparent_65%)] opacity-80 motion-reduce:opacity-40" aria-hidden />
       <div className="relative mx-auto flex max-w-6xl flex-col gap-10 px-4 sm:px-6 lg:flex-row lg:justify-between lg:px-8">
         <div className="max-w-sm">
           <Link href="/" className="flex items-center gap-2" aria-label={t("logoAriaLabel")}>

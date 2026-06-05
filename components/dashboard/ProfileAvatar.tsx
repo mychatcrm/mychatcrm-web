@@ -30,12 +30,12 @@ type ResolvedAvatar =
   | { kind: "upload"; src: string; alt: string };
 
 export const profileAvatarPresets: ProfileAvatarPreset[] = [
-  { id: "sun", label: "Sol", Icon: Sun, className: "bg-gradient-to-br from-amber-400 via-orange-500 to-rose-500" },
-  { id: "fox", label: "Raposa", Icon: Flame, className: "bg-gradient-to-br from-orange-500 via-amber-500 to-yellow-400" },
-  { id: "cat", label: "Gato", Icon: Cat, className: "bg-gradient-to-br from-fuchsia-500 via-pink-500 to-rose-500" },
-  { id: "owl", label: "Coruja", Icon: Bird, className: "bg-gradient-to-br from-[#1a3552] via-[#2c4a6e] to-[#0e1d2f]" },
-  { id: "robot", label: "Robô", Icon: Bot, className: "bg-gradient-to-br from-cyan-500 via-blue-500 to-indigo-600" },
-  { id: "ninja", label: "Ninja", Icon: Moon, className: "bg-gradient-to-br from-slate-600 via-zinc-700 to-neutral-900" },
+  { id: "sun", label: "Sol", Icon: Sun, className: "bg-primary" },
+  { id: "fox", label: "Raposa", Icon: Flame, className: "bg-primary-hover" },
+  { id: "cat", label: "Gato", Icon: Cat, className: "bg-brand-secondary" },
+  { id: "owl", label: "Coruja", Icon: Bird, className: "bg-brand-secondary" },
+  { id: "robot", label: "Robô", Icon: Bot, className: "bg-primary" },
+  { id: "ninja", label: "Ninja", Icon: Moon, className: "bg-brand-dark" },
 ];
 
 function readStoredAvatar(): StoredProfileAvatar | null {
@@ -149,7 +149,7 @@ export function ProfileAvatar({
   }
 
   return (
-    <div style={dimensionStyle} className={cn(sharedClassName, "bg-gradient-primary text-white")} aria-hidden>
+    <div style={dimensionStyle} className={cn(sharedClassName, "bg-primary text-white")} aria-hidden>
       <span className={cn("text-xs font-bold", textClassName)}>{avatar.initials}</span>
     </div>
   );

@@ -5,7 +5,7 @@ import { formatDateBR } from "@/lib/utils";
 
 export function BlogPostCard({ post, priority = false }: { post: BlogPostSummary; priority?: boolean }) {
   return (
-    <article className="group overflow-hidden rounded-3xl border border-line/80 bg-surface-card/70 shadow-elevation-2 transition duration-300 hover:-translate-y-1 hover:border-primary/40 hover:shadow-card-hover-glow">
+    <article className="group overflow-hidden rounded-2xl border border-line/80 bg-surface-card transition-colors duration-150 hover:border-primary/40">
       <Link href={`/blog/${post.slug}`} className="block" aria-label={`Ler artigo: ${post.title}`}>
         <div className="relative aspect-[16/10] overflow-hidden bg-surface-elevated">
           <BlogIllustration
@@ -15,7 +15,7 @@ export function BlogPostCard({ post, priority = false }: { post: BlogPostSummary
             priority={priority}
             className="transition duration-500 group-hover:scale-[1.035]"
           />
-          <div className="absolute left-4 top-4 rounded-full border border-primary/30 bg-black/70 px-3 py-1 text-xs font-semibold text-primary backdrop-blur">
+          <div className="absolute left-4 top-4 rounded-xl border border-primary/30 bg-surface-card px-3 py-1 text-xs font-semibold text-primary">
             {post.niche}
           </div>
         </div>

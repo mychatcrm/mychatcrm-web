@@ -6,7 +6,7 @@ export function BlogCta({ title, description }: { title: string; description: st
   const whatsappHref = whatsappHandoffHref();
 
   return (
-    <aside id="cta" className="overflow-hidden rounded-3xl border border-primary/30 bg-gradient-to-br from-primary/20 via-surface-card to-black p-6 shadow-cta-glow sm:p-8">
+    <aside id="cta" className="overflow-hidden rounded-2xl border border-primary/30 bg-surface-card p-6 sm:p-8">
       <div className="grid gap-6 lg:grid-cols-[1fr_auto] lg:items-center">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">Próximo passo</p>
@@ -28,7 +28,7 @@ export function BlogCta({ title, description }: { title: string; description: st
 
 export function InlineBlogCta() {
   return (
-    <div className="rounded-3xl border border-line/80 bg-surface-elevated/55 p-5 sm:p-6">
+    <div className="rounded-2xl border border-line/80 bg-surface-elevated/55 p-5 sm:p-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-semibold text-primary">Quer transformar este guia em operação real?</p>
@@ -43,4 +43,3 @@ export function InlineBlogCta() {
     </div>
   );
 }
-

@@ -99,7 +99,7 @@ function VoiceWaveBars({ className }: { className?: string }) {
 
 function TypingBubble() {
   return (
-    <div className="mr-auto inline-flex max-w-[72%] items-center gap-1 rounded-2xl rounded-bl-sm border border-line/70 bg-surface-card/90 px-4 py-3 shadow-sm">
+    <div className="mr-auto inline-flex max-w-[72%] items-center gap-1 rounded-2xl rounded-bl-sm border border-line/70 bg-surface-card/90 px-4 py-3">
       {[0, 1, 2].map((i) => (
         <motion.span
           key={i}
@@ -114,9 +114,9 @@ function TypingBubble() {
 
 function MessageBubble({ msg }: { msg: DemoMsg }) {
   const userShell =
-    "ml-auto max-w-[88%] rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-sm text-white shadow-sm";
+    "ml-auto max-w-[88%] rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-sm text-white";
   const botShell =
-    "mr-auto max-w-[92%] rounded-2xl rounded-bl-sm border border-line/80 bg-surface-card px-3 py-2 text-sm text-content-secondary shadow-sm";
+    "mr-auto max-w-[92%] rounded-2xl rounded-bl-sm border border-line/80 bg-surface-card px-3 py-2 text-sm text-content-secondary";
 
   if (msg.side === "user" && msg.kind === "text") {
     return <div className={cn(userShell, "leading-snug")}>{msg.body}</div>;
@@ -231,11 +231,11 @@ export function WhatsAppDemo() {
 
   return (
     <div
-      className="relative mx-auto flex h-[416px] w-full max-w-md flex-col rounded-[28px] border border-line bg-surface-deep p-4 shadow-2xl shadow-black/50"
+      className="relative mx-auto flex h-[416px] w-full max-w-md flex-col rounded-2xl border border-line bg-surface-deep p-4"
       aria-label="Demonstração de conversa natural no WhatsApp com o assistente MyChatCRM"
     >
       <div className="mb-3 shrink-0 flex items-center gap-3 border-b border-line pb-3">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-primary text-sm font-bold text-white">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-bold text-white">
           M
         </div>
         <div className="min-w-0">

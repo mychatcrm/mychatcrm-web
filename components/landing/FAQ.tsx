@@ -17,16 +17,13 @@ export function FAQ() {
       id="faq"
       className="relative isolate mx-auto max-w-3xl scroll-mt-24 px-4 py-24 sm:px-6 lg:px-8"
     >
-      <div
-        className="pointer-events-none absolute inset-0 z-0 rounded-[2.5rem] bg-[radial-gradient(ellipse_90%_70%_at_20%_20%,rgba(242,68,0,0.12),transparent_50%),radial-gradient(ellipse_80%_60%_at_85%_80%,rgba(255,106,0,0.1),transparent_55%),linear-gradient(180deg,rgb(var(--color-surface-deep)_/_0.9),rgb(var(--color-surface-base)_/_0.95))] opacity-95 motion-reduce:opacity-60"
-        aria-hidden
-      />
+      <div className="pointer-events-none absolute inset-0 z-0 rounded-2xl bg-surface-base" aria-hidden />
       <div className="relative z-10 text-center">
         <h2 className="font-display text-3xl font-bold text-content sm:text-4xl">{t("heading")}</h2>
         <div className="title-accent-line" aria-hidden />
         <p className="mt-4 text-content-secondary">{t("subheading")}</p>
       </div>
-      <div className="relative z-10 mt-10 divide-y divide-line/80 overflow-hidden rounded-2xl border border-line/80 bg-surface-card/40 shadow-elevation-2 backdrop-blur-md">
+      <div className="relative z-10 mt-10 divide-y divide-line/80 overflow-hidden rounded-2xl border border-line/80 bg-surface-card">
         {items.map((item, i) => {
           const isOpen = open === i;
           return (

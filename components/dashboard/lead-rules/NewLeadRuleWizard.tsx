@@ -221,7 +221,7 @@ function MetaFieldTypeBadge({ type }: { type: string }) {
   }
   if (t === "FULL_NAME") {
     return (
-      <Badge className="border-sky-500/40 bg-sky-500/15 text-[10px] font-medium text-sky-800 dark:text-sky-200">
+      <Badge className="border-info/35 bg-info/10 text-[10px] font-medium text-info">
         Nome completo
       </Badge>
     );
@@ -235,7 +235,7 @@ function MetaFieldTypeBadge({ type }: { type: string }) {
   }
   if (t === "EMAIL") {
     return (
-      <Badge className="border-violet-500/40 bg-violet-500/15 text-[10px] font-medium text-violet-800 dark:text-violet-200">
+      <Badge className="border-brand-secondary/30 bg-brand-secondary/10 text-[10px] font-medium text-brand-secondary dark:text-content-secondary">
         Email
       </Badge>
     );
@@ -1359,7 +1359,7 @@ export function NewLeadRuleWizard({
                                                 "flex w-full items-center gap-3 px-3 py-3 text-left transition sm:gap-3.5 sm:px-4 sm:py-3.5",
                                                 i > 0 && (isLight ? "border-t border-rose-200/70" : "border-t border-rose-800/60"),
                                                 selected
-                                                  ? "bg-[rgba(242,68,0,0.08)] ring-1 ring-inset ring-primary/30"
+                                                  ? "bg-primary/10 ring-1 ring-inset ring-primary/30"
                                                   : isLight
                                                     ? "hover:bg-rose-50/80"
                                                     : "hover:bg-rose-950/40",
@@ -1507,7 +1507,7 @@ export function NewLeadRuleWizard({
                                             "flex w-full items-center gap-3 px-3 py-3 text-left transition sm:gap-3.5 sm:px-4 sm:py-3.5",
                                             i > 0 && "border-t border-line/70",
                                             selected
-                                              ? "bg-[#f24400]/10 ring-1 ring-inset ring-primary/30"
+                                              ? "bg-primary/10 ring-1 ring-inset ring-primary/30"
                                               : "hover:bg-surface-card/70",
                                           )}
                                         >
@@ -2153,7 +2153,7 @@ export function NewLeadRuleWizard({
                 {/* timeline rows */}
                 <div className="flex gap-3.5">
                   <div className="flex w-5 shrink-0 flex-col items-center pt-1">
-                    <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-surface-card", isLight ? "bg-sky-500" : "bg-sky-400")} aria-hidden />
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-info ring-2 ring-surface-card" aria-hidden />
                     <div className="mt-1 min-h-[1.25rem] w-px flex-1 bg-line/55" aria-hidden />
                   </div>
                   <div className="min-w-0 flex-1 pb-8">
@@ -2164,14 +2164,14 @@ export function NewLeadRuleWizard({
 
                 <div className="flex gap-3.5">
                   <div className="flex w-5 shrink-0 flex-col items-center pt-1">
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-blue-500 ring-2 ring-surface-card" aria-hidden />
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-brand-secondary ring-2 ring-surface-card" aria-hidden />
                     <div className="mt-1 min-h-[1.25rem] w-px flex-1 bg-line/55" aria-hidden />
                   </div>
                   <div className="min-w-0 flex-1 pb-8">
                     <p className="text-[11px] font-bold uppercase tracking-wide text-content-muted">Canal de entrada</p>
                     <div className="mt-2 flex flex-wrap gap-2">
                       {draft.source === "meta_form" ? (
-                        <span className={cn("inline-flex items-center rounded-full border border-sky-400/35 bg-sky-500/10 px-2.5 py-0.5 text-xs font-semibold", isLight ? "text-sky-800" : "text-sky-200")}>
+                        <span className="inline-flex items-center rounded-full border border-info/35 bg-info/10 px-2.5 py-0.5 text-xs font-semibold text-info">
                           Facebook · formulários
                         </span>
                       ) : draft.source === "whatsapp_api" ? (
@@ -2197,7 +2197,7 @@ export function NewLeadRuleWizard({
                 {draft.source === "meta_form" ? (
                   <div className="flex gap-3.5">
                     <div className="flex w-5 shrink-0 flex-col items-center pt-1">
-                      <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-surface-card", isLight ? "bg-indigo-500" : "bg-indigo-400")} aria-hidden />
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-primary ring-2 ring-surface-card" aria-hidden />
                       <div className="mt-1 min-h-[1.25rem] w-px flex-1 bg-line/55" aria-hidden />
                     </div>
                     <div className="min-w-0 flex-1 pb-8">
@@ -2230,7 +2230,7 @@ export function NewLeadRuleWizard({
 
                 <div className="flex gap-3.5">
                   <div className="flex w-5 shrink-0 flex-col items-center pt-1">
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-violet-400 ring-2 ring-surface-card" aria-hidden />
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-brand-secondary ring-2 ring-surface-card" aria-hidden />
                     <div className="mt-1 min-h-[1.25rem] w-px flex-1 bg-line/55" aria-hidden />
                   </div>
                   <div className="min-w-0 flex-1 pb-8">
@@ -2239,11 +2239,11 @@ export function NewLeadRuleWizard({
                       <div className="mt-2 max-h-52 space-y-1.5 overflow-y-auto overscroll-contain rounded-lg border border-line/70 bg-surface-card/50 px-3 py-2.5 font-mono text-[11px] leading-relaxed">
                         {draft.mappings.map((m) => (
                           <div key={m.id} className="flex flex-wrap items-baseline gap-x-1 gap-y-0.5">
-                            <span className="font-medium text-violet-300" title={m.sourceLabel}>
+                            <span className="font-medium text-primary" title={m.sourceLabel}>
                               {m.sourceKey}
                             </span>
                             <ArrowRight className="inline h-3 w-3 shrink-0 text-content-faint" aria-hidden />
-                            <span className="font-medium text-sky-300">
+                            <span className="font-medium text-content">
                               {CRM_FIELD_OPTIONS.find((c) => c.value === m.crmField)?.label ?? m.crmField}
                             </span>
                             <span className="w-full pl-0 text-[10px] font-normal text-content-faint sm:inline sm:w-auto sm:pl-1">
@@ -2260,7 +2260,7 @@ export function NewLeadRuleWizard({
 
                 <div className="flex gap-3.5">
                   <div className="flex w-5 shrink-0 flex-col items-center pt-1">
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-cyan-500 ring-2 ring-surface-card" aria-hidden />
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-info ring-2 ring-surface-card" aria-hidden />
                     <div className="mt-1 min-h-[1.25rem] w-px flex-1 bg-line/55" aria-hidden />
                   </div>
                   <div className="min-w-0 flex-1 pb-8">
@@ -2274,7 +2274,7 @@ export function NewLeadRuleWizard({
 
                 <div className="flex gap-3.5">
                   <div className="flex w-5 shrink-0 flex-col items-center pt-1">
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-fuchsia-400 ring-2 ring-surface-card" aria-hidden />
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-primary ring-2 ring-surface-card" aria-hidden />
                     <div className="mt-1 min-h-[1.25rem] w-px flex-1 bg-line/55" aria-hidden />
                   </div>
                   <div className="min-w-0 flex-1 pb-8">
@@ -2287,7 +2287,7 @@ export function NewLeadRuleWizard({
 
                 <div className="flex gap-3.5">
                   <div className="flex w-5 shrink-0 flex-col items-center pt-1">
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-purple-400 ring-2 ring-surface-card" aria-hidden />
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-brand-secondary ring-2 ring-surface-card" aria-hidden />
                     <div className="mt-1 min-h-[1.25rem] w-px flex-1 bg-line/55" aria-hidden />
                   </div>
                   <div className="min-w-0 flex-1 pb-8">
@@ -2301,7 +2301,7 @@ export function NewLeadRuleWizard({
                             return (
                               <li
                                 key={id}
-                                className="inline-flex max-w-full items-center truncate rounded-full border border-purple-400/30 bg-purple-500/10 px-2.5 py-0.5 text-xs font-medium text-purple-200"
+                                className="inline-flex max-w-full items-center truncate rounded-full border border-brand-secondary/30 bg-brand-secondary/10 px-2.5 py-0.5 text-xs font-medium text-brand-secondary dark:text-content-secondary"
                               >
                                 {nome}
                               </li>

@@ -49,7 +49,7 @@ function AgentFormPortalOverlay({
         }}
       >
         <div
-          className="absolute inset-0 bg-surface-base/70 backdrop-blur-md motion-reduce:backdrop-blur-sm"
+          className="absolute inset-0 bg-surface-base/80"
           aria-hidden
         />
         <div

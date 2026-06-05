@@ -27,19 +27,19 @@ function InsightCard({
   const { isLight } = usePanelAppearance();
 
   const iconWrap = cn(
-    "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border backdrop-blur-sm transition-colors group-hover:border-primary/35",
+    "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition-colors group-hover:border-primary/35",
     accent === "sky" &&
       (isLight
         ? "border-line/80 bg-surface-elevated/90 text-content"
         : "border-line/60 bg-surface-elevated/40 text-content-secondary"),
     accent === "amber" &&
       (isLight
-        ? "border-amber-200/80 bg-amber-50/90 text-amber-700"
-        : "border-amber-400/25 bg-amber-500/10 text-amber-300"),
+        ? "border-primary/25 bg-primary/[0.08] text-primary"
+        : "border-primary/30 bg-primary/10 text-primary"),
     accent === "emerald" &&
       (isLight
-        ? "border-emerald-200/80 bg-emerald-50/90 text-emerald-700"
-        : "border-emerald-400/25 bg-emerald-500/10 text-emerald-300"),
+        ? "border-primary/25 bg-primary/[0.08] text-primary"
+        : "border-primary/30 bg-primary/10 text-primary"),
     (accent === "primary" || !accent) &&
       (isLight
         ? "border-primary/25 bg-primary/[0.08] text-content"
@@ -50,19 +50,12 @@ function InsightCard({
     accent === "sky"
       ? (isLight ? "text-content-secondary" : "text-content-muted")
       : accent === "amber"
-        ? (isLight ? "text-amber-700" : "text-amber-300")
+        ? "text-primary"
         : accent === "emerald"
-          ? (isLight ? "text-emerald-700" : "text-emerald-300")
+          ? "text-primary"
           : "text-primary";
 
-  const topSheen =
-    accent === "sky"
-      ? "bg-gradient-to-r from-transparent via-primary/30 to-transparent"
-      : accent === "amber"
-        ? "bg-gradient-to-r from-transparent via-amber-400/45 to-transparent"
-        : accent === "emerald"
-          ? "bg-gradient-to-r from-transparent via-emerald-400/45 to-transparent"
-          : "bg-gradient-to-r from-transparent via-primary/50 to-transparent";
+  const topSheen = accent === "sky" ? "bg-brand-secondary/35" : "bg-primary/45";
 
   return (
     <div
@@ -71,7 +64,7 @@ function InsightCard({
         compact ? "rounded-xl p-3" : "rounded-xl p-4",
         isLight
           ? "border border-slate-200/90 bg-surface-deep"
-          : "border border-line/70 bg-gradient-to-br from-surface-card/95 via-surface-elevated/[0.08] to-surface-deep/85",
+          : "border border-line/70 bg-surface-card",
       )}
     >
       <div
@@ -182,7 +175,7 @@ export function CrmInsightsBar({
           "mb-5 rounded-xl border p-3.5 sm:p-4",
           isLight
             ? "border-slate-200/90 bg-surface-deep"
-            : "border-line/70 bg-gradient-to-br from-surface-deep/40 via-surface-elevated/[0.06] to-surface-deep/30",
+            : "border-line/70 bg-surface-card",
         )}
       >
         <p className="mb-3 text-xs text-content-muted">
@@ -201,7 +194,7 @@ export function CrmInsightsBar({
         "rounded-xl border p-4 sm:p-5",
         isLight
           ? "border-slate-200/90 bg-surface-deep"
-          : "border-line/70 bg-gradient-to-br from-surface-deep/90 via-surface-card/50 to-surface-deep/70 ring-1 ring-white/[0.05]",
+          : "border-line/70 bg-surface-card",
       )}
     >
       <div className="mb-4 flex flex-wrap items-end justify-between gap-2">

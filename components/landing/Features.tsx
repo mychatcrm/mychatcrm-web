@@ -34,11 +34,11 @@ export function Features() {
               viewport={{ once: true, amount: 0.15 }}
               transition={{ delay: i * 0.06, duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
               className={cn(
-                "group relative overflow-hidden rounded-2xl border border-line/80 bg-surface-card/55 p-6 shadow-elevation-1 backdrop-blur-md transition duration-300",
-                "hover:-translate-y-1 hover:border-primary/40 hover:shadow-card-hover-glow motion-reduce:hover:translate-y-0",
+                "group relative overflow-hidden rounded-2xl border border-line/80 bg-surface-card p-6 transition-colors duration-150",
+                "hover:border-primary/40",
               )}
             >
-              <div className="mb-4 inline-flex rounded-xl border border-line/70 bg-primary/10 p-3 transition duration-300 group-hover:border-primary/35 group-hover:shadow-[0_0_20px_rgba(242,68,0,0.2)]">
+              <div className="mb-4 inline-flex rounded-xl border border-line/70 bg-primary/10 p-3 transition-colors duration-150 group-hover:border-primary/35">
                 <FeatureIcon name={f.icon} />
               </div>
               <h3 className="text-lg font-semibold text-content">{f.title}</h3>
