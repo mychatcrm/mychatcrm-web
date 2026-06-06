@@ -18,9 +18,50 @@ import {
   type FollowUpDecision,
 } from "@/lib/server/follow-up-engine";
 import { buildFollowUpEvalContext } from "@/lib/server/follow-up-evaluate";
-import { findNextActiveAgendaEvent } from "@/lib/server/agent-cta-scheduler";
+import {
+  detectAgendaCancelIntent,
+  detectRescheduleIntent,
+  findNextActiveAgendaEvent,
+} from "@/lib/server/agent-cta-scheduler";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
+
+/**
+ * Decide se o follow-up convencional deve IGNORAR a supressão por evento de
+ * agenda ativo. Só libera (bypass) quando a automação de agenda está ligada,
+ * a transferência humana está desligada e a última mensagem do cliente indica
+ * um pedido em aberto de remarcação/cancelamento (risco de abandono).
+ * Em qualquer outro escopo retorna false — comportamento idêntico ao atual.
+ */
+export function conventionalFollowUpBypassesAgendaSuppression(params: {
+  agendaAutomationEnabled: boolean;
+  ctaHandoffAtivo: boolean;
+  latestInboundText: string | null;
+}): boolean {
+  if (!params.agendaAutomationEnabled || params.ctaHandoffAtivo) return false;
+  const text = params.latestInboundText?.trim();
+  if (!text) return false;
+  return detectRescheduleIntent(text) || detectAgendaCancelIntent(text);
+}
+
+/** Última mensagem inbound do cliente (read-only, escopada por tenant + contato). */
+async function loadLatestInboundText(
+  sb: SupabaseServiceClient,
+  tenantId: string,
+  remoteJid: string,
+): Promise<string | null> {
+  const { data } = await sb
+    .from("whatsapp_messages")
+    .select("content")
+    .eq("tenant_id", tenantId)
+    .eq("remote_jid", remoteJid)
+    .eq("direction", "inbound")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const content = (data as { content?: unknown } | null)?.content;
+  return typeof content === "string" ? content : null;
+}
 
 export type FollowUpJobRow = {
   id: string;
@@ -838,25 +879,50 @@ export async function processFollowUpJob(
         remoteJid: job.remote_jid,
       });
       if (activeAgendaEvent) {
-        const retryAt = new Date(
-          now.getTime() + Math.max(1, settings.intervaloVerificacaoMinutos) * 60_000,
-        );
-        await client
-          .from("follow_up_jobs")
-          .update({
-            status: "pending",
-            scheduled_at: retryAt.toISOString(),
-            last_error: "active_agenda_event",
-            updated_at: now.toISOString(),
-          })
-          .eq("id", job.id);
-        logFollowUp("rescheduled_active_agenda_event", {
+        // Exceção (agenda ON + handoff OFF): se o cliente está com um pedido de
+        // remarcação/cancelamento em aberto, reativamos o follow-up convencional
+        // para mitigar abandono. Fora desse escopo, mantém o adiamento atual.
+        const agendaAutomationEnabled = metadata.agendaAutomationEnabled === true;
+        const ctaHandoffAtivo = metadata.ctaHandoffAtivo === true;
+        let bypassAgendaSuppression = false;
+        if (agendaAutomationEnabled && !ctaHandoffAtivo) {
+          const latestInboundText = await loadLatestInboundText(
+            client,
+            job.tenant_id,
+            job.remote_jid,
+          );
+          bypassAgendaSuppression = conventionalFollowUpBypassesAgendaSuppression({
+            agendaAutomationEnabled,
+            ctaHandoffAtivo,
+            latestInboundText,
+          });
+        }
+        if (!bypassAgendaSuppression) {
+          const retryAt = new Date(
+            now.getTime() + Math.max(1, settings.intervaloVerificacaoMinutos) * 60_000,
+          );
+          await client
+            .from("follow_up_jobs")
+            .update({
+              status: "pending",
+              scheduled_at: retryAt.toISOString(),
+              last_error: "active_agenda_event",
+              updated_at: now.toISOString(),
+            })
+            .eq("id", job.id);
+          logFollowUp("rescheduled_active_agenda_event", {
+            job_id: job.id,
+            tenant_id: job.tenant_id,
+            event_id: activeAgendaEvent.id,
+            retry_at: retryAt.toISOString(),
+          });
+          return "skipped";
+        }
+        logFollowUp("agenda_suppression_bypassed", {
           job_id: job.id,
           tenant_id: job.tenant_id,
           event_id: activeAgendaEvent.id,
-          retry_at: retryAt.toISOString(),
         });
-        return "skipped";
       }
     }
 
