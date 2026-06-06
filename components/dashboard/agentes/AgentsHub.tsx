@@ -389,8 +389,8 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
         onDeleted={handleAgentDeleted}
       />
 
-      <div className="panel-surface-card w-full max-w-[72rem] overflow-hidden rounded-xl border border-line bg-surface-card p-4 sm:p-5">
-        <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(15rem,20rem)] lg:items-center">
+      <div className="panel-surface-card w-full max-w-[46rem] overflow-hidden rounded-xl border border-line bg-surface-card p-4 sm:p-5">
+        <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(13.5rem,16rem)] md:items-center">
           <div className="min-w-0">
             <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">
               <Sparkles className="h-3 w-3" strokeWidth={1.9} aria-hidden />
@@ -406,7 +406,7 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
             </p>
           </div>
 
-          <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:grid-cols-1">
+          <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:grid-cols-1">
             <div className="flex min-w-0 items-center justify-between gap-3 rounded-xl bg-surface-elevated/35 px-3 py-2.5">
               <div className="flex min-w-0 items-center gap-2">
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
@@ -427,7 +427,7 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
                 onClick={openCreateOverlay}
                 disabled={atAgentCap}
                 title={atAgentCap ? `Limite de ${limit} agentes ativos no plano.` : undefined}
-                className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-white hover:bg-primary-hover enabled:cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:self-start lg:max-w-[14rem]"
+                className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-white hover:bg-primary-hover enabled:cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Plus className="h-4 w-4 shrink-0" strokeWidth={2.25} aria-hidden />
                 Novo agente
