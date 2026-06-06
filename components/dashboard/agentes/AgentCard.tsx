@@ -72,12 +72,12 @@ export function AgentCard({
   const isActive = agent.status === "ativo";
 
   return (
-    <article className="panel-surface-card group flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-surface-card/95 p-3.5 transition-colors hover:bg-surface-card">
-      <div className="flex min-w-0 items-start justify-between gap-2.5">
+    <article className="panel-surface-card group flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-surface-card p-3.5 transition-colors hover:bg-surface-card/95">
+      <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="flex min-w-0 flex-1 items-start gap-2 sm:gap-3">
           {dragHandle ? <div className="shrink-0">{dragHandle}</div> : null}
           <div
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white ring-1 ring-white/10"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white"
             style={{ backgroundColor: agent.cor }}
             aria-hidden
           >
@@ -85,9 +85,7 @@ export function AgentCard({
           </div>
           <div className="min-w-0 pt-0.5">
             <p className="truncate text-sm font-semibold leading-tight text-content sm:text-[15px]">{agent.nome}</p>
-            <p className={cn("mt-1 text-[11px] font-medium capitalize", isActive ? "text-emerald-500" : "text-content-muted")}>
-              {isActive ? "Ativo agora" : "Pausado"}
-            </p>
+            <p className="mt-1 text-[11px] font-medium capitalize text-content-muted">{isActive ? "Ativo agora" : "Pausado"}</p>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2 pt-1">
@@ -100,8 +98,8 @@ export function AgentCard({
       </div>
 
       <div className="mt-3.5 grid min-w-0 gap-2 min-[390px]:grid-cols-2">
-        <div className="min-w-0 rounded-xl bg-surface-elevated/28 p-2.5 transition-colors group-hover:bg-surface-elevated/36">
-          <span className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-500/12", isLight ? "text-amber-600" : "text-amber-300")}>
+        <div className="min-w-0 rounded-xl bg-surface-elevated/35 p-2.5">
+          <span className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-amber-500/12", isLight ? "text-amber-600" : "text-amber-300")}>
             <Coins className="h-4 w-4" strokeWidth={1.75} aria-hidden />
           </span>
           <div className="mt-2.5 min-w-0">
@@ -109,8 +107,8 @@ export function AgentCard({
             <p className="truncate text-lg font-semibold tabular-nums leading-tight text-content">{creditsDisplay}</p>
           </div>
         </div>
-        <div className="min-w-0 rounded-xl bg-surface-elevated/28 p-2.5 transition-colors group-hover:bg-surface-elevated/36">
-          <span className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-500/12", isLight ? "text-emerald-600" : "text-emerald-300")}>
+        <div className="min-w-0 rounded-xl bg-surface-elevated/35 p-2.5">
+          <span className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-emerald-500/12", isLight ? "text-emerald-600" : "text-emerald-300")}>
             <Users className="h-4 w-4" strokeWidth={1.75} aria-hidden />
           </span>
           <div className="mt-2.5 min-w-0">
@@ -123,7 +121,7 @@ export function AgentCard({
       <div className="mt-auto flex min-w-0 flex-col gap-2 pt-3.5">
         <Link
           href={`/dashboard/integracoes?agente=${encodeURIComponent(agent.id)}`}
-          className="inline-flex min-h-9 min-w-0 items-center justify-center gap-2 rounded-xl bg-surface-elevated/34 px-3 text-xs font-medium text-content-secondary transition hover:bg-surface-elevated/60 hover:text-content sm:text-[13px]"
+          className="inline-flex min-h-9 min-w-0 items-center justify-center gap-2 rounded-xl bg-surface-elevated/45 px-3 text-xs font-medium text-content-secondary transition hover:bg-surface-elevated hover:text-content sm:text-[13px]"
         >
           <Link2 className="h-3.5 w-3.5 shrink-0 opacity-80" strokeWidth={1.75} aria-hidden />
           <span className="truncate">Distribuições de leads</span>
@@ -150,7 +148,7 @@ export function AgentCard({
           <Button
             variant="secondary"
             type="button"
-            className="!min-h-9 w-full rounded-xl border-primary/20 bg-primary/8 px-3 text-xs text-primary hover:bg-primary/12 sm:text-[13px]"
+            className="!min-h-9 w-full rounded-xl px-3 text-xs sm:text-[13px]"
             onClick={() => onDuplicate(agent.id)}
           >
             <Copy className="mr-1.5 h-3.5 w-3.5 shrink-0 opacity-80" strokeWidth={1.75} aria-hidden />
