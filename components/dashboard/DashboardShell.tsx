@@ -76,7 +76,7 @@ function DashboardShellInner({
         <Sidebar collapsed={false} session={session} onNavigate={() => setDrawer(false)} />
       </Drawer>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="panel-main-pane flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="panel-topbar flex h-12 shrink-0 items-center px-4 sm:px-6 xl:px-8">
           <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
@@ -161,7 +161,7 @@ function DashboardShellInner({
               className="flex flex-col overflow-hidden"
               style={{
                 width: "100%",
-                height: "calc(100dvh - 48px)", // 48px = h-12 do header
+                height: "calc(100dvh - 48px - var(--panel-shell-y-inset, 0px))", // 48px = h-12 do header
               }}
             >
               {children}

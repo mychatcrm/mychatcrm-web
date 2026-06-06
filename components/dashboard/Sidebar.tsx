@@ -278,7 +278,7 @@ export function Sidebar({
                   Master
                 </Badge>
               ) : active ? (
-                <span className="ml-auto h-3 w-1 shrink-0 rounded-full bg-primary" aria-hidden />
+                <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-primary/90" aria-hidden />
               ) : null}
             </>
           ) : null}
@@ -477,7 +477,7 @@ export function Sidebar({
           <div className="space-y-1">{visibleNavItems.map((it) => renderNavItem(it))}</div>
         </nav>
 
-        <div className="border-t border-line/80 p-3">
+        <div className="px-3 pb-3 pt-2">
           {!collapsed ? (
             <>
               {!isSellerNav && canManageAccountPlan ? (

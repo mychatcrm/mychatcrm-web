@@ -82,7 +82,7 @@ export function AdminSidebar({
                       )}
                     />
                     <span className="truncate">{it.label}</span>
-                    {active && <span className="ml-auto h-3 w-1 shrink-0 rounded-full bg-primary" aria-hidden />}
+                    {active && <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-primary/90" aria-hidden />}
                   </Link>
                 );
               })}
@@ -90,7 +90,7 @@ export function AdminSidebar({
           </div>
         ))}
       </nav>
-      <div className="border-t border-line p-2">
+      <div className="px-2 pb-2 pt-1.5">
         <div className="panel-profile-card flex items-center gap-2.5 rounded-xl border border-line bg-surface-elevated/50 p-2.5">
           <div
             className={cn(
