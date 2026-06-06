@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clientConfirmedAgendaMutation,
   isStandaloneAgendaConfirmation,
+  priorAgendaAssistantTextFromMessages,
   resolveAgendaTurn,
   shouldDeferHandoffForAgendaResult,
 } from "@/lib/server/agent-cta-scheduler";
@@ -53,24 +54,37 @@ const EXISTING_EVENT = {
 
 function makeSb(existing: typeof EXISTING_EVENT | null = EXISTING_EVENT) {
   return {
-    from: (table: string) => ({
-      select: () => ({
-        eq: () => ({
+    from: (table: string) => {
+      if (table === "leads") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: { name: "Lead" }, error: null }),
+            }),
+          }),
+        };
+      }
+      return {
+        select: () => ({
           eq: () => ({
-            neq: () => ({
-              gte: () => ({
-                order: () => ({
-                  limit: () => ({
-                    maybeSingle: async () =>
-                      table === "agenda_events" ? { data: existing, error: null } : { data: null, error: null },
+            eq: () => ({
+              neq: () => ({
+                gte: () => ({
+                  order: () => ({
+                    limit: () => ({
+                      maybeSingle: async () =>
+                        table === "agenda_events"
+                          ? { data: existing, error: null }
+                          : { data: null, error: null },
+                    }),
                   }),
                 }),
               }),
             }),
           }),
         }),
-      }),
-    }),
+      };
+    },
   } as unknown;
 }
 
@@ -87,6 +101,25 @@ describe("agenda confirmation helpers", () => {
   it("clientConfirmedAgendaMutation exige confirmação real", () => {
     expect(clientConfirmedAgendaMutation("sim", "Posso confirmar para amanhã às 14:00?")).toBe(true);
     expect(clientConfirmedAgendaMutation("quero remarcar", "Posso confirmar?")).toBe(false);
+  });
+});
+
+describe("priorAgendaAssistantTextFromMessages", () => {
+  it("retorna a última proposta de remarcação do assistente", () => {
+    const prior = priorAgendaAssistantTextFromMessages([
+      { role: "user", content: "quero remarcar" },
+      { role: "assistant", content: "Posso confirmar a remarcação para 15/06/2026 às 10:00?" },
+      { role: "user", content: "sim" },
+    ]);
+    expect(prior).toBe("Posso confirmar a remarcação para 15/06/2026 às 10:00?");
+  });
+
+  it("retorna a última proposta de cancelamento do assistente", () => {
+    const prior = priorAgendaAssistantTextFromMessages([
+      { role: "assistant", content: "Posso confirmar o cancelamento do seu agendamento?" },
+      { role: "user", content: "sim" },
+    ]);
+    expect(prior).toBe("Posso confirmar o cancelamento do seu agendamento?");
   });
 });
 
@@ -135,32 +168,52 @@ describe("resolveAgendaTurn", () => {
 
   it("remarcar com confirmação altera agenda (fallback sem marcador)", async () => {
     const sb = makeSb(EXISTING_EVENT);
+    const conversation = [
+      { role: "user", content: "quero remarcar" },
+      { role: "assistant", content: "Posso confirmar a remarcação para 15/06/2026 às 10:00?" },
+      { role: "user", content: "sim" },
+    ];
+    const priorAssistantText = priorAgendaAssistantTextFromMessages(conversation);
     const result = await resolveAgendaTurn({
       sb,
       tenantId: "tenant-1",
       remoteJid: "5511999999999@s.whatsapp.net",
+      leadId: "lead-1",
       timezone: "America/Sao_Paulo",
       modelText: "Pronto, remarquei seu agendamento para 15/06/2026 às 10:00.",
       clientText: "sim",
+      priorAssistantText,
       agendaAutomationEnabled: true,
-      priorAssistantText: "Posso confirmar a remarcação para 15/06/2026 às 10:00?",
     });
     expect(result.action).toBe("rescheduled");
     expect(insertAgendaEventMock).toHaveBeenCalledTimes(1);
+    expect(insertAgendaEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenant_id: "tenant-1",
+        attendee_phone: "5511999999999",
+        lead_id: "lead-1",
+      }),
+    );
     expect(cancelAgendaEventMock).toHaveBeenCalledWith("tenant-1", EXISTING_EVENT.id);
   });
 
   it("cancelar com confirmação cancela (fallback sem marcador)", async () => {
     const sb = makeSb(EXISTING_EVENT);
+    const conversation = [
+      { role: "assistant", content: "Posso confirmar o cancelamento do seu agendamento?" },
+      { role: "user", content: "sim" },
+    ];
+    const priorAssistantText = priorAgendaAssistantTextFromMessages(conversation);
     const result = await resolveAgendaTurn({
       sb,
       tenantId: "tenant-1",
       remoteJid: "5511999999999@s.whatsapp.net",
+      leadId: "lead-1",
       timezone: "America/Sao_Paulo",
       modelText: "Seu agendamento foi cancelado.",
-      clientText: "sim, pode cancelar",
+      clientText: "sim",
+      priorAssistantText,
       agendaAutomationEnabled: true,
-      priorAssistantText: "Posso confirmar o cancelamento do seu agendamento?",
     });
     expect(result.action).toBe("cancelled");
     expect(cancelAgendaEventMock).toHaveBeenCalledWith("tenant-1", EXISTING_EVENT.id);
@@ -179,6 +232,38 @@ describe("resolveAgendaTurn", () => {
       agendaAutomationEnabled: true,
     });
     expect(result.action).toBe("needs_confirmation");
+    expect(cancelAgendaEventMock).not.toHaveBeenCalled();
+  });
+
+  it("remarcar sem confirmação não executa", async () => {
+    const sb = makeSb(EXISTING_EVENT);
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      timezone: "America/Sao_Paulo",
+      modelText: "Perfeito! [[AGENDAR: data=15/06/2026, hora=10:00]]",
+      clientText: "quero remarcar para sexta",
+      priorAssistantText: "Posso confirmar a remarcação para 15/06/2026 às 10:00?",
+      agendaAutomationEnabled: true,
+    });
+    expect(result.action).toBe("needs_confirmation");
+    expect(insertAgendaEventMock).not.toHaveBeenCalled();
+  });
+
+  it("sem priorAssistantText não executa remarcação indevida", async () => {
+    const sb = makeSb(EXISTING_EVENT);
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      timezone: "America/Sao_Paulo",
+      modelText: "Pronto, remarquei seu agendamento para 15/06/2026 às 10:00.",
+      clientText: "sim",
+      agendaAutomationEnabled: true,
+    });
+    expect(result.action).toBe("none");
+    expect(insertAgendaEventMock).not.toHaveBeenCalled();
     expect(cancelAgendaEventMock).not.toHaveBeenCalled();
   });
 

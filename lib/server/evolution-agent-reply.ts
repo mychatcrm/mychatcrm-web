@@ -40,6 +40,7 @@ import { sendPresence, typingDelayMs } from "@/lib/server/evolution-presence";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import {
   AGENDA_AUTOMATION_DISABLED_REPLY,
+  priorAgendaAssistantTextFromMessages,
   resolveAgendaTurn,
   shouldDeferHandoffForAgendaResult,
 } from "@/lib/server/agent-cta-scheduler";
@@ -501,6 +502,14 @@ export async function processAgentResponseJob(
     // Strip [[HANDOFF]] marker from AI reply (always safe to remove)
     const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
     const modelTextWithoutHandoff = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
+    const priorAssistantText = priorAgendaAssistantTextFromMessages(
+      await getRecentConversationMessages({
+        sb,
+        tenantId: job.tenant_id,
+        remoteJid: job.remote_jid,
+        limit: 12,
+      }),
+    );
     const agendaTurn = await resolveAgendaTurn({
       sb,
       tenantId: job.tenant_id,
@@ -510,6 +519,7 @@ export async function processAgentResponseJob(
       timezone: schedulingTimezone,
       modelText: modelTextWithoutHandoff,
       clientText: lastInboundText,
+      priorAssistantText,
       agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,
       agendaLembretes:
         typeof metadata.agendaLembretes === "object" && metadata.agendaLembretes !== null

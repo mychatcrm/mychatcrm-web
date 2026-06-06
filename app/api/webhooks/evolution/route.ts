@@ -43,6 +43,7 @@ import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import {
   AGENDA_AUTOMATION_DISABLED_REPLY,
+  priorAgendaAssistantTextFromMessages,
   resolveAgendaTurn,
   shouldDeferHandoffForAgendaResult,
 } from "@/lib/server/agent-cta-scheduler";
@@ -728,6 +729,14 @@ export async function POST(request: Request) {
           const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
           const modelTextWithoutHandoff = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
           const clientText = inboundLanguageSource(msg);
+          const priorAssistantText = priorAgendaAssistantTextFromMessages(
+            await getRecentConversationMessages({
+              sb: sbState,
+              tenantId: row.tenant_id,
+              remoteJid: msg.remoteJid,
+              limit: 12,
+            }),
+          );
           const agendaTurn = await resolveAgendaTurn({
             sb: sbState,
             tenantId: row.tenant_id,
@@ -738,6 +747,7 @@ export async function POST(request: Request) {
             timezone: schedulingTimezone,
             modelText: modelTextWithoutHandoff,
             clientText,
+            priorAssistantText,
             agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,
             agendaLembretes:
               typeof metadata.agendaLembretes === "object" && metadata.agendaLembretes !== null

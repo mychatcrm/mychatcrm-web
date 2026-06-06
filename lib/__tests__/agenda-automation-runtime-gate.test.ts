@@ -15,6 +15,8 @@ describe("agenda automation runtime gate", () => {
 
     expect(source).toContain("AGENDA_AUTOMATION_DISABLED_REPLY");
     expect(source).toContain("resolveAgendaTurn");
+    expect(source).toContain("priorAgendaAssistantTextFromMessages");
+    expect(source).toContain("priorAssistantText");
     expect(source).toContain('agendaTurn.action === "blocked"');
     expect(source).toContain("shouldDeferHandoffForAgendaResult");
   });

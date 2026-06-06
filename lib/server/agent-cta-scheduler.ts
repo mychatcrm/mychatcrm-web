@@ -272,6 +272,22 @@ function assistantProposedScheduleConfirmation(assistantText: string): boolean {
   );
 }
 
+/** Última proposta de agenda do assistente no histórico (não o burst atual). */
+export function priorAgendaAssistantTextFromMessages(
+  messages: Array<{ role: string; content: string }>,
+): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]!;
+    if (message.role !== "assistant") continue;
+    const text = stripAgendaDirectives(message.content.trim());
+    if (!text) continue;
+    if (assistantProposedScheduleConfirmation(text) || assistantProposedCancelConfirmation(text)) {
+      return text;
+    }
+  }
+  return null;
+}
+
 function extractPhone(remoteJid: string): string | null {
   const digits = remoteJid.split("@")[0]?.replace(/\D/g, "") ?? "";
   return digits.length >= 8 ? digits : null;
