@@ -1,10 +1,13 @@
 import "server-only";
 
 import type { PostgrestSingleResponse } from "@supabase/supabase-js";
-import { localWallClockToUtc } from "@/lib/server/agenda-datetime-parse";
+import {
+  localWallClockToUtc,
+  parseAppointmentDateTime,
+  resolveScheduleDateTimeFromText,
+} from "@/lib/server/agenda-datetime-parse";
 import { parseTimezone } from "@/lib/agents/agent-datetime";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { parseAppointmentDateTime } from "@/lib/server/agenda-datetime-parse";
 import { broadcastAgendaChange } from "@/lib/server/agenda-realtime";
 import {
   cancelGoogleCalendarEvent,
@@ -29,14 +32,22 @@ type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 const SCHEDULE_CTA_VALUE = "Agendar no Google Agenda";
 const SCHEDULING_DEDUPE_WINDOW_MS = 30 * 24 * 60 * 60_000;
 const CONFIRMATION_RE =
-  /\b(sim|t[aá]\s*bom|t[aá]|pode|claro|com\s*certeza|[oó]timo|certo|isso|exato|confirm|confirmo|confirmada|confirmado|fechou|fechado|combinado|perfeito|ok|pode\s*ser|marcar|marcado)\b/i;
+  /\b(sim|t[aá]\s*bom|t[aá]|pode|claro|com\s*certeza|[oó]timo|certo|isso|exato|confirm|confirmo|confirmada|confirmado|fechou|fechado|combinado|perfeito|ok|pode\s*ser)\b/i;
+/** Novo pedido de mutação na mesma mensagem — não conta como confirmação isolada. */
+const AGENDA_MUTATION_IN_MESSAGE_RE =
+  /\b(?:quero|preciso|gostaria|desejo|vou)\s+(?:cancelar|remarcar|reagendar|agendar|marcar|desmarcar)\b|\b(?:remarcar|reagendar|agendar|marcar)\s+(?:para|em|no|na)\b|\b\d{1,2}\s*[/-]\s*\d{1,2}\b|\bdaqui\s+(?:a\s+)?\d+\s+dias?\b|\bsemana\s+que\s+vem\b|\bproxim[ao]\s+\w{3,}/i;
+const CANCEL_INTENT_RE =
+  /\b(cancelar|cancelamento|desmarcar|desmarcação|desmarcacao)\b/i;
 const RESCHEDULE_RE =
   /\b(remarcar|reagendar|trocar\s+(o\s+)?hor[aá]rio|mudar\s+(a\s+)?data|outro\s+hor[aá]rio|alterar\s+agendamento)\b/i;
-const SCHEDULING_RE = /\b(agend|reuni[aã]o|visita|hor[aá]rio|amanh[ãa]|hoje|segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo|\d{1,2}[:h]\d{2}|\d{1,2}\/\d{1,2})\b/i;
+const SCHEDULING_RE =
+  /\b(agendamento|agend|cancelamento|cancelar|remarcar|reagendar|reuni[aã]o|visita|hor[aá]rio|amanh[ãa]|hoje|segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo|\d{1,2}[:h]\d{2}|\d{1,2}\/\d{1,2})\b/i;
 const AGENDA_DIRECTIVE_RE = /\[\[\s*(AGENDAR|CANCELAR_AGENDA)\s*(?::\s*([^\]]*))?\]\]/gi;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const AGENDA_FAILURE_REPLY =
+export const AGENDA_FAILURE_REPLY =
   "Não consegui confirmar essa alteração na agenda agora. Nossa equipe vai conferir e te retornar em breve.";
+export const AGENDA_AUTOMATION_DISABLED_REPLY =
+  "Posso consultar seus compromissos existentes, mas não consigo criar, remarcar ou cancelar agendamentos por aqui no momento.";
 
 /**
  * Verifica se uma data/hora está dentro da janela de disponibilidade configurada.
@@ -156,6 +167,125 @@ export function detectRescheduleConfirmation(
   if (!hasActiveEvent) return false;
   if (detectRescheduleIntent(userText, assistantText)) return true;
   return detectSchedulingConfirmation(userText, assistantText);
+}
+
+/** Pedido inicial de criar/remarcar/cancelar — não é confirmação explícita do cliente. */
+export function isInitialAgendaMutationRequest(userText: string): boolean {
+  const text = userText.trim().toLowerCase();
+  if (!text) return false;
+  if (
+    /^\s*(sim|ok|pode|confirmo|confirmado|claro|perfeito|fechado|combinado|t[aá]\s*bom)\s*[!.?]*\s*$/i.test(
+      text,
+    )
+  ) {
+    return false;
+  }
+  if (/^\s*(sim|ok|pode|confirmo)\b/i.test(text) && CONFIRMATION_RE.test(text)) {
+    return false;
+  }
+  return (
+    /\b(quero|preciso|gostaria|desejo|vou)\s+(cancelar|remarcar|reagendar|agendar|marcar|desmarcar)\b/i.test(
+      text,
+    ) ||
+    /\b(cancelar|remarcar|reagendar|desmarcar)\s+(meu|minha|o|a)?\s*agendamento/i.test(text) ||
+    /^(cancelar|remarcar|reagendar|desmarcar|agendar)\b/i.test(text)
+  );
+}
+
+const CONFIRMATION_ONLY_WORDS = new Set([
+  "sim",
+  "ok",
+  "pode",
+  "confirmo",
+  "confirmar",
+  "confirmado",
+  "confirmada",
+  "claro",
+  "perfeito",
+  "fechado",
+  "combinado",
+  "isso",
+  "certo",
+  "exato",
+  "ta",
+  "bom",
+  "ser",
+  "cancelar",
+  "desmarcar",
+]);
+
+/** Resposta curta só de confirmação (sem novo pedido de agenda na mesma mensagem). */
+export function isStandaloneAgendaConfirmation(userText: string): boolean {
+  const text = userText.trim();
+  if (!text || isInitialAgendaMutationRequest(text)) return false;
+  if (!CONFIRMATION_RE.test(text)) return false;
+  if (AGENDA_MUTATION_IN_MESSAGE_RE.test(text)) return false;
+  const tokens = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (tokens.length === 0 || tokens.length > 5) return false;
+  return tokens.every((token) => CONFIRMATION_ONLY_WORDS.has(token));
+}
+
+/** Confirmação válida no inbound do lead (backend — não confiar só no prompt). */
+export function clientConfirmedAgendaMutation(
+  userText: string | null | undefined,
+  assistantText?: string,
+): boolean {
+  if (!userText?.trim()) return false;
+  if (isInitialAgendaMutationRequest(userText)) return false;
+  if (isStandaloneAgendaConfirmation(userText)) return true;
+  const text = userText.trim();
+  if (
+    assistantText?.trim() &&
+    text.length <= 48 &&
+    !AGENDA_MUTATION_IN_MESSAGE_RE.test(text) &&
+    detectSchedulingConfirmation(userText, assistantText)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function detectAgendaCancelIntent(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  return CANCEL_INTENT_RE.test(trimmed);
+}
+
+function assistantProposedCancelConfirmation(assistantText: string): boolean {
+  return (
+    /\b(posso confirmar|confirma)\b/i.test(assistantText) &&
+    detectAgendaCancelIntent(assistantText)
+  );
+}
+
+function assistantProposedScheduleConfirmation(assistantText: string): boolean {
+  return (
+    /\b(posso confirmar|confirma)\b/i.test(assistantText) &&
+    (RESCHEDULE_RE.test(assistantText) ||
+      /\b(remarca[cç][aã]o|agendamento|agendar|marcar|hor[aá]rio)\b/i.test(assistantText))
+  );
+}
+
+/** Última proposta de agenda do assistente no histórico (não o burst atual). */
+export function priorAgendaAssistantTextFromMessages(
+  messages: Array<{ role: string; content: string }>,
+): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]!;
+    if (message.role !== "assistant") continue;
+    const text = stripAgendaDirectives(message.content.trim());
+    if (!text) continue;
+    if (assistantProposedScheduleConfirmation(text) || assistantProposedCancelConfirmation(text)) {
+      return text;
+    }
+  }
+  return null;
 }
 
 function extractPhone(remoteJid: string): string | null {
@@ -699,5 +829,193 @@ export async function executePreparedAgendaDirective(params: {
       reason: error instanceof Error ? error.message : String(error),
     });
     return { text: AGENDA_FAILURE_REPLY, action: "failed" };
+  }
+}
+
+export type ResolveAgendaTurnResult = {
+  text: string;
+  action:
+    | "none"
+    | "needs_confirmation"
+    | "scheduled"
+    | "rescheduled"
+    | "cancelled"
+    | "failed"
+    | "blocked";
+  eventId?: string;
+  /** Quando true, handoff deve ser adiado (agenda falhou ou pendente). */
+  deferHandoff?: boolean;
+};
+
+export function shouldDeferHandoffForAgendaResult(result: ResolveAgendaTurnResult): boolean {
+  return (
+    result.deferHandoff === true ||
+    result.action === "failed" ||
+    result.action === "needs_confirmation" ||
+    result.action === "blocked"
+  );
+}
+
+function resolveScheduleDirective(
+  directive: Extract<AgendaDirective, { type: "schedule" }>,
+  params: { clientText: string; assistantText: string; timezone: string },
+): Extract<AgendaDirective, { type: "schedule" }> {
+  const resolved = resolveScheduleDateTimeFromText({
+    clientText: params.clientText,
+    assistantText: params.assistantText,
+    timezone: params.timezone,
+    fallbackDate: directive.date,
+    fallbackTime: directive.time,
+  });
+  if (!resolved) return directive;
+  return { ...directive, date: resolved.date, time: resolved.time };
+}
+
+/** Orquestra confirmação, fallback e execução de agenda antes do envio ao lead. */
+export async function resolveAgendaTurn(params: {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  leadId?: string | null;
+  agentId?: string | null;
+  contactName?: string | null;
+  timezone: string;
+  modelText: string;
+  clientText: string;
+  agendaAutomationEnabled: boolean;
+  priorAssistantText?: string | null;
+  agendaLembretes?: AgentAgendaLembretes | null;
+  agendaDisponibilidade?: AgentAgendaDisponibilidade | null;
+  slotIndex?: number;
+}): Promise<ResolveAgendaTurnResult> {
+  const cleanText = stripAgendaDirectives(params.modelText);
+
+  if (!params.agendaAutomationEnabled) {
+    const parsed = parseAgendaDirectives(params.modelText);
+    if (parsed.directives.length > 0 || parsed.invalid) {
+      return { text: AGENDA_AUTOMATION_DISABLED_REPLY, action: "blocked", deferHandoff: true };
+    }
+    return { text: cleanText, action: "none" };
+  }
+
+  const parsed = parseAgendaDirectives(params.modelText);
+  if (parsed.invalid || parsed.directives.length > 1) {
+    return { text: AGENDA_FAILURE_REPLY, action: "failed", deferHandoff: true };
+  }
+
+  const directive = parsed.directives.length === 1 ? parsed.directives[0]! : null;
+  const proposalText = params.priorAssistantText?.trim() ?? "";
+  const assistantForConfirm = assistantTextForSchedulingConfirmation(
+    cleanText,
+    params.priorAssistantText,
+  );
+  const confirmed = clientConfirmedAgendaMutation(params.clientText, assistantForConfirm);
+
+  const cancelFromDirective = directive?.type === "cancel";
+  const scheduleFromDirective = directive?.type === "schedule";
+  const cancelFromContext =
+    detectAgendaCancelIntent(params.clientText) ||
+    assistantProposedCancelConfirmation(assistantForConfirm) ||
+    assistantProposedCancelConfirmation(proposalText);
+  const scheduleFromContext =
+    isInitialAgendaMutationRequest(params.clientText) ||
+    RESCHEDULE_RE.test(params.clientText) ||
+    assistantProposedScheduleConfirmation(assistantForConfirm) ||
+    assistantProposedScheduleConfirmation(proposalText);
+  const confirmedFromPriorProposal =
+    confirmed &&
+    !directive &&
+    (assistantProposedScheduleConfirmation(proposalText) ||
+      assistantProposedCancelConfirmation(proposalText));
+
+  const hasMutationIntent =
+    cancelFromDirective ||
+    scheduleFromDirective ||
+    cancelFromContext ||
+    scheduleFromContext ||
+    confirmedFromPriorProposal;
+
+  if (!hasMutationIntent) {
+    return { text: cleanText, action: "none" };
+  }
+
+  if (!confirmed) {
+    if (scheduleFromDirective || cancelFromDirective) {
+      return {
+        text: cleanText,
+        action: "needs_confirmation",
+        deferHandoff: true,
+      };
+    }
+    return { text: cleanText, action: "none" };
+  }
+
+  let finalDirective: AgendaDirective;
+
+  if (cancelFromDirective || (cancelFromContext && !scheduleFromDirective) || (confirmedFromPriorProposal && assistantProposedCancelConfirmation(proposalText))) {
+    finalDirective =
+      cancelFromDirective && directive?.type === "cancel"
+        ? directive
+        : { type: "cancel", eventId: null };
+  } else if (scheduleFromDirective) {
+    finalDirective = resolveScheduleDirective(directive as Extract<AgendaDirective, { type: "schedule" }>, {
+      clientText: params.clientText,
+      assistantText: assistantForConfirm,
+      timezone: params.timezone,
+    });
+  } else {
+    const resolved = resolveScheduleDateTimeFromText({
+      clientText: params.clientText,
+      assistantText: proposalText || assistantForConfirm,
+      timezone: params.timezone,
+    });
+    if (!resolved) {
+      return {
+        text: AGENDA_FAILURE_REPLY,
+        action: "failed",
+        deferHandoff: true,
+      };
+    }
+    const location =
+      extractLocationFromText(assistantForConfirm) ?? extractLocationFromText(params.clientText);
+    finalDirective = {
+      type: "schedule",
+      date: resolved.date,
+      time: resolved.time,
+      location,
+    };
+  }
+
+  try {
+    const sb = params.sb ?? createSupabaseServiceClient();
+    const result = await executeAgendaDirective({
+      sb,
+      tenantId: params.tenantId,
+      remoteJid: params.remoteJid,
+      leadId: params.leadId,
+      agentId: params.agentId,
+      contactName: params.contactName,
+      timezone: params.timezone,
+      directive: finalDirective,
+      agendaLembretes: params.agendaLembretes,
+      agendaDisponibilidade: params.agendaDisponibilidade,
+      slotIndex: params.slotIndex,
+    });
+    console.info("[agent-agenda-turn]", {
+      tenant_id: params.tenantId,
+      agent_id: params.agentId,
+      action: result.action,
+      event_id: result.eventId,
+      fallback: !directive,
+    });
+    return { text: cleanText, action: result.action, eventId: result.eventId };
+  } catch (error) {
+    console.warn("[agent-agenda-turn]", {
+      tenant_id: params.tenantId,
+      agent_id: params.agentId,
+      action: "failed",
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    return { text: AGENDA_FAILURE_REPLY, action: "failed", deferHandoff: true };
   }
 }
