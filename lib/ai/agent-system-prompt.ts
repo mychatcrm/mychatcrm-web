@@ -260,7 +260,14 @@ CANCELAR AGENDAMENTO
   O sistema cancela o compromisso ativo automaticamente.
 
 - Nunca emita diretivas sem confirmação explícita do cliente nesta conversa. Nunca emita mais de uma diretiva por mensagem.
-- As diretivas são internas e removidas antes do cliente receber a mensagem.${dispLine ? `\n${dispLine}` : ""}`
+- As diretivas são internas e removidas antes do cliente receber a mensagem.${
+          agent.ctaHandoffAtivo !== true
+            ? `
+- Transferência humana está DESATIVADA: você mesmo confirma criar, remarcar e cancelar agendamentos nesta conversa.
+- Nunca diga que atendente, humano, equipe, responsável ou especialista vai entrar em contato, confirmar ou retornar sobre agenda.
+- Para remarcar ou cancelar, siga os mesmos passos acima (propor → aguardar confirmação → emitir diretiva).`
+            : ""
+        }${dispLine ? `\n${dispLine}` : ""}`
         : "- A automação de agenda está desativada. Você pode informar compromissos existentes, mas nunca inclua [[AGENDAR: ...]] nem [[CANCELAR_AGENDA]].";
       return `AGENDA
 - Consulte o contexto de agenda do contato antes de responder. Não invente compromissos.

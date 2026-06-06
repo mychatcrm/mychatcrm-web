@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AGENDA_SUCCESS_REPLY_CANCELLED,
+  AGENDA_SUCCESS_REPLY_RESCHEDULED,
+  AGENDA_SUCCESS_REPLY_SCHEDULED,
   clientConfirmedAgendaMutation,
   isStandaloneAgendaConfirmation,
   priorAgendaAssistantTextFromMessages,
   resolveAgendaTurn,
+  sanitizeAgendaReplyForNoHandoff,
   shouldDeferHandoffForAgendaResult,
 } from "@/lib/server/agent-cta-scheduler";
 
@@ -353,5 +357,133 @@ describe("resolveAgendaTurn", () => {
     expect(result.action).toBe("scheduled");
     expect(insertAgendaEventMock).toHaveBeenCalledTimes(1);
     expect(result.deferHandoff).toBeFalsy();
+  });
+
+  describe("Agenda ON + Handoff OFF", () => {
+    const handoffOff = { agendaAutomationEnabled: true, ctaHandoffAtivo: false as const };
+    const forbiddenHumanWords = ["atendente", "humano", "entrar em contato", "transferir"];
+
+    function expectNoHumanDelegation(text: string) {
+      for (const word of forbiddenHumanWords) {
+        expect(text.toLowerCase()).not.toContain(word);
+      }
+    }
+
+    it("criar retorna confirmação sem menção a humano", async () => {
+      const sb = makeSb(null);
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Agendado! Um atendente humano vai entrar em contato. [[AGENDAR: data=10/06/2026, hora=14:00]]",
+        clientText: "sim",
+        ...handoffOff,
+      });
+      expect(result.action).toBe("scheduled");
+      expect(result.text).toBe(AGENDA_SUCCESS_REPLY_SCHEDULED);
+      expectNoHumanDelegation(result.text);
+      expect(insertAgendaEventMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("remarcar funciona com proposta ampla no histórico (sem Posso confirmar)", async () => {
+      const sb = makeSb(EXISTING_EVENT);
+      const priorAssistantText = "Remarcamos para 15/06/2026 às 10:00, confirma?";
+      expect(priorAgendaAssistantTextFromMessages([
+        { role: "assistant", content: priorAssistantText },
+        { role: "user", content: "sim" },
+      ])).toBe(priorAssistantText);
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Pronto, remarcado para 15/06/2026 às 10:00.",
+        clientText: "sim",
+        priorAssistantText,
+        ...handoffOff,
+      });
+      expect(result.action).toBe("rescheduled");
+      expect(result.text).toBe(AGENDA_SUCCESS_REPLY_RESCHEDULED);
+      expectNoHumanDelegation(result.text);
+      expect(insertAgendaEventMock).toHaveBeenCalledTimes(1);
+      expect(cancelAgendaEventMock).toHaveBeenCalledWith("tenant-1", EXISTING_EVENT.id);
+    });
+
+    it("cancelar funciona com handoff OFF", async () => {
+      const sb = makeSb(EXISTING_EVENT);
+      const priorAssistantText = "Posso confirmar o cancelamento do seu agendamento?";
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Cancelamento feito.",
+        clientText: "sim",
+        priorAssistantText,
+        ...handoffOff,
+      });
+      expect(result.action).toBe("cancelled");
+      expect(result.text).toBe(AGENDA_SUCCESS_REPLY_CANCELLED);
+      expectNoHumanDelegation(result.text);
+      expect(cancelAgendaEventMock).toHaveBeenCalledWith("tenant-1", EXISTING_EVENT.id);
+    });
+
+    it("sanitiza texto do modelo que menciona humano na proposta", () => {
+      const sanitized = sanitizeAgendaReplyForNoHandoff(
+        "Perfeito! Um atendente humano vai entrar em contato com você para confirmar.",
+      );
+      expectNoHumanDelegation(sanitized);
+      expect(sanitized.length).toBeGreaterThan(0);
+    });
+
+    it("não usa mensagem de delegação humana como proposta válida no histórico", () => {
+      const prior = priorAgendaAssistantTextFromMessages([
+        {
+          role: "assistant",
+          content: "Um atendente humano vai entrar em contato com você para confirmar.",
+        },
+        { role: "user", content: "sim" },
+      ]);
+      expect(prior).toBeNull();
+    });
+  });
+
+  describe("Agenda ON + Handoff ON (comportamento preservado)", () => {
+    it("criar mantém texto do modelo no sucesso", async () => {
+      const sb = makeSb(null);
+      const modelText = "Agendado para 10/06 às 14h! [[AGENDAR: data=10/06/2026, hora=14:00]]";
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText,
+        clientText: "sim",
+        agendaAutomationEnabled: true,
+        ctaHandoffAtivo: true,
+      });
+      expect(result.action).toBe("scheduled");
+      expect(result.text).toBe("Agendado para 10/06 às 14h!");
+      expect(result.text).not.toBe(AGENDA_SUCCESS_REPLY_SCHEDULED);
+    });
+
+    it("remarcar mantém texto do modelo no sucesso", async () => {
+      const sb = makeSb(EXISTING_EVENT);
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Pronto, remarquei seu agendamento para 15/06/2026 às 10:00.",
+        clientText: "sim",
+        priorAssistantText: "Posso confirmar a remarcação para 15/06/2026 às 10:00?",
+        agendaAutomationEnabled: true,
+        ctaHandoffAtivo: true,
+      });
+      expect(result.action).toBe("rescheduled");
+      expect(result.text).toBe("Pronto, remarquei seu agendamento para 15/06/2026 às 10:00.");
+      expect(result.text).not.toBe(AGENDA_SUCCESS_REPLY_RESCHEDULED);
+    });
   });
 });

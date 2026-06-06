@@ -46,8 +46,21 @@ const AGENDA_DIRECTIVE_RE = /\[\[\s*(AGENDAR|CANCELAR_AGENDA)\s*(?::\s*([^\]]*))
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const AGENDA_FAILURE_REPLY =
   "Não consegui confirmar essa alteração na agenda agora. Nossa equipe vai conferir e te retornar em breve.";
+export const AGENDA_FAILURE_REPLY_NO_HANDOFF =
+  "Não consegui confirmar essa alteração na agenda agora. Tente novamente em instantes ou informe outra data e horário.";
+export const AGENDA_SUCCESS_REPLY_SCHEDULED = "Agendamento confirmado.";
+export const AGENDA_SUCCESS_REPLY_RESCHEDULED = "Remarcação confirmada.";
+export const AGENDA_SUCCESS_REPLY_CANCELLED = "Cancelamento confirmado.";
 export const AGENDA_AUTOMATION_DISABLED_REPLY =
   "Posso consultar seus compromissos existentes, mas não consigo criar, remarcar ou cancelar agendamentos por aqui no momento.";
+
+const HUMAN_DELEGATION_IN_REPLY_RE =
+  /\b(atendente\s+humano|humano\s+vai|entrar\s+em\s+contato|nossa\s+equipe|equipe\s+vai|respons[aá]vel\s+vai|transferir|transfer[eê]ncia)\b/i;
+const CONFIRM_ASK_RE =
+  /\b(posso confirmar|pode confirmar|confirma|confirmar|tudo bem|serve|fica bom|pode ser)\b/i;
+const DATE_OR_TIME_IN_TEXT_RE = /\d{1,2}\/\d{1,2}|\d{1,2}[:h]\d{2}|\bàs\s+\d{1,2}/i;
+const AGENDA_TOPIC_RE =
+  /\b(agendamento|agendar|remarc|reagend|hor[aá]rio|compromisso|marcar|cancel)/i;
 
 /**
  * Verifica se uma data/hora está dentro da janela de disponibilidade configurada.
@@ -258,18 +271,64 @@ export function detectAgendaCancelIntent(text: string): boolean {
 }
 
 function assistantProposedCancelConfirmation(assistantText: string): boolean {
+  if (HUMAN_DELEGATION_IN_REPLY_RE.test(assistantText)) return false;
   return (
-    /\b(posso confirmar|confirma)\b/i.test(assistantText) &&
-    detectAgendaCancelIntent(assistantText)
+    CONFIRM_ASK_RE.test(assistantText) && detectAgendaCancelIntent(assistantText)
   );
 }
 
 function assistantProposedScheduleConfirmation(assistantText: string): boolean {
-  return (
-    /\b(posso confirmar|confirma)\b/i.test(assistantText) &&
+  if (HUMAN_DELEGATION_IN_REPLY_RE.test(assistantText)) return false;
+  if (
+    CONFIRM_ASK_RE.test(assistantText) &&
     (RESCHEDULE_RE.test(assistantText) ||
       /\b(remarca[cç][aã]o|agendamento|agendar|marcar|hor[aá]rio)\b/i.test(assistantText))
+  ) {
+    return true;
+  }
+  return (
+    CONFIRM_ASK_RE.test(assistantText) &&
+    DATE_OR_TIME_IN_TEXT_RE.test(assistantText) &&
+    AGENDA_TOPIC_RE.test(assistantText)
   );
+}
+
+function assistantProposedAgendaMutationConfirmation(assistantText: string): boolean {
+  return (
+    assistantProposedScheduleConfirmation(assistantText) ||
+    assistantProposedCancelConfirmation(assistantText)
+  );
+}
+
+/** Remove menções a humano/equipe/transferência quando handoff está desativado. */
+export function sanitizeAgendaReplyForNoHandoff(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed || !HUMAN_DELEGATION_IN_REPLY_RE.test(trimmed)) return trimmed;
+  const sentences = trimmed.split(/(?<=[.!?])\s+/);
+  const kept = sentences.filter((sentence) => !HUMAN_DELEGATION_IN_REPLY_RE.test(sentence));
+  const result = kept.join(" ").trim();
+  if (result) return result;
+  return "Posso confirmar essa alteração na agenda. Responda sim para confirmar.";
+}
+
+function finalizeResolveAgendaTurnResult(
+  result: ResolveAgendaTurnResult,
+  ctaHandoffAtivo?: boolean,
+): ResolveAgendaTurnResult {
+  if (ctaHandoffAtivo !== false) return result;
+  if (result.action === "scheduled") {
+    return { ...result, text: AGENDA_SUCCESS_REPLY_SCHEDULED };
+  }
+  if (result.action === "rescheduled") {
+    return { ...result, text: AGENDA_SUCCESS_REPLY_RESCHEDULED };
+  }
+  if (result.action === "cancelled") {
+    return { ...result, text: AGENDA_SUCCESS_REPLY_CANCELLED };
+  }
+  if (result.action === "failed") {
+    return { ...result, text: AGENDA_FAILURE_REPLY_NO_HANDOFF };
+  }
+  return { ...result, text: sanitizeAgendaReplyForNoHandoff(result.text) };
 }
 
 /** Última proposta de agenda do assistente no histórico (não o burst atual). */
@@ -281,7 +340,7 @@ export function priorAgendaAssistantTextFromMessages(
     if (message.role !== "assistant") continue;
     const text = stripAgendaDirectives(message.content.trim());
     if (!text) continue;
-    if (assistantProposedScheduleConfirmation(text) || assistantProposedCancelConfirmation(text)) {
+    if (assistantProposedAgendaMutationConfirmation(text)) {
       return text;
     }
   }
@@ -883,24 +942,28 @@ export async function resolveAgendaTurn(params: {
   modelText: string;
   clientText: string;
   agendaAutomationEnabled: boolean;
+  /** Quando false, respostas de sucesso/falha da agenda não mencionam humano/equipe. */
+  ctaHandoffAtivo?: boolean;
   priorAssistantText?: string | null;
   agendaLembretes?: AgentAgendaLembretes | null;
   agendaDisponibilidade?: AgentAgendaDisponibilidade | null;
   slotIndex?: number;
 }): Promise<ResolveAgendaTurnResult> {
   const cleanText = stripAgendaDirectives(params.modelText);
+  const finalize = (result: ResolveAgendaTurnResult) =>
+    finalizeResolveAgendaTurnResult(result, params.ctaHandoffAtivo);
 
   if (!params.agendaAutomationEnabled) {
     const parsed = parseAgendaDirectives(params.modelText);
     if (parsed.directives.length > 0 || parsed.invalid) {
-      return { text: AGENDA_AUTOMATION_DISABLED_REPLY, action: "blocked", deferHandoff: true };
+      return finalize({ text: AGENDA_AUTOMATION_DISABLED_REPLY, action: "blocked", deferHandoff: true });
     }
-    return { text: cleanText, action: "none" };
+    return finalize({ text: cleanText, action: "none" });
   }
 
   const parsed = parseAgendaDirectives(params.modelText);
   if (parsed.invalid || parsed.directives.length > 1) {
-    return { text: AGENDA_FAILURE_REPLY, action: "failed", deferHandoff: true };
+    return finalize({ text: AGENDA_FAILURE_REPLY, action: "failed", deferHandoff: true });
   }
 
   const directive = parsed.directives.length === 1 ? parsed.directives[0]! : null;
@@ -925,8 +988,7 @@ export async function resolveAgendaTurn(params: {
   const confirmedFromPriorProposal =
     confirmed &&
     !directive &&
-    (assistantProposedScheduleConfirmation(proposalText) ||
-      assistantProposedCancelConfirmation(proposalText));
+    assistantProposedAgendaMutationConfirmation(proposalText);
 
   const hasMutationIntent =
     cancelFromDirective ||
@@ -936,30 +998,26 @@ export async function resolveAgendaTurn(params: {
     confirmedFromPriorProposal;
 
   if (!hasMutationIntent) {
-    return { text: cleanText, action: "none" };
+    return finalize({ text: cleanText, action: "none" });
   }
 
   if (!confirmed) {
     if (scheduleFromDirective || cancelFromDirective) {
-      return {
+      return finalize({
         text: cleanText,
         action: "needs_confirmation",
         deferHandoff: true,
-      };
+      });
     }
-    // Cliente engajou a agenda NESTE turno (sem confirmação nem diretiva ainda):
-    // adia o handoff para não interromper a mutação antes da confirmação.
-    // Não considera só o contexto da proposta anterior, para não prender quem
-    // realmente pivota para "falar com humano" sem intenção de agenda.
     const clientEngagedAgendaThisTurn =
       isInitialAgendaMutationRequest(params.clientText) ||
       RESCHEDULE_RE.test(params.clientText) ||
       detectAgendaCancelIntent(params.clientText);
-    return {
+    return finalize({
       text: cleanText,
       action: "none",
       deferHandoff: clientEngagedAgendaThisTurn || undefined,
-    };
+    });
   }
 
   let finalDirective: AgendaDirective;
@@ -982,11 +1040,11 @@ export async function resolveAgendaTurn(params: {
       timezone: params.timezone,
     });
     if (!resolved) {
-      return {
+      return finalize({
         text: AGENDA_FAILURE_REPLY,
         action: "failed",
         deferHandoff: true,
-      };
+      });
     }
     const location =
       extractLocationFromText(assistantForConfirm) ?? extractLocationFromText(params.clientText);
@@ -1020,7 +1078,7 @@ export async function resolveAgendaTurn(params: {
       event_id: result.eventId,
       fallback: !directive,
     });
-    return { text: cleanText, action: result.action, eventId: result.eventId };
+    return finalize({ text: cleanText, action: result.action, eventId: result.eventId });
   } catch (error) {
     console.warn("[agent-agenda-turn]", {
       tenant_id: params.tenantId,
@@ -1028,6 +1086,6 @@ export async function resolveAgendaTurn(params: {
       action: "failed",
       reason: error instanceof Error ? error.message : String(error),
     });
-    return { text: AGENDA_FAILURE_REPLY, action: "failed", deferHandoff: true };
+    return finalize({ text: AGENDA_FAILURE_REPLY, action: "failed", deferHandoff: true });
   }
 }

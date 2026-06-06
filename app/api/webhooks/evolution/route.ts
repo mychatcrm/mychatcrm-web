@@ -749,6 +749,7 @@ export async function POST(request: Request) {
             clientText,
             priorAssistantText,
             agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,
+            ctaHandoffAtivo: metadata.ctaHandoffAtivo === true,
             agendaLembretes:
               typeof metadata.agendaLembretes === "object" && metadata.agendaLembretes !== null
                 ? (metadata.agendaLembretes as import("@/lib/types").AgentAgendaLembretes)

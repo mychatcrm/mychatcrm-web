@@ -154,6 +154,22 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("[[CANCELAR_AGENDA]]");
   });
 
+  it("forbids human delegation in agenda flow when handoff is disabled", () => {
+    const prompt = buildAgentSystemPrompt({
+      languageInstruction: "Responda em português.",
+      agent: {
+        nome: "Bia",
+        systemPrompt: "Ajude o cliente.",
+        agendaAutomationEnabled: true,
+        ctaHandoffAtivo: false,
+      },
+    });
+
+    expect(prompt).toContain("Transferência humana está DESATIVADA");
+    expect(prompt).toContain("Nunca diga que atendente, humano, equipe");
+    expect(prompt).toContain("[[AGENDAR: data=DD/MM/AAAA, hora=HH:MM");
+  });
+
   it("keeps agenda read-only when agenda automation is disabled", () => {
     const prompt = buildAgentSystemPrompt({
       languageInstruction: "Responda em português.",
