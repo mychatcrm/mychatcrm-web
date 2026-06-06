@@ -33,7 +33,7 @@ const CONFIRMATION_RE =
 const RESCHEDULE_RE =
   /\b(remarcar|reagendar|trocar\s+(o\s+)?hor[aá]rio|mudar\s+(a\s+)?data|outro\s+hor[aá]rio|alterar\s+agendamento)\b/i;
 const SCHEDULING_RE = /\b(agend|reuni[aã]o|visita|hor[aá]rio|amanh[ãa]|hoje|segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo|\d{1,2}[:h]\d{2}|\d{1,2}\/\d{1,2})\b/i;
-const AGENDA_DIRECTIVE_RE = /\[\[\s*(AGENDAR|CANCELAR_AGENDA)\s*:\s*([^\]]*)\]\]/gi;
+const AGENDA_DIRECTIVE_RE = /\[\[\s*(AGENDAR|CANCELAR_AGENDA)\s*(?::\s*([^\]]*))?\]\]/gi;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const AGENDA_FAILURE_REPLY =
   "Não consegui confirmar essa alteração na agenda agora. Nossa equipe vai conferir e te retornar em breve.";
@@ -91,7 +91,7 @@ export type CreateAgendaEventResult =
 
 export type AgendaDirective =
   | { type: "schedule"; date: string; time: string; location: string | null }
-  | { type: "cancel"; eventId: string };
+  | { type: "cancel"; eventId: string | null };
 
 export type ParsedAgendaDirectives = {
   directives: AgendaDirective[];
@@ -385,12 +385,11 @@ export function parseAgendaDirectives(text: string): ParsedAgendaDirectives {
   AGENDA_DIRECTIVE_RE.lastIndex = 0;
   while ((match = AGENDA_DIRECTIVE_RE.exec(text)) !== null) {
     const name = match[1]!.toUpperCase();
-    const values = parseDirectiveParams(match[2] ?? "");
-    if (!values) {
-      invalid = true;
-      continue;
-    }
+    const rawParams = (match[2] ?? "").trim();
+
     if (name === "AGENDAR") {
+      const values = parseDirectiveParams(rawParams);
+      if (!values) { invalid = true; continue; }
       const keys = Object.keys(values);
       const allowed = keys.every((key) => key === "data" || key === "hora" || key === "local");
       const location = values.local?.trim() || null;
@@ -408,11 +407,18 @@ export function parseAgendaDirectives(text: string): ParsedAgendaDirectives {
       directives.push({ type: "schedule", date: values.data, time: values.hora, location });
       continue;
     }
-    if (Object.keys(values).length !== 1 || !values.id || !UUID_RE.test(values.id)) {
+
+    // CANCELAR_AGENDA — aceita sem params (auto-detecta evento ativo) ou com id=UUID
+    if (!rawParams) {
+      directives.push({ type: "cancel", eventId: null });
+      continue;
+    }
+    const cancelValues = parseDirectiveParams(rawParams);
+    if (!cancelValues || Object.keys(cancelValues).length !== 1 || !cancelValues.id || !UUID_RE.test(cancelValues.id)) {
       invalid = true;
       continue;
     }
-    directives.push({ type: "cancel", eventId: values.id });
+    directives.push({ type: "cancel", eventId: cancelValues.id });
   }
   const markerCount = text.match(/\[\[\s*(?:AGENDAR|CANCELAR_AGENDA)\b/gi)?.length ?? 0;
   if (markerCount !== directives.length) invalid = true;
@@ -592,8 +598,16 @@ export async function executeAgendaDirective(params: {
 }): Promise<{ action: "scheduled" | "rescheduled" | "cancelled"; eventId: string }> {
   const sb = params.sb ?? createSupabaseServiceClient();
   if (params.directive.type === "cancel") {
-    const event = await getAgendaEventById(params.tenantId, params.directive.eventId);
-    if (!event) throw new Error("agenda_event_not_found");
+    let event: AgendaEventRow | null = null;
+    if (params.directive.eventId) {
+      // Cancelamento por ID específico (formato legado [[CANCELAR_AGENDA: id=UUID]])
+      event = await getAgendaEventById(params.tenantId, params.directive.eventId);
+      if (!event) throw new Error("agenda_event_not_found");
+    } else {
+      // Cancelamento automático: próximo evento ativo do contato
+      event = await findNextActiveAgendaEvent({ sb, tenantId: params.tenantId, remoteJid: params.remoteJid });
+      if (!event) throw new Error("agenda_event_not_found");
+    }
     await cancelStructuredAgendaEvent({ tenantId: params.tenantId, remoteJid: params.remoteJid, event });
     return { action: "cancelled", eventId: event.id };
   }

@@ -177,6 +177,14 @@ describe("agent-cta-scheduler", () => {
     expect(parseAgendaDirectives("[[CANCELAR_AGENDA: id=invalido]]").invalid).toBe(true);
   });
 
+  it("parses [[CANCELAR_AGENDA]] without params as auto-cancel", () => {
+    expect(parseAgendaDirectives("Cancelado! [[CANCELAR_AGENDA]]")).toEqual({
+      directives: [{ type: "cancel", eventId: null }],
+      invalid: false,
+    });
+    expect(stripAgendaDirectives("Cancelado! [[CANCELAR_AGENDA]]")).toBe("Cancelado!");
+  });
+
   it("rejects incomplete, invalid and conflicting directives", () => {
     expect(parseAgendaDirectives("[[AGENDAR: data=31/02/2026, hora=14:30]]").invalid).toBe(true);
     expect(parseAgendaDirectives("[[AGENDAR: data=02/06/2026]]").invalid).toBe(true);
@@ -374,6 +382,37 @@ describe("agent-cta-scheduler", () => {
         directive: { type: "cancel", eventId: "123e4567-e89b-42d3-a456-426614174000" },
       }),
     ).rejects.toThrow("agenda_event_contact_mismatch");
+    expect(cancelAgendaEventMock).not.toHaveBeenCalled();
+  });
+
+  it("auto-cancels next active event when no id provided", async () => {
+    const activeEvent = {
+      id: "evt-active",
+      attendee_phone: "5562999999999",
+      google_event_id: null,
+      start_at: "2099-06-10T17:00:00.000Z",
+    };
+    const result = await executeAgendaDirective({
+      sb: makeStructuredSb(activeEvent),
+      tenantId: "t1",
+      remoteJid: "5562999999999@s.whatsapp.net",
+      timezone: "America/Sao_Paulo",
+      directive: { type: "cancel", eventId: null },
+    });
+    expect(result).toEqual({ action: "cancelled", eventId: "evt-active" });
+    expect(cancelAgendaEventMock).toHaveBeenCalledWith("t1", "evt-active");
+  });
+
+  it("throws when auto-cancel finds no active event", async () => {
+    await expect(
+      executeAgendaDirective({
+        sb: makeStructuredSb(null),
+        tenantId: "t1",
+        remoteJid: "5562999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        directive: { type: "cancel", eventId: null },
+      }),
+    ).rejects.toThrow("agenda_event_not_found");
     expect(cancelAgendaEventMock).not.toHaveBeenCalled();
   });
 

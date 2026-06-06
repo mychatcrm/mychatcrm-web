@@ -239,14 +239,29 @@ ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o c
           : null;
       const automationBlock = agent.agendaAutomationEnabled === true
         ? `- A automação de agenda está ativa para este agente.
-- FUSO HORÁRIO: Use sempre o fuso horário ${agentTz}. Datas e horas no [[AGENDAR:]] devem estar no horário local (não UTC).
-- Para qualquer ação de agenda siga SEMPRE este fluxo de 2 passos:
-  Passo 1 — PROPOSTA: quando o cliente mencionar data/hora (criar) ou pedir remarcação/cancelamento, apresente o resumo com a data exata (DD/MM/AAAA) e hora (HH:MM) e o local, e pergunte se confirma. Não inclua nenhuma diretiva neste passo.
-  Passo 2 — EXECUÇÃO IMEDIATA: assim que o cliente confirmar (sim, ok, confirmo, pode, claro, etc.), inclua IMEDIATAMENTE a diretiva correspondente no final da mensagem — usando a exata data DD/MM/AAAA e hora HH:MM que você apresentou no Passo 1. Nunca recalcule a data. Nunca omita a diretiva após confirmação:
-    • Criar ou remarcar: [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]] — o sistema cancela o compromisso anterior automaticamente ao remarcar.
-    • Cancelar: [[CANCELAR_AGENDA: id=EVENT_ID]] — use o event_id do contexto de agenda.
+- FUSO HORÁRIO: Use sempre o fuso horário ${agentTz}. Datas e horas em diretivas devem estar no horário local (não UTC).
+
+CRIAR AGENDAMENTO
+  Passo 1: quando o cliente quiser marcar um horário, proponha a data (DD/MM/AAAA), hora (HH:MM) e local e pergunte se confirma. Não emita diretiva neste passo.
+  Passo 2: após o cliente confirmar (sim, ok, pode, claro, confirmo, etc.), inclua IMEDIATAMENTE no final da mensagem:
+  [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]]
+  Use EXATAMENTE a data e hora que você propôs — nunca recalcule.
+
+REMARCAR AGENDAMENTO
+  Passo 1: quando o cliente pedir para remarcar ou sugerir nova data/hora, proponha a nova data (DD/MM/AAAA) e hora (HH:MM) e pergunte se confirma. Não emita diretiva neste passo.
+  Passo 2: após o cliente confirmar, inclua IMEDIATAMENTE no final da mensagem:
+  [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]]
+  Use EXATAMENTE a nova data que você propôs. O sistema cancela o compromisso anterior automaticamente.
+
+CANCELAR AGENDAMENTO
+  Passo 1: quando o cliente pedir cancelamento, mostre os detalhes do compromisso ativo (data, hora, local do contexto de agenda) e pergunte se confirma o cancelamento. Não emita diretiva neste passo.
+  Passo 2: após o cliente confirmar, inclua IMEDIATAMENTE no final da mensagem:
+  [[CANCELAR_AGENDA]]
+  O sistema cancela o compromisso ativo automaticamente.
+
+- Nunca emita diretivas sem confirmação explícita do cliente nesta conversa. Nunca emita mais de uma diretiva por mensagem.
 - As diretivas são internas e removidas antes do cliente receber a mensagem.${dispLine ? `\n${dispLine}` : ""}`
-        : "- A automação de agenda está desativada. Você pode informar compromissos existentes, mas nunca inclua [[AGENDAR: ...]] nem [[CANCELAR_AGENDA: ...]].";
+        : "- A automação de agenda está desativada. Você pode informar compromissos existentes, mas nunca inclua [[AGENDAR: ...]] nem [[CANCELAR_AGENDA]].";
       return `AGENDA
 - Consulte o contexto de agenda do contato antes de responder. Não invente compromissos.
 - Não crie um evento apenas porque o cliente perguntou sobre um agendamento.

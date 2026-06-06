@@ -151,7 +151,7 @@ describe("buildAgentSystemPrompt", () => {
     });
 
     expect(prompt).toContain("[[AGENDAR: data=DD/MM/AAAA, hora=HH:MM");
-    expect(prompt).toContain("[[CANCELAR_AGENDA: id=EVENT_ID]]");
+    expect(prompt).toContain("[[CANCELAR_AGENDA]]");
   });
 
   it("keeps agenda read-only when agenda automation is disabled", () => {
