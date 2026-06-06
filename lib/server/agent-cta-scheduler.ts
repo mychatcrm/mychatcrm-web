@@ -947,7 +947,19 @@ export async function resolveAgendaTurn(params: {
         deferHandoff: true,
       };
     }
-    return { text: cleanText, action: "none" };
+    // Cliente engajou a agenda NESTE turno (sem confirmação nem diretiva ainda):
+    // adia o handoff para não interromper a mutação antes da confirmação.
+    // Não considera só o contexto da proposta anterior, para não prender quem
+    // realmente pivota para "falar com humano" sem intenção de agenda.
+    const clientEngagedAgendaThisTurn =
+      isInitialAgendaMutationRequest(params.clientText) ||
+      RESCHEDULE_RE.test(params.clientText) ||
+      detectAgendaCancelIntent(params.clientText);
+    return {
+      text: cleanText,
+      action: "none",
+      deferHandoff: clientEngagedAgendaThisTurn || undefined,
+    };
   }
 
   let finalDirective: AgendaDirective;

@@ -283,4 +283,75 @@ describe("resolveAgendaTurn", () => {
     expect(shouldDeferHandoffForAgendaResult({ text: "", action: "failed" })).toBe(true);
     expect(shouldDeferHandoffForAgendaResult({ text: "", action: "scheduled" })).toBe(false);
   });
+
+  it("turno de proposta de agenda com palavra de handoff adia handoff sem mutar", async () => {
+    const sb = makeSb(null);
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      timezone: "America/Sao_Paulo",
+      modelText: "Posso te encaixar amanhã às 14:00? Confirma?",
+      clientText: "quero agendar uma reunião com o especialista",
+      agendaAutomationEnabled: true,
+    });
+    expect(result.action).toBe("none");
+    expect(result.deferHandoff).toBe(true);
+    expect(shouldDeferHandoffForAgendaResult(result)).toBe(true);
+    expect(insertAgendaEventMock).not.toHaveBeenCalled();
+  });
+
+  it("pedido puro de humano sem intenção de agenda não adia handoff", async () => {
+    const sb = makeSb(null);
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      timezone: "America/Sao_Paulo",
+      modelText: "Claro! Já te conecto com um atendente.",
+      clientText: "quero falar com atendente",
+      agendaAutomationEnabled: true,
+    });
+    expect(result.action).toBe("none");
+    expect(result.deferHandoff).toBeFalsy();
+    expect(shouldDeferHandoffForAgendaResult(result)).toBe(false);
+    expect(insertAgendaEventMock).not.toHaveBeenCalled();
+  });
+
+  it("após sucesso (scheduled) não adia handoff", async () => {
+    const sb = makeSb(null);
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      timezone: "America/Sao_Paulo",
+      modelText: "Agendado! [[AGENDAR: data=10/06/2026, hora=14:00]]",
+      clientText: "sim",
+      agendaAutomationEnabled: true,
+    });
+    expect(result.action).toBe("scheduled");
+    expect(result.deferHandoff).toBeFalsy();
+    expect(shouldDeferHandoffForAgendaResult(result)).toBe(false);
+    // scheduled/rescheduled/cancelled nunca adiam handoff
+    expect(shouldDeferHandoffForAgendaResult({ text: "", action: "rescheduled" })).toBe(false);
+    expect(shouldDeferHandoffForAgendaResult({ text: "", action: "cancelled" })).toBe(false);
+  });
+
+  it("Agenda ON funciona sem qualquer sinal de handoff (resolveAgendaTurn não recebe handoff)", async () => {
+    const sb = makeSb(null);
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      leadId: "lead-1",
+      timezone: "America/Sao_Paulo",
+      modelText: "Pronto, agendei para 12/06/2026 às 09:00.",
+      clientText: "sim",
+      priorAssistantText: "Posso confirmar o agendamento para 12/06/2026 às 09:00?",
+      agendaAutomationEnabled: true,
+    });
+    expect(result.action).toBe("scheduled");
+    expect(insertAgendaEventMock).toHaveBeenCalledTimes(1);
+    expect(result.deferHandoff).toBeFalsy();
+  });
 });
