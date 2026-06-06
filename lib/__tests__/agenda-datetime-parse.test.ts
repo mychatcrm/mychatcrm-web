@@ -1,88 +1,90 @@
 import { describe, expect, it } from "vitest";
-import { localWallClockToUtc, parseAppointmentDateTime } from "@/lib/server/agenda-datetime-parse";
+import {
+  addDaysInTimezone,
+  parseAppointmentDateTime,
+  resolveScheduleDateTimeFromText,
+} from "@/lib/server/agenda-datetime-parse";
 
-describe("agenda-datetime-parse", () => {
-  const tz = "America/Sao_Paulo";
-  const now = new Date("2026-05-28T15:00:00.000Z");
+const TZ = "America/Sao_Paulo";
+const NOW = new Date("2026-06-05T15:00:00.000Z");
 
-  it("parses amanhã às 14h in agent timezone", () => {
-    const dt = parseAppointmentDateTime({
-      userMessage: "Confirmado, amanhã às 14h",
-      timezone: tz,
-      now,
+describe("agenda-datetime-parse extended", () => {
+  it("daqui 3 dias = hoje + 3", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "sim, daqui 3 dias às 14:00",
+      assistantText: "Posso confirmar para daqui 3 dias às 14:00?",
+      timezone: TZ,
+      now: NOW,
     });
-    expect(dt).not.toBeNull();
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: tz,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).formatToParts(dt!);
-    const get = (type: string) => parts.find((p) => p.type === type)?.value;
-    expect(get("day")).toBe("29");
-    expect(get("hour")).toBe("14");
-    expect(get("minute")).toBe("00");
+    expect(result?.date).toBe(addDaysInTimezone(TZ, 3, NOW));
+    expect(result?.time).toBe("14:00");
   });
 
-  it("parses duas da tarde from assistant message", () => {
+  it("daqui 15 dias = hoje + 15", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "confirmo, daqui 15 dias às 10:00",
+      timezone: TZ,
+      now: NOW,
+    });
+    expect(result?.date).toBe(addDaysInTimezone(TZ, 15, NOW));
+  });
+
+  it("próxima sexta sempre é sexta futura", () => {
     const dt = parseAppointmentDateTime({
-      userMessage: "sim",
-      assistantMessage: "Perfeito, visita marcada para amanhã, duas da tarde no stand",
-      timezone: tz,
-      now,
+      userMessage: "próxima sexta às 15:00",
+      timezone: TZ,
+      now: NOW,
     });
     expect(dt).not.toBeNull();
-    const hour = new Intl.DateTimeFormat("en-US", {
-      timeZone: tz,
-      hour: "2-digit",
-      hour12: false,
+    const dow = new Intl.DateTimeFormat("en-US", {
+      timeZone: TZ,
+      weekday: "short",
     }).format(dt!);
-    expect(hour).toBe("14");
+    expect(dow).toBe("Fri");
+    expect(dt!.getTime()).toBeGreaterThan(NOW.getTime());
   });
 
-  it("parses depois de amanhã 10:30", () => {
-    const dt = parseAppointmentDateTime({
-      userMessage: "pode ser depois de amanhã 10:30",
-      timezone: tz,
-      now,
+  it("dia 20 escolhe próximo dia 20 futuro", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "sim",
+      assistantText: "Posso confirmar para dia 20 às 09:00?",
+      timezone: TZ,
+      now: NOW,
     });
-    expect(dt).not.toBeNull();
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: tz,
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).formatToParts(dt!);
-    const get = (type: string) => parts.find((p) => p.type === type)?.value;
-    expect(get("day")).toBe("30");
-    expect(get("hour")).toBe("10");
-    expect(get("minute")).toBe("30");
+    expect(result?.date).toMatch(/^20\/06\/2026$/);
+    expect(result?.time).toBe("09:00");
   });
 
-  it("returns null when no date/time found", () => {
-    expect(
-      parseAppointmentDateTime({
-        userMessage: "quero saber mais",
-        timezone: tz,
-        now,
-      }),
-    ).toBeNull();
+  it("20/06 resolve corretamente", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "sim",
+      assistantText: "Posso confirmar para 20/06/2026 às 11:00?",
+      timezone: TZ,
+      now: NOW,
+    });
+    expect(result?.date).toBe("20/06/2026");
+    expect(result?.time).toBe("11:00");
   });
 
-  it("localWallClockToUtc respects timezone offset", () => {
-    const utc = localWallClockToUtc(
-      { year: 2026, month: 5, day: 28, hour: 14, minute: 0 },
-      tz,
-    );
-    const hour = new Intl.DateTimeFormat("en-US", {
-      timeZone: tz,
-      hour: "2-digit",
-      hour12: false,
-    }).format(utc);
-    expect(hour).toBe("14");
+  it("20 de junho resolve corretamente", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "sim",
+      assistantText: "Posso confirmar para 20 de junho às 16:30?",
+      timezone: TZ,
+      now: NOW,
+    });
+    expect(result?.date).toBe("20/06/2026");
+    expect(result?.time).toBe("16:30");
+  });
+
+  it("amanhã resolve a partir de hoje", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "sim",
+      assistantText: "Posso confirmar para amanhã às 08:00?",
+      timezone: TZ,
+      now: NOW,
+    });
+    expect(result?.date).toBe(addDaysInTimezone(TZ, 1, NOW));
+    expect(result?.time).toBe("08:00");
   });
 });
