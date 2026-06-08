@@ -36,6 +36,7 @@ import { applyHumanConversationCommand } from "@/lib/server/conversation-human-c
 import { revealConversationOnInbound } from "@/lib/server/conversation-visibility";
 import { isAgentAutomationAllowed, markWaitingForHuman } from "@/lib/server/conversation-operation";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
+import { recordAgendaFollowUpReactivationForInbound } from "@/lib/server/agenda-follow-up-control";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { isSmartWaitGloballyDisabled, runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
 import { scheduleFollowUpAfterInbound, scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
@@ -557,6 +558,16 @@ export async function POST(request: Request) {
               agentMetaRow?.metadata && typeof agentMetaRow.metadata === "object"
                 ? (agentMetaRow.metadata as Record<string, unknown>)
                 : {};
+            await recordAgendaFollowUpReactivationForInbound({
+              sb: sbState,
+              tenantId: row.tenant_id,
+              agentId,
+              remoteJid: msg.remoteJid,
+              leadId,
+              conversationStateId: state?.id ?? null,
+              agentMetadata,
+              inboundText: inboundLanguageSource(msg, contentFromMsg(msg)),
+            });
             await scheduleFollowUpAfterInbound({
               sb: sbState,
               tenantId: row.tenant_id,
