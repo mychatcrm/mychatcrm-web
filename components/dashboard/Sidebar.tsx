@@ -261,7 +261,7 @@ export function Sidebar({
             panel="dashboard"
             routeKey={it.routeKey}
             className={cn(
-              "text-content-muted group-hover:text-content-secondary",
+              "text-content-muted transition-colors duration-200 group-hover:text-primary",
               active && "text-primary",
             )}
           />
@@ -296,7 +296,8 @@ export function Sidebar({
             onClick={() => setUpgradeOpen(true)}
             className={cn(
               "panel-nav-item group relative flex h-9 w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-medium transition duration-200 ease-out",
-              "text-content-secondary hover:bg-surface-elevated/45 hover:text-content",
+              "text-content-secondary before:absolute before:inset-y-1.5 before:left-1 before:w-1 before:rounded-full before:bg-primary before:opacity-0 before:transition-opacity before:duration-200",
+              "hover:border-primary/25 hover:bg-primary/[0.075] hover:text-content hover:ring-1 hover:ring-primary/15 hover:before:opacity-70",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25",
               collapsed && "justify-center px-0",
             )}
@@ -317,7 +318,7 @@ export function Sidebar({
             active && "panel-nav-item--active",
             active
               ? "border border-transparent bg-primary/10 text-primary"
-              : "border border-transparent text-content-secondary hover:bg-surface-elevated/40 hover:text-content",
+              : "border border-transparent text-content-secondary before:absolute before:inset-y-1.5 before:left-1 before:w-1 before:rounded-full before:bg-primary before:opacity-0 before:transition-opacity before:duration-200 hover:border-primary/25 hover:bg-primary/[0.075] hover:text-content hover:ring-1 hover:ring-primary/15 hover:before:opacity-70",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
             collapsed && "justify-center px-0",
           )}
