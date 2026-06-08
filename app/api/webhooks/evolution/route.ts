@@ -38,7 +38,7 @@ import { isAgentAutomationAllowed, markWaitingForHuman } from "@/lib/server/conv
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { isSmartWaitGloballyDisabled, runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
-import { scheduleFollowUpAfterInbound, scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
+import { cancelPendingFollowUpJobs, scheduleFollowUpAfterInbound, scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import {
@@ -762,6 +762,32 @@ export async function POST(request: Request) {
             slotIndex:
               typeof metadata.whatsappSlotIndex === "number" ? metadata.whatsappSlotIndex : 0,
           });
+          // Agenda × follow-up — apenas quando handoff DESATIVADO
+          // Cancelamento imediato ao agendar; reativação imediata ao cancelar.
+          // O gate de active_agenda_event em follow-up-jobs.ts L834 cobre o caso
+          // intermediário (adiamento automático enquanto evento ativo existe).
+          if (metadata?.ctaHandoffAtivo !== true) {
+            if (agendaTurn.action === "scheduled" || agendaTurn.action === "rescheduled") {
+              await cancelPendingFollowUpJobs({
+                sb: sbState,
+                tenantId: row.tenant_id,
+                remoteJid: msg.remoteJid,
+                reason: "agenda_booked",
+              });
+            } else if (agendaTurn.action === "cancelled") {
+              const fuSettings = followUpInteligenteFromMetadata(metadata);
+              if (fuSettings.ativo) {
+                await scheduleFollowUpAfterInbound({
+                  sb: sbState,
+                  tenantId: row.tenant_id,
+                  agentId,
+                  remoteJid: msg.remoteJid,
+                  leadId,
+                  settings: fuSettings,
+                });
+              }
+            }
+          }
           if (agendaTurn.action === "blocked" || agendaTurn.action === "failed") {
             console.info("[agent-agenda-turn]", {
               tenant_id: row.tenant_id,
