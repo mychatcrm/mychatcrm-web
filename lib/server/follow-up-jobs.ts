@@ -10,7 +10,6 @@ import {
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
-import { shouldSuppressConventionalFollowUpForAgenda } from "@/lib/server/agenda-follow-up-control";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
   buildFollowUpAiInstruction,
@@ -19,6 +18,7 @@ import {
   type FollowUpDecision,
 } from "@/lib/server/follow-up-engine";
 import { buildFollowUpEvalContext } from "@/lib/server/follow-up-evaluate";
+import { findNextActiveAgendaEvent } from "@/lib/server/agent-cta-scheduler";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -832,13 +832,12 @@ export async function processFollowUpJob(
     // Follow-up convencional aguarda enquanto houver compromisso futuro ativo.
     // Jobs de retomada humana possuem lifecycle próprio e não passam por este gate.
     if (!isHumanAbandonedJob) {
-      const agendaGate = await shouldSuppressConventionalFollowUpForAgenda({
+      const activeAgendaEvent = await findNextActiveAgendaEvent({
         sb: client,
         tenantId: job.tenant_id,
         remoteJid: job.remote_jid,
-        agentMetadata: metadata,
       });
-      if (agendaGate.suppress && agendaGate.activeAgendaEvent) {
+      if (activeAgendaEvent) {
         const retryAt = new Date(
           now.getTime() + Math.max(1, settings.intervaloVerificacaoMinutos) * 60_000,
         );
@@ -854,20 +853,10 @@ export async function processFollowUpJob(
         logFollowUp("rescheduled_active_agenda_event", {
           job_id: job.id,
           tenant_id: job.tenant_id,
-          event_id: agendaGate.activeAgendaEvent.id,
-          gate_reason: agendaGate.reason,
+          event_id: activeAgendaEvent.id,
           retry_at: retryAt.toISOString(),
         });
         return "skipped";
-      }
-      if (agendaGate.activeAgendaEvent) {
-        logFollowUp("allowed_active_agenda_reactivation", {
-          job_id: job.id,
-          tenant_id: job.tenant_id,
-          event_id: agendaGate.activeAgendaEvent.id,
-          gate_reason: agendaGate.reason,
-          reactivation_event_id: agendaGate.reactivationEventId,
-        });
       }
     }
 
