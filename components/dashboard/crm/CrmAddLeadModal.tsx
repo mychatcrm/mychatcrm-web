@@ -79,7 +79,7 @@ export function CrmAddLeadModal({
       open={open}
       onClose={onClose}
       title="Novo lead"
-      className="max-w-md"
+      className="max-w-lg"
       footer={
         <>
           <Button variant="secondary" type="button" onClick={onClose}>
@@ -91,23 +91,27 @@ export function CrmAddLeadModal({
         </>
       }
     >
-      <div className="space-y-3">
-        <p className="text-sm text-content-muted">O lead entra na primeira etapa do funil selecionado no CRM Kanban.</p>
-        <div>
-          <label className="text-xs text-content-faint">Nome</label>
+      <div className="space-y-4">
+        <p className="rounded-2xl border border-line/60 bg-surface-elevated/30 px-3 py-2.5 text-sm text-content-muted">
+          O lead entra na primeira etapa do funil selecionado no CRM Kanban.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="sm:col-span-2">
+          <label className="text-xs font-medium text-content-faint">Nome</label>
           <Input value={nome} onChange={(e) => setNome(e.target.value)} className="mt-1" placeholder="Nome completo" />
         </div>
         <div>
-          <label className="text-xs text-content-faint">Empresa</label>
+          <label className="text-xs font-medium text-content-faint">Empresa</label>
           <Input value={empresa} onChange={(e) => setEmpresa(e.target.value)} className="mt-1" />
         </div>
         <div>
-          <label className="text-xs text-content-faint">Telefone</label>
+          <label className="text-xs font-medium text-content-faint">Telefone</label>
           <Input value={telefone} onChange={(e) => setTelefone(e.target.value)} className="mt-1" placeholder="(00) 00000-0000" />
         </div>
-        <div>
-          <label className="text-xs text-content-faint">E-mail</label>
+        <div className="sm:col-span-2">
+          <label className="text-xs font-medium text-content-faint">E-mail</label>
           <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="mt-1" />
+        </div>
         </div>
         {err ? <p className="text-sm text-rose-300">{err}</p> : null}
       </div>

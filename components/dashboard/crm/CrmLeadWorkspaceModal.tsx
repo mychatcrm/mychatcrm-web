@@ -178,8 +178,8 @@ function InfoRow({
   title?: string;
 }) {
   return (
-    <div className="flex gap-3 rounded-xl border border-line/80 bg-surface-base/40 px-3 py-2.5">
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-deep text-content-muted">
+    <div className="flex gap-3 rounded-[1.15rem] border border-line/60 bg-surface-elevated/30 px-3 py-2.5 ring-1 ring-white/[0.02]">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-surface-card/75 text-content-muted ring-1 ring-line/40">
         <Icon className="h-4 w-4" aria-hidden />
       </span>
       <div className="min-w-0 flex-1">
@@ -316,10 +316,10 @@ export function CrmLeadWorkspaceModal({
   };
 
   const titleHero = (
-    <div className="rounded-xl border border-line/90 bg-surface-card p-3 sm:p-4">
+    <div className="rounded-[1.4rem] border border-line/65 bg-surface-card/80 p-3 shadow-[0_20px_62px_-50px_rgba(15,23,42,0.72)] ring-1 ring-white/[0.025] sm:p-4">
       <div className="flex min-w-0 gap-2 sm:gap-3">
         <div
-          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-sm font-bold tracking-tight text-primary ring-1 ring-primary/25"
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary/15 text-sm font-bold tracking-tight text-primary ring-1 ring-primary/25"
           aria-hidden
         >
           {leadInitials(lead.nome)}
@@ -353,20 +353,20 @@ export function CrmLeadWorkspaceModal({
             </Badge>
           </div>
           <div className="grid gap-2 pt-0.5 sm:grid-cols-3">
-            <div className="rounded-lg bg-surface-base/60 px-2.5 py-1.5 ring-1 ring-line/60">
+            <div className="rounded-2xl bg-surface-elevated/35 px-2.5 py-1.5 ring-1 ring-line/45">
               <p className="text-[10px] font-medium uppercase tracking-wide text-content-faint">Valor</p>
               <p className="text-sm font-semibold tabular-nums text-content">{formatBRL(lead.valor)}</p>
             </div>
-            <div className="rounded-lg bg-surface-base/60 px-2.5 py-1.5 ring-1 ring-line/60">
+            <div className="rounded-2xl bg-surface-elevated/35 px-2.5 py-1.5 ring-1 ring-line/45">
               <p className="text-[10px] font-medium uppercase tracking-wide text-content-faint">Origem</p>
               <p className="truncate text-sm font-medium text-content">{lead.origem}</p>
             </div>
-            <div className="rounded-lg bg-surface-base/60 px-2.5 py-1.5 ring-1 ring-line/60">
+            <div className="rounded-2xl bg-surface-elevated/35 px-2.5 py-1.5 ring-1 ring-line/45">
               <p className="text-[10px] font-medium uppercase tracking-wide text-content-faint">Entrada no CRM Kanban</p>
               <p className="text-sm font-medium text-content">{formatEntrada(lead.dataEntradaISO)}</p>
             </div>
           </div>
-          <div className="flex flex-col gap-1 border-t border-line/70 pt-3 text-xs text-content-muted sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+          <div className="flex flex-col gap-1 rounded-2xl bg-surface-elevated/25 px-3 py-2 text-xs text-content-muted ring-1 ring-line/35 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
             <span className="inline-flex items-center gap-1.5 min-w-0">
               <UserRound className="h-3.5 w-3.5 shrink-0 text-content-faint" aria-hidden />
               <span className="truncate">
@@ -394,7 +394,7 @@ export function CrmLeadWorkspaceModal({
       onClose={onClose}
       title={lead.nome}
       titleContent={titleHero}
-      className="max-w-[min(56rem,calc(100vw-1.25rem))]"
+      className="max-w-[min(58rem,calc(100vw-1.25rem))]"
       footer={
         <>
           <Button variant="secondary" type="button" className="w-full min-w-0 sm:w-auto" onClick={onClose}>
@@ -428,7 +428,7 @@ export function CrmLeadWorkspaceModal({
         </div>
 
         <nav
-          className="flex min-w-0 gap-0.5 overflow-x-auto rounded-xl border border-line/90 bg-surface-deep/50 p-1 [-webkit-overflow-scrolling:touch] touch-pan-x"
+          className="flex min-w-0 gap-0.5 overflow-x-auto rounded-2xl border border-line/65 bg-surface-card/65 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)] [-webkit-overflow-scrolling:touch] touch-pan-x"
           aria-label="Secções do lead"
         >
           {tabs.map((t) => {
@@ -442,7 +442,7 @@ export function CrmLeadWorkspaceModal({
                 className={cn(
                   "inline-flex min-h-[40px] shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition",
                   active
-                    ? "bg-surface-card text-content ring-1 ring-line/80"
+                    ? "bg-surface-elevated/65 text-content ring-1 ring-line/55"
                     : "text-content-muted hover:bg-surface-card/40 hover:text-content",
                 )}
               >
@@ -457,9 +457,9 @@ export function CrmLeadWorkspaceModal({
           <div className="space-y-4">
             <LeadThermometerPanel result={temperatura} />
             {showLeadAdsFormSection ? (
-              <div className="space-y-4 rounded-xl border border-primary/25 bg-surface-deep/30 p-4 ring-1 ring-inset ring-primary/15">
+              <div className="space-y-4 rounded-[1.35rem] border border-primary/20 bg-surface-card/70 p-4 shadow-[0_20px_62px_-50px_rgba(242,68,0,0.45)] ring-1 ring-primary/10">
                 <div className="flex items-start gap-2.5 border-b border-line/70 pb-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-primary/20">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/20">
                     <FileText className="h-4 w-4" aria-hidden />
                   </span>
                   <div className="min-w-0">
@@ -470,33 +470,33 @@ export function CrmLeadWorkspaceModal({
                   </div>
                 </div>
                 <dl className="grid gap-2 sm:grid-cols-2">
-                  <div className="rounded-lg border border-line/80 bg-surface-base/40 px-3 py-2">
+                  <div className="rounded-2xl border border-line/60 bg-surface-elevated/30 px-3 py-2">
                     <dt className={typography.ui.overline}>Formulário</dt>
                     <dd className="mt-0.5 text-sm font-medium text-content">
                       {profileMeta?.meta_form_name ?? "—"}
                     </dd>
                   </div>
-                  <div className="rounded-lg border border-line/80 bg-surface-base/40 px-3 py-2">
+                  <div className="rounded-2xl border border-line/60 bg-surface-elevated/30 px-3 py-2">
                     <dt className={typography.ui.overline}>Data do cadastro</dt>
                     <dd className="mt-0.5 text-sm font-medium text-content">{latestFormReceivedAt ?? "—"}</dd>
                   </div>
-                  <div className="rounded-lg border border-line/80 bg-surface-base/40 px-3 py-2">
+                  <div className="rounded-2xl border border-line/60 bg-surface-elevated/30 px-3 py-2">
                     <dt className={typography.ui.overline}>Origem</dt>
                     <dd className="mt-0.5 text-sm font-medium text-content">Meta Lead Ads</dd>
                   </div>
-                  <div className="rounded-lg border border-line/80 bg-surface-base/40 px-3 py-2">
+                  <div className="rounded-2xl border border-line/60 bg-surface-elevated/30 px-3 py-2">
                     <dt className={typography.ui.overline}>Página</dt>
                     <dd className="mt-0.5 text-sm font-medium text-content">{profileMeta?.meta_page_name ?? "—"}</dd>
                   </div>
-                  <div className="rounded-lg border border-line/80 bg-surface-base/40 px-3 py-2">
+                  <div className="rounded-2xl border border-line/60 bg-surface-elevated/30 px-3 py-2">
                     <dt className={typography.ui.overline}>Campanha</dt>
                     <dd className="mt-0.5 text-sm font-medium text-content">{formatMetaCampaignDisplay(profileMeta)}</dd>
                   </div>
-                  <div className="rounded-lg border border-line/80 bg-surface-base/40 px-3 py-2">
+                  <div className="rounded-2xl border border-line/60 bg-surface-elevated/30 px-3 py-2">
                     <dt className={typography.ui.overline}>Conjunto de anúncios</dt>
                     <dd className="mt-0.5 text-sm font-medium text-content">{formatMetaAdsetDisplay(profileMeta)}</dd>
                   </div>
-                  <div className="rounded-lg border border-line/80 bg-surface-base/40 px-3 py-2 sm:col-span-2">
+                  <div className="rounded-2xl border border-line/60 bg-surface-elevated/30 px-3 py-2 sm:col-span-2">
                     <dt className={typography.ui.overline}>Anúncio</dt>
                     <dd className="mt-0.5 text-sm font-medium text-content">{formatMetaAdDisplay(profileMeta)}</dd>
                   </div>
@@ -505,7 +505,7 @@ export function CrmLeadWorkspaceModal({
                   {leadAdsFormFields.map((field) => (
                     <li
                       key={`${field.key}-${field.label}`}
-                      className="rounded-xl border border-line/80 bg-surface-base/40 px-3 py-2.5"
+                      className="rounded-2xl border border-line/60 bg-surface-elevated/30 px-3 py-2.5"
                     >
                       <p className={typography.ui.overline}>{field.label}</p>
                       <p className="mt-0.5 break-words text-sm font-medium text-content">{field.value}</p>
@@ -530,7 +530,7 @@ export function CrmLeadWorkspaceModal({
                       .map((submission) => (
                         <div
                           key={submission.leadgen_id}
-                          className="rounded-lg border border-line/70 bg-surface-base/30 p-3"
+                          className="rounded-2xl border border-line/60 bg-surface-elevated/25 p-3"
                         >
                           <p className="text-xs font-medium text-content">
                             {submission.form_name || submission.form_id || "Formulário"}
@@ -553,7 +553,7 @@ export function CrmLeadWorkspaceModal({
               </div>
             ) : null}
             <div className="grid gap-4 lg:grid-cols-2">
-            <div className="space-y-3 rounded-xl border border-line/90 bg-surface-deep/30 p-4 ring-1 ring-inset ring-line/25">
+            <div className="space-y-3 rounded-[1.35rem] border border-line/65 bg-surface-card/70 p-4 shadow-[0_20px_62px_-50px_rgba(15,23,42,0.72)] ring-1 ring-white/[0.025]">
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-sm font-semibold text-content">Contacto</h3>
                 <span className="rounded-md bg-surface-base/80 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-content-faint">
@@ -584,7 +584,7 @@ export function CrmLeadWorkspaceModal({
                 />
               </div>
             </div>
-            <div className="space-y-4 rounded-xl border border-line/90 bg-surface-deep/30 p-4 ring-1 ring-inset ring-line/25">
+            <div className="space-y-4 rounded-[1.35rem] border border-line/65 bg-surface-card/70 p-4 shadow-[0_20px_62px_-50px_rgba(15,23,42,0.72)] ring-1 ring-white/[0.025]">
               <div className="flex items-start gap-2.5 border-b border-line/70 pb-3">
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-base text-content-muted ring-1 ring-line/80">
                   <User className="h-4 w-4" aria-hidden />
@@ -609,7 +609,7 @@ export function CrmLeadWorkspaceModal({
                     <span className={cn(typography.ui.overline, "text-content")}>Tipo de cliente</span>
                   </div>
                   <div
-                    className="flex min-h-[44px] w-full cursor-default items-center gap-2 rounded-xl border border-line bg-surface-base/50 px-3 py-2 text-sm text-content"
+                  className="flex min-h-[44px] w-full cursor-default items-center gap-2 rounded-2xl border border-line/60 bg-surface-elevated/30 px-3 py-2 text-sm text-content"
                     aria-label="Tipo de cliente (edição em breve)"
                   >
                     <span className={cn("min-w-0 flex-1 truncate", origemView.tipoCliente ? "font-semibold" : "text-content-faint")}>
@@ -621,7 +621,7 @@ export function CrmLeadWorkspaceModal({
               </div>
               <div className="space-y-2">
                 <p className={typography.ui.overline}>Tags</p>
-                <div className="flex min-h-[44px] flex-wrap items-center gap-2 rounded-xl border border-line bg-surface-base/50 px-3 py-2">
+                <div className="flex min-h-[44px] flex-wrap items-center gap-2 rounded-2xl border border-line/60 bg-surface-elevated/30 px-3 py-2">
                   {lead.tags.map((tag) => (
                     <Badge key={tag} className="border-line/80 bg-surface-card px-2.5 py-0.5 text-xs font-medium">
                       {tag}
@@ -658,20 +658,20 @@ export function CrmLeadWorkspaceModal({
             </div>
             <div className="relative min-w-0 pr-1">
               {timeline.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-line/80 bg-surface-deep/25 px-4 py-10 text-center text-sm text-content-muted">
+                <div className="rounded-[1.25rem] border border-dashed border-line/70 bg-surface-card/55 px-4 py-10 text-center text-sm text-content-muted">
                   Ainda não há eventos no histórico. Movimentações no funil, follow-ups e notas passam a aparecer aqui
                   quando os registar no painel ou quando existir integração com canais externos.
                 </div>
               ) : (
                 <>
                   <div
-                    className="absolute bottom-2 left-[15px] top-2 w-px bg-line"
+                    className="absolute bottom-2 left-[15px] top-2 w-px bg-line/70"
                     aria-hidden
                   />
                   <ul className="relative space-y-3">
                     {timeline.map((item) => (
                       <li key={item.id} className="relative flex gap-3 pl-1">
-                        <span className="relative z-[1] mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-line bg-surface-card text-content-secondary">
+                        <span className="relative z-[1] mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl border border-line/65 bg-surface-card text-content-secondary shadow-[0_10px_26px_-22px_rgba(15,23,42,0.7)]">
                           {item.tipo === "whatsapp" ? (
                             <MessageCircle className="h-4 w-4" />
                           ) : item.tipo === "email" ? (
@@ -690,7 +690,7 @@ export function CrmLeadWorkspaceModal({
                         </span>
                         <div
                           className={cn(
-                            "min-w-0 flex-1 rounded-xl border bg-surface-card/90 p-3",
+                            "min-w-0 flex-1 rounded-[1.15rem] border bg-surface-card/85 p-3 shadow-[0_14px_42px_-36px_rgba(15,23,42,0.72)]",
                             item.tipo === "entrada"
                               ? "border-primary/35 ring-1 ring-primary/10"
                               : item.tipo === "followup"
@@ -719,7 +719,7 @@ export function CrmLeadWorkspaceModal({
 
         {tab === "tarefas" ? (
           <div className="space-y-4">
-            <div className="flex flex-wrap gap-2 rounded-xl border border-line/80 bg-surface-deep/25 p-3">
+            <div className="flex flex-wrap gap-2 rounded-[1.25rem] border border-line/65 bg-surface-card/65 p-3 shadow-[0_18px_52px_-44px_rgba(15,23,42,0.72)] ring-1 ring-white/[0.025]">
               <Input
                 id={`${baseId}-task`}
                 value={taskDraft}
@@ -733,7 +733,7 @@ export function CrmLeadWorkspaceModal({
             </div>
             <ul className="space-y-2">
               {tasks.length === 0 ? (
-                <li className="rounded-xl border border-dashed border-line/90 bg-surface-deep/20 px-4 py-8 text-center">
+                <li className="rounded-[1.25rem] border border-dashed border-line/70 bg-surface-card/55 px-4 py-8 text-center">
                   <ListTodo className="mx-auto mb-2 h-8 w-8 text-content-faint opacity-60" aria-hidden />
                   <p className="text-sm font-medium text-content-secondary">Sem tarefas ainda</p>
                   <p className="mt-1 text-xs text-content-muted">
@@ -744,7 +744,7 @@ export function CrmLeadWorkspaceModal({
                 tasks.map((t) => (
                   <li
                     key={t.id}
-                    className="flex items-center gap-3 rounded-xl border border-line/90 bg-surface-deep/35 px-3 py-2.5 transition hover:border-line"
+                    className="flex items-center gap-3 rounded-[1.15rem] border border-line/65 bg-surface-card/70 px-3 py-2.5 transition hover:border-primary/25"
                   >
                     <input
                       type="checkbox"
@@ -762,10 +762,10 @@ export function CrmLeadWorkspaceModal({
         ) : null}
 
         {tab === "ia" ? (
-          <div className="relative overflow-hidden rounded-xl border border-primary/30 bg-surface-card p-5">
+          <div className="relative overflow-hidden rounded-[1.35rem] border border-primary/25 bg-surface-card/75 p-5 shadow-[0_22px_70px_-52px_rgba(242,68,0,0.45)] ring-1 ring-primary/10">
             <Sparkles className="pointer-events-none absolute -right-2 -top-2 h-24 w-24 text-primary/10" aria-hidden />
             <div className="relative flex items-start gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary ring-1 ring-primary/25">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/15 text-primary ring-1 ring-primary/25">
                 <Sparkles className="h-5 w-5" aria-hidden />
               </span>
               <div className="space-y-2 text-sm text-content-secondary">

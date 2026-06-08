@@ -27,7 +27,7 @@ function InsightCard({
   const { isLight } = usePanelAppearance();
 
   const iconWrap = cn(
-    "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition-colors group-hover:border-primary/35",
+    "flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border transition-colors group-hover:border-primary/35",
     accent === "sky" &&
       (isLight
         ? "border-line/80 bg-surface-elevated/90 text-content"
@@ -60,17 +60,15 @@ function InsightCard({
   return (
     <div
       className={cn(
-        "group relative min-w-0 overflow-hidden transition duration-200 hover:border-line",
-        compact ? "rounded-xl p-3" : "rounded-xl p-4",
+        "group relative min-w-0 overflow-hidden transition duration-200 hover:-translate-y-0.5 hover:border-primary/25",
+        "shadow-[0_18px_52px_-42px_rgba(15,23,42,0.72)] ring-1 ring-white/[0.025]",
+        compact ? "rounded-[1.25rem] p-3" : "rounded-[1.35rem] p-4",
         isLight
-          ? "border border-slate-200/90 bg-surface-deep"
-          : "border border-line/70 bg-surface-card",
+          ? "border border-slate-200/75 bg-white/75"
+          : "border border-line/60 bg-surface-card/[0.86]",
       )}
     >
-      <div
-        className={cn("pointer-events-none absolute inset-x-3 top-0 h-px rounded-full opacity-90", topSheen)}
-        aria-hidden
-      />
+      <div className={cn("pointer-events-none absolute inset-x-4 top-0 h-px rounded-full opacity-90", topSheen)} aria-hidden />
       <div className={cn("relative flex items-start gap-3", compact && "gap-2.5")}>
         <div className={cn(iconWrap, compact && "h-9 w-9 rounded-lg [&_svg]:h-[18px] [&_svg]:w-[18px]")}>
           <Icon strokeWidth={1.85} />
@@ -172,10 +170,10 @@ export function CrmInsightsBar({
     return (
       <div
         className={cn(
-          "mb-5 rounded-xl border p-3.5 sm:p-4",
+          "mb-5 rounded-[1.4rem] border p-3.5 shadow-[0_22px_70px_-52px_rgba(15,23,42,0.72)] ring-1 ring-white/[0.025] sm:p-4",
           isLight
-            ? "border-slate-200/90 bg-surface-deep"
-            : "border-line/70 bg-surface-card",
+            ? "border-slate-200/75 bg-white/70"
+            : "border-line/60 bg-surface-card/75",
         )}
       >
         <p className="mb-3 text-xs text-content-muted">
@@ -191,10 +189,10 @@ export function CrmInsightsBar({
   return (
     <section
       className={cn(
-        "rounded-xl border p-4 sm:p-5",
+        "rounded-[1.4rem] border p-4 shadow-[0_22px_70px_-52px_rgba(15,23,42,0.72)] ring-1 ring-white/[0.025] sm:p-5",
         isLight
-          ? "border-slate-200/90 bg-surface-deep"
-          : "border-line/70 bg-surface-card",
+          ? "border-slate-200/75 bg-white/70"
+          : "border-line/60 bg-surface-card/75",
       )}
     >
       <div className="mb-4 flex flex-wrap items-end justify-between gap-2">

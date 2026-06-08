@@ -67,7 +67,7 @@ export function LeadThermometerBar({ result, className }: { result: LeadTemperat
         </span>
         <span className="tabular-nums text-content-secondary">{result.score}/100</span>
       </div>
-      <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-surface-deep ring-1 ring-line/60">
+      <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-surface-elevated/45 ring-1 ring-line/45">
         <div
           className={cn("h-full rounded-full transition-[width] duration-500 ease-out", fillClass(result.level))}
           style={{ width: `${result.score}%` }}
@@ -85,7 +85,7 @@ export function LeadThermometerInline({ result, className }: { result: LeadTempe
       className={cn("flex w-[5.5rem] shrink-0 flex-col gap-0.5", className)}
       title={`${result.label} · ${result.score}/100 — ${result.hint}`}
     >
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-deep ring-1 ring-line/50">
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated/45 ring-1 ring-line/45">
         <div className={cn("h-full rounded-full", fillClass(result.level))} style={{ width: `${result.score}%` }} />
       </div>
       <span className="text-[9px] font-bold uppercase tracking-tight text-content-muted">{result.label}</span>
@@ -99,14 +99,14 @@ export function LeadThermometerPanel({ result, className }: { result: LeadTemper
   return (
     <div
       className={cn(
-        "rounded-xl border border-line/80 bg-surface-deep/30 p-4 ring-1 ring-inset ring-line/25",
+        "rounded-[1.35rem] border border-line/65 bg-surface-card/75 p-4 shadow-[0_20px_62px_-50px_rgba(15,23,42,0.72)] ring-1 ring-white/[0.025]",
         className,
       )}
     >
       <div className="flex flex-wrap items-stretch gap-4">
         <div className="flex shrink-0 flex-col items-center gap-1">
           <span className={typography.ui.overline}>Termómetro</span>
-          <div className="relative h-32 w-8 overflow-hidden rounded-full border border-line/70 bg-surface-card">
+          <div className="relative h-32 w-8 overflow-hidden rounded-full border border-line/55 bg-surface-elevated/40">
             <div
               className={cn("absolute bottom-0 left-0 right-0 rounded-b-full opacity-95", fillClass(result.level))}
               style={{ height: `${h}%` }}

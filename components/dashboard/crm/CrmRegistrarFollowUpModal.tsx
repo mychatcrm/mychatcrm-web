@@ -219,7 +219,7 @@ export function CrmRegistrarFollowUpModal({
 
   const header = (
     <div className="flex min-w-0 items-center gap-3">
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary ring-1 ring-primary/25">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/15 text-primary ring-1 ring-primary/25">
         <History className="h-5 w-5" aria-hidden />
       </span>
       <span className="text-base font-semibold leading-snug text-content sm:text-lg">Registrar Follow-Up</span>
@@ -232,7 +232,7 @@ export function CrmRegistrarFollowUpModal({
       onClose={onClose}
       title="Registrar Follow-Up"
       titleContent={header}
-      className="max-w-lg"
+      className="max-w-xl"
       footer={
         <>
           <Button type="button" variant="secondary" className="w-full min-w-0 sm:w-auto" onClick={onClose}>
@@ -246,7 +246,7 @@ export function CrmRegistrarFollowUpModal({
       }
     >
       <form id={formId} className="space-y-5" onSubmit={(e) => e.preventDefault()}>
-        <div>
+        <div className="rounded-[1.25rem] border border-line/60 bg-surface-card/70 p-3.5">
           <p className="text-sm font-semibold text-content">
             Tipo de atividade <span className="text-error">*</span>
           </p>
@@ -259,10 +259,10 @@ export function CrmRegistrarFollowUpModal({
                   type="button"
                   onClick={() => setTipo(id)}
                   className={cn(
-                    "flex min-h-[88px] flex-col items-center justify-center gap-2 rounded-xl border px-2 py-3 text-center text-xs font-semibold transition",
+                    "flex min-h-[88px] flex-col items-center justify-center gap-2 rounded-2xl border px-2 py-3 text-center text-xs font-semibold transition",
                     active
-                      ? "border-primary bg-primary/10 text-primary ring-2 ring-primary/25"
-                      : "border-line bg-surface-deep/40 text-content-muted hover:border-primary/40 hover:text-content",
+                      ? "border-primary/45 bg-primary/10 text-primary ring-2 ring-primary/20"
+                      : "border-line/60 bg-surface-elevated/30 text-content-muted hover:border-primary/35 hover:text-content",
                   )}
                 >
                   <Icon className="h-6 w-6" aria-hidden />
@@ -274,7 +274,7 @@ export function CrmRegistrarFollowUpModal({
         </div>
 
         {allFunnels.length > 0 ? (
-          <div>
+          <div className="rounded-[1.25rem] border border-line/60 bg-surface-card/60 p-3.5">
             <label htmlFor={`${formId}-funil`} className="text-sm font-semibold text-content">
               Funil de destino <span className="text-error">*</span>
             </label>
@@ -298,7 +298,7 @@ export function CrmRegistrarFollowUpModal({
         ) : null}
 
         {colunas.length > 0 ? (
-          <div>
+          <div className="rounded-[1.25rem] border border-line/60 bg-surface-card/60 p-3.5">
             <label htmlFor={`${formId}-etapa`} className="text-sm font-semibold text-content">
               Etapa no funil <span className="text-error">*</span>
             </label>
@@ -320,7 +320,7 @@ export function CrmRegistrarFollowUpModal({
           </div>
         ) : null}
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 rounded-[1.25rem] border border-line/60 bg-surface-card/60 p-3.5 sm:grid-cols-2">
           <div>
             <label htmlFor={`${formId}-data`} className="text-sm font-semibold text-content">
               Data próximo contacto <span className="text-error">*</span>
@@ -352,7 +352,7 @@ export function CrmRegistrarFollowUpModal({
           </div>
         </div>
 
-        <div>
+        <div className="rounded-[1.25rem] border border-line/60 bg-surface-card/60 p-3.5">
           <label htmlFor={`${formId}-desc`} className="text-sm font-semibold text-content">
             Descrição da atividade <span className="text-error">*</span>
           </label>
@@ -362,7 +362,7 @@ export function CrmRegistrarFollowUpModal({
             onChange={(e) => setDescricao(e.target.value.slice(0, MAX_DESC))}
             placeholder="Ex.: Fazer ligação para agendar visita ao imóvel"
             rows={5}
-            className="mt-2 w-full rounded-xl border border-line bg-surface-deep/40 px-4 py-3 text-sm text-content outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+            className="mt-2 w-full rounded-2xl border border-line/65 bg-surface-elevated/35 px-4 py-3 text-sm text-content outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
           />
           <p className="mt-1 text-right text-xs text-content-muted">
             {descricao.length} / {MAX_DESC}
