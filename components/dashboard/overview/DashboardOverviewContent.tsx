@@ -27,7 +27,6 @@ import {
   TrendingDown,
   TrendingUp,
   UserPlus,
-  Zap,
 } from "lucide-react";
 import type { ClientSession } from "@/lib/client-auth";
 import type { DashboardDataset, OverviewStats } from "@/lib/dashboard-data";
@@ -649,16 +648,6 @@ export function DashboardOverviewContent({
           icon: Send,
           accent: "primary",
         },
-        ...(stats.aiCostUsd > 0
-          ? [
-              {
-                label: "Custo IA",
-                value: `US$ ${stats.aiCostUsd.toFixed(3)}`,
-                icon: Zap,
-                accent: "info" as const,
-              },
-            ]
-          : []),
       ]
     : [];
 

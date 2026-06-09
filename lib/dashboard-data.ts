@@ -77,7 +77,6 @@ export type OverviewStats = {
   agendaConfirmed: number;
   agendaCancelled: number;
   followUpSent: number;
-  aiCostUsd: number;
   messagesByDay: Array<{ date: string; inbound: number; outbound: number }>;
   peakHourCounts: Array<{ hour: number; count: number }>;  // 24 items
   leadsBySource: Array<{ source: string; count: number }>;

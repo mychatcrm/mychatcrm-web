@@ -34,8 +34,7 @@ function toUTCEnd(dateISO: string): string {
  *   Q7 — conversas arquivadas no período
  *   Q8 — agenda events no período
  *   Q9 — próximos 3 agendamentos (upcoming)
- *   Q10 — custo IA no período
- *   Q11 — follow-ups enviados no período
+ *   Q10 — follow-ups enviados no período
  */
 export async function fetchOverviewStats(params: FetchOverviewStatsParams): Promise<OverviewStats> {
   const { sb, tenantId, fromISO, toISO } = params;
@@ -52,7 +51,6 @@ export async function fetchOverviewStats(params: FetchOverviewStatsParams): Prom
     closedConvsRes,
     agendaRes,
     upcomingAgendaRes,
-    aiCostRes,
     followUpRes,
   ] = await Promise.all([
     // Q1: mensagens no período (limitado a 10k para performance)
@@ -124,14 +122,7 @@ export async function fetchOverviewStats(params: FetchOverviewStatsParams): Prom
       .order("start_at", { ascending: true })
       .limit(3),
 
-    // Q10: custo de IA no período
-    sb.from("ai_usage_daily")
-      .select("estimated_cost_usd")
-      .eq("tenant_id", tenantId)
-      .gte("day", fromISO)
-      .lte("day", toISO),
-
-    // Q11: follow-ups enviados no período
+    // Q10: follow-ups enviados no período
     sb.from("follow_up_jobs")
       .select("*", { count: "exact", head: true })
       .eq("tenant_id", tenantId)
@@ -219,12 +210,6 @@ export async function fetchOverviewStats(params: FetchOverviewStatsParams): Prom
     attendeeName: (e.attendee_name as string | null) ?? null,
   }));
 
-  // --- processar IA ---
-  const aiCostUsd = (aiCostRes.data ?? []).reduce(
-    (sum, row) => sum + ((row.estimated_cost_usd as number | null) ?? 0),
-    0
-  );
-
   // --- processar follow-up ---
   const followUpSent = followUpRes.count ?? 0;
 
@@ -241,7 +226,6 @@ export async function fetchOverviewStats(params: FetchOverviewStatsParams): Prom
     agendaConfirmed,
     agendaCancelled,
     followUpSent,
-    aiCostUsd,
     messagesByDay,
     peakHourCounts,
     leadsBySource,
