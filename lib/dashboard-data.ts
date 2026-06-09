@@ -60,6 +60,32 @@ export type ClientLead = {
 const EMPTY_HELPER =
   "Sem dados agregados neste período. Os números passam a refletir a operação quando as integrações e o CRM estiverem em uso.";
 
+/**
+ * Estatísticas reais do overview carregadas do banco.
+ * Preenchidas por `fetchOverviewStats` em `lib/server/dashboard-stats-query.ts`.
+ */
+export type OverviewStats = {
+  period: { fromISO: string; toISO: string };
+  totalMessages: number;
+  newLeads: number;
+  closedConversations: number;
+  activeConversations: number;
+  handoffCount: number;
+  automationRate: number;   // 0–100
+  peakHour: number | null;  // 0–23
+  leadsInOpportunity: number;
+  agendaConfirmed: number;
+  agendaCancelled: number;
+  followUpSent: number;
+  aiCostUsd: number;
+  messagesByDay: Array<{ date: string; inbound: number; outbound: number }>;
+  peakHourCounts: Array<{ hour: number; count: number }>;  // 24 items
+  leadsBySource: Array<{ source: string; count: number }>;
+  leadsByTemperature: Array<{ temperature: string; count: number }>;
+  recentConversations: Array<{ phone: string; name: string | null; mode: string; lastAt: string }>;
+  upcomingAgenda: Array<{ title: string; startAt: string; attendeeName: string | null }>;
+};
+
 export type DashboardDataset = {
   tenantId: string;
   kanbanColumns: string[];
@@ -81,6 +107,8 @@ export type DashboardDataset = {
   campaignItems: string[];
   funnelSteps: string[];
   funnelMetrics: { label: string; value: number }[];
+  /** Estatísticas do overview carregadas do banco no SSR (pode ser undefined se query falhou). */
+  overviewStats?: OverviewStats;
 };
 
 const baseDataset: DashboardDataset = {

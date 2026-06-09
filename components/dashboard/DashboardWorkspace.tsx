@@ -145,6 +145,7 @@ import { BillingOffersPopover } from "./BillingOffersPopover";
 import { IntegracoesLeadsHub } from "./lead-rules/IntegracoesLeadsHub";
 import { TeamEmployeesHub } from "./equipe/TeamEmployeesHub";
 import { BotStatusToggle } from "./BotStatusToggle";
+import { DashboardOverviewContent } from "./overview/DashboardOverviewContent";
 import { typography } from "@/lib/typography";
 
 function Panel({
@@ -4284,7 +4285,14 @@ function DashboardOverviewRoute({
     [rangeISO.fromISO, rangeISO.toISO],
   );
 
-  return <OverviewPage session={session} dataset={dataset} rangeLabel={rangeLabel} />;
+  return (
+    <DashboardOverviewContent
+      session={session}
+      dataset={dataset}
+      rangeISO={rangeISO}
+      rangeLabel={rangeLabel}
+    />
+  );
 }
 
 export function DashboardWorkspace({
