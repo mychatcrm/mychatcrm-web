@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AreaChart,
   Area,
@@ -579,6 +579,34 @@ export function DashboardOverviewContent({
       cancelled = true;
     };
   }, [rangeISO.fromISO, rangeISO.toISO]);
+
+  // Ref para o rangeISO atual — evita stale closure no setInterval
+  const rangeRef = useRef(rangeISO);
+  useEffect(() => {
+    rangeRef.current = rangeISO;
+  }, [rangeISO]);
+
+  // Polling 30s + refetch imediato ao voltar à aba
+  useEffect(() => {
+    const poll = () => {
+      if (document.hidden) return;
+      const { fromISO, toISO } = rangeRef.current;
+      fetch(`/api/client/stats/overview?from=${fromISO}&to=${toISO}`)
+        .then((r) => (r.ok ? (r.json() as Promise<OverviewStats>) : null))
+        .then((data) => {
+          if (data) setStats(data);
+        })
+        .catch(() => {});
+    };
+
+    const timer = setInterval(poll, 30_000);
+    document.addEventListener("visibilitychange", poll);
+
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", poll);
+    };
+  }, []); // roda uma vez; cleanup no unmount
 
   // Cards de métricas definidos a partir dos stats reais
   const statCards: StatCard[] = stats
