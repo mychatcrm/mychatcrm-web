@@ -582,7 +582,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
             /* Connected state: show pages + form→agent mappings */
             <div className="space-y-4">
               {metaPages.map((page) => (
-                <details key={page.page_id} className={cn("rounded-lg border", isLight ? "border-blue-100 bg-blue-50/30" : "border-blue-500/15 bg-blue-500/[0.05]")} open>
+                <details key={page.page_id} className={cn("rounded-lg border", isLight ? "border-blue-100 bg-blue-50/30" : "border-blue-500/15 bg-blue-500/[0.05]")}>
                   <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 [&::-webkit-details-marker]:hidden">
                     <span className="flex items-center gap-2 text-sm font-semibold text-content">
                       <BadgeCheck className={cn("size-4 shrink-0", isLight ? "text-emerald-600" : "text-emerald-400")} aria-hidden />
