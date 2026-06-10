@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export type MetaConnectionStatus = {
   connected: boolean;
-  pageName: string | null;
+  pages: Array<{ pageName: string | null }>;
 };
 
 export async function GET() {
@@ -22,14 +22,17 @@ export async function GET() {
       .from("meta_connections")
       .select("page_name")
       .eq("tenant_id", session.tenantId)
-      .limit(1)
-      .maybeSingle();
+      .order("connected_at", { ascending: true });
 
     if (error) throw error;
 
+    const pages = (data ?? []).map((row) => ({
+      pageName: (row.page_name as string | null) ?? null,
+    }));
+
     const result: MetaConnectionStatus = {
-      connected: Boolean(data),
-      pageName: (data?.page_name as string | null) ?? null,
+      connected: pages.length > 0,
+      pages,
     };
 
     return NextResponse.json(result);

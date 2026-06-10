@@ -31,7 +31,6 @@ import {
   UserPlus,
   Users,
   Wifi,
-  WifiOff,
 } from "lucide-react";
 import type { ClientSession } from "@/lib/client-auth";
 import type {
@@ -541,112 +540,91 @@ function UpcomingAgendaList({
   );
 }
 
-const WA_STATE_LABEL: Record<string, string> = {
-  open: "Conectado",
-  close: "Desconectado",
-  connecting: "Conectando",
-};
-const WA_STATE_COLOR: Record<string, string> = {
-  open: "text-success",
-  close: "text-error",
-  connecting: "text-warning",
-};
-
-function WhatsAppInstancesCard({ instances }: { instances: WhatsAppInstanceStatus[] }) {
-  if (!instances.length) {
-    return (
-      <p className="rounded-lg border border-dashed border-line/70 px-3 py-4 text-center text-[12.5px] text-content-muted">
-        Nenhuma instância configurada.
-      </p>
-    );
-  }
+function EmptyChannelRow({ label, badge }: { label: string; badge: string }) {
   return (
-    <ul className="space-y-2.5">
-      {instances.map((inst) => {
-        const stateLabel = WA_STATE_LABEL[inst.connectionState] ?? inst.connectionState;
-        const stateColor = WA_STATE_COLOR[inst.connectionState] ?? "text-content-muted";
-        const isOpen = inst.connectionState === "open";
-        return (
-          <li
-            key={inst.slotIndex}
-            className="flex items-center gap-3 rounded-xl border border-line/70 bg-surface-card p-3"
-          >
-            <span
-              aria-hidden
-              className={cn(
-                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border",
-                isOpen
-                  ? "border-success/25 bg-success/[0.10] text-success"
-                  : "border-line/60 bg-surface-elevated/30 text-content-muted",
-              )}
-            >
-              {isOpen ? (
-                <Wifi className="h-4 w-4" strokeWidth={2} />
-              ) : (
-                <WifiOff className="h-4 w-4" strokeWidth={2} />
-              )}
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-2">
-                <span className="truncate text-[13px] font-semibold text-content">
-                  Linha {inst.slotIndex + 1}
-                  {inst.waJid ? (
-                    <span className="ml-1.5 font-normal text-content-muted">
-                      ({inst.waJid.split("@")[0]})
-                    </span>
-                  ) : null}
-                </span>
-                <span className={cn("shrink-0 text-[11px] font-semibold", stateColor)}>
-                  {stateLabel}
-                </span>
-              </div>
-              <p className="mt-0.5 truncate text-[11px] text-content-muted">
-                {inst.agentName ? `Agente: ${inst.agentName}` : "Sem agente vinculado"}
-              </p>
-            </div>
-          </li>
-        );
-      })}
-    </ul>
+    <div className="flex items-center justify-between pl-9">
+      <span className="text-[12px] text-content-muted">{label}</span>
+      <span className="text-[11px] font-semibold text-content-muted">{badge}</span>
+    </div>
   );
 }
 
-function MetaStatusRow({
-  status,
-}: {
-  status: { connected: boolean; pageName: string | null } | null;
-}) {
-  const connected = status?.connected ?? false;
-  const pageName = status?.pageName ?? "Página Meta";
+function WhatsAppSection({ instances }: { instances: WhatsAppInstanceStatus[] }) {
   return (
-    <div className="mt-3 border-t border-line/50 pt-3">
-      <div className="flex items-center gap-3 rounded-xl border border-line/70 bg-surface-card p-3">
+    <div>
+      <div className="mb-2 flex items-center gap-2.5">
         <span
           aria-hidden
-          className={cn(
-            "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border",
-            connected
-              ? "border-success/25 bg-success/[0.10] text-success"
-              : "border-line/60 bg-surface-elevated/30 text-content-muted",
-          )}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-success/25 bg-success/[0.10] text-success"
         >
-          <Globe className="h-4 w-4" strokeWidth={2} />
+          <Wifi className="h-3.5 w-3.5" strokeWidth={2} />
         </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-2">
-            <span className="truncate text-[13px] font-semibold text-content">{pageName}</span>
-            <span
-              className={cn(
-                "shrink-0 text-[11px] font-semibold",
-                connected ? "text-success" : "text-content-muted",
-              )}
-            >
-              {connected ? "Conectado" : "Desconectado"}
-            </span>
-          </div>
-          <p className="mt-0.5 text-[11px] text-content-muted">Meta Lead Ads</p>
-        </div>
+        <span className="text-[13px] font-semibold text-content">WhatsApp</span>
       </div>
+      {instances.length === 0 ? (
+        <EmptyChannelRow label="Linha não configurada" badge="Não configurado" />
+      ) : (
+        <ul className="space-y-1.5 pl-9">
+          {instances.map((inst) => {
+            const isOpen = inst.connectionState === "open";
+            const isConnecting = inst.connectionState === "connecting";
+            const phone = inst.waJid?.split("@")[0];
+            return (
+              <li key={inst.slotIndex} className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate text-[12px] text-content">
+                  Linha {inst.slotIndex + 1}
+                  {phone ? (
+                    <span className="text-content-muted"> · ({phone})</span>
+                  ) : null}
+                </span>
+                <span
+                  className={cn(
+                    "shrink-0 text-[11px] font-semibold",
+                    isOpen ? "text-success" : isConnecting ? "text-warning" : "text-error",
+                  )}
+                >
+                  {isOpen ? "Conectado" : isConnecting ? "Conectando" : "Desconectado"}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function MetaSection({
+  status,
+}: {
+  status: { connected: boolean; pages: Array<{ pageName: string | null }> } | null;
+}) {
+  const pages = status?.pages ?? [];
+  return (
+    <div className="mt-3 border-t border-line/50 pt-3">
+      <div className="mb-2 flex items-center gap-2.5">
+        <span
+          aria-hidden
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[#1877F2]/25 bg-[#1877F2]/[0.08] text-[#1877F2]"
+        >
+          <Globe className="h-3.5 w-3.5" strokeWidth={2} />
+        </span>
+        <span className="text-[13px] font-semibold text-content">Meta Lead Ads</span>
+      </div>
+      {pages.length === 0 ? (
+        <EmptyChannelRow label="Nenhuma página" badge="Não conectado" />
+      ) : (
+        <ul className="space-y-1.5 pl-9">
+          {pages.map((p, i) => (
+            <li key={i} className="flex items-center justify-between gap-2">
+              <span className="min-w-0 truncate text-[12px] text-content">
+                {p.pageName ?? "Página Meta"}
+              </span>
+              <span className="shrink-0 text-[11px] font-semibold text-success">Conectado</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -719,7 +697,7 @@ export function DashboardOverviewContent({
   const [exportOpen, setExportOpen] = useState(false);
   const [waInstances, setWaInstances] = useState<WhatsAppInstanceStatus[]>([]);
   const [teamStats, setTeamStats] = useState<TeamMemberStats[]>([]);
-  const [metaStatus, setMetaStatus] = useState<{ connected: boolean; pageName: string | null } | null>(null);
+  const [metaStatus, setMetaStatus] = useState<{ connected: boolean; pages: Array<{ pageName: string | null }> } | null>(null);
 
   const leadSnap = useLeadUsageSnapshot(session.tenantId, session.plan, session.operationalLimits);
   const baseLeads = planMonthlyLeadAllowance(session.plan, session.operationalLimits);
@@ -790,7 +768,7 @@ export function DashboardOverviewContent({
   // Meta — leitura única no mount (status do banco, sem chamada externa)
   useEffect(() => {
     fetch("/api/client/meta/connection-status")
-      .then((r) => (r.ok ? (r.json() as Promise<{ connected: boolean; pageName: string | null }>) : null))
+      .then((r) => (r.ok ? (r.json() as Promise<{ connected: boolean; pages: Array<{ pageName: string | null }> }>) : null))
       .then((data) => { if (data) setMetaStatus(data); })
       .catch(() => {});
   }, []);
@@ -980,12 +958,12 @@ export function DashboardOverviewContent({
         </OverviewPanel>
 
         <OverviewPanel
-          title="WhatsApp"
-          description="Estado das instâncias conectadas ao bot."
+          title="Canais Conectados"
+          description="Status em tempo real das integrações ativas."
           className="self-start"
         >
-          <WhatsAppInstancesCard instances={waInstances} />
-          <MetaStatusRow status={metaStatus} />
+          <WhatsAppSection instances={waInstances} />
+          <MetaSection status={metaStatus} />
         </OverviewPanel>
       </div>
 
