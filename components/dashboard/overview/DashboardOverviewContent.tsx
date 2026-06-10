@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AreaChart,
   Area,
@@ -16,6 +16,7 @@ import {
 import {
   Activity,
   AlertTriangle,
+  AlarmClock,
   Bot,
   CalendarCheck,
   CheckCircle2,
@@ -27,13 +28,20 @@ import {
   TrendingDown,
   TrendingUp,
   UserPlus,
+  Users,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import type { ClientSession } from "@/lib/client-auth";
-import type { DashboardDataset, OverviewStats } from "@/lib/dashboard-data";
+import type {
+  DashboardDataset,
+  OverviewStats,
+  TeamMemberStats,
+  WhatsAppInstanceStatus,
+} from "@/lib/dashboard-data";
 import { useLeadUsageSnapshot } from "@/lib/use-lead-usage-snapshot";
 import { formatLeadCount, planMonthlyLeadAllowance } from "@/lib/dashboard-lead-usage";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
-import { BotStatusToggle } from "@/components/dashboard/BotStatusToggle";
 import { typography } from "@/lib/typography";
 import { cn } from "@/lib/utils";
 import { Modal } from "@/components/ui/Modal";
@@ -532,6 +540,124 @@ function UpcomingAgendaList({
   );
 }
 
+const WA_STATE_LABEL: Record<string, string> = {
+  open: "Conectado",
+  close: "Desconectado",
+  connecting: "Conectando",
+};
+const WA_STATE_COLOR: Record<string, string> = {
+  open: "text-success",
+  close: "text-error",
+  connecting: "text-warning",
+};
+
+function WhatsAppInstancesCard({ instances }: { instances: WhatsAppInstanceStatus[] }) {
+  if (!instances.length) {
+    return (
+      <p className="rounded-lg border border-dashed border-line/70 px-3 py-4 text-center text-[12.5px] text-content-muted">
+        Nenhuma instância configurada.
+      </p>
+    );
+  }
+  return (
+    <ul className="space-y-2.5">
+      {instances.map((inst) => {
+        const stateLabel = WA_STATE_LABEL[inst.connectionState] ?? inst.connectionState;
+        const stateColor = WA_STATE_COLOR[inst.connectionState] ?? "text-content-muted";
+        const isOpen = inst.connectionState === "open";
+        return (
+          <li
+            key={inst.slotIndex}
+            className="flex items-center gap-3 rounded-xl border border-line/70 bg-surface-card p-3"
+          >
+            <span
+              aria-hidden
+              className={cn(
+                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border",
+                isOpen
+                  ? "border-success/25 bg-success/[0.10] text-success"
+                  : "border-line/60 bg-surface-elevated/30 text-content-muted",
+              )}
+            >
+              {isOpen ? (
+                <Wifi className="h-4 w-4" strokeWidth={2} />
+              ) : (
+                <WifiOff className="h-4 w-4" strokeWidth={2} />
+              )}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate text-[13px] font-semibold text-content">
+                  Linha {inst.slotIndex + 1}
+                  {inst.waJid ? (
+                    <span className="ml-1.5 font-normal text-content-muted">
+                      ({inst.waJid.split("@")[0]})
+                    </span>
+                  ) : null}
+                </span>
+                <span className={cn("shrink-0 text-[11px] font-semibold", stateColor)}>
+                  {stateLabel}
+                </span>
+              </div>
+              <p className="mt-0.5 truncate text-[11px] text-content-muted">
+                {inst.agentName ? `Agente: ${inst.agentName}` : "Sem agente vinculado"}
+              </p>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function TeamOverviewTable({ members }: { members: TeamMemberStats[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-[12.5px]">
+        <thead>
+          <tr className="border-b border-line/50 text-left">
+            <th className={cn(typography.ui.overline, "pb-2 font-medium")}>Colaborador</th>
+            <th className={cn(typography.ui.overline, "pb-2 text-right font-medium")}>Leads</th>
+            <th className={cn(typography.ui.overline, "pb-2 text-right font-medium")}>Ativas</th>
+            <th className={cn(typography.ui.overline, "pb-2 text-right font-medium")}>Concluídas</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line/30">
+          {members.map((m) => (
+            <tr key={m.id} className="transition-colors hover:bg-surface-elevated/20">
+              <td className="py-2.5 pr-4">
+                <div className="flex items-center gap-2.5">
+                  <span
+                    aria-hidden
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/[0.10] font-display text-[10px] font-bold text-primary"
+                  >
+                    {m.nome.slice(0, 2).toUpperCase()}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-content">{m.nome}</p>
+                    {m.funcao ? (
+                      <p className="truncate text-[10.5px] capitalize text-content-muted">{m.funcao}</p>
+                    ) : null}
+                  </div>
+                </div>
+              </td>
+              <td className="py-2.5 text-right tabular-nums font-semibold text-content">
+                {m.leadsCount}
+              </td>
+              <td className="py-2.5 text-right tabular-nums font-semibold text-info">
+                {m.activeConvs}
+              </td>
+              <td className="py-2.5 text-right tabular-nums font-semibold text-success">
+                {m.closedConvs}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Componente principal
 // ---------------------------------------------------------------------------
@@ -550,6 +676,8 @@ export function DashboardOverviewContent({
   const [stats, setStats] = useState<OverviewStats | null>(dataset.overviewStats ?? null);
   const [loading, setLoading] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [waInstances, setWaInstances] = useState<WhatsAppInstanceStatus[]>([]);
+  const [teamStats, setTeamStats] = useState<TeamMemberStats[]>([]);
 
   const leadSnap = useLeadUsageSnapshot(session.tenantId, session.plan, session.operationalLimits);
   const baseLeads = planMonthlyLeadAllowance(session.plan, session.operationalLimits);
@@ -577,6 +705,44 @@ export function DashboardOverviewContent({
     return () => {
       cancelled = true;
     };
+  }, [rangeISO.fromISO, rangeISO.toISO]);
+
+  // Polling 30s + refetch imediato ao voltar à aba
+  const rangeRef = useRef(rangeISO);
+  useEffect(() => { rangeRef.current = rangeISO; }, [rangeISO]);
+  useEffect(() => {
+    const poll = () => {
+      if (document.hidden) return;
+      const { fromISO, toISO } = rangeRef.current;
+      fetch(`/api/client/stats/overview?from=${fromISO}&to=${toISO}`)
+        .then((r) => (r.ok ? (r.json() as Promise<OverviewStats>) : null))
+        .then((data) => { if (data) setStats(data); })
+        .catch(() => {});
+    };
+    const timer = setInterval(poll, 30_000);
+    document.addEventListener("visibilitychange", poll);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", poll); };
+  }, []);
+
+  // WhatsApp instances — 60s polling (podem desconectar a qualquer hora)
+  useEffect(() => {
+    const fetchWa = () => {
+      fetch("/api/client/stats/whatsapp-status")
+        .then((r) => (r.ok ? (r.json() as Promise<WhatsAppInstanceStatus[]>) : null))
+        .then((data) => { if (data) setWaInstances(data); })
+        .catch(() => {});
+    };
+    fetchWa();
+    const timer = setInterval(fetchWa, 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Equipe — refetch ao mudar período
+  useEffect(() => {
+    fetch(`/api/client/stats/team-overview?from=${rangeISO.fromISO}&to=${rangeISO.toISO}`)
+      .then((r) => (r.ok ? (r.json() as Promise<TeamMemberStats[]>) : null))
+      .then((data) => { if (data) setTeamStats(data); })
+      .catch(() => {});
   }, [rangeISO.fromISO, rangeISO.toISO]);
 
   // Cards de métricas definidos a partir dos stats reais
@@ -764,28 +930,41 @@ export function DashboardOverviewContent({
         </OverviewPanel>
 
         <OverviewPanel
-          title="Status do bot"
-          description="Controle rápido do modo de atendimento."
+          title="WhatsApp"
+          description="Estado das instâncias conectadas ao bot."
         >
-          <div className="space-y-4">
-            <div className="rounded-xl border border-success/25 bg-success/[0.08] p-4">
-              <div className="flex items-center gap-2">
-                <span className="relative flex h-2 w-2" aria-hidden>
-                  <span className="absolute inset-0 animate-ping rounded-full bg-success/50" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-                </span>
-                <p className="font-display text-sm font-bold tracking-tight text-success">
-                  Online
-                </p>
-              </div>
-              <p className="mt-1.5 text-[12.5px] leading-relaxed text-content-muted">
-                Respondendo automaticamente com delay humanizado de 2 segundos.
-              </p>
-            </div>
-            <BotStatusToggle value="online" onChange={() => null} />
-          </div>
+          <WhatsAppInstancesCard instances={waInstances} />
         </OverviewPanel>
       </div>
+
+      {/* Follow-up hoje */}
+      {stats && (stats.followUpPending > 0 || stats.followUpSentToday > 0 || stats.followUpCancelledToday > 0) ? (
+        <OverviewPanel title="Follow-up hoje" description="Atividade de follow-up automático no dia atual.">
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-xl border border-line/60 bg-surface-deep/40 px-3 py-3 text-center">
+              <AlarmClock className="mx-auto mb-1.5 h-4 w-4 text-warning" strokeWidth={2} />
+              <p className="font-display text-xl font-bold tabular-nums text-content">
+                {stats.followUpPending}
+              </p>
+              <p className="mt-1 text-[11px] text-content-muted">Pendentes</p>
+            </div>
+            <div className="rounded-xl border border-success/25 bg-success/[0.07] px-3 py-3 text-center">
+              <Send className="mx-auto mb-1.5 h-4 w-4 text-success" strokeWidth={2} />
+              <p className="font-display text-xl font-bold tabular-nums text-success">
+                {stats.followUpSentToday}
+              </p>
+              <p className="mt-1 text-[11px] text-content-muted">Enviados hoje</p>
+            </div>
+            <div className="rounded-xl border border-line/60 bg-surface-deep/40 px-3 py-3 text-center">
+              <AlertTriangle className="mx-auto mb-1.5 h-4 w-4 text-content-muted" strokeWidth={2} />
+              <p className="font-display text-xl font-bold tabular-nums text-content-muted">
+                {stats.followUpCancelledToday}
+              </p>
+              <p className="mt-1 text-[11px] text-content-muted">Cancelados hoje</p>
+            </div>
+          </div>
+        </OverviewPanel>
+      ) : null}
 
       {/* Charts */}
       <div className="grid gap-6 xl:grid-cols-3">
@@ -830,11 +1009,21 @@ export function DashboardOverviewContent({
           <RecentConversationsList items={stats?.recentConversations ?? []} />
         </OverviewPanel>
 
-        <OverviewPanel title="Agenda e próximos">
+        <OverviewPanel title="Agenda">
           <div className="space-y-5">
             <div>
-              <p className={cn(typography.ui.overline, "mb-2")}>Próximos agendamentos</p>
-              <UpcomingAgendaList items={stats?.upcomingAgenda ?? []} />
+              <p className={cn(typography.ui.overline, "mb-2")}>Hoje</p>
+              {(stats?.agendaToday ?? []).length > 0 ? (
+                <UpcomingAgendaList items={stats!.agendaToday} />
+              ) : (
+                <p className="rounded-lg border border-dashed border-line/70 px-3 py-3 text-[12px] text-content-muted">
+                  Nenhum agendamento para hoje.
+                </p>
+              )}
+            </div>
+            <div>
+              <p className={cn(typography.ui.overline, "mb-2")}>Próximos 7 dias</p>
+              <UpcomingAgendaList items={stats?.upcomingAgendaWeek ?? []} />
             </div>
             {stats && stats.agendaConfirmed > 0 ? (
               <div className="rounded-lg border border-success/25 bg-success/[0.07] px-3 py-2.5 text-[12.5px]">
@@ -860,6 +1049,16 @@ export function DashboardOverviewContent({
           description="Classificação de temperatura feita pela IA para leads do período."
         >
           <LeadTemperatureBars data={stats.leadsByTemperature} />
+        </OverviewPanel>
+      ) : null}
+
+      {/* Equipe */}
+      {teamStats.length > 0 ? (
+        <OverviewPanel
+          title="Equipe"
+          description={`Desempenho dos colaboradores no período ${rangeLabel}.`}
+        >
+          <TeamOverviewTable members={teamStats} />
         </OverviewPanel>
       ) : null}
 

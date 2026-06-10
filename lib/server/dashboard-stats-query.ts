@@ -35,11 +35,23 @@ function toUTCEnd(dateISO: string): string {
  *   Q8 — agenda events no período
  *   Q9 — próximos 3 agendamentos (upcoming)
  *   Q10 — follow-ups enviados no período
+ *   Q11 — follow-ups pendentes (snapshot)
+ *   Q12 — follow-ups enviados hoje
+ *   Q13 — follow-ups cancelados/esgotados hoje
+ *   Q14 — agenda hoje
+ *   Q15 — agenda próxima semana (7 dias)
  */
 export async function fetchOverviewStats(params: FetchOverviewStatsParams): Promise<OverviewStats> {
   const { sb, tenantId, fromISO, toISO } = params;
   const fromTs = toUTCStart(fromISO);
   const toTs = toUTCEnd(toISO);
+
+  const now = new Date();
+  const todayISO = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(now.getUTCDate()).padStart(2, "0")}`;
+  const todayStart = toUTCStart(todayISO);
+  const todayEnd = toUTCEnd(todayISO);
+  const weekLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const weekLaterISO = `${weekLater.getUTCFullYear()}-${String(weekLater.getUTCMonth() + 1).padStart(2, "0")}-${String(weekLater.getUTCDate()).padStart(2, "0")}`;
 
   const [
     messagesRes,
@@ -52,6 +64,11 @@ export async function fetchOverviewStats(params: FetchOverviewStatsParams): Prom
     agendaRes,
     upcomingAgendaRes,
     followUpRes,
+    fupPendingRes,
+    fupSentTodayRes,
+    fupCancelledTodayRes,
+    agendaTodayRes,
+    agendaWeekRes,
   ] = await Promise.all([
     // Q1: mensagens no período (limitado a 10k para performance)
     sb.from("whatsapp_messages")
@@ -129,6 +146,48 @@ export async function fetchOverviewStats(params: FetchOverviewStatsParams): Prom
       .eq("status", "sent")
       .gte("updated_at", fromTs)
       .lte("updated_at", toTs),
+
+    // Q11: follow-ups pendentes (snapshot atual)
+    sb.from("follow_up_jobs")
+      .select("*", { count: "exact", head: true })
+      .eq("tenant_id", tenantId)
+      .eq("status", "pending")
+      .gt("scheduled_at", now.toISOString()),
+
+    // Q12: follow-ups enviados hoje
+    sb.from("follow_up_jobs")
+      .select("*", { count: "exact", head: true })
+      .eq("tenant_id", tenantId)
+      .eq("status", "sent")
+      .gte("updated_at", todayStart)
+      .lte("updated_at", todayEnd),
+
+    // Q13: follow-ups cancelados/esgotados hoje
+    sb.from("follow_up_jobs")
+      .select("*", { count: "exact", head: true })
+      .eq("tenant_id", tenantId)
+      .in("status", ["cancelled", "exhausted"])
+      .gte("updated_at", todayStart)
+      .lte("updated_at", todayEnd),
+
+    // Q14: agenda hoje
+    sb.from("agenda_events")
+      .select("title, start_at, attendee_name")
+      .eq("tenant_id", tenantId)
+      .neq("status", "cancelled")
+      .gte("start_at", todayStart)
+      .lte("start_at", todayEnd)
+      .order("start_at", { ascending: true }),
+
+    // Q15: agenda próxima semana (amanhã → 7 dias)
+    sb.from("agenda_events")
+      .select("title, start_at, attendee_name")
+      .eq("tenant_id", tenantId)
+      .neq("status", "cancelled")
+      .gt("start_at", todayEnd)
+      .lte("start_at", toUTCEnd(weekLaterISO))
+      .order("start_at", { ascending: true })
+      .limit(10),
   ]);
 
   // --- processar mensagens ---
@@ -212,6 +271,21 @@ export async function fetchOverviewStats(params: FetchOverviewStatsParams): Prom
 
   // --- processar follow-up ---
   const followUpSent = followUpRes.count ?? 0;
+  const followUpPending = fupPendingRes.count ?? 0;
+  const followUpSentToday = fupSentTodayRes.count ?? 0;
+  const followUpCancelledToday = fupCancelledTodayRes.count ?? 0;
+
+  const agendaToday = (agendaTodayRes.data ?? []).map((e) => ({
+    title: (e.title as string) ?? "Agendamento",
+    startAt: e.start_at as string,
+    attendeeName: (e.attendee_name as string | null) ?? null,
+  }));
+
+  const upcomingAgendaWeek = (agendaWeekRes.data ?? []).map((e) => ({
+    title: (e.title as string) ?? "Agendamento",
+    startAt: e.start_at as string,
+    attendeeName: (e.attendee_name as string | null) ?? null,
+  }));
 
   return {
     period: { fromISO, toISO },
@@ -226,6 +300,11 @@ export async function fetchOverviewStats(params: FetchOverviewStatsParams): Prom
     agendaConfirmed,
     agendaCancelled,
     followUpSent,
+    followUpPending,
+    followUpSentToday,
+    followUpCancelledToday,
+    agendaToday,
+    upcomingAgendaWeek,
     messagesByDay,
     peakHourCounts,
     leadsBySource,

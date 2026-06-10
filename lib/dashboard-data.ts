@@ -77,12 +77,35 @@ export type OverviewStats = {
   agendaConfirmed: number;
   agendaCancelled: number;
   followUpSent: number;
+  followUpPending: number;
+  followUpSentToday: number;
+  followUpCancelledToday: number;
+  agendaToday: Array<{ title: string; startAt: string; attendeeName: string | null }>;
+  upcomingAgendaWeek: Array<{ title: string; startAt: string; attendeeName: string | null }>;
   messagesByDay: Array<{ date: string; inbound: number; outbound: number }>;
   peakHourCounts: Array<{ hour: number; count: number }>;  // 24 items
   leadsBySource: Array<{ source: string; count: number }>;
   leadsByTemperature: Array<{ temperature: string; count: number }>;
   recentConversations: Array<{ phone: string; name: string | null; mode: string; lastAt: string }>;
   upcomingAgenda: Array<{ title: string; startAt: string; attendeeName: string | null }>;
+};
+
+export type WhatsAppInstanceStatus = {
+  slotIndex: number;
+  instanceName: string;
+  connectionState: string;
+  waJid: string | null;
+  agentName: string | null;
+};
+
+export type TeamMemberStats = {
+  id: string;
+  nome: string;
+  funcao: string;
+  hierarchyRole: string;
+  leadsCount: number;
+  activeConvs: number;
+  closedConvs: number;
 };
 
 export type DashboardDataset = {
