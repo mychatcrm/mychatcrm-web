@@ -1,9 +1,8 @@
 "use client";
 
-import Link from "next/link";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangle, BadgeCheck, Check, ChevronDown, ExternalLink, Loader2, Plug, QrCode, Share2, Sparkles, Unlink } from "lucide-react";
+import { AlertTriangle, BadgeCheck, Check, ChevronDown, ExternalLink, Loader2, Plug, QrCode, Share2, Unlink } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
@@ -31,61 +30,7 @@ function safeRun<T>(fn: () => T, fallback: T): T {
   }
 }
 
-/** Anel de progresso simples (SVG) — “X de Y” ligacoes prontas, incluindo WhatsApp quando escolhido. */
-function IntegrationsHealthRing({
-  active,
-  total,
-  caption,
-  gradId,
-}: {
-  active: number;
-  total: number;
-  caption: string;
-  gradId: string;
-}) {
-  const safeTotal = Math.max(1, total);
-  const pct = Math.min(1, Math.max(0, active / safeTotal));
-  const radius = 54;
-  const circumference = 2 * Math.PI * radius;
-  const dash = pct * circumference;
-  const label = `${active} de ${total} ligacoes ativas no painel`;
-
-  return (
-    <div className="flex flex-col items-center justify-center py-2" role="img" aria-label={label}>
-      <div className="relative h-[168px] w-[168px]">
-        <svg width="168" height="168" viewBox="0 0 168 168" className="text-content/5" aria-hidden>
-          <g transform="translate(84,84) rotate(-90)">
-            <circle r={radius} fill="none" stroke="currentColor" strokeWidth="12" className="text-line/40" />
-            <circle
-              r={radius}
-              fill="none"
-              stroke={`url(#${gradId})`}
-              strokeWidth="12"
-              strokeLinecap="round"
-              strokeDasharray={`${dash} ${circumference}`}
-              className="transition-[stroke-dasharray] duration-700 ease-out"
-            />
-          </g>
-          <defs>
-            <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="rgb(20,38,58)" />
-              <stop offset="55%" stopColor="rgb(242,68,0)" />
-              <stop offset="100%" stopColor="rgb(178,42,0)" />
-            </linearGradient>
-          </defs>
-        </svg>
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-          <span className="text-3xl font-bold tabular-nums leading-none text-content">{active}</span>
-          <span className="mt-1 text-[11px] font-medium text-content-muted">de {total}</span>
-          <span className="mt-2 max-w-[7.5rem] text-[10px] leading-snug text-content-faint">{caption}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function IntegracoesHub({ tenantId }: { tenantId: string }) {
-  const ringGradId = useId().replace(/:/g, "");
   const { isLight } = usePanelAppearance();
   const [revision, setRevision] = useState(0);
   const [banner, setBanner] = useState<string | null>(null);
@@ -270,20 +215,13 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const metaConnected = metaPages.length > 0;
   const visibleMetaBanner = metaBanner?.startsWith("✅") && !metaConnected ? null : metaBanner;
 
-  const health = useMemo(() => {
+  const waLineStatus = useMemo(() => {
     void revision;
-    const waLinesReady = waSlots.filter(Boolean).length;
-    const waOn = waLinesReady > 0;
-    const fbOn = metaConnected;
-    const channelTotal = 2;
-    const channelActive = (waOn ? 1 : 0) + (fbOn ? 1 : 0);
     return {
-      donutActive: channelActive,
-      donutTotal: channelTotal,
-      waLinesReady,
+      waLinesReady: waSlots.filter(Boolean).length,
       waLineCount: waSlots.length,
     };
-  }, [metaConnected, revision, waSlots]);
+  }, [revision, waSlots]);
 
   return (
     <div className="space-y-8">
@@ -334,12 +272,12 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
           <Badge
             className={cn(
               "mr-5 shrink-0 self-center text-[10px] sm:mr-6",
-              health.waLinesReady > 0
+              waLineStatus.waLinesReady > 0
                 ? cn("border-emerald-500/40 bg-emerald-500/15", isLight ? "text-emerald-700" : "text-emerald-300")
                 : "border-line bg-surface-elevated/50 text-content-secondary",
             )}
           >
-            {health.waLinesReady}/{health.waLineCount} com metodo
+            {waLineStatus.waLinesReady}/{waLineStatus.waLineCount} com metodo
           </Badge>
         </div>
         <div className="space-y-4 p-5 sm:p-6">
@@ -696,105 +634,6 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
           </p>
         </Modal>
       ) : null}
-
-      <details
-        className={cn(
-          "overflow-hidden rounded-xl border [&_summary::-webkit-details-marker]:hidden",
-          isLight
-            ? "border-slate-200/90 bg-surface-deep"
-            : "border-line bg-surface-card",
-        )}
-      >
-        <summary className="cursor-pointer list-none px-5 py-4 text-sm font-semibold text-content sm:px-7 sm:py-5">
-          <span className="inline-flex items-center gap-2">
-            <Sparkles className="size-4 shrink-0 text-primary" aria-hidden />
-            Guia rápido e resumo das ligações
-          </span>
-        </summary>
-        <div className="border-t border-line/40 px-5 pb-6 pt-2 sm:px-7">
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_min(100%,260px)] lg:items-center">
-            <div>
-              <h2 className={cn(typography.heading.h3, "text-content")}>Três ideias simples</h2>
-              <p className="mt-2 max-w-xl text-sm leading-relaxed text-content-secondary">
-                Use os botões <span className="font-medium text-content">Ligar agora</span> ou <span className="font-medium text-content">QR / Meta</span> nos canais acima — sem
-                comandos.
-              </p>
-              <ol className="mt-5 space-y-3 text-sm text-content-secondary">
-                <li className="flex gap-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-sm font-bold text-primary">1</span>
-                  <div>
-                    <p className="font-medium text-content">Escolha o canal</p>
-                    <p className="text-xs text-content-muted">WhatsApp em primeiro lugar; Facebook quando fizer sentido para a empresa.</p>
-                  </div>
-                </li>
-                <li className="flex gap-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-sm font-bold text-primary">2</span>
-                  <div>
-                    <p className="font-medium text-content">Ligue com um clique</p>
-                    <p className="text-xs text-content-muted">Nome da conta opcional e interruptor para ativar.</p>
-                  </div>
-                </li>
-                <li className="flex gap-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-sm font-bold text-primary">3</span>
-                  <div>
-                    <p className="font-medium text-content">Use no dia a dia</p>
-                    <p className="text-xs text-content-muted">Quando o backend estiver ativo, dados sincronizam com CRM, agenda e lembretes.</p>
-                  </div>
-                </li>
-              </ol>
-            </div>
-            <div
-              className={cn(
-                "flex flex-col items-center justify-center rounded-xl border p-4",
-                isLight ? "border-slate-200/80 bg-surface-deep/80" : "border-line/80 bg-surface-deep/35",
-              )}
-            >
-              <div className="mb-0.5 flex items-center justify-center gap-1.5">
-                <div className="h-1 w-1 shrink-0 rounded-full bg-primary" aria-hidden />
-                <p className={cn(typography.ui.overline, "text-primary")}>Resumo</p>
-              </div>
-              <IntegrationsHealthRing
-                gradId={ringGradId}
-                active={health.donutActive}
-                total={health.donutTotal}
-                caption="WhatsApp + Facebook"
-              />
-              <p className="mt-1 text-center text-[11px] text-content-muted">
-                WhatsApp {health.waLinesReady}/{health.waLineCount} linha(s) com método · Meta {metaConnected ? "conectado" : "não conectado"}
-              </p>
-            </div>
-          </div>
-        </div>
-      </details>
-
-      <details
-        className={cn(
-          "rounded-xl border text-sm",
-          isLight ? "border-primary/20 bg-primary/[0.06] text-content" : "border-primary/25 bg-primary/[0.08] text-content",
-        )}
-      >
-        <summary className="cursor-pointer list-none px-4 py-3 font-semibold text-content sm:px-5 [&::-webkit-details-marker]:hidden">
-          Nota sobre esta demonstração
-        </summary>
-        <div className="space-y-3 border-t border-line/30 px-4 py-3 text-content-secondary sm:px-5">
-          <p>
-            <strong className="text-content">Google Agenda</strong> e outras ligações futuras usam a mesma área de{" "}
-            <Link href="/dashboard/agenda" className="font-semibold text-primary underline-offset-2 hover:underline">
-              Agenda
-            </Link>{" "}
-            e restantes menus do painel quando estiverem disponíveis. Nesta página focamo-nos em WhatsApp e Facebook.
-          </p>
-          <details className="rounded-lg border border-line/50 bg-surface-deep/20">
-            <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-content [&::-webkit-details-marker]:hidden">
-              Para equipa técnica
-            </summary>
-            <p className="border-t border-line/40 px-3 py-2 text-xs leading-relaxed text-content-muted">
-              O WhatsApp por QR (Evolution) usa sessão e webhook nas rotas do servidor e base de dados; a escolha QR/Meta por linha sincroniza neste navegador. A integração Meta
-              oficial segue em preparação.
-            </p>
-          </details>
-        </div>
-      </details>
 
     </div>
   );
