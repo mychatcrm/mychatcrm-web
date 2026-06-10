@@ -21,6 +21,7 @@ import {
   CalendarCheck,
   CheckCircle2,
   Clock,
+  Globe,
   Headphones,
   MessageCircle,
   Send,
@@ -610,6 +611,46 @@ function WhatsAppInstancesCard({ instances }: { instances: WhatsAppInstanceStatu
   );
 }
 
+function MetaStatusRow({
+  status,
+}: {
+  status: { connected: boolean; pageName: string | null } | null;
+}) {
+  const connected = status?.connected ?? false;
+  const pageName = status?.pageName ?? "Página Meta";
+  return (
+    <div className="mt-3 border-t border-line/50 pt-3">
+      <div className="flex items-center gap-3 rounded-xl border border-line/70 bg-surface-card p-3">
+        <span
+          aria-hidden
+          className={cn(
+            "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border",
+            connected
+              ? "border-success/25 bg-success/[0.10] text-success"
+              : "border-line/60 bg-surface-elevated/30 text-content-muted",
+          )}
+        >
+          <Globe className="h-4 w-4" strokeWidth={2} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate text-[13px] font-semibold text-content">{pageName}</span>
+            <span
+              className={cn(
+                "shrink-0 text-[11px] font-semibold",
+                connected ? "text-success" : "text-content-muted",
+              )}
+            >
+              {connected ? "Conectado" : "Desconectado"}
+            </span>
+          </div>
+          <p className="mt-0.5 text-[11px] text-content-muted">Meta Lead Ads</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TeamOverviewTable({ members }: { members: TeamMemberStats[] }) {
   return (
     <div className="overflow-x-auto">
@@ -678,6 +719,7 @@ export function DashboardOverviewContent({
   const [exportOpen, setExportOpen] = useState(false);
   const [waInstances, setWaInstances] = useState<WhatsAppInstanceStatus[]>([]);
   const [teamStats, setTeamStats] = useState<TeamMemberStats[]>([]);
+  const [metaStatus, setMetaStatus] = useState<{ connected: boolean; pageName: string | null } | null>(null);
 
   const leadSnap = useLeadUsageSnapshot(session.tenantId, session.plan, session.operationalLimits);
   const baseLeads = planMonthlyLeadAllowance(session.plan, session.operationalLimits);
@@ -744,6 +786,14 @@ export function DashboardOverviewContent({
       .then((data) => { if (data) setTeamStats(data); })
       .catch(() => {});
   }, [rangeISO.fromISO, rangeISO.toISO]);
+
+  // Meta — leitura única no mount (status do banco, sem chamada externa)
+  useEffect(() => {
+    fetch("/api/client/meta/connection-status")
+      .then((r) => (r.ok ? (r.json() as Promise<{ connected: boolean; pageName: string | null }>) : null))
+      .then((data) => { if (data) setMetaStatus(data); })
+      .catch(() => {});
+  }, []);
 
   // Cards de métricas definidos a partir dos stats reais
   const statCards: StatCard[] = stats
@@ -932,8 +982,10 @@ export function DashboardOverviewContent({
         <OverviewPanel
           title="WhatsApp"
           description="Estado das instâncias conectadas ao bot."
+          className="self-start"
         >
           <WhatsAppInstancesCard instances={waInstances} />
+          <MetaStatusRow status={metaStatus} />
         </OverviewPanel>
       </div>
 
