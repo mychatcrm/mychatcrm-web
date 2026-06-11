@@ -482,7 +482,7 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
                         });
                         if (!res.ok) throw new Error();
                         const { url } = (await res.json()) as { url: string };
-                        window.location.href = url;
+                        window.open(url, '_blank');
                       } catch {
                         setBuying(false);
                       }
