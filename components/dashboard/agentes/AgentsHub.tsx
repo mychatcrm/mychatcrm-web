@@ -429,14 +429,12 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
                 <div className="min-w-0">
                   <p className="text-[11px] font-medium text-content-muted">Agentes ativos</p>
                   <p className="text-sm font-semibold text-content">{activeCount} de {limit}</p>
-                  {extraPurchased > 0 && (
-                    <>
-                      <p className="mt-1 text-[11px] font-medium text-content-muted">Agentes extras</p>
-                      <p className="text-sm font-semibold text-content">
-                        {Math.max(0, activeCount - baseLimit)} de {extraPurchased}
-                      </p>
-                    </>
-                  )}
+                  <p className="mt-1 text-[11px] font-medium text-content-muted">Agentes extras</p>
+                  <p className="text-sm font-semibold text-content">
+                    {Math.max(0, activeCount - baseLimit)} de {extraPurchased}
+                  </p>
+                  <p className="mt-1 text-[11px] font-medium text-content-muted">Agentes criados</p>
+                  <p className="text-sm font-semibold text-content">{agents.length} de {limit}</p>
                 </div>
               </div>
               <Badge className="shrink-0 border-primary/25 bg-primary/10 text-xs font-semibold text-primary">
