@@ -73,7 +73,7 @@ export function AgentCard({
 
   return (
     <article className="panel-surface-card group flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-surface-card p-3.5 transition-colors hover:bg-surface-card/95">
-      <div className="flex min-w-0 items-start justify-between gap-3">
+      <div className="flex min-w-0 items-start justify-between gap-3 border-b border-line/40 pb-3">
         <div className="flex min-w-0 flex-1 items-start gap-2 sm:gap-3">
           {dragHandle ? <div className="shrink-0">{dragHandle}</div> : null}
           <div
@@ -85,7 +85,10 @@ export function AgentCard({
           </div>
           <div className="min-w-0 pt-0.5">
             <p className="truncate text-sm font-semibold leading-tight text-content sm:text-[15px]">{agent.nome}</p>
-            <p className="mt-1 text-[11px] font-medium capitalize text-content-muted">{isActive ? "Ativo agora" : "Pausado"}</p>
+            <p className="mt-1 flex items-center gap-1 text-[11px] font-medium capitalize text-content-muted">
+              <span className={cn("inline-block h-1.5 w-1.5 shrink-0 rounded-full", isActive ? "bg-emerald-500" : "bg-content-subtle")} aria-hidden />
+              {isActive ? "Ativo agora" : "Pausado"}
+            </p>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2 pt-1">
@@ -97,7 +100,7 @@ export function AgentCard({
         </div>
       </div>
 
-      <div className="mt-3.5 grid min-w-0 gap-2 min-[390px]:grid-cols-2">
+      <div className="mt-0 pt-3 grid min-w-0 gap-2 min-[390px]:grid-cols-2">
         <div className="min-w-0 rounded-xl bg-surface-elevated/35 p-2.5">
           <span className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-amber-500/12", isLight ? "text-amber-600" : "text-amber-300")}>
             <Coins className="h-4 w-4" strokeWidth={1.75} aria-hidden />
@@ -118,7 +121,7 @@ export function AgentCard({
         </div>
       </div>
 
-      <div className="mt-auto flex min-w-0 flex-col gap-2 pt-3.5">
+      <div className="mt-auto flex min-w-0 flex-col gap-2 pt-3">
         <Link
           href={`/dashboard/integracoes?agente=${encodeURIComponent(agent.id)}`}
           className="inline-flex min-h-9 min-w-0 items-center justify-center gap-2 rounded-xl bg-surface-elevated/45 px-3 text-xs font-medium text-content-secondary transition hover:bg-surface-elevated hover:text-content sm:text-[13px]"

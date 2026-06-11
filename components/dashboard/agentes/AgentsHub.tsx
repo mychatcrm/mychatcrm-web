@@ -12,7 +12,7 @@ import {
 import { SortableContext, arrayMove, rectSortingStrategy, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Activity, Bot, Plus, Sparkles } from "lucide-react";
+import { Bot, Plus, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
@@ -410,10 +410,10 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
               <Sparkles className="h-3 w-3" strokeWidth={1.9} aria-hidden />
               Central de agentes IA
             </div>
-            <h2 className="mt-3 text-[1.65rem] font-semibold leading-tight tracking-[-0.03em] text-content sm:text-[2rem]">
+            <h2 className="mt-2 text-xl font-semibold leading-tight tracking-[-0.03em] text-content sm:text-2xl">
               Meus Agentes
             </h2>
-            <p className="mt-2 max-w-xl text-sm leading-relaxed text-content-muted">
+            <p className="mt-1 max-w-xl text-sm leading-relaxed text-content-muted">
               {loadedFromDb
                 ? "Organize seus agentes, acompanhe uso e conecte cada automação aos canais certos. Arraste pela alça do cartão para reorganizar."
                 : "A carregar agentes…"}
@@ -421,25 +421,38 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
           </div>
 
           <div className="grid w-full min-w-0 gap-3 justify-self-stretch sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:max-w-[19rem] md:grid-cols-1 md:justify-self-end">
-            <div className="flex min-w-0 items-center justify-between gap-3 rounded-xl bg-surface-elevated/35 px-3 py-2.5">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                  <Activity className="h-4 w-4" strokeWidth={1.85} aria-hidden />
-                </span>
-                <div className="min-w-0">
-                  <p className="text-[11px] font-medium text-content-muted">Agentes ativos</p>
-                  <p className="text-sm font-semibold text-content">{activeCount} de {limit}</p>
-                  <p className="mt-1 text-[11px] font-medium text-content-muted">Agentes extras</p>
-                  <p className="text-sm font-semibold text-content">
-                    {Math.max(0, activeCount - baseLimit)} de {extraPurchased}
-                  </p>
-                  <p className="mt-1 text-[11px] font-medium text-content-muted">Agentes criados</p>
-                  <p className="text-sm font-semibold text-content">{agents.length} de {limit}</p>
-                </div>
+            <div className="min-w-0 rounded-xl bg-surface-elevated/35 px-3 py-3">
+              {/* Grupo Plano */}
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-content-subtle">Plano</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-medium text-content-muted">Agentes criados</p>
+                <p className="text-[11px] font-semibold tabular-nums text-content">
+                  {Math.min(agents.length, baseLimit)}<span className="font-normal text-content-subtle"> / {baseLimit}</span>
+                </p>
               </div>
-              <Badge className="shrink-0 border-primary/25 bg-primary/10 text-xs font-semibold text-primary">
-                {activeCount}/{limit}
-              </Badge>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <p className="text-[11px] font-medium text-content-muted">Agentes ativos</p>
+                <p className="text-[11px] font-semibold tabular-nums text-content">
+                  {Math.min(activeCount, baseLimit)}<span className="font-normal text-content-subtle"> / {baseLimit}</span>
+                </p>
+              </div>
+
+              <div className="my-2.5 border-t border-line/50" />
+
+              {/* Grupo Extras */}
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-content-subtle">Extras</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-medium text-content-muted">Agentes criados</p>
+                <p className="text-[11px] font-semibold tabular-nums text-content">
+                  {Math.max(0, agents.length - baseLimit)}<span className="font-normal text-content-subtle"> / {extraPurchased}</span>
+                </p>
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <p className="text-[11px] font-medium text-content-muted">Agentes ativos</p>
+                <p className="text-[11px] font-semibold tabular-nums text-content">
+                  {Math.max(0, activeCount - baseLimit)}<span className="font-normal text-content-subtle"> / {extraPurchased}</span>
+                </p>
+              </div>
             </div>
             <div className="flex min-w-0 flex-col gap-2">
               <Button
