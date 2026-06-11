@@ -487,13 +487,18 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
                         setBuying(false);
                       }
                     }}
-                    className="flex-1 truncate rounded-lg bg-primary/10 px-2.5 py-1.5 text-left text-[11px] font-semibold text-primary hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-lg bg-primary/10 px-2.5 py-1.5 text-[11px] font-semibold text-primary hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {buying
-                      ? "Redirecionando…"
-                      : `Comprar ${qty} agente${qty > 1 ? "s" : ""} extra — ${formatBRL(EXTRA_AGENT_MONTHLY_BRL * qty)}/mês`}
+                    {buying ? "Redirecionando…" : "Comprar agora"}
                   </button>
                 </div>
+                <p className="text-[11px] text-content-subtle">
+                  {qty} agente{qty > 1 ? "s" : ""} extra — R${" "}
+                  {(EXTRA_AGENT_MONTHLY_BRL * qty).toLocaleString("pt-BR", {
+                    minimumFractionDigits: 2,
+                  })}
+                  /mês
+                </p>
                 {purchaseSuccess && (
                   <p className="text-[11px] font-medium text-success">
                     ✓ Agentes adicionados com sucesso!
