@@ -421,37 +421,41 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
           </div>
 
           <div className="grid w-full min-w-0 gap-3 justify-self-stretch sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:max-w-[19rem] md:grid-cols-1 md:justify-self-end">
-            <div className="min-w-0 rounded-xl bg-surface-elevated/35 px-3 py-3">
+            <div className="flex min-w-0 gap-3 rounded-xl bg-surface-elevated/35 px-3 py-3">
               {/* Grupo Plano */}
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-content-subtle">Plano</p>
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[11px] font-medium text-content-muted">Agentes criados</p>
-                <p className="text-[11px] font-semibold tabular-nums text-content">
-                  {Math.min(agents.length, baseLimit)}<span className="font-normal text-content-subtle"> / {baseLimit}</span>
-                </p>
-              </div>
-              <div className="mt-1 flex items-center justify-between gap-2">
-                <p className="text-[11px] font-medium text-content-muted">Agentes ativos</p>
-                <p className="text-[11px] font-semibold tabular-nums text-content">
-                  {Math.min(activeCount, baseLimit)}<span className="font-normal text-content-subtle"> / {baseLimit}</span>
-                </p>
+              <div className="min-w-0 flex-1">
+                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-content-subtle">Plano</p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-medium text-content-muted">Agentes criados</p>
+                  <p className="text-[11px] font-semibold tabular-nums text-content">
+                    {Math.min(agents.length, baseLimit)}<span className="font-normal text-content-subtle"> / {baseLimit}</span>
+                  </p>
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-medium text-content-muted">Agentes ativos</p>
+                  <p className="text-[11px] font-semibold tabular-nums text-content">
+                    {Math.min(activeCount, baseLimit)}<span className="font-normal text-content-subtle"> / {baseLimit}</span>
+                  </p>
+                </div>
               </div>
 
-              <div className="my-2.5 border-t border-line/50" />
+              <div className="w-px self-stretch bg-line/50" />
 
               {/* Grupo Extras */}
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-content-subtle">Extras</p>
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[11px] font-medium text-content-muted">Agentes criados</p>
-                <p className="text-[11px] font-semibold tabular-nums text-content">
-                  {Math.max(0, agents.length - baseLimit)}<span className="font-normal text-content-subtle"> / {extraPurchased}</span>
-                </p>
-              </div>
-              <div className="mt-1 flex items-center justify-between gap-2">
-                <p className="text-[11px] font-medium text-content-muted">Agentes ativos</p>
-                <p className="text-[11px] font-semibold tabular-nums text-content">
-                  {Math.max(0, activeCount - baseLimit)}<span className="font-normal text-content-subtle"> / {extraPurchased}</span>
-                </p>
+              <div className="min-w-0 flex-1">
+                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-content-subtle">Extras</p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-medium text-content-muted">Agentes criados</p>
+                  <p className="text-[11px] font-semibold tabular-nums text-content">
+                    {Math.max(0, agents.length - baseLimit)}<span className="font-normal text-content-subtle"> / {extraPurchased}</span>
+                  </p>
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-medium text-content-muted">Agentes ativos</p>
+                  <p className="text-[11px] font-semibold tabular-nums text-content">
+                    {Math.max(0, activeCount - baseLimit)}<span className="font-normal text-content-subtle"> / {extraPurchased}</span>
+                  </p>
+                </div>
               </div>
             </div>
             <div className="flex min-w-0 flex-col gap-2">
