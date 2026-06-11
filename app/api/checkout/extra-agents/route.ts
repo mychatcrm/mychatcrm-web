@@ -96,6 +96,7 @@ export async function POST(req: Request) {
         metadata: {
           tenant_id: session.tenantId,
           type: "extra_agent",
+          quantity: String(quantity),
         },
       },
       success_url: `${SITE_URL}/dashboard/agentes?success=extra_agents`,

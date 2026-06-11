@@ -201,3 +201,13 @@ export async function getTenantByStripeSession(sessionId: string): Promise<strin
     .maybeSingle();
   return (data?.tenant_id as string) ?? null;
 }
+
+/** Suspende o tenant — bloqueia acesso imediato via middleware e API guard. */
+export async function suspendTenant(tenantId: string): Promise<void> {
+  const sb = createSupabaseServiceClient();
+  const { error } = await sb
+    .from("tenants")
+    .update({ status: "cancelada" })
+    .eq("id", tenantId);
+  if (error) throw new Error(`[suspendTenant] ${error.message}`);
+}
