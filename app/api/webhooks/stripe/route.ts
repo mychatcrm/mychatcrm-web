@@ -13,11 +13,35 @@ import { NextRequest, NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
 import { provisionFromStripeSession } from "@/lib/server/stripe-provision";
+import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 function getWebhookSecret(): string {
   const s = process.env.STRIPE_WEBHOOK_SECRET?.trim();
   if (!s) throw new Error("[stripe-webhook] STRIPE_WEBHOOK_SECRET não definida.");
   return s;
+}
+
+async function incrementExtraAgentPurchased(
+  session: Stripe.Checkout.Session,
+): Promise<void> {
+  const tenantId = session.metadata?.tenant_id;
+  const qty = Number(session.metadata?.quantity ?? 1);
+  if (!tenantId || !Number.isInteger(qty) || qty < 1) {
+    console.error("[extra-agent] Metadata inválida:", session.metadata);
+    return;
+  }
+  const sb = createSupabaseServiceClient();
+  const { data } = await sb
+    .from("stripe_subscriptions")
+    .select("extra_agents_purchased")
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+  const current = (data?.extra_agents_purchased as number) ?? 0;
+  const { error } = await sb
+    .from("stripe_subscriptions")
+    .update({ extra_agents_purchased: current + qty })
+    .eq("tenant_id", tenantId);
+  if (error) console.error("[extra-agent] Falha ao incrementar:", error);
 }
 
 export async function POST(req: NextRequest) {
@@ -38,7 +62,11 @@ export async function POST(req: NextRequest) {
         const session = event.data.object as Stripe.Checkout.Session;
         // Provisiona apenas se o pagamento foi confirmado (assinatura → always paid)
         if (session.payment_status === "paid" || session.mode === "subscription") {
-          await provisionFromStripeSession(session);
+          if (session.metadata?.type === "extra_agent") {
+            await incrementExtraAgentPurchased(session);
+          } else {
+            await provisionFromStripeSession(session);
+          }
         }
         break;
       }

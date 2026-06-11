@@ -11,7 +11,6 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, arrayMove, rectSortingStrategy, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Activity, Bot, Plus, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
@@ -209,8 +208,23 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
   const [createFormKey, setCreateFormKey] = useState(0);
   const [manageAgent, setManageAgent] = useState<Agent | null>(null);
   const [manageFormKey, setManageFormKey] = useState(0);
+  const [extraPurchased, setExtraPurchased] = useState(0);
+  const [qty, setQty] = useState(1);
+  const [buying, setBuying] = useState(false);
 
-  const limit = getPlanIncludedAgentLimitForSession(session);
+  const purchaseSuccess = searchParams?.get("success") === "extra_agents";
+
+  useEffect(() => {
+    fetch("/api/checkout/extra-agents")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { extraPurchased?: number } | null) => {
+        if (d) setExtraPurchased(d.extraPurchased ?? 0);
+      })
+      .catch(() => {});
+  }, [purchaseSuccess]);
+
+  const baseLimit = getPlanIncludedAgentLimitForSession(session);
+  const limit = baseLimit + extraPurchased;
   const activeCount = agents.filter((agent) => agent.status === "ativo").length;
   const atAgentCap = activeCount >= limit;
 
@@ -432,12 +446,60 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
                 <Plus className="h-4 w-4 shrink-0" strokeWidth={2.25} aria-hidden />
                 Novo agente
               </Button>
-              <Link
-                href="/planos"
-                className="max-w-[20rem] text-balance text-left text-[11px] font-semibold leading-relaxed text-primary underline-offset-2 hover:underline"
-              >
-                Comprar mais agentes — {formatBRL(EXTRA_AGENT_MONTHLY_BRL)}/mês por agente extra
-              </Link>
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    aria-label="Diminuir quantidade"
+                    disabled={qty <= 1 || buying}
+                    onClick={() => setQty((q) => Math.max(1, q - 1))}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-line bg-surface-card text-sm font-bold text-content hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    −
+                  </button>
+                  <span className="w-5 text-center text-sm font-semibold tabular-nums text-content">
+                    {qty}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label="Aumentar quantidade"
+                    disabled={qty >= 10 || buying}
+                    onClick={() => setQty((q) => Math.min(10, q + 1))}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-line bg-surface-card text-sm font-bold text-content hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    +
+                  </button>
+                  <button
+                    type="button"
+                    disabled={buying}
+                    onClick={async () => {
+                      setBuying(true);
+                      try {
+                        const res = await fetch("/api/checkout/extra-agents", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ quantity: qty }),
+                        });
+                        if (!res.ok) throw new Error();
+                        const { url } = (await res.json()) as { url: string };
+                        window.location.href = url;
+                      } catch {
+                        setBuying(false);
+                      }
+                    }}
+                    className="flex-1 truncate rounded-lg bg-primary/10 px-2.5 py-1.5 text-left text-[11px] font-semibold text-primary hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {buying
+                      ? "Redirecionando…"
+                      : `Comprar ${qty} agente${qty > 1 ? "s" : ""} extra — ${formatBRL(EXTRA_AGENT_MONTHLY_BRL * qty)}/mês`}
+                  </button>
+                </div>
+                {purchaseSuccess && (
+                  <p className="text-[11px] font-medium text-success">
+                    ✓ Agentes adicionados com sucesso!
+                  </p>
+                )}
+              </div>
             </div>
           </div>
         </div>
