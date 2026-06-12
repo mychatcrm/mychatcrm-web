@@ -1860,13 +1860,17 @@ function CrmPage({
               aria-expanded={funnelConfigOpen}
               aria-controls="crm-funnel-config-panel"
               className={cn(
-                "inline-flex min-h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium transition",
+                "group inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition duration-200",
                 funnelConfigOpen
-                  ? "border-primary/35 bg-primary/10 text-primary"
-                  : "border-line/60 bg-surface-elevated/30 text-content-muted hover:border-line hover:text-content",
+                  ? "border-primary/30 bg-primary/[0.09] text-primary"
+                  : "border-transparent bg-surface-elevated/35 text-content-muted hover:border-primary/20 hover:bg-primary/[0.055] hover:text-primary",
               )}
             >
-              <Settings className="h-3.5 w-3.5 shrink-0" strokeWidth={2} aria-hidden />
+              <Settings
+                className="h-3.5 w-3.5 shrink-0 transition-transform duration-200 group-hover:rotate-45"
+                strokeWidth={2}
+                aria-hidden
+              />
               Configurar funil
             </button>
           </div>
@@ -1888,23 +1892,34 @@ function CrmPage({
             </section>
           ) : null}
 
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="sr-only" htmlFor="crm-pipeline-funil">
-              Funil ativo
-            </label>
-            <Select
-              id="crm-pipeline-funil"
-              className="h-9 min-w-[10rem] max-w-xs shrink-0 text-sm"
-              value={pipelineFunilId}
-              onChange={(event) => setPipelineFunilId(event.target.value)}
-            >
-              {funnels.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.nome}
-                </option>
-              ))}
-            </Select>
-            <span className="text-xs text-content-muted">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line/45 bg-surface-elevated/20 p-2">
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-elevated/55 text-primary ring-1 ring-line/45">
+                <Layers className="h-4 w-4" strokeWidth={1.9} aria-hidden />
+              </div>
+              <div className="min-w-0 flex-1 sm:max-w-sm">
+                <label className="sr-only" htmlFor="crm-pipeline-funil">
+                  Funil ativo
+                </label>
+                <Select
+                  id="crm-pipeline-funil"
+                  className={cn(
+                    "h-9 min-h-0 w-full max-w-none truncate rounded-lg border-line/40 bg-surface-card/70 py-0 pl-3 pr-9 text-sm font-semibold text-content",
+                    isLight ? "[color-scheme:light]" : "[color-scheme:dark]",
+                  )}
+                  value={activeFunnel?.id ?? ""}
+                  title={activeFunnel?.nome ?? "Selecionar funil"}
+                  onChange={(event) => setPipelineFunilId(event.target.value)}
+                >
+                  {funnels.map((f) => (
+                    <option key={f.id} value={f.id} className="bg-surface-card text-content">
+                      {f.nome}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+            <span className="shrink-0 rounded-full bg-surface-elevated/45 px-2.5 py-1 text-[11px] font-medium text-content-muted ring-1 ring-line/40">
               {pipelineLeads.length} {pipelineLeads.length === 1 ? "lead visível" : "leads visíveis"}
             </span>
           </div>
@@ -2049,9 +2064,9 @@ function CrmPage({
 
           {/* Área de trabalho CRM Kanban / Lista */}
           <section className="min-w-0" aria-labelledby="crm-sec-vista-heading">
-            <div className="mb-3 space-y-3 rounded-xl border border-line/55 bg-surface-card/75 p-3 sm:p-4">
-              <div className="flex flex-wrap items-end gap-2">
-                <div className="relative min-w-[12rem] flex-1">
+            <div className="mb-3 space-y-2.5 rounded-2xl border border-line/50 bg-surface-card/75 p-2.5 shadow-[0_16px_45px_-42px_rgba(15,23,42,0.62)] sm:p-3">
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+                <div className="relative min-w-0 flex-1">
                   <label className="sr-only" htmlFor="crm-pipeline-busca">
                     Buscar leads
                   </label>
@@ -2061,53 +2076,55 @@ function CrmPage({
                   />
                   <Input
                     id="crm-pipeline-busca"
-                    className="min-h-9 pl-9 text-sm"
+                    className="h-9 min-h-0 rounded-lg py-0 pl-9 text-sm"
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
                     placeholder="Buscar nome, empresa, tag ou origem"
                   />
                 </div>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="shrink-0 gap-1.5"
-                  type="button"
-                  disabled={!pipelineLeads.length}
-                  onClick={toggleAllVisibleLeads}
-                >
-                  {selectedVisibleLeadCount === pipelineLeads.length && pipelineLeads.length > 0 ? "Desmarcar" : "Selecionar"}
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="shrink-0 gap-1.5"
-                  type="button"
-                  onClick={() => setAddLeadOpen(true)}
-                >
-                  <Plus className="h-4 w-4 shrink-0" strokeWidth={2.25} aria-hidden />
-                  Novo lead
-                </Button>
-                <button
-                  type="button"
-                  onClick={toggleCrmFiltersPanel}
-                  aria-expanded={crmFiltersOpen}
-                  aria-controls="crm-leads-filters-panel"
-                  className={cn(
-                    "inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition",
-                    isLight
-                      ? "border-primary/35 bg-primary/[0.035] text-primary hover:bg-primary/[0.08]"
-                      : "border-primary/45 bg-primary/[0.055] text-content-secondary hover:bg-primary/10 hover:text-content",
-                  )}
-                >
-                  <Filter className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
-                  Filtros
-                  <ChevronDown
-                    className={cn("h-4 w-4 shrink-0 transition", crmFiltersOpen && "rotate-180")}
-                    aria-hidden
-                  />
-                </button>
+                <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="h-9 shrink-0 gap-1.5 rounded-lg px-3 py-0"
+                    type="button"
+                    disabled={!pipelineLeads.length}
+                    onClick={toggleAllVisibleLeads}
+                  >
+                    {selectedVisibleLeadCount === pipelineLeads.length && pipelineLeads.length > 0 ? "Desmarcar" : "Selecionar"}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="h-9 shrink-0 gap-1.5 rounded-lg px-3 py-0"
+                    type="button"
+                    onClick={() => setAddLeadOpen(true)}
+                  >
+                    <Plus className="h-4 w-4 shrink-0" strokeWidth={2.25} aria-hidden />
+                    Novo lead
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={toggleCrmFiltersPanel}
+                    aria-expanded={crmFiltersOpen}
+                    aria-controls="crm-leads-filters-panel"
+                    className={cn(
+                      "inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition",
+                      isLight
+                        ? "border-primary/30 bg-primary/[0.035] text-primary hover:bg-primary/[0.075]"
+                        : "border-primary/35 bg-primary/[0.05] text-content-secondary hover:bg-primary/[0.09] hover:text-content",
+                    )}
+                  >
+                    <Filter className="h-3.5 w-3.5 shrink-0" strokeWidth={2} aria-hidden />
+                    Filtros
+                    <ChevronDown
+                      className={cn("h-3.5 w-3.5 shrink-0 transition", crmFiltersOpen && "rotate-180")}
+                      aria-hidden
+                    />
+                  </button>
+                </div>
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 px-1">
                 <h3
                   id="crm-sec-vista-heading"
                   className="text-sm font-semibold text-content-muted"

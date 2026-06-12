@@ -23,7 +23,7 @@ function InsightCard({
   /** `sky` mantém o nome histórico na API; visual alinhado ao azul carvão / neutros da marca. */
   accent?: "primary" | "sky" | "amber" | "emerald";
   compact?: boolean;
-  /** Topo CRM: só label + valor, sem ícone nem hint. */
+  /** Topo CRM: KPI compacto com ícone, valor e label. */
   minimal?: boolean;
   Icon: LucideIcon;
 }) {
@@ -60,12 +60,30 @@ function InsightCard({
     return (
       <div
         className={cn(
-          "min-w-0 rounded-xl border px-3 py-2.5",
-          isLight ? "border-line/70 bg-surface-elevated/30" : "border-line/55 bg-surface-elevated/20",
+          "group min-w-0 px-3.5 py-3.5 transition-colors duration-200 sm:px-4",
+          isLight
+            ? "bg-white/80 hover:bg-primary/[0.035]"
+            : "bg-surface-card/90 hover:bg-surface-elevated/55",
         )}
       >
-        <p className="truncate text-[10px] font-medium uppercase tracking-wide text-content-muted">{label}</p>
-        <p className={cn("mt-1 truncate text-sm font-semibold tabular-nums tracking-tight", valueClass)}>{value}</p>
+        <div className="flex min-w-0 items-center gap-3">
+          <div
+            className={cn(
+              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors duration-200",
+              accent === "sky"
+                ? "border-line/55 bg-surface-elevated/45 text-content-secondary group-hover:border-line/80"
+                : "border-primary/25 bg-primary/[0.075] text-primary group-hover:border-primary/40",
+            )}
+          >
+            <Icon className="h-4 w-4" strokeWidth={1.9} aria-hidden />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className={cn("truncate text-lg font-bold tabular-nums tracking-tight", valueClass)}>{value}</p>
+            <p className="mt-0.5 truncate text-[10px] font-medium uppercase tracking-[0.12em] text-content-muted">
+              {label}
+            </p>
+          </div>
+        </div>
       </div>
     );
   }
@@ -149,7 +167,11 @@ export function CrmInsightsBar({
     <div
       className={cn(
         "grid min-[480px]:grid-cols-2 lg:grid-cols-4",
-        compactTop ? "gap-2" : embedded ? "gap-2.5" : "gap-3",
+        compactTop
+          ? "gap-px overflow-hidden rounded-2xl border border-line/55 bg-line/55 shadow-[0_18px_48px_-42px_rgba(15,23,42,0.68)]"
+          : embedded
+            ? "gap-2.5"
+            : "gap-3",
       )}
     >
       <InsightCard
