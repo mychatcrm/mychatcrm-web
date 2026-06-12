@@ -46,6 +46,27 @@ async function incrementExtraAgentPurchased(
   if (error) console.error("[extra-agent] Falha ao incrementar:", error);
 }
 
+async function incrementExtraWhatsAppSlots(session: Stripe.Checkout.Session): Promise<void> {
+  const tenantId = session.metadata?.tenant_id;
+  const qty = Number(session.metadata?.quantity ?? 1);
+  if (!tenantId || !Number.isInteger(qty) || qty < 1) {
+    console.error("[extra-whatsapp] Metadata inválida:", session.metadata);
+    return;
+  }
+  const sb = createSupabaseServiceClient();
+  const { data } = await sb
+    .from("stripe_subscriptions")
+    .select("extra_whatsapp_slots")
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+  const current = (data?.extra_whatsapp_slots as number) ?? 0;
+  const { error } = await sb
+    .from("stripe_subscriptions")
+    .update({ extra_whatsapp_slots: current + qty })
+    .eq("tenant_id", tenantId);
+  if (error) console.error("[extra-whatsapp] Falha ao incrementar:", error);
+}
+
 /** Resolve tenant_id a partir do subscription_id do Stripe. */
 async function getTenantIdBySubscriptionId(subscriptionId: string): Promise<string | null> {
   const sb = createSupabaseServiceClient();
@@ -88,6 +109,8 @@ export async function POST(req: NextRequest) {
         if (session.payment_status === "paid" || session.mode === "subscription") {
           if (session.metadata?.type === "extra_agent") {
             await incrementExtraAgentPurchased(session);
+          } else if (session.metadata?.type === "extra_whatsapp") {
+            await incrementExtraWhatsAppSlots(session);
           } else {
             await provisionFromStripeSession(session);
           }
@@ -116,6 +139,24 @@ export async function POST(req: NextRequest) {
               .update({ extra_agents_purchased: Math.max(0, current - qty) })
               .eq("tenant_id", tenantId);
             if (error) console.error("[extra-agent-cancel] Falha ao decrementar:", error);
+          }
+        } else if (sub.metadata?.type === "extra_whatsapp") {
+          // Caso A2 — decrementar slots WhatsApp extras
+          const tenantId = sub.metadata?.tenant_id;
+          const qty = sub.items.data[0]?.quantity ?? 1;
+          if (tenantId) {
+            const sb = createSupabaseServiceClient();
+            const { data } = await sb
+              .from("stripe_subscriptions")
+              .select("extra_whatsapp_slots")
+              .eq("tenant_id", tenantId)
+              .maybeSingle();
+            const current = (data?.extra_whatsapp_slots as number) ?? 0;
+            const { error } = await sb
+              .from("stripe_subscriptions")
+              .update({ extra_whatsapp_slots: Math.max(0, current - qty) })
+              .eq("tenant_id", tenantId);
+            if (error) console.error("[extra-whatsapp-cancel] Falha ao decrementar:", error);
           }
         } else {
           // Caso B — suspender tenant (plano principal cancelado)
