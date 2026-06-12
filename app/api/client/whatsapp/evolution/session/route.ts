@@ -22,8 +22,19 @@ import {
   upsertTenantEvolutionInstance,
 } from "@/lib/server/tenant-evolution-instance-db";
 import { assertSlotIndexAllowed } from "@/lib/server/whatsapp-slot-server";
+import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
+
+async function getExtraWhatsappSlots(tenantId: string): Promise<number> {
+  const sb = createSupabaseServiceClient();
+  const { data } = await sb
+    .from("stripe_subscriptions")
+    .select("extra_whatsapp_slots")
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+  return (data?.extra_whatsapp_slots as number) ?? 0;
+}
 
 /**
  * POST — cria/reaproveita instância Evolution, configura webhook e devolve QR + estado.
@@ -50,7 +61,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
   }
   const slotIndex = typeof body.slotIndex === "number" ? body.slotIndex : Number(body.slotIndex);
-  if (!Number.isInteger(slotIndex) || !assertSlotIndexAllowed(session, slotIndex)) {
+  const extraWhatsappSlots = await getExtraWhatsappSlots(session.tenantId);
+  if (!Number.isInteger(slotIndex) || !assertSlotIndexAllowed(session, slotIndex, extraWhatsappSlots)) {
     return NextResponse.json({ error: "slotIndex inválido" }, { status: 400 });
   }
 
@@ -160,7 +172,8 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const slotIndex = Number(url.searchParams.get("slotIndex"));
-  if (!Number.isInteger(slotIndex) || !assertSlotIndexAllowed(session, slotIndex)) {
+  const extraWhatsappSlotsGet = await getExtraWhatsappSlots(session.tenantId);
+  if (!Number.isInteger(slotIndex) || !assertSlotIndexAllowed(session, slotIndex, extraWhatsappSlotsGet)) {
     return NextResponse.json({ error: "slotIndex inválido" }, { status: 400 });
   }
 
@@ -249,7 +262,8 @@ export async function DELETE(request: Request) {
 
   const url = new URL(request.url);
   const slotIndex = Number(url.searchParams.get("slotIndex"));
-  if (!Number.isInteger(slotIndex) || !assertSlotIndexAllowed(session, slotIndex)) {
+  const extraWhatsappSlotsDel = await getExtraWhatsappSlots(session.tenantId);
+  if (!Number.isInteger(slotIndex) || !assertSlotIndexAllowed(session, slotIndex, extraWhatsappSlotsDel)) {
     return NextResponse.json({ error: "slotIndex inválido" }, { status: 400 });
   }
 
