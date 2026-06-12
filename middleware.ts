@@ -13,9 +13,8 @@ import { fetchMaintenanceSnapshot } from "@/lib/maintenance-middleware-snapshot"
 import { isMaintenanceAnonymousAllowPath, isMaintenanceStatusApiPath } from "@/lib/maintenance-policy";
 import {
   defaultDashboardPathForOrganizationRole,
-  organizationRoleCanAccessDashboardRoute,
   resolveOrganizationRole,
-  sessionCanAccessPersonalSettings,
+  sessionCanAccessDashboardRoute,
 } from "@/lib/organization-role";
 import { routing } from "@/i18n/routing";
 import { resolveLegacyLegalRedirect } from "@/lib/legal-legacy-redirects";
@@ -162,14 +161,7 @@ export async function middleware(request: NextRequest) {
       const orgRole = resolveOrganizationRole(session);
       const routeKey = getDashboardRouteKey(pathname);
 
-      if (!sessionCanAccessPersonalSettings(session) && routeKey === "configuracoes") {
-        const url = request.nextUrl.clone();
-        url.pathname = defaultDashboardPathForOrganizationRole(orgRole);
-        url.searchParams.delete("from");
-        return NextResponse.redirect(url);
-      }
-
-      if (!organizationRoleCanAccessDashboardRoute(orgRole, routeKey)) {
+      if (!sessionCanAccessDashboardRoute(session, routeKey)) {
         const url = request.nextUrl.clone();
         url.pathname = defaultDashboardPathForOrganizationRole(orgRole);
         url.searchParams.delete("from");

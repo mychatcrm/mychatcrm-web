@@ -52,6 +52,20 @@ export function sessionCanAccessPersonalSettings(session: {
   );
 }
 
+/** Acesso a rotas do dashboard incluindo configurações do titular (director raiz). */
+export function sessionCanAccessDashboardRoute(
+  session: {
+    organizationRole?: OrganizationRole;
+    employeeId?: string;
+    reportsToEmployeeId?: string;
+  },
+  routeKey: string,
+): boolean {
+  const role = resolveOrganizationRole(session);
+  if (organizationRoleCanAccessDashboardRoute(role, routeKey)) return true;
+  return routeKey === "configuracoes" && sessionCanAccessPersonalSettings(session);
+}
+
 /** Diretor, gerente e vendedor: ajustes pessoais rápidos na sidebar (sem rota de configurações completas do dono). */
 export function organizationRoleCanUseSidebarProfilePopover(role: OrganizationRole): boolean {
   return role === "director" || role === "manager" || role === "seller";
