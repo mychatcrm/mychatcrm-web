@@ -63,9 +63,7 @@ export function Sidebar({
   const [waQty, setWaQty] = useState(1);
   const [waBuying, setWaBuying] = useState(false);
   const [extraSlotsDb, setExtraSlotsDb] = useState(0);
-  const leadsTriggerRef = useRef<HTMLButtonElement>(null);
-  const [leadsPopoverOpen, setLeadsPopoverOpen] = useState(false);
-  const [leadPopoverPos, setLeadPopoverPos] = useState<{ left: number; top: number; width: number } | null>(null);
+  const [leadsDetailOpen, setLeadsDetailOpen] = useState(false);
   const leadsPanelId = useId();
   const leadsTitleId = useId();
   const leadsTriggerId = useId();
@@ -102,13 +100,6 @@ export function Sidebar({
 
   const remainingLeadsShort = formatLeadCount(remainingLeads);
 
-  const refreshLeadsPopoverPos = useCallback(() => {
-    const el = leadsTriggerRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    setLeadPopoverPos({ left: r.left, top: r.top, width: r.width });
-  }, []);
-
   const refreshProfilePopoverPos = useCallback(() => {
     const el = profileTriggerRef.current;
     if (!el) return;
@@ -116,56 +107,19 @@ export function Sidebar({
     setProfilePopoverPos({ left: r.left, top: r.top, width: r.width });
   }, []);
 
-  const toggleLeadsPopover = () => {
+  const toggleLeadsDetail = () => {
     setProfilePopoverOpen(false);
-    setLeadsPopoverOpen((open) => {
-      const next = !open;
-      if (next) queueMicrotask(() => refreshLeadsPopoverPos());
-      return next;
-    });
+    setLeadsDetailOpen((open) => !open);
   };
 
   const toggleProfilePopover = () => {
-    setLeadsPopoverOpen(false);
+    setLeadsDetailOpen(false);
     setProfilePopoverOpen((open) => {
       const next = !open;
       if (next) queueMicrotask(() => refreshProfilePopoverPos());
       return next;
     });
   };
-
-  useLayoutEffect(() => {
-    if (!leadsPopoverOpen) return;
-    refreshLeadsPopoverPos();
-    const onScroll = () => refreshLeadsPopoverPos();
-    const onResize = () => refreshLeadsPopoverPos();
-    window.addEventListener("scroll", onScroll, true);
-    window.addEventListener("resize", onResize);
-    return () => {
-      window.removeEventListener("scroll", onScroll, true);
-      window.removeEventListener("resize", onResize);
-    };
-  }, [leadsPopoverOpen, refreshLeadsPopoverPos]);
-
-  useEffect(() => {
-    if (!leadsPopoverOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (leadsTriggerRef.current?.contains(t)) return;
-      const portalRoot = document.getElementById(leadsPanelId);
-      if (portalRoot?.contains(t)) return;
-      setLeadsPopoverOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setLeadsPopoverOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [leadsPopoverOpen, leadsPanelId]);
 
   useLayoutEffect(() => {
     if (!profilePopoverOpen) return;
@@ -199,6 +153,15 @@ export function Sidebar({
       document.removeEventListener("keydown", onKey);
     };
   }, [profilePopoverOpen, profilePanelId]);
+
+  useEffect(() => {
+    if (!leadsDetailOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLeadsDetailOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [leadsDetailOpen]);
 
   useEffect(() => {
     if (!workspaceMenuOpen) return;
@@ -524,18 +487,17 @@ export function Sidebar({
             </>
           ) : null}
           {!isSellerNav && canManageAccountPlan ? (
-            <div className={cn("mb-2", collapsed && "flex justify-center")}>
+            <div className={cn("relative mb-2", collapsed && "flex justify-center")}>
               <button
-                ref={leadsTriggerRef}
                 type="button"
                 id={leadsTriggerId}
-                onClick={toggleLeadsPopover}
-                aria-haspopup="dialog"
-                aria-expanded={leadsPopoverOpen}
+                onClick={toggleLeadsDetail}
+                aria-expanded={leadsDetailOpen}
                 aria-controls={leadsPanelId}
                 aria-label={`Leads restantes neste ciclo: ${formatLeadCount(remainingLeads)}, ${Math.round(pctRemaining)} por cento disponível. Ver detalhes.`}
                 className={cn(
                   "panel-surface-card rounded-xl border border-line bg-surface-elevated/40 text-left transition hover:border-primary/35 hover:bg-surface-elevated/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+                  leadsDetailOpen && !collapsed && "border-primary/30 bg-surface-elevated/55",
                   collapsed
                     ? "flex h-10 w-10 flex-col items-center justify-center gap-0.5 p-0"
                     : "w-full px-2 py-1.5",
@@ -570,6 +532,62 @@ export function Sidebar({
                   </>
                 )}
               </button>
+              {leadsDetailOpen ? (
+                <div
+                  id={leadsPanelId}
+                  role="region"
+                  aria-labelledby={leadsTitleId}
+                  className={cn(
+                    "panel-floating-card rounded-xl border border-line bg-surface-card p-3 text-content shadow-lg",
+                    collapsed
+                      ? "absolute left-[calc(100%+8px)] top-0 z-50 w-[min(280px,calc(100vw-5rem))]"
+                      : "mt-1.5",
+                  )}
+                >
+                  <div className="mb-0.5 flex items-center gap-1.5">
+                    <div className="h-1 w-1 shrink-0 rounded-full bg-primary" aria-hidden />
+                    <p id={leadsTitleId} className={cn(typography.ui.overline, "text-primary")}>
+                      Uso de leads
+                    </p>
+                  </div>
+                  <p className="mt-2 text-[11px] leading-relaxed text-content-muted">
+                    Resumo do ciclo mensal do plano. Renova em{" "}
+                    <span className="font-medium text-content">{cycleEndLabel}</span>.
+                  </p>
+                  <dl className="mt-2 space-y-1.5 rounded-xl border border-line bg-surface-deep/40 px-2.5 py-2 text-[11px]">
+                    <div className="flex justify-between gap-2">
+                      <dt className="text-content-muted">Plano ({session.planLabel})</dt>
+                      <dd className="font-medium tabular-nums text-content">{formatLeadCount(planLeadsBase)} / mês</dd>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <dt className="text-content-muted">Extra contratado</dt>
+                      <dd className="font-medium tabular-nums text-primary">{formatLeadCount(leadSnap.bonus)}</dd>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <dt className="text-content-muted">Total no ciclo</dt>
+                      <dd className="font-semibold tabular-nums text-content">{formatLeadCount(totalLeadCap)}</dd>
+                    </div>
+                    <div className="flex justify-between gap-2 border-t border-line/60 pt-1.5">
+                      <dt className="text-content-muted">Leads atendidos</dt>
+                      <dd className="tabular-nums text-content-secondary">{formatLeadCount(usedLeads)}</dd>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <dt className="text-content-muted">Restante</dt>
+                      <dd className="font-semibold tabular-nums text-primary">{formatLeadCount(remainingLeads)}</dd>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <dt className="text-content-muted">Percentual usado</dt>
+                      <dd className="tabular-nums text-content">{pctUsed.toFixed(1)}%</dd>
+                    </div>
+                  </dl>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-deep ring-1 ring-inset ring-line/50">
+                    <div className="h-full rounded-full bg-primary" style={{ width: `${pctRemaining}%` }} />
+                  </div>
+                  <p className="mt-2 text-[10px] leading-relaxed text-content-faint">
+                    Apenas consulta — o limite mensal conta leads distintos atendidos no ciclo.
+                  </p>
+                </div>
+              ) : null}
             </div>
           ) : null}
           {canManageAccountPlan ? (
@@ -681,72 +699,6 @@ export function Sidebar({
           </button>
         </div>
       </div>
-      {typeof document !== "undefined" && canManageAccountPlan && leadsPopoverOpen && leadPopoverPos
-        ? createPortal(
-            <div
-              id={leadsPanelId}
-              role="dialog"
-              aria-labelledby={leadsTitleId}
-              className="panel-floating-card fixed z-[120] rounded-xl border border-line bg-surface-card p-3 text-content"
-              style={(() => {
-                const vw = window.innerWidth;
-                const popW = Math.min(280, vw - 24);
-                const centerX = leadPopoverPos.left + leadPopoverPos.width / 2;
-                const left = Math.max(12, Math.min(centerX - popW / 2, vw - 12 - popW));
-                return {
-                  left,
-                  top: leadPopoverPos.top - 8,
-                  width: popW,
-                  transform: "translateY(-100%)",
-                };
-              })()}
-            >
-              <div className="mb-0.5 flex items-center gap-1.5">
-                <div className="h-1 w-1 shrink-0 rounded-full bg-primary" aria-hidden />
-                <p id={leadsTitleId} className={cn(typography.ui.overline, "text-primary")}>
-                  Uso de leads
-                </p>
-              </div>
-              <p className="mt-2 text-[11px] leading-relaxed text-content-muted">
-                Resumo do ciclo mensal do plano. Renova em{" "}
-                <span className="font-medium text-content">{cycleEndLabel}</span>.
-              </p>
-              <dl className="mt-2 space-y-1.5 rounded-xl border border-line bg-surface-deep/40 px-2.5 py-2 text-[11px]">
-                <div className="flex justify-between gap-2">
-                  <dt className="text-content-muted">Plano ({session.planLabel})</dt>
-                  <dd className="font-medium tabular-nums text-content">{formatLeadCount(planLeadsBase)} / mês</dd>
-                </div>
-                <div className="flex justify-between gap-2">
-                  <dt className="text-content-muted">Extra contratado (fora do plano)</dt>
-                  <dd className="font-medium tabular-nums text-primary">{formatLeadCount(leadSnap.bonus)}</dd>
-                </div>
-                <div className="flex justify-between gap-2">
-                  <dt className="text-content-muted">Total no ciclo</dt>
-                  <dd className="font-semibold tabular-nums text-content">{formatLeadCount(totalLeadCap)}</dd>
-                </div>
-                <div className="flex justify-between gap-2 border-t border-line/60 pt-1.5">
-                  <dt className="text-content-muted">Leads atendidos (estimativa)</dt>
-                  <dd className="tabular-nums text-content-secondary">{formatLeadCount(usedLeads)}</dd>
-                </div>
-                <div className="flex justify-between gap-2">
-                  <dt className="text-content-muted">Restante</dt>
-                  <dd className="font-semibold tabular-nums text-primary">{formatLeadCount(remainingLeads)}</dd>
-                </div>
-                <div className="flex justify-between gap-2">
-                  <dt className="text-content-muted">Percentual usado</dt>
-                  <dd className="tabular-nums text-content">{pctUsed.toFixed(1)}%</dd>
-                </div>
-              </dl>
-              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-deep ring-1 ring-inset ring-line/50">
-                <div className="h-full rounded-full bg-primary" style={{ width: `${pctRemaining}%` }} />
-              </div>
-              <p className="mt-2 text-[10px] leading-relaxed text-content-faint">
-                Apenas consulta — o limite mensal conta leads distintos atendidos no ciclo.
-              </p>
-            </div>,
-            document.body,
-          )
-        : null}
       {typeof document !== "undefined" &&
       !canManageAccountPlan &&
       canCollaboratorProfilePopover &&
