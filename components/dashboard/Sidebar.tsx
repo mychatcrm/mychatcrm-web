@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronRight, ChevronUp, Circle, Cpu, Moon, Settings, Sun, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Circle, Cpu, Moon, Settings, Sun } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { Badge } from "@/components/ui/Badge";
@@ -63,10 +63,7 @@ export function Sidebar({
   const [waQty, setWaQty] = useState(1);
   const [waBuying, setWaBuying] = useState(false);
   const [extraSlotsDb, setExtraSlotsDb] = useState(0);
-  const [leadsDetailOpen, setLeadsDetailOpen] = useState(false);
-  const leadsPanelId = useId();
-  const leadsTitleId = useId();
-  const leadsTriggerId = useId();
+  const [leadsModalOpen, setLeadsModalOpen] = useState(false);
   const profileTriggerRef = useRef<HTMLButtonElement>(null);
   const [profilePopoverOpen, setProfilePopoverOpen] = useState(false);
   const [profilePopoverPos, setProfilePopoverPos] = useState<{ left: number; top: number; width: number } | null>(null);
@@ -107,13 +104,13 @@ export function Sidebar({
     setProfilePopoverPos({ left: r.left, top: r.top, width: r.width });
   }, []);
 
-  const toggleLeadsDetail = () => {
+  const openLeadsModal = () => {
     setProfilePopoverOpen(false);
-    setLeadsDetailOpen((open) => !open);
+    setLeadsModalOpen(true);
   };
 
   const toggleProfilePopover = () => {
-    setLeadsDetailOpen(false);
+    setLeadsModalOpen(false);
     setProfilePopoverOpen((open) => {
       const next = !open;
       if (next) queueMicrotask(() => refreshProfilePopoverPos());
@@ -153,15 +150,6 @@ export function Sidebar({
       document.removeEventListener("keydown", onKey);
     };
   }, [profilePopoverOpen, profilePanelId]);
-
-  useEffect(() => {
-    if (!leadsDetailOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setLeadsDetailOpen(false);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [leadsDetailOpen]);
 
   useEffect(() => {
     if (!workspaceMenuOpen) return;
@@ -487,21 +475,15 @@ export function Sidebar({
             </>
           ) : null}
           {!isSellerNav && canManageAccountPlan ? (
-            <div className={cn("relative mb-2", collapsed && "flex justify-center")}>
+            <div className={cn("mb-2", collapsed && "flex justify-center")}>
               <button
                 type="button"
-                id={leadsTriggerId}
-                onClick={toggleLeadsDetail}
-                aria-expanded={leadsDetailOpen}
-                aria-controls={leadsPanelId}
-                aria-label={
-                  leadsDetailOpen
-                    ? `Ocultar detalhes de leads. ${formatLeadCount(remainingLeads)} restantes neste ciclo.`
-                    : `Ver detalhes de leads. ${formatLeadCount(remainingLeads)} restantes neste ciclo, ${Math.round(pctRemaining)} por cento disponível.`
-                }
+                onClick={openLeadsModal}
+                aria-haspopup="dialog"
+                aria-label={`Abrir relatório de uso de leads. ${formatLeadCount(remainingLeads)} restantes neste ciclo, ${Math.round(pctRemaining)} por cento disponível.`}
+                title="Ver relatório de uso de leads do plano"
                 className={cn(
                   "panel-surface-card rounded-xl border border-line bg-surface-elevated/40 text-left transition hover:border-primary/35 hover:bg-surface-elevated/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
-                  leadsDetailOpen && !collapsed && "border-primary/30 bg-surface-elevated/55",
                   collapsed
                     ? "flex h-10 w-10 flex-col items-center justify-center gap-0.5 p-0"
                     : "w-full px-2 py-1.5",
@@ -522,19 +504,7 @@ export function Sidebar({
                       </div>
                       <span className="shrink-0 text-[10px] font-semibold tabular-nums text-content-muted">{Math.round(pctRemaining)}%</span>
                     </div>
-                    <p className="flex items-center gap-1 text-[10px] text-content-faint">
-                      {leadsDetailOpen ? (
-                        <>
-                          <ChevronUp className="h-3 w-3 shrink-0" strokeWidth={2} aria-hidden />
-                          Clique para ocultar
-                        </>
-                      ) : (
-                        <>
-                          <ChevronDown className="h-3 w-3 shrink-0" strokeWidth={2} aria-hidden />
-                          Clique para ver detalhes
-                        </>
-                      )}
-                    </p>
+                    <p className="text-[10px] text-primary/80">Ver relatório</p>
                   </div>
                 ) : (
                   <>
@@ -549,80 +519,6 @@ export function Sidebar({
                   </>
                 )}
               </button>
-              {leadsDetailOpen ? (
-                <div
-                  id={leadsPanelId}
-                  role="region"
-                  aria-labelledby={leadsTitleId}
-                  className={cn(
-                    "panel-floating-card rounded-xl border border-line bg-surface-card p-3 text-content shadow-lg",
-                    collapsed
-                      ? "absolute left-[calc(100%+8px)] top-0 z-50 w-[min(280px,calc(100vw-5rem))]"
-                      : "mt-1.5",
-                  )}
-                >
-                  <div className="mb-0.5 flex items-start justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <div className="h-1 w-1 shrink-0 rounded-full bg-primary" aria-hidden />
-                      <p id={leadsTitleId} className={cn(typography.ui.overline, "text-primary")}>
-                        Uso de leads
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setLeadsDetailOpen(false)}
-                      aria-label="Fechar uso de leads"
-                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-line/70 text-content-muted transition hover:border-line hover:bg-surface-elevated hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-                    >
-                      <X className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
-                    </button>
-                  </div>
-                  <p className="mt-2 text-[11px] leading-relaxed text-content-muted">
-                    Resumo do ciclo mensal do plano. Renova em{" "}
-                    <span className="font-medium text-content">{cycleEndLabel}</span>.
-                  </p>
-                  <dl className="mt-2 space-y-1.5 rounded-xl border border-line bg-surface-deep/40 px-2.5 py-2 text-[11px]">
-                    <div className="flex justify-between gap-2">
-                      <dt className="text-content-muted">Plano ({session.planLabel})</dt>
-                      <dd className="font-medium tabular-nums text-content">{formatLeadCount(planLeadsBase)} / mês</dd>
-                    </div>
-                    <div className="flex justify-between gap-2">
-                      <dt className="text-content-muted">Extra contratado</dt>
-                      <dd className="font-medium tabular-nums text-primary">{formatLeadCount(leadSnap.bonus)}</dd>
-                    </div>
-                    <div className="flex justify-between gap-2">
-                      <dt className="text-content-muted">Total no ciclo</dt>
-                      <dd className="font-semibold tabular-nums text-content">{formatLeadCount(totalLeadCap)}</dd>
-                    </div>
-                    <div className="flex justify-between gap-2 border-t border-line/60 pt-1.5">
-                      <dt className="text-content-muted">Leads atendidos</dt>
-                      <dd className="tabular-nums text-content-secondary">{formatLeadCount(usedLeads)}</dd>
-                    </div>
-                    <div className="flex justify-between gap-2">
-                      <dt className="text-content-muted">Restante</dt>
-                      <dd className="font-semibold tabular-nums text-primary">{formatLeadCount(remainingLeads)}</dd>
-                    </div>
-                    <div className="flex justify-between gap-2">
-                      <dt className="text-content-muted">Percentual usado</dt>
-                      <dd className="tabular-nums text-content">{pctUsed.toFixed(1)}%</dd>
-                    </div>
-                  </dl>
-                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-deep ring-1 ring-inset ring-line/50">
-                    <div className="h-full rounded-full bg-primary" style={{ width: `${pctRemaining}%` }} />
-                  </div>
-                  <p className="mt-2 text-[10px] leading-relaxed text-content-faint">
-                    Apenas consulta — o limite mensal conta leads distintos atendidos no ciclo.
-                  </p>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => setLeadsDetailOpen(false)}
-                    className="mt-3 min-h-9 w-full text-xs font-semibold"
-                  >
-                    Fechar
-                  </Button>
-                </div>
-              ) : null}
             </div>
           ) : null}
           {canManageAccountPlan ? (
@@ -751,6 +647,62 @@ export function Sidebar({
             document.body,
           )
         : null}
+      <Modal
+        open={leadsModalOpen}
+        onClose={() => setLeadsModalOpen(false)}
+        title="Uso de leads"
+        className="max-w-md"
+        footer={
+          <Button type="button" variant="secondary" onClick={() => setLeadsModalOpen(false)}>
+            Fechar
+          </Button>
+        }
+      >
+        <div className="space-y-3 text-sm text-content-secondary">
+          <p className="text-[13px] leading-relaxed text-content-muted">
+            Resumo do ciclo mensal do plano <span className="font-medium text-content">{session.planLabel}</span>.
+            Renova em <span className="font-medium text-content">{cycleEndLabel}</span>.
+          </p>
+          <dl className="space-y-2 rounded-xl border border-line bg-surface-deep/40 px-3 py-3 text-[13px]">
+            <div className="flex justify-between gap-3">
+              <dt className="text-content-muted">Incluídos no plano</dt>
+              <dd className="font-medium tabular-nums text-content">{formatLeadCount(planLeadsBase)} / mês</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-content-muted">Extra contratado</dt>
+              <dd className="font-medium tabular-nums text-primary">{formatLeadCount(leadSnap.bonus)}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-content-muted">Total no ciclo</dt>
+              <dd className="font-semibold tabular-nums text-content">{formatLeadCount(totalLeadCap)}</dd>
+            </div>
+            <div className="flex justify-between gap-3 border-t border-line/60 pt-2">
+              <dt className="text-content-muted">Leads atendidos</dt>
+              <dd className="tabular-nums text-content-secondary">{formatLeadCount(usedLeads)}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-content-muted">Restante</dt>
+              <dd className="font-semibold tabular-nums text-primary">{formatLeadCount(remainingLeads)}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-content-muted">Percentual usado</dt>
+              <dd className="tabular-nums text-content">{pctUsed.toFixed(1)}%</dd>
+            </div>
+          </dl>
+          <div>
+            <div className="mb-1.5 flex items-center justify-between text-xs text-content-muted">
+              <span>Disponível no ciclo</span>
+              <span className="font-semibold tabular-nums text-content">{Math.round(pctRemaining)}%</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-surface-deep ring-1 ring-inset ring-line/50">
+              <div className="h-full rounded-full bg-primary transition-[width] duration-300" style={{ width: `${pctRemaining}%` }} />
+            </div>
+          </div>
+          <p className="text-xs leading-relaxed text-content-faint">
+            Apenas consulta — o limite mensal conta leads distintos atendidos no ciclo.
+          </p>
+        </div>
+      </Modal>
       <Modal
         open={upgradeOpen}
         onClose={() => setUpgradeOpen(false)}
