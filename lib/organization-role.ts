@@ -39,6 +39,19 @@ export function organizationRoleCanAccessPersonalSettings(role: OrganizationRole
   return role === "owner";
 }
 
+/** Titular da conta: role owner ou director raiz (sem superior na hierarquia). */
+export function sessionCanAccessPersonalSettings(session: {
+  organizationRole?: OrganizationRole;
+  employeeId?: string;
+  reportsToEmployeeId?: string;
+}): boolean {
+  const role = resolveOrganizationRole(session);
+  return (
+    organizationRoleCanAccessPersonalSettings(role) ||
+    (role === "director" && !session.reportsToEmployeeId)
+  );
+}
+
 /** Diretor, gerente e vendedor: ajustes pessoais rápidos na sidebar (sem rota de configurações completas do dono). */
 export function organizationRoleCanUseSidebarProfilePopover(role: OrganizationRole): boolean {
   return role === "director" || role === "manager" || role === "seller";
