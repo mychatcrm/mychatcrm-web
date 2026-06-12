@@ -7,7 +7,6 @@ import { ChevronDown, ChevronRight, Circle, Cpu, Moon, Settings, Sun } from "luc
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { Badge } from "@/components/ui/Badge";
-import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
 import { Modal } from "@/components/ui/Modal";
 import { WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL } from "@/lib/plans";
 import { cn, formatBRL } from "@/lib/utils";
@@ -61,9 +60,7 @@ export function Sidebar({
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [waSlotSummary, setWaSlotSummary] = useState({ purchased: 0, configured: 0 });
-  const [waAddOpen, setWaAddOpen] = useState(false);
   const [waQty, setWaQty] = useState(1);
-  const [waQtyError, setWaQtyError] = useState<string | null>(null);
   const [waBuying, setWaBuying] = useState(false);
   const [extraSlotsDb, setExtraSlotsDb] = useState(0);
   const leadsTriggerRef = useRef<HTMLButtonElement>(null);
@@ -86,8 +83,6 @@ export function Sidebar({
 
   /** Data do fim do ciclo — só no cliente após layout (evita mismatch SSR/cliente por fuso/formato). */
   const [cycleEndLabel, setCycleEndLabel] = useState("…");
-
-  const waLineMonthlyTotal = useMemo(() => waQty * WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL, [waQty]);
 
   useLayoutEffect(() => {
     const d = new Date();
@@ -235,44 +230,6 @@ export function Sidebar({
       })
       .catch(() => {});
   }, [session.tenantId]);
-
-  const closeWaAddModal = useCallback(() => {
-    setWaAddOpen(false);
-    setWaQty(1);
-    setWaQtyError(null);
-    setWaBuying(false);
-  }, []);
-
-  const openWaAddFlow = useCallback(() => {
-    setWorkspaceMenuOpen(false);
-    setWaQty(1);
-    setWaQtyError(null);
-    setWaBuying(false);
-    setWaAddOpen(true);
-  }, []);
-
-  const handleBuyWhatsApp = useCallback(async () => {
-    const n = Math.floor(Number(waQty));
-    if (!Number.isFinite(n) || n < 1 || n > 10) {
-      setWaQtyError("Indique uma quantidade entre 1 e 10.");
-      return;
-    }
-    setWaQtyError(null);
-    setWaBuying(true);
-    try {
-      const res = await fetch("/api/checkout/extra-whatsapp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ quantity: n }),
-      });
-      if (!res.ok) throw new Error();
-      const { url } = (await res.json()) as { url: string };
-      window.open(url, "_blank");
-      closeWaAddModal();
-    } catch {
-      setWaBuying(false);
-    }
-  }, [waQty, closeWaAddModal]);
 
   const logout = async () => {
     await fetch("/api/auth/client/logout", { method: "POST" }).catch(() => null);
@@ -469,16 +426,60 @@ export function Sidebar({
                     ) : null}
                     {canManageAccountPlan ? (
                       <>
-                        <button
-                          type="button"
-                          onClick={openWaAddFlow}
-                          className="mt-3 flex min-h-[44px] w-full items-center justify-center rounded-xl bg-primary px-3 text-center text-sm font-medium text-white transition hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-card"
-                        >
-                          Adicionar outro WhatsApp
-                        </button>
-                        <p className="mt-2 text-center text-[10px] text-content-faint">
-                          Quantidade → checkout imediato. Os números em si liga-se em Integrações &gt; WhatsApp.
-                        </p>
+                        <div className="mt-3 flex flex-col gap-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              aria-label="Diminuir quantidade"
+                              disabled={waQty <= 1 || waBuying}
+                              onClick={() => setWaQty((q) => Math.max(1, q - 1))}
+                              className="flex h-7 w-7 items-center justify-center rounded-lg border border-line bg-surface-card text-sm font-bold text-content hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              −
+                            </button>
+                            <span className="w-5 text-center text-sm font-semibold tabular-nums text-content">
+                              {waQty}
+                            </span>
+                            <button
+                              type="button"
+                              aria-label="Aumentar quantidade"
+                              disabled={waQty >= 10 || waBuying}
+                              onClick={() => setWaQty((q) => Math.min(10, q + 1))}
+                              className="flex h-7 w-7 items-center justify-center rounded-lg border border-line bg-surface-card text-sm font-bold text-content hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              +
+                            </button>
+                            <button
+                              type="button"
+                              disabled={waBuying}
+                              onClick={async () => {
+                                setWaBuying(true);
+                                try {
+                                  const res = await fetch("/api/checkout/extra-whatsapp", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ quantity: waQty }),
+                                  });
+                                  if (!res.ok) throw new Error();
+                                  const { url } = (await res.json()) as { url: string };
+                                  window.open(url, "_blank");
+                                } catch {
+                                  setWaBuying(false);
+                                }
+                              }}
+                              className="rounded-lg bg-primary/10 px-2.5 py-1.5 text-[11px] font-semibold text-primary hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {waBuying ? "Redirecionando…" : "Comprar agora"}
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-content-subtle">
+                            {waQty} número{waQty > 1 ? "s" : ""} extra{waQty > 1 ? "s" : ""} — R${" "}
+                            {(WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL * waQty).toLocaleString("pt-BR", {
+                              minimumFractionDigits: 2,
+                            })}
+                            /mês
+                          </p>
+                        </div>
                         <Link
                           href="/planos"
                           onClick={() => {
@@ -775,58 +776,6 @@ export function Sidebar({
             document.body,
           )
         : null}
-      <Modal
-        open={waAddOpen}
-        onClose={closeWaAddModal}
-        title="Números WhatsApp extra"
-        className="max-w-md"
-        footer={
-          <>
-            <Button type="button" variant="secondary" onClick={closeWaAddModal} disabled={waBuying}>
-              Cancelar
-            </Button>
-            <Button type="button" variant="gradient" isLoading={waBuying} onClick={handleBuyWhatsApp}>
-              {waBuying ? "Redirecionando…" : "Comprar agora"}
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-4 text-sm text-content-secondary">
-          <p>
-            Cada linha extra na <span className="font-medium text-content">API oficial WhatsApp</span> custa{" "}
-            <span className="font-semibold text-primary">{formatBRL(WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL)}</span> por mês,
-            somada à assinatura. O registo do número (QR ou Meta) faz-se depois em{" "}
-            <span className="font-medium text-content-secondary">Integrações → WhatsApp</span>.
-          </p>
-          <div>
-            <label className="text-xs font-semibold text-content-muted" htmlFor="sidebar-wa-extra-qty">
-              Quantidade de números novos
-            </label>
-            <Input
-              id="sidebar-wa-extra-qty"
-              type="number"
-              inputMode="numeric"
-              min={1}
-              max={10}
-              value={waQty}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                setWaQty(Number.isFinite(v) ? v : 1);
-                if (waQtyError) setWaQtyError(null);
-              }}
-              className="mt-1.5"
-            />
-            {waQtyError ? <p className="mt-1.5 text-xs text-rose-500">{waQtyError}</p> : null}
-          </div>
-          <div className="rounded-xl border border-line bg-surface-deep/40 px-3 py-2 text-xs">
-            <span className="text-content-muted">Total mensal:</span>{" "}
-            <span className="font-display text-base font-semibold tabular-nums text-primary">
-              {formatBRL(waLineMonthlyTotal)}
-            </span>
-            <span className="text-content-faint"> ({waQty} × {formatBRL(WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL)})</span>
-          </div>
-        </div>
-      </Modal>
       <Modal
         open={upgradeOpen}
         onClose={() => setUpgradeOpen(false)}
