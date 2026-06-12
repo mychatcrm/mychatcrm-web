@@ -1851,30 +1851,7 @@ function CrmPage({
     <div className="space-y-4">
       <Panel
         title="CRM Kanban"
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            {crmViewToggle}
-            <button
-              type="button"
-              onClick={() => setFunnelConfigOpen((open) => !open)}
-              aria-expanded={funnelConfigOpen}
-              aria-controls="crm-funnel-config-panel"
-              className={cn(
-                "group inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition duration-200",
-                funnelConfigOpen
-                  ? "border-primary/30 bg-primary/[0.09] text-primary"
-                  : "border-transparent bg-surface-elevated/35 text-content-muted hover:border-primary/20 hover:bg-primary/[0.055] hover:text-primary",
-              )}
-            >
-              <Settings
-                className="h-3.5 w-3.5 shrink-0 transition-transform duration-200 group-hover:rotate-45"
-                strokeWidth={2}
-                aria-hidden
-              />
-              Configurar funil
-            </button>
-          </div>
-        }
+        actions={crmViewToggle}
       >
         <div className="space-y-4">
           {activeFunnel ? (
@@ -1892,40 +1869,70 @@ function CrmPage({
             </section>
           ) : null}
 
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line/45 bg-surface-elevated/20 p-2">
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-elevated/55 text-primary ring-1 ring-line/45">
-                <Layers className="h-4 w-4" strokeWidth={1.9} aria-hidden />
+          <div className="min-w-0">
+            <div className="relative flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line/45 bg-surface-elevated/20 p-2 pb-3">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-elevated/55 text-primary ring-1 ring-line/45">
+                  <Layers className="h-4 w-4" strokeWidth={1.9} aria-hidden />
+                </div>
+                <div className="min-w-0 flex-1 sm:max-w-sm">
+                  <label className="sr-only" htmlFor="crm-pipeline-funil">
+                    Funil ativo
+                  </label>
+                  <Select
+                    id="crm-pipeline-funil"
+                    className={cn(
+                      "h-9 min-h-0 w-full max-w-none truncate rounded-lg border-line/40 bg-surface-card/70 py-0 pl-3 pr-9 text-sm font-semibold text-content",
+                      isLight ? "[color-scheme:light]" : "[color-scheme:dark]",
+                    )}
+                    value={activeFunnel?.id ?? ""}
+                    title={activeFunnel?.nome ?? "Selecionar funil"}
+                    onChange={(event) => setPipelineFunilId(event.target.value)}
+                  >
+                    {funnels.map((f) => (
+                      <option key={f.id} value={f.id} className="bg-surface-card text-content">
+                        {f.nome}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
               </div>
-              <div className="min-w-0 flex-1 sm:max-w-sm">
-                <label className="sr-only" htmlFor="crm-pipeline-funil">
-                  Funil ativo
-                </label>
-                <Select
-                  id="crm-pipeline-funil"
+              <span className="shrink-0 rounded-full bg-surface-elevated/45 px-2.5 py-1 text-[11px] font-medium text-content-muted ring-1 ring-line/40">
+                {pipelineLeads.length} {pipelineLeads.length === 1 ? "lead visível" : "leads visíveis"}
+              </span>
+              <button
+                type="button"
+                onClick={() => setFunnelConfigOpen((open) => !open)}
+                aria-expanded={funnelConfigOpen}
+                aria-controls="crm-funnel-config-panel"
+                aria-label={funnelConfigOpen ? "Fechar configurações do funil" : "Abrir configurações do funil"}
+                title={funnelConfigOpen ? "Fechar configurações do funil" : "Abrir configurações do funil"}
+                className="absolute bottom-0 left-1/2 z-10 flex h-6 w-8 -translate-x-1/2 translate-y-1/2 items-center justify-center bg-transparent text-content-faint opacity-65 transition-opacity duration-200 ease-out hover:opacity-100 focus-visible:rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25"
+              >
+                <ChevronDown
                   className={cn(
-                    "h-9 min-h-0 w-full max-w-none truncate rounded-lg border-line/40 bg-surface-card/70 py-0 pl-3 pr-9 text-sm font-semibold text-content",
-                    isLight ? "[color-scheme:light]" : "[color-scheme:dark]",
+                    "h-4 w-4 transition-transform duration-200 ease-out",
+                    funnelConfigOpen && "rotate-180",
                   )}
-                  value={activeFunnel?.id ?? ""}
-                  title={activeFunnel?.nome ?? "Selecionar funil"}
-                  onChange={(event) => setPipelineFunilId(event.target.value)}
-                >
-                  {funnels.map((f) => (
-                    <option key={f.id} value={f.id} className="bg-surface-card text-content">
-                      {f.nome}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+                  strokeWidth={1.8}
+                  aria-hidden
+                />
+              </button>
             </div>
-            <span className="shrink-0 rounded-full bg-surface-elevated/45 px-2.5 py-1 text-[11px] font-medium text-content-muted ring-1 ring-line/40">
-              {pipelineLeads.length} {pipelineLeads.length === 1 ? "lead visível" : "leads visíveis"}
-            </span>
-          </div>
 
-          {funnelConfigOpen ? (
-            <section id="crm-funnel-config-panel" className={crmSectionCard} aria-labelledby="crm-sec-funil-heading">
+            <div
+              className={cn(
+                "grid transition-[grid-template-rows,opacity,padding] duration-200 ease-out",
+                funnelConfigOpen ? "grid-rows-[1fr] pt-4 opacity-100" : "grid-rows-[0fr] pt-0 opacity-0",
+              )}
+            >
+              <div className="min-h-0 overflow-hidden" inert={!funnelConfigOpen}>
+                <section
+                  id="crm-funnel-config-panel"
+                  className={crmSectionCard}
+                  aria-labelledby="crm-sec-funil-heading"
+                  aria-hidden={!funnelConfigOpen}
+                >
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3 rounded-2xl bg-surface-elevated/25 px-3 py-3 ring-1 ring-line/35">
               <div className="min-w-0">
                 <h3 id="crm-sec-funil-heading" className={typography.ui.overline}>
@@ -2059,8 +2066,10 @@ function CrmPage({
                 </p>
               ) : null}
             </div>
-          </section>
-          ) : null}
+                </section>
+              </div>
+            </div>
+          </div>
 
           {/* Área de trabalho CRM Kanban / Lista */}
           <section className="min-w-0" aria-labelledby="crm-sec-vista-heading">
