@@ -45,7 +45,9 @@ export function Sidebar({
   const orgRole = resolveOrganizationRole(session);
   const isSellerNav = orgRole === "seller";
   /** Plano, limites de leads, contratação e configurações sensíveis da conta — só o titular (dono). */
-  const canManageAccountPlan = organizationRoleCanAccessPersonalSettings(orgRole);
+  const canManageAccountPlan =
+    organizationRoleCanAccessPersonalSettings(orgRole) ||
+    (orgRole === "director" && !session.reportsToEmployeeId);
   const canCollaboratorProfilePopover = organizationRoleCanUseSidebarProfilePopover(orgRole);
   const settingsActive = pathname === "/dashboard/configuracoes" || pathname.startsWith("/dashboard/configuracoes/");
   const visibleNavItems = useMemo(
