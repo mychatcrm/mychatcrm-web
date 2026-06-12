@@ -14,6 +14,7 @@ function InsightCard({
   hint,
   accent,
   compact,
+  minimal,
   Icon,
 }: {
   label: string;
@@ -22,6 +23,8 @@ function InsightCard({
   /** `sky` mantém o nome histórico na API; visual alinhado ao azul carvão / neutros da marca. */
   accent?: "primary" | "sky" | "amber" | "emerald";
   compact?: boolean;
+  /** Topo CRM: só label + valor, sem ícone nem hint. */
+  minimal?: boolean;
   Icon: LucideIcon;
 }) {
   const { isLight } = usePanelAppearance();
@@ -49,13 +52,23 @@ function InsightCard({
   const valueClass =
     accent === "sky"
       ? (isLight ? "text-content-secondary" : "text-content-muted")
-      : accent === "amber"
-        ? "text-primary"
-        : accent === "emerald"
-          ? "text-primary"
-          : "text-primary";
+      : "text-primary";
 
   const topSheen = accent === "sky" ? "bg-brand-secondary/35" : "bg-primary/45";
+
+  if (minimal) {
+    return (
+      <div
+        className={cn(
+          "min-w-0 rounded-xl border px-3 py-2.5",
+          isLight ? "border-line/70 bg-surface-elevated/30" : "border-line/55 bg-surface-elevated/20",
+        )}
+      >
+        <p className="truncate text-[10px] font-medium uppercase tracking-wide text-content-muted">{label}</p>
+        <p className={cn("mt-1 truncate text-sm font-semibold tabular-nums tracking-tight", valueClass)}>{value}</p>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -104,6 +117,7 @@ export function CrmInsightsBar({
   funnelName,
   firstStageId,
   embedded,
+  compactTop,
 }: {
   leads: ClientLead[];
   stageCount: number;
@@ -111,6 +125,8 @@ export function CrmInsightsBar({
   firstStageId: string;
   /** Dentro do painel principal CRM: menos moldura e título duplicado. */
   embedded?: boolean;
+  /** Barra compacta no topo do CRM Kanban — só os 4 KPIs. */
+  compactTop?: boolean;
 }) {
   const { isLight } = usePanelAppearance();
 
@@ -130,13 +146,19 @@ export function CrmInsightsBar({
   }, [leads, firstStageId]);
 
   const grid = (
-    <div className={cn("grid min-[480px]:grid-cols-2 lg:grid-cols-4", embedded ? "gap-2.5" : "gap-3")}>
+    <div
+      className={cn(
+        "grid min-[480px]:grid-cols-2 lg:grid-cols-4",
+        compactTop ? "gap-2" : embedded ? "gap-2.5" : "gap-3",
+      )}
+    >
       <InsightCard
         label="Valor no pipeline"
         value={formatBRL(stats.valor)}
         hint="Soma das oportunidades abertas neste funil (demo)."
         accent="primary"
         compact={embedded}
+        minimal={compactTop}
         Icon={Wallet}
       />
       <InsightCard
@@ -145,6 +167,7 @@ export function CrmInsightsBar({
         hint="Leads que já saíram da primeira etapa."
         accent="sky"
         compact={embedded}
+        minimal={compactTop}
         Icon={TrendingUp}
       />
       <InsightCard
@@ -153,6 +176,7 @@ export function CrmInsightsBar({
         hint="Proporção em etapa «Fechado» neste conjunto."
         accent="emerald"
         compact={embedded}
+        minimal={compactTop}
         Icon={Percent}
       />
       <InsightCard
@@ -161,10 +185,15 @@ export function CrmInsightsBar({
         hint="Distribuição simulada por corretor."
         accent="amber"
         compact={embedded}
+        minimal={compactTop}
         Icon={UserRound}
       />
     </div>
   );
+
+  if (compactTop) {
+    return grid;
+  }
 
   if (embedded) {
     return (

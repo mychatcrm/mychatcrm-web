@@ -1098,6 +1098,7 @@ function CrmPage({
   const [renameColErr, setRenameColErr] = useState("");
   const [reorderStagesOpen, setReorderStagesOpen] = useState(false);
   const [crmFiltersOpen, setCrmFiltersOpen] = useState(false);
+  const [funnelConfigOpen, setFunnelConfigOpen] = useState(false);
   const [crmShowMoreFilters, setCrmShowMoreFilters] = useState(false);
   const [crmAppliedFilters, setCrmAppliedFilters] = useState<CrmLeadAppliedFilters>(() => ({
     ...EMPTY_CRM_LEAD_FILTERS,
@@ -1810,142 +1811,75 @@ function CrmPage({
     "min-w-0 rounded-[1.4rem] border border-line/65 bg-surface-card/[0.82] p-4 shadow-[0_22px_70px_-52px_rgba(15,23,42,0.72)] ring-1 ring-white/[0.025] sm:p-5",
   );
 
-  const storedLeadCount = leads.length;
+  const crmViewToggle = (
+    <div
+      className={cn(
+        "inline-flex shrink-0 rounded-xl border border-line/60 p-0.5",
+        "bg-surface-elevated/35",
+      )}
+      role="group"
+      aria-label="Vista do pipeline"
+    >
+      <button
+        type="button"
+        className={cn(
+          "rounded-lg px-3 py-1.5 text-sm font-medium transition",
+          view === "kanban"
+            ? "bg-primary text-white shadow-[0_10px_26px_-18px_rgba(242,68,0,0.85)]"
+            : "text-content-muted hover:bg-surface-elevated/60 hover:text-content",
+        )}
+        onClick={() => setView("kanban")}
+      >
+        CRM Kanban
+      </button>
+      <button
+        type="button"
+        className={cn(
+          "rounded-lg px-3 py-1.5 text-sm font-medium transition",
+          view === "lista"
+            ? "bg-primary text-white shadow-[0_10px_26px_-18px_rgba(242,68,0,0.85)]"
+            : "text-content-muted hover:bg-surface-elevated/60 hover:text-content",
+        )}
+        onClick={() => setView("lista")}
+      >
+        Lista
+      </button>
+    </div>
+  );
 
   return (
-    <div className="space-y-6">
-      <div
-        className={cn(
-          "flex flex-col gap-3 rounded-[1.35rem] border px-4 py-3 text-sm leading-relaxed shadow-[0_20px_64px_-52px_rgba(15,23,42,0.72)] ring-1 ring-white/[0.025] sm:flex-row sm:items-center sm:justify-between sm:px-5",
-          isLight ? "border-slate-200/80 bg-white/[0.78] text-content" : "border-line/65 bg-surface-card/70 text-content-secondary",
-        )}
-      >
-        <p className="min-w-0">
-          <span className="font-semibold text-content">Leads no CRM Kanban</span> sem teto mensal por plano (cadastro e integrações).
-          <span className="mx-1 text-content-faint" aria-hidden>
-            ·
-          </span>
-          <span className="font-semibold text-content">Funis de vendas:</span> até{" "}
-          <span className="font-semibold text-content">{formatIntegerPtBr(maxSalesFunnels)}</span> neste plano — nesta demo há{" "}
-          <span className="font-semibold text-content">{funnels.length}</span> funil(is) e{" "}
-          <span className="font-semibold text-content">{formatIntegerPtBr(storedLeadCount)}</span> leads sincronizados no CRM.
-        </p>
-        <Link
-          href="/planos"
-          className="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-2xl border border-primary/35 bg-primary/10 px-4 text-sm font-semibold text-primary transition hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-        >
-          Ver planos
-        </Link>
-      </div>
+    <div className="space-y-4">
       <Panel
         title="CRM Kanban"
-        description="Um funil ativo, vista CRM Kanban ou em lista, ficha 360º do lead e o mesmo pipeline em «Funil e follow-up» nos agentes. Integrações em breve com backend ativo."
         actions={
-          <div
-            className={cn(
-              "inline-flex shrink-0 rounded-2xl border border-line/60 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]",
-              "bg-surface-elevated/35",
-            )}
-            role="group"
-            aria-label="Vista do pipeline"
-          >
+          <div className="flex flex-wrap items-center gap-2">
+            {crmViewToggle}
             <button
               type="button"
+              onClick={() => setFunnelConfigOpen((open) => !open)}
+              aria-expanded={funnelConfigOpen}
+              aria-controls="crm-funnel-config-panel"
               className={cn(
-                "rounded-lg px-3 py-1.5 text-sm font-medium transition",
-                view === "kanban"
-                  ? "bg-primary text-white shadow-[0_10px_26px_-18px_rgba(242,68,0,0.85)]"
-                  : "text-content-muted hover:bg-surface-elevated/60 hover:text-content",
+                "inline-flex min-h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium transition",
+                funnelConfigOpen
+                  ? "border-primary/35 bg-primary/10 text-primary"
+                  : "border-line/60 bg-surface-elevated/30 text-content-muted hover:border-line hover:text-content",
               )}
-              onClick={() => setView("kanban")}
             >
-              CRM Kanban
-            </button>
-            <button
-              type="button"
-              className={cn(
-                "rounded-lg px-3 py-1.5 text-sm font-medium transition",
-                view === "lista"
-                  ? "bg-primary text-white shadow-[0_10px_26px_-18px_rgba(242,68,0,0.85)]"
-                  : "text-content-muted hover:bg-surface-elevated/60 hover:text-content",
-              )}
-              onClick={() => setView("lista")}
-            >
-              Lista
+              <Settings className="h-3.5 w-3.5 shrink-0" strokeWidth={2} aria-hidden />
+              Configurar funil
             </button>
           </div>
         }
       >
-        <div className="space-y-5">
-          {/* 1 — Filtros e ações sobre leads */}
-          <section className={crmSectionCard} aria-labelledby="crm-sec-leads-heading">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <h3 id="crm-sec-leads-heading" className={typography.ui.overline}>
-                Leads neste funil
-              </h3>
-              <span className="rounded-full bg-surface-elevated/45 px-2.5 py-1 text-[11px] font-medium text-content-muted ring-1 ring-line/45">
-                {pipelineLeads.length} {pipelineLeads.length === 1 ? "lead visível" : "leads visíveis"}
-              </span>
-            </div>
-            <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-12 lg:items-end">
-              <div className="min-w-0 sm:col-span-2 lg:col-span-5">
-                <label className="text-xs text-content-faint" htmlFor="crm-pipeline-busca">
-                  Buscar
-                </label>
-                <Input
-                  id="crm-pipeline-busca"
-                  className="mt-1"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Nome, empresa, tag ou origem"
-                />
-              </div>
-              <div className="min-w-0 lg:col-span-3">
-                <label className="text-xs text-content-faint" htmlFor="crm-pipeline-tags">
-                  Tags
-                </label>
-                <Select id="crm-pipeline-tags" className="mt-1" defaultValue="todos">
-                  <option value="todos">Todas</option>
-                  <option value="inbound">Inbound</option>
-                  <option value="premium">Premium</option>
-                </Select>
-              </div>
-              <div className="flex flex-col gap-2 sm:col-span-2 lg:col-span-4 sm:flex-row sm:items-end sm:justify-end lg:justify-end">
-                <p className="text-sm tabular-nums text-content-muted sm:mr-auto sm:pt-2 lg:hidden">
-                  {pipelineLeads.length} {pipelineLeads.length === 1 ? "lead" : "leads"} visíveis
-                </p>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="w-full shrink-0 gap-1.5 sm:w-auto"
-                  type="button"
-                  disabled={!pipelineLeads.length}
-                  onClick={toggleAllVisibleLeads}
-                >
-                  {selectedVisibleLeadCount === pipelineLeads.length && pipelineLeads.length > 0 ? "Desmarcar visíveis" : "Selecionar visíveis"}
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="w-full shrink-0 gap-1.5 sm:w-auto"
-                  type="button"
-                  onClick={() => setAddLeadOpen(true)}
-                >
-                  <Plus className="h-4 w-4 shrink-0" strokeWidth={2.25} aria-hidden />
-                  Novo lead
-                </Button>
-              </div>
-            </div>
-          </section>
-
-          {/* 2 — Métricas rápidas */}
+        <div className="space-y-4">
           {activeFunnel ? (
             <section aria-labelledby="crm-sec-metricas-heading">
               <h3 id="crm-sec-metricas-heading" className="sr-only">
                 Métricas do funil
               </h3>
               <CrmInsightsBar
-                embedded
+                compactTop
                 leads={pipelineLeads}
                 stageCount={activeFunnel.columns.length}
                 funnelName={activeFunnel.nome}
@@ -1954,8 +1888,29 @@ function CrmPage({
             </section>
           ) : null}
 
-          {/* 3 — Funil e etapas (por cima do quadro) */}
-          <section className={crmSectionCard} aria-labelledby="crm-sec-funil-heading">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="sr-only" htmlFor="crm-pipeline-funil">
+              Funil ativo
+            </label>
+            <Select
+              id="crm-pipeline-funil"
+              className="h-9 min-w-[10rem] max-w-xs shrink-0 text-sm"
+              value={pipelineFunilId}
+              onChange={(event) => setPipelineFunilId(event.target.value)}
+            >
+              {funnels.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.nome}
+                </option>
+              ))}
+            </Select>
+            <span className="text-xs text-content-muted">
+              {pipelineLeads.length} {pipelineLeads.length === 1 ? "lead visível" : "leads visíveis"}
+            </span>
+          </div>
+
+          {funnelConfigOpen ? (
+            <section id="crm-funnel-config-panel" className={crmSectionCard} aria-labelledby="crm-sec-funil-heading">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3 rounded-2xl bg-surface-elevated/25 px-3 py-3 ring-1 ring-line/35">
               <div className="min-w-0">
                 <h3 id="crm-sec-funil-heading" className={typography.ui.overline}>
@@ -2023,22 +1978,8 @@ function CrmPage({
 
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:gap-4">
               <div className="min-w-0 flex-1 rounded-2xl bg-surface-elevated/20 p-3 ring-1 ring-line/30">
-                <label className="text-xs text-content-faint" htmlFor="crm-pipeline-funil">
-                  Trocar funil
-                </label>
+                <p className="text-xs text-content-faint">Gestão de funis</p>
                 <div className="mt-1 flex flex-wrap gap-2">
-                  <Select
-                    id="crm-pipeline-funil"
-                    className="min-w-0 flex-1 basis-[min(100%,14rem)]"
-                    value={pipelineFunilId}
-                    onChange={(event) => setPipelineFunilId(event.target.value)}
-                  >
-                    {funnels.map((f) => (
-                      <option key={f.id} value={f.id}>
-                        {f.nome}
-                      </option>
-                    ))}
-                  </Select>
                   <Button
                     type="button"
                     variant="secondary"
@@ -2104,52 +2045,81 @@ function CrmPage({
               ) : null}
             </div>
           </section>
+          ) : null}
 
-          {/* 4 — Área de trabalho CRM Kanban / Lista */}
+          {/* Área de trabalho CRM Kanban / Lista */}
           <section className="min-w-0" aria-labelledby="crm-sec-vista-heading">
-            <div className="mb-3 space-y-3 rounded-[1.35rem] border border-line/55 bg-surface-card/75 p-3.5 shadow-[0_22px_70px_-54px_rgba(15,23,42,0.72)] ring-1 ring-white/[0.025] sm:p-4">
-              <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="mb-3 space-y-3 rounded-xl border border-line/55 bg-surface-card/75 p-3 sm:p-4">
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="relative min-w-[12rem] flex-1">
+                  <label className="sr-only" htmlFor="crm-pipeline-busca">
+                    Buscar leads
+                  </label>
+                  <Search
+                    className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-content-faint"
+                    aria-hidden
+                  />
+                  <Input
+                    id="crm-pipeline-busca"
+                    className="min-h-9 pl-9 text-sm"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder="Buscar nome, empresa, tag ou origem"
+                  />
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="shrink-0 gap-1.5"
+                  type="button"
+                  disabled={!pipelineLeads.length}
+                  onClick={toggleAllVisibleLeads}
+                >
+                  {selectedVisibleLeadCount === pipelineLeads.length && pipelineLeads.length > 0 ? "Desmarcar" : "Selecionar"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="shrink-0 gap-1.5"
+                  type="button"
+                  onClick={() => setAddLeadOpen(true)}
+                >
+                  <Plus className="h-4 w-4 shrink-0" strokeWidth={2.25} aria-hidden />
+                  Novo lead
+                </Button>
+                <button
+                  type="button"
+                  onClick={toggleCrmFiltersPanel}
+                  aria-expanded={crmFiltersOpen}
+                  aria-controls="crm-leads-filters-panel"
+                  className={cn(
+                    "inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition",
+                    isLight
+                      ? "border-primary/35 bg-primary/[0.035] text-primary hover:bg-primary/[0.08]"
+                      : "border-primary/45 bg-primary/[0.055] text-content-secondary hover:bg-primary/10 hover:text-content",
+                  )}
+                >
+                  <Filter className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
+                  Filtros
+                  <ChevronDown
+                    className={cn("h-4 w-4 shrink-0 transition", crmFiltersOpen && "rotate-180")}
+                    aria-hidden
+                  />
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3
                   id="crm-sec-vista-heading"
-                  className="flex flex-wrap items-center gap-2.5"
+                  className="text-sm font-semibold text-content-muted"
                   aria-label={`${view === "kanban" ? "Atendimentos" : "Tabela de leads"}, ${pipelineLeads.length} ${pipelineLeads.length === 1 ? "lead" : "leads"} visíveis`}
                 >
-                  <span className="text-base font-semibold tracking-tight text-content sm:text-lg">
-                    {view === "kanban" ? "Atendimentos" : "Tabela de leads"}
-                  </span>
-                  <span
-                    className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-2xl border border-line/55 bg-surface-elevated/40 px-2.5 text-lg font-bold tabular-nums leading-none text-content transition-colors"
-                    title={`${pipelineLeads.length} ${pipelineLeads.length === 1 ? "lead" : "leads"}`}
-                  >
-                    {pipelineLeads.length}
-                  </span>
+                  {view === "kanban" ? "Quadro Kanban" : "Lista de leads"}
                 </h3>
-                <div className="flex max-w-full flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-end">
-                  <p className="text-xs text-content-muted sm:max-w-[20rem] sm:text-right">
-                    {view === "kanban"
-                      ? "Arraste entre colunas ou reordene na vertical dentro da mesma etapa."
-                      : "Clique numa linha para abrir a ficha 360º."}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={toggleCrmFiltersPanel}
-                    aria-expanded={crmFiltersOpen}
-                    aria-controls="crm-leads-filters-panel"
-                    className={cn(
-                      "inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition",
-                      isLight
-                        ? "border-primary/35 bg-primary/[0.035] text-primary hover:bg-primary/[0.08]"
-                        : "border-primary/45 bg-primary/[0.055] text-content-secondary hover:bg-primary/10 hover:text-content",
-                    )}
-                  >
-                    <Filter className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
-                    {crmFiltersOpen ? "Ocultar filtros" : "Mostrar filtros"}
-                    <ChevronDown
-                      className={cn("h-4 w-4 shrink-0 transition", crmFiltersOpen && "rotate-180")}
-                      aria-hidden
-                    />
-                  </button>
-                </div>
+                <p className="text-xs text-content-faint">
+                  {view === "kanban"
+                    ? "Arraste entre colunas ou reordene na vertical."
+                    : "Clique numa linha para abrir a ficha 360º."}
+                </p>
               </div>
 
               {crmFiltersOpen && activeFunnel ? (
