@@ -504,7 +504,6 @@ export function Sidebar({
                       </div>
                       <span className="shrink-0 text-[10px] font-semibold tabular-nums text-content-muted">{Math.round(pctRemaining)}%</span>
                     </div>
-                    <p className="text-[10px] text-primary/80">Ver relatório</p>
                   </div>
                 ) : (
                   <>
