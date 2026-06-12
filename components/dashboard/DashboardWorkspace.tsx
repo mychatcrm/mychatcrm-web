@@ -47,6 +47,7 @@ import {
   CreditCard,
   Filter,
   FolderPlus,
+  Inbox,
   ListMinus,
   ListPlus,
   KeyRound,
@@ -869,43 +870,93 @@ function CrmKanbanColumn({
   title,
   leadCount,
   sortableIds,
+  animationIndex,
   children,
 }: {
   columnId: string;
   title: string;
   leadCount: number;
   sortableIds: string[];
+  animationIndex: number;
   children: ReactNode;
 }) {
   const { isLight } = usePanelAppearance();
   const id = `${CRM_KANBAN_COL_PREFIX}${columnId}`;
   const { setNodeRef, isOver } = useDroppable({ id });
+  const isClosedColumn = columnId === "fechado" || title.toLocaleLowerCase("pt-BR").includes("fechado");
   return (
     <div
       ref={setNodeRef}
+      style={{ animationDelay: `${animationIndex * 50}ms` }}
       className={cn(
-        "shrink-0 grow-0 rounded-[1.35rem] border border-line/70 bg-surface-card/85 p-3.5 transition-[background-color,border-color,box-shadow]",
-        "shadow-[0_22px_60px_-46px_rgba(15,23,42,0.72)] ring-1 ring-white/[0.03]",
+        "crm-kanban-column-enter shrink-0 grow-0 rounded-[1.35rem] border p-3.5",
+        "transition-[background-color,border-color,box-shadow,transform] duration-200 ease-out hover:-translate-y-0.5",
+        "shadow-[0_24px_62px_-46px_rgba(0,0,0,0.82)] ring-1 ring-white/[0.025]",
         /** Largura responsiva: ~5 colunas visíveis na área útil; scroll horizontal se houver mais etapas. */
         "w-[min(82vw,19rem)] sm:w-[clamp(14rem,calc((100%_-_4rem)/5),19rem)]",
+        isLight
+          ? "border-slate-200/75 bg-white/80 hover:border-slate-300/85 hover:shadow-[0_26px_68px_-45px_rgba(15,23,42,0.32)]"
+          : "border-white/[0.06] bg-[#161b22]/85 hover:border-white/[0.1] hover:bg-[#1c2128]/92 hover:shadow-[0_26px_68px_-42px_rgba(0,0,0,0.95)]",
+        isClosedColumn && (isLight ? "border-emerald-500/20" : "border-[#238636]/35"),
         isOver && "border-primary/45 bg-primary/[0.055] shadow-[0_24px_70px_-42px_rgba(242,68,0,0.55)] ring-primary/20",
       )}
     >
-      <div className="mb-3.5 flex items-center justify-between gap-2 rounded-2xl bg-surface-elevated/35 px-3 py-2 ring-1 ring-line/45">
-        <p className="min-w-0 truncate text-sm font-semibold tracking-tight text-content">{title}</p>
+      <div
+        className={cn(
+          "mb-3.5 flex items-center justify-between gap-2 rounded-2xl px-3 py-2.5 ring-1",
+          isLight ? "bg-slate-50/85 ring-slate-200/70" : "bg-[#0d1117]/72 ring-white/[0.055]",
+          isClosedColumn && (isLight ? "bg-emerald-50/75 ring-emerald-500/15" : "bg-[#238636]/[0.09] ring-[#238636]/25"),
+        )}
+      >
+        <p
+          className={cn(
+            "min-w-0 truncate text-sm font-semibold tracking-tight text-content",
+            isClosedColumn && "text-emerald-500",
+          )}
+        >
+          {title}
+        </p>
         <span
           className={cn(
             "inline-flex min-w-8 shrink-0 items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold tabular-nums",
             isLight
               ? "border border-slate-200/70 bg-white/70 text-content"
-              : "border border-line/55 bg-surface-card/75 text-content",
+              : "border border-white/[0.06] bg-white/[0.055] text-white",
+            isClosedColumn &&
+              (isLight
+                ? "border-emerald-500/20 bg-emerald-500/[0.08] text-emerald-700"
+                : "border-[#238636]/30 bg-[#238636]/15 text-[#56d364]"),
           )}
         >
           {leadCount}
         </span>
       </div>
       <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-        <div className="min-h-[5.5rem] space-y-3">{children}</div>
+        <div
+          className={cn(
+            "min-h-[9.5rem] space-y-3 rounded-2xl border border-dashed p-2.5 transition-colors duration-200",
+            isLight ? "border-slate-200/80 bg-slate-50/35" : "border-white/[0.065] bg-[#0d1117]/35",
+            isOver && "border-primary/35 bg-primary/[0.035]",
+          )}
+        >
+          {leadCount === 0 ? (
+            <div
+              className="flex min-h-[8rem] flex-col items-center justify-center gap-2 text-center text-content-faint"
+              aria-hidden
+            >
+              <div
+                className={cn(
+                  "flex h-8 w-8 items-center justify-center rounded-full",
+                  isLight ? "bg-slate-100" : "bg-white/[0.045]",
+                )}
+              >
+                <Inbox className="h-3.5 w-3.5" strokeWidth={1.7} />
+              </div>
+              <span className="text-[10px] font-medium uppercase tracking-[0.12em]">Sem leads</span>
+            </div>
+          ) : null}
+          {children}
+        </div>
       </SortableContext>
     </div>
   );
@@ -1808,7 +1859,8 @@ function CrmPage({
   }, [addFunnel, newFunnelNome, funnels.length, maxSalesFunnels]);
 
   const crmSectionCard = cn(
-    "min-w-0 rounded-[1.4rem] border border-line/65 bg-surface-card/[0.82] p-4 shadow-[0_22px_70px_-52px_rgba(15,23,42,0.72)] ring-1 ring-white/[0.025] sm:p-5",
+    "min-w-0 rounded-[1.4rem] border p-4 shadow-[0_24px_72px_-52px_rgba(0,0,0,0.86)] ring-1 ring-white/[0.02] sm:p-5",
+    isLight ? "border-slate-200/75 bg-white/80" : "border-white/[0.06] bg-[#161b22]/78",
   );
 
   const crmViewToggle = (
@@ -1852,6 +1904,12 @@ function CrmPage({
       <Panel
         title="CRM Kanban"
         actions={crmViewToggle}
+        className={cn(
+          "overflow-hidden [&>div:first-child_h2]:text-2xl [&>div:first-child_h2]:font-semibold [&>div:first-child_h2]:tracking-[-0.025em]",
+          isLight
+            ? "border-slate-200/75 bg-white/78"
+            : "border-white/[0.06] bg-[#0d1117]/95 shadow-[0_30px_90px_-60px_rgba(0,0,0,0.95)]",
+        )}
       >
         <div className="space-y-4">
           {activeFunnel ? (
@@ -1870,19 +1928,25 @@ function CrmPage({
           ) : null}
 
           <div className="min-w-0">
-            <div className="relative flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line/45 bg-surface-elevated/20 p-2 pb-3">
+            <div
+              className={cn(
+                "relative flex flex-wrap items-center justify-between gap-2 rounded-2xl border p-2.5 pb-4 backdrop-blur-xl",
+                isLight ? "border-slate-200/80 bg-slate-50/70" : "border-white/[0.06] bg-[#161b22]/72",
+              )}
+            >
               <div className="flex min-w-0 flex-1 items-center gap-2">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-elevated/55 text-primary ring-1 ring-line/45">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/[0.12] text-primary ring-1 ring-primary/20">
                   <Layers className="h-4 w-4" strokeWidth={1.9} aria-hidden />
                 </div>
-                <div className="min-w-0 flex-1 sm:max-w-sm">
+                <div className="min-w-0 flex-1 sm:max-w-md">
                   <label className="sr-only" htmlFor="crm-pipeline-funil">
                     Funil ativo
                   </label>
                   <Select
                     id="crm-pipeline-funil"
                     className={cn(
-                      "h-9 min-h-0 w-full max-w-none truncate rounded-lg border-line/40 bg-surface-card/70 py-0 pl-3 pr-9 text-sm font-semibold text-content",
+                      "h-10 min-h-0 w-full max-w-none truncate rounded-full py-0 pl-4 pr-10 text-sm font-semibold text-content shadow-inner",
+                      isLight ? "border-slate-200/80 bg-white/85" : "border-white/[0.06] bg-[#0d1117]/85",
                       isLight ? "[color-scheme:light]" : "[color-scheme:dark]",
                     )}
                     value={activeFunnel?.id ?? ""}
@@ -1897,7 +1961,12 @@ function CrmPage({
                   </Select>
                 </div>
               </div>
-              <span className="shrink-0 rounded-full bg-surface-elevated/45 px-2.5 py-1 text-[11px] font-medium text-content-muted ring-1 ring-line/40">
+              <span
+                className={cn(
+                  "shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium text-content-muted ring-1",
+                  isLight ? "bg-white/80 ring-slate-200/70" : "bg-white/[0.045] ring-white/[0.06]",
+                )}
+              >
                 {pipelineLeads.length} {pipelineLeads.length === 1 ? "lead visível" : "leads visíveis"}
               </span>
               <button
@@ -1907,7 +1976,12 @@ function CrmPage({
                 aria-controls="crm-funnel-config-panel"
                 aria-label={funnelConfigOpen ? "Fechar configurações do funil" : "Abrir configurações do funil"}
                 title={funnelConfigOpen ? "Fechar configurações do funil" : "Abrir configurações do funil"}
-                className="absolute bottom-0 left-1/2 z-10 flex h-6 w-8 -translate-x-1/2 translate-y-1/2 items-center justify-center bg-transparent text-content-faint opacity-65 transition-opacity duration-200 ease-out hover:opacity-100 focus-visible:rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25"
+                className={cn(
+                  "absolute bottom-0 left-1/2 z-10 flex h-7 w-9 -translate-x-1/2 translate-y-1/2 items-center justify-center rounded-full text-content-faint opacity-70 ring-1 transition-[opacity,background-color] duration-200 ease-out hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25",
+                  isLight
+                    ? "bg-white ring-slate-200/80 hover:bg-slate-50"
+                    : "bg-[#161b22] ring-white/[0.06] hover:bg-[#1c2128]",
+                )}
               >
                 <ChevronDown
                   className={cn(
@@ -2073,7 +2147,12 @@ function CrmPage({
 
           {/* Área de trabalho CRM Kanban / Lista */}
           <section className="min-w-0" aria-labelledby="crm-sec-vista-heading">
-            <div className="mb-3 space-y-2.5 rounded-2xl border border-line/50 bg-surface-card/75 p-2.5 shadow-[0_16px_45px_-42px_rgba(15,23,42,0.62)] sm:p-3">
+            <div
+              className={cn(
+                "mb-3 space-y-2.5 rounded-2xl border p-2.5 backdrop-blur-xl sm:p-3",
+                isLight ? "border-slate-200/75 bg-white/78" : "border-white/[0.06] bg-[#161b22]/72",
+              )}
+            >
               <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
                 <div className="relative min-w-0 flex-1">
                   <label className="sr-only" htmlFor="crm-pipeline-busca">
@@ -2085,7 +2164,7 @@ function CrmPage({
                   />
                   <Input
                     id="crm-pipeline-busca"
-                    className="h-9 min-h-0 rounded-lg py-0 pl-9 text-sm"
+                    className="h-10 min-h-0 rounded-xl py-0 pl-9 text-sm focus-visible:border-primary/45 focus-visible:ring-0 focus-visible:shadow-[0_0_0_2px_rgba(242,68,0,0.30)]"
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
                     placeholder="Buscar nome, empresa, tag ou origem"
@@ -2095,7 +2174,7 @@ function CrmPage({
                   <Button
                     variant="secondary"
                     size="sm"
-                    className="h-9 shrink-0 gap-1.5 rounded-lg px-3 py-0"
+                    className="h-10 shrink-0 gap-1.5 rounded-xl px-3 py-0"
                     type="button"
                     disabled={!pipelineLeads.length}
                     onClick={toggleAllVisibleLeads}
@@ -2103,9 +2182,9 @@ function CrmPage({
                     {selectedVisibleLeadCount === pipelineLeads.length && pipelineLeads.length > 0 ? "Desmarcar" : "Selecionar"}
                   </Button>
                   <Button
-                    variant="secondary"
+                    variant="primary"
                     size="sm"
-                    className="h-9 shrink-0 gap-1.5 rounded-lg px-3 py-0"
+                    className="h-10 shrink-0 gap-1.5 rounded-xl bg-gradient-to-b from-[#ff5722] to-primary px-4 py-0 font-semibold text-white shadow-[0_12px_28px_-18px_rgba(242,68,0,0.85)] transition hover:brightness-110"
                     type="button"
                     onClick={() => setAddLeadOpen(true)}
                   >
@@ -2118,7 +2197,7 @@ function CrmPage({
                     aria-expanded={crmFiltersOpen}
                     aria-controls="crm-leads-filters-panel"
                     className={cn(
-                      "inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition",
+                      "inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl border px-3 text-xs font-medium transition",
                       isLight
                         ? "border-primary/30 bg-primary/[0.035] text-primary hover:bg-primary/[0.075]"
                         : "border-primary/35 bg-primary/[0.05] text-content-secondary hover:bg-primary/[0.09] hover:text-content",
@@ -2540,6 +2619,29 @@ function CrmPage({
               ) : null}
             </div>
             {view === "kanban" ? (
+              <>
+                <style jsx global>{`
+                  @keyframes crm-kanban-column-enter {
+                    from {
+                      opacity: 0;
+                      transform: translateY(8px);
+                    }
+                    to {
+                      opacity: 1;
+                      transform: translateY(0);
+                    }
+                  }
+
+                  .crm-kanban-column-enter {
+                    animation: crm-kanban-column-enter 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
+                  }
+
+                  @media (prefers-reduced-motion: reduce) {
+                    .crm-kanban-column-enter {
+                      animation: none;
+                    }
+                  }
+                `}</style>
               <DndContext
                 sensors={sensors}
                 collisionDetection={closestCorners}
@@ -2551,10 +2653,13 @@ function CrmPage({
                 autoScroll={{ acceleration: 14, interval: 5 }}
               >
                 <div
-                  className="flex w-full min-w-0 flex-nowrap gap-4 overflow-x-auto overflow-y-visible rounded-[1.35rem] bg-surface-elevated/20 p-3 pb-4 ring-1 ring-line/35 [-webkit-overflow-scrolling:touch] touch-pan-x"
+                  className={cn(
+                    "flex w-full min-w-0 flex-nowrap gap-4 overflow-x-auto overflow-y-visible rounded-[1.35rem] p-3 pb-4 ring-1 [-webkit-overflow-scrolling:touch] touch-pan-x",
+                    isLight ? "bg-slate-50/55 ring-slate-200/70" : "bg-[#0d1117]/82 ring-white/[0.055]",
+                  )}
                   aria-label="Colunas do funil — deslize para o lado para ver todas as etapas"
                 >
-                  {(activeFunnel?.columns ?? []).map((col) => {
+                  {(activeFunnel?.columns ?? []).map((col, columnIndex) => {
                     const columnLeads = pipelineLeads.filter((lead) => lead.status === col.id);
                     return (
                       <CrmKanbanColumn
@@ -2563,6 +2668,7 @@ function CrmPage({
                         title={col.title}
                         leadCount={columnLeads.length}
                         sortableIds={columnLeads.map((l) => l.id)}
+                        animationIndex={columnIndex}
                       >
                         {columnLeads.map((lead) => (
                           <CrmKanbanLeadCard
@@ -2580,6 +2686,7 @@ function CrmPage({
                   })}
                 </div>
               </DndContext>
+              </>
             ) : (
               <div className="min-w-0 overflow-x-auto touch-pan-x">
                 <DataTable columns={columns} data={pipelineLeads} rowKey={(row) => row.id} onRowClick={setSelectedLead} />

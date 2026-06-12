@@ -8,6 +8,20 @@ import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 import { cn, formatBRL } from "@/lib/utils";
 import { typography } from "@/lib/typography";
 
+function splitMetricValue(value: string) {
+  const currencyMatch = value.match(/^(R\$)\s*(.+)$/);
+  if (currencyMatch) {
+    return { prefix: currencyMatch[1], main: currencyMatch[2], suffix: "" };
+  }
+
+  const percentMatch = value.match(/^(.+?)(%)$/);
+  if (percentMatch) {
+    return { prefix: "", main: percentMatch[1], suffix: percentMatch[2] };
+  }
+
+  return { prefix: "", main: value, suffix: "" };
+}
+
 function InsightCard({
   label,
   value,
@@ -28,6 +42,7 @@ function InsightCard({
   Icon: LucideIcon;
 }) {
   const { isLight } = usePanelAppearance();
+  const metricValue = splitMetricValue(value);
 
   const iconWrap = cn(
     "flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border transition-colors group-hover:border-primary/35",
@@ -60,26 +75,38 @@ function InsightCard({
     return (
       <div
         className={cn(
-          "group min-w-0 px-3.5 py-3.5 transition-colors duration-200 sm:px-4",
+          "group relative min-w-0 overflow-hidden px-3.5 py-4 backdrop-blur-xl transition-[background-color,box-shadow,transform] duration-200 sm:px-4",
+          "before:pointer-events-none before:absolute before:inset-x-5 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-primary/45 before:to-transparent before:opacity-0 before:transition-opacity before:duration-200 group-hover:before:opacity-100",
+          "after:pointer-events-none after:absolute after:inset-y-3 after:right-0 after:hidden after:w-px after:bg-gradient-to-b after:from-transparent after:via-white/10 after:to-transparent lg:after:block lg:last:after:hidden",
           isLight
-            ? "bg-white/80 hover:bg-primary/[0.035]"
-            : "bg-surface-card/90 hover:bg-surface-elevated/55",
+            ? "bg-white/80 hover:bg-primary/[0.035] hover:shadow-[0_16px_36px_-30px_rgba(242,68,0,0.28)]"
+            : "bg-[#161b22]/80 hover:bg-[#1c2128]/95 hover:shadow-[0_18px_42px_-32px_rgba(242,68,0,0.34)]",
         )}
       >
         <div className="flex min-w-0 items-center gap-3">
           <div
             className={cn(
-              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors duration-200",
-              accent === "sky"
-                ? "border-line/55 bg-surface-elevated/45 text-content-secondary group-hover:border-line/80"
-                : "border-primary/25 bg-primary/[0.075] text-primary group-hover:border-primary/40",
+              "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/20 bg-primary/[0.12] text-primary transition-[background-color,transform] duration-200 group-hover:scale-[1.04] group-hover:bg-primary/[0.17]",
             )}
           >
             <Icon className="h-4 w-4" strokeWidth={1.9} aria-hidden />
           </div>
           <div className="min-w-0 flex-1">
-            <p className={cn("truncate text-lg font-bold tabular-nums tracking-tight", valueClass)}>{value}</p>
-            <p className="mt-0.5 truncate text-[10px] font-medium uppercase tracking-[0.12em] text-content-muted">
+            <p
+              className={cn(
+                "flex min-w-0 items-baseline gap-1 truncate font-bold tabular-nums tracking-[-0.035em]",
+                isLight ? "text-content" : "text-white",
+              )}
+            >
+              {metricValue.prefix ? (
+                <span className="text-[11px] font-semibold tracking-normal text-primary">{metricValue.prefix}</span>
+              ) : null}
+              <span className="truncate text-xl sm:text-[1.35rem]">{metricValue.main}</span>
+              {metricValue.suffix ? (
+                <span className="text-xs font-semibold tracking-normal text-content-muted">{metricValue.suffix}</span>
+              ) : null}
+            </p>
+            <p className="mt-1 truncate text-[10px] font-medium uppercase tracking-[0.13em] text-content-muted">
               {label}
             </p>
           </div>
@@ -168,7 +195,10 @@ export function CrmInsightsBar({
       className={cn(
         "grid min-[480px]:grid-cols-2 lg:grid-cols-4",
         compactTop
-          ? "gap-px overflow-hidden rounded-2xl border border-line/55 bg-line/55 shadow-[0_18px_48px_-42px_rgba(15,23,42,0.68)]"
+          ? cn(
+              "gap-px overflow-hidden rounded-2xl border shadow-[0_22px_56px_-44px_rgba(0,0,0,0.86)]",
+              isLight ? "border-slate-200/75 bg-slate-200/80" : "border-white/[0.06] bg-white/[0.055]",
+            )
           : embedded
             ? "gap-2.5"
             : "gap-3",
