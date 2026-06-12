@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronRight, Circle, Cpu, Moon, Settings, Sun } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronUp, Circle, Cpu, Moon, Settings, Sun, X } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { Badge } from "@/components/ui/Badge";
@@ -494,7 +494,11 @@ export function Sidebar({
                 onClick={toggleLeadsDetail}
                 aria-expanded={leadsDetailOpen}
                 aria-controls={leadsPanelId}
-                aria-label={`Leads restantes neste ciclo: ${formatLeadCount(remainingLeads)}, ${Math.round(pctRemaining)} por cento disponível. Ver detalhes.`}
+                aria-label={
+                  leadsDetailOpen
+                    ? `Ocultar detalhes de leads. ${formatLeadCount(remainingLeads)} restantes neste ciclo.`
+                    : `Ver detalhes de leads. ${formatLeadCount(remainingLeads)} restantes neste ciclo, ${Math.round(pctRemaining)} por cento disponível.`
+                }
                 className={cn(
                   "panel-surface-card rounded-xl border border-line bg-surface-elevated/40 text-left transition hover:border-primary/35 hover:bg-surface-elevated/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
                   leadsDetailOpen && !collapsed && "border-primary/30 bg-surface-elevated/55",
@@ -518,6 +522,19 @@ export function Sidebar({
                       </div>
                       <span className="shrink-0 text-[10px] font-semibold tabular-nums text-content-muted">{Math.round(pctRemaining)}%</span>
                     </div>
+                    <p className="flex items-center gap-1 text-[10px] text-content-faint">
+                      {leadsDetailOpen ? (
+                        <>
+                          <ChevronUp className="h-3 w-3 shrink-0" strokeWidth={2} aria-hidden />
+                          Clique para ocultar
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="h-3 w-3 shrink-0" strokeWidth={2} aria-hidden />
+                          Clique para ver detalhes
+                        </>
+                      )}
+                    </p>
                   </div>
                 ) : (
                   <>
@@ -544,11 +561,21 @@ export function Sidebar({
                       : "mt-1.5",
                   )}
                 >
-                  <div className="mb-0.5 flex items-center gap-1.5">
-                    <div className="h-1 w-1 shrink-0 rounded-full bg-primary" aria-hidden />
-                    <p id={leadsTitleId} className={cn(typography.ui.overline, "text-primary")}>
-                      Uso de leads
-                    </p>
+                  <div className="mb-0.5 flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <div className="h-1 w-1 shrink-0 rounded-full bg-primary" aria-hidden />
+                      <p id={leadsTitleId} className={cn(typography.ui.overline, "text-primary")}>
+                        Uso de leads
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setLeadsDetailOpen(false)}
+                      aria-label="Fechar uso de leads"
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-line/70 text-content-muted transition hover:border-line hover:bg-surface-elevated hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                    >
+                      <X className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+                    </button>
                   </div>
                   <p className="mt-2 text-[11px] leading-relaxed text-content-muted">
                     Resumo do ciclo mensal do plano. Renova em{" "}
@@ -586,6 +613,14 @@ export function Sidebar({
                   <p className="mt-2 text-[10px] leading-relaxed text-content-faint">
                     Apenas consulta — o limite mensal conta leads distintos atendidos no ciclo.
                   </p>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setLeadsDetailOpen(false)}
+                    className="mt-3 min-h-9 w-full text-xs font-semibold"
+                  >
+                    Fechar
+                  </Button>
                 </div>
               ) : null}
             </div>
