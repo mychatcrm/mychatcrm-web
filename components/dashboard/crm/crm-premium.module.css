@@ -218,14 +218,17 @@
 }
 
 .kanbanColumn {
+  --crm-stage: #24b9ce;
+  --crm-stage-deep: #12839b;
+  --crm-stage-soft: rgba(36, 185, 206, 0.12);
   border: 0 !important;
-  background: color-mix(in srgb, var(--crm-workspace) 78%, var(--crm-section)) !important;
-  box-shadow: none !important;
+  background: color-mix(in srgb, var(--crm-workspace) 92%, var(--crm-stage)) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--crm-stage) 13%, var(--crm-outline)) !important;
 }
 
 .kanbanColumn:hover {
-  background: color-mix(in srgb, var(--crm-section) 76%, var(--crm-hover)) !important;
-  box-shadow: var(--crm-card-shadow) !important;
+  background: color-mix(in srgb, var(--crm-workspace) 89%, var(--crm-stage)) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--crm-stage) 24%, var(--crm-outline)), 0 18px 44px -34px var(--crm-stage) !important;
 }
 
 .kanbanClosed {
@@ -241,8 +244,8 @@
   position: relative;
   overflow: hidden;
   border: 0 !important;
-  background: #1aa6c8 !important;
-  box-shadow: 0 10px 24px -20px rgba(6, 32, 48, 0.7) !important;
+  background: linear-gradient(135deg, var(--crm-stage-deep), var(--crm-stage)) !important;
+  box-shadow: 0 10px 24px -18px var(--crm-stage) !important;
 }
 
 .kanbanHeader::after {
@@ -253,24 +256,34 @@
   background: linear-gradient(110deg, rgba(255, 255, 255, 0.14), transparent 42%, rgba(0, 0, 0, 0.08));
 }
 
-.kanbanColumn[data-tone="cyan"] .kanbanHeader {
-  background: linear-gradient(135deg, #17a8c5, #28bfd0) !important;
+.kanbanColumn[data-tone="cyan"] {
+  --crm-stage: #29c3d5;
+  --crm-stage-deep: #1092ae;
+  --crm-stage-soft: rgba(41, 195, 213, 0.13);
 }
 
-.kanbanColumn[data-tone="blue"] .kanbanHeader {
-  background: linear-gradient(135deg, #2f79d6, #4a9bea) !important;
+.kanbanColumn[data-tone="blue"] {
+  --crm-stage: #4c9cff;
+  --crm-stage-deep: #286bd4;
+  --crm-stage-soft: rgba(76, 156, 255, 0.13);
 }
 
-.kanbanColumn[data-tone="orange"] .kanbanHeader {
-  background: linear-gradient(135deg, #df3d00, #f26922) !important;
+.kanbanColumn[data-tone="orange"] {
+  --crm-stage: #f24400;
+  --crm-stage-deep: #bd2e00;
+  --crm-stage-soft: rgba(242, 68, 0, 0.13);
 }
 
-.kanbanColumn[data-tone="amber"] .kanbanHeader {
-  background: linear-gradient(135deg, #c88900, #eab308) !important;
+.kanbanColumn[data-tone="amber"] {
+  --crm-stage: #f0b429;
+  --crm-stage-deep: #bc7900;
+  --crm-stage-soft: rgba(240, 180, 41, 0.14);
 }
 
-.kanbanColumn[data-tone="green"] .kanbanHeader {
-  background: linear-gradient(135deg, #258548, #34a85d) !important;
+.kanbanColumn[data-tone="green"] {
+  --crm-stage: #39b66a;
+  --crm-stage-deep: #20854a;
+  --crm-stage-soft: rgba(57, 182, 106, 0.13);
 }
 
 .kanbanBody {
@@ -285,13 +298,24 @@
 }
 
 .leadCard {
+  position: relative;
   border: 0 !important;
   background: var(--crm-elevated) !important;
-  box-shadow: 0 9px 22px -18px rgba(15, 23, 42, 0.62), inset 0 0 0 1px var(--crm-outline) !important;
+  box-shadow: 0 12px 28px -22px rgba(15, 23, 42, 0.7), inset 0 0 0 1px var(--crm-outline) !important;
+}
+
+.leadCard::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 1;
+  width: 3px;
+  content: "";
+  background: linear-gradient(180deg, var(--crm-stage), var(--crm-stage-deep));
+  box-shadow: 4px 0 16px -6px var(--crm-stage);
 }
 
 .leadCard:hover {
-  box-shadow: 0 22px 48px -30px rgba(242, 68, 0, 0.24) !important;
+  box-shadow: 0 22px 44px -28px color-mix(in srgb, var(--crm-stage) 55%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--crm-stage) 25%, var(--crm-outline)) !important;
 }
 
 .leadCardSelected {
@@ -307,6 +331,45 @@
   border: 0 !important;
   background: color-mix(in srgb, var(--crm-inset) 76%, transparent) !important;
   box-shadow: none !important;
+}
+
+.leadAvatar {
+  color: var(--crm-stage-deep);
+  background: var(--crm-stage-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--crm-stage) 22%, transparent);
+}
+
+:global(.panel-app[data-panel-theme="soft-dark"]) .leadAvatar,
+:global(.panel-app[data-panel-theme="dark"]) .leadAvatar {
+  color: color-mix(in srgb, var(--crm-stage) 86%, white);
+}
+
+.leadValueBand {
+  background: linear-gradient(110deg, var(--crm-stage-soft), color-mix(in srgb, var(--crm-inset) 72%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--crm-stage) 10%, var(--crm-outline));
+}
+
+.leadValue {
+  color: var(--crm-stage-deep);
+}
+
+:global(.panel-app[data-panel-theme="soft-dark"]) .leadValue,
+:global(.panel-app[data-panel-theme="dark"]) .leadValue {
+  color: color-mix(in srgb, var(--crm-stage) 88%, white);
+}
+
+.leadMetaTile {
+  background: color-mix(in srgb, var(--crm-inset) 72%, transparent);
+}
+
+.agentChip {
+  color: var(--crm-stage-deep);
+  background: var(--crm-stage-soft);
+}
+
+:global(.panel-app[data-panel-theme="soft-dark"]) .agentChip,
+:global(.panel-app[data-panel-theme="dark"]) .agentChip {
+  color: color-mix(in srgb, var(--crm-stage) 84%, white);
 }
 
 .listSurface :global(.panel-data-table) {

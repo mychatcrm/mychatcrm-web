@@ -47,6 +47,7 @@ import {
   CreditCard,
   Filter,
   FolderPlus,
+  GripVertical,
   Inbox,
   ListMinus,
   ListPlus,
@@ -990,6 +991,12 @@ function CrmKanbanLeadCard({
     zIndex: isDragging ? 40 : undefined,
   };
   const waWebHref = phoneToWhatsAppWebHref(lead.telefone);
+  const leadInitials = lead.nome
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toLocaleUpperCase("pt-BR"))
+    .join("") || "L";
 
   return (
     <div
@@ -1022,80 +1029,91 @@ function CrmKanbanLeadCard({
         }
       }}
     >
-      <div className="relative p-2.5">
-        <div className="mb-1.5 flex items-center justify-between gap-2">
-          <label
-            className={cn(
-              "inline-flex h-5 w-5 items-center justify-center rounded-md text-content-muted transition hover:bg-primary/10",
-              selected && "border-primary/35 bg-primary/10 text-content",
-            )}
-            onClick={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            <input
-              type="checkbox"
-              className="h-3.5 w-3.5 rounded border-line text-primary focus:ring-primary/25"
-              checked={selected}
-              onChange={() => onToggleSelected(lead.id)}
-              aria-label={`Selecionar lead ${lead.nome}`}
-            />
-            <span className="sr-only">Selecionar</span>
-          </label>
-          <span
-            className={cn(
-              "max-w-[70%] truncate rounded px-1.5 py-0.5 text-[9px] font-semibold leading-tight",
-              isLight ? "bg-primary/10 text-orange-800" : "bg-primary/15 text-primary",
-            )}
-            title={`Agente IA a atender: ${lead.agenteAtendendo}`}
-          >
-            {lead.agenteAtendendo}
-          </span>
-        </div>
-        <div className="relative min-w-0">
-          <p className="min-w-0 truncate text-[13px] font-semibold leading-snug tracking-tight text-content">{lead.nome}</p>
-          <div className="mt-1 flex items-center gap-1 text-[10px] text-content-muted">
-            <Building2 className="h-3 w-3 shrink-0 opacity-70" strokeWidth={2} aria-hidden />
-            <span className="min-w-0 truncate">{lead.empresa}</span>
+      <div className="relative p-3">
+        <div className="flex min-w-0 items-start gap-2.5">
+          <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-bold", crmStyles.leadAvatar)}>
+            {leadInitials}
+          </div>
+          <div className="min-w-0 flex-1 pt-0.5">
+            <p className="truncate text-[13px] font-semibold leading-snug tracking-[-0.01em] text-content">{lead.nome}</p>
+            <div className="mt-0.5 flex min-w-0 items-center gap-1 text-[10px] text-content-muted">
+              <Building2 className="h-3 w-3 shrink-0 opacity-65" strokeWidth={1.9} aria-hidden />
+              <span className="truncate">{lead.empresa}</span>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-0.5">
+            <GripVertical className="h-4 w-4 text-content-faint opacity-0 transition-opacity group-hover:opacity-70" strokeWidth={1.8} aria-hidden />
+            <label
+              className={cn(
+                "inline-flex h-6 w-6 items-center justify-center rounded-md text-content-muted transition hover:bg-primary/10",
+                selected && "bg-primary/10 text-content",
+              )}
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 rounded border-line text-primary focus:ring-primary/25"
+                checked={selected}
+                onChange={() => onToggleSelected(lead.id)}
+                aria-label={`Selecionar lead ${lead.nome}`}
+              />
+              <span className="sr-only">Selecionar</span>
+            </label>
           </div>
         </div>
 
-        <div className="mt-2 flex items-end justify-between gap-2">
+        <div className={cn("mt-2.5 flex items-end justify-between gap-2 rounded-lg px-2.5 py-2", crmStyles.leadValueBand)}>
           <div>
-            <p className="text-[9px] uppercase tracking-[0.09em] text-content-faint">Valor</p>
-            <p className="text-sm font-bold tabular-nums tracking-tight text-content">{formatBRL(lead.valor)}</p>
+            <p className="text-[8px] font-semibold uppercase tracking-[0.14em] text-content-faint">Oportunidade</p>
+            <p className={cn("mt-0.5 text-[15px] font-bold tabular-nums tracking-[-0.025em]", crmStyles.leadValue)}>{formatBRL(lead.valor)}</p>
           </div>
           <LeadThermometerInline result={temperature} className="w-[4.5rem]" />
         </div>
 
-        <div className={cn("relative mt-2 space-y-1 rounded-lg px-2 py-1.5", crmStyles.leadCardInset)}>
-          <div className="flex items-center justify-between gap-2 text-[10px] text-content-muted">
-            <div className="flex min-w-0 items-center gap-1">
-              <Clock className="h-3 w-3 shrink-0 opacity-70" strokeWidth={2} aria-hidden />
-              <span className="truncate">{lead.ultimoContato}</span>
+        <div className="mt-2.5 grid grid-cols-2 gap-1.5">
+          <div className={cn("min-w-0 rounded-lg px-2 py-1.5", crmStyles.leadMetaTile)}>
+            <div className="flex items-center gap-1 text-[8px] font-semibold uppercase tracking-[0.1em] text-content-faint">
+              <Clock className="h-2.5 w-2.5 shrink-0" strokeWidth={2} aria-hidden />
+              Contato
             </div>
-            <span className="truncate text-right text-content-faint">{lead.responsavel}</span>
+            <p className="mt-1 truncate text-[10px] font-medium text-content-secondary">{lead.ultimoContato}</p>
           </div>
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="min-w-0 flex-1 truncate text-[10px] font-medium text-content-secondary">{lead.telefone}</span>
-            <a
-              href={waWebHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={cn(
-                "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition",
-                isLight
-                  ? "border-emerald-200/80 bg-emerald-50/80 text-emerald-700 hover:bg-emerald-100"
-                  : "border-emerald-500/25 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/35",
-              )}
-              aria-label={`Abrir WhatsApp Web com ${lead.nome}`}
-              title="Conversar no WhatsApp Web"
-              onClick={(e) => e.stopPropagation()}
-              onPointerDown={(e) => e.stopPropagation()}
-            >
-              <WhatsAppGlyph className="h-3.5 w-3.5" />
-            </a>
+          <div className={cn("min-w-0 rounded-lg px-2 py-1.5", crmStyles.leadMetaTile)}>
+            <div className="flex items-center gap-1 text-[8px] font-semibold uppercase tracking-[0.1em] text-content-faint">
+              <User className="h-2.5 w-2.5 shrink-0" strokeWidth={2} aria-hidden />
+              Responsável
+            </div>
+            <p className="mt-1 truncate text-[10px] font-medium text-content-secondary">{lead.responsavel}</p>
           </div>
+        </div>
+
+        <div className="mt-2.5 flex min-w-0 items-center gap-1.5">
+          <span
+            className={cn("min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-[9px] font-semibold", crmStyles.agentChip)}
+            title={`Agente IA a atender: ${lead.agenteAtendendo}`}
+          >
+            IA · {lead.agenteAtendendo}
+          </span>
+          <a
+            href={waWebHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(
+              "flex h-7 max-w-[46%] shrink-0 items-center gap-1.5 rounded-md px-2 text-[9px] font-semibold transition",
+              isLight
+                ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                : "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/35",
+            )}
+            aria-label={`Abrir WhatsApp Web com ${lead.nome}`}
+            title="Conversar no WhatsApp Web"
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <WhatsAppGlyph className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{lead.telefone}</span>
+          </a>
         </div>
       </div>
     </div>
