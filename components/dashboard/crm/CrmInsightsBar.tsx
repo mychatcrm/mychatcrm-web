@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Percent, TrendingUp, UserRound, Wallet } from "lucide-react";
+import { ChevronDown, Percent, TrendingUp, UserRound, Wallet } from "lucide-react";
 import type { ClientLead } from "@/lib/dashboard-data";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 import { cn, formatBRL } from "@/lib/utils";
@@ -172,6 +172,7 @@ export function CrmInsightsBar({
   compactTop?: boolean;
 }) {
   const { isLight } = usePanelAppearance();
+  const [metricsOpen, setMetricsOpen] = useState(true);
 
   const stats = useMemo(() => {
     const ativos = leads.length;
@@ -242,7 +243,40 @@ export function CrmInsightsBar({
   );
 
   if (compactTop) {
-    return grid;
+    return (
+      <div className={styles.metricsPanel}>
+        <button
+          type="button"
+          className={styles.metricsToggle}
+          aria-expanded={metricsOpen}
+          aria-controls="crm-pipeline-metrics"
+          onClick={() => setMetricsOpen((open) => !open)}
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="text-xs font-semibold text-content">Indicadores do funil</span>
+            <span className="hidden truncate text-[10px] text-content-faint sm:inline">
+              {funnelName} · {stageCount} etapas
+            </span>
+          </span>
+          <span className="flex shrink-0 items-center gap-2 text-[10px] font-medium text-content-muted">
+            {stats.ativos} {stats.ativos === 1 ? "oportunidade" : "oportunidades"}
+            <ChevronDown
+              className={cn("h-3.5 w-3.5 transition-transform duration-200", metricsOpen && "rotate-180")}
+              strokeWidth={1.8}
+              aria-hidden
+            />
+          </span>
+        </button>
+        <div
+          id="crm-pipeline-metrics"
+          className={cn(styles.metricsCollapse, metricsOpen && styles.metricsCollapseOpen)}
+          aria-hidden={!metricsOpen}
+          inert={!metricsOpen}
+        >
+          <div className={styles.metricsCollapseInner}>{grid}</div>
+        </div>
+      </div>
+    );
   }
 
   if (embedded) {

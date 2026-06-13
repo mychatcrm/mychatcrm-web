@@ -130,7 +130,7 @@ import {
   updateCrmLeadInApi,
 } from "@/lib/crm-leads-storage";
 import { fetchActiveOfferDetailFromApi, fetchActiveOffersFromApi, type ActiveOfferDetail, type ActiveOfferSummary } from "@/lib/crm-active-offers-client";
-import { LeadThermometerBar, LeadThermometerInline } from "./crm/LeadThermometer";
+import { LeadThermometerInline } from "./crm/LeadThermometer";
 import { CrmAddLeadModal } from "./crm/CrmAddLeadModal";
 import { CrmReorderStagesModal } from "./crm/CrmReorderStagesModal";
 import { CrmInsightsBar } from "./crm/CrmInsightsBar";
@@ -866,10 +866,26 @@ function reorderLeadsForFunnelColumn(
   return out;
 }
 
+function crmStageTone(
+  columnId: string,
+  title: string,
+  index: number,
+): "cyan" | "blue" | "orange" | "amber" | "green" {
+  const normalized = `${columnId} ${title}`.toLocaleLowerCase("pt-BR");
+  if (normalized.includes("fechado") || normalized.includes("ganho")) return "green";
+  if (normalized.includes("negocia")) return "amber";
+  if (normalized.includes("proposta")) return "orange";
+  if (normalized.includes("atendimento") || normalized.includes("contato")) return "blue";
+  if (normalized.includes("novo") || normalized.includes("entrada")) return "cyan";
+  return (["cyan", "blue", "orange", "amber"] as const)[index % 4]!;
+}
+
 function CrmKanbanColumn({
   columnId,
   title,
   leadCount,
+  totalValue,
+  tone,
   sortableIds,
   animationIndex,
   children,
@@ -877,6 +893,8 @@ function CrmKanbanColumn({
   columnId: string;
   title: string;
   leadCount: number;
+  totalValue: number;
+  tone: "cyan" | "blue" | "orange" | "amber" | "green";
   sortableIds: string[];
   animationIndex: number;
   children: ReactNode;
@@ -889,11 +907,11 @@ function CrmKanbanColumn({
     <div
       ref={setNodeRef}
       style={{ animationDelay: `${animationIndex * 50}ms` }}
+      data-tone={tone}
       className={cn(
-        "crm-kanban-column-enter shrink-0 grow-0 rounded-[1.35rem] p-3.5",
+        "crm-kanban-column-enter shrink-0 grow-0 rounded-xl p-2",
         "transition-[background-color,border-color,box-shadow,transform] duration-200 ease-out hover:-translate-y-0.5",
-        /** Largura responsiva: ~5 colunas visíveis na área útil; scroll horizontal se houver mais etapas. */
-        "w-[min(82vw,19rem)] sm:w-[clamp(14rem,calc((100%_-_4rem)/5),19rem)]",
+        "w-[min(86vw,16.5rem)] sm:w-64 lg:w-[16.5rem]",
         crmStyles.kanbanColumn,
         isClosedColumn && crmStyles.kanbanClosed,
         isOver && crmStyles.kanbanDropActive,
@@ -902,55 +920,42 @@ function CrmKanbanColumn({
     >
       <div
         className={cn(
-          "mb-3.5 flex items-center justify-between gap-2 rounded-2xl px-3 py-2.5",
+          "mb-2 rounded-lg px-3 py-2.5 text-white",
           crmStyles.kanbanHeader,
-          isClosedColumn && (isLight ? "bg-emerald-50/75" : "bg-[#238636]/[0.09]"),
         )}
       >
-        <p
-          className={cn(
-            "min-w-0 truncate text-sm font-semibold tracking-tight text-content",
-            isClosedColumn && "text-emerald-500",
-          )}
-        >
-          {title}
+        <div className="flex items-center justify-between gap-2">
+          <p className="min-w-0 truncate text-xs font-semibold tracking-tight text-white">{title}</p>
+          <span className="inline-flex min-w-6 shrink-0 items-center justify-center rounded-full bg-black/15 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-white">
+            {leadCount}
+          </span>
+        </div>
+        <p className="mt-1 text-lg font-medium tabular-nums tracking-[-0.03em] text-white/95">
+          {formatBRL(totalValue)}
         </p>
-        <span
-          className={cn(
-            "inline-flex min-w-8 shrink-0 items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold tabular-nums",
-            crmStyles.countBadge,
-            isLight ? "text-content" : "text-white",
-            isClosedColumn &&
-              (isLight
-                ? "border-emerald-500/20 bg-emerald-500/[0.08] text-emerald-700"
-                : "border-[#238636]/30 bg-[#238636]/15 text-[#56d364]"),
-          )}
-        >
-          {leadCount}
-        </span>
       </div>
       <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
         <div
           className={cn(
-            "min-h-[9.5rem] space-y-3 rounded-2xl p-2.5 transition-colors duration-200",
+            "min-h-[10rem] space-y-2 rounded-lg p-1 transition-colors duration-200",
             crmStyles.kanbanBody,
             isOver && "border-primary/35 bg-primary/[0.035]",
           )}
         >
           {leadCount === 0 ? (
             <div
-              className={cn("flex min-h-[8rem] flex-col items-center justify-center gap-2 text-center text-content-faint", crmStyles.emptyState)}
+              className={cn("flex min-h-[8rem] flex-col items-center justify-center gap-1.5 text-center text-content-faint", crmStyles.emptyState)}
               aria-hidden
             >
               <div
                 className={cn(
-                  "flex h-8 w-8 items-center justify-center rounded-full",
+                  "flex h-7 w-7 items-center justify-center rounded-full",
                   isLight ? "bg-slate-100" : "bg-white/[0.045]",
                 )}
               >
                 <Inbox className="h-3.5 w-3.5" strokeWidth={1.7} />
               </div>
-              <span className="text-[10px] font-medium uppercase tracking-[0.12em]">Sem leads</span>
+              <span className="text-[9px] font-medium uppercase tracking-[0.12em]">Sem leads</span>
             </div>
           ) : null}
           {children}
@@ -991,7 +996,7 @@ function CrmKanbanLeadCard({
       ref={setNodeRef}
       style={style}
       className={cn(
-        "group relative overflow-hidden rounded-[1.2rem] border border-line/70 bg-surface-card/95 text-left outline-none",
+        "group relative overflow-hidden rounded-lg border border-line/70 bg-surface-card/95 text-left outline-none",
         "cursor-grab active:cursor-grabbing",
         "transition-[border-color,background-color,box-shadow,transform] duration-200 ease-out",
         crmStyles.leadCard,
@@ -1017,12 +1022,11 @@ function CrmKanbanLeadCard({
         }
       }}
     >
-      <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-primary/55 to-transparent" aria-hidden />
-      <div className="relative p-3.5">
-        <div className="mb-2 flex items-center justify-between gap-2">
+      <div className="relative p-2.5">
+        <div className="mb-1.5 flex items-center justify-between gap-2">
           <label
             className={cn(
-              "inline-flex items-center gap-2 rounded-full border border-line/60 bg-surface-elevated/45 px-2.5 py-1 text-[11px] font-medium text-content-muted transition hover:border-primary/30",
+              "inline-flex h-5 w-5 items-center justify-center rounded-md text-content-muted transition hover:bg-primary/10",
               selected && "border-primary/35 bg-primary/10 text-content",
             )}
             onClick={(e) => e.stopPropagation()}
@@ -1030,74 +1034,68 @@ function CrmKanbanLeadCard({
           >
             <input
               type="checkbox"
-              className="h-4 w-4 rounded border-line text-primary focus:ring-primary/25"
+              className="h-3.5 w-3.5 rounded border-line text-primary focus:ring-primary/25"
               checked={selected}
               onChange={() => onToggleSelected(lead.id)}
               aria-label={`Selecionar lead ${lead.nome}`}
             />
-            Selecionar
+            <span className="sr-only">Selecionar</span>
           </label>
+          <span
+            className={cn(
+              "max-w-[70%] truncate rounded px-1.5 py-0.5 text-[9px] font-semibold leading-tight",
+              isLight ? "bg-primary/10 text-orange-800" : "bg-primary/15 text-primary",
+            )}
+            title={`Agente IA a atender: ${lead.agenteAtendendo}`}
+          >
+            {lead.agenteAtendendo}
+          </span>
         </div>
         <div className="relative min-w-0">
-          <div className="flex items-start justify-between gap-2">
-            <p className="min-w-0 flex-1 text-sm font-semibold leading-snug tracking-tight text-content">{lead.nome}</p>
-            <span
-              className={cn(
-                "max-w-[min(11rem,46%)] shrink-0 truncate rounded-lg px-2 py-0.5 text-left text-[10px] font-semibold leading-tight tracking-tight",
-                isLight ? "bg-primary/12 text-orange-800 ring-1 ring-primary/15" : "bg-primary/20 text-primary ring-1 ring-primary/25",
-              )}
-              title={`Agente IA a atender: ${lead.agenteAtendendo}`}
-            >
-              {lead.agenteAtendendo}
-            </span>
-          </div>
-          <div className="mt-1.5 flex items-center gap-1 text-xs text-content-muted">
-            <Building2 className="h-3.5 w-3.5 shrink-0 opacity-70" strokeWidth={2} aria-hidden />
+          <p className="min-w-0 truncate text-[13px] font-semibold leading-snug tracking-tight text-content">{lead.nome}</p>
+          <div className="mt-1 flex items-center gap-1 text-[10px] text-content-muted">
+            <Building2 className="h-3 w-3 shrink-0 opacity-70" strokeWidth={2} aria-hidden />
             <span className="min-w-0 truncate">{lead.empresa}</span>
           </div>
-          <p className="mt-1 truncate text-[11px] leading-tight text-content-faint">{lead.origem}</p>
-          <div className="mt-2.5">
-            <LeadThermometerBar result={temperature} />
-          </div>
         </div>
 
-        <div className={cn("relative mt-3 flex items-end justify-between gap-2 rounded-2xl px-3 py-2.5", crmStyles.leadCardInset)}>
+        <div className="mt-2 flex items-end justify-between gap-2">
           <div>
-            <p className={typography.ui.overline}>Valor</p>
-            <p className="mt-0.5 text-base font-bold tabular-nums tracking-tight text-content">{formatBRL(lead.valor)}</p>
+            <p className="text-[9px] uppercase tracking-[0.09em] text-content-faint">Valor</p>
+            <p className="text-sm font-bold tabular-nums tracking-tight text-content">{formatBRL(lead.valor)}</p>
           </div>
-          <div className="min-w-0 text-right">
-            <div className="flex items-center justify-end gap-1 text-[11px] text-content-muted">
-              <Clock className="h-3.5 w-3.5 shrink-0 opacity-70" strokeWidth={2} aria-hidden />
+          <LeadThermometerInline result={temperature} className="w-[4.5rem]" />
+        </div>
+
+        <div className={cn("relative mt-2 space-y-1 rounded-lg px-2 py-1.5", crmStyles.leadCardInset)}>
+          <div className="flex items-center justify-between gap-2 text-[10px] text-content-muted">
+            <div className="flex min-w-0 items-center gap-1">
+              <Clock className="h-3 w-3 shrink-0 opacity-70" strokeWidth={2} aria-hidden />
               <span className="truncate">{lead.ultimoContato}</span>
             </div>
-            <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-content-faint">
-              <User className="h-3 w-3 shrink-0 opacity-70" strokeWidth={2} aria-hidden />
-              <span className="truncate">{lead.responsavel}</span>
-            </div>
+            <span className="truncate text-right text-content-faint">{lead.responsavel}</span>
           </div>
-        </div>
-
-        <div className={cn("relative mt-3 flex min-w-0 items-center gap-2 rounded-2xl px-2.5 py-2", crmStyles.leadCardInset)}>
-          <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-content-secondary">{lead.telefone}</span>
-          <a
-            href={waWebHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={cn(
-              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition",
-              isLight
-                ? "border-emerald-200/80 bg-emerald-50/80 text-emerald-700 hover:bg-emerald-100"
-                : "border-emerald-500/25 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/35",
-            )}
-            aria-label={`Abrir WhatsApp Web com ${lead.nome}`}
-            title="Conversar no WhatsApp Web"
-            onClick={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            <WhatsAppGlyph className="h-[18px] w-[18px]" />
-          </a>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-[10px] font-medium text-content-secondary">{lead.telefone}</span>
+            <a
+              href={waWebHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition",
+                isLight
+                  ? "border-emerald-200/80 bg-emerald-50/80 text-emerald-700 hover:bg-emerald-100"
+                  : "border-emerald-500/25 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/35",
+              )}
+              aria-label={`Abrir WhatsApp Web com ${lead.nome}`}
+              title="Conversar no WhatsApp Web"
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <WhatsAppGlyph className="h-3.5 w-3.5" />
+            </a>
+          </div>
         </div>
       </div>
     </div>
@@ -1910,21 +1908,6 @@ function CrmPage({
         )}
       >
         <div className="space-y-4">
-          {activeFunnel ? (
-            <section aria-labelledby="crm-sec-metricas-heading">
-              <h3 id="crm-sec-metricas-heading" className="sr-only">
-                Métricas do funil
-              </h3>
-              <CrmInsightsBar
-                compactTop
-                leads={pipelineLeads}
-                stageCount={activeFunnel.columns.length}
-                funnelName={activeFunnel.nome}
-                firstStageId={activeFunnel.columns[0]?.id ?? ""}
-              />
-            </section>
-          ) : null}
-
           <div className="min-w-0">
             <div
               className={cn(
@@ -2618,6 +2601,22 @@ function CrmPage({
                 </div>
               ) : null}
             </div>
+
+            {activeFunnel ? (
+              <section className="mb-3" aria-labelledby="crm-sec-metricas-heading">
+                <h3 id="crm-sec-metricas-heading" className="sr-only">
+                  Métricas do funil
+                </h3>
+                <CrmInsightsBar
+                  compactTop
+                  leads={pipelineLeads}
+                  stageCount={activeFunnel.columns.length}
+                  funnelName={activeFunnel.nome}
+                  firstStageId={activeFunnel.columns[0]?.id ?? ""}
+                />
+              </section>
+            ) : null}
+
             {view === "kanban" ? (
               <>
                 <style jsx global>{`
@@ -2661,12 +2660,15 @@ function CrmPage({
                 >
                   {(activeFunnel?.columns ?? []).map((col, columnIndex) => {
                     const columnLeads = pipelineLeads.filter((lead) => lead.status === col.id);
+                    const columnTotalValue = columnLeads.reduce((sum, lead) => sum + lead.valor, 0);
                     return (
                       <CrmKanbanColumn
                         key={col.id}
                         columnId={col.id}
                         title={col.title}
                         leadCount={columnLeads.length}
+                        totalValue={columnTotalValue}
+                        tone={crmStageTone(col.id, col.title, columnIndex)}
                         sortableIds={columnLeads.map((l) => l.id)}
                         animationIndex={columnIndex}
                       >

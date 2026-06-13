@@ -1,11 +1,11 @@
 .theme {
-  --crm-page: #f1f3f5;
+  --crm-page: #eef2f5;
   --crm-workspace: #ffffff;
-  --crm-section: #f6f7f9;
-  --crm-inset: #eceff3;
+  --crm-section: #f4f7f9;
+  --crm-inset: #e8eef2;
   --crm-control: #ffffff;
   --crm-elevated: #ffffff;
-  --crm-hover: #e9edf2;
+  --crm-hover: #e5ebef;
   --crm-muted: #707986;
   --crm-outline: rgba(15, 23, 42, 0.09);
   --crm-control-outline: rgba(15, 23, 42, 0.12);
@@ -45,15 +45,21 @@
 
 .workspace {
   min-width: 0;
-  border-radius: 1.45rem;
+  border-radius: 1rem;
   background: var(--crm-page);
-  padding: clamp(0.65rem, 1.3vw, 1rem);
+  padding: clamp(0.35rem, 0.8vw, 0.65rem);
 }
 
 .mainShell {
   border: 0 !important;
   background: var(--crm-workspace) !important;
-  box-shadow: var(--crm-shadow) !important;
+  box-shadow: 0 16px 44px -38px rgba(15, 23, 42, 0.34) !important;
+  padding: clamp(0.7rem, 1.3vw, 1.1rem) !important;
+}
+
+.mainShell > div:first-child {
+  margin-bottom: 0.75rem !important;
+  align-items: center !important;
 }
 
 .viewToggle {
@@ -70,7 +76,7 @@
 .toolbar {
   border: 0 !important;
   background: var(--crm-section) !important;
-  box-shadow: none !important;
+  box-shadow: inset 0 0 0 1px var(--crm-outline) !important;
 }
 
 .toolbarIcon {
@@ -123,18 +129,27 @@
 
 .metricStrip {
   display: grid;
-  gap: 0.5rem;
+  gap: 1px;
   overflow: visible;
   border: 0 !important;
-  background: transparent !important;
+  border-radius: 0.75rem !important;
+  background: var(--crm-outline) !important;
   box-shadow: none !important;
 }
 
 .metricCell {
   border: 0 !important;
-  border-radius: 1.05rem;
-  background: var(--crm-section) !important;
+  border-radius: 0 !important;
+  background: var(--crm-workspace) !important;
   box-shadow: none !important;
+}
+
+.metricCell:first-child {
+  border-radius: 0.75rem 0 0 0.75rem !important;
+}
+
+.metricCell:last-child {
+  border-radius: 0 0.75rem 0.75rem 0 !important;
 }
 
 .metricCell:hover {
@@ -146,15 +161,65 @@
   box-shadow: none !important;
 }
 
+.metricsPanel {
+  overflow: hidden;
+  border-radius: 0.8rem;
+  background: var(--crm-section);
+  box-shadow: inset 0 0 0 1px var(--crm-outline);
+}
+
+.metricsToggle {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.75rem;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  transition: background-color 160ms ease;
+}
+
+.metricsToggle:hover {
+  background: var(--crm-hover);
+}
+
+.metricsToggle:focus-visible {
+  outline: 2px solid rgba(242, 68, 0, 0.35);
+  outline-offset: -2px;
+}
+
+.metricsCollapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 200ms ease, opacity 160ms ease;
+}
+
+.metricsCollapseOpen {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.metricsCollapseInner {
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 0.45rem 0.45rem;
+}
+
 .kanbanViewport {
   border: 0 !important;
-  background: var(--crm-workspace) !important;
+  gap: 0.55rem !important;
+  border-radius: 0.9rem !important;
+  background: var(--crm-section) !important;
   box-shadow: none !important;
 }
 
 .kanbanColumn {
   border: 0 !important;
-  background: var(--crm-section) !important;
+  background: color-mix(in srgb, var(--crm-workspace) 78%, var(--crm-section)) !important;
   box-shadow: none !important;
 }
 
@@ -164,7 +229,7 @@
 }
 
 .kanbanClosed {
-  box-shadow: inset 0 2px 0 rgba(35, 134, 54, 0.65) !important;
+  box-shadow: none !important;
 }
 
 .kanbanDropActive {
@@ -173,14 +238,44 @@
 }
 
 .kanbanHeader {
+  position: relative;
+  overflow: hidden;
   border: 0 !important;
-  background: var(--crm-inset) !important;
-  box-shadow: none !important;
+  background: #1aa6c8 !important;
+  box-shadow: 0 10px 24px -20px rgba(6, 32, 48, 0.7) !important;
+}
+
+.kanbanHeader::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background: linear-gradient(110deg, rgba(255, 255, 255, 0.14), transparent 42%, rgba(0, 0, 0, 0.08));
+}
+
+.kanbanColumn[data-tone="cyan"] .kanbanHeader {
+  background: linear-gradient(135deg, #17a8c5, #28bfd0) !important;
+}
+
+.kanbanColumn[data-tone="blue"] .kanbanHeader {
+  background: linear-gradient(135deg, #2f79d6, #4a9bea) !important;
+}
+
+.kanbanColumn[data-tone="orange"] .kanbanHeader {
+  background: linear-gradient(135deg, #df3d00, #f26922) !important;
+}
+
+.kanbanColumn[data-tone="amber"] .kanbanHeader {
+  background: linear-gradient(135deg, #c88900, #eab308) !important;
+}
+
+.kanbanColumn[data-tone="green"] .kanbanHeader {
+  background: linear-gradient(135deg, #258548, #34a85d) !important;
 }
 
 .kanbanBody {
   border: 0 !important;
-  background: color-mix(in srgb, var(--crm-workspace) 74%, transparent) !important;
+  background: transparent !important;
   box-shadow: none !important;
 }
 
@@ -192,7 +287,7 @@
 .leadCard {
   border: 0 !important;
   background: var(--crm-elevated) !important;
-  box-shadow: var(--crm-card-shadow) !important;
+  box-shadow: 0 9px 22px -18px rgba(15, 23, 42, 0.62), inset 0 0 0 1px var(--crm-outline) !important;
 }
 
 .leadCard:hover {
@@ -210,7 +305,7 @@
 
 .leadCardInset {
   border: 0 !important;
-  background: var(--crm-inset) !important;
+  background: color-mix(in srgb, var(--crm-inset) 76%, transparent) !important;
   box-shadow: none !important;
 }
 
@@ -332,10 +427,47 @@
     border-radius: 1rem;
     padding: 0.4rem;
   }
+
+  .metricStrip {
+    gap: 1px;
+  }
+
+  .metricCell:first-child {
+    border-radius: 0.75rem 0 0 0 !important;
+  }
+
+  .metricCell:nth-child(2) {
+    border-radius: 0 0.75rem 0 0 !important;
+  }
+
+  .metricCell:nth-child(3) {
+    border-radius: 0 0 0 0.75rem !important;
+  }
+
+  .metricCell:last-child {
+    border-radius: 0 0 0.75rem 0 !important;
+  }
+}
+
+@media (max-width: 479px) {
+  .metricCell:first-child {
+    border-radius: 0.75rem 0.75rem 0 0 !important;
+  }
+
+  .metricCell:nth-child(2),
+  .metricCell:nth-child(3) {
+    border-radius: 0 !important;
+  }
+
+  .metricCell:last-child {
+    border-radius: 0 0 0.75rem 0.75rem !important;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .metricCell,
+  .metricsToggle,
+  .metricsCollapse,
   .kanbanColumn,
   .leadCard,
   .listSurface :global(tbody tr) {
