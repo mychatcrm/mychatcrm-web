@@ -399,6 +399,45 @@ export async function returnConversationToAutomation(params: {
   };
 }
 
+export async function transferConversationToWaiting(params: {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  actorId: string;
+  actorName: string;
+}): Promise<{ state: ConversationState | null; operation: ConversationOperationSnapshot }> {
+  const sb = params.sb ?? createSupabaseServiceClient();
+  const state = await patchConversationOperation({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    mode: "waiting_human",
+    humanPaused: true,
+    pausedReason: "human_transfer",
+    pausedBy: "human_manual",
+    handoffSuggested: false,
+    assignedHumanId: null,
+    assignedHumanName: null,
+  });
+  await logConversationEvent({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    leadId: null,
+    stateId: state?.id ?? null,
+    eventType: "human_transfer",
+    title: `Conversa transferida para fila de espera por ${params.actorName}`,
+    detail: null,
+    actorType: "human",
+    actorId: params.actorId,
+    actorName: params.actorName,
+  });
+  return {
+    state,
+    operation: buildOperationSnapshot(state, { conversationMode: "waiting_human" }),
+  };
+}
+
 export async function markWaitingForHuman(params: {
   sb?: SupabaseServiceClient;
   tenantId: string;
