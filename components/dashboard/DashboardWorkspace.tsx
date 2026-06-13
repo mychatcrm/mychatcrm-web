@@ -136,6 +136,7 @@ import { CrmReorderStagesModal } from "./crm/CrmReorderStagesModal";
 import { CrmInsightsBar } from "./crm/CrmInsightsBar";
 import { CrmLeadWorkspaceModal } from "./crm/CrmLeadWorkspaceModal";
 import { phoneToWhatsAppWebHref, WhatsAppGlyph } from "./crm/crm-phone";
+import crmStyles from "./crm/crm-premium.module.css";
 import { useCrmFunnels } from "./CrmFunnelsContext";
 import { DisparosMassaHub } from "./disparos/DisparosMassaHub";
 import { AgendaHub } from "./agenda/AgendaHub";
@@ -889,23 +890,21 @@ function CrmKanbanColumn({
       ref={setNodeRef}
       style={{ animationDelay: `${animationIndex * 50}ms` }}
       className={cn(
-        "crm-kanban-column-enter shrink-0 grow-0 rounded-[1.35rem] border p-3.5",
+        "crm-kanban-column-enter shrink-0 grow-0 rounded-[1.35rem] p-3.5",
         "transition-[background-color,border-color,box-shadow,transform] duration-200 ease-out hover:-translate-y-0.5",
-        "shadow-[0_24px_62px_-46px_rgba(0,0,0,0.82)] ring-1 ring-white/[0.025]",
         /** Largura responsiva: ~5 colunas visíveis na área útil; scroll horizontal se houver mais etapas. */
         "w-[min(82vw,19rem)] sm:w-[clamp(14rem,calc((100%_-_4rem)/5),19rem)]",
-        isLight
-          ? "border-slate-200/75 bg-white/80 hover:border-slate-300/85 hover:shadow-[0_26px_68px_-45px_rgba(15,23,42,0.32)]"
-          : "border-white/[0.06] bg-[#161b22]/85 hover:border-white/[0.1] hover:bg-[#1c2128]/92 hover:shadow-[0_26px_68px_-42px_rgba(0,0,0,0.95)]",
-        isClosedColumn && (isLight ? "border-emerald-500/20" : "border-[#238636]/35"),
+        crmStyles.kanbanColumn,
+        isClosedColumn && crmStyles.kanbanClosed,
+        isOver && crmStyles.kanbanDropActive,
         isOver && "border-primary/45 bg-primary/[0.055] shadow-[0_24px_70px_-42px_rgba(242,68,0,0.55)] ring-primary/20",
       )}
     >
       <div
         className={cn(
-          "mb-3.5 flex items-center justify-between gap-2 rounded-2xl px-3 py-2.5 ring-1",
-          isLight ? "bg-slate-50/85 ring-slate-200/70" : "bg-[#0d1117]/72 ring-white/[0.055]",
-          isClosedColumn && (isLight ? "bg-emerald-50/75 ring-emerald-500/15" : "bg-[#238636]/[0.09] ring-[#238636]/25"),
+          "mb-3.5 flex items-center justify-between gap-2 rounded-2xl px-3 py-2.5",
+          crmStyles.kanbanHeader,
+          isClosedColumn && (isLight ? "bg-emerald-50/75" : "bg-[#238636]/[0.09]"),
         )}
       >
         <p
@@ -919,9 +918,8 @@ function CrmKanbanColumn({
         <span
           className={cn(
             "inline-flex min-w-8 shrink-0 items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold tabular-nums",
-            isLight
-              ? "border border-slate-200/70 bg-white/70 text-content"
-              : "border border-white/[0.06] bg-white/[0.055] text-white",
+            crmStyles.countBadge,
+            isLight ? "text-content" : "text-white",
             isClosedColumn &&
               (isLight
                 ? "border-emerald-500/20 bg-emerald-500/[0.08] text-emerald-700"
@@ -934,14 +932,14 @@ function CrmKanbanColumn({
       <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
         <div
           className={cn(
-            "min-h-[9.5rem] space-y-3 rounded-2xl border border-dashed p-2.5 transition-colors duration-200",
-            isLight ? "border-slate-200/80 bg-slate-50/35" : "border-white/[0.065] bg-[#0d1117]/35",
+            "min-h-[9.5rem] space-y-3 rounded-2xl p-2.5 transition-colors duration-200",
+            crmStyles.kanbanBody,
             isOver && "border-primary/35 bg-primary/[0.035]",
           )}
         >
           {leadCount === 0 ? (
             <div
-              className="flex min-h-[8rem] flex-col items-center justify-center gap-2 text-center text-content-faint"
+              className={cn("flex min-h-[8rem] flex-col items-center justify-center gap-2 text-center text-content-faint", crmStyles.emptyState)}
               aria-hidden
             >
               <div
@@ -996,9 +994,11 @@ function CrmKanbanLeadCard({
         "group relative overflow-hidden rounded-[1.2rem] border border-line/70 bg-surface-card/95 text-left outline-none",
         "cursor-grab active:cursor-grabbing",
         "transition-[border-color,background-color,box-shadow,transform] duration-200 ease-out",
-        "shadow-[0_16px_46px_-38px_rgba(15,23,42,0.65)] ring-1 ring-white/[0.025]",
+        crmStyles.leadCard,
         "hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-[0_24px_58px_-42px_rgba(242,68,0,0.45)]",
         "focus-visible:ring-2 focus-visible:ring-primary/30",
+        selected && crmStyles.leadCardSelected,
+        isDragging && crmStyles.leadCardDragging,
         selected && "border-primary/55 bg-primary/[0.06] ring-2 ring-primary/25",
         isDragging && "z-40 cursor-grabbing opacity-[0.96] ring-2 ring-primary/35",
       )}
@@ -1061,7 +1061,7 @@ function CrmKanbanLeadCard({
           </div>
         </div>
 
-        <div className="relative mt-3 flex items-end justify-between gap-2 rounded-2xl bg-surface-elevated/25 px-3 py-2.5 ring-1 ring-line/35">
+        <div className={cn("relative mt-3 flex items-end justify-between gap-2 rounded-2xl px-3 py-2.5", crmStyles.leadCardInset)}>
           <div>
             <p className={typography.ui.overline}>Valor</p>
             <p className="mt-0.5 text-base font-bold tabular-nums tracking-tight text-content">{formatBRL(lead.valor)}</p>
@@ -1078,7 +1078,7 @@ function CrmKanbanLeadCard({
           </div>
         </div>
 
-        <div className="relative mt-3 flex min-w-0 items-center gap-2 rounded-2xl border border-line/45 bg-surface-elevated/25 px-2.5 py-2">
+        <div className={cn("relative mt-3 flex min-w-0 items-center gap-2 rounded-2xl px-2.5 py-2", crmStyles.leadCardInset)}>
           <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-content-secondary">{lead.telefone}</span>
           <a
             href={waWebHref}
@@ -1859,15 +1859,15 @@ function CrmPage({
   }, [addFunnel, newFunnelNome, funnels.length, maxSalesFunnels]);
 
   const crmSectionCard = cn(
-    "min-w-0 rounded-[1.4rem] border p-4 shadow-[0_24px_72px_-52px_rgba(0,0,0,0.86)] ring-1 ring-white/[0.02] sm:p-5",
-    isLight ? "border-slate-200/75 bg-white/80" : "border-white/[0.06] bg-[#161b22]/78",
+    "min-w-0 rounded-[1.4rem] p-4 sm:p-5",
+    crmStyles.insetPanel,
   );
 
   const crmViewToggle = (
     <div
       className={cn(
-        "inline-flex shrink-0 rounded-xl border border-line/60 p-0.5",
-        "bg-surface-elevated/35",
+        "inline-flex shrink-0 rounded-xl p-0.5",
+        crmStyles.viewToggle,
       )}
       role="group"
       aria-label="Vista do pipeline"
@@ -1900,15 +1900,13 @@ function CrmPage({
   );
 
   return (
-    <div className="space-y-4">
+    <div className={cn("space-y-4", crmStyles.theme, crmStyles.workspace)}>
       <Panel
         title="CRM Kanban"
         actions={crmViewToggle}
         className={cn(
           "overflow-hidden [&>div:first-child_h2]:text-2xl [&>div:first-child_h2]:font-semibold [&>div:first-child_h2]:tracking-[-0.025em]",
-          isLight
-            ? "border-slate-200/75 bg-white/78"
-            : "border-white/[0.06] bg-[#0d1117]/95 shadow-[0_30px_90px_-60px_rgba(0,0,0,0.95)]",
+          crmStyles.mainShell,
         )}
       >
         <div className="space-y-4">
@@ -1930,12 +1928,12 @@ function CrmPage({
           <div className="min-w-0">
             <div
               className={cn(
-                "relative flex flex-wrap items-center justify-between gap-2 rounded-2xl border p-2.5 pb-4 backdrop-blur-xl",
-                isLight ? "border-slate-200/80 bg-slate-50/70" : "border-white/[0.06] bg-[#161b22]/72",
+                "relative flex flex-wrap items-center justify-between gap-2 rounded-2xl p-2.5 pb-4",
+                crmStyles.toolbar,
               )}
             >
               <div className="flex min-w-0 flex-1 items-center gap-2">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/[0.12] text-primary ring-1 ring-primary/20">
+                <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/[0.12] text-primary", crmStyles.toolbarIcon)}>
                   <Layers className="h-4 w-4" strokeWidth={1.9} aria-hidden />
                 </div>
                 <div className="min-w-0 flex-1 sm:max-w-md">
@@ -1963,8 +1961,8 @@ function CrmPage({
               </div>
               <span
                 className={cn(
-                  "shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium text-content-muted ring-1",
-                  isLight ? "bg-white/80 ring-slate-200/70" : "bg-white/[0.045] ring-white/[0.06]",
+                  "shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium text-content-muted",
+                  crmStyles.countBadge,
                 )}
               >
                 {pipelineLeads.length} {pipelineLeads.length === 1 ? "lead visível" : "leads visíveis"}
@@ -1981,6 +1979,7 @@ function CrmPage({
                   isLight
                     ? "bg-white ring-slate-200/80 hover:bg-slate-50"
                     : "bg-[#161b22] ring-white/[0.06] hover:bg-[#1c2128]",
+                  crmStyles.chevron,
                 )}
               >
                 <ChevronDown
@@ -2007,7 +2006,7 @@ function CrmPage({
                   aria-labelledby="crm-sec-funil-heading"
                   aria-hidden={!funnelConfigOpen}
                 >
-            <div className="mb-4 flex flex-wrap items-start justify-between gap-3 rounded-2xl bg-surface-elevated/25 px-3 py-3 ring-1 ring-line/35">
+            <div className={cn("mb-4 flex flex-wrap items-start justify-between gap-3 rounded-2xl px-3 py-3", crmStyles.insetHeader)}>
               <div className="min-w-0">
                 <h3 id="crm-sec-funil-heading" className={typography.ui.overline}>
                   Funil e etapas
@@ -2073,7 +2072,7 @@ function CrmPage({
             </div>
 
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:gap-4">
-              <div className="min-w-0 flex-1 rounded-2xl bg-surface-elevated/20 p-3 ring-1 ring-line/30">
+              <div className={cn("min-w-0 flex-1 rounded-2xl p-3", crmStyles.insetBlock)}>
                 <p className="text-xs text-content-faint">Gestão de funis</p>
                 <div className="mt-1 flex flex-wrap gap-2">
                   <Button
@@ -2149,8 +2148,8 @@ function CrmPage({
           <section className="min-w-0" aria-labelledby="crm-sec-vista-heading">
             <div
               className={cn(
-                "mb-3 space-y-2.5 rounded-2xl border p-2.5 backdrop-blur-xl sm:p-3",
-                isLight ? "border-slate-200/75 bg-white/78" : "border-white/[0.06] bg-[#161b22]/72",
+                "mb-3 space-y-2.5 rounded-2xl p-2.5 sm:p-3",
+                crmStyles.actionSurface,
               )}
             >
               <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
@@ -2231,10 +2230,8 @@ function CrmPage({
                 <div
                   id="crm-leads-filters-panel"
                   className={cn(
-                    "rounded-xl border px-3 py-3 sm:px-4 sm:py-3",
-                    isLight
-                      ? "border-slate-200/80 bg-surface-deep"
-                      : "border-line/80 bg-surface-deep/50",
+                    "rounded-xl px-3 py-3 sm:px-4 sm:py-3",
+                    crmStyles.filterPanel,
                   )}
                 >
                   <p className="mb-2.5 text-[11px] leading-snug text-content-muted sm:hidden">
@@ -2271,6 +2268,7 @@ function CrmPage({
                         className={cn(
                           "flex h-9 shrink-0 items-center gap-2 rounded-lg border px-2.5",
                           isLight ? "border-slate-200/90 bg-slate-50/80" : "border-line bg-surface-deep/80",
+                          crmStyles.filterSubsection,
                         )}
                         title="Mostrar apenas leads sem responsável definido"
                       >
@@ -2459,6 +2457,7 @@ function CrmPage({
                         className={cn(
                           "flex flex-nowrap gap-1 overflow-x-auto overscroll-x-contain rounded-lg border px-2 py-1.5 [-ms-overflow-style:none] [scrollbar-width:none] touch-pan-x [&::-webkit-scrollbar]:hidden",
                           isLight ? "border-slate-200/80 bg-slate-50/60" : "border-line/80 bg-surface-deep/40",
+                          crmStyles.filterSubsection,
                         )}
                         title="Sem caixa marcada = todas. Marque uma ou mais etapas para filtrar."
                       >
@@ -2527,6 +2526,7 @@ function CrmPage({
                         isLight
                           ? "border-amber-200/60 bg-amber-50/70"
                           : "border-amber-900/35 bg-amber-950/20",
+                        crmStyles.filterSubsection,
                       )}
                     >
                       <div className={cn("mb-2 text-amber-400/90 sm:mb-0 sm:mr-1 sm:self-center sm:pt-1", typography.ui.overline)}>
@@ -2654,8 +2654,8 @@ function CrmPage({
               >
                 <div
                   className={cn(
-                    "flex w-full min-w-0 flex-nowrap gap-4 overflow-x-auto overflow-y-visible rounded-[1.35rem] p-3 pb-4 ring-1 [-webkit-overflow-scrolling:touch] touch-pan-x",
-                    isLight ? "bg-slate-50/55 ring-slate-200/70" : "bg-[#0d1117]/82 ring-white/[0.055]",
+                    "flex w-full min-w-0 flex-nowrap gap-4 overflow-x-auto overflow-y-visible rounded-[1.35rem] p-3 pb-4 [-webkit-overflow-scrolling:touch] touch-pan-x",
+                    crmStyles.kanbanViewport,
                   )}
                   aria-label="Colunas do funil — deslize para o lado para ver todas as etapas"
                 >
@@ -2688,7 +2688,7 @@ function CrmPage({
               </DndContext>
               </>
             ) : (
-              <div className="min-w-0 overflow-x-auto touch-pan-x">
+              <div className={cn("min-w-0 overflow-x-auto touch-pan-x", crmStyles.listSurface)}>
                 <DataTable columns={columns} data={pipelineLeads} rowKey={(row) => row.id} onRowClick={setSelectedLead} />
               </div>
             )}
@@ -2697,6 +2697,7 @@ function CrmPage({
                 className={cn(
                   "mt-3 flex flex-col gap-2 rounded-[1.25rem] border px-3 py-3 shadow-[0_18px_54px_-42px_rgba(16,185,129,0.65)] sm:flex-row sm:items-center sm:justify-between",
                   isLight ? "border-emerald-200 bg-emerald-50/80 text-emerald-900" : "border-emerald-500/25 bg-emerald-500/10 text-emerald-100",
+                  crmStyles.statusSurface,
                 )}
               >
                 <p className="text-sm font-medium">
@@ -2720,6 +2721,7 @@ function CrmPage({
                 className={cn(
                   "sticky bottom-3 z-30 mt-3 flex flex-col gap-2 rounded-[1.25rem] border px-3 py-3 shadow-[0_24px_70px_-42px_rgba(242,68,0,0.5)] backdrop-blur sm:flex-row sm:items-center sm:justify-between",
                   isLight ? "border-primary/25 bg-white/95" : "border-primary/30 bg-surface-card/95",
+                  crmStyles.selectionBar,
                 )}
               >
                 <p className="text-sm font-medium text-content">

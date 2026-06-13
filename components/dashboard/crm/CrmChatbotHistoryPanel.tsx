@@ -11,6 +11,7 @@ import type {
   ChatbotHistorySummary,
 } from "@/lib/server/lead-chatbot-history";
 import type { TimelineItem } from "@/lib/conversas/conversation-timeline";
+import styles from "./crm-premium.module.css";
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "—";
@@ -206,7 +207,7 @@ export function CrmChatbotHistoryPanel({
       ) : null}
 
       {summary ? (
-        <div className="rounded-[1.35rem] border border-primary/20 bg-primary/[0.055] p-4 shadow-[0_20px_62px_-50px_rgba(242,68,0,0.55)] ring-1 ring-primary/10">
+        <div className={cn("rounded-[1.35rem] p-4", styles.modalSection)}>
           <div className="flex items-start gap-3">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-primary/15 text-primary">
               <Sparkles className="h-4 w-4" aria-hidden />
@@ -232,7 +233,7 @@ export function CrmChatbotHistoryPanel({
         </div>
       ) : null}
 
-      <div className="rounded-[1.35rem] border border-line/65 bg-surface-card/70 p-4 shadow-[0_20px_62px_-50px_rgba(15,23,42,0.72)] ring-1 ring-white/[0.025]">
+      <div className={cn("rounded-[1.35rem] p-4", styles.chatSurface)}>
         {loading ? <p className="text-xs text-content-faint">Carregando conversa…</p> : null}
         {error ? (
           <p className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
@@ -240,7 +241,7 @@ export function CrmChatbotHistoryPanel({
           </p>
         ) : null}
         {!loading && !error && timeline.length === 0 ? (
-          <p className="rounded-[1.2rem] border border-dashed border-line/70 bg-surface-elevated/30 px-4 py-8 text-center text-sm text-content-muted">
+          <p className={cn("rounded-[1.2rem] px-4 py-8 text-center text-sm text-content-muted", styles.emptyPanel)}>
             Ainda não há mensagens para este lead.
           </p>
         ) : null}
@@ -250,7 +251,7 @@ export function CrmChatbotHistoryPanel({
               if (item.kind === "event") {
                 return (
                   <li key={`event-${item.id}`} className="flex justify-center">
-                    <div className="w-full max-w-[92%] rounded-[1.15rem] border border-dashed border-line/70 bg-surface-elevated/35 px-4 py-3 text-center">
+                    <div className={cn("w-full max-w-[92%] rounded-[1.15rem] px-4 py-3 text-center", styles.chatEvent)}>
                       <p className="text-xs font-medium text-content-secondary">{item.title}</p>
                       {item.detail ? (
                         <p className="mt-1 text-[11px] text-content-muted">{item.detail}</p>
@@ -269,7 +270,8 @@ export function CrmChatbotHistoryPanel({
                 <li key={message.id} className={cn("flex", outbound ? "justify-end" : "justify-start")}>
                   <div
                     className={cn(
-                      "max-w-[88%] rounded-[1.15rem] border px-3 py-2 text-sm shadow-[0_14px_42px_-36px_rgba(15,23,42,0.72)]",
+                      "max-w-[88%] rounded-[1.15rem] px-3 py-2 text-sm",
+                      styles.chatMessage,
                       outbound
                         ? isHuman
                           ? "border-emerald-500/30 bg-emerald-500/10"

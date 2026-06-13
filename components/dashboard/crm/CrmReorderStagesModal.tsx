@@ -23,6 +23,7 @@ import type { CrmFunnelColumn } from "@/lib/crm-funnels";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { Modal } from "@/components/ui/Modal";
 import { cn } from "@/lib/utils";
+import styles from "./crm-premium.module.css";
 
 function SortableStageRow({ id, title }: { id: string; title: string }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
@@ -37,15 +38,18 @@ function SortableStageRow({ id, title }: { id: string; title: string }) {
       ref={setNodeRef}
       style={style}
       className={cn(
-        "flex items-center gap-3 rounded-[1.15rem] border border-line/65 bg-surface-card/75 px-3 py-2.5 shadow-[0_14px_40px_-34px_rgba(15,23,42,0.72)] ring-1 ring-white/[0.025]",
+        "flex items-center gap-3 rounded-[1.15rem] px-3 py-2.5",
+        styles.reorderRow,
+        isDragging && styles.reorderDragging,
         isDragging && "z-10 border-primary/40 bg-primary/5 opacity-95 ring-2 ring-primary/20",
       )}
     >
       <button
         type="button"
         className={cn(
-          "flex h-10 w-10 shrink-0 cursor-grab items-center justify-center rounded-lg border border-line/80",
-          "bg-surface-elevated/30 text-content-muted hover:bg-surface-elevated/55 hover:text-content active:cursor-grabbing",
+          "flex h-10 w-10 shrink-0 cursor-grab items-center justify-center rounded-lg",
+          "text-content-muted hover:text-content active:cursor-grabbing",
+          styles.reorderHandle,
         )}
         aria-label={`Arrastar etapa ${title}`}
         {...attributes}
@@ -99,7 +103,7 @@ export function CrmReorderStagesModal({
       open={open}
       onClose={onClose}
       title="Ordenar etapas do funil"
-      className="max-w-lg"
+      className={cn("max-w-lg", styles.theme, styles.modalSurface)}
       footer={
         <>
           <Button variant="secondary" type="button" onClick={onClose}>
@@ -112,7 +116,7 @@ export function CrmReorderStagesModal({
       }
     >
       <div className="space-y-4">
-        <p className="rounded-2xl border border-line/60 bg-surface-elevated/30 px-3 py-2.5 text-sm text-content-muted">
+        <p className={cn("rounded-2xl px-3 py-2.5 text-sm text-content-muted", styles.modalIntro)}>
           Arraste pelo ícone de pegar para mudar a ordem das colunas no CRM Kanban. A ordem guardada aplica-se de imediato ao
           quadro.
         </p>

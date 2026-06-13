@@ -1,0 +1,345 @@
+.theme {
+  --crm-page: #f1f3f5;
+  --crm-workspace: #ffffff;
+  --crm-section: #f6f7f9;
+  --crm-inset: #eceff3;
+  --crm-control: #ffffff;
+  --crm-elevated: #ffffff;
+  --crm-hover: #e9edf2;
+  --crm-muted: #707986;
+  --crm-outline: rgba(15, 23, 42, 0.09);
+  --crm-control-outline: rgba(15, 23, 42, 0.12);
+  --crm-shadow: 0 18px 48px -38px rgba(15, 23, 42, 0.22);
+  --crm-card-shadow: 0 16px 38px -30px rgba(15, 23, 42, 0.24);
+}
+
+:global(.panel-app[data-panel-theme="soft-dark"]) .theme {
+  --crm-page: #0d1015;
+  --crm-workspace: #12161c;
+  --crm-section: #181d25;
+  --crm-inset: #202630;
+  --crm-control: #171c23;
+  --crm-elevated: #1d232c;
+  --crm-hover: #252c37;
+  --crm-muted: #939ba7;
+  --crm-outline: rgba(255, 255, 255, 0.055);
+  --crm-control-outline: rgba(255, 255, 255, 0.085);
+  --crm-shadow: 0 22px 56px -40px rgba(0, 0, 0, 0.72);
+  --crm-card-shadow: 0 18px 44px -30px rgba(0, 0, 0, 0.78);
+}
+
+:global(.panel-app[data-panel-theme="dark"]) .theme {
+  --crm-page: #030405;
+  --crm-workspace: #080a0d;
+  --crm-section: #0e1115;
+  --crm-inset: #15191f;
+  --crm-control: #0c0f13;
+  --crm-elevated: #161a20;
+  --crm-hover: #1d232b;
+  --crm-muted: #8c949f;
+  --crm-outline: rgba(255, 255, 255, 0.05);
+  --crm-control-outline: rgba(255, 255, 255, 0.075);
+  --crm-shadow: 0 24px 64px -42px rgba(0, 0, 0, 0.92);
+  --crm-card-shadow: 0 20px 48px -30px rgba(0, 0, 0, 0.94);
+}
+
+.workspace {
+  min-width: 0;
+  border-radius: 1.45rem;
+  background: var(--crm-page);
+  padding: clamp(0.65rem, 1.3vw, 1rem);
+}
+
+.mainShell {
+  border: 0 !important;
+  background: var(--crm-workspace) !important;
+  box-shadow: var(--crm-shadow) !important;
+}
+
+.viewToggle {
+  border: 0 !important;
+  background: var(--crm-section) !important;
+}
+
+.surface {
+  border: 0 !important;
+  background: var(--crm-section) !important;
+  box-shadow: none !important;
+}
+
+.toolbar {
+  border: 0 !important;
+  background: var(--crm-section) !important;
+  box-shadow: none !important;
+}
+
+.toolbarIcon {
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+.countBadge {
+  border: 0 !important;
+  background: var(--crm-inset) !important;
+  box-shadow: none !important;
+}
+
+.chevron {
+  border: 0 !important;
+  background: var(--crm-inset) !important;
+  box-shadow: none !important;
+}
+
+.insetPanel {
+  border: 0 !important;
+  background: var(--crm-inset) !important;
+  box-shadow: none !important;
+}
+
+.insetHeader,
+.insetBlock {
+  border: 0 !important;
+  background: var(--crm-section) !important;
+  box-shadow: none !important;
+}
+
+.actionSurface {
+  border: 0 !important;
+  background: var(--crm-section) !important;
+  box-shadow: none !important;
+}
+
+.filterPanel {
+  border: 0 !important;
+  background: var(--crm-inset) !important;
+  box-shadow: none !important;
+}
+
+.filterSubsection {
+  border: 0 !important;
+  background: var(--crm-section) !important;
+  box-shadow: none !important;
+}
+
+.metricStrip {
+  display: grid;
+  gap: 0.5rem;
+  overflow: visible;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.metricCell {
+  border: 0 !important;
+  border-radius: 1.05rem;
+  background: var(--crm-section) !important;
+  box-shadow: none !important;
+}
+
+.metricCell:hover {
+  background: var(--crm-hover) !important;
+}
+
+.metricIcon {
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+.kanbanViewport {
+  border: 0 !important;
+  background: var(--crm-workspace) !important;
+  box-shadow: none !important;
+}
+
+.kanbanColumn {
+  border: 0 !important;
+  background: var(--crm-section) !important;
+  box-shadow: none !important;
+}
+
+.kanbanColumn:hover {
+  background: color-mix(in srgb, var(--crm-section) 76%, var(--crm-hover)) !important;
+  box-shadow: var(--crm-card-shadow) !important;
+}
+
+.kanbanClosed {
+  box-shadow: inset 0 2px 0 rgba(35, 134, 54, 0.65) !important;
+}
+
+.kanbanDropActive {
+  background: color-mix(in srgb, var(--crm-section) 90%, #f24400) !important;
+  box-shadow: inset 0 0 0 1px rgba(242, 68, 0, 0.28) !important;
+}
+
+.kanbanHeader {
+  border: 0 !important;
+  background: var(--crm-inset) !important;
+  box-shadow: none !important;
+}
+
+.kanbanBody {
+  border: 0 !important;
+  background: color-mix(in srgb, var(--crm-workspace) 74%, transparent) !important;
+  box-shadow: none !important;
+}
+
+.emptyState {
+  border: 0 !important;
+  background: transparent !important;
+}
+
+.leadCard {
+  border: 0 !important;
+  background: var(--crm-elevated) !important;
+  box-shadow: var(--crm-card-shadow) !important;
+}
+
+.leadCard:hover {
+  box-shadow: 0 22px 48px -30px rgba(242, 68, 0, 0.24) !important;
+}
+
+.leadCardSelected {
+  background: color-mix(in srgb, var(--crm-elevated) 91%, #f24400) !important;
+  box-shadow: inset 0 0 0 1px rgba(242, 68, 0, 0.38), var(--crm-card-shadow) !important;
+}
+
+.leadCardDragging {
+  box-shadow: inset 0 0 0 1px rgba(242, 68, 0, 0.5), 0 24px 54px -32px rgba(242, 68, 0, 0.38) !important;
+}
+
+.leadCardInset {
+  border: 0 !important;
+  background: var(--crm-inset) !important;
+  box-shadow: none !important;
+}
+
+.listSurface :global(.panel-data-table) {
+  border: 0 !important;
+  background: var(--crm-section) !important;
+  box-shadow: none !important;
+}
+
+.listSurface :global(table) {
+  border-collapse: separate;
+  border-spacing: 0 0.35rem;
+}
+
+.listSurface :global(thead) {
+  background: var(--crm-inset) !important;
+}
+
+.listSurface :global(tbody) {
+  background: transparent !important;
+}
+
+.listSurface :global(tbody tr) {
+  background: var(--crm-elevated);
+}
+
+.listSurface :global(tbody tr:hover) {
+  background: var(--crm-hover) !important;
+}
+
+.listSurface :global(th),
+.listSurface :global(td) {
+  border: 0 !important;
+}
+
+.statusSurface {
+  border: 0 !important;
+}
+
+.selectionBar {
+  border: 0 !important;
+  background: var(--crm-elevated) !important;
+}
+
+.modalSurface {
+  border: 0 !important;
+  background: var(--crm-workspace) !important;
+  box-shadow: 0 30px 90px -38px rgba(0, 0, 0, 0.78) !important;
+}
+
+.modalIntro,
+.modalSection,
+.infoTile,
+.historySurface,
+.reorderRow {
+  border: 0 !important;
+  background: var(--crm-section) !important;
+  box-shadow: none !important;
+}
+
+.modalSectionAlt,
+.reorderHandle,
+.eventBubble {
+  border: 0 !important;
+  background: var(--crm-inset) !important;
+  box-shadow: none !important;
+}
+
+.reorderDragging {
+  background: color-mix(in srgb, var(--crm-section) 90%, #f24400) !important;
+  box-shadow: inset 0 0 0 1px rgba(242, 68, 0, 0.38) !important;
+}
+
+.modalTabs {
+  border: 0 !important;
+  background: var(--crm-section) !important;
+  box-shadow: none !important;
+}
+
+.modalTab {
+  border: 0 !important;
+}
+
+.modalTabActive {
+  background: var(--crm-inset) !important;
+  box-shadow: none !important;
+}
+
+.emptyPanel {
+  border: 0 !important;
+  background: var(--crm-section) !important;
+}
+
+.timelineItem,
+.chatSurface {
+  border: 0 !important;
+  background: var(--crm-elevated) !important;
+  box-shadow: var(--crm-card-shadow) !important;
+}
+
+.chatMessage {
+  border: 0 !important;
+  box-shadow: var(--crm-card-shadow) !important;
+}
+
+.chatEvent {
+  border: 0 !important;
+  background: var(--crm-inset) !important;
+  box-shadow: none !important;
+}
+
+.controlOutline {
+  border-color: var(--crm-control-outline) !important;
+  background: var(--crm-control) !important;
+}
+
+@media (max-width: 639px) {
+  .workspace {
+    border-radius: 1rem;
+    padding: 0.4rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .metricCell,
+  .kanbanColumn,
+  .leadCard,
+  .listSurface :global(tbody tr) {
+    transition: none !important;
+    transform: none !important;
+  }
+}

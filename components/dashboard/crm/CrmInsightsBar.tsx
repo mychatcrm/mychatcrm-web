@@ -7,6 +7,7 @@ import type { ClientLead } from "@/lib/dashboard-data";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 import { cn, formatBRL } from "@/lib/utils";
 import { typography } from "@/lib/typography";
+import styles from "./crm-premium.module.css";
 
 function splitMetricValue(value: string) {
   const currencyMatch = value.match(/^(R\$)\s*(.+)$/);
@@ -75,18 +76,15 @@ function InsightCard({
     return (
       <div
         className={cn(
-          "group relative min-w-0 overflow-hidden px-3.5 py-4 backdrop-blur-xl transition-[background-color,box-shadow,transform] duration-200 sm:px-4",
-          "before:pointer-events-none before:absolute before:inset-x-5 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-primary/45 before:to-transparent before:opacity-0 before:transition-opacity before:duration-200 group-hover:before:opacity-100",
-          "after:pointer-events-none after:absolute after:inset-y-3 after:right-0 after:hidden after:w-px after:bg-gradient-to-b after:from-transparent after:via-white/10 after:to-transparent lg:after:block lg:last:after:hidden",
-          isLight
-            ? "bg-white/80 hover:bg-primary/[0.035] hover:shadow-[0_16px_36px_-30px_rgba(242,68,0,0.28)]"
-            : "bg-[#161b22]/80 hover:bg-[#1c2128]/95 hover:shadow-[0_18px_42px_-32px_rgba(242,68,0,0.34)]",
+          "group relative min-w-0 overflow-hidden px-3.5 py-4 transition-[background-color,box-shadow,transform] duration-200 sm:px-4",
+          styles.metricCell,
         )}
       >
         <div className="flex min-w-0 items-center gap-3">
           <div
             className={cn(
-              "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/20 bg-primary/[0.12] text-primary transition-[background-color,transform] duration-200 group-hover:scale-[1.04] group-hover:bg-primary/[0.17]",
+              "flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/[0.12] text-primary transition-[background-color,transform] duration-200 group-hover:scale-[1.04] group-hover:bg-primary/[0.17]",
+              styles.metricIcon,
             )}
           >
             <Icon className="h-4 w-4" strokeWidth={1.9} aria-hidden />
@@ -196,8 +194,8 @@ export function CrmInsightsBar({
         "grid min-[480px]:grid-cols-2 lg:grid-cols-4",
         compactTop
           ? cn(
-              "gap-px overflow-hidden rounded-2xl border shadow-[0_22px_56px_-44px_rgba(0,0,0,0.86)]",
-              isLight ? "border-slate-200/75 bg-slate-200/80" : "border-white/[0.06] bg-white/[0.055]",
+              "rounded-2xl",
+              styles.metricStrip,
             )
           : embedded
             ? "gap-2.5"

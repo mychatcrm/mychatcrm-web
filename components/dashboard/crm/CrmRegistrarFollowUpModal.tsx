@@ -10,6 +10,7 @@ import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
 import { Modal } from "@/components/ui/Modal";
 import { PanelSelect as Select } from "@/components/panel/ui/PanelSelect";
 import { cn } from "@/lib/utils";
+import styles from "./crm-premium.module.css";
 
 const MAX_DESC = 500;
 
@@ -232,7 +233,7 @@ export function CrmRegistrarFollowUpModal({
       onClose={onClose}
       title="Registrar Follow-Up"
       titleContent={header}
-      className="max-w-xl"
+      className={cn("max-w-xl", styles.theme, styles.modalSurface)}
       footer={
         <>
           <Button type="button" variant="secondary" className="w-full min-w-0 sm:w-auto" onClick={onClose}>
@@ -246,7 +247,7 @@ export function CrmRegistrarFollowUpModal({
       }
     >
       <form id={formId} className="space-y-5" onSubmit={(e) => e.preventDefault()}>
-        <div className="rounded-[1.25rem] border border-line/60 bg-surface-card/70 p-3.5">
+        <div className={cn("rounded-[1.25rem] p-3.5", styles.modalSection)}>
           <p className="text-sm font-semibold text-content">
             Tipo de atividade <span className="text-error">*</span>
           </p>
@@ -259,10 +260,10 @@ export function CrmRegistrarFollowUpModal({
                   type="button"
                   onClick={() => setTipo(id)}
                   className={cn(
-                    "flex min-h-[88px] flex-col items-center justify-center gap-2 rounded-2xl border px-2 py-3 text-center text-xs font-semibold transition",
+                    "flex min-h-[88px] flex-col items-center justify-center gap-2 rounded-2xl px-2 py-3 text-center text-xs font-semibold transition",
                     active
                       ? "border-primary/45 bg-primary/10 text-primary ring-2 ring-primary/20"
-                      : "border-line/60 bg-surface-elevated/30 text-content-muted hover:border-primary/35 hover:text-content",
+                      : cn(styles.modalSectionAlt, "text-content-muted hover:text-content"),
                   )}
                 >
                   <Icon className="h-6 w-6" aria-hidden />
@@ -274,7 +275,7 @@ export function CrmRegistrarFollowUpModal({
         </div>
 
         {allFunnels.length > 0 ? (
-          <div className="rounded-[1.25rem] border border-line/60 bg-surface-card/60 p-3.5">
+          <div className={cn("rounded-[1.25rem] p-3.5", styles.modalSection)}>
             <label htmlFor={`${formId}-funil`} className="text-sm font-semibold text-content">
               Funil de destino <span className="text-error">*</span>
             </label>
@@ -298,7 +299,7 @@ export function CrmRegistrarFollowUpModal({
         ) : null}
 
         {colunas.length > 0 ? (
-          <div className="rounded-[1.25rem] border border-line/60 bg-surface-card/60 p-3.5">
+          <div className={cn("rounded-[1.25rem] p-3.5", styles.modalSection)}>
             <label htmlFor={`${formId}-etapa`} className="text-sm font-semibold text-content">
               Etapa no funil <span className="text-error">*</span>
             </label>
@@ -320,7 +321,7 @@ export function CrmRegistrarFollowUpModal({
           </div>
         ) : null}
 
-        <div className="grid gap-3 rounded-[1.25rem] border border-line/60 bg-surface-card/60 p-3.5 sm:grid-cols-2">
+        <div className={cn("grid gap-3 rounded-[1.25rem] p-3.5 sm:grid-cols-2", styles.modalSection)}>
           <div>
             <label htmlFor={`${formId}-data`} className="text-sm font-semibold text-content">
               Data próximo contacto <span className="text-error">*</span>
@@ -352,7 +353,7 @@ export function CrmRegistrarFollowUpModal({
           </div>
         </div>
 
-        <div className="rounded-[1.25rem] border border-line/60 bg-surface-card/60 p-3.5">
+        <div className={cn("rounded-[1.25rem] p-3.5", styles.modalSection)}>
           <label htmlFor={`${formId}-desc`} className="text-sm font-semibold text-content">
             Descrição da atividade <span className="text-error">*</span>
           </label>

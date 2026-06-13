@@ -5,6 +5,8 @@ import type { ClientLead } from "@/lib/dashboard-data";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
 import { Modal } from "@/components/ui/Modal";
+import { cn } from "@/lib/utils";
+import styles from "./crm-premium.module.css";
 
 function todayLocalISODate() {
   const d = new Date();
@@ -79,7 +81,7 @@ export function CrmAddLeadModal({
       open={open}
       onClose={onClose}
       title="Novo lead"
-      className="max-w-lg"
+      className={cn("max-w-lg", styles.theme, styles.modalSurface)}
       footer={
         <>
           <Button variant="secondary" type="button" onClick={onClose}>
@@ -92,7 +94,7 @@ export function CrmAddLeadModal({
       }
     >
       <div className="space-y-4">
-        <p className="rounded-2xl border border-line/60 bg-surface-elevated/30 px-3 py-2.5 text-sm text-content-muted">
+        <p className={cn("rounded-2xl px-3 py-2.5 text-sm text-content-muted", styles.modalIntro)}>
           O lead entra na primeira etapa do funil selecionado no CRM Kanban.
         </p>
         <div className="grid gap-3 sm:grid-cols-2">

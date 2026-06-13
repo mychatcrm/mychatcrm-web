@@ -5,6 +5,7 @@ import type { LeadTemperatureResult } from "@/lib/crm-lead-temperature";
 import { cn } from "@/lib/utils";
 import { typography } from "@/lib/typography";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
+import styles from "./crm-premium.module.css";
 
 function fillClass(level: LeadTemperatureResult["level"]) {
   switch (level) {
@@ -99,7 +100,8 @@ export function LeadThermometerPanel({ result, className }: { result: LeadTemper
   return (
     <div
       className={cn(
-        "rounded-[1.35rem] border border-line/65 bg-surface-card/75 p-4 shadow-[0_20px_62px_-50px_rgba(15,23,42,0.72)] ring-1 ring-white/[0.025]",
+        "rounded-[1.35rem] p-4",
+        styles.modalSection,
         className,
       )}
     >
