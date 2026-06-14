@@ -211,3 +211,13 @@ export async function suspendTenant(tenantId: string): Promise<void> {
     .eq("id", tenantId);
   if (error) throw new Error(`[suspendTenant] ${error.message}`);
 }
+
+/** Reativa o tenant após regularização de pagamento ou nova assinatura. Idempotente. */
+export async function reactivateTenant(tenantId: string): Promise<void> {
+  const sb = createSupabaseServiceClient();
+  const { error } = await sb
+    .from("tenants")
+    .update({ status: "ativa" })
+    .eq("id", tenantId);
+  if (error) throw new Error(`[reactivateTenant] ${error.message}`);
+}
