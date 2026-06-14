@@ -405,6 +405,8 @@ export async function transferConversationToWaiting(params: {
   remoteJid: string;
   actorId: string;
   actorName: string;
+  targetEmployeeId?: string | null;
+  targetEmployeeName?: string | null;
 }): Promise<{ state: ConversationState | null; operation: ConversationOperationSnapshot }> {
   const sb = params.sb ?? createSupabaseServiceClient();
   const state = await patchConversationOperation({
@@ -416,8 +418,8 @@ export async function transferConversationToWaiting(params: {
     pausedReason: "human_transfer",
     pausedBy: "human_manual",
     handoffSuggested: false,
-    assignedHumanId: null,
-    assignedHumanName: null,
+    assignedHumanId: params.targetEmployeeId ?? null,
+    assignedHumanName: params.targetEmployeeName ?? null,
   });
   await logConversationEvent({
     sb,
