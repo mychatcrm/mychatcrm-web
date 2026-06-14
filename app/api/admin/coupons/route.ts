@@ -86,14 +86,13 @@ export async function POST(request: Request) {
 
       const stripeCoupon = await stripe.coupons.create({
         name: coupon.internalName,
-        currency: "brl",
         duration,
         ...(duration === "repeating" && coupon.recurringCyclesLimit
           ? { duration_in_months: coupon.recurringCyclesLimit }
           : {}),
         ...(coupon.discountType === "percent"
           ? { percent_off: coupon.discountValue }
-          : { amount_off: coupon.discountValue }),
+          : { amount_off: coupon.discountValue, currency: "brl" }),
       });
       const promoCode = await stripe.promotionCodes.create({
         promotion: { type: "coupon", coupon: stripeCoupon.id },
