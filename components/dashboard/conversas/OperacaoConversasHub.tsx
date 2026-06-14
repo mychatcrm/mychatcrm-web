@@ -256,11 +256,11 @@ async function apiReturnToAutomation(remoteJid: string): Promise<AutomationSnaps
   };
 }
 
-async function apiTransferHuman(remoteJid: string): Promise<AutomationSnapshot> {
+async function apiTransferHuman(remoteJid: string, targetEmployeeId: string | null): Promise<AutomationSnapshot> {
   const res = await fetch("/api/client/conversas/transfer-human", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ remoteJid }),
+    body: JSON.stringify({ remoteJid, targetEmployeeId }),
   });
   if (!res.ok) {
     const err = (await res.json().catch(() => ({}))) as { error?: string };
@@ -276,7 +276,7 @@ async function apiTransferHuman(remoteJid: string): Promise<AutomationSnapshot> 
     paused_reason: "human_transfer",
     conversation_mode: data.operation?.conversation_mode ?? "waiting_human",
     can_human_send: data.operation?.can_human_send ?? true,
-    assigned_human_name: null,
+    assigned_human_name: data.operation?.assigned_human_name ?? null,
   };
 }
 
@@ -1165,8 +1165,10 @@ function ConfirmDeleteModal({
   busy,
   busyLabel,
   confirmColor = "#d64d4d",
+  confirmDisabled,
   onCancel,
   onConfirm,
+  children,
 }: {
   title: string;
   description: string;
@@ -1174,8 +1176,10 @@ function ConfirmDeleteModal({
   busy: boolean;
   busyLabel?: string;
   confirmColor?: string;
+  confirmDisabled?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
+  children?: ReactNode;
 }) {
   return (
     <div
@@ -1207,6 +1211,7 @@ function ConfirmDeleteModal({
         <p style={{ margin: "10px 0 0", color: W.muted, fontSize: 14, lineHeight: 1.55 }}>
           {description}
         </p>
+        {children}
         <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end", gap: 10 }}>
           <button
             type="button"
@@ -1227,15 +1232,15 @@ function ConfirmDeleteModal({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={busy}
+            disabled={busy || confirmDisabled}
             style={{
               border: "none",
               background: confirmColor,
               color: "white",
               borderRadius: 999,
               padding: "9px 15px",
-              cursor: busy ? "not-allowed" : "pointer",
-              opacity: busy ? 0.7 : 1,
+              cursor: busy || confirmDisabled ? "not-allowed" : "pointer",
+              opacity: busy || confirmDisabled ? 0.5 : 1,
               fontWeight: 650,
             }}
           >
@@ -1303,6 +1308,9 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   const [inboxTab, setInboxTab] = useState<InboxTab>("all");
   const [operationConfirm, setOperationConfirm] = useState<"takeover" | "return_automation" | "transfer_human" | null>(null);
   const [operationBusy, setOperationBusy] = useState(false);
+  const [transferCandidates, setTransferCandidates] = useState<{ id: string; nome: string; funcao: string; hierarchyRole: string }[]>([]);
+  const [selectedTransferEmployeeId, setSelectedTransferEmployeeId] = useState<string>("");
+  const [transferCandidatesLoading, setTransferCandidatesLoading] = useState(false);
 
   // Cache em ref para evitar fetches duplicados concorrentes
   const photoCacheRef    = useRef<Set<string>>(new Set());
@@ -1698,22 +1706,25 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
     setOperationBusy(true);
     setAutomationError("");
     try {
-      const automation = await apiTransferHuman(selectedJid);
+      const targetId = selectedTransferEmployeeId || null;
+      const targetName = transferCandidates.find((c) => c.id === targetId)?.nome ?? null;
+      const automation = await apiTransferHuman(selectedJid, targetId);
       setAutomationByJid((prev) => ({ ...prev, [selectedJid]: automation }));
       setConversations((prev) =>
         prev.map((c) =>
           c.remoteJid === selectedJid
-            ? { ...c, conversation_mode: "waiting_human", assigned_human_name: null }
+            ? { ...c, conversation_mode: "waiting_human", assigned_human_name: targetName }
             : c,
         ),
       );
       setOperationConfirm(null);
+      setSelectedTransferEmployeeId("");
     } catch (e) {
       setAutomationError(e instanceof Error ? e.message : "Erro ao transferir conversa.");
     } finally {
       setOperationBusy(false);
     }
-  }, [selectedJid, operationBusy]);
+  }, [selectedJid, operationBusy, selectedTransferEmployeeId, transferCandidates]);
 
   const handleDeleteConversation = useCallback(() => {
     if (!active || deleteBusy) return;
@@ -2310,17 +2321,50 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
 
       {operationConfirm === "transfer_human" && (
         <ConfirmDeleteModal
-          title="Transferir para outro atendente?"
-          description="A conversa voltará para a fila de aguardando humano. Outro atendente poderá assumir."
+          title="Transferir para outro atendente"
+          description="Escolha o atendente e a conversa entrará na fila dele."
           confirmLabel="Transferir"
           confirmColor={W.green}
           busyLabel="Transferindo…"
           busy={operationBusy}
+          confirmDisabled={!selectedTransferEmployeeId}
           onCancel={() => {
-            if (!operationBusy) setOperationConfirm(null);
+            if (!operationBusy) {
+              setOperationConfirm(null);
+              setSelectedTransferEmployeeId("");
+            }
           }}
           onConfirm={() => void handleTransferHuman()}
-        />
+        >
+          {transferCandidatesLoading ? (
+            <p style={{ fontSize: 12, color: W.muted, margin: "10px 0 0" }}>Carregando atendentes…</p>
+          ) : transferCandidates.length === 0 ? (
+            <p style={{ fontSize: 12, color: W.muted, margin: "10px 0 0" }}>Nenhum atendente disponível.</p>
+          ) : (
+            <select
+              value={selectedTransferEmployeeId}
+              onChange={(e) => setSelectedTransferEmployeeId(e.target.value)}
+              disabled={operationBusy}
+              style={{
+                width: "100%",
+                marginTop: 10,
+                padding: "7px 9px",
+                borderRadius: 7,
+                border: `1px solid ${W.bgBorder}`,
+                background: W.bg,
+                color: W.text,
+                fontSize: 13,
+              }}
+            >
+              <option value="">— Selecionar atendente —</option>
+              {transferCandidates.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.nome} ({c.funcao})
+                </option>
+              ))}
+            </select>
+          )}
+        </ConfirmDeleteModal>
       )}
 
       {/* ─────────────── LEFT SIDEBAR ─────────────── */}
@@ -3310,7 +3354,9 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 >
                   <p style={{ margin: 0, fontSize: 12.5, color: W.text }}>
                     {activeConversationMode === "waiting_human"
-                      ? "Aguardando atendimento humano."
+                      ? activeOperation?.assigned_human_name
+                        ? `Aguardando atendimento: ${activeOperation.assigned_human_name}.`
+                        : "Aguardando atendimento humano."
                       : `Atendimento humano${activeOperation?.assigned_human_name ? `: ${activeOperation.assigned_human_name}` : ""}.`}
                   </p>
                   <div style={{ display: "flex", gap: 8, flexShrink: 0, marginLeft: "auto" }}>
@@ -3333,10 +3379,18 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                         Assumir atendimento
                       </button>
                     )}
-                    {activeConversationMode === "human" && (
+                    {activeConversationMode === "human" && session.organizationRole !== "seller" && (
                       <button
                         type="button"
-                        onClick={() => setOperationConfirm("transfer_human")}
+                        onClick={() => {
+                          setSelectedTransferEmployeeId("");
+                          setTransferCandidatesLoading(true);
+                          void fetch("/api/client/conversas/transfer-candidates")
+                            .then((r) => r.json() as Promise<{ candidates: { id: string; nome: string; funcao: string; hierarchyRole: string }[] }>)
+                            .then((d) => { setTransferCandidates(d.candidates ?? []); })
+                            .finally(() => { setTransferCandidatesLoading(false); });
+                          setOperationConfirm("transfer_human");
+                        }}
                         disabled={operationBusy}
                         style={{
                           border: `1px solid ${W.bgBorder}`,
