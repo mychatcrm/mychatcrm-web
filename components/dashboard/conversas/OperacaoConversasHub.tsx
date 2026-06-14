@@ -3379,7 +3379,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                         Assumir atendimento
                       </button>
                     )}
-                    {activeConversationMode === "human" && session.organizationRole !== "seller" && (
+                    {activeConversationMode === "human" && (
                       <button
                         type="button"
                         onClick={() => {
