@@ -242,7 +242,14 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
       const res = await fetch("/api/stripe/create-checkout-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planSlug: plan.slug, ciclo: plan.billingCycle, email, name, company }),
+        body: JSON.stringify({
+          planSlug: plan.slug,
+          ciclo: plan.billingCycle,
+          email,
+          name,
+          company,
+          stripePromoCodeId: applied?.stripePromoCodeId ?? undefined,
+        }),
       });
 
       const data = (await res.json()) as { url?: string; message?: string; code?: string };

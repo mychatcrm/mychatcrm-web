@@ -13,9 +13,10 @@ export async function POST(req: NextRequest) {
       email?: string;
       name?: string;
       company?: string;
+      stripePromoCodeId?: string;
     };
 
-    const { planSlug, ciclo, email, name, company } = body;
+    const { planSlug, ciclo, email, name, company, stripePromoCodeId } = body;
 
     if (!planSlug || !PLAN_CHECKOUT_SLUGS.includes(planSlug)) {
       return NextResponse.json({ message: "Plano inválido." }, { status: 400 });
@@ -101,6 +102,7 @@ export async function POST(req: NextRequest) {
           billingCycle: cycle,
         },
       },
+      ...(stripePromoCodeId ? { discounts: [{ promotion_code: stripePromoCodeId }] } : {}),
       success_url: `${SITE_URL}/checkout/${planSlug}/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${SITE_URL}/checkout/${planSlug}?ciclo=${cycle}&cancelled=1`,
       locale: "pt-BR",

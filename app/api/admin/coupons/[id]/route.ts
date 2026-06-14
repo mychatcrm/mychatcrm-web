@@ -8,6 +8,7 @@ import {
   deleteCoupon,
   persistModifiedPartners,
 } from "@/lib/server/commercial-store-db";
+import { getStripe } from "@/lib/stripe";
 import { randomUUID } from "crypto";
 
 export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -40,6 +41,12 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
   );
   if (changedPartners.length > 0) {
     await persistModifiedPartners(changedPartners);
+  }
+
+  if (coupon.stripePromoCodeId) {
+    getStripe().promotionCodes.update(coupon.stripePromoCodeId, { active: false }).catch(
+      (err: unknown) => console.warn("[admin-coupons] Falha ao desativar promo code no Stripe:", err),
+    );
   }
 
   await deleteCoupon(id);

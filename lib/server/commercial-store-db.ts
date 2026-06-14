@@ -29,6 +29,8 @@ function dbToCoupon(row: Record<string, unknown>): CommercialCoupon {
     recurringCyclesLimit: (row.recurring_cycles_limit as number | null) ?? null,
     active: row.active as boolean,
     partnerId: (row.partner_id as string | null) ?? null,
+    stripeCouponId: (row.stripe_coupon_id as string | null) ?? null,
+    stripePromoCodeId: (row.stripe_promo_code_id as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };
@@ -71,6 +73,8 @@ export async function upsertCoupon(coupon: CommercialCoupon): Promise<void> {
       recurring_cycles_limit: coupon.recurringCyclesLimit ?? null,
       active: coupon.active,
       partner_id: coupon.partnerId ?? null,
+      stripe_coupon_id: coupon.stripeCouponId ?? null,
+      stripe_promo_code_id: coupon.stripePromoCodeId ?? null,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "id" },

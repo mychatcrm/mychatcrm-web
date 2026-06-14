@@ -13,6 +13,7 @@ import {
   persistModifiedPartners,
   upsertCoupon,
 } from "@/lib/server/commercial-store-db";
+import { getStripe } from "@/lib/stripe";
 import { randomUUID } from "crypto";
 
 export async function GET() {
@@ -70,6 +71,44 @@ export async function POST(request: Request) {
   }
 
   await upsertCoupon(parsed.coupon);
+
+  // Sincronizar com o Stripe apenas na primeira criação (sem stripeCouponId ainda)
+  if (!existing?.stripeCouponId) {
+    try {
+      const stripe = getStripe();
+      const coupon = parsed.coupon;
+
+      const durationMap = {
+        first_cycle: "once",
+        all_cycles: coupon.recurringCyclesLimit ? "repeating" : "forever",
+      } as const;
+      const duration = durationMap[coupon.discountRecurrence];
+
+      const stripeCoupon = await stripe.coupons.create({
+        name: coupon.internalName,
+        currency: "brl",
+        duration,
+        ...(duration === "repeating" && coupon.recurringCyclesLimit
+          ? { duration_in_months: coupon.recurringCyclesLimit }
+          : {}),
+        ...(coupon.discountType === "percent"
+          ? { percent_off: coupon.discountValue }
+          : { amount_off: coupon.discountValue }),
+      });
+      const promoCode = await stripe.promotionCodes.create({
+        promotion: { type: "coupon", coupon: stripeCoupon.id },
+        code: coupon.code,
+        active: true,
+      });
+
+      parsed.coupon.stripeCouponId = stripeCoupon.id;
+      parsed.coupon.stripePromoCodeId = promoCode.id;
+      await upsertCoupon(parsed.coupon);
+    } catch (stripeErr) {
+      console.error("[admin-coupons] Falha ao criar no Stripe:", stripeErr);
+      // Cupom salvo no DB mas sem IDs Stripe — não bloqueia a criação
+    }
+  }
 
   const updated = applyCouponPartnerLink(store, parsed.coupon);
   const changedPartners = updated.partners.filter(
