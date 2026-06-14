@@ -2351,7 +2351,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                 padding: "7px 9px",
                 borderRadius: 7,
                 border: `1px solid ${W.bgBorder}`,
-                background: W.bg,
+                background: W.bgInput,
                 color: W.text,
                 fontSize: 13,
               }}
