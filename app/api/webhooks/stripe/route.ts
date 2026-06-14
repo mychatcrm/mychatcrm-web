@@ -8,12 +8,13 @@
  * Eventos necessários:
  *   - checkout.session.completed
  *   - customer.subscription.deleted
+ *   - customer.subscription.updated
  *   - invoice.payment_failed
  */
 import { NextRequest, NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
-import { provisionFromStripeSession, suspendTenant } from "@/lib/server/stripe-provision";
+import { provisionFromStripeSession, suspendTenant, reactivateTenant } from "@/lib/server/stripe-provision";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { sendTransactionalEmail } from "@/lib/server/resend-mail";
 
@@ -113,6 +114,8 @@ export async function POST(req: NextRequest) {
             await incrementExtraWhatsAppSlots(session);
           } else {
             await provisionFromStripeSession(session);
+            const tenantId = session.metadata?.tenant_id as string | undefined;
+            if (tenantId) await reactivateTenant(tenantId);
           }
         }
         break;
@@ -197,7 +200,16 @@ export async function POST(req: NextRequest) {
       }
 
       case "customer.subscription.updated": {
-        // TODO: suspender/reativar ao mudar plano (fora do escopo atual)
+        const sub = event.data.object as Stripe.Subscription;
+        const isExtra =
+          sub.metadata?.type === "extra_agent" || sub.metadata?.type === "extra_whatsapp";
+        if (sub.status === "active" && !isExtra) {
+          const tenantId = await getTenantIdBySubscriptionId(sub.id);
+          if (tenantId) {
+            await reactivateTenant(tenantId);
+            console.log("[stripe-webhook] Tenant reativado:", tenantId);
+          }
+        }
         break;
       }
 
