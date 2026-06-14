@@ -37,5 +37,6 @@ export async function POST(request: Request) {
     return NextResponse.json(result, { status: 422 });
   }
 
-  return NextResponse.json(result);
+  const coupon = store.coupons.find((c) => c.id === result.couponId);
+  return NextResponse.json({ ...result, stripePromoCodeId: coupon?.stripePromoCodeId ?? null });
 }

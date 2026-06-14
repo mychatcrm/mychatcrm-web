@@ -22,6 +22,8 @@ export type CommercialCoupon = {
   recurringCyclesLimit: number | null;
   active: boolean;
   partnerId: string | null;
+  stripeCouponId: string | null;
+  stripePromoCodeId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -118,6 +120,8 @@ export type CouponValidateSuccess = {
   discountRecurrence: DiscountRecurrence;
   recurringCyclesLimit: number | null;
   partnerId: string | null;
+  /** Preenchido pela validate route, não pelo engine. */
+  stripePromoCodeId?: string | null;
   message: string;
 };
 

@@ -97,6 +97,8 @@ export function parseCouponUpsert(
     recurringCyclesLimit,
     active,
     partnerId,
+    stripeCouponId: existing?.stripeCouponId ?? null,
+    stripePromoCodeId: existing?.stripePromoCodeId ?? null,
     createdAt: existing?.createdAt ?? isoNow(),
     updatedAt: isoNow(),
   };
