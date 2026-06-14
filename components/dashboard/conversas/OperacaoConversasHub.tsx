@@ -256,6 +256,30 @@ async function apiReturnToAutomation(remoteJid: string): Promise<AutomationSnaps
   };
 }
 
+async function apiTransferHuman(remoteJid: string): Promise<AutomationSnapshot> {
+  const res = await fetch("/api/client/conversas/transfer-human", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ remoteJid }),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? `Erro ${res.status} ao transferir para fila`);
+  }
+  const data = (await res.json()) as {
+    operation?: { conversation_mode: ConversationMode; can_human_send: boolean; assigned_human_name: string | null };
+  };
+  return {
+    enabled: false,
+    human_paused: true,
+    paused_by: "human_manual",
+    paused_reason: "human_transfer",
+    conversation_mode: data.operation?.conversation_mode ?? "waiting_human",
+    can_human_send: data.operation?.can_human_send ?? true,
+    assigned_human_name: null,
+  };
+}
+
 async function apiToggleAutomation(
   remoteJid: string,
   enabled: boolean,
@@ -1277,7 +1301,7 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
   const [automationError, setAutomationError] = useState("");
   const [automationConfirm, setAutomationConfirm] = useState<AutomationConfirmIntent>(null);
   const [inboxTab, setInboxTab] = useState<InboxTab>("all");
-  const [operationConfirm, setOperationConfirm] = useState<"takeover" | "return_automation" | null>(null);
+  const [operationConfirm, setOperationConfirm] = useState<"takeover" | "return_automation" | "transfer_human" | null>(null);
   const [operationBusy, setOperationBusy] = useState(false);
 
   // Cache em ref para evitar fetches duplicados concorrentes
@@ -1664,6 +1688,28 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
       setOperationConfirm(null);
     } catch (e) {
       setAutomationError(e instanceof Error ? e.message : "Erro ao retornar para automação.");
+    } finally {
+      setOperationBusy(false);
+    }
+  }, [selectedJid, operationBusy]);
+
+  const handleTransferHuman = useCallback(async () => {
+    if (!selectedJid || operationBusy) return;
+    setOperationBusy(true);
+    setAutomationError("");
+    try {
+      const automation = await apiTransferHuman(selectedJid);
+      setAutomationByJid((prev) => ({ ...prev, [selectedJid]: automation }));
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.remoteJid === selectedJid
+            ? { ...c, conversation_mode: "waiting_human", assigned_human_name: null }
+            : c,
+        ),
+      );
+      setOperationConfirm(null);
+    } catch (e) {
+      setAutomationError(e instanceof Error ? e.message : "Erro ao transferir conversa.");
     } finally {
       setOperationBusy(false);
     }
@@ -2259,6 +2305,21 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
             if (!operationBusy) setOperationConfirm(null);
           }}
           onConfirm={() => void handleReturnAutomation()}
+        />
+      )}
+
+      {operationConfirm === "transfer_human" && (
+        <ConfirmDeleteModal
+          title="Transferir para outro atendente?"
+          description="A conversa voltará para a fila de aguardando humano. Outro atendente poderá assumir."
+          confirmLabel="Transferir"
+          confirmColor={W.green}
+          busyLabel="Transferindo…"
+          busy={operationBusy}
+          onCancel={() => {
+            if (!operationBusy) setOperationConfirm(null);
+          }}
+          onConfirm={() => void handleTransferHuman()}
         />
       )}
 
@@ -3252,24 +3313,61 @@ export function OperacaoConversasHub({ session }: { session: ClientSession }) {
                       ? "Aguardando atendimento humano."
                       : `Atendimento humano${activeOperation?.assigned_human_name ? `: ${activeOperation.assigned_human_name}` : ""}.`}
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => setOperationConfirm("return_automation")}
-                    disabled={operationBusy}
-                    style={{
-                      flexShrink: 0,
-                      marginLeft: "auto",
-                      border: `1px solid ${W.bgBorder}`,
-                      background: "transparent",
-                      color: W.text,
-                      borderRadius: 999,
-                      padding: "7px 12px",
-                      fontSize: 12,
-                      cursor: operationBusy ? "wait" : "pointer",
-                    }}
-                  >
-                    Retornar para automação
-                  </button>
+                  <div style={{ display: "flex", gap: 8, flexShrink: 0, marginLeft: "auto" }}>
+                    {activeConversationMode === "waiting_human" && (
+                      <button
+                        type="button"
+                        onClick={() => setOperationConfirm("takeover")}
+                        disabled={operationBusy}
+                        style={{
+                          border: "none",
+                          background: W.green,
+                          color: "white",
+                          borderRadius: 999,
+                          padding: "7px 12px",
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: operationBusy ? "wait" : "pointer",
+                        }}
+                      >
+                        Assumir atendimento
+                      </button>
+                    )}
+                    {activeConversationMode === "human" && (
+                      <button
+                        type="button"
+                        onClick={() => setOperationConfirm("transfer_human")}
+                        disabled={operationBusy}
+                        style={{
+                          border: `1px solid ${W.bgBorder}`,
+                          background: "transparent",
+                          color: W.text,
+                          borderRadius: 999,
+                          padding: "7px 12px",
+                          fontSize: 12,
+                          cursor: operationBusy ? "wait" : "pointer",
+                        }}
+                      >
+                        Transferir para outro atendente
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setOperationConfirm("return_automation")}
+                      disabled={operationBusy}
+                      style={{
+                        border: `1px solid ${W.bgBorder}`,
+                        background: "transparent",
+                        color: W.text,
+                        borderRadius: 999,
+                        padding: "7px 12px",
+                        fontSize: 12,
+                        cursor: operationBusy ? "wait" : "pointer",
+                      }}
+                    >
+                      Retornar para automação
+                    </button>
+                  </div>
                 </div>
               )}
 
