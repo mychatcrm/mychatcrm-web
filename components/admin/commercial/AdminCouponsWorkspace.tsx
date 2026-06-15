@@ -57,7 +57,7 @@ const emptyCoupon = (): Partial<CommercialCoupon> => ({
   recurringCyclesLimit: null,
   active: true,
   partnerId: null,
-  createPublicCode: true,
+  createPublicCode: false,
   stripeProductIds: [],
   firstTimeOnly: false,
   restrictedCustomerEmail: null,
@@ -85,6 +85,91 @@ function optionalExpandedFromCoupon(c: Partial<CommercialCoupon>): CouponOptiona
     validityDates: Boolean(c.validFrom || c.validUntil),
     minimumAmount: c.minimumAmountBrl != null,
   };
+}
+
+function discountDurationLabel(d: Partial<CommercialCoupon>): string {
+  if (d.discountRecurrence === "first_cycle") return "Uma vez";
+  if (d.recurringCyclesLimit != null) return `${d.recurringCyclesLimit} meses`;
+  return "Vitalício";
+}
+
+function advancedStripeSummary(d: Partial<CommercialCoupon>, partnerList: CommercialPartner[]): string {
+  const parts: string[] = [discountDurationLabel(d)];
+  if ((d.stripeProductIds ?? []).length > 0) {
+    parts.push(`${d.stripeProductIds!.length} produto(s) Stripe`);
+  }
+  if (d.maxRedemptionsPerUser != null) {
+    parts.push(`Limite ${d.maxRedemptionsPerUser}/e-mail`);
+  }
+  if (d.partnerId) {
+    const partner = partnerList.find((p) => p.id === d.partnerId);
+    parts.push(partner ? partner.name : "Parceiro vinculado");
+  }
+  return parts.join(" · ");
+}
+
+function planRestrictionSummary(d: Partial<CommercialCoupon>): string {
+  const slugs = d.allowedPlanSlugs ?? [];
+  if (!slugs.length) return "Todos os planos";
+  return slugs.join(", ");
+}
+
+function CollapsibleSection({
+  title,
+  summary,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  summary: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="sm:col-span-2 overflow-hidden rounded-xl border border-line">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-elevated/40"
+      >
+        <div className="min-w-0 flex-1">
+          <span className="text-sm font-medium text-content">{title}</span>
+          {!open ? <p className="mt-0.5 truncate text-xs text-content-faint">{summary}</p> : null}
+        </div>
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={cn(
+            "shrink-0 text-content-muted transition-transform duration-200",
+            open && "rotate-180",
+          )}
+          aria-hidden
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      <div
+        className={cn(
+          "grid transition-[grid-template-rows] duration-200 ease-in-out",
+          open ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+        )}
+      >
+        <div className="overflow-hidden">
+          <div className="space-y-4 border-t border-line px-4 pb-4 pt-3">{children}</div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ExpandableCheckboxOption({
@@ -136,6 +221,8 @@ export function AdminCouponsWorkspace() {
   const [modalOpen, setModalOpen] = useState(false);
   const [draft, setDraft] = useState<Partial<CommercialCoupon>>(emptyCoupon);
   const [optionalExpanded, setOptionalExpanded] = useState<CouponOptionalExpanded>(emptyOptionalExpanded);
+  const [advancedStripeOpen, setAdvancedStripeOpen] = useState(false);
+  const [planRestrictionOpen, setPlanRestrictionOpen] = useState(false);
   const [extraCodeInputs, setExtraCodeInputs] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -221,6 +308,8 @@ export function AdminCouponsWorkspace() {
   const openCreate = () => {
     setDraft(emptyCoupon());
     setOptionalExpanded(emptyOptionalExpanded());
+    setAdvancedStripeOpen(false);
+    setPlanRestrictionOpen(false);
     setExtraCodeInputs([]);
     setFormError(null);
     setModalOpen(true);
@@ -233,6 +322,8 @@ export function AdminCouponsWorkspace() {
       validUntil: c.validUntil ?? "",
     });
     setOptionalExpanded(optionalExpandedFromCoupon(c));
+    setAdvancedStripeOpen(false);
+    setPlanRestrictionOpen(false);
     setExtraCodeInputs([]);
     setFormError(null);
     setModalOpen(true);
@@ -582,138 +673,7 @@ export function AdminCouponsWorkspace() {
               <p className="mt-1 text-xs text-content-faint">Armazenado em centavos no servidor.</p>
             ) : null}
           </div>
-          <div>
-            <label className="text-xs font-semibold text-content-muted">Limite por e-mail (vazio = ilimitado)</label>
-            <Input
-              type="number"
-              className="mt-1.5"
-              value={draft.maxRedemptionsPerUser ?? ""}
-              onChange={(e) =>
-                setDraft((d) => ({
-                  ...d,
-                  maxRedemptionsPerUser: e.target.value === "" ? null : parseInt(e.target.value, 10),
-                }))
-              }
-            />
-          </div>
           <div className="sm:col-span-2">
-            <label className="text-xs font-semibold text-content-muted">Duração do desconto (Stripe)</label>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {(["once", "repeating", "forever"] as const).map((opt) => {
-                const active =
-                  opt === "once"
-                    ? draft.discountRecurrence === "first_cycle"
-                    : opt === "repeating"
-                      ? draft.discountRecurrence === "all_cycles" && draft.recurringCyclesLimit !== null
-                      : draft.discountRecurrence === "all_cycles" && draft.recurringCyclesLimit === null;
-                const label = opt === "once" ? "Uma vez" : opt === "repeating" ? "Vários meses" : "Vitalício";
-                return (
-                  <button
-                    key={opt}
-                    type="button"
-                    onClick={() => {
-                      if (opt === "once")
-                        setDraft((d) => ({ ...d, discountRecurrence: "first_cycle", recurringCyclesLimit: null }));
-                      else if (opt === "forever")
-                        setDraft((d) => ({ ...d, discountRecurrence: "all_cycles", recurringCyclesLimit: null }));
-                      else
-                        setDraft((d) => ({
-                          ...d,
-                          discountRecurrence: "all_cycles",
-                          recurringCyclesLimit: d.recurringCyclesLimit ?? 1,
-                        }));
-                    }}
-                    className={cn(
-                      "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                      active ? "border-primary/40 bg-primary/15 text-content" : "border-line text-content-muted",
-                    )}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-            {draft.discountRecurrence === "all_cycles" && draft.recurringCyclesLimit !== null && (
-              <div className="mt-3">
-                <label className="text-xs font-semibold text-content-muted">Quantos meses?</label>
-                <Input
-                  type="number"
-                  className="mt-1.5"
-                  min={1}
-                  value={draft.recurringCyclesLimit ?? ""}
-                  onChange={(e) =>
-                    setDraft((d) => ({
-                      ...d,
-                      recurringCyclesLimit: e.target.value === "" ? 1 : parseInt(e.target.value, 10),
-                    }))
-                  }
-                />
-              </div>
-            )}
-          </div>
-          <div className="sm:col-span-2">
-            <label className="text-xs font-semibold text-content-muted">Produtos Stripe (opcional)</label>
-            <Input
-              className="mt-1.5 font-mono text-xs"
-              placeholder="prod_xxx, prod_yyy"
-              value={(draft.stripeProductIds ?? []).join(", ")}
-              onChange={(e) =>
-                setDraft((d) => ({
-                  ...d,
-                  stripeProductIds: e.target.value
-                    .split(",")
-                    .map((s) => s.trim())
-                    .filter((s) => s.startsWith("prod_")),
-                }))
-              }
-            />
-            <p className="mt-1 text-xs text-content-faint">
-              Restringe o cupom a produtos Stripe específicos (applies_to.products). Product IDs em Stripe Dashboard → Products.
-            </p>
-          </div>
-          <div className="sm:col-span-2">
-            <label className="text-xs font-semibold text-content-muted">Restringir a planos (vazio = todos com checkout)</label>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {PLAN_CHECKOUT_SLUGS.map((slug) => {
-                const on = draft.allowedPlanSlugs?.includes(slug);
-                return (
-                  <button
-                    key={slug}
-                    type="button"
-                    onClick={() =>
-                      setDraft((d) => {
-                        const cur = d.allowedPlanSlugs ?? [];
-                        const next = on ? cur.filter((s) => s !== slug) : [...cur, slug];
-                        return { ...d, allowedPlanSlugs: next };
-                      })
-                    }
-                    className={cn(
-                      "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                      on ? "border-primary/40 bg-primary/15 text-content" : "border-line text-content-muted",
-                    )}
-                  >
-                    {slug}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-content-muted">Parceiro vinculado</label>
-            <Select
-              className="mt-1.5"
-              value={draft.partnerId ?? ""}
-              onChange={(e) => setDraft((d) => ({ ...d, partnerId: e.target.value || null }))}
-            >
-              <option value="">Nenhum</option>
-              {partners.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.code})
-                </option>
-              ))}
-            </Select>
-          </div>
-          <div className="flex items-end pb-1">
             <Toggle
               id="coupon-active"
               checked={draft.active !== false}
@@ -721,6 +681,153 @@ export function AdminCouponsWorkspace() {
               label="Cupom ativo"
             />
           </div>
+
+          <CollapsibleSection
+            title="Configurações avançadas do Stripe"
+            summary={advancedStripeSummary(draft, partners)}
+            open={advancedStripeOpen}
+            onToggle={() => setAdvancedStripeOpen((o) => !o)}
+          >
+            <div>
+              <label className="text-xs font-semibold text-content-muted">Duração do desconto (Stripe)</label>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {(["once", "repeating", "forever"] as const).map((opt) => {
+                  const active =
+                    opt === "once"
+                      ? draft.discountRecurrence === "first_cycle"
+                      : opt === "repeating"
+                        ? draft.discountRecurrence === "all_cycles" && draft.recurringCyclesLimit !== null
+                        : draft.discountRecurrence === "all_cycles" && draft.recurringCyclesLimit === null;
+                  const label = opt === "once" ? "Uma vez" : opt === "repeating" ? "Vários meses" : "Vitalício";
+                  return (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => {
+                        if (opt === "once")
+                          setDraft((d) => ({ ...d, discountRecurrence: "first_cycle", recurringCyclesLimit: null }));
+                        else if (opt === "forever")
+                          setDraft((d) => ({ ...d, discountRecurrence: "all_cycles", recurringCyclesLimit: null }));
+                        else
+                          setDraft((d) => ({
+                            ...d,
+                            discountRecurrence: "all_cycles",
+                            recurringCyclesLimit: d.recurringCyclesLimit ?? 1,
+                          }));
+                      }}
+                      className={cn(
+                        "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                        active ? "border-primary/40 bg-primary/15 text-content" : "border-line text-content-muted",
+                      )}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              {draft.discountRecurrence === "all_cycles" && draft.recurringCyclesLimit !== null && (
+                <div className="mt-3">
+                  <label className="text-xs font-semibold text-content-muted">Quantos meses?</label>
+                  <Input
+                    type="number"
+                    className="mt-1.5"
+                    min={1}
+                    value={draft.recurringCyclesLimit ?? ""}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        recurringCyclesLimit: e.target.value === "" ? 1 : parseInt(e.target.value, 10),
+                      }))
+                    }
+                  />
+                </div>
+              )}
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-content-muted">Produtos Stripe (opcional)</label>
+              <Input
+                className="mt-1.5 font-mono text-xs"
+                placeholder="prod_xxx, prod_yyy"
+                value={(draft.stripeProductIds ?? []).join(", ")}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    stripeProductIds: e.target.value
+                      .split(",")
+                      .map((s) => s.trim())
+                      .filter((s) => s.startsWith("prod_")),
+                  }))
+                }
+              />
+              <p className="mt-1 text-xs text-content-faint">
+                Restringe o cupom a produtos Stripe específicos (applies_to.products). Product IDs em Stripe Dashboard → Products.
+              </p>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-content-muted">Limite por e-mail (vazio = ilimitado)</label>
+              <Input
+                type="number"
+                className="mt-1.5"
+                value={draft.maxRedemptionsPerUser ?? ""}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    maxRedemptionsPerUser: e.target.value === "" ? null : parseInt(e.target.value, 10),
+                  }))
+                }
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-content-muted">Parceiro vinculado</label>
+              <Select
+                className="mt-1.5"
+                value={draft.partnerId ?? ""}
+                onChange={(e) => setDraft((d) => ({ ...d, partnerId: e.target.value || null }))}
+              >
+                <option value="">Nenhum</option>
+                {partners.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.code})
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            title="Restrição de planos"
+            summary={planRestrictionSummary(draft)}
+            open={planRestrictionOpen}
+            onToggle={() => setPlanRestrictionOpen((o) => !o)}
+          >
+            <div>
+              <label className="text-xs font-semibold text-content-muted">Restringir a planos (vazio = todos com checkout)</label>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {PLAN_CHECKOUT_SLUGS.map((slug) => {
+                  const on = draft.allowedPlanSlugs?.includes(slug);
+                  return (
+                    <button
+                      key={slug}
+                      type="button"
+                      onClick={() =>
+                        setDraft((d) => {
+                          const cur = d.allowedPlanSlugs ?? [];
+                          const next = on ? cur.filter((s) => s !== slug) : [...cur, slug];
+                          return { ...d, allowedPlanSlugs: next };
+                        })
+                      }
+                      className={cn(
+                        "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                        on ? "border-primary/40 bg-primary/15 text-content" : "border-line text-content-muted",
+                      )}
+                    >
+                      {slug}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </CollapsibleSection>
 
           <div className="sm:col-span-2 flex items-center gap-3 border-t border-line pt-4">
             <Toggle
