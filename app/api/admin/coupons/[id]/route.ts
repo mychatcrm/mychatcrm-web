@@ -4,7 +4,6 @@ import { applyCouponPartnerLink } from "@/lib/commercial/sync-links";
 import {
   appendAuditEntry,
   buildCommercialStoreFromDb,
-  countRedemptionsByCoupon,
   deleteCoupon,
   persistModifiedPartners,
 } from "@/lib/server/commercial-store-db";
@@ -23,14 +22,6 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
   const coupon = store.coupons.find((c) => c.id === id);
   if (!coupon) return NextResponse.json({ error: "Cupom não encontrado." }, { status: 404 });
 
-  const redemptionCount = await countRedemptionsByCoupon(id);
-  if (redemptionCount > 0) {
-    return NextResponse.json(
-      { error: "Não é possível excluir: já existem resgates confirmados. Desative o cupom." },
-      { status: 409 },
-    );
-  }
-
   const ghost = { ...coupon, partnerId: null as string | null };
   const updated = applyCouponPartnerLink(
     { ...store, coupons: store.coupons.filter((c) => c.id !== id) },
@@ -46,6 +37,11 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
   if (coupon.stripePromoCodeId) {
     getStripe().promotionCodes.update(coupon.stripePromoCodeId, { active: false }).catch(
       (err: unknown) => console.warn("[admin-coupons] Falha ao desativar promo code no Stripe:", err),
+    );
+  }
+  if (coupon.stripeCouponId) {
+    getStripe().coupons.del(coupon.stripeCouponId).catch(
+      (err: unknown) => console.warn("[admin-coupons] Falha ao deletar coupon no Stripe:", err),
     );
   }
 

@@ -74,6 +74,7 @@ export function AdminCouponsWorkspace() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<ApiCouponRow | null>(null);
 
   const clearFlashSoon = useCallback(() => {
     window.setTimeout(() => setFlash(null), 3000);
@@ -196,8 +197,10 @@ export function AdminCouponsWorkspace() {
     }
   };
 
-  const remove = async (c: CommercialCoupon) => {
-    if (!confirm(`Excluir cupom ${c.code}? Só é permitido sem resgates confirmados.`)) return;
+  const confirmDelete = async () => {
+    const c = pendingDelete;
+    if (!c) return;
+    setPendingDelete(null);
     try {
       const res = await fetch(`/api/admin/coupons/${encodeURIComponent(c.id)}`, { method: "DELETE" });
       const data = await res.json().catch(() => null);
@@ -247,11 +250,19 @@ export function AdminCouponsWorkspace() {
     {
       key: "status",
       header: "Status",
-      render: (r) => (
-        <span className={cn("text-xs font-medium", r.active ? "text-success" : "text-content-faint")}>
-          {r.active ? "Ativo" : "Inativo"}
-        </span>
-      ),
+      render: (r) => {
+        if (!r.active) {
+          return <span className="text-xs font-medium text-content-faint">Inativo</span>;
+        }
+        const now = Date.now();
+        if (r.validUntil != null && new Date(r.validUntil).getTime() < now) {
+          return <span className="text-xs font-medium text-amber-400">Expirado</span>;
+        }
+        if (r.validFrom != null && new Date(r.validFrom).getTime() > now) {
+          return <span className="text-xs font-medium text-blue-400">Não iniciado</span>;
+        }
+        return <span className="text-xs font-medium text-success">Ativo</span>;
+      },
     },
     {
       key: "actions",
@@ -262,7 +273,7 @@ export function AdminCouponsWorkspace() {
           <Button type="button" size="sm" variant="secondary" onClick={() => openEdit(r)}>
             Editar
           </Button>
-          <Button type="button" size="sm" variant="ghost" onClick={() => void remove(r)}>
+          <Button type="button" size="sm" variant="ghost" onClick={() => setPendingDelete(r)}>
             Excluir
           </Button>
         </div>
@@ -588,6 +599,36 @@ export function AdminCouponsWorkspace() {
             />
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        open={pendingDelete !== null}
+        onClose={() => setPendingDelete(null)}
+        title="Confirmar exclusão"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={() => setPendingDelete(null)}>
+              Cancelar
+            </Button>
+            <Button type="button" variant="danger" onClick={() => void confirmDelete()}>
+              Excluir
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-sm text-content-secondary">
+          Deseja excluir o cupom{" "}
+          <span className="font-mono font-semibold text-primary">{pendingDelete?.code}</span>?
+        </p>
+        {(pendingDelete?._uses ?? 0) > 0 && (
+          <p className="mt-2 text-sm text-amber-400">
+            Atenção: este cupom tem {pendingDelete?._uses} resgate
+            {pendingDelete?._uses === 1 ? "" : "s"} confirmado
+            {pendingDelete?._uses === 1 ? "" : "s"}. O histórico será preservado, mas o cupom e o
+            código Stripe serão permanentemente removidos.
+          </p>
+        )}
+        <p className="mt-2 text-xs text-content-faint">Esta ação é irreversível.</p>
       </Modal>
     </div>
   );
