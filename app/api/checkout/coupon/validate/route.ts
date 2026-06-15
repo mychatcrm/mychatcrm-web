@@ -29,7 +29,15 @@ export async function POST(request: Request) {
   const billingCycle = parsePlanBillingCycle(body?.ciclo ?? body?.billingCycle);
   const store = await buildCommercialStoreFromDb();
   const originalCents = brlToCents(planCheckoutChargeBaseBRL(plan.priceMonthly, billingCycle));
-  const result = validateCouponForCheckout({ store, codeRaw: code, planSlug, originalCents, emailRaw: email });
+
+  // Suporte a extra codes — resolver para o código principal antes de validar
+  const normalizedCode = normalizeCouponCode(code);
+  const extraCodeMatch = store.extraCodes.find((e) => e.code === normalizedCode);
+  const effectiveCode = extraCodeMatch
+    ? store.coupons.find((c) => c.id === extraCodeMatch.couponId)?.code ?? code
+    : code;
+
+  const result = validateCouponForCheckout({ store, codeRaw: effectiveCode, planSlug, originalCents, emailRaw: email });
 
   if (!result.ok) {
     if (result.code === "COUPON_EMPTY") {
@@ -39,6 +47,7 @@ export async function POST(request: Request) {
   }
 
   const coupon = store.coupons.find((c) => c.id === result.couponId);
+  const stripePromoCodeId = extraCodeMatch?.stripePromoCodeId ?? coupon?.stripePromoCodeId ?? null;
 
   if (email && result.couponId) {
     insertRedemption({
@@ -47,7 +56,7 @@ export async function POST(request: Request) {
       status: "pending",
       idempotencyKey: `pending_${randomUUID()}`,
       couponId: result.couponId,
-      codeNormalized: normalizeCouponCode(code),
+      codeNormalized: normalizedCode,
       planSlug,
       emailNormalized: email.toLowerCase(),
       originalCents: result.originalCents,
@@ -58,5 +67,5 @@ export async function POST(request: Request) {
     }).catch((e: unknown) => console.warn("[validate] Falha ao gravar pending:", e));
   }
 
-  return NextResponse.json({ ...result, stripePromoCodeId: coupon?.stripePromoCodeId ?? null });
+  return NextResponse.json({ ...result, stripePromoCodeId });
 }

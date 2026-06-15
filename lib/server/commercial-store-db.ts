@@ -7,6 +7,7 @@ import type {
   CommercialCoupon,
   CommercialPartner,
   CommercialStore,
+  CouponExtraCode,
   CouponRedemption,
   RedemptionStatus,
 } from "@/lib/commercial/types";
@@ -34,6 +35,9 @@ function dbToCoupon(row: Record<string, unknown>): CommercialCoupon {
     stripePromoCodeId: (row.stripe_promo_code_id as string | null) ?? null,
     stripeProductIds: (row.stripe_product_ids as string[]) ?? [],
     createPublicCode: (row.create_public_code as boolean) ?? true,
+    firstTimeOnly: (row.first_time_only as boolean) ?? false,
+    restrictedCustomerEmail: (row.restricted_customer_email as string | null) ?? null,
+    minimumAmountBrl: (row.minimum_amount_brl as number | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };
@@ -80,6 +84,9 @@ export async function upsertCoupon(coupon: CommercialCoupon): Promise<void> {
       stripe_promo_code_id: coupon.stripePromoCodeId ?? null,
       stripe_product_ids: coupon.stripeProductIds,
       create_public_code: coupon.createPublicCode,
+      first_time_only: coupon.firstTimeOnly,
+      restricted_customer_email: coupon.restrictedCustomerEmail ?? null,
+      minimum_amount_brl: coupon.minimumAmountBrl ?? null,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "id" },
@@ -250,6 +257,36 @@ export async function findCommittedRedemptionByCouponAndEmail(
   return data ? { id: data.id as string } : null;
 }
 
+// ── Extra Codes ──────────────────────────────────────────────────────────
+
+function dbToExtraCode(row: Record<string, unknown>): CouponExtraCode {
+  return {
+    id: row.id as string,
+    couponId: row.coupon_id as string,
+    code: row.code as string,
+    stripePromoCodeId: (row.stripe_promo_code_id as string | null) ?? null,
+    createdAt: row.created_at as string,
+  };
+}
+
+export async function listAllExtraCodes(): Promise<CouponExtraCode[]> {
+  const sb = createSupabaseServiceClient();
+  const { data, error } = await sb.from("coupon_extra_codes").select("*");
+  if (error) { console.error("[commercial-store-db] listAllExtraCodes:", error.message); return []; }
+  return (data ?? []).map(dbToExtraCode);
+}
+
+export async function insertExtraCode(e: CouponExtraCode): Promise<void> {
+  const sb = createSupabaseServiceClient();
+  const { error } = await sb.from("coupon_extra_codes").insert({
+    id: e.id,
+    coupon_id: e.couponId,
+    code: e.code,
+    stripe_promo_code_id: e.stripePromoCodeId ?? null,
+  });
+  if (error) throw new Error(`[commercial-store-db] insertExtraCode: ${error.message}`);
+}
+
 // ── Audit Log ─────────────────────────────────────────────────────────────
 
 export async function appendAuditEntry(entry: CommercialAuditEntry): Promise<void> {
@@ -269,12 +306,13 @@ export async function appendAuditEntry(entry: CommercialAuditEntry): Promise<voi
 
 /** Constrói um CommercialStore em memória a partir dos dados do banco. */
 export async function buildCommercialStoreFromDb(): Promise<CommercialStore> {
-  const [coupons, partners, redemptions] = await Promise.all([
+  const [coupons, partners, redemptions, extraCodes] = await Promise.all([
     listCoupons(),
     listPartners(),
     listRedemptions(),
+    listAllExtraCodes(),
   ]);
-  return { version: 1, coupons, partners, redemptions, auditLog: [] };
+  return { version: 1, coupons, partners, redemptions, extraCodes, auditLog: [] };
 }
 
 /** Persiste múltiplos cupons modificados (após sync-links). */

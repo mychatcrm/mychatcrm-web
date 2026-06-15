@@ -25,7 +25,7 @@ function parseOptionalInt(raw: unknown): number | null | "invalid" {
 export function parseCouponUpsert(
   body: unknown,
   existing: CommercialCoupon | undefined,
-): { ok: true; coupon: CommercialCoupon } | { ok: false; error: string } {
+): { ok: true; coupon: CommercialCoupon; extraCodes: string[] } | { ok: false; error: string } {
   if (!body || typeof body !== "object") return { ok: false, error: "Payload inválido." };
   const r = body as Record<string, unknown>;
   const id = typeof r.id === "string" && r.id ? r.id : `cpn_${randomUUID().slice(0, 12)}`;
@@ -88,6 +88,21 @@ export function parseCouponUpsert(
     : [];
 
   const createPublicCode = r.createPublicCode !== false;
+  const firstTimeOnly = r.firstTimeOnly === true;
+  const restrictedCustomerEmail =
+    typeof r.restrictedCustomerEmail === "string" && r.restrictedCustomerEmail.trim()
+      ? r.restrictedCustomerEmail.trim().toLowerCase()
+      : null;
+  const minimumAmountBrl = parseOptionalInt(r.minimumAmountBrl);
+  if (minimumAmountBrl === "invalid" || (minimumAmountBrl !== null && minimumAmountBrl < 0)) {
+    return { ok: false, error: "Valor mínimo inválido." };
+  }
+  const extraCodes: string[] = Array.isArray(r.extraCodes)
+    ? (r.extraCodes as unknown[])
+        .filter((c): c is string => typeof c === "string" && c.trim().length > 0)
+        .map((c) => c.trim().toUpperCase().replace(/\s+/g, ""))
+        .slice(0, 5)
+    : [];
 
   const coupon: CommercialCoupon = {
     id,
@@ -109,11 +124,14 @@ export function parseCouponUpsert(
     stripePromoCodeId: existing?.stripePromoCodeId ?? null,
     stripeProductIds,
     createPublicCode,
+    firstTimeOnly,
+    restrictedCustomerEmail,
+    minimumAmountBrl,
     createdAt: existing?.createdAt ?? isoNow(),
     updatedAt: isoNow(),
   };
 
-  return { ok: true, coupon };
+  return { ok: true, coupon, extraCodes };
 }
 
 export function parsePartnerUpsert(
