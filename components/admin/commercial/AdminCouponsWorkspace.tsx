@@ -534,30 +534,6 @@ export function AdminCouponsWorkspace() {
       >
         {formError ? <p className="mb-3 text-sm text-rose-400">{formError}</p> : null}
         <div className="grid max-h-[70vh] gap-4 overflow-y-auto pr-1 sm:grid-cols-2">
-          <div className="sm:col-span-2 flex items-center gap-3 pt-1">
-            <Toggle
-              id="coupon-create-public-code"
-              checked={draft.createPublicCode !== false}
-              onChange={(v) => setDraft((d) => ({ ...d, createPublicCode: v }))}
-              label="Criar código público (Promotion Code no Stripe)"
-            />
-          </div>
-          <div className="sm:col-span-2">
-            <label className="text-xs font-semibold text-content-muted">
-              {draft.createPublicCode !== false ? "Código público" : "Código interno"}
-            </label>
-            <Input
-              className="mt-1.5 font-mono"
-              value={draft.code ?? ""}
-              onChange={(e) => setDraft((d) => ({ ...d, code: e.target.value }))}
-              placeholder="SOLO15"
-            />
-            {draft.createPublicCode === false && (
-              <p className="mt-1 text-xs text-content-faint">
-                Nenhum Promotion Code será criado no Stripe — cupom interno, não digitável pelo cliente.
-              </p>
-            )}
-          </div>
           <div className="sm:col-span-2">
             <label className="text-xs font-semibold text-content-muted">Nome (aparece nos recibos)</label>
             <Input
@@ -619,33 +595,6 @@ export function AdminCouponsWorkspace() {
                 }))
               }
             />
-          </div>
-          <div className="sm:col-span-2">
-            <label className="text-xs font-semibold text-content-muted">Restringir a planos (vazio = todos com checkout)</label>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {PLAN_CHECKOUT_SLUGS.map((slug) => {
-                const on = draft.allowedPlanSlugs?.includes(slug);
-                return (
-                  <button
-                    key={slug}
-                    type="button"
-                    onClick={() =>
-                      setDraft((d) => {
-                        const cur = d.allowedPlanSlugs ?? [];
-                        const next = on ? cur.filter((s) => s !== slug) : [...cur, slug];
-                        return { ...d, allowedPlanSlugs: next };
-                      })
-                    }
-                    className={cn(
-                      "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                      on ? "border-primary/40 bg-primary/15 text-content" : "border-line text-content-muted",
-                    )}
-                  >
-                    {slug}
-                  </button>
-                );
-              })}
-            </div>
           </div>
           <div className="sm:col-span-2">
             <label className="text-xs font-semibold text-content-muted">Duração do desconto (Stripe)</label>
@@ -722,8 +671,78 @@ export function AdminCouponsWorkspace() {
               Restringe o cupom a produtos Stripe específicos (applies_to.products). Product IDs em Stripe Dashboard → Products.
             </p>
           </div>
-          {draft.createPublicCode !== false && (
+          <div className="sm:col-span-2">
+            <label className="text-xs font-semibold text-content-muted">Restringir a planos (vazio = todos com checkout)</label>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {PLAN_CHECKOUT_SLUGS.map((slug) => {
+                const on = draft.allowedPlanSlugs?.includes(slug);
+                return (
+                  <button
+                    key={slug}
+                    type="button"
+                    onClick={() =>
+                      setDraft((d) => {
+                        const cur = d.allowedPlanSlugs ?? [];
+                        const next = on ? cur.filter((s) => s !== slug) : [...cur, slug];
+                        return { ...d, allowedPlanSlugs: next };
+                      })
+                    }
+                    className={cn(
+                      "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                      on ? "border-primary/40 bg-primary/15 text-content" : "border-line text-content-muted",
+                    )}
+                  >
+                    {slug}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-content-muted">Parceiro vinculado</label>
+            <Select
+              className="mt-1.5"
+              value={draft.partnerId ?? ""}
+              onChange={(e) => setDraft((d) => ({ ...d, partnerId: e.target.value || null }))}
+            >
+              <option value="">Nenhum</option>
+              {partners.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.code})
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="flex items-end pb-1">
+            <Toggle
+              id="coupon-active"
+              checked={draft.active !== false}
+              onChange={(v) => setDraft((d) => ({ ...d, active: v }))}
+              label="Cupom ativo"
+            />
+          </div>
+
+          <div className="sm:col-span-2 flex items-center gap-3 border-t border-line pt-4">
+            <Toggle
+              id="coupon-create-public-code"
+              checked={draft.createPublicCode !== false}
+              onChange={(v) => setDraft((d) => ({ ...d, createPublicCode: v }))}
+              label="Criar código público (Promotion Code no Stripe)"
+            />
+          </div>
+
+          {draft.createPublicCode !== false ? (
             <>
+              <div className="sm:col-span-2">
+                <label className="text-xs font-semibold text-content-muted">Código público</label>
+                <Input
+                  className="mt-1.5 font-mono"
+                  value={draft.code ?? ""}
+                  onChange={(e) => setDraft((d) => ({ ...d, code: e.target.value }))}
+                  placeholder="SOLO15"
+                />
+              </div>
+
               <ExpandableCheckboxOption
                 id="coupon-first-time-only"
                 label="Válido somente para o primeiro pedido"
@@ -868,9 +887,6 @@ export function AdminCouponsWorkspace() {
               {/* Extra codes — só na criação (não editável) */}
               {!draft.stripeCouponId && (
                 <div className="sm:col-span-2">
-                  <label className="text-xs font-semibold text-content-muted">
-                    Códigos adicionais (mesmo cupom, até 5)
-                  </label>
                   {extraCodeInputs.map((c, i) => (
                     <div key={i} className="mt-2 flex gap-2">
                       <Input
@@ -896,7 +912,7 @@ export function AdminCouponsWorkspace() {
                     <Button
                       type="button"
                       variant="secondary"
-                      className="mt-2"
+                      className={extraCodeInputs.length > 0 ? "mt-2" : undefined}
                       onClick={() => setExtraCodeInputs((prev) => [...prev, ""])}
                     >
                       + Adicionar outro código
@@ -911,31 +927,7 @@ export function AdminCouponsWorkspace() {
                 </p>
               )}
             </>
-          )}
-
-          <div>
-            <label className="text-xs font-semibold text-content-muted">Parceiro vinculado</label>
-            <Select
-              className="mt-1.5"
-              value={draft.partnerId ?? ""}
-              onChange={(e) => setDraft((d) => ({ ...d, partnerId: e.target.value || null }))}
-            >
-              <option value="">Nenhum</option>
-              {partners.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.code})
-                </option>
-              ))}
-            </Select>
-          </div>
-          <div className="flex items-end pb-1">
-            <Toggle
-              id="coupon-active"
-              checked={draft.active !== false}
-              onChange={(v) => setDraft((d) => ({ ...d, active: v }))}
-              label="Cupom ativo"
-            />
-          </div>
+          ) : null}
         </div>
       </Modal>
 
