@@ -80,6 +80,10 @@ export function AdminCouponsWorkspace() {
   const [formError, setFormError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ApiCouponRow | null>(null);
+  const [redemptionSearch, setRedemptionSearch] = useState("");
+  const [redemptionStatusFilter, setRedemptionStatusFilter] = useState<"all" | "pending" | "committed" | "confirmed">("all");
+  const [redemptionPlanFilter, setRedemptionPlanFilter] = useState("all");
+  const [pendingDeleteRedemption, setPendingDeleteRedemption] = useState<CouponRedemption | null>(null);
 
   const clearFlashSoon = useCallback(() => {
     window.setTimeout(() => setFlash(null), 3000);
@@ -126,6 +130,32 @@ export function AdminCouponsWorkspace() {
       );
     });
   }, [rows, filter, statusFilter]);
+
+  const filteredRedemptions = useMemo(() => {
+    const q = redemptionSearch.trim().toLowerCase();
+    return redemptions.filter((r) => {
+      if (redemptionStatusFilter !== "all" && r.status !== redemptionStatusFilter) return false;
+      if (redemptionPlanFilter !== "all" && r.planSlug !== redemptionPlanFilter) return false;
+      if (q && !r.codeNormalized.toLowerCase().includes(q) && !r.emailNormalized.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [redemptions, redemptionSearch, redemptionStatusFilter, redemptionPlanFilter]);
+
+  const confirmDeleteRedemption = async () => {
+    const r = pendingDeleteRedemption;
+    if (!r) return;
+    setPendingDeleteRedemption(null);
+    try {
+      const res = await fetch(`/api/admin/coupons/redemptions/${encodeURIComponent(r.id)}`, { method: "DELETE" });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error ?? "Erro ao apagar.");
+      setRedemptions((prev) => prev.filter((x) => x.id !== r.id));
+      setFlash("Registro apagado.");
+      clearFlashSoon();
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Erro ao apagar registro.");
+    }
+  };
 
   const openCreate = () => {
     setDraft(emptyCoupon());
@@ -342,9 +372,46 @@ export function AdminCouponsWorkspace() {
         <DataTable columns={columns} data={filtered} rowKey={(r) => r.id} emptyLabel={loading ? "Carregando…" : "Nenhum cupom."} />
       </Panel>
 
-      <Panel title="Resgates recentes" description="Últimos eventos gravados no checkout (ambiente demo — persistência em disco).">
+      <Panel title="Resgates recentes" description="Eventos gravados no checkout. Filtros aplicados no frontend.">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+          <div className="min-w-0 flex-1 sm:min-w-[180px]">
+            <label className="text-xs font-semibold uppercase tracking-wider text-content-muted">Buscar</label>
+            <Input
+              className="mt-1.5"
+              value={redemptionSearch}
+              onChange={(e) => setRedemptionSearch(e.target.value)}
+              placeholder="Código ou email"
+            />
+          </div>
+          <div className="w-full sm:w-44">
+            <label className="text-xs font-semibold uppercase tracking-wider text-content-muted">Status</label>
+            <Select
+              className="mt-1.5"
+              value={redemptionStatusFilter}
+              onChange={(e) => setRedemptionStatusFilter(e.target.value as typeof redemptionStatusFilter)}
+            >
+              <option value="all">Todos</option>
+              <option value="pending">Tentativa</option>
+              <option value="committed">Aguardando</option>
+              <option value="confirmed">Confirmado</option>
+            </Select>
+          </div>
+          <div className="w-full sm:w-40">
+            <label className="text-xs font-semibold uppercase tracking-wider text-content-muted">Plano</label>
+            <Select
+              className="mt-1.5"
+              value={redemptionPlanFilter}
+              onChange={(e) => setRedemptionPlanFilter(e.target.value)}
+            >
+              <option value="all">Todos</option>
+              {PLAN_CHECKOUT_SLUGS.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </Select>
+          </div>
+        </div>
         <ul className="space-y-2 text-sm text-content-secondary">
-          {redemptions.slice(0, 12).map((r) => (
+          {filteredRedemptions.map((r) => (
             <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-surface-card px-3 py-2">
               <span className="font-mono text-xs text-primary">{r.codeNormalized}</span>
               <span className="text-content-muted">{r.planSlug}</span>
@@ -361,9 +428,28 @@ export function AdminCouponsWorkspace() {
               {r.status === "committed" && (
                 <span className="text-xs font-medium text-amber-400">Aguardando</span>
               )}
+              <button
+                type="button"
+                onClick={() => setPendingDeleteRedemption(r)}
+                className="ml-auto text-content-faint transition-colors hover:text-rose-400"
+                title="Apagar registro"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                  fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6l-1 14H6L5 6" />
+                  <path d="M10 11v6" />
+                  <path d="M14 11v6" />
+                  <path d="M9 6V4h6v2" />
+                </svg>
+              </button>
             </li>
           ))}
-          {!redemptions.length ? <li className="text-content-muted">Nenhum resgate ainda.</li> : null}
+          {!filteredRedemptions.length && (
+            <li className="text-content-muted">
+              {redemptions.length === 0 ? "Nenhum resgate ainda." : "Nenhum resgate encontrado."}
+            </li>
+          )}
         </ul>
       </Panel>
 
@@ -771,6 +857,32 @@ export function AdminCouponsWorkspace() {
             código Stripe serão permanentemente removidos.
           </p>
         )}
+        <p className="mt-2 text-xs text-content-faint">Esta ação é irreversível.</p>
+      </Modal>
+
+      <Modal
+        open={pendingDeleteRedemption !== null}
+        onClose={() => setPendingDeleteRedemption(null)}
+        title="Apagar registro"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={() => setPendingDeleteRedemption(null)}>
+              Cancelar
+            </Button>
+            <Button type="button" variant="danger" onClick={() => void confirmDeleteRedemption()}>
+              Apagar
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-sm text-content-secondary">
+          Deseja apagar o resgate{" "}
+          <span className="font-mono font-semibold text-primary">
+            {pendingDeleteRedemption?.codeNormalized}
+          </span>{" "}
+          de{" "}
+          <span className="text-content">{pendingDeleteRedemption?.emailNormalized}</span>?
+        </p>
         <p className="mt-2 text-xs text-content-faint">Esta ação é irreversível.</p>
       </Modal>
     </div>

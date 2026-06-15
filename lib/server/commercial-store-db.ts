@@ -239,6 +239,12 @@ export async function updateRedemptionStatus(id: string, status: RedemptionStatu
   if (error) console.warn("[commercial-store-db] updateRedemptionStatus:", error.message);
 }
 
+export async function deleteRedemption(id: string): Promise<void> {
+  const sb = createSupabaseServiceClient();
+  const { error } = await sb.from("coupon_redemptions").delete().eq("id", id);
+  if (error) throw new Error(`[commercial-store-db] deleteRedemption: ${error.message}`);
+}
+
 export async function findCommittedRedemptionByCouponAndEmail(
   couponId: string,
   emailNormalized: string,
