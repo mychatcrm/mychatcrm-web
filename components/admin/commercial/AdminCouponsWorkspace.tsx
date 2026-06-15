@@ -331,6 +331,15 @@ export function AdminCouponsWorkspace() {
               <span className="text-xs">
                 −{centsToBRL(r.discountCents)} → {centsToBRL(r.finalCents)}
               </span>
+              {r.status === "confirmed" && (
+                <span className="text-xs font-medium text-success">Confirmado</span>
+              )}
+              {r.status === "pending" && (
+                <span className="text-xs font-medium text-content-faint">Tentativa</span>
+              )}
+              {r.status === "committed" && (
+                <span className="text-xs font-medium text-amber-400">Aguardando</span>
+              )}
             </li>
           ))}
           {!redemptions.length ? <li className="text-content-muted">Nenhum resgate ainda.</li> : null}

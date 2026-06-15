@@ -58,7 +58,7 @@ export async function POST(request: Request) {
 
   const store = await buildCommercialStoreFromDb();
   const existing = findRedemptionByIdempotencyKey(store, idempotencyKey);
-  if (existing && existing.status === "committed") {
+  if (existing && (existing.status === "committed" || existing.status === "confirmed")) {
     return NextResponse.json({
       ok: true,
       idempotent: true,

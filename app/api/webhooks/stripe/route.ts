@@ -15,6 +15,11 @@ import { NextRequest, NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
 import { provisionFromStripeSession, suspendTenant, reactivateTenant } from "@/lib/server/stripe-provision";
+import {
+  buildCommercialStoreFromDb,
+  findCommittedRedemptionByCouponAndEmail,
+  updateRedemptionStatus,
+} from "@/lib/server/commercial-store-db";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { sendTransactionalEmail } from "@/lib/server/resend-mail";
 
@@ -116,6 +121,27 @@ export async function POST(req: NextRequest) {
             await provisionFromStripeSession(session);
             const tenantId = session.metadata?.tenant_id as string | undefined;
             if (tenantId) await reactivateTenant(tenantId);
+          }
+
+          // Confirmar redemption de cupom se houver desconto aplicado
+          const discounts = (session as Stripe.Checkout.Session & { discounts?: { promotion_code?: unknown }[] }).discounts ?? [];
+          const rawPromo = discounts.find((d) => d.promotion_code)?.promotion_code;
+          const promoCodeId =
+            typeof rawPromo === "string" ? rawPromo
+            : rawPromo && typeof rawPromo === "object" ? (rawPromo as { id: string }).id
+            : null;
+          if (promoCodeId && session.customer_details?.email) {
+            const store = await buildCommercialStoreFromDb();
+            const coupon = store.coupons.find((c) => c.stripePromoCodeId === promoCodeId);
+            if (coupon) {
+              const redemption = await findCommittedRedemptionByCouponAndEmail(
+                coupon.id,
+                session.customer_details.email.toLowerCase(),
+              );
+              if (redemption) {
+                await updateRedemptionStatus(redemption.id, "confirmed");
+              }
+            }
           }
         }
         break;

@@ -40,6 +40,7 @@ export function buildCommercialMetrics(store: CommercialStore, fromIso?: string 
 
   const couponUses = new Map<string, { couponId: string; code: string; count: number; discountCents: number }>();
   for (const r of rows) {
+    if (!r.couponId) continue;
     const cur = couponUses.get(r.couponId) ?? {
       couponId: r.couponId,
       code: r.codeNormalized,

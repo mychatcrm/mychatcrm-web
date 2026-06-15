@@ -60,14 +60,14 @@ export type CommercialPartner = {
   updatedAt: string;
 };
 
-export type RedemptionStatus = "committed" | "voided";
+export type RedemptionStatus = "pending" | "committed" | "confirmed" | "voided";
 
 export type CouponRedemption = {
   id: string;
   createdAt: string;
   status: RedemptionStatus;
   idempotencyKey: string;
-  couponId: string;
+  couponId: string | null;
   codeNormalized: string;
   planSlug: string;
   emailNormalized: string;

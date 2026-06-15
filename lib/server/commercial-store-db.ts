@@ -8,6 +8,7 @@ import type {
   CommercialPartner,
   CommercialStore,
   CouponRedemption,
+  RedemptionStatus,
 } from "@/lib/commercial/types";
 
 // ── Coupons ────────────────────────────────────────────────────────────────
@@ -159,9 +160,9 @@ function dbToRedemption(row: Record<string, unknown>): CouponRedemption {
   return {
     id: row.id as string,
     createdAt: row.created_at as string,
-    status: row.status as "committed" | "voided",
+    status: row.status as RedemptionStatus,
     idempotencyKey: row.idempotency_key as string,
-    couponId: row.coupon_id as string,
+    couponId: (row.coupon_id as string | null) ?? null,
     codeNormalized: row.code_normalized as string,
     planSlug: row.plan_slug as string,
     emailNormalized: row.email_normalized as string,
@@ -186,7 +187,7 @@ export async function countRedemptionsByCoupon(couponId: string): Promise<number
     .from("coupon_redemptions")
     .select("id", { count: "exact", head: true })
     .eq("coupon_id", couponId)
-    .eq("status", "committed");
+    .in("status", ["committed", "confirmed"]);
   if (error) return 0;
   return count ?? 0;
 }
@@ -201,7 +202,7 @@ export async function countRedemptionsByEmail(
     .select("id", { count: "exact", head: true })
     .eq("coupon_id", couponId)
     .eq("email_normalized", emailNormalized)
-    .eq("status", "committed");
+    .in("status", ["committed", "confirmed"]);
   if (error) return 0;
   return count ?? 0;
 }
@@ -223,6 +224,30 @@ export async function insertRedemption(redemption: CouponRedemption): Promise<vo
     status: redemption.status,
   });
   if (error) throw new Error(`[commercial-store-db] insertRedemption: ${error.message}`);
+}
+
+export async function updateRedemptionStatus(id: string, status: RedemptionStatus): Promise<void> {
+  const sb = createSupabaseServiceClient();
+  const { error } = await sb.from("coupon_redemptions").update({ status }).eq("id", id);
+  if (error) console.warn("[commercial-store-db] updateRedemptionStatus:", error.message);
+}
+
+export async function findCommittedRedemptionByCouponAndEmail(
+  couponId: string,
+  emailNormalized: string,
+): Promise<{ id: string } | null> {
+  const sb = createSupabaseServiceClient();
+  const { data, error } = await sb
+    .from("coupon_redemptions")
+    .select("id")
+    .eq("coupon_id", couponId)
+    .eq("email_normalized", emailNormalized)
+    .eq("status", "committed")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) return null;
+  return data ? { id: data.id as string } : null;
 }
 
 // ── Audit Log ─────────────────────────────────────────────────────────────

@@ -40,7 +40,7 @@ export async function GET() {
     coupons,
     partners,
     redemptionStats: stats,
-    redemptions: redemptions.filter((r) => r.status === "committed").slice(-200).reverse(),
+    redemptions: redemptions.filter((r) => r.status !== "voided").slice(-200).reverse(),
   });
 }
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { brlToCents, validateCouponForCheckout } from "@/lib/commercial/engine";
-import { buildCommercialStoreFromDb } from "@/lib/server/commercial-store-db";
+import { randomUUID } from "crypto";
+import { brlToCents, normalizeCouponCode, validateCouponForCheckout } from "@/lib/commercial/engine";
+import { buildCommercialStoreFromDb, insertRedemption } from "@/lib/server/commercial-store-db";
 import { parsePlanBillingCycle, planCheckoutChargeBaseBRL, SALES_PLANS } from "@/lib/plans";
 
 export async function POST(request: Request) {
@@ -38,5 +39,24 @@ export async function POST(request: Request) {
   }
 
   const coupon = store.coupons.find((c) => c.id === result.couponId);
+
+  if (email && result.couponId) {
+    insertRedemption({
+      id: `red_${randomUUID()}`,
+      createdAt: new Date().toISOString(),
+      status: "pending",
+      idempotencyKey: `pending_${randomUUID()}`,
+      couponId: result.couponId,
+      codeNormalized: normalizeCouponCode(code),
+      planSlug,
+      emailNormalized: email.toLowerCase(),
+      originalCents: result.originalCents,
+      discountCents: result.discountCents,
+      finalCents: result.finalCents,
+      partnerId: result.partnerId,
+      commissionCents: 0,
+    }).catch((e: unknown) => console.warn("[validate] Falha ao gravar pending:", e));
+  }
+
   return NextResponse.json({ ...result, stripePromoCodeId: coupon?.stripePromoCodeId ?? null });
 }
