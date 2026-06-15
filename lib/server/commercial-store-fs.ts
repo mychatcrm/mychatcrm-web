@@ -47,7 +47,7 @@ function normalizeStore(raw: unknown): CommercialStore {
   const partners = Array.isArray(o.partners) ? o.partners.filter(isPartner) : seed.partners;
   const redemptions = Array.isArray(o.redemptions) ? o.redemptions.filter(isRedemption) : [];
   const auditLog = Array.isArray(o.auditLog) ? (o.auditLog as CommercialAuditEntry[]).filter((a) => a && typeof a.id === "string") : [];
-  return { version: 1, coupons, partners, redemptions, auditLog };
+  return { version: 1, coupons, partners, redemptions, extraCodes: [], auditLog };
 }
 
 export function readCommercialStore(): CommercialStore {

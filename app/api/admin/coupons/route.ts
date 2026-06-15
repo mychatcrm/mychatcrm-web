@@ -7,6 +7,8 @@ import {
   appendAuditEntry,
   buildCommercialStoreFromDb,
   countRedemptionsByCoupon,
+  insertExtraCode,
+  listAllExtraCodes,
   listCoupons,
   listPartners,
   listRedemptions,
@@ -23,13 +25,14 @@ export async function GET() {
     return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
   }
 
-  const [coupons, partners, redemptions] = await Promise.all([
+  const [coupons, partners, redemptions, extraCodes] = await Promise.all([
     listCoupons(),
     listPartners(),
     listRedemptions(),
+    listAllExtraCodes(),
   ]);
 
-  const store = { version: 1 as const, coupons, partners, redemptions, auditLog: [] };
+  const store = { version: 1 as const, coupons, partners, redemptions, extraCodes, auditLog: [] };
   const stats = coupons.map((c) => ({
     couponId: c.id,
     code: c.code,
@@ -41,6 +44,7 @@ export async function GET() {
     partners,
     redemptionStats: stats,
     redemptions: redemptions.filter((r) => r.status !== "voided").slice(-200).reverse(),
+    extraCodes,
   });
 }
 
@@ -105,12 +109,63 @@ export async function POST(request: Request) {
       parsed.coupon.stripeCouponId = stripeCoupon.id;
 
       if (coupon.createPublicCode) {
-        const promoCode = await stripe.promotionCodes.create({
-          promotion: { type: "coupon", coupon: stripeCoupon.id },
-          code: coupon.code,
+        // Lookup do cliente no Stripe quando email restrito especificado
+        let stripeCustomerId: string | undefined;
+        if (coupon.restrictedCustomerEmail) {
+          const customers = await stripe.customers.list({
+            email: coupon.restrictedCustomerEmail,
+            limit: 1,
+          });
+          if (!customers.data.length) {
+            return NextResponse.json(
+              { error: `Cliente "${coupon.restrictedCustomerEmail}" não encontrado no Stripe.` },
+              { status: 400 },
+            );
+          }
+          stripeCustomerId = customers.data[0].id;
+        }
+
+        // Parâmetros de restrictions compartilhados entre código principal e extras
+        const promoRestrictions: {
+          first_time_transaction?: boolean;
+          minimum_amount?: number;
+          minimum_amount_currency?: string;
+        } = {};
+        if (coupon.firstTimeOnly) promoRestrictions.first_time_transaction = true;
+        if (coupon.minimumAmountBrl) {
+          promoRestrictions.minimum_amount = coupon.minimumAmountBrl;
+          promoRestrictions.minimum_amount_currency = "brl";
+        }
+
+        const basePromoParams = {
+          promotion: { type: "coupon" as const, coupon: stripeCoupon.id },
           active: true,
+          ...(stripeCustomerId ? { customer: stripeCustomerId } : {}),
+          ...(Object.keys(promoRestrictions).length > 0 ? { restrictions: promoRestrictions } : {}),
+        };
+
+        const promoCode = await stripe.promotionCodes.create({
+          ...basePromoParams,
+          code: coupon.code,
         });
         parsed.coupon.stripePromoCodeId = promoCode.id;
+
+        // Extra codes — mesmo Coupon Stripe, PromoCodes separados
+        for (const extraCodeStr of parsed.extraCodes) {
+          const extraPromo = await stripe.promotionCodes
+            .create({ ...basePromoParams, code: extraCodeStr })
+            .catch((err: unknown) => {
+              console.warn("[admin-coupons] Falha ao criar extra code no Stripe:", extraCodeStr, err);
+              return null;
+            });
+          await insertExtraCode({
+            id: `exc_${randomUUID()}`,
+            couponId: parsed.coupon.id,
+            code: extraCodeStr,
+            stripePromoCodeId: extraPromo?.id ?? null,
+            createdAt: new Date().toISOString(),
+          });
+        }
       }
 
       await upsertCoupon(parsed.coupon);

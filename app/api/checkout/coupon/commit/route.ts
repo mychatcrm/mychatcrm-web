@@ -70,7 +70,15 @@ export async function POST(request: Request) {
 
   const billingCycle = parsePlanBillingCycle(body?.ciclo ?? body?.billingCycle);
   const originalCents = brlToCents(planCheckoutChargeBaseBRL(plan.priceMonthly, billingCycle));
-  const validated = validateCouponForCheckout({ store, codeRaw: code, planSlug, originalCents, emailRaw: email });
+
+  // Suporte a extra codes — resolver para o código principal antes de validar
+  const normalizedCode = normalizeCouponCode(code);
+  const extraCodeMatch = store.extraCodes.find((e) => e.code === normalizedCode);
+  const effectiveCode = extraCodeMatch
+    ? store.coupons.find((c) => c.id === extraCodeMatch.couponId)?.code ?? code
+    : code;
+
+  const validated = validateCouponForCheckout({ store, codeRaw: effectiveCode, planSlug, originalCents, emailRaw: email });
 
   if (!validated.ok) {
     return NextResponse.json(validated, { status: 422 });
@@ -90,7 +98,7 @@ export async function POST(request: Request) {
     status: "committed" as const,
     idempotencyKey,
     couponId: coupon.id,
-    codeNormalized: coupon.code,
+    codeNormalized: normalizedCode,
     planSlug,
     emailNormalized: email.toLowerCase(),
     originalCents: validated.originalCents,

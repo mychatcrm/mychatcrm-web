@@ -40,6 +40,15 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
         (err: unknown) => console.warn("[admin-coupons] Falha ao desativar promo code no Stripe:", err),
       );
     }
+    // Desativar extra codes no Stripe (fire-and-forget; CASCADE apaga do DB)
+    const extraCodes = store.extraCodes.filter((e) => e.couponId === id);
+    for (const ec of extraCodes) {
+      if (ec.stripePromoCodeId) {
+        getStripe().promotionCodes.update(ec.stripePromoCodeId, { active: false }).catch(
+          (err: unknown) => console.warn("[admin-coupons] Falha ao desativar extra code no Stripe:", err),
+        );
+      }
+    }
     if (coupon.stripeCouponId) {
       getStripe().coupons.del(coupon.stripeCouponId).catch(
         (err: unknown) => console.warn("[admin-coupons] Falha ao deletar coupon no Stripe:", err),

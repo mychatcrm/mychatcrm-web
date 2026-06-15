@@ -7,7 +7,7 @@ import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
 import { Modal } from "@/components/ui/Modal";
 import { PanelSelect as Select } from "@/components/panel/ui/PanelSelect";
 import { Toggle } from "@/components/ui/Toggle";
-import type { CommercialCoupon, CommercialPartner, CouponRedemption } from "@/lib/commercial/types";
+import type { CommercialCoupon, CommercialPartner, CouponExtraCode, CouponRedemption } from "@/lib/commercial/types";
 import { PLAN_CHECKOUT_SLUGS } from "@/lib/plans";
 import { cn, formatBRL } from "@/lib/utils";
 
@@ -59,18 +59,23 @@ const emptyCoupon = (): Partial<CommercialCoupon> => ({
   partnerId: null,
   createPublicCode: true,
   stripeProductIds: [],
+  firstTimeOnly: false,
+  restrictedCustomerEmail: null,
+  minimumAmountBrl: null,
 });
 
 export function AdminCouponsWorkspace() {
   const [rows, setRows] = useState<ApiCouponRow[]>([]);
   const [partners, setPartners] = useState<CommercialPartner[]>([]);
   const [redemptions, setRedemptions] = useState<CouponRedemption[]>([]);
+  const [extraCodes, setExtraCodes] = useState<CouponExtraCode[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [modalOpen, setModalOpen] = useState(false);
   const [draft, setDraft] = useState<Partial<CommercialCoupon>>(emptyCoupon);
+  const [extraCodeInputs, setExtraCodeInputs] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
@@ -96,6 +101,7 @@ export function AdminCouponsWorkspace() {
       setRows(merged);
       setPartners(data.partners ?? []);
       setRedemptions(data.redemptions ?? []);
+      setExtraCodes(data.extraCodes ?? []);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Erro ao carregar.");
     } finally {
@@ -123,6 +129,7 @@ export function AdminCouponsWorkspace() {
 
   const openCreate = () => {
     setDraft(emptyCoupon());
+    setExtraCodeInputs([]);
     setFormError(null);
     setModalOpen(true);
   };
@@ -133,6 +140,7 @@ export function AdminCouponsWorkspace() {
       validFrom: c.validFrom ?? "",
       validUntil: c.validUntil ?? "",
     });
+    setExtraCodeInputs([]);
     setFormError(null);
     setModalOpen(true);
   };
@@ -182,6 +190,7 @@ export function AdminCouponsWorkspace() {
           ...draft,
           validFrom: draft.validFrom || null,
           validUntil: draft.validUntil || null,
+          extraCodes: extraCodeInputs,
         }),
       });
       const data = await res.json().catch(() => null);
@@ -217,7 +226,19 @@ export function AdminCouponsWorkspace() {
     {
       key: "code",
       header: "Código",
-      render: (r) => <span className="font-mono text-xs font-semibold text-primary">{r.code}</span>,
+      render: (r) => {
+        const extras = extraCodes.filter((e) => e.couponId === r.id);
+        return (
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="font-mono text-xs font-semibold text-primary">{r.code}</span>
+            {extras.map((e) => (
+              <span key={e.id} className="font-mono text-xs text-content-faint">
+                +{e.code}
+              </span>
+            ))}
+          </div>
+        );
+      },
     },
     {
       key: "name",
@@ -389,7 +410,7 @@ export function AdminCouponsWorkspace() {
             )}
           </div>
           <div className="sm:col-span-2">
-            <label className="text-xs font-semibold text-content-muted">Nome interno</label>
+            <label className="text-xs font-semibold text-content-muted">Nome (aparece nos recibos)</label>
             <Input
               className="mt-1.5"
               value={draft.internalName ?? ""}
@@ -584,6 +605,119 @@ export function AdminCouponsWorkspace() {
               Restringe o cupom a produtos Stripe específicos (applies_to.products). Product IDs em Stripe Dashboard → Products.
             </p>
           </div>
+          {draft.createPublicCode !== false && (
+            <>
+              {/* Campo 1: Primeiro pedido */}
+              <div className="sm:col-span-2 flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="coupon-first-time-only"
+                  disabled={!!draft.stripeCouponId}
+                  checked={draft.firstTimeOnly === true}
+                  onChange={(e) => setDraft((d) => ({ ...d, firstTimeOnly: e.target.checked }))}
+                  className="h-4 w-4 rounded border-line accent-primary"
+                />
+                <label htmlFor="coupon-first-time-only" className="text-xs text-content-secondary">
+                  Válido somente para o primeiro pedido do cliente no Stripe
+                </label>
+              </div>
+
+              {/* Campo 2: Cliente específico */}
+              <div>
+                <label className="text-xs font-semibold text-content-muted">
+                  Restringir a um cliente (email no Stripe)
+                </label>
+                <Input
+                  className="mt-1.5"
+                  type="email"
+                  placeholder="cliente@email.com"
+                  disabled={!!draft.stripeCouponId}
+                  value={draft.restrictedCustomerEmail ?? ""}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, restrictedCustomerEmail: e.target.value || null }))
+                  }
+                />
+                <p className="mt-1 text-xs text-content-faint">
+                  O cliente precisa já existir no Stripe. Deixe em branco para não restringir.
+                </p>
+              </div>
+
+              {/* Campo 3: Valor mínimo */}
+              <div>
+                <label className="text-xs font-semibold text-content-muted">
+                  Valor mínimo do pedido (R$)
+                </label>
+                <Input
+                  className="mt-1.5"
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  placeholder="0,00"
+                  disabled={!!draft.stripeCouponId}
+                  value={
+                    draft.minimumAmountBrl != null
+                      ? (draft.minimumAmountBrl / 100).toFixed(2)
+                      : ""
+                  }
+                  onChange={(e) =>
+                    setDraft((d) => ({
+                      ...d,
+                      minimumAmountBrl: e.target.value
+                        ? Math.round(parseFloat(e.target.value) * 100)
+                        : null,
+                    }))
+                  }
+                />
+              </div>
+
+              {/* Campo 4: Extra codes — só na criação (não editável) */}
+              {!draft.stripeCouponId && (
+                <div className="sm:col-span-2">
+                  <label className="text-xs font-semibold text-content-muted">
+                    Códigos adicionais (mesmo cupom, até 5)
+                  </label>
+                  {extraCodeInputs.map((c, i) => (
+                    <div key={i} className="mt-2 flex gap-2">
+                      <Input
+                        className="font-mono"
+                        value={c}
+                        onChange={(e) => {
+                          const next = [...extraCodeInputs];
+                          next[i] = e.target.value.toUpperCase().replace(/\s+/g, "");
+                          setExtraCodeInputs(next);
+                        }}
+                        placeholder={`CÓDIGO${i + 2}`}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => setExtraCodeInputs((prev) => prev.filter((_, j) => j !== i))}
+                      >
+                        Remover
+                      </Button>
+                    </div>
+                  ))}
+                  {extraCodeInputs.length < 5 && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="mt-2"
+                      onClick={() => setExtraCodeInputs((prev) => [...prev, ""])}
+                    >
+                      + Adicionar outro código
+                    </Button>
+                  )}
+                </div>
+              )}
+
+              {!!draft.stripeCouponId && (
+                <p className="sm:col-span-2 text-xs text-content-faint">
+                  Restrições de PromotionCode foram configuradas na criação e não podem ser alteradas retroativamente.
+                </p>
+              )}
+            </>
+          )}
+
           <div>
             <label className="text-xs font-semibold text-content-muted">Parceiro vinculado</label>
             <Select

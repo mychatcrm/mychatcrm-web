@@ -2,6 +2,14 @@
 
 export type DiscountRecurrence = "first_cycle" | "all_cycles";
 
+export type CouponExtraCode = {
+  id: string;
+  couponId: string;
+  code: string;
+  stripePromoCodeId: string | null;
+  createdAt: string;
+};
+
 export type CommercialCoupon = {
   id: string;
   /** Código normalizado em maiúsculas, sem espaços laterais. */
@@ -28,6 +36,12 @@ export type CommercialCoupon = {
   stripeProductIds: string[];
   /** Se false, não cria PromotionCode no Stripe — cupom interno sem código público. */
   createPublicCode: boolean;
+  /** Somente para o primeiro pedido do cliente no Stripe (restrictions.first_time_transaction). */
+  firstTimeOnly: boolean;
+  /** Email do cliente no Stripe para restrictions.customer — null = sem restrição. */
+  restrictedCustomerEmail: string | null;
+  /** Valor mínimo do pedido em centavos BRL (restrictions.minimum_amount) — null = sem mínimo. */
+  minimumAmountBrl: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -92,6 +106,7 @@ export type CommercialStore = {
   coupons: CommercialCoupon[];
   partners: CommercialPartner[];
   redemptions: CouponRedemption[];
+  extraCodes: CouponExtraCode[];
   auditLog: CommercialAuditEntry[];
 };
 
