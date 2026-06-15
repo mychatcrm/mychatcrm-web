@@ -93,15 +93,26 @@ export async function POST(request: Request) {
         ...(coupon.discountType === "percent"
           ? { percent_off: coupon.discountValue }
           : { amount_off: coupon.discountValue, currency: "brl" }),
-      });
-      const promoCode = await stripe.promotionCodes.create({
-        promotion: { type: "coupon", coupon: stripeCoupon.id },
-        code: coupon.code,
-        active: true,
+        ...(coupon.maxRedemptionsTotal ? { max_redemptions: coupon.maxRedemptionsTotal } : {}),
+        ...(coupon.validUntil
+          ? { redeem_by: Math.floor(new Date(coupon.validUntil).getTime() / 1000) }
+          : {}),
+        ...(coupon.stripeProductIds.length > 0
+          ? { applies_to: { products: coupon.stripeProductIds } }
+          : {}),
       });
 
       parsed.coupon.stripeCouponId = stripeCoupon.id;
-      parsed.coupon.stripePromoCodeId = promoCode.id;
+
+      if (coupon.createPublicCode) {
+        const promoCode = await stripe.promotionCodes.create({
+          promotion: { type: "coupon", coupon: stripeCoupon.id },
+          code: coupon.code,
+          active: true,
+        });
+        parsed.coupon.stripePromoCodeId = promoCode.id;
+      }
+
       await upsertCoupon(parsed.coupon);
     } catch (stripeErr) {
       console.error("[admin-coupons] Falha ao criar no Stripe:", stripeErr);

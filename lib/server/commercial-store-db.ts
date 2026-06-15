@@ -31,6 +31,8 @@ function dbToCoupon(row: Record<string, unknown>): CommercialCoupon {
     partnerId: (row.partner_id as string | null) ?? null,
     stripeCouponId: (row.stripe_coupon_id as string | null) ?? null,
     stripePromoCodeId: (row.stripe_promo_code_id as string | null) ?? null,
+    stripeProductIds: (row.stripe_product_ids as string[]) ?? [],
+    createPublicCode: (row.create_public_code as boolean) ?? true,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };
@@ -75,6 +77,8 @@ export async function upsertCoupon(coupon: CommercialCoupon): Promise<void> {
       partner_id: coupon.partnerId ?? null,
       stripe_coupon_id: coupon.stripeCouponId ?? null,
       stripe_promo_code_id: coupon.stripePromoCodeId ?? null,
+      stripe_product_ids: coupon.stripeProductIds,
+      create_public_code: coupon.createPublicCode,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "id" },

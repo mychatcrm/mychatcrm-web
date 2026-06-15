@@ -24,6 +24,10 @@ export type CommercialCoupon = {
   partnerId: string | null;
   stripeCouponId: string | null;
   stripePromoCodeId: string | null;
+  /** Product IDs do Stripe para applies_to.products. Vazio = sem restrição de produto. */
+  stripeProductIds: string[];
+  /** Se false, não cria PromotionCode no Stripe — cupom interno sem código público. */
+  createPublicCode: boolean;
   createdAt: string;
   updatedAt: string;
 };

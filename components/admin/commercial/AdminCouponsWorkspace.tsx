@@ -57,6 +57,8 @@ const emptyCoupon = (): Partial<CommercialCoupon> => ({
   recurringCyclesLimit: null,
   active: true,
   partnerId: null,
+  createPublicCode: true,
+  stripeProductIds: [],
 });
 
 export function AdminCouponsWorkspace() {
@@ -342,14 +344,29 @@ export function AdminCouponsWorkspace() {
       >
         {formError ? <p className="mb-3 text-sm text-rose-400">{formError}</p> : null}
         <div className="grid max-h-[70vh] gap-4 overflow-y-auto pr-1 sm:grid-cols-2">
+          <div className="sm:col-span-2 flex items-center gap-3 pt-1">
+            <Toggle
+              id="coupon-create-public-code"
+              checked={draft.createPublicCode !== false}
+              onChange={(v) => setDraft((d) => ({ ...d, createPublicCode: v }))}
+              label="Criar código público (Promotion Code no Stripe)"
+            />
+          </div>
           <div className="sm:col-span-2">
-            <label className="text-xs font-semibold text-content-muted">Código público</label>
+            <label className="text-xs font-semibold text-content-muted">
+              {draft.createPublicCode !== false ? "Código público" : "Código interno"}
+            </label>
             <Input
               className="mt-1.5 font-mono"
               value={draft.code ?? ""}
               onChange={(e) => setDraft((d) => ({ ...d, code: e.target.value }))}
               placeholder="SOLO15"
             />
+            {draft.createPublicCode === false && (
+              <p className="mt-1 text-xs text-content-faint">
+                Nenhum Promotion Code será criado no Stripe — cupom interno, não digitável pelo cliente.
+              </p>
+            )}
           </div>
           <div className="sm:col-span-2">
             <label className="text-xs font-semibold text-content-muted">Nome interno</label>
@@ -472,33 +489,80 @@ export function AdminCouponsWorkspace() {
               })}
             </div>
           </div>
-          <div>
-            <label className="text-xs font-semibold text-content-muted">Recorrência do desconto</label>
-            <Select
-              className="mt-1.5"
-              value={draft.discountRecurrence ?? "first_cycle"}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, discountRecurrence: e.target.value as CommercialCoupon["discountRecurrence"] }))
-              }
-            >
-              <option value="first_cycle">Primeiro ciclo</option>
-              <option value="all_cycles">Todos os ciclos (contrato)</option>
-            </Select>
+          <div className="sm:col-span-2">
+            <label className="text-xs font-semibold text-content-muted">Duração do desconto (Stripe)</label>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {(["once", "repeating", "forever"] as const).map((opt) => {
+                const active =
+                  opt === "once"
+                    ? draft.discountRecurrence === "first_cycle"
+                    : opt === "repeating"
+                      ? draft.discountRecurrence === "all_cycles" && draft.recurringCyclesLimit !== null
+                      : draft.discountRecurrence === "all_cycles" && draft.recurringCyclesLimit === null;
+                const label = opt === "once" ? "Uma vez" : opt === "repeating" ? "Vários meses" : "Vitalício";
+                return (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => {
+                      if (opt === "once")
+                        setDraft((d) => ({ ...d, discountRecurrence: "first_cycle", recurringCyclesLimit: null }));
+                      else if (opt === "forever")
+                        setDraft((d) => ({ ...d, discountRecurrence: "all_cycles", recurringCyclesLimit: null }));
+                      else
+                        setDraft((d) => ({
+                          ...d,
+                          discountRecurrence: "all_cycles",
+                          recurringCyclesLimit: d.recurringCyclesLimit ?? 1,
+                        }));
+                    }}
+                    className={cn(
+                      "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                      active ? "border-primary/40 bg-primary/15 text-content" : "border-line text-content-muted",
+                    )}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            {draft.discountRecurrence === "all_cycles" && draft.recurringCyclesLimit !== null && (
+              <div className="mt-3">
+                <label className="text-xs font-semibold text-content-muted">Quantos meses?</label>
+                <Input
+                  type="number"
+                  className="mt-1.5"
+                  min={1}
+                  value={draft.recurringCyclesLimit ?? ""}
+                  onChange={(e) =>
+                    setDraft((d) => ({
+                      ...d,
+                      recurringCyclesLimit: e.target.value === "" ? 1 : parseInt(e.target.value, 10),
+                    }))
+                  }
+                />
+              </div>
+            )}
           </div>
-          <div>
-            <label className="text-xs font-semibold text-content-muted">Máx. ciclos (só all_cycles)</label>
+          <div className="sm:col-span-2">
+            <label className="text-xs font-semibold text-content-muted">Produtos Stripe (opcional)</label>
             <Input
-              type="number"
-              className="mt-1.5"
-              placeholder="vazio = sem limite"
-              value={draft.recurringCyclesLimit ?? ""}
+              className="mt-1.5 font-mono text-xs"
+              placeholder="prod_xxx, prod_yyy"
+              value={(draft.stripeProductIds ?? []).join(", ")}
               onChange={(e) =>
                 setDraft((d) => ({
                   ...d,
-                  recurringCyclesLimit: e.target.value === "" ? null : parseInt(e.target.value, 10),
+                  stripeProductIds: e.target.value
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter((s) => s.startsWith("prod_")),
                 }))
               }
             />
+            <p className="mt-1 text-xs text-content-faint">
+              Restringe o cupom a produtos Stripe específicos (applies_to.products). Product IDs em Stripe Dashboard → Products.
+            </p>
           </div>
           <div>
             <label className="text-xs font-semibold text-content-muted">Parceiro vinculado</label>

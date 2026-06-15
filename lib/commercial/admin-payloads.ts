@@ -81,6 +81,14 @@ export function parseCouponUpsert(
   const partnerId =
     typeof r.partnerId === "string" && r.partnerId.trim() ? r.partnerId.trim() : null;
 
+  const stripeProductIds = Array.isArray(r.stripeProductIds)
+    ? (r.stripeProductIds as unknown[]).filter(
+        (id): id is string => typeof id === "string" && id.startsWith("prod_"),
+      )
+    : [];
+
+  const createPublicCode = r.createPublicCode !== false;
+
   const coupon: CommercialCoupon = {
     id,
     code,
@@ -99,6 +107,8 @@ export function parseCouponUpsert(
     partnerId,
     stripeCouponId: existing?.stripeCouponId ?? null,
     stripePromoCodeId: existing?.stripePromoCodeId ?? null,
+    stripeProductIds,
+    createPublicCode,
     createdAt: existing?.createdAt ?? isoNow(),
     updatedAt: isoNow(),
   };
