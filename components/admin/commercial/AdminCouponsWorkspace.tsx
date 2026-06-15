@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
@@ -64,6 +64,66 @@ const emptyCoupon = (): Partial<CommercialCoupon> => ({
   minimumAmountBrl: null,
 });
 
+type CouponOptionalExpanded = {
+  restrictCustomer: boolean;
+  limitRedemptions: boolean;
+  validityDates: boolean;
+  minimumAmount: boolean;
+};
+
+const emptyOptionalExpanded = (): CouponOptionalExpanded => ({
+  restrictCustomer: false,
+  limitRedemptions: false,
+  validityDates: false,
+  minimumAmount: false,
+});
+
+function optionalExpandedFromCoupon(c: Partial<CommercialCoupon>): CouponOptionalExpanded {
+  return {
+    restrictCustomer: c.restrictedCustomerEmail != null,
+    limitRedemptions: c.maxRedemptionsTotal != null,
+    validityDates: Boolean(c.validFrom || c.validUntil),
+    minimumAmount: c.minimumAmountBrl != null,
+  };
+}
+
+function ExpandableCheckboxOption({
+  id,
+  label,
+  checked,
+  onChange,
+  disabled,
+  children,
+}: {
+  id: string;
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="sm:col-span-2">
+      <div className="flex items-start gap-2.5">
+        <input
+          type="checkbox"
+          id={id}
+          checked={checked}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.checked)}
+          className="mt-0.5 h-4 w-4 shrink-0 rounded border-line accent-primary"
+        />
+        <div className="min-w-0 flex-1">
+          <label htmlFor={id} className="cursor-pointer text-sm text-content-secondary">
+            {label}
+          </label>
+          {checked && children ? <div className="mt-2.5">{children}</div> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AdminCouponsWorkspace() {
   const [rows, setRows] = useState<ApiCouponRow[]>([]);
   const [partners, setPartners] = useState<CommercialPartner[]>([]);
@@ -75,6 +135,7 @@ export function AdminCouponsWorkspace() {
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [modalOpen, setModalOpen] = useState(false);
   const [draft, setDraft] = useState<Partial<CommercialCoupon>>(emptyCoupon);
+  const [optionalExpanded, setOptionalExpanded] = useState<CouponOptionalExpanded>(emptyOptionalExpanded);
   const [extraCodeInputs, setExtraCodeInputs] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -159,6 +220,7 @@ export function AdminCouponsWorkspace() {
 
   const openCreate = () => {
     setDraft(emptyCoupon());
+    setOptionalExpanded(emptyOptionalExpanded());
     setExtraCodeInputs([]);
     setFormError(null);
     setModalOpen(true);
@@ -170,6 +232,7 @@ export function AdminCouponsWorkspace() {
       validFrom: c.validFrom ?? "",
       validUntil: c.validUntil ?? "",
     });
+    setOptionalExpanded(optionalExpandedFromCoupon(c));
     setExtraCodeInputs([]);
     setFormError(null);
     setModalOpen(true);
@@ -544,38 +607,6 @@ export function AdminCouponsWorkspace() {
             ) : null}
           </div>
           <div>
-            <label className="text-xs font-semibold text-content-muted">Válido de (opcional)</label>
-            <Input
-              type="date"
-              className="mt-1.5"
-              value={draft.validFrom ?? ""}
-              onChange={(e) => setDraft((d) => ({ ...d, validFrom: e.target.value || null }))}
-            />
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-content-muted">Válido até (opcional)</label>
-            <Input
-              type="date"
-              className="mt-1.5"
-              value={draft.validUntil ?? ""}
-              onChange={(e) => setDraft((d) => ({ ...d, validUntil: e.target.value || null }))}
-            />
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-content-muted">Limite total (vazio = ilimitado)</label>
-            <Input
-              type="number"
-              className="mt-1.5"
-              value={draft.maxRedemptionsTotal ?? ""}
-              onChange={(e) =>
-                setDraft((d) => ({
-                  ...d,
-                  maxRedemptionsTotal: e.target.value === "" ? null : parseInt(e.target.value, 10),
-                }))
-              }
-            />
-          </div>
-          <div>
             <label className="text-xs font-semibold text-content-muted">Limite por e-mail (vazio = ilimitado)</label>
             <Input
               type="number"
@@ -693,70 +724,148 @@ export function AdminCouponsWorkspace() {
           </div>
           {draft.createPublicCode !== false && (
             <>
-              {/* Campo 1: Primeiro pedido */}
-              <div className="sm:col-span-2 flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="coupon-first-time-only"
-                  disabled={!!draft.stripeCouponId}
-                  checked={draft.firstTimeOnly === true}
-                  onChange={(e) => setDraft((d) => ({ ...d, firstTimeOnly: e.target.checked }))}
-                  className="h-4 w-4 rounded border-line accent-primary"
-                />
-                <label htmlFor="coupon-first-time-only" className="text-xs text-content-secondary">
-                  Válido somente para o primeiro pedido do cliente no Stripe
-                </label>
-              </div>
+              <ExpandableCheckboxOption
+                id="coupon-first-time-only"
+                label="Válido somente para o primeiro pedido"
+                checked={draft.firstTimeOnly === true}
+                disabled={!!draft.stripeCouponId}
+                onChange={(v) => setDraft((d) => ({ ...d, firstTimeOnly: v }))}
+              />
 
-              {/* Campo 2: Cliente específico */}
-              <div>
-                <label className="text-xs font-semibold text-content-muted">
-                  Restringir a um cliente (email no Stripe)
-                </label>
-                <Input
-                  className="mt-1.5"
-                  type="email"
-                  placeholder="cliente@email.com"
-                  disabled={!!draft.stripeCouponId}
-                  value={draft.restrictedCustomerEmail ?? ""}
-                  onChange={(e) =>
-                    setDraft((d) => ({ ...d, restrictedCustomerEmail: e.target.value || null }))
-                  }
-                />
-                <p className="mt-1 text-xs text-content-faint">
-                  O cliente precisa já existir no Stripe. Deixe em branco para não restringir.
-                </p>
-              </div>
+              <ExpandableCheckboxOption
+                id="coupon-restrict-customer"
+                label="Limitar a um cliente específico"
+                checked={optionalExpanded.restrictCustomer}
+                disabled={!!draft.stripeCouponId}
+                onChange={(v) => {
+                  setOptionalExpanded((o) => ({ ...o, restrictCustomer: v }));
+                  setDraft((d) => ({
+                    ...d,
+                    restrictedCustomerEmail: v ? (d.restrictedCustomerEmail ?? "") : null,
+                  }));
+                }}
+              >
+                <div>
+                  <label className="text-xs font-semibold text-content-muted">Email do cliente no Stripe</label>
+                  <Input
+                    className="mt-1.5"
+                    type="email"
+                    placeholder="cliente@email.com"
+                    disabled={!!draft.stripeCouponId}
+                    value={draft.restrictedCustomerEmail ?? ""}
+                    onChange={(e) =>
+                      setDraft((d) => ({ ...d, restrictedCustomerEmail: e.target.value || null }))
+                    }
+                  />
+                  <p className="mt-1 text-xs text-content-faint">
+                    O cliente precisa já existir no Stripe.
+                  </p>
+                </div>
+              </ExpandableCheckboxOption>
 
-              {/* Campo 3: Valor mínimo */}
-              <div>
-                <label className="text-xs font-semibold text-content-muted">
-                  Valor mínimo do pedido (R$)
-                </label>
-                <Input
-                  className="mt-1.5"
-                  type="number"
-                  min={0}
-                  step={0.01}
-                  placeholder="0,00"
-                  disabled={!!draft.stripeCouponId}
-                  value={
-                    draft.minimumAmountBrl != null
-                      ? (draft.minimumAmountBrl / 100).toFixed(2)
-                      : ""
-                  }
-                  onChange={(e) =>
-                    setDraft((d) => ({
-                      ...d,
-                      minimumAmountBrl: e.target.value
-                        ? Math.round(parseFloat(e.target.value) * 100)
-                        : null,
-                    }))
-                  }
-                />
-              </div>
+              <ExpandableCheckboxOption
+                id="coupon-limit-redemptions"
+                label="Limitar o número de vezes que este código pode ser resgatado"
+                checked={optionalExpanded.limitRedemptions}
+                onChange={(v) => {
+                  setOptionalExpanded((o) => ({ ...o, limitRedemptions: v }));
+                  setDraft((d) => ({
+                    ...d,
+                    maxRedemptionsTotal: v ? d.maxRedemptionsTotal : null,
+                  }));
+                }}
+              >
+                <div>
+                  <label className="text-xs font-semibold text-content-muted">Limite total</label>
+                  <Input
+                    type="number"
+                    className="mt-1.5"
+                    value={draft.maxRedemptionsTotal ?? ""}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        maxRedemptionsTotal: e.target.value === "" ? null : parseInt(e.target.value, 10),
+                      }))
+                    }
+                  />
+                </div>
+              </ExpandableCheckboxOption>
 
-              {/* Campo 4: Extra codes — só na criação (não editável) */}
+              <ExpandableCheckboxOption
+                id="coupon-validity-dates"
+                label="Incluir data de validade"
+                checked={optionalExpanded.validityDates}
+                onChange={(v) => {
+                  setOptionalExpanded((o) => ({ ...o, validityDates: v }));
+                  setDraft((d) => ({
+                    ...d,
+                    validFrom: v ? (d.validFrom ?? "") : null,
+                    validUntil: v ? (d.validUntil ?? "") : null,
+                  }));
+                }}
+              >
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="text-xs font-semibold text-content-muted">Válido de</label>
+                    <Input
+                      type="date"
+                      className="mt-1.5"
+                      value={draft.validFrom ?? ""}
+                      onChange={(e) => setDraft((d) => ({ ...d, validFrom: e.target.value || null }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-content-muted">Válido até</label>
+                    <Input
+                      type="date"
+                      className="mt-1.5"
+                      value={draft.validUntil ?? ""}
+                      onChange={(e) => setDraft((d) => ({ ...d, validUntil: e.target.value || null }))}
+                    />
+                  </div>
+                </div>
+              </ExpandableCheckboxOption>
+
+              <ExpandableCheckboxOption
+                id="coupon-minimum-amount"
+                label="Exigir um valor mínimo por pedido"
+                checked={optionalExpanded.minimumAmount}
+                disabled={!!draft.stripeCouponId}
+                onChange={(v) => {
+                  setOptionalExpanded((o) => ({ ...o, minimumAmount: v }));
+                  setDraft((d) => ({
+                    ...d,
+                    minimumAmountBrl: v ? d.minimumAmountBrl : null,
+                  }));
+                }}
+              >
+                <div>
+                  <label className="text-xs font-semibold text-content-muted">Valor mínimo (R$)</label>
+                  <Input
+                    className="mt-1.5"
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    placeholder="0,00"
+                    disabled={!!draft.stripeCouponId}
+                    value={
+                      draft.minimumAmountBrl != null
+                        ? (draft.minimumAmountBrl / 100).toFixed(2)
+                        : ""
+                    }
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        minimumAmountBrl: e.target.value
+                          ? Math.round(parseFloat(e.target.value) * 100)
+                          : null,
+                      }))
+                    }
+                  />
+                </div>
+              </ExpandableCheckboxOption>
+
+              {/* Extra codes — só na criação (não editável) */}
               {!draft.stripeCouponId && (
                 <div className="sm:col-span-2">
                   <label className="text-xs font-semibold text-content-muted">
