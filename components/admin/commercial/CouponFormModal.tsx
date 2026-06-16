@@ -13,6 +13,7 @@ import type {
 } from "@/lib/commercial/types";
 import { PLAN_CHECKOUT_SLUGS } from "@/lib/plans";
 import { cn } from "@/lib/utils";
+import { StripeProductPicker, type StripeProductOption } from "@/components/admin/commercial/StripeProductPicker";
 
 const PERIODICITY_OPTIONS: { value: CouponPeriodicity; label: string }[] = [
   { value: "monthly", label: "Mensal" },
@@ -167,11 +168,13 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
   const [saving, setSaving] = useState(false);
   const [syncingStripe, setSyncingStripe] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [stripeProducts, setStripeProducts] = useState<{ id: string; name: string; active: boolean }[]>([]);
+  const [stripeProducts, setStripeProducts] = useState<StripeProductOption[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [productsError, setProductsError] = useState<string | null>(null);
+  const [productsLoaded, setProductsLoaded] = useState(false);
 
   const loadStripeProducts = useCallback(async () => {
+    if (productsLoaded && stripeProducts.length > 0) return;
     setLoadingProducts(true);
     setProductsError(null);
     try {
@@ -179,18 +182,14 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error ?? `Erro HTTP ${res.status}`);
       setStripeProducts(Array.isArray(data?.products) ? data.products : []);
+      setProductsLoaded(true);
     } catch (e) {
       setProductsError(e instanceof Error ? e.message : "Falha ao carregar produtos do Stripe.");
       setStripeProducts([]);
     } finally {
       setLoadingProducts(false);
     }
-  }, []);
-
-  useEffect(() => {
-    if (!open || isEdit) return;
-    void loadStripeProducts();
-  }, [open, isEdit, loadStripeProducts]);
+  }, [productsLoaded, stripeProducts.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -213,6 +212,9 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
       setLimitMaxRedemptions(false);
       setRestrictCustomer(false);
       setMinimumAmount(false);
+      setProductsLoaded(false);
+      setStripeProducts([]);
+      setProductsError(null);
     }
   }, [open, coupon]);
 
@@ -444,59 +446,15 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
                 ) : null}
               </Field>
 
-              <Field
-                label="Aplicar a produtos específicos"
-                hint="Opcional. Vazio = cupom válido para todos os produtos. Lista carregada da sua conta Stripe."
-                className="sm:col-span-2"
-              >
-                {loadingProducts ? (
-                  <p className="text-sm text-content-muted">Carregando produtos do Stripe…</p>
-                ) : productsError ? (
-                  <div className="space-y-2">
-                    <p className="text-sm text-rose-400">{productsError}</p>
-                    <Button type="button" variant="secondary" size="sm" onClick={() => void loadStripeProducts()}>
-                      Tentar novamente
-                    </Button>
-                  </div>
-                ) : stripeProducts.length === 0 ? (
-                  <p className="text-sm text-content-muted">Nenhum produto encontrado na conta Stripe.</p>
-                ) : (
-                  <div className="max-h-48 space-y-2 overflow-y-auto rounded-lg border border-line p-3">
-                    {stripeProducts.map((product) => {
-                      const on = draft.stripeProductIds?.includes(product.id);
-                      return (
-                        <label
-                          key={product.id}
-                          className={cn(
-                            "flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-surface-elevated/50",
-                            on && "bg-primary/5",
-                          )}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={on}
-                            onChange={() =>
-                              setDraft((d) => {
-                                const cur = d.stripeProductIds ?? [];
-                                const next = on ? cur.filter((id) => id !== product.id) : [...cur, product.id];
-                                return { ...d, stripeProductIds: next };
-                              })
-                            }
-                            className="mt-0.5 h-4 w-4 shrink-0 rounded border-line accent-primary"
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-sm text-content">{product.name}</span>
-                            <span className="block font-mono text-xs text-content-faint">
-                              {product.id}
-                              {!product.active ? " · inativo" : ""}
-                            </span>
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
-              </Field>
+              <StripeProductPicker
+                products={stripeProducts}
+                selectedIds={draft.stripeProductIds ?? []}
+                onChange={(ids) => setDraft((d) => ({ ...d, stripeProductIds: ids }))}
+                loading={loadingProducts}
+                error={productsError}
+                onRetry={() => void loadStripeProducts()}
+                onRequestLoad={() => void loadStripeProducts()}
+              />
             </StripeSection>
 
             <StripeSection
