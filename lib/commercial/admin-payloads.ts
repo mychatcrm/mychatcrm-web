@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { isCheckoutPlanSlug } from "@/lib/plan-policy";
-import type { CommercialCoupon, CommercialPartner } from "@/lib/commercial/types";
+import type { CommercialCoupon, CommercialPartner, CouponPeriodicity } from "@/lib/commercial/types";
 import { normalizeCouponCode } from "@/lib/commercial/engine";
 
 function isoNow() {
@@ -71,6 +71,12 @@ export function parseCouponUpsert(
   if (Array.isArray(r.allowedPlanSlugs)) {
     allowedPlanSlugs = r.allowedPlanSlugs.filter((s): s is string => typeof s === "string" && isCheckoutPlanSlug(s));
   }
+  let allowedPeriodicities: CouponPeriodicity[] = [];
+  if (Array.isArray(r.allowedPeriodicities)) {
+    allowedPeriodicities = r.allowedPeriodicities.filter(
+      (p): p is CouponPeriodicity => p === "monthly" || p === "yearly",
+    );
+  }
   const discountRecurrence = r.discountRecurrence === "all_cycles" ? "all_cycles" : "first_cycle";
   const recurringCyclesLimit = parseOptionalInt(r.recurringCyclesLimit);
   if (recurringCyclesLimit === "invalid" || (recurringCyclesLimit !== null && recurringCyclesLimit < 1)) {
@@ -116,6 +122,7 @@ export function parseCouponUpsert(
     maxRedemptionsTotal,
     maxRedemptionsPerUser,
     allowedPlanSlugs,
+    allowedPeriodicities,
     discountRecurrence,
     recurringCyclesLimit,
     active,

@@ -7,7 +7,7 @@ import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
 import { Modal } from "@/components/ui/Modal";
 import { PanelSelect as Select } from "@/components/panel/ui/PanelSelect";
 import { Toggle } from "@/components/ui/Toggle";
-import type { CommercialCoupon, CommercialPartner, CouponExtraCode, CouponRedemption } from "@/lib/commercial/types";
+import type { CommercialCoupon, CommercialPartner, CouponExtraCode, CouponPeriodicity, CouponRedemption } from "@/lib/commercial/types";
 import { PLAN_CHECKOUT_SLUGS } from "@/lib/plans";
 import { cn, formatBRL } from "@/lib/utils";
 
@@ -53,6 +53,7 @@ const emptyCoupon = (): Partial<CommercialCoupon> => ({
   maxRedemptionsTotal: null,
   maxRedemptionsPerUser: null,
   allowedPlanSlugs: [],
+  allowedPeriodicities: [],
   discountRecurrence: "first_cycle",
   recurringCyclesLimit: null,
   active: true,
@@ -109,10 +110,22 @@ function advancedStripeSummary(d: Partial<CommercialCoupon>, partnerList: Commer
 }
 
 function planRestrictionSummary(d: Partial<CommercialCoupon>): string {
+  const parts: string[] = [];
   const slugs = d.allowedPlanSlugs ?? [];
-  if (!slugs.length) return "Todos os planos";
-  return slugs.join(", ");
+  parts.push(slugs.length ? slugs.join(", ") : "Todos os planos");
+  const periods = d.allowedPeriodicities ?? [];
+  parts.push(
+    periods.length
+      ? periods.map((p) => (p === "monthly" ? "Mensal" : "Anual")).join(", ")
+      : "Mensal e anual",
+  );
+  return parts.join(" · ");
 }
+
+const COUPON_PERIODICITY_OPTIONS: { value: CouponPeriodicity; label: string }[] = [
+  { value: "monthly", label: "mensal" },
+  { value: "yearly", label: "anual" },
+];
 
 function CollapsibleSection({
   title,
@@ -822,6 +835,35 @@ export function AdminCouponsWorkspace() {
                       )}
                     >
                       {slug}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-content-muted">
+                Periodicidade (vazio = mensal e anual)
+              </label>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {COUPON_PERIODICITY_OPTIONS.map(({ value, label }) => {
+                  const on = draft.allowedPeriodicities?.includes(value);
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() =>
+                        setDraft((d) => {
+                          const cur = d.allowedPeriodicities ?? [];
+                          const next = on ? cur.filter((p) => p !== value) : [...cur, value];
+                          return { ...d, allowedPeriodicities: next };
+                        })
+                      }
+                      className={cn(
+                        "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                        on ? "border-primary/40 bg-primary/15 text-content" : "border-line text-content-muted",
+                      )}
+                    >
+                      {label}
                     </button>
                   );
                 })}

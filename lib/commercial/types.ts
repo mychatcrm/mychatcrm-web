@@ -2,6 +2,9 @@
 
 export type DiscountRecurrence = "first_cycle" | "all_cycles";
 
+/** Periodicidade de checkout permitida pelo cupom. Vazio = mensal e anual. */
+export type CouponPeriodicity = "monthly" | "yearly";
+
 export type CouponExtraCode = {
   id: string;
   couponId: string;
@@ -25,6 +28,8 @@ export type CommercialCoupon = {
   maxRedemptionsPerUser: number | null;
   /** Vazio = todos os planos com checkout. */
   allowedPlanSlugs: string[];
+  /** Vazio = mensal e anual. Valores: "monthly" | "yearly". */
+  allowedPeriodicities: CouponPeriodicity[];
   discountRecurrence: DiscountRecurrence;
   /** Com `all_cycles`: quantos ciclos mensais o desconto vale; `null` = sem limite explícito (contrato). */
   recurringCyclesLimit: number | null;
@@ -119,6 +124,7 @@ export type CouponRejectCode =
   | "COUPON_LIMIT_REACHED"
   | "COUPON_USER_LIMIT_REACHED"
   | "COUPON_PLAN_NOT_ALLOWED"
+  | "COUPON_PERIOD_NOT_ALLOWED"
   | "EMAIL_REQUIRED_FOR_COUPON"
   | "PLAN_NOT_CHECKOUT";
 

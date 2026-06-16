@@ -1,4 +1,5 @@
 import { isCheckoutPlanSlug } from "@/lib/plan-policy";
+import type { CouponPeriodicity } from "@/lib/commercial/types";
 import type {
   CommercialCoupon,
   CommercialPartner,
@@ -98,6 +99,7 @@ export function validateCouponForCheckout(params: {
   originalCents: number;
   emailRaw?: string | null;
   nowMs?: number;
+  checkoutPeriodicity?: CouponPeriodicity;
 }): CouponValidateResult {
   const { store, planSlug, originalCents } = params;
   const nowMs = params.nowMs ?? Date.now();
@@ -126,6 +128,13 @@ export function validateCouponForCheckout(params: {
 
   if (coupon.allowedPlanSlugs.length > 0 && !coupon.allowedPlanSlugs.includes(planSlug)) {
     return fail("COUPON_PLAN_NOT_ALLOWED", "Cupom não se aplica a este plano.");
+  }
+
+  if (coupon.allowedPeriodicities.length > 0) {
+    const period = params.checkoutPeriodicity;
+    if (!period || !coupon.allowedPeriodicities.includes(period)) {
+      return fail("COUPON_PERIOD_NOT_ALLOWED", "Cupom não se aplica a esta periodicidade de cobrança.");
+    }
   }
 
   if (coupon.maxRedemptionsTotal !== null) {

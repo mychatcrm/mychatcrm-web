@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { brlToCents, normalizeCouponCode, validateCouponForCheckout } from "@/lib/commercial/engine";
+import { resolveCheckoutPeriodicity } from "@/lib/commercial/coupon-periodicity";
 import { buildCommercialStoreFromDb, insertRedemption } from "@/lib/server/commercial-store-db";
 import { parsePlanBillingCycle, planCheckoutChargeBaseBRL, SALES_PLANS } from "@/lib/plans";
 
@@ -27,6 +28,7 @@ export async function POST(request: Request) {
   }
 
   const billingCycle = parsePlanBillingCycle(body?.ciclo ?? body?.billingCycle);
+  const checkoutPeriodicity = resolveCheckoutPeriodicity(billingCycle, planSlug);
   const store = await buildCommercialStoreFromDb();
   const originalCents = brlToCents(planCheckoutChargeBaseBRL(plan.priceMonthly, billingCycle));
 
@@ -37,7 +39,14 @@ export async function POST(request: Request) {
     ? store.coupons.find((c) => c.id === extraCodeMatch.couponId)?.code ?? code
     : code;
 
-  const result = validateCouponForCheckout({ store, codeRaw: effectiveCode, planSlug, originalCents, emailRaw: email });
+  const result = validateCouponForCheckout({
+    store,
+    codeRaw: effectiveCode,
+    planSlug,
+    originalCents,
+    emailRaw: email,
+    checkoutPeriodicity,
+  });
 
   if (!result.ok) {
     if (result.code === "COUPON_EMPTY") {

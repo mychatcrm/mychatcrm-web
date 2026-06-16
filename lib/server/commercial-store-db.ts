@@ -27,6 +27,9 @@ function dbToCoupon(row: Record<string, unknown>): CommercialCoupon {
     maxRedemptionsTotal: (row.max_redemptions_total as number | null) ?? null,
     maxRedemptionsPerUser: (row.max_redemptions_per_user as number | null) ?? null,
     allowedPlanSlugs: (row.allowed_plan_slugs as string[]) ?? [],
+    allowedPeriodicities: ((row.allowed_periodicities as string[]) ?? []).filter(
+      (p): p is "monthly" | "yearly" => p === "monthly" || p === "yearly",
+    ),
     discountRecurrence: row.discount_recurrence as "first_cycle" | "all_cycles",
     recurringCyclesLimit: (row.recurring_cycles_limit as number | null) ?? null,
     active: row.active as boolean,
@@ -76,6 +79,7 @@ export async function upsertCoupon(coupon: CommercialCoupon): Promise<void> {
       max_redemptions_total: coupon.maxRedemptionsTotal ?? null,
       max_redemptions_per_user: coupon.maxRedemptionsPerUser ?? null,
       allowed_plan_slugs: coupon.allowedPlanSlugs,
+      allowed_periodicities: coupon.allowedPeriodicities,
       discount_recurrence: coupon.discountRecurrence,
       recurring_cycles_limit: coupon.recurringCyclesLimit ?? null,
       active: coupon.active,
