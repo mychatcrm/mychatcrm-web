@@ -62,7 +62,7 @@ export type AdminDataset = {
   topAgents: { nome: string; cliente: string; conversasDia: number; origemPrincipal: string }[];
   agentDistribution: { faixa: string; totalClientes: number }[];
   agentOriginShare: { origem: string; percentual: number }[];
-  agentConversationsDaily: { dia: string; mariana: number; carlos: number; verao: number }[];
+  agentConversationsDaily: { dia: string; counts: Record<string, number> }[];
 };
 
 const ADMIN_EMPTY_HELPER =

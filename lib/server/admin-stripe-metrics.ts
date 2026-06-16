@@ -145,7 +145,7 @@ function invoiceToRow(inv: Stripe.Invoice): AdminStripeFaturaRow {
   };
 }
 
-function estimateMonthlyFromSubscription(sub: Stripe.Subscription): { cents: number; currency: string } | null {
+export function estimateMonthlyFromSubscription(sub: Stripe.Subscription): { cents: number; currency: string } | null {
   let cents = 0;
   let currency = "usd";
   for (const si of sub.items?.data ?? []) {

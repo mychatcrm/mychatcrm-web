@@ -121,9 +121,20 @@ type PlatformMetricsKpis = {
   growthVsPreviousPct: number | null;
 };
 
+type AnalyticsExtrasPayload = {
+  acquisitionBars: { label: string; value: number }[];
+  retentionBars: { label: string; value: number }[] | null;
+  revenueBars: { label: string; value: number }[];
+  topAgents: { nome: string; cliente: string; conversasDia: number; origemPrincipal: string }[];
+  agentDistribution: { faixa: string; totalClientes: number }[];
+  agentOriginShare: { origem: string; percentual: number }[];
+  agentConversationsDaily: { dia: string; counts: Record<string, number> }[];
+};
+
 function AnalyticsPage({ dataset }: { dataset: ReturnType<typeof getAdminDataset> }) {
   const [period, setPeriod] = useState<"7d" | "30d" | "90d" | "12m">("30d");
   const [metrics, setMetrics] = useState<PlatformMetricsKpis | null>(null);
+  const [extras, setExtras] = useState<AnalyticsExtrasPayload | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricsError, setMetricsError] = useState<string | null>(null);
 
@@ -152,6 +163,7 @@ function AnalyticsPage({ dataset }: { dataset: ReturnType<typeof getAdminDataset
         }
         const data = await res.json();
         setMetrics(data.kpis ?? null);
+        setExtras(data.analyticsExtras ?? null);
       } catch {
         if (!cancelled) setMetricsError("Erro de conexão ao carregar métricas.");
       } finally {
@@ -196,24 +208,48 @@ function AnalyticsPage({ dataset }: { dataset: ReturnType<typeof getAdminDataset
         </div>
       </Panel>
       <div className="grid gap-6 xl:grid-cols-3">
-        <Panel title="Aquisicao"><Bars items={dataset.acquisitionBars} /></Panel>
-        <Panel title="Retencao"><Bars items={dataset.retentionBars} /></Panel>
-        <Panel title="Receita"><Bars items={dataset.revenueBars} /></Panel>
+        <Panel title="Aquisicao">
+          {(extras?.acquisitionBars ?? []).length === 0 ? (
+            <p className="text-sm text-content-muted">Sem novos workspaces no período.</p>
+          ) : (
+            <Bars items={extras?.acquisitionBars ?? []} />
+          )}
+        </Panel>
+        <Panel title="Retencao">
+          {extras?.retentionBars == null ? (
+            <p className="text-sm text-content-muted">
+              Sem dados suficientes — é necessário histórico de mudança de status dos workspaces.
+            </p>
+          ) : (
+            <Bars items={extras.retentionBars} />
+          )}
+        </Panel>
+        <Panel title="Receita">
+          {(extras?.revenueBars ?? []).length === 0 ? (
+            <p className="text-sm text-content-muted">Sem receita registada no período.</p>
+          ) : (
+            <Bars items={extras?.revenueBars ?? []} />
+          )}
+        </Panel>
       </div>
       <div className="grid gap-6 xl:grid-cols-2">
         <Panel title="Performance de Agentes">
           <div className="space-y-3">
-            {dataset.topAgents.map((agent) => (
-              <div key={agent.nome} className="flex items-center justify-between rounded-xl border border-line bg-surface-card p-3 text-sm">
-                <div>
-                  <p className="font-medium text-content">{agent.nome}</p>
-                  <p className="text-xs text-content-faint">
-                    {agent.cliente} · origem principal: {agent.origemPrincipal}
-                  </p>
+            {(extras?.topAgents ?? []).length === 0 ? (
+              <p className="text-sm text-content-muted">Sem agentes com atividade no período.</p>
+            ) : (
+              (extras?.topAgents ?? []).map((agent) => (
+                <div key={agent.nome} className="flex items-center justify-between rounded-xl border border-line bg-surface-card p-3 text-sm">
+                  <div>
+                    <p className="font-medium text-content">{agent.nome}</p>
+                    <p className="text-xs text-content-faint">
+                      {agent.cliente} · origem principal: {agent.origemPrincipal}
+                    </p>
+                  </div>
+                  <Badge className="border-primary/30 bg-primary/10 text-primary">{agent.conversasDia} conv/dia</Badge>
                 </div>
-                <Badge className="border-primary/30 bg-primary/10 text-primary">{agent.conversasDia} conv/dia</Badge>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </Panel>
         <Panel title="Adoção de multiagentes">
@@ -221,7 +257,7 @@ function AnalyticsPage({ dataset }: { dataset: ReturnType<typeof getAdminDataset
             <div>
               <p className={cn(typography.ui.overline, "text-content-faint")}>Distribuição por cliente</p>
               <ul className="mt-2 space-y-2 text-sm text-content-secondary">
-                {dataset.agentDistribution.map((item) => (
+                {(extras?.agentDistribution ?? []).map((item) => (
                   <li key={item.faixa} className="flex items-center justify-between">
                     <span>{item.faixa}</span>
                     <span>{item.totalClientes} clientes</span>
@@ -230,14 +266,18 @@ function AnalyticsPage({ dataset }: { dataset: ReturnType<typeof getAdminDataset
               </ul>
             </div>
             <div>
-              <p className={cn(typography.ui.overline, "text-content-faint")}>Origem mais usada</p>
+              <p className={cn(typography.ui.overline, "text-content-faint")}>Origem dos leads</p>
               <ul className="mt-2 space-y-2 text-sm text-content-secondary">
-                {dataset.agentOriginShare.map((item) => (
-                  <li key={item.origem} className="flex items-center justify-between">
-                    <span>{item.origem}</span>
-                    <span>{item.percentual}%</span>
-                  </li>
-                ))}
+                {(extras?.agentOriginShare ?? []).length === 0 ? (
+                  <li className="text-content-muted">Sem leads registados ainda.</li>
+                ) : (
+                  (extras?.agentOriginShare ?? []).map((item) => (
+                    <li key={item.origem} className="flex items-center justify-between">
+                      <span>{item.origem}</span>
+                      <span>{item.percentual}%</span>
+                    </li>
+                  ))
+                )}
               </ul>
             </div>
           </div>
@@ -245,19 +285,32 @@ function AnalyticsPage({ dataset }: { dataset: ReturnType<typeof getAdminDataset
       </div>
       <Panel title="Conversas por agente por dia">
         <div className="space-y-3">
-          {dataset.agentConversationsDaily.map((row) => (
-            <div key={row.dia} className="rounded-xl border border-line bg-surface-card p-3">
-              <div className="mb-2 flex items-center justify-between text-sm text-content-secondary">
-                <span>{row.dia}</span>
-                <span>{row.mariana + row.carlos + row.verao} total</span>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-3">
-                <div className="h-2 rounded-full bg-primary/70" style={{ width: `${Math.min(100, row.mariana)}%` }} />
-                <div className="h-2 rounded-full bg-primary-hover/85" style={{ width: `${Math.min(100, row.carlos)}%` }} />
-                <div className="h-2 rounded-full bg-amber-500/80" style={{ width: `${Math.min(100, row.verao)}%` }} />
-              </div>
-            </div>
-          ))}
+          {(extras?.agentConversationsDaily ?? []).length === 0 ? (
+            <p className="text-sm text-content-muted">Sem mensagens no período.</p>
+          ) : (
+            (extras?.agentConversationsDaily ?? []).map((row) => {
+              const entries = Object.entries(row.counts);
+              const total = entries.reduce((s, [, n]) => s + n, 0);
+              return (
+                <div key={row.dia} className="rounded-xl border border-line bg-surface-card p-3">
+                  <div className="mb-2 flex items-center justify-between text-sm text-content-secondary">
+                    <span>{row.dia}</span>
+                    <span>{total} total</span>
+                  </div>
+                  <div className="flex gap-2">
+                    {entries.map(([agentId, count], i) => (
+                      <div
+                        key={agentId}
+                        className={cn("h-2 rounded-full", i % 3 === 0 ? "bg-primary/70" : i % 3 === 1 ? "bg-primary-hover/85" : "bg-amber-500/80")}
+                        style={{ width: `${Math.max(4, Math.round((count / Math.max(1, total)) * 100))}%` }}
+                        title={`${agentId}: ${count}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       </Panel>
     </div>
