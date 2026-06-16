@@ -20,7 +20,7 @@ export function generateStaticParams() {
 
 type PageProps = {
   params: Promise<{ locale: string; planSlug: string }>;
-  searchParams?: Promise<{ ciclo?: string | string[] }>;
+  searchParams?: Promise<{ ciclo?: string | string[]; cupom?: string | string[] }>;
 };
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
@@ -53,6 +53,9 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
   const cicloRaw = resolvedSearchParams?.ciclo;
   const ciclo = Array.isArray(cicloRaw) ? cicloRaw[0] : cicloRaw;
   const billingCycle = parsePlanBillingCycle(ciclo);
+
+  const cupomRaw = resolvedSearchParams?.cupom;
+  const initialCouponCode = Array.isArray(cupomRaw) ? cupomRaw[0] : cupomRaw;
 
   const summary = {
     slug: plan.slug,
@@ -112,7 +115,7 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
             . Preencha seus dados e você será encaminhado para o pagamento seguro.
           </p>
           <div className="mt-10">
-            <CheckoutView plan={summary} />
+            <CheckoutView plan={summary} initialCouponCode={initialCouponCode} />
           </div>
         </div>
       </main>

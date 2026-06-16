@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
+import { normalizeCouponCode } from "@/lib/commercial/engine";
 import { getStripe } from "@/lib/stripe";
 import { getStripePriceId } from "@/lib/stripe-prices";
 import { getPlanBySlug, parsePlanBillingCycle, PLAN_CHECKOUT_SLUGS } from "@/lib/plans";
 import { SITE_URL } from "@/lib/constants";
 import { checkEmailAvailability } from "@/lib/server/email-availability";
+import { buildCommercialStoreFromDb } from "@/lib/server/commercial-store-db";
+import { commitCheckoutCoupon, resolveCheckoutCoupon } from "@/lib/server/checkout-coupon";
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,9 +18,11 @@ export async function POST(req: NextRequest) {
       name?: string;
       company?: string;
       stripePromoCodeId?: string;
+      couponCode?: string;
+      couponIdempotencyKey?: string;
     };
 
-    const { planSlug, ciclo, email, name, company, stripePromoCodeId } = body;
+    const { planSlug, ciclo, email, name, company, couponCode, couponIdempotencyKey } = body;
 
     if (!planSlug || !PLAN_CHECKOUT_SLUGS.includes(planSlug)) {
       return NextResponse.json({ message: "Plano inválido." }, { status: 400 });
@@ -30,7 +36,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Verificar disponibilidade do e-mail — fail-CLOSED
     const emailRaw = (email ?? "").trim();
     if (!emailRaw) {
       return NextResponse.json({ message: "E-mail é obrigatório." }, { status: 400 });
@@ -42,7 +47,6 @@ export async function POST(req: NextRequest) {
       if (availability.reason === "invalid_format") {
         return NextResponse.json({ message: "E-mail inválido." }, { status: 400 });
       }
-      // Supabase falhou — fail-closed: bloquear o checkout
       if (availability.envMissing) {
         console.error(
           "[create-checkout-session] SUPABASE_SERVICE_ROLE_KEY ausente em produção — configure a variável na Vercel.",
@@ -52,8 +56,7 @@ export async function POST(req: NextRequest) {
       }
       return NextResponse.json(
         {
-          message:
-            "Não foi possível validar o e-mail. Aguarde alguns segundos e tente novamente.",
+          message: "Não foi possível validar o e-mail. Aguarde alguns segundos e tente novamente.",
           code: "EMAIL_CHECK_FAILED",
         },
         { status: 503 },
@@ -83,14 +86,64 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const stripe = getStripe();
+    const normalizedCoupon = normalizeCouponCode(couponCode ?? "");
+    let stripePromoCodeId: string | undefined;
+    let couponMetadata: { couponCode?: string; couponId?: string } = {};
 
-    console.log("[CHECKOUT DEBUG] body recebido:", JSON.stringify(body));
-    console.log("[CHECKOUT DEBUG] stripePromoCodeId extraído:", stripePromoCodeId);
-    console.log(
-      "[CHECKOUT DEBUG] discounts que serão enviados:",
-      stripePromoCodeId ? JSON.stringify([{ promotion_code: stripePromoCodeId }]) : "NENHUM",
-    );
+    if (normalizedCoupon) {
+      const store = await buildCommercialStoreFromDb();
+      const resolved = resolveCheckoutCoupon({
+        store,
+        codeRaw: normalizedCoupon,
+        planSlug,
+        billingCycle: cycle,
+        emailRaw: emailRaw,
+      });
+
+      if (!resolved.ok) {
+        return NextResponse.json(
+          { message: resolved.message, code: resolved.code },
+          { status: 422 },
+        );
+      }
+
+      if (!resolved.stripePromoCodeId) {
+        return NextResponse.json(
+          {
+            message:
+              "Este cupom não está configurado para desconto no pagamento. Entre em contato com o suporte.",
+            code: "COUPON_STRIPE_PROMO_MISSING",
+          },
+          { status: 422 },
+        );
+      }
+
+      const idempotencyKey =
+        typeof couponIdempotencyKey === "string" && couponIdempotencyKey.trim()
+          ? couponIdempotencyKey.trim()
+          : `checkout_${randomUUID()}`;
+
+      const commitResult = await commitCheckoutCoupon({
+        store,
+        codeRaw: normalizedCoupon,
+        planSlug,
+        billingCycle: cycle,
+        email: emailRaw,
+        idempotencyKey,
+      });
+
+      if (!commitResult.ok) {
+        return NextResponse.json(
+          { message: commitResult.message, code: commitResult.code },
+          { status: 422 },
+        );
+      }
+
+      stripePromoCodeId = resolved.stripePromoCodeId;
+      couponMetadata = { couponCode: resolved.code, couponId: resolved.couponId };
+    }
+
+    const stripe = getStripe();
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
@@ -102,11 +155,13 @@ export async function POST(req: NextRequest) {
         billingCycle: cycle,
         customerName: (name ?? "").trim(),
         company: (company ?? "").trim(),
+        ...couponMetadata,
       },
       subscription_data: {
         metadata: {
           planSlug,
           billingCycle: cycle,
+          ...couponMetadata,
         },
       },
       ...(stripePromoCodeId ? { discounts: [{ promotion_code: stripePromoCodeId }] } : {}),

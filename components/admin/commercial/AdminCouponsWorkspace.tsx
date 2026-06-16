@@ -238,6 +238,7 @@ export function AdminCouponsWorkspace() {
   const [planRestrictionOpen, setPlanRestrictionOpen] = useState(false);
   const [extraCodeInputs, setExtraCodeInputs] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [syncingStripe, setSyncingStripe] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ApiCouponRow | null>(null);
@@ -403,6 +404,27 @@ export function AdminCouponsWorkspace() {
     }
   };
 
+  const syncStripe = async () => {
+    if (!draft.id) return;
+    setFormError(null);
+    setSyncingStripe(true);
+    try {
+      const res = await fetch(`/api/admin/coupons/${encodeURIComponent(draft.id)}/sync-stripe`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error ?? "Falha ao sincronizar com o Stripe.");
+      setDraft((d) => ({ ...d, ...(data.coupon as CommercialCoupon) }));
+      setFlash("Cupom sincronizado com o Stripe.");
+      clearFlashSoon();
+      await load();
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : "Erro ao sincronizar.");
+    } finally {
+      setSyncingStripe(false);
+    }
+  };
+
   const confirmDelete = async () => {
     const c = pendingDelete;
     if (!c) return;
@@ -478,6 +500,9 @@ export function AdminCouponsWorkspace() {
         }
         if (r.validFrom != null && new Date(r.validFrom).getTime() > now) {
           return <span className="text-xs font-medium text-blue-400">Não iniciado</span>;
+        }
+        if (r.createPublicCode !== false && !r.stripePromoCodeId) {
+          return <span className="text-xs font-medium text-amber-400">Sem Stripe</span>;
         }
         return <span className="text-xs font-medium text-success">Ativo</span>;
       },
@@ -626,7 +651,17 @@ export function AdminCouponsWorkspace() {
         title={draft.id ? "Editar cupom" : "Novo cupom"}
         className="max-w-3xl"
         footer={
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
+            {draft.id && draft.active && draft.createPublicCode !== false && !draft.stripePromoCodeId ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => void syncStripe()}
+                isLoading={syncingStripe}
+              >
+                Sincronizar Stripe
+              </Button>
+            ) : null}
             <Button type="button" variant="secondary" onClick={() => setModalOpen(false)}>
               Cancelar
             </Button>
@@ -637,6 +672,12 @@ export function AdminCouponsWorkspace() {
         }
       >
         {formError ? <p className="mb-3 text-sm text-rose-400">{formError}</p> : null}
+        {draft.id && draft.active && draft.createPublicCode !== false && !draft.stripePromoCodeId ? (
+          <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-400">
+            Este cupom está ativo mas sem Promotion Code no Stripe — o desconto não será aplicado no checkout até
+            sincronizar.
+          </p>
+        ) : null}
         <div className="grid max-h-[70vh] gap-4 overflow-y-auto pr-1 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <label className="text-xs font-semibold text-content-muted">Nome (aparece nos recibos)</label>

@@ -32,7 +32,21 @@ const DEBOUNCE_MS = 400;
 
 type EmailStatus = "idle" | "checking" | "available" | "taken" | "uncertain";
 
-export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
+type AppliedCoupon = Extract<CouponValidateResult, { ok: true }> & {
+  stripePromoCodeId?: string | null;
+};
+
+function couponStorageKey(planSlug: string) {
+  return `checkout_coupon_${planSlug}`;
+}
+
+export function CheckoutView({
+  plan,
+  initialCouponCode,
+}: {
+  plan: CheckoutPlanSummary;
+  initialCouponCode?: string;
+}) {
   const baseMonthlyBrl = planEffectiveMonthlyBRL(plan.priceMonthly, plan.billingCycle);
   const annualTotals =
     plan.billingCycle === "annual" ? planAnnualCheckoutTotalsBRL(plan.priceMonthly) : null;
@@ -41,8 +55,11 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
   const [couponInput, setCouponInput] = useState("");
   const [couponLoading, setCouponLoading] = useState(false);
   const [couponMessage, setCouponMessage] = useState<string | null>(null);
-  const [applied, setApplied] = useState<Extract<CouponValidateResult, { ok: true }> | null>(null);
+  const [applied, setApplied] = useState<AppliedCoupon | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const appliedEmailRef = useRef<string>("");
+  const couponIdempotencyRef = useRef<string>("");
+  const initialCouponAppliedRef = useRef(false);
 
   // --- Estado de verificação de e-mail ---
   const [emailValue, setEmailValue] = useState("");
@@ -138,6 +155,11 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
       setEmailStatus("idle");
       lastCompletedRef.current = "";
     }
+    if (applied && appliedEmailRef.current && norm !== appliedEmailRef.current) {
+      setApplied(null);
+      appliedEmailRef.current = "";
+      setCouponMessage("E-mail alterado — reaplique o cupom.");
+    }
   };
 
   const handleEmailBlur = () => {
@@ -151,56 +173,103 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
   const emailNorm = emailValue.trim().toLowerCase();
   const canSubmit = !loading && !emailBlocked && EMAIL_REGEX.test(emailNorm);
 
-  const applyCoupon = useCallback(async () => {
-    if (!normalizeCouponCode(couponInput)) {
-      setApplied(null);
+  const validateCouponCode = useCallback(
+    async (code: string, emailForValidation?: string): Promise<AppliedCoupon | null> => {
+      if (!normalizeCouponCode(code)) {
+        setApplied(null);
+        setCouponMessage(null);
+        return null;
+      }
+      setCouponLoading(true);
       setCouponMessage(null);
-      return;
-    }
-    setCouponLoading(true);
-    setCouponMessage(null);
-    try {
-      const res = await fetch("/api/checkout/coupon/validate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          code: couponInput,
-          planSlug: plan.slug,
-          email: emailValue.trim() || undefined,
-          ciclo: plan.billingCycle === "annual" ? "anual" : "mensal",
-        }),
-      });
-      const data = (await res.json().catch(() => null)) as CouponValidateResult | { message?: string } | null;
-      if (!data || typeof data !== "object") {
-        setApplied(null);
-        setCouponMessage("Resposta inválida do servidor.");
-        return;
-      }
-      if (!("ok" in data) || !data.ok) {
-        setApplied(null);
-        const code = "code" in data ? (data.code as CouponRejectCode | undefined) : undefined;
-        if (code === "COUPON_EMPTY") {
-          setCouponMessage(null);
-          return;
+      try {
+        const res = await fetch("/api/checkout/coupon/validate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            code,
+            planSlug: plan.slug,
+            email: (emailForValidation ?? emailValue).trim() || undefined,
+            ciclo: plan.billingCycle === "annual" ? "anual" : "mensal",
+          }),
+        });
+        const data = (await res.json().catch(() => null)) as CouponValidateResult | { message?: string } | null;
+        if (!data || typeof data !== "object") {
+          setApplied(null);
+          setCouponMessage("Resposta inválida do servidor.");
+          return null;
         }
-        setCouponMessage("message" in data && data.message ? data.message : "Cupom não pôde ser aplicado.");
-        return;
+        if (!("ok" in data) || !data.ok) {
+          setApplied(null);
+          const rejectCode = "code" in data ? (data.code as CouponRejectCode | undefined) : undefined;
+          if (rejectCode === "COUPON_EMPTY") {
+            setCouponMessage(null);
+            return null;
+          }
+          setCouponMessage("message" in data && data.message ? data.message : "Cupom não pôde ser aplicado.");
+          return null;
+        }
+        if (!data.stripePromoCodeId) {
+          setApplied(null);
+          setCouponMessage(
+            "Este cupom não está configurado para desconto no pagamento. Entre em contato com o suporte.",
+          );
+          return null;
+        }
+        const appliedCoupon = data as AppliedCoupon;
+        setApplied(appliedCoupon);
+        setCouponMessage(data.message);
+        appliedEmailRef.current = (emailForValidation ?? emailValue).trim().toLowerCase();
+        try {
+          sessionStorage.setItem(couponStorageKey(plan.slug), normalizeCouponCode(code));
+        } catch {
+          /* sessionStorage indisponível */
+        }
+        return appliedCoupon;
+      } catch {
+        setApplied(null);
+        setCouponMessage("Falha de rede. Tente novamente.");
+        return null;
+      } finally {
+        setCouponLoading(false);
       }
-      setApplied(data);
-      setCouponMessage(data.message);
-    } catch {
-      setApplied(null);
-      setCouponMessage("Falha de rede. Tente novamente.");
-    } finally {
-      setCouponLoading(false);
-    }
-  }, [couponInput, plan.slug, plan.billingCycle, emailValue]);
+    },
+    [plan.slug, plan.billingCycle, emailValue],
+  );
+
+  const applyCoupon = useCallback(async () => {
+    await validateCouponCode(couponInput);
+  }, [couponInput, validateCouponCode]);
 
   const clearCoupon = () => {
     setApplied(null);
     setCouponMessage(null);
     setCouponInput("");
+    appliedEmailRef.current = "";
+    try {
+      sessionStorage.removeItem(couponStorageKey(plan.slug));
+    } catch {
+      /* sessionStorage indisponível */
+    }
   };
+
+  useEffect(() => {
+    if (initialCouponAppliedRef.current) return;
+    initialCouponAppliedRef.current = true;
+
+    let codeToApply = initialCouponCode?.trim() ?? "";
+    if (!codeToApply) {
+      try {
+        codeToApply = sessionStorage.getItem(couponStorageKey(plan.slug)) ?? "";
+      } catch {
+        codeToApply = "";
+      }
+    }
+    if (!codeToApply) return;
+
+    setCouponInput(codeToApply);
+    void validateCouponCode(codeToApply);
+  }, [initialCouponCode, plan.slug, validateCouponCode]);
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -217,39 +286,21 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
     const company = String(fd.get("company") ?? "").trim();
 
     try {
-      if (applied) {
-        const couponRes = await fetch("/api/checkout/coupon/commit", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            code: applied.code,
-            planSlug: plan.slug,
-            email,
-            ciclo: plan.billingCycle === "annual" ? "anual" : "mensal",
-            idempotencyKey:
-              typeof crypto !== "undefined" && "randomUUID" in crypto
-                ? crypto.randomUUID()
-                : `idem-${Date.now()}`,
-          }),
-        });
-        if (!couponRes.ok) {
-          const data = await couponRes.json().catch(() => null);
-          setSubmitError((data as { message?: string } | null)?.message ?? "Não foi possível confirmar o cupom.");
-          return;
-        }
+      let activeCoupon = applied;
+      const typedCode = normalizeCouponCode(couponInput);
+
+      if (typedCode && !activeCoupon) {
+        activeCoupon = await validateCouponCode(typedCode, email);
+        if (!activeCoupon) return;
       }
 
-      console.log(
-        "[CHECKOUT DEBUG] payload enviado ao backend:",
-        JSON.stringify({
-          planSlug: plan.slug,
-          ciclo: plan.billingCycle,
-          email,
-          name,
-          company,
-          stripePromoCodeId: applied?.stripePromoCodeId ?? undefined,
-        }),
-      );
+      const couponCode = activeCoupon?.code ?? (typedCode || undefined);
+      if (!couponIdempotencyRef.current) {
+        couponIdempotencyRef.current =
+          typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `idem-${Date.now()}`;
+      }
 
       const res = await fetch("/api/stripe/create-checkout-session", {
         method: "POST",
@@ -260,7 +311,8 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
           email,
           name,
           company,
-          stripePromoCodeId: applied?.stripePromoCodeId ?? undefined,
+          couponCode,
+          couponIdempotencyKey: couponCode ? couponIdempotencyRef.current : undefined,
         }),
       });
 
@@ -480,6 +532,12 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
               <Input
                 value={couponInput}
                 onChange={(e) => setCouponInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void applyCoupon();
+                  }
+                }}
                 placeholder="Opcional — ex.: SOLO15"
                 className="font-mono"
                 autoCapitalize="characters"
@@ -510,6 +568,11 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
 
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-content-muted">Resumo</p>
+          {applied ? (
+            <p className="mt-2 inline-flex items-center rounded-full bg-success/10 px-2.5 py-1 text-xs font-medium text-success">
+              Cupom aplicado: {applied.code}
+            </p>
+          ) : null}
           <h3 className="mt-2 font-display text-lg font-bold text-content">{plan.name}</h3>
           <p className="mt-1 text-sm text-content-muted">{plan.tagline}</p>
           <div className="mt-6 space-y-3 border-t border-line pt-6">

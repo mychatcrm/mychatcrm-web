@@ -20,6 +20,7 @@ import {
   findCommittedRedemptionByCouponAndEmail,
   updateRedemptionStatus,
 } from "@/lib/server/commercial-store-db";
+import { findCouponByStripePromoCodeId } from "@/lib/server/checkout-coupon";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { sendTransactionalEmail } from "@/lib/server/resend-mail";
 
@@ -132,7 +133,7 @@ export async function POST(req: NextRequest) {
             : null;
           if (promoCodeId && session.customer_details?.email) {
             const store = await buildCommercialStoreFromDb();
-            const coupon = store.coupons.find((c) => c.stripePromoCodeId === promoCodeId);
+            const coupon = findCouponByStripePromoCodeId(store, promoCodeId);
             if (coupon) {
               const redemption = await findCommittedRedemptionByCouponAndEmail(
                 coupon.id,
