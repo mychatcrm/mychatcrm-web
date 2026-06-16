@@ -9,16 +9,9 @@ import { Toggle } from "@/components/ui/Toggle";
 import type {
   CommercialCoupon,
   CommercialPartner,
-  CouponPeriodicity,
 } from "@/lib/commercial/types";
-import { PLAN_CHECKOUT_SLUGS } from "@/lib/plans";
 import { cn } from "@/lib/utils";
 import { StripeProductPicker, type StripeProductOption } from "@/components/admin/commercial/StripeProductPicker";
-
-const PERIODICITY_OPTIONS: { value: CouponPeriodicity; label: string }[] = [
-  { value: "monthly", label: "Mensal" },
-  { value: "yearly", label: "Anual" },
-];
 
 export type CouponFormDraft = Partial<CommercialCoupon> & { id?: string };
 
@@ -340,8 +333,8 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
       ) : null}
       {isEdit ? (
         <p className="mb-4 text-xs text-content-muted">
-          No Stripe, só o nome pode ser alterado após a criação. Aqui você também pode editar status, planos,
-          periodicidade, limite por e-mail, parceiro e descrição interna.
+          No Stripe, só o nome pode ser alterado após a criação. Aqui você também pode editar status, limite por
+          e-mail, parceiro e descrição interna.
         </p>
       ) : null}
 
@@ -662,65 +655,9 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
         )}
 
         <StripeSection
-          title="Restrições MyChatCRM"
-          description="Campos exclusivos do nosso sistema — não existem no formulário do Stripe."
+          title="Configurações MyChatCRM"
+          description="Campos internos do sistema — restrição de produtos fica no bloco Stripe acima."
         >
-          <Field label="Restringir a planos" className="sm:col-span-2">
-            <div className="flex flex-wrap gap-2">
-              {PLAN_CHECKOUT_SLUGS.map((slug) => {
-                const on = draft.allowedPlanSlugs?.includes(slug);
-                return (
-                  <button
-                    key={slug}
-                    type="button"
-                    onClick={() =>
-                      setDraft((d) => {
-                        const cur = d.allowedPlanSlugs ?? [];
-                        const next = on ? cur.filter((s) => s !== slug) : [...cur, slug];
-                        return { ...d, allowedPlanSlugs: next };
-                      })
-                    }
-                    className={cn(
-                      "rounded-full border px-3 py-1 text-xs font-medium capitalize transition-colors",
-                      on ? "border-primary/40 bg-primary/15 text-content" : "border-line text-content-muted",
-                    )}
-                  >
-                    {slug}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="mt-1 text-xs text-content-faint">Vazio = todos os planos com checkout.</p>
-          </Field>
-
-          <Field label="Periodicidade" className="sm:col-span-2">
-            <div className="flex flex-wrap gap-2">
-              {PERIODICITY_OPTIONS.map(({ value, label }) => {
-                const on = draft.allowedPeriodicities?.includes(value);
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() =>
-                      setDraft((d) => {
-                        const cur = d.allowedPeriodicities ?? [];
-                        const next = on ? cur.filter((p) => p !== value) : [...cur, value];
-                        return { ...d, allowedPeriodicities: next };
-                      })
-                    }
-                    className={cn(
-                      "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                      on ? "border-primary/40 bg-primary/15 text-content" : "border-line text-content-muted",
-                    )}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="mt-1 text-xs text-content-faint">Vazio = mensal e anual.</p>
-          </Field>
-
           <Field label="Limite de usos por e-mail">
             <Input
               type="number"
