@@ -11,7 +11,7 @@ import type {
   CommercialPartner,
 } from "@/lib/commercial/types";
 import { cn } from "@/lib/utils";
-import { StripeProductPicker, type StripeProductOption } from "@/components/admin/commercial/StripeProductPicker";
+import { StripeProductPicker, StripeInlineToggle, type StripeProductOption } from "@/components/admin/commercial/StripeProductPicker";
 
 export type CouponFormDraft = Partial<CommercialCoupon> & { id?: string };
 
@@ -166,6 +166,7 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
   const [productsError, setProductsError] = useState<string | null>(null);
   const [productsLoaded, setProductsLoaded] = useState(false);
   const [productRestrictionEnabled, setProductRestrictionEnabled] = useState(false);
+  const [mychatcrmOpen, setMychatcrmOpen] = useState(false);
 
   const loadStripeProducts = useCallback(async () => {
     if (productsLoaded && stripeProducts.length > 0) return;
@@ -199,6 +200,13 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
       setLimitMaxRedemptions(coupon.maxRedemptionsTotal != null);
       setRestrictCustomer(Boolean(coupon.restrictedCustomerEmail));
       setMinimumAmount(coupon.minimumAmountBrl != null);
+      setMychatcrmOpen(
+        Boolean(
+          coupon.maxRedemptionsPerUser != null ||
+            coupon.partnerId ||
+            String(coupon.description ?? "").trim(),
+        ),
+      );
     } else {
       setDraft(emptyDraft());
       setExtraCodeInputs([]);
@@ -210,6 +218,7 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
       setStripeProducts([]);
       setProductsError(null);
       setProductRestrictionEnabled(false);
+      setMychatcrmOpen(false);
     }
   }, [open, coupon]);
 
@@ -654,46 +663,68 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
           </StripeSection>
         )}
 
-        <StripeSection
-          title="Configurações MyChatCRM"
-          description="Campos internos do sistema — restrição de produtos fica no bloco Stripe acima."
-        >
-          <Field label="Limite de usos por e-mail">
-            <Input
-              type="number"
-              min={0}
-              placeholder="Ilimitado"
-              value={draft.maxRedemptionsPerUser ?? ""}
-              onChange={(e) =>
+        <section className="space-y-4 border-b border-line pb-5 last:border-b-0">
+          <StripeInlineToggle
+            id="mychatcrm-settings"
+            checked={mychatcrmOpen}
+            onChange={(on) => {
+              setMychatcrmOpen(on);
+              if (!on) {
                 setDraft((d) => ({
                   ...d,
-                  maxRedemptionsPerUser: e.target.value === "" ? null : parseInt(e.target.value, 10),
-                }))
+                  maxRedemptionsPerUser: null,
+                  partnerId: null,
+                  description: "",
+                }));
               }
-            />
-          </Field>
+            }}
+            label="Configurações MyChatCRM"
+          />
+          {mychatcrmOpen ? (
+            <div className="space-y-4">
+              <p className="text-xs text-content-muted">
+                Campos internos do sistema — restrição de produtos fica no bloco Stripe acima.
+              </p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Limite de usos por e-mail">
+                  <Input
+                    type="number"
+                    min={0}
+                    placeholder="Ilimitado"
+                    value={draft.maxRedemptionsPerUser ?? ""}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        maxRedemptionsPerUser: e.target.value === "" ? null : parseInt(e.target.value, 10),
+                      }))
+                    }
+                  />
+                </Field>
 
-          <Field label="Parceiro vinculado">
-            <Select
-              value={draft.partnerId ?? ""}
-              onChange={(e) => setDraft((d) => ({ ...d, partnerId: e.target.value || null }))}
-            >
-              <option value="">Nenhum</option>
-              {partners.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.code})
-                </option>
-              ))}
-            </Select>
-          </Field>
+                <Field label="Parceiro vinculado">
+                  <Select
+                    value={draft.partnerId ?? ""}
+                    onChange={(e) => setDraft((d) => ({ ...d, partnerId: e.target.value || null }))}
+                  >
+                    <option value="">Nenhum</option>
+                    {partners.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.code})
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
 
-          <Field label="Descrição interna" className="sm:col-span-2">
-            <Input
-              value={draft.description ?? ""}
-              onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
-            />
-          </Field>
-        </StripeSection>
+                <Field label="Descrição interna" className="sm:col-span-2">
+                  <Input
+                    value={draft.description ?? ""}
+                    onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
+                  />
+                </Field>
+              </div>
+            </div>
+          ) : null}
+        </section>
       </div>
     </Modal>
   );
