@@ -21,7 +21,6 @@ import {
 import type { AdminSession } from "@/lib/admin-auth";
 import {
   canAccessPlatformMetricsApi,
-  PLATFORM_ESTIMATED_COST_BRL_PER_MILLION_TOKENS,
   type PlatformChannel,
   type PlatformMetricsPayload,
   type PlatformPlanFilter,
@@ -192,10 +191,12 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
   }
 
   const pieData =
-    data?.consumption.channelShare.map((c) => ({
-      name: c.channel === "whatsapp" ? "WhatsApp" : c.channel === "web" ? "Web" : "API",
-      value: c.messages,
-    })) ?? [];
+    data?.consumption.channelShare
+      .filter((c) => c.messages > 0)
+      .map((c) => ({
+        name: c.channel === "whatsapp" ? "WhatsApp" : c.channel === "web" ? "Web" : "API",
+        value: c.messages,
+      })) ?? [];
   const pieTotal = pieData.reduce((s, x) => s + x.value, 0);
 
   const financeCompare =
@@ -304,8 +305,10 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
             <label className="text-xs font-medium text-content-muted">Plano (workspace)</label>
             <Select className="mt-1" value={plan} onChange={(e) => setPlan(e.target.value as PlatformPlanFilter)}>
               <option value="all">Todos</option>
-              <option value="Profissional">Profissional</option>
-              <option value="Master">Master</option>
+              <option value="solo">Solo</option>
+              <option value="equipa">Equipa</option>
+              <option value="escala">Escala</option>
+              <option value="enterprise">Enterprise</option>
             </Select>
           </div>
           <div className="flex items-end">
@@ -330,21 +333,23 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
 
           <Section title="KPIs principais" description="Visão consolidada da plataforma no intervalo selecionado.">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-              <Kpi label="Mensagens processadas" value={formatIntegerPtBr(data.kpis.messagesProcessed)} />
-              <Kpi label="Tokens consumidos" value={formatCompactNumber(data.kpis.tokensConsumed)} hint="Input + output agregados" />
-              <Kpi label="Interações / execuções" value={formatIntegerPtBr(data.kpis.interactions)} />
+              <Kpi label="Mensagens processadas" value={formatIntegerPtBr(data.kpis.messagesProcessed)} hint="WhatsApp — único canal com tracking real hoje" />
+              <Kpi label="Tokens consumidos" value={formatCompactNumber(data.kpis.tokensConsumed)} hint="Input + output, somados de ai_usage_logs" />
+              <Kpi label="Interações / execuções" value={formatIntegerPtBr(data.kpis.interactions)} hint="Chamadas de IA registadas no período" />
               <Kpi label="Workspaces registados" value={formatIntegerPtBr(data.kpis.workspacesRegistered)} hint="Contas na base administrativa" />
               <Kpi label="Workspaces ativos (período)" value={formatIntegerPtBr(data.kpis.workspacesActiveInPeriod)} />
               <Kpi label="Agentes (configurados)" value={formatIntegerPtBr(data.kpis.agentsTotal)} />
-              <Kpi label="Agentes ativos (est.)" value={formatIntegerPtBr(data.kpis.agentsActiveInPeriod)} />
+              <Kpi label="Agentes ativos no período" value={formatIntegerPtBr(data.kpis.agentsActiveInPeriod)} hint="Com pelo menos 1 chamada de IA no período" />
               <Kpi label="Sessões (período)" value={formatIntegerPtBr(data.kpis.sessionsInPeriod)} />
-              <Kpi label="Minutos de uso (est.)" value={formatIntegerPtBr(data.kpis.screenMinutesTotal)} hint="Soma agregada de tempo de tela" />
-              <Kpi label="Média min / workspace" value={formatIntegerPtBr(data.kpis.avgScreenMinutesPerWorkspace)} />
               <Kpi label="Média msgs / workspace" value={formatIntegerPtBr(data.kpis.avgMessagesPerWorkspace)} />
               <Kpi label="Média tokens / workspace" value={formatCompactNumber(data.kpis.avgTokensPerWorkspace)} />
-              <Kpi label="Receita (período)" value={formatBRL(data.kpis.revenueTotalBrl)} accent="success" />
-              <Kpi label="Custo IA estimado" value={formatBRL(data.kpis.costTotalBrl)} hint={`Referência ${formatBRL(PLATFORM_ESTIMATED_COST_BRL_PER_MILLION_TOKENS)}/M tokens`} />
-              <Kpi label="Saldo operacional (est.)" value={formatBRL(data.kpis.operatingMarginBrl)} accent={data.kpis.operatingMarginBrl >= 0 ? "success" : "warning"} />
+              <Kpi label="Receita (período)" value={formatBRL(data.kpis.revenueTotalBrl)} accent="success" hint="Charges Stripe líquidos de reembolso" />
+              <Kpi
+                label="Custo IA"
+                value={formatBRL(data.kpis.costTotalBrl)}
+                hint={`Real (ai_usage_logs) · câmbio 1 USD = R$ ${data.financial.usdToBrlRate.toFixed(2)}`}
+              />
+              <Kpi label="Saldo operacional" value={formatBRL(data.kpis.operatingMarginBrl)} accent={data.kpis.operatingMarginBrl >= 0 ? "success" : "warning"} />
               <Kpi
                 label="Crescimento vs período anterior"
                 value={data.kpis.growthVsPreviousPct == null ? "—" : `${data.kpis.growthVsPreviousPct} %`}
@@ -399,6 +404,7 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
             <div className="mt-6 grid gap-6 lg:grid-cols-2">
               <div className="h-[260px] min-h-[220px] w-full min-w-0">
                 <p className="mb-2 text-xs font-medium text-content-muted">Distribuição por canal (mensagens)</p>
+                <p className="mb-2 text-[11px] text-content-faint">Apenas WhatsApp tem rastreamento real hoje.</p>
                 {pieTotal > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
@@ -457,13 +463,17 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
             </div>
           </Section>
 
-          <Section title="Indicadores operacionais" description="Capacidade, sessões e retenção agregada (sem logs sensíveis).">
+          <Section title="Indicadores operacionais" description="Capacidade, sessões e retenção (sem logs sensíveis).">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <Kpi label="Integrações (hits est.)" value={formatIntegerPtBr(data.operational.integrationsHitsEstimate)} />
-              <Kpi label="Automações (exec. est.)" value={formatIntegerPtBr(data.operational.automationsEstimate)} />
-              <Kpi label="Agentes inativos (est.)" value={formatIntegerPtBr(data.operational.agentsInactiveEstimate)} />
-              <Kpi label="Tempo médio de sessão (min)" value={formatIntegerPtBr(data.operational.avgSessionMinutes)} />
-              <Kpi label="Retenção básica (est.)" value={`${data.operational.retentionPctEstimate}%`} hint="Modelo simplificado até haver cohort real" />
+              <Kpi label="Integrações ativas" value={formatIntegerPtBr(data.operational.integrationsActive)} hint="Conexões WhatsApp com status 'open'" />
+              <Kpi label="Automações executadas" value={formatIntegerPtBr(data.operational.automationsExecuted)} hint="Eventos de follow-up no período" />
+              <Kpi label="Agentes inativos" value={formatIntegerPtBr(data.operational.agentsInactive)} hint="tenant_agents.active = false" />
+              <Kpi label="Duração média de conversa (min)" value={formatIntegerPtBr(data.operational.avgSessionDurationMin)} hint="last_message_at − created_at" />
+              <Kpi
+                label="Retenção"
+                value={data.operational.retentionPct == null ? "—" : `${data.operational.retentionPct}%`}
+                hint="Sem histórico de cohort suficiente ainda"
+              />
             </div>
           </Section>
 
@@ -512,7 +522,7 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
                     <th className="px-4 py-3 text-right">Msgs</th>
                     <th className="px-4 py-3 text-right">Tokens</th>
                     <th className="px-4 py-3 text-right">Sessões</th>
-                    <th className="px-4 py-3 text-right">Min. tela</th>
+                    <th className="px-4 py-3 text-right">Dur. méd. (min)</th>
                     <th className="px-4 py-3 text-right">Receita</th>
                     <th className="px-4 py-3 text-right">Custo IA</th>
                     <th className="px-4 py-3 text-right">Margem</th>
@@ -534,7 +544,7 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
                         <td className="px-4 py-3 text-right tabular-nums">{formatIntegerPtBr(w.messages)}</td>
                         <td className="px-4 py-3 text-right tabular-nums">{formatCompactNumber(w.tokensIn + w.tokensOut)}</td>
                         <td className="px-4 py-3 text-right tabular-nums">{formatIntegerPtBr(w.sessions)}</td>
-                        <td className="px-4 py-3 text-right tabular-nums">{formatIntegerPtBr(w.screenMinutes)}</td>
+                        <td className="px-4 py-3 text-right tabular-nums">{w.avgSessionDurationMin}</td>
                         <td className="px-4 py-3 text-right tabular-nums">{formatBRL(w.revenueBrl)}</td>
                         <td className="px-4 py-3 text-right tabular-nums">{formatBRL(w.costIaBrl)}</td>
                         <td className="px-4 py-3 text-right tabular-nums">{formatBRL(w.marginBrl)}</td>
