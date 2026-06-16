@@ -38,7 +38,7 @@ function emptyDraft(): CouponFormDraft {
     recurringCyclesLimit: null,
     active: true,
     partnerId: null,
-    createPublicCode: true,
+    createPublicCode: false,
     stripeProductIds: [],
     firstTimeOnly: false,
     restrictedCustomerEmail: null,
@@ -46,7 +46,7 @@ function emptyDraft(): CouponFormDraft {
   };
 }
 
-function Section({
+function StripeSection({
   title,
   description,
   children,
@@ -56,7 +56,7 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="space-y-4 rounded-xl border border-line bg-surface-elevated/30 p-4">
+    <section className="space-y-4 border-b border-line pb-5 last:border-b-0 last:pb-0">
       <div>
         <h3 className="text-sm font-semibold text-content">{title}</h3>
         {description ? <p className="mt-0.5 text-xs text-content-muted">{description}</p> : null}
@@ -120,6 +120,31 @@ function OptionalCheckbox({
         </div>
       </div>
     </div>
+  );
+}
+
+function SegmentedOption({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex-1 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors",
+        active
+          ? "border-primary bg-primary/10 text-content ring-1 ring-primary/30"
+          : "border-line text-content-muted hover:border-line-strong hover:bg-surface-elevated/40",
+      )}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -191,7 +216,9 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
   const validateDraft = useCallback((): string | null => {
     if (!String(draft.internalName ?? "").trim()) return "Nome é obrigatório.";
     if (!isEdit) {
-      if (!String(draft.code ?? "").trim()) return "Código do cupom é obrigatório.";
+      if (draft.createPublicCode !== false && !String(draft.code ?? "").trim()) {
+        return "Código do cupom é obrigatório quando códigos públicos estão ativos.";
+      }
       const dv = Number(draft.discountValue);
       if (!Number.isFinite(dv) || dv < 0) return "Valor de desconto inválido.";
       if (draft.discountType === "percent" && dv > 100) return "Percentual não pode exceder 100.";
@@ -256,7 +283,7 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
     <Modal
       open={open}
       onClose={onClose}
-      title={isEdit ? `Editar cupom · ${coupon?.code}` : "Novo cupom"}
+      title={isEdit ? `Editar cupom · ${coupon?.code}` : "Criar cupom"}
       className="max-w-3xl"
       footer={
         <div className="flex flex-wrap justify-end gap-2">
@@ -282,59 +309,74 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
       ) : null}
       {isEdit ? (
         <p className="mb-4 text-xs text-content-muted">
-          Após a criação, desconto, código e restrições Stripe não podem ser alterados. Apenas os campos abaixo são
-          editáveis.
+          No Stripe, só o nome pode ser alterado após a criação. Aqui você também pode editar status, planos,
+          periodicidade, limite por e-mail, parceiro e descrição interna.
         </p>
       ) : null}
 
       <div className="max-h-[70vh] space-y-5 overflow-y-auto pr-1">
-        {/* Seção 1 — Informações básicas */}
-        <Section
-          title="Informações básicas"
-          description={isEdit ? "Nome interno e status." : "Espelha o cupom no Stripe Dashboard."}
-        >
-          <Field label="Nome (aparece nos recibos)" className="sm:col-span-2">
-            <Input
-              value={draft.internalName ?? ""}
-              onChange={(e) => setDraft((d) => ({ ...d, internalName: e.target.value }))}
-            />
-          </Field>
-
-          {!isEdit ? (
-            <>
-              <Field label="Tipo de desconto">
-                <Select
-                  value={draft.discountType ?? "percent"}
-                  onChange={(e) =>
-                    setDraft((d) => ({
-                      ...d,
-                      discountType: e.target.value as CommercialCoupon["discountType"],
-                    }))
-                  }
-                >
-                  <option value="percent">Percentual de desconto</option>
-                  <option value="fixed">Valor fixo de desconto</option>
-                </Select>
-              </Field>
-              <Field label={draft.discountType === "fixed" ? "Valor do desconto (R$)" : "Desconto percentual (%)"}>
+        {!isEdit ? (
+          <>
+            {/* Espelha a ordem do Stripe Dashboard → Products → Coupons → + New */}
+            <StripeSection title="Informações do cupom">
+              <Field label="Nome" hint="Aparece em recibos e faturas." className="sm:col-span-2">
                 <Input
-                  type="number"
-                  value={
-                    draft.discountType === "fixed"
-                      ? (draft.discountValue ?? 0) / 100
-                      : (draft.discountValue ?? 0)
-                  }
-                  onChange={(e) => {
-                    const n = parseFloat(e.target.value);
-                    if (!Number.isFinite(n)) return;
-                    setDraft((d) => ({
-                      ...d,
-                      discountValue: d.discountType === "fixed" ? Math.round(n * 100) : n,
-                    }));
-                  }}
+                  value={draft.internalName ?? ""}
+                  onChange={(e) => setDraft((d) => ({ ...d, internalName: e.target.value }))}
+                  placeholder="Ex.: Desconto de lançamento"
                 />
               </Field>
-              <Field label="Duração" className="sm:col-span-2">
+
+              <Field label="Tipo de desconto" className="sm:col-span-2">
+                <div className="flex gap-2">
+                  <SegmentedOption
+                    active={draft.discountType === "percent"}
+                    onClick={() => setDraft((d) => ({ ...d, discountType: "percent" }))}
+                  >
+                    <span className="font-medium">Percentual de desconto</span>
+                  </SegmentedOption>
+                  <SegmentedOption
+                    active={draft.discountType === "fixed"}
+                    onClick={() => setDraft((d) => ({ ...d, discountType: "fixed" }))}
+                  >
+                    <span className="font-medium">Valor fixo de desconto</span>
+                  </SegmentedOption>
+                </div>
+              </Field>
+
+              <Field label={draft.discountType === "fixed" ? "Valor do desconto" : "Percentual de desconto"}>
+                <div className="relative">
+                  {draft.discountType === "fixed" ? (
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-content-muted">
+                      R$
+                    </span>
+                  ) : null}
+                  <Input
+                    type="number"
+                    className={draft.discountType === "fixed" ? "pl-10" : undefined}
+                    value={
+                      draft.discountType === "fixed"
+                        ? (draft.discountValue ?? 0) / 100
+                        : (draft.discountValue ?? 0)
+                    }
+                    onChange={(e) => {
+                      const n = parseFloat(e.target.value);
+                      if (!Number.isFinite(n)) return;
+                      setDraft((d) => ({
+                        ...d,
+                        discountValue: d.discountType === "fixed" ? Math.round(n * 100) : n,
+                      }));
+                    }}
+                  />
+                  {draft.discountType === "percent" ? (
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-content-muted">
+                      %
+                    </span>
+                  ) : null}
+                </div>
+              </Field>
+
+              <Field label="Duração">
                 <div className="flex flex-wrap gap-2">
                   {(["once", "repeating", "forever"] as const).map((opt) => (
                     <button
@@ -368,216 +410,239 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
                   />
                 ) : null}
               </Field>
-            </>
-          ) : null}
 
-          <Field label="Status" className="sm:col-span-2">
-            <Toggle
-              id="coupon-active"
-              checked={draft.active !== false}
-              onChange={(v) => setDraft((d) => ({ ...d, active: v }))}
-              label="Cupom ativo"
-            />
-          </Field>
-        </Section>
-
-        {/* Seção 2 — Limites de resgate (só criação) */}
-        {!isEdit ? (
-          <Section title="Limites de resgate" description="Configurações do Coupon no Stripe.">
-            <OptionalCheckbox
-              id="limit-redeem-until"
-              label="Limitar o período em que os clientes podem resgatar o cupom"
-              checked={limitRedeemUntil}
-              onChange={(v) => {
-                setLimitRedeemUntil(v);
-                if (!v) setDraft((d) => ({ ...d, validUntil: null }));
-              }}
-            >
-              <Field label="Válido até">
+              <Field
+                label="Aplicar a produtos específicos"
+                hint="Opcional. Restringe o cupom a produtos Stripe (applies_to.products). IDs em Products no Dashboard."
+                className="sm:col-span-2"
+              >
                 <Input
-                  type="date"
-                  value={draft.validUntil ? String(draft.validUntil).slice(0, 10) : ""}
-                  onChange={(e) => setDraft((d) => ({ ...d, validUntil: e.target.value || null }))}
-                />
-              </Field>
-            </OptionalCheckbox>
-
-            <OptionalCheckbox
-              id="limit-max-redemptions"
-              label="Limitar o total de vezes que o cupom pode ser resgatado"
-              checked={limitMaxRedemptions}
-              onChange={(v) => {
-                setLimitMaxRedemptions(v);
-                if (!v) setDraft((d) => ({ ...d, maxRedemptionsTotal: null }));
-              }}
-            >
-              <Field label="Máximo de resgates">
-                <Input
-                  type="number"
-                  min={1}
-                  value={draft.maxRedemptionsTotal ?? ""}
+                  className="font-mono text-xs"
+                  placeholder="prod_xxx, prod_yyy"
+                  value={(draft.stripeProductIds ?? []).join(", ")}
                   onChange={(e) =>
                     setDraft((d) => ({
                       ...d,
-                      maxRedemptionsTotal: e.target.value === "" ? null : parseInt(e.target.value, 10),
+                      stripeProductIds: e.target.value
+                        .split(",")
+                        .map((s) => s.trim())
+                        .filter((s) => s.startsWith("prod_")),
                     }))
                   }
                 />
               </Field>
-            </OptionalCheckbox>
-          </Section>
-        ) : null}
+            </StripeSection>
 
-        {/* Seção 3 — Códigos públicos (só criação) */}
-        {!isEdit ? (
-          <Section
-            title="Códigos públicos"
-            description="Promotion Codes no Stripe. Restrições abaixo valem para o código principal e todos os extras."
-          >
-            <Field className="sm:col-span-2">
-              <Toggle
-                id="create-public-code"
-                checked={draft.createPublicCode !== false}
-                onChange={(v) => setDraft((d) => ({ ...d, createPublicCode: v }))}
-                label="Usar códigos de cupons visíveis para o cliente"
-              />
-            </Field>
-
-            {draft.createPublicCode !== false ? (
-              <>
-                <Field label="Código" className="sm:col-span-2">
+            <StripeSection
+              title="Limites de resgate"
+              description="Opcional. Configurações do Coupon no Stripe (redeem_by e max_redemptions)."
+            >
+              <OptionalCheckbox
+                id="limit-redeem-until"
+                label="Limitar o período em que os clientes podem resgatar o cupom"
+                checked={limitRedeemUntil}
+                onChange={(v) => {
+                  setLimitRedeemUntil(v);
+                  if (!v) setDraft((d) => ({ ...d, validUntil: null }));
+                }}
+              >
+                <Field label="Válido até">
                   <Input
-                    className="font-mono uppercase"
-                    value={draft.code ?? ""}
+                    type="date"
+                    value={draft.validUntil ? String(draft.validUntil).slice(0, 10) : ""}
+                    onChange={(e) => setDraft((d) => ({ ...d, validUntil: e.target.value || null }))}
+                  />
+                </Field>
+              </OptionalCheckbox>
+
+              <OptionalCheckbox
+                id="limit-max-redemptions"
+                label="Limitar o total de vezes que o cupom pode ser resgatado"
+                checked={limitMaxRedemptions}
+                onChange={(v) => {
+                  setLimitMaxRedemptions(v);
+                  if (!v) setDraft((d) => ({ ...d, maxRedemptionsTotal: null }));
+                }}
+              >
+                <Field label="Máximo de resgates">
+                  <Input
+                    type="number"
+                    min={1}
+                    value={draft.maxRedemptionsTotal ?? ""}
                     onChange={(e) =>
                       setDraft((d) => ({
                         ...d,
-                        code: e.target.value.toUpperCase().replace(/\s+/g, ""),
+                        maxRedemptionsTotal: e.target.value === "" ? null : parseInt(e.target.value, 10),
                       }))
                     }
-                    placeholder="PROMOOFFICE100"
                   />
                 </Field>
+              </OptionalCheckbox>
+            </StripeSection>
 
-                <OptionalCheckbox
-                  id="first-time-only"
-                  label="Válido somente para o primeiro pedido"
-                  checked={draft.firstTimeOnly === true}
-                  onChange={(v) => setDraft((d) => ({ ...d, firstTimeOnly: v }))}
+            <StripeSection title="Códigos de cupom">
+              <Field className="sm:col-span-2">
+                <Toggle
+                  id="create-public-code"
+                  checked={draft.createPublicCode === true}
+                  onChange={(v) => setDraft((d) => ({ ...d, createPublicCode: v }))}
+                  label="Usar códigos de cupons visíveis para o cliente"
                 />
+                <p className="mt-1.5 text-xs text-content-faint">
+                  Equivale ao botão «Use customer-facing coupon codes» no Stripe Dashboard.
+                </p>
+              </Field>
 
-                <OptionalCheckbox
-                  id="restrict-customer"
-                  label="Limitar a um cliente específico"
-                  checked={restrictCustomer}
-                  onChange={(v) => {
-                    setRestrictCustomer(v);
-                    if (!v) setDraft((d) => ({ ...d, restrictedCustomerEmail: null }));
-                  }}
-                >
-                  <Field label="E-mail do cliente no Stripe" hint="Será buscado ou criado automaticamente no Stripe.">
+              {draft.createPublicCode === true ? (
+                <>
+                  <Field label="Código" className="sm:col-span-2">
                     <Input
-                      type="email"
-                      value={draft.restrictedCustomerEmail ?? ""}
-                      onChange={(e) =>
-                        setDraft((d) => ({ ...d, restrictedCustomerEmail: e.target.value || null }))
-                      }
-                    />
-                  </Field>
-                </OptionalCheckbox>
-
-                <OptionalCheckbox
-                  id="minimum-amount"
-                  label="Exigir um valor mínimo por pedido"
-                  checked={minimumAmount}
-                  onChange={(v) => {
-                    setMinimumAmount(v);
-                    if (!v) setDraft((d) => ({ ...d, minimumAmountBrl: null }));
-                  }}
-                >
-                  <Field label="Valor mínimo (R$)">
-                    <Input
-                      type="number"
-                      min={0}
-                      step={0.01}
-                      value={
-                        draft.minimumAmountBrl != null ? (draft.minimumAmountBrl / 100).toFixed(2) : ""
-                      }
+                      className="font-mono uppercase"
+                      value={draft.code ?? ""}
                       onChange={(e) =>
                         setDraft((d) => ({
                           ...d,
-                          minimumAmountBrl: e.target.value
-                            ? Math.round(parseFloat(e.target.value) * 100)
-                            : null,
+                          code: e.target.value.toUpperCase().replace(/\s+/g, ""),
                         }))
                       }
+                      placeholder="PROMOOFFICE100"
                     />
+                    <p className="mt-1 text-xs text-content-faint">
+                      O código é sensível a maiúsculas/minúsculas no Stripe. Deixe em branco para o Stripe gerar
+                      automaticamente — aqui exigimos um código explícito.
+                    </p>
                   </Field>
-                </OptionalCheckbox>
 
-                <div className="sm:col-span-2">
-                  {extraCodeInputs.map((c, i) => (
-                    <div key={i} className="mt-2 flex gap-2">
+                  <p className="sm:col-span-2 rounded-lg border border-line bg-surface-elevated/40 px-3 py-2 text-xs text-content-muted">
+                    As restrições abaixo valem para o código principal e todos os códigos extras (decisão de
+                    produto: sem schema por código).
+                  </p>
+
+                  <OptionalCheckbox
+                    id="first-time-only"
+                    label="Válido somente para o primeiro pedido"
+                    checked={draft.firstTimeOnly === true}
+                    onChange={(v) => setDraft((d) => ({ ...d, firstTimeOnly: v }))}
+                  />
+
+                  <OptionalCheckbox
+                    id="restrict-customer"
+                    label="Limitar a um cliente específico"
+                    checked={restrictCustomer}
+                    onChange={(v) => {
+                      setRestrictCustomer(v);
+                      if (!v) setDraft((d) => ({ ...d, restrictedCustomerEmail: null }));
+                    }}
+                  >
+                    <Field
+                      label="E-mail do cliente"
+                      hint="Será buscado ou criado automaticamente no Stripe (customers.list → customers.create)."
+                    >
                       <Input
-                        className="font-mono"
-                        value={c}
-                        onChange={(e) => {
-                          const next = [...extraCodeInputs];
-                          next[i] = e.target.value.toUpperCase().replace(/\s+/g, "");
-                          setExtraCodeInputs(next);
-                        }}
-                        placeholder={`CÓDIGO_EXTRA_${i + 1}`}
+                        type="email"
+                        value={draft.restrictedCustomerEmail ?? ""}
+                        onChange={(e) =>
+                          setDraft((d) => ({ ...d, restrictedCustomerEmail: e.target.value || null }))
+                        }
                       />
+                    </Field>
+                  </OptionalCheckbox>
+
+                  <OptionalCheckbox
+                    id="minimum-amount"
+                    label="Exigir um valor mínimo por pedido"
+                    checked={minimumAmount}
+                    onChange={(v) => {
+                      setMinimumAmount(v);
+                      if (!v) setDraft((d) => ({ ...d, minimumAmountBrl: null }));
+                    }}
+                  >
+                    <Field label="Valor mínimo">
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-content-muted">
+                          R$
+                        </span>
+                        <Input
+                          type="number"
+                          className="pl-10"
+                          min={0}
+                          step={0.01}
+                          value={
+                            draft.minimumAmountBrl != null ? (draft.minimumAmountBrl / 100).toFixed(2) : ""
+                          }
+                          onChange={(e) =>
+                            setDraft((d) => ({
+                              ...d,
+                              minimumAmountBrl: e.target.value
+                                ? Math.round(parseFloat(e.target.value) * 100)
+                                : null,
+                            }))
+                          }
+                        />
+                      </div>
+                    </Field>
+                  </OptionalCheckbox>
+
+                  <div className="sm:col-span-2">
+                    {extraCodeInputs.map((c, i) => (
+                      <div key={i} className="mt-2 flex gap-2">
+                        <Input
+                          className="font-mono uppercase"
+                          value={c}
+                          onChange={(e) => {
+                            const next = [...extraCodeInputs];
+                            next[i] = e.target.value.toUpperCase().replace(/\s+/g, "");
+                            setExtraCodeInputs(next);
+                          }}
+                          placeholder={`CÓDIGO_EXTRA_${i + 1}`}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() => setExtraCodeInputs((prev) => prev.filter((_, j) => j !== i))}
+                        >
+                          Remover
+                        </Button>
+                      </div>
+                    ))}
+                    {extraCodeInputs.length < 5 ? (
                       <Button
                         type="button"
-                        variant="ghost"
-                        onClick={() => setExtraCodeInputs((prev) => prev.filter((_, j) => j !== i))}
+                        variant="secondary"
+                        className={extraCodeInputs.length > 0 ? "mt-2" : undefined}
+                        onClick={() => setExtraCodeInputs((prev) => [...prev, ""])}
                       >
-                        Remover
+                        + Adicionar outro código
                       </Button>
-                    </div>
-                  ))}
-                  {extraCodeInputs.length < 5 ? (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      className={extraCodeInputs.length > 0 ? "mt-2" : undefined}
-                      onClick={() => setExtraCodeInputs((prev) => [...prev, ""])}
-                    >
-                      + Adicionar outro código
-                    </Button>
-                  ) : null}
-                </div>
-              </>
-            ) : null}
-          </Section>
-        ) : null}
-
-        {/* Seção 4 — Restrições MyChatCRM */}
-        <Section title="Restrições MyChatCRM" description="Campos exclusivos do nosso sistema (não vão para o Stripe).">
-          {!isEdit ? (
-            <Field
-              label="Produtos Stripe (applies_to.products)"
-              hint="IDs separados por vírgula, ex.: prod_xxx"
-              className="sm:col-span-2"
-            >
+                    ) : null}
+                  </div>
+                </>
+              ) : null}
+            </StripeSection>
+          </>
+        ) : (
+          <StripeSection title="Informações do cupom">
+            <Field label="Nome" hint="Único campo editável no Stripe após a criação." className="sm:col-span-2">
               <Input
-                className="font-mono text-xs"
-                placeholder="prod_xxx, prod_yyy"
-                value={(draft.stripeProductIds ?? []).join(", ")}
-                onChange={(e) =>
-                  setDraft((d) => ({
-                    ...d,
-                    stripeProductIds: e.target.value
-                      .split(",")
-                      .map((s) => s.trim())
-                      .filter((s) => s.startsWith("prod_")),
-                  }))
-                }
+                value={draft.internalName ?? ""}
+                onChange={(e) => setDraft((d) => ({ ...d, internalName: e.target.value }))}
               />
             </Field>
-          ) : null}
+            <Field label="Status" className="sm:col-span-2">
+              <Toggle
+                id="coupon-active"
+                checked={draft.active !== false}
+                onChange={(v) => setDraft((d) => ({ ...d, active: v }))}
+                label="Cupom ativo"
+              />
+            </Field>
+          </StripeSection>
+        )}
 
+        <StripeSection
+          title="Restrições MyChatCRM"
+          description="Campos exclusivos do nosso sistema — não existem no formulário do Stripe."
+        >
           <Field label="Restringir a planos" className="sm:col-span-2">
             <div className="flex flex-wrap gap-2">
               {PLAN_CHECKOUT_SLUGS.map((slug) => {
@@ -669,7 +734,7 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
               onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
             />
           </Field>
-        </Section>
+        </StripeSection>
       </div>
     </Modal>
   );
