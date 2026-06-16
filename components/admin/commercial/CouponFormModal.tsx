@@ -80,6 +80,29 @@ function Field({
   );
 }
 
+function combineRedeemUntil(date: string, time: string): string | null {
+  if (!date.trim()) return null;
+  const t = time.trim() || "23:59";
+  const parsed = new Date(`${date}T${t}:00-03:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function parseRedeemUntilParts(value: string | null | undefined): { date: string; time: string } {
+  if (!value) return { date: "", time: "23:59" };
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return { date: String(value).slice(0, 10), time: "23:59" };
+  }
+  const date = parsed.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+  const time = parsed.toLocaleTimeString("en-GB", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return { date, time };
+}
+
 function OptionalCheckbox({
   id,
   label,
@@ -156,6 +179,8 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
   const [extraCodeInputs, setExtraCodeInputs] = useState<string[]>([]);
   const [limitRedeemUntil, setLimitRedeemUntil] = useState(false);
   const [limitMaxRedemptions, setLimitMaxRedemptions] = useState(false);
+  const [redeemUntilDate, setRedeemUntilDate] = useState("");
+  const [redeemUntilTime, setRedeemUntilTime] = useState("23:59");
   const [restrictCustomer, setRestrictCustomer] = useState(false);
   const [minimumAmount, setMinimumAmount] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -198,6 +223,9 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
       setExtraCodeInputs([]);
       setLimitRedeemUntil(Boolean(coupon.validUntil));
       setLimitMaxRedemptions(coupon.maxRedemptionsTotal != null);
+      const redeemParts = parseRedeemUntilParts(coupon.validUntil);
+      setRedeemUntilDate(redeemParts.date);
+      setRedeemUntilTime(redeemParts.time);
       setRestrictCustomer(Boolean(coupon.restrictedCustomerEmail));
       setMinimumAmount(coupon.minimumAmountBrl != null);
       setMychatcrmOpen(
@@ -212,6 +240,8 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
       setExtraCodeInputs([]);
       setLimitRedeemUntil(false);
       setLimitMaxRedemptions(false);
+      setRedeemUntilDate("");
+      setRedeemUntilTime("23:59");
       setRestrictCustomer(false);
       setMinimumAmount(false);
       setProductsLoaded(false);
@@ -255,14 +285,20 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
       if (productRestrictionEnabled && (draft.stripeProductIds?.length ?? 0) === 0) {
         return "Selecione pelo menos um produto ou desative «Aplicar a produtos específicos».";
       }
+      if (limitRedeemUntil && !redeemUntilDate.trim()) {
+        return "Informe a data em «Resgatar até» ou desative o limite de período.";
+      }
+      if (limitMaxRedemptions && (draft.maxRedemptionsTotal == null || draft.maxRedemptionsTotal < 1)) {
+        return "Informe o máximo de resgates ou desative o limite total.";
+      }
     }
     return null;
-  }, [draft, isEdit, productRestrictionEnabled]);
+  }, [draft, isEdit, productRestrictionEnabled, limitRedeemUntil, redeemUntilDate, limitMaxRedemptions]);
 
   const buildPayload = () => ({
     ...draft,
     validFrom: draft.validFrom || null,
-    validUntil: limitRedeemUntil ? draft.validUntil || null : null,
+    validUntil: limitRedeemUntil ? combineRedeemUntil(redeemUntilDate, redeemUntilTime) : null,
     maxRedemptionsTotal: limitMaxRedemptions ? draft.maxRedemptionsTotal : null,
     restrictedCustomerEmail: restrictCustomer ? draft.restrictedCustomerEmail || null : null,
     minimumAmountBrl: minimumAmount ? draft.minimumAmountBrl : null,
@@ -463,53 +499,87 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
                   />
                 ) : null}
               </Field>
-            </StripeSection>
 
-            <StripeSection
-              title="Limites de resgate"
-              description="Opcional. Configurações do Coupon no Stripe (redeem_by e max_redemptions)."
-            >
-              <OptionalCheckbox
-                id="limit-redeem-until"
-                label="Limitar o período em que os clientes podem resgatar o cupom"
-                checked={limitRedeemUntil}
-                onChange={(v) => {
-                  setLimitRedeemUntil(v);
-                  if (!v) setDraft((d) => ({ ...d, validUntil: null }));
-                }}
-              >
-                <Field label="Válido até">
-                  <Input
-                    type="date"
-                    value={draft.validUntil ? String(draft.validUntil).slice(0, 10) : ""}
-                    onChange={(e) => setDraft((d) => ({ ...d, validUntil: e.target.value || null }))}
-                  />
-                </Field>
-              </OptionalCheckbox>
+              <div className="space-y-5 border-t border-line pt-5 sm:col-span-2">
+                <h3 className="text-sm font-semibold text-content">Limites de resgate</h3>
 
-              <OptionalCheckbox
-                id="limit-max-redemptions"
-                label="Limitar o total de vezes que o cupom pode ser resgatado"
-                checked={limitMaxRedemptions}
-                onChange={(v) => {
-                  setLimitMaxRedemptions(v);
-                  if (!v) setDraft((d) => ({ ...d, maxRedemptionsTotal: null }));
-                }}
-              >
-                <Field label="Máximo de resgates">
-                  <Input
-                    type="number"
-                    min={1}
-                    value={draft.maxRedemptionsTotal ?? ""}
-                    onChange={(e) =>
-                      setDraft((d) => ({
-                        ...d,
-                        maxRedemptionsTotal: e.target.value === "" ? null : parseInt(e.target.value, 10),
-                      }))
+                <OptionalCheckbox
+                  id="limit-redeem-until"
+                  label="Limitar o período em que os clientes podem resgatar o cupom"
+                  checked={limitRedeemUntil}
+                  onChange={(v) => {
+                    setLimitRedeemUntil(v);
+                    if (!v) {
+                      setRedeemUntilDate("");
+                      setRedeemUntilTime("23:59");
+                      setDraft((d) => ({ ...d, validUntil: null }));
                     }
-                  />
-                </Field>
-              </OptionalCheckbox>
+                  }}
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm text-content-muted">Resgatar até</span>
+                    <Input
+                      type="date"
+                      className="w-auto min-w-[10.5rem]"
+                      value={redeemUntilDate}
+                      onChange={(e) => {
+                        const date = e.target.value;
+                        setRedeemUntilDate(date);
+                        setDraft((d) => ({
+                          ...d,
+                          validUntil: combineRedeemUntil(date, redeemUntilTime),
+                        }));
+                      }}
+                    />
+                    <Input
+                      type="time"
+                      className="w-auto min-w-[7rem]"
+                      value={redeemUntilTime}
+                      onChange={(e) => {
+                        const time = e.target.value;
+                        setRedeemUntilTime(time);
+                        setDraft((d) => ({
+                          ...d,
+                          validUntil: combineRedeemUntil(redeemUntilDate, time),
+                        }));
+                      }}
+                    />
+                    <span className="text-xs font-medium text-content-faint">BRT</span>
+                  </div>
+                </OptionalCheckbox>
+
+                <OptionalCheckbox
+                  id="limit-max-redemptions"
+                  label="Limitar o total de vezes que o cupom pode ser resgatado"
+                  checked={limitMaxRedemptions}
+                  onChange={(v) => {
+                    setLimitMaxRedemptions(v);
+                    if (!v) setDraft((d) => ({ ...d, maxRedemptionsTotal: null }));
+                  }}
+                >
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      min={1}
+                      className="w-24"
+                      value={draft.maxRedemptionsTotal ?? ""}
+                      onChange={(e) =>
+                        setDraft((d) => ({
+                          ...d,
+                          maxRedemptionsTotal: e.target.value === "" ? null : parseInt(e.target.value, 10),
+                        }))
+                      }
+                    />
+                    <span className="text-sm text-content-muted">
+                      {(draft.maxRedemptionsTotal ?? 1) === 1 ? "vez" : "vezes"}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs leading-relaxed text-content-faint">
+                    Este limite se aplica a diversos clientes, ou seja, não impede um único cliente de resgatar
+                    várias vezes.
+                  </p>
+                </OptionalCheckbox>
+              </div>
             </StripeSection>
 
             <StripeSection title="Códigos de cupom">
