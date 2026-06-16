@@ -85,6 +85,13 @@ export async function POST(req: NextRequest) {
 
     const stripe = getStripe();
 
+    console.log("[CHECKOUT DEBUG] body recebido:", JSON.stringify(body));
+    console.log("[CHECKOUT DEBUG] stripePromoCodeId extraído:", stripePromoCodeId);
+    console.log(
+      "[CHECKOUT DEBUG] discounts que serão enviados:",
+      stripePromoCodeId ? JSON.stringify([{ promotion_code: stripePromoCodeId }]) : "NENHUM",
+    );
+
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],

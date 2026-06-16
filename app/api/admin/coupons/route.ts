@@ -74,7 +74,13 @@ export async function POST(request: Request) {
     }
   }
 
-  await upsertCoupon(parsed.coupon);
+  try {
+    await upsertCoupon(parsed.coupon);
+  } catch (dbErr) {
+    const msg = dbErr instanceof Error ? dbErr.message : "Erro ao salvar cupom no banco.";
+    console.error("[admin-coupons] Falha ao gravar cupom:", msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 
   // Sincronizar com o Stripe apenas na primeira criação (sem stripeCouponId ainda)
   if (!existing?.stripeCouponId) {

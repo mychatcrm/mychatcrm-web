@@ -239,6 +239,18 @@ export function CheckoutView({ plan }: { plan: CheckoutPlanSummary }) {
         }
       }
 
+      console.log(
+        "[CHECKOUT DEBUG] payload enviado ao backend:",
+        JSON.stringify({
+          planSlug: plan.slug,
+          ciclo: plan.billingCycle,
+          email,
+          name,
+          company,
+          stripePromoCodeId: applied?.stripePromoCodeId ?? undefined,
+        }),
+      );
+
       const res = await fetch("/api/stripe/create-checkout-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
