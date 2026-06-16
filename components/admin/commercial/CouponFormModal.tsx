@@ -418,7 +418,18 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
                 </div>
               </Field>
 
-              <Field label="Duração">
+              <StripeProductPicker
+                products={stripeProducts}
+                selectedIds={draft.stripeProductIds ?? []}
+                onChange={(ids) => setDraft((d) => ({ ...d, stripeProductIds: ids }))}
+                onEnabledChange={setProductRestrictionEnabled}
+                loading={loadingProducts}
+                error={productsError}
+                onRetry={() => void loadStripeProducts()}
+                onRequestLoad={() => void loadStripeProducts()}
+              />
+
+              <Field label="Duração" className="sm:col-span-2">
                 <div className="flex flex-wrap gap-2">
                   {(["once", "repeating", "forever"] as const).map((opt) => (
                     <button
@@ -452,17 +463,6 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
                   />
                 ) : null}
               </Field>
-
-              <StripeProductPicker
-                products={stripeProducts}
-                selectedIds={draft.stripeProductIds ?? []}
-                onChange={(ids) => setDraft((d) => ({ ...d, stripeProductIds: ids }))}
-                onEnabledChange={setProductRestrictionEnabled}
-                loading={loadingProducts}
-                error={productsError}
-                onRetry={() => void loadStripeProducts()}
-                onRequestLoad={() => void loadStripeProducts()}
-              />
             </StripeSection>
 
             <StripeSection
