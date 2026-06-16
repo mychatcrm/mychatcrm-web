@@ -172,6 +172,7 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [productsError, setProductsError] = useState<string | null>(null);
   const [productsLoaded, setProductsLoaded] = useState(false);
+  const [productRestrictionEnabled, setProductRestrictionEnabled] = useState(false);
 
   const loadStripeProducts = useCallback(async () => {
     if (productsLoaded && stripeProducts.length > 0) return;
@@ -215,6 +216,7 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
       setProductsLoaded(false);
       setStripeProducts([]);
       setProductsError(null);
+      setProductRestrictionEnabled(false);
     }
   }, [open, coupon]);
 
@@ -248,9 +250,12 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
       const dv = Number(draft.discountValue);
       if (!Number.isFinite(dv) || dv < 0) return "Valor de desconto inválido.";
       if (draft.discountType === "percent" && dv > 100) return "Percentual não pode exceder 100.";
+      if (productRestrictionEnabled && (draft.stripeProductIds?.length ?? 0) === 0) {
+        return "Selecione pelo menos um produto ou desative «Aplicar a produtos específicos».";
+      }
     }
     return null;
-  }, [draft, isEdit]);
+  }, [draft, isEdit, productRestrictionEnabled]);
 
   const buildPayload = () => ({
     ...draft,
@@ -450,6 +455,7 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
                 products={stripeProducts}
                 selectedIds={draft.stripeProductIds ?? []}
                 onChange={(ids) => setDraft((d) => ({ ...d, stripeProductIds: ids }))}
+                onEnabledChange={setProductRestrictionEnabled}
                 loading={loadingProducts}
                 error={productsError}
                 onRetry={() => void loadStripeProducts()}
