@@ -314,6 +314,15 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
         </p>
       ) : null}
 
+      <Field label="Status" className="mb-4">
+        <Toggle
+          id="coupon-active"
+          checked={draft.active !== false}
+          onChange={(v) => setDraft((d) => ({ ...d, active: v }))}
+          label="Cupom ativo"
+        />
+      </Field>
+
       <div className="max-h-[70vh] space-y-5 overflow-y-auto pr-1">
         {!isEdit ? (
           <>
@@ -626,14 +635,6 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
               <Input
                 value={draft.internalName ?? ""}
                 onChange={(e) => setDraft((d) => ({ ...d, internalName: e.target.value }))}
-              />
-            </Field>
-            <Field label="Status" className="sm:col-span-2">
-              <Toggle
-                id="coupon-active"
-                checked={draft.active !== false}
-                onChange={(v) => setDraft((d) => ({ ...d, active: v }))}
-                label="Cupom ativo"
               />
             </Field>
           </StripeSection>
