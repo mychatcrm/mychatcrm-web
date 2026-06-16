@@ -73,7 +73,7 @@ function ProductIcon() {
   );
 }
 
-function RowMenu({
+export function RowMenu({
   items,
   ariaLabel,
 }: {

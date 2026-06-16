@@ -11,9 +11,12 @@ import type {
   CommercialPartner,
 } from "@/lib/commercial/types";
 import { cn } from "@/lib/utils";
-import { StripeProductPicker, StripeInlineToggle, type StripeProductOption } from "@/components/admin/commercial/StripeProductPicker";
+import { StripeProductPicker, StripeInlineToggle, RowMenu, type StripeProductOption } from "@/components/admin/commercial/StripeProductPicker";
 
-export type CouponFormDraft = Partial<CommercialCoupon> & { id?: string };
+export type CouponFormDraft = Partial<CommercialCoupon> & {
+  id?: string;
+  promoMaxRedemptions?: number | null;
+};
 
 function emptyDraft(): CouponFormDraft {
   return {
@@ -165,6 +168,198 @@ function SegmentedOption({
   );
 }
 
+function CodePromoCard({
+  title,
+  collapsed,
+  onToggleCollapse,
+  menuItems,
+  children,
+}: {
+  title: string;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
+  menuItems?: { label: string; onClick: () => void; destructive?: boolean }[];
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-line">
+      <div className="flex items-center gap-2 border-b border-line bg-surface-elevated/20 px-3 py-2.5">
+        <span className="min-w-0 flex-1 truncate text-sm text-content-secondary">{title}</span>
+        {menuItems && menuItems.length > 0 ? (
+          <RowMenu ariaLabel="Opções do código" items={menuItems} />
+        ) : null}
+        <button
+          type="button"
+          aria-label={collapsed ? "Expandir" : "Recolher"}
+          onClick={onToggleCollapse}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-content-muted transition-colors hover:bg-surface-elevated hover:text-content"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={cn("transition-transform", collapsed ? "" : "rotate-180")}
+            aria-hidden
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+      </div>
+      {!collapsed ? <div className="space-y-4 p-4">{children}</div> : null}
+    </div>
+  );
+}
+
+function PromoRestrictionCheckboxes({
+  draft,
+  setDraft,
+  restrictCustomer,
+  setRestrictCustomer,
+  minimumAmount,
+  setMinimumAmount,
+  limitPromoRedemptions,
+  setLimitPromoRedemptions,
+  promoValidityEnabled,
+  setPromoValidityEnabled,
+  promoExpiresDate,
+  setPromoExpiresDate,
+  promoExpiresTime,
+  setPromoExpiresTime,
+}: {
+  draft: CouponFormDraft;
+  setDraft: React.Dispatch<React.SetStateAction<CouponFormDraft>>;
+  restrictCustomer: boolean;
+  setRestrictCustomer: (v: boolean) => void;
+  minimumAmount: boolean;
+  setMinimumAmount: (v: boolean) => void;
+  limitPromoRedemptions: boolean;
+  setLimitPromoRedemptions: React.Dispatch<React.SetStateAction<boolean>>;
+  promoValidityEnabled: boolean;
+  setPromoValidityEnabled: (v: boolean) => void;
+  promoExpiresDate: string;
+  setPromoExpiresDate: (v: string) => void;
+  promoExpiresTime: string;
+  setPromoExpiresTime: (v: string) => void;
+}) {
+  return (
+    <div className="space-y-4 border-t border-line pt-4">
+      <OptionalCheckbox
+        id="first-time-only"
+        label="Válido somente para o primeiro pedido"
+        checked={draft.firstTimeOnly === true}
+        onChange={(v) => setDraft((d) => ({ ...d, firstTimeOnly: v }))}
+      />
+      <OptionalCheckbox
+        id="restrict-customer"
+        label="Limitar a um cliente específico"
+        checked={restrictCustomer}
+        onChange={(v) => {
+          setRestrictCustomer(v);
+          if (!v) setDraft((d) => ({ ...d, restrictedCustomerEmail: null }));
+        }}
+      >
+        <Input
+          type="email"
+          placeholder="cliente@email.com"
+          value={draft.restrictedCustomerEmail ?? ""}
+          onChange={(e) =>
+            setDraft((d) => ({ ...d, restrictedCustomerEmail: e.target.value || null }))
+          }
+        />
+      </OptionalCheckbox>
+      <OptionalCheckbox
+        id="limit-promo-redemptions"
+        label="Limitar o número de vezes que este código pode ser resgatado"
+        checked={limitPromoRedemptions}
+        onChange={(v) => {
+          setLimitPromoRedemptions(v);
+          if (!v) setDraft((d) => ({ ...d, promoMaxRedemptions: null }));
+        }}
+      >
+        <div className="flex items-center gap-2">
+          <Input
+            type="number"
+            min={1}
+            className="w-24"
+            value={draft.promoMaxRedemptions ?? ""}
+            onChange={(e) =>
+              setDraft((d) => ({
+                ...d,
+                promoMaxRedemptions: e.target.value === "" ? null : parseInt(e.target.value, 10),
+              }))
+            }
+          />
+          <span className="text-sm text-content-muted">
+            {(draft.promoMaxRedemptions ?? 1) === 1 ? "vez" : "vezes"}
+          </span>
+        </div>
+      </OptionalCheckbox>
+      <OptionalCheckbox
+        id="promo-validity"
+        label="Incluir data de validade"
+        checked={promoValidityEnabled}
+        onChange={(v) => {
+          setPromoValidityEnabled(v);
+          if (!v) {
+            setPromoExpiresDate("");
+            setPromoExpiresTime("23:59");
+          }
+        }}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            type="date"
+            className="w-auto min-w-[10.5rem]"
+            value={promoExpiresDate}
+            onChange={(e) => setPromoExpiresDate(e.target.value)}
+          />
+          <Input
+            type="time"
+            className="w-auto min-w-[7rem]"
+            value={promoExpiresTime}
+            onChange={(e) => setPromoExpiresTime(e.target.value)}
+          />
+          <span className="text-xs font-medium text-content-faint">BRT</span>
+        </div>
+      </OptionalCheckbox>
+      <OptionalCheckbox
+        id="minimum-amount"
+        label="Exigir um valor mínimo por pedido"
+        checked={minimumAmount}
+        onChange={(v) => {
+          setMinimumAmount(v);
+          if (!v) setDraft((d) => ({ ...d, minimumAmountBrl: null }));
+        }}
+      >
+        <div className="relative max-w-xs">
+          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-content-muted">
+            R$
+          </span>
+          <Input
+            type="number"
+            className="pl-10"
+            min={0}
+            step={0.01}
+            value={draft.minimumAmountBrl != null ? (draft.minimumAmountBrl / 100).toFixed(2) : ""}
+            onChange={(e) =>
+              setDraft((d) => ({
+                ...d,
+                minimumAmountBrl: e.target.value ? Math.round(parseFloat(e.target.value) * 100) : null,
+              }))
+            }
+          />
+        </div>
+      </OptionalCheckbox>
+    </div>
+  );
+}
+
 type CouponFormModalProps = {
   open: boolean;
   coupon: CommercialCoupon | null;
@@ -192,6 +387,11 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
   const [productsLoaded, setProductsLoaded] = useState(false);
   const [productRestrictionEnabled, setProductRestrictionEnabled] = useState(false);
   const [mychatcrmOpen, setMychatcrmOpen] = useState(false);
+  const [mainCodeCollapsed, setMainCodeCollapsed] = useState(false);
+  const [limitPromoRedemptions, setLimitPromoRedemptions] = useState(false);
+  const [promoValidityEnabled, setPromoValidityEnabled] = useState(false);
+  const [promoExpiresDate, setPromoExpiresDate] = useState("");
+  const [promoExpiresTime, setPromoExpiresTime] = useState("23:59");
 
   const loadStripeProducts = useCallback(async () => {
     if (productsLoaded && stripeProducts.length > 0) return;
@@ -249,6 +449,11 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
       setProductsError(null);
       setProductRestrictionEnabled(false);
       setMychatcrmOpen(false);
+      setMainCodeCollapsed(false);
+      setLimitPromoRedemptions(false);
+      setPromoValidityEnabled(false);
+      setPromoExpiresDate("");
+      setPromoExpiresTime("23:59");
     }
   }, [open, coupon]);
 
@@ -291,9 +496,25 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
       if (limitMaxRedemptions && (draft.maxRedemptionsTotal == null || draft.maxRedemptionsTotal < 1)) {
         return "Informe o máximo de resgates ou desative o limite total.";
       }
+      if (limitPromoRedemptions && (draft.promoMaxRedemptions == null || draft.promoMaxRedemptions < 1)) {
+        return "Informe o limite de resgates do código ou desative a opção.";
+      }
+      if (promoValidityEnabled && !promoExpiresDate.trim()) {
+        return "Informe a data de validade do código ou desative a opção.";
+      }
     }
     return null;
-  }, [draft, isEdit, productRestrictionEnabled, limitRedeemUntil, redeemUntilDate, limitMaxRedemptions]);
+  }, [
+    draft,
+    isEdit,
+    productRestrictionEnabled,
+    limitRedeemUntil,
+    redeemUntilDate,
+    limitMaxRedemptions,
+    limitPromoRedemptions,
+    promoValidityEnabled,
+    promoExpiresDate,
+  ]);
 
   const buildPayload = () => ({
     ...draft,
@@ -302,6 +523,8 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
     maxRedemptionsTotal: limitMaxRedemptions ? draft.maxRedemptionsTotal : null,
     restrictedCustomerEmail: restrictCustomer ? draft.restrictedCustomerEmail || null : null,
     minimumAmountBrl: minimumAmount ? draft.minimumAmountBrl : null,
+    promoMaxRedemptions: limitPromoRedemptions ? draft.promoMaxRedemptions : null,
+    promoExpiresAt: promoValidityEnabled ? combineRedeemUntil(promoExpiresDate, promoExpiresTime) : null,
     extraCodes: extraCodeInputs.filter((c) => c.trim().length > 0),
   });
 
@@ -582,145 +805,102 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
               </div>
             </StripeSection>
 
-            <StripeSection title="Códigos de cupom">
-              <Field className="sm:col-span-2">
-                <Toggle
+            <div className="border-t border-line pt-5">
+              <div className="space-y-4">
+                <h3 className="text-sm font-semibold text-content">Códigos</h3>
+                <StripeInlineToggle
                   id="create-public-code"
                   checked={draft.createPublicCode === true}
                   onChange={(v) => setDraft((d) => ({ ...d, createPublicCode: v }))}
                   label="Usar códigos de cupons visíveis para o cliente"
                 />
-                <p className="mt-1.5 text-xs text-content-faint">
-                  Equivale ao botão «Use customer-facing coupon codes» no Stripe Dashboard.
-                </p>
-              </Field>
 
-              {draft.createPublicCode === true ? (
-                <>
-                  <Field label="Código" className="sm:col-span-2">
-                    <Input
-                      className="font-mono uppercase"
-                      value={draft.code ?? ""}
-                      onChange={(e) =>
-                        setDraft((d) => ({
-                          ...d,
-                          code: e.target.value.toUpperCase().replace(/\s+/g, ""),
-                        }))
+                {draft.createPublicCode === true ? (
+                  <div className="space-y-3">
+                    <CodePromoCard
+                      title={
+                        draft.code?.trim()
+                          ? draft.code
+                          : "O código será gerado quando for criado"
                       }
-                      placeholder="PROMOOFFICE100"
-                    />
-                    <p className="mt-1 text-xs text-content-faint">
-                      O código é sensível a maiúsculas/minúsculas no Stripe. Deixe em branco para o Stripe gerar
-                      automaticamente — aqui exigimos um código explícito.
-                    </p>
-                  </Field>
-
-                  <p className="sm:col-span-2 rounded-lg border border-line bg-surface-elevated/40 px-3 py-2 text-xs text-content-muted">
-                    As restrições abaixo valem para o código principal e todos os códigos extras (decisão de
-                    produto: sem schema por código).
-                  </p>
-
-                  <OptionalCheckbox
-                    id="first-time-only"
-                    label="Válido somente para o primeiro pedido"
-                    checked={draft.firstTimeOnly === true}
-                    onChange={(v) => setDraft((d) => ({ ...d, firstTimeOnly: v }))}
-                  />
-
-                  <OptionalCheckbox
-                    id="restrict-customer"
-                    label="Limitar a um cliente específico"
-                    checked={restrictCustomer}
-                    onChange={(v) => {
-                      setRestrictCustomer(v);
-                      if (!v) setDraft((d) => ({ ...d, restrictedCustomerEmail: null }));
-                    }}
-                  >
-                    <Field
-                      label="E-mail do cliente"
-                      hint="Será buscado ou criado automaticamente no Stripe (customers.list → customers.create)."
+                      collapsed={mainCodeCollapsed}
+                      onToggleCollapse={() => setMainCodeCollapsed((v) => !v)}
                     >
-                      <Input
-                        type="email"
-                        value={draft.restrictedCustomerEmail ?? ""}
-                        onChange={(e) =>
-                          setDraft((d) => ({ ...d, restrictedCustomerEmail: e.target.value || null }))
-                        }
-                      />
-                    </Field>
-                  </OptionalCheckbox>
-
-                  <OptionalCheckbox
-                    id="minimum-amount"
-                    label="Exigir um valor mínimo por pedido"
-                    checked={minimumAmount}
-                    onChange={(v) => {
-                      setMinimumAmount(v);
-                      if (!v) setDraft((d) => ({ ...d, minimumAmountBrl: null }));
-                    }}
-                  >
-                    <Field label="Valor mínimo">
-                      <div className="relative">
-                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-content-muted">
-                          R$
-                        </span>
+                      <Field label="Código">
                         <Input
-                          type="number"
-                          className="pl-10"
-                          min={0}
-                          step={0.01}
-                          value={
-                            draft.minimumAmountBrl != null ? (draft.minimumAmountBrl / 100).toFixed(2) : ""
-                          }
+                          className="font-mono uppercase"
+                          value={draft.code ?? ""}
                           onChange={(e) =>
                             setDraft((d) => ({
                               ...d,
-                              minimumAmountBrl: e.target.value
-                                ? Math.round(parseFloat(e.target.value) * 100)
-                                : null,
+                              code: e.target.value.toUpperCase().replace(/\s+/g, ""),
                             }))
                           }
+                          placeholder="FRIENDS20"
                         />
-                      </div>
-                    </Field>
-                  </OptionalCheckbox>
+                      </Field>
+                      <PromoRestrictionCheckboxes
+                        draft={draft}
+                        setDraft={setDraft}
+                        restrictCustomer={restrictCustomer}
+                        setRestrictCustomer={setRestrictCustomer}
+                        minimumAmount={minimumAmount}
+                        setMinimumAmount={setMinimumAmount}
+                        limitPromoRedemptions={limitPromoRedemptions}
+                        setLimitPromoRedemptions={setLimitPromoRedemptions}
+                        promoValidityEnabled={promoValidityEnabled}
+                        setPromoValidityEnabled={setPromoValidityEnabled}
+                        promoExpiresDate={promoExpiresDate}
+                        setPromoExpiresDate={setPromoExpiresDate}
+                        promoExpiresTime={promoExpiresTime}
+                        setPromoExpiresTime={setPromoExpiresTime}
+                      />
+                    </CodePromoCard>
 
-                  <div className="sm:col-span-2">
-                    {extraCodeInputs.map((c, i) => (
-                      <div key={i} className="mt-2 flex gap-2">
-                        <Input
-                          className="font-mono uppercase"
-                          value={c}
-                          onChange={(e) => {
-                            const next = [...extraCodeInputs];
-                            next[i] = e.target.value.toUpperCase().replace(/\s+/g, "");
-                            setExtraCodeInputs(next);
-                          }}
-                          placeholder={`CÓDIGO_EXTRA_${i + 1}`}
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          onClick={() => setExtraCodeInputs((prev) => prev.filter((_, j) => j !== i))}
-                        >
-                          Remover
-                        </Button>
-                      </div>
-                    ))}
-                    {extraCodeInputs.length < 5 ? (
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        className={extraCodeInputs.length > 0 ? "mt-2" : undefined}
-                        onClick={() => setExtraCodeInputs((prev) => [...prev, ""])}
+                    {extraCodeInputs.map((code, i) => (
+                      <CodePromoCard
+                        key={i}
+                        title={code.trim() ? code : "O código será gerado quando for criado"}
+                        collapsed={false}
+                        onToggleCollapse={() => undefined}
+                        menuItems={[
+                          {
+                            label: "Remover código",
+                            onClick: () =>
+                              setExtraCodeInputs((prev) => prev.filter((_, j) => j !== i)),
+                            destructive: true,
+                          },
+                        ]}
                       >
-                        + Adicionar outro código
-                      </Button>
+                        <Field label="Código">
+                          <Input
+                            className="font-mono uppercase"
+                            value={code}
+                            onChange={(e) => {
+                              const next = [...extraCodeInputs];
+                              next[i] = e.target.value.toUpperCase().replace(/\s+/g, "");
+                              setExtraCodeInputs(next);
+                            }}
+                            placeholder="FRIENDS20"
+                          />
+                        </Field>
+                      </CodePromoCard>
+                    ))}
+
+                    {extraCodeInputs.length < 5 ? (
+                      <button
+                        type="button"
+                        onClick={() => setExtraCodeInputs((prev) => [...prev, ""])}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-surface-elevated/50"
+                      >
+                        <span className="text-base leading-none">+</span>
+                        Adicionar outro código
+                      </button>
                     ) : null}
                   </div>
-                </>
-              ) : null}
-            </StripeSection>
+                ) : null}
+              </div>
+            </div>
           </>
         ) : (
           <StripeSection title="Informações do cupom">

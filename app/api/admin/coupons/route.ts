@@ -119,7 +119,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: `Já existe um cupom ou código extra com «${dup}».` }, { status: 409 });
   }
 
-  const createResult = await createCouponWithStripe(parsed.coupon, parsed.extraCodes);
+  const createResult = await createCouponWithStripe(parsed.coupon, parsed.extraCodes, {
+    promoMaxRedemptions:
+      typeof body?.promoMaxRedemptions === "number" && body.promoMaxRedemptions >= 1
+        ? Math.floor(body.promoMaxRedemptions)
+        : null,
+    promoExpiresAt:
+      typeof body?.promoExpiresAt === "string" && body.promoExpiresAt.trim()
+        ? body.promoExpiresAt
+        : null,
+  });
   if (!createResult.ok) {
     return NextResponse.json({ error: createResult.error }, { status: createResult.status });
   }

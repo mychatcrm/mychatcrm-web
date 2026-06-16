@@ -116,10 +116,16 @@ export function findDuplicateCodes(
   return null;
 }
 
+export type PromoCodeCreateOptions = {
+  promoMaxRedemptions?: number | null;
+  promoExpiresAt?: string | null;
+};
+
 async function createStripePromotionCodes(
   coupon: CommercialCoupon,
   stripeCouponId: string,
   extraCodeStrings: string[],
+  options?: PromoCodeCreateOptions,
 ): Promise<{ stripePromoCodeId: string | null; extraCodes: CouponExtraCode[] }> {
   const stripe = getStripe();
   let stripeCustomerId: string | undefined;
@@ -128,8 +134,8 @@ async function createStripePromotionCodes(
   }
 
   const restrictions = buildPromoRestrictions(coupon);
-  const expiresAt = coupon.validUntil
-    ? Math.floor(new Date(coupon.validUntil).getTime() / 1000)
+  const expiresAt = options?.promoExpiresAt
+    ? Math.floor(new Date(options.promoExpiresAt).getTime() / 1000)
     : undefined;
 
   const basePromoParams: Omit<Stripe.PromotionCodeCreateParams, "code"> = {
@@ -137,6 +143,7 @@ async function createStripePromotionCodes(
     active: true,
     ...(stripeCustomerId ? { customer: stripeCustomerId } : {}),
     ...(expiresAt ? { expires_at: expiresAt } : {}),
+    ...(options?.promoMaxRedemptions ? { max_redemptions: options.promoMaxRedemptions } : {}),
     ...(restrictions ? { restrictions } : {}),
   };
 
@@ -167,6 +174,7 @@ async function createStripePromotionCodes(
 export async function createCouponWithStripe(
   coupon: CommercialCoupon,
   extraCodeStrings: string[],
+  promoOptions?: PromoCodeCreateOptions,
 ): Promise<CreateCouponResult> {
   let stripeCouponId: string | null = null;
   let dbWritten = false;
@@ -180,7 +188,12 @@ export async function createCouponWithStripe(
     let extraCodes: CouponExtraCode[] = [];
 
     if (coupon.createPublicCode) {
-      const promoResult = await createStripePromotionCodes(coupon, stripeCouponId, extraCodeStrings);
+      const promoResult = await createStripePromotionCodes(
+        coupon,
+        stripeCouponId,
+        extraCodeStrings,
+        promoOptions,
+      );
       stripePromoCodeId = promoResult.stripePromoCodeId;
       extraCodes = promoResult.extraCodes;
     }
