@@ -10,6 +10,7 @@ import {
   buildPromotionCodeCreateParams,
   buildStripeCouponCreateParams,
   mergeMainPromoOptions,
+  validateAllPromoExpiriesForCoupon,
   type PromoCodeCreateOptions,
 } from "@/lib/server/stripe-coupon-mapping";
 import { getStripe } from "@/lib/stripe";
@@ -148,6 +149,11 @@ export async function createCouponWithStripe(
   let dbWritten = false;
 
   try {
+    const expiryErr = validateAllPromoExpiriesForCoupon(coupon, promoOptions, extraPromoConfigs);
+    if (expiryErr) {
+      return { ok: false, error: expiryErr, status: 400 };
+    }
+
     const stripe = getStripe();
     const stripeCoupon = await stripe.coupons.create(buildStripeCouponCreateParams(coupon));
     stripeCouponId = stripeCoupon.id;

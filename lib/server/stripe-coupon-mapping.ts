@@ -101,3 +101,44 @@ export function mergeMainPromoOptions(
     active: coupon.active,
   };
 }
+
+/** Stripe: Promotion Code expires_at não pode ser depois do Coupon redeem_by. */
+export function validatePromoExpiresWithinCouponRedeemBy(
+  promoExpiresAt: string | null | undefined,
+  couponValidUntil: string | null | undefined,
+  label = "código",
+): string | null {
+  if (!promoExpiresAt || !couponValidUntil) return null;
+  const promoMs = new Date(promoExpiresAt).getTime();
+  const redeemMs = new Date(couponValidUntil).getTime();
+  if (Number.isNaN(promoMs) || Number.isNaN(redeemMs)) return null;
+  if (promoMs > redeemMs) {
+    return `A validade em «${label}» não pode ser posterior a «Resgatar até» do cupom. No Stripe, o código precisa expirar no mesmo prazo ou antes do limite do cupom.`;
+  }
+  return null;
+}
+
+export function validateAllPromoExpiriesForCoupon(
+  coupon: CommercialCoupon,
+  mainOptions?: PromoCodeCreateOptions,
+  extraPromoConfigs: PromoCodeCreateOptions[] = [],
+): string | null {
+  if (!coupon.validUntil) return null;
+
+  const mainErr = validatePromoExpiresWithinCouponRedeemBy(
+    mainOptions?.promoExpiresAt ?? coupon.promoExpiresAt,
+    coupon.validUntil,
+    "código principal",
+  );
+  if (mainErr) return mainErr;
+
+  for (let i = 0; i < extraPromoConfigs.length; i++) {
+    const err = validatePromoExpiresWithinCouponRedeemBy(
+      extraPromoConfigs[i]?.promoExpiresAt,
+      coupon.validUntil,
+      `código ${i + 2}`,
+    );
+    if (err) return err;
+  }
+  return null;
+}

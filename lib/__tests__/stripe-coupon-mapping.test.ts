@@ -7,6 +7,7 @@ import {
   buildStripeCouponCreateParams,
   durationFromCoupon,
   mergeMainPromoOptions,
+  validatePromoExpiresWithinCouponRedeemBy,
 } from "@/lib/server/stripe-coupon-mapping";
 
 function baseCoupon(overrides: Partial<CommercialCoupon> = {}): CommercialCoupon {
@@ -120,6 +121,25 @@ describe("mergeMainPromoOptions", () => {
     expect(merged.promoMaxRedemptions).toBe(3);
     expect(merged.promoExpiresAt).toBe(coupon.promoExpiresAt);
     expect(merged.active).toBe(false);
+  });
+});
+
+describe("validatePromoExpiresWithinCouponRedeemBy", () => {
+  it("rejects promo expiry after coupon redeem_by", () => {
+    const err = validatePromoExpiresWithinCouponRedeemBy(
+      "2026-12-31T23:59:00.000Z",
+      "2026-06-17T23:59:00-03:00",
+      "código principal",
+    );
+    expect(err).toMatch(/não pode ser posterior/);
+  });
+
+  it("allows promo expiry on or before redeem_by", () => {
+    const redeemBy = "2026-06-17T23:59:00-03:00";
+    expect(validatePromoExpiresWithinCouponRedeemBy(redeemBy, redeemBy)).toBeNull();
+    expect(
+      validatePromoExpiresWithinCouponRedeemBy("2026-06-01T23:59:00-03:00", redeemBy),
+    ).toBeNull();
   });
 });
 

@@ -13,6 +13,7 @@ import type {
 import { cn } from "@/lib/utils";
 import { StripeProductPicker, StripeInlineToggle, RowMenu, type StripeProductOption } from "@/components/admin/commercial/StripeProductPicker";
 import { MinimumAmountFields } from "@/components/admin/commercial/MinimumAmountFields";
+import { validatePromoExpiresWithinCouponRedeemBy } from "@/lib/server/stripe-coupon-mapping";
 
 export type CouponFormDraft = Partial<CommercialCoupon> & {
   id?: string;
@@ -572,6 +573,34 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
       if (limitMaxRedemptions && (draft.maxRedemptionsTotal == null || draft.maxRedemptionsTotal < 1)) {
         return "Informe o máximo de resgates ou desative o limite total.";
       }
+      const couponValidUntil = limitRedeemUntil
+        ? combineRedeemUntil(redeemUntilDate, redeemUntilTime)
+        : null;
+      if (couponValidUntil) {
+        if (draft.createPublicCode !== false) {
+          const mainPromoExpires = mainPromoBlock.promoValidityEnabled
+            ? combineRedeemUntil(mainPromoBlock.promoExpiresDate, mainPromoBlock.promoExpiresTime)
+            : null;
+          const mainExpiryErr = validatePromoExpiresWithinCouponRedeemBy(
+            mainPromoExpires,
+            couponValidUntil,
+            "código principal",
+          );
+          if (mainExpiryErr) return mainExpiryErr;
+          for (let i = 0; i < extraPromoBlocks.length; i++) {
+            const block = extraPromoBlocks[i];
+            const promoExpires = block.promoValidityEnabled
+              ? combineRedeemUntil(block.promoExpiresDate, block.promoExpiresTime)
+              : null;
+            const err = validatePromoExpiresWithinCouponRedeemBy(
+              promoExpires,
+              couponValidUntil,
+              block.code.trim() || `código ${i + 2}`,
+            );
+            if (err) return err;
+          }
+        }
+      }
     }
     return null;
   }, [
@@ -582,6 +611,7 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
     productRestrictionEnabled,
     limitRedeemUntil,
     redeemUntilDate,
+    redeemUntilTime,
     limitMaxRedemptions,
   ]);
 
