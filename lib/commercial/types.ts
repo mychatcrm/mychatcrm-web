@@ -45,8 +45,10 @@ export type CommercialCoupon = {
   firstTimeOnly: boolean;
   /** Email do cliente no Stripe para restrictions.customer — null = sem restrição. */
   restrictedCustomerEmail: string | null;
-  /** Valor mínimo do pedido em centavos BRL (restrictions.minimum_amount) — null = sem mínimo. */
-  minimumAmountBrl: number | null;
+  /** Valor mínimo do pedido em menor unidade da moeda (restrictions.minimum_amount) — null = sem mínimo. */
+  minimumAmountCents: number | null;
+  /** Moeda ISO do valor mínimo (restrictions.minimum_amount_currency). */
+  minimumAmountCurrency: string | null;
   createdAt: string;
   updatedAt: string;
 };

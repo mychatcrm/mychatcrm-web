@@ -52,14 +52,99 @@ function buildStripeCouponCreateParams(coupon: CommercialCoupon): Stripe.CouponC
   };
 }
 
-function buildPromoRestrictions(coupon: CommercialCoupon): Stripe.PromotionCodeCreateParams["restrictions"] {
+function buildPromoRestrictionsFromOptions(options: {
+  firstTimeOnly?: boolean;
+  minimumAmountCents?: number | null;
+  minimumAmountCurrency?: string | null;
+}): Stripe.PromotionCodeCreateParams["restrictions"] {
   const restrictions: NonNullable<Stripe.PromotionCodeCreateParams["restrictions"]> = {};
-  if (coupon.firstTimeOnly) restrictions.first_time_transaction = true;
-  if (coupon.minimumAmountBrl) {
-    restrictions.minimum_amount = coupon.minimumAmountBrl;
-    restrictions.minimum_amount_currency = "brl";
+  if (options.firstTimeOnly) restrictions.first_time_transaction = true;
+  if (options.minimumAmountCents) {
+    restrictions.minimum_amount = options.minimumAmountCents;
+    restrictions.minimum_amount_currency = (options.minimumAmountCurrency ?? "brl").toLowerCase();
   }
   return Object.keys(restrictions).length > 0 ? restrictions : undefined;
+}
+
+export type PromoCodeCreateOptions = {
+  promoMaxRedemptions?: number | null;
+  promoExpiresAt?: string | null;
+  firstTimeOnly?: boolean;
+  restrictedCustomerEmail?: string | null;
+  minimumAmountCents?: number | null;
+  minimumAmountCurrency?: string | null;
+  /** @deprecated use minimumAmountCents */
+  minimumAmountBrl?: number | null;
+};
+
+async function createSinglePromotionCode(
+  stripeCouponId: string,
+  code: string,
+  options: PromoCodeCreateOptions,
+): Promise<Stripe.PromotionCode> {
+  const stripe = getStripe();
+  let stripeCustomerId: string | undefined;
+  if (options.restrictedCustomerEmail) {
+    stripeCustomerId = await findOrCreateStripeCustomer(options.restrictedCustomerEmail);
+  }
+
+  const restrictions = buildPromoRestrictionsFromOptions({
+    firstTimeOnly: options.firstTimeOnly,
+    minimumAmountCents: options.minimumAmountCents ?? options.minimumAmountBrl,
+    minimumAmountCurrency: options.minimumAmountCurrency,
+  });
+  const expiresAt = options.promoExpiresAt
+    ? Math.floor(new Date(options.promoExpiresAt).getTime() / 1000)
+    : undefined;
+
+  return stripe.promotionCodes.create({
+    promotion: { type: "coupon", coupon: stripeCouponId },
+    active: true,
+    code,
+    ...(stripeCustomerId ? { customer: stripeCustomerId } : {}),
+    ...(expiresAt ? { expires_at: expiresAt } : {}),
+    ...(options.promoMaxRedemptions ? { max_redemptions: options.promoMaxRedemptions } : {}),
+    ...(restrictions ? { restrictions } : {}),
+  });
+}
+
+async function createStripePromotionCodes(
+  coupon: CommercialCoupon,
+  stripeCouponId: string,
+  extraCodeStrings: string[],
+  mainOptions?: PromoCodeCreateOptions,
+  extraPromoConfigs: PromoCodeCreateOptions[] = [],
+): Promise<{ stripePromoCodeId: string | null; extraCodes: CouponExtraCode[] }> {
+  const mainPromo = await createSinglePromotionCode(stripeCouponId, coupon.code, {
+    firstTimeOnly: coupon.firstTimeOnly,
+    minimumAmountCents: coupon.minimumAmountCents,
+    minimumAmountCurrency: coupon.minimumAmountCurrency,
+    restrictedCustomerEmail: coupon.restrictedCustomerEmail,
+    promoMaxRedemptions: mainOptions?.promoMaxRedemptions,
+    promoExpiresAt: mainOptions?.promoExpiresAt,
+  });
+
+  const extraCodes: CouponExtraCode[] = [];
+  for (let i = 0; i < extraCodeStrings.length; i++) {
+    const extraOpts = extraPromoConfigs[i] ?? {};
+    const extraPromo = await createSinglePromotionCode(stripeCouponId, extraCodeStrings[i], {
+      firstTimeOnly: extraOpts.firstTimeOnly ?? false,
+      minimumAmountCents: extraOpts.minimumAmountCents ?? extraOpts.minimumAmountBrl ?? null,
+      minimumAmountCurrency: extraOpts.minimumAmountCurrency ?? null,
+      restrictedCustomerEmail: extraOpts.restrictedCustomerEmail ?? null,
+      promoMaxRedemptions: extraOpts.promoMaxRedemptions,
+      promoExpiresAt: extraOpts.promoExpiresAt,
+    });
+    extraCodes.push({
+      id: `exc_${randomUUID()}`,
+      couponId: coupon.id,
+      code: extraCodeStrings[i],
+      stripePromoCodeId: extraPromo.id,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  return { stripePromoCodeId: mainPromo.id, extraCodes };
 }
 
 export async function findOrCreateStripeCustomer(email: string): Promise<string> {
@@ -116,65 +201,12 @@ export function findDuplicateCodes(
   return null;
 }
 
-export type PromoCodeCreateOptions = {
-  promoMaxRedemptions?: number | null;
-  promoExpiresAt?: string | null;
-};
-
-async function createStripePromotionCodes(
-  coupon: CommercialCoupon,
-  stripeCouponId: string,
-  extraCodeStrings: string[],
-  options?: PromoCodeCreateOptions,
-): Promise<{ stripePromoCodeId: string | null; extraCodes: CouponExtraCode[] }> {
-  const stripe = getStripe();
-  let stripeCustomerId: string | undefined;
-  if (coupon.restrictedCustomerEmail) {
-    stripeCustomerId = await findOrCreateStripeCustomer(coupon.restrictedCustomerEmail);
-  }
-
-  const restrictions = buildPromoRestrictions(coupon);
-  const expiresAt = options?.promoExpiresAt
-    ? Math.floor(new Date(options.promoExpiresAt).getTime() / 1000)
-    : undefined;
-
-  const basePromoParams: Omit<Stripe.PromotionCodeCreateParams, "code"> = {
-    promotion: { type: "coupon", coupon: stripeCouponId },
-    active: true,
-    ...(stripeCustomerId ? { customer: stripeCustomerId } : {}),
-    ...(expiresAt ? { expires_at: expiresAt } : {}),
-    ...(options?.promoMaxRedemptions ? { max_redemptions: options.promoMaxRedemptions } : {}),
-    ...(restrictions ? { restrictions } : {}),
-  };
-
-  const mainPromo = await stripe.promotionCodes.create({
-    ...basePromoParams,
-    code: coupon.code,
-  });
-
-  const extraCodes: CouponExtraCode[] = [];
-  for (const extraCodeStr of extraCodeStrings) {
-    const extraPromo = await stripe.promotionCodes.create({
-      ...basePromoParams,
-      code: extraCodeStr,
-    });
-    extraCodes.push({
-      id: `exc_${randomUUID()}`,
-      couponId: coupon.id,
-      code: extraCodeStr,
-      stripePromoCodeId: extraPromo.id,
-      createdAt: new Date().toISOString(),
-    });
-  }
-
-  return { stripePromoCodeId: mainPromo.id, extraCodes };
-}
-
 /** Cria cupom novo: Stripe primeiro, depois DB, com rollback em falha. */
 export async function createCouponWithStripe(
   coupon: CommercialCoupon,
   extraCodeStrings: string[],
   promoOptions?: PromoCodeCreateOptions,
+  extraPromoConfigs: PromoCodeCreateOptions[] = [],
 ): Promise<CreateCouponResult> {
   let stripeCouponId: string | null = null;
   let dbWritten = false;
@@ -193,6 +225,7 @@ export async function createCouponWithStripe(
         stripeCouponId,
         extraCodeStrings,
         promoOptions,
+        extraPromoConfigs,
       );
       stripePromoCodeId = promoResult.stripePromoCodeId;
       extraCodes = promoResult.extraCodes;
@@ -265,7 +298,8 @@ export function isSafeEditOnly(existing: CommercialCoupon, incoming: CommercialC
     "createPublicCode",
     "firstTimeOnly",
     "restrictedCustomerEmail",
-    "minimumAmountBrl",
+    "minimumAmountCents",
+    "minimumAmountCurrency",
     "stripeProductIds",
     "stripeCouponId",
     "stripePromoCodeId",

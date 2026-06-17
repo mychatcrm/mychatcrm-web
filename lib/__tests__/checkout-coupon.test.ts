@@ -31,7 +31,8 @@ function withCoupon(store: CommercialStore, patch: Partial<CommercialCoupon> & {
     createPublicCode: true,
     firstTimeOnly: false,
     restrictedCustomerEmail: null,
-    minimumAmountBrl: null,
+    minimumAmountCents: null,
+    minimumAmountCurrency: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };

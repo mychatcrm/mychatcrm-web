@@ -18,8 +18,51 @@ import {
   findDuplicateCodes,
   isSafeEditOnly,
   mergeSafeCouponEdit,
+  type PromoCodeCreateOptions,
 } from "@/lib/server/create-coupon";
 import { randomUUID } from "crypto";
+import { isStripeCurrency, normalizeStripeCurrency } from "@/lib/commercial/stripe-currencies";
+
+function parseMinimumAmountCents(o: Record<string, unknown>): number | null {
+  if (typeof o.minimumAmountCents === "number" && o.minimumAmountCents >= 0) {
+    return Math.floor(o.minimumAmountCents);
+  }
+  if (typeof o.minimumAmountBrl === "number" && o.minimumAmountBrl >= 0) {
+    return Math.floor(o.minimumAmountBrl);
+  }
+  return null;
+}
+
+function parsePromoCodeCreateOptions(raw: unknown): PromoCodeCreateOptions | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const minimumAmountCents = parseMinimumAmountCents(o);
+  return {
+    firstTimeOnly: o.firstTimeOnly === true,
+    restrictedCustomerEmail:
+      typeof o.restrictedCustomerEmail === "string" && o.restrictedCustomerEmail.trim()
+        ? o.restrictedCustomerEmail.trim()
+        : null,
+    minimumAmountCents,
+    minimumAmountCurrency:
+      minimumAmountCents != null
+        ? typeof o.minimumAmountCurrency === "string" && isStripeCurrency(o.minimumAmountCurrency)
+          ? normalizeStripeCurrency(o.minimumAmountCurrency)
+          : "brl"
+        : null,
+    promoMaxRedemptions:
+      typeof o.promoMaxRedemptions === "number" && o.promoMaxRedemptions >= 1
+        ? Math.floor(o.promoMaxRedemptions)
+        : null,
+    promoExpiresAt:
+      typeof o.promoExpiresAt === "string" && o.promoExpiresAt.trim() ? o.promoExpiresAt : null,
+  };
+}
+
+function parseExtraPromoConfigs(raw: unknown): PromoCodeCreateOptions[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map(parsePromoCodeCreateOptions).filter((x): x is PromoCodeCreateOptions => x != null);
+}
 
 export async function GET() {
   const session = await getAdminSessionFromCookies();
@@ -119,16 +162,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: `Já existe um cupom ou código extra com «${dup}».` }, { status: 409 });
   }
 
-  const createResult = await createCouponWithStripe(parsed.coupon, parsed.extraCodes, {
-    promoMaxRedemptions:
-      typeof body?.promoMaxRedemptions === "number" && body.promoMaxRedemptions >= 1
-        ? Math.floor(body.promoMaxRedemptions)
-        : null,
-    promoExpiresAt:
-      typeof body?.promoExpiresAt === "string" && body.promoExpiresAt.trim()
-        ? body.promoExpiresAt
-        : null,
-  });
+  const createResult = await createCouponWithStripe(
+    parsed.coupon,
+    parsed.extraCodes,
+    {
+      promoMaxRedemptions:
+        typeof body?.promoMaxRedemptions === "number" && body.promoMaxRedemptions >= 1
+          ? Math.floor(body.promoMaxRedemptions)
+          : null,
+      promoExpiresAt:
+        typeof body?.promoExpiresAt === "string" && body.promoExpiresAt.trim()
+          ? body.promoExpiresAt
+          : null,
+    },
+    parseExtraPromoConfigs(body?.extraPromoConfigs),
+  );
   if (!createResult.ok) {
     return NextResponse.json({ error: createResult.error }, { status: createResult.status });
   }

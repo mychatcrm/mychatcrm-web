@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { isCheckoutPlanSlug } from "@/lib/plan-policy";
+import { isStripeCurrency, normalizeStripeCurrency } from "@/lib/commercial/stripe-currencies";
 import type { CommercialCoupon, CommercialPartner, CouponPeriodicity } from "@/lib/commercial/types";
 import { normalizeCouponCode } from "@/lib/commercial/engine";
 
@@ -99,10 +100,17 @@ export function parseCouponUpsert(
     typeof r.restrictedCustomerEmail === "string" && r.restrictedCustomerEmail.trim()
       ? r.restrictedCustomerEmail.trim().toLowerCase()
       : null;
-  const minimumAmountBrl = parseOptionalInt(r.minimumAmountBrl);
-  if (minimumAmountBrl === "invalid" || (minimumAmountBrl !== null && minimumAmountBrl < 0)) {
+  const minimumAmountCentsRaw =
+    r.minimumAmountCents !== undefined ? parseOptionalInt(r.minimumAmountCents) : parseOptionalInt(r.minimumAmountBrl);
+  if (minimumAmountCentsRaw === "invalid" || (minimumAmountCentsRaw !== null && minimumAmountCentsRaw < 0)) {
     return { ok: false, error: "Valor mínimo inválido." };
   }
+  const minimumAmountCurrency =
+    minimumAmountCentsRaw != null
+      ? typeof r.minimumAmountCurrency === "string" && isStripeCurrency(r.minimumAmountCurrency)
+        ? normalizeStripeCurrency(r.minimumAmountCurrency)
+        : "brl"
+      : null;
   const extraCodes: string[] = Array.isArray(r.extraCodes)
     ? (r.extraCodes as unknown[])
         .filter((c): c is string => typeof c === "string" && c.trim().length > 0)
@@ -133,7 +141,8 @@ export function parseCouponUpsert(
     createPublicCode,
     firstTimeOnly,
     restrictedCustomerEmail,
-    minimumAmountBrl,
+    minimumAmountCents: minimumAmountCentsRaw,
+    minimumAmountCurrency,
     createdAt: existing?.createdAt ?? isoNow(),
     updatedAt: isoNow(),
   };

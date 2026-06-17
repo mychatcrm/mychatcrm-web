@@ -71,9 +71,9 @@ export async function syncCouponToStripe(coupon: CommercialCoupon): Promise<Sync
         minimum_amount_currency?: string;
       } = {};
       if (coupon.firstTimeOnly) promoRestrictions.first_time_transaction = true;
-      if (coupon.minimumAmountBrl) {
-        promoRestrictions.minimum_amount = coupon.minimumAmountBrl;
-        promoRestrictions.minimum_amount_currency = "brl";
+      if (coupon.minimumAmountCents) {
+        promoRestrictions.minimum_amount = coupon.minimumAmountCents;
+        promoRestrictions.minimum_amount_currency = (coupon.minimumAmountCurrency ?? "brl").toLowerCase();
       }
 
       const promoCode = await stripe.promotionCodes.create({

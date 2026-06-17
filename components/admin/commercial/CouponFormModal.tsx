@@ -12,6 +12,7 @@ import type {
 } from "@/lib/commercial/types";
 import { cn } from "@/lib/utils";
 import { StripeProductPicker, StripeInlineToggle, RowMenu, type StripeProductOption } from "@/components/admin/commercial/StripeProductPicker";
+import { MinimumAmountFields } from "@/components/admin/commercial/MinimumAmountFields";
 
 export type CouponFormDraft = Partial<CommercialCoupon> & {
   id?: string;
@@ -39,7 +40,8 @@ function emptyDraft(): CouponFormDraft {
     stripeProductIds: [],
     firstTimeOnly: false,
     restrictedCustomerEmail: null,
-    minimumAmountBrl: null,
+    minimumAmountCents: null,
+    minimumAmountCurrency: "brl",
   };
 }
 
@@ -106,12 +108,76 @@ function parseRedeemUntilParts(value: string | null | undefined): { date: string
   return { date, time };
 }
 
+export type PromoCodeBlockDraft = {
+  code: string;
+  collapsed: boolean;
+  firstTimeOnly: boolean;
+  restrictCustomer: boolean;
+  restrictedCustomerEmail: string | null;
+  limitPromoRedemptions: boolean;
+  promoMaxRedemptions: number | null;
+  promoValidityEnabled: boolean;
+  promoExpiresDate: string;
+  promoExpiresTime: string;
+  minimumAmount: boolean;
+  minimumAmountCents: number | null;
+  minimumAmountCurrency: string;
+};
+
+function emptyPromoCodeBlock(): PromoCodeBlockDraft {
+  return {
+    code: "",
+    collapsed: false,
+    firstTimeOnly: false,
+    restrictCustomer: false,
+    restrictedCustomerEmail: null,
+    limitPromoRedemptions: false,
+    promoMaxRedemptions: null,
+    promoValidityEnabled: false,
+    promoExpiresDate: "",
+    promoExpiresTime: "23:59",
+    minimumAmount: false,
+    minimumAmountCents: null,
+    minimumAmountCurrency: "brl",
+  };
+}
+
+function validatePromoCodeBlock(block: PromoCodeBlockDraft, label: string): string | null {
+  if (block.limitPromoRedemptions && (block.promoMaxRedemptions == null || block.promoMaxRedemptions < 1)) {
+    return `Informe o limite de resgates em «${label}» ou desative a opção.`;
+  }
+  if (block.promoValidityEnabled && !block.promoExpiresDate.trim()) {
+    return `Informe a data de validade em «${label}» ou desative a opção.`;
+  }
+  if (block.restrictCustomer && !String(block.restrictedCustomerEmail ?? "").trim()) {
+    return `Informe o e-mail do cliente em «${label}».`;
+  }
+  if (block.minimumAmount && (block.minimumAmountCents == null || block.minimumAmountCents < 0)) {
+    return `Informe o valor mínimo em «${label}».`;
+  }
+  return null;
+}
+
+function promoBlockToApiOptions(block: PromoCodeBlockDraft) {
+  return {
+    firstTimeOnly: block.firstTimeOnly,
+    restrictedCustomerEmail: block.restrictCustomer ? block.restrictedCustomerEmail : null,
+    minimumAmountCents: block.minimumAmount ? block.minimumAmountCents : null,
+    minimumAmountCurrency: block.minimumAmount ? block.minimumAmountCurrency : null,
+    promoMaxRedemptions: block.limitPromoRedemptions ? block.promoMaxRedemptions : null,
+    promoExpiresAt: block.promoValidityEnabled
+      ? combineRedeemUntil(block.promoExpiresDate, block.promoExpiresTime)
+      : null,
+  };
+}
+
 function OptionalCheckbox({
   id,
   label,
   checked,
   onChange,
   disabled,
+  className,
   children,
 }: {
   id: string;
@@ -119,10 +185,11 @@ function OptionalCheckbox({
   checked: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
+  className?: string;
   children?: React.ReactNode;
 }) {
   return (
-    <div className="sm:col-span-2">
+    <div className={cn(className)}>
       <div className="flex items-start gap-2.5">
         <input
           type="checkbox"
@@ -216,147 +283,160 @@ function CodePromoCard({
   );
 }
 
-function PromoRestrictionCheckboxes({
-  draft,
-  setDraft,
-  restrictCustomer,
-  setRestrictCustomer,
-  minimumAmount,
-  setMinimumAmount,
-  limitPromoRedemptions,
-  setLimitPromoRedemptions,
-  promoValidityEnabled,
-  setPromoValidityEnabled,
-  promoExpiresDate,
-  setPromoExpiresDate,
-  promoExpiresTime,
-  setPromoExpiresTime,
+function PromoCodeBlockFields({
+  block,
+  idPrefix,
+  onChange,
 }: {
-  draft: CouponFormDraft;
-  setDraft: React.Dispatch<React.SetStateAction<CouponFormDraft>>;
-  restrictCustomer: boolean;
-  setRestrictCustomer: (v: boolean) => void;
-  minimumAmount: boolean;
-  setMinimumAmount: (v: boolean) => void;
-  limitPromoRedemptions: boolean;
-  setLimitPromoRedemptions: React.Dispatch<React.SetStateAction<boolean>>;
-  promoValidityEnabled: boolean;
-  setPromoValidityEnabled: (v: boolean) => void;
-  promoExpiresDate: string;
-  setPromoExpiresDate: (v: string) => void;
-  promoExpiresTime: string;
-  setPromoExpiresTime: (v: string) => void;
+  block: PromoCodeBlockDraft;
+  idPrefix: string;
+  onChange: (patch: Partial<PromoCodeBlockDraft>) => void;
 }) {
   return (
-    <div className="space-y-4 border-t border-line pt-4">
+    <div className="space-y-4">
       <OptionalCheckbox
-        id="first-time-only"
+        id={`${idPrefix}-first-time`}
         label="Válido somente para o primeiro pedido"
-        checked={draft.firstTimeOnly === true}
-        onChange={(v) => setDraft((d) => ({ ...d, firstTimeOnly: v }))}
+        checked={block.firstTimeOnly}
+        onChange={(v) => onChange({ firstTimeOnly: v })}
       />
       <OptionalCheckbox
-        id="restrict-customer"
+        id={`${idPrefix}-restrict-customer`}
         label="Limitar a um cliente específico"
-        checked={restrictCustomer}
+        checked={block.restrictCustomer}
         onChange={(v) => {
-          setRestrictCustomer(v);
-          if (!v) setDraft((d) => ({ ...d, restrictedCustomerEmail: null }));
+          onChange({
+            restrictCustomer: v,
+            restrictedCustomerEmail: v ? block.restrictedCustomerEmail : null,
+          });
         }}
       >
         <Input
           type="email"
-          placeholder="cliente@email.com"
-          value={draft.restrictedCustomerEmail ?? ""}
+          placeholder="Encontrar ou adicionar um cliente…"
+          value={block.restrictedCustomerEmail ?? ""}
           onChange={(e) =>
-            setDraft((d) => ({ ...d, restrictedCustomerEmail: e.target.value || null }))
+            onChange({ restrictedCustomerEmail: e.target.value.trim() || null })
           }
         />
       </OptionalCheckbox>
       <OptionalCheckbox
-        id="limit-promo-redemptions"
+        id={`${idPrefix}-limit-promo`}
         label="Limitar o número de vezes que este código pode ser resgatado"
-        checked={limitPromoRedemptions}
-        onChange={(v) => {
-          setLimitPromoRedemptions(v);
-          if (!v) setDraft((d) => ({ ...d, promoMaxRedemptions: null }));
-        }}
+        checked={block.limitPromoRedemptions}
+        onChange={(v) =>
+          onChange({
+            limitPromoRedemptions: v,
+            promoMaxRedemptions: v ? block.promoMaxRedemptions : null,
+          })
+        }
       >
         <div className="flex items-center gap-2">
           <Input
             type="number"
             min={1}
             className="w-24"
-            value={draft.promoMaxRedemptions ?? ""}
+            value={block.promoMaxRedemptions ?? ""}
             onChange={(e) =>
-              setDraft((d) => ({
-                ...d,
+              onChange({
                 promoMaxRedemptions: e.target.value === "" ? null : parseInt(e.target.value, 10),
-              }))
+              })
             }
           />
           <span className="text-sm text-content-muted">
-            {(draft.promoMaxRedemptions ?? 1) === 1 ? "vez" : "vezes"}
+            {(block.promoMaxRedemptions ?? 1) === 1 ? "vez" : "vezes"}
           </span>
         </div>
       </OptionalCheckbox>
       <OptionalCheckbox
-        id="promo-validity"
+        id={`${idPrefix}-promo-validity`}
         label="Incluir data de validade"
-        checked={promoValidityEnabled}
-        onChange={(v) => {
-          setPromoValidityEnabled(v);
-          if (!v) {
-            setPromoExpiresDate("");
-            setPromoExpiresTime("23:59");
-          }
-        }}
+        checked={block.promoValidityEnabled}
+        onChange={(v) =>
+          onChange({
+            promoValidityEnabled: v,
+            promoExpiresDate: v ? block.promoExpiresDate : "",
+            promoExpiresTime: v ? block.promoExpiresTime : "23:59",
+          })
+        }
       >
         <div className="flex flex-wrap items-center gap-2">
           <Input
             type="date"
             className="w-auto min-w-[10.5rem]"
-            value={promoExpiresDate}
-            onChange={(e) => setPromoExpiresDate(e.target.value)}
+            value={block.promoExpiresDate}
+            onChange={(e) => onChange({ promoExpiresDate: e.target.value })}
           />
           <Input
             type="time"
             className="w-auto min-w-[7rem]"
-            value={promoExpiresTime}
-            onChange={(e) => setPromoExpiresTime(e.target.value)}
+            value={block.promoExpiresTime}
+            onChange={(e) => onChange({ promoExpiresTime: e.target.value })}
           />
           <span className="text-xs font-medium text-content-faint">BRT</span>
         </div>
       </OptionalCheckbox>
       <OptionalCheckbox
-        id="minimum-amount"
+        id={`${idPrefix}-minimum-amount`}
         label="Exigir um valor mínimo por pedido"
-        checked={minimumAmount}
-        onChange={(v) => {
-          setMinimumAmount(v);
-          if (!v) setDraft((d) => ({ ...d, minimumAmountBrl: null }));
-        }}
+        checked={block.minimumAmount}
+        onChange={(v) =>
+          onChange({
+            minimumAmount: v,
+            minimumAmountCents: v ? block.minimumAmountCents : null,
+            minimumAmountCurrency: v ? block.minimumAmountCurrency : "brl",
+          })
+        }
       >
-        <div className="relative max-w-xs">
-          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-content-muted">
-            R$
-          </span>
-          <Input
-            type="number"
-            className="pl-10"
-            min={0}
-            step={0.01}
-            value={draft.minimumAmountBrl != null ? (draft.minimumAmountBrl / 100).toFixed(2) : ""}
-            onChange={(e) =>
-              setDraft((d) => ({
-                ...d,
-                minimumAmountBrl: e.target.value ? Math.round(parseFloat(e.target.value) * 100) : null,
-              }))
-            }
-          />
-        </div>
+        <MinimumAmountFields
+          currency={block.minimumAmountCurrency}
+          cents={block.minimumAmountCents}
+          onCurrencyChange={(currency) =>
+            onChange({ minimumAmountCurrency: currency, minimumAmountCents: null })
+          }
+          onCentsChange={(cents) => onChange({ minimumAmountCents: cents })}
+        />
       </OptionalCheckbox>
     </div>
+  );
+}
+
+function PromoCodeBlockEditor({
+  block,
+  idPrefix,
+  onChange,
+  onRemove,
+}: {
+  block: PromoCodeBlockDraft;
+  idPrefix: string;
+  onChange: (patch: Partial<PromoCodeBlockDraft>) => void;
+  onRemove?: () => void;
+}) {
+  const title = block.code.trim() ? block.code : "O código será gerado quando for criado";
+
+  return (
+    <CodePromoCard
+      title={title}
+      collapsed={block.collapsed}
+      onToggleCollapse={() => onChange({ collapsed: !block.collapsed })}
+      menuItems={
+        onRemove
+          ? [{ label: "Remover código", onClick: onRemove, destructive: true }]
+          : undefined
+      }
+    >
+      <Field label="Código">
+        <Input
+          className="font-mono uppercase"
+          value={block.code}
+          onChange={(e) =>
+            onChange({ code: e.target.value.toUpperCase().replace(/\s+/g, "") })
+          }
+          placeholder="FRIENDS20"
+        />
+      </Field>
+      <PromoCodeBlockFields block={block} idPrefix={idPrefix} onChange={onChange} />
+    </CodePromoCard>
   );
 }
 
@@ -371,13 +451,12 @@ type CouponFormModalProps = {
 export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: CouponFormModalProps) {
   const isEdit = Boolean(coupon?.id);
   const [draft, setDraft] = useState<CouponFormDraft>(emptyDraft());
-  const [extraCodeInputs, setExtraCodeInputs] = useState<string[]>([]);
+  const [mainPromoBlock, setMainPromoBlock] = useState<PromoCodeBlockDraft>(emptyPromoCodeBlock);
+  const [extraPromoBlocks, setExtraPromoBlocks] = useState<PromoCodeBlockDraft[]>([]);
   const [limitRedeemUntil, setLimitRedeemUntil] = useState(false);
   const [limitMaxRedemptions, setLimitMaxRedemptions] = useState(false);
   const [redeemUntilDate, setRedeemUntilDate] = useState("");
   const [redeemUntilTime, setRedeemUntilTime] = useState("23:59");
-  const [restrictCustomer, setRestrictCustomer] = useState(false);
-  const [minimumAmount, setMinimumAmount] = useState(false);
   const [saving, setSaving] = useState(false);
   const [syncingStripe, setSyncingStripe] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -387,11 +466,6 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
   const [productsLoaded, setProductsLoaded] = useState(false);
   const [productRestrictionEnabled, setProductRestrictionEnabled] = useState(false);
   const [mychatcrmOpen, setMychatcrmOpen] = useState(false);
-  const [mainCodeCollapsed, setMainCodeCollapsed] = useState(false);
-  const [limitPromoRedemptions, setLimitPromoRedemptions] = useState(false);
-  const [promoValidityEnabled, setPromoValidityEnabled] = useState(false);
-  const [promoExpiresDate, setPromoExpiresDate] = useState("");
-  const [promoExpiresTime, setPromoExpiresTime] = useState("23:59");
 
   const loadStripeProducts = useCallback(async () => {
     if (productsLoaded && stripeProducts.length > 0) return;
@@ -420,14 +494,13 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
         validFrom: coupon.validFrom ?? null,
         validUntil: coupon.validUntil ?? null,
       });
-      setExtraCodeInputs([]);
+      setExtraPromoBlocks([]);
+      setMainPromoBlock(emptyPromoCodeBlock());
       setLimitRedeemUntil(Boolean(coupon.validUntil));
       setLimitMaxRedemptions(coupon.maxRedemptionsTotal != null);
       const redeemParts = parseRedeemUntilParts(coupon.validUntil);
       setRedeemUntilDate(redeemParts.date);
       setRedeemUntilTime(redeemParts.time);
-      setRestrictCustomer(Boolean(coupon.restrictedCustomerEmail));
-      setMinimumAmount(coupon.minimumAmountBrl != null);
       setMychatcrmOpen(
         Boolean(
           coupon.maxRedemptionsPerUser != null ||
@@ -437,23 +510,17 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
       );
     } else {
       setDraft(emptyDraft());
-      setExtraCodeInputs([]);
+      setMainPromoBlock(emptyPromoCodeBlock());
+      setExtraPromoBlocks([]);
       setLimitRedeemUntil(false);
       setLimitMaxRedemptions(false);
       setRedeemUntilDate("");
       setRedeemUntilTime("23:59");
-      setRestrictCustomer(false);
-      setMinimumAmount(false);
       setProductsLoaded(false);
       setStripeProducts([]);
       setProductsError(null);
       setProductRestrictionEnabled(false);
       setMychatcrmOpen(false);
-      setMainCodeCollapsed(false);
-      setLimitPromoRedemptions(false);
-      setPromoValidityEnabled(false);
-      setPromoExpiresDate("");
-      setPromoExpiresTime("23:59");
     }
   }, [open, coupon]);
 
@@ -481,8 +548,17 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
   const validateDraft = useCallback((): string | null => {
     if (!String(draft.internalName ?? "").trim()) return "Nome é obrigatório.";
     if (!isEdit) {
-      if (draft.createPublicCode !== false && !String(draft.code ?? "").trim()) {
-        return "Código do cupom é obrigatório quando códigos públicos estão ativos.";
+      if (draft.createPublicCode !== false) {
+        if (!mainPromoBlock.code.trim()) {
+          return "Código do cupom é obrigatório quando códigos públicos estão ativos.";
+        }
+        const mainBlockErr = validatePromoCodeBlock(mainPromoBlock, "código principal");
+        if (mainBlockErr) return mainBlockErr;
+        for (let i = 0; i < extraPromoBlocks.length; i++) {
+          const label = extraPromoBlocks[i].code.trim() || `código ${i + 2}`;
+          const err = validatePromoCodeBlock(extraPromoBlocks[i], label);
+          if (err) return err;
+        }
       }
       const dv = Number(draft.discountValue);
       if (!Number.isFinite(dv) || dv < 0) return "Valor de desconto inválido.";
@@ -496,37 +572,39 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
       if (limitMaxRedemptions && (draft.maxRedemptionsTotal == null || draft.maxRedemptionsTotal < 1)) {
         return "Informe o máximo de resgates ou desative o limite total.";
       }
-      if (limitPromoRedemptions && (draft.promoMaxRedemptions == null || draft.promoMaxRedemptions < 1)) {
-        return "Informe o limite de resgates do código ou desative a opção.";
-      }
-      if (promoValidityEnabled && !promoExpiresDate.trim()) {
-        return "Informe a data de validade do código ou desative a opção.";
-      }
     }
     return null;
   }, [
     draft,
     isEdit,
+    mainPromoBlock,
+    extraPromoBlocks,
     productRestrictionEnabled,
     limitRedeemUntil,
     redeemUntilDate,
     limitMaxRedemptions,
-    limitPromoRedemptions,
-    promoValidityEnabled,
-    promoExpiresDate,
   ]);
 
-  const buildPayload = () => ({
-    ...draft,
-    validFrom: draft.validFrom || null,
-    validUntil: limitRedeemUntil ? combineRedeemUntil(redeemUntilDate, redeemUntilTime) : null,
-    maxRedemptionsTotal: limitMaxRedemptions ? draft.maxRedemptionsTotal : null,
-    restrictedCustomerEmail: restrictCustomer ? draft.restrictedCustomerEmail || null : null,
-    minimumAmountBrl: minimumAmount ? draft.minimumAmountBrl : null,
-    promoMaxRedemptions: limitPromoRedemptions ? draft.promoMaxRedemptions : null,
-    promoExpiresAt: promoValidityEnabled ? combineRedeemUntil(promoExpiresDate, promoExpiresTime) : null,
-    extraCodes: extraCodeInputs.filter((c) => c.trim().length > 0),
-  });
+  const buildPayload = () => {
+    const mainOpts = promoBlockToApiOptions(mainPromoBlock);
+    return {
+      ...draft,
+      code: mainPromoBlock.code,
+      firstTimeOnly: mainPromoBlock.firstTimeOnly,
+      restrictedCustomerEmail: mainPromoBlock.restrictCustomer
+        ? mainPromoBlock.restrictedCustomerEmail || null
+        : null,
+      minimumAmountCents: mainPromoBlock.minimumAmount ? mainPromoBlock.minimumAmountCents : null,
+      minimumAmountCurrency: mainPromoBlock.minimumAmount ? mainPromoBlock.minimumAmountCurrency : null,
+      promoMaxRedemptions: mainOpts.promoMaxRedemptions,
+      promoExpiresAt: mainOpts.promoExpiresAt,
+      validFrom: draft.validFrom || null,
+      validUntil: limitRedeemUntil ? combineRedeemUntil(redeemUntilDate, redeemUntilTime) : null,
+      maxRedemptionsTotal: limitMaxRedemptions ? draft.maxRedemptionsTotal : null,
+      extraCodes: extraPromoBlocks.map((b) => b.code).filter((c) => c.trim().length > 0),
+      extraPromoConfigs: extraPromoBlocks.map(promoBlockToApiOptions),
+    };
+  };
 
   const save = async () => {
     setFormError(null);
@@ -728,6 +806,7 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
 
                 <OptionalCheckbox
                   id="limit-redeem-until"
+                  className="sm:col-span-2"
                   label="Limitar o período em que os clientes podem resgatar o cupom"
                   checked={limitRedeemUntil}
                   onChange={(v) => {
@@ -773,6 +852,7 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
 
                 <OptionalCheckbox
                   id="limit-max-redemptions"
+                  className="sm:col-span-2"
                   label="Limitar o total de vezes que o cupom pode ser resgatado"
                   checked={limitMaxRedemptions}
                   onChange={(v) => {
@@ -817,80 +897,34 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
 
                 {draft.createPublicCode === true ? (
                   <div className="space-y-3">
-                    <CodePromoCard
-                      title={
-                        draft.code?.trim()
-                          ? draft.code
-                          : "O código será gerado quando for criado"
-                      }
-                      collapsed={mainCodeCollapsed}
-                      onToggleCollapse={() => setMainCodeCollapsed((v) => !v)}
-                    >
-                      <Field label="Código">
-                        <Input
-                          className="font-mono uppercase"
-                          value={draft.code ?? ""}
-                          onChange={(e) =>
-                            setDraft((d) => ({
-                              ...d,
-                              code: e.target.value.toUpperCase().replace(/\s+/g, ""),
-                            }))
-                          }
-                          placeholder="FRIENDS20"
-                        />
-                      </Field>
-                      <PromoRestrictionCheckboxes
-                        draft={draft}
-                        setDraft={setDraft}
-                        restrictCustomer={restrictCustomer}
-                        setRestrictCustomer={setRestrictCustomer}
-                        minimumAmount={minimumAmount}
-                        setMinimumAmount={setMinimumAmount}
-                        limitPromoRedemptions={limitPromoRedemptions}
-                        setLimitPromoRedemptions={setLimitPromoRedemptions}
-                        promoValidityEnabled={promoValidityEnabled}
-                        setPromoValidityEnabled={setPromoValidityEnabled}
-                        promoExpiresDate={promoExpiresDate}
-                        setPromoExpiresDate={setPromoExpiresDate}
-                        promoExpiresTime={promoExpiresTime}
-                        setPromoExpiresTime={setPromoExpiresTime}
-                      />
-                    </CodePromoCard>
+                    <PromoCodeBlockEditor
+                      block={mainPromoBlock}
+                      idPrefix="main-promo"
+                      onChange={(patch) => setMainPromoBlock((b) => ({ ...b, ...patch }))}
+                    />
 
-                    {extraCodeInputs.map((code, i) => (
-                      <CodePromoCard
+                    {extraPromoBlocks.map((block, i) => (
+                      <PromoCodeBlockEditor
                         key={i}
-                        title={code.trim() ? code : "O código será gerado quando for criado"}
-                        collapsed={false}
-                        onToggleCollapse={() => undefined}
-                        menuItems={[
-                          {
-                            label: "Remover código",
-                            onClick: () =>
-                              setExtraCodeInputs((prev) => prev.filter((_, j) => j !== i)),
-                            destructive: true,
-                          },
-                        ]}
-                      >
-                        <Field label="Código">
-                          <Input
-                            className="font-mono uppercase"
-                            value={code}
-                            onChange={(e) => {
-                              const next = [...extraCodeInputs];
-                              next[i] = e.target.value.toUpperCase().replace(/\s+/g, "");
-                              setExtraCodeInputs(next);
-                            }}
-                            placeholder="FRIENDS20"
-                          />
-                        </Field>
-                      </CodePromoCard>
+                        block={block}
+                        idPrefix={`extra-promo-${i}`}
+                        onChange={(patch) =>
+                          setExtraPromoBlocks((prev) =>
+                            prev.map((b, j) => (j === i ? { ...b, ...patch } : b)),
+                          )
+                        }
+                        onRemove={() =>
+                          setExtraPromoBlocks((prev) => prev.filter((_, j) => j !== i))
+                        }
+                      />
                     ))}
 
-                    {extraCodeInputs.length < 5 ? (
+                    {extraPromoBlocks.length < 5 ? (
                       <button
                         type="button"
-                        onClick={() => setExtraCodeInputs((prev) => [...prev, ""])}
+                        onClick={() =>
+                          setExtraPromoBlocks((prev) => [...prev, emptyPromoCodeBlock()])
+                        }
                         className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-surface-elevated/50"
                       >
                         <span className="text-base leading-none">+</span>
