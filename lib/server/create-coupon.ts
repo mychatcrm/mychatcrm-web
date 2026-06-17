@@ -2,8 +2,10 @@ import type Stripe from "stripe";
 import type { CommercialCoupon, CommercialStore, CouponExtraCode } from "@/lib/commercial/types";
 import { normalizeCouponCode } from "@/lib/commercial/engine";
 import {
+  assertCommercialCouponsSchemaReady,
   deleteCoupon,
   insertExtraCode,
+  isCommercialCouponsSchemaError,
   upsertCoupon,
 } from "@/lib/server/commercial-store-db";
 import {
@@ -27,6 +29,15 @@ function stripeErrorMessage(err: unknown, prefix: string): string {
     return `${prefix}: ${(err as { message: string }).message}`;
   }
   return prefix;
+}
+
+function createCouponErrorMessage(err: unknown): string {
+  if (isCommercialCouponsSchemaError(err)) {
+    return err instanceof Error
+      ? err.message
+      : "Configuração do banco de cupons incompleta. A criação no Stripe foi bloqueada por segurança.";
+  }
+  return stripeErrorMessage(err, "Falha ao criar cupom no Stripe");
 }
 
 async function createSinglePromotionCode(
@@ -154,6 +165,8 @@ export async function createCouponWithStripe(
       return { ok: false, error: expiryErr, status: 400 };
     }
 
+    await assertCommercialCouponsSchemaReady();
+
     const stripe = getStripe();
     const stripeCoupon = await stripe.coupons.create(buildStripeCouponCreateParams(coupon));
     stripeCouponId = stripeCoupon.id;
@@ -193,8 +206,8 @@ export async function createCouponWithStripe(
     await rollbackStripeCoupon(stripeCouponId);
     return {
       ok: false,
-      error: stripeErrorMessage(err, "Falha ao criar cupom no Stripe"),
-      status: 502,
+      error: createCouponErrorMessage(err),
+      status: isCommercialCouponsSchemaError(err) ? 500 : 502,
     };
   }
 }

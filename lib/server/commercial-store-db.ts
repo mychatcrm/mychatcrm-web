@@ -49,6 +49,60 @@ function dbToCoupon(row: Record<string, unknown>): CommercialCoupon {
   };
 }
 
+const REQUIRED_COMMERCIAL_COUPON_COLUMNS = [
+  "minimum_amount_currency",
+  "promo_max_redemptions",
+  "promo_expires_at",
+] as const;
+
+const COMMERCIAL_COUPONS_SCHEMA_MESSAGE =
+  "Configuração do banco de cupons incompleta. As colunas de limites/validade do código promocional ainda não estão disponíveis no Supabase. Aplique as migrations comerciais e recarregue o cache do schema antes de criar cupons no Stripe.";
+
+export class CommercialCouponsSchemaError extends Error {
+  constructor(detail?: string) {
+    super(detail ? `${COMMERCIAL_COUPONS_SCHEMA_MESSAGE} Detalhe: ${detail}` : COMMERCIAL_COUPONS_SCHEMA_MESSAGE);
+    this.name = "CommercialCouponsSchemaError";
+  }
+}
+
+function isCommercialCouponsSchemaMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("commercial_coupons") &&
+    REQUIRED_COMMERCIAL_COUPON_COLUMNS.some((column) => normalized.includes(column)) &&
+    (normalized.includes("schema cache") ||
+      normalized.includes("could not find") ||
+      normalized.includes("column"))
+  );
+}
+
+export function isCommercialCouponsSchemaError(err: unknown): boolean {
+  if (err instanceof CommercialCouponsSchemaError) return true;
+  if (err instanceof Error) {
+    return err.name === "CommercialCouponsSchemaError" || isCommercialCouponsSchemaMessage(err.message);
+  }
+  return false;
+}
+
+/**
+ * Preflight leve para impedir side-effects no Stripe quando o PostgREST
+ * ainda não reconhece as colunas comerciais mais recentes.
+ */
+export async function assertCommercialCouponsSchemaReady(): Promise<void> {
+  const sb = createSupabaseServiceClient();
+  const { error } = await sb
+    .from("commercial_coupons")
+    .select(`id,${REQUIRED_COMMERCIAL_COUPON_COLUMNS.join(",")}`)
+    .limit(1);
+
+  if (error) {
+    if (isCommercialCouponsSchemaMessage(error.message)) {
+      throw new CommercialCouponsSchemaError(error.message);
+    }
+    throw new Error(`[commercial-store-db] assertCommercialCouponsSchemaReady: ${error.message}`);
+  }
+}
+
 export async function listCoupons(): Promise<CommercialCoupon[]> {
   const sb = createSupabaseServiceClient();
   const { data, error } = await sb.from("commercial_coupons").select("*");
@@ -101,7 +155,12 @@ export async function upsertCoupon(coupon: CommercialCoupon): Promise<void> {
     },
     { onConflict: "id" },
   );
-  if (error) throw new Error(`[commercial-store-db] upsertCoupon: ${error.message}`);
+  if (error) {
+    if (isCommercialCouponsSchemaMessage(error.message)) {
+      throw new CommercialCouponsSchemaError(error.message);
+    }
+    throw new Error(`[commercial-store-db] upsertCoupon: ${error.message}`);
+  }
 }
 
 export async function deleteCoupon(id: string): Promise<void> {
