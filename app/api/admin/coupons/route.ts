@@ -166,14 +166,8 @@ export async function POST(request: Request) {
     parsed.coupon,
     parsed.extraCodes,
     {
-      promoMaxRedemptions:
-        typeof body?.promoMaxRedemptions === "number" && body.promoMaxRedemptions >= 1
-          ? Math.floor(body.promoMaxRedemptions)
-          : null,
-      promoExpiresAt:
-        typeof body?.promoExpiresAt === "string" && body.promoExpiresAt.trim()
-          ? body.promoExpiresAt
-          : null,
+      promoMaxRedemptions: parsed.coupon.promoMaxRedemptions,
+      promoExpiresAt: parsed.coupon.promoExpiresAt,
     },
     parseExtraPromoConfigs(body?.extraPromoConfigs),
   );

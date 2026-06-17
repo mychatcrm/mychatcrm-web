@@ -42,6 +42,8 @@ function dbToCoupon(row: Record<string, unknown>): CommercialCoupon {
     restrictedCustomerEmail: (row.restricted_customer_email as string | null) ?? null,
     minimumAmountCents: (row.minimum_amount_brl as number | null) ?? null,
     minimumAmountCurrency: (row.minimum_amount_currency as string | null) ?? null,
+    promoMaxRedemptions: (row.promo_max_redemptions as number | null) ?? null,
+    promoExpiresAt: (row.promo_expires_at as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };
@@ -93,6 +95,8 @@ export async function upsertCoupon(coupon: CommercialCoupon): Promise<void> {
       restricted_customer_email: coupon.restrictedCustomerEmail ?? null,
       minimum_amount_brl: coupon.minimumAmountCents ?? null,
       minimum_amount_currency: coupon.minimumAmountCurrency ?? null,
+      promo_max_redemptions: coupon.promoMaxRedemptions ?? null,
+      promo_expires_at: coupon.promoExpiresAt ?? null,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "id" },

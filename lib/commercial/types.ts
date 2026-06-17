@@ -49,6 +49,10 @@ export type CommercialCoupon = {
   minimumAmountCents: number | null;
   /** Moeda ISO do valor mínimo (restrictions.minimum_amount_currency). */
   minimumAmountCurrency: string | null;
+  /** Limite de resgates do código principal (Promotion Code max_redemptions). */
+  promoMaxRedemptions: number | null;
+  /** Validade do código principal (Promotion Code expires_at). */
+  promoExpiresAt: string | null;
   createdAt: string;
   updatedAt: string;
 };

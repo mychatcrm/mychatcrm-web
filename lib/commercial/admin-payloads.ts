@@ -30,8 +30,15 @@ export function parseCouponUpsert(
   if (!body || typeof body !== "object") return { ok: false, error: "Payload inválido." };
   const r = body as Record<string, unknown>;
   const id = typeof r.id === "string" && r.id ? r.id : `cpn_${randomUUID().slice(0, 12)}`;
-  const code = normalizeCouponCode(typeof r.code === "string" ? r.code : "");
-  if (!code) return { ok: false, error: "Código do cupom é obrigatório." };
+  const createPublicCode = r.createPublicCode !== false;
+  let code = normalizeCouponCode(typeof r.code === "string" ? r.code : "");
+  if (!code) {
+    if (!createPublicCode) {
+      code = `INT_${id.replace(/^cpn_/, "").toUpperCase()}`;
+    } else {
+      return { ok: false, error: "Código do cupom é obrigatório." };
+    }
+  }
 
   const internalName = typeof r.internalName === "string" ? r.internalName.trim() : "";
   if (!internalName) return { ok: false, error: "Nome interno é obrigatório." };
@@ -94,7 +101,6 @@ export function parseCouponUpsert(
       )
     : [];
 
-  const createPublicCode = r.createPublicCode !== false;
   const firstTimeOnly = r.firstTimeOnly === true;
   const restrictedCustomerEmail =
     typeof r.restrictedCustomerEmail === "string" && r.restrictedCustomerEmail.trim()
@@ -111,6 +117,14 @@ export function parseCouponUpsert(
         ? normalizeStripeCurrency(r.minimumAmountCurrency)
         : "brl"
       : null;
+  const promoMaxRedemptions = parseOptionalInt(r.promoMaxRedemptions);
+  if (promoMaxRedemptions === "invalid" || (promoMaxRedemptions !== null && promoMaxRedemptions < 1)) {
+    return { ok: false, error: "Limite de resgates do código inválido." };
+  }
+  const promoExpiresAt = normalizeIsoDateInput(r.promoExpiresAt);
+  if (promoExpiresAt === "invalid") {
+    return { ok: false, error: "Data de validade do código inválida." };
+  }
   const extraCodes: string[] = Array.isArray(r.extraCodes)
     ? (r.extraCodes as unknown[])
         .filter((c): c is string => typeof c === "string" && c.trim().length > 0)
@@ -143,6 +157,8 @@ export function parseCouponUpsert(
     restrictedCustomerEmail,
     minimumAmountCents: minimumAmountCentsRaw,
     minimumAmountCurrency,
+    promoMaxRedemptions,
+    promoExpiresAt,
     createdAt: existing?.createdAt ?? isoNow(),
     updatedAt: isoNow(),
   };

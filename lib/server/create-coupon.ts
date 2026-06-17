@@ -6,8 +6,16 @@ import {
   insertExtraCode,
   upsertCoupon,
 } from "@/lib/server/commercial-store-db";
+import {
+  buildPromotionCodeCreateParams,
+  buildStripeCouponCreateParams,
+  mergeMainPromoOptions,
+  type PromoCodeCreateOptions,
+} from "@/lib/server/stripe-coupon-mapping";
 import { getStripe } from "@/lib/stripe";
 import { randomUUID } from "crypto";
+
+export type { PromoCodeCreateOptions } from "@/lib/server/stripe-coupon-mapping";
 
 export type CreateCouponResult =
   | { ok: true; coupon: CommercialCoupon; extraCodes: CouponExtraCode[] }
@@ -20,67 +28,10 @@ function stripeErrorMessage(err: unknown, prefix: string): string {
   return prefix;
 }
 
-function durationFromCoupon(coupon: CommercialCoupon): {
-  duration: "once" | "repeating" | "forever";
-  duration_in_months?: number;
-} {
-  if (coupon.discountRecurrence === "first_cycle") {
-    return { duration: "once" };
-  }
-  if (coupon.recurringCyclesLimit != null) {
-    return { duration: "repeating", duration_in_months: coupon.recurringCyclesLimit };
-  }
-  return { duration: "forever" };
-}
-
-function buildStripeCouponCreateParams(coupon: CommercialCoupon): Stripe.CouponCreateParams {
-  const { duration, duration_in_months } = durationFromCoupon(coupon);
-  return {
-    name: coupon.internalName,
-    duration,
-    ...(duration === "repeating" && duration_in_months ? { duration_in_months } : {}),
-    ...(coupon.discountType === "percent"
-      ? { percent_off: coupon.discountValue }
-      : { amount_off: coupon.discountValue, currency: "brl" }),
-    ...(coupon.maxRedemptionsTotal ? { max_redemptions: coupon.maxRedemptionsTotal } : {}),
-    ...(coupon.validUntil
-      ? { redeem_by: Math.floor(new Date(coupon.validUntil).getTime() / 1000) }
-      : {}),
-    ...(coupon.stripeProductIds.length > 0
-      ? { applies_to: { products: coupon.stripeProductIds } }
-      : {}),
-  };
-}
-
-function buildPromoRestrictionsFromOptions(options: {
-  firstTimeOnly?: boolean;
-  minimumAmountCents?: number | null;
-  minimumAmountCurrency?: string | null;
-}): Stripe.PromotionCodeCreateParams["restrictions"] {
-  const restrictions: NonNullable<Stripe.PromotionCodeCreateParams["restrictions"]> = {};
-  if (options.firstTimeOnly) restrictions.first_time_transaction = true;
-  if (options.minimumAmountCents) {
-    restrictions.minimum_amount = options.minimumAmountCents;
-    restrictions.minimum_amount_currency = (options.minimumAmountCurrency ?? "brl").toLowerCase();
-  }
-  return Object.keys(restrictions).length > 0 ? restrictions : undefined;
-}
-
-export type PromoCodeCreateOptions = {
-  promoMaxRedemptions?: number | null;
-  promoExpiresAt?: string | null;
-  firstTimeOnly?: boolean;
-  restrictedCustomerEmail?: string | null;
-  minimumAmountCents?: number | null;
-  minimumAmountCurrency?: string | null;
-  /** @deprecated use minimumAmountCents */
-  minimumAmountBrl?: number | null;
-};
-
 async function createSinglePromotionCode(
   stripeCouponId: string,
   code: string,
-  options: PromoCodeCreateOptions,
+  options: PromoCodeCreateOptions & { active?: boolean },
 ): Promise<Stripe.PromotionCode> {
   const stripe = getStripe();
   let stripeCustomerId: string | undefined;
@@ -88,23 +39,10 @@ async function createSinglePromotionCode(
     stripeCustomerId = await findOrCreateStripeCustomer(options.restrictedCustomerEmail);
   }
 
-  const restrictions = buildPromoRestrictionsFromOptions({
-    firstTimeOnly: options.firstTimeOnly,
-    minimumAmountCents: options.minimumAmountCents ?? options.minimumAmountBrl,
-    minimumAmountCurrency: options.minimumAmountCurrency,
-  });
-  const expiresAt = options.promoExpiresAt
-    ? Math.floor(new Date(options.promoExpiresAt).getTime() / 1000)
-    : undefined;
-
+  const params = buildPromotionCodeCreateParams(stripeCouponId, code, options);
   return stripe.promotionCodes.create({
-    promotion: { type: "coupon", coupon: stripeCouponId },
-    active: true,
-    code,
+    ...params,
     ...(stripeCustomerId ? { customer: stripeCustomerId } : {}),
-    ...(expiresAt ? { expires_at: expiresAt } : {}),
-    ...(options.promoMaxRedemptions ? { max_redemptions: options.promoMaxRedemptions } : {}),
-    ...(restrictions ? { restrictions } : {}),
   });
 }
 
@@ -115,14 +53,11 @@ async function createStripePromotionCodes(
   mainOptions?: PromoCodeCreateOptions,
   extraPromoConfigs: PromoCodeCreateOptions[] = [],
 ): Promise<{ stripePromoCodeId: string | null; extraCodes: CouponExtraCode[] }> {
-  const mainPromo = await createSinglePromotionCode(stripeCouponId, coupon.code, {
-    firstTimeOnly: coupon.firstTimeOnly,
-    minimumAmountCents: coupon.minimumAmountCents,
-    minimumAmountCurrency: coupon.minimumAmountCurrency,
-    restrictedCustomerEmail: coupon.restrictedCustomerEmail,
-    promoMaxRedemptions: mainOptions?.promoMaxRedemptions,
-    promoExpiresAt: mainOptions?.promoExpiresAt,
-  });
+  const mainPromo = await createSinglePromotionCode(
+    stripeCouponId,
+    coupon.code,
+    mergeMainPromoOptions(coupon, mainOptions),
+  );
 
   const extraCodes: CouponExtraCode[] = [];
   for (let i = 0; i < extraCodeStrings.length; i++) {
@@ -134,6 +69,7 @@ async function createStripePromotionCodes(
       restrictedCustomerEmail: extraOpts.restrictedCustomerEmail ?? null,
       promoMaxRedemptions: extraOpts.promoMaxRedemptions,
       promoExpiresAt: extraOpts.promoExpiresAt,
+      active: coupon.active,
     });
     extraCodes.push({
       id: `exc_${randomUUID()}`,
@@ -300,6 +236,8 @@ export function isSafeEditOnly(existing: CommercialCoupon, incoming: CommercialC
     "restrictedCustomerEmail",
     "minimumAmountCents",
     "minimumAmountCurrency",
+    "promoMaxRedemptions",
+    "promoExpiresAt",
     "stripeProductIds",
     "stripeCouponId",
     "stripePromoCodeId",

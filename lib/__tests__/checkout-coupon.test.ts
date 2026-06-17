@@ -33,6 +33,8 @@ function withCoupon(store: CommercialStore, patch: Partial<CommercialCoupon> & {
     restrictedCustomerEmail: null,
     minimumAmountCents: null,
     minimumAmountCurrency: null,
+    promoMaxRedemptions: null,
+    promoExpiresAt: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
