@@ -36,10 +36,6 @@ type AppliedCoupon = Extract<CouponValidateResult, { ok: true }> & {
   stripePromoCodeId?: string | null;
 };
 
-function couponStorageKey(planSlug: string) {
-  return `checkout_coupon_${planSlug}`;
-}
-
 export function CheckoutView({
   plan,
   initialCouponCode,
@@ -57,9 +53,12 @@ export function CheckoutView({
   const [couponMessage, setCouponMessage] = useState<string | null>(null);
   const [applied, setApplied] = useState<AppliedCoupon | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [fullNameValue, setFullNameValue] = useState("");
+  const [companyValue, setCompanyValue] = useState("");
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const appliedEmailRef = useRef<string>("");
   const couponIdempotencyRef = useRef<string>("");
-  const initialCouponAppliedRef = useRef(false);
+  const initialCheckoutScopeRef = useRef("");
 
   // --- Estado de verificação de e-mail ---
   const [emailValue, setEmailValue] = useState("");
@@ -158,6 +157,7 @@ export function CheckoutView({
     if (applied && appliedEmailRef.current && norm !== appliedEmailRef.current) {
       setApplied(null);
       appliedEmailRef.current = "";
+      couponIdempotencyRef.current = "";
       setCouponMessage("E-mail alterado — reaplique o cupom.");
     }
   };
@@ -220,11 +220,6 @@ export function CheckoutView({
         setApplied(appliedCoupon);
         setCouponMessage(data.message);
         appliedEmailRef.current = (emailForValidation ?? emailValue).trim().toLowerCase();
-        try {
-          sessionStorage.setItem(couponStorageKey(plan.slug), normalizeCouponCode(code));
-        } catch {
-          /* sessionStorage indisponível */
-        }
         return appliedCoupon;
       } catch {
         setApplied(null);
@@ -246,30 +241,33 @@ export function CheckoutView({
     setCouponMessage(null);
     setCouponInput("");
     appliedEmailRef.current = "";
-    try {
-      sessionStorage.removeItem(couponStorageKey(plan.slug));
-    } catch {
-      /* sessionStorage indisponível */
-    }
+    couponIdempotencyRef.current = "";
   };
 
   useEffect(() => {
-    if (initialCouponAppliedRef.current) return;
-    initialCouponAppliedRef.current = true;
+    const scope = `${plan.slug}:${plan.billingCycle}:${initialCouponCode?.trim() ?? ""}`;
+    if (initialCheckoutScopeRef.current === scope) return;
+    initialCheckoutScopeRef.current = scope;
 
-    let codeToApply = initialCouponCode?.trim() ?? "";
-    if (!codeToApply) {
-      try {
-        codeToApply = sessionStorage.getItem(couponStorageKey(plan.slug)) ?? "";
-      } catch {
-        codeToApply = "";
-      }
-    }
+    setFullNameValue("");
+    setCompanyValue("");
+    setTermsAccepted(false);
+    setEmailValue("");
+    setEmailStatus("idle");
+    setCouponInput("");
+    setApplied(null);
+    setCouponMessage(null);
+    setSubmitError(null);
+    appliedEmailRef.current = "";
+    couponIdempotencyRef.current = "";
+    lastCompletedRef.current = "";
+
+    const codeToApply = initialCouponCode?.trim() ?? "";
     if (!codeToApply) return;
 
     setCouponInput(codeToApply);
-    void validateCouponCode(codeToApply);
-  }, [initialCouponCode, plan.slug, validateCouponCode]);
+    void validateCouponCode(codeToApply, "");
+  }, [initialCouponCode, plan.slug, plan.billingCycle, validateCouponCode]);
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -360,6 +358,11 @@ export function CheckoutView({
                 autoComplete="name"
                 className="mt-1.5"
                 placeholder="Seu nome"
+                value={fullNameValue}
+                onChange={(e) => {
+                  setFullNameValue(e.target.value);
+                  setSubmitError(null);
+                }}
               />
             </div>
 
@@ -433,6 +436,11 @@ export function CheckoutView({
                 autoComplete="organization"
                 className="mt-1.5"
                 placeholder="Razão social ou nome fantasia"
+                value={companyValue}
+                onChange={(e) => {
+                  setCompanyValue(e.target.value);
+                  setSubmitError(null);
+                }}
               />
             </div>
           </div>
@@ -441,6 +449,8 @@ export function CheckoutView({
             <input
               type="checkbox"
               required
+              checked={termsAccepted}
+              onChange={(e) => setTermsAccepted(e.target.checked)}
               className="mt-1 h-4 w-4 shrink-0 rounded border-line accent-primary"
             />
             <span>
