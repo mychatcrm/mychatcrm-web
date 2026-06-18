@@ -332,6 +332,24 @@ export async function findCommittedRedemptionByCouponAndEmail(
   return data ? { id: data.id as string } : null;
 }
 
+export async function findRedemptionByIdempotencyKey(
+  idempotencyKey: string,
+): Promise<{ id: string } | null> {
+  const key = idempotencyKey.trim();
+  if (!key) return null;
+  const sb = createSupabaseServiceClient();
+  const { data, error } = await sb
+    .from("coupon_redemptions")
+    .select("id")
+    .eq("idempotency_key", key)
+    .in("status", ["committed", "confirmed"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) return null;
+  return data ? { id: data.id as string } : null;
+}
+
 // ── Extra Codes ──────────────────────────────────────────────────────────
 
 function dbToExtraCode(row: Record<string, unknown>): CouponExtraCode {

@@ -795,6 +795,13 @@ export function CouponFormModal({ open, coupon, partners, onClose, onSaved }: Co
                 onRetry={() => void loadStripeProducts()}
                 onRequestLoad={() => void loadStripeProducts()}
               />
+              {productRestrictionEnabled ? (
+                <p className="sm:col-span-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-700 dark:text-amber-200">
+                  Se este cupom for usado na página de vendas, selecione o Product Stripe do plano
+                  correspondente. Cupons restritos apenas a add-ons ou produtos diferentes serão
+                  recusados pelo Stripe no checkout.
+                </p>
+              ) : null}
 
               <Field label="Duração" className="sm:col-span-2">
                 <div className="flex flex-wrap gap-2">

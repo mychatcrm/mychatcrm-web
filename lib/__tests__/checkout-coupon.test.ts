@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { buildSeedCommercialStore } from "@/lib/commercial/seed";
 import type { CommercialCoupon, CommercialStore } from "@/lib/commercial/types";
 import {
+  countCommittedRedemptionsForCoupon,
+  countCommittedRedemptionsForUserOnCoupon,
+} from "@/lib/commercial/engine";
+import {
   findCouponByStripePromoCodeId,
   resolveCheckoutCoupon,
 } from "@/lib/server/checkout-coupon";
@@ -27,7 +31,7 @@ function withCoupon(store: CommercialStore, patch: Partial<CommercialCoupon> & {
     partnerId: null,
     stripeCouponId: patch.stripeCouponId ?? "cou_test",
     stripePromoCodeId: patch.stripePromoCodeId ?? "promo_test_main",
-    stripeProductIds: [],
+    stripeProductIds: patch.stripeProductIds ?? [],
     createPublicCode: true,
     firstTimeOnly: false,
     restrictedCustomerEmail: null,
@@ -116,6 +120,143 @@ describe("resolveCheckoutCoupon", () => {
       expect(result.stripePromoCodeId).toBe("promo_extra");
       expect(result.normalizedCode).toBe("EXTRACODE");
     }
+  });
+
+  it("aceita cupom restrito quando o Product do Price corresponde", () => {
+    const store = withCoupon(buildSeedCommercialStore(), {
+      code: "PRODOK",
+      allowedPlanSlugs: ["escala"],
+      stripeProductIds: ["prod_escala"],
+    });
+
+    const result = resolveCheckoutCoupon({
+      store,
+      codeRaw: "PRODOK",
+      planSlug: "escala",
+      billingCycle: "annual",
+      stripeProductId: "prod_escala",
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejeita cupom restrito quando o Product do Price não corresponde", () => {
+    const store = withCoupon(buildSeedCommercialStore(), {
+      code: "PRODFAIL",
+      allowedPlanSlugs: ["escala"],
+      stripeProductIds: ["prod_addon"],
+    });
+
+    const result = resolveCheckoutCoupon({
+      store,
+      codeRaw: "PRODFAIL",
+      planSlug: "escala",
+      billingCycle: "annual",
+      stripeProductId: "prod_escala",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("COUPON_PRODUCT_NOT_ALLOWED");
+      expect(result.message).toBe("Este cupom não se aplica ao produto deste plano.");
+    }
+  });
+
+  it("aplica a restrição de Product do cupom pai em extra codes", () => {
+    const base = withCoupon(buildSeedCommercialStore(), {
+      code: "PARENT",
+      allowedPlanSlugs: ["escala"],
+      stripeProductIds: ["prod_solo"],
+    });
+    const coupon = base.coupons.find((c) => c.code === "PARENT")!;
+    const store: CommercialStore = {
+      ...base,
+      extraCodes: [
+        {
+          id: "exc_product",
+          couponId: coupon.id,
+          code: "CHILD",
+          stripePromoCodeId: "promo_child",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    };
+
+    const result = resolveCheckoutCoupon({
+      store,
+      codeRaw: "CHILD",
+      planSlug: "escala",
+      billingCycle: "annual",
+      stripeProductId: "prod_escala",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("COUPON_PRODUCT_NOT_ALLOWED");
+    }
+  });
+});
+
+describe("contadores de uso de cupom", () => {
+  it("conta committed e confirmed como uso de limite", () => {
+    const base = withCoupon(buildSeedCommercialStore(), {
+      code: "LIMIT",
+      allowedPlanSlugs: ["escala"],
+    });
+    const coupon = base.coupons.find((c) => c.code === "LIMIT")!;
+    const store: CommercialStore = {
+      ...base,
+      redemptions: [
+        {
+          id: "red_pending",
+          createdAt: new Date().toISOString(),
+          status: "pending",
+          idempotencyKey: "pending",
+          couponId: coupon.id,
+          codeNormalized: "LIMIT",
+          planSlug: "escala",
+          emailNormalized: "renato@example.com",
+          originalCents: 10000,
+          discountCents: 1000,
+          finalCents: 9000,
+          partnerId: null,
+          commissionCents: 0,
+        },
+        {
+          id: "red_committed",
+          createdAt: new Date().toISOString(),
+          status: "committed",
+          idempotencyKey: "committed",
+          couponId: coupon.id,
+          codeNormalized: "LIMIT",
+          planSlug: "escala",
+          emailNormalized: "renato@example.com",
+          originalCents: 10000,
+          discountCents: 1000,
+          finalCents: 9000,
+          partnerId: null,
+          commissionCents: 0,
+        },
+        {
+          id: "red_confirmed",
+          createdAt: new Date().toISOString(),
+          status: "confirmed",
+          idempotencyKey: "confirmed",
+          couponId: coupon.id,
+          codeNormalized: "LIMIT",
+          planSlug: "escala",
+          emailNormalized: "renato@example.com",
+          originalCents: 10000,
+          discountCents: 1000,
+          finalCents: 9000,
+          partnerId: null,
+          commissionCents: 0,
+        },
+      ],
+    };
+
+    expect(countCommittedRedemptionsForCoupon(store, coupon.id)).toBe(2);
+    expect(countCommittedRedemptionsForUserOnCoupon(store, coupon.id, "renato@example.com")).toBe(2);
   });
 });
 

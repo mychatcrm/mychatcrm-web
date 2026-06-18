@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { randomUUID } from "crypto";
-import { buildCommercialStoreFromDb, insertRedemption } from "@/lib/server/commercial-store-db";
-import { resolveCheckoutCoupon } from "@/lib/server/checkout-coupon";
+import { buildCommercialStoreFromDb } from "@/lib/server/commercial-store-db";
+import { resolveCheckoutCoupon, resolveCheckoutPriceProduct } from "@/lib/server/checkout-coupon";
 import { parsePlanBillingCycle, SALES_PLANS } from "@/lib/plans";
 
 export async function POST(request: Request) {
@@ -27,6 +26,33 @@ export async function POST(request: Request) {
   }
 
   const billingCycle = parsePlanBillingCycle(body?.ciclo ?? body?.billingCycle);
+  if (!code.trim()) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "COUPON_EMPTY",
+        message: "Cupom opcional — digite um código para validar ou continue sem cupom.",
+      },
+      { status: 200 },
+    );
+  }
+
+  let stripeProductId: string | null = null;
+  try {
+    const priceContext = await resolveCheckoutPriceProduct({ planSlug, billingCycle });
+    stripeProductId = priceContext.productId;
+  } catch (error) {
+    console.error("[checkout/coupon/validate] Falha ao resolver produto Stripe do plano:", error);
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "STRIPE_PRICE_PRODUCT_UNAVAILABLE",
+        message: "Não foi possível verificar a compatibilidade deste cupom com o plano agora.",
+      },
+      { status: 503 },
+    );
+  }
+
   const store = await buildCommercialStoreFromDb();
 
   const result = resolveCheckoutCoupon({
@@ -35,6 +61,7 @@ export async function POST(request: Request) {
     planSlug,
     billingCycle,
     emailRaw: email,
+    stripeProductId,
   });
 
   if (!result.ok) {
@@ -45,24 +72,6 @@ export async function POST(request: Request) {
   }
 
   const { stripePromoCodeId, normalizedCode, ...couponResult } = result;
-
-  if (email && couponResult.couponId) {
-    insertRedemption({
-      id: `red_${randomUUID()}`,
-      createdAt: new Date().toISOString(),
-      status: "pending",
-      idempotencyKey: `pending_${randomUUID()}`,
-      couponId: couponResult.couponId,
-      codeNormalized: normalizedCode,
-      planSlug,
-      emailNormalized: email.toLowerCase(),
-      originalCents: couponResult.originalCents,
-      discountCents: couponResult.discountCents,
-      finalCents: couponResult.finalCents,
-      partnerId: couponResult.partnerId,
-      commissionCents: 0,
-    }).catch((e: unknown) => console.warn("[validate] Falha ao gravar pending:", e));
-  }
 
   return NextResponse.json({ ...couponResult, stripePromoCodeId });
 }

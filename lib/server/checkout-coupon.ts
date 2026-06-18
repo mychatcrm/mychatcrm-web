@@ -10,12 +10,48 @@ import { resolveCheckoutPeriodicity } from "@/lib/commercial/coupon-periodicity"
 import type { CommercialStore, CouponExtraCode, CouponValidateResult } from "@/lib/commercial/types";
 import type { PlanBillingCycle } from "@/lib/plans";
 import { planCheckoutChargeBaseBRL, SALES_PLANS } from "@/lib/plans";
+import { getStripe } from "@/lib/stripe";
+import { getStripePriceId } from "@/lib/stripe-prices";
 import {
   appendAuditEntry,
   buildCommercialStoreFromDb,
   insertRedemption,
 } from "@/lib/server/commercial-store-db";
 import { randomUUID } from "crypto";
+
+export type CheckoutPriceProductContext = {
+  priceId: string;
+  productId: string;
+};
+
+const checkoutPriceProductCache = new Map<string, Promise<CheckoutPriceProductContext>>();
+
+export async function resolveCheckoutPriceProduct(params: {
+  planSlug: string;
+  billingCycle: PlanBillingCycle;
+}): Promise<CheckoutPriceProductContext> {
+  const key = `${params.planSlug}:${params.billingCycle}`;
+  const cached = checkoutPriceProductCache.get(key);
+  if (cached) return cached;
+
+  const task = (async () => {
+    const priceId = getStripePriceId(params.planSlug, params.billingCycle);
+    const price = await getStripe().prices.retrieve(priceId);
+    const productId = typeof price.product === "string" ? price.product : price.product?.id;
+
+    if (!productId) {
+      throw new Error(`[checkout-coupon] Stripe Price sem Product resolvido: ${priceId}`);
+    }
+
+    return { priceId, productId };
+  })().catch((error) => {
+    checkoutPriceProductCache.delete(key);
+    throw error;
+  });
+
+  checkoutPriceProductCache.set(key, task);
+  return task;
+}
 
 export type ResolvedCheckoutCoupon = Extract<CouponValidateResult, { ok: true }> & {
   stripePromoCodeId: string | null;
@@ -29,6 +65,7 @@ export type ResolveCheckoutCouponParams = {
   planSlug: string;
   billingCycle: PlanBillingCycle;
   emailRaw?: string | null;
+  stripeProductId?: string | null;
 };
 
 /** Resolve extra code → valida cupom → retorna promo Stripe. */
@@ -63,6 +100,16 @@ export function resolveCheckoutCoupon(
   if (!result.ok) return result;
 
   const coupon = store.coupons.find((c) => c.id === result.couponId);
+  const restrictedProductIds = coupon?.stripeProductIds.map((id) => id.trim()).filter(Boolean) ?? [];
+  const stripeProductId = params.stripeProductId?.trim();
+  if (stripeProductId && restrictedProductIds.length > 0 && !restrictedProductIds.includes(stripeProductId)) {
+    return {
+      ok: false,
+      code: "COUPON_PRODUCT_NOT_ALLOWED",
+      message: "Este cupom não se aplica ao produto deste plano.",
+    };
+  }
+
   const stripePromoCodeId = extraCodeMatch?.stripePromoCodeId ?? coupon?.stripePromoCodeId ?? null;
 
   return {
@@ -80,6 +127,7 @@ export type CommitCheckoutCouponParams = {
   billingCycle: PlanBillingCycle;
   email: string;
   idempotencyKey: string;
+  stripeProductId?: string | null;
 };
 
 export type CommitCheckoutCouponResult =
@@ -114,6 +162,7 @@ export async function commitCheckoutCoupon(params: CommitCheckoutCouponParams): 
     planSlug: params.planSlug,
     billingCycle: params.billingCycle,
     emailRaw: email,
+    stripeProductId: params.stripeProductId,
   });
 
   if (!resolved.ok) {

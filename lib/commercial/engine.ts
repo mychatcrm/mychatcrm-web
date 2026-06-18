@@ -44,7 +44,9 @@ function parseDayEnd(iso: string | null) {
 }
 
 export function countCommittedRedemptionsForCoupon(store: CommercialStore, couponId: string) {
-  return store.redemptions.filter((r) => r.couponId === couponId && r.status === "committed").length;
+  return store.redemptions.filter(
+    (r) => r.couponId === couponId && (r.status === "committed" || r.status === "confirmed"),
+  ).length;
 }
 
 export function countCommittedRedemptionsForUserOnCoupon(
@@ -54,7 +56,10 @@ export function countCommittedRedemptionsForUserOnCoupon(
 ) {
   if (!emailNormalized) return 0;
   return store.redemptions.filter(
-    (r) => r.couponId === couponId && r.status === "committed" && r.emailNormalized === emailNormalized,
+    (r) =>
+      r.couponId === couponId &&
+      (r.status === "committed" || r.status === "confirmed") &&
+      r.emailNormalized === emailNormalized,
   ).length;
 }
 

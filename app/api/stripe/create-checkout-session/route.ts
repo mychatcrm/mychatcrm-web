@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { normalizeCouponCode } from "@/lib/commercial/engine";
 import { getStripe } from "@/lib/stripe";
-import { getStripePriceId } from "@/lib/stripe-prices";
 import { getPlanBySlug, parsePlanBillingCycle, PLAN_CHECKOUT_SLUGS } from "@/lib/plans";
 import { SITE_URL } from "@/lib/constants";
 import { checkEmailAvailability } from "@/lib/server/email-availability";
 import { buildCommercialStoreFromDb } from "@/lib/server/commercial-store-db";
-import { commitCheckoutCoupon, resolveCheckoutCoupon } from "@/lib/server/checkout-coupon";
+import {
+  commitCheckoutCoupon,
+  resolveCheckoutCoupon,
+  resolveCheckoutPriceProduct,
+} from "@/lib/server/checkout-coupon";
 
 export async function POST(req: NextRequest) {
   try {
@@ -76,9 +79,9 @@ export async function POST(req: NextRequest) {
 
     const cycle = parsePlanBillingCycle(ciclo);
 
-    let priceId: string;
+    let priceContext: Awaited<ReturnType<typeof resolveCheckoutPriceProduct>>;
     try {
-      priceId = getStripePriceId(planSlug, cycle);
+      priceContext = await resolveCheckoutPriceProduct({ planSlug, billingCycle: cycle });
     } catch {
       return NextResponse.json(
         { message: "Pagamento temporariamente indisponível. Entre em contacto com o suporte." },
@@ -88,7 +91,14 @@ export async function POST(req: NextRequest) {
 
     const normalizedCoupon = normalizeCouponCode(couponCode ?? "");
     let stripePromoCodeId: string | undefined;
-    let couponMetadata: { couponCode?: string; couponId?: string } = {};
+    let couponMetadata: { couponCode?: string; couponId?: string; couponIdempotencyKey?: string } = {};
+    let couponCommit:
+      | {
+          store: Awaited<ReturnType<typeof buildCommercialStoreFromDb>>;
+          codeRaw: string;
+          idempotencyKey: string;
+        }
+      | null = null;
 
     if (normalizedCoupon) {
       const store = await buildCommercialStoreFromDb();
@@ -98,6 +108,7 @@ export async function POST(req: NextRequest) {
         planSlug,
         billingCycle: cycle,
         emailRaw: emailRaw,
+        stripeProductId: priceContext.productId,
       });
 
       if (!resolved.ok) {
@@ -123,24 +134,17 @@ export async function POST(req: NextRequest) {
           ? couponIdempotencyKey.trim()
           : `checkout_${randomUUID()}`;
 
-      const commitResult = await commitCheckoutCoupon({
+      stripePromoCodeId = resolved.stripePromoCodeId;
+      couponMetadata = {
+        couponCode: resolved.code,
+        couponId: resolved.couponId,
+        couponIdempotencyKey: idempotencyKey,
+      };
+      couponCommit = {
         store,
         codeRaw: normalizedCoupon,
-        planSlug,
-        billingCycle: cycle,
-        email: emailRaw,
         idempotencyKey,
-      });
-
-      if (!commitResult.ok) {
-        return NextResponse.json(
-          { message: commitResult.message, code: commitResult.code },
-          { status: 422 },
-        );
-      }
-
-      stripePromoCodeId = resolved.stripePromoCodeId;
-      couponMetadata = { couponCode: resolved.code, couponId: resolved.couponId };
+      };
     }
 
     const stripe = getStripe();
@@ -148,7 +152,7 @@ export async function POST(req: NextRequest) {
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
-      line_items: [{ price: priceId, quantity: 1 }],
+      line_items: [{ price: priceContext.priceId, quantity: 1 }],
       customer_email: emailRaw,
       metadata: {
         planSlug,
@@ -170,9 +174,47 @@ export async function POST(req: NextRequest) {
       locale: "pt-BR",
     });
 
+    if (couponCommit) {
+      const commitResult = await commitCheckoutCoupon({
+        store: couponCommit.store,
+        codeRaw: couponCommit.codeRaw,
+        planSlug,
+        billingCycle: cycle,
+        email: emailRaw,
+        idempotencyKey: couponCommit.idempotencyKey,
+        stripeProductId: priceContext.productId,
+      });
+
+      if (!commitResult.ok) {
+        console.error("[create-checkout-session] Sessão criada, mas commit de cupom falhou:", {
+          sessionId: session.id,
+          code: commitResult.code,
+          message: commitResult.message,
+        });
+        return NextResponse.json(
+          { message: commitResult.message, code: commitResult.code },
+          { status: 422 },
+        );
+      }
+    }
+
     return NextResponse.json({ url: session.url });
   } catch (err) {
     console.error("[stripe/create-checkout-session]", err);
+    if (
+      err &&
+      typeof err === "object" &&
+      "code" in err &&
+      (err as { code?: unknown }).code === "coupon_applies_to_nothing"
+    ) {
+      return NextResponse.json(
+        {
+          message: "Este cupom não se aplica ao produto deste plano.",
+          code: "COUPON_PRODUCT_NOT_ALLOWED",
+        },
+        { status: 422 },
+      );
+    }
     return NextResponse.json(
       { message: "Não foi possível iniciar o pagamento. Tente novamente." },
       { status: 500 },

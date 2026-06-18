@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { normalizeCouponCode } from "@/lib/commercial/engine";
-import { commitCheckoutCoupon } from "@/lib/server/checkout-coupon";
+import { commitCheckoutCoupon, resolveCheckoutPriceProduct } from "@/lib/server/checkout-coupon";
 import { parsePlanBillingCycle, SALES_PLANS } from "@/lib/plans";
 
 export async function POST(request: Request) {
@@ -45,12 +45,29 @@ export async function POST(request: Request) {
   }
 
   const billingCycle = parsePlanBillingCycle(body?.ciclo ?? body?.billingCycle);
+  let stripeProductId: string | null = null;
+  try {
+    const priceContext = await resolveCheckoutPriceProduct({ planSlug, billingCycle });
+    stripeProductId = priceContext.productId;
+  } catch (error) {
+    console.error("[checkout/coupon/commit] Falha ao resolver produto Stripe do plano:", error);
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "STRIPE_PRICE_PRODUCT_UNAVAILABLE",
+        message: "Não foi possível verificar a compatibilidade deste cupom com o plano agora.",
+      },
+      { status: 503 },
+    );
+  }
+
   const result = await commitCheckoutCoupon({
     codeRaw: code,
     planSlug,
     billingCycle,
     email,
     idempotencyKey,
+    stripeProductId,
   });
 
   if (!result.ok) {

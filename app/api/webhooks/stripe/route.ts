@@ -18,6 +18,7 @@ import { provisionFromStripeSession, suspendTenant, reactivateTenant } from "@/l
 import {
   buildCommercialStoreFromDb,
   findCommittedRedemptionByCouponAndEmail,
+  findRedemptionByIdempotencyKey,
   updateRedemptionStatus,
 } from "@/lib/server/commercial-store-db";
 import { findCouponByStripePromoCodeId } from "@/lib/server/checkout-coupon";
@@ -124,24 +125,44 @@ export async function POST(req: NextRequest) {
             if (tenantId) await reactivateTenant(tenantId);
           }
 
-          // Confirmar redemption de cupom se houver desconto aplicado
-          const discounts = (session as Stripe.Checkout.Session & { discounts?: { promotion_code?: unknown }[] }).discounts ?? [];
-          const rawPromo = discounts.find((d) => d.promotion_code)?.promotion_code;
-          const promoCodeId =
-            typeof rawPromo === "string" ? rawPromo
-            : rawPromo && typeof rawPromo === "object" ? (rawPromo as { id: string }).id
-            : null;
-          if (promoCodeId && session.customer_details?.email) {
-            const store = await buildCommercialStoreFromDb();
-            const coupon = findCouponByStripePromoCodeId(store, promoCodeId);
-            if (coupon) {
-              const redemption = await findCommittedRedemptionByCouponAndEmail(
-                coupon.id,
-                session.customer_details.email.toLowerCase(),
-              );
-              if (redemption) {
-                await updateRedemptionStatus(redemption.id, "confirmed");
+          // Confirmar redemption de cupom se houver desconto aplicado.
+          // Metadata é a fonte mais confiável porque `session.discounts` nem sempre vem expandido.
+          const customerEmail = session.customer_details?.email?.toLowerCase() ?? null;
+          if (customerEmail) {
+            const couponIdempotencyKey =
+              typeof session.metadata?.couponIdempotencyKey === "string"
+                ? session.metadata.couponIdempotencyKey
+                : "";
+            const metadataCouponId =
+              typeof session.metadata?.couponId === "string" ? session.metadata.couponId : "";
+
+            let redemption = await findRedemptionByIdempotencyKey(couponIdempotencyKey);
+
+            if (!redemption && metadataCouponId) {
+              redemption = await findCommittedRedemptionByCouponAndEmail(metadataCouponId, customerEmail);
+            }
+
+            if (!redemption) {
+              const discounts =
+                (session as Stripe.Checkout.Session & { discounts?: { promotion_code?: unknown }[] }).discounts ?? [];
+              const rawPromo = discounts.find((d) => d.promotion_code)?.promotion_code;
+              const promoCodeId =
+                typeof rawPromo === "string"
+                  ? rawPromo
+                  : rawPromo && typeof rawPromo === "object"
+                    ? (rawPromo as { id: string }).id
+                    : null;
+              if (promoCodeId) {
+                const store = await buildCommercialStoreFromDb();
+                const coupon = findCouponByStripePromoCodeId(store, promoCodeId);
+                if (coupon) {
+                  redemption = await findCommittedRedemptionByCouponAndEmail(coupon.id, customerEmail);
+                }
               }
+            }
+
+            if (redemption) {
+              await updateRedemptionStatus(redemption.id, "confirmed");
             }
           }
         }
