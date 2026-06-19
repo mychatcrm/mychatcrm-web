@@ -38,6 +38,8 @@ function makeSbClient(rpcOverride?: ReturnType<typeof vi.fn>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("RESEND_API_KEY", "re_test_key");
+  vi.stubEnv("RESEND_FROM_EMAIL", "no-reply@mychatcrm.com.br");
   vi.mocked(createSupabaseServiceClient).mockReturnValue(makeSbClient() as never);
 });
 
@@ -155,6 +157,17 @@ describe("requestPasswordReset", () => {
     mockRpc.mockResolvedValueOnce({ data: null, error: { message: "connection refused" } });
     const result = await requestPasswordReset({ emailRaw: "user@example.com", scope: "member" });
     expect(result.sent).toBe(false);
+    expect(sendTransactionalEmail).not.toHaveBeenCalled();
+  });
+
+  it("does not change member password while Resend is using the test sender", async () => {
+    vi.stubEnv("RESEND_FROM_EMAIL", "MyChatCRM <onboarding@resend.dev>");
+
+    const result = await requestPasswordReset({ emailRaw: "user@example.com", scope: "member" });
+
+    expect(result.sent).toBe(false);
+    expect(result.mailConfigured).toBe(true);
+    expect(mockRpc).not.toHaveBeenCalled();
     expect(sendTransactionalEmail).not.toHaveBeenCalled();
   });
 });

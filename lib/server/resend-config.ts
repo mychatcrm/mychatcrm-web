@@ -15,3 +15,12 @@ export function getResendApiKey(): string | undefined {
 export function isResendConfigured(): boolean {
   return Boolean(getResendApiKey());
 }
+
+export function getResendFromEmail(): string {
+  const from = process.env.RESEND_FROM_EMAIL?.trim() || "MyChatCRM <onboarding@resend.dev>";
+  return from.match(/<([^>]+)>/)?.[1]?.trim() || from;
+}
+
+export function isResendTestSender(): boolean {
+  return getResendFromEmail().toLowerCase().endsWith("@resend.dev");
+}

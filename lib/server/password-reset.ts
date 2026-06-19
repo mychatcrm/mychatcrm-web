@@ -17,7 +17,7 @@ import { SITE_URL } from "@/lib/constants";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { isForgotPasswordForensicEnabled } from "@/lib/server/forgot-password-forensics";
 import { sendTransactionalEmail } from "@/lib/server/resend-mail";
-import { isResendConfigured } from "@/lib/server/resend-config";
+import { isResendConfigured, isResendTestSender } from "@/lib/server/resend-config";
 import { validatePassword } from "@/lib/password-policy";
 
 const TOKEN_BYTES = 32;
@@ -178,6 +178,16 @@ async function requestMemberTemporaryPassword(params: {
 
   if (!mailConfigured) {
     return { sent: false, mailConfigured: false };
+  }
+
+  if (isResendTestSender()) {
+    console.error(
+      "[password-reset] member temporary password blocked: Resend sender is still using @resend.dev test mode. Verify a domain in Resend and set RESEND_FROM_EMAIL to that domain before changing member passwords.",
+    );
+    if (isForgotPasswordForensicEnabled()) {
+      console.warn("[password-reset] stage", JSON.stringify({ stage: "member_temp_password_test_sender_blocked" }));
+    }
+    return { sent: false, mailConfigured };
   }
 
   const temporaryPassword = generateTemporaryPassword();
