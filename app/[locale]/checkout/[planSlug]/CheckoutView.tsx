@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { normalizeCouponCode } from "@/lib/commercial/engine";
+import { validateCheckoutPhone } from "@/lib/checkout-phone";
 import type { CouponRejectCode, CouponValidateResult } from "@/lib/commercial/types";
 import {
   PLAN_ANNUAL_DISCOUNT_PERCENT,
@@ -54,6 +55,7 @@ export function CheckoutView({
   const [applied, setApplied] = useState<AppliedCoupon | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [fullNameValue, setFullNameValue] = useState("");
+  const [phoneValue, setPhoneValue] = useState("");
   const [companyValue, setCompanyValue] = useState("");
   const [termsAccepted, setTermsAccepted] = useState(false);
   const appliedEmailRef = useRef<string>("");
@@ -250,6 +252,7 @@ export function CheckoutView({
     initialCheckoutScopeRef.current = scope;
 
     setFullNameValue("");
+    setPhoneValue("");
     setCompanyValue("");
     setTermsAccepted(false);
     setEmailValue("");
@@ -281,6 +284,12 @@ export function CheckoutView({
     const fd = new FormData(form);
     const email = String(fd.get("email") ?? "").trim();
     const name = String(fd.get("fullName") ?? "").trim();
+    const phoneCheck = validateCheckoutPhone(String(fd.get("phone") ?? ""));
+    if (!phoneCheck.ok) {
+      setSubmitError(phoneCheck.message);
+      setLoading(false);
+      return;
+    }
     const company = String(fd.get("company") ?? "").trim();
 
     try {
@@ -308,6 +317,7 @@ export function CheckoutView({
           ciclo: plan.billingCycle,
           email,
           name,
+          phone: phoneCheck.phone,
           company,
           couponCode,
           couponIdempotencyKey: couponCode ? couponIdempotencyRef.current : undefined,
@@ -424,6 +434,30 @@ export function CheckoutView({
                   </p>
                 )}
               </div>
+            </div>
+
+            <div className="sm:col-span-2">
+              <label htmlFor="phone" className="text-sm font-medium text-content-secondary">
+                Telefone / WhatsApp
+              </label>
+              <Input
+                id="phone"
+                name="phone"
+                type="tel"
+                required
+                autoComplete="tel"
+                inputMode="tel"
+                className="mt-1.5"
+                placeholder="(62) 99999-9999"
+                value={phoneValue}
+                onChange={(e) => {
+                  setPhoneValue(e.target.value);
+                  setSubmitError(null);
+                }}
+              />
+              <p className="mt-1.5 text-xs text-content-faint">
+                Usaremos este número para vincular sua conta e preparar recuperação por SMS no futuro.
+              </p>
             </div>
 
             <div className="sm:col-span-2">

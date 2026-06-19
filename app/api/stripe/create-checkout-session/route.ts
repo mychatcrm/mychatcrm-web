@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { normalizeCouponCode } from "@/lib/commercial/engine";
+import { validateCheckoutPhone } from "@/lib/checkout-phone";
 import { getStripe } from "@/lib/stripe";
 import type { NormalizedPlan } from "@/lib/plan-policy";
 import { getPlanBySlug, parsePlanBillingCycle, PLAN_CHECKOUT_SLUGS } from "@/lib/plans";
@@ -21,13 +22,14 @@ export async function POST(req: NextRequest) {
       ciclo?: string;
       email?: string;
       name?: string;
+      phone?: string;
       company?: string;
       stripePromoCodeId?: string;
       couponCode?: string;
       couponIdempotencyKey?: string;
     };
 
-    const { planSlug, ciclo, email, name, company, couponCode, couponIdempotencyKey } = body;
+    const { planSlug, ciclo, email, name, phone, company, couponCode, couponIdempotencyKey } = body;
 
     if (!planSlug || !PLAN_CHECKOUT_SLUGS.includes(planSlug)) {
       return NextResponse.json({ message: "Plano inválido." }, { status: 400 });
@@ -44,6 +46,11 @@ export async function POST(req: NextRequest) {
     const emailRaw = (email ?? "").trim();
     if (!emailRaw) {
       return NextResponse.json({ message: "E-mail é obrigatório." }, { status: 400 });
+    }
+
+    const phoneCheck = validateCheckoutPhone(phone ?? "");
+    if (!phoneCheck.ok) {
+      return NextResponse.json({ message: phoneCheck.message }, { status: 400 });
     }
 
     const availability = await checkEmailAvailability(emailRaw);
@@ -168,6 +175,7 @@ export async function POST(req: NextRequest) {
       const provision = await provisionFromInternalCheckout({
         email: emailRaw,
         name,
+        phone: phoneCheck.phone,
         company,
         planSlug: planSlug as NormalizedPlan,
         billingCycle: cycle,
@@ -209,6 +217,7 @@ export async function POST(req: NextRequest) {
         planSlug,
         billingCycle: cycle,
         customerName: (name ?? "").trim(),
+        phone: phoneCheck.phone,
         company: (company ?? "").trim(),
         ...couponMetadata,
       },
@@ -216,6 +225,7 @@ export async function POST(req: NextRequest) {
         metadata: {
           planSlug,
           billingCycle: cycle,
+          phone: phoneCheck.phone,
           ...couponMetadata,
         },
       },

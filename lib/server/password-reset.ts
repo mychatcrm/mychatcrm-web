@@ -1,9 +1,13 @@
 /**
- * Password recovery service — tokens de uso único, hash SHA-256 no Postgres.
+ * Password recovery service.
  *
- * Toda a lógica de banco é delegada a dois RPCs SECURITY DEFINER:
+ * Admin continua com tokens de uso único. Clientes recebem uma senha temporária
+ * gerada pelo sistema e enviada por e-mail, conforme fluxo comercial atual.
+ *
+ * A lógica sensível de banco é delegada a RPCs SECURITY DEFINER:
  *   • request_password_reset_token — lookup do utilizador + gestão do token (atómico)
  *   • consume_password_reset_token — validação + update de senha + mark used (atómico, FOR UPDATE)
+ *   • set_member_temporary_password — troca atómica da senha do membro por e-mail
  *
  * Isso elimina (1) dependência de bypass RLS via chave legada, e (2) a janela de
  * replay entre validação e marcação de used_at que existia na implementação anterior.
@@ -18,6 +22,7 @@ import { validatePassword } from "@/lib/password-policy";
 
 const TOKEN_BYTES = 32;
 const EXPIRY_MINUTES = 30;
+const TEMP_PASSWORD_BYTES = 9;
 
 export type PasswordResetScope = "admin" | "member";
 
@@ -36,6 +41,11 @@ function resetLink(rawToken: string, baseOverride?: string): string {
     base = SITE_URL.replace(/\/$/, "");
   }
   return `${base}/reset-password?token=${encodeURIComponent(rawToken)}`;
+}
+
+function generateTemporaryPassword(): string {
+  const base = randomBytes(TEMP_PASSWORD_BYTES).toString("base64url");
+  return `${base}Aa1!`;
 }
 
 /** Masks email for safe logging: ana@empresa.com → a**@e*****.com */
@@ -60,6 +70,10 @@ export async function requestPasswordReset(params: {
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     // Invalid format: still report whether Resend is configured (avoids misleading 503 when key is set).
     return { sent: false, mailConfigured };
+  }
+
+  if (params.scope === "member") {
+    return requestMemberTemporaryPassword({ email, mailConfigured });
   }
 
   const rawToken = randomBytes(TOKEN_BYTES).toString("hex");
@@ -151,6 +165,90 @@ export async function requestPasswordReset(params: {
 
   if (isForgotPasswordForensicEnabled()) {
     console.warn("[password-reset] stage", JSON.stringify({ stage: "resend_ok", scope: params.scope }));
+  }
+
+  return { sent: true, mailConfigured: true };
+}
+
+async function requestMemberTemporaryPassword(params: {
+  email: string;
+  mailConfigured: boolean;
+}): Promise<{ sent: boolean; mailConfigured: boolean }> {
+  const { email, mailConfigured } = params;
+
+  if (!mailConfigured) {
+    return { sent: false, mailConfigured: false };
+  }
+
+  const temporaryPassword = generateTemporaryPassword();
+  const sb = createSupabaseServiceClient();
+
+  const { data: rpcResult, error: rpcErr } = await sb.rpc("set_member_temporary_password", {
+    p_email: email,
+    p_new_password: temporaryPassword,
+  });
+
+  if (rpcErr) {
+    console.error("[password-reset] set_member_temporary_password RPC:", rpcErr.message);
+    if (isForgotPasswordForensicEnabled()) {
+      console.warn("[password-reset] stage", JSON.stringify({ stage: "member_temp_password_rpc_error" }));
+    }
+    return { sent: false, mailConfigured };
+  }
+
+  const result = rpcResult as { found?: boolean; code?: string } | null;
+  if (!result?.found) {
+    if (isForgotPasswordForensicEnabled()) {
+      console.warn("[password-reset] stage", JSON.stringify({ stage: "member_account_not_found" }));
+    }
+    return { sent: false, mailConfigured };
+  }
+
+  const loginUrl = `${SITE_URL.replace(/\/$/, "")}/login`;
+  const subject = "Nova senha temporária — MyChatCRM";
+  const html = `
+<div style="font-family:sans-serif;max-width:520px;margin:0 auto;color:#111827">
+  <h2 style="font-size:20px;font-weight:700;margin-bottom:16px">Nova senha temporária</h2>
+  <p>Recebemos um pedido para recuperar o acesso à sua conta MyChatCRM.</p>
+  <p>Use a senha temporária abaixo para entrar no painel:</p>
+  <p style="font-size:22px;letter-spacing:1px;font-weight:700;background:#f3f4f6;border-radius:10px;padding:14px 16px;margin:20px 0;color:#111827">${temporaryPassword}</p>
+  <p style="margin:24px 0">
+    <a href="${loginUrl}" style="display:inline-block;padding:12px 20px;background:#f24400;color:#fff;text-decoration:none;border-radius:8px;font-weight:600">
+      Entrar no MyChatCRM
+    </a>
+  </p>
+  <p style="font-size:13px;color:#6b7280;line-height:1.5">
+    Por segurança, recomendamos trocar esta senha em Configurações depois de entrar.
+    Se não foi você, entre em contato com o suporte.
+  </p>
+</div>
+`.trim();
+
+  const text = `Nova senha temporária MyChatCRM\n\nUse esta senha para entrar no painel: ${temporaryPassword}\n\nLogin: ${loginUrl}\n\nPor segurança, recomendamos trocar esta senha em Configurações depois de entrar. Se não foi você, entre em contato com o suporte.`;
+
+  const mail = await sendTransactionalEmail({ to: email, subject, html, text });
+  if (!mail.ok) {
+    console.error(
+      "[password-reset] CRITICAL temporary password updated but email failed for",
+      maskEmail(email),
+      "code:",
+      "detail" in mail ? mail.detail : mail.code,
+    );
+    if (isForgotPasswordForensicEnabled()) {
+      console.warn(
+        "[password-reset] stage",
+        JSON.stringify({
+          stage: "member_temp_password_email_failed",
+          resendCode: mail.code,
+          resendDetail: "detail" in mail ? mail.detail : undefined,
+        }),
+      );
+    }
+    return { sent: false, mailConfigured };
+  }
+
+  if (isForgotPasswordForensicEnabled()) {
+    console.warn("[password-reset] stage", JSON.stringify({ stage: "member_temp_password_email_ok" }));
   }
 
   return { sent: true, mailConfigured: true };

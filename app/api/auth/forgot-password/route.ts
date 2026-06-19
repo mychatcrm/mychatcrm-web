@@ -9,7 +9,10 @@ import { isResendConfigured } from "@/lib/server/resend-config";
 import { passwordResetPublicOrigin } from "@/lib/server/password-reset-origin";
 import { requestPasswordReset, type PasswordResetScope } from "@/lib/server/password-reset";
 
-const GENERIC_MESSAGE =
+const GENERIC_MEMBER_MESSAGE =
+  "Se existir uma conta associada a este e-mail, enviámos uma senha temporária para a caixa de entrada. Verifique também o spam.";
+
+const GENERIC_ADMIN_MESSAGE =
   "Se existir uma conta associada a este e-mail, enviámos instruções para redefinir a palavra-passe. Verifique a caixa de entrada e o spam.";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -34,6 +37,7 @@ export async function POST(request: Request) {
   const emailRaw = String(body?.email ?? "").trim().toLowerCase();
   const scopeRaw = String(body?.scope ?? "member").toLowerCase();
   const scope: PasswordResetScope = scopeRaw === "admin" ? "admin" : "member";
+  const genericMessage = scope === "member" ? GENERIC_MEMBER_MESSAGE : GENERIC_ADMIN_MESSAGE;
 
   if (!emailRaw) {
     return NextResponse.json({ message: "Indique o e-mail da conta." }, { status: 400 });
@@ -91,7 +95,7 @@ export async function POST(request: Request) {
     );
     if (!rlEmail.ok) {
       // Return generic message — do not confirm the email exists or is throttled
-      return NextResponse.json({ ok: true, message: GENERIC_MESSAGE });
+      return NextResponse.json({ ok: true, message: genericMessage });
     }
   }
 
@@ -116,7 +120,7 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({ ok: true, message: GENERIC_MESSAGE });
+    return NextResponse.json({ ok: true, message: genericMessage });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[forgot-password] unexpected:", msg, "scope:", scope);
@@ -130,6 +134,6 @@ export async function POST(request: Request) {
       );
     }
     // Generic success — avoid leaking internal errors
-    return NextResponse.json({ ok: true, message: GENERIC_MESSAGE });
+    return NextResponse.json({ ok: true, message: genericMessage });
   }
 }

@@ -57,26 +57,54 @@ describe("requestPasswordReset", () => {
     expect(sendTransactionalEmail).not.toHaveBeenCalled();
   });
 
-  it("sends email and returns sent=true for an existing account", async () => {
+  it("sends a temporary password and returns sent=true for an existing member account", async () => {
     mockRpc.mockResolvedValueOnce({ data: { found: true }, error: null });
     vi.mocked(sendTransactionalEmail).mockResolvedValueOnce({ ok: true });
 
     const result = await requestPasswordReset({ emailRaw: "user@example.com", scope: "member" });
     expect(result.sent).toBe(true);
+    expect(mockRpc).toHaveBeenCalledWith(
+      "set_member_temporary_password",
+      expect.objectContaining({
+        p_email: "user@example.com",
+        p_new_password: expect.any(String),
+      }),
+    );
     expect(sendTransactionalEmail).toHaveBeenCalledOnce();
 
     const call = vi.mocked(sendTransactionalEmail).mock.calls[0][0];
     expect(call.to).toBe("user@example.com");
+    expect(call.subject).toContain("Nova senha temporária");
+    expect(call.html).toContain("Nova senha temporária");
+    expect(call.html).not.toContain("/reset-password?token=");
+  });
+
+  it("sends reset link for an existing admin account", async () => {
+    mockRpc.mockResolvedValueOnce({ data: { found: true }, error: null });
+    vi.mocked(sendTransactionalEmail).mockResolvedValueOnce({ ok: true });
+
+    const result = await requestPasswordReset({ emailRaw: "admin@example.com", scope: "admin" });
+    expect(result.sent).toBe(true);
+    expect(mockRpc).toHaveBeenCalledWith(
+      "request_password_reset_token",
+      expect.objectContaining({
+        p_email: "admin@example.com",
+        p_scope: "admin",
+      }),
+    );
+
+    const call = vi.mocked(sendTransactionalEmail).mock.calls[0][0];
+    expect(call.to).toBe("admin@example.com");
     expect(call.html).toContain("/reset-password?token=");
   });
 
-  it("uses linkBaseUrl in the reset link when provided", async () => {
+  it("uses linkBaseUrl in the admin reset link when provided", async () => {
     mockRpc.mockResolvedValueOnce({ data: { found: true }, error: null });
     vi.mocked(sendTransactionalEmail).mockResolvedValueOnce({ ok: true });
 
     await requestPasswordReset({
       emailRaw: "user@example.com",
-      scope: "member",
+      scope: "admin",
       linkBaseUrl: "https://mychatcrm.vercel.app",
     });
 
@@ -84,7 +112,20 @@ describe("requestPasswordReset", () => {
     expect(call.html).toContain("https://mychatcrm.vercel.app/reset-password?token=");
   });
 
-  it("rolls back token and returns sent=false when Resend fails", async () => {
+  it("returns sent=false for member temporary password when Resend fails", async () => {
+    mockRpc.mockResolvedValueOnce({ data: { found: true }, error: null });
+    vi.mocked(sendTransactionalEmail).mockResolvedValueOnce({
+      ok: false,
+      code: "http_error",
+      detail: "500",
+    });
+
+    const result = await requestPasswordReset({ emailRaw: "user@example.com", scope: "member" });
+    expect(result.sent).toBe(false);
+    expect(mockFrom).not.toHaveBeenCalledWith("password_reset_tokens");
+  });
+
+  it("rolls back admin token and returns sent=false when Resend fails", async () => {
     mockRpc.mockResolvedValueOnce({ data: { found: true }, error: null });
     vi.mocked(sendTransactionalEmail).mockResolvedValueOnce({
       ok: false,
@@ -96,21 +137,17 @@ describe("requestPasswordReset", () => {
     const mockDelete = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) });
     mockFrom.mockReturnValue({ delete: mockDelete });
 
-    const result = await requestPasswordReset({ emailRaw: "user@example.com", scope: "member" });
+    const result = await requestPasswordReset({ emailRaw: "admin@example.com", scope: "admin" });
     expect(result.sent).toBe(false);
     expect(mockFrom).toHaveBeenCalledWith("password_reset_tokens");
   });
 
   it("returns mailConfigured=false when RESEND_API_KEY is missing", async () => {
     vi.stubEnv("RESEND_API_KEY", "");
-    // RPC finds user; but Resend has no key → sendTransactionalEmail returns missing_key
-    mockRpc.mockResolvedValueOnce({ data: { found: true }, error: null });
-    vi.mocked(sendTransactionalEmail).mockResolvedValueOnce({ ok: false, code: "missing_key" });
-    const mockDelete = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) });
-    mockFrom.mockReturnValue({ delete: mockDelete });
-
     const result = await requestPasswordReset({ emailRaw: "user@example.com", scope: "member" });
     expect(result.mailConfigured).toBe(false);
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(sendTransactionalEmail).not.toHaveBeenCalled();
     vi.stubEnv("RESEND_API_KEY", "re_test_key");
   });
 

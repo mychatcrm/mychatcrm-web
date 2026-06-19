@@ -30,6 +30,7 @@ type CheckoutProvisionInput = {
   sessionId: string;
   email: string;
   name: string;
+  phone: string;
   company: string;
   planSlug: NormalizedPlan;
   billingCycle: string;
@@ -49,6 +50,7 @@ export async function provisionFromStripeSession(
     sessionId: session.id,
     email: session.customer_email ?? "",
     name: (session.metadata?.customerName ?? "").trim(),
+    phone: (session.metadata?.phone ?? "").trim(),
     company: (session.metadata?.company ?? "").trim(),
     planSlug: ((session.metadata?.planSlug as NormalizedPlan) ?? "solo") as NormalizedPlan,
     billingCycle: session.metadata?.billingCycle ?? "monthly",
@@ -60,6 +62,7 @@ export async function provisionFromStripeSession(
 export async function provisionFromInternalCheckout(params: {
   email: string;
   name?: string | null;
+  phone?: string | null;
   company?: string | null;
   planSlug: NormalizedPlan;
   billingCycle: string;
@@ -69,6 +72,7 @@ export async function provisionFromInternalCheckout(params: {
     sessionId: internalSessionId,
     email: params.email,
     name: params.name?.trim() ?? "",
+    phone: params.phone?.trim() ?? "",
     company: params.company?.trim() ?? "",
     planSlug: params.planSlug,
     billingCycle: params.billingCycle,
@@ -85,6 +89,7 @@ async function provisionFromCheckoutData(input: CheckoutProvisionInput): Promise
 
   const email = input.email.toLowerCase().trim();
   const name = input.name.trim() || email.split("@")[0];
+  const phone = input.phone.trim();
   const company = input.company.trim() || name;
   const planSlug = input.planSlug;
   const billingCycle = input.billingCycle;
@@ -109,6 +114,7 @@ async function provisionFromCheckoutData(input: CheckoutProvisionInput): Promise
   const existingMember = existingRows?.[0] ?? null;
 
   if (existingMember) {
+    await updateMemberPhoneIfPresent(sb, existingMember.id as string, phone);
     // Tenant já provisionado — devolver (ou criar) token de ativação
     const token = await ensureActivationToken(
       sb,
@@ -160,12 +166,15 @@ async function provisionFromCheckoutData(input: CheckoutProvisionInput): Promise
         .limit(1);
       const dup = dupRows?.[0];
       if (dup) {
+        await updateMemberPhoneIfPresent(sb, dup.id as string, phone);
         const token = await ensureActivationToken(sb, dup.tenant_id as string, dup.id as string, email);
         return { tenantId: dup.tenant_id as string, memberId: dup.id as string, email, activationToken: token };
       }
     }
     throw new Error(`[stripe-provision] upsert_tenant_member: ${memberErr.message}`);
   }
+
+  await updateMemberPhoneIfPresent(sb, memberId, phone);
 
   // --- Provisionar limites do plano ---
   const limits = getPlanPolicy(planSlug);
@@ -212,6 +221,23 @@ async function provisionFromCheckoutData(input: CheckoutProvisionInput): Promise
   console.log("[stripe-provision] Tenant provisionado:", tenantId, "plano:", planSlug, "email:", email);
 
   return { tenantId, memberId, email, activationToken };
+}
+
+async function updateMemberPhoneIfPresent(
+  sb: ReturnType<typeof createSupabaseServiceClient>,
+  memberId: string,
+  phone: string,
+): Promise<void> {
+  if (!phone) return;
+
+  const { error } = await sb
+    .from("tenant_members")
+    .update({ phone })
+    .eq("id", memberId);
+
+  if (error) {
+    throw new Error(`[stripe-provision] tenant_members.phone: ${error.message}`);
+  }
 }
 
 export function isInternalTestCheckoutSessionId(sessionId: string): boolean {
