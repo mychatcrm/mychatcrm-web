@@ -45,7 +45,7 @@ export default async function ForgotPasswordPage({ params }: Props) {
         variant="client"
         scope="member"
         title="Recuperar palavra-passe"
-        subtitle="Indique o e-mail da sua conta de cliente. Se existir, receberá uma senha temporária para entrar e trocar depois nas configurações."
+        subtitle="Indique o e-mail da sua conta de cliente. Se existir, enviaremos um link seguro para definir uma nova palavra-passe."
         loginHref={loginHref}
         loginLabel="Voltar ao início de sessão"
       />

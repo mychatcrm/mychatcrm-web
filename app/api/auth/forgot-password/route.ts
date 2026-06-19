@@ -10,7 +10,7 @@ import { passwordResetPublicOrigin } from "@/lib/server/password-reset-origin";
 import { requestPasswordReset, type PasswordResetScope } from "@/lib/server/password-reset";
 
 const GENERIC_MEMBER_MESSAGE =
-  "Se existir uma conta associada a este e-mail, enviámos uma senha temporária para a caixa de entrada. Verifique também o spam.";
+  "Se existir uma conta associada a este e-mail, enviaremos um link seguro para redefinir sua senha. Verifique também o spam.";
 
 const GENERIC_ADMIN_MESSAGE =
   "Se existir uma conta associada a este e-mail, enviámos instruções para redefinir a palavra-passe. Verifique a caixa de entrada e o spam.";

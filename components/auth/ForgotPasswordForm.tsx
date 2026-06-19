@@ -139,7 +139,7 @@ export function ForgotPasswordForm({ variant, scope, title, subtitle, loginHref,
           {cooldownLeft > 0
             ? `Reenviar em ${cooldownLeft}s`
             : scope === "member"
-              ? "Enviar senha temporária"
+              ? "Enviar link de recuperação"
               : "Enviar instruções"}
         </Button>
 

@@ -59,26 +59,28 @@ describe("requestPasswordReset", () => {
     expect(sendTransactionalEmail).not.toHaveBeenCalled();
   });
 
-  it("sends a temporary password and returns sent=true for an existing member account", async () => {
+  it("sends a reset link and returns sent=true for an existing member account", async () => {
     mockRpc.mockResolvedValueOnce({ data: { found: true }, error: null });
     vi.mocked(sendTransactionalEmail).mockResolvedValueOnce({ ok: true });
 
     const result = await requestPasswordReset({ emailRaw: "user@example.com", scope: "member" });
     expect(result.sent).toBe(true);
     expect(mockRpc).toHaveBeenCalledWith(
-      "set_member_temporary_password",
+      "request_password_reset_token",
       expect.objectContaining({
         p_email: "user@example.com",
-        p_new_password: expect.any(String),
+        p_scope: "member",
+        p_token_hash: expect.any(String),
+        p_expires_at: expect.any(String),
       }),
     );
     expect(sendTransactionalEmail).toHaveBeenCalledOnce();
 
     const call = vi.mocked(sendTransactionalEmail).mock.calls[0][0];
     expect(call.to).toBe("user@example.com");
-    expect(call.subject).toContain("Nova senha temporária");
-    expect(call.html).toContain("Nova senha temporária");
-    expect(call.html).not.toContain("/reset-password?token=");
+    expect(call.subject).toContain("Redefinição de senha");
+    expect(call.html).toContain("/reset-password?token=");
+    expect(call.html).not.toContain("Nova senha temporária");
   });
 
   it("sends reset link for an existing admin account", async () => {
@@ -114,7 +116,7 @@ describe("requestPasswordReset", () => {
     expect(call.html).toContain("https://mychatcrm.vercel.app/reset-password?token=");
   });
 
-  it("returns sent=false for member temporary password when Resend fails", async () => {
+  it("rolls back member token and returns sent=false when Resend fails", async () => {
     mockRpc.mockResolvedValueOnce({ data: { found: true }, error: null });
     vi.mocked(sendTransactionalEmail).mockResolvedValueOnce({
       ok: false,
@@ -122,9 +124,12 @@ describe("requestPasswordReset", () => {
       detail: "500",
     });
 
+    const mockDelete = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) });
+    mockFrom.mockReturnValue({ delete: mockDelete });
+
     const result = await requestPasswordReset({ emailRaw: "user@example.com", scope: "member" });
     expect(result.sent).toBe(false);
-    expect(mockFrom).not.toHaveBeenCalledWith("password_reset_tokens");
+    expect(mockFrom).toHaveBeenCalledWith("password_reset_tokens");
   });
 
   it("rolls back admin token and returns sent=false when Resend fails", async () => {
@@ -160,7 +165,7 @@ describe("requestPasswordReset", () => {
     expect(sendTransactionalEmail).not.toHaveBeenCalled();
   });
 
-  it("does not change member password while Resend is using the test sender", async () => {
+  it("does not create a reset token while Resend is using the test sender", async () => {
     vi.stubEnv("RESEND_FROM_EMAIL", "MyChatCRM <onboarding@resend.dev>");
 
     const result = await requestPasswordReset({ emailRaw: "user@example.com", scope: "member" });
