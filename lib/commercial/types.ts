@@ -154,6 +154,8 @@ export type CouponValidateSuccess = {
   partnerId: string | null;
   /** Preenchido pela validate route, não pelo engine. */
   stripePromoCodeId?: string | null;
+  /** Cupom interno controlado pelo admin que provisiona conta sem Checkout Stripe. */
+  internalProvisioning?: boolean;
   message: string;
 };
 

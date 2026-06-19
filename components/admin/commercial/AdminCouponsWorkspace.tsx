@@ -13,6 +13,7 @@ import type {
   CouponExtraCode,
   CouponRedemption,
 } from "@/lib/commercial/types";
+import { isInternalTestProvisioningCoupon } from "@/lib/commercial/internal-test-coupon";
 import { PLAN_CHECKOUT_SLUGS } from "@/lib/plans";
 import { formatBRL } from "@/lib/utils";
 
@@ -200,7 +201,16 @@ export function AdminCouponsWorkspace() {
     {
       key: "name",
       header: "Nome interno",
-      render: (r) => <span className="text-content-secondary">{r.internalName}</span>,
+      render: (r) => (
+        <div className="flex flex-col gap-1">
+          <span className="text-content-secondary">{r.internalName}</span>
+          {isInternalTestProvisioningCoupon(r) ? (
+            <span className="w-fit rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-400">
+              Cupom interno de teste · sem Stripe
+            </span>
+          ) : null}
+        </div>
+      ),
     },
     {
       key: "discount",
@@ -229,6 +239,9 @@ export function AdminCouponsWorkspace() {
       key: "status",
       header: "Status",
       render: (r) => {
+        if (isInternalTestProvisioningCoupon(r)) {
+          return <span className="text-xs font-medium text-amber-400">Teste interno</span>;
+        }
         if (!r.active) {
           return <span className="text-xs font-medium text-content-faint">Inativo</span>;
         }
@@ -249,16 +262,21 @@ export function AdminCouponsWorkspace() {
       key: "actions",
       header: "",
       className: "w-[200px]",
-      render: (r) => (
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" size="sm" variant="secondary" onClick={() => openEdit(r)}>
-            Editar
-          </Button>
-          <Button type="button" size="sm" variant="ghost" onClick={() => setPendingDelete(r)}>
-            Excluir
-          </Button>
-        </div>
-      ),
+      render: (r) => {
+        const isInternal = isInternalTestProvisioningCoupon(r);
+        return (
+          <div className="flex flex-wrap gap-2">
+            {!isInternal ? (
+              <Button type="button" size="sm" variant="secondary" onClick={() => openEdit(r)}>
+                Editar
+              </Button>
+            ) : null}
+            <Button type="button" size="sm" variant="ghost" onClick={() => setPendingDelete(r)}>
+              Excluir
+            </Button>
+          </div>
+        );
+      },
     },
   ];
 
@@ -440,6 +458,11 @@ export function AdminCouponsWorkspace() {
           </p>
         )}
         <p className="mt-2 text-xs text-content-faint">Esta ação é irreversível.</p>
+        {isInternalTestProvisioningCoupon(pendingDelete) ? (
+          <p className="mt-2 text-xs text-amber-400">
+            Ao excluir este cupom, o atalho interno TEST100 deixa de criar contas de teste sem Stripe.
+          </p>
+        ) : null}
       </Modal>
 
       <Modal

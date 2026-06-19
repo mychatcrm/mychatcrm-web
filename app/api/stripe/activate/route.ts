@@ -5,7 +5,11 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getStripe } from "@/lib/stripe";
-import { provisionFromStripeSession } from "@/lib/server/stripe-provision";
+import {
+  activateInternalCheckoutSession,
+  isInternalTestCheckoutSessionId,
+  provisionFromStripeSession,
+} from "@/lib/server/stripe-provision";
 
 export async function GET(req: NextRequest) {
   const sessionId = req.nextUrl.searchParams.get("session_id");
@@ -14,6 +18,15 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    if (isInternalTestCheckoutSessionId(sessionId)) {
+      const result = await activateInternalCheckoutSession(sessionId);
+      return NextResponse.json({
+        ok: true,
+        email: result.email,
+        activationToken: result.activationToken,
+      });
+    }
+
     const stripe = getStripe();
     const session = await stripe.checkout.sessions.retrieve(sessionId);
 

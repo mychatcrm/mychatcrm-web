@@ -17,6 +17,7 @@ import {
   buildCommercialStoreFromDb,
   insertRedemption,
 } from "@/lib/server/commercial-store-db";
+import { isInternalTestProvisioningCoupon } from "@/lib/commercial/internal-test-coupon";
 import { randomUUID } from "crypto";
 
 export type CheckoutPriceProductContext = {
@@ -55,6 +56,7 @@ export async function resolveCheckoutPriceProduct(params: {
 
 export type ResolvedCheckoutCoupon = Extract<CouponValidateResult, { ok: true }> & {
   stripePromoCodeId: string | null;
+  internalProvisioning: boolean;
   normalizedCode: string;
   extraCodeMatch: CouponExtraCode | null;
 };
@@ -111,10 +113,15 @@ export function resolveCheckoutCoupon(
   }
 
   const stripePromoCodeId = extraCodeMatch?.stripePromoCodeId ?? coupon?.stripePromoCodeId ?? null;
+  const internalProvisioning = isInternalTestProvisioningCoupon(coupon);
 
   return {
     ...result,
+    message: internalProvisioning
+      ? "Cupom interno TEST100 aplicado. A conta de teste será criada sem passar pelo Stripe."
+      : result.message,
     stripePromoCodeId,
+    internalProvisioning,
     normalizedCode,
     extraCodeMatch,
   };

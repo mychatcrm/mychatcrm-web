@@ -16,7 +16,7 @@ function withCoupon(store: CommercialStore, patch: Partial<CommercialCoupon> & {
     id,
     code: patch.code,
     internalName: patch.internalName ?? patch.code,
-    description: "",
+    description: patch.description ?? "",
     discountType: patch.discountType ?? "percent",
     discountValue: patch.discountValue ?? 100,
     validFrom: null,
@@ -29,10 +29,10 @@ function withCoupon(store: CommercialStore, patch: Partial<CommercialCoupon> & {
     recurringCyclesLimit: null,
     active: patch.active ?? true,
     partnerId: null,
-    stripeCouponId: patch.stripeCouponId ?? "cou_test",
-    stripePromoCodeId: patch.stripePromoCodeId ?? "promo_test_main",
+    stripeCouponId: "stripeCouponId" in patch ? patch.stripeCouponId ?? null : "cou_test",
+    stripePromoCodeId: "stripePromoCodeId" in patch ? patch.stripePromoCodeId ?? null : "promo_test_main",
     stripeProductIds: patch.stripeProductIds ?? [],
-    createPublicCode: true,
+    createPublicCode: patch.createPublicCode ?? true,
     firstTimeOnly: false,
     restrictedCustomerEmail: null,
     minimumAmountCents: null,
@@ -193,6 +193,34 @@ describe("resolveCheckoutCoupon", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe("COUPON_PRODUCT_NOT_ALLOWED");
+    }
+  });
+
+  it("reconhece TEST100 interno sem exigir Promotion Code Stripe", () => {
+    const store = withCoupon(buildSeedCommercialStore(), {
+      code: "TEST100",
+      internalName: "TEST100 · contas de teste",
+      description:
+        "[internal-test-provisioning] Cupom interno para criar contas de teste sem checkout Stripe.",
+      allowedPlanSlugs: [],
+      createPublicCode: false,
+      stripeCouponId: null,
+      stripePromoCodeId: null,
+    });
+
+    const result = resolveCheckoutCoupon({
+      store,
+      codeRaw: "TEST100",
+      planSlug: "escala",
+      billingCycle: "annual",
+      stripeProductId: "prod_escala",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.finalCents).toBe(0);
+      expect(result.stripePromoCodeId).toBeNull();
+      expect(result.internalProvisioning).toBe(true);
     }
   });
 });

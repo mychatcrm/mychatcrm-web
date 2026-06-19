@@ -209,7 +209,7 @@ export function CheckoutView({
           setCouponMessage("message" in data && data.message ? data.message : "Cupom não pôde ser aplicado.");
           return null;
         }
-        if (!data.stripePromoCodeId) {
+        if (!data.stripePromoCodeId && !data.internalProvisioning) {
           setApplied(null);
           setCouponMessage(
             "Este cupom não está configurado para desconto no pagamento. Entre em contato com o suporte.",
@@ -490,7 +490,9 @@ export function CheckoutView({
           >
             {loading
               ? "Redirecionando…"
-              : plan.billingCycle === "annual" && !applied
+              : applied?.internalProvisioning
+                ? "Criar conta de teste · R$ 0,00"
+                : plan.billingCycle === "annual" && !applied
                 ? `Ir para o pagamento · ${displayPay} (anual)`
                 : `Ir para o pagamento · ${displayPay}`}
           </Button>
@@ -503,7 +505,9 @@ export function CheckoutView({
                 clipRule="evenodd"
               />
             </svg>
-            Pagamento 100% seguro — processado pelo Stripe
+            {applied?.internalProvisioning
+              ? "Cupom interno de teste — conta criada sem cobrança Stripe"
+              : "Pagamento 100% seguro — processado pelo Stripe"}
           </p>
 
           {plan.billingCycle === "annual" && !applied && annualTotals ? (

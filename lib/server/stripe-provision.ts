@@ -24,6 +24,20 @@ export type ProvisionResult = {
   activationToken: string;
 };
 
+const INTERNAL_TEST_CHECKOUT_SESSION_PREFIX = "internal_TEST100";
+
+type CheckoutProvisionInput = {
+  sessionId: string;
+  email: string;
+  name: string;
+  company: string;
+  planSlug: NormalizedPlan;
+  billingCycle: string;
+  stripeCustomerId: string | null;
+  stripeSubscriptionId: string | null;
+  requireSubscriptionRecord?: boolean;
+};
+
 /**
  * Idempotente: se o tenant já existe para este e-mail, retorna o token de ativação existente
  * (ou cria um novo se o anterior já foi usado).
@@ -31,17 +45,51 @@ export type ProvisionResult = {
 export async function provisionFromStripeSession(
   session: Stripe.Checkout.Session,
 ): Promise<ProvisionResult> {
+  return provisionFromCheckoutData({
+    sessionId: session.id,
+    email: session.customer_email ?? "",
+    name: (session.metadata?.customerName ?? "").trim(),
+    company: (session.metadata?.company ?? "").trim(),
+    planSlug: ((session.metadata?.planSlug as NormalizedPlan) ?? "solo") as NormalizedPlan,
+    billingCycle: session.metadata?.billingCycle ?? "monthly",
+    stripeCustomerId: typeof session.customer === "string" ? session.customer : null,
+    stripeSubscriptionId: typeof session.subscription === "string" ? session.subscription : null,
+  });
+}
+
+export async function provisionFromInternalCheckout(params: {
+  email: string;
+  name?: string | null;
+  company?: string | null;
+  planSlug: NormalizedPlan;
+  billingCycle: string;
+}): Promise<ProvisionResult & { internalSessionId: string }> {
+  const internalSessionId = shortId(INTERNAL_TEST_CHECKOUT_SESSION_PREFIX);
+  const result = await provisionFromCheckoutData({
+    sessionId: internalSessionId,
+    email: params.email,
+    name: params.name?.trim() ?? "",
+    company: params.company?.trim() ?? "",
+    planSlug: params.planSlug,
+    billingCycle: params.billingCycle,
+    stripeCustomerId: null,
+    stripeSubscriptionId: null,
+    requireSubscriptionRecord: true,
+  });
+
+  return { ...result, internalSessionId };
+}
+
+async function provisionFromCheckoutData(input: CheckoutProvisionInput): Promise<ProvisionResult> {
   const sb = createSupabaseServiceClient();
 
-  const email = (session.customer_email ?? "").toLowerCase().trim();
-  const name = (session.metadata?.customerName ?? "").trim() || email.split("@")[0];
-  const company = (session.metadata?.company ?? "").trim() || name;
-  const planSlug = ((session.metadata?.planSlug as NormalizedPlan) ?? "solo") as NormalizedPlan;
-  const billingCycle = session.metadata?.billingCycle ?? "monthly";
-  const stripeCustomerId =
-    typeof session.customer === "string" ? session.customer : null;
-  const stripeSubscriptionId =
-    typeof session.subscription === "string" ? session.subscription : null;
+  const email = input.email.toLowerCase().trim();
+  const name = input.name.trim() || email.split("@")[0];
+  const company = input.company.trim() || name;
+  const planSlug = input.planSlug;
+  const billingCycle = input.billingCycle;
+  const stripeCustomerId = input.stripeCustomerId;
+  const stripeSubscriptionId = input.stripeSubscriptionId;
 
   if (!email) throw new Error("[stripe-provision] Session sem e-mail do cliente.");
 
@@ -147,16 +195,59 @@ export async function provisionFromStripeSession(
       plan_slug: planSlug,
       billing_cycle: billingCycle,
       status: "active",
-      stripe_session_id: session.id,
+      stripe_session_id: input.sessionId,
     },
     { onConflict: "tenant_id" },
   );
-  if (subErr) console.warn("[stripe-provision] stripe_subscriptions:", subErr.message);
+  if (subErr) {
+    if (input.requireSubscriptionRecord) {
+      throw new Error(`[stripe-provision] stripe_subscriptions: ${subErr.message}`);
+    }
+    console.warn("[stripe-provision] stripe_subscriptions:", subErr.message);
+  }
 
   // --- Gerar token de ativação de senha ---
   const activationToken = await ensureActivationToken(sb, tenantId, memberId, email);
 
   console.log("[stripe-provision] Tenant provisionado:", tenantId, "plano:", planSlug, "email:", email);
+
+  return { tenantId, memberId, email, activationToken };
+}
+
+export function isInternalTestCheckoutSessionId(sessionId: string): boolean {
+  return sessionId.startsWith(`${INTERNAL_TEST_CHECKOUT_SESSION_PREFIX}-`);
+}
+
+export async function activateInternalCheckoutSession(sessionId: string): Promise<ProvisionResult> {
+  if (!isInternalTestCheckoutSessionId(sessionId)) {
+    throw new Error("[stripe-provision] Sessão interna inválida.");
+  }
+
+  const sb = createSupabaseServiceClient();
+  const { data: subscription, error: subscriptionErr } = await sb
+    .from("stripe_subscriptions")
+    .select("tenant_id")
+    .eq("stripe_session_id", sessionId)
+    .maybeSingle();
+
+  if (subscriptionErr || !subscription?.tenant_id) {
+    throw new Error("[stripe-provision] Sessão interna não encontrada.");
+  }
+
+  const tenantId = subscription.tenant_id as string;
+  const { data: provision, error: provisionErr } = await sb
+    .from("enterprise_provisions")
+    .select("owner_member_id, owner_email")
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+
+  if (provisionErr || !provision?.owner_member_id || !provision.owner_email) {
+    throw new Error("[stripe-provision] Provisionamento interno incompleto.");
+  }
+
+  const memberId = provision.owner_member_id as string;
+  const email = provision.owner_email as string;
+  const activationToken = await ensureActivationToken(sb, tenantId, memberId, email);
 
   return { tenantId, memberId, email, activationToken };
 }

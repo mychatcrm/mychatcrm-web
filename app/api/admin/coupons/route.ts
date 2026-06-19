@@ -3,6 +3,7 @@ import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
 import { parseCouponUpsert } from "@/lib/commercial/admin-payloads";
 import { countCommittedRedemptionsForCoupon, normalizeCouponCode } from "@/lib/commercial/engine";
 import { applyCouponPartnerLink } from "@/lib/commercial/sync-links";
+import { isInternalTestProvisioningCoupon } from "@/lib/commercial/internal-test-coupon";
 import {
   appendAuditEntry,
   buildCommercialStoreFromDb,
@@ -160,6 +161,27 @@ export async function POST(request: Request) {
   const dup = findDuplicateCodes(store, codeNorm, parsed.extraCodes);
   if (dup) {
     return NextResponse.json({ error: `Já existe um cupom ou código extra com «${dup}».` }, { status: 409 });
+  }
+
+  if (isInternalTestProvisioningCoupon(parsed.coupon)) {
+    try {
+      await upsertCoupon(parsed.coupon);
+    } catch (dbErr) {
+      const msg = dbErr instanceof Error ? dbErr.message : "Erro ao criar cupom interno no banco.";
+      console.error("[admin-coupons] Falha ao criar cupom interno:", msg);
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
+
+    await appendAuditEntry({
+      id: `aud_${randomUUID()}`,
+      createdAt: new Date().toISOString(),
+      adminId: session.adminId,
+      adminEmail: session.email,
+      action: "coupon_internal_test_create",
+      detail: parsed.coupon.code,
+    });
+
+    return NextResponse.json({ ok: true, coupon: parsed.coupon });
   }
 
   const createResult = await createCouponWithStripe(

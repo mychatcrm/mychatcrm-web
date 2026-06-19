@@ -2,15 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { normalizeCouponCode } from "@/lib/commercial/engine";
 import { getStripe } from "@/lib/stripe";
+import type { NormalizedPlan } from "@/lib/plan-policy";
 import { getPlanBySlug, parsePlanBillingCycle, PLAN_CHECKOUT_SLUGS } from "@/lib/plans";
 import { SITE_URL } from "@/lib/constants";
 import { checkEmailAvailability } from "@/lib/server/email-availability";
-import { buildCommercialStoreFromDb } from "@/lib/server/commercial-store-db";
+import { buildCommercialStoreFromDb, updateRedemptionStatus } from "@/lib/server/commercial-store-db";
 import {
   commitCheckoutCoupon,
   resolveCheckoutCoupon,
   resolveCheckoutPriceProduct,
 } from "@/lib/server/checkout-coupon";
+import { provisionFromInternalCheckout } from "@/lib/server/stripe-provision";
 
 export async function POST(req: NextRequest) {
   try {
@@ -92,6 +94,7 @@ export async function POST(req: NextRequest) {
     const normalizedCoupon = normalizeCouponCode(couponCode ?? "");
     let stripePromoCodeId: string | undefined;
     let couponMetadata: { couponCode?: string; couponId?: string; couponIdempotencyKey?: string } = {};
+    let internalProvisioningCoupon = false;
     let couponCommit:
       | {
           store: Awaited<ReturnType<typeof buildCommercialStoreFromDb>>;
@@ -118,33 +121,81 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      if (!resolved.stripePromoCodeId) {
-        return NextResponse.json(
-          {
-            message:
-              "Este cupom não está configurado para desconto no pagamento. Entre em contato com o suporte.",
-            code: "COUPON_STRIPE_PROMO_MISSING",
-          },
-          { status: 422 },
-        );
-      }
-
       const idempotencyKey =
         typeof couponIdempotencyKey === "string" && couponIdempotencyKey.trim()
           ? couponIdempotencyKey.trim()
           : `checkout_${randomUUID()}`;
 
-      stripePromoCodeId = resolved.stripePromoCodeId;
-      couponMetadata = {
-        couponCode: resolved.code,
-        couponId: resolved.couponId,
-        couponIdempotencyKey: idempotencyKey,
-      };
-      couponCommit = {
-        store,
-        codeRaw: normalizedCoupon,
-        idempotencyKey,
-      };
+      if (resolved.internalProvisioning) {
+        internalProvisioningCoupon = true;
+        couponMetadata = {
+          couponCode: resolved.code,
+          couponId: resolved.couponId,
+          couponIdempotencyKey: idempotencyKey,
+        };
+        couponCommit = {
+          store,
+          codeRaw: normalizedCoupon,
+          idempotencyKey,
+        };
+      } else {
+        if (!resolved.stripePromoCodeId) {
+          return NextResponse.json(
+            {
+              message:
+                "Este cupom não está configurado para desconto no pagamento. Entre em contato com o suporte.",
+              code: "COUPON_STRIPE_PROMO_MISSING",
+            },
+            { status: 422 },
+          );
+        }
+
+        stripePromoCodeId = resolved.stripePromoCodeId;
+        couponMetadata = {
+          couponCode: resolved.code,
+          couponId: resolved.couponId,
+          couponIdempotencyKey: idempotencyKey,
+        };
+        couponCommit = {
+          store,
+          codeRaw: normalizedCoupon,
+          idempotencyKey,
+        };
+      }
+    }
+
+    if (internalProvisioningCoupon && couponCommit) {
+      const provision = await provisionFromInternalCheckout({
+        email: emailRaw,
+        name,
+        company,
+        planSlug: planSlug as NormalizedPlan,
+        billingCycle: cycle,
+      });
+
+      const commitResult = await commitCheckoutCoupon({
+        store: couponCommit.store,
+        codeRaw: couponCommit.codeRaw,
+        planSlug,
+        billingCycle: cycle,
+        email: emailRaw,
+        idempotencyKey: couponCommit.idempotencyKey,
+        stripeProductId: priceContext.productId,
+      });
+
+      if (!commitResult.ok) {
+        console.error("[create-checkout-session] Conta interna criada, mas registro de cupom falhou:", {
+          internalSessionId: provision.internalSessionId,
+          code: commitResult.code,
+          message: commitResult.message,
+        });
+      } else {
+        await updateRedemptionStatus(commitResult.redemptionId, "confirmed");
+      }
+
+      return NextResponse.json({
+        url: `${SITE_URL}/checkout/${planSlug}/success?session_id=${encodeURIComponent(provision.internalSessionId)}`,
+      });
     }
 
     const stripe = getStripe();

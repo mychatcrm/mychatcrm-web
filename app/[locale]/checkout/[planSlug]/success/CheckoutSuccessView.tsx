@@ -20,6 +20,7 @@ export function CheckoutSuccessView({
   sessionId: string | null;
 }) {
   const router = useRouter();
+  const isInternalTestSession = sessionId?.startsWith("internal_TEST100-") ?? false;
   const [state, setState] = useState<State>({ phase: "loading" });
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -118,7 +119,9 @@ export function CheckoutSuccessView({
     return (
       <div className="mx-auto w-full max-w-lg rounded-2xl border border-line bg-surface-card px-5 py-10 text-center sm:px-8 sm:py-12">
         <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-primary/20 border-t-primary" />
-        <p className="mt-6 text-sm text-content-muted">Confirmando seu pagamento…</p>
+        <p className="mt-6 text-sm text-content-muted">
+          {isInternalTestSession ? "Preparando sua conta de teste…" : "Confirmando seu pagamento…"}
+        </p>
       </div>
     );
   }
@@ -180,7 +183,7 @@ export function CheckoutSuccessView({
           ✓
         </div>
         <h2 className="mt-6 font-display text-2xl font-bold text-content">
-          Pagamento confirmado!
+          {isInternalTestSession ? "Conta de teste liberada!" : "Pagamento confirmado!"}
         </h2>
         <p className="mt-2 text-sm text-content-muted">
           Crie agora a senha para o seu acesso ao plano{" "}
