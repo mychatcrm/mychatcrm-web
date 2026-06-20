@@ -25,18 +25,23 @@
   --color-content-secondary:  40  55  75;
   --color-content-muted:     113 113 122;  /* #71717a — DS brand-text-muted */
   --color-content-faint:     130 140 155;
-  --panel-shell-glow: none;
-  --panel-topbar-fill: rgb(255 255 255 / 0.96);
-  --panel-sidebar-fill: rgb(242 242 242 / 1);
-  --panel-card-fill: rgb(255 255 255 / 1);
-  --panel-card-fill-alt: rgb(250 250 251 / 1);
-  --panel-workspace-fill: rgb(238 240 244 / 1);
-  --panel-section-fill: rgb(247 247 248 / 0.82);
-  --panel-muted-fill: rgb(247 247 248 / 1);
-  --panel-card-highlight: none;
-  --panel-shadow-ambient: none;
-  --panel-shadow-float: none;
-  --panel-shadow-edge: none;
+  --panel-shell-glow:
+    radial-gradient(circle at 14% 0%, rgb(242 68 0 / 0.13), transparent 30rem),
+    radial-gradient(circle at 86% 7%, rgb(14 29 41 / 0.10), transparent 34rem),
+    linear-gradient(135deg, rgb(255 255 255 / 0.72), rgb(226 232 240 / 0.34));
+  --panel-topbar-fill: rgb(255 255 255 / 0.78);
+  --panel-sidebar-fill: rgb(244 246 249 / 0.78);
+  --panel-card-fill: rgb(255 255 255 / 0.86);
+  --panel-card-fill-alt: rgb(250 251 253 / 0.92);
+  --panel-workspace-fill: rgb(237 240 244 / 1);
+  --panel-section-fill: rgb(248 250 252 / 0.74);
+  --panel-muted-fill: rgb(247 247 248 / 0.86);
+  --panel-card-highlight:
+    linear-gradient(135deg, rgb(255 255 255 / 0.76), transparent 42%),
+    radial-gradient(circle at 92% 0%, rgb(242 68 0 / 0.13), transparent 38%);
+  --panel-shadow-ambient: 0 18px 50px rgb(14 29 41 / 0.12);
+  --panel-shadow-float: 0 18px 44px rgb(14 29 41 / 0.14);
+  --panel-shadow-edge: 0 1px 0 rgb(255 255 255 / 0.72) inset;
   --panel-border-soft: rgb(14 29 41 / 0.09);
   --panel-border-subtle: rgb(14 29 41 / 0.055);
   --panel-border-control: rgb(14 29 41 / 0.105);
@@ -45,15 +50,17 @@
   --panel-surface-hover: rgb(14 29 41 / 0.035);
   --panel-surface-inset: rgb(14 29 41 / 0.04);
   --panel-window-fill: rgb(255 255 255 / 1);
-  --panel-floating-sidebar-fill: rgb(247 247 248 / 0.98);
-  --panel-floating-sidebar-outline: rgb(14 29 41 / 0.075);
-  --panel-floating-sidebar-shadow: 0 1px 2px rgb(14 29 41 / 0.035);
-  --panel-main-pane-outline: transparent;
-  --panel-main-pane-shadow: none;
-  --panel-active-item-fill: rgb(14 29 41 / 0.055);
-  --panel-active-item-outline: transparent;
+  --panel-floating-sidebar-fill: rgb(255 255 255 / 0.72);
+  --panel-floating-sidebar-outline: rgb(255 255 255 / 0.78);
+  --panel-floating-sidebar-shadow: 0 22px 60px rgb(14 29 41 / 0.16);
+  --panel-main-pane-outline: rgb(255 255 255 / 0.76);
+  --panel-main-pane-shadow: 0 24px 70px rgb(14 29 41 / 0.16);
+  --panel-active-item-fill: linear-gradient(135deg, rgb(242 68 0 / 0.16), rgb(242 68 0 / 0.055));
+  --panel-active-item-outline: rgb(242 68 0 / 0.24);
   --panel-shell-inset: 0px;
   --panel-shell-y-inset: 0px;
+  --panel-gridline: rgb(14 29 41 / 0.035);
+  --panel-accent-wash: rgb(242 68 0 / 0.10);
   color-scheme: light;
 }
 
@@ -71,18 +78,23 @@
   --color-content-secondary: 228 228 231;  /* #e4e4e7 */
   --color-content-muted:     161 161 170;  /* #a1a1aa */
   --color-content-faint:     113 113 122;  /* #71717a */
-  --panel-shell-glow: none;
-  --panel-topbar-fill: rgb(20 23 29 / 0.96);
-  --panel-sidebar-fill: rgb(18 21 27 / 1);
-  --panel-card-fill: rgb(24 27 35 / 1);
-  --panel-card-fill-alt: rgb(28 32 40 / 1);
-  --panel-workspace-fill: rgb(14 16 21 / 1);
-  --panel-section-fill: rgb(21 24 31 / 0.82);
-  --panel-muted-fill: rgb(32 36 45 / 0.78);
-  --panel-card-highlight: none;
-  --panel-shadow-ambient: none;
-  --panel-shadow-float: none;
-  --panel-shadow-edge: none;
+  --panel-shell-glow:
+    radial-gradient(circle at 13% 0%, rgb(242 68 0 / 0.18), transparent 32rem),
+    radial-gradient(circle at 86% 10%, rgb(255 255 255 / 0.07), transparent 30rem),
+    linear-gradient(135deg, rgb(255 255 255 / 0.04), transparent 42%);
+  --panel-topbar-fill: rgb(20 23 29 / 0.72);
+  --panel-sidebar-fill: rgb(18 21 27 / 0.78);
+  --panel-card-fill: rgb(24 27 35 / 0.82);
+  --panel-card-fill-alt: rgb(29 33 42 / 0.88);
+  --panel-workspace-fill: rgb(12 14 19 / 1);
+  --panel-section-fill: rgb(25 29 38 / 0.72);
+  --panel-muted-fill: rgb(32 36 45 / 0.72);
+  --panel-card-highlight:
+    linear-gradient(135deg, rgb(255 255 255 / 0.06), transparent 45%),
+    radial-gradient(circle at 92% 0%, rgb(242 68 0 / 0.18), transparent 40%);
+  --panel-shadow-ambient: 0 20px 60px rgb(0 0 0 / 0.32);
+  --panel-shadow-float: 0 22px 56px rgb(0 0 0 / 0.34);
+  --panel-shadow-edge: 0 1px 0 rgb(255 255 255 / 0.07) inset;
   --panel-border-soft: rgb(255 255 255 / 0.085);
   --panel-border-subtle: rgb(255 255 255 / 0.052);
   --panel-border-control: rgb(255 255 255 / 0.11);
@@ -91,15 +103,17 @@
   --panel-surface-hover: rgb(255 255 255 / 0.045);
   --panel-surface-inset: rgb(255 255 255 / 0.048);
   --panel-window-fill: rgb(19 20 24 / 1);
-  --panel-floating-sidebar-fill: rgb(26 27 32 / 0.98);
-  --panel-floating-sidebar-outline: rgb(255 255 255 / 0.065);
-  --panel-floating-sidebar-shadow: 0 1px 2px rgb(0 0 0 / 0.20);
-  --panel-main-pane-outline: transparent;
-  --panel-main-pane-shadow: none;
-  --panel-active-item-fill: rgb(255 255 255 / 0.075);
-  --panel-active-item-outline: transparent;
+  --panel-floating-sidebar-fill: rgb(22 25 32 / 0.76);
+  --panel-floating-sidebar-outline: rgb(255 255 255 / 0.10);
+  --panel-floating-sidebar-shadow: 0 24px 70px rgb(0 0 0 / 0.42);
+  --panel-main-pane-outline: rgb(255 255 255 / 0.075);
+  --panel-main-pane-shadow: 0 24px 80px rgb(0 0 0 / 0.40);
+  --panel-active-item-fill: linear-gradient(135deg, rgb(242 68 0 / 0.18), rgb(255 255 255 / 0.045));
+  --panel-active-item-outline: rgb(242 68 0 / 0.28);
   --panel-shell-inset: 0px;
   --panel-shell-y-inset: 0px;
+  --panel-gridline: rgb(255 255 255 / 0.028);
+  --panel-accent-wash: rgb(242 68 0 / 0.13);
 }
 
 /* Modo escuro: paleta zinc pura (Design System) */
@@ -116,18 +130,23 @@
   --color-content-secondary: 212 212 216;  /* #d4d4d8 — DS .dark brand-text-muted / zinc-300 */
   --color-content-muted:     113 113 122;  /* #71717a — zinc-500 */
   --color-content-faint:      63  63  70;  /* #3f3f46 — zinc-700 */
-  --panel-shell-glow: none;
-  --panel-topbar-fill: rgb(10 10 10 / 0.96);
-  --panel-sidebar-fill: rgb(0 0 0 / 1);
-  --panel-card-fill: rgb(10 10 10 / 1);
-  --panel-card-fill-alt: rgb(18 18 20 / 1);
+  --panel-shell-glow:
+    radial-gradient(circle at 10% 0%, rgb(242 68 0 / 0.22), transparent 34rem),
+    radial-gradient(circle at 88% 12%, rgb(255 255 255 / 0.055), transparent 30rem),
+    linear-gradient(135deg, rgb(255 255 255 / 0.035), transparent 44%);
+  --panel-topbar-fill: rgb(10 10 10 / 0.76);
+  --panel-sidebar-fill: rgb(0 0 0 / 0.78);
+  --panel-card-fill: rgb(10 10 10 / 0.84);
+  --panel-card-fill-alt: rgb(18 18 20 / 0.90);
   --panel-workspace-fill: rgb(3 3 4 / 1);
-  --panel-section-fill: rgb(18 18 20 / 0.72);
-  --panel-muted-fill: rgb(24 24 27 / 0.78);
-  --panel-card-highlight: none;
-  --panel-shadow-ambient: none;
-  --panel-shadow-float: none;
-  --panel-shadow-edge: none;
+  --panel-section-fill: rgb(18 18 20 / 0.76);
+  --panel-muted-fill: rgb(24 24 27 / 0.72);
+  --panel-card-highlight:
+    linear-gradient(135deg, rgb(255 255 255 / 0.052), transparent 45%),
+    radial-gradient(circle at 92% 0%, rgb(242 68 0 / 0.20), transparent 42%);
+  --panel-shadow-ambient: 0 24px 70px rgb(0 0 0 / 0.52);
+  --panel-shadow-float: 0 24px 72px rgb(0 0 0 / 0.55);
+  --panel-shadow-edge: 0 1px 0 rgb(255 255 255 / 0.06) inset;
   --panel-border-soft: rgb(255 255 255 / 0.075);
   --panel-border-subtle: rgb(255 255 255 / 0.045);
   --panel-border-control: rgb(255 255 255 / 0.095);
@@ -136,15 +155,17 @@
   --panel-surface-hover: rgb(255 255 255 / 0.04);
   --panel-surface-inset: rgb(255 255 255 / 0.044);
   --panel-window-fill: rgb(13 13 13 / 1);
-  --panel-floating-sidebar-fill: rgb(23 23 23 / 0.98);
-  --panel-floating-sidebar-outline: rgb(255 255 255 / 0.06);
-  --panel-floating-sidebar-shadow: 0 1px 2px rgb(0 0 0 / 0.26);
-  --panel-main-pane-outline: transparent;
-  --panel-main-pane-shadow: none;
-  --panel-active-item-fill: rgb(255 255 255 / 0.075);
-  --panel-active-item-outline: transparent;
+  --panel-floating-sidebar-fill: rgb(13 13 13 / 0.78);
+  --panel-floating-sidebar-outline: rgb(255 255 255 / 0.095);
+  --panel-floating-sidebar-shadow: 0 24px 80px rgb(0 0 0 / 0.62);
+  --panel-main-pane-outline: rgb(255 255 255 / 0.07);
+  --panel-main-pane-shadow: 0 24px 90px rgb(0 0 0 / 0.62);
+  --panel-active-item-fill: linear-gradient(135deg, rgb(242 68 0 / 0.20), rgb(255 255 255 / 0.04));
+  --panel-active-item-outline: rgb(242 68 0 / 0.30);
   --panel-shell-inset: 0px;
   --panel-shell-y-inset: 0px;
+  --panel-gridline: rgb(255 255 255 / 0.026);
+  --panel-accent-wash: rgb(242 68 0 / 0.15);
 }
 
 .panel-app[data-panel-theme="dark"],
@@ -157,7 +178,11 @@
   isolation: isolate;
   position: relative;
   background-color: rgb(var(--color-surface-base) / 1);
-  background-image: none;
+  background-image:
+    var(--panel-shell-glow),
+    linear-gradient(var(--panel-gridline) 1px, transparent 1px),
+    linear-gradient(90deg, var(--panel-gridline) 1px, transparent 1px);
+  background-size: auto, auto, auto, 44px 44px, 44px 44px;
   color: rgb(var(--color-content) / 1);
 }
 
@@ -208,7 +233,9 @@
 .panel-shell {
   gap: calc(var(--panel-shell-inset) * 0.8);
   padding: var(--panel-shell-inset);
-  background: var(--panel-workspace-fill);
+  background:
+    radial-gradient(circle at 38% 0%, var(--panel-accent-wash), transparent 24rem),
+    var(--panel-workspace-fill);
 }
 
 .panel-sidebar {
@@ -217,8 +244,8 @@
   background: var(--panel-floating-sidebar-fill) !important;
   border: 1px solid var(--panel-floating-sidebar-outline) !important;
   box-shadow: var(--panel-floating-sidebar-shadow);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  backdrop-filter: blur(20px) saturate(1.22);
+  -webkit-backdrop-filter: blur(20px) saturate(1.22);
 }
 
 .panel-sidebar::after {
@@ -227,16 +254,19 @@
   inset: 0;
   pointer-events: none;
   border-radius: inherit;
-  background: none;
-  opacity: 0;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.10), transparent 18%),
+    radial-gradient(circle at 0% 0%, rgb(242 68 0 / 0.18), transparent 18rem);
+  opacity: 1;
 }
 
 .panel-topbar {
   position: relative;
-  background: transparent;
-  backdrop-filter: none;
-  border-color: transparent !important;
-  box-shadow: none;
+  background: var(--panel-topbar-fill);
+  backdrop-filter: blur(18px) saturate(1.18);
+  -webkit-backdrop-filter: blur(18px) saturate(1.18);
+  border-color: var(--panel-border-subtle) !important;
+  box-shadow: var(--panel-shadow-edge);
 }
 
 .panel-topbar::after {
@@ -244,19 +274,24 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: none;
-  opacity: 0;
+  background:
+    linear-gradient(90deg, transparent, rgb(242 68 0 / 0.10), transparent),
+    linear-gradient(180deg, rgb(255 255 255 / 0.05), transparent);
+  opacity: 0.9;
 }
 
 .panel-topbar-control {
-  border: 1px solid transparent;
-  background: transparent;
-  box-shadow: none;
+  border: 1px solid var(--panel-border-control);
+  background: var(--panel-control-fill);
+  box-shadow: var(--panel-shadow-edge);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .panel-topbar-control:hover {
-  border-color: transparent;
+  border-color: rgb(242 68 0 / 0.26);
   background: var(--panel-control-hover);
+  transform: translateY(-1px);
 }
 
 .panel-content-frame {
@@ -272,8 +307,8 @@
   position: relative;
   overflow: hidden;
   background: var(--panel-window-fill);
-  border: 0;
-  box-shadow: none;
+  border: 1px solid var(--panel-main-pane-outline);
+  box-shadow: var(--panel-main-pane-shadow);
 }
 
 .panel-main-pane > main,
@@ -286,7 +321,10 @@
   overflow: hidden;
   border-color: var(--panel-border-soft) !important;
   background: var(--panel-card-fill) !important;
-  box-shadow: inset 0 0 0 1px var(--panel-border-subtle);
+  box-shadow: inset 0 0 0 1px var(--panel-border-subtle), var(--panel-shadow-edge);
+  backdrop-filter: blur(16px) saturate(1.14);
+  -webkit-backdrop-filter: blur(16px) saturate(1.14);
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .panel-surface-card::before,
@@ -300,7 +338,7 @@
   pointer-events: none;
   border-radius: inherit;
   background: var(--panel-card-highlight);
-  opacity: 0;
+  opacity: 0.9;
 }
 
 .panel-surface-card > *,
@@ -316,6 +354,16 @@
   background: var(--panel-card-fill-alt) !important;
 }
 
+.panel-kpi-card::after {
+  content: "";
+  position: absolute;
+  inset: auto 1rem 0;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgb(242 68 0 / 0.52), transparent);
+  opacity: 0.72;
+}
+
 .panel-floating-card {
   position: relative;
   overflow: hidden;
@@ -323,14 +371,16 @@
   background: var(--panel-card-fill) !important;
   box-shadow:
     inset 0 0 0 1px var(--panel-border-subtle),
-    0 10px 28px rgb(0 0 0 / 0.08);
+    var(--panel-shadow-float);
+  backdrop-filter: blur(20px) saturate(1.18);
+  -webkit-backdrop-filter: blur(20px) saturate(1.18);
 }
 
 .panel-profile-card {
   position: relative;
   overflow: hidden;
   background: var(--panel-card-fill-alt);
-  box-shadow: inset 0 0 0 1px var(--panel-border-subtle);
+  box-shadow: inset 0 0 0 1px var(--panel-border-subtle), var(--panel-shadow-edge);
 }
 
 .panel-nav-section-label {
@@ -352,7 +402,18 @@
 .panel-nav-item--active {
   border-color: var(--panel-active-item-outline) !important;
   background: var(--panel-active-item-fill) !important;
-  box-shadow: none !important;
+  box-shadow: inset 0 0 0 1px rgb(242 68 0 / 0.12), 0 10px 26px rgb(242 68 0 / 0.10) !important;
+}
+
+.panel-nav-item--active::before {
+  content: "";
+  position: absolute;
+  inset-block: 0.55rem;
+  left: 0;
+  width: 2px;
+  border-radius: 999px;
+  background: #F24400;
+  box-shadow: 0 0 16px rgb(242 68 0 / 0.62);
 }
 
 .panel-data-table {
@@ -361,7 +422,9 @@
   max-width: 100%;
   border-color: var(--panel-border-soft) !important;
   background: var(--panel-card-fill) !important;
-  box-shadow: inset 0 0 0 1px var(--panel-border-subtle);
+  box-shadow: inset 0 0 0 1px var(--panel-border-subtle), var(--panel-shadow-edge);
+  backdrop-filter: blur(14px) saturate(1.12);
+  -webkit-backdrop-filter: blur(14px) saturate(1.12);
 }
 
 .panel-data-table > div {
@@ -372,7 +435,9 @@
 }
 
 .panel-data-table thead {
-  background: var(--panel-surface-inset);
+  background:
+    linear-gradient(90deg, rgb(242 68 0 / 0.10), transparent 28%),
+    var(--panel-surface-inset);
 }
 
 .panel-data-table tbody tr:hover {
@@ -384,16 +449,47 @@
   overflow: hidden;
   border-color: var(--panel-border-soft) !important;
   background: var(--panel-card-fill) !important;
-  box-shadow: inset 0 0 0 1px var(--panel-border-subtle);
+  box-shadow: inset 0 0 0 1px var(--panel-border-subtle), var(--panel-shadow-float);
+  backdrop-filter: blur(22px) saturate(1.18);
+  -webkit-backdrop-filter: blur(22px) saturate(1.18);
 }
 
 .panel-drawer-surface {
   position: relative;
   overflow: hidden;
-  background: var(--panel-sidebar-fill);
-  backdrop-filter: none;
-  border-color: transparent !important;
-  box-shadow: none;
+  background: var(--panel-floating-sidebar-fill);
+  backdrop-filter: blur(20px) saturate(1.18);
+  -webkit-backdrop-filter: blur(20px) saturate(1.18);
+  border-color: var(--panel-floating-sidebar-outline) !important;
+  box-shadow: var(--panel-floating-sidebar-shadow);
+}
+
+.panel-app :where(.panel-surface-card, .panel-floating-card, .panel-data-table, .panel-modal-surface):hover {
+  border-color: rgb(242 68 0 / 0.20) !important;
+}
+
+.panel-app :where(
+  [class*="bg-surface-card"][class*="border"],
+  [class*="bg-surface-deep"][class*="border"],
+  [class*="bg-surface-elevated"][class*="border"]
+) {
+  box-shadow: var(--panel-shadow-edge);
+}
+
+.panel-app :where(
+  [class*="bg-surface-card"][class*="border"],
+  [class*="bg-surface-deep"][class*="border"],
+  [class*="bg-surface-elevated"][class*="border"]
+):hover {
+  border-color: rgb(242 68 0 / 0.18);
+}
+
+.panel-app :where(input, select, textarea):focus {
+  box-shadow: 0 0 0 1px rgb(242 68 0 / 0.34), 0 0 0 4px rgb(242 68 0 / 0.10);
+}
+
+.panel-app :where(button, a, input, select, textarea) {
+  -webkit-tap-highlight-color: transparent;
 }
 
 .panel-app .rounded-lg {

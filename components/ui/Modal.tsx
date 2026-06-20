@@ -2,6 +2,7 @@
 
 import { useEffect, useId, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { X } from "lucide-react";
 import { PanelAppearancePortalBridge } from "@/components/panel/PanelAppearance";
 import { cn } from "@/lib/utils";
 import { typography } from "@/lib/typography";
@@ -81,7 +82,7 @@ export function Modal({ open, onClose, title, titleContent, children, footer, cl
               onClick={onClose}
               aria-label="Fechar modal"
             >
-              ✕
+              <X className="h-4 w-4" strokeWidth={2} aria-hidden />
             </Button>
           </div>
           <div className="min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain py-3 pr-1 [scrollbar-gutter:stable] sm:py-4">

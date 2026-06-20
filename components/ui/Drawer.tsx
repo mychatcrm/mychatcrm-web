@@ -48,9 +48,9 @@ export function Drawer({ open, onClose, title, children, side = "left" }: Drawer
         )}
       >
         {title ? (
-          <div className={cn("px-4 py-4", typography.label.default)}>{title}</div>
+          <div className={cn("border-b border-line/60 px-4 py-4", typography.label.default)}>{title}</div>
         ) : null}
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))]">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 pb-[max(1rem,env(safe-area-inset-bottom,0px))]">{children}</div>
       </div>
     </div>
   );

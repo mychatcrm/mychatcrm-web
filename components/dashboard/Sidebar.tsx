@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronRight, Circle, Cpu, Moon, Settings, Sun } from "lucide-react";
+import { ChevronDown, ChevronRight, Circle, Cpu, Minus, Moon, Plus, Settings, Sun } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { Badge } from "@/components/ui/Badge";
@@ -232,7 +232,7 @@ export function Sidebar({
             type="button"
             onClick={() => setUpgradeOpen(true)}
             className={cn(
-              "panel-nav-item group relative flex h-9 w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-medium transition duration-200 ease-out",
+              "panel-nav-item group relative flex h-10 w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-medium transition duration-200 ease-out",
               "text-content-secondary hover:border-primary/20 hover:bg-primary/[0.06] hover:text-content hover:ring-1 hover:ring-primary/15",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25",
               collapsed && "justify-center px-0",
@@ -250,7 +250,7 @@ export function Sidebar({
           href={it.href}
           onClick={onNavigate}
           className={cn(
-            "panel-nav-item group relative flex h-9 items-center rounded-xl px-2.5 text-[13px] font-medium transition duration-200 ease-out",
+            "panel-nav-item group relative flex h-10 items-center rounded-xl px-2.5 text-[13px] font-medium transition duration-200 ease-out",
             active && "panel-nav-item--active",
             active
               ? "border border-transparent bg-primary/10 text-primary"
@@ -261,7 +261,7 @@ export function Sidebar({
           aria-current={active ? "page" : undefined}
           title={collapsed ? it.label : undefined}
         >
-          <span className={cn("flex h-9 w-full items-center gap-2.5", collapsed && "justify-center")}>
+          <span className={cn("flex h-10 w-full items-center gap-2.5", collapsed && "justify-center")}>
             {content}
           </span>
         </Link>
@@ -279,7 +279,7 @@ export function Sidebar({
   return (
     <>
       <div className="flex h-full flex-col bg-transparent">
-        <div className="flex h-auto min-h-16 flex-col justify-center gap-2 px-4 py-3.5">
+        <div className="flex h-auto min-h-16 flex-col justify-center gap-2 px-4 py-4">
           <div className="flex items-center justify-between gap-2">
             <div className="flex min-w-0 flex-1 items-center gap-3">
               <PanelBrandMark size={collapsed ? 40 : 36} />
@@ -289,7 +289,7 @@ export function Sidebar({
                     <span className="text-primary">My</span>
                     <span className="text-content">ChatCRM</span>
                   </span>
-                  <p className="text-[11px] text-content-muted">Painel de controle</p>
+                  <p className="text-[11px] text-content-muted">Command center</p>
                 </div>
               ) : null}
             </div>
@@ -328,7 +328,7 @@ export function Sidebar({
                   aria-expanded={workspaceMenuOpen}
                   aria-controls={workspacePanelId}
                   onClick={() => setWorkspaceMenuOpen((open) => !open)}
-                  className="panel-profile-card flex w-full min-h-[40px] items-center justify-between gap-2 rounded-xl border border-line/80 bg-surface-deep/60 px-3 py-2 text-left text-[12px] font-medium text-content transition hover:border-line hover:bg-surface-elevated/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                  className="panel-profile-card flex w-full min-h-[42px] items-center justify-between gap-2 rounded-xl border border-line/80 bg-surface-deep/60 px-3 py-2.5 text-left text-[12px] font-medium text-content transition hover:border-primary/25 hover:bg-surface-elevated/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
                 >
                   <span className="min-w-0 truncate">{workspaceLabel}</span>
                   <span className="shrink-0 text-content-muted" aria-hidden>
@@ -386,7 +386,7 @@ export function Sidebar({
                               onClick={() => setWaQty((q) => Math.max(1, q - 1))}
                               className="flex h-7 w-7 items-center justify-center rounded-lg border border-line bg-surface-card text-sm font-bold text-content hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-40"
                             >
-                              −
+                              <Minus className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
                             </button>
                             <span className="w-5 text-center text-sm font-semibold tabular-nums text-content">
                               {waQty}
@@ -398,7 +398,7 @@ export function Sidebar({
                               onClick={() => setWaQty((q) => Math.min(10, q + 1))}
                               className="flex h-7 w-7 items-center justify-center rounded-lg border border-line bg-surface-card text-sm font-bold text-content hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-40"
                             >
-                              +
+                              <Plus className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
                             </button>
                             <button
                               type="button"
@@ -423,7 +423,7 @@ export function Sidebar({
                               {waBuying ? "Redirecionando…" : "Comprar agora"}
                             </button>
                           </div>
-                          <p className="text-[11px] text-content-subtle">
+                          <p className="text-[11px] text-content-muted">
                             {waQty} número{waQty > 1 ? "s" : ""} extra{waQty > 1 ? "s" : ""} — R${" "}
                             {(WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL * waQty).toLocaleString("pt-BR", {
                               minimumFractionDigits: 2,

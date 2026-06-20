@@ -192,7 +192,7 @@ function MetricCard({
   accent?: string;
 }) {
   return (
-    <div className="panel-surface-card panel-kpi-card rounded-xl border border-line bg-surface-card p-4 transition-colors duration-200 hover:border-line">
+    <div className="panel-surface-card panel-kpi-card rounded-xl border border-line bg-surface-card p-4 transition-colors duration-200 hover:border-primary/25">
       <p className={typography.ui.overline}>{label}</p>
       <p className={cn(typography.ui.kpi, "mt-2 text-2xl sm:text-3xl", accent)}>{value}</p>
       <p className={cn(typography.ui.caption, "mt-2 leading-snug")}>{helper}</p>
@@ -204,14 +204,14 @@ function ProgressBar({ value }: { value: number }) {
   const pct = Math.min(Math.max(value, 0), 100);
   return (
     <div
-      className="relative h-2.5 overflow-hidden rounded-full bg-content-muted/20 ring-2 ring-inset ring-line/60"
+      className="relative h-2.5 overflow-hidden rounded-full bg-content-muted/20 ring-1 ring-inset ring-line/60"
       role="progressbar"
       aria-valuenow={Math.round(pct)}
       aria-valuemin={0}
       aria-valuemax={100}
     >
       <div
-        className="relative h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
+        className="relative h-full rounded-full bg-[linear-gradient(90deg,#F24400,#B22A00)] transition-[width] duration-500 ease-out"
         style={{ width: `${pct}%` }}
       />
     </div>

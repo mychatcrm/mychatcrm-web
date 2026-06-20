@@ -26,6 +26,7 @@ export function DataTable<T>({
   if (!data.length) {
     return (
       <div className="panel-surface-card rounded-xl border border-dashed border-line/70 bg-surface-deep/60 p-10 text-center text-sm text-content-muted">
+        <div className="mx-auto mb-3 h-1 w-16 rounded-full bg-primary/70" aria-hidden />
         {emptyLabel}
       </div>
     );
@@ -42,7 +43,7 @@ export function DataTable<T>({
                   key={c.key}
                   scope="col"
                   className={cn(
-                    "px-4 py-3 text-[11px] font-medium uppercase tracking-[0.08em] text-content-muted",
+                    "px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-content-muted",
                     c.className,
                   )}
                 >
@@ -56,13 +57,13 @@ export function DataTable<T>({
               <tr
                 key={rowKey(row)}
                 className={cn(
-                  "transition-colors",
-                  onRowClick && "cursor-pointer hover:bg-surface-elevated/45",
+                  "transition-colors odd:bg-surface-deep/[0.015]",
+                  onRowClick && "cursor-pointer hover:bg-primary/[0.045]",
                 )}
                 onClick={() => onRowClick?.(row)}
               >
                 {columns.map((c) => (
-                  <td key={c.key} className={cn("whitespace-nowrap px-4 py-3 text-[13px] text-content-secondary", c.className)}>
+                  <td key={c.key} className={cn("whitespace-nowrap px-4 py-3.5 text-[13px] text-content-secondary", c.className)}>
                     {c.render(row)}
                   </td>
                 ))}

@@ -84,7 +84,7 @@ function Stat({
   helper: string;
 }) {
   return (
-    <div className="panel-surface-card panel-kpi-card rounded-xl border border-line bg-surface-card p-4">
+    <div className="panel-surface-card panel-kpi-card rounded-xl border border-line bg-surface-card p-4 transition-colors hover:border-primary/25">
       <p className="text-sm text-content-muted">{label}</p>
       <p className="mt-2 text-2xl font-semibold text-content">{value}</p>
       <p className="mt-2 text-xs text-content-faint">{helper}</p>
@@ -101,8 +101,8 @@ function Bars({ items }: { items: { label: string; value: number; color?: string
             <span className="text-content-secondary">{item.label}</span>
             <span className="text-content-faint">{item.value}%</span>
           </div>
-          <div className="h-3 rounded-full bg-line/40">
-            <div className={cn("h-3 rounded-full bg-primary", item.color)} style={{ width: `${item.value}%` }} />
+          <div className="h-3 rounded-full bg-line/40 ring-1 ring-inset ring-line/50">
+            <div className={cn("h-3 rounded-full bg-[linear-gradient(90deg,#F24400,#B22A00)]", item.color)} style={{ width: `${item.value}%` }} />
           </div>
         </div>
       ))}

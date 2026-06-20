@@ -11,7 +11,7 @@ import { dashboardNavPinnedItems } from "./navigation";
 import { PanelAppearanceProvider, type PanelAppearanceMode } from "@/components/panel/PanelAppearance";
 import { CrmFunnelsProvider } from "./CrmFunnelsContext";
 import { cn } from "@/lib/utils";
-import { Bell, Menu, Search } from "lucide-react";
+import { Bell, ExternalLink, Menu, PanelLeftClose, PanelLeftOpen, Search } from "lucide-react";
 
 function DashboardShellInner({
   children,
@@ -90,11 +90,15 @@ function DashboardShellInner({
               </button>
               <button
                 type="button"
-                className={cn(shellControl, "hidden h-8 items-center px-2.5 text-xs md:inline-flex")}
+                className={cn(shellControl, "hidden h-8 w-8 items-center justify-center md:inline-flex")}
                 onClick={() => setCollapsed((c) => !c)}
                 aria-label={collapsed ? "Expandir menu lateral" : "Recolher menu lateral"}
               >
-                {collapsed ? "⟩" : "⟨"}
+                {collapsed ? (
+                  <PanelLeftOpen className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+                ) : (
+                  <PanelLeftClose className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+                )}
               </button>
               <div className="hidden items-center gap-2 sm:flex">
                 <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-content-faint">Painel</span>
@@ -143,8 +147,9 @@ function DashboardShellInner({
               </Link>
               <Link
                 href="/"
-                className={cn(shellControl, "hidden h-8 items-center px-3 text-[13px] sm:inline-flex")}
+                className={cn(shellControl, "hidden h-8 items-center gap-1.5 px-3 text-[13px] sm:inline-flex")}
               >
+                <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
                 Site
               </Link>
             </div>

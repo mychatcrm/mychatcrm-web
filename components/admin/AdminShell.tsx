@@ -7,7 +7,7 @@ import { Drawer } from "@/components/ui/Drawer";
 import Link from "next/link";
 import type { AdminSession } from "@/lib/admin-auth";
 import { adminNavGroups } from "./navigation";
-import { Menu } from "lucide-react";
+import { ExternalLink, Menu } from "lucide-react";
 import {
   PanelAppearanceProvider,
   type PanelAppearanceMode,
@@ -66,8 +66,9 @@ function AdminShellInner({
           <div className="flex shrink-0 items-center gap-2">
             <Link
               href="/"
-              className="panel-topbar-control hidden h-8 items-center rounded-xl border border-line/45 bg-surface-card/55 px-3 text-[13px] text-content-secondary transition duration-200 hover:border-line/60 hover:bg-surface-elevated/45 hover:text-content sm:inline-flex"
+              className="panel-topbar-control hidden h-8 items-center gap-1.5 rounded-xl border border-line/45 bg-surface-card/55 px-3 text-[13px] text-content-secondary transition duration-200 hover:border-line/60 hover:bg-surface-elevated/45 hover:text-content sm:inline-flex"
             >
+              <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
               Site público
             </Link>
           </div>

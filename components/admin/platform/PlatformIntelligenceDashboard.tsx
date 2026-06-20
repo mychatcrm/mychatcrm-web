@@ -85,7 +85,7 @@ function Kpi({
   return (
     <div
       className={cn(
-        "rounded-xl border border-line bg-surface-card p-4",
+        "panel-surface-card panel-kpi-card rounded-xl border border-line bg-surface-card p-4",
         accent === "success" && "border-emerald-500/25 bg-emerald-500/[0.06]",
         accent === "warning" && "border-amber-500/25 bg-amber-500/[0.06]",
       )}
@@ -107,7 +107,7 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-xl border border-line bg-surface-card p-5 sm:p-6">
+    <section className="panel-surface-card rounded-xl border border-line bg-surface-card p-5 sm:p-6">
       <div className="mb-5">
         <h2 className="font-display text-lg font-semibold text-content">{title}</h2>
         {description ? <p className="mt-1 text-sm text-content-muted">{description}</p> : null}
@@ -118,6 +118,14 @@ function Section({
 }
 
 const CHART_COLORS = ["#F24400", "#0E1D29", "#B22A00", "#00A650", "#71717A"];
+const chartTooltipStyle = {
+  background: "rgb(var(--color-surface-card) / 0.96)",
+  border: "1px solid rgb(var(--color-line) / 0.82)",
+  borderRadius: 12,
+  color: "rgb(var(--color-content) / 1)",
+  boxShadow: "var(--panel-shadow-float)",
+} as const;
+const chartLabelStyle = { color: "rgb(var(--color-content) / 1)" } as const;
 
 export function PlatformIntelligenceDashboard({ session }: { session: AdminSession }) {
   const allowed = useMemo(() => canAccessPlatformMetricsApi(session.role), [session.role]);
@@ -180,7 +188,7 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
 
   if (!allowed) {
     return (
-      <div className="rounded-xl border border-line bg-surface-card p-8 text-center">
+      <div className="panel-surface-card rounded-xl border border-line bg-surface-card p-8 text-center">
         <p className="font-medium text-content">Acesso restrito</p>
         <p className="mt-2 text-sm text-content-muted">
           O seu papel administrativo não inclui a leitura de métricas consolidadas da plataforma. Contacte um super
@@ -215,7 +223,7 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
 
   return (
     <div className="space-y-8">
-      <div className="rounded-xl border border-primary/25 bg-primary/[0.06] px-4 py-3 text-sm text-content-secondary sm:px-5">
+      <div className="panel-surface-card rounded-xl border border-primary/25 bg-primary/[0.06] px-4 py-3 text-sm text-content-secondary sm:px-5">
         <strong className="text-content">Privacidade:</strong> esta visão mostra apenas agregados administrativos e
         identificadores internos de workspace. Não são exibidos conteúdos de conversas, mensagens, contactos finais nem
         dados pessoais. Os volumes de uso são estimados a partir de sinais operacionais até existir pipeline de
@@ -371,8 +379,8 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
                     <XAxis dataKey="dateISO" tick={{ fontSize: 11 }} tickFormatter={(v) => String(v).slice(5)} />
                     <YAxis tick={{ fontSize: 11 }} width={44} />
                     <Tooltip
-                      contentStyle={{ background: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 12, color: "#09090B" }}
-                      labelStyle={{ color: "#09090B" }}
+                      contentStyle={chartTooltipStyle}
+                      labelStyle={chartLabelStyle}
                     />
                     <Line type="monotone" dataKey="messages" name="Mensagens" stroke={CHART_COLORS[0]} strokeWidth={2} dot={false} />
                   </LineChart>
@@ -386,7 +394,8 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
                     <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                     <YAxis tick={{ fontSize: 11 }} width={44} />
                     <Tooltip
-                      contentStyle={{ background: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 12, color: "#09090B" }}
+                      contentStyle={chartTooltipStyle}
+                      labelStyle={chartLabelStyle}
                     />
                     <Legend />
                     <Area type="monotone" dataKey="entrada" name="Input (M)" stackId="1" stroke={CHART_COLORS[1]} fill={`${CHART_COLORS[1]}55`} />
@@ -423,12 +432,8 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
                         ))}
                       </Pie>
                       <Tooltip
-                        contentStyle={{
-                          background: "#FFFFFF",
-                          border: "1px solid #E2E8F0",
-                          color: "#09090B",
-                          borderRadius: 12,
-                        }}
+                        contentStyle={chartTooltipStyle}
+                        labelStyle={chartLabelStyle}
                       />
                       <Legend />
                     </PieChart>
@@ -446,12 +451,8 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
                       <XAxis type="number" tick={{ fontSize: 11 }} />
                       <YAxis type="category" dataKey="label" width={120} tick={{ fontSize: 10 }} />
                       <Tooltip
-                        contentStyle={{
-                          background: "#FFFFFF",
-                          border: "1px solid #E2E8F0",
-                          color: "#09090B",
-                          borderRadius: 12,
-                        }}
+                        contentStyle={chartTooltipStyle}
+                        labelStyle={chartLabelStyle}
                       />
                       <Bar dataKey="messages" name="Mensagens" fill={CHART_COLORS[0]} radius={[0, 8, 8, 0]} />
                     </BarChart>
@@ -495,7 +496,8 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
                     <XAxis dataKey="date" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
                     <YAxis tick={{ fontSize: 11 }} width={48} />
                     <Tooltip
-                      contentStyle={{ background: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 12, color: "#09090B" }}
+                      contentStyle={chartTooltipStyle}
+                      labelStyle={chartLabelStyle}
                     />
                     <Legend />
                     <Bar dataKey="receita" name="Receita" fill={CHART_COLORS[3]} radius={[4, 4, 0, 0]} />
@@ -512,7 +514,7 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
             title="Detalhe por workspace (quantitativo)"
             description="Somente métricas agregadas por conta interna — sem nomes comerciais nem contactos."
           >
-            <div className="overflow-x-auto rounded-xl border border-line">
+            <div className="panel-data-table overflow-x-auto rounded-xl border border-line">
               <table className="min-w-[720px] w-full border-collapse text-sm">
                 <thead>
                   <tr className="border-b border-line bg-surface-elevated/40 text-left text-xs uppercase tracking-wide text-content-muted">
@@ -537,7 +539,7 @@ export function PlatformIntelligenceDashboard({ session }: { session: AdminSessi
                     </tr>
                   ) : (
                     data.workspaces.map((w) => (
-                      <tr key={w.workspaceRef} className="border-b border-line/60 hover:bg-surface-elevated/20">
+                      <tr key={w.workspaceRef} className="border-b border-line/60 hover:bg-primary/[0.045]">
                         <td className="px-4 py-3 font-mono text-xs text-content-secondary">{w.label}</td>
                         <td className="px-4 py-3 text-content-secondary">{w.plan}</td>
                         <td className="px-4 py-3 text-content-secondary">{w.status}</td>

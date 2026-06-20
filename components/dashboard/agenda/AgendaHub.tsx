@@ -266,7 +266,7 @@ export function AgendaHub() {
 
   return (
     <div
-      className="bg-surface-card text-content"
+      className="text-content"
       style={{
         position: "fixed",
         top: "var(--mc-header-h, 48px)",
@@ -278,12 +278,14 @@ export function AgendaHub() {
         flexDirection: "column",
         minWidth: 0,
         zIndex: 1,
+        background:
+          "radial-gradient(circle at 18% 0%, rgb(242 68 0 / 0.10), transparent 26rem), var(--panel-workspace-fill)",
       }}
     >
       {/* Topbar: título do período em linha própria no mobile para não competir com os controlos */}
-      <header className="flex shrink-0 flex-col gap-2 border-b border-line px-2 py-2 md:flex-row md:items-center md:gap-3 md:px-3">
+      <header className="panel-topbar flex shrink-0 flex-col gap-2 border-b border-line px-2 py-2 md:flex-row md:items-center md:gap-3 md:px-3">
         <div className="flex min-w-0 w-full flex-wrap items-center gap-x-1 gap-y-1 md:w-auto md:shrink-0 md:flex-nowrap md:gap-2">
-          <button type="button" className="shrink-0 rounded-full p-1.5 hover:bg-surface-elevated md:p-2" onClick={() => setSidebarOpen((v) => !v)} aria-label="Menu">
+          <button type="button" className="panel-topbar-control shrink-0 rounded-xl p-1.5 hover:bg-surface-elevated md:p-2" onClick={() => setSidebarOpen((v) => !v)} aria-label="Menu">
             <Menu className="size-5" />
           </button>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -293,15 +295,15 @@ export function AgendaHub() {
           <button
             type="button"
             onClick={goToday}
-            className="shrink-0 rounded-xl border border-line px-2 py-1 text-xs font-medium hover:bg-surface-elevated md:px-4 md:py-1.5 md:text-sm"
+            className="panel-topbar-control shrink-0 rounded-xl border border-line px-2 py-1 text-xs font-medium hover:bg-surface-elevated md:px-4 md:py-1.5 md:text-sm"
           >
             Hoje
           </button>
           <div className="flex shrink-0 items-center">
-            <button type="button" className="rounded-full p-1.5 hover:bg-surface-elevated md:p-2" onClick={() => navigate(-1)} aria-label="Anterior">
+            <button type="button" className="panel-topbar-control rounded-xl p-1.5 hover:bg-surface-elevated md:p-2" onClick={() => navigate(-1)} aria-label="Anterior">
               <ChevronLeft className="size-5" />
             </button>
-            <button type="button" className="rounded-full p-1.5 hover:bg-surface-elevated md:p-2" onClick={() => navigate(1)} aria-label="Próximo">
+            <button type="button" className="panel-topbar-control rounded-xl p-1.5 hover:bg-surface-elevated md:p-2" onClick={() => navigate(1)} aria-label="Próximo">
               <ChevronRight className="size-5" />
             </button>
           </div>
@@ -317,18 +319,18 @@ export function AgendaHub() {
                 placeholder="Pesquisar eventos"
                 className="h-9 min-w-0 flex-1 rounded-xl border border-line bg-surface-base px-2 text-sm outline-none focus:border-primary sm:px-3"
               />
-              <button type="button" className="shrink-0 rounded-full p-2 hover:bg-surface-elevated" onClick={() => { setSearchOpen(false); setSearchQ(""); void data.refreshEvents(); }}>
+              <button type="button" className="panel-topbar-control shrink-0 rounded-xl p-2 hover:bg-surface-elevated" onClick={() => { setSearchOpen(false); setSearchQ(""); void data.refreshEvents(); }} aria-label="Fechar pesquisa">
                 <X className="size-4" />
               </button>
             </div>
           ) : (
-            <button type="button" className="shrink-0 rounded-full p-2 hover:bg-surface-elevated" onClick={() => setSearchOpen(true)} aria-label="Pesquisar">
+            <button type="button" className="panel-topbar-control shrink-0 rounded-xl p-2 hover:bg-surface-elevated" onClick={() => setSearchOpen(true)} aria-label="Pesquisar">
               <Search className="size-5" />
             </button>
           )}
           <button
             type="button"
-            className="shrink-0 rounded-full p-2 hover:bg-surface-elevated"
+            className="panel-topbar-control shrink-0 rounded-xl p-2 hover:bg-surface-elevated"
             aria-label="Configurações"
             onClick={() => setSidebarOpen(true)}
           >
@@ -337,7 +339,7 @@ export function AgendaHub() {
           <select
             value={view}
             onChange={(e) => setView(e.target.value as AgendaViewMode)}
-            className="shrink-0 rounded-xl border border-line bg-surface-card py-1.5 pl-2 pr-7 text-xs text-content md:px-3 md:text-sm"
+            className="panel-topbar-control shrink-0 rounded-xl border border-line bg-surface-card py-1.5 pl-2 pr-7 text-xs text-content md:px-3 md:text-sm"
             style={{ maxWidth: "min(11rem, 100%)" }}
             aria-label="Vista do calendário"
           >
@@ -359,11 +361,11 @@ export function AgendaHub() {
               aria-label="Fechar menu da agenda"
               onClick={() => setSidebarOpen(false)}
             />
-            <aside className="fixed inset-y-0 left-0 z-50 flex w-[min(100vw,18rem)] max-w-full shrink-0 flex-col gap-4 overflow-y-auto overflow-x-hidden border-r border-line bg-surface-card p-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))] md:static md:z-auto md:w-[256px]">
+            <aside className="panel-sidebar fixed inset-y-0 left-0 z-50 flex w-[min(100vw,18rem)] max-w-full shrink-0 flex-col gap-4 overflow-y-auto overflow-x-hidden border-r border-line bg-surface-card p-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))] md:static md:z-auto md:w-[256px]">
             <button
               type="button"
               onClick={() => openCreateModal()}
-              className="flex items-center gap-3 rounded-full px-6 py-3 text-sm font-medium text-white"
+              className="flex items-center gap-3 rounded-xl px-6 py-3 text-sm font-medium text-white shadow-[0_12px_30px_rgba(242,68,0,0.22)]"
               style={{ backgroundColor: AGENDA_BRAND }}
               onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = AGENDA_BRAND_HOVER; }}
               onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = AGENDA_BRAND; }}

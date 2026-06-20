@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { typography } from "@/lib/typography";
 import { PanelNavIcon } from "@/components/nav/panel-nav-icons";
@@ -35,7 +36,7 @@ export function AdminSidebar({
             <p className="font-display text-sm font-bold text-content">
               <span className="text-primary">My</span>ChatCRM
             </p>
-            <p className={cn("text-[11px]", isLight ? "text-primary" : "text-primary/90")}>Admin</p>
+            <p className={cn("text-[11px]", isLight ? "text-primary" : "text-primary/90")}>Command center</p>
           </div>
         </div>
         <PanelThemeToggle />
@@ -65,7 +66,7 @@ export function AdminSidebar({
                     href={it.href}
                     onClick={onNavigate}
                     className={cn(
-                      "panel-nav-item group flex h-8 items-center gap-2 rounded-xl border px-2 text-sm font-medium transition duration-200",
+                      "panel-nav-item group flex h-9 items-center gap-2 rounded-xl border px-2.5 text-sm font-medium transition duration-200",
                       active && "panel-nav-item--active",
                       active
                         ? "border-transparent bg-primary/10 text-primary"
@@ -108,9 +109,10 @@ export function AdminSidebar({
         <button
           type="button"
           onClick={logout}
-          className="panel-topbar-control mt-2 w-full rounded-xl border border-line bg-surface-elevated/50 py-2 text-[13px] text-content-secondary transition duration-200 hover:bg-surface-elevated hover:text-content"
+          className="panel-topbar-control mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-line bg-surface-elevated/50 py-2 text-[13px] text-content-secondary transition duration-200 hover:bg-surface-elevated hover:text-content"
           aria-label="Sair do painel admin"
         >
+          <LogOut className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
           Sair
         </button>
       </div>

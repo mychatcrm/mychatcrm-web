@@ -16,7 +16,7 @@ export function PanelBrandMark({
   return (
     <div
       className={cn(
-        "flex shrink-0 items-center justify-center rounded-panel-xl bg-brand-secondary ring-1 ring-inset ring-white/12",
+        "flex shrink-0 items-center justify-center rounded-panel-xl bg-brand-secondary shadow-[0_12px_28px_rgba(242,68,0,0.18)] ring-1 ring-inset ring-white/12",
         className,
       )}
       style={{ width: size, height: size }}

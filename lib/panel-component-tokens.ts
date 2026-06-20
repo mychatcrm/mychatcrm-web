@@ -19,4 +19,4 @@ export type PanelButtonSize = keyof typeof PANEL_BUTTON_SIZES;
 
 /** Classes base de input do painel (DS) — bg-surface-base, py-3.5, focus bg-surface-deep, zero shadow */
 export const PANEL_INPUT_BASE =
-  "w-full rounded-xl border border-line/45 [background:var(--panel-section-fill)] px-4 py-3 text-sm font-normal text-content transition-all duration-150 placeholder:text-content-faint hover:border-line/60 hover:bg-surface-elevated/50 focus:border-primary/55 focus:bg-surface-card focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-60 shadow-none sm:py-3.5";
+  "w-full rounded-xl border border-line/45 [background:var(--panel-section-fill)] px-4 py-3 text-sm font-normal text-content shadow-[var(--panel-shadow-edge)] transition-all duration-150 placeholder:text-content-faint hover:border-primary/25 hover:bg-surface-elevated/50 focus:border-primary/55 focus:bg-surface-card focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-60 sm:py-3.5";

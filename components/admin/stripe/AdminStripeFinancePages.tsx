@@ -27,7 +27,7 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <section className="min-w-0 rounded-xl border border-line bg-surface-card p-5 sm:p-6">
+    <section className="panel-surface-card min-w-0 rounded-xl border border-line bg-surface-card p-5 sm:p-6">
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <h2 className="text-[17px] font-semibold text-content sm:text-xl">{title}</h2>
@@ -44,7 +44,7 @@ function Panel({
 
 function Stat({ label, value, helper }: { label: string; value: string; helper: string }) {
   return (
-    <div className="rounded-xl border border-line bg-surface-card p-4">
+    <div className="panel-surface-card panel-kpi-card rounded-xl border border-line bg-surface-card p-4">
       <p className="text-sm text-content-muted">{label}</p>
       <p className="mt-2 text-2xl font-semibold text-content">{value}</p>
       <p className="mt-2 text-xs text-content-faint">{helper}</p>
@@ -98,8 +98,8 @@ function FinanceBars({
                 <span>{item.label}</span>
                 <span>{item.grossPct}%</span>
               </div>
-              <div className="h-2 rounded-full bg-line/40">
-                <div className="h-2 rounded-full bg-primary" style={{ width: `${item.grossPct}%` }} />
+              <div className="h-2 rounded-full bg-line/40 ring-1 ring-inset ring-line/50">
+                <div className="h-2 rounded-full bg-[linear-gradient(90deg,#F24400,#B22A00)]" style={{ width: `${item.grossPct}%` }} />
               </div>
             </div>
           ))}
@@ -114,7 +114,7 @@ function FinanceBars({
                 <span>{item.label}</span>
                 <span>{item.refPct}%</span>
               </div>
-              <div className="h-2 rounded-full bg-line/40">
+              <div className="h-2 rounded-full bg-line/40 ring-1 ring-inset ring-line/50">
                 <div className="h-2 rounded-full bg-amber-500/80" style={{ width: `${item.refPct}%` }} />
               </div>
             </div>

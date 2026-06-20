@@ -124,7 +124,7 @@ function OverviewPanel({
   return (
     <section
       className={cn(
-        "rounded-xl border border-line bg-surface-card p-5 sm:p-6",
+        "panel-surface-card rounded-xl border border-line bg-surface-card p-5 sm:p-6",
         className,
       )}
     >
@@ -160,9 +160,9 @@ function OverviewStatsCard({ label, value, icon: Icon, helper, accent, trend }: 
   return (
     <div
       className={cn(
-        "group relative rounded-xl border border-line bg-surface-card/80 p-4 backdrop-blur-md",
+        "panel-surface-card panel-kpi-card group relative rounded-xl border border-line bg-surface-card/80 p-4",
         "transition-all duration-300",
-        "hover:border-primary/30 hover:shadow-[0_0_20px_-4px_rgba(242,68,0,0.20)]",
+        "hover:border-primary/30",
       )}
     >
       <div className="flex items-start justify-between gap-2">
@@ -195,7 +195,7 @@ function OverviewStatsCard({ label, value, icon: Icon, helper, accent, trend }: 
 
 function OverviewSkeletonCard() {
   return (
-    <div className="animate-pulse rounded-xl border border-line bg-surface-card p-4">
+    <div className="panel-surface-card animate-pulse rounded-xl border border-line bg-surface-card p-4">
       <div className="h-8 w-8 rounded-lg bg-surface-elevated/50" />
       <div className="mt-3 h-7 w-20 rounded-md bg-surface-elevated/50" />
       <div className="mt-1.5 h-3 w-28 rounded bg-surface-elevated/40" />
@@ -848,7 +848,7 @@ export function DashboardOverviewContent({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <section className="rounded-xl border border-line bg-surface-card px-5 py-5 sm:px-7 sm:py-7">
+      <section className="panel-surface-card rounded-xl border border-line bg-surface-card px-5 py-5 sm:px-7 sm:py-7">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
             <div
@@ -899,7 +899,7 @@ export function DashboardOverviewContent({
 
       {/* Dica banner */}
       <div
-        className="flex flex-wrap items-start gap-3 rounded-xl border border-amber-500/35 bg-amber-500/[0.08] px-4 py-3 text-[13px] text-content-secondary"
+        className="panel-surface-card flex flex-wrap items-start gap-3 rounded-xl border border-amber-500/35 bg-amber-500/[0.08] px-4 py-3 text-[13px] text-content-secondary"
         role="status"
       >
         <span className="mt-0.5 flex shrink-0 rounded-lg bg-amber-500/15 p-1.5 text-amber-500" aria-hidden>
@@ -934,7 +934,7 @@ export function DashboardOverviewContent({
           </div>
 
           {/* Progresso de leads */}
-          <div className="mt-4 rounded-xl border border-primary/25 bg-primary/[0.06] p-4 sm:p-5">
+          <div className="panel-surface-card mt-4 rounded-xl border border-primary/25 bg-primary/[0.06] p-4 sm:p-5">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
                 <p className={cn("text-primary", typography.ui.overline)}>
