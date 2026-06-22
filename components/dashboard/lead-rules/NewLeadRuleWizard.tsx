@@ -42,6 +42,10 @@ import {
   type LeadFieldMapping,
   type LeadRuleSource,
 } from "@/lib/lead-distribution-rules";
+import {
+  buildLeadRuleMappingsFromFields,
+  normalizeLeadFieldText,
+} from "@/lib/lead-rule-field-mapping";
 import { refreshTeamEmployeesFromApi } from "@/lib/team-employees-client-cache";
 import {
   MAX_ORG_DIRECTORS,
@@ -67,10 +71,7 @@ function FacebookMark({ className }: { className?: string }) {
 }
 
 function normalizeFormSearchText(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "")
-    .toLowerCase();
+  return normalizeLeadFieldText(value);
 }
 
 const CRM_FIELD_OPTIONS: { value: string; label: string }[] = [
@@ -136,31 +137,10 @@ const GENERIC_LEAD_FIELD_CATALOG: { key: string; label: string }[] = [
   { key: "contact_hint", label: "Dica de contacto" },
 ];
 
-const CONTEXT_FIELDS: { key: string; label: string }[] = [
-  { key: "form_name", label: "Nome do formulário (form_name)" },
-  { key: "page_name", label: "Nome da página (page_name)" },
-  { key: "campaign_name", label: "Nome da campanha (campaign_name)" },
-  { key: "ad_name", label: "Nome do anúncio (ads_name)" },
-];
-
 function catalogForSource(source: LeadRuleSource | null): { key: string; label: string }[] {
   if (source === "meta_form") return META_LEAD_FORM_FIELD_CATALOG;
   if (source === "whatsapp_api" || source === "whatsapp_qr" || source === ORGANIC_WHATSAPP_SOURCE) return WHATSAPP_LEAD_FIELD_CATALOG;
   return GENERIC_LEAD_FIELD_CATALOG;
-}
-
-/** Sugere campo de CRM com base na chave técnica do payload (heurística demo). */
-function inferCrmTarget(sourceKey: string): string {
-  const k = sourceKey.toLowerCase();
-  if (k.includes("email") || k.endsWith("_mail")) return "email";
-  if (/(phone|tel|mobile|cell|wa_from|numero)/.test(k)) return "celular";
-  if (/(full_name|first_name|last_name|profile_name|display_name|^nome)/.test(k)) return "nome";
-  if (/(company|business|employer|empresa|org_name)/.test(k)) return "empresa";
-  if (/(job_title|cargo|title)/.test(k)) return "empresa";
-  if (/(form_name|page_name|campaign|ad_name|adset|utm_|timestamp|referral|payload|channel)/.test(k)) return "mensagem";
-  if (/(address|morada|city|cidade|postal|zip|country|pais|state|estado)/.test(k)) return "mensagem";
-  if (/(note|message|body|mensagem|coment|observ|topic|assunto|extra_|privacy|revenue|budget)/.test(k)) return "mensagem";
-  return "mensagem";
 }
 
 const MAPPING_CRM_OPTIONS: { value: string; label: string }[] = [
@@ -172,44 +152,16 @@ const MAPPING_CRM_OPTIONS: { value: string; label: string }[] = [
   { value: "__ignore__", label: "Ignorar campo (não mapear)" },
 ];
 
-function inferCrmFromMetaField(field: MetaFormField): string {
-  const type = (field.type ?? "").toUpperCase();
-  const k = field.key.toLowerCase();
-  if (type === "FULL_NAME" || /nome|name/.test(k)) return "nome";
-  if (type === "PHONE" || /phone|telefone|celular/.test(k)) return "celular";
-  if (type === "EMAIL" || /email/.test(k)) return "email";
-  return "mensagem";
-}
-
 function buildMappingsFromMetaFields(
   fields: MetaFormField[],
   existing: LeadFieldMapping[],
   options: { forceAuto: boolean },
 ): LeadFieldMapping[] {
-  const existingByKey = new Map(existing.filter((m) => m.kind === "form").map((m) => [m.sourceKey, m]));
-  const formRows: LeadFieldMapping[] = fields.map((f) => {
-    const prev = existingByKey.get(f.key);
-    const crm = options.forceAuto ? inferCrmFromMetaField(f) : (prev?.crmField ?? inferCrmFromMetaField(f));
-    return {
-      id: prev?.id ?? mappingId(),
-      sourceKey: f.key,
-      sourceLabel: f.label || f.key,
-      kind: "form",
-      crmField: crm,
-    };
+  return buildLeadRuleMappingsFromFields(fields, existing, {
+    forceAuto: options.forceAuto,
+    includeContext: true,
+    makeId: mappingId,
   });
-  const ctxExisting = existing.filter((m) => m.kind === "context");
-  const ctx: LeadFieldMapping[] = CONTEXT_FIELDS.map((c) => {
-    const prev = ctxExisting.find((x) => x.sourceKey === c.key);
-    return {
-      id: prev?.id ?? mappingId(),
-      sourceKey: c.key,
-      sourceLabel: c.label,
-      kind: "context",
-      crmField: options.forceAuto ? "mensagem" : (prev?.crmField ?? "mensagem"),
-    };
-  });
-  return [...formRows, ...ctx];
 }
 
 function MetaFieldTypeBadge({ type }: { type: string }) {
@@ -267,6 +219,11 @@ function MetaMappingRow({
         {m.kind === "context" ? (
           <p className="mt-0.5 text-[10px] text-content-faint">Campo de contexto · {m.sourceKey}</p>
         ) : null}
+        {m.kind === "form" && metaType?.toUpperCase() === "CUSTOM" && m.crmField === "mensagem" ? (
+          <p className="mt-1 text-[10px] font-medium text-content-muted">
+            Pergunta personalizada salva como observação/contexto do lead.
+          </p>
+        ) : null}
       </div>
       <ArrowRight className="hidden h-4 w-4 shrink-0 text-content-faint sm:block" aria-hidden />
       <div className="flex min-w-0 flex-col gap-1 sm:w-[min(100%,14rem)] sm:flex-none">
@@ -300,57 +257,67 @@ const DISTRIBUTION_CHOICES: {
   value: LeadDistributionType;
   label: string;
   hint: string;
-  group: "equipa" | "ia";
+  group: "equipa" | "ia" | "crm";
 }[] = [
   {
     value: "entry_owner",
-    group: "equipa",
-    label: "Responsável pela entrada",
-    hint: "Quem captou ou ficou associado ao contacto na origem (qualquer sector).",
-  },
-  {
-    value: "round_robin_employees",
-    group: "equipa",
-    label: "Rodízio na equipa (plantão / fila)",
-    hint: "Alterna entre os colaboradores que selecionar — útil para filas de atendimento.",
-  },
-  {
-    value: "all_employees",
-    group: "equipa",
-    label: "Todos os colaboradores",
-    hint: "Todos os registos activos em Colaboradores podem receber o lead.",
+    group: "crm",
+    label: "Salvar no CRM apenas",
+    hint: "O lead entra no CRM sem acionar agente de IA nem WhatsApp automático.",
   },
   {
     value: "specific_employees",
     group: "equipa",
-    label: "Colaboradores selecionados",
-    hint: "Apenas as pessoas que marcar na lista (definidas em Colaboradores).",
+    label: "Enviar para equipe humana",
+    hint: "Escolha colaboradores cadastrados para receber este lead.",
   },
   {
     value: "automation_agent",
     group: "ia",
-    label: "Agente de automação",
-    hint: "Um agente de IA recebe o lead e envia a primeira mensagem automática ao contacto.",
+    label: "Atender com agente de IA",
+    hint: "Escolha um agente ativo para iniciar o atendimento automaticamente.",
+  },
+];
+
+const LEGACY_DISTRIBUTION_CHOICES: {
+  value: LeadDistributionType;
+  label: string;
+  hint: string;
+  group: "equipa" | "ia";
+}[] = [
+  {
+    value: "round_robin_employees",
+    group: "equipa",
+    label: "Rodízio na equipa (legado)",
+    hint: "Regra antiga preservada sem conversão automática.",
   },
   {
-    value: "round_robin",
-    group: "ia",
-    label: "Rodízio entre agentes de IA",
-    hint: "Distribui entre os agentes configurados em Agentes.",
-  },
-  {
-    value: "all_agents",
-    group: "ia",
-    label: "Todos os agentes de IA",
-    hint: "Todos os agentes activos podem processar o contexto do lead.",
+    value: "all_employees",
+    group: "equipa",
+    label: "Todos os colaboradores (legado)",
+    hint: "Regra antiga preservada sem conversão automática.",
   },
   {
     value: "specific_agents",
     group: "ia",
-    label: "Agentes de IA selecionados",
-    hint: "Escolha um ou mais agentes na lista abaixo.",
+    label: "Agentes de IA selecionados (legado)",
+    hint: "Regra antiga preservada sem conversão automática.",
+  },
+  {
+    value: "round_robin",
+    group: "ia",
+    label: "Rodízio entre agentes de IA (legado)",
+    hint: "Regra antiga preservada sem conversão automática.",
+  },
+  {
+    value: "all_agents",
+    group: "ia",
+    label: "Todos os agentes de IA (legado)",
+    hint: "Regra antiga preservada sem conversão automática.",
   },
 ];
+
+const ALL_DISTRIBUTION_CHOICES = [...DISTRIBUTION_CHOICES, ...LEGACY_DISTRIBUTION_CHOICES];
 
 function newId() {
   return `lr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -667,32 +634,12 @@ export function NewLeadRuleWizard({
       if (!src) return;
       const formCatalog = catalogForSource(src);
       const existing = draft.mappings;
-      const existingByKey = new Map(existing.filter((m) => m.kind === "form").map((m) => [m.sourceKey, m]));
-      const base: LeadFieldMapping[] = formCatalog.map((f) => {
-        const prev = existingByKey.get(f.key);
-        return {
-          id: prev?.id ?? mappingId(),
-          sourceKey: f.key,
-          sourceLabel: f.label,
-          kind: "form" as const,
-          crmField: forceAuto ? inferCrmTarget(f.key) : (prev?.crmField ?? inferCrmTarget(f.key)),
-        };
+      const mappings = buildLeadRuleMappingsFromFields(formCatalog, existing, {
+        forceAuto,
+        includeContext: src === "meta_form",
+        makeId: mappingId,
       });
-      const ctxExisting = existing.filter((m) => m.kind === "context");
-      const ctx: LeadFieldMapping[] =
-        src === "meta_form"
-          ? CONTEXT_FIELDS.map((c) => {
-              const prev = ctxExisting.find((x) => x.sourceKey === c.key);
-              return {
-                id: prev?.id ?? mappingId(),
-                sourceKey: c.key,
-                sourceLabel: c.label,
-                kind: "context" as const,
-                crmField: forceAuto ? "mensagem" : (prev?.crmField ?? "mensagem"),
-              };
-            })
-          : [];
-      setDraft((d) => ({ ...d, mappings: [...base, ...ctx] }));
+      setDraft((d) => ({ ...d, mappings }));
     },
     [draft.mappings, draft.source],
   );
@@ -809,7 +756,7 @@ export function NewLeadRuleWizard({
 
   const currentDistChoice = useMemo(() => {
     if (!draft.distributionType) return null;
-    return DISTRIBUTION_CHOICES.find((c) => c.value === draft.distributionType) ?? null;
+    return ALL_DISTRIBUTION_CHOICES.find((c) => c.value === draft.distributionType) ?? null;
   }, [draft.distributionType]);
 
   const canAdvance = useMemo(() => {
@@ -1830,13 +1777,13 @@ export function NewLeadRuleWizard({
                             />
                           </div>
                           <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
-                            {(["equipa", "ia"] as const).map((group) => {
+                            {(["crm", "equipa", "ia"] as const).map((group) => {
                               const items = filteredDistChoices.filter((c) => c.group === group);
                               if (!items.length) return null;
                               return (
                                 <li key={group} className="list-none">
                                   <p className={cn(typography.ui.overline, "px-3 pb-1 pt-2 text-content-faint")}>
-                                    {group === "equipa" ? "Equipa humana" : "Agentes de IA"}
+                                    {group === "crm" ? "CRM" : group === "equipa" ? "Equipe humana" : "Agentes de IA"}
                                   </p>
                                   <ul className="pb-1">
                                     {items.map((c) => {
@@ -1985,7 +1932,7 @@ export function NewLeadRuleWizard({
                         }))
                       }
                     >
-                      {DISTRIBUTION_CHOICES.map((choice) => (
+                      {ALL_DISTRIBUTION_CHOICES.map((choice) => (
                         <option key={choice.value} value={choice.value}>
                           {choice.label}
                         </option>
@@ -2038,25 +1985,35 @@ export function NewLeadRuleWizard({
                   Escolha <strong className="text-content">um</strong> agente de IA. Ele recebe o lead assim que entra e dispara a{" "}
                   <strong className="text-content">primeira mensagem automática</strong> (conforme o fluxo e templates configurados em Agentes).
                 </p>
-                <ul className="mt-3 space-y-2">
-                  {agents.map((a) => {
-                    const checked = draft.agentIds[0] === a.id;
-                    return (
-                      <li key={a.id}>
-                        <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-line/80 bg-surface-card px-3 py-2">
-                          <input
-                            type="radio"
-                            name={`${formId}-automation-agent`}
-                            className="h-4 w-4 border-line accent-primary"
-                            checked={checked}
-                            onChange={() => setDraft((d) => ({ ...d, agentIds: [a.id] }))}
-                          />
-                          <span className="text-sm text-content">{a.nome}</span>
-                        </label>
-                      </li>
-                    );
-                  })}
-                </ul>
+                {agents.length === 0 ? (
+                  <div className="mt-3 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-3 text-xs leading-relaxed text-amber-700 dark:text-amber-200">
+                    Nenhum agente ativo encontrado neste tenant.{" "}
+                    <Link href="/dashboard/agentes" className="font-semibold text-primary underline-offset-2 hover:underline">
+                      Crie ou ative um agente em Agentes
+                    </Link>{" "}
+                    para liberar o atendimento automático.
+                  </div>
+                ) : (
+                  <ul className="mt-3 space-y-2">
+                    {agents.map((a) => {
+                      const checked = draft.agentIds[0] === a.id;
+                      return (
+                        <li key={a.id}>
+                          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-line/80 bg-surface-card px-3 py-2 transition hover:border-primary/35 hover:bg-primary/[0.04]">
+                            <input
+                              type="radio"
+                              name={`${formId}-automation-agent`}
+                              className="h-4 w-4 border-line accent-primary"
+                              checked={checked}
+                              onChange={() => setDraft((d) => ({ ...d, agentIds: [a.id] }))}
+                            />
+                            <span className="text-sm text-content">{a.nome}</span>
+                          </label>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </div>
             ) : null}
 

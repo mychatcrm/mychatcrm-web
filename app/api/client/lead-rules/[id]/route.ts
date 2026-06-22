@@ -15,6 +15,8 @@ import {
 
 export const dynamic = "force-dynamic";
 
+const META_AUTOMATION_DISTRIBUTION_TYPES = new Set(["automation_agent", "specific_agents", "round_robin"]);
+
 /** @see app/api/client/lead-rules/route.ts — same logic, kept in sync */
 async function syncOrganicAgentId(
   sb: ReturnType<typeof createSupabaseServiceClient>,
@@ -84,6 +86,15 @@ export async function PUT(req: NextRequest, { params }: RouteContext): Promise<N
     return NextResponse.json({ error: err instanceof Error ? err.message : "Invalid payload" }, { status: 400 });
   }
 
+  if (
+    payload.source === "meta_form" &&
+    typeof payload.distribution_type === "string" &&
+    META_AUTOMATION_DISTRIBUTION_TYPES.has(payload.distribution_type) &&
+    stringArray(payload.agent_ids).length === 0
+  ) {
+    return NextResponse.json({ error: "Selecione um agente de IA ativo para esta regra." }, { status: 400 });
+  }
+
   // Block editing to whatsapp_organico if another rule of this type already exists
   if (payload.source === "whatsapp_organico") {
     const { count: organicCount } = await sb
@@ -119,12 +130,11 @@ export async function PUT(req: NextRequest, { params }: RouteContext): Promise<N
   if (data.source === "meta_form") {
     if (stringArray(data.agent_ids).length === 0) {
       await deleteMetaFormMappingsForRule(sb, data);
-      await sb.from("lead_distribution_rules").delete().eq("tenant_id", session.tenantId).eq("id", params.id);
       await reconcileMetaFormMappingsWithRules(sb, session.tenantId);
-      return NextResponse.json({ deleted: true, ruleId: params.id });
+    } else {
+      await syncMetaFormAgentMappingForRule(sb, data);
+      await reconcileMetaFormMappingsWithRules(sb, session.tenantId);
     }
-    await syncMetaFormAgentMappingForRule(sb, data);
-    await reconcileMetaFormMappingsWithRules(sb, session.tenantId);
   }
 
   // Keep organic_agent_id in sync for organic WhatsApp rules

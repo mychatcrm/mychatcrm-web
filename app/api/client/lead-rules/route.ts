@@ -10,8 +10,11 @@ import {
   reconcileMetaFormMappingsWithRules,
   syncMetaFormAgentMappingForRule,
 } from "@/lib/server/lead-rules-meta-sync";
+import { stringArray } from "@/lib/server/meta-form-authorization";
 
 export const dynamic = "force-dynamic";
+
+const META_AUTOMATION_DISTRIBUTION_TYPES = new Set(["automation_agent", "specific_agents", "round_robin"]);
 
 /**
  * When a whatsapp_organico rule is saved, keep tenant_evolution_instances.organic_agent_id
@@ -95,6 +98,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     payload = leadRuleClientToDbPayload(body, session.tenantId, count ?? 999);
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Invalid payload" }, { status: 400 });
+  }
+
+  if (
+    payload.source === "meta_form" &&
+    typeof payload.distribution_type === "string" &&
+    META_AUTOMATION_DISTRIBUTION_TYPES.has(payload.distribution_type) &&
+    stringArray(payload.agent_ids).length === 0
+  ) {
+    return NextResponse.json({ error: "Selecione um agente de IA ativo para esta regra." }, { status: 400 });
   }
 
   // Block creation of a second whatsapp_organico rule — only one organic agent per tenant

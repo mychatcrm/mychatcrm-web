@@ -31,6 +31,11 @@ import {
   shouldSkipMetaOutreachForHumanAttending,
 } from "@/lib/server/meta-lead-processing";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import {
+  applyLeadRuleMappingsToFields,
+  type AppliedLeadRuleMapping,
+} from "@/lib/lead-rule-field-mapping";
+import type { LeadFieldMapping } from "@/lib/lead-distribution-rules";
 
 export type LeadgenValue = {
   leadgen_id: string;
@@ -101,6 +106,46 @@ async function loadRuleActivationStartedAtMs(params: {
   return timestampMsFromDb(row.updated_at) ?? timestampMsFromDb(row.created_at);
 }
 
+async function loadLeadRuleMappings(params: {
+  sb: ReturnType<typeof createSupabaseServiceClient>;
+  tenantId: string;
+  ruleId: string | null;
+}): Promise<LeadFieldMapping[]> {
+  if (!params.ruleId) return [];
+  const { data, error } = await params.sb
+    .from("lead_distribution_rules")
+    .select("mappings")
+    .eq("tenant_id", params.tenantId)
+    .eq("id", params.ruleId)
+    .maybeSingle();
+  if (error || !data) {
+    if (error) {
+      console.warn("[meta-webhook] Failed to load lead rule mappings", {
+        tenant_id: params.tenantId,
+        rule_id: params.ruleId,
+        error: error.message,
+      });
+    }
+    return [];
+  }
+  const mappings = (data as { mappings?: unknown }).mappings;
+  return Array.isArray(mappings) ? (mappings as LeadFieldMapping[]) : [];
+}
+
+function buildMappingMetadata(params: {
+  ruleId: string | null;
+  mappings: LeadFieldMapping[];
+  applied: AppliedLeadRuleMapping;
+}): Record<string, unknown> | null {
+  if (params.mappings.length === 0) return null;
+  return {
+    rule_id: params.ruleId,
+    mapped_fields: params.applied.mappedFields,
+    mapped_company: params.applied.company,
+    mapped_observations: params.applied.observations,
+  };
+}
+
 export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void> {
   const { leadgen_id, page_id, form_id, ad_id, ad_group_id } = value;
   if (!leadgen_id || !page_id) {
@@ -151,21 +196,11 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
   await eventRecorder.step("graph_data_fetched");
 
   const fields = parseFieldData(lead.field_data ?? []);
-  const phone = extractLeadPhone(fields);
-  const fullName = extractLeadName(fields);
-  const email = fields.email ?? null;
+  let phone = extractLeadPhone(fields);
+  let fullName = extractLeadName(fields);
+  let email = fields.email ?? null;
 
   await eventRecorder.patch({ name: fullName, phone: phone || null, email });
-
-  if (!phone) {
-    await eventRecorder.step("skipped_no_phone", { field_keys: Object.keys(fields) });
-    await eventRecorder.patch({ whatsapp_status: "skipped", error_message: "no_phone_in_form" });
-    console.warn("[meta-webhook] Lead has no phone — cannot route via WhatsApp", {
-      leadgen_id,
-      field_keys: Object.keys(fields),
-    });
-    return;
-  }
 
   const resolvedFormId = (form_id ?? lead.form_id ?? "").trim();
   const crmAllowance = await isMetaFormAllowedForCrm({
@@ -198,6 +233,28 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
   }
 
   const ruleId = crmAllowance.ruleId;
+  const ruleMappings = await loadLeadRuleMappings({
+    sb,
+    tenantId: tenant_id,
+    ruleId,
+  });
+  const appliedMapping = applyLeadRuleMappingsToFields(fields, ruleMappings);
+  if (appliedMapping.name) fullName = appliedMapping.name;
+  if (appliedMapping.phone) phone = appliedMapping.phone;
+  if (appliedMapping.email) email = appliedMapping.email;
+
+  await eventRecorder.patch({ name: fullName, phone: phone || null, email });
+
+  if (!phone) {
+    await eventRecorder.step("skipped_no_phone", { field_keys: Object.keys(fields), rule_id: ruleId });
+    await eventRecorder.patch({ whatsapp_status: "skipped", error_message: "no_phone_in_form" });
+    console.warn("[meta-webhook] Lead has no phone — cannot route via WhatsApp", {
+      leadgen_id,
+      field_keys: Object.keys(fields),
+      rule_id: ruleId,
+    });
+    return;
+  }
 
   const leadCreatedAtMs = timestampMsFromSeconds(value.created_time);
   const activationStartedAtMs = await loadRuleActivationStartedAtMs({
@@ -266,7 +323,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     ? await fetchFormQuestionLabels(effectiveFormId, page_access_token)
     : new Map<string, string>();
 
-  const leadMetadata = buildLeadProfileMetadata({
+  const baseLeadMetadata = buildLeadProfileMetadata({
     leadgenId: leadgen_id,
     fieldData: lead.field_data ?? [],
     formId: effectiveFormId ?? form_id,
@@ -284,6 +341,17 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     rawWebhook: value as Record<string, unknown>,
     questionLabels,
   });
+  const mappingMetadata = buildMappingMetadata({
+    ruleId,
+    mappings: ruleMappings,
+    applied: appliedMapping,
+  });
+  const leadMetadata = mappingMetadata
+    ? {
+        ...baseLeadMetadata,
+        lead_rule_mapping: mappingMetadata,
+      }
+    : baseLeadMetadata;
 
   await eventRecorder.step("form_fields_saved");
   await eventRecorder.patch({
