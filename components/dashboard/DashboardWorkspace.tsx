@@ -1157,8 +1157,12 @@ function CrmPage({
   const [deleteFunnelPhrase, setDeleteFunnelPhrase] = useState("");
   const [deleteFunnelLeadsMode, setDeleteFunnelLeadsMode] = useState<"migrate" | "remove">("migrate");
   const [deleteFunnelMigrateToId, setDeleteFunnelMigrateToId] = useState("");
+  const [deleteFunnelErr, setDeleteFunnelErr] = useState("");
+  const [deleteFunnelBusy, setDeleteFunnelBusy] = useState(false);
   const [removeColOpen, setRemoveColOpen] = useState(false);
   const [removeColId, setRemoveColId] = useState("");
+  const [removeColErr, setRemoveColErr] = useState("");
+  const [removeColBusy, setRemoveColBusy] = useState(false);
   const [renameColOpen, setRenameColOpen] = useState(false);
   const [renameColId, setRenameColId] = useState("");
   const [renameColTitle, setRenameColTitle] = useState("");
@@ -1177,6 +1181,7 @@ function CrmPage({
   const [bulkActionsOpen, setBulkActionsOpen] = useState(false);
   const [bulkActionBusy, setBulkActionBusy] = useState<"assign" | "status" | "offer" | null>(null);
   const [bulkActionError, setBulkActionError] = useState<string | null>(null);
+  const [crmPipelineError, setCrmPipelineError] = useState<string | null>(null);
   const [assignAttendantOpen, setAssignAttendantOpen] = useState(false);
   const [assignAttendantId, setAssignAttendantId] = useState("");
   const [changeStatusOpen, setChangeStatusOpen] = useState(false);
@@ -1336,7 +1341,14 @@ function CrmPage({
               funnel: activeFunnel,
               item: buildPipelineMoveItem(activeLead.id, activeLead.status, targetStatus, activeFunnel),
             });
-            void updateCrmLeadInApi(activeLead.id, { status: targetStatus }).catch(() => undefined);
+            void updateCrmLeadInApi(activeLead.id, { status: targetStatus, funilId: fid })
+              .then(() => setCrmPipelineError(null))
+              .catch(() => {
+                setLeads((current) =>
+                  current.map((l) => (l.id === activeLead.id ? { ...activeLead } : l)),
+                );
+                setCrmPipelineError("Não foi possível salvar a movimentação do lead. Tente novamente.");
+              });
           });
 
           const moved = { ...activeLead, status: targetStatus };
@@ -1370,7 +1382,14 @@ function CrmPage({
               funnel: activeFunnel,
               item: buildPipelineMoveItem(activeLead.id, activeLead.status, targetStatus, activeFunnel),
             });
-            void updateCrmLeadInApi(activeLead.id, { status: targetStatus }).catch(() => undefined);
+            void updateCrmLeadInApi(activeLead.id, { status: targetStatus, funilId: fid })
+              .then(() => setCrmPipelineError(null))
+              .catch(() => {
+                setLeads((current) =>
+                  current.map((l) => (l.id === activeLead.id ? { ...activeLead } : l)),
+                );
+                setCrmPipelineError("Não foi possível salvar a movimentação do lead. Tente novamente.");
+              });
           });
         }
 
@@ -1767,71 +1786,99 @@ function CrmPage({
     closeRenameColumnModal();
   }, [activeFunnel, closeRenameColumnModal, renameColId, renameColTitle, updateFunnel]);
 
-  const confirmRemoveColumn = useCallback(() => {
-    if (!activeFunnel || !removeColId || activeFunnel.columns.length <= 2) return;
+  const confirmRemoveColumn = useCallback(async () => {
+    if (!activeFunnel || !removeColId || activeFunnel.columns.length <= 2 || removeColBusy) return;
     const fallback = activeFunnel.columns.find((c) => c.id !== removeColId)?.id;
     if (!fallback) return;
     const fid = activeFunnel.id;
-    setLeads((prev) => {
-      const affected = prev.filter((l) => l.funilId === fid && l.status === removeColId);
-      for (const lead of affected) {
-        void updateCrmLeadInApi(lead.id, { status: fallback }).catch(() => undefined);
-      }
-      return prev.map((l) => (l.funilId === fid && l.status === removeColId ? { ...l, status: fallback } : l));
-    });
-    removeFunnelColumn(fid, removeColId);
-    setRemoveColOpen(false);
-    setRemoveColId("");
-  }, [activeFunnel, removeColId, removeFunnelColumn]);
+    const affected = leads.filter((l) => l.funilId === fid && l.status === removeColId);
+    setRemoveColBusy(true);
+    setRemoveColErr("");
+    try {
+      await Promise.all(
+        affected.map((lead) => updateCrmLeadInApi(lead.id, { status: fallback, funilId: fid })),
+      );
+      setLeads((prev) =>
+        prev.map((l) => (l.funilId === fid && l.status === removeColId ? { ...l, status: fallback } : l)),
+      );
+      removeFunnelColumn(fid, removeColId);
+      setRemoveColOpen(false);
+      setRemoveColId("");
+    } catch {
+      setRemoveColErr("Não foi possível migrar os leads desta etapa. A remoção foi cancelada.");
+    } finally {
+      setRemoveColBusy(false);
+    }
+  }, [activeFunnel, leads, removeColBusy, removeColId, removeFunnelColumn]);
 
   const closeDeleteFunnelModal = useCallback(() => {
     setDeleteFunnelOpen(false);
     setDeleteFunnelPhrase("");
     setDeleteFunnelLeadsMode("migrate");
     setDeleteFunnelMigrateToId("");
+    setDeleteFunnelErr("");
+    setDeleteFunnelBusy(false);
   }, []);
 
-  const confirmDeleteFunnel = useCallback(() => {
-    if (deleteFunnelPhrase.trim() !== DELETE_FUNNEL_CONFIRM_TEXT) return;
+  const confirmDeleteFunnel = useCallback(async () => {
+    if (deleteFunnelPhrase.trim() !== DELETE_FUNNEL_CONFIRM_TEXT || deleteFunnelBusy) return;
     if (funnels.length <= 1 || !activeFunnel) return;
     const sourceId = activeFunnel.id;
+    setDeleteFunnelBusy(true);
+    setDeleteFunnelErr("");
 
-    if (deleteFunnelLeadsMode === "remove") {
-      setLeads((prev) => {
-        const removed = prev.filter((l) => l.funilId === sourceId);
-        for (const lead of removed) {
-          void deleteCrmLeadInApi(lead.id).catch(() => undefined);
+    try {
+      if (deleteFunnelLeadsMode === "remove") {
+        const removed = leads.filter((l) => l.funilId === sourceId);
+        await Promise.all(removed.map((lead) => deleteCrmLeadInApi(lead.id)));
+        setLeads((prev) => prev.filter((l) => l.funilId !== sourceId));
+      } else {
+        const targetFunnel = funnels.find((f) => f.id === deleteFunnelMigrateToId && f.id !== sourceId);
+        if (!targetFunnel?.columns.length) {
+          setDeleteFunnelErr("Selecione um funil de destino válido.");
+          return;
         }
-        return prev.filter((l) => l.funilId !== sourceId);
-      });
-    } else {
-      const targetFunnel = funnels.find((f) => f.id === deleteFunnelMigrateToId && f.id !== sourceId);
-      if (!targetFunnel?.columns.length) return;
-      setLeads((prev) => {
-        const next = prev.map((l) => {
-          if (l.funilId !== sourceId) return l;
-          const migrated = {
+        const toMigrate = leads
+          .filter((l) => l.funilId === sourceId)
+          .map((l) => ({
             ...l,
             funilId: targetFunnel.id,
             status: normalizeColunaInicialForFunnel(l.status, targetFunnel),
-          };
-          void updateCrmLeadInApi(migrated.id, { status: migrated.status }).catch(() => undefined);
-          return migrated;
-        });
-        return next;
-      });
-    }
+          }));
+        await Promise.all(
+          toMigrate.map((lead) =>
+            updateCrmLeadInApi(lead.id, { status: lead.status, funilId: lead.funilId }),
+          ),
+        );
+        setLeads((prev) =>
+          prev.map((l) => {
+            if (l.funilId !== sourceId) return l;
+            return {
+              ...l,
+              funilId: targetFunnel.id,
+              status: normalizeColunaInicialForFunnel(l.status, targetFunnel),
+            };
+          }),
+        );
+      }
 
-    deleteFunnel(sourceId);
-    closeDeleteFunnelModal();
+      deleteFunnel(sourceId);
+      closeDeleteFunnelModal();
+    } catch {
+      setDeleteFunnelErr("Não foi possível concluir a operação nos leads. O funil não foi apagado.");
+    } finally {
+      setDeleteFunnelBusy(false);
+    }
   }, [
     activeFunnel,
     closeDeleteFunnelModal,
     deleteFunnel,
+    deleteFunnelBusy,
     deleteFunnelLeadsMode,
     deleteFunnelMigrateToId,
     deleteFunnelPhrase,
     funnels,
+    leads,
   ]);
 
   const deleteFunnelMigrationTargets = useMemo(
@@ -2154,6 +2201,11 @@ function CrmPage({
               )}
             >
               <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+                {crmPipelineError ? (
+                  <p className="w-full rounded-lg border border-rose-500/25 bg-rose-500/[0.06] px-3 py-2 text-sm text-rose-500 lg:order-last lg:basis-full">
+                    {crmPipelineError}
+                  </p>
+                ) : null}
                 <div className="relative min-w-0 flex-1">
                   <label className="sr-only" htmlFor="crm-pipeline-busca">
                     Buscar leads
@@ -2852,8 +2904,8 @@ function CrmPage({
             <Button variant="secondary" type="button" onClick={closeDeleteFunnelModal}>
               Cancelar
             </Button>
-            <Button variant="danger" type="button" disabled={!canConfirmDeleteFunnel} onClick={confirmDeleteFunnel}>
-              Confirmar e apagar
+            <Button variant="danger" type="button" disabled={!canConfirmDeleteFunnel || deleteFunnelBusy} onClick={() => void confirmDeleteFunnel()}>
+              {deleteFunnelBusy ? "A processar…" : "Confirmar e apagar"}
             </Button>
           </>
         }
@@ -2949,6 +3001,7 @@ function CrmPage({
                 aria-invalid={deleteFunnelPhrase.length > 0 && deleteFunnelPhrase.trim() !== DELETE_FUNNEL_CONFIRM_TEXT}
               />
             </div>
+            {deleteFunnelErr ? <p className="text-sm text-rose-500">{deleteFunnelErr}</p> : null}
           </div>
         ) : null}
       </Modal>
@@ -3024,6 +3077,7 @@ function CrmPage({
         onClose={() => {
           setRemoveColOpen(false);
           setRemoveColId("");
+          setRemoveColErr("");
         }}
         title="Remover etapa"
         className="max-w-md"
@@ -3035,12 +3089,13 @@ function CrmPage({
               onClick={() => {
                 setRemoveColOpen(false);
                 setRemoveColId("");
+                setRemoveColErr("");
               }}
             >
               Cancelar
             </Button>
-            <Button variant="danger" type="button" onClick={confirmRemoveColumn} disabled={!removeColId}>
-              Remover etapa
+            <Button variant="danger" type="button" onClick={() => void confirmRemoveColumn()} disabled={!removeColId || removeColBusy}>
+              {removeColBusy ? "A processar…" : "Remover etapa"}
             </Button>
           </>
         }
@@ -3067,6 +3122,7 @@ function CrmPage({
                 ))}
               </Select>
             </div>
+            {removeColErr ? <p className="text-sm text-rose-500">{removeColErr}</p> : null}
           </div>
         ) : null}
       </Modal>

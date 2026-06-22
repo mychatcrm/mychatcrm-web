@@ -1,5 +1,10 @@
 import { DEFAULT_CRM_FUNNELS } from "@/lib/crm-funnels";
 import { deleteCrmLeadsForTenant, normalizeCrmLeadIds, validateCrmLeadIds } from "@/lib/server/crm-leads-delete";
+import {
+  normalizeAllowedStatusIds,
+  validateLeadFunnelIdForUpdate,
+  validateLeadStatusForUpdate,
+} from "@/lib/server/crm-lead-status-validation";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import type { TeamEmployee } from "@/lib/team-employees-types";
 
@@ -36,16 +41,6 @@ function textOrNull(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const clean = value.trim();
   return clean ? clean : null;
-}
-
-function normalizeAllowedStatuses(input: unknown): string[] {
-  if (!Array.isArray(input)) return [];
-  const seen = new Set<string>();
-  for (const value of input) {
-    const clean = textOrNull(value);
-    if (clean) seen.add(clean);
-  }
-  return [...seen];
 }
 
 function validateCommonIds(ids: string[]): string | null {
@@ -111,10 +106,20 @@ export function validateCrmBulkStatus(params: {
   const status = textOrNull(params.status);
   if (!status) throw new Error("Selecione um status válido.");
 
-  const explicitAllowed = normalizeAllowedStatuses(params.allowedStatusIds);
+  const explicitAllowed = normalizeAllowedStatusIds(params.allowedStatusIds);
   const fallbackAllowed = DEFAULT_CRM_FUNNELS.flatMap((funnel) => funnel.columns.map((column) => column.id));
   const allowed = explicitAllowed.length ? explicitAllowed : fallbackAllowed;
-  if (!allowed.includes(status)) throw new Error("Status inválido para o funil selecionado.");
+
+  if (explicitAllowed.length) {
+    if (!explicitAllowed.includes(status)) {
+      throw new Error("Status inválido para o funil selecionado.");
+    }
+  } else {
+    const statusError = validateLeadStatusForUpdate(status);
+    if (statusError || !allowed.includes(status)) {
+      throw new Error("Status inválido para o funil selecionado.");
+    }
+  }
 
   return { status, allowed };
 }
@@ -183,6 +188,10 @@ export async function executeCrmLeadBulkAction(params: {
         allowedStatusIds: payload.allowedStatusIds,
       });
       const funnelId = textOrNull(payload.funnelId);
+      if (funnelId) {
+        const funnelError = validateLeadFunnelIdForUpdate(funnelId);
+        if (funnelError) throw new Error(funnelError);
+      }
       const patch: Record<string, unknown> = { status, updated_at: now };
       if (funnelId) patch.crm_funnel_id = funnelId;
 

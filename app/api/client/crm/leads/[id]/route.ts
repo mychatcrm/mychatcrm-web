@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { deleteCrmLeadsForTenant, normalizeCrmLeadIds, validateCrmLeadIds } from "@/lib/server/crm-leads-delete";
+import {
+  normalizeAllowedStatusIds,
+  validateLeadFunnelIdForUpdate,
+  validateLeadStatusForUpdate,
+} from "@/lib/server/crm-lead-status-validation";
 import { readTeamMembersFromDb } from "@/lib/server/team-employees-db";
 import type { ClientLead } from "@/lib/dashboard-data";
 
@@ -190,6 +195,22 @@ export async function PUT(
     body = (await request.json()) as Record<string, unknown>;
   } catch {
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
+  }
+
+  const statusRaw = textOrNull(body.status);
+  const allowedStatusIds = normalizeAllowedStatusIds(body.allowedStatusIds);
+  if (statusRaw) {
+    const statusError = validateLeadStatusForUpdate(
+      statusRaw,
+      allowedStatusIds.length ? allowedStatusIds : undefined,
+    );
+    if (statusError) return NextResponse.json({ error: statusError }, { status: 400 });
+  }
+
+  const funnelIdRaw = textOrNull(body.crm_funnel_id) ?? textOrNull(body.funilId);
+  if (funnelIdRaw) {
+    const funnelError = validateLeadFunnelIdForUpdate(funnelIdRaw);
+    if (funnelError) return NextResponse.json({ error: funnelError }, { status: 400 });
   }
 
   const sb = createSupabaseServiceClient();

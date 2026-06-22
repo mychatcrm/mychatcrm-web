@@ -18,7 +18,10 @@ export const CRM_FUNNELS_STORAGE_KEY = "mychatcrm-crm-funnels-v1";
 export { CRM_FUNNELS_MIGRATION_VERSION, migrateCrmFunnelsFromLocalStorage, migrateFunnelColumns };
 
 export function templateColumnsFromGlobalKanban(): CrmFunnelColumn[] {
-  return migrateFunnelColumns(listCrmKanbanColumns().map((c) => ({ id: c.id, title: c.title })));
+  return migrateFunnelColumns(
+    listCrmKanbanColumns().map((c) => ({ id: c.id, title: c.title })),
+    { template: "full" },
+  );
 }
 
 /** Funil inicial com pipeline próprio (colunas copiadas do modelo global na primeira instalação). */

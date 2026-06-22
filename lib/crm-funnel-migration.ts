@@ -7,12 +7,12 @@ function buildFallbackFunnels(): CrmFunnel[] {
     {
       id: "funil-default",
       nome: "Funil Principal",
-      columns: KANBAN_COLUMNS.map((c) => ({ id: c.id, title: c.title })),
+      columns: fullTemplateColumns(),
     },
   ];
 }
 
-export const CRM_FUNNELS_MIGRATION_VERSION = 2;
+export const CRM_FUNNELS_MIGRATION_VERSION = 3;
 
 const SYSTEM_COLUMN_IDS = new Set<string>(KANBAN_COLUMNS.map((c) => c.id));
 
@@ -37,6 +37,11 @@ const LEGACY_TITLE_TO_COLUMN_ID: Record<string, KanbanColumnId> = {
   perdido: "perdido",
 };
 
+export type MigrateFunnelColumnsOptions = {
+  /** preserve = mantém ordem/títulos/remoções do utilizador; full = modelo oficial completo */
+  template?: "preserve" | "full";
+};
+
 export function isSystemKanbanColumnId(columnId: string): boolean {
   return SYSTEM_COLUMN_IDS.has(columnId);
 }
@@ -57,45 +62,65 @@ function resolveLegacyColumnId(column: CrmFunnelColumn): string {
   return byTitle ?? column.id;
 }
 
+/** Atualiza só títulos legados conhecidos; preserva renomeações do utilizador. */
+function normalizeStoredColumnTitle(columnId: string, title: string): string {
+  const trimmed = title.trim();
+  const lower = trimmed.toLowerCase();
+  const mappedId = LEGACY_TITLE_TO_COLUMN_ID[lower];
+  const official = OFFICIAL_TITLE_BY_ID.get(columnId);
+  if (mappedId === columnId && official && lower !== official.toLowerCase() && trimmed !== official) {
+    return official;
+  }
+  return trimmed;
+}
+
+export function fullTemplateColumns(): CrmFunnelColumn[] {
+  return KANBAN_COLUMNS.map((c) => ({ id: c.id, title: c.title }));
+}
+
 /**
- * Garante colunas base do Kanban + preserva etapas customizadas (`col-*`).
+ * Normaliza colunas do funil.
+ * - `preserve`: mantém ordem, títulos renomeados e etapas removidas; garante coluna `novo`.
+ * - `full`: modelo oficial completo (novos funis / reset).
  */
-export function migrateFunnelColumns(columns: CrmFunnelColumn[] | undefined): CrmFunnelColumn[] {
-  const input = (columns ?? []).filter(isValidColumn).map((c) => ({
-    id: resolveLegacyColumnId(c),
-    title: c.title.trim(),
-  }));
+export function migrateFunnelColumns(
+  columns: CrmFunnelColumn[] | undefined,
+  options?: MigrateFunnelColumnsOptions,
+): CrmFunnelColumn[] {
+  const template = options?.template ?? "preserve";
 
-  const customById = new Map<string, CrmFunnelColumn>();
+  if (template === "full") {
+    return fullTemplateColumns();
+  }
+
+  const input = (columns ?? []).filter(isValidColumn).map((c) => {
+    const id = resolveLegacyColumnId(c);
+    return { id, title: normalizeStoredColumnTitle(id, c.title) };
+  });
+
+  const seen = new Set<string>();
+  const merged: CrmFunnelColumn[] = [];
   for (const col of input) {
-    if (!isSystemKanbanColumnId(col.id) && isCustomFunnelColumnId(col.id)) {
-      customById.set(col.id, { id: col.id, title: col.title });
-    }
+    if (seen.has(col.id)) continue;
+    seen.add(col.id);
+    merged.push(col);
   }
 
-  const merged: CrmFunnelColumn[] = KANBAN_COLUMNS.map((base) => ({
-    id: base.id,
-    title: OFFICIAL_TITLE_BY_ID.get(base.id) ?? base.title,
-  }));
-
-  for (const col of input) {
-    if (isCustomFunnelColumnId(col.id) && !merged.some((m) => m.id === col.id)) {
-      merged.push({ id: col.id, title: col.title });
-    }
+  if (!merged.some((c) => c.id === "novo")) {
+    merged.unshift({
+      id: "novo",
+      title: OFFICIAL_TITLE_BY_ID.get("novo") ?? "Novo Lead",
+    });
   }
 
-  for (const [id, col] of customById) {
-    if (!merged.some((m) => m.id === id)) merged.push(col);
-  }
-
-  return merged.length ? merged : KANBAN_COLUMNS.map((c) => ({ id: c.id, title: c.title }));
+  return merged.length ? merged : fullTemplateColumns();
 }
 
 export function migrateCrmFunnelRow(funnel: CrmFunnel): CrmFunnel {
   return {
     id: funnel.id.trim(),
     nome: funnel.nome.trim(),
-    columns: migrateFunnelColumns(funnel.columns),
+    columns: migrateFunnelColumns(funnel.columns, { template: "preserve" }),
   };
 }
 
@@ -153,12 +178,10 @@ export function migrateCrmFunnelsFromLocalStorage(parsed: CrmFunnel[] | null): C
 
   const normalized = withDefault.map((f) => ({
     ...f,
-    columns: migrateFunnelColumns(f.columns),
+    columns: migrateFunnelColumns(f.columns, { template: "preserve" }),
   }));
 
-  const changed =
-    JSON.stringify(parsed) !== JSON.stringify(normalized) ||
-    !parsed.some((f) => f.columns?.some((c) => c.id === "novo"));
+  const changed = JSON.stringify(parsed) !== JSON.stringify(normalized);
 
   return {
     funnels: normalized,

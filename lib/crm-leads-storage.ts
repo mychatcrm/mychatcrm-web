@@ -64,6 +64,16 @@ export async function updateCrmLeadInApi(leadId: string, patch: Partial<ClientLe
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
   });
+  if (!res.ok) {
+    let message = `CRM leads PUT ${res.status}`;
+    try {
+      const data = (await res.json()) as { error?: string };
+      if (data.error) message = data.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(message);
+  }
   const [updated] = await parseLeadsResponse(res);
   return updated ?? null;
 }
