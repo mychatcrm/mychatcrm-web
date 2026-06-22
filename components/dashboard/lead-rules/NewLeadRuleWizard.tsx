@@ -44,7 +44,11 @@ import {
 } from "@/lib/lead-distribution-rules";
 import {
   buildLeadRuleMappingsFromFields,
+  buildLeadRuleMappingsFromMetaFormGroups,
+  computeFormMappingHealth,
+  mappingLookupKey,
   normalizeLeadFieldText,
+  type MetaFormFieldGroup,
 } from "@/lib/lead-rule-field-mapping";
 import { refreshTeamEmployeesFromApi } from "@/lib/team-employees-client-cache";
 import {
@@ -152,11 +156,30 @@ const MAPPING_CRM_OPTIONS: { value: string; label: string }[] = [
   { value: "__ignore__", label: "Ignorar campo (não mapear)" },
 ];
 
-function buildMappingsFromMetaFields(
-  fields: MetaFormField[],
+function buildMappingsFromMetaFormGroups(
+  groups: MetaFormFieldGroup[],
   existing: LeadFieldMapping[],
   options: { forceAuto: boolean },
 ): LeadFieldMapping[] {
+  return buildLeadRuleMappingsFromMetaFormGroups(groups, existing, {
+    forceAuto: options.forceAuto,
+    makeId: mappingId,
+  });
+}
+
+function buildMappingsFromMetaFields(
+  fields: MetaFormField[],
+  existing: LeadFieldMapping[],
+  options: { forceAuto: boolean; formId?: string; formLabel?: string },
+): LeadFieldMapping[] {
+  const formId = options.formId?.trim();
+  if (formId) {
+    return buildMappingsFromMetaFormGroups(
+      [{ formId, formLabel: options.formLabel?.trim() || formId, fields }],
+      existing,
+      options,
+    );
+  }
   return buildLeadRuleMappingsFromFields(fields, existing, {
     forceAuto: options.forceAuto,
     includeContext: true,
@@ -440,7 +463,7 @@ export function NewLeadRuleWizard({
   const [availableForms, setAvailableForms] = useState<MetaFormsForm[]>([]);
   const [formsLoading, setFormsLoading] = useState(false);
   const [formsError, setFormsError] = useState<string | null>(null);
-  const [metaFormFieldsMeta, setMetaFormFieldsMeta] = useState<MetaFormField[]>([]);
+  const [metaFormFieldGroups, setMetaFormFieldGroups] = useState<MetaFormFieldGroup[]>([]);
   const [fieldsFetchLoading, setFieldsFetchLoading] = useState(false);
   const [fieldsFetchError, setFieldsFetchError] = useState<string | null>(null);
   const [employeesRev, setEmployeesRev] = useState(0);
@@ -538,7 +561,7 @@ export function NewLeadRuleWizard({
     if (!open) return;
     setStep(0);
     prevStepRef.current = 0;
-    setMetaFormFieldsMeta([]);
+    setMetaFormFieldGroups([]);
     setFieldsFetchLoading(false);
     setFieldsFetchError(null);
     setExcludeFormPicker("");
@@ -654,28 +677,32 @@ export function NewLeadRuleWizard({
   applyCatalogMappingsFn.current = applyCatalogMappings;
 
   const refazerMapeamentoAutomatico = useCallback(() => {
-    if (draft.source === "meta_form" && metaFormFieldsMeta.length > 0) {
+    if (draft.source === "meta_form" && metaFormFieldGroups.length > 0) {
       setDraft((d) => ({
         ...d,
-        mappings: buildMappingsFromMetaFields(metaFormFieldsMeta, [], { forceAuto: true }),
+        mappings: buildMappingsFromMetaFormGroups(metaFormFieldGroups, [], { forceAuto: true }),
       }));
       return;
     }
     applyCatalogMappings(true);
-  }, [applyCatalogMappings, draft.source, metaFormFieldsMeta]);
+  }, [applyCatalogMappings, draft.source, metaFormFieldGroups]);
 
   const metaFieldTypeByKey = useMemo(() => {
     const map = new Map<string, string>();
-    for (const f of metaFormFieldsMeta) map.set(f.key, f.type);
+    for (const group of metaFormFieldGroups) {
+      for (const f of group.fields) {
+        map.set(mappingLookupKey(f.key, group.formId), f.type ?? "CUSTOM");
+      }
+    }
     return map;
-  }, [metaFormFieldsMeta]);
+  }, [metaFormFieldGroups]);
 
   /** Ao entrar no passo Mapeamento: busca campos reais (Meta) ou catálogo de fallback. */
   useEffect(() => {
     if (!open || step !== 1 || !draft.source) return;
 
     if (draft.source !== "meta_form") {
-      setMetaFormFieldsMeta([]);
+      setMetaFormFieldGroups([]);
       setFieldsFetchError(null);
       setFieldsFetchLoading(false);
       if (draft.mappings.length === 0) applyCatalogMappingsFn.current(true);
@@ -683,17 +710,17 @@ export function NewLeadRuleWizard({
     }
 
     if (draft.useAllForms) {
-      setMetaFormFieldsMeta([]);
+      setMetaFormFieldGroups([]);
       setFieldsFetchLoading(false);
       setFieldsFetchError("Selecione formulários específicos no passo Entrada para mapear os campos.");
       return;
     }
 
-    const formId = draft.includedFormIds[0];
-    if (!formId?.trim() || !draft.pageId.trim()) {
-      setMetaFormFieldsMeta([]);
+    const formIds = draft.includedFormIds.map((id) => id.trim()).filter(Boolean);
+    if (formIds.length === 0 || !draft.pageId.trim()) {
+      setMetaFormFieldGroups([]);
       setFieldsFetchLoading(false);
-      setFieldsFetchError("Selecione um formulário no passo anterior.");
+      setFieldsFetchError("Selecione um ou mais formulários no passo anterior.");
       return;
     }
 
@@ -701,20 +728,28 @@ export function NewLeadRuleWizard({
     setFieldsFetchLoading(true);
     setFieldsFetchError(null);
 
-    fetch(
-      `/api/client/meta/form-fields?form_id=${encodeURIComponent(formId)}&page_id=${encodeURIComponent(draft.pageId)}`,
-      { credentials: "same-origin" },
-    )
-      .then((r) => r.json())
-      .then((data: { fields?: MetaFormField[]; error?: string }) => {
-        if (cancelled) return;
-        if (data.error) throw new Error(data.error);
+    void Promise.all(
+      formIds.map(async (formId) => {
+        const res = await fetch(
+          `/api/client/meta/form-fields?form_id=${encodeURIComponent(formId)}&page_id=${encodeURIComponent(draft.pageId)}`,
+          { credentials: "same-origin" },
+        );
+        const data = (await res.json()) as { fields?: MetaFormField[]; error?: string };
+        const label = metaFormLabel(formId);
+        if (data.error) throw new Error(`${label}: ${data.error}`);
         const fields = data.fields ?? [];
-        if (fields.length === 0) throw new Error("Nenhum campo encontrado neste formulário.");
-        setMetaFormFieldsMeta(fields);
+        if (fields.length === 0) throw new Error(`${label}: nenhum campo encontrado neste formulário.`);
+        return { formId, formLabel: label, fields };
+      }),
+    )
+      .then((groups) => {
+        if (cancelled) return;
+        setMetaFormFieldGroups(groups);
         setDraft((d) => ({
           ...d,
-          mappings: buildMappingsFromMetaFields(fields, d.mappings, { forceAuto: d.mappings.length === 0 }),
+          mappings: buildMappingsFromMetaFormGroups(groups, d.mappings, {
+            forceAuto: d.mappings.filter((m) => m.kind === "form").length === 0,
+          }),
         }));
         setFieldsFetchError(null);
       })
@@ -722,7 +757,7 @@ export function NewLeadRuleWizard({
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : "Erro ao buscar campos do formulário";
         setFieldsFetchError(msg);
-        setMetaFormFieldsMeta([]);
+        setMetaFormFieldGroups([]);
       })
       .finally(() => {
         if (!cancelled) setFieldsFetchLoading(false);
@@ -738,6 +773,11 @@ export function NewLeadRuleWizard({
 
   const formMappings = useMemo(() => draft.mappings.filter((m) => m.kind === "form"), [draft.mappings]);
   const contextMappings = useMemo(() => draft.mappings.filter((m) => m.kind === "context"), [draft.mappings]);
+
+  const mappingStepHealthByForm = useMemo(
+    () => computeFormMappingHealth(draft.mappings, metaFormFieldGroups),
+    [draft.mappings, metaFormFieldGroups],
+  );
 
   const mappingStepHealth = useMemo(() => {
     const active = draft.mappings.filter((m) => m.crmField !== "__ignore__");
@@ -769,6 +809,9 @@ export function NewLeadRuleWizard({
       return base;
     }
     if (step === 1) {
+      if (draft.source === "meta_form" && !draft.useAllForms && mappingStepHealthByForm.length > 0) {
+        return mappingStepHealthByForm.every((h) => h.canAdvance);
+      }
       const active = draft.mappings.filter((m) => m.crmField !== "__ignore__");
       return active.some((m) => m.crmField === "celular") || active.some((m) => m.crmField === "email");
     }
@@ -802,6 +845,7 @@ export function NewLeadRuleWizard({
     draft.source,
     draft.useAllForms,
     isOrganicWhatsApp,
+    mappingStepHealthByForm,
     step,
     teamEmployees.length,
   ]);
@@ -1603,14 +1647,14 @@ export function NewLeadRuleWizard({
               <div className="min-w-0 flex-1">
                 <p className="font-semibold text-content">Mapeamento de campos</p>
                 <p className="mt-1 text-xs leading-relaxed text-content-muted">
-                  Os campos do seu formulário foram detectados automaticamente. Revise e ajuste se necessário.
+                  Os campos de cada formulário selecionado foram detectados automaticamente. Revise e ajuste se necessário.
                 </p>
               </div>
               <Button
                 type="button"
                 size="sm"
                 variant="secondary"
-                disabled={fieldsFetchLoading || (draft.source === "meta_form" && metaFormFieldsMeta.length === 0 && !fieldsFetchError)}
+                disabled={fieldsFetchLoading || (draft.source === "meta_form" && metaFormFieldGroups.length === 0 && !fieldsFetchError)}
                 className="shrink-0"
                 onClick={() => refazerMapeamentoAutomatico()}
               >
@@ -1621,7 +1665,7 @@ export function NewLeadRuleWizard({
             {fieldsFetchLoading ? (
               <p className="flex items-center gap-2 rounded-xl border border-line/80 bg-surface-deep/20 px-3 py-3 text-sm text-content-muted">
                 <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" aria-hidden />
-                Buscando campos do formulário...
+                Buscando campos dos formulários...
               </p>
             ) : null}
 
@@ -1632,13 +1676,76 @@ export function NewLeadRuleWizard({
               </p>
             ) : null}
 
-            {!fieldsFetchLoading && formMappings.length > 0 ? (
+            {!fieldsFetchLoading && metaFormFieldGroups.length > 0 ? (
+              <div className="space-y-4">
+                {metaFormFieldGroups.map((group) => {
+                  const groupMappings = draft.mappings.filter(
+                    (m) =>
+                      m.kind === "form" &&
+                      (m.formId === group.formId || (!m.formId && metaFormFieldGroups.length === 1)),
+                  );
+                  const health = mappingStepHealthByForm.find((h) => h.formId === group.formId);
+                  return (
+                    <section
+                      key={group.formId}
+                      className="rounded-xl border border-line/80 bg-surface-deep/10 p-3 sm:p-4"
+                    >
+                      <div className="mb-3 flex flex-wrap items-start justify-between gap-2 border-b border-line/60 pb-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-content">{group.formLabel}</p>
+                          <p className="mt-0.5 text-[10px] text-content-faint">ID: {group.formId}</p>
+                        </div>
+                        {health ? (
+                          <div className="flex flex-wrap gap-x-2 gap-y-1 text-[10px] font-medium">
+                            {health.hasNome ? (
+                              <span className={isLight ? "text-emerald-700" : "text-emerald-300"}>✓ Nome</span>
+                            ) : null}
+                            {health.hasCelular ? (
+                              <span className={isLight ? "text-emerald-700" : "text-emerald-300"}>✓ Celular</span>
+                            ) : null}
+                            {health.hasEmail ? (
+                              <span className={isLight ? "text-emerald-700" : "text-emerald-300"}>✓ Email</span>
+                            ) : null}
+                            {!health.canAdvance ? (
+                              <span className={isLight ? "text-amber-800" : "text-amber-200"}>
+                                Mapeie celular ou email
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                      {groupMappings.length > 0 ? (
+                        <ul className="space-y-2">
+                          {groupMappings.map((m) => (
+                            <MetaMappingRow
+                              key={m.id}
+                              m={m}
+                              metaType={metaFieldTypeByKey.get(mappingLookupKey(m.sourceKey, m.formId ?? group.formId))}
+                              onPickCrm={(crm) =>
+                                setDraft((d) => ({
+                                  ...d,
+                                  mappings: d.mappings.map((x) => (x.id === m.id ? { ...x, crmField: crm } : x)),
+                                }))
+                              }
+                            />
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-xs text-content-muted">Nenhum campo mapeável neste formulário.</p>
+                      )}
+                    </section>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            {!fieldsFetchLoading && metaFormFieldGroups.length === 0 && formMappings.length > 0 ? (
               <ul className="space-y-2">
                 {formMappings.map((m) => (
                   <MetaMappingRow
                     key={m.id}
                     m={m}
-                    metaType={metaFieldTypeByKey.get(m.sourceKey)}
+                    metaType={metaFieldTypeByKey.get(mappingLookupKey(m.sourceKey, m.formId))}
                     onPickCrm={(crm) =>
                       setDraft((d) => ({
                         ...d,
@@ -2193,21 +2300,69 @@ export function NewLeadRuleWizard({
                   <div className="min-w-0 flex-1 pb-8">
                     <p className="text-[11px] font-bold uppercase tracking-wide text-content-muted">Mapeamento de campos</p>
                     {draft.mappings.length ? (
-                      <div className="mt-2 max-h-52 space-y-1.5 overflow-y-auto overscroll-contain rounded-lg border border-line/70 bg-surface-card/50 px-3 py-2.5 font-mono text-[11px] leading-relaxed">
-                        {draft.mappings.map((m) => (
-                          <div key={m.id} className="flex flex-wrap items-baseline gap-x-1 gap-y-0.5">
-                            <span className="font-medium text-primary" title={m.sourceLabel}>
-                              {m.sourceKey}
-                            </span>
-                            <ArrowRight className="inline h-3 w-3 shrink-0 text-content-faint" aria-hidden />
-                            <span className="font-medium text-content">
-                              {CRM_FIELD_OPTIONS.find((c) => c.value === m.crmField)?.label ?? m.crmField}
-                            </span>
-                            <span className="w-full pl-0 text-[10px] font-normal text-content-faint sm:inline sm:w-auto sm:pl-1">
-                              ({m.kind === "context" ? "contexto" : "formulário"})
-                            </span>
+                      <div className="mt-2 max-h-64 space-y-3 overflow-y-auto overscroll-contain">
+                        {metaFormFieldGroups.length > 0 ? (
+                          metaFormFieldGroups.map((group) => {
+                            const groupMappings = draft.mappings.filter(
+                              (m) =>
+                                m.kind === "form" &&
+                                (m.formId === group.formId || (!m.formId && metaFormFieldGroups.length === 1)),
+                            );
+                            if (groupMappings.length === 0) return null;
+                            return (
+                              <div
+                                key={group.formId}
+                                className="rounded-lg border border-line/70 bg-surface-card/50 px-3 py-2.5 font-mono text-[11px] leading-relaxed"
+                              >
+                                <p className="mb-1.5 font-sans text-xs font-semibold text-content">{group.formLabel}</p>
+                                {groupMappings.map((m) => (
+                                  <div key={m.id} className="flex flex-wrap items-baseline gap-x-1 gap-y-0.5">
+                                    <span className="font-medium text-primary" title={m.sourceLabel}>
+                                      {m.sourceKey}
+                                    </span>
+                                    <ArrowRight className="inline h-3 w-3 shrink-0 text-content-faint" aria-hidden />
+                                    <span className="font-medium text-content">
+                                      {CRM_FIELD_OPTIONS.find((c) => c.value === m.crmField)?.label ?? m.crmField}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div className="max-h-52 space-y-1.5 overflow-y-auto overscroll-contain rounded-lg border border-line/70 bg-surface-card/50 px-3 py-2.5 font-mono text-[11px] leading-relaxed">
+                            {draft.mappings.map((m) => (
+                              <div key={m.id} className="flex flex-wrap items-baseline gap-x-1 gap-y-0.5">
+                                <span className="font-medium text-primary" title={m.sourceLabel}>
+                                  {m.sourceKey}
+                                </span>
+                                <ArrowRight className="inline h-3 w-3 shrink-0 text-content-faint" aria-hidden />
+                                <span className="font-medium text-content">
+                                  {CRM_FIELD_OPTIONS.find((c) => c.value === m.crmField)?.label ?? m.crmField}
+                                </span>
+                                <span className="w-full pl-0 text-[10px] font-normal text-content-faint sm:inline sm:w-auto sm:pl-1">
+                                  ({m.kind === "context" ? "contexto" : "formulário"})
+                                </span>
+                              </div>
+                            ))}
                           </div>
-                        ))}
+                        )}
+                        {contextMappings.length > 0 ? (
+                          <div className="rounded-lg border border-line/70 bg-surface-card/50 px-3 py-2.5 font-mono text-[11px] leading-relaxed">
+                            <p className="mb-1.5 font-sans text-xs font-semibold text-content-muted">Campos de contexto</p>
+                            {contextMappings.map((m) => (
+                              <div key={m.id} className="flex flex-wrap items-baseline gap-x-1 gap-y-0.5">
+                                <span className="font-medium text-primary" title={m.sourceLabel}>
+                                  {m.sourceKey}
+                                </span>
+                                <ArrowRight className="inline h-3 w-3 shrink-0 text-content-faint" aria-hidden />
+                                <span className="font-medium text-content">
+                                  {CRM_FIELD_OPTIONS.find((c) => c.value === m.crmField)?.label ?? m.crmField}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
                     ) : (
                       <p className="mt-2 text-xs text-content-muted">Sem mapeamentos — opcional na demo; volte ao passo «Mapeamento» se quiser definir.</p>

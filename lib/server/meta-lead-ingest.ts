@@ -238,7 +238,9 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     tenantId: tenant_id,
     ruleId,
   });
-  const appliedMapping = applyLeadRuleMappingsToFields(fields, ruleMappings);
+  const appliedMapping = applyLeadRuleMappingsToFields(fields, ruleMappings, {
+    formId: resolvedFormId || null,
+  });
   if (appliedMapping.name) fullName = appliedMapping.name;
   if (appliedMapping.phone) phone = appliedMapping.phone;
   if (appliedMapping.email) email = appliedMapping.email;

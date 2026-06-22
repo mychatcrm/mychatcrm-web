@@ -6,6 +6,12 @@ export type LeadRuleMappableField = {
   type?: string | null;
 };
 
+export type MetaFormFieldGroup = {
+  formId: string;
+  formLabel: string;
+  fields: LeadRuleMappableField[];
+};
+
 export type AppliedLeadRuleMapping = {
   name: string | null;
   phone: string | null;
@@ -36,6 +42,11 @@ function hasAny(value: string, patterns: RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(value));
 }
 
+export function mappingLookupKey(sourceKey: string, formId?: string | null): string {
+  const fid = formId?.trim();
+  return fid ? `${fid}::${sourceKey}` : sourceKey;
+}
+
 export function inferCrmFieldFromLeadFormField(field: LeadRuleMappableField): string {
   const type = normalizeLeadFieldText(field.type ?? "");
   const key = normalizeLeadFieldText(field.key);
@@ -45,6 +56,14 @@ export function inferCrmFieldFromLeadFormField(field: LeadRuleMappableField): st
   if (type === "full name" || type === "full_name") return "nome";
   if (type === "phone" || type === "phone number" || type === "phone_number") return "celular";
   if (type === "email" || type === "e mail") return "email";
+
+  if (
+    hasAny(combined, [
+      /\b(prefere ser contatado|como voce prefere|como você prefere|forma de contato preferida|meio de contato preferido|preferencia de contato)\b/,
+    ])
+  ) {
+    return "mensagem";
+  }
 
   if (
     hasAny(combined, [
@@ -70,6 +89,8 @@ export function inferCrmFieldFromLeadFormField(field: LeadRuleMappableField): st
       /\b(phone|phone number|work phone|telefone|telemovel|telemóvel|celular|whatsapp|mobile|cell|numero|número|zap)\b/,
       /\bcontacto telefonico\b/,
       /\bcontato telefonico\b/,
+      /\bqual.*whatsapp\b/,
+      /\bseu whatsapp\b/,
     ])
   ) {
     return "celular";
@@ -81,6 +102,7 @@ export function inferCrmFieldFromLeadFormField(field: LeadRuleMappableField): st
       /\b(seu nome|teu nome|qual.*nome)\b/,
       /^name\b/,
       /^nome\b/,
+      /^full_name\b/,
     ])
   ) {
     return "nome";
@@ -96,12 +118,29 @@ function defaultMappingId(): string {
 export function buildLeadRuleMappingsFromFields(
   fields: LeadRuleMappableField[],
   existing: LeadFieldMapping[],
-  options: { forceAuto: boolean; includeContext?: boolean; makeId?: () => string },
+  options: {
+    forceAuto: boolean;
+    includeContext?: boolean;
+    makeId?: () => string;
+    formId?: string;
+    formLabel?: string;
+  },
 ): LeadFieldMapping[] {
   const makeId = options.makeId ?? defaultMappingId;
-  const existingByKey = new Map(existing.filter((m) => m.kind === "form").map((m) => [m.sourceKey, m]));
+  const formId = options.formId?.trim() || undefined;
+  const formLabel = options.formLabel?.trim() || undefined;
+
+  const existingByKey = new Map(
+    existing
+      .filter((m) => m.kind === "form")
+      .map((m) => [mappingLookupKey(m.sourceKey, m.formId), m]),
+  );
+
   const formRows: LeadFieldMapping[] = fields.map((field) => {
-    const prev = existingByKey.get(field.key);
+    const lookup = mappingLookupKey(field.key, formId);
+    const prev =
+      existingByKey.get(lookup) ??
+      (!formId ? existingByKey.get(field.key) : undefined);
     const crmField = options.forceAuto
       ? inferCrmFieldFromLeadFormField(field)
       : (prev?.crmField ?? inferCrmFieldFromLeadFormField(field));
@@ -111,6 +150,7 @@ export function buildLeadRuleMappingsFromFields(
       sourceLabel: field.label?.trim() || field.key,
       kind: "form",
       crmField,
+      ...(formId ? { formId, formLabel: formLabel ?? formId } : {}),
     };
   });
 
@@ -129,6 +169,67 @@ export function buildLeadRuleMappingsFromFields(
   });
 
   return [...formRows, ...contextRows];
+}
+
+/** Monta mappings para vários formulários Meta, preservando contexto uma única vez. */
+export function buildLeadRuleMappingsFromMetaFormGroups(
+  groups: MetaFormFieldGroup[],
+  existing: LeadFieldMapping[],
+  options: { forceAuto: boolean; makeId?: () => string },
+): LeadFieldMapping[] {
+  const makeId = options.makeId ?? defaultMappingId;
+  const selectedFormIds = new Set(groups.map((g) => g.formId));
+
+  const formRows: LeadFieldMapping[] = [];
+  for (const group of groups) {
+    const scopedExisting = existing.filter(
+      (m) => m.kind === "form" && m.formId === group.formId,
+    );
+    const legacyExisting =
+      groups.length === 1
+        ? existing.filter((m) => m.kind === "form" && !m.formId)
+        : [];
+    const mergedExisting = scopedExisting.length > 0 ? scopedExisting : legacyExisting;
+
+    const rows = buildLeadRuleMappingsFromFields(group.fields, mergedExisting, {
+      forceAuto: options.forceAuto,
+      includeContext: false,
+      makeId,
+      formId: group.formId,
+      formLabel: group.formLabel,
+    });
+    formRows.push(...rows);
+  }
+
+  const ctxExisting = existing.filter((m) => m.kind === "context");
+  const contextRows = buildLeadRuleMappingsFromFields([], ctxExisting, {
+    forceAuto: options.forceAuto,
+    includeContext: true,
+    makeId,
+  }).filter((m) => m.kind === "context");
+
+  const prunedFormRows = formRows.filter((m) => !m.formId || selectedFormIds.has(m.formId));
+
+  return [...prunedFormRows, ...contextRows];
+}
+
+/** Filtra mappings para o formulário que gerou o lead; fallback para regras legadas sem formId. */
+export function filterLeadRuleMappingsForForm(
+  mappings: LeadFieldMapping[],
+  formId: string | null | undefined,
+): LeadFieldMapping[] {
+  const trimmedFormId = formId?.trim();
+  if (!trimmedFormId) return mappings;
+
+  const context = mappings.filter((m) => m.kind === "context");
+  const formSpecific = mappings.filter((m) => m.kind === "form" && m.formId === trimmedFormId);
+
+  if (formSpecific.length > 0) {
+    return [...formSpecific, ...context];
+  }
+
+  const legacyForm = mappings.filter((m) => m.kind === "form" && !m.formId);
+  return [...legacyForm, ...context];
 }
 
 function normalizeSourceKey(value: string): string {
@@ -161,7 +262,12 @@ function fieldValue(fields: Record<string, string>, sourceKey: string): string {
 export function applyLeadRuleMappingsToFields(
   fields: Record<string, string>,
   mappings: LeadFieldMapping[],
+  options?: { formId?: string | null },
 ): AppliedLeadRuleMapping {
+  const activeMappings = options?.formId
+    ? filterLeadRuleMappingsForForm(mappings, options.formId)
+    : mappings;
+
   const result: AppliedLeadRuleMapping = {
     name: null,
     phone: null,
@@ -171,7 +277,7 @@ export function applyLeadRuleMappingsToFields(
     mappedFields: {},
   };
 
-  for (const mapping of mappings) {
+  for (const mapping of activeMappings) {
     if (mapping.kind !== "form" || mapping.crmField === "__ignore__") continue;
     const value = fieldValue(fields, mapping.sourceKey);
     if (!value) continue;
@@ -205,4 +311,40 @@ export function applyLeadRuleMappingsToFields(
   }
 
   return result;
+}
+
+export type FormMappingHealth = {
+  formId: string;
+  formLabel: string;
+  hasNome: boolean;
+  hasCelular: boolean;
+  hasEmail: boolean;
+  canAdvance: boolean;
+  warnEssential: boolean;
+};
+
+export function computeFormMappingHealth(
+  mappings: LeadFieldMapping[],
+  groups: Array<{ formId: string; formLabel: string }>,
+): FormMappingHealth[] {
+  return groups.map((group) => {
+    const active = mappings.filter(
+      (m) =>
+        m.kind === "form" &&
+        m.crmField !== "__ignore__" &&
+        (m.formId === group.formId || (!m.formId && groups.length === 1)),
+    );
+    const hasNome = active.some((m) => m.crmField === "nome");
+    const hasCelular = active.some((m) => m.crmField === "celular");
+    const hasEmail = active.some((m) => m.crmField === "email");
+    return {
+      formId: group.formId,
+      formLabel: group.formLabel,
+      hasNome,
+      hasCelular,
+      hasEmail,
+      canAdvance: hasCelular || hasEmail,
+      warnEssential: !hasNome || !hasCelular,
+    };
+  });
 }

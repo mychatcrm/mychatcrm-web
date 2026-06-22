@@ -30,6 +30,9 @@ export type LeadFieldMapping = {
   sourceLabel: string;
   kind: "form" | "context";
   crmField: string;
+  /** Formulário Meta de origem (quando a regra cobre vários formulários). */
+  formId?: string;
+  formLabel?: string;
 };
 
 export type LeadDistributionRule = {
