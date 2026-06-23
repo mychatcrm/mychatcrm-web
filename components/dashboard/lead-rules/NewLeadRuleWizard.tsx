@@ -899,7 +899,9 @@ export function NewLeadRuleWizard({
         redistribution: draft.redistribution,
         distributionType: dist,
         agentIds:
-          dist === "specific_agents"
+          isOrganicWhatsApp
+            ? draft.agentIds.slice(0, 1)
+            : dist === "specific_agents"
             ? [...draft.agentIds]
             : dist === "automation_agent"
               ? draft.agentIds.slice(0, 1)
@@ -928,7 +930,13 @@ export function NewLeadRuleWizard({
       redistribution: draft.redistribution,
       distributionType: dist,
       agentIds:
-        dist === "specific_agents" ? [...draft.agentIds] : dist === "automation_agent" ? draft.agentIds.slice(0, 1) : [],
+        isOrganicWhatsApp
+          ? draft.agentIds.slice(0, 1)
+          : dist === "specific_agents"
+            ? [...draft.agentIds]
+            : dist === "automation_agent"
+              ? draft.agentIds.slice(0, 1)
+              : [],
       mappings: draft.mappings,
       pageLabel: draft.pageLabel,
       pageId: draft.pageId,

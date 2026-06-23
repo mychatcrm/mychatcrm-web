@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { evaluateCanAgentAutoContactLeadSnapshot } from "@/lib/server/agent-auto-contact-guard";
+import {
+  canAgentAutoContactLead,
+  evaluateCanAgentAutoContactLeadSnapshot,
+} from "@/lib/server/agent-auto-contact-guard";
 import type { MetaFormAuthRule } from "@/lib/server/meta-form-authorization";
 
 const PAGE = "107104725336342";
@@ -109,4 +112,88 @@ describe("agent auto contact guard", () => {
 
     expect(result.ok).toBe(true);
   });
+
+  it("blocks direct WhatsApp automation without an explicit organic rule", async () => {
+    const sb = fakeGuardSupabase({ organicRules: [] });
+
+    const result = await canAgentAutoContactLead({
+      sb,
+      tenantId: "tenant-1",
+      agentId: AGENT,
+      leadId: "lead-1",
+      phone: "5562999999999@s.whatsapp.net",
+      triggerSource: "follow_up_job",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("blocked_no_direct_whatsapp_rule");
+  });
+
+  it("allows direct WhatsApp automation with an explicit organic rule", async () => {
+    const sb = fakeGuardSupabase({
+      organicRules: [
+        {
+          id: "organic-rule",
+          distribution_type: "automation_agent",
+          agent_ids: [AGENT],
+          order_index: 0,
+        },
+      ],
+    });
+
+    const result = await canAgentAutoContactLead({
+      sb,
+      tenantId: "tenant-1",
+      agentId: AGENT,
+      leadId: "lead-1",
+      phone: "5562999999999@s.whatsapp.net",
+      triggerSource: "evolution_inbound_auto_reply",
+    });
+
+    expect(result.ok).toBe(true);
+  });
 });
+
+function fakeGuardSupabase(params: {
+  organicRules: Array<{
+    id: string;
+    distribution_type: string;
+    agent_ids: string[];
+    order_index: number;
+  }>;
+}) {
+  return {
+    from(table: string) {
+      const builder = {
+        select: () => builder,
+        eq: () => builder,
+        order: () =>
+          Promise.resolve({
+            data: table === "lead_distribution_rules" ? params.organicRules : [],
+            error: null,
+          }),
+        maybeSingle: () => {
+          if (table === "tenant_agents") {
+            return Promise.resolve({
+              data: { active: true, metadata: { status: "ativo" } },
+              error: null,
+            });
+          }
+          if (table === "leads") {
+            return Promise.resolve({
+              data: {
+                id: "lead-1",
+                source: "whatsapp",
+                phone: "5562999999999",
+                profile_metadata: {},
+              },
+              error: null,
+            });
+          }
+          return Promise.resolve({ data: null, error: null });
+        },
+      };
+      return builder;
+    },
+  } as never;
+}

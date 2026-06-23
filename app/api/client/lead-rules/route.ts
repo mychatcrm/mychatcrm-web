@@ -15,6 +15,7 @@ import { stringArray } from "@/lib/server/meta-form-authorization";
 export const dynamic = "force-dynamic";
 
 const META_AUTOMATION_DISTRIBUTION_TYPES = new Set(["automation_agent", "specific_agents", "round_robin"]);
+const ORGANIC_AGENT_DISTRIBUTION_TYPES = new Set(["automation_agent", "specific_agents", "round_robin"]);
 
 /**
  * When a whatsapp_organico rule is saved, keep tenant_evolution_instances.organic_agent_id
@@ -55,6 +56,18 @@ async function syncOrganicAgentId(
   if (error) {
     console.warn("[lead-rules] Failed to sync organic_agent_id", error.message);
   }
+}
+
+function validateOrganicRulePayload(payload: Record<string, unknown>): NextResponse | null {
+  if (payload.source !== "whatsapp_organico") return null;
+  const agentIds = stringArray(payload.agent_ids);
+  if (!ORGANIC_AGENT_DISTRIBUTION_TYPES.has(String(payload.distribution_type)) || agentIds.length !== 1) {
+    return NextResponse.json(
+      { error: "Selecione exatamente um agente de IA ativo para atendimento direto no WhatsApp." },
+      { status: 400 },
+    );
+  }
+  return null;
 }
 
 export async function GET(): Promise<NextResponse> {
@@ -108,6 +121,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   ) {
     return NextResponse.json({ error: "Selecione um agente de IA ativo para esta regra." }, { status: 400 });
   }
+
+  const organicValidationError = validateOrganicRulePayload(payload);
+  if (organicValidationError) return organicValidationError;
 
   // Block creation of a second whatsapp_organico rule — only one organic agent per tenant
   if (payload.source === "whatsapp_organico") {

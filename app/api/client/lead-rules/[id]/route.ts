@@ -16,6 +16,7 @@ import {
 export const dynamic = "force-dynamic";
 
 const META_AUTOMATION_DISTRIBUTION_TYPES = new Set(["automation_agent", "specific_agents", "round_robin"]);
+const ORGANIC_AGENT_DISTRIBUTION_TYPES = new Set(["automation_agent", "specific_agents", "round_robin"]);
 
 /** @see app/api/client/lead-rules/route.ts — same logic, kept in sync */
 async function syncOrganicAgentId(
@@ -50,6 +51,39 @@ async function syncOrganicAgentId(
   if (error) {
     console.warn("[lead-rules/[id]] Failed to sync organic_agent_id", error.message);
   }
+}
+
+async function clearOrganicAgentId(
+  sb: ReturnType<typeof createSupabaseServiceClient>,
+  tenantId: string,
+  agentIds: unknown,
+): Promise<void> {
+  const ids = stringArray(agentIds);
+  let query = sb
+    .from("tenant_evolution_instances")
+    .update({ organic_agent_id: null, updated_at: new Date().toISOString() })
+    .eq("tenant_id", tenantId);
+
+  if (ids.length > 0) {
+    query = query.in("organic_agent_id", ids);
+  }
+
+  const { error } = await query;
+  if (error) {
+    console.warn("[lead-rules/[id]] Failed to clear organic_agent_id", error.message);
+  }
+}
+
+function validateOrganicRulePayload(payload: Record<string, unknown>): NextResponse | null {
+  if (payload.source !== "whatsapp_organico") return null;
+  const agentIds = stringArray(payload.agent_ids);
+  if (!ORGANIC_AGENT_DISTRIBUTION_TYPES.has(String(payload.distribution_type)) || agentIds.length !== 1) {
+    return NextResponse.json(
+      { error: "Selecione exatamente um agente de IA ativo para atendimento direto no WhatsApp." },
+      { status: 400 },
+    );
+  }
+  return null;
 }
 
 type RouteContext = {
@@ -95,6 +129,9 @@ export async function PUT(req: NextRequest, { params }: RouteContext): Promise<N
     return NextResponse.json({ error: "Selecione um agente de IA ativo para esta regra." }, { status: 400 });
   }
 
+  const organicValidationError = validateOrganicRulePayload(payload);
+  if (organicValidationError) return organicValidationError;
+
   // Block editing to whatsapp_organico if another rule of this type already exists
   if (payload.source === "whatsapp_organico") {
     const { count: organicCount } = await sb
@@ -137,8 +174,20 @@ export async function PUT(req: NextRequest, { params }: RouteContext): Promise<N
     }
   }
 
+  if (existing.source === "whatsapp_organico" && data.source !== "whatsapp_organico") {
+    await clearOrganicAgentId(sb, session.tenantId, existing.agent_ids);
+  }
+
   // Keep organic_agent_id in sync for organic WhatsApp rules
   if (data.source === "whatsapp_organico") {
+    if (existing.source === "whatsapp_organico") {
+      const previousIds = stringArray(existing.agent_ids);
+      const nextIds = stringArray(data.agent_ids);
+      const staleIds = previousIds.filter((id) => !nextIds.includes(id));
+      if (staleIds.length > 0) {
+        await clearOrganicAgentId(sb, session.tenantId, staleIds);
+      }
+    }
     await syncOrganicAgentId(sb, session.tenantId, data.agent_ids);
   }
 
@@ -163,6 +212,9 @@ export async function DELETE(_req: NextRequest, { params }: RouteContext): Promi
 
   if (existing.source === "meta_form") {
     await deleteMetaFormMappingsForRule(sb, existing);
+  }
+  if (existing.source === "whatsapp_organico") {
+    await clearOrganicAgentId(sb, session.tenantId, existing.agent_ids);
   }
 
   const ruleId = params.id;

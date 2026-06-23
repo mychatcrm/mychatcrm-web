@@ -6,6 +6,9 @@ import {
   verifyMetaSignature256,
 } from "@/lib/integrations/whatsapp-cloud";
 import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
+import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
+import { resolveDirectWhatsAppAgentFromRules } from "@/lib/server/agent-channel-authorization";
+import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -50,7 +53,14 @@ export async function POST(request: Request) {
   }
 
   const tenantId = process.env.WHATSAPP_DEFAULT_TENANT_ID?.trim() || "public";
-  const agentId = process.env.WHATSAPP_DEFAULT_AGENT_ID?.trim() || "marketing_site_assistant";
+  const preferredAgentId = process.env.WHATSAPP_DEFAULT_AGENT_ID?.trim() || null;
+  const sb = createSupabaseServiceClient();
+  const organic = await resolveDirectWhatsAppAgentFromRules({
+    sb,
+    tenantId,
+    preferredAgentId,
+  });
+  const agentId = organic?.agentId ?? null;
 
   await upsertLeadFromWhatsAppContact({
     tenantId,
@@ -62,6 +72,32 @@ export async function POST(request: Request) {
     agentId,
     conversationId: inbound.fromWaId,
   });
+
+  if (!agentId) {
+    console.info("[webhooks/whatsapp] agent skipped", {
+      reason: "blocked_no_direct_whatsapp_rule",
+      tenant_id: tenantId,
+      wa_id_last4: inbound.fromWaId.replace(/\D/g, "").slice(-4),
+    });
+    return NextResponse.json({ ok: true });
+  }
+
+  const guard = await canAgentAutoContactLead({
+    sb,
+    tenantId,
+    agentId,
+    phone: inbound.fromWaId,
+    triggerSource: "whatsapp_cloud_inbound_auto_reply",
+  });
+  if (!guard.ok) {
+    console.warn("[webhooks/whatsapp] auto contact blocked", {
+      tenant_id: tenantId,
+      agent_id: agentId,
+      lead_id: guard.leadId,
+      reason: guard.reason,
+    });
+    return NextResponse.json({ ok: true });
+  }
 
   const result = await generateAgentResponse({
     tenantId,

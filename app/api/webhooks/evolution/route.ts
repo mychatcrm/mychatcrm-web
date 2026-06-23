@@ -547,24 +547,26 @@ export async function POST(request: Request) {
           });
 
           try {
-            const { data: agentMetaRow } = await sbState
-              .from("tenant_agents")
-              .select("metadata")
-              .eq("tenant_id", row.tenant_id)
-              .eq("agent_id", agentId)
-              .maybeSingle();
-            const agentMetadata =
-              agentMetaRow?.metadata && typeof agentMetaRow.metadata === "object"
-                ? (agentMetaRow.metadata as Record<string, unknown>)
-                : {};
-            await scheduleFollowUpAfterInbound({
-              sb: sbState,
-              tenantId: row.tenant_id,
-              agentId,
-              remoteJid: msg.remoteJid,
-              leadId,
-              settings: followUpInteligenteFromMetadata(agentMetadata),
-            });
+            if (agentId) {
+              const { data: agentMetaRow } = await sbState
+                .from("tenant_agents")
+                .select("metadata")
+                .eq("tenant_id", row.tenant_id)
+                .eq("agent_id", agentId)
+                .maybeSingle();
+              const agentMetadata =
+                agentMetaRow?.metadata && typeof agentMetaRow.metadata === "object"
+                  ? (agentMetaRow.metadata as Record<string, unknown>)
+                  : {};
+              await scheduleFollowUpAfterInbound({
+                sb: sbState,
+                tenantId: row.tenant_id,
+                agentId,
+                remoteJid: msg.remoteJid,
+                leadId,
+                settings: followUpInteligenteFromMetadata(agentMetadata),
+              });
+            }
           } catch (followUpErr) {
             console.warn(
               "[webhooks/evolution] follow-up schedule",
@@ -594,6 +596,15 @@ export async function POST(request: Request) {
         if (!ctx) return;
         const { msg, agentId, contactName, leadId, inboundSaved, state, inboundLanguageCode } = ctx;
         try {
+          if (!agentId) {
+            console.info("[webhooks/evolution] agent skipped", {
+              reason: "blocked_no_direct_whatsapp_rule",
+              tenant_id: row.tenant_id,
+              remote_jid_last4: msg.remoteJid.replace(/\D/g, "").slice(-4),
+            });
+            return;
+          }
+
           const sbState = createSupabaseServiceClient();
 
           const automationAllowed = await isAgentAutomationAllowed({

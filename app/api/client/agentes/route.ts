@@ -101,18 +101,9 @@ async function linkAgentToWhatsAppSlot(params: {
     console.warn("[api/client/agentes] WhatsApp slot default link", error.code, error.message);
   }
 
-  // Populate organic_agent_id only if it is still NULL (COALESCE semantics).
-  // The organic slot is changed exclusively via a whatsapp_organico lead rule —
-  // saving an agent should never silently overwrite a user-configured organic agent.
-  const { error: organicError } = await params.sb
-    .from("tenant_evolution_instances")
-    .update({ organic_agent_id: params.agentId })
-    .eq("tenant_id", params.tenantId)
-    .eq("slot_index", slotIndex)
-    .is("organic_agent_id", null);
-  if (organicError && !isMissingColumnError(organicError)) {
-    console.warn("[api/client/agentes] WhatsApp slot organic link", organicError.code, organicError.message);
-  }
+  // organic_agent_id is intentionally controlled only by whatsapp_organico
+  // lead rules. Creating/editing an agent must never authorize private WhatsApp
+  // automation by itself.
 }
 
 // ---------------------------------------------------------------------------

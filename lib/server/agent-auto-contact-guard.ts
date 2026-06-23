@@ -4,6 +4,10 @@ import {
   metaRuleExplicitlyAuthorizesAgent,
   type MetaFormAuthRule,
 } from "@/lib/server/meta-form-authorization";
+import {
+  isAgentAuthorizedForDirectWhatsApp,
+  isDirectWhatsAppAutomationTrigger,
+} from "@/lib/server/agent-channel-authorization";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -169,7 +173,34 @@ export async function canAgentAutoContactLead(params: {
 
   const needsMetaAuth =
     isMetaLikeSource(source) || triggerRequiresMetaAuthorization(params.triggerSource) || Boolean(params.leadgenId ?? text(meta.meta_leadgen_id));
-  if (!needsMetaAuth) return { ok: true, reason: "allowed", leadId, formId: formId ?? null };
+  if (!needsMetaAuth) {
+    if (!isDirectWhatsAppAutomationTrigger(params.triggerSource)) {
+      return { ok: true, reason: "allowed", leadId, formId: formId ?? null };
+    }
+
+    const organicAllowed = await isAgentAuthorizedForDirectWhatsApp({
+      sb: params.sb,
+      tenantId: params.tenantId,
+      agentId,
+    });
+    if (!organicAllowed) {
+      console.warn("[auto-contact-guard] blocked", {
+        tenant_id: params.tenantId,
+        agent_id: agentId,
+        lead_id: leadId,
+        trigger_source: params.triggerSource,
+        reason: "blocked_no_direct_whatsapp_rule",
+      });
+      return {
+        ok: false,
+        reason: "blocked_no_direct_whatsapp_rule",
+        leadId,
+        formId: formId ?? null,
+      };
+    }
+
+    return { ok: true, reason: "allowed", leadId, formId: formId ?? null };
+  }
 
   if (!formId) return { ok: false, reason: "missing_meta_form_id", leadId, formId: null };
   if (!pageId) return { ok: false, reason: "missing_meta_page_id", leadId, formId };
