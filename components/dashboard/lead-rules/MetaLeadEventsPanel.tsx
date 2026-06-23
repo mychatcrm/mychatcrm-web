@@ -46,7 +46,7 @@ function stepLabel(step: string): string {
     whatsapp_sent: "WhatsApp enviado",
     whatsapp_failed: "WhatsApp falhou",
     blocked_unauthorized_form: "Formulário não autorizado",
-    blocked_form_not_in_rules: "Formulário não cadastrado nas regras",
+    blocked_form_not_registered_in_lead_rules: "Formulário não cadastrado nas regras",
     blocked_ambiguous_meta_page_form_tenant: "Página/form ambíguos",
     blocked_missing_meta_connection_for_resolved_tenant: "Conexão Meta ausente",
     blocked_historical_lead: "Lead anterior à regra",

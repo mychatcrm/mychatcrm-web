@@ -138,7 +138,7 @@ async function recordBlockedMetaLeadForTenants(params: {
   connections: MetaConnectionRow[];
   value: LeadgenValue;
   step:
-    | "blocked_form_not_in_rules"
+    | "blocked_form_not_registered_in_lead_rules"
     | "blocked_ambiguous_meta_page_form_tenant"
     | "blocked_missing_meta_connection_for_resolved_tenant";
   reason: string;
@@ -304,7 +304,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       tenantIds: tenantsToRecord,
       connections,
       value,
-      step: "blocked_form_not_in_rules",
+      step: "blocked_form_not_registered_in_lead_rules",
       reason: tenantResolution.reason,
       formId: resolvedFormId || null,
       name: fullName,
@@ -424,14 +424,14 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
 
   if (!crmAllowance.allowed) {
     const userMessage = crmBlockedUserMessage(crmAllowance.reason);
-    await eventRecorder.step("blocked_form_not_in_rules", {
+    await eventRecorder.step("blocked_form_not_registered_in_lead_rules", {
       reason: crmAllowance.reason,
     });
     await eventRecorder.patch({
       crm_sync_status: "blocked",
       whatsapp_status: "blocked",
       error_message: crmAllowance.reason,
-      current_step: "blocked_form_not_in_rules",
+      current_step: "blocked_form_not_registered_in_lead_rules",
     });
     console.warn("[meta-webhook] Meta form blocked before CRM — not in lead rules", {
       tenant_id,

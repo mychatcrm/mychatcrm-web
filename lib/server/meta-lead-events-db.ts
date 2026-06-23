@@ -24,7 +24,7 @@ export const META_LEAD_EVENT_STEPS = [
   "skipped_initial_outreach",
   "skipped_human_attending",
   "blocked_unauthorized_form",
-  "blocked_form_not_in_rules",
+  "blocked_form_not_registered_in_lead_rules",
   "blocked_ambiguous_meta_page_form_tenant",
   "blocked_missing_meta_connection_for_resolved_tenant",
   "blocked_historical_lead",
