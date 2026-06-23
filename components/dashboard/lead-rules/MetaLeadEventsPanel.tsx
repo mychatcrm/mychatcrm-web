@@ -27,6 +27,7 @@ function formatWhen(iso: string): string {
 function stepLabel(step: string): string {
   const map: Record<string, string> = {
     lead_received: "Recebido",
+    meta_tenant_resolved_by_form_rule: "Tenant pela regra",
     graph_data_fetched: "Dados Meta",
     graph_fetch_failed: "Falha Graph API",
     crm_lead_created: "CRM criado",
@@ -46,6 +47,8 @@ function stepLabel(step: string): string {
     whatsapp_failed: "WhatsApp falhou",
     blocked_unauthorized_form: "Formulário não autorizado",
     blocked_form_not_in_rules: "Formulário não cadastrado nas regras",
+    blocked_ambiguous_meta_page_form_tenant: "Página/form ambíguos",
+    blocked_missing_meta_connection_for_resolved_tenant: "Conexão Meta ausente",
     blocked_historical_lead: "Lead anterior à regra",
   };
   return map[step] ?? step;
@@ -140,6 +143,12 @@ function errorMessageHint(message: string | null): string | null {
     form_not_authorized_for_agent: "Formulário no CRM, mas agente não autorizado para WhatsApp automático.",
     missing_form_id: "Lead sem form_id — não entra no CRM nem no atendimento automático.",
     historical_meta_lead_before_rule_activation: "Lead anterior à ativação da regra — não entra no CRM.",
+    ambiguous_meta_page_form_tenant:
+      "Mais de um tenant autoriza a mesma página e formulário. O sistema bloqueou para não enviar pelo agente errado.",
+    missing_meta_connection_for_resolved_tenant:
+      "A regra autoriza o formulário, mas a conexão Meta deste tenant não foi encontrada para esta página.",
+    rules_query_failed:
+      "Não foi possível consultar as regras ativas. O sistema bloqueou por segurança antes de acionar o agente.",
   };
   return map[message] ?? message;
 }
@@ -327,10 +336,16 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
                 <div>
                   <dt className="text-content-muted">Formulário</dt>
                   <dd className="truncate font-medium text-content">{ev.form_name || ev.form_id || "—"}</dd>
+                  {ev.form_name && ev.form_id ? (
+                    <dd className="truncate font-mono text-[10px] text-content-muted">ID {ev.form_id}</dd>
+                  ) : null}
                 </div>
                 <div>
                   <dt className="text-content-muted">Página</dt>
                   <dd className="truncate font-medium text-content">{ev.page_name || ev.page_id}</dd>
+                  {ev.page_name ? (
+                    <dd className="truncate font-mono text-[10px] text-content-muted">ID {ev.page_id}</dd>
+                  ) : null}
                 </div>
                 {ev.campaign_name ? (
                   <div>

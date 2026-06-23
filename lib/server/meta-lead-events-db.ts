@@ -4,6 +4,7 @@ type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
 export const META_LEAD_EVENT_STEPS = [
   "lead_received",
+  "meta_tenant_resolved_by_form_rule",
   "graph_data_fetched",
   "graph_fetch_failed",
   "skipped_no_tenant",
@@ -24,6 +25,8 @@ export const META_LEAD_EVENT_STEPS = [
   "skipped_human_attending",
   "blocked_unauthorized_form",
   "blocked_form_not_in_rules",
+  "blocked_ambiguous_meta_page_form_tenant",
+  "blocked_missing_meta_connection_for_resolved_tenant",
   "blocked_historical_lead",
 ] as const;
 

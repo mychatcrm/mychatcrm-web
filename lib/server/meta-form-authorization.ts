@@ -35,6 +35,29 @@ export type MetaFormAuthRule = {
   order_index?: number;
 };
 
+export type MetaFormTenantAuthRule = MetaFormAuthRule & {
+  tenant_id: string;
+};
+
+export type MetaFormTenantResolutionResult =
+  | {
+      status: "resolved";
+      tenantId: string;
+      ruleId: string;
+      reason: "active_rule_explicit_form";
+    }
+  | {
+      status: "not_found";
+      tenantIds: string[];
+      reason: "missing_form_id" | "form_not_registered_in_lead_rules" | "rules_query_failed";
+    }
+  | {
+      status: "ambiguous";
+      tenantIds: string[];
+      ruleIds: string[];
+      reason: "ambiguous_meta_page_form_tenant";
+    };
+
 const AUTOMATION_DISTRIBUTION_TYPES = new Set([
   "automation_agent",
   "specific_agents",
@@ -77,6 +100,59 @@ function pickAgentFromRule(
     return agentIds.includes(preferredAgentId) ? preferredAgentId : null;
   }
   return agentIds[0] ?? null;
+}
+
+export function resolveMetaTenantFromExplicitFormRulesSnapshot(params: {
+  pageId: string;
+  formId: string;
+  rules: MetaFormTenantAuthRule[];
+  candidateTenantIds?: string[];
+}): MetaFormTenantResolutionResult {
+  const formId = params.formId.trim();
+  const pageId = params.pageId.trim();
+  const candidateTenantIds = Array.from(
+    new Set((params.candidateTenantIds ?? []).map((id) => id.trim()).filter(Boolean)),
+  );
+
+  if (!formId) {
+    return {
+      status: "not_found",
+      tenantIds: candidateTenantIds,
+      reason: "missing_form_id",
+    };
+  }
+
+  const matches = params.rules
+    .filter((rule) => rule.tenant_id.trim().length > 0)
+    .filter((rule) => rule.page_id === pageId)
+    .filter((rule) => ruleMatchesExplicitForm(rule, formId, pageId))
+    .sort((a, b) => (a.order_index ?? 999) - (b.order_index ?? 999));
+
+  if (matches.length === 0) {
+    return {
+      status: "not_found",
+      tenantIds: candidateTenantIds,
+      reason: "form_not_registered_in_lead_rules",
+    };
+  }
+
+  const tenantIds = Array.from(new Set(matches.map((rule) => rule.tenant_id.trim())));
+  if (tenantIds.length > 1) {
+    return {
+      status: "ambiguous",
+      tenantIds,
+      ruleIds: matches.map((rule) => rule.id),
+      reason: "ambiguous_meta_page_form_tenant",
+    };
+  }
+
+  const match = matches[0];
+  return {
+    status: "resolved",
+    tenantId: match.tenant_id.trim(),
+    ruleId: match.id,
+    reason: "active_rule_explicit_form",
+  };
 }
 
 /**
@@ -219,6 +295,43 @@ export async function loadActiveMetaFormRules(
     return [];
   }
   return (data ?? []) as MetaFormAuthRule[];
+}
+
+export async function resolveMetaTenantFromExplicitFormRules(params: {
+  sb: SupabaseServiceClient;
+  pageId: string;
+  formId: string;
+  candidateTenantIds?: string[];
+}): Promise<MetaFormTenantResolutionResult> {
+  const pageId = params.pageId.trim();
+  const { data, error } = await params.sb
+    .from("lead_distribution_rules")
+    .select(
+      "id, tenant_id, page_id, use_all_forms, included_form_ids, excluded_form_ids, distribution_type, agent_ids, order_index",
+    )
+    .eq("active", true)
+    .eq("source", "meta_form")
+    .eq("page_id", pageId)
+    .order("order_index", { ascending: true });
+
+  if (error) {
+    console.warn("[meta-form-auth] tenant_rules_query_failed", {
+      page_id: pageId,
+      error: error.message,
+    });
+    return {
+      status: "not_found",
+      tenantIds: params.candidateTenantIds ?? [],
+      reason: "rules_query_failed",
+    };
+  }
+
+  return resolveMetaTenantFromExplicitFormRulesSnapshot({
+    pageId,
+    formId: params.formId,
+    rules: (data ?? []) as MetaFormTenantAuthRule[],
+    candidateTenantIds: params.candidateTenantIds,
+  });
 }
 
 async function pickRoundRobinAgent(

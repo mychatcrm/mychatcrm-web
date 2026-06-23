@@ -9,6 +9,7 @@ import { MetaLeadEventRecorder } from "@/lib/server/meta-lead-events-db";
 import {
   crmBlockedUserMessage,
   isMetaFormAllowedForCrm,
+  resolveMetaTenantFromExplicitFormRules,
   resolveAuthorizedMetaLeadAgent,
   unauthorizedUserMessage,
 } from "@/lib/server/meta-form-authorization";
@@ -19,6 +20,7 @@ import {
   fetchFormQuestionLabels,
   fetchGraphLead,
   fetchGraphObjectField,
+  type GraphLeadResponse,
   mergeLeadProfileMetadata,
   parseFieldData,
   resolveMetaLeadAdAttribution,
@@ -36,6 +38,12 @@ import {
   type AppliedLeadRuleMapping,
 } from "@/lib/lead-rule-field-mapping";
 import type { LeadFieldMapping } from "@/lib/lead-distribution-rules";
+
+type MetaConnectionRow = {
+  tenant_id: string;
+  page_access_token: string | null;
+  page_name?: string | null;
+};
 
 export type LeadgenValue = {
   leadgen_id: string;
@@ -85,6 +93,93 @@ function timestampMsFromDb(value: unknown): number | null {
   if (typeof value !== "string" || !value.trim()) return null;
   const ms = Date.parse(value);
   return Number.isFinite(ms) ? ms : null;
+}
+
+function uniqueTenantIds(connections: MetaConnectionRow[]): string[] {
+  return Array.from(new Set(connections.map((conn) => conn.tenant_id).filter(Boolean)));
+}
+
+async function loadMetaConnectionsForPage(params: {
+  sb: ReturnType<typeof createSupabaseServiceClient>;
+  pageId: string;
+}): Promise<MetaConnectionRow[]> {
+  const { data, error } = await params.sb
+    .from("meta_connections")
+    .select("tenant_id, page_access_token, page_name")
+    .eq("page_id", params.pageId);
+
+  if (error) {
+    console.warn("[meta-webhook] meta_connections_query_failed", {
+      page_id: params.pageId,
+      error: error.message,
+    });
+    return [];
+  }
+
+  return ((data ?? []) as MetaConnectionRow[]).filter((conn) => Boolean(conn.tenant_id));
+}
+
+async function fetchGraphLeadFromAnyConnection(params: {
+  connections: MetaConnectionRow[];
+  leadgenId: string;
+}): Promise<{ lead: GraphLeadResponse; connection: MetaConnectionRow } | null> {
+  for (const connection of params.connections) {
+    const token = connection.page_access_token?.trim();
+    if (!token) continue;
+    const lead = await fetchGraphLead(params.leadgenId, token);
+    if (lead) return { lead, connection };
+  }
+  return null;
+}
+
+async function recordBlockedMetaLeadForTenants(params: {
+  sb: ReturnType<typeof createSupabaseServiceClient>;
+  tenantIds: string[];
+  connections: MetaConnectionRow[];
+  value: LeadgenValue;
+  step:
+    | "blocked_form_not_in_rules"
+    | "blocked_ambiguous_meta_page_form_tenant"
+    | "blocked_missing_meta_connection_for_resolved_tenant";
+  reason: string;
+  formId: string | null;
+  name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  detail?: Record<string, unknown>;
+}) {
+  const tenantIds = Array.from(new Set(params.tenantIds.filter(Boolean)));
+  await Promise.all(
+    tenantIds.map(async (tenantId) => {
+      const connection = params.connections.find((conn) => conn.tenant_id === tenantId);
+      const recorder = new MetaLeadEventRecorder(params.sb, {
+        tenant_id: tenantId,
+        leadgen_id: params.value.leadgen_id,
+        page_id: params.value.page_id,
+        form_id: params.formId,
+        ad_id: params.value.ad_id ?? null,
+        adset_id: params.value.ad_group_id ?? null,
+        raw_webhook: params.value as Record<string, unknown>,
+      });
+      await recorder.init();
+      await recorder.patch({
+        page_name: connection?.page_name?.trim() || null,
+        name: params.name ?? null,
+        phone: params.phone || null,
+        email: params.email ?? null,
+      });
+      await recorder.step(params.step, {
+        reason: params.reason,
+        ...(params.detail ?? {}),
+      });
+      await recorder.patch({
+        crm_sync_status: "blocked",
+        whatsapp_status: "blocked",
+        error_message: params.reason,
+        current_step: params.step,
+      });
+    }),
+  );
 }
 
 async function loadRuleActivationStartedAtMs(params: {
@@ -155,14 +250,135 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
 
   const sb = createSupabaseServiceClient();
 
-  const { data: conn } = await sb
-    .from("meta_connections")
-    .select("tenant_id, page_access_token, page_name")
-    .eq("page_id", page_id)
-    .maybeSingle();
-
-  if (!conn) {
+  const connections = await loadMetaConnectionsForPage({ sb, pageId: page_id });
+  if (connections.length === 0) {
     console.warn("[meta-webhook] No tenant found for page_id", { page_id });
+    return;
+  }
+  const candidateTenantIds = uniqueTenantIds(connections);
+
+  const graphResult = await fetchGraphLeadFromAnyConnection({ connections, leadgenId: leadgen_id });
+  if (!graphResult) {
+    await Promise.all(
+      candidateTenantIds.map(async (tenantId) => {
+        const connection = connections.find((conn) => conn.tenant_id === tenantId);
+        const recorder = new MetaLeadEventRecorder(sb, {
+          tenant_id: tenantId,
+          leadgen_id,
+          page_id,
+          form_id: form_id ?? null,
+          ad_id: ad_id ?? null,
+          adset_id: ad_group_id ?? null,
+          raw_webhook: value as Record<string, unknown>,
+        });
+        await recorder.init();
+        await recorder.patch({
+          page_name: connection?.page_name?.trim() || null,
+          error_message: "graph_api_fetch_failed",
+        });
+        await recorder.step("graph_fetch_failed");
+      }),
+    );
+    console.warn("[meta-webhook] Could not fetch lead from Graph API", { leadgen_id });
+    return;
+  }
+
+  const lead = graphResult.lead;
+  const fields = parseFieldData(lead.field_data ?? []);
+  let phone = extractLeadPhone(fields);
+  let fullName = extractLeadName(fields);
+  let email = fields.email ?? null;
+  const resolvedFormId = (form_id ?? lead.form_id ?? "").trim();
+
+  const tenantResolution = await resolveMetaTenantFromExplicitFormRules({
+    sb,
+    pageId: page_id,
+    formId: resolvedFormId,
+    candidateTenantIds,
+  });
+
+  if (tenantResolution.status === "not_found") {
+    const tenantsToRecord = tenantResolution.tenantIds.length > 0 ? tenantResolution.tenantIds : candidateTenantIds;
+    await recordBlockedMetaLeadForTenants({
+      sb,
+      tenantIds: tenantsToRecord,
+      connections,
+      value,
+      step: "blocked_form_not_in_rules",
+      reason: tenantResolution.reason,
+      formId: resolvedFormId || null,
+      name: fullName,
+      phone,
+      email,
+      detail: {
+        page_id,
+        form_id: resolvedFormId || null,
+      },
+    });
+    console.warn("[meta-webhook] Meta form blocked before CRM — no matching lead rule", {
+      page_id,
+      form_id: resolvedFormId || null,
+      leadgen_id,
+      reason: tenantResolution.reason,
+      candidate_tenant_ids: candidateTenantIds,
+    });
+    return;
+  }
+
+  if (tenantResolution.status === "ambiguous") {
+    await recordBlockedMetaLeadForTenants({
+      sb,
+      tenantIds: tenantResolution.tenantIds,
+      connections,
+      value,
+      step: "blocked_ambiguous_meta_page_form_tenant",
+      reason: tenantResolution.reason,
+      formId: resolvedFormId || null,
+      name: fullName,
+      phone,
+      email,
+      detail: {
+        page_id,
+        form_id: resolvedFormId || null,
+        rule_ids: tenantResolution.ruleIds,
+      },
+    });
+    console.warn("[meta-webhook] Meta form blocked before CRM — ambiguous tenant resolution", {
+      page_id,
+      form_id: resolvedFormId || null,
+      leadgen_id,
+      tenant_ids: tenantResolution.tenantIds,
+      rule_ids: tenantResolution.ruleIds,
+    });
+    return;
+  }
+
+  const conn = connections.find((connection) => connection.tenant_id === tenantResolution.tenantId);
+  if (!conn?.page_access_token?.trim()) {
+    await recordBlockedMetaLeadForTenants({
+      sb,
+      tenantIds: [tenantResolution.tenantId],
+      connections,
+      value,
+      step: "blocked_missing_meta_connection_for_resolved_tenant",
+      reason: "missing_meta_connection_for_resolved_tenant",
+      formId: resolvedFormId || null,
+      name: fullName,
+      phone,
+      email,
+      detail: {
+        page_id,
+        form_id: resolvedFormId || null,
+        rule_id: tenantResolution.ruleId,
+      },
+    });
+    console.warn("[meta-webhook] Meta form blocked before CRM — missing connection for resolved tenant", {
+      tenant_id: tenantResolution.tenantId,
+      page_id,
+      form_id: resolvedFormId || null,
+      leadgen_id,
+      rule_id: tenantResolution.ruleId,
+    });
     return;
   }
 
@@ -176,33 +392,29 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     tenant_id,
     leadgen_id,
     page_id,
-    form_id: form_id ?? null,
+    form_id: resolvedFormId || form_id || null,
     ad_id: ad_id ?? null,
     adset_id: ad_group_id ?? null,
     raw_webhook: value as Record<string, unknown>,
   });
   await eventRecorder.init();
   await eventRecorder.patch({ page_name: connPageName?.trim() || null });
-
-  console.info("[meta-webhook] Tenant resolved", { tenant_id, page_id });
-
-  const lead = await fetchGraphLead(leadgen_id, page_access_token);
-  if (!lead) {
-    await eventRecorder.step("graph_fetch_failed");
-    await eventRecorder.patch({ error_message: "graph_api_fetch_failed" });
-    console.warn("[meta-webhook] Could not fetch lead from Graph API", { leadgen_id });
-    return;
-  }
+  await eventRecorder.step("meta_tenant_resolved_by_form_rule", {
+    rule_id: tenantResolution.ruleId,
+    form_id: resolvedFormId || null,
+  });
   await eventRecorder.step("graph_data_fetched");
 
-  const fields = parseFieldData(lead.field_data ?? []);
-  let phone = extractLeadPhone(fields);
-  let fullName = extractLeadName(fields);
-  let email = fields.email ?? null;
+  console.info("[meta-webhook] meta_tenant_resolved_by_form_rule", {
+    tenant_id,
+    page_id,
+    form_id: resolvedFormId || null,
+    rule_id: tenantResolution.ruleId,
+    leadgen_id,
+  });
 
   await eventRecorder.patch({ name: fullName, phone: phone || null, email });
 
-  const resolvedFormId = (form_id ?? lead.form_id ?? "").trim();
   const crmAllowance = await isMetaFormAllowedForCrm({
     sb,
     tenantId: tenant_id,
@@ -258,7 +470,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     return;
   }
 
-  const leadCreatedAtMs = timestampMsFromSeconds(value.created_time);
+  const leadCreatedAtMs = timestampMsFromSeconds(value.created_time) ?? timestampMsFromDb(lead.created_time);
   const activationStartedAtMs = await loadRuleActivationStartedAtMs({
     sb,
     tenantId: tenant_id,
@@ -267,7 +479,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
   if (!leadCreatedAtMs || !activationStartedAtMs || leadCreatedAtMs < activationStartedAtMs) {
     await eventRecorder.step("blocked_historical_lead", {
       rule_id: ruleId,
-      lead_created_time: value.created_time ?? null,
+      lead_created_time: value.created_time ?? lead.created_time ?? null,
     });
     await eventRecorder.patch({
       crm_sync_status: "blocked",
@@ -281,7 +493,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       form_id: resolvedFormId || null,
       leadgen_id,
       rule_id: ruleId,
-      lead_created_time: value.created_time ?? null,
+      lead_created_time: value.created_time ?? lead.created_time ?? null,
       activation_started_at_ms: activationStartedAtMs,
     });
     return;
