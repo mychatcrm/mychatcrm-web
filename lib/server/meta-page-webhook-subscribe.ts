@@ -1,4 +1,5 @@
 import "server-only";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 const GRAPH = "https://graph.facebook.com/v19.0";
 
@@ -20,6 +21,15 @@ export type PageWebhookSubscribeResult = {
 export type PageSubscribedAppsSnapshot = {
   pageId: string;
   apps: Array<{ appId: string; appName: string | null; subscribedFields: string[] }>;
+  error?: string;
+};
+
+export type TenantPageLeadgenSubscriptionResult = {
+  pageId: string;
+  pageName: string | null;
+  ok: boolean;
+  wasSubscribed: boolean;
+  subscribedFields?: string[];
   error?: string;
 };
 
@@ -92,4 +102,84 @@ export async function subscribePageToLeadgenWebhooks(
   } catch (err) {
     return { pageId, ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/**
+ * Ensures a tenant page is subscribed to Lead Ads webhooks. This is intentionally
+ * called from lead-rule saves so every tenant gets the same protection: a rule
+ * is not only stored locally, the Meta page is also prepared to deliver events.
+ */
+export async function ensureTenantPageLeadgenWebhookSubscription(params: {
+  sb: SupabaseClient;
+  tenantId: string;
+  pageId: string;
+}): Promise<TenantPageLeadgenSubscriptionResult> {
+  const pageId = params.pageId.trim();
+  const appId = expectedAppId();
+  if (!pageId) {
+    return {
+      pageId,
+      pageName: null,
+      ok: false,
+      wasSubscribed: false,
+      error: "missing_page_id",
+    };
+  }
+  if (!appId) {
+    return {
+      pageId,
+      pageName: null,
+      ok: false,
+      wasSubscribed: false,
+      error: "missing_meta_app_id",
+    };
+  }
+
+  const { data: connection, error } = await params.sb
+    .from("meta_connections")
+    .select("page_id, page_name, page_access_token")
+    .eq("tenant_id", params.tenantId)
+    .eq("page_id", pageId)
+    .maybeSingle<{ page_id: string; page_name: string | null; page_access_token: string | null }>();
+
+  if (error) {
+    return {
+      pageId,
+      pageName: null,
+      ok: false,
+      wasSubscribed: false,
+      error: `meta_connection_query_failed:${error.message}`,
+    };
+  }
+  if (!connection?.page_access_token?.trim()) {
+    return {
+      pageId,
+      pageName: connection?.page_name ?? null,
+      ok: false,
+      wasSubscribed: false,
+      error: "missing_page_access_token",
+    };
+  }
+
+  const before = await fetchPageSubscribedApps(pageId, connection.page_access_token);
+  const wasSubscribed = pageHasLeadgenSubscription(before, appId);
+  if (wasSubscribed) {
+    return {
+      pageId,
+      pageName: connection.page_name ?? null,
+      ok: true,
+      wasSubscribed: true,
+      subscribedFields: before.apps.find((app) => app.appId === appId)?.subscribedFields,
+    };
+  }
+
+  const subscribed = await subscribePageToLeadgenWebhooks(pageId, connection.page_access_token);
+  return {
+    pageId,
+    pageName: connection.page_name ?? null,
+    ok: subscribed.ok,
+    wasSubscribed: false,
+    subscribedFields: subscribed.subscribedFields,
+    error: subscribed.error,
+  };
 }

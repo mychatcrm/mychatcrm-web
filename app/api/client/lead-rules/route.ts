@@ -7,6 +7,7 @@ import {
   type LeadDistributionRuleRow,
 } from "@/lib/server/lead-distribution-rules";
 import {
+  ensureMetaLeadWebhookSubscriptionForRule,
   reconcileMetaFormMappingsWithRules,
   syncMetaFormAgentMappingForRule,
 } from "@/lib/server/lead-rules-meta-sync";
@@ -152,9 +153,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+  let metaWebhookSubscription = null;
   if (data.source === "meta_form") {
     await syncMetaFormAgentMappingForRule(sb, data);
     await reconcileMetaFormMappingsWithRules(sb, session.tenantId);
+    metaWebhookSubscription = await ensureMetaLeadWebhookSubscriptionForRule(sb, data);
   }
 
   // Keep organic_agent_id in sync for organic WhatsApp rules
@@ -162,5 +165,5 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     await syncOrganicAgentId(sb, session.tenantId, data.agent_ids);
   }
 
-  return NextResponse.json({ rule: leadRuleRowToClient(data) }, { status: 201 });
+  return NextResponse.json({ rule: leadRuleRowToClient(data), metaWebhookSubscription }, { status: 201 });
 }

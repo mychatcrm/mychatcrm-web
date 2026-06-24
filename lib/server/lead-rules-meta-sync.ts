@@ -1,6 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { LeadDistributionRuleRow } from "@/lib/server/lead-distribution-rules";
 import { stringArray } from "@/lib/server/meta-form-authorization";
+import {
+  ensureTenantPageLeadgenWebhookSubscription,
+  type TenantPageLeadgenSubscriptionResult,
+} from "@/lib/server/meta-page-webhook-subscribe";
 
 export async function deleteMetaFormAgentMapping(
   sb: SupabaseClient,
@@ -143,4 +147,37 @@ export async function syncMetaFormAgentMappingForRule(
   }
 
   await reconcileMetaFormMappingsWithRules(sb, tenantId);
+}
+
+export async function ensureMetaLeadWebhookSubscriptionForRule(
+  sb: SupabaseClient,
+  rule: LeadDistributionRuleRow,
+): Promise<TenantPageLeadgenSubscriptionResult | null> {
+  if (rule.source !== "meta_form") return null;
+  if (rule.active === false) return null;
+  const pageId = rule.page_id?.trim();
+  if (!pageId) return null;
+
+  const result = await ensureTenantPageLeadgenWebhookSubscription({
+    sb,
+    tenantId: rule.tenant_id,
+    pageId,
+  });
+
+  const logPayload = {
+    tenant_id: rule.tenant_id,
+    rule_id: rule.id,
+    page_id: result.pageId,
+    page_name: result.pageName,
+    was_subscribed: result.wasSubscribed,
+    ok: result.ok,
+    error: result.error,
+  };
+  if (result.ok) {
+    console.info("[lead-rules] meta page leadgen webhook subscription ensured", logPayload);
+  } else {
+    console.warn("[lead-rules] meta page leadgen webhook subscription failed", logPayload);
+  }
+
+  return result;
 }

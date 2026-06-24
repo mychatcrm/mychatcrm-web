@@ -9,6 +9,7 @@ import {
 import { stringArray } from "@/lib/server/meta-form-authorization";
 import {
   deleteMetaFormMappingsForRule,
+  ensureMetaLeadWebhookSubscriptionForRule,
   reconcileMetaFormMappingsWithRules,
   syncMetaFormAgentMappingForRule,
 } from "@/lib/server/lead-rules-meta-sync";
@@ -164,6 +165,7 @@ export async function PUT(req: NextRequest, { params }: RouteContext): Promise<N
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+  let metaWebhookSubscription = null;
   if (data.source === "meta_form") {
     if (stringArray(data.agent_ids).length === 0) {
       await deleteMetaFormMappingsForRule(sb, data);
@@ -172,6 +174,7 @@ export async function PUT(req: NextRequest, { params }: RouteContext): Promise<N
       await syncMetaFormAgentMappingForRule(sb, data);
       await reconcileMetaFormMappingsWithRules(sb, session.tenantId);
     }
+    metaWebhookSubscription = await ensureMetaLeadWebhookSubscriptionForRule(sb, data);
   }
 
   if (existing.source === "whatsapp_organico" && data.source !== "whatsapp_organico") {
@@ -191,7 +194,7 @@ export async function PUT(req: NextRequest, { params }: RouteContext): Promise<N
     await syncOrganicAgentId(sb, session.tenantId, data.agent_ids);
   }
 
-  return NextResponse.json({ rule: leadRuleRowToClient(data) });
+  return NextResponse.json({ rule: leadRuleRowToClient(data), metaWebhookSubscription });
 }
 
 export async function DELETE(_req: NextRequest, { params }: RouteContext): Promise<NextResponse> {
