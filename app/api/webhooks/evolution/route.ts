@@ -40,6 +40,10 @@ import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { isSmartWaitGloballyDisabled, runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
 import { scheduleFollowUpAfterInbound, scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
+import {
+  notifyTenantIntegrationDisconnected,
+  shouldNotifyWhatsappDisconnect,
+} from "@/lib/server/integration-disconnect-notifications";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import {
   AGENDA_AUTOMATION_DISABLED_REPLY,
@@ -422,11 +426,38 @@ export async function POST(request: Request) {
       const waJid = extractInstanceJid(payload);
       if (state) {
         try {
+          const previousRow = await getEvolutionInstanceByName(instanceName);
           await updateEvolutionInstanceStateByName({
             instanceName,
             connectionState: state,
             waJid: waJid ?? undefined,
           });
+          if (
+            previousRow &&
+            shouldNotifyWhatsappDisconnect({
+              previousState: previousRow.connection_state,
+              nextState: state,
+            })
+          ) {
+            try {
+              await notifyTenantIntegrationDisconnected({
+                tenantId: previousRow.tenant_id,
+                integration: "whatsapp",
+                source: "evolution_connection_update",
+                sourceKey: previousRow.instance_name,
+                instanceName: previousRow.instance_name,
+                state,
+                previousState: previousRow.connection_state,
+                manual: false,
+                metadata: {
+                  slot_index: previousRow.slot_index,
+                  wa_jid: waJid ?? previousRow.wa_jid ?? null,
+                },
+              });
+            } catch (notifyError) {
+              console.warn("[webhooks/evolution] disconnect notification failed", notifyError);
+            }
+          }
         } catch (e) {
           console.warn("[webhooks/evolution] connection update db", e);
         }

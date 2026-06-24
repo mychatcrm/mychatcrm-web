@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
+import { notifyTenantIntegrationDisconnected } from "@/lib/server/integration-disconnect-notifications";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -8,6 +9,11 @@ const GRAPH = "https://graph.facebook.com/v19.0";
 
 type MetaConnectionTokenRow = {
   user_access_token: string | null;
+};
+
+type DeletedMetaConnectionRow = {
+  page_id: string;
+  page_name: string | null;
 };
 
 type MetaMeResponse = {
@@ -84,7 +90,11 @@ export async function DELETE(): Promise<NextResponse> {
     return NextResponse.json({ error: mappingResult.error.message }, { status: 500 });
   }
 
-  const connResult = await sb.from("meta_connections").delete().eq("tenant_id", session.tenantId).select("page_id");
+  const connResult = await sb
+    .from("meta_connections")
+    .delete()
+    .eq("tenant_id", session.tenantId)
+    .select("page_id, page_name");
   if (connResult.error) {
     return NextResponse.json({ error: connResult.error.message }, { status: 500 });
   }
@@ -114,6 +124,27 @@ export async function DELETE(): Promise<NextResponse> {
       errors: revokeResults.filter((result) => !result.ok).map((result) => result.error ?? "unknown_error"),
     });
   }
+
+  const deletedConnections = (connResult.data ?? []) as DeletedMetaConnectionRow[];
+  await Promise.allSettled(
+    deletedConnections.map((conn) =>
+      notifyTenantIntegrationDisconnected({
+        tenantId: session.tenantId,
+        integration: "facebook",
+        source: "meta_manual_disconnect",
+        sourceKey: conn.page_id,
+        pageId: conn.page_id,
+        pageName: conn.page_name,
+        state: "deleted",
+        manual: true,
+        metadata: {
+          facebook_tokens_found: userAccessTokens.length,
+          facebook_tokens_revoked: revokedCount,
+          facebook_revoke_errors: revokeErrorCount,
+        },
+      }),
+    ),
+  );
 
   console.info("[meta-disconnect]", {
     tenant_id: session.tenantId,

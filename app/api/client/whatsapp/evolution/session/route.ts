@@ -21,6 +21,10 @@ import {
   getEvolutionInstanceByTenantSlot,
   upsertTenantEvolutionInstance,
 } from "@/lib/server/tenant-evolution-instance-db";
+import {
+  notifyTenantIntegrationDisconnected,
+  shouldNotifyWhatsappDisconnect,
+} from "@/lib/server/integration-disconnect-notifications";
 import { assertSlotIndexAllowed } from "@/lib/server/whatsapp-slot-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
@@ -227,6 +231,27 @@ export async function GET(request: Request) {
     );
   }
 
+  if (shouldNotifyWhatsappDisconnect({ previousState: row.connection_state, nextState: remoteState })) {
+    try {
+      await notifyTenantIntegrationDisconnected({
+        tenantId: session.tenantId,
+        integration: "whatsapp",
+        source: "evolution_session_status_probe",
+        sourceKey: row.instance_name,
+        instanceName: row.instance_name,
+        state: remoteState,
+        previousState: row.connection_state,
+        manual: false,
+        metadata: {
+          slot_index: slotIndex,
+          wa_jid: row.wa_jid ?? null,
+        },
+      });
+    } catch (notifyError) {
+      console.warn("[evolution/session] status disconnect notification failed", notifyError);
+    }
+  }
+
   if (remoteState === "open") {
     return NextResponse.json({
       instanceName: row.instance_name,
@@ -284,6 +309,24 @@ export async function DELETE(request: Request) {
       await deleteTenantEvolutionInstanceRow(session.tenantId, slotIndex);
     } catch (e) {
       console.warn("[evolution/session] delete row", e);
+    }
+    try {
+      await notifyTenantIntegrationDisconnected({
+        tenantId: session.tenantId,
+        integration: "whatsapp",
+        source: "evolution_session_manual_delete",
+        sourceKey: row.instance_name,
+        instanceName: row.instance_name,
+        state: "deleted",
+        previousState: row.connection_state,
+        manual: true,
+        metadata: {
+          slot_index: slotIndex,
+          wa_jid: row.wa_jid ?? null,
+        },
+      });
+    } catch (notifyError) {
+      console.warn("[evolution/session] manual disconnect notification failed", notifyError);
     }
   }
 
