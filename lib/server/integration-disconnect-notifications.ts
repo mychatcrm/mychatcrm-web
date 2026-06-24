@@ -34,14 +34,24 @@ function safeText(value: string | null | undefined, fallback: string): string {
   return text || fallback;
 }
 
-async function loadTenantNotificationRecipient(params: {
+export async function loadTenantNotificationRecipient(params: {
   sb: ReturnType<typeof createSupabaseServiceClient>;
   tenantId: string;
-}): Promise<{ phone: string | null; tenantName: string | null; ownerName: string | null }> {
+}): Promise<{
+  phone: string | null;
+  tenantName: string | null;
+  ownerName: string | null;
+  source:
+    | "tenant_system_notification_phone"
+    | "owner_member_phone"
+    | "owner_email_member_phone"
+    | "director_member_phone"
+    | "missing";
+}> {
   const [{ data: tenant }, { data: provision }] = await Promise.all([
     params.sb
       .from("tenants")
-      .select("name")
+      .select("name, system_notification_phone")
       .eq("id", params.tenantId)
       .maybeSingle(),
     params.sb
@@ -57,6 +67,19 @@ async function loadTenantNotificationRecipient(params: {
   const ownerName = safeText((provision as { owner_name?: string | null } | null)?.owner_name, "");
   const ownerMemberId = safeText((provision as { owner_member_id?: string | null } | null)?.owner_member_id, "");
   const ownerEmail = safeText((provision as { owner_email?: string | null } | null)?.owner_email, "");
+  const systemNotificationPhone = safeText(
+    (tenant as { system_notification_phone?: string | null } | null)?.system_notification_phone,
+    "",
+  );
+
+  if (systemNotificationPhone) {
+    return {
+      phone: systemNotificationPhone,
+      tenantName,
+      ownerName: ownerName || null,
+      source: "tenant_system_notification_phone",
+    };
+  }
 
   if (ownerMemberId) {
     const { data } = await params.sb
@@ -66,7 +89,9 @@ async function loadTenantNotificationRecipient(params: {
       .eq("id", ownerMemberId)
       .maybeSingle();
     const phone = safeText((data as { phone?: string | null } | null)?.phone, "");
-    if (phone) return { phone, tenantName, ownerName: ownerName || null };
+    if (phone) {
+      return { phone, tenantName, ownerName: ownerName || null, source: "owner_member_phone" };
+    }
   }
 
   if (ownerEmail) {
@@ -77,7 +102,9 @@ async function loadTenantNotificationRecipient(params: {
       .eq("email", ownerEmail.toLowerCase())
       .maybeSingle();
     const phone = safeText((data as { phone?: string | null } | null)?.phone, "");
-    if (phone) return { phone, tenantName, ownerName: ownerName || null };
+    if (phone) {
+      return { phone, tenantName, ownerName: ownerName || null, source: "owner_email_member_phone" };
+    }
   }
 
   const { data: firstDirector } = await params.sb
@@ -95,10 +122,11 @@ async function loadTenantNotificationRecipient(params: {
       phone: directorPhone,
       tenantName,
       ownerName: safeText((firstDirector as { nome?: string | null } | null)?.nome, "") || ownerName || null,
+      source: "director_member_phone",
     };
   }
 
-  return { phone: null, tenantName, ownerName: ownerName || null };
+  return { phone: null, tenantName, ownerName: ownerName || null, source: "missing" };
 }
 
 function buildDedupeMetadata(params: {
@@ -246,6 +274,7 @@ export async function notifyTenantIntegrationDisconnected(params: {
     previous_state: params.previousState ?? null,
     manual: Boolean(params.manual),
     recipient_phone_last4: maskPhoneLast4(recipient.phone),
+    recipient_source: recipient.source,
     ...(params.metadata ?? {}),
   };
 

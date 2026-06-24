@@ -3682,6 +3682,21 @@ function ActiveOffersPage() {
   );
 }
 
+type AccountContactSettings = {
+  personalPhone: string | null;
+  systemNotificationPhone: string | null;
+  canManageSystemNotificationPhone: boolean;
+};
+
+function formatAccountPhone(value: string | null | undefined): string {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  if (!digits) return "Não informado";
+  const br = digits.startsWith("55") ? digits.slice(2) : digits;
+  if (br.length === 11) return `(${br.slice(0, 2)}) ${br.slice(2, 7)}-${br.slice(7)}`;
+  if (br.length === 10) return `(${br.slice(0, 2)}) ${br.slice(2, 6)}-${br.slice(6)}`;
+  return `+${digits}`;
+}
+
 function ConfiguracoesPage({ session }: { session: ClientSession }) {
   const tabs = ["Minha Conta", "Plano e Cobranca", "Notificacoes", "Seguranca"];
   const [activeTab, setActiveTab] = useState(tabs[0]);
@@ -3710,13 +3725,51 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
   const [phoneNew, setPhoneNew] = useState("");
   const [phoneNew2, setPhoneNew2] = useState("");
   const [phoneCurrentPass, setPhoneCurrentPass] = useState("");
-  const [displayPhone, setDisplayPhone] = useState("(62) 99999-1111");
+  const [displayPhone, setDisplayPhone] = useState<string | null>(null);
+  const [systemNotificationPhone, setSystemNotificationPhone] = useState("");
+  const [systemNotificationPhoneDraft, setSystemNotificationPhoneDraft] = useState("");
+  const [canManageSystemNotificationPhone, setCanManageSystemNotificationPhone] = useState(false);
+  const [contactSettingsLoading, setContactSettingsLoading] = useState(true);
+  const [phoneSaving, setPhoneSaving] = useState(false);
+  const [notificationPhoneSaving, setNotificationPhoneSaving] = useState(false);
   const [displayName, setDisplayName] = useState(session.displayName);
   const [namePopoverOpen, setNamePopoverOpen] = useState(false);
   const [nameNew, setNameNew] = useState("");
   const [nameCurrentPass, setNameCurrentPass] = useState("");
   const [accountMsg, setAccountMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const { avatar, setInitialsAvatar, setPresetAvatar, setUploadedAvatar } = useDashboardProfileAvatar(session.initials, displayName);
+
+  useEffect(() => {
+    let active = true;
+    setContactSettingsLoading(true);
+    fetch("/api/client/account/contact", { cache: "no-store", credentials: "include" })
+      .then(async (res) => {
+        const data = (await res.json().catch(() => null)) as AccountContactSettings | { error?: string } | null;
+        if (!active) return;
+        if (!res.ok || !data || ("error" in data && data.error)) {
+          setAccountMsg({
+            type: "err",
+            text: (data && "error" in data && data.error) || "Não foi possível carregar os telefones da conta.",
+          });
+          return;
+        }
+        const settings = data as AccountContactSettings;
+        setDisplayPhone(settings.personalPhone);
+        setSystemNotificationPhone(settings.systemNotificationPhone ?? "");
+        setSystemNotificationPhoneDraft(settings.systemNotificationPhone ? formatAccountPhone(settings.systemNotificationPhone) : "");
+        setCanManageSystemNotificationPhone(Boolean(settings.canManageSystemNotificationPhone));
+      })
+      .catch(() => {
+        if (!active) return;
+        setAccountMsg({ type: "err", text: "Não foi possível carregar os telefones da conta." });
+      })
+      .finally(() => {
+        if (active) setContactSettingsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!emailPopoverOpen && !passwordPopoverOpen && !phonePopoverOpen && !namePopoverOpen) return;
@@ -3800,16 +3853,13 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
     setNameCurrentPass("");
   };
 
-  const onlyPhoneDigits = (s: string) => s.replace(/\D/g, "");
+  const onlyPhoneDigits = (s: string | null | undefined) => String(s ?? "").replace(/\D/g, "");
 
-  const submitPhoneChange = (e: FormEvent) => {
+  const submitPhoneChange = async (e: FormEvent) => {
     e.preventDefault();
+    if (phoneSaving) return;
     if (!phoneCurrentPass.trim()) {
       setAccountMsg({ type: "err", text: "Digite a senha atual para alterar o telemovel." });
-      return;
-    }
-    if (phoneCurrentPass !== clientDemoReauthPassword()) {
-      setAccountMsg({ type: "err", text: "Senha atual incorreta." });
       return;
     }
     const a = phoneNew.trim();
@@ -3830,12 +3880,59 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
       setAccountMsg({ type: "err", text: "O numero novo e igual ao atual." });
       return;
     }
-    setDisplayPhone(a);
-    setAccountMsg({ type: "ok", text: "Telemovel atualizado (simulacao). Em producao validamos SMS ou chamada de confirmacao." });
-    setPhonePopoverOpen(false);
-    setPhoneNew("");
-    setPhoneNew2("");
-    setPhoneCurrentPass("");
+
+    setPhoneSaving(true);
+    try {
+      const res = await fetch("/api/client/account/contact", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ personalPhone: a, currentPassword: phoneCurrentPass }),
+      });
+      const data = (await res.json().catch(() => null)) as { personalPhone?: string | null; error?: string } | null;
+      if (!res.ok) {
+        setAccountMsg({ type: "err", text: data?.error || "Não foi possível salvar o telefone pessoal." });
+        return;
+      }
+      setDisplayPhone(data?.personalPhone ?? null);
+      setAccountMsg({ type: "ok", text: "Telefone pessoal atualizado com segurança." });
+      setPhonePopoverOpen(false);
+      setPhoneNew("");
+      setPhoneNew2("");
+      setPhoneCurrentPass("");
+    } catch {
+      setAccountMsg({ type: "err", text: "Não foi possível salvar o telefone pessoal." });
+    } finally {
+      setPhoneSaving(false);
+    }
+  };
+
+  const submitSystemNotificationPhone = async (e: FormEvent) => {
+    e.preventDefault();
+    if (notificationPhoneSaving || !canManageSystemNotificationPhone) return;
+
+    setNotificationPhoneSaving(true);
+    try {
+      const res = await fetch("/api/client/account/contact", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ systemNotificationPhone: systemNotificationPhoneDraft }),
+      });
+      const data = (await res.json().catch(() => null)) as { systemNotificationPhone?: string | null; error?: string } | null;
+      if (!res.ok) {
+        setAccountMsg({ type: "err", text: data?.error || "Não foi possível salvar o telefone de notificações." });
+        return;
+      }
+      const next = data?.systemNotificationPhone ?? "";
+      setSystemNotificationPhone(next);
+      setSystemNotificationPhoneDraft(next ? formatAccountPhone(next) : "");
+      setAccountMsg({ type: "ok", text: "Telefone de notificações do sistema atualizado." });
+    } catch {
+      setAccountMsg({ type: "err", text: "Não foi possível salvar o telefone de notificações." });
+    } finally {
+      setNotificationPhoneSaving(false);
+    }
   };
 
   const submitEmailChange = (e: FormEvent) => {
@@ -4055,7 +4152,9 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0 flex-1">
                       <p className={typography.ui.overline}>Telemovel</p>
-                      <p className="mt-1 text-sm font-medium text-content">{displayPhone}</p>
+                      <p className="mt-1 text-sm font-medium text-content">
+                        {contactSettingsLoading ? "Carregando..." : formatAccountPhone(displayPhone)}
+                      </p>
                     </div>
                     <div className="relative shrink-0" ref={phonePopRef}>
                       <Button type="button" variant="secondary" className="min-h-[44px] gap-2" onClick={openPhonePopover}>
@@ -4116,8 +4215,8 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                             <Button type="button" variant="ghost" size="sm" onClick={() => setPhonePopoverOpen(false)}>
                               Cancelar
                             </Button>
-                            <Button type="submit" size="sm">
-                              Guardar
+                            <Button type="submit" size="sm" disabled={phoneSaving}>
+                              {phoneSaving ? "Salvando..." : "Guardar"}
                             </Button>
                           </div>
                         </form>
@@ -4276,6 +4375,65 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                 </div>
               </div>
             </div>
+
+            <form onSubmit={submitSystemNotificationPhone} className="rounded-xl border border-line bg-surface-card p-4 md:p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <Bell className="h-4 w-4 shrink-0 text-primary" strokeWidth={1.75} aria-hidden />
+                    <h3 className="text-sm font-semibold text-content">Telefone para notificações do sistema</h3>
+                  </div>
+                  <p className="mt-2 max-w-3xl text-xs leading-relaxed text-content-muted">
+                    Este número recebe avisos operacionais do MyChatCRM, como WhatsApp ou Meta/Facebook conectados,
+                    desconectados ou exigindo atenção. Ele não é usado como linha de atendimento dos agentes.
+                  </p>
+                  <p className="mt-2 text-[11px] text-content-faint">
+                    Atual:{" "}
+                    <span className="font-medium text-content-secondary">
+                      {contactSettingsLoading ? "Carregando..." : formatAccountPhone(systemNotificationPhone)}
+                    </span>
+                  </p>
+                </div>
+
+                <div className="w-full max-w-md space-y-3">
+                  <label className="text-xs font-medium text-content-muted" htmlFor="system-notification-phone">
+                    Número do responsável pelos alertas
+                  </label>
+                  <Input
+                    id="system-notification-phone"
+                    type="tel"
+                    value={systemNotificationPhoneDraft}
+                    onChange={(ev) => setSystemNotificationPhoneDraft(ev.target.value)}
+                    placeholder="(00) 00000-0000"
+                    autoComplete="tel"
+                    disabled={!canManageSystemNotificationPhone || contactSettingsLoading || notificationPhoneSaving}
+                  />
+                  {!canManageSystemNotificationPhone ? (
+                    <p className="text-[11px] leading-relaxed text-content-faint">
+                      Apenas o dono da conta pode alterar o telefone de notificações operacionais.
+                    </p>
+                  ) : null}
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={!systemNotificationPhoneDraft || notificationPhoneSaving || contactSettingsLoading}
+                      onClick={() => setSystemNotificationPhoneDraft("")}
+                    >
+                      Limpar
+                    </Button>
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={!canManageSystemNotificationPhone || contactSettingsLoading || notificationPhoneSaving}
+                    >
+                      {notificationPhoneSaving ? "Salvando..." : "Salvar notificações"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </form>
           </div>
         ) : null}
         {activeTab === "Plano e Cobranca" ? (

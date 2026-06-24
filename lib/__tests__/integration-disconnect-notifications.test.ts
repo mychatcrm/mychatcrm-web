@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildIntegrationDisconnectedMessage,
   isDisconnectedConnectionState,
+  loadTenantNotificationRecipient,
   normalizeConnectionState,
   shouldNotifyWhatsappDisconnect,
 } from "@/lib/server/integration-disconnect-notifications";
@@ -47,5 +48,51 @@ describe("integration disconnect notifications", () => {
     expect(facebook).toContain("Meta/Facebook");
     expect(facebook).toContain("Renato Lagares");
     expect(facebook).toContain("Meta Lead Ads");
+  });
+
+  it("uses the dedicated system notification phone before owner/member fallbacks", async () => {
+    const queriedTables: string[] = [];
+    const sb = {
+      from(table: string) {
+        queriedTables.push(table);
+        const builder = {
+          select: () => builder,
+          eq: () => builder,
+          not: () => builder,
+          limit: () => builder,
+          maybeSingle: async () => {
+            if (table === "tenants") {
+              return {
+                data: {
+                  name: "My Broker Office",
+                  system_notification_phone: "5562999991111",
+                },
+              };
+            }
+            if (table === "enterprise_provisions") {
+              return {
+                data: {
+                  owner_member_id: "member-owner",
+                  owner_email: "owner@example.com",
+                  owner_name: "Renato",
+                  organization_name: "My Broker Office",
+                },
+              };
+            }
+            return { data: { phone: "5562000000000" } };
+          },
+        };
+        return builder;
+      },
+    };
+
+    const recipient = await loadTenantNotificationRecipient({
+      sb: sb as never,
+      tenantId: "tenant-1",
+    });
+
+    expect(recipient.phone).toBe("5562999991111");
+    expect(recipient.source).toBe("tenant_system_notification_phone");
+    expect(queriedTables).not.toContain("tenant_members");
   });
 });
