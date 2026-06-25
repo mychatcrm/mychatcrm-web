@@ -150,6 +150,7 @@ import { TeamEmployeesHub } from "./equipe/TeamEmployeesHub";
 import { BotStatusToggle } from "./BotStatusToggle";
 import { DashboardOverviewV2 } from "./overview/DashboardOverviewV2";
 import { AtendimentoV2 } from "./conversas/AtendimentoV2";
+import { CrmKanbanV2 } from "./crm/CrmKanbanV2";
 import { typography } from "@/lib/typography";
 
 function Panel({
@@ -4454,7 +4455,7 @@ export function DashboardWorkspace({
       case "colaboradores":
         return <TeamEmployeesHub session={session} />;
       case "crm":
-        return <CrmPage dataset={dataset} session={session} />;
+        return <CrmKanbanV2 dataset={dataset} session={session} />;
       case "ofertas-ativas":
         return <ActiveOffersPage />;
       case "agenda":
