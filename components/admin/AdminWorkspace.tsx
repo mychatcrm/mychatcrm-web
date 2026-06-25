@@ -18,6 +18,7 @@ import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 import { AdminCouponsWorkspace } from "@/components/admin/commercial/AdminCouponsWorkspace";
 import { AdminPartnersHub } from "@/components/admin/commercial/AdminPartnersHub";
 import { MaintenanceModePanel } from "@/components/admin/MaintenanceModePanel";
+import { AdminOverviewV2 } from "@/components/admin/overview/AdminOverviewV2";
 import { AdminEnterpriseWorkspace } from "@/components/admin/enterprise/AdminEnterpriseWorkspace";
 import { AdminAiControlCenter } from "@/components/admin/ai/AdminAiControlCenter";
 import {
@@ -889,7 +890,7 @@ export function AdminWorkspace({
   const content = useMemo(() => {
     switch (routeKey) {
       case "dashboard":
-        return <PlatformIntelligenceDashboard session={session} />;
+        return <AdminOverviewV2 session={session} />;
       case "analytics":
         return <AnalyticsPage dataset={dataset} />;
       case "clientes":
