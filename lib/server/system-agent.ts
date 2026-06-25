@@ -3,6 +3,7 @@ import {
   evolutionSendText,
   normalizeEvolutionConnectionState,
   parseEvolutionConnectionStatePayload,
+  resolveEvolutionSendNumber,
 } from "@/lib/integrations/evolution-api";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
@@ -183,9 +184,38 @@ export async function sendSystemNotification(
     return { ok: false, error };
   }
 
+  // Resolve o número real no WhatsApp antes de enviar. A Evolution aceita um sendText
+  // para um número inexistente (ex.: 9º dígito brasileiro errado) e devolve message_id
+  // sem entregar a mensagem. O JID canônico é o número correto para o envio.
+  const resolution = await resolveEvolutionSendNumber({ instanceName: resolvedInstance, number: digits });
+
+  if (resolution.status === "not_found") {
+    await logSystemNotification({
+      type: options?.type ?? "generic",
+      toNumber: digits,
+      message,
+      status: "failed",
+      error: "number_not_on_whatsapp",
+      metadata: {
+        ...(options?.metadata ?? {}),
+        instance_name: resolvedInstance,
+        number_raw: rawDigits,
+        number_normalized: digits,
+        evolution_connection_state: liveState,
+        evolution_number_check: "not_found",
+        resolved_jid: resolution.jid,
+      },
+    });
+    return { ok: false, error: "number_not_on_whatsapp" };
+  }
+
+  const numberCheck = resolution.status;
+  const sendNumber = resolution.status === "exists" ? resolution.sendNumber : digits;
+  const resolvedJid = resolution.status === "exists" ? resolution.jid : null;
+
   const send = await evolutionSendText({
     instanceName: resolvedInstance,
-    number: digits,
+    number: sendNumber,
     text: message.slice(0, 4000),
   });
 
@@ -205,6 +235,9 @@ export async function sendSystemNotification(
       instance_name: resolvedInstance,
       number_raw: rawDigits,
       number_normalized: digits,
+      number_sent: sendNumber,
+      resolved_jid: resolvedJid,
+      evolution_number_check: numberCheck,
       evolution_connection_state: liveState,
       evolution_message_id: evolutionMessageId,
     },

@@ -301,6 +301,91 @@ export async function evolutionSendText(params: {
   });
 }
 
+export type EvolutionWhatsappNumberCheck = {
+  exists: boolean;
+  jid: string | null;
+  number: string;
+};
+
+/** Extrai os dígitos de um JID WhatsApp (556293580574@s.whatsapp.net → 556293580574). */
+export function jidToDigits(jid: string | null | undefined): string {
+  if (!jid) return "";
+  return jid.split("@")[0]?.replace(/\D/g, "") ?? "";
+}
+
+/**
+ * Verifica se números existem no WhatsApp e devolve o JID canônico de cada um.
+ * POST /chat/whatsappNumbers/{instance}
+ *
+ * Resolve o problema do 9º dígito brasileiro: a Evolution aceita um sendText para
+ * um número inexistente (devolvendo message_id) sem entregar. O JID retornado aqui
+ * é o número real que deve ser usado no envio (pode vir sem o 9).
+ */
+export async function evolutionCheckWhatsappNumbers(params: {
+  instanceName: string;
+  numbers: string[];
+}): Promise<EvolutionFetchResult<EvolutionWhatsappNumberCheck[]>> {
+  const enc = encodeURIComponent(params.instanceName);
+  const res = await evolutionFetchJson<unknown>(`/chat/whatsappNumbers/${enc}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ numbers: params.numbers }),
+    timeoutMs: 12_000,
+  });
+  if (!res.ok) return res;
+
+  const rawArray = Array.isArray(res.data)
+    ? res.data
+    : Array.isArray((res.data as { data?: unknown } | null)?.data)
+      ? (res.data as { data: unknown[] }).data
+      : [];
+
+  const parsed: EvolutionWhatsappNumberCheck[] = rawArray
+    .map((item): EvolutionWhatsappNumberCheck | null => {
+      if (!item || typeof item !== "object") return null;
+      const o = item as Record<string, unknown>;
+      const jid = typeof o.jid === "string" && o.jid.trim() ? o.jid.trim() : null;
+      const number = typeof o.number === "string" ? o.number.replace(/\D/g, "") : "";
+      return { exists: Boolean(o.exists), jid, number };
+    })
+    .filter((x): x is EvolutionWhatsappNumberCheck => x !== null);
+
+  return { ok: true, status: res.status, data: parsed };
+}
+
+/**
+ * Resolve o número de envio correto consultando o WhatsApp.
+ * - `exists`: devolve os dígitos do JID canônico (corrige o 9º dígito).
+ * - `not_found`: número não está no WhatsApp.
+ * - `check_failed`: a verificação não pôde ser feita (o chamador deve usar fallback).
+ */
+export async function resolveEvolutionSendNumber(params: {
+  instanceName: string;
+  number: string;
+}): Promise<
+  | { status: "exists"; sendNumber: string; jid: string | null }
+  | { status: "not_found"; jid: string | null }
+  | { status: "check_failed"; error: string }
+> {
+  const check = await evolutionCheckWhatsappNumbers({
+    instanceName: params.instanceName,
+    numbers: [params.number],
+  });
+  if (!check.ok) {
+    return { status: "check_failed", error: check.error };
+  }
+
+  const wanted = params.number.replace(/\D/g, "");
+  const match = check.data.find((item) => item.number && item.number === wanted) ?? check.data[0] ?? null;
+
+  if (!match || !match.exists) {
+    return { status: "not_found", jid: match?.jid ?? null };
+  }
+
+  const digits = jidToDigits(match.jid) || wanted;
+  return { status: "exists", sendNumber: digits, jid: match.jid };
+}
+
 /**
  * Envia mídia (imagem, vídeo, documento) via Evolution API v2.
  * POST /message/sendMedia/{instance}
