@@ -4885,7 +4885,7 @@ export function DashboardWorkspace({
       case "colaboradores":
         return <TeamEmployeesHub session={session} />;
       case "crm":
-        return <CrmKanbanV2 dataset={dataset} session={session} />;
+        return <CrmPage dataset={dataset} session={session} />;
       case "ofertas-ativas":
         return <ActiveOffersPage />;
       case "agenda":
