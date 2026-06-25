@@ -3726,11 +3726,13 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
   const [phoneNew2, setPhoneNew2] = useState("");
   const [phoneCurrentPass, setPhoneCurrentPass] = useState("");
   const [phoneVerificationCode, setPhoneVerificationCode] = useState("");
+  const [phoneVerificationCodeError, setPhoneVerificationCodeError] = useState<string | null>(null);
   const [phoneVerificationPending, setPhoneVerificationPending] = useState<{ phone: string; expiresAt: string } | null>(null);
   const [displayPhone, setDisplayPhone] = useState<string | null>(null);
   const [systemNotificationPhone, setSystemNotificationPhone] = useState("");
   const [systemNotificationPhoneDraft, setSystemNotificationPhoneDraft] = useState("");
   const [systemNotificationCode, setSystemNotificationCode] = useState("");
+  const [systemNotificationCodeError, setSystemNotificationCodeError] = useState<string | null>(null);
   const [systemNotificationPending, setSystemNotificationPending] = useState<{ phone: string; expiresAt: string } | null>(null);
   const [canManageSystemNotificationPhone, setCanManageSystemNotificationPhone] = useState(false);
   const [contactSettingsLoading, setContactSettingsLoading] = useState(true);
@@ -3906,6 +3908,7 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
       }
       setPhoneVerificationPending({ phone: data?.phone ?? a, expiresAt: data?.expiresAt ?? "" });
       setPhoneVerificationCode("");
+      setPhoneVerificationCodeError(null);
       setAccountMsg({ type: "ok", text: "Código enviado pelo agente do sistema para o novo telefone." });
     } catch {
       setAccountMsg({ type: "err", text: "Não foi possível enviar o código de verificação." });
@@ -3930,7 +3933,9 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
       });
       const data = (await res.json().catch(() => null)) as { personalPhone?: string | null; error?: string } | null;
       if (!res.ok) {
-        setAccountMsg({ type: "err", text: data?.error || "Não foi possível confirmar o telefone pessoal." });
+        const message = data?.error || "Não foi possível confirmar o telefone pessoal.";
+        setPhoneVerificationCodeError(message);
+        setAccountMsg({ type: "err", text: message });
         return;
       }
       setDisplayPhone(data?.personalPhone ?? phoneVerificationPending?.phone ?? null);
@@ -3940,6 +3945,7 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
       setPhoneNew2("");
       setPhoneCurrentPass("");
       setPhoneVerificationCode("");
+      setPhoneVerificationCodeError(null);
       setPhoneVerificationPending(null);
     } catch {
       setAccountMsg({ type: "err", text: "Não foi possível confirmar o telefone pessoal." });
@@ -3976,13 +3982,16 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
         });
         const data = (await res.json().catch(() => null)) as { systemNotificationPhone?: string | null; error?: string } | null;
         if (!res.ok) {
-          setAccountMsg({ type: "err", text: data?.error || "Não foi possível confirmar o telefone de notificações." });
+          const message = data?.error || "Não foi possível confirmar o telefone de notificações.";
+          setSystemNotificationCodeError(message);
+          setAccountMsg({ type: "err", text: message });
           return;
         }
         const next = data?.systemNotificationPhone ?? systemNotificationPending.phone;
         setSystemNotificationPhone(next);
         setSystemNotificationPhoneDraft(next ? formatAccountPhone(next) : "");
         setSystemNotificationCode("");
+        setSystemNotificationCodeError(null);
         setSystemNotificationPending(null);
         setAccountMsg({ type: "ok", text: "Telefone de notificações confirmado e atualizado." });
         return;
@@ -4005,6 +4014,7 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
       }
       setSystemNotificationPending({ phone: data?.phone ?? systemNotificationPhoneDraft, expiresAt: data?.expiresAt ?? "" });
       setSystemNotificationCode("");
+      setSystemNotificationCodeError(null);
       setAccountMsg({ type: "ok", text: "Código enviado pelo agente do sistema para o telefone de notificações." });
     } catch {
       setAccountMsg({ type: "err", text: "Não foi possível processar o telefone de notificações." });
@@ -4031,6 +4041,7 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
       setSystemNotificationPhone("");
       setSystemNotificationPhoneDraft("");
       setSystemNotificationCode("");
+      setSystemNotificationCodeError(null);
       setSystemNotificationPending(null);
       setAccountMsg({ type: "ok", text: "Telefone de notificações removido." });
     } catch {
@@ -4290,6 +4301,7 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                                   setPhoneNew(ev.target.value);
                                   setPhoneVerificationPending(null);
                                   setPhoneVerificationCode("");
+                                  setPhoneVerificationCodeError(null);
                                 }}
                                 placeholder="(00) 00000-0000"
                                 autoComplete="tel"
@@ -4308,6 +4320,7 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                                   setPhoneNew2(ev.target.value);
                                   setPhoneVerificationPending(null);
                                   setPhoneVerificationCode("");
+                                  setPhoneVerificationCodeError(null);
                                 }}
                                 autoComplete="tel"
                                 disabled={Boolean(phoneVerificationPending)}
@@ -4338,13 +4351,23 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                                 </label>
                                 <Input
                                   id={`${phoneFormBaseId}-code`}
-                                  className="mt-1"
+                                  className={`mt-1 ${phoneVerificationCodeError ? "border-red-500 bg-red-500/10 text-red-700 focus-visible:ring-red-500 dark:text-red-100" : ""}`}
                                   inputMode="numeric"
                                   autoComplete="one-time-code"
                                   value={phoneVerificationCode}
-                                  onChange={(ev) => setPhoneVerificationCode(ev.target.value.replace(/\D/g, "").slice(0, 6))}
+                                  onChange={(ev) => {
+                                    setPhoneVerificationCode(ev.target.value.replace(/\D/g, "").slice(0, 6));
+                                    setPhoneVerificationCodeError(null);
+                                  }}
                                   placeholder="000000"
+                                  aria-invalid={Boolean(phoneVerificationCodeError)}
+                                  aria-describedby={phoneVerificationCodeError ? `${phoneFormBaseId}-code-error` : undefined}
                                 />
+                                {phoneVerificationCodeError ? (
+                                  <p id={`${phoneFormBaseId}-code-error`} className="mt-2 text-[11px] font-medium text-red-500">
+                                    {phoneVerificationCodeError}
+                                  </p>
+                                ) : null}
                               </div>
                             ) : null}
                           </div>
@@ -4357,6 +4380,7 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                                 setPhonePopoverOpen(false);
                                 setPhoneVerificationPending(null);
                                 setPhoneVerificationCode("");
+                                setPhoneVerificationCodeError(null);
                               }}
                             >
                               Cancelar
@@ -4553,6 +4577,7 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                       setSystemNotificationPhoneDraft(ev.target.value);
                       setSystemNotificationPending(null);
                       setSystemNotificationCode("");
+                      setSystemNotificationCodeError(null);
                     }}
                     placeholder="(00) 00000-0000"
                     autoComplete="tel"
@@ -4575,14 +4600,24 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                       </label>
                       <Input
                         id="system-notification-phone-code"
-                        className="mt-1"
+                        className={`mt-1 ${systemNotificationCodeError ? "border-red-500 bg-red-500/10 text-red-700 focus-visible:ring-red-500 dark:text-red-100" : ""}`}
                         inputMode="numeric"
                         autoComplete="one-time-code"
                         value={systemNotificationCode}
-                        onChange={(ev) => setSystemNotificationCode(ev.target.value.replace(/\D/g, "").slice(0, 6))}
+                        onChange={(ev) => {
+                          setSystemNotificationCode(ev.target.value.replace(/\D/g, "").slice(0, 6));
+                          setSystemNotificationCodeError(null);
+                        }}
                         placeholder="000000"
                         disabled={notificationPhoneSaving}
+                        aria-invalid={Boolean(systemNotificationCodeError)}
+                        aria-describedby={systemNotificationCodeError ? "system-notification-phone-code-error" : undefined}
                       />
+                      {systemNotificationCodeError ? (
+                        <p id="system-notification-phone-code-error" className="mt-2 text-[11px] font-medium text-red-500">
+                          {systemNotificationCodeError}
+                        </p>
+                      ) : null}
                     </div>
                   ) : null}
                   {!canManageSystemNotificationPhone ? (
@@ -4599,6 +4634,7 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                       onClick={systemNotificationPending ? () => {
                         setSystemNotificationPending(null);
                         setSystemNotificationCode("");
+                        setSystemNotificationCodeError(null);
                       } : clearSystemNotificationPhone}
                     >
                       {systemNotificationPending ? "Trocar número" : "Limpar"}

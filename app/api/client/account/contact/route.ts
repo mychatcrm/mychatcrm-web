@@ -6,6 +6,7 @@ import {
   type AccountPhoneVerificationType,
 } from "@/lib/server/account-phone-verification";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
+import { sendSystemNotification } from "@/lib/server/system-agent";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +44,53 @@ function canManageTenantNotifications(session: { organizationRole?: string }): b
 function normalizePhoneType(raw: unknown): AccountPhoneVerificationType | null {
   if (raw === "personal" || raw === "system_notification") return raw;
   return null;
+}
+
+function buildPhoneRemovedMessage(phoneType: AccountPhoneVerificationType): string {
+  const label = phoneType === "personal" ? "telefone da conta" : "telefone de notificações do sistema";
+  return [
+    "Aviso MyChatCRM",
+    `Este número foi removido como ${label}.`,
+    "Se você não reconhece essa alteração, acesse sua conta ou fale com o responsável pela organização.",
+  ].join("\n");
+}
+
+async function notifyRemovedPhone(params: {
+  tenantId: string;
+  memberId: string | null;
+  phoneType: AccountPhoneVerificationType;
+  oldPhone: string | null | undefined;
+  newPhone?: string | null;
+  changedByEmail: string;
+}): Promise<void> {
+  const oldDigits = String(params.oldPhone ?? "").replace(/\D/g, "");
+  const newDigits = String(params.newPhone ?? "").replace(/\D/g, "");
+  if (!oldDigits || oldDigits === newDigits) return;
+
+  const metadata = {
+    tenant_id: params.tenantId,
+    member_id: params.memberId,
+    phone_type: params.phoneType,
+    changed_by_email: params.changedByEmail,
+    old_phone_last4: oldDigits.slice(-4),
+    new_phone_last4: newDigits ? newDigits.slice(-4) : null,
+  };
+
+  const sent = await sendSystemNotification(params.oldPhone ?? oldDigits, buildPhoneRemovedMessage(params.phoneType), "", {
+    type: "account_phone_removed",
+    metadata,
+  }).catch((error) => ({
+    ok: false,
+    error: error instanceof Error ? error.message : "send_failed",
+  }));
+
+  if (!sent.ok) {
+    console.warn("[client/account/contact] removed_phone_notification_failed", {
+      tenantId: params.tenantId,
+      phoneType: params.phoneType,
+      error: sent.error ?? "send_failed",
+    });
+  }
 }
 
 async function findSessionMember(params: {
@@ -197,20 +245,46 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
       sb,
       applyVerifiedPhone: async (phone) => {
         if (phoneType === "personal") {
+          const oldPhone = member.phone;
           const { error } = await sb
             .from("tenant_members")
             .update({ phone })
             .eq("tenant_id", session.tenantId)
             .eq("id", member.id);
           if (error) throw new Error(error.message);
+          await notifyRemovedPhone({
+            tenantId: session.tenantId,
+            memberId: member.id,
+            phoneType,
+            oldPhone,
+            newPhone: phone,
+            changedByEmail: session.email,
+          });
           return;
         }
 
+        const { data: currentTenant, error: currentTenantError } = await sb
+          .from("tenants")
+          .select("system_notification_phone")
+          .eq("id", session.tenantId)
+          .maybeSingle();
+        if (currentTenantError && !isMissingSystemNotificationPhoneColumn(currentTenantError)) {
+          throw new Error(currentTenantError.message);
+        }
+        const oldPhone = (currentTenant as TenantContactRow | null)?.system_notification_phone ?? null;
         const { error } = await sb
           .from("tenants")
           .update({ system_notification_phone: phone })
           .eq("id", session.tenantId);
         if (error) throw new Error(error.message);
+        await notifyRemovedPhone({
+          tenantId: session.tenantId,
+          memberId: member.id,
+          phoneType,
+          oldPhone,
+          newPhone: phone,
+          changedByEmail: session.email,
+        });
       },
     });
 
@@ -240,6 +314,16 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Envie e confirme o código antes de salvar o telefone de notificações." }, { status: 400 });
     }
 
+    const { data: currentTenant, error: currentTenantError } = await sb
+      .from("tenants")
+      .select("system_notification_phone")
+      .eq("id", session.tenantId)
+      .maybeSingle();
+    if (currentTenantError && !isMissingSystemNotificationPhoneColumn(currentTenantError)) {
+      return NextResponse.json({ error: currentTenantError.message }, { status: 500 });
+    }
+    const oldPhone = (currentTenant as TenantContactRow | null)?.system_notification_phone ?? null;
+
     const { error } = await sb
       .from("tenants")
       .update({ system_notification_phone: normalized.phone })
@@ -248,6 +332,15 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    await notifyRemovedPhone({
+      tenantId: session.tenantId,
+      memberId: session.employeeId ?? null,
+      phoneType: "system_notification",
+      oldPhone,
+      newPhone: normalized.phone,
+      changedByEmail: session.email,
+    });
 
     return NextResponse.json({ ok: true, systemNotificationPhone: normalized.phone });
   }
