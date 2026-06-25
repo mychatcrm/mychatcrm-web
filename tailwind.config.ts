@@ -52,6 +52,18 @@ const config: Config = {
           "sidebar-bg": "#F2F2F2",
           surface:   "#FFFFFF",
         },
+        /** DS redesign — tokens reativos ao tema (light/dim/dark via CSS vars) */
+        mc: {
+          bg:          "var(--bg)",
+          surface:     "var(--surface)",
+          "surface-2": "var(--surface-2)",
+          border:      "var(--border)",
+          text:        "var(--text)",
+          muted:       "var(--muted)",
+          rail:        "var(--rail)",
+          brand:       "var(--color-brand)",
+          coal:        "var(--color-coal)",
+        },
       },
       fontFamily: {
         display: ["var(--font-inter)", "system-ui", "sans-serif"],
@@ -81,6 +93,8 @@ const config: Config = {
       },
       borderRadius: {
         "2.5xl": "0.75rem",
+        /** DS redesign: raio padrão 14px para todos os novos componentes */
+        "mc-base": "0.875rem",
         /** Radius oficial do DS: reduzido e consistente também nas áreas públicas. */
         sm:    "0.125rem",
         md:    "0.225rem",

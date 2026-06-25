@@ -148,7 +148,9 @@ import { BillingOffersPopover } from "./BillingOffersPopover";
 import { IntegracoesLeadsHub } from "./lead-rules/IntegracoesLeadsHub";
 import { TeamEmployeesHub } from "./equipe/TeamEmployeesHub";
 import { BotStatusToggle } from "./BotStatusToggle";
-import { DashboardOverviewContent } from "./overview/DashboardOverviewContent";
+import { DashboardOverviewV2 } from "./overview/DashboardOverviewV2";
+import { AtendimentoV2 } from "./conversas/AtendimentoV2";
+import { CrmKanbanV2 } from "./crm/CrmKanbanV2";
 import { typography } from "@/lib/typography";
 
 function Panel({
@@ -4841,7 +4843,7 @@ function DashboardOverviewRoute({
   );
 
   return (
-    <DashboardOverviewContent
+    <DashboardOverviewV2
       session={session}
       dataset={dataset}
       rangeISO={rangeISO}
@@ -4877,13 +4879,13 @@ export function DashboardWorkspace({
       case "agentes":
         return <AgentsListSection session={session} />;
       case "conversas":
-        return <OperacaoConversasHub session={session} />;
+        return <AtendimentoV2 session={session} />;
       case "integracoes-leads":
         return <IntegracoesLeadsHub session={session} />;
       case "colaboradores":
         return <TeamEmployeesHub session={session} />;
       case "crm":
-        return <CrmPage dataset={dataset} session={session} />;
+        return <CrmKanbanV2 dataset={dataset} session={session} />;
       case "ofertas-ativas":
         return <ActiveOffersPage />;
       case "agenda":

@@ -39,21 +39,26 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 function LoginFallback() {
   return (
-    <div className="min-h-dvh bg-surface-base lg:flex">
-      <div className="flex flex-1 flex-col border-line/40 px-6 py-12 lg:max-w-[min(100%,540px)] lg:border-r lg:bg-surface-deep lg:px-12">
-        <Skeleton className="h-10 w-40 rounded-lg" />
-        <Skeleton className="mt-10 h-4 w-32" />
-        <Skeleton className="mt-3 h-9 w-full max-w-sm" />
-        <Skeleton className="mt-2 h-4 w-full max-w-md" />
-        <div className="mt-10 space-y-4">
-          <Skeleton className="h-4 w-16" />
-          <Skeleton className="h-11 w-full max-w-md rounded-xl" />
-          <Skeleton className="h-4 w-14" />
-          <Skeleton className="h-11 w-full max-w-md rounded-xl" />
-          <Skeleton className="h-12 w-full max-w-md rounded-xl" />
+    <div className="flex min-h-dvh bg-mc-bg">
+      {/* Brand panel placeholder */}
+      <div
+        className="hidden lg:block lg:w-[420px] xl:w-[480px]"
+        style={{ backgroundColor: "var(--color-coal)" }}
+        aria-hidden
+      />
+      {/* Form panel skeleton */}
+      <div className="flex flex-1 items-center justify-center px-4 py-12">
+        <div className="w-full max-w-[380px] space-y-4">
+          <Skeleton className="h-10 w-full rounded-mc-base" />
+          <div className="space-y-3 pt-2">
+            <Skeleton className="h-4 w-16" />
+            <Skeleton className="h-11 w-full rounded-mc-base" />
+            <Skeleton className="h-4 w-14 pt-2" />
+            <Skeleton className="h-11 w-full rounded-mc-base" />
+            <Skeleton className="h-12 w-full rounded-mc-base" />
+          </div>
         </div>
       </div>
-      <div className="hidden flex-1 bg-surface-brown lg:block" />
     </div>
   );
 }

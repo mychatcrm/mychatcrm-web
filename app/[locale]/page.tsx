@@ -1,11 +1,5 @@
 import type { Metadata } from "next";
-import { getTranslations, getLocale } from "next-intl/server";
-import dynamic from "next/dynamic";
-import { Navbar } from "@/components/landing/Navbar";
-import { Hero } from "@/components/landing/Hero";
-import { SocialProofBar } from "@/components/landing/SocialProofBar";
-import { Features } from "@/components/landing/Features";
-import { LandingSectionSkeleton } from "@/components/landing/LandingSectionSkeleton";
+import { getTranslations } from "next-intl/server";
 import { JsonLd } from "@/components/JsonLd";
 import {
   buildBreadcrumbSchema,
@@ -15,43 +9,8 @@ import {
   buildSoftwareApplicationSchema,
 } from "@/lib/seo";
 import { SITE_URL } from "@/lib/constants";
-import { LandingShell } from "@/components/landing/LandingShell";
 import { routing } from "@/i18n/routing";
-
-const HowItWorks = dynamic(
-  () => import("@/components/landing/HowItWorks").then((m) => ({ default: m.HowItWorks })),
-  { loading: () => <LandingSectionSkeleton className="min-h-[260px]" /> },
-);
-
-const VideoSection = dynamic(
-  () => import("@/components/landing/VideoSection").then((m) => ({ default: m.VideoSection })),
-  { loading: () => <LandingSectionSkeleton className="min-h-[280px]" /> },
-);
-
-const Testimonials = dynamic(
-  () => import("@/components/landing/Testimonials").then((m) => ({ default: m.Testimonials })),
-  { loading: () => <LandingSectionSkeleton className="min-h-[320px]" /> },
-);
-
-const SavingsCalculator = dynamic(
-  () => import("@/components/landing/SavingsCalculator").then((m) => ({ default: m.SavingsCalculator })),
-  { loading: () => <LandingSectionSkeleton className="min-h-[240px]" /> },
-);
-
-const Pricing = dynamic(
-  () => import("@/components/landing/Pricing").then((m) => ({ default: m.Pricing })),
-  { loading: () => <LandingSectionSkeleton className="min-h-[400px]" /> },
-);
-
-const FAQ = dynamic(
-  () => import("@/components/landing/FAQ").then((m) => ({ default: m.FAQ })),
-  { loading: () => <LandingSectionSkeleton className="min-h-[280px]" /> },
-);
-
-const Footer = dynamic(
-  () => import("@/components/landing/Footer").then((m) => ({ default: m.Footer })),
-  { loading: () => <LandingSectionSkeleton className="min-h-[120px]" label="A carregar rodapé…" /> },
-);
+import { LandingV2 } from "@/components/landing/LandingV2";
 
 type Props = { params: Promise<{ locale: string }> };
 
@@ -102,21 +61,7 @@ export default async function HomePage({ params }: Props) {
       {structuredData.map((data, i) => (
         <JsonLd key={i} data={data} />
       ))}
-      <LandingShell className="landing-typography">
-        <Navbar />
-        <main>
-          <Hero />
-          <SocialProofBar />
-          <Features />
-          <HowItWorks />
-          <VideoSection />
-          <Testimonials />
-          <SavingsCalculator />
-          <Pricing />
-          <FAQ />
-        </main>
-        <Footer />
-      </LandingShell>
+      <LandingV2 />
     </>
   );
 }

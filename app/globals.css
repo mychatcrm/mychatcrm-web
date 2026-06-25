@@ -55,6 +55,47 @@
   --gradient-primary: linear-gradient(135deg, #F24400, #F24400);
   --gradient-dark: linear-gradient(135deg, #0E1D29, #0E1D29);
   --gradient-glow: linear-gradient(135deg, transparent, transparent);
+
+  /* DS redesign — tokens de marca */
+  --color-brand: #F24400;
+  --color-brand-hover: #B22A00;
+  --color-coal: #0E1D29;
+
+  /* DS redesign — tokens de superfície (light default) */
+  --bg: #F2F2F2;
+  --surface: #FFFFFF;
+  --surface-2: #F2F2F2;
+  --border: #E2E8F0;
+  --text: #0E1D29;
+  --muted: #71717A;
+  --rail: #0E1D29;
+  --rail-muted: #8A97A3;
+}
+
+/* DS redesign — tema Cinza/Coal (navy da marca) */
+.dim {
+  color-scheme: dark;
+  --bg: #0E1D29;
+  --surface: #16242F;
+  --surface-2: #1D2F3D;
+  --border: #283A48;
+  --text: #FFFFFF;
+  --muted: #AAB8C4;
+  --rail: #16242F;
+  --rail-muted: #8A97A3;
+}
+
+/* DS redesign — tema Preto puro */
+.dark {
+  color-scheme: dark;
+  --bg: #000000;
+  --surface: #0A0A0A;
+  --surface-2: #18181B;
+  --border: #27272A;
+  --text: #FFFFFF;
+  --muted: #D4D4D8;
+  --rail: #0A0A0A;
+  --rail-muted: #A1A1AA;
 }
 
 html {
