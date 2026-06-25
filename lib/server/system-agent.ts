@@ -1,6 +1,9 @@
 import {
   evolutionConnectionState,
+  evolutionRestartInstance,
   evolutionSendText,
+  isEvolutionConnectionClosedError,
+  isEvolutionDeliveryErrorStatus,
   normalizeEvolutionConnectionState,
   parseEvolutionConnectionStatePayload,
   resolveEvolutionSendNumber,
@@ -64,7 +67,7 @@ async function logSystemNotification(params: {
   type: string;
   toNumber: string;
   message: string;
-  status: "sent" | "failed";
+  status: "sent" | "failed" | "delivery_failed";
   error?: string | null;
   metadata?: Record<string, unknown> | null;
 }): Promise<void> {
@@ -108,6 +111,7 @@ function detectEvolutionPayloadFailure(payload: unknown): string | null {
   const data = payload as Record<string, unknown>;
   if (data.status === false) return "evolution_payload_status_false";
   if (data.success === false) return "evolution_payload_success_false";
+  if (isEvolutionDeliveryErrorStatus(data.status)) return "evolution_delivery_error_status";
   if (typeof data.error === "string" && data.error.trim()) return data.error.trim().slice(0, 500);
 
   const response = data.response;
@@ -120,7 +124,95 @@ function detectEvolutionPayloadFailure(payload: unknown): string | null {
     if (typeof message === "string" && message.trim()) return message.trim().slice(0, 500);
   }
 
+  const key = data.key;
+  if (key && typeof key === "object") {
+    const keyStatus = (key as Record<string, unknown>).status;
+    if (isEvolutionDeliveryErrorStatus(keyStatus)) return "evolution_delivery_error_status";
+  }
+
   return null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function sendEvolutionTextWithRestartRetry(params: {
+  instanceName: string;
+  number: string;
+  text: string;
+}): Promise<Awaited<ReturnType<typeof evolutionSendText>> & { restarted?: boolean }> {
+  let restarted = false;
+
+  const attempt = () =>
+    evolutionSendText({
+      instanceName: params.instanceName,
+      number: params.number,
+      text: params.text,
+    });
+
+  let send = await attempt();
+  const payloadFailure = send.ok ? detectEvolutionPayloadFailure(send.data) : null;
+  const connectionIssue =
+    (!send.ok && isEvolutionConnectionClosedError(send.error)) ||
+    isEvolutionConnectionClosedError(payloadFailure);
+
+  if (connectionIssue && !restarted) {
+    const restart = await evolutionRestartInstance(params.instanceName);
+    restarted = restart.ok;
+    if (restart.ok) {
+      await sleep(2500);
+      const state = await evolutionConnectionState(params.instanceName);
+      const liveState = state.ok
+        ? normalizeEvolutionConnectionState(parseEvolutionConnectionStatePayload(state.data), "close")
+        : "unknown";
+      if (state.ok && liveState === "open") {
+        send = await attempt();
+      }
+    }
+  }
+
+  return { ...send, restarted };
+}
+
+export async function markSystemNotificationDeliveryFailed(params: {
+  evolutionMessageId: string;
+  reason: string;
+}): Promise<void> {
+  try {
+    const sb = createSupabaseServiceClient();
+    const { data: rows } = await sb
+      .from("system_notifications_log")
+      .select("id, metadata")
+      .eq("status", "sent")
+      .filter("metadata->>evolution_message_id", "eq", params.evolutionMessageId)
+      .limit(1);
+
+    const row = rows?.[0];
+    if (!row) return;
+
+    const meta =
+      row.metadata && typeof row.metadata === "object"
+        ? { ...(row.metadata as Record<string, unknown>) }
+        : {};
+
+    await sb
+      .from("system_notifications_log")
+      .update({
+        status: "delivery_failed",
+        error: params.reason.slice(0, 500),
+        metadata: {
+          ...meta,
+          delivery_failed_at: new Date().toISOString(),
+          delivery_failure_reason: params.reason.slice(0, 500),
+        },
+      })
+      .eq("id", row.id);
+  } catch (error) {
+    console.warn("[system-agent] delivery_failed_update", {
+      error: error instanceof Error ? error.message : "update_failed",
+    });
+  }
 }
 
 export async function sendSystemNotification(
@@ -208,10 +300,16 @@ export async function sendSystemNotification(
   }
 
   const numberCheck = resolution.status;
-  const sendNumber = resolution.status === "exists" ? resolution.sendNumber : digits;
+  const platformNumber = resolution.platformNumber;
+  const sendNumber =
+    resolution.status === "exists"
+      ? resolution.sendNumber
+      : resolution.status === "check_failed"
+        ? platformNumber
+        : digits;
   const resolvedJid = resolution.status === "exists" ? resolution.jid : null;
 
-  const send = await evolutionSendText({
+  const send = await sendEvolutionTextWithRestartRetry({
     instanceName: resolvedInstance,
     number: sendNumber,
     text: message.slice(0, 4000),
@@ -224,7 +322,7 @@ export async function sendSystemNotification(
 
   await logSystemNotification({
     type: options?.type ?? "generic",
-    toNumber: digits,
+    toNumber: platformNumber,
     message,
     status: finalOk ? "sent" : "failed",
     error: finalOk ? null : finalError,
@@ -232,12 +330,13 @@ export async function sendSystemNotification(
       ...(options?.metadata ?? {}),
       instance_name: resolvedInstance,
       number_raw: rawDigits,
-      number_normalized: digits,
+      number_normalized: platformNumber,
       number_sent: sendNumber,
       resolved_jid: resolvedJid,
       evolution_number_check: numberCheck,
       evolution_connection_state: liveState,
       evolution_message_id: evolutionMessageId,
+      evolution_session_restarted: send.restarted === true,
     },
   });
 

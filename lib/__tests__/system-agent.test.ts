@@ -2,11 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   evolutionConnectionStateMock,
+  evolutionRestartInstanceMock,
   evolutionSendTextMock,
   resolveEvolutionSendNumberMock,
   insertMock,
 } = vi.hoisted(() => ({
   evolutionConnectionStateMock: vi.fn(),
+  evolutionRestartInstanceMock: vi.fn(),
   evolutionSendTextMock: vi.fn(),
   resolveEvolutionSendNumberMock: vi.fn(),
   insertMock: vi.fn(),
@@ -17,6 +19,7 @@ vi.mock("@/lib/integrations/evolution-api", async (importOriginal) => {
   return {
     ...actual,
     evolutionConnectionState: evolutionConnectionStateMock,
+    evolutionRestartInstance: evolutionRestartInstanceMock,
     evolutionSendText: evolutionSendTextMock,
     resolveEvolutionSendNumber: resolveEvolutionSendNumberMock,
   };
@@ -44,7 +47,9 @@ describe("sendSystemNotification", () => {
       status: "exists",
       sendNumber: number,
       jid: `${number}@s.whatsapp.net`,
+      platformNumber: number,
     }));
+    evolutionRestartInstanceMock.mockResolvedValue({ ok: true, status: 200, data: {} });
   });
 
   it("does not call Evolution sendText when the system instance is not open", async () => {
@@ -141,7 +146,7 @@ describe("sendSystemNotification", () => {
     );
   });
 
-  it("sends to the platform-canonical 13-digit number when Evolution JID omits the 9th digit", async () => {
+  it("sends using Evolution JID digits when the API omits the 9th digit", async () => {
     evolutionConnectionStateMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -149,8 +154,9 @@ describe("sendSystemNotification", () => {
     });
     resolveEvolutionSendNumberMock.mockResolvedValueOnce({
       status: "exists",
-      sendNumber: "5562993580574",
+      sendNumber: "556293580574",
       jid: "556293580574@s.whatsapp.net",
+      platformNumber: "5562993580574",
     });
     evolutionSendTextMock.mockResolvedValueOnce({
       ok: true,
@@ -164,19 +170,53 @@ describe("sendSystemNotification", () => {
 
     expect(result.ok).toBe(true);
     expect(evolutionSendTextMock).toHaveBeenCalledWith(
-      expect.objectContaining({ number: "5562993580574" }),
+      expect.objectContaining({ number: "556293580574" }),
     );
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "sent",
+        to_number: "5562993580574",
         metadata: expect.objectContaining({
           number_normalized: "5562993580574",
-          number_sent: "5562993580574",
+          number_sent: "556293580574",
           resolved_jid: "556293580574@s.whatsapp.net",
           evolution_number_check: "exists",
         }),
       }),
     );
+  });
+
+  it("restarts the session and retries when Evolution reports Connection Closed", async () => {
+    evolutionConnectionStateMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { instance: { state: "open" } },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { instance: { state: "open" } },
+      });
+    evolutionSendTextMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        error: "Bad Request — Error: Connection Closed",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        data: { key: { id: "MSGZ" } },
+      });
+
+    const result = await sendSystemNotification("62999991111", "Teste", "system-instance", {
+      type: "test",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(evolutionRestartInstanceMock).toHaveBeenCalledWith("system-instance");
+    expect(evolutionSendTextMock).toHaveBeenCalledTimes(2);
   });
 
   it("fails clearly without sending when the destination is not on WhatsApp", async () => {
@@ -185,7 +225,7 @@ describe("sendSystemNotification", () => {
       status: 200,
       data: { instance: { state: "open" } },
     });
-    resolveEvolutionSendNumberMock.mockResolvedValueOnce({ status: "not_found", jid: null });
+    resolveEvolutionSendNumberMock.mockResolvedValueOnce({ status: "not_found", jid: null, platformNumber: "5562993580574" });
 
     const result = await sendSystemNotification("5562993580574", "Teste", "system-instance", {
       type: "test",
@@ -211,6 +251,7 @@ describe("sendSystemNotification", () => {
     resolveEvolutionSendNumberMock.mockResolvedValueOnce({
       status: "check_failed",
       error: "timeout",
+      platformNumber: "5562999991111",
     });
     evolutionSendTextMock.mockResolvedValueOnce({
       ok: true,

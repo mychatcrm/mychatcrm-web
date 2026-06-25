@@ -11,10 +11,15 @@ import {
   extractInboundMessagesFromEvolutionPayload,
   extractInstanceJid,
   extractInstanceName,
+  extractMessageDeliveryUpdates,
   normalizeEvolutionEventName,
   type EvolutionInboundMessage,
 } from "@/lib/integrations/evolution-webhook-parse";
-import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
+import {
+  evolutionSendText,
+  isEvolutionDeliveryErrorStatus,
+  remoteJidToEvoNumber,
+} from "@/lib/integrations/evolution-api";
 import { isElevenlabsConfigured } from "@/lib/integrations/elevenlabs";
 import { deliverAgentReplyWithOptionalTts } from "@/lib/server/agent-tts-outbound";
 import { resolveOutboundMediaForAgentResponse } from "@/lib/server/agent-media-files";
@@ -44,7 +49,7 @@ import {
   notifyTenantIntegrationDisconnected,
   shouldNotifyWhatsappDisconnect,
 } from "@/lib/server/integration-disconnect-notifications";
-import { SYSTEM_TENANT_ID } from "@/lib/server/system-agent";
+import { SYSTEM_TENANT_ID, markSystemNotificationDeliveryFailed } from "@/lib/server/system-agent";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import {
   AGENDA_AUTOMATION_DISABLED_REPLY,
@@ -463,6 +468,24 @@ export async function POST(request: Request) {
         } catch (e) {
           console.warn("[webhooks/evolution] connection update db", e);
         }
+      }
+      continue;
+    }
+
+    if (event === "MESSAGES_UPDATE") {
+      try {
+        const row = await getEvolutionInstanceByName(instanceName);
+        if (!row || row.tenant_id !== SYSTEM_TENANT_ID) continue;
+
+        for (const update of extractMessageDeliveryUpdates(payload)) {
+          if (!update.fromMe || !isEvolutionDeliveryErrorStatus(update.status)) continue;
+          await markSystemNotificationDeliveryFailed({
+            evolutionMessageId: update.messageId,
+            reason: `delivery_status:${String(update.status)}`,
+          });
+        }
+      } catch (e) {
+        console.warn("[webhooks/evolution] messages update system delivery", e);
       }
       continue;
     }

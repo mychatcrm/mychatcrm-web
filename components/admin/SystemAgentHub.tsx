@@ -31,6 +31,9 @@ function connectionLabel(state: string): { label: string; tone: string } {
 
 function notificationStatusLabel(status: string): { label: string; tone: string } {
   if (status === "sent") return { label: "enviado", tone: "text-emerald-400" };
+  if (status === "delivery_failed") {
+    return { label: "falha na entrega", tone: "text-rose-400" };
+  }
   if (status === "skipped") {
     return { label: "não enviado — sem telefone de alertas", tone: "text-amber-400" };
   }
@@ -85,7 +88,12 @@ export function SystemAgentHub(props: {
   const [logs, setLogs] = useState(props.initialLogs);
   const [connectionState, setConnectionState] = useState(props.connectionState);
   const [waJid, setWaJid] = useState(props.waJid);
+  const [testNumber, setTestNumber] = useState("");
+  const [testBusy, setTestBusy] = useState(false);
+  const [restartBusy, setRestartBusy] = useState(false);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
   const conn = connectionLabel(connectionState);
+  const senderLine = formatWaJid(waJid);
 
   const refreshLogs = useCallback(async () => {
     const res = await fetch("/api/admin/system-agent/notifications", { credentials: "same-origin" });
@@ -120,6 +128,57 @@ export function SystemAgentHub(props: {
     }, 15_000);
     return () => clearInterval(timer);
   }, [refreshIdentity]);
+
+  const restartSession = useCallback(async () => {
+    setRestartBusy(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch("/api/admin/system-agent/evolution/session", {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "restart" }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string; connectionState?: string };
+      if (!res.ok) {
+        setActionMessage(json.error ?? "Falha ao reiniciar sessão.");
+        return;
+      }
+      if (json.connectionState) setConnectionState(json.connectionState);
+      setActionMessage("Sessão reiniciada. Aguarde alguns segundos e teste o envio novamente.");
+      await refreshIdentity();
+    } finally {
+      setRestartBusy(false);
+    }
+  }, [refreshIdentity]);
+
+  const sendTest = useCallback(async () => {
+    if (!testNumber.trim()) {
+      setActionMessage("Informe o número de destino para o teste.");
+      return;
+    }
+    setTestBusy(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch("/api/admin/system-agent/test-send", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toNumber: testNumber.trim() }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setActionMessage(json.error ?? "Falha no envio de teste.");
+        return;
+      }
+      setActionMessage(
+        `Teste enviado para ${testNumber.trim()}. Verifique o WhatsApp — a mensagem vem de ${senderLine}, não do número comercial do tenant.`,
+      );
+      await refreshLogs();
+    } finally {
+      setTestBusy(false);
+    }
+  }, [refreshLogs, senderLine, testNumber]);
 
   return (
     <div className="mx-auto max-w-4xl space-y-8 px-4 py-6 sm:px-6 sm:py-8">
@@ -165,6 +224,48 @@ export function SystemAgentHub(props: {
           Este agente é crítico para o produto. Não desative nem remova do banco. As notificações de handoff e
           automações internas usam a instância WhatsApp configurada abaixo.
         </p>
+        {senderLine !== "—" ? (
+          <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-100">
+            As notificações são enviadas do número <strong>{senderLine}</strong>. No celular, procure essa conversa
+            (ou em Solicitações) — não confunda com o WhatsApp comercial do seu tenant.
+          </p>
+        ) : null}
+      </section>
+
+      <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Diagnóstico</h2>
+        <p className="mt-2 text-xs leading-relaxed text-content-muted">
+          Se o painel mostra &quot;enviado&quot; mas nada chega no celular, reinicie a sessão e envie um teste.
+        </p>
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+          <label className="flex-1 text-sm">
+            <span className="mb-1 block text-content-faint">Número de teste</span>
+            <input
+              type="tel"
+              value={testNumber}
+              onChange={(e) => setTestNumber(e.target.value)}
+              placeholder="62993580574"
+              className="w-full rounded-lg border border-line bg-surface-elevated px-3 py-2 text-content"
+            />
+          </label>
+          <button
+            type="button"
+            disabled={testBusy}
+            onClick={() => void sendTest()}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+          >
+            {testBusy ? "Enviando…" : "Enviar teste"}
+          </button>
+          <button
+            type="button"
+            disabled={restartBusy}
+            onClick={() => void restartSession()}
+            className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-content-secondary disabled:opacity-60"
+          >
+            {restartBusy ? "Reiniciando…" : "Reiniciar sessão"}
+          </button>
+        </div>
+        {actionMessage ? <p className="mt-3 text-xs text-content-muted">{actionMessage}</p> : null}
       </section>
 
       <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">

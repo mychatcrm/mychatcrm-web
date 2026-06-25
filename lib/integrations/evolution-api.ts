@@ -137,7 +137,7 @@ export async function evolutionCreateInstance(params: {
       url: params.webhookUrl,
       byEvents: false,
       base64: true,
-      events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
+      events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
     };
   }
   return evolutionFetchJson<EvolutionCreateInstanceResponse>("/instance/create", {
@@ -255,7 +255,7 @@ export async function evolutionSetWebhook(params: {
       url: params.url,
       webhookByEvents: false,
       webhookBase64: true,
-      events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
+      events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
     }),
   });
 }
@@ -263,6 +263,22 @@ export async function evolutionSetWebhook(params: {
 export async function evolutionDeleteInstance(instanceName: string): Promise<EvolutionFetchResult<unknown>> {
   const enc = encodeURIComponent(instanceName);
   return evolutionFetchJson(`/instance/delete/${enc}`, { method: "DELETE" });
+}
+
+/** Reinicia a sessão WhatsApp (útil quando connectionState diz open mas envios falham). */
+export async function evolutionRestartInstance(instanceName: string): Promise<EvolutionFetchResult<unknown>> {
+  const enc = encodeURIComponent(instanceName);
+  const putRes = await evolutionFetchJson(`/instance/restart/${enc}`, { method: "PUT" });
+  if (putRes.ok) return putRes;
+  if (putRes.status === 404 || putRes.status === 405) {
+    return evolutionFetchJson(`/instance/restart/${enc}`, { method: "POST" });
+  }
+  return putRes;
+}
+
+export async function evolutionLogoutInstance(instanceName: string): Promise<EvolutionFetchResult<unknown>> {
+  const enc = encodeURIComponent(instanceName);
+  return evolutionFetchJson(`/instance/logout/${enc}`, { method: "DELETE" });
 }
 
 export async function evolutionSendText(params: {
@@ -383,18 +399,17 @@ export async function evolutionCheckWhatsappNumbers(params: {
 }
 
 /**
- * Valida existência no WhatsApp e devolve o número de envio canônico da plataforma.
- * A Evolution pode retornar JID sem o 9º dígito, mas o envio deve usar o formato
- * de 13 dígitos (com 9) — igual ao normalizeBrazilianJid do webhook e ao remote_jid
- * gravado em whatsapp_messages.
+ * Valida existência no WhatsApp e devolve o número de envio que a Evolution reconhece.
+ * Quando a API retorna um JID, usamos os dígitos desse JID no sendText — é o endereço
+ * que o Baileys/Evolution usa para rotear a mensagem.
  */
 export async function resolveEvolutionSendNumber(params: {
   instanceName: string;
   number: string;
 }): Promise<
-  | { status: "exists"; sendNumber: string; jid: string | null }
-  | { status: "not_found"; jid: string | null }
-  | { status: "check_failed"; error: string }
+  | { status: "exists"; sendNumber: string; jid: string | null; platformNumber: string }
+  | { status: "not_found"; jid: string | null; platformNumber: string }
+  | { status: "check_failed"; error: string; platformNumber: string }
 > {
   const wanted = ensureBrazilianMobileWhatsappDigits(params.number.replace(/\D/g, ""));
   const alternate = brazilianMobileAlternateVariant(wanted);
@@ -406,7 +421,7 @@ export async function resolveEvolutionSendNumber(params: {
     numbers: numbersToCheck,
   });
   if (!check.ok) {
-    return { status: "check_failed", error: check.error };
+    return { status: "check_failed", error: check.error, platformNumber: wanted };
   }
 
   const exists = check.data.some((item) => item.exists);
@@ -417,14 +432,33 @@ export async function resolveEvolutionSendNumber(params: {
     null;
 
   if (!exists) {
-    return { status: "not_found", jid: match?.jid ?? check.data[0]?.jid ?? null };
+    return { status: "not_found", jid: match?.jid ?? check.data[0]?.jid ?? null, platformNumber: wanted };
   }
+
+  const jidDigits = jidToDigits(match?.jid);
+  const sendNumber = jidDigits || match?.number || wanted;
 
   return {
     status: "exists",
-    sendNumber: wanted,
+    sendNumber,
     jid: match?.jid ?? null,
+    platformNumber: wanted,
   };
+}
+
+/** Indica erro de entrega no campo `status` típico da Evolution/Baileys (0 = ERROR). */
+export function isEvolutionDeliveryErrorStatus(status: unknown): boolean {
+  if (status === 0) return true;
+  if (typeof status === "string") {
+    const normalized = status.trim().toUpperCase();
+    return normalized === "ERROR" || normalized === "FAILED";
+  }
+  return false;
+}
+
+export function isEvolutionConnectionClosedError(error: string | null | undefined): boolean {
+  if (!error) return false;
+  return /connection\s*closed/i.test(error);
 }
 
 /**

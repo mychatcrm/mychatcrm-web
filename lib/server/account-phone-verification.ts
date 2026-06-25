@@ -67,6 +67,7 @@ function buildVerificationMessage(code: string): string {
   return [
     `Código MyChatCRM: ${code}.`,
     "Use este código em Configurações para confirmar seu telefone.",
+    "A mensagem pode vir de um número diferente do seu WhatsApp comercial — verifique também Solicitações.",
     "Ele expira em 10 minutos. Se você não solicitou, ignore.",
   ].join("\n");
 }

@@ -334,3 +334,36 @@ export function extractInstanceJid(payload: Record<string, unknown>): string | n
 
   return visit(payload.data, 0) ?? visit(payload.instance, 0) ?? null;
 }
+
+export type EvolutionMessageDeliveryUpdate = {
+  messageId: string;
+  fromMe: boolean;
+  status: unknown;
+};
+
+/** Extrai atualizações de entrega de payloads MESSAGES_UPDATE / messages.update. */
+export function extractMessageDeliveryUpdates(payload: Record<string, unknown>): EvolutionMessageDeliveryUpdate[] {
+  const raw = payload.data;
+  const items = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? [raw] : [];
+  const updates: EvolutionMessageDeliveryUpdate[] = [];
+
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const key = row.key;
+    const update = row.update;
+    if (!key || typeof key !== "object") continue;
+
+    const keyObj = key as Record<string, unknown>;
+    const messageId = typeof keyObj.id === "string" ? keyObj.id.trim() : "";
+    if (!messageId) continue;
+
+    const fromMe = keyObj.fromMe === true;
+    const status =
+      update && typeof update === "object" ? (update as Record<string, unknown>).status : row.status;
+
+    updates.push({ messageId, fromMe, status });
+  }
+
+  return updates;
+}

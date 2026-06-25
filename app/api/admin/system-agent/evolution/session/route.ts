@@ -12,6 +12,7 @@ import {
   evolutionCreateInstance,
   evolutionDeleteInstance,
   evolutionInstanceConnect,
+  evolutionRestartInstance,
   evolutionSetWebhook,
   isEvolutionApiConfigured,
   normalizeEvolutionConnectionState,
@@ -185,6 +186,63 @@ export async function GET(request: Request) {
     pairingCode: connectRes.ok ? extractPairingCodeFromConnectPayload(connectRes.data as unknown) : null,
     waJid: remoteWaJid ?? null,
   });
+}
+
+export async function PATCH(request: Request) {
+  const session = await getAdminSessionFromCookies();
+  const denied = assertAdminSystemAgent(session);
+  if (denied) return denied;
+  if (!isEvolutionApiConfigured()) {
+    return NextResponse.json({ error: "Evolution API não configurada no servidor." }, { status: 503 });
+  }
+
+  let body: { action?: string } = {};
+  try {
+    body = (await request.json()) as { action?: string };
+  } catch {
+    return NextResponse.json({ error: "JSON inválido." }, { status: 400 });
+  }
+
+  const row = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
+  if (!row?.instance_name) {
+    return NextResponse.json({ error: "Instância do sistema não configurada." }, { status: 404 });
+  }
+
+  if (body.action?.trim() !== "restart") {
+    return NextResponse.json({ error: "Ação inválida." }, { status: 400 });
+  }
+
+  const restart = await evolutionRestartInstance(row.instance_name);
+  if (!restart.ok) {
+    return NextResponse.json(
+      { error: "Falha ao reiniciar sessão na Evolution.", detail: restart.error },
+      { status: 502 },
+    );
+  }
+
+  const webhookSecret = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
+  if (webhookSecret) {
+    const publicBase = getPublicBaseUrlFromRequest(request);
+    const webhookUrl = buildEvolutionWebhookUrl(publicBase, webhookSecret);
+    await evolutionSetWebhook({ instanceName: row.instance_name, url: webhookUrl }).catch(() => null);
+  }
+
+  const stateRes = await evolutionConnectionState(row.instance_name);
+  const remoteState = normalizeEvolutionConnectionState(
+    stateRes.ok ? parseEvolutionConnectionStatePayload(stateRes.data) : undefined,
+    "close",
+  );
+
+  await upsertTenantEvolutionInstance({
+    tenantId: SYSTEM_TENANT_ID,
+    slotIndex: SYSTEM_SLOT_INDEX,
+    instanceName: row.instance_name,
+    connectionState: remoteState,
+    waJid: row.wa_jid,
+    defaultAgentId: SYSTEM_AGENT_ID,
+  });
+
+  return NextResponse.json({ ok: true, connectionState: remoteState });
 }
 
 export async function DELETE(request: Request) {
