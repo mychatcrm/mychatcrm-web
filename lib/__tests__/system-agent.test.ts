@@ -61,6 +61,23 @@ describe("sendSystemNotification", () => {
     );
   });
 
+  it("does not call Evolution when the phone has 12 digits without country code", async () => {
+    const result = await sendSystemNotification("629935805744", "Teste", "system-instance", {
+      type: "test",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("invalid_number");
+    expect(evolutionConnectionStateMock).not.toHaveBeenCalled();
+    expect(evolutionSendTextMock).not.toHaveBeenCalled();
+    expect(insertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        error: "invalid_number",
+      }),
+    );
+  });
+
   it("does not mark sent when Evolution returns an error payload with HTTP ok", async () => {
     evolutionConnectionStateMock.mockResolvedValueOnce({
       ok: true,

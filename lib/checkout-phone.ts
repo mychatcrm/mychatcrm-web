@@ -23,7 +23,7 @@ export function validateCheckoutPhone(raw: string): CheckoutPhoneValidation {
     return { ok: false, message: "Telefone / WhatsApp é obrigatório." };
   }
 
-  if (phone.length < 10 || phone.length > 15) {
+  if (!phone.startsWith("55") || (phone.length !== 12 && phone.length !== 13)) {
     return {
       ok: false,
       message: "Informe um telefone válido com DDD. Exemplo: (62) 99999-9999.",

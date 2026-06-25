@@ -33,6 +33,10 @@ export function normalizeBrazilianPhoneNumber(digits: string): string {
   return digits;
 }
 
+function isValidBrazilianWhatsAppNumber(digits: string): boolean {
+  return digits.startsWith("55") && (digits.length === 12 || digits.length === 13);
+}
+
 async function logSystemNotification(params: {
   type: string;
   toNumber: string;
@@ -116,7 +120,7 @@ export async function sendSystemNotification(
     type: options?.type ?? "generic",
   });
 
-  if (digits.length < 10) {
+  if (!isValidBrazilianWhatsAppNumber(digits)) {
     await logSystemNotification({
       type: options?.type ?? "generic",
       toNumber: digits || toNumber,

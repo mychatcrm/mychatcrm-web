@@ -18,4 +18,10 @@ describe("checkout phone validation", () => {
     expect(validateCheckoutPhone("").ok).toBe(false);
     expect(validateCheckoutPhone("12345").ok).toBe(false);
   });
+
+  it("rejects 12 digit numbers that are missing the Brazil country code", () => {
+    const result = validateCheckoutPhone("629935805744");
+
+    expect(result.ok).toBe(false);
+  });
 });
