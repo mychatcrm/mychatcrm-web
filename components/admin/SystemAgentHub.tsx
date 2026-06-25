@@ -137,15 +137,26 @@ export function SystemAgentHub(props: {
         method: "PATCH",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "restart" }),
+        body: JSON.stringify({ action: "reconnect" }),
       });
-      const json = (await res.json().catch(() => ({}))) as { error?: string; connectionState?: string };
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        connectionState?: string;
+        qrDataUrl?: string | null;
+        detail?: string;
+      };
       if (!res.ok) {
-        setActionMessage(json.error ?? "Falha ao reiniciar sessão.");
+        setActionMessage(json.error ?? json.detail ?? "Falha ao forçar reconexão.");
         return;
       }
-      if (json.connectionState) setConnectionState(json.connectionState);
-      setActionMessage("Sessão reiniciada. Aguarde alguns segundos e teste o envio novamente.");
+      if (typeof json.connectionState === "string") setConnectionState(json.connectionState);
+      if (json.qrDataUrl) {
+        setActionMessage(
+          `Escaneie o QR Code abaixo com o celular do número ${senderLine}. Sem isso, o WhatsApp aceita o envio na API mas não entrega no celular.`,
+        );
+      } else {
+        setActionMessage("Sessão reiniciada. Se ainda não receber, desconecte e escaneie o QR novamente.");
+      }
       await refreshIdentity();
     } finally {
       setRestartBusy(false);
@@ -166,13 +177,14 @@ export function SystemAgentHub(props: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ toNumber: testNumber.trim() }),
       });
-      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      const json = (await res.json().catch(() => ({}))) as { error?: string; debug?: { numberSent?: string; candidatesTried?: string[] } };
       if (!res.ok) {
         setActionMessage(json.error ?? "Falha no envio de teste.");
         return;
       }
+      const tried = json.debug?.candidatesTried?.join(", ") ?? json.debug?.numberSent ?? testNumber.trim();
       setActionMessage(
-        `Teste enviado para ${testNumber.trim()}. Verifique o WhatsApp — a mensagem vem de ${senderLine}, não do número comercial do tenant.`,
+        `API aceitou o envio (${tried}). Verifique o WhatsApp de ${senderLine} → conversa com seu número, ou Solicitações. Se não chegar em 1 min, clique em "Forçar reconexão (QR)".`,
       );
       await refreshLogs();
     } finally {
@@ -235,7 +247,8 @@ export function SystemAgentHub(props: {
       <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Diagnóstico</h2>
         <p className="mt-2 text-xs leading-relaxed text-content-muted">
-          Se o painel mostra &quot;enviado&quot; mas nada chega no celular, reinicie a sessão e envie um teste.
+          Se o painel mostra &quot;enviado&quot; mas nada chega: a sessão WhatsApp na Evolution pode estar
+          &quot;zombie&quot; (API ok, entrega falha). Use reconexão com QR no celular {senderLine}.
         </p>
         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
           <label className="flex-1 text-sm">
@@ -262,7 +275,7 @@ export function SystemAgentHub(props: {
             onClick={() => void restartSession()}
             className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-content-secondary disabled:opacity-60"
           >
-            {restartBusy ? "Reiniciando…" : "Reiniciar sessão"}
+            {restartBusy ? "Reconectando…" : "Forçar reconexão (QR)"}
           </button>
         </div>
         {actionMessage ? <p className="mt-3 text-xs text-content-muted">{actionMessage}</p> : null}

@@ -12,6 +12,7 @@ import {
   evolutionCreateInstance,
   evolutionDeleteInstance,
   evolutionInstanceConnect,
+  evolutionLogoutInstance,
   evolutionRestartInstance,
   evolutionSetWebhook,
   isEvolutionApiConfigured,
@@ -208,16 +209,24 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "Instância do sistema não configurada." }, { status: 404 });
   }
 
-  if (body.action?.trim() !== "restart") {
+  const action = body.action?.trim();
+  if (action !== "restart" && action !== "reconnect") {
     return NextResponse.json({ error: "Ação inválida." }, { status: 400 });
   }
 
-  const restart = await evolutionRestartInstance(row.instance_name);
-  if (!restart.ok) {
-    return NextResponse.json(
-      { error: "Falha ao reiniciar sessão na Evolution.", detail: restart.error },
-      { status: 502 },
-    );
+  if (action === "reconnect") {
+    const logout = await evolutionLogoutInstance(row.instance_name);
+    if (!logout.ok && logout.status !== 404) {
+      console.warn("[admin/system-agent/evolution] logout", logout.status, logout.error);
+    }
+  } else {
+    const restart = await evolutionRestartInstance(row.instance_name);
+    if (!restart.ok) {
+      return NextResponse.json(
+        { error: "Falha ao reiniciar sessão na Evolution.", detail: restart.error },
+        { status: 502 },
+      );
+    }
   }
 
   const webhookSecret = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
@@ -230,7 +239,7 @@ export async function PATCH(request: Request) {
   const stateRes = await evolutionConnectionState(row.instance_name);
   const remoteState = normalizeEvolutionConnectionState(
     stateRes.ok ? parseEvolutionConnectionStatePayload(stateRes.data) : undefined,
-    "close",
+    action === "reconnect" ? "close" : "close",
   );
 
   await upsertTenantEvolutionInstance({
@@ -238,11 +247,27 @@ export async function PATCH(request: Request) {
     slotIndex: SYSTEM_SLOT_INDEX,
     instanceName: row.instance_name,
     connectionState: remoteState,
-    waJid: row.wa_jid,
+    waJid: action === "reconnect" ? null : row.wa_jid,
     defaultAgentId: SYSTEM_AGENT_ID,
   });
 
-  return NextResponse.json({ ok: true, connectionState: remoteState });
+  if (remoteState === "open") {
+    const remoteWaJid =
+      stateRes.ok && stateRes.data
+        ? extractInstanceJid(stateRes.data as Record<string, unknown>) ?? row.wa_jid
+        : row.wa_jid;
+    return NextResponse.json({ ok: true, connectionState: remoteState, waJid: remoteWaJid ?? null });
+  }
+
+  const connectRes = await evolutionInstanceConnect(row.instance_name);
+  return NextResponse.json({
+    ok: true,
+    connectionState: remoteState,
+    qrDataUrl: connectRes.ok ? normalizeInstanceConnectToQrDataUrl(connectRes.data as unknown) : null,
+    pairingCode: connectRes.ok ? extractPairingCodeFromConnectPayload(connectRes.data as unknown) : null,
+    waJid: null,
+    detail: connectRes.ok ? null : connectRes.error,
+  });
 }
 
 export async function DELETE(request: Request) {

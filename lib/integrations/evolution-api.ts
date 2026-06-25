@@ -407,9 +407,9 @@ export async function resolveEvolutionSendNumber(params: {
   instanceName: string;
   number: string;
 }): Promise<
-  | { status: "exists"; sendNumber: string; jid: string | null; platformNumber: string }
-  | { status: "not_found"; jid: string | null; platformNumber: string }
-  | { status: "check_failed"; error: string; platformNumber: string }
+  | { status: "exists"; sendNumber: string; jid: string | null; platformNumber: string; candidateNumbers: string[] }
+  | { status: "not_found"; jid: string | null; platformNumber: string; candidateNumbers: string[] }
+  | { status: "check_failed"; error: string; platformNumber: string; candidateNumbers: string[] }
 > {
   const wanted = ensureBrazilianMobileWhatsappDigits(params.number.replace(/\D/g, ""));
   const alternate = brazilianMobileAlternateVariant(wanted);
@@ -421,7 +421,12 @@ export async function resolveEvolutionSendNumber(params: {
     numbers: numbersToCheck,
   });
   if (!check.ok) {
-    return { status: "check_failed", error: check.error, platformNumber: wanted };
+    return {
+      status: "check_failed",
+      error: check.error,
+      platformNumber: wanted,
+      candidateNumbers: alternate ? [wanted, alternate] : [wanted],
+    };
   }
 
   const exists = check.data.some((item) => item.exists);
@@ -432,17 +437,26 @@ export async function resolveEvolutionSendNumber(params: {
     null;
 
   if (!exists) {
-    return { status: "not_found", jid: match?.jid ?? check.data[0]?.jid ?? null, platformNumber: wanted };
+    return {
+      status: "not_found",
+      jid: match?.jid ?? check.data[0]?.jid ?? null,
+      platformNumber: wanted,
+      candidateNumbers: alternate ? [wanted, alternate] : [wanted],
+    };
   }
 
   const jidDigits = jidToDigits(match?.jid);
   const sendNumber = jidDigits || match?.number || wanted;
+  const candidateNumbers = Array.from(
+    new Set([wanted, sendNumber, alternate].filter((n): n is string => Boolean(n && n.length >= 12))),
+  );
 
   return {
     status: "exists",
     sendNumber,
     jid: match?.jid ?? null,
     platformNumber: wanted,
+    candidateNumbers,
   };
 }
 

@@ -38,8 +38,8 @@ export async function POST(request: Request) {
   });
 
   if (!result.ok) {
-    return NextResponse.json({ ok: false, error: result.error ?? "send_failed" }, { status: 502 });
+    return NextResponse.json({ ok: false, error: result.error ?? "send_failed", debug: result.debug }, { status: 502 });
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, debug: result.debug });
 }

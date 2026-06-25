@@ -223,7 +223,17 @@ export async function sendSystemNotification(
     type?: string;
     metadata?: Record<string, unknown> | null;
   },
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{
+  ok: boolean;
+  error?: string;
+  debug?: {
+    numberSent?: string;
+    candidatesTried?: string[];
+    evolutionMessageId?: string | null;
+    evolutionResponseStatus?: unknown;
+    sessionRestarted?: boolean;
+  };
+}> {
   const rawDigits = toNumber.replace(/\D/g, "");
   const digits = normalizeBrazilianPhoneNumber(rawDigits);
 
@@ -300,23 +310,55 @@ export async function sendSystemNotification(
   }
 
   const numberCheck = resolution.status;
-  const platformNumber = resolution.platformNumber;
-  const sendNumber =
-    resolution.status === "exists"
-      ? resolution.sendNumber
-      : resolution.status === "check_failed"
-        ? platformNumber
-        : digits;
+  const platformNumber =
+    resolution.status === "exists" ||
+    resolution.status === "not_found" ||
+    resolution.status === "check_failed"
+      ? resolution.platformNumber
+      : digits;
+  const candidateNumbers =
+    (resolution.status === "exists" ||
+    resolution.status === "not_found" ||
+    resolution.status === "check_failed"
+      ? resolution.candidateNumbers
+      : null) ?? [platformNumber];
   const resolvedJid = resolution.status === "exists" ? resolution.jid : null;
 
-  const send = await sendEvolutionTextWithRestartRetry({
-    instanceName: resolvedInstance,
-    number: sendNumber,
-    text: message.slice(0, 4000),
-  });
+  let send: Awaited<ReturnType<typeof sendEvolutionTextWithRestartRetry>> | null = null;
+  let sendNumber = candidateNumbers[0] ?? platformNumber;
+  const tried: string[] = [];
+
+  for (const candidate of candidateNumbers) {
+    tried.push(candidate);
+    const attempt = await sendEvolutionTextWithRestartRetry({
+      instanceName: resolvedInstance,
+      number: candidate,
+      text: message.slice(0, 4000),
+    });
+    send = attempt;
+    sendNumber = candidate;
+    const attemptFailure = attempt.ok ? detectEvolutionPayloadFailure(attempt.data) : null;
+    if (attempt.ok && !attemptFailure) break;
+    if (!attempt.ok && !isEvolutionConnectionClosedError(attempt.error)) {
+      // HTTP error unrelated to session — try next number format before giving up.
+      continue;
+    }
+    if (attemptFailure && !isEvolutionConnectionClosedError(attemptFailure)) {
+      continue;
+    }
+    break;
+  }
+
+  if (!send) {
+    return { ok: false, error: "evolution_send_failed" };
+  }
 
   const payloadFailure = send.ok ? detectEvolutionPayloadFailure(send.data) : null;
   const evolutionMessageId = send.ok ? extractEvolutionMessageId(send.data) : null;
+  const evolutionResponseStatus =
+    send.ok && send.data && typeof send.data === "object"
+      ? (send.data as Record<string, unknown>).status
+      : null;
   const finalOk = send.ok && !payloadFailure;
   const finalError = send.ok ? payloadFailure : send.error;
 
@@ -332,14 +374,24 @@ export async function sendSystemNotification(
       number_raw: rawDigits,
       number_normalized: platformNumber,
       number_sent: sendNumber,
+      numbers_tried: tried,
       resolved_jid: resolvedJid,
       evolution_number_check: numberCheck,
       evolution_connection_state: liveState,
       evolution_message_id: evolutionMessageId,
+      evolution_response_status: evolutionResponseStatus,
       evolution_session_restarted: send.restarted === true,
     },
   });
 
-  if (!finalOk) return { ok: false, error: finalError ?? "evolution_send_failed" };
-  return { ok: true };
+  const debug = {
+    numberSent: sendNumber,
+    candidatesTried: tried,
+    evolutionMessageId,
+    evolutionResponseStatus,
+    sessionRestarted: send.restarted === true,
+  };
+
+  if (!finalOk) return { ok: false, error: finalError ?? "evolution_send_failed", debug };
+  return { ok: true, debug };
 }

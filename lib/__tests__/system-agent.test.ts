@@ -48,6 +48,7 @@ describe("sendSystemNotification", () => {
       sendNumber: number,
       jid: `${number}@s.whatsapp.net`,
       platformNumber: number,
+      candidateNumbers: [number],
     }));
     evolutionRestartInstanceMock.mockResolvedValue({ ok: true, status: 200, data: {} });
   });
@@ -146,7 +147,7 @@ describe("sendSystemNotification", () => {
     );
   });
 
-  it("sends using Evolution JID digits when the API omits the 9th digit", async () => {
+  it("tries platform number with 9 before Evolution JID digits", async () => {
     evolutionConnectionStateMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -157,11 +158,12 @@ describe("sendSystemNotification", () => {
       sendNumber: "556293580574",
       jid: "556293580574@s.whatsapp.net",
       platformNumber: "5562993580574",
+      candidateNumbers: ["5562993580574", "556293580574"],
     });
     evolutionSendTextMock.mockResolvedValueOnce({
       ok: true,
       status: 201,
-      data: { key: { id: "MSGX" } },
+      data: { key: { id: "MSGX" }, status: "PENDING" },
     });
 
     const result = await sendSystemNotification("5562993580574", "Teste", "system-instance", {
@@ -170,7 +172,7 @@ describe("sendSystemNotification", () => {
 
     expect(result.ok).toBe(true);
     expect(evolutionSendTextMock).toHaveBeenCalledWith(
-      expect.objectContaining({ number: "556293580574" }),
+      expect.objectContaining({ number: "5562993580574" }),
     );
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -178,9 +180,8 @@ describe("sendSystemNotification", () => {
         to_number: "5562993580574",
         metadata: expect.objectContaining({
           number_normalized: "5562993580574",
-          number_sent: "556293580574",
-          resolved_jid: "556293580574@s.whatsapp.net",
-          evolution_number_check: "exists",
+          number_sent: "5562993580574",
+          numbers_tried: ["5562993580574"],
         }),
       }),
     );
@@ -225,7 +226,12 @@ describe("sendSystemNotification", () => {
       status: 200,
       data: { instance: { state: "open" } },
     });
-    resolveEvolutionSendNumberMock.mockResolvedValueOnce({ status: "not_found", jid: null, platformNumber: "5562993580574" });
+    resolveEvolutionSendNumberMock.mockResolvedValueOnce({
+      status: "not_found",
+      jid: null,
+      platformNumber: "5562993580574",
+      candidateNumbers: ["5562993580574", "556293580574"],
+    });
 
     const result = await sendSystemNotification("5562993580574", "Teste", "system-instance", {
       type: "test",
@@ -252,6 +258,7 @@ describe("sendSystemNotification", () => {
       status: "check_failed",
       error: "timeout",
       platformNumber: "5562999991111",
+      candidateNumbers: ["5562999991111"],
     });
     evolutionSendTextMock.mockResolvedValueOnce({
       ok: true,
