@@ -141,7 +141,7 @@ describe("sendSystemNotification", () => {
     );
   });
 
-  it("sends to the canonical WhatsApp JID digits when the 9th digit differs", async () => {
+  it("sends to the platform-canonical 13-digit number when Evolution JID omits the 9th digit", async () => {
     evolutionConnectionStateMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -149,7 +149,7 @@ describe("sendSystemNotification", () => {
     });
     resolveEvolutionSendNumberMock.mockResolvedValueOnce({
       status: "exists",
-      sendNumber: "556293580574",
+      sendNumber: "5562993580574",
       jid: "556293580574@s.whatsapp.net",
     });
     evolutionSendTextMock.mockResolvedValueOnce({
@@ -164,14 +164,14 @@ describe("sendSystemNotification", () => {
 
     expect(result.ok).toBe(true);
     expect(evolutionSendTextMock).toHaveBeenCalledWith(
-      expect.objectContaining({ number: "556293580574" }),
+      expect.objectContaining({ number: "5562993580574" }),
     );
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "sent",
         metadata: expect.objectContaining({
           number_normalized: "5562993580574",
-          number_sent: "556293580574",
+          number_sent: "5562993580574",
           resolved_jid: "556293580574@s.whatsapp.net",
           evolution_number_check: "exists",
         }),

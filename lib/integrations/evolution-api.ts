@@ -314,12 +314,41 @@ export function jidToDigits(jid: string | null | undefined): string {
 }
 
 /**
- * Verifica se números existem no WhatsApp e devolve o JID canônico de cada um.
+ * Garante o 9º dígito em linhas móveis brasileiras (55 + DDD + 9 + local).
+ * Alinhado com normalizeBrazilianJid em evolution-webhook-parse.ts — o restante
+ * da plataforma (conversas, CRM, handoff) usa o formato de 13 dígitos.
+ */
+export function ensureBrazilianMobileWhatsappDigits(digits: string): string {
+  const clean = digits.replace(/\D/g, "");
+  if (clean.startsWith("55") && clean.length === 12) {
+    const local = clean.slice(4);
+    if (/^[6-9]/.test(local)) {
+      return `${clean.slice(0, 4)}9${local}`;
+    }
+  }
+  return clean;
+}
+
+/** Variante com/sem 9º dígito para checagem na Evolution (ex.: 5562993580574 ↔ 556293580574). */
+export function brazilianMobileAlternateVariant(digits: string): string | null {
+  const clean = digits.replace(/\D/g, "");
+  if (!clean.startsWith("55")) return null;
+  if (clean.length === 13 && clean[4] === "9") {
+    const local = clean.slice(5);
+    if (/^[6-9]/.test(local)) {
+      return `${clean.slice(0, 4)}${local}`;
+    }
+  }
+  if (clean.length === 12) {
+    const withNine = ensureBrazilianMobileWhatsappDigits(clean);
+    return withNine !== clean ? withNine : null;
+  }
+  return null;
+}
+
+/**
+ * Verifica se números existem no WhatsApp.
  * POST /chat/whatsappNumbers/{instance}
- *
- * Resolve o problema do 9º dígito brasileiro: a Evolution aceita um sendText para
- * um número inexistente (devolvendo message_id) sem entregar. O JID retornado aqui
- * é o número real que deve ser usado no envio (pode vir sem o 9).
  */
 export async function evolutionCheckWhatsappNumbers(params: {
   instanceName: string;
@@ -354,10 +383,10 @@ export async function evolutionCheckWhatsappNumbers(params: {
 }
 
 /**
- * Resolve o número de envio correto consultando o WhatsApp.
- * - `exists`: devolve os dígitos do JID canônico (corrige o 9º dígito).
- * - `not_found`: número não está no WhatsApp.
- * - `check_failed`: a verificação não pôde ser feita (o chamador deve usar fallback).
+ * Valida existência no WhatsApp e devolve o número de envio canônico da plataforma.
+ * A Evolution pode retornar JID sem o 9º dígito, mas o envio deve usar o formato
+ * de 13 dígitos (com 9) — igual ao normalizeBrazilianJid do webhook e ao remote_jid
+ * gravado em whatsapp_messages.
  */
 export async function resolveEvolutionSendNumber(params: {
   instanceName: string;
@@ -367,23 +396,35 @@ export async function resolveEvolutionSendNumber(params: {
   | { status: "not_found"; jid: string | null }
   | { status: "check_failed"; error: string }
 > {
+  const wanted = ensureBrazilianMobileWhatsappDigits(params.number.replace(/\D/g, ""));
+  const alternate = brazilianMobileAlternateVariant(wanted);
+  const numbersToCheck =
+    alternate && alternate !== wanted ? Array.from(new Set([wanted, alternate])) : [wanted];
+
   const check = await evolutionCheckWhatsappNumbers({
     instanceName: params.instanceName,
-    numbers: [params.number],
+    numbers: numbersToCheck,
   });
   if (!check.ok) {
     return { status: "check_failed", error: check.error };
   }
 
-  const wanted = params.number.replace(/\D/g, "");
-  const match = check.data.find((item) => item.number && item.number === wanted) ?? check.data[0] ?? null;
+  const exists = check.data.some((item) => item.exists);
+  const match =
+    check.data.find((item) => item.exists && item.number === wanted) ??
+    check.data.find((item) => item.exists && item.number === alternate) ??
+    check.data.find((item) => item.exists) ??
+    null;
 
-  if (!match || !match.exists) {
-    return { status: "not_found", jid: match?.jid ?? null };
+  if (!exists) {
+    return { status: "not_found", jid: match?.jid ?? check.data[0]?.jid ?? null };
   }
 
-  const digits = jidToDigits(match.jid) || wanted;
-  return { status: "exists", sendNumber: digits, jid: match.jid };
+  return {
+    status: "exists",
+    sendNumber: wanted,
+    jid: match?.jid ?? null,
+  };
 }
 
 /**

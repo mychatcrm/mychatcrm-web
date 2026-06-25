@@ -184,9 +184,7 @@ export async function sendSystemNotification(
     return { ok: false, error };
   }
 
-  // Resolve o número real no WhatsApp antes de enviar. A Evolution aceita um sendText
-  // para um número inexistente (ex.: 9º dígito brasileiro errado) e devolve message_id
-  // sem entregar a mensagem. O JID canônico é o número correto para o envio.
+  // Valida existência no WhatsApp e envia no formato canônico da plataforma (13 dígitos com 9).
   const resolution = await resolveEvolutionSendNumber({ instanceName: resolvedInstance, number: digits });
 
   if (resolution.status === "not_found") {
