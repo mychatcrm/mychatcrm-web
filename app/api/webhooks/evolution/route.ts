@@ -44,6 +44,7 @@ import {
   notifyTenantIntegrationDisconnected,
   shouldNotifyWhatsappDisconnect,
 } from "@/lib/server/integration-disconnect-notifications";
+import { SYSTEM_TENANT_ID } from "@/lib/server/system-agent";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import {
   AGENDA_AUTOMATION_DISABLED_REPLY,
@@ -434,6 +435,7 @@ export async function POST(request: Request) {
           });
           if (
             previousRow &&
+            previousRow.tenant_id !== SYSTEM_TENANT_ID &&
             shouldNotifyWhatsappDisconnect({
               previousState: previousRow.connection_state,
               nextState: state,

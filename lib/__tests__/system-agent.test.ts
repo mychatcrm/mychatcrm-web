@@ -31,7 +31,7 @@ vi.mock("@/lib/server/tenant-evolution-instance-db", () => ({
   getEvolutionInstanceByTenantId: vi.fn(async () => ({ instance_name: "system-instance" })),
 }));
 
-import { sendSystemNotification } from "@/lib/server/system-agent";
+import { isSystemAgentReady, sendSystemNotification } from "@/lib/server/system-agent";
 
 describe("sendSystemNotification", () => {
   beforeEach(() => {
@@ -131,5 +131,34 @@ describe("sendSystemNotification", () => {
         }),
       }),
     );
+  });
+
+  it("reports ready when the system instance is open", async () => {
+    evolutionConnectionStateMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { instance: { state: "open" } },
+    });
+
+    const result = await isSystemAgentReady();
+
+    expect(result).toEqual({
+      ready: true,
+      instanceName: "system-instance",
+      connectionState: "open",
+    });
+  });
+
+  it("reports not ready when the system instance is missing", async () => {
+    const { getEvolutionInstanceByTenantId } = await import("@/lib/server/tenant-evolution-instance-db");
+    vi.mocked(getEvolutionInstanceByTenantId).mockResolvedValueOnce(null);
+
+    const result = await isSystemAgentReady();
+
+    expect(result).toEqual({
+      ready: false,
+      instanceName: null,
+      connectionState: "none",
+    });
   });
 });

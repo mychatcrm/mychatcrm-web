@@ -1,10 +1,11 @@
 import "server-only";
 
-import { sendSystemNotification } from "@/lib/server/system-agent";
+import { SYSTEM_TENANT_ID, sendSystemNotification } from "@/lib/server/system-agent";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 const SYSTEM_NOTIFICATION_TYPE = "integration_disconnected";
 const DEDUPE_WINDOW_MS = 4 * 60 * 60 * 1000;
+const STABLE_DISCONNECT_STATES = new Set(["close", "refused", "deleted", "logout"]);
 
 export type IntegrationDisconnectKind = "whatsapp" | "facebook";
 
@@ -17,11 +18,17 @@ export function isDisconnectedConnectionState(state: string | null | undefined):
   return Boolean(normalized) && normalized !== "open";
 }
 
+export function isStableDisconnectState(state: string | null | undefined): boolean {
+  return STABLE_DISCONNECT_STATES.has(normalizeConnectionState(state));
+}
+
 export function shouldNotifyWhatsappDisconnect(params: {
   previousState?: string | null;
   nextState?: string | null;
 }): boolean {
-  return normalizeConnectionState(params.previousState) === "open" && isDisconnectedConnectionState(params.nextState);
+  return (
+    normalizeConnectionState(params.previousState) === "open" && isStableDisconnectState(params.nextState)
+  );
 }
 
 function maskPhoneLast4(value: string | null | undefined): string | null {
@@ -182,7 +189,7 @@ async function logSkippedNotification(params: {
     type: SYSTEM_NOTIFICATION_TYPE,
     to_number: "missing",
     message: params.message.slice(0, 4000),
-    status: "failed",
+    status: params.reason === "missing_tenant_owner_phone" ? "skipped" : "failed",
     error: params.reason,
     metadata: {
       ...buildDedupeMetadata(params),
@@ -236,6 +243,10 @@ export async function notifyTenantIntegrationDisconnected(params: {
   manual?: boolean;
   metadata?: Record<string, unknown>;
 }): Promise<{ ok: boolean; skipped?: string; error?: string }> {
+  if (params.tenantId === SYSTEM_TENANT_ID) {
+    return { ok: true, skipped: "system_tenant" };
+  }
+
   const sb = createSupabaseServiceClient();
   const sourceKey =
     params.sourceKey?.trim() ||

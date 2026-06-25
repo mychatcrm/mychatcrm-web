@@ -5,6 +5,7 @@ import {
   normalizeInstanceConnectToQrDataUrl,
 } from "@/lib/integrations/evolution-connect-qr";
 import { buildEvolutionWebhookUrl, getPublicBaseUrlFromRequest } from "@/lib/integrations/evolution-webhook-url";
+import { extractInstanceJid } from "@/lib/integrations/evolution-webhook-parse";
 import {
   buildEvolutionInstanceName,
   evolutionConnectionState,
@@ -152,12 +153,17 @@ export async function GET(request: Request) {
     normalizeEvolutionConnectionState(row.connection_state, "close"),
   );
 
+  const remoteWaJid =
+    remoteState === "open" && stateRes.ok && stateRes.data
+      ? extractInstanceJid(stateRes.data as Record<string, unknown>) ?? row.wa_jid
+      : row.wa_jid;
+
   await upsertTenantEvolutionInstance({
     tenantId: SYSTEM_TENANT_ID,
     slotIndex: SYSTEM_SLOT_INDEX,
     instanceName: row.instance_name,
     connectionState: remoteState,
-    waJid: row.wa_jid,
+    waJid: remoteWaJid,
     defaultAgentId: SYSTEM_AGENT_ID,
   });
 
@@ -167,7 +173,7 @@ export async function GET(request: Request) {
       connectionState: remoteState,
       qrDataUrl: null,
       pairingCode: null,
-      waJid: row.wa_jid ?? null,
+      waJid: remoteWaJid ?? null,
     });
   }
 
@@ -177,7 +183,7 @@ export async function GET(request: Request) {
     connectionState: remoteState,
     qrDataUrl: connectRes.ok ? normalizeInstanceConnectToQrDataUrl(connectRes.data as unknown) : null,
     pairingCode: connectRes.ok ? extractPairingCodeFromConnectPayload(connectRes.data as unknown) : null,
-    waJid: row.wa_jid ?? null,
+    waJid: remoteWaJid ?? null,
   });
 }
 

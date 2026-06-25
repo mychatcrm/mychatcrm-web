@@ -22,7 +22,7 @@ export default async function SystemAgentAdminPage() {
 
   const { data: logs } = await sb
     .from("system_notifications_log")
-    .select("id, type, to_number, message, status, error, created_at")
+    .select("id, type, to_number, message, status, error, metadata, created_at")
     .order("created_at", { ascending: false })
     .limit(10);
 

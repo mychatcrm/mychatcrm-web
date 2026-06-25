@@ -12,6 +12,7 @@ export type SystemNotificationLogItem = {
   message: string;
   status: string;
   error: string | null;
+  metadata?: Record<string, unknown> | null;
   created_at: string;
 };
 
@@ -28,6 +29,51 @@ function connectionLabel(state: string): { label: string; tone: string } {
   return { label: "Desconectado", tone: "text-rose-400" };
 }
 
+function notificationStatusLabel(status: string): { label: string; tone: string } {
+  if (status === "sent") return { label: "enviado", tone: "text-emerald-400" };
+  if (status === "skipped") {
+    return { label: "não enviado — sem telefone de alertas", tone: "text-amber-400" };
+  }
+  return { label: status, tone: "text-rose-400" };
+}
+
+function humanizeNotificationError(error: string | null): string | null {
+  if (!error) return null;
+
+  const known: Record<string, string> = {
+    missing_tenant_owner_phone: "Conta sem telefone de alertas configurado",
+    missing_system_instance: "Instância do agente do sistema não configurada",
+    invalid_number: "Número de destino inválido",
+  };
+  if (known[error]) return known[error];
+
+  if (error.startsWith("system_instance_not_open:")) {
+    const state = error.split(":")[1] ?? "?";
+    return `Agente do sistema desconectado (${state})`;
+  }
+  if (error.startsWith("system_instance_state_check_failed:")) {
+    return "Não foi possível verificar o estado do agente do sistema";
+  }
+
+  return error;
+}
+
+function formatLogMetadata(item: SystemNotificationLogItem): string | null {
+  const meta = item.metadata;
+  if (!meta || typeof meta !== "object") return null;
+
+  const parts: string[] = [];
+  const tenantId = typeof meta.tenant_id === "string" ? meta.tenant_id : null;
+  const recipientSource = typeof meta.recipient_source === "string" ? meta.recipient_source : null;
+
+  if (item.type === "integration_disconnected") {
+    if (tenantId) parts.push(`tenant: ${tenantId}`);
+    if (recipientSource) parts.push(`destino: ${recipientSource}`);
+  }
+
+  return parts.length ? parts.join(" · ") : null;
+}
+
 export function SystemAgentHub(props: {
   agentId: string;
   tenantId: string;
@@ -37,7 +83,9 @@ export function SystemAgentHub(props: {
   initialLogs: SystemNotificationLogItem[];
 }) {
   const [logs, setLogs] = useState(props.initialLogs);
-  const conn = connectionLabel(props.connectionState);
+  const [connectionState, setConnectionState] = useState(props.connectionState);
+  const [waJid, setWaJid] = useState(props.waJid);
+  const conn = connectionLabel(connectionState);
 
   const refreshLogs = useCallback(async () => {
     const res = await fetch("/api/admin/system-agent/notifications", { credentials: "same-origin" });
@@ -46,12 +94,32 @@ export function SystemAgentHub(props: {
     setLogs(json.items ?? []);
   }, []);
 
+  const refreshIdentity = useCallback(async () => {
+    const res = await fetch("/api/admin/system-agent/evolution/session?slotIndex=0", {
+      credentials: "same-origin",
+    });
+    if (!res.ok) return;
+    const json = (await res.json()) as { connectionState?: string; waJid?: string | null };
+    if (typeof json.connectionState === "string" && json.connectionState.trim()) {
+      setConnectionState(json.connectionState.trim());
+    }
+    if (json.waJid) setWaJid(json.waJid);
+  }, []);
+
   useEffect(() => {
     const timer = setInterval(() => {
       void refreshLogs();
     }, 30_000);
     return () => clearInterval(timer);
   }, [refreshLogs]);
+
+  useEffect(() => {
+    void refreshIdentity();
+    const timer = setInterval(() => {
+      void refreshIdentity();
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [refreshIdentity]);
 
   return (
     <div className="mx-auto max-w-4xl space-y-8 px-4 py-6 sm:px-6 sm:py-8">
@@ -90,7 +158,7 @@ export function SystemAgentHub(props: {
           </div>
           <div>
             <dt className="text-content-faint">Número conectado</dt>
-            <dd className="text-content-secondary">{formatWaJid(props.waJid)}</dd>
+            <dd className="text-content-secondary">{formatWaJid(waJid)}</dd>
           </div>
         </dl>
         <p className="mt-4 text-xs leading-relaxed text-content-muted">
@@ -109,7 +177,7 @@ export function SystemAgentHub(props: {
         <EvolutionQrSlotPanel
           slotIndex={0}
           sessionApiPath="/api/admin/system-agent/evolution/session"
-          statusApiPath="/api/client/whatsapp/evolution/status"
+          statusApiPath="/api/admin/system-agent/evolution/status"
         />
       </section>
 
@@ -133,19 +201,26 @@ export function SystemAgentHub(props: {
           <p className="text-sm text-content-muted">Nenhuma notificação registrada ainda.</p>
         ) : (
           <ul className="space-y-3">
-            {logs.map((item) => (
-              <li key={item.id} className="rounded-lg border border-line/80 bg-surface-elevated/30 p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <span className="font-semibold uppercase tracking-wide text-content-secondary">{item.type}</span>
-                  <span className={item.status === "sent" ? "text-emerald-400" : "text-rose-400"}>{item.status}</span>
-                </div>
-                <p className="mt-1 text-xs text-content-faint">
-                  {new Date(item.created_at).toLocaleString("pt-BR")} · {item.to_number}
-                </p>
-                <p className="mt-2 whitespace-pre-wrap text-sm text-content-secondary">{item.message}</p>
-                {item.error ? <p className="mt-1 text-xs text-rose-300">{item.error}</p> : null}
-              </li>
-            ))}
+            {logs.map((item) => {
+              const status = notificationStatusLabel(item.status);
+              const metaLine = formatLogMetadata(item);
+              const errorLine = humanizeNotificationError(item.error);
+
+              return (
+                <li key={item.id} className="rounded-lg border border-line/80 bg-surface-elevated/30 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="font-semibold uppercase tracking-wide text-content-secondary">{item.type}</span>
+                    <span className={status.tone}>{status.label}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-content-faint">
+                    {new Date(item.created_at).toLocaleString("pt-BR")} · {item.to_number}
+                  </p>
+                  {metaLine ? <p className="mt-1 text-xs text-content-muted">{metaLine}</p> : null}
+                  <p className="mt-2 whitespace-pre-wrap text-sm text-content-secondary">{item.message}</p>
+                  {errorLine ? <p className="mt-1 text-xs text-rose-300">{errorLine}</p> : null}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

@@ -3,10 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   buildIntegrationDisconnectedMessage,
   isDisconnectedConnectionState,
+  isStableDisconnectState,
   loadTenantNotificationRecipient,
   normalizeConnectionState,
+  notifyTenantIntegrationDisconnected,
   shouldNotifyWhatsappDisconnect,
 } from "@/lib/server/integration-disconnect-notifications";
+import { SYSTEM_TENANT_ID } from "@/lib/server/system-agent";
 
 describe("integration disconnect notifications", () => {
   it("normalizes Evolution connection states", () => {
@@ -21,9 +24,19 @@ describe("integration disconnect notifications", () => {
     expect(isDisconnectedConnectionState("deleted")).toBe(true);
   });
 
-  it("only notifies WhatsApp transition from open to disconnected", () => {
+  it("treats only stable disconnect states as alert-worthy", () => {
+    expect(isStableDisconnectState("close")).toBe(true);
+    expect(isStableDisconnectState("refused")).toBe(true);
+    expect(isStableDisconnectState("deleted")).toBe(true);
+    expect(isStableDisconnectState("logout")).toBe(true);
+    expect(isStableDisconnectState("connecting")).toBe(false);
+    expect(isStableDisconnectState("open")).toBe(false);
+  });
+
+  it("only notifies WhatsApp transition from open to stable disconnect", () => {
     expect(shouldNotifyWhatsappDisconnect({ previousState: "open", nextState: "close" })).toBe(true);
-    expect(shouldNotifyWhatsappDisconnect({ previousState: "open", nextState: "connecting" })).toBe(true);
+    expect(shouldNotifyWhatsappDisconnect({ previousState: "open", nextState: "refused" })).toBe(true);
+    expect(shouldNotifyWhatsappDisconnect({ previousState: "open", nextState: "connecting" })).toBe(false);
     expect(shouldNotifyWhatsappDisconnect({ previousState: "close", nextState: "connecting" })).toBe(false);
     expect(shouldNotifyWhatsappDisconnect({ previousState: "open", nextState: "open" })).toBe(false);
   });
@@ -94,5 +107,18 @@ describe("integration disconnect notifications", () => {
     expect(recipient.phone).toBe("5562999991111");
     expect(recipient.source).toBe("tenant_system_notification_phone");
     expect(queriedTables).not.toContain("tenant_members");
+  });
+
+  it("skips integration disconnect notifications for the internal system tenant", async () => {
+    const result = await notifyTenantIntegrationDisconnected({
+      tenantId: SYSTEM_TENANT_ID,
+      integration: "whatsapp",
+      source: "test",
+      instanceName: "system-instance",
+      state: "close",
+      previousState: "open",
+    });
+
+    expect(result).toEqual({ ok: true, skipped: "system_tenant" });
   });
 });

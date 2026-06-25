@@ -15,6 +15,28 @@ export async function getSystemAgentInstanceName(): Promise<string | null> {
   return row?.instance_name?.trim() || null;
 }
 
+export async function isSystemAgentReady(): Promise<{
+  ready: boolean;
+  instanceName: string | null;
+  connectionState: string;
+}> {
+  const instanceName = await getSystemAgentInstanceName();
+  if (!instanceName) {
+    return { ready: false, instanceName: null, connectionState: "none" };
+  }
+
+  const state = await evolutionConnectionState(instanceName);
+  const connectionState = state.ok
+    ? normalizeEvolutionConnectionState(parseEvolutionConnectionStatePayload(state.data), "close")
+    : "unknown";
+
+  return {
+    ready: state.ok && connectionState === "open",
+    instanceName,
+    connectionState,
+  };
+}
+
 /**
  * Normaliza um número de telefone brasileiro para o formato esperado pela Evolution API.
  * A Evolution API exige dígitos com código de país (ex: 5562993580574).
@@ -112,14 +134,6 @@ export async function sendSystemNotification(
   const rawDigits = toNumber.replace(/\D/g, "");
   const digits = normalizeBrazilianPhoneNumber(rawDigits);
 
-  console.log("[HANDOFF_DEBUG] sendSystemNotification", {
-    toNumber_raw: toNumber,
-    digits_before_normalize: rawDigits,
-    digits_after_normalize: digits,
-    instanceName_received: instanceName,
-    type: options?.type ?? "generic",
-  });
-
   if (!isValidBrazilianWhatsAppNumber(digits)) {
     await logSystemNotification({
       type: options?.type ?? "generic",
@@ -129,15 +143,10 @@ export async function sendSystemNotification(
       error: "invalid_number",
       metadata: options?.metadata ?? null,
     });
-    console.log("[HANDOFF_DEBUG] invalid_number — abortando");
     return { ok: false, error: "invalid_number" };
   }
 
   const resolvedInstance = instanceName.trim() || (await getSystemAgentInstanceName());
-  console.log("[HANDOFF_DEBUG] instance resolved", {
-    instanceName_trim: instanceName.trim(),
-    resolvedInstance: resolvedInstance ?? "(null)",
-  });
 
   if (!resolvedInstance) {
     await logSystemNotification({
@@ -148,7 +157,6 @@ export async function sendSystemNotification(
       error: "missing_system_instance",
       metadata: options?.metadata ?? null,
     });
-    console.log("[HANDOFF_DEBUG] missing_system_instance — abortando");
     return { ok: false, error: "missing_system_instance" };
   }
 
@@ -172,19 +180,8 @@ export async function sendSystemNotification(
         evolution_connection_state: liveState,
       },
     });
-    console.log("[HANDOFF_DEBUG] system_instance_not_open — abortando", {
-      instanceName: resolvedInstance,
-      liveState,
-      error,
-    });
     return { ok: false, error };
   }
-
-  console.log("[HANDOFF_DEBUG] chamando evolutionSendText", {
-    instanceName: resolvedInstance,
-    number: digits,
-    messageLength: message.length,
-  });
 
   const send = await evolutionSendText({
     instanceName: resolvedInstance,
@@ -196,12 +193,6 @@ export async function sendSystemNotification(
   const evolutionMessageId = send.ok ? extractEvolutionMessageId(send.data) : null;
   const finalOk = send.ok && !payloadFailure;
   const finalError = send.ok ? payloadFailure : send.error;
-
-  console.log("[HANDOFF_DEBUG] evolutionSendText resultado", {
-    ok: finalOk,
-    error: finalError,
-    evolutionMessageId,
-  });
 
   await logSystemNotification({
     type: options?.type ?? "generic",
