@@ -149,6 +149,7 @@ import { IntegracoesLeadsHub } from "./lead-rules/IntegracoesLeadsHub";
 import { TeamEmployeesHub } from "./equipe/TeamEmployeesHub";
 import { BotStatusToggle } from "./BotStatusToggle";
 import { DashboardOverviewV2 } from "./overview/DashboardOverviewV2";
+import { AtendimentoV2 } from "./conversas/AtendimentoV2";
 import { typography } from "@/lib/typography";
 
 function Panel({
@@ -4447,7 +4448,7 @@ export function DashboardWorkspace({
       case "agentes":
         return <AgentsListSection session={session} />;
       case "conversas":
-        return <OperacaoConversasHub session={session} />;
+        return <AtendimentoV2 session={session} />;
       case "integracoes-leads":
         return <IntegracoesLeadsHub session={session} />;
       case "colaboradores":
