@@ -3725,9 +3725,13 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
   const [phoneNew, setPhoneNew] = useState("");
   const [phoneNew2, setPhoneNew2] = useState("");
   const [phoneCurrentPass, setPhoneCurrentPass] = useState("");
+  const [phoneVerificationCode, setPhoneVerificationCode] = useState("");
+  const [phoneVerificationPending, setPhoneVerificationPending] = useState<{ phone: string; expiresAt: string } | null>(null);
   const [displayPhone, setDisplayPhone] = useState<string | null>(null);
   const [systemNotificationPhone, setSystemNotificationPhone] = useState("");
   const [systemNotificationPhoneDraft, setSystemNotificationPhoneDraft] = useState("");
+  const [systemNotificationCode, setSystemNotificationCode] = useState("");
+  const [systemNotificationPending, setSystemNotificationPending] = useState<{ phone: string; expiresAt: string } | null>(null);
   const [canManageSystemNotificationPhone, setCanManageSystemNotificationPhone] = useState(false);
   const [contactSettingsLoading, setContactSettingsLoading] = useState(true);
   const [phoneSaving, setPhoneSaving] = useState(false);
@@ -3813,6 +3817,8 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
     setPhoneNew("");
     setPhoneNew2("");
     setPhoneCurrentPass("");
+    setPhoneVerificationCode("");
+    setPhoneVerificationPending(null);
     setAccountMsg(null);
     setPhonePopoverOpen(true);
   };
@@ -3855,8 +3861,7 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
 
   const onlyPhoneDigits = (s: string | null | undefined) => String(s ?? "").replace(/\D/g, "");
 
-  const submitPhoneChange = async (e: FormEvent) => {
-    e.preventDefault();
+  const submitPhoneVerificationRequest = async () => {
     if (phoneSaving) return;
     if (!phoneCurrentPass.trim()) {
       setAccountMsg({ type: "err", text: "Digite a senha atual para alterar o telemovel." });
@@ -3887,24 +3892,69 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ personalPhone: a, currentPassword: phoneCurrentPass }),
+        body: JSON.stringify({
+          action: "request_phone_verification",
+          phoneType: "personal",
+          phone: a,
+          currentPassword: phoneCurrentPass,
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as { phone?: string | null; expiresAt?: string; error?: string } | null;
+      if (!res.ok) {
+        setAccountMsg({ type: "err", text: data?.error || "Não foi possível enviar o código de verificação." });
+        return;
+      }
+      setPhoneVerificationPending({ phone: data?.phone ?? a, expiresAt: data?.expiresAt ?? "" });
+      setPhoneVerificationCode("");
+      setAccountMsg({ type: "ok", text: "Código enviado pelo agente do sistema para o novo telefone." });
+    } catch {
+      setAccountMsg({ type: "err", text: "Não foi possível enviar o código de verificação." });
+    } finally {
+      setPhoneSaving(false);
+    }
+  };
+
+  const submitPhoneVerificationConfirm = async () => {
+    if (phoneSaving) return;
+    setPhoneSaving(true);
+    try {
+      const res = await fetch("/api/client/account/contact", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          action: "confirm_phone_verification",
+          phoneType: "personal",
+          code: phoneVerificationCode,
+        }),
       });
       const data = (await res.json().catch(() => null)) as { personalPhone?: string | null; error?: string } | null;
       if (!res.ok) {
-        setAccountMsg({ type: "err", text: data?.error || "Não foi possível salvar o telefone pessoal." });
+        setAccountMsg({ type: "err", text: data?.error || "Não foi possível confirmar o telefone pessoal." });
         return;
       }
-      setDisplayPhone(data?.personalPhone ?? null);
-      setAccountMsg({ type: "ok", text: "Telefone pessoal atualizado com segurança." });
+      setDisplayPhone(data?.personalPhone ?? phoneVerificationPending?.phone ?? null);
+      setAccountMsg({ type: "ok", text: "Telefone pessoal confirmado e atualizado com segurança." });
       setPhonePopoverOpen(false);
       setPhoneNew("");
       setPhoneNew2("");
       setPhoneCurrentPass("");
+      setPhoneVerificationCode("");
+      setPhoneVerificationPending(null);
     } catch {
-      setAccountMsg({ type: "err", text: "Não foi possível salvar o telefone pessoal." });
+      setAccountMsg({ type: "err", text: "Não foi possível confirmar o telefone pessoal." });
     } finally {
       setPhoneSaving(false);
     }
+  };
+
+  const submitPhoneChange = async (e: FormEvent) => {
+    e.preventDefault();
+    if (phoneVerificationPending) {
+      await submitPhoneVerificationConfirm();
+      return;
+    }
+    await submitPhoneVerificationRequest();
   };
 
   const submitSystemNotificationPhone = async (e: FormEvent) => {
@@ -3913,23 +3963,78 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
 
     setNotificationPhoneSaving(true);
     try {
+      if (systemNotificationPending) {
+        const res = await fetch("/api/client/account/contact", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            action: "confirm_phone_verification",
+            phoneType: "system_notification",
+            code: systemNotificationCode,
+          }),
+        });
+        const data = (await res.json().catch(() => null)) as { systemNotificationPhone?: string | null; error?: string } | null;
+        if (!res.ok) {
+          setAccountMsg({ type: "err", text: data?.error || "Não foi possível confirmar o telefone de notificações." });
+          return;
+        }
+        const next = data?.systemNotificationPhone ?? systemNotificationPending.phone;
+        setSystemNotificationPhone(next);
+        setSystemNotificationPhoneDraft(next ? formatAccountPhone(next) : "");
+        setSystemNotificationCode("");
+        setSystemNotificationPending(null);
+        setAccountMsg({ type: "ok", text: "Telefone de notificações confirmado e atualizado." });
+        return;
+      }
+
       const res = await fetch("/api/client/account/contact", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ systemNotificationPhone: systemNotificationPhoneDraft }),
+        body: JSON.stringify({
+          action: "request_phone_verification",
+          phoneType: "system_notification",
+          phone: systemNotificationPhoneDraft,
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as { phone?: string | null; expiresAt?: string; error?: string } | null;
+      if (!res.ok) {
+        setAccountMsg({ type: "err", text: data?.error || "Não foi possível enviar o código de verificação." });
+        return;
+      }
+      setSystemNotificationPending({ phone: data?.phone ?? systemNotificationPhoneDraft, expiresAt: data?.expiresAt ?? "" });
+      setSystemNotificationCode("");
+      setAccountMsg({ type: "ok", text: "Código enviado pelo agente do sistema para o telefone de notificações." });
+    } catch {
+      setAccountMsg({ type: "err", text: "Não foi possível processar o telefone de notificações." });
+    } finally {
+      setNotificationPhoneSaving(false);
+    }
+  };
+
+  const clearSystemNotificationPhone = async () => {
+    if (notificationPhoneSaving || !canManageSystemNotificationPhone) return;
+    setNotificationPhoneSaving(true);
+    try {
+      const res = await fetch("/api/client/account/contact", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ systemNotificationPhone: "" }),
       });
       const data = (await res.json().catch(() => null)) as { systemNotificationPhone?: string | null; error?: string } | null;
       if (!res.ok) {
-        setAccountMsg({ type: "err", text: data?.error || "Não foi possível salvar o telefone de notificações." });
+        setAccountMsg({ type: "err", text: data?.error || "Não foi possível limpar o telefone de notificações." });
         return;
       }
-      const next = data?.systemNotificationPhone ?? "";
-      setSystemNotificationPhone(next);
-      setSystemNotificationPhoneDraft(next ? formatAccountPhone(next) : "");
-      setAccountMsg({ type: "ok", text: "Telefone de notificações do sistema atualizado." });
+      setSystemNotificationPhone("");
+      setSystemNotificationPhoneDraft("");
+      setSystemNotificationCode("");
+      setSystemNotificationPending(null);
+      setAccountMsg({ type: "ok", text: "Telefone de notificações removido." });
     } catch {
-      setAccountMsg({ type: "err", text: "Não foi possível salvar o telefone de notificações." });
+      setAccountMsg({ type: "err", text: "Não foi possível limpar o telefone de notificações." });
     } finally {
       setNotificationPhoneSaving(false);
     }
@@ -4181,9 +4286,14 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                                 id={`${phoneFormBaseId}-new`}
                                 type="tel"
                                 value={phoneNew}
-                                onChange={(ev) => setPhoneNew(ev.target.value)}
+                                onChange={(ev) => {
+                                  setPhoneNew(ev.target.value);
+                                  setPhoneVerificationPending(null);
+                                  setPhoneVerificationCode("");
+                                }}
                                 placeholder="(00) 00000-0000"
                                 autoComplete="tel"
+                                disabled={Boolean(phoneVerificationPending)}
                               />
                             </div>
                             <div className="space-y-1">
@@ -4194,8 +4304,13 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                                 id={`${phoneFormBaseId}-new2`}
                                 type="tel"
                                 value={phoneNew2}
-                                onChange={(ev) => setPhoneNew2(ev.target.value)}
+                                onChange={(ev) => {
+                                  setPhoneNew2(ev.target.value);
+                                  setPhoneVerificationPending(null);
+                                  setPhoneVerificationCode("");
+                                }}
                                 autoComplete="tel"
+                                disabled={Boolean(phoneVerificationPending)}
                               />
                             </div>
                             <div className="space-y-1">
@@ -4208,15 +4323,46 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                                 value={phoneCurrentPass}
                                 onChange={(ev) => setPhoneCurrentPass(ev.target.value)}
                                 autoComplete="current-password"
+                                disabled={Boolean(phoneVerificationPending)}
                               />
                             </div>
+                            {phoneVerificationPending ? (
+                              <div className="rounded-lg border border-primary/20 bg-primary/10 p-3">
+                                <p className="text-[11px] leading-relaxed text-content-muted">
+                                  Enviamos um código para{" "}
+                                  <span className="font-medium text-content">{formatAccountPhone(phoneVerificationPending.phone)}</span>.
+                                  Digite abaixo para confirmar a troca.
+                                </p>
+                                <label className="mt-3 block text-xs font-medium text-content-muted" htmlFor={`${phoneFormBaseId}-code`}>
+                                  Código recebido
+                                </label>
+                                <Input
+                                  id={`${phoneFormBaseId}-code`}
+                                  className="mt-1"
+                                  inputMode="numeric"
+                                  autoComplete="one-time-code"
+                                  value={phoneVerificationCode}
+                                  onChange={(ev) => setPhoneVerificationCode(ev.target.value.replace(/\D/g, "").slice(0, 6))}
+                                  placeholder="000000"
+                                />
+                              </div>
+                            ) : null}
                           </div>
                           <div className="mt-4 flex flex-wrap justify-end gap-2">
-                            <Button type="button" variant="ghost" size="sm" onClick={() => setPhonePopoverOpen(false)}>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setPhonePopoverOpen(false);
+                                setPhoneVerificationPending(null);
+                                setPhoneVerificationCode("");
+                              }}
+                            >
                               Cancelar
                             </Button>
                             <Button type="submit" size="sm" disabled={phoneSaving}>
-                              {phoneSaving ? "Salvando..." : "Guardar"}
+                              {phoneSaving ? "Aguarde..." : phoneVerificationPending ? "Confirmar código" : "Enviar código"}
                             </Button>
                           </div>
                         </form>
@@ -4403,11 +4549,42 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                     id="system-notification-phone"
                     type="tel"
                     value={systemNotificationPhoneDraft}
-                    onChange={(ev) => setSystemNotificationPhoneDraft(ev.target.value)}
+                    onChange={(ev) => {
+                      setSystemNotificationPhoneDraft(ev.target.value);
+                      setSystemNotificationPending(null);
+                      setSystemNotificationCode("");
+                    }}
                     placeholder="(00) 00000-0000"
                     autoComplete="tel"
-                    disabled={!canManageSystemNotificationPhone || contactSettingsLoading || notificationPhoneSaving}
+                    disabled={
+                      !canManageSystemNotificationPhone ||
+                      contactSettingsLoading ||
+                      notificationPhoneSaving ||
+                      Boolean(systemNotificationPending)
+                    }
                   />
+                  {systemNotificationPending ? (
+                    <div className="rounded-lg border border-primary/20 bg-primary/10 p-3">
+                      <p className="text-[11px] leading-relaxed text-content-muted">
+                        O agente do sistema enviou um código para{" "}
+                        <span className="font-medium text-content">{formatAccountPhone(systemNotificationPending.phone)}</span>.
+                        Confirme para este número receber alertas operacionais.
+                      </p>
+                      <label className="mt-3 block text-xs font-medium text-content-muted" htmlFor="system-notification-phone-code">
+                        Código recebido
+                      </label>
+                      <Input
+                        id="system-notification-phone-code"
+                        className="mt-1"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        value={systemNotificationCode}
+                        onChange={(ev) => setSystemNotificationCode(ev.target.value.replace(/\D/g, "").slice(0, 6))}
+                        placeholder="000000"
+                        disabled={notificationPhoneSaving}
+                      />
+                    </div>
+                  ) : null}
                   {!canManageSystemNotificationPhone ? (
                     <p className="text-[11px] leading-relaxed text-content-faint">
                       Apenas o dono da conta pode alterar o telefone de notificações operacionais.
@@ -4419,16 +4596,19 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                       variant="ghost"
                       size="sm"
                       disabled={!systemNotificationPhoneDraft || notificationPhoneSaving || contactSettingsLoading}
-                      onClick={() => setSystemNotificationPhoneDraft("")}
+                      onClick={systemNotificationPending ? () => {
+                        setSystemNotificationPending(null);
+                        setSystemNotificationCode("");
+                      } : clearSystemNotificationPhone}
                     >
-                      Limpar
+                      {systemNotificationPending ? "Trocar número" : "Limpar"}
                     </Button>
                     <Button
                       type="submit"
                       size="sm"
                       disabled={!canManageSystemNotificationPhone || contactSettingsLoading || notificationPhoneSaving}
                     >
-                      {notificationPhoneSaving ? "Salvando..." : "Salvar notificações"}
+                      {notificationPhoneSaving ? "Aguarde..." : systemNotificationPending ? "Confirmar código" : "Enviar código"}
                     </Button>
                   </div>
                 </div>

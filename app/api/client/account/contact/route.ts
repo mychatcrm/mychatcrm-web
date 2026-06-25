@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateCheckoutPhone } from "@/lib/checkout-phone";
+import {
+  confirmAccountPhoneVerification,
+  requestAccountPhoneVerification,
+  type AccountPhoneVerificationType,
+} from "@/lib/server/account-phone-verification";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
@@ -33,6 +38,11 @@ function normalizeOptionalPhone(raw: unknown): { ok: true; phone: string | null 
 
 function canManageTenantNotifications(session: { organizationRole?: string }): boolean {
   return session.organizationRole === "owner";
+}
+
+function normalizePhoneType(raw: unknown): AccountPhoneVerificationType | null {
+  if (raw === "personal" || raw === "system_notification") return raw;
+  return null;
 }
 
 async function findSessionMember(params: {
@@ -100,12 +110,11 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
   }
 
   const sb = createSupabaseServiceClient();
+  const action = String((body as { action?: unknown }).action ?? "").trim();
 
-  if (Object.prototype.hasOwnProperty.call(body, "personalPhone")) {
-    const currentPassword = String((body as { currentPassword?: unknown }).currentPassword ?? "").trim();
-    if (!currentPassword) {
-      return NextResponse.json({ error: "Digite a senha atual para alterar o telefone pessoal." }, { status: 400 });
-    }
+  if (action === "request_phone_verification") {
+    const phoneType = normalizePhoneType((body as { phoneType?: unknown }).phoneType);
+    if (!phoneType) return NextResponse.json({ error: "Tipo de telefone inválido." }, { status: 400 });
 
     const member = await findSessionMember({
       sb,
@@ -117,40 +126,106 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Usuário da conta não encontrado." }, { status: 404 });
     }
 
-    const { data: passwordOk, error: passwordError } = await sb.rpc("verify_member_password", {
-      member_id: member.id,
-      plain_password: currentPassword,
+    if (phoneType === "personal") {
+      const currentPassword = String((body as { currentPassword?: unknown }).currentPassword ?? "").trim();
+      if (!currentPassword) {
+        return NextResponse.json({ error: "Digite a senha atual para alterar o telefone pessoal." }, { status: 400 });
+      }
+
+      const { data: passwordOk, error: passwordError } = await sb.rpc("verify_member_password", {
+        member_id: member.id,
+        plain_password: currentPassword,
+      });
+
+      if (passwordError) {
+        console.error("[client/account/contact] verify_member_password:", passwordError.message);
+        return NextResponse.json({ error: "Não foi possível validar a senha atual." }, { status: 500 });
+      }
+      if (!passwordOk) {
+        return NextResponse.json({ error: "Senha atual incorreta." }, { status: 403 });
+      }
+    }
+
+    if (phoneType === "system_notification" && !canManageTenantNotifications(session)) {
+      return NextResponse.json({ error: "Apenas o dono da conta pode alterar este telefone." }, { status: 403 });
+    }
+
+    const requested = await requestAccountPhoneVerification({
+      tenantId: session.tenantId,
+      memberId: member.id,
+      phoneType,
+      rawPhone: String((body as { phone?: unknown }).phone ?? ""),
+      requestedByEmail: session.email,
+      sb,
     });
 
-    if (passwordError) {
-      console.error("[client/account/contact] verify_member_password:", passwordError.message);
-      return NextResponse.json({ error: "Não foi possível validar a senha atual." }, { status: 500 });
-    }
-    if (!passwordOk) {
-      return NextResponse.json({ error: "Senha atual incorreta." }, { status: 403 });
+    if (!requested.ok) {
+      return NextResponse.json({ error: requested.error }, { status: requested.status ?? 400 });
     }
 
-    const normalized = normalizeOptionalPhone((body as { personalPhone?: unknown }).personalPhone);
-    if (!normalized.ok) return NextResponse.json({ error: normalized.message }, { status: 400 });
+    return NextResponse.json({
+      ok: true,
+      phone: requested.phone,
+      expiresAt: requested.expiresAt,
+      message: "Código enviado pelo agente do sistema para o telefone informado.",
+    });
+  }
 
-    const { error } = await sb
-      .from("tenant_members")
-      .update({ phone: normalized.phone })
-      .eq("tenant_id", session.tenantId)
-      .eq("id", member.id);
+  if (action === "confirm_phone_verification") {
+    const phoneType = normalizePhoneType((body as { phoneType?: unknown }).phoneType);
+    if (!phoneType) return NextResponse.json({ error: "Tipo de telefone inválido." }, { status: 400 });
 
-    if (isMissingSystemNotificationPhoneColumn(error)) {
-      return NextResponse.json(
-        { error: "O banco ainda não reconhece o telefone de notificações. Aplique a migration e tente novamente." },
-        { status: 503 },
-      );
+    const member = await findSessionMember({
+      sb,
+      tenantId: session.tenantId,
+      employeeId: session.employeeId,
+      email: session.email,
+    });
+    if (!member) {
+      return NextResponse.json({ error: "Usuário da conta não encontrado." }, { status: 404 });
     }
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    if (phoneType === "system_notification" && !canManageTenantNotifications(session)) {
+      return NextResponse.json({ error: "Apenas o dono da conta pode alterar este telefone." }, { status: 403 });
     }
 
-    return NextResponse.json({ ok: true, personalPhone: normalized.phone });
+    const confirmed = await confirmAccountPhoneVerification({
+      tenantId: session.tenantId,
+      memberId: member.id,
+      phoneType,
+      code: String((body as { code?: unknown }).code ?? ""),
+      sb,
+      applyVerifiedPhone: async (phone) => {
+        if (phoneType === "personal") {
+          const { error } = await sb
+            .from("tenant_members")
+            .update({ phone })
+            .eq("tenant_id", session.tenantId)
+            .eq("id", member.id);
+          if (error) throw new Error(error.message);
+          return;
+        }
+
+        const { error } = await sb
+          .from("tenants")
+          .update({ system_notification_phone: phone })
+          .eq("id", session.tenantId);
+        if (error) throw new Error(error.message);
+      },
+    });
+
+    if (!confirmed.ok) {
+      return NextResponse.json({ error: confirmed.error }, { status: confirmed.status ?? 400 });
+    }
+
+    if (phoneType === "personal") {
+      return NextResponse.json({ ok: true, personalPhone: confirmed.phone });
+    }
+    return NextResponse.json({ ok: true, systemNotificationPhone: confirmed.phone });
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, "personalPhone")) {
+    return NextResponse.json({ error: "Envie e confirme o código antes de salvar o telefone pessoal." }, { status: 400 });
   }
 
   if (Object.prototype.hasOwnProperty.call(body, "systemNotificationPhone")) {
@@ -160,6 +235,10 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
 
     const normalized = normalizeOptionalPhone((body as { systemNotificationPhone?: unknown }).systemNotificationPhone);
     if (!normalized.ok) return NextResponse.json({ error: normalized.message }, { status: 400 });
+
+    if (normalized.phone) {
+      return NextResponse.json({ error: "Envie e confirme o código antes de salvar o telefone de notificações." }, { status: 400 });
+    }
 
     const { error } = await sb
       .from("tenants")
