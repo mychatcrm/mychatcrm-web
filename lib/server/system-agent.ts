@@ -1,4 +1,9 @@
-import { evolutionSendText } from "@/lib/integrations/evolution-api";
+import {
+  evolutionConnectionState,
+  evolutionSendText,
+  normalizeEvolutionConnectionState,
+  parseEvolutionConnectionStatePayload,
+} from "@/lib/integrations/evolution-api";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
 
@@ -53,6 +58,44 @@ async function logSystemNotification(params: {
   }
 }
 
+function readEvolutionPayloadString(payload: unknown, path: string[]): string | null {
+  let current: unknown = payload;
+  for (const key of path) {
+    if (!current || typeof current !== "object") return null;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return typeof current === "string" && current.trim() ? current.trim() : null;
+}
+
+function extractEvolutionMessageId(payload: unknown): string | null {
+  return (
+    readEvolutionPayloadString(payload, ["key", "id"]) ||
+    readEvolutionPayloadString(payload, ["message", "key", "id"]) ||
+    readEvolutionPayloadString(payload, ["data", "key", "id"]) ||
+    readEvolutionPayloadString(payload, ["id"])
+  );
+}
+
+function detectEvolutionPayloadFailure(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const data = payload as Record<string, unknown>;
+  if (data.status === false) return "evolution_payload_status_false";
+  if (data.success === false) return "evolution_payload_success_false";
+  if (typeof data.error === "string" && data.error.trim()) return data.error.trim().slice(0, 500);
+
+  const response = data.response;
+  if (response && typeof response === "object") {
+    const message = (response as Record<string, unknown>).message;
+    if (Array.isArray(message)) {
+      const joined = message.filter((item): item is string => typeof item === "string").join(" · ").trim();
+      if (joined) return joined.slice(0, 500);
+    }
+    if (typeof message === "string" && message.trim()) return message.trim().slice(0, 500);
+  }
+
+  return null;
+}
+
 export async function sendSystemNotification(
   toNumber: string,
   message: string,
@@ -105,6 +148,34 @@ export async function sendSystemNotification(
     return { ok: false, error: "missing_system_instance" };
   }
 
+  const state = await evolutionConnectionState(resolvedInstance);
+  const liveState = state.ok
+    ? normalizeEvolutionConnectionState(parseEvolutionConnectionStatePayload(state.data), "close")
+    : "unknown";
+  if (!state.ok || liveState !== "open") {
+    const error = state.ok ? `system_instance_not_open:${liveState}` : `system_instance_state_check_failed:${state.error}`;
+    await logSystemNotification({
+      type: options?.type ?? "generic",
+      toNumber: digits,
+      message,
+      status: "failed",
+      error,
+      metadata: {
+        ...(options?.metadata ?? {}),
+        instance_name: resolvedInstance,
+        number_raw: rawDigits,
+        number_normalized: digits,
+        evolution_connection_state: liveState,
+      },
+    });
+    console.log("[HANDOFF_DEBUG] system_instance_not_open — abortando", {
+      instanceName: resolvedInstance,
+      liveState,
+      error,
+    });
+    return { ok: false, error };
+  }
+
   console.log("[HANDOFF_DEBUG] chamando evolutionSendText", {
     instanceName: resolvedInstance,
     number: digits,
@@ -117,25 +188,33 @@ export async function sendSystemNotification(
     text: message.slice(0, 4000),
   });
 
+  const payloadFailure = send.ok ? detectEvolutionPayloadFailure(send.data) : null;
+  const evolutionMessageId = send.ok ? extractEvolutionMessageId(send.data) : null;
+  const finalOk = send.ok && !payloadFailure;
+  const finalError = send.ok ? payloadFailure : send.error;
+
   console.log("[HANDOFF_DEBUG] evolutionSendText resultado", {
-    ok: send.ok,
-    error: send.ok ? null : send.error,
+    ok: finalOk,
+    error: finalError,
+    evolutionMessageId,
   });
 
   await logSystemNotification({
     type: options?.type ?? "generic",
     toNumber: digits,
     message,
-    status: send.ok ? "sent" : "failed",
-    error: send.ok ? null : send.error,
+    status: finalOk ? "sent" : "failed",
+    error: finalOk ? null : finalError,
     metadata: {
       ...(options?.metadata ?? {}),
       instance_name: resolvedInstance,
       number_raw: rawDigits,
       number_normalized: digits,
+      evolution_connection_state: liveState,
+      evolution_message_id: evolutionMessageId,
     },
   });
 
-  if (!send.ok) return { ok: false, error: send.error };
+  if (!finalOk) return { ok: false, error: finalError ?? "evolution_send_failed" };
   return { ok: true };
 }
