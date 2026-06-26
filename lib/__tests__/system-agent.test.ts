@@ -147,7 +147,7 @@ describe("sendSystemNotification", () => {
     );
   });
 
-  it("tries platform number with 9 before Evolution JID digits", async () => {
+  it("prioritizes the Evolution JID digits before the platform number with 9", async () => {
     evolutionConnectionStateMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -172,7 +172,7 @@ describe("sendSystemNotification", () => {
 
     expect(result.ok).toBe(true);
     expect(evolutionSendTextMock).toHaveBeenCalledWith(
-      expect.objectContaining({ number: "5562993580574" }),
+      expect.objectContaining({ number: "556293580574" }),
     );
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -180,9 +180,35 @@ describe("sendSystemNotification", () => {
         to_number: "5562993580574",
         metadata: expect.objectContaining({
           number_normalized: "5562993580574",
-          number_sent: "5562993580574",
-          numbers_tried: ["5562993580574"],
+          number_sent: "556293580574",
+          numbers_tried: ["556293580574"],
         }),
+      }),
+    );
+  });
+
+  it("does not mark sent when Evolution accepts without returning a message id", async () => {
+    evolutionConnectionStateMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { instance: { state: "open" } },
+    });
+    evolutionSendTextMock.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      data: { status: "PENDING" },
+    });
+
+    const result = await sendSystemNotification("62999991111", "Teste", "system-instance", {
+      type: "test",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("missing_evolution_message_id");
+    expect(insertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        error: "missing_evolution_message_id",
       }),
     );
   });
