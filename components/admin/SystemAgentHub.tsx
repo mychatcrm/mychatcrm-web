@@ -16,6 +16,29 @@ export type SystemNotificationLogItem = {
   created_at: string;
 };
 
+type DiagnoseResult = {
+  instanceName: string | null;
+  session: {
+    connectionState: string;
+    ownerJid: string | null;
+    profileName: string | null;
+    authenticated: boolean;
+    source: string;
+  };
+  instanceInfo: { connectionStatus: string | null; ownerJid: string | null; profileName: string | null } | null;
+  fetchInstancesOk: boolean;
+  fetchInstancesError: string | null;
+  recent: Array<{
+    type: string;
+    status: string;
+    to_number: string;
+    response_status: unknown;
+    message_id: unknown;
+    delivered_at: unknown;
+    created_at: string;
+  }>;
+};
+
 function formatWaJid(jid: string | null): string {
   if (!jid) return "—";
   const digits = jid.split("@")[0]?.replace(/\D/g, "");
@@ -30,7 +53,8 @@ function connectionLabel(state: string): { label: string; tone: string } {
 }
 
 function notificationStatusLabel(status: string): { label: string; tone: string } {
-  if (status === "sent") return { label: "enviado", tone: "text-emerald-400" };
+  if (status === "delivered") return { label: "entregue ✓", tone: "text-emerald-400" };
+  if (status === "sent") return { label: "enviado (sem confirmação)", tone: "text-amber-400" };
   if (status === "delivery_failed") {
     return { label: "falha na entrega", tone: "text-rose-400" };
   }
@@ -56,6 +80,15 @@ function humanizeNotificationError(error: string | null): string | null {
   }
   if (error.startsWith("system_instance_state_check_failed:")) {
     return "Não foi possível verificar o estado do agente do sistema";
+  }
+  if (error.startsWith("system_session_not_authenticated:")) {
+    return "Sessão conectada na API mas sem número WhatsApp ativo (sessão zumbi). Reconecte escaneando o QR.";
+  }
+  if (error === "number_not_on_whatsapp") {
+    return "Número de destino não está no WhatsApp";
+  }
+  if (error === "missing_evolution_message_id") {
+    return "Evolution aceitou mas não devolveu ID — envio não confirmado";
   }
 
   return error;
@@ -88,12 +121,17 @@ export function SystemAgentHub(props: {
   const [logs, setLogs] = useState(props.initialLogs);
   const [connectionState, setConnectionState] = useState(props.connectionState);
   const [waJid, setWaJid] = useState(props.waJid);
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [testNumber, setTestNumber] = useState("");
   const [testBusy, setTestBusy] = useState(false);
   const [restartBusy, setRestartBusy] = useState(false);
+  const [diagnoseBusy, setDiagnoseBusy] = useState(false);
+  const [diagnose, setDiagnose] = useState<DiagnoseResult | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const conn = connectionLabel(connectionState);
   const senderLine = formatWaJid(waJid);
+  // Sessão "open" sem número conectado = sessão zumbi (API aceita, WhatsApp não entrega).
+  const zombieSession = connectionState === "open" && (authenticated === false || (!waJid && authenticated !== null));
 
   const refreshLogs = useCallback(async () => {
     const res = await fetch("/api/admin/system-agent/notifications", { credentials: "same-origin" });
@@ -107,11 +145,35 @@ export function SystemAgentHub(props: {
       credentials: "same-origin",
     });
     if (!res.ok) return;
-    const json = (await res.json()) as { connectionState?: string; waJid?: string | null };
+    const json = (await res.json()) as {
+      connectionState?: string;
+      waJid?: string | null;
+      authenticated?: boolean;
+    };
     if (typeof json.connectionState === "string" && json.connectionState.trim()) {
       setConnectionState(json.connectionState.trim());
     }
-    if (json.waJid) setWaJid(json.waJid);
+    setWaJid(json.waJid ?? null);
+    if (typeof json.authenticated === "boolean") setAuthenticated(json.authenticated);
+  }, []);
+
+  const runDiagnose = useCallback(async () => {
+    setDiagnoseBusy(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch("/api/admin/system-agent/evolution/diagnose", { credentials: "same-origin" });
+      const json = (await res.json().catch(() => null)) as (DiagnoseResult & { error?: string }) | null;
+      if (!res.ok || !json || json.error || !json.session) {
+        setActionMessage(json?.error || "Falha ao executar diagnóstico.");
+        return;
+      }
+      setDiagnose(json);
+      if (typeof json.session.authenticated === "boolean") setAuthenticated(json.session.authenticated);
+      if (json.session.ownerJid) setWaJid(json.session.ownerJid);
+      if (json.session.connectionState) setConnectionState(json.session.connectionState);
+    } finally {
+      setDiagnoseBusy(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -232,6 +294,14 @@ export function SystemAgentHub(props: {
             <dd className="text-content-secondary">{formatWaJid(waJid)}</dd>
           </div>
         </dl>
+        {zombieSession ? (
+          <div className="mt-4 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-3 text-xs leading-relaxed text-rose-100">
+            <strong>Sessão zumbi detectada.</strong> O status diz &quot;Conectado&quot;, mas a sessão não tem um
+            número WhatsApp ativo (sem identidade). A Evolution aceita os envios, porém o WhatsApp não entrega
+            nada. <strong>Solução:</strong> clique em &quot;Forçar reconexão (QR)&quot; abaixo e escaneie o QR com o
+            celular do chip do agente.
+          </div>
+        ) : null}
         <p className="mt-4 text-xs leading-relaxed text-content-muted">
           Este agente é crítico para o produto. Não desative nem remova do banco. As notificações de handoff e
           automações internas usam a instância WhatsApp configurada abaixo.
@@ -277,8 +347,68 @@ export function SystemAgentHub(props: {
           >
             {restartBusy ? "Reconectando…" : "Forçar reconexão (QR)"}
           </button>
+          <button
+            type="button"
+            disabled={diagnoseBusy}
+            onClick={() => void runDiagnose()}
+            className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-content-secondary disabled:opacity-60"
+          >
+            {diagnoseBusy ? "Verificando…" : "Diagnóstico avançado"}
+          </button>
         </div>
         {actionMessage ? <p className="mt-3 text-xs text-content-muted">{actionMessage}</p> : null}
+        {diagnose ? (
+          <div className="mt-4 space-y-2 rounded-lg border border-line/80 bg-surface-elevated/40 p-3 text-xs">
+            <div className="grid gap-1 sm:grid-cols-2">
+              <span className="text-content-faint">
+                Sessão (fonte: {diagnose.session.source}):{" "}
+                <strong className={diagnose.session.authenticated ? "text-emerald-400" : "text-rose-400"}>
+                  {diagnose.session.authenticated ? "autenticada" : "NÃO autenticada"}
+                </strong>
+              </span>
+              <span className="text-content-faint">
+                connectionStatus: <span className="font-mono text-content-secondary">{diagnose.session.connectionState}</span>
+              </span>
+              <span className="text-content-faint">
+                Número (ownerJid):{" "}
+                <span className="font-mono text-content-secondary">{formatWaJid(diagnose.session.ownerJid)}</span>
+              </span>
+              <span className="text-content-faint">
+                Perfil: <span className="text-content-secondary">{diagnose.session.profileName ?? "—"}</span>
+              </span>
+            </div>
+            {!diagnose.fetchInstancesOk ? (
+              <p className="text-rose-300">
+                Não foi possível ler fetchInstances: {diagnose.fetchInstancesError ?? "erro desconhecido"}
+              </p>
+            ) : null}
+            {diagnose.recent.length ? (
+              <div className="mt-2">
+                <p className="mb-1 text-content-faint">Últimos envios (status real):</p>
+                <ul className="space-y-1">
+                  {diagnose.recent.slice(0, 5).map((r, i) => (
+                    <li key={i} className="flex flex-wrap gap-x-2 text-content-muted">
+                      <span className="font-mono">{new Date(r.created_at).toLocaleTimeString("pt-BR")}</span>
+                      <span>{r.type}</span>
+                      <span
+                        className={
+                          r.status === "delivered"
+                            ? "text-emerald-400"
+                            : r.status === "sent"
+                              ? "text-amber-400"
+                              : "text-rose-400"
+                        }
+                      >
+                        {r.status}
+                      </span>
+                      {r.response_status ? <span>· {String(r.response_status)}</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">

@@ -17,6 +17,7 @@ import {
 } from "@/lib/integrations/evolution-webhook-parse";
 import {
   evolutionSendText,
+  isEvolutionDeliveredStatus,
   isEvolutionDeliveryErrorStatus,
   remoteJidToEvoNumber,
 } from "@/lib/integrations/evolution-api";
@@ -49,7 +50,11 @@ import {
   notifyTenantIntegrationDisconnected,
   shouldNotifyWhatsappDisconnect,
 } from "@/lib/server/integration-disconnect-notifications";
-import { SYSTEM_TENANT_ID, markSystemNotificationDeliveryFailed } from "@/lib/server/system-agent";
+import {
+  SYSTEM_TENANT_ID,
+  markSystemNotificationDelivered,
+  markSystemNotificationDeliveryFailed,
+} from "@/lib/server/system-agent";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import {
   AGENDA_AUTOMATION_DISABLED_REPLY,
@@ -478,11 +483,18 @@ export async function POST(request: Request) {
         if (!row || row.tenant_id !== SYSTEM_TENANT_ID) continue;
 
         for (const update of extractMessageDeliveryUpdates(payload)) {
-          if (!update.fromMe || !isEvolutionDeliveryErrorStatus(update.status)) continue;
-          await markSystemNotificationDeliveryFailed({
-            evolutionMessageId: update.messageId,
-            reason: `delivery_status:${String(update.status)}`,
-          });
+          if (!update.fromMe) continue;
+          if (isEvolutionDeliveryErrorStatus(update.status)) {
+            await markSystemNotificationDeliveryFailed({
+              evolutionMessageId: update.messageId,
+              reason: `delivery_status:${String(update.status)}`,
+            });
+          } else if (isEvolutionDeliveredStatus(update.status)) {
+            await markSystemNotificationDelivered({
+              evolutionMessageId: update.messageId,
+              status: update.status,
+            });
+          }
         }
       } catch (e) {
         console.warn("[webhooks/evolution] messages update system delivery", e);

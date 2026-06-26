@@ -241,6 +241,93 @@ export async function evolutionConnectionState(
   });
 }
 
+/**
+ * Identidade real de uma instância segundo a Evolution.
+ * `ownerJid` só vem preenchido quando a sessão WhatsApp está REALMENTE autenticada
+ * (QR escaneado e socket Baileys ativo). `connectionState` (endpoint connectionState)
+ * pode reportar "open" mesmo numa sessão zumbi — por isso usamos fetchInstances como
+ * fonte de verdade para o número conectado.
+ */
+export type EvolutionInstanceInfo = {
+  name: string | null;
+  connectionStatus: string | null;
+  ownerJid: string | null;
+  profileName: string | null;
+};
+
+function normalizeOwnerJidValue(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const clean = value.trim();
+  if (!clean) return null;
+  if (clean.includes("@")) {
+    if (clean.endsWith("@g.us") || clean.endsWith("@broadcast")) return null;
+    const digits = clean.split("@")[0]?.replace(/\D/g, "") ?? "";
+    return digits.length >= 8 ? `${digits}@s.whatsapp.net` : null;
+  }
+  const digits = clean.replace(/\D/g, "");
+  return digits.length >= 8 ? `${digits}@s.whatsapp.net` : null;
+}
+
+function parseEvolutionInstanceItem(item: unknown): EvolutionInstanceInfo | null {
+  if (!item || typeof item !== "object") return null;
+  const o = item as Record<string, unknown>;
+  const inst =
+    o.instance && typeof o.instance === "object" ? (o.instance as Record<string, unknown>) : null;
+  const read = (key: string): unknown => o[key] ?? inst?.[key];
+
+  const nameRaw = read("name") ?? read("instanceName");
+  const name = typeof nameRaw === "string" && nameRaw.trim() ? nameRaw.trim() : null;
+
+  const statusRaw =
+    read("connectionStatus") ?? read("connectionState") ?? read("state") ?? read("status");
+  const connectionStatus =
+    typeof statusRaw === "string" && statusRaw.trim() ? statusRaw.trim().toLowerCase() : null;
+
+  const ownerJid =
+    normalizeOwnerJidValue(read("ownerJid")) ??
+    normalizeOwnerJidValue(read("owner")) ??
+    normalizeOwnerJidValue(read("wuid"));
+
+  const profileRaw = read("profileName") ?? read("profilename");
+  const profileName = typeof profileRaw === "string" && profileRaw.trim() ? profileRaw.trim() : null;
+
+  if (!name && !connectionStatus && !ownerJid) return null;
+  return { name, connectionStatus, ownerJid, profileName };
+}
+
+/** GET /instance/fetchInstances — lista instâncias com `ownerJid`/`connectionStatus`. */
+export async function evolutionFetchInstances(
+  instanceName?: string,
+): Promise<EvolutionFetchResult<EvolutionInstanceInfo[]>> {
+  const query = instanceName ? `?instanceName=${encodeURIComponent(instanceName)}` : "";
+  const res = await evolutionFetchJson<unknown>(`/instance/fetchInstances${query}`, { method: "GET" });
+  if (!res.ok) return res;
+
+  const raw = res.data;
+  const arr: unknown[] = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === "object" && Array.isArray((raw as { instances?: unknown }).instances)
+      ? ((raw as { instances: unknown[] }).instances)
+      : raw && typeof raw === "object"
+        ? [raw]
+        : [];
+
+  const parsed = arr
+    .map(parseEvolutionInstanceItem)
+    .filter((item): item is EvolutionInstanceInfo => item !== null);
+
+  return { ok: true, status: res.status, data: parsed };
+}
+
+/** Seleciona a instância pelo nome (ou a única retornada). */
+export function pickEvolutionInstanceInfo(
+  list: EvolutionInstanceInfo[],
+  instanceName: string,
+): EvolutionInstanceInfo | null {
+  const target = instanceName.trim();
+  return list.find((item) => item.name === target) ?? (list.length === 1 ? list[0] ?? null : null);
+}
+
 export async function evolutionSetWebhook(params: {
   instanceName: string;
   /** URL completa (ex.: com `?token=` para o route handler validar). */
@@ -473,6 +560,20 @@ export function isEvolutionDeliveryErrorStatus(status: unknown): boolean {
 export function isEvolutionConnectionClosedError(error: string | null | undefined): boolean {
   if (!error) return false;
   return /connection\s*closed/i.test(error);
+}
+
+/**
+ * Indica entrega confirmada no aparelho a partir do `status` típico Baileys/Evolution.
+ * Numérico: 3 = DELIVERY_ACK, 4 = READ, 5 = PLAYED. (1 = PENDING, 2 = SERVER_ACK não contam
+ * como entrega no aparelho.) Aceita também os equivalentes em string.
+ */
+export function isEvolutionDeliveredStatus(status: unknown): boolean {
+  if (typeof status === "number") return status >= 3;
+  if (typeof status === "string") {
+    const normalized = status.trim().toUpperCase();
+    return normalized === "DELIVERY_ACK" || normalized === "READ" || normalized === "PLAYED";
+  }
+  return false;
 }
 
 /**

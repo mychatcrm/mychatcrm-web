@@ -1,11 +1,13 @@
 import {
   evolutionConnectionState,
+  evolutionFetchInstances,
   evolutionRestartInstance,
   evolutionSendText,
   isEvolutionConnectionClosedError,
   isEvolutionDeliveryErrorStatus,
   normalizeEvolutionConnectionState,
   parseEvolutionConnectionStatePayload,
+  pickEvolutionInstanceInfo,
   resolveEvolutionSendNumber,
 } from "@/lib/integrations/evolution-api";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
@@ -19,14 +21,49 @@ export async function getSystemAgentInstanceName(): Promise<string | null> {
   return row?.instance_name?.trim() || null;
 }
 
-export async function isSystemAgentReady(): Promise<{
-  ready: boolean;
+export type SystemAgentSession = {
   instanceName: string | null;
   connectionState: string;
-}> {
+  ownerJid: string | null;
+  profileName: string | null;
+  /** true só quando a sessão WhatsApp está REALMENTE autenticada (open + ownerJid). */
+  authenticated: boolean;
+  source: "fetchInstances" | "connectionState" | "none";
+};
+
+/**
+ * Identidade real da sessão do agente do sistema.
+ * Usa `fetchInstances` (traz `ownerJid`) como fonte de verdade — o endpoint
+ * `connectionState` pode reportar "open" numa sessão zumbi (aceita API, não entrega).
+ * Faz fallback para `connectionState` apenas quando `fetchInstances` está indisponível.
+ */
+export async function getSystemAgentSession(): Promise<SystemAgentSession> {
   const instanceName = await getSystemAgentInstanceName();
   if (!instanceName) {
-    return { ready: false, instanceName: null, connectionState: "none" };
+    return {
+      instanceName: null,
+      connectionState: "none",
+      ownerJid: null,
+      profileName: null,
+      authenticated: false,
+      source: "none",
+    };
+  }
+
+  const instances = await evolutionFetchInstances(instanceName);
+  if (instances.ok) {
+    const info = pickEvolutionInstanceInfo(instances.data, instanceName);
+    if (info) {
+      const connectionState = info.connectionStatus ?? "unknown";
+      return {
+        instanceName,
+        connectionState,
+        ownerJid: info.ownerJid,
+        profileName: info.profileName,
+        authenticated: connectionState === "open" && Boolean(info.ownerJid),
+        source: "fetchInstances",
+      };
+    }
   }
 
   const state = await evolutionConnectionState(instanceName);
@@ -35,9 +72,25 @@ export async function isSystemAgentReady(): Promise<{
     : "unknown";
 
   return {
-    ready: state.ok && connectionState === "open",
     instanceName,
     connectionState,
+    ownerJid: null,
+    profileName: null,
+    authenticated: state.ok && connectionState === "open",
+    source: "connectionState",
+  };
+}
+
+export async function isSystemAgentReady(): Promise<{
+  ready: boolean;
+  instanceName: string | null;
+  connectionState: string;
+}> {
+  const session = await getSystemAgentSession();
+  return {
+    ready: session.authenticated,
+    instanceName: session.instanceName,
+    connectionState: session.connectionState,
   };
 }
 
@@ -67,7 +120,7 @@ async function logSystemNotification(params: {
   type: string;
   toNumber: string;
   message: string;
-  status: "sent" | "failed" | "delivery_failed";
+  status: "sent" | "failed" | "delivery_failed" | "delivered";
   error?: string | null;
   metadata?: Record<string, unknown> | null;
 }): Promise<void> {
@@ -195,26 +248,45 @@ async function sendEvolutionTextWithRestartRetry(params: {
   return { ...send, restarted };
 }
 
+type SystemNotificationRow = { id: string; status: string; metadata: Record<string, unknown> | null };
+
+/**
+ * Localiza a notificação do sistema correspondente a um message_id da Evolution.
+ * Considera tanto o `evolution_message_id` primário quanto o array `evolution_message_ids`
+ * (notificações críticas podem ter sido enviadas em mais de um formato de número).
+ */
+async function findSystemNotificationByMessageId(
+  sb: ReturnType<typeof createSupabaseServiceClient>,
+  evolutionMessageId: string,
+): Promise<SystemNotificationRow | null> {
+  const primary = await sb
+    .from("system_notifications_log")
+    .select("id, status, metadata")
+    .filter("metadata->>evolution_message_id", "eq", evolutionMessageId)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const primaryRow = primary.data?.[0] as SystemNotificationRow | undefined;
+  if (primaryRow) return primaryRow;
+
+  const inArray = await sb
+    .from("system_notifications_log")
+    .select("id, status, metadata")
+    .contains("metadata", { evolution_message_ids: [evolutionMessageId] })
+    .order("created_at", { ascending: false })
+    .limit(1);
+  return (inArray.data?.[0] as SystemNotificationRow | undefined) ?? null;
+}
+
 export async function markSystemNotificationDeliveryFailed(params: {
   evolutionMessageId: string;
   reason: string;
 }): Promise<void> {
   try {
     const sb = createSupabaseServiceClient();
-    const { data: rows } = await sb
-      .from("system_notifications_log")
-      .select("id, metadata")
-      .eq("status", "sent")
-      .filter("metadata->>evolution_message_id", "eq", params.evolutionMessageId)
-      .limit(1);
+    const row = await findSystemNotificationByMessageId(sb, params.evolutionMessageId);
+    if (!row || row.status === "delivery_failed") return;
 
-    const row = rows?.[0];
-    if (!row) return;
-
-    const meta =
-      row.metadata && typeof row.metadata === "object"
-        ? { ...(row.metadata as Record<string, unknown>) }
-        : {};
+    const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
 
     await sb
       .from("system_notifications_log")
@@ -230,6 +302,38 @@ export async function markSystemNotificationDeliveryFailed(params: {
       .eq("id", row.id);
   } catch (error) {
     console.warn("[system-agent] delivery_failed_update", {
+      error: error instanceof Error ? error.message : "update_failed",
+    });
+  }
+}
+
+/** Marca a notificação como entregue (DELIVERY_ACK/READ/PLAYED) confirmada via webhook. */
+export async function markSystemNotificationDelivered(params: {
+  evolutionMessageId: string;
+  status?: unknown;
+}): Promise<void> {
+  try {
+    const sb = createSupabaseServiceClient();
+    const row = await findSystemNotificationByMessageId(sb, params.evolutionMessageId);
+    // Não rebaixa um estado de falha já registado; só confirma envios pendentes/enviados.
+    if (!row || row.status === "delivered" || row.status === "delivery_failed") return;
+
+    const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
+
+    await sb
+      .from("system_notifications_log")
+      .update({
+        status: "delivered",
+        error: null,
+        metadata: {
+          ...meta,
+          delivered_at: new Date().toISOString(),
+          delivery_status: params.status ?? null,
+        },
+      })
+      .eq("id", row.id);
+  } catch (error) {
+    console.warn("[system-agent] delivered_update", {
       error: error instanceof Error ? error.message : "update_failed",
     });
   }
@@ -305,6 +409,44 @@ export async function sendSystemNotification(
       },
     });
     return { ok: false, error };
+  }
+
+  // Fonte de verdade da identidade: fetchInstances traz ownerJid quando a sessão está REALMENTE
+  // autenticada. "open" sem ownerJid = sessão zumbi (a Evolution aceita o sendText e devolve
+  // message_id, mas o WhatsApp nunca entrega). Bloqueamos com erro claro e acionável.
+  let sessionOwnerJid: string | null = null;
+  let sessionConnectionStatus: string | null = null;
+  const instancesRes = await evolutionFetchInstances(resolvedInstance);
+  if (instancesRes.ok) {
+    const info = pickEvolutionInstanceInfo(instancesRes.data, resolvedInstance);
+    if (info) {
+      sessionOwnerJid = info.ownerJid;
+      sessionConnectionStatus = info.connectionStatus;
+      const authenticated = info.connectionStatus === "open" && Boolean(info.ownerJid);
+      if (!authenticated) {
+        const reason =
+          info.connectionStatus && info.connectionStatus !== "open"
+            ? `system_session_not_authenticated:${info.connectionStatus}`
+            : "system_session_not_authenticated:no_owner";
+        await logSystemNotification({
+          type: options?.type ?? "generic",
+          toNumber: digits,
+          message,
+          status: "failed",
+          error: reason,
+          metadata: {
+            ...(options?.metadata ?? {}),
+            instance_name: resolvedInstance,
+            number_raw: rawDigits,
+            number_normalized: digits,
+            evolution_connection_state: liveState,
+            session_connection_status: info.connectionStatus,
+            session_owner_jid: info.ownerJid,
+          },
+        });
+        return { ok: false, error: reason };
+      }
+    }
   }
 
   // Valida existência no WhatsApp e prepara as variantes brasileiras reconhecidas pela Evolution.
@@ -441,6 +583,8 @@ export async function sendSystemNotification(
       number_sent: successfulAttempt?.number ?? sendNumber,
       numbers_tried: tried,
       resolved_jid: resolvedJid,
+      session_owner_jid: sessionOwnerJid,
+      session_connection_status: sessionConnectionStatus,
       evolution_number_check: numberCheck,
       evolution_connection_state: liveState,
       evolution_message_id: evolutionMessageId,

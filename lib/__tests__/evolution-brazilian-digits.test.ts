@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   brazilianMobileAlternateVariant,
   ensureBrazilianMobileWhatsappDigits,
+  isEvolutionDeliveredStatus,
   isEvolutionDeliveryErrorStatus,
+  pickEvolutionInstanceInfo,
+  type EvolutionInstanceInfo,
 } from "@/lib/integrations/evolution-api";
 import { extractMessageDeliveryUpdates } from "@/lib/integrations/evolution-webhook-parse";
 
@@ -37,5 +40,37 @@ describe("Evolution delivery helpers", () => {
     expect(updates).toEqual([
       { messageId: "ABC123", fromMe: true, status: 0 },
     ]);
+  });
+
+  it("treats DELIVERY_ACK/READ/PLAYED as delivered, PENDING/SERVER_ACK as not", () => {
+    expect(isEvolutionDeliveredStatus(3)).toBe(true);
+    expect(isEvolutionDeliveredStatus(4)).toBe(true);
+    expect(isEvolutionDeliveredStatus("DELIVERY_ACK")).toBe(true);
+    expect(isEvolutionDeliveredStatus("READ")).toBe(true);
+    expect(isEvolutionDeliveredStatus(2)).toBe(false);
+    expect(isEvolutionDeliveredStatus("PENDING")).toBe(false);
+    expect(isEvolutionDeliveredStatus("SERVER_ACK")).toBe(false);
+  });
+});
+
+describe("pickEvolutionInstanceInfo", () => {
+  const list: EvolutionInstanceInfo[] = [
+    { name: "mc-other", connectionStatus: "open", ownerJid: "5511999999999@s.whatsapp.net", profileName: "Other" },
+    { name: "mc-system", connectionStatus: "open", ownerJid: "556282067910@s.whatsapp.net", profileName: "System" },
+  ];
+
+  it("selects the instance by name", () => {
+    expect(pickEvolutionInstanceInfo(list, "mc-system")?.ownerJid).toBe("556282067910@s.whatsapp.net");
+  });
+
+  it("returns the only instance when there is a single one", () => {
+    const single: EvolutionInstanceInfo[] = [
+      { name: "weird-name", connectionStatus: "open", ownerJid: "5562000000000@s.whatsapp.net", profileName: null },
+    ];
+    expect(pickEvolutionInstanceInfo(single, "mc-system")?.ownerJid).toBe("5562000000000@s.whatsapp.net");
+  });
+
+  it("returns null when the named instance is missing among several", () => {
+    expect(pickEvolutionInstanceInfo(list, "does-not-exist")).toBeNull();
   });
 });

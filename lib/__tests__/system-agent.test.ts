@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   evolutionConnectionStateMock,
+  evolutionFetchInstancesMock,
   evolutionRestartInstanceMock,
   evolutionSendTextMock,
   resolveEvolutionSendNumberMock,
   insertMock,
 } = vi.hoisted(() => ({
   evolutionConnectionStateMock: vi.fn(),
+  evolutionFetchInstancesMock: vi.fn(),
   evolutionRestartInstanceMock: vi.fn(),
   evolutionSendTextMock: vi.fn(),
   resolveEvolutionSendNumberMock: vi.fn(),
@@ -19,6 +21,7 @@ vi.mock("@/lib/integrations/evolution-api", async (importOriginal) => {
   return {
     ...actual,
     evolutionConnectionState: evolutionConnectionStateMock,
+    evolutionFetchInstances: evolutionFetchInstancesMock,
     evolutionRestartInstance: evolutionRestartInstanceMock,
     evolutionSendText: evolutionSendTextMock,
     resolveEvolutionSendNumber: resolveEvolutionSendNumberMock,
@@ -51,6 +54,19 @@ describe("sendSystemNotification", () => {
       candidateNumbers: [number],
     }));
     evolutionRestartInstanceMock.mockResolvedValue({ ok: true, status: 200, data: {} });
+    // Default: sessão realmente autenticada (open + ownerJid) para os caminhos felizes.
+    evolutionFetchInstancesMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: [
+        {
+          name: "system-instance",
+          connectionStatus: "open",
+          ownerJid: "556282067910@s.whatsapp.net",
+          profileName: "MyChatCRM",
+        },
+      ],
+    });
   });
 
   it("does not call Evolution sendText when the system instance is not open", async () => {
@@ -298,6 +314,54 @@ describe("sendSystemNotification", () => {
     expect(result.ok).toBe(true);
     expect(evolutionRestartInstanceMock).toHaveBeenCalledWith("system-instance");
     expect(evolutionSendTextMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not send when the session is open but has no owner (zombie session)", async () => {
+    evolutionConnectionStateMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { instance: { state: "open" } },
+    });
+    evolutionFetchInstancesMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: [{ name: "system-instance", connectionStatus: "open", ownerJid: null, profileName: null }],
+    });
+
+    const result = await sendSystemNotification("62999991111", "Teste", "system-instance", {
+      type: "admin_test",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("system_session_not_authenticated:no_owner");
+    expect(evolutionSendTextMock).not.toHaveBeenCalled();
+    expect(insertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        error: "system_session_not_authenticated:no_owner",
+      }),
+    );
+  });
+
+  it("does not send when the session reports a non-open connection status", async () => {
+    evolutionConnectionStateMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { instance: { state: "open" } },
+    });
+    evolutionFetchInstancesMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: [{ name: "system-instance", connectionStatus: "connecting", ownerJid: null, profileName: null }],
+    });
+
+    const result = await sendSystemNotification("62999991111", "Teste", "system-instance", {
+      type: "admin_test",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("system_session_not_authenticated:connecting");
+    expect(evolutionSendTextMock).not.toHaveBeenCalled();
   });
 
   it("fails clearly without sending when the destination is not on WhatsApp", async () => {

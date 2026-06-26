@@ -11,6 +11,7 @@ import {
   evolutionConnectionState,
   evolutionCreateInstance,
   evolutionDeleteInstance,
+  evolutionFetchInstances,
   evolutionInstanceConnect,
   evolutionLogoutInstance,
   evolutionRestartInstance,
@@ -18,6 +19,7 @@ import {
   isEvolutionApiConfigured,
   normalizeEvolutionConnectionState,
   parseEvolutionConnectionStatePayload,
+  pickEvolutionInstanceInfo,
 } from "@/lib/integrations/evolution-api";
 import { SYSTEM_AGENT_ID, SYSTEM_TENANT_ID } from "@/lib/server/system-agent";
 import {
@@ -36,6 +38,36 @@ function assertAdminSystemAgent(session: Awaited<ReturnType<typeof getAdminSessi
     return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
   }
   return null;
+}
+
+/**
+ * Resolve a identidade real da instância. `fetchInstances` traz `ownerJid` (número
+ * conectado) e `connectionStatus`; o endpoint `connectionState` serve apenas de fallback.
+ * `authenticated` = sessão WhatsApp realmente ativa (open + ownerJid). "open" sem ownerJid
+ * é uma sessão zumbi (API aceita, WhatsApp não entrega).
+ */
+async function resolveSystemInstanceIdentity(
+  instanceName: string,
+  fallbackState: string | null,
+  fallbackJid: string | null,
+): Promise<{ connectionState: string; waJid: string | null; profileName: string | null; authenticated: boolean }> {
+  const identity = await evolutionFetchInstances(instanceName);
+  const info = identity.ok ? pickEvolutionInstanceInfo(identity.data, instanceName) : null;
+
+  const stateRes = await evolutionConnectionState(instanceName);
+  const connStateRaw = stateRes.ok ? parseEvolutionConnectionStatePayload(stateRes.data) : undefined;
+
+  const connectionState = normalizeEvolutionConnectionState(
+    info?.connectionStatus ?? connStateRaw,
+    normalizeEvolutionConnectionState(fallbackState ?? "close", "close"),
+  );
+
+  const jidFromState =
+    stateRes.ok && stateRes.data ? extractInstanceJid(stateRes.data as Record<string, unknown>) : null;
+  const waJid = info?.ownerJid ?? jidFromState ?? fallbackJid ?? null;
+  const authenticated = connectionState === "open" && Boolean(info?.ownerJid ?? jidFromState);
+
+  return { connectionState, waJid, profileName: info?.profileName ?? null, authenticated };
 }
 
 export async function POST(request: Request) {
@@ -149,43 +181,38 @@ export async function GET(request: Request) {
     });
   }
 
-  const stateRes = await evolutionConnectionState(row.instance_name);
-  const remoteState = normalizeEvolutionConnectionState(
-    stateRes.ok ? parseEvolutionConnectionStatePayload(stateRes.data) : row.connection_state,
-    normalizeEvolutionConnectionState(row.connection_state, "close"),
-  );
-
-  const remoteWaJid =
-    remoteState === "open" && stateRes.ok && stateRes.data
-      ? extractInstanceJid(stateRes.data as Record<string, unknown>) ?? row.wa_jid
-      : row.wa_jid;
+  const identity = await resolveSystemInstanceIdentity(row.instance_name, row.connection_state, row.wa_jid);
 
   await upsertTenantEvolutionInstance({
     tenantId: SYSTEM_TENANT_ID,
     slotIndex: SYSTEM_SLOT_INDEX,
     instanceName: row.instance_name,
-    connectionState: remoteState,
-    waJid: remoteWaJid,
+    connectionState: identity.connectionState,
+    waJid: identity.waJid,
     defaultAgentId: SYSTEM_AGENT_ID,
   });
 
-  if (remoteState === "open") {
+  if (identity.connectionState === "open") {
     return NextResponse.json({
       instanceName: row.instance_name,
-      connectionState: remoteState,
+      connectionState: identity.connectionState,
       qrDataUrl: null,
       pairingCode: null,
-      waJid: remoteWaJid ?? null,
+      waJid: identity.waJid ?? null,
+      authenticated: identity.authenticated,
+      profileName: identity.profileName,
     });
   }
 
   const connectRes = await evolutionInstanceConnect(row.instance_name);
   return NextResponse.json({
     instanceName: row.instance_name,
-    connectionState: remoteState,
+    connectionState: identity.connectionState,
     qrDataUrl: connectRes.ok ? normalizeInstanceConnectToQrDataUrl(connectRes.data as unknown) : null,
     pairingCode: connectRes.ok ? extractPairingCodeFromConnectPayload(connectRes.data as unknown) : null,
-    waJid: remoteWaJid ?? null,
+    waJid: identity.waJid ?? null,
+    authenticated: identity.authenticated,
+    profileName: identity.profileName,
   });
 }
 
@@ -236,36 +263,36 @@ export async function PATCH(request: Request) {
     await evolutionSetWebhook({ instanceName: row.instance_name, url: webhookUrl }).catch(() => null);
   }
 
-  const stateRes = await evolutionConnectionState(row.instance_name);
-  const remoteState = normalizeEvolutionConnectionState(
-    stateRes.ok ? parseEvolutionConnectionStatePayload(stateRes.data) : undefined,
-    action === "reconnect" ? "close" : "close",
-  );
+  // Após reconnect (logout) a sessão fica sem identidade até novo QR; limpamos o JID antigo.
+  const fallbackJid = action === "reconnect" ? null : row.wa_jid;
+  const identity = await resolveSystemInstanceIdentity(row.instance_name, "close", fallbackJid);
 
   await upsertTenantEvolutionInstance({
     tenantId: SYSTEM_TENANT_ID,
     slotIndex: SYSTEM_SLOT_INDEX,
     instanceName: row.instance_name,
-    connectionState: remoteState,
-    waJid: action === "reconnect" ? null : row.wa_jid,
+    connectionState: identity.connectionState,
+    waJid: identity.waJid,
     defaultAgentId: SYSTEM_AGENT_ID,
   });
 
-  if (remoteState === "open") {
-    const remoteWaJid =
-      stateRes.ok && stateRes.data
-        ? extractInstanceJid(stateRes.data as Record<string, unknown>) ?? row.wa_jid
-        : row.wa_jid;
-    return NextResponse.json({ ok: true, connectionState: remoteState, waJid: remoteWaJid ?? null });
+  if (identity.connectionState === "open") {
+    return NextResponse.json({
+      ok: true,
+      connectionState: identity.connectionState,
+      waJid: identity.waJid ?? null,
+      authenticated: identity.authenticated,
+    });
   }
 
   const connectRes = await evolutionInstanceConnect(row.instance_name);
   return NextResponse.json({
     ok: true,
-    connectionState: remoteState,
+    connectionState: identity.connectionState,
     qrDataUrl: connectRes.ok ? normalizeInstanceConnectToQrDataUrl(connectRes.data as unknown) : null,
     pairingCode: connectRes.ok ? extractPairingCodeFromConnectPayload(connectRes.data as unknown) : null,
-    waJid: null,
+    waJid: identity.waJid ?? null,
+    authenticated: identity.authenticated,
     detail: connectRes.ok ? null : connectRes.error,
   });
 }
