@@ -133,6 +133,26 @@ function detectEvolutionPayloadFailure(payload: unknown): string | null {
   return null;
 }
 
+function extractEvolutionResponseStatus(payload: unknown): unknown {
+  if (!payload || typeof payload !== "object") return null;
+  return (payload as Record<string, unknown>).status ?? null;
+}
+
+function isEvolutionPendingStatus(status: unknown): boolean {
+  return typeof status === "string" && status.trim().toUpperCase() === "PENDING";
+}
+
+const CRITICAL_SYSTEM_NOTIFICATION_TYPES = new Set([
+  "account_phone_removed",
+  "admin_test",
+  "integration_disconnected",
+  "phone_verification_code",
+]);
+
+function shouldTryReliableBrazilianVariants(type: string | undefined): boolean {
+  return Boolean(type && CRITICAL_SYSTEM_NOTIFICATION_TYPES.has(type));
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -230,6 +250,7 @@ export async function sendSystemNotification(
     numberSent?: string;
     candidatesTried?: string[];
     evolutionMessageId?: string | null;
+    evolutionMessageIds?: string[];
     evolutionResponseStatus?: unknown;
     sessionRestarted?: boolean;
   };
@@ -286,7 +307,7 @@ export async function sendSystemNotification(
     return { ok: false, error };
   }
 
-  // Valida existência no WhatsApp e envia no formato que a Evolution reconheceu para o contato.
+  // Valida existência no WhatsApp e prepara as variantes brasileiras reconhecidas pela Evolution.
   const resolution = await resolveEvolutionSendNumber({ instanceName: resolvedInstance, number: digits });
 
   if (resolution.status === "not_found") {
@@ -329,7 +350,19 @@ export async function sendSystemNotification(
   );
   const resolvedJid = resolution.status === "exists" ? resolution.jid : null;
 
-  let send: Awaited<ReturnType<typeof sendEvolutionTextWithRestartRetry>> | null = null;
+  const tryAllCriticalVariants = shouldTryReliableBrazilianVariants(options?.type);
+  type SendAttempt = {
+    number: string;
+    ok: boolean;
+    error: string | null;
+    payloadFailure: string | null;
+    messageId: string | null;
+    responseStatus: unknown;
+    restarted: boolean;
+  };
+
+  const attempts: SendAttempt[] = [];
+  const successfulAttempts: SendAttempt[] = [];
   let sendNumber = candidateNumbers[0] ?? platformNumber;
   const tried: string[] = [];
 
@@ -340,10 +373,32 @@ export async function sendSystemNotification(
       number: candidate,
       text: message.slice(0, 4000),
     });
-    send = attempt;
     sendNumber = candidate;
     const attemptFailure = attempt.ok ? detectEvolutionPayloadFailure(attempt.data) : null;
-    if (attempt.ok && !attemptFailure) break;
+    const messageId = attempt.ok ? extractEvolutionMessageId(attempt.data) : null;
+    const responseStatus = attempt.ok ? extractEvolutionResponseStatus(attempt.data) : null;
+    const sendAttempt: SendAttempt = {
+      number: candidate,
+      ok: attempt.ok,
+      error: attempt.ok ? null : attempt.error,
+      payloadFailure: attemptFailure,
+      messageId,
+      responseStatus,
+      restarted: attempt.restarted === true,
+    };
+    attempts.push(sendAttempt);
+
+    if (attempt.ok && !attemptFailure && messageId) {
+      successfulAttempts.push(sendAttempt);
+      const shouldTryNextVariant =
+        tryAllCriticalVariants && isEvolutionPendingStatus(responseStatus) && tried.length < candidateNumbers.length;
+      if (shouldTryNextVariant) continue;
+      break;
+    }
+    if (attempt.ok && !attemptFailure && !messageId) {
+      // Resposta aceita sem ID não é suficiente para considerar entregue; tenta o próximo formato.
+      continue;
+    }
     if (!attempt.ok && !isEvolutionConnectionClosedError(attempt.error)) {
       // HTTP error unrelated to session — try next number format before giving up.
       continue;
@@ -354,21 +409,23 @@ export async function sendSystemNotification(
     break;
   }
 
-  if (!send) {
+  if (!attempts.length) {
     return { ok: false, error: "evolution_send_failed" };
   }
 
-  const payloadFailure = send.ok ? detectEvolutionPayloadFailure(send.data) : null;
-  const evolutionMessageId = send.ok ? extractEvolutionMessageId(send.data) : null;
-  const evolutionResponseStatus =
-    send.ok && send.data && typeof send.data === "object"
-      ? (send.data as Record<string, unknown>).status
-      : null;
-  const missingMessageId = send.ok && !payloadFailure && !evolutionMessageId;
-  const finalOk = send.ok && !payloadFailure && !missingMessageId;
-  const finalError = send.ok
-    ? payloadFailure ?? (missingMessageId ? "missing_evolution_message_id" : null)
-    : send.error;
+  const lastAttempt = attempts[attempts.length - 1];
+  const successfulAttempt = successfulAttempts[successfulAttempts.length - 1] ?? null;
+  const evolutionMessageIds = successfulAttempts
+    .map((attempt) => attempt.messageId)
+    .filter((messageId): messageId is string => Boolean(messageId));
+  const evolutionMessageId = successfulAttempt?.messageId ?? null;
+  const evolutionResponseStatus = successfulAttempt?.responseStatus ?? lastAttempt.responseStatus;
+  const finalOk = Boolean(successfulAttempt);
+  const finalError = finalOk
+    ? null
+    : lastAttempt.ok
+      ? lastAttempt.payloadFailure ?? "missing_evolution_message_id"
+      : lastAttempt.error;
 
   await logSystemNotification({
     type: options?.type ?? "generic",
@@ -381,23 +438,34 @@ export async function sendSystemNotification(
       instance_name: resolvedInstance,
       number_raw: rawDigits,
       number_normalized: platformNumber,
-      number_sent: sendNumber,
+      number_sent: successfulAttempt?.number ?? sendNumber,
       numbers_tried: tried,
       resolved_jid: resolvedJid,
       evolution_number_check: numberCheck,
       evolution_connection_state: liveState,
       evolution_message_id: evolutionMessageId,
+      evolution_message_ids: evolutionMessageIds,
       evolution_response_status: evolutionResponseStatus,
-      evolution_session_restarted: send.restarted === true,
+      evolution_attempts: attempts.map((attempt) => ({
+        number: attempt.number,
+        ok: attempt.ok,
+        error: attempt.error,
+        payload_failure: attempt.payloadFailure,
+        message_id: attempt.messageId,
+        response_status: attempt.responseStatus,
+        restarted: attempt.restarted,
+      })),
+      evolution_session_restarted: attempts.some((attempt) => attempt.restarted),
     },
   });
 
   const debug = {
-    numberSent: sendNumber,
+    numberSent: successfulAttempt?.number ?? sendNumber,
     candidatesTried: tried,
     evolutionMessageId,
+    evolutionMessageIds,
     evolutionResponseStatus,
-    sessionRestarted: send.restarted === true,
+    sessionRestarted: attempts.some((attempt) => attempt.restarted),
   };
 
   if (!finalOk) return { ok: false, error: finalError ?? "evolution_send_failed", debug };
