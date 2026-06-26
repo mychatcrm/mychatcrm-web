@@ -286,7 +286,7 @@ export async function sendSystemNotification(
     return { ok: false, error };
   }
 
-  // Valida existência no WhatsApp e envia no formato canônico da plataforma (13 dígitos com 9).
+  // Valida existência no WhatsApp e envia no formato que a Evolution reconheceu para o contato.
   const resolution = await resolveEvolutionSendNumber({ instanceName: resolvedInstance, number: digits });
 
   if (resolution.status === "not_found") {
@@ -314,10 +314,19 @@ export async function sendSystemNotification(
     resolution.status === "exists" || resolution.status === "check_failed"
       ? resolution.platformNumber
       : digits;
-  const candidateNumbers =
-    (resolution.status === "exists" || resolution.status === "check_failed"
-      ? resolution.candidateNumbers
-      : null) ?? [platformNumber];
+  const preferredSendNumber =
+    resolution.status === "exists" && resolution.sendNumber ? resolution.sendNumber : platformNumber;
+  const candidateNumbers = Array.from(
+    new Set(
+      [
+        preferredSendNumber,
+        ...(resolution.status === "exists" || resolution.status === "check_failed"
+          ? resolution.candidateNumbers
+          : []),
+        platformNumber,
+      ].filter((candidate): candidate is string => Boolean(candidate && candidate.length >= 12)),
+    ),
+  );
   const resolvedJid = resolution.status === "exists" ? resolution.jid : null;
 
   let send: Awaited<ReturnType<typeof sendEvolutionTextWithRestartRetry>> | null = null;
@@ -355,8 +364,11 @@ export async function sendSystemNotification(
     send.ok && send.data && typeof send.data === "object"
       ? (send.data as Record<string, unknown>).status
       : null;
-  const finalOk = send.ok && !payloadFailure;
-  const finalError = send.ok ? payloadFailure : send.error;
+  const missingMessageId = send.ok && !payloadFailure && !evolutionMessageId;
+  const finalOk = send.ok && !payloadFailure && !missingMessageId;
+  const finalError = send.ok
+    ? payloadFailure ?? (missingMessageId ? "missing_evolution_message_id" : null)
+    : send.error;
 
   await logSystemNotification({
     type: options?.type ?? "generic",
