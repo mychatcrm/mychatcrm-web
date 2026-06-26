@@ -161,7 +161,7 @@ export function SystemAgentHub(props: {
     } finally {
       setRestartBusy(false);
     }
-  }, [refreshIdentity]);
+  }, [refreshIdentity, senderLine]);
 
   const sendTest = useCallback(async () => {
     if (!testNumber.trim()) {

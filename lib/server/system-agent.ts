@@ -311,15 +311,11 @@ export async function sendSystemNotification(
 
   const numberCheck = resolution.status;
   const platformNumber =
-    resolution.status === "exists" ||
-    resolution.status === "not_found" ||
-    resolution.status === "check_failed"
+    resolution.status === "exists" || resolution.status === "check_failed"
       ? resolution.platformNumber
       : digits;
   const candidateNumbers =
-    (resolution.status === "exists" ||
-    resolution.status === "not_found" ||
-    resolution.status === "check_failed"
+    (resolution.status === "exists" || resolution.status === "check_failed"
       ? resolution.candidateNumbers
       : null) ?? [platformNumber];
   const resolvedJid = resolution.status === "exists" ? resolution.jid : null;
