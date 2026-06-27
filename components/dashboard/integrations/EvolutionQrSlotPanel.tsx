@@ -97,10 +97,17 @@ export function EvolutionQrSlotPanel({
   slotIndex,
   sessionApiPath = "/api/client/whatsapp/evolution/session",
   statusApiPath = "/api/client/whatsapp/evolution/status",
+  autoProvision = true,
 }: {
   slotIndex: number;
   sessionApiPath?: string;
   statusApiPath?: string;
+  /**
+   * Quando false, o painel NÃO cria/recria a instância automaticamente: ao apagar/desconectar,
+   * a conexão fica vazia até o usuário clicar em "Conectar". Usado pelo agente do sistema para
+   * permitir apagar de vez (e trocar de número) sem recriação automática. Default true (clientes).
+   */
+  autoProvision?: boolean;
 }) {
   const { isLight } = usePanelAppearance();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -228,8 +235,12 @@ export function EvolutionQrSlotPanel({
     } finally {
       setDisconnecting(false);
     }
-    await startOrRefreshSession();
-  }, [slotIndex, startOrRefreshSession]);
+    if (autoProvision) {
+      await startOrRefreshSession();
+    } else {
+      setConnectionState("none");
+    }
+  }, [slotIndex, startOrRefreshSession, autoProvision]);
 
   // Infra check on mount
   useEffect(() => {
@@ -268,14 +279,14 @@ export function EvolutionQrSlotPanel({
       if (cancelled) return;
       const st = j.connectionState ?? "";
       const hasQr = Boolean(j.qrDataUrl);
-      if (res.ok && (st === "none" || (!hasQr && st !== "open"))) {
+      if (autoProvision && res.ok && (st === "none" || (!hasQr && st !== "open"))) {
         await startOrRefreshSession();
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [applySessionPayload, slotIndex, startOrRefreshSession]);
+  }, [applySessionPayload, slotIndex, startOrRefreshSession, autoProvision]);
 
   // Polling while not connected
   useEffect(() => {
@@ -289,6 +300,10 @@ export function EvolutionQrSlotPanel({
 
   const unifiedAlert = useMemo(() => deriveUnifiedAlert(infraHint, error), [infraHint, error]);
   const waNumber = formatWaNumber(waJid);
+  // Quando o provisionamento automático está desligado e não há conexão/QR ativo,
+  // mostramos um CTA explícito de "Conectar" em vez de criar a instância sozinho.
+  const showConnectCta =
+    !autoProvision && connectionState !== "open" && !qrDataUrl && !busy && !error;
 
   const countdownColor =
     qrSecondsLeft > 30
@@ -376,6 +391,28 @@ export function EvolutionQrSlotPanel({
           </p>
         </div>
       </details>
+
+      {/* ── Connect CTA (autoProvision off: leave empty until user connects) ── */}
+      {showConnectCta ? (
+        <div className="rounded-xl border border-line/60 bg-surface-elevated/30 px-4 py-5 text-center">
+          <div className="mb-2 flex justify-center">
+            <div className="rounded-full bg-primary/10 p-2.5">
+              <Smartphone className="size-6 text-primary" strokeWidth={1.5} aria-hidden />
+            </div>
+          </div>
+          <p className="text-sm font-semibold text-content">Sem conexão WhatsApp ativa</p>
+          <p className="mx-auto mt-1 max-w-xs text-xs leading-relaxed text-content-muted">
+            Clique em <strong className="text-content-secondary">Conectar</strong> para criar uma
+            instância nova e escanear o QR com o número que quiser.
+          </p>
+          <div className="mt-4 flex justify-center">
+            <Button type="button" variant="primary" disabled={busy} onClick={() => void startOrRefreshSession()}>
+              <Smartphone className="size-3.5" aria-hidden />
+              Conectar (gerar QR)
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       {/* ── Infra alert (infraHint with or without session error) ── */}
       {infraHint && unifiedAlert ? (
@@ -561,7 +598,7 @@ export function EvolutionQrSlotPanel({
       ) : null}
 
       {/* ── Status label ── */}
-      {!error || infraHint ? (
+      {(!error || infraHint) && !showConnectCta ? (
         <p className="text-xs text-content-muted">
           {connectionState === "open"
             ? "Ligado — o WhatsApp nesta linha está ativo."
@@ -573,8 +610,8 @@ export function EvolutionQrSlotPanel({
         </p>
       ) : null}
 
-      {/* ── Action buttons (hidden while loading) ── */}
-      {!busy ? (
+      {/* ── Action buttons (hidden while loading or when Connect CTA is shown) ── */}
+      {!busy && !showConnectCta ? (
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
