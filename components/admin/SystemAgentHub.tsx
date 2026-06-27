@@ -125,6 +125,7 @@ export function SystemAgentHub(props: {
   const [testNumber, setTestNumber] = useState("");
   const [testBusy, setTestBusy] = useState(false);
   const [restartBusy, setRestartBusy] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
   const [diagnoseBusy, setDiagnoseBusy] = useState(false);
   const [diagnose, setDiagnose] = useState<DiagnoseResult | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -155,6 +156,35 @@ export function SystemAgentHub(props: {
     }
     setWaJid(json.waJid ?? null);
     if (typeof json.authenticated === "boolean") setAuthenticated(json.authenticated);
+  }, []);
+
+  const resetAgent = useCallback(async () => {
+    const confirmed = window.confirm(
+      "Isto vai APAGAR a instância do agente do sistema no MyChatCRM e na Evolution API. " +
+        "Uma nova instância (nome novo, sessão limpa) será criada ao reconectar, e você poderá escanear o QR com qualquer número. Continuar?",
+    );
+    if (!confirmed) return;
+    setResetBusy(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch("/api/admin/system-agent/evolution/session?slotIndex=0", {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; deletedInstance?: string | null };
+      if (!res.ok) {
+        setActionMessage(json.error ?? "Falha ao apagar a instância.");
+        setResetBusy(false);
+        return;
+      }
+      setActionMessage(
+        "Instância apagada. Recarregando para gerar uma sessão NOVA do zero — escaneie o QR com o número que quiser usar no agente do sistema.",
+      );
+      setTimeout(() => window.location.reload(), 1200);
+    } catch {
+      setActionMessage("Falha ao apagar a instância.");
+      setResetBusy(false);
+    }
   }, []);
 
   const runDiagnose = useCallback(async () => {
@@ -357,6 +387,23 @@ export function SystemAgentHub(props: {
           </button>
         </div>
         {actionMessage ? <p className="mt-3 text-xs text-content-muted">{actionMessage}</p> : null}
+
+        <div className="mt-4 rounded-lg border border-rose-500/30 bg-rose-500/[0.06] p-3">
+          <p className="text-xs font-semibold text-rose-200">Zona de risco — recomeçar do zero</p>
+          <p className="mt-1 text-xs leading-relaxed text-content-muted">
+            Apaga a instância no MyChatCRM <strong>e</strong> na Evolution API. Ao reconectar, uma instância
+            <strong> nova (nome e sessão limpos)</strong> é criada — útil quando a sessão fica presa mesmo após
+            reconectar. Depois é só escanear o QR com o número que quiser (dá pra trocar de número aqui).
+          </p>
+          <button
+            type="button"
+            disabled={resetBusy}
+            onClick={() => void resetAgent()}
+            className="mt-3 rounded-lg border border-rose-500/50 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-100 hover:bg-rose-500/20 disabled:opacity-60"
+          >
+            {resetBusy ? "Apagando…" : "Apagar e recriar do zero"}
+          </button>
+        </div>
         {diagnose ? (
           <div className="mt-4 space-y-2 rounded-lg border border-line/80 bg-surface-elevated/40 p-3 text-xs">
             <div className="grid gap-1 sm:grid-cols-2">

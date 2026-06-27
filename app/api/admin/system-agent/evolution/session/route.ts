@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
 import {
@@ -31,6 +32,18 @@ import {
 export const dynamic = "force-dynamic";
 
 const SYSTEM_SLOT_INDEX = 0;
+
+/**
+ * Nome ÚNICO por provisionamento do agente do sistema. Mantém o prefixo determinístico
+ * (recognível como instância do sistema) + sufixo aleatório, garantindo que cada reset crie
+ * uma sessão Baileys 100% nova na Evolution — evita reaproveitar arquivos de sessão corrompidos
+ * quando se recria com o mesmo nome. Como o nome é sempre persistido no banco, todos os lookups
+ * (webhook, envio, status) continuam funcionando.
+ */
+function buildFreshSystemInstanceName(): string {
+  const base = buildEvolutionInstanceName(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
+  return `${base}${randomBytes(4).toString("hex")}`;
+}
 
 function assertAdminSystemAgent(session: Awaited<ReturnType<typeof getAdminSessionFromCookies>>) {
   if (!session) return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
@@ -82,7 +95,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "EVOLUTION_WEBHOOK_SECRET em falta." }, { status: 503 });
   }
 
-  const instanceName = buildEvolutionInstanceName(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
+  // Reusa o nome de uma instância já existente; se não houver (após apagar/resetar),
+  // gera um nome NOVO para garantir uma sessão Baileys limpa do zero.
+  const existingRow = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
+  const instanceName = existingRow?.instance_name?.trim() || buildFreshSystemInstanceName();
   const publicBase = getPublicBaseUrlFromRequest(request);
   const webhookUrl = buildEvolutionWebhookUrl(publicBase, webhookSecret);
 
@@ -306,7 +322,11 @@ export async function DELETE(request: Request) {
   }
 
   const row = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
+  let deletedInstance: string | null = null;
   if (row) {
+    deletedInstance = row.instance_name;
+    // Logout encerra a sessão WhatsApp; delete remove a instância e seus arquivos de sessão.
+    await evolutionLogoutInstance(row.instance_name).catch(() => null);
     const del = await evolutionDeleteInstance(row.instance_name);
     if (!del.ok && del.status !== 404) {
       console.warn("[admin/system-agent/evolution] delete instance", del.status, del.error);
@@ -314,5 +334,5 @@ export async function DELETE(request: Request) {
     await deleteTenantEvolutionInstanceRow(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX).catch(() => null);
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, deletedInstance });
 }
