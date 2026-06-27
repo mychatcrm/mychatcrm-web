@@ -126,11 +126,18 @@ export async function evolutionCreateInstance(params: {
   instanceName: string;
   /** URL completa do webhook (incluir `?token=` se usar validação por query). */
   webhookUrl?: string;
+  /**
+   * Settings opcionais do Baileys (top-level no /instance/create da Evolution v2):
+   * alwaysOnline, groupsIgnore, readMessages, readStatus, syncFullHistory, rejectCall...
+   * Só passar para casos específicos (ex.: instância do sistema). Default: nada (clientes inalterados).
+   */
+  settings?: Record<string, unknown>;
 }): Promise<EvolutionFetchResult<EvolutionCreateInstanceResponse>> {
   const body: Record<string, unknown> = {
     instanceName: params.instanceName,
     integration: "WHATSAPP-BAILEYS",
     qrcode: true,
+    ...(params.settings ?? {}),
   };
   if (params.webhookUrl) {
     body.webhook = {
@@ -144,6 +151,22 @@ export async function evolutionCreateInstance(params: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Aplica settings do Baileys numa instância já criada (`POST /settings/set/{instance}`).
+ * Útil quando o create não persiste os settings inline. Falhas não são críticas.
+ */
+export async function evolutionSetInstanceSettings(params: {
+  instanceName: string;
+  settings: Record<string, unknown>;
+}): Promise<EvolutionFetchResult<unknown>> {
+  const enc = encodeURIComponent(params.instanceName);
+  return evolutionFetchJson(`/settings/set/${enc}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params.settings),
   });
 }
 

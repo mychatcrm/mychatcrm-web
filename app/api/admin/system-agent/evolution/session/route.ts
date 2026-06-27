@@ -16,6 +16,7 @@ import {
   evolutionInstanceConnect,
   evolutionLogoutInstance,
   evolutionRestartInstance,
+  evolutionSetInstanceSettings,
   evolutionSetWebhook,
   isEvolutionApiConfigured,
   normalizeEvolutionConnectionState,
@@ -32,6 +33,20 @@ import {
 export const dynamic = "force-dynamic";
 
 const SYSTEM_SLOT_INDEX = 0;
+
+/**
+ * Settings do Baileys para a instância do agente do sistema (envia avisos "frios").
+ * alwaysOnline melhora presença/entrega; sync/grupos desligados deixam a sessão mais leve
+ * e estável. Aplicado SÓ ao sistema — instâncias de cliente seguem o padrão.
+ */
+const SYSTEM_INSTANCE_SETTINGS: Record<string, unknown> = {
+  alwaysOnline: true,
+  groupsIgnore: true,
+  readMessages: false,
+  readStatus: false,
+  syncFullHistory: false,
+  rejectCall: false,
+};
 
 /**
  * Nome ÚNICO por provisionamento do agente do sistema. Mantém o prefixo determinístico
@@ -102,7 +117,11 @@ export async function POST(request: Request) {
   const publicBase = getPublicBaseUrlFromRequest(request);
   const webhookUrl = buildEvolutionWebhookUrl(publicBase, webhookSecret);
 
-  let createResult = await evolutionCreateInstance({ instanceName, webhookUrl });
+  let createResult = await evolutionCreateInstance({
+    instanceName,
+    webhookUrl,
+    settings: SYSTEM_INSTANCE_SETTINGS,
+  });
   if (!createResult.ok && createResult.status === 403) {
     const probe = await evolutionConnectionState(instanceName);
     if (!probe.ok && probe.status === 404) {
@@ -121,6 +140,9 @@ export async function POST(request: Request) {
   } else {
     await evolutionSetWebhook({ instanceName, url: webhookUrl });
   }
+
+  // Reforça os settings (alguns builds 2.3.x ignoram settings inline no create).
+  await evolutionSetInstanceSettings({ instanceName, settings: SYSTEM_INSTANCE_SETTINGS }).catch(() => null);
 
   const stateRes = await evolutionConnectionState(instanceName);
   const remoteState = normalizeEvolutionConnectionState(
