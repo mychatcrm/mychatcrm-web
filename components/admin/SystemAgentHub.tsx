@@ -210,6 +210,14 @@ export function SystemAgentHub(props: {
   const senderLine = formatWaJid(waJid);
   // Sessão "open" sem número conectado = sessão zumbi (API aceita, WhatsApp não entrega).
   const zombieSession = connectionState === "open" && (authenticated === false || (!waJid && authenticated !== null));
+  // Sessão aparece autenticada mas nenhuma mensagem foi confirmada via webhook → possível zombie puro
+  // (Evolution cacheia ownerJid mesmo após credenciais WhatsApp expirarem).
+  const staleSendSuspected =
+    diagnose !== null &&
+    diagnose.session.authenticated === true &&
+    diagnose.delivery?.webhookUpdatesWorking === false &&
+    diagnose.recent.length > 0 &&
+    diagnose.recent.every((r) => r.status === "sent" || r.status === "pending");
 
   const refreshLogs = useCallback(async () => {
     const res = await fetch("/api/admin/system-agent/notifications", { credentials: "same-origin" });
@@ -471,7 +479,10 @@ export function SystemAgentHub(props: {
         setActionMessage(`Entregue ✓ — enviado de ${senderLabel} para ${tried}.`);
       } else {
         setActionMessage(
-          `Disparado de ${senderLabel} para ${tried}. Aguardando confirmação no celular (pode levar alguns segundos). Se não chegar, salve ${senderLabel} nos contatos e responda \"oi\" antes de testar de novo.`,
+          `Disparado de ${senderLabel} para ${tried}. Aguardando confirmação (pode levar alguns segundos). ` +
+          `Verifique também no celular do número ${senderLabel}: a mensagem de teste deve aparecer lá (no chat com o destinatário). ` +
+          `Se não aparecer no celular remetente, a sessão está zombie — use "Reparar sessão" ou "Apagar conexão + Reconectar". ` +
+          `Se aparecer lá mas não chegar no destinatário: salve ${senderLabel} nos contatos do destinatário e responda "oi" antes de testar de novo.`,
         );
       }
       await refreshLogs();
@@ -526,6 +537,18 @@ export function SystemAgentHub(props: {
             número WhatsApp ativo (sem identidade). A Evolution aceita os envios, porém o WhatsApp não entrega
             nada. <strong>Solução:</strong> clique em &quot;Forçar reconexão (QR)&quot; abaixo e escaneie o QR com o
             celular do chip do agente.
+          </div>
+        ) : null}
+        {staleSendSuspected ? (
+          <div className="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-3 text-xs leading-relaxed text-amber-100">
+            <strong>Possível sessão zombie detectada por padrão de entrega.</strong> A sessão aparece conectada e
+            mensagens são aceitas pelo Evolution, mas nenhuma entrega foi confirmada via webhook do WhatsApp.
+            Isso ocorre quando o número conectado tem a sessão Baileys ativa mas as credenciais WhatsApp
+            expiraram (zombie puro — celular desvinculou o linked device).{" "}
+            <strong>Solução:</strong> clique em <strong>Reparar sessão (VPS)</strong> → aguarde 5s → clique em{" "}
+            <strong>Enviar teste</strong> → verifique se a mensagem aparece no WhatsApp do celular do número
+            conectado ({senderLine}). Se não aparecer no celular remetente, use{" "}
+            <strong>Apagar conexão + Reconectar</strong> com um QR novo.
           </div>
         ) : null}
         <p className="mt-4 text-xs leading-relaxed text-content-muted">
@@ -798,6 +821,29 @@ export function SystemAgentHub(props: {
           autoProvision={false}
           seedQrDataUrl={seedQrDataUrl}
         />
+        <div className="mt-4 rounded-lg border border-line/60 bg-surface-elevated/30 p-3 text-xs leading-relaxed text-content-muted">
+          <p className="font-semibold text-content-secondary">Como verificar se o QR funcionou corretamente</p>
+          <ol className="mt-2 list-decimal space-y-1 pl-5">
+            <li>
+              No celular do número conectado: abra o WhatsApp → <strong>Configurações → Dispositivos
+              conectados</strong> → confirme que aparece &quot;MyChatCRM&quot; (ou similar) na lista
+            </li>
+            <li>
+              Clique em <strong>Enviar teste</strong> acima → a mensagem de teste deve aparecer no WhatsApp
+              do celular conectado (o remetente), no chat com o número de destino
+            </li>
+            <li>
+              Se a mensagem <strong>não aparecer no celular remetente</strong> mesmo com status
+              &quot;Conectado&quot;: o QR não estabeleceu a sessão corretamente ou o linked device foi
+              revogado — apague a conexão e escaneie um QR novo
+            </li>
+            <li>
+              Se aparecer no celular remetente mas <strong>não chegar no destinatário</strong>: é problema
+              de anti-spam do WhatsApp — peça ao destinatário para salvar o número {senderLine} e enviar
+              &quot;oi&quot; antes do teste
+            </li>
+          </ol>
+        </div>
       </section>
 
       <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">

@@ -57,8 +57,8 @@ async function resolveSystemInstanceIdentity(
   fallbackState: string | null,
   fallbackJid: string | null,
 ): Promise<{ connectionState: string; waJid: string | null; profileName: string | null; authenticated: boolean }> {
-  const identity = await evolutionFetchInstances(instanceName);
-  const info = identity.ok ? pickEvolutionInstanceInfo(identity.data, instanceName) : null;
+  const fetchResult = await evolutionFetchInstances(instanceName);
+  const info = fetchResult.ok ? pickEvolutionInstanceInfo(fetchResult.data, instanceName) : null;
 
   const stateRes = await evolutionConnectionState(instanceName);
   const connStateRaw = stateRes.ok ? parseEvolutionConnectionStatePayload(stateRes.data) : undefined;
@@ -70,7 +70,16 @@ async function resolveSystemInstanceIdentity(
 
   const jidFromState =
     stateRes.ok && stateRes.data ? extractInstanceJid(stateRes.data as Record<string, unknown>) : null;
-  const waJid = info?.ownerJid ?? jidFromState ?? fallbackJid ?? null;
+
+  // Quando fetchInstances responde com sucesso: confiar apenas em dados frescos — nunca ressuscitar
+  // o JID stale do DB via fallbackJid. Um ownerJid ausente numa resposta ok significa sessão zombie
+  // ou sessão não autenticada; propagar o fallback mascararia isso e deixaria trustDbSession=true.
+  // Quando fetchInstances falha (ok=false): usar fallback para evitar falso-negativo durante
+  // indisponibilidade temporária da Evolution API.
+  const waJid = fetchResult.ok
+    ? (info?.ownerJid ?? jidFromState ?? null)
+    : (info?.ownerJid ?? jidFromState ?? fallbackJid ?? null);
+
   const authenticated = connectionState === "open" && Boolean(info?.ownerJid ?? jidFromState);
 
   return { connectionState, waJid, profileName: info?.profileName ?? null, authenticated };
@@ -340,6 +349,9 @@ export async function PATCH(request: Request) {
     const webhookUrl = buildEvolutionWebhookUrl(publicBase, webhookSecret);
     await evolutionSetWebhook({ instanceName: row.instance_name, url: webhookUrl }).catch(() => null);
   }
+
+  // Aguarda Baileys estabilizar antes de re-checar identidade — restart é assíncrono na Evolution.
+  await new Promise((r) => setTimeout(r, 1500));
 
   const identity = await resolveSystemInstanceIdentity(row.instance_name, row.connection_state, row.wa_jid);
   const displayState = displayConnectionState(identity.connectionState, identity.authenticated);
