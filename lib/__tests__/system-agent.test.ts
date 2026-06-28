@@ -203,7 +203,47 @@ describe("sendSystemNotification", () => {
     );
   });
 
-  it("tries the alternate Brazilian format for critical notifications accepted as pending", async () => {
+  it("sends once for critical notifications when Evolution returns PENDING (no double send)", async () => {
+    evolutionConnectionStateMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { instance: { state: "open" } },
+    });
+    resolveEvolutionSendNumberMock.mockResolvedValueOnce({
+      status: "exists",
+      sendNumber: "556293580574",
+      jid: "556293580574@s.whatsapp.net",
+      platformNumber: "5562993580574",
+      candidateNumbers: ["5562993580574", "556293580574"],
+    });
+    evolutionSendTextMock.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      data: { key: { id: "MSG_NO_9" }, status: "PENDING" },
+    });
+
+    const result = await sendSystemNotification("5562993580574", "Teste", "system-instance", {
+      type: "phone_verification_code",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(evolutionSendTextMock).toHaveBeenCalledTimes(1);
+    expect(evolutionSendTextMock).toHaveBeenCalledWith(
+      expect.objectContaining({ number: "556293580574" }),
+    );
+    expect(insertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "pending",
+        metadata: expect.objectContaining({
+          evolution_message_id: "MSG_NO_9",
+          evolution_message_ids: ["MSG_NO_9"],
+          numbers_tried: ["556293580574"],
+        }),
+      }),
+    );
+  });
+
+  it("tries alternate Brazilian format on hard failure without message id", async () => {
     evolutionConnectionStateMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -220,7 +260,7 @@ describe("sendSystemNotification", () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 201,
-        data: { key: { id: "MSG_NO_9" }, status: "PENDING" },
+        data: { status: "PENDING" },
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -234,24 +274,11 @@ describe("sendSystemNotification", () => {
 
     expect(result.ok).toBe(true);
     expect(evolutionSendTextMock).toHaveBeenCalledTimes(2);
-    expect(evolutionSendTextMock).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ number: "556293580574" }),
-    );
-    expect(evolutionSendTextMock).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ number: "5562993580574" }),
-    );
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: "pending",
-        to_number: "5562993580574",
         metadata: expect.objectContaining({
-          number_normalized: "5562993580574",
-          number_sent: "5562993580574",
-          numbers_tried: ["556293580574", "5562993580574"],
           evolution_message_id: "MSG_WITH_9",
-          evolution_message_ids: ["MSG_NO_9", "MSG_WITH_9"],
+          numbers_tried: ["556293580574", "5562993580574"],
         }),
       }),
     );
@@ -303,7 +330,7 @@ describe("sendSystemNotification", () => {
     expect(evolutionSendTextMock).not.toHaveBeenCalled();
   });
 
-  it("tries alternate Brazilian format for handoff_alert with numeric PENDING (1)", async () => {
+  it("sends once for handoff_alert when Evolution returns numeric PENDING (1)", async () => {
     evolutionConnectionStateMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -316,30 +343,24 @@ describe("sendSystemNotification", () => {
       platformNumber: "5562993580574",
       candidateNumbers: ["5562993580574", "556293580574"],
     });
-    evolutionSendTextMock
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 201,
-        data: { key: { id: "H1" }, status: 1 },
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 201,
-        data: { key: { id: "H2" }, status: 1 },
-      });
+    evolutionSendTextMock.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      data: { key: { id: "H1" }, status: 1 },
+    });
 
     const result = await sendSystemNotification("5562993580574", "Handoff", "system-instance", {
       type: "handoff_alert",
     });
 
     expect(result.ok).toBe(true);
-    expect(evolutionSendTextMock).toHaveBeenCalledTimes(2);
+    expect(evolutionSendTextMock).toHaveBeenCalledTimes(1);
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "pending",
         metadata: expect.objectContaining({
-          evolution_message_id: "H2",
-          evolution_message_ids: ["H1", "H2"],
+          evolution_message_id: "H1",
+          evolution_message_ids: ["H1"],
         }),
       }),
     );

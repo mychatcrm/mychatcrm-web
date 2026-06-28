@@ -4,10 +4,15 @@ import { buildEvolutionWebhookUrl, getPublicBaseUrlFromRequest } from "@/lib/int
 import {
   evolutionFetchInstances,
   evolutionPing,
+  evolutionSetWebhook,
   isEvolutionApiConfigured,
   pickEvolutionInstanceInfo,
 } from "@/lib/integrations/evolution-api";
-import { getSystemAgentInstanceName, getSystemAgentSession } from "@/lib/server/system-agent";
+import {
+  getSystemAgentInstanceName,
+  getSystemAgentSession,
+  getSystemWebhookDiagnostics,
+} from "@/lib/server/system-agent";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -16,20 +21,7 @@ function maskWebhookUrl(url: string): string {
   return url.replace(/token=[^&]+/, "token=***");
 }
 
-/**
- * Diagnóstico avançado do agente do sistema.
- * Mostra a VERDADE da sessão WhatsApp (ownerJid via fetchInstances), webhook esperado e entregas recentes.
- */
-export async function GET(request: Request) {
-  const session = await getAdminSessionFromCookies();
-  if (!session) return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
-  if (!hasAdminAccess(session, "system-agent")) {
-    return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
-  }
-  if (!isEvolutionApiConfigured()) {
-    return NextResponse.json({ error: "Evolution API não configurada no servidor." }, { status: 503 });
-  }
-
+async function buildDiagnosePayload(request: Request) {
   const instanceName = await getSystemAgentInstanceName();
   const agentSession = await getSystemAgentSession();
   const webhookSecret = process.env.EVOLUTION_WEBHOOK_SECRET?.trim() ?? "";
@@ -38,9 +30,10 @@ export async function GET(request: Request) {
     ? maskWebhookUrl(buildEvolutionWebhookUrl(publicBase, webhookSecret))
     : null;
 
-  const [instancesRes, pingRes] = await Promise.all([
+  const [instancesRes, pingRes, webhookDiagnostics] = await Promise.all([
     instanceName ? evolutionFetchInstances(instanceName) : Promise.resolve(null),
     evolutionPing(),
+    getSystemWebhookDiagnostics(),
   ]);
 
   const instanceInfo =
@@ -87,7 +80,7 @@ export async function GET(request: Request) {
     recent = [];
   }
 
-  return NextResponse.json({
+  return {
     instanceName,
     session: {
       connectionState: agentSession.connectionState,
@@ -112,11 +105,71 @@ export async function GET(request: Request) {
       expectedWebhookUrl,
       publicBaseUrl: publicBase || null,
     },
+    webhook: webhookDiagnostics,
     delivery: {
       lastDeliveredAt,
       recentPendingCount: pendingCount,
-      webhookUpdatesWorking: lastDeliveredAt !== null,
+      webhookUpdatesWorking:
+        lastDeliveredAt !== null || webhookDiagnostics.lastMessagesUpdateAt !== null,
     },
     recent,
+  };
+}
+
+/**
+ * Diagnóstico avançado do agente do sistema.
+ * GET: estado da sessão, webhook esperado, entregas recentes.
+ * POST: re-aplica webhook na instância Evolution (action: reapply_webhook).
+ */
+export async function GET(request: Request) {
+  const session = await getAdminSessionFromCookies();
+  if (!session) return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
+  if (!hasAdminAccess(session, "system-agent")) {
+    return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
+  }
+  if (!isEvolutionApiConfigured()) {
+    return NextResponse.json({ error: "Evolution API não configurada no servidor." }, { status: 503 });
+  }
+
+  return NextResponse.json(await buildDiagnosePayload(request));
+}
+
+export async function POST(request: Request) {
+  const session = await getAdminSessionFromCookies();
+  if (!session) return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
+  if (!hasAdminAccess(session, "system-agent")) {
+    return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
+  }
+  if (!isEvolutionApiConfigured()) {
+    return NextResponse.json({ error: "Evolution API não configurada no servidor." }, { status: 503 });
+  }
+
+  const body = (await request.json().catch(() => ({}))) as { action?: string };
+  if (body.action !== "reapply_webhook") {
+    return NextResponse.json({ error: "Ação inválida." }, { status: 400 });
+  }
+
+  const webhookSecret = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
+  if (!webhookSecret) {
+    return NextResponse.json({ error: "EVOLUTION_WEBHOOK_SECRET não configurado." }, { status: 503 });
+  }
+
+  const instanceName = await getSystemAgentInstanceName();
+  if (!instanceName) {
+    return NextResponse.json({ error: "Instância do sistema não configurada." }, { status: 400 });
+  }
+
+  const publicBase = getPublicBaseUrlFromRequest(request);
+  const webhookUrl = buildEvolutionWebhookUrl(publicBase, webhookSecret);
+  const setResult = await evolutionSetWebhook({ instanceName, url: webhookUrl });
+
+  const payload = await buildDiagnosePayload(request);
+  return NextResponse.json({
+    ...payload,
+    webhookReapply: {
+      ok: setResult.ok,
+      error: setResult.ok ? null : setResult.error,
+      url: maskWebhookUrl(webhookUrl),
+    },
   });
 }

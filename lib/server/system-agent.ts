@@ -286,11 +286,11 @@ async function findSystemNotificationByMessageId(
 export async function markSystemNotificationDeliveryFailed(params: {
   evolutionMessageId: string;
   reason: string;
-}): Promise<void> {
+}): Promise<boolean> {
   try {
     const sb = createSupabaseServiceClient();
     const row = await findSystemNotificationByMessageId(sb, params.evolutionMessageId);
-    if (!row || row.status === "delivery_failed") return;
+    if (!row || row.status === "delivery_failed") return false;
 
     const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
 
@@ -306,11 +306,13 @@ export async function markSystemNotificationDeliveryFailed(params: {
         },
       })
       .eq("id", row.id);
+    return true;
   } catch (error) {
     console.error("[system-agent] delivery_failed_update", {
       evolutionMessageId: params.evolutionMessageId,
       error: error instanceof Error ? error.message : "update_failed",
     });
+    return false;
   }
 }
 
@@ -318,11 +320,11 @@ export async function markSystemNotificationDeliveryFailed(params: {
 export async function markSystemNotificationDelivered(params: {
   evolutionMessageId: string;
   status?: unknown;
-}): Promise<void> {
+}): Promise<boolean> {
   try {
     const sb = createSupabaseServiceClient();
     const row = await findSystemNotificationByMessageId(sb, params.evolutionMessageId);
-    if (!row || row.status === "delivered" || row.status === "delivery_failed") return;
+    if (!row || row.status === "delivered" || row.status === "delivery_failed") return false;
 
     const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
 
@@ -338,11 +340,165 @@ export async function markSystemNotificationDelivered(params: {
         },
       })
       .eq("id", row.id);
+    return true;
   } catch (error) {
     console.error("[system-agent] delivered_update", {
       evolutionMessageId: params.evolutionMessageId,
       error: error instanceof Error ? error.message : "update_failed",
     });
+    return false;
+  }
+}
+
+/** Promove pending → sent quando webhook reporta SERVER_ACK (status 2). */
+export async function markSystemNotificationServerAck(params: {
+  evolutionMessageId: string;
+  status?: unknown;
+}): Promise<boolean> {
+  try {
+    const sb = createSupabaseServiceClient();
+    const row = await findSystemNotificationByMessageId(sb, params.evolutionMessageId);
+    if (!row || row.status !== "pending") return false;
+
+    const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
+
+    await sb
+      .from("system_notifications_log")
+      .update({
+        status: "sent",
+        error: null,
+        metadata: {
+          ...meta,
+          server_ack_at: new Date().toISOString(),
+          server_ack_status: params.status ?? null,
+        },
+      })
+      .eq("id", row.id);
+    return true;
+  } catch (error) {
+    console.error("[system-agent] server_ack_update", {
+      evolutionMessageId: params.evolutionMessageId,
+      error: error instanceof Error ? error.message : "update_failed",
+    });
+    return false;
+  }
+}
+
+export type SystemWebhookDiagnostics = {
+  lastMessagesUpdateAt: string | null;
+  lastMessagesUpdateMessageId: string | null;
+  lastMessagesUpdateStatus: unknown;
+  lastMessagesUpdateInstance: string | null;
+};
+
+/** Persiste heartbeat do último MESSAGES_UPDATE da instância sistema (metadata do agente interno). */
+export async function recordSystemWebhookMessagesUpdate(params: {
+  instanceName: string;
+  messageId: string;
+  status: unknown;
+}): Promise<void> {
+  try {
+    const sb = createSupabaseServiceClient();
+    const { data } = await sb
+      .from("tenant_agents")
+      .select("metadata")
+      .eq("tenant_id", SYSTEM_TENANT_ID)
+      .eq("agent_id", SYSTEM_AGENT_ID)
+      .maybeSingle();
+    const prev = (data?.metadata ?? {}) as Record<string, unknown>;
+    await sb
+      .from("tenant_agents")
+      .update({
+        metadata: {
+          ...prev,
+          system_webhook_last_messages_update_at: new Date().toISOString(),
+          system_webhook_last_messages_update_message_id: params.messageId,
+          system_webhook_last_messages_update_status: params.status ?? null,
+          system_webhook_last_messages_update_instance: params.instanceName,
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq("tenant_id", SYSTEM_TENANT_ID)
+      .eq("agent_id", SYSTEM_AGENT_ID);
+  } catch (error) {
+    console.warn("[system-agent] webhook_heartbeat_failed", {
+      error: error instanceof Error ? error.message : "heartbeat_failed",
+    });
+  }
+}
+
+export async function getSystemWebhookDiagnostics(): Promise<SystemWebhookDiagnostics> {
+  try {
+    const sb = createSupabaseServiceClient();
+    const { data } = await sb
+      .from("tenant_agents")
+      .select("metadata")
+      .eq("tenant_id", SYSTEM_TENANT_ID)
+      .eq("agent_id", SYSTEM_AGENT_ID)
+      .maybeSingle();
+    const meta = (data?.metadata ?? {}) as Record<string, unknown>;
+    return {
+      lastMessagesUpdateAt:
+        typeof meta.system_webhook_last_messages_update_at === "string"
+          ? meta.system_webhook_last_messages_update_at
+          : null,
+      lastMessagesUpdateMessageId:
+        typeof meta.system_webhook_last_messages_update_message_id === "string"
+          ? meta.system_webhook_last_messages_update_message_id
+          : null,
+      lastMessagesUpdateStatus: meta.system_webhook_last_messages_update_status ?? null,
+      lastMessagesUpdateInstance:
+        typeof meta.system_webhook_last_messages_update_instance === "string"
+          ? meta.system_webhook_last_messages_update_instance
+          : null,
+    };
+  } catch {
+    return {
+      lastMessagesUpdateAt: null,
+      lastMessagesUpdateMessageId: null,
+      lastMessagesUpdateStatus: null,
+      lastMessagesUpdateInstance: null,
+    };
+  }
+}
+
+/** Marca notificações pending antigas como delivery_failed (timeout). */
+export async function reconcileStalePendingNotifications(maxAgeSeconds = 60): Promise<number> {
+  try {
+    const sb = createSupabaseServiceClient();
+    const cutoff = new Date(Date.now() - maxAgeSeconds * 1000).toISOString();
+    const { data, error } = await sb
+      .from("system_notifications_log")
+      .select("id, metadata")
+      .eq("status", "pending")
+      .lt("created_at", cutoff)
+      .limit(100);
+    if (error || !data?.length) return 0;
+
+    let updated = 0;
+    for (const row of data) {
+      const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
+      const { error: updateError } = await sb
+        .from("system_notifications_log")
+        .update({
+          status: "delivery_failed",
+          error: "delivery_timeout",
+          metadata: {
+            ...meta,
+            delivery_failed_at: new Date().toISOString(),
+            delivery_failure_reason: "delivery_timeout",
+          },
+        })
+        .eq("id", row.id)
+        .eq("status", "pending");
+      if (!updateError) updated += 1;
+    }
+    return updated;
+  } catch (error) {
+    console.error("[system-agent] reconcile_pending_failed", {
+      error: error instanceof Error ? error.message : "reconcile_failed",
+    });
+    return 0;
   }
 }
 
@@ -572,17 +728,19 @@ export async function sendSystemNotification(
 
     if (attempt.ok && !attemptFailure && messageId) {
       successfulAttempts.push(sendAttempt);
-      const shouldTryNextVariant =
-        tryAllCriticalVariants && isEvolutionPendingStatus(responseStatus) && tried.length < candidateNumbers.length;
-      if (shouldTryNextVariant) continue;
       break;
     }
+    if (tryAllCriticalVariants && tried.length < candidateNumbers.length) {
+      const hardFailure =
+        (attempt.ok && !messageId) ||
+        (!attempt.ok && !isEvolutionConnectionClosedError(attempt.error)) ||
+        (Boolean(attemptFailure) && !isEvolutionConnectionClosedError(attemptFailure));
+      if (hardFailure) continue;
+    }
     if (attempt.ok && !attemptFailure && !messageId) {
-      // Resposta aceita sem ID não é suficiente para considerar entregue; tenta o próximo formato.
       continue;
     }
     if (!attempt.ok && !isEvolutionConnectionClosedError(attempt.error)) {
-      // HTTP error unrelated to session — try next number format before giving up.
       continue;
     }
     if (attemptFailure && !isEvolutionConnectionClosedError(attemptFailure)) {

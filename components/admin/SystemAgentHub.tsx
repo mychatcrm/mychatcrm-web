@@ -40,6 +40,17 @@ type DiagnoseResult = {
     recentPendingCount: number;
     webhookUpdatesWorking: boolean;
   };
+  webhook?: {
+    lastMessagesUpdateAt: string | null;
+    lastMessagesUpdateMessageId: string | null;
+    lastMessagesUpdateStatus: unknown;
+    lastMessagesUpdateInstance: string | null;
+  };
+  webhookReapply?: {
+    ok: boolean;
+    error: string | null;
+    url: string;
+  };
   recent: Array<{
     type: string;
     status: string;
@@ -69,7 +80,7 @@ function notificationStatusLabel(status: string): { label: string; tone: string 
   if (status === "pending") return { label: "aguardando WhatsApp…", tone: "text-amber-400" };
   if (status === "sent") return { label: "aceito pelo servidor (SERVER_ACK)", tone: "text-amber-400" };
   if (status === "delivery_failed") {
-    return { label: "falha na entrega", tone: "text-rose-400" };
+    return { label: "não entregue no celular", tone: "text-rose-400" };
   }
   if (status === "skipped") {
     return { label: "não enviado — sem telefone de alertas", tone: "text-amber-400" };
@@ -109,6 +120,9 @@ function humanizeNotificationError(error: string | null): string | null {
   if (error === "missing_evolution_message_id") {
     return "Evolution aceitou mas não devolveu ID — envio não confirmado";
   }
+  if (error === "delivery_timeout") {
+    return "Não houve confirmação de entrega em 60s — mensagem provavelmente não chegou no celular";
+  }
 
   return error;
 }
@@ -146,6 +160,7 @@ export function SystemAgentHub(props: {
   const [restartBusy, setRestartBusy] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
   const [diagnoseBusy, setDiagnoseBusy] = useState(false);
+  const [webhookReapplyBusy, setWebhookReapplyBusy] = useState(false);
   const [diagnose, setDiagnose] = useState<DiagnoseResult | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [qrPanelRevision, setQrPanelRevision] = useState(0);
@@ -225,6 +240,35 @@ export function SystemAgentHub(props: {
       if (json.session.connectionState) setConnectionState(json.session.connectionState);
     } finally {
       setDiagnoseBusy(false);
+    }
+  }, []);
+
+  const reapplyWebhook = useCallback(async () => {
+    setWebhookReapplyBusy(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch("/api/admin/system-agent/evolution/diagnose", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reapply_webhook" }),
+      });
+      const json = (await res.json().catch(() => null)) as (DiagnoseResult & {
+        error?: string;
+        webhookReapply?: { ok: boolean; error: string | null; url: string };
+      }) | null;
+      if (!res.ok || !json || json.error || !json.session) {
+        setActionMessage(json?.error || "Falha ao re-aplicar webhook.");
+        return;
+      }
+      setDiagnose(json);
+      if (json.webhookReapply?.ok) {
+        setActionMessage(`Webhook re-aplicado na instância: ${json.webhookReapply.url}`);
+      } else {
+        setActionMessage(json.webhookReapply?.error ?? "Falha ao re-aplicar webhook na Evolution.");
+      }
+    } finally {
+      setWebhookReapplyBusy(false);
     }
   }, []);
 
@@ -373,10 +417,34 @@ export function SystemAgentHub(props: {
       </section>
 
       <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">
+          Isolamento (Evolution Manager)
+        </h2>
+        <p className="mt-2 text-xs leading-relaxed text-content-muted">
+          Antes de culpar o MyChatCRM, teste envio manual no Evolution Manager para o mesmo número de destino:
+        </p>
+        <ol className="mt-3 list-decimal space-y-2 pl-5 text-xs text-content-secondary">
+          <li>
+            Instância <strong>sistema</strong> (nome completo acima) → enviar texto para o número de teste
+          </li>
+          <li>
+            Instância <strong>cliente Sofia</strong> (<code className="font-mono">mc976b7b…</code>) → mesmo número
+          </li>
+          <li>
+            <strong>Enviar teste</strong> abaixo no MyChatCRM → comparar os três
+          </li>
+        </ol>
+        <p className="mt-3 text-[11px] text-content-faint">
+          Se nenhum entregar → VPS/Baileys. Só Sofia entregar → reconectar sessão sistema. Manager sistema entregar
+          mas MyChatCRM não → bug de formato/número no app.
+        </p>
+      </section>
+
+      <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Diagnóstico</h2>
         <p className="mt-2 text-xs leading-relaxed text-content-muted">
-          Se o painel mostra &quot;enviado&quot; mas nada chega: a sessão WhatsApp na Evolution pode estar
-          &quot;zombie&quot; (API ok, entrega falha). Use reconexão com QR no celular {senderLine}.
+          Se aparece &quot;aguardando WhatsApp…&quot; ou &quot;não entregue no celular&quot;: a Evolution aceitou o
+          envio, mas o WhatsApp não confirmou entrega. Use reconexão com QR no celular {senderLine}.
         </p>
         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
           <label className="flex-1 text-sm">
@@ -412,6 +480,14 @@ export function SystemAgentHub(props: {
             className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-content-secondary disabled:opacity-60"
           >
             {diagnoseBusy ? "Verificando…" : "Diagnóstico avançado"}
+          </button>
+          <button
+            type="button"
+            disabled={webhookReapplyBusy}
+            onClick={() => void reapplyWebhook()}
+            className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-content-secondary disabled:opacity-60"
+          >
+            {webhookReapplyBusy ? "Aplicando…" : "Re-aplicar webhook"}
           </button>
         </div>
         {actionMessage ? <p className="mt-3 text-xs text-content-muted">{actionMessage}</p> : null}
@@ -477,9 +553,20 @@ export function SystemAgentHub(props: {
                     Entregas confirmadas via webhook:{" "}
                     <strong className={diagnose.delivery.webhookUpdatesWorking ? "text-emerald-400" : "text-amber-400"}>
                       {diagnose.delivery.webhookUpdatesWorking
-                        ? `sim (última: ${diagnose.delivery.lastDeliveredAt ? new Date(diagnose.delivery.lastDeliveredAt).toLocaleString("pt-BR") : "—"})`
+                        ? `sim (última: ${diagnose.delivery.lastDeliveredAt ? new Date(diagnose.delivery.lastDeliveredAt).toLocaleString("pt-BR") : diagnose.webhook?.lastMessagesUpdateAt ? new Date(diagnose.webhook.lastMessagesUpdateAt).toLocaleString("pt-BR") : "—"})`
                         : `nenhuma ainda (${diagnose.delivery.recentPendingCount} pendentes recentes)`}
                     </strong>
+                  </p>
+                ) : null}
+                {diagnose.webhook?.lastMessagesUpdateAt ? (
+                  <p className="text-content-faint">
+                    Último MESSAGES_UPDATE:{" "}
+                    <span className="font-mono text-content-secondary">
+                      {new Date(diagnose.webhook.lastMessagesUpdateAt).toLocaleString("pt-BR")}
+                    </span>
+                    {diagnose.webhook.lastMessagesUpdateMessageId
+                      ? ` · ${diagnose.webhook.lastMessagesUpdateMessageId}`
+                      : null}
                   </p>
                 ) : null}
               </div>
@@ -548,7 +635,14 @@ export function SystemAgentHub(props: {
             Evolution Manager (eventos: MESSAGES_UPDATE, CONNECTION_UPDATE)
           </li>
           <li>
-            <strong>Enviar teste</strong> — número de destino acima
+            <strong>Re-aplicar webhook</strong> — botão acima ou confirmar URL no Evolution Manager
+          </li>
+          <li>
+            <strong>Enviar teste</strong> — número de destino acima (verifique também Solicitações no WhatsApp)
+          </li>
+          <li>
+            <strong>Warm-up anti-spam</strong> — do celular destino, mande &quot;oi&quot; para {senderLine} antes do
+            teste/código
           </li>
           <li>
             <strong>Código de verificação</strong> — Configurações → confirmar telefone
@@ -564,9 +658,11 @@ export function SystemAgentHub(props: {
           </li>
         </ol>
         <p className="mt-3 text-[11px] text-content-faint">
-          Se todos ficarem em &quot;aguardando WhatsApp…&quot; e nada chegar no celular: reinicie a Evolution na VPS (
-          script <code className="font-mono">scripts/evolution-vps-maintenance.sh</code>) ou apague e reconecte a
-          instância do sistema.
+          Se nada chegar no celular: reinicie a Evolution na VPS (
+          <code className="font-mono">scripts/evolution-vps-maintenance.sh restart</code>), apague instâncias órfãs{" "}
+          <code className="font-mono">mc049357*</code> no Manager (nunca <code className="font-mono">mc976b7b*</code>
+          ), ou apague e reconecte a instância do sistema. Pending &gt;60s vira &quot;não entregue no celular&quot;
+          automaticamente.
         </p>
       </section>
 
