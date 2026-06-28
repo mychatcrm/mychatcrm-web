@@ -360,6 +360,41 @@ async function patchSystemAgentMetadata(patch: Record<string, unknown>): Promise
   }
 }
 
+const SYSTEM_WEBHOOK_METADATA_KEYS = [
+  "system_webhook_last_messages_update_at",
+  "system_webhook_last_messages_update_message_id",
+  "system_webhook_last_messages_update_status",
+  "system_webhook_last_messages_update_instance",
+  ORPHAN_EVENTS_KEY,
+  "system_webhook_last_orphan_reconcile_at",
+  "system_webhook_last_orphan_reconcile_applied",
+  "system_webhook_last_orphan_reconcile_remaining",
+] as const;
+
+/** Limpa metadata de webhook/sessão ao apagar conexão do agente do sistema. */
+export async function clearSystemAgentWebhookMetadata(): Promise<void> {
+  try {
+    const sb = createSupabaseServiceClient();
+    const prev = await readSystemAgentMetadataRecord();
+    const next = { ...prev };
+    for (const key of SYSTEM_WEBHOOK_METADATA_KEYS) {
+      delete next[key];
+    }
+    await sb
+      .from("tenant_agents")
+      .update({
+        metadata: next,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("tenant_id", SYSTEM_TENANT_ID)
+      .eq("agent_id", SYSTEM_AGENT_ID);
+  } catch (error) {
+    console.warn("[system-agent] metadata_clear_failed", {
+      error: error instanceof Error ? error.message : "clear_failed",
+    });
+  }
+}
+
 function parsePendingDeliveryEvents(meta: Record<string, unknown>): PendingDeliveryEvent[] {
   const raw = meta[ORPHAN_EVENTS_KEY];
   if (!Array.isArray(raw)) return [];

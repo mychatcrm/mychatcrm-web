@@ -22,7 +22,7 @@ import {
   parseEvolutionConnectionStatePayload,
   pickEvolutionInstanceInfo,
 } from "@/lib/integrations/evolution-api";
-import { SYSTEM_AGENT_ID, SYSTEM_TENANT_ID } from "@/lib/server/system-agent";
+import { SYSTEM_AGENT_ID, SYSTEM_TENANT_ID, clearSystemAgentWebhookMetadata } from "@/lib/server/system-agent";
 import {
   deleteTenantEvolutionInstanceRow,
   getEvolutionInstanceByTenantSlot,
@@ -339,6 +339,9 @@ export async function DELETE(request: Request) {
       console.warn("[admin/system-agent/evolution] delete instance", removal.status, removal.error);
     }
     await deleteTenantEvolutionInstanceRow(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX).catch(() => null);
+    await clearSystemAgentWebhookMetadata().catch(() => null);
+  } else {
+    await clearSystemAgentWebhookMetadata().catch(() => null);
   }
 
   return NextResponse.json({

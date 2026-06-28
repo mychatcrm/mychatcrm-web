@@ -72,6 +72,7 @@ vi.mock("@/lib/supabase/server", () => ({
 
 import {
   bufferOrphanDeliveryEvent,
+  clearSystemAgentWebhookMetadata,
   markSystemNotificationDelivered,
   markSystemNotificationServerAck,
   processSystemMessagesUpdate,
@@ -219,5 +220,21 @@ describe("system notification delivery helpers", () => {
     }>;
     expect(events).toHaveLength(1);
     expect(events[0]?.status).toBe(3);
+  });
+
+  it("clears system webhook metadata keys on disconnect cleanup", async () => {
+    tenantAgentsMetadata.value = {
+      system_webhook_last_messages_update_at: "2026-01-01T00:00:00.000Z",
+      system_webhook_last_messages_update_instance: "mc049357old",
+      system_webhook_pending_delivery_events: [{ messageId: "X", status: 3, instanceName: "mc", receivedAt: "2026-01-01" }],
+      isSystemAgent: true,
+    };
+
+    await clearSystemAgentWebhookMetadata();
+
+    expect(tenantAgentsMetadata.value.system_webhook_last_messages_update_at).toBeUndefined();
+    expect(tenantAgentsMetadata.value.system_webhook_last_messages_update_instance).toBeUndefined();
+    expect(tenantAgentsMetadata.value.system_webhook_pending_delivery_events).toBeUndefined();
+    expect(tenantAgentsMetadata.value.isSystemAgent).toBe(true);
   });
 });
