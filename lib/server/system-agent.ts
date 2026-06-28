@@ -21,6 +21,7 @@ import {
   deleteTenantEvolutionInstanceRow,
   getEvolutionInstanceByTenantId,
   getEvolutionInstanceByTenantSlot,
+  upsertTenantEvolutionInstance,
 } from "@/lib/server/tenant-evolution-instance-db";
 
 export const SYSTEM_AGENT_ID = "mychatcrm-system-agent";
@@ -80,9 +81,57 @@ export async function resetSystemAgentEvolutionBinding(): Promise<{
   return { purgedInstances, deletedDbInstance };
 }
 
+/**
+ * Descobre a instância viva do sistema na Evolution pelo prefixo determinístico,
+ * usada como auto-reparo quando a linha em `tenant_evolution_instances` sumiu
+ * (apagada num reset/reconexão) mas a sessão Baileys continua ativa na Evolution.
+ * Reescreve a linha do banco para re-sincronizar (webhook de entrega depende dela).
+ */
+async function discoverAndPersistSystemInstanceFromEvolution(): Promise<string | null> {
+  const prefix = getSystemEvolutionInstancePrefix();
+  const res = await evolutionFetchInstances();
+  if (!res.ok) return null;
+
+  const candidates = res.data.filter(
+    (item): item is typeof item & { name: string } =>
+      typeof item.name === "string" && item.name.startsWith(prefix),
+  );
+  if (!candidates.length) return null;
+
+  // Prefere a sessão realmente autenticada (open + ownerJid); senão a primeira.
+  const authenticated = candidates.find(
+    (item) => item.connectionStatus === "open" && Boolean(item.ownerJid),
+  );
+  const chosen = authenticated ?? candidates[0];
+  const instanceName = chosen.name.trim();
+  if (!instanceName) return null;
+
+  try {
+    await upsertTenantEvolutionInstance({
+      tenantId: SYSTEM_TENANT_ID,
+      slotIndex: SYSTEM_SLOT_INDEX,
+      instanceName,
+      connectionState: chosen.connectionStatus ?? "unknown",
+      waJid: chosen.ownerJid ?? null,
+      defaultAgentId: SYSTEM_AGENT_ID,
+    });
+    console.info("[system-agent] self_healed_instance_row", { instanceName });
+  } catch (error) {
+    console.warn("[system-agent] self_heal_instance_row_failed", {
+      instanceName,
+      error: error instanceof Error ? error.message : "upsert_failed",
+    });
+  }
+
+  return instanceName;
+}
+
 export async function getSystemAgentInstanceName(): Promise<string | null> {
   const row = await getEvolutionInstanceByTenantId(SYSTEM_TENANT_ID);
-  return row?.instance_name?.trim() || null;
+  const fromDb = row?.instance_name?.trim() || null;
+  if (fromDb) return fromDb;
+  // Linha ausente → tenta descobrir a instância ativa na Evolution e re-gravar.
+  return discoverAndPersistSystemInstanceFromEvolution();
 }
 
 export type SystemAgentSession = {

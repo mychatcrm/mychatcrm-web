@@ -50,6 +50,7 @@ import {
 } from "@/lib/server/integration-disconnect-notifications";
 import {
   SYSTEM_TENANT_ID,
+  getSystemEvolutionInstancePrefix,
   processSystemMessagesUpdate,
 } from "@/lib/server/system-agent";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
@@ -476,10 +477,31 @@ export async function POST(request: Request) {
 
     if (event === "MESSAGES_UPDATE") {
       try {
+        // Reconhece a instância do sistema pelo prefixo determinístico do nome
+        // (mc<hash do tenant-system-internal>…) ANTES de depender da linha no
+        // banco. A linha em tenant_evolution_instances pode estar ausente
+        // (apagada num reset/reconexão) enquanto a instância segue ativa na
+        // Evolution — sem este fallback, todo MESSAGES_UPDATE de entrega era
+        // descartado e a confirmação "entregue" nunca acontecia.
+        const systemPrefix = getSystemEvolutionInstancePrefix();
         const row = await getEvolutionInstanceByName(instanceName);
-        if (!row || row.tenant_id !== SYSTEM_TENANT_ID) continue;
+        const isSystemInstance =
+          (row?.tenant_id === SYSTEM_TENANT_ID) ||
+          (!!instanceName && instanceName.startsWith(systemPrefix));
 
-        for (const update of extractMessageDeliveryUpdates(payload)) {
+        const updates = extractMessageDeliveryUpdates(payload);
+        console.info("[webhooks/evolution] messages_update_seen", {
+          instanceName,
+          isSystemInstance,
+          hasDbRow: Boolean(row),
+          updateCount: updates.length,
+          fromMeCount: updates.filter((u) => u.fromMe).length,
+          statuses: updates.map((u) => u.status),
+        });
+
+        if (!isSystemInstance) continue;
+
+        for (const update of updates) {
           if (!update.fromMe) continue;
 
           console.info("[webhooks/evolution] system_messages_update", {

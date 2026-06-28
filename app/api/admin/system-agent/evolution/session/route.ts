@@ -24,6 +24,7 @@ import {
   SYSTEM_AGENT_ID,
   SYSTEM_SLOT_INDEX,
   SYSTEM_TENANT_ID,
+  getSystemAgentInstanceName,
   resetSystemAgentEvolutionBinding,
 } from "@/lib/server/system-agent";
 import {
@@ -235,7 +236,16 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "slotIndex inválido para agente do sistema." }, { status: 400 });
   }
 
-  const row = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
+  let row = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
+  if (!row) {
+    // Auto-reparo: a linha pode ter sumido (reset/reconexão) enquanto a instância
+    // segue viva na Evolution. getSystemAgentInstanceName descobre pelo prefixo e
+    // re-grava a linha — evita mostrar "desconectado" e perder o webhook de entrega.
+    const healed = await getSystemAgentInstanceName();
+    if (healed) {
+      row = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
+    }
+  }
   if (!row) {
     return NextResponse.json({
       instanceName: buildEvolutionInstanceName(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX),

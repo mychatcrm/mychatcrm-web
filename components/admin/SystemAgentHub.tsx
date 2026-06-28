@@ -85,8 +85,11 @@ function connectionLabel(state: string): { label: string; tone: string } {
 }
 
 function notificationStatusLabel(status: string): { label: string; tone: string } {
+  // Honesto: VERDE só quando o WhatsApp confirma a entrega no aparelho (delivered).
+  // "enviado/enviando" = a Evolution aceitou, mas a entrega ainda NÃO foi confirmada
+  // (amarelo) — não afirmamos "funcionou" sem confirmação real.
   if (status === "delivered") return { label: "entregue ✓ (confirmado no aparelho)", tone: "text-emerald-400" };
-  if (status === "sent") return { label: "enviado ✓", tone: "text-emerald-400" };
+  if (status === "sent") return { label: "enviado · aguardando confirmação de entrega", tone: "text-amber-400" };
   if (status === "pending") return { label: "enviando…", tone: "text-amber-400" };
   if (status === "delivery_failed") {
     return { label: "não entregue no celular", tone: "text-rose-400" };
@@ -108,9 +111,9 @@ const E2E_REQUIRED_FLOWS = [
 function evaluateE2EFlow(logs: SystemNotificationLogItem[], type: string): "pass" | "fail" | "pending" | "none" {
   const latest = logs.find((item) => item.type === type);
   if (!latest) return "none";
-  // "sent" e "delivered" contam como sucesso: a Evolution aceitou e enfileirou o
-  // envio. A confirmação de entrega no aparelho (delivered) é um bônus opcional.
-  if (latest.status === "delivered" || latest.status === "sent") return "pass";
+  // PASS só com confirmação real de entrega no aparelho (delivered via webhook).
+  // "sent/pending" = enviado mas ainda não confirmado → fica pendente (não verde).
+  if (latest.status === "delivered") return "pass";
   if (latest.status === "delivery_failed" || latest.status === "failed") return "fail";
   return "pending";
 }
@@ -511,10 +514,11 @@ export function SystemAgentHub(props: {
       <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Diagnóstico</h2>
         <p className="mt-2 text-xs leading-relaxed text-content-muted">
-          &quot;enviado ✓&quot; = a Evolution aceitou e enfileirou a mensagem (sucesso). &quot;entregue ✓&quot; só
-          aparece se o webhook MESSAGES_UPDATE confirmar a entrega no aparelho (opcional). Se a mensagem não chega
-          no celular mesmo com &quot;enviado ✓&quot;, o problema é a sessão/número na Evolution: reconecte com QR
-          no celular {senderLine}.
+          <strong className="text-emerald-400">entregue ✓</strong> (verde) = o WhatsApp confirmou a entrega no
+          aparelho — só isso é sucesso de verdade. <strong className="text-amber-400">enviado</strong> (amarelo) = a
+          Evolution aceitou, mas a entrega ainda não foi confirmada pelo webhook. Se fica preso em
+          &quot;enviado&quot;, a mensagem provavelmente não chegou: reconecte com QR o número {senderLine} e confirme
+          que o destinatário tem o número salvo / respondeu (anti-spam de número novo).
         </p>
         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
           <label className="flex-1 text-sm">
@@ -689,9 +693,9 @@ export function SystemAgentHub(props: {
                       <span>{r.type}</span>
                       <span
                         className={
-                          r.status === "delivered" || r.status === "sent"
+                          r.status === "delivered"
                             ? "text-emerald-400"
-                            : r.status === "pending"
+                            : r.status === "pending" || r.status === "sent"
                               ? "text-amber-400"
                               : "text-rose-400"
                         }
@@ -789,9 +793,9 @@ export function SystemAgentHub(props: {
           })}
         </ul>
         <p className="mt-3 text-[11px] text-content-faint">
-          Meta de aceite: <strong>5/5 enviado ✓</strong>. &quot;enviado&quot; = Evolution aceitou (sucesso).
-          &quot;entregue&quot; só aparece se o webhook confirmar a entrega no aparelho. Só vira &quot;falha&quot; se a
-          Evolution recusar o envio.
+          Meta real: <strong>5/5 entregue ✓</strong> (confirmado no aparelho pelo webhook). &quot;enviado&quot;
+          (amarelo) = aceito pela Evolution, mas entrega ainda não confirmada. &quot;falha&quot; = Evolution recusou o
+          envio.
         </p>
         <ol className="mt-3 list-decimal space-y-2 pl-5 text-xs text-content-secondary">
           <li>
