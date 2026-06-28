@@ -11,6 +11,7 @@ import {
   evolutionCreateInstance,
   evolutionDeleteInstance,
   evolutionInstanceConnect,
+  evolutionLogoutInstance,
   evolutionSetWebhook,
   isEvolutionApiConfigured,
   normalizeEvolutionConnectionState,
@@ -301,6 +302,8 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Erro interno ao consultar instância." }, { status: 503 });
   }
   if (row) {
+    // Logout encerra a sessão WhatsApp; delete remove a instância e seus arquivos de sessão.
+    await evolutionLogoutInstance(row.instance_name).catch(() => null);
     const del = await evolutionDeleteInstance(row.instance_name);
     if (!del.ok && del.status !== 404) {
       console.warn("[evolution/session] delete instance", del.status, del.error);

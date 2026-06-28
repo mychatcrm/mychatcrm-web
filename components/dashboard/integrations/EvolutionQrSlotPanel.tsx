@@ -126,6 +126,9 @@ export function EvolutionQrSlotPanel({
   const [qrSecondsLeft, setQrSecondsLeft] = useState(QR_TTL_SECONDS);
   // Entrance animation flag for connected state
   const [connectedVisible, setConnectedVisible] = useState(false);
+  // True após o usuário desconectar manualmente: não recriamos a instância sozinhos;
+  // mostramos o CTA "Conectar" para uma nova ligação sob demanda.
+  const [manuallyDisconnected, setManuallyDisconnected] = useState(false);
 
   const clearPoll = useCallback(() => {
     if (pollRef.current) {
@@ -202,6 +205,7 @@ export function EvolutionQrSlotPanel({
   const startOrRefreshSession = useCallback(async () => {
     setBusy(true);
     setError(null);
+    setManuallyDisconnected(false);
     try {
       const res = await fetch(sessionApiPath, {
         method: "POST",
@@ -218,13 +222,24 @@ export function EvolutionQrSlotPanel({
   }, [applySessionPayload, slotIndex]);
 
   const handleDisconnect = useCallback(async () => {
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Desconectar esta linha? A instância será apagada da Evolution e você precisará escanear o QR novamente para reconectar.",
+      )
+    ) {
+      return;
+    }
     setDisconnecting(true);
     try {
       await fetch(`${sessionApiPath}?slotIndex=${slotIndex}`, {
         method: "DELETE",
         credentials: "same-origin",
       });
-      setConnectionState("close");
+    } finally {
+      // Desconectar = apagar de vez. Nunca recriamos automaticamente aqui;
+      // o usuário religa pelo CTA "Conectar".
+      setConnectionState("none");
       setQrDataUrl(null);
       setPairingCode(null);
       setWaJid(null);
@@ -232,15 +247,10 @@ export function EvolutionQrSlotPanel({
       prevQrFingerprintRef.current = null;
       qrReceivedAtRef.current = null;
       setQrSecondsLeft(QR_TTL_SECONDS);
-    } finally {
+      setManuallyDisconnected(true);
       setDisconnecting(false);
     }
-    if (autoProvision) {
-      await startOrRefreshSession();
-    } else {
-      setConnectionState("none");
-    }
-  }, [slotIndex, startOrRefreshSession, autoProvision]);
+  }, [slotIndex, sessionApiPath]);
 
   // Infra check on mount
   useEffect(() => {
@@ -300,10 +310,14 @@ export function EvolutionQrSlotPanel({
 
   const unifiedAlert = useMemo(() => deriveUnifiedAlert(infraHint, error), [infraHint, error]);
   const waNumber = formatWaNumber(waJid);
-  // Quando o provisionamento automático está desligado e não há conexão/QR ativo,
-  // mostramos um CTA explícito de "Conectar" em vez de criar a instância sozinho.
+  // Mostra o CTA explícito de "Conectar" (em vez de criar a instância sozinho) quando
+  // o auto-provisionamento está desligado OU logo após uma desconexão manual.
   const showConnectCta =
-    !autoProvision && connectionState !== "open" && !qrDataUrl && !busy && !error;
+    (!autoProvision || manuallyDisconnected) &&
+    connectionState !== "open" &&
+    !qrDataUrl &&
+    !busy &&
+    !error;
 
   const countdownColor =
     qrSecondsLeft > 30

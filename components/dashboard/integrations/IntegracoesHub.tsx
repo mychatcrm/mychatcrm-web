@@ -396,7 +396,11 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                     ) : null}
                     {method === "qr" ? (
                       <div className="space-y-4">
-                        <EvolutionQrSlotPanel key={`evo-qr-${tenantId}-${slotIndex}`} slotIndex={slotIndex} />
+                        <EvolutionQrSlotPanel
+                          key={`evo-qr-${tenantId}-${slotIndex}`}
+                          slotIndex={slotIndex}
+                          autoProvision={false}
+                        />
                         <div className="flex flex-wrap items-center gap-3 border-t border-line/40 pt-3">
                           <p className="flex-1 text-[11px] text-content-muted">
                             Para trocar de método ou desligar permanentemente esta linha:
