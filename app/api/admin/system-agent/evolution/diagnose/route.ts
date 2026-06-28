@@ -4,11 +4,14 @@ import { buildEvolutionWebhookUrl, getPublicBaseUrlFromRequest } from "@/lib/int
 import {
   evolutionFetchInstances,
   evolutionPing,
+  evolutionRestartInstance,
   evolutionSetWebhook,
+  evolutionCheckWhatsappNumbers,
   isEvolutionApiConfigured,
   pickEvolutionInstanceInfo,
 } from "@/lib/integrations/evolution-api";
 import {
+  applySystemEvolutionInstanceSettings,
   getSystemAgentInstanceName,
   getSystemAgentSession,
   getSystemWebhookDiagnostics,
@@ -54,13 +57,28 @@ async function buildDiagnosePayload(request: Request) {
   }> = [];
   let lastDeliveredAt: string | null = null;
   let pendingCount = 0;
+  let lastPlatformOutboundAt: string | null = null;
+  let whatsappNumberCheck: Array<{ number: string; exists: boolean; jid: string | null; jidAlt: string | null }> =
+    [];
+  const testNumberParam = new URL(request.url).searchParams.get("testNumber")?.replace(/\D/g, "") ?? "";
   try {
     const sb = createSupabaseServiceClient();
-    const { data } = await sb
-      .from("system_notifications_log")
-      .select("type, status, to_number, metadata, created_at")
-      .order("created_at", { ascending: false })
-      .limit(10);
+    const [{ data }, { data: outboundRow }] = await Promise.all([
+      sb
+        .from("system_notifications_log")
+        .select("type, status, to_number, metadata, created_at")
+        .order("created_at", { ascending: false })
+        .limit(10),
+      sb
+        .from("whatsapp_messages")
+        .select("created_at")
+        .eq("direction", "outbound")
+        .order("created_at", { ascending: false })
+        .limit(1),
+    ]);
+    if (outboundRow?.[0]?.created_at) {
+      lastPlatformOutboundAt = String(outboundRow[0].created_at);
+    }
     recent = (data ?? []).map((row) => {
       const meta = (row.metadata ?? {}) as Record<string, unknown>;
       const deliveredAt = meta.delivered_at ?? null;
@@ -81,6 +99,21 @@ async function buildDiagnosePayload(request: Request) {
     });
   } catch {
     recent = [];
+  }
+
+  if (instanceName && testNumberParam.length >= 12) {
+    const check = await evolutionCheckWhatsappNumbers({
+      instanceName,
+      numbers: [testNumberParam],
+    });
+    if (check.ok) {
+      whatsappNumberCheck = check.data.map((row) => ({
+        number: row.number,
+        exists: row.exists,
+        jid: row.jid,
+        jidAlt: row.jidAlt,
+      }));
+    }
   }
 
   return {
@@ -112,6 +145,11 @@ async function buildDiagnosePayload(request: Request) {
     delivery: {
       lastDeliveredAt,
       recentPendingCount: pendingCount,
+      lastPlatformOutboundAt,
+      platformOutboundPossiblyBroken: lastPlatformOutboundAt
+        ? Date.now() - Date.parse(lastPlatformOutboundAt) > 24 * 60 * 60 * 1000
+        : true,
+      whatsappNumberCheck,
       webhookUpdatesWorking:
         lastDeliveredAt !== null || webhookDiagnostics.lastMessagesUpdateAt !== null,
       pendingOrphanEventsCount: webhookDiagnostics.pendingOrphanEventsCount,
@@ -180,6 +218,32 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ...payload,
       purge: { purgedInstances: purged, keptInstance: instanceName },
+    });
+  }
+
+  if (body.action === "repair_session") {
+    const instanceName = await getSystemAgentInstanceName();
+    if (!instanceName) {
+      return NextResponse.json({ error: "Instância do sistema não configurada." }, { status: 400 });
+    }
+    await applySystemEvolutionInstanceSettings(instanceName);
+    const restart = await evolutionRestartInstance(instanceName);
+    const webhookSecret = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
+    let webhookOk = false;
+    if (webhookSecret) {
+      const publicBase = getPublicBaseUrlFromRequest(request);
+      const webhookUrl = buildEvolutionWebhookUrl(publicBase, webhookSecret);
+      const setResult = await evolutionSetWebhook({ instanceName, url: webhookUrl });
+      webhookOk = setResult.ok;
+    }
+    const payload = await buildDiagnosePayload(request);
+    return NextResponse.json({
+      ...payload,
+      repair: {
+        ok: restart.ok,
+        error: restart.ok ? null : restart.error,
+        webhookReapplied: webhookOk,
+      },
     });
   }
 

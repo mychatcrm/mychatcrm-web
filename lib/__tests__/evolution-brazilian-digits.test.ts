@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   brazilianMobileAlternateVariant,
+  buildEvolutionSendCandidates,
   ensureBrazilianMobileWhatsappDigits,
+  formatEvolutionSendAddress,
   isEvolutionDeliveredStatus,
   isEvolutionDeliveryErrorStatus,
   isEvolutionPendingStatus,
@@ -20,6 +22,18 @@ describe("Brazilian WhatsApp digit normalization", () => {
   it("exposes alternate variants for Evolution number checks", () => {
     expect(brazilianMobileAlternateVariant("5562993580574")).toBe("556293580574");
     expect(brazilianMobileAlternateVariant("556293580574")).toBe("5562993580574");
+  });
+
+  it("builds send candidates with full @lid JIDs", () => {
+    const candidates = buildEvolutionSendCandidates({
+      platformNumber: "5562993580574",
+      jid: "5562993580574@s.whatsapp.net",
+      jidAlt: "123456789@lid",
+    });
+    expect(candidates).toContain("5562993580574@s.whatsapp.net");
+    expect(candidates).toContain("123456789@lid");
+    expect(candidates).toContain("5562993580574");
+    expect(formatEvolutionSendAddress("123456789@lid", "5562993580574")).toBe("123456789@lid");
   });
 });
 

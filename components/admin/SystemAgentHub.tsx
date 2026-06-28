@@ -38,6 +38,9 @@ type DiagnoseResult = {
   delivery?: {
     lastDeliveredAt: string | null;
     recentPendingCount: number;
+    lastPlatformOutboundAt?: string | null;
+    platformOutboundPossiblyBroken?: boolean;
+    whatsappNumberCheck?: Array<{ number: string; exists: boolean; jid: string | null; jidAlt: string | null }>;
     webhookUpdatesWorking: boolean;
     pendingOrphanEventsCount?: number;
     lastOrphanReconcileAt?: string | null;
@@ -153,8 +156,8 @@ function humanizeNotificationError(error: string | null): string | null {
   if (error === "delivery_timeout") {
     return "Não houve confirmação de entrega em 60s — mensagem provavelmente não chegou no celular";
   }
-  if (error === "whatsapp_delivery_failed") {
-    return "WhatsApp recusou a entrega — número remetente novo ou bloqueado (anti-spam). Salve o número remetente nos contatos e responda com um \"oi\" antes de testar.";
+  if (error === "whatsapp_delivery_failed" || error.startsWith("delivery_status:ERROR")) {
+    return "WhatsApp recusou a entrega (ERROR). A Evolution aceita o envio, mas o WhatsApp bloqueia — sessão Baileys na VPS provavelmente degradada. Use «Reparar sessão» no diagnóstico ou reconecte o QR; se /conversas também não enviar, reinicie o container Evolution na VPS.";
   }
   if (error.startsWith("delivery_status:")) {
     return `WhatsApp reportou falha na entrega (${error.split(":").slice(1).join(":")})`;
@@ -198,6 +201,7 @@ export function SystemAgentHub(props: {
   const [diagnoseBusy, setDiagnoseBusy] = useState(false);
   const [webhookReapplyBusy, setWebhookReapplyBusy] = useState(false);
   const [orphanReconcileBusy, setOrphanReconcileBusy] = useState(false);
+  const [repairBusy, setRepairBusy] = useState(false);
   const [diagnose, setDiagnose] = useState<DiagnoseResult | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [qrPanelRevision, setQrPanelRevision] = useState(0);
@@ -265,7 +269,8 @@ export function SystemAgentHub(props: {
     setDiagnoseBusy(true);
     setActionMessage(null);
     try {
-      const res = await fetch("/api/admin/system-agent/evolution/diagnose", { credentials: "same-origin" });
+      const qs = testNumber.trim() ? `?testNumber=${encodeURIComponent(testNumber.replace(/\D/g, ""))}` : "";
+      const res = await fetch(`/api/admin/system-agent/evolution/diagnose${qs}`, { credentials: "same-origin" });
       const json = (await res.json().catch(() => null)) as (DiagnoseResult & { error?: string }) | null;
       if (!res.ok || !json || json.error || !json.session) {
         setActionMessage(json?.error || "Falha ao executar diagnóstico.");
@@ -277,6 +282,37 @@ export function SystemAgentHub(props: {
       if (json.session.connectionState) setConnectionState(json.session.connectionState);
     } finally {
       setDiagnoseBusy(false);
+    }
+  }, [testNumber]);
+
+  const repairSession = useCallback(async () => {
+    setRepairBusy(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch("/api/admin/system-agent/evolution/diagnose", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "repair_session" }),
+      });
+      const json = (await res.json().catch(() => null)) as (DiagnoseResult & {
+        error?: string;
+        repair?: { ok: boolean; error: string | null; webhookReapplied: boolean };
+      }) | null;
+      if (!res.ok || !json || json.error || !json.session) {
+        setActionMessage(json?.error || "Falha ao reparar sessão.");
+        return;
+      }
+      setDiagnose(json);
+      if (json.repair?.ok) {
+        setActionMessage(
+          "Sessão reiniciada na Evolution (settings + restart + webhook). Aguarde ~10s e teste de novo.",
+        );
+      } else {
+        setActionMessage(json.repair?.error ?? "Falha ao reiniciar sessão na Evolution.");
+      }
+    } finally {
+      setRepairBusy(false);
     }
   }, []);
 
@@ -574,6 +610,14 @@ export function SystemAgentHub(props: {
           </button>
           <button
             type="button"
+            disabled={repairBusy}
+            onClick={() => void repairSession()}
+            className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-100 disabled:opacity-60"
+          >
+            {repairBusy ? "Reparando…" : "Reparar sessão (VPS)"}
+          </button>
+          <button
+            type="button"
             disabled={webhookReapplyBusy}
             onClick={() => void reapplyWebhook()}
             className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-content-secondary disabled:opacity-60"
@@ -649,6 +693,16 @@ export function SystemAgentHub(props: {
                 </p>
                 {diagnose.delivery ? (
                   <>
+                    {diagnose.delivery.platformOutboundPossiblyBroken ? (
+                      <p className="text-rose-300">
+                        <strong>Alerta plataforma:</strong> nenhum envio outbound confirmado no CRM desde{" "}
+                        {diagnose.delivery.lastPlatformOutboundAt
+                          ? new Date(diagnose.delivery.lastPlatformOutboundAt).toLocaleString("pt-BR")
+                          : "sempre"}
+                        . Se /conversas também não envia, o problema é a sessão Baileys na VPS — use
+                        &quot;Reparar sessão&quot; ou reinicie o container Evolution.
+                      </p>
+                    ) : null}
                     <p className="text-content-faint">
                       Entregas confirmadas via webhook:{" "}
                       <strong className={diagnose.delivery.webhookUpdatesWorking ? "text-emerald-400" : "text-amber-400"}>

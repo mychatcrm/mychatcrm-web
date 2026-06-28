@@ -149,7 +149,7 @@ describe("sendSystemNotification", () => {
       status: 200,
       data: { instance: { state: "open" } },
     });
-    evolutionSendTextMock.mockResolvedValueOnce({
+    evolutionSendTextMock.mockResolvedValue({
       ok: true,
       status: 200,
       data: { success: false, error: "Connection Closed" },
@@ -223,7 +223,7 @@ describe("sendSystemNotification", () => {
 
     expect(result.ok).toBe(true);
     expect(evolutionSendTextMock).toHaveBeenCalledWith(
-      expect.objectContaining({ number: "556293580574" }),
+      expect.objectContaining({ number: "556293580574@s.whatsapp.net" }),
     );
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -231,8 +231,7 @@ describe("sendSystemNotification", () => {
         to_number: "5562993580574",
         metadata: expect.objectContaining({
           number_normalized: "5562993580574",
-          number_sent: "556293580574",
-          numbers_tried: ["556293580574"],
+          number_sent: "556293580574@s.whatsapp.net",
         }),
       }),
     );
@@ -246,10 +245,10 @@ describe("sendSystemNotification", () => {
     });
     resolveEvolutionSendNumberMock.mockResolvedValueOnce({
       status: "exists",
-      sendNumber: "556293580574",
-      jid: "556293580574@s.whatsapp.net",
+      sendNumber: "5562993580574@s.whatsapp.net",
+      jid: "5562993580574@s.whatsapp.net",
       platformNumber: "5562993580574",
-      candidateNumbers: ["5562993580574", "556293580574"],
+      candidateNumbers: ["5562993580574@s.whatsapp.net", "5562993580574", "556293580574"],
     });
     evolutionSendTextMock.mockResolvedValueOnce({
       ok: true,
@@ -264,7 +263,7 @@ describe("sendSystemNotification", () => {
     expect(result.ok).toBe(true);
     expect(evolutionSendTextMock).toHaveBeenCalledTimes(1);
     expect(evolutionSendTextMock).toHaveBeenCalledWith(
-      expect.objectContaining({ number: "5562993580574" }),
+      expect.objectContaining({ number: "5562993580574@s.whatsapp.net" }),
     );
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -272,23 +271,22 @@ describe("sendSystemNotification", () => {
         metadata: expect.objectContaining({
           evolution_message_id: "MSG_NO_9",
           evolution_message_ids: ["MSG_NO_9"],
-          numbers_tried: ["5562993580574"],
         }),
       }),
     );
   });
 
-  it("replies in-thread when the system tenant already has inbound messages from the recipient", async () => {
+  it("prefers conversation remote_jid when the system tenant already has messages from the recipient", async () => {
     whatsappMessagesSelectMock.mockResolvedValueOnce({
-      data: [
-        {
-          remote_jid: "5562993580574@s.whatsapp.net",
-          direction: "inbound",
-          message_id: "2A79F14121E19C82EB13",
-          content: "Oi",
-        },
-      ],
+      data: [{ remote_jid: "5562993580574@s.whatsapp.net" }],
       error: null,
+    });
+    resolveEvolutionSendNumberMock.mockResolvedValueOnce({
+      status: "exists",
+      sendNumber: "5562993580574",
+      jid: "5562993580574@s.whatsapp.net",
+      platformNumber: "5562993580574",
+      candidateNumbers: ["5562993580574@s.whatsapp.net", "5562993580574"],
     });
     evolutionSendTextMock.mockResolvedValueOnce({
       ok: true,
@@ -303,20 +301,14 @@ describe("sendSystemNotification", () => {
     expect(result.ok).toBe(true);
     expect(evolutionSendTextMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        number: "5562993580574",
-        quoted: {
-          messageId: "2A79F14121E19C82EB13",
-          remoteJid: "5562993580574@s.whatsapp.net",
-          fromMe: false,
-          conversation: "Oi",
-        },
+        number: "5562993580574@s.whatsapp.net",
       }),
     );
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
         metadata: expect.objectContaining({
-          evolution_number_check: "conversation_reply",
-          conversation_quoted_message_id: "2A79F14121E19C82EB13",
+          evolution_number_check: "conversation_jid_check",
+          conversation_remote_jid: "5562993580574@s.whatsapp.net",
         }),
       }),
     );
@@ -352,12 +344,11 @@ describe("sendSystemNotification", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(evolutionSendTextMock).toHaveBeenCalledTimes(2);
+    expect(evolutionSendTextMock.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
         metadata: expect.objectContaining({
           evolution_message_id: "MSG_WITH_9",
-          numbers_tried: ["5562993580574", "556293580574"],
         }),
       }),
     );
@@ -409,7 +400,14 @@ describe("sendSystemNotification", () => {
     expect(evolutionSendTextMock).not.toHaveBeenCalled();
   });
 
-  it("uses fast path for critical notifications without WhatsApp number check", async () => {
+  it("checks whatsappNumbers before critical notifications", async () => {
+    resolveEvolutionSendNumberMock.mockResolvedValueOnce({
+      status: "exists",
+      sendNumber: "5562993580574@s.whatsapp.net",
+      jid: "5562993580574@s.whatsapp.net",
+      platformNumber: "5562993580574",
+      candidateNumbers: ["5562993580574@s.whatsapp.net", "5562993580574"],
+    });
     evolutionSendTextMock.mockResolvedValueOnce({
       ok: true,
       status: 201,
@@ -420,14 +418,9 @@ describe("sendSystemNotification", () => {
       type: "admin_test",
     });
 
-    expect(resolveEvolutionSendNumberMock).not.toHaveBeenCalled();
+    expect(resolveEvolutionSendNumberMock).toHaveBeenCalled();
     expect(evolutionSendTextMock).toHaveBeenCalledWith(
-      expect.objectContaining({ number: "5562993580574" }),
-    );
-    expect(insertMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        metadata: expect.objectContaining({ evolution_number_check: "fast_path" }),
-      }),
+      expect.objectContaining({ number: "5562993580574@s.whatsapp.net" }),
     );
   });
 

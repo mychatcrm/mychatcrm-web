@@ -1,12 +1,14 @@
 import {
   brazilianMobileAlternateVariant,
   buildEvolutionInstanceName,
+  buildEvolutionSendCandidates,
   ensureBrazilianMobileWhatsappDigits,
   evolutionConnectionState,
   evolutionFetchInstances,
   evolutionRemoveInstanceCompletely,
   evolutionRestartInstance,
   evolutionSendText,
+  evolutionSetInstanceSettings,
   isEvolutionConnectionClosedError,
   isEvolutionDeliveredStatus,
   isEvolutionDeliveryErrorStatus,
@@ -35,6 +37,30 @@ export const SYSTEM_SLOT_INDEX = 0;
 /** Prefixo estável das instâncias Evolution do agente do sistema (mc…). */
 export function getSystemEvolutionInstancePrefix(): string {
   return buildEvolutionInstanceName(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
+}
+
+const SYSTEM_EVOLUTION_INSTANCE_SETTINGS = {
+  alwaysOnline: true,
+  readMessages: false,
+  readStatus: false,
+  groupsIgnore: true,
+} as const;
+
+/** Aplica settings Baileys recomendados numa instância do sistema (idempotente). */
+export async function applySystemEvolutionInstanceSettings(instanceName: string): Promise<void> {
+  const trimmed = instanceName.trim();
+  if (!trimmed) return;
+  const res = await evolutionSetInstanceSettings({
+    instanceName: trimmed,
+    settings: { ...SYSTEM_EVOLUTION_INSTANCE_SETTINGS },
+  });
+  if (!res.ok) {
+    console.warn("[system-agent] apply_instance_settings_failed", {
+      instanceName: trimmed,
+      status: res.status,
+      error: res.error,
+    });
+  }
 }
 
 /** Remove instâncias órfãs do sistema na Evolution (sessões Baileys antigas / número anterior). */
@@ -408,12 +434,6 @@ function sleep(ms: number): Promise<void> {
 type SystemConversationSendHint = {
   remoteJid: string;
   sendNumber: string;
-  quoted: {
-    messageId: string;
-    remoteJid: string;
-    fromMe: boolean;
-    conversation: string;
-  } | null;
 };
 
 /** Usa thread existente no tenant interno (ex.: cliente respondeu "oi" ao número do sistema). */
@@ -434,11 +454,11 @@ async function findSystemConversationSendHint(
     const sb = createSupabaseServiceClient();
     const { data: recentRows } = await sb
       .from("whatsapp_messages")
-      .select("remote_jid, direction, message_id, content")
+      .select("remote_jid")
       .eq("tenant_id", SYSTEM_TENANT_ID)
       .in("remote_jid", jidVariants)
       .order("created_at", { ascending: false })
-      .limit(20);
+      .limit(1);
 
     if (!recentRows?.length) return null;
 
@@ -447,23 +467,7 @@ async function findSystemConversationSendHint(
     if (!remoteJid) return null;
 
     const sendNumber = remoteJidToEvoNumber(remoteJid) ?? platformNumber;
-    const inbound = recentRows.find(
-      (row) =>
-        row.direction === "inbound" &&
-        typeof row.message_id === "string" &&
-        row.message_id.trim().length > 0,
-    );
-
-    const quoted = inbound
-      ? {
-          messageId: inbound.message_id as string,
-          remoteJid: typeof inbound.remote_jid === "string" ? inbound.remote_jid : remoteJid,
-          fromMe: false,
-          conversation: typeof inbound.content === "string" ? inbound.content : "",
-        }
-      : null;
-
-    return { remoteJid, sendNumber, quoted };
+    return { remoteJid, sendNumber };
   } catch (error) {
     console.warn("[system-agent] conversation_hint_lookup_failed", {
       error: error instanceof Error ? error.message : "lookup_failed",
@@ -1255,65 +1259,66 @@ export async function sendSystemNotification(
   let candidateNumbers: string[];
   let resolvedJid: string | null = null;
   const conversationHint = await findSystemConversationSendHint(platformNumber);
+  const resolution = await resolveEvolutionSendNumber({
+    instanceName: resolvedInstance,
+    number: platformNumber,
+  });
 
-  if (tryAllCriticalVariants) {
-    const alternate = brazilianMobileAlternateVariant(platformNumber);
-    candidateNumbers = Array.from(
-      new Set(
-        [
-          ...(conversationHint ? [conversationHint.sendNumber] : []),
-          platformNumber,
-          alternate,
-        ].filter((n): n is string => Boolean(n && n.length >= 12)),
-      ),
-    );
-    numberCheck = conversationHint?.quoted ? "conversation_reply" : "fast_path";
-    resolvedJid = conversationHint?.remoteJid ?? null;
-  } else {
-    const resolution = await resolveEvolutionSendNumber({ instanceName: resolvedInstance, number: platformNumber });
-
-    if (resolution.status === "not_found") {
-      await logSystemNotification({
-        type: options?.type ?? "generic",
-        toNumber: platformNumber,
-        message,
-        status: "failed",
-        error: "number_not_on_whatsapp",
-        metadata: {
-          ...(options?.metadata ?? {}),
-          instance_name: resolvedInstance,
-          number_raw: rawDigits,
-          number_normalized: platformNumber,
-          evolution_connection_state: liveState,
-          evolution_number_check: "not_found",
-          resolved_jid: resolution.jid,
-        },
-      });
-      return { ok: false, error: "number_not_on_whatsapp" };
-    }
-
-    numberCheck = resolution.status;
-    const preferredSendNumber =
-      resolution.status === "exists" && resolution.sendNumber ? resolution.sendNumber : platformNumber;
-    candidateNumbers = Array.from(
-      new Set(
-        [
-          ...(conversationHint ? [conversationHint.sendNumber] : []),
-          preferredSendNumber,
-          ...(resolution.status === "exists" || resolution.status === "check_failed"
-            ? resolution.candidateNumbers
-            : []),
-          platformNumber,
-        ].filter((candidate): candidate is string => Boolean(candidate && candidate.length >= 12)),
-      ),
-    );
-    resolvedJid = resolution.status === "exists" ? resolution.jid : conversationHint?.remoteJid ?? null;
+  if (resolution.status === "not_found" && !tryAllCriticalVariants) {
+    await logSystemNotification({
+      type: options?.type ?? "generic",
+      toNumber: platformNumber,
+      message,
+      status: "failed",
+      error: "number_not_on_whatsapp",
+      metadata: {
+        ...(options?.metadata ?? {}),
+        instance_name: resolvedInstance,
+        number_raw: rawDigits,
+        number_normalized: platformNumber,
+        evolution_connection_state: liveState,
+        evolution_number_check: "not_found",
+        resolved_jid: resolution.jid,
+      },
+    });
+    return { ok: false, error: "number_not_on_whatsapp" };
   }
 
-  const quotedReply = conversationHint?.quoted ?? null;
-  if (quotedReply) {
-    await sendPresence(resolvedInstance, candidateNumbers[0] ?? platformNumber, "composing", typingDelayMs(message));
-  }
+  numberCheck =
+    resolution.status === "exists"
+      ? conversationHint
+        ? "conversation_jid_check"
+        : resolution.status
+      : resolution.status;
+
+  const preferredSendNumber =
+    resolution.status === "exists" ? resolution.sendNumber : platformNumber;
+
+  candidateNumbers = Array.from(
+    new Set(
+      [
+        ...(conversationHint ? [conversationHint.remoteJid, conversationHint.sendNumber] : []),
+        ...buildEvolutionSendCandidates({
+          platformNumber,
+          jid: resolution.status === "exists" ? resolution.jid : null,
+          alternateDigits: brazilianMobileAlternateVariant(platformNumber),
+        }),
+        ...(resolution.status === "exists" || resolution.status === "check_failed"
+          ? resolution.candidateNumbers
+          : []),
+        preferredSendNumber,
+        platformNumber,
+      ].filter((candidate): candidate is string => Boolean(candidate && candidate.length >= 8)),
+    ),
+  );
+  resolvedJid = resolution.jid ?? conversationHint?.remoteJid ?? null;
+
+  await sendPresence(
+    resolvedInstance,
+    remoteJidToEvoNumber(candidateNumbers[0] ?? "") ?? platformNumber,
+    "composing",
+    typingDelayMs(message),
+  );
 
   type SendAttempt = {
     number: string;
@@ -1336,7 +1341,6 @@ export async function sendSystemNotification(
       instanceName: resolvedInstance,
       number: candidate,
       text: message.slice(0, 4000),
-      quoted: quotedReply,
     });
     sendNumber = candidate;
     const attemptFailure = attempt.ok ? detectEvolutionPayloadFailure(attempt.data) : null;
@@ -1415,7 +1419,7 @@ export async function sendSystemNotification(
       evolution_number_check: numberCheck,
       evolution_connection_state: liveState,
       conversation_remote_jid: conversationHint?.remoteJid ?? null,
-      conversation_quoted_message_id: quotedReply?.messageId ?? null,
+      evolution_whatsapp_check_jid: resolvedJid,
       evolution_message_id: evolutionMessageId,
       evolution_message_ids: evolutionMessageIds,
       evolution_response_status: evolutionResponseStatus,
@@ -1440,17 +1444,7 @@ export async function sendSystemNotification(
     });
   }
 
-  let deliveryStatus: string | undefined;
-  let deliveryError: string | null | undefined;
-  if (finalOk && logId && (options?.waitForOutcomeMs ?? 0) > 0) {
-    const outcome = await waitForSystemNotificationOutcome(logId, options?.waitForOutcomeMs);
-    if (outcome) {
-      deliveryStatus = outcome.status;
-      deliveryError = outcome.error;
-    }
-  }
-
-  const debug = {
+  const debugBase = {
     numberSent: successfulAttempt?.number ?? sendNumber,
     candidatesTried: tried,
     evolutionMessageId,
@@ -1459,8 +1453,98 @@ export async function sendSystemNotification(
     sessionRestarted: attempts.some((attempt) => attempt.restarted),
     sessionOwnerJid,
     logId,
-    deliveryStatus,
   };
+
+  let deliveryStatus: string | undefined;
+  let deliveryError: string | null | undefined;
+  if (finalOk && logId && (options?.waitForOutcomeMs ?? 0) > 0) {
+    const outcome = await waitForSystemNotificationOutcome(logId, options?.waitForOutcomeMs);
+    if (outcome) {
+      deliveryStatus = outcome.status;
+      deliveryError = outcome.error;
+    }
+
+    const whatsappRejected =
+      deliveryStatus === "delivery_failed" &&
+      typeof deliveryError === "string" &&
+      deliveryError.toUpperCase().includes("ERROR");
+
+    if (whatsappRejected) {
+      console.warn("[system-agent] whatsapp_error_retry", {
+        instanceName: resolvedInstance,
+        logId,
+        tried,
+      });
+      await evolutionRestartInstance(resolvedInstance);
+      await applySystemEvolutionInstanceSettings(resolvedInstance);
+      await sleep(3000);
+
+      const retryResolution = await resolveEvolutionSendNumber({
+        instanceName: resolvedInstance,
+        number: platformNumber,
+      });
+      const retryCandidates = Array.from(
+        new Set(
+          [
+            ...buildEvolutionSendCandidates({
+              platformNumber,
+              jid: retryResolution.status === "exists" ? retryResolution.jid : null,
+              alternateDigits: brazilianMobileAlternateVariant(platformNumber),
+            }),
+            ...(retryResolution.status === "exists" || retryResolution.status === "check_failed"
+              ? retryResolution.candidateNumbers
+              : []),
+            platformNumber,
+          ].filter((candidate): candidate is string => Boolean(candidate && candidate.length >= 8)),
+        ),
+      );
+
+      for (const candidate of retryCandidates) {
+        const retryAttempt = await sendEvolutionTextWithRestartRetry({
+          instanceName: resolvedInstance,
+          number: candidate,
+          text: message.slice(0, 4000),
+        });
+        const retryMessageId = retryAttempt.ok ? extractEvolutionMessageId(retryAttempt.data) : null;
+        if (!retryAttempt.ok || !retryMessageId) continue;
+
+        const sb = createSupabaseServiceClient();
+        await sb
+          .from("system_notifications_log")
+          .update({
+            status: "sent",
+            error: null,
+            metadata: {
+              ...(options?.metadata ?? {}),
+              instance_name: resolvedInstance,
+              number_sent: candidate,
+              numbers_tried: [...tried, ...retryCandidates],
+              evolution_message_id: retryMessageId,
+              evolution_whatsapp_error_retry: true,
+              evolution_whatsapp_check_jid: retryResolution.jid ?? null,
+            },
+          })
+          .eq("id", logId);
+
+        const retryOutcome = await waitForSystemNotificationOutcome(logId, options.waitForOutcomeMs ?? 5000);
+        if (retryOutcome) {
+          deliveryStatus = retryOutcome.status;
+          deliveryError = retryOutcome.error;
+        }
+        if (deliveryStatus !== "delivery_failed" && deliveryStatus !== "failed") {
+          return {
+            ok: true,
+            deliveryStatus: deliveryStatus ?? "sent",
+            deliveryError,
+            debug: { ...debugBase, deliveryStatus, numberSent: candidate, evolutionMessageId: retryMessageId },
+          };
+        }
+        break;
+      }
+    }
+  }
+
+  const debug = { ...debugBase, deliveryStatus };
 
   if (!finalOk) return { ok: false, error: finalError ?? "evolution_send_failed", debug };
 

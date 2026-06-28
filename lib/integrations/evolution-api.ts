@@ -456,7 +456,7 @@ export async function evolutionLogoutInstance(instanceName: string): Promise<Evo
 
 export async function evolutionSendText(params: {
   instanceName: string;
-  /** Digits with country code, no @ suffix (ex: 5511999999999). */
+  /** Dígitos E.164 ou JID completo (ex: 5511999999999 ou 123@lid). */
   number: string;
   text: string;
   quoted?: {
@@ -493,6 +493,8 @@ export async function evolutionSendText(params: {
 export type EvolutionWhatsappNumberCheck = {
   exists: boolean;
   jid: string | null;
+  /** JID alternativo (@lid) exigido por alguns contatos após migração WhatsApp. */
+  jidAlt: string | null;
   number: string;
 };
 
@@ -500,6 +502,47 @@ export type EvolutionWhatsappNumberCheck = {
 export function jidToDigits(jid: string | null | undefined): string {
   if (!jid) return "";
   return jid.split("@")[0]?.replace(/\D/g, "") ?? "";
+}
+
+/**
+ * Endereço preferido para sendText: usa JID completo (@lid / @s.whatsapp.net) quando
+ * a Evolution devolve um; senão cai nos dígitos E.164.
+ */
+export function formatEvolutionSendAddress(jid: string | null | undefined, fallbackDigits: string): string {
+  const trimmed = typeof jid === "string" ? jid.trim() : "";
+  if (trimmed.includes("@")) return trimmed;
+  const digits = trimmed.replace(/\D/g, "");
+  if (digits.length >= 8) return digits;
+  return fallbackDigits.replace(/\D/g, "");
+}
+
+/** Candidatos de envio (dígitos + JIDs completos) para contornar @lid e variantes BR. */
+export function buildEvolutionSendCandidates(params: {
+  platformNumber: string;
+  jid?: string | null;
+  jidAlt?: string | null;
+  alternateDigits?: string | null;
+}): string[] {
+  const wanted = ensureBrazilianMobileWhatsappDigits(params.platformNumber.replace(/\D/g, ""));
+  const alternate = params.alternateDigits ?? brazilianMobileAlternateVariant(wanted);
+  const out: string[] = [];
+  const add = (value: string | null | undefined) => {
+    const v = typeof value === "string" ? value.trim() : "";
+    if (!v || out.includes(v)) return;
+    out.push(v);
+  };
+
+  for (const jid of [params.jid, params.jidAlt]) {
+    if (jid?.includes("@")) add(jid);
+  }
+  add(wanted);
+  add(alternate);
+  for (const jid of [params.jid, params.jidAlt]) {
+    const digits = jidToDigits(jid);
+    if (digits.length >= 12) add(digits);
+  }
+
+  return out.filter((v) => v.length >= 8);
 }
 
 /**
@@ -563,8 +606,12 @@ export async function evolutionCheckWhatsappNumbers(params: {
       if (!item || typeof item !== "object") return null;
       const o = item as Record<string, unknown>;
       const jid = typeof o.jid === "string" && o.jid.trim() ? o.jid.trim() : null;
+      const jidAltRaw =
+        (typeof o.remoteJidAlt === "string" && o.remoteJidAlt.trim()) ||
+        (typeof o.jidAlt === "string" && o.jidAlt.trim()) ||
+        null;
       const number = typeof o.number === "string" ? o.number.replace(/\D/g, "") : "";
-      return { exists: Boolean(o.exists), jid, number };
+      return { exists: Boolean(o.exists), jid, jidAlt: jidAltRaw, number };
     })
     .filter((x): x is EvolutionWhatsappNumberCheck => x !== null);
 
@@ -618,16 +665,18 @@ export async function resolveEvolutionSendNumber(params: {
     };
   }
 
-  const jidDigits = jidToDigits(match?.jid);
-  const sendNumber = jidDigits || match?.number || wanted;
-  const candidateNumbers = Array.from(
-    new Set([wanted, sendNumber, alternate].filter((n): n is string => Boolean(n && n.length >= 12))),
-  );
+  const sendNumber = formatEvolutionSendAddress(match?.jid ?? match?.jidAlt, match?.number || wanted);
+  const candidateNumbers = buildEvolutionSendCandidates({
+    platformNumber: wanted,
+    jid: match?.jid ?? null,
+    jidAlt: match?.jidAlt ?? null,
+    alternateDigits: alternate,
+  });
 
   return {
     status: "exists",
     sendNumber,
-    jid: match?.jid ?? null,
+    jid: match?.jid ?? match?.jidAlt ?? null,
     platformNumber: wanted,
     candidateNumbers,
   };
