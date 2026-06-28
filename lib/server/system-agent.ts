@@ -41,15 +41,16 @@ export async function purgeSystemEvolutionInstances(keepInstanceName?: string | 
 
   const purged: string[] = [];
   for (const item of res.data) {
-    if (!item.name.startsWith(prefix)) continue;
-    if (keep && item.name === keep) continue;
+    const name = item.name?.trim();
+    if (!name || !name.startsWith(prefix)) continue;
+    if (keep && name === keep) continue;
 
-    const removal = await evolutionRemoveInstanceCompletely(item.name);
+    const removal = await evolutionRemoveInstanceCompletely(name);
     if (removal.deleted || removal.verifiedAbsent) {
-      purged.push(item.name);
+      purged.push(name);
     } else {
       console.warn("[system-agent] purge_instance_failed", {
-        instanceName: item.name,
+        instanceName: name,
         error: removal.error,
       });
     }
