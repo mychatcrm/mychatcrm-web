@@ -46,7 +46,7 @@ export async function sendPresence(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         number,
-        options: { presence, delay: delayMs, number },
+        options: { presence, delay: delayMs },
       }),
       timeoutMs: PRESENCE_TIMEOUT_MS,
     });
@@ -55,6 +55,9 @@ export async function sendPresence(
         status: res.status,
         error: res.error,
       });
+      // Não aguardar o delay quando Evolution rejeita a presença — evita
+      // bloquear o envio real por vários segundos desnecessariamente.
+      return;
     }
   } catch (err) {
     // Falha silenciosa — a mensagem será enviada na mesma sem o indicador
@@ -62,10 +65,11 @@ export async function sendPresence(
       "[evolution-presence] sendPresence falhou",
       err instanceof Error ? err.message : err,
     );
+    return;
   }
 
-  // Aguarda o delay independentemente do resultado da chamada,
-  // para que o utilizador veja o indicador antes de a mensagem chegar.
+  // Aguarda o delay só quando Evolution aceitou — para que o utilizador
+  // veja o indicador antes de a mensagem chegar.
   await sleep(delayMs);
 }
 
