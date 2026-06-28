@@ -10,7 +10,7 @@
     },
     {
       "path": "/api/internal/system-notifications/reconcile",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 5 * * *"
     }
   ]
 }

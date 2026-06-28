@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
+import { reconcileStalePendingNotifications } from "@/lib/server/system-agent";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +11,8 @@ export async function GET() {
   if (!hasAdminAccess(session, "system-agent")) {
     return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
   }
+
+  await reconcileStalePendingNotifications(60);
 
   const sb = createSupabaseServiceClient();
   const { data, error } = await sb

@@ -12,6 +12,7 @@ import {
   getSystemAgentInstanceName,
   getSystemAgentSession,
   getSystemWebhookDiagnostics,
+  reconcileStalePendingNotifications,
 } from "@/lib/server/system-agent";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
@@ -130,6 +131,8 @@ export async function GET(request: Request) {
   if (!isEvolutionApiConfigured()) {
     return NextResponse.json({ error: "Evolution API não configurada no servidor." }, { status: 503 });
   }
+
+  await reconcileStalePendingNotifications(60);
 
   return NextResponse.json(await buildDiagnosePayload(request));
 }
