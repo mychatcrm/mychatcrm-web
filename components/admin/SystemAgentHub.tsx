@@ -153,6 +153,12 @@ function humanizeNotificationError(error: string | null): string | null {
   if (error === "delivery_timeout") {
     return "Não houve confirmação de entrega em 60s — mensagem provavelmente não chegou no celular";
   }
+  if (error === "whatsapp_delivery_failed") {
+    return "WhatsApp recusou a entrega — número remetente novo ou bloqueado (anti-spam). Salve o número remetente nos contatos e responda com um \"oi\" antes de testar.";
+  }
+  if (error.startsWith("delivery_status:")) {
+    return `WhatsApp reportou falha na entrega (${error.split(":").slice(1).join(":")})`;
+  }
 
   return error;
 }
@@ -402,6 +408,8 @@ export function SystemAgentHub(props: {
       });
       const json = (await res.json().catch(() => ({}))) as {
         error?: string;
+        deliveryStatus?: string;
+        deliveryError?: string | null;
         debug?: {
           numberSent?: string;
           candidatesTried?: string[];
@@ -410,7 +418,12 @@ export function SystemAgentHub(props: {
         };
       };
       if (!res.ok) {
-        setActionMessage(json.error ?? "Falha no envio de teste.");
+        setActionMessage(
+          humanizeNotificationError(json.error ?? json.deliveryError ?? null) ??
+            json.error ??
+            "Falha no envio de teste.",
+        );
+        await refreshLogs();
         return;
       }
       const sender =
@@ -418,9 +431,13 @@ export function SystemAgentHub(props: {
         waJid?.split("@")[0]?.replace(/\D/g, "");
       const senderLabel = sender ? `+${sender}` : senderLine;
       const tried = json.debug?.candidatesTried?.join(", ") ?? json.debug?.numberSent ?? testNumber.trim();
-      setActionMessage(
-        `Enviado de ${senderLabel} para ${tried}. Verifique o celular de destino (e Solicitações). Se não chegar em 1 min, use "Forçar reconexão (QR)" com o número novo.`,
-      );
+      if (json.deliveryStatus === "delivered") {
+        setActionMessage(`Entregue ✓ — enviado de ${senderLabel} para ${tried}.`);
+      } else {
+        setActionMessage(
+          `Disparado de ${senderLabel} para ${tried}. Aguardando confirmação no celular (pode levar alguns segundos). Se não chegar, salve ${senderLabel} nos contatos e responda \"oi\" antes de testar de novo.`,
+        );
+      }
       await refreshLogs();
     } finally {
       setTestBusy(false);

@@ -38,6 +38,7 @@ vi.mock("@/lib/supabase/server", () => ({
 
 vi.mock("@/lib/server/tenant-evolution-instance-db", () => ({
   getEvolutionInstanceByTenantId: vi.fn(async () => ({ instance_name: "system-instance" })),
+  getEvolutionInstanceByTenantSlot: vi.fn(async () => null),
 }));
 
 import { isSystemAgentReady, sendSystemNotification } from "@/lib/server/system-agent";
@@ -45,7 +46,11 @@ import { isSystemAgentReady, sendSystemNotification } from "@/lib/server/system-
 describe("sendSystemNotification", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    insertMock.mockResolvedValue({ error: null });
+    insertMock.mockReturnValue({
+      select: () => ({
+        single: () => Promise.resolve({ data: { id: "log-test-id" }, error: null }),
+      }),
+    });
     resolveEvolutionSendNumberMock.mockImplementation(async ({ number }: { number: string }) => ({
       status: "exists",
       sendNumber: number,
@@ -70,10 +75,17 @@ describe("sendSystemNotification", () => {
   });
 
   it("does not call Evolution sendText when the system instance is not open", async () => {
-    evolutionConnectionStateMock.mockResolvedValueOnce({
+    evolutionFetchInstancesMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { instance: { state: "connecting" } },
+      data: [
+        {
+          name: "system-instance",
+          connectionStatus: "connecting",
+          ownerJid: null,
+          profileName: null,
+        },
+      ],
     });
 
     const result = await sendSystemNotification("62999991111", "Teste", "system-instance", {
@@ -81,12 +93,12 @@ describe("sendSystemNotification", () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.error).toBe("system_instance_not_open:connecting");
+    expect(result.error).toBe("system_session_not_authenticated:connecting");
     expect(evolutionSendTextMock).not.toHaveBeenCalled();
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "failed",
-        error: "system_instance_not_open:connecting",
+        error: "system_session_not_authenticated:connecting",
       }),
     );
   });
@@ -330,6 +342,28 @@ describe("sendSystemNotification", () => {
     expect(evolutionSendTextMock).not.toHaveBeenCalled();
   });
 
+  it("uses fast path for critical notifications without WhatsApp number check", async () => {
+    evolutionSendTextMock.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      data: { key: { id: "FAST1" }, status: "PENDING" },
+    });
+
+    await sendSystemNotification("5562993580574", "Teste", "system-instance", {
+      type: "admin_test",
+    });
+
+    expect(resolveEvolutionSendNumberMock).not.toHaveBeenCalled();
+    expect(evolutionSendTextMock).toHaveBeenCalledWith(
+      expect.objectContaining({ number: "5562993580574" }),
+    );
+    expect(insertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ evolution_number_check: "fast_path" }),
+      }),
+    );
+  });
+
   it("sends once for handoff_alert when Evolution returns numeric PENDING (1)", async () => {
     evolutionConnectionStateMock.mockResolvedValueOnce({
       ok: true,
@@ -372,7 +406,7 @@ describe("sendSystemNotification", () => {
       status: 200,
       data: { instance: { state: "open" } },
     });
-    evolutionSendTextMock.mockResolvedValueOnce({
+    evolutionSendTextMock.mockResolvedValue({
       ok: true,
       status: 201,
       data: { status: "PENDING" },

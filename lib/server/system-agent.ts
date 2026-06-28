@@ -1,5 +1,7 @@
 import {
+  brazilianMobileAlternateVariant,
   buildEvolutionInstanceName,
+  ensureBrazilianMobileWhatsappDigits,
   evolutionConnectionState,
   evolutionFetchInstances,
   evolutionRemoveInstanceCompletely,
@@ -233,6 +235,8 @@ function isValidBrazilianWhatsAppNumber(digits: string): boolean {
   return digits.startsWith("55") && (digits.length === 12 || digits.length === 13);
 }
 
+type SystemNotificationRow = { id: string; status: string; metadata: Record<string, unknown> | null };
+
 async function logSystemNotification(params: {
   type: string;
   toNumber: string;
@@ -240,22 +244,87 @@ async function logSystemNotification(params: {
   status: "sent" | "failed" | "delivery_failed" | "delivered" | "pending" | "skipped";
   error?: string | null;
   metadata?: Record<string, unknown> | null;
-}): Promise<void> {
+}): Promise<string | null> {
   try {
     const sb = createSupabaseServiceClient();
-    await sb.from("system_notifications_log").insert({
-      type: params.type,
-      to_number: params.toNumber,
-      message: params.message.slice(0, 4000),
-      status: params.status,
-      error: params.error ?? null,
-      metadata: params.metadata ?? null,
-    });
+    const { data, error } = await sb
+      .from("system_notifications_log")
+      .insert({
+        type: params.type,
+        to_number: params.toNumber,
+        message: params.message.slice(0, 4000),
+        status: params.status,
+        error: params.error ?? null,
+        metadata: params.metadata ?? null,
+      })
+      .select("id")
+      .single();
+    if (error) {
+      console.warn("[system-agent] log_failed", { error: error.message });
+      return null;
+    }
+    return typeof data?.id === "string" ? data.id : null;
   } catch (error) {
     console.warn("[system-agent] log_failed", {
       error: error instanceof Error ? error.message : "log_failed",
     });
+    return null;
   }
+}
+
+/** Localiza a notificação mais recente ainda sem confirmação final (webhook ERROR com id interno da Evolution). */
+async function findLatestRecentSystemNotificationForInstance(
+  sb: ReturnType<typeof createSupabaseServiceClient>,
+  instanceName: string,
+  maxAgeSeconds = 120,
+): Promise<SystemNotificationRow | null> {
+  const cutoff = new Date(Date.now() - maxAgeSeconds * 1000).toISOString();
+  const { data } = await sb
+    .from("system_notifications_log")
+    .select("id, status, metadata")
+    .in("status", ["pending", "sent"])
+    .eq("metadata->>instance_name", instanceName)
+    .gt("created_at", cutoff)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  return (data?.[0] as SystemNotificationRow | undefined) ?? null;
+}
+
+async function readSystemNotificationStatus(
+  logId: string,
+): Promise<{ status: string; error: string | null } | null> {
+  try {
+    const sb = createSupabaseServiceClient();
+    const { data } = await sb
+      .from("system_notifications_log")
+      .select("status, error")
+      .eq("id", logId)
+      .maybeSingle();
+    if (!data) return null;
+    return {
+      status: String(data.status),
+      error: typeof data.error === "string" ? data.error : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Aguarda confirmação de entrega/falha via webhook (poll curto pós-envio). */
+export async function waitForSystemNotificationOutcome(
+  logId: string,
+  maxWaitMs = 4000,
+): Promise<{ status: string; error: string | null } | null> {
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    const row = await readSystemNotificationStatus(logId);
+    if (!row) return null;
+    if (row.status === "delivered" || row.status === "delivery_failed" || row.status === "failed") {
+      return row;
+    }
+    await sleep(400);
+  }
+  return readSystemNotificationStatus(logId);
 }
 
 function readEvolutionPayloadString(payload: unknown, path: string[]): string | null {
@@ -359,11 +428,9 @@ async function sendEvolutionTextWithRestartRetry(params: {
     restarted = restart.ok;
     if (restart.ok) {
       await sleep(2500);
-      const state = await evolutionConnectionState(params.instanceName);
-      const liveState = state.ok
-        ? normalizeEvolutionConnectionState(parseEvolutionConnectionStatePayload(state.data), "close")
-        : "unknown";
-      if (state.ok && liveState === "open") {
+      const instances = await evolutionFetchInstances(params.instanceName);
+      const info = instances.ok ? pickEvolutionInstanceInfo(instances.data, params.instanceName) : null;
+      if (instances.ok && info?.connectionStatus === "open" && info.ownerJid) {
         send = await attempt();
       }
     }
@@ -371,8 +438,6 @@ async function sendEvolutionTextWithRestartRetry(params: {
 
   return { ...send, restarted };
 }
-
-type SystemNotificationRow = { id: string; status: string; metadata: Record<string, unknown> | null };
 
 const ORPHAN_EVENTS_KEY = "system_webhook_pending_delivery_events";
 const MAX_ORPHAN_EVENTS = 50;
@@ -624,9 +689,17 @@ async function applySystemDeliveryUpdate(params: {
   useRetry?: boolean;
 }): Promise<SystemDeliveryUpdateResult> {
   const sb = createSupabaseServiceClient();
-  const row = params.useRetry !== false
+  let row = params.useRetry !== false
     ? await findSystemNotificationByMessageIdWithRetry(sb, params.evolutionMessageId)
     : await findSystemNotificationByMessageId(sb, params.evolutionMessageId);
+
+  if (
+    !row &&
+    params.instanceName &&
+    isEvolutionDeliveryErrorStatus(params.status)
+  ) {
+    row = await findLatestRecentSystemNotificationForInstance(sb, params.instanceName, 120);
+  }
 
   if (!row) {
     if (params.allowBuffer && params.instanceName) {
@@ -972,10 +1045,14 @@ export async function sendSystemNotification(
   options?: {
     type?: string;
     metadata?: Record<string, unknown> | null;
+    /** Poll curto pós-envio para capturar webhook de entrega/falha (ex.: admin_test). */
+    waitForOutcomeMs?: number;
   },
 ): Promise<{
   ok: boolean;
   error?: string;
+  deliveryStatus?: string;
+  deliveryError?: string | null;
   debug?: {
     numberSent?: string;
     candidatesTried?: string[];
@@ -1015,152 +1092,140 @@ export async function sendSystemNotification(
     return { ok: false, error: "missing_system_instance" };
   }
 
-  const state = await evolutionConnectionState(resolvedInstance);
-  const liveState = state.ok
-    ? normalizeEvolutionConnectionState(parseEvolutionConnectionStatePayload(state.data), "close")
-    : "unknown";
-  if (!state.ok || liveState !== "open") {
-    const error = state.ok ? `system_instance_not_open:${liveState}` : `system_instance_state_check_failed:${state.error}`;
-    await logSystemNotification({
-      type: options?.type ?? "generic",
-      toNumber: digits,
-      message,
-      status: "failed",
-      error,
-      metadata: {
-        ...(options?.metadata ?? {}),
-        instance_name: resolvedInstance,
-        number_raw: rawDigits,
-        number_normalized: digits,
-        evolution_connection_state: liveState,
-      },
-    });
-    return { ok: false, error };
-  }
-
-  // Fonte de verdade da identidade: fetchInstances traz ownerJid quando a sessão está REALMENTE
-  // autenticada. Falha fechada: sem fetchInstances não enviamos (evita sessão zumbi).
-  let sessionOwnerJid: string | null = null;
-  let sessionConnectionStatus: string | null = null;
-  const instancesRes = await evolutionFetchInstances(resolvedInstance);
-  if (!instancesRes.ok) {
-    const reason = `system_session_check_failed:${instancesRes.error ?? "fetchInstances_failed"}`;
-    await logSystemNotification({
-      type: options?.type ?? "generic",
-      toNumber: digits,
-      message,
-      status: "failed",
-      error: reason,
-      metadata: {
-        ...(options?.metadata ?? {}),
-        instance_name: resolvedInstance,
-        number_raw: rawDigits,
-        number_normalized: digits,
-        evolution_connection_state: liveState,
-      },
-    });
-    return { ok: false, error: reason };
-  }
-
-  const info = pickEvolutionInstanceInfo(instancesRes.data, resolvedInstance);
-  if (!info) {
-    const reason = "system_session_not_found_in_evolution";
-    await logSystemNotification({
-      type: options?.type ?? "generic",
-      toNumber: digits,
-      message,
-      status: "failed",
-      error: reason,
-      metadata: {
-        ...(options?.metadata ?? {}),
-        instance_name: resolvedInstance,
-        number_raw: rawDigits,
-        number_normalized: digits,
-        evolution_connection_state: liveState,
-      },
-    });
-    return { ok: false, error: reason };
-  }
-
-  sessionOwnerJid = info.ownerJid;
-  sessionConnectionStatus = info.connectionStatus;
-  const authenticated = info.connectionStatus === "open" && Boolean(info.ownerJid);
-  if (!authenticated) {
-    const reason =
-      info.connectionStatus && info.connectionStatus !== "open"
-        ? `system_session_not_authenticated:${info.connectionStatus}`
-        : "system_session_not_authenticated:no_owner";
-    await logSystemNotification({
-      type: options?.type ?? "generic",
-      toNumber: digits,
-      message,
-      status: "failed",
-      error: reason,
-      metadata: {
-        ...(options?.metadata ?? {}),
-        instance_name: resolvedInstance,
-        number_raw: rawDigits,
-        number_normalized: digits,
-        evolution_connection_state: liveState,
-        session_connection_status: info.connectionStatus,
-        session_owner_jid: info.ownerJid,
-      },
-    });
-    return { ok: false, error: reason };
-  }
-
-  // Valida existência no WhatsApp e prepara as variantes brasileiras reconhecidas pela Evolution.
-  const resolution = await resolveEvolutionSendNumber({ instanceName: resolvedInstance, number: digits });
-
-  if (resolution.status === "not_found") {
-    await logSystemNotification({
-      type: options?.type ?? "generic",
-      toNumber: digits,
-      message,
-      status: "failed",
-      error: "number_not_on_whatsapp",
-      metadata: {
-        ...(options?.metadata ?? {}),
-        instance_name: resolvedInstance,
-        number_raw: rawDigits,
-        number_normalized: digits,
-        evolution_connection_state: liveState,
-        evolution_number_check: "not_found",
-        resolved_jid: resolution.jid,
-      },
-    });
-    return { ok: false, error: "number_not_on_whatsapp" };
-  }
-
-  const numberCheck = resolution.status;
-  const platformNumber =
-    resolution.status === "exists" || resolution.status === "check_failed"
-      ? resolution.platformNumber
-      : digits;
-  const preferredSendNumber =
-    resolution.status === "exists" && resolution.sendNumber ? resolution.sendNumber : platformNumber;
+  const platformNumber = ensureBrazilianMobileWhatsappDigits(digits);
   const tryAllCriticalVariants = shouldTryReliableBrazilianVariants(options?.type);
-  const candidateSeed = tryAllCriticalVariants
-    ? [
-        // Para fluxos críticos do sistema, priorizamos o número canônico com 9
-        // (platformNumber). Se falhar, tentamos os alternates retornados pela Evolution.
-        platformNumber,
-        preferredSendNumber,
-        ...(resolution.status === "exists" || resolution.status === "check_failed"
-          ? resolution.candidateNumbers
-          : []),
-      ]
-    : [
-        preferredSendNumber,
-        ...(resolution.status === "exists" || resolution.status === "check_failed"
-          ? resolution.candidateNumbers
-          : []),
-        platformNumber,
-      ];
-  const candidateNumbers = Array.from(
-    new Set(candidateSeed.filter((candidate): candidate is string => Boolean(candidate && candidate.length >= 12))),
-  );
-  const resolvedJid = resolution.status === "exists" ? resolution.jid : null;
+
+  // Sessão: confia no DB se recente (evita round-trip extra); senão valida 1x na Evolution.
+  const dbRow = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
+  const dbAgeMs = dbRow?.updated_at ? Date.now() - Date.parse(dbRow.updated_at) : Number.POSITIVE_INFINITY;
+  const trustDbSession =
+    dbRow?.instance_name === resolvedInstance &&
+    dbRow.connection_state === "open" &&
+    Boolean(dbRow.wa_jid?.trim()) &&
+    dbAgeMs < 120_000;
+
+  let sessionOwnerJid: string | null = trustDbSession ? dbRow?.wa_jid ?? null : null;
+  let sessionConnectionStatus: string | null = trustDbSession ? "open" : null;
+  let liveState = trustDbSession ? "open" : "unknown";
+
+  if (!trustDbSession) {
+    const instancesRes = await evolutionFetchInstances(resolvedInstance);
+    if (!instancesRes.ok) {
+      const reason = `system_session_check_failed:${instancesRes.error ?? "fetchInstances_failed"}`;
+      await logSystemNotification({
+        type: options?.type ?? "generic",
+        toNumber: platformNumber,
+        message,
+        status: "failed",
+        error: reason,
+        metadata: {
+          ...(options?.metadata ?? {}),
+          instance_name: resolvedInstance,
+          number_raw: rawDigits,
+          number_normalized: platformNumber,
+        },
+      });
+      return { ok: false, error: reason };
+    }
+
+    const info = pickEvolutionInstanceInfo(instancesRes.data, resolvedInstance);
+    if (!info) {
+      const reason = "system_session_not_found_in_evolution";
+      await logSystemNotification({
+        type: options?.type ?? "generic",
+        toNumber: platformNumber,
+        message,
+        status: "failed",
+        error: reason,
+        metadata: {
+          ...(options?.metadata ?? {}),
+          instance_name: resolvedInstance,
+          number_raw: rawDigits,
+          number_normalized: platformNumber,
+        },
+      });
+      return { ok: false, error: reason };
+    }
+
+    sessionOwnerJid = info.ownerJid;
+    sessionConnectionStatus = info.connectionStatus;
+    liveState = info.connectionStatus ?? "unknown";
+    const authenticated = info.connectionStatus === "open" && Boolean(info.ownerJid);
+    if (!authenticated) {
+      const reason =
+        info.connectionStatus && info.connectionStatus !== "open"
+          ? `system_session_not_authenticated:${info.connectionStatus}`
+          : "system_session_not_authenticated:no_owner";
+      await logSystemNotification({
+        type: options?.type ?? "generic",
+        toNumber: platformNumber,
+        message,
+        status: "failed",
+        error: reason,
+        metadata: {
+          ...(options?.metadata ?? {}),
+          instance_name: resolvedInstance,
+          number_raw: rawDigits,
+          number_normalized: platformNumber,
+          session_connection_status: info.connectionStatus,
+          session_owner_jid: info.ownerJid,
+        },
+      });
+      return { ok: false, error: reason };
+    }
+  }
+
+  let numberCheck: string;
+  let candidateNumbers: string[];
+  let resolvedJid: string | null = null;
+
+  if (tryAllCriticalVariants) {
+    // Caminho rápido (igual /conversas/send): dispara direto sem checkWhatsappNumbers.
+    const alternate = brazilianMobileAlternateVariant(platformNumber);
+    candidateNumbers = Array.from(
+      new Set([platformNumber, alternate].filter((n): n is string => Boolean(n && n.length >= 12))),
+    );
+    numberCheck = "fast_path";
+  } else {
+    const resolution = await resolveEvolutionSendNumber({ instanceName: resolvedInstance, number: platformNumber });
+
+    if (resolution.status === "not_found") {
+      await logSystemNotification({
+        type: options?.type ?? "generic",
+        toNumber: platformNumber,
+        message,
+        status: "failed",
+        error: "number_not_on_whatsapp",
+        metadata: {
+          ...(options?.metadata ?? {}),
+          instance_name: resolvedInstance,
+          number_raw: rawDigits,
+          number_normalized: platformNumber,
+          evolution_connection_state: liveState,
+          evolution_number_check: "not_found",
+          resolved_jid: resolution.jid,
+        },
+      });
+      return { ok: false, error: "number_not_on_whatsapp" };
+    }
+
+    numberCheck = resolution.status;
+    const preferredSendNumber =
+      resolution.status === "exists" && resolution.sendNumber ? resolution.sendNumber : platformNumber;
+    candidateNumbers = Array.from(
+      new Set(
+        [
+          preferredSendNumber,
+          ...(resolution.status === "exists" || resolution.status === "check_failed"
+            ? resolution.candidateNumbers
+            : []),
+          platformNumber,
+        ].filter((candidate): candidate is string => Boolean(candidate && candidate.length >= 12)),
+      ),
+    );
+    resolvedJid = resolution.status === "exists" ? resolution.jid : null;
+  }
+
   type SendAttempt = {
     number: string;
     ok: boolean;
@@ -1241,7 +1306,7 @@ export async function sendSystemNotification(
 
   const logStatus = finalOk ? resolveNotificationLogStatus(evolutionResponseStatus) : "failed";
 
-  await logSystemNotification({
+  const logId = await logSystemNotification({
     type: options?.type ?? "generic",
     toNumber: platformNumber,
     message,
@@ -1283,6 +1348,16 @@ export async function sendSystemNotification(
     });
   }
 
+  let deliveryStatus: string | undefined;
+  let deliveryError: string | null | undefined;
+  if (finalOk && logId && (options?.waitForOutcomeMs ?? 0) > 0) {
+    const outcome = await waitForSystemNotificationOutcome(logId, options?.waitForOutcomeMs);
+    if (outcome) {
+      deliveryStatus = outcome.status;
+      deliveryError = outcome.error;
+    }
+  }
+
   const debug = {
     numberSent: successfulAttempt?.number ?? sendNumber,
     candidatesTried: tried,
@@ -1291,8 +1366,26 @@ export async function sendSystemNotification(
     evolutionResponseStatus,
     sessionRestarted: attempts.some((attempt) => attempt.restarted),
     sessionOwnerJid,
+    logId,
+    deliveryStatus,
   };
 
   if (!finalOk) return { ok: false, error: finalError ?? "evolution_send_failed", debug };
-  return { ok: true, debug };
+
+  if (deliveryStatus === "delivery_failed" || deliveryStatus === "failed") {
+    return {
+      ok: false,
+      error: deliveryError ?? "whatsapp_delivery_failed",
+      deliveryStatus,
+      deliveryError,
+      debug,
+    };
+  }
+
+  return {
+    ok: true,
+    deliveryStatus: deliveryStatus ?? logStatus,
+    deliveryError,
+    debug,
+  };
 }

@@ -35,11 +35,25 @@ export async function POST(request: Request) {
   const result = await sendSystemNotification(toNumber, message, instanceName, {
     type: "admin_test",
     metadata: { requested_by: session.email ?? "admin" },
+    waitForOutcomeMs: 5000,
   });
 
   if (!result.ok) {
-    return NextResponse.json({ ok: false, error: result.error ?? "send_failed", debug: result.debug }, { status: 502 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: result.error ?? "send_failed",
+        deliveryStatus: result.deliveryStatus,
+        deliveryError: result.deliveryError,
+        debug: result.debug,
+      },
+      { status: 502 },
+    );
   }
 
-  return NextResponse.json({ ok: true, debug: result.debug });
+  return NextResponse.json({
+    ok: true,
+    deliveryStatus: result.deliveryStatus,
+    debug: result.debug,
+  });
 }
