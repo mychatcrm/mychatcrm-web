@@ -5,17 +5,13 @@ const {
   evolutionFetchInstancesMock,
   evolutionRestartInstanceMock,
   evolutionSendTextMock,
-  resolveEvolutionSendNumberMock,
   insertMock,
-  whatsappMessagesSelectMock,
 } = vi.hoisted(() => ({
   evolutionConnectionStateMock: vi.fn(),
   evolutionFetchInstancesMock: vi.fn(),
   evolutionRestartInstanceMock: vi.fn(),
   evolutionSendTextMock: vi.fn(),
-  resolveEvolutionSendNumberMock: vi.fn(),
   insertMock: vi.fn(),
-  whatsappMessagesSelectMock: vi.fn(),
 }));
 
 vi.mock("@/lib/server/evolution-presence", () => ({
@@ -31,30 +27,14 @@ vi.mock("@/lib/integrations/evolution-api", async (importOriginal) => {
     evolutionFetchInstances: evolutionFetchInstancesMock,
     evolutionRestartInstance: evolutionRestartInstanceMock,
     evolutionSendText: evolutionSendTextMock,
-    resolveEvolutionSendNumber: resolveEvolutionSendNumberMock,
   };
 });
 
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServiceClient: () => ({
-    from: (table: string) => {
-      if (table === "whatsapp_messages") {
-        return {
-          select: () => ({
-            eq: () => ({
-              in: () => ({
-                order: () => ({
-                  limit: whatsappMessagesSelectMock,
-                }),
-              }),
-            }),
-          }),
-        };
-      }
-      return {
-        insert: insertMock,
-      };
-    },
+    from: () => ({
+      insert: insertMock,
+    }),
   }),
 }));
 
@@ -68,19 +48,11 @@ import { isSystemAgentReady, sendSystemNotification } from "@/lib/server/system-
 describe("sendSystemNotification", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    whatsappMessagesSelectMock.mockResolvedValue({ data: [], error: null });
     insertMock.mockReturnValue({
       select: () => ({
         single: () => Promise.resolve({ data: { id: "log-test-id" }, error: null }),
       }),
     });
-    resolveEvolutionSendNumberMock.mockImplementation(async ({ number }: { number: string }) => ({
-      status: "exists",
-      sendNumber: number,
-      jid: `${number}@s.whatsapp.net`,
-      platformNumber: number,
-      candidateNumbers: [number],
-    }));
     evolutionRestartInstanceMock.mockResolvedValue({ ok: true, status: 200, data: {} });
     // Default: sessão realmente autenticada (open + ownerJid) para os caminhos felizes.
     evolutionFetchInstancesMock.mockResolvedValue({
@@ -274,7 +246,6 @@ describe("sendSystemNotification", () => {
       type: "admin_test",
     });
 
-    expect(resolveEvolutionSendNumberMock).not.toHaveBeenCalled();
     expect(evolutionSendTextMock).toHaveBeenCalledWith(
       expect.objectContaining({ number: "5562993580574" }),
     );
@@ -285,35 +256,32 @@ describe("sendSystemNotification", () => {
     );
   });
 
-  it("tries alternate Brazilian format on hard failure without message id", async () => {
+  it("does not retry with alternate Brazilian format when Evolution omits message id", async () => {
     evolutionConnectionStateMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
       data: { instance: { state: "open" } },
     });
-    evolutionSendTextMock
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 201,
-        data: { status: "PENDING" },
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 201,
-        data: { key: { id: "MSG_WITH_9" }, status: "PENDING" },
-      });
+    evolutionSendTextMock.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      data: { status: "PENDING" },
+    });
 
     const result = await sendSystemNotification("5562993580574", "Teste", "system-instance", {
       type: "phone_verification_code",
     });
 
-    expect(result.ok).toBe(true);
-    expect(evolutionSendTextMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("missing_evolution_message_id");
+    expect(evolutionSendTextMock).toHaveBeenCalledTimes(1);
+    expect(evolutionSendTextMock).toHaveBeenCalledWith(
+      expect.objectContaining({ number: "5562993580574" }),
+    );
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        metadata: expect.objectContaining({
-          evolution_message_id: "MSG_WITH_9",
-        }),
+        status: "failed",
+        error: "missing_evolution_message_id",
       }),
     );
   });

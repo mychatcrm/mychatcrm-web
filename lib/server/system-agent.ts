@@ -1,5 +1,4 @@
 import {
-  brazilianMobileAlternateVariant,
   buildEvolutionInstanceName,
   ensureBrazilianMobileWhatsappDigits,
   evolutionConnectionState,
@@ -402,14 +401,6 @@ function extractEvolutionResponseStatus(payload: unknown): unknown {
   return (payload as Record<string, unknown>).status ?? null;
 }
 
-const CRITICAL_SYSTEM_NOTIFICATION_TYPES = new Set([
-  "account_phone_removed",
-  "admin_test",
-  "handoff_alert",
-  "integration_disconnected",
-  "phone_verification_code",
-]);
-
 function resolveNotificationLogStatus(responseStatus: unknown): "sent" | "pending" {
   // Esta função só é chamada quando a Evolution aceitou o envio (há message_id).
   // Aceitação da Evolution = mensagem enfileirada/enviada com sucesso. Esse é o
@@ -420,71 +411,8 @@ function resolveNotificationLogStatus(responseStatus: unknown): "sent" | "pendin
   return "sent";
 }
 
-function shouldTryReliableBrazilianVariants(type: string | undefined): boolean {
-  return Boolean(type && CRITICAL_SYSTEM_NOTIFICATION_TYPES.has(type));
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-type NotificationInstanceTarget = {
-  instanceName: string;
-  label: "system" | "fallback_commercial";
-  waJid: string | null;
-};
-
-/** Linha comercial que entregava antes (+556282194839 / instância Sofia). */
-async function getSystemNotificationFallbackInstance(): Promise<NotificationInstanceTarget | null> {
-  const explicit = process.env.SYSTEM_AGENT_FALLBACK_INSTANCE?.trim();
-  const resolveRow = async (
-    instanceName: string,
-    waJid: string | null,
-  ): Promise<NotificationInstanceTarget | null> => {
-    const res = await evolutionFetchInstances(instanceName);
-    const info = res.ok ? pickEvolutionInstanceInfo(res.data, instanceName) : null;
-    if (!info || info.connectionStatus !== "open" || !info.ownerJid) return null;
-    return {
-      instanceName,
-      label: "fallback_commercial",
-      waJid: info.ownerJid ?? waJid,
-    };
-  };
-
-  if (explicit) {
-    return resolveRow(explicit, null);
-  }
-
-  try {
-    const sb = createSupabaseServiceClient();
-    const { data } = await sb
-      .from("tenant_evolution_instances")
-      .select("instance_name, wa_jid")
-      .neq("tenant_id", SYSTEM_TENANT_ID)
-      .like("wa_jid", "%82194839%")
-      .order("updated_at", { ascending: false })
-      .limit(1);
-    const row = data?.[0];
-    if (row && typeof row.instance_name === "string" && row.instance_name.trim()) {
-      const instanceName = row.instance_name.trim();
-      const waJid = typeof row.wa_jid === "string" ? row.wa_jid : null;
-      return resolveRow(instanceName, waJid);
-    }
-  } catch (error) {
-    console.warn("[system-agent] fallback_instance_lookup_failed", {
-      error: error instanceof Error ? error.message : "lookup_failed",
-    });
-  }
-  return null;
-}
-
-function buildReliableBrazilianSendNumbers(platformNumber: string, tryAlternates: boolean): string[] {
-  const wanted = ensureBrazilianMobileWhatsappDigits(platformNumber);
-  const alternate = brazilianMobileAlternateVariant(wanted);
-  if (tryAlternates && alternate && alternate !== wanted) {
-    return [wanted, alternate];
-  }
-  return [wanted];
 }
 
 async function sendEvolutionTextWithRestartRetry(params: {
@@ -1186,7 +1114,6 @@ export async function sendSystemNotification(
   }
 
   const platformNumber = ensureBrazilianMobileWhatsappDigits(digits);
-  const tryAllCriticalVariants = shouldTryReliableBrazilianVariants(options?.type);
 
   // Sessão: confia no DB se recente (evita round-trip extra); senão valida 1x na Evolution.
   const dbRow = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
@@ -1268,101 +1195,28 @@ export async function sendSystemNotification(
     }
   }
 
-  const candidateNumbers = buildReliableBrazilianSendNumbers(platformNumber, tryAllCriticalVariants);
-  const numberCheck = "conversas_style";
+  const sendNumber = ensureBrazilianMobileWhatsappDigits(platformNumber);
 
-  const instanceTargets: NotificationInstanceTarget[] = [];
-  const fallbackInstance = await getSystemNotificationFallbackInstance();
-  if (fallbackInstance && fallbackInstance.instanceName !== resolvedInstance) {
-    instanceTargets.push(fallbackInstance);
-  }
-  instanceTargets.push({ instanceName: resolvedInstance, label: "system", waJid: sessionOwnerJid });
+  await sendPresence(resolvedInstance, sendNumber, "composing", typingDelayMs(message));
+  const attempt = await sendEvolutionTextWithRestartRetry({
+    instanceName: resolvedInstance,
+    number: sendNumber,
+    text: message.slice(0, 4000),
+  });
 
-  type SendAttempt = {
-    instanceName: string;
-    instanceLabel: string;
-    number: string;
-    ok: boolean;
-    error: string | null;
-    payloadFailure: string | null;
-    messageId: string | null;
-    responseStatus: unknown;
-    restarted: boolean;
-  };
-
-  const attempts: SendAttempt[] = [];
-  const successfulAttempts: SendAttempt[] = [];
-  let sendNumber = candidateNumbers[0] ?? platformNumber;
-  let usedInstance = resolvedInstance;
-  let usedInstanceLabel = "system";
-  let usedOwnerJid = sessionOwnerJid;
-  const tried: string[] = [];
-
-  for (const target of instanceTargets) {
-    await sendPresence(
-      target.instanceName,
-      candidateNumbers[0] ?? platformNumber,
-      "composing",
-      typingDelayMs(message),
-    );
-
-    for (const candidate of candidateNumbers) {
-      tried.push(`${target.label}:${candidate}`);
-      const attempt = await sendEvolutionTextWithRestartRetry({
-        instanceName: target.instanceName,
-        number: candidate,
-        text: message.slice(0, 4000),
-      });
-      sendNumber = candidate;
-      const attemptFailure = attempt.ok ? detectEvolutionPayloadFailure(attempt.data) : null;
-      const messageId = attempt.ok ? extractEvolutionMessageId(attempt.data) : null;
-      const responseStatus = attempt.ok ? extractEvolutionResponseStatus(attempt.data) : null;
-      const sendAttempt: SendAttempt = {
-        instanceName: target.instanceName,
-        instanceLabel: target.label,
-        number: candidate,
-        ok: attempt.ok,
-        error: attempt.ok ? null : attempt.error,
-        payloadFailure: attemptFailure,
-        messageId,
-        responseStatus,
-        restarted: attempt.restarted === true,
-      };
-      attempts.push(sendAttempt);
-
-      if (attempt.ok && !attemptFailure && messageId) {
-        successfulAttempts.push(sendAttempt);
-        usedInstance = target.instanceName;
-        usedInstanceLabel = target.label;
-        usedOwnerJid = target.waJid;
-        break;
-      }
-      if (tryAllCriticalVariants && candidateNumbers.indexOf(candidate) < candidateNumbers.length - 1) {
-        continue;
-      }
-    }
-    if (successfulAttempts.length) break;
-  }
-
-  if (!attempts.length) {
-    return { ok: false, error: "evolution_send_failed" };
-  }
-
-  const lastAttempt = attempts[attempts.length - 1];
-  const successfulAttempt = successfulAttempts[successfulAttempts.length - 1] ?? null;
-  const evolutionMessageIds = successfulAttempts
-    .map((attempt) => attempt.messageId)
-    .filter((messageId): messageId is string => Boolean(messageId));
-  const evolutionMessageId = successfulAttempt?.messageId ?? null;
-  const evolutionResponseStatus = successfulAttempt?.responseStatus ?? lastAttempt.responseStatus;
-  const finalOk = Boolean(successfulAttempt);
+  const payloadFailure = attempt.ok ? detectEvolutionPayloadFailure(attempt.data) : null;
+  const evolutionMessageId = attempt.ok ? extractEvolutionMessageId(attempt.data) : null;
+  const evolutionResponseStatus = attempt.ok ? extractEvolutionResponseStatus(attempt.data) : null;
+  const finalOk = attempt.ok && !payloadFailure && Boolean(evolutionMessageId);
   const finalError = finalOk
     ? null
-    : lastAttempt.ok
-      ? lastAttempt.payloadFailure ?? "missing_evolution_message_id"
-      : lastAttempt.error;
+    : attempt.ok
+      ? payloadFailure ?? "missing_evolution_message_id"
+      : attempt.error;
+  const sessionRestarted = attempt.restarted === true;
 
   const logStatus = finalOk ? resolveNotificationLogStatus(evolutionResponseStatus) : "failed";
+  const evolutionMessageIds = evolutionMessageId ? [evolutionMessageId] : [];
 
   const logId = await logSystemNotification({
     type: options?.type ?? "generic",
@@ -1372,32 +1226,18 @@ export async function sendSystemNotification(
     error: finalOk ? null : finalError,
     metadata: {
       ...(options?.metadata ?? {}),
-      instance_name: usedInstance,
-      instance_label: usedInstanceLabel,
-      fallback_instance_available: Boolean(fallbackInstance),
+      instance_name: resolvedInstance,
       number_raw: rawDigits,
       number_normalized: platformNumber,
-      number_sent: successfulAttempt?.number ?? sendNumber,
-      numbers_tried: tried,
-      session_owner_jid: usedOwnerJid,
+      number_sent: sendNumber,
+      session_owner_jid: sessionOwnerJid,
       session_connection_status: sessionConnectionStatus,
-      evolution_number_check: numberCheck,
+      evolution_number_check: "conversas_style",
       evolution_connection_state: liveState,
       evolution_message_id: evolutionMessageId,
       evolution_message_ids: evolutionMessageIds,
       evolution_response_status: evolutionResponseStatus,
-      evolution_attempts: attempts.map((attempt) => ({
-        instance_name: attempt.instanceName,
-        instance_label: attempt.instanceLabel,
-        number: attempt.number,
-        ok: attempt.ok,
-        error: attempt.error,
-        payload_failure: attempt.payloadFailure,
-        message_id: attempt.messageId,
-        response_status: attempt.responseStatus,
-        restarted: attempt.restarted,
-      })),
-      evolution_session_restarted: attempts.some((attempt) => attempt.restarted),
+      evolution_session_restarted: sessionRestarted,
     },
   });
 
@@ -1410,13 +1250,12 @@ export async function sendSystemNotification(
   }
 
   const debugBase = {
-    numberSent: successfulAttempt?.number ?? sendNumber,
-    candidatesTried: tried,
+    numberSent: sendNumber,
     evolutionMessageId,
     evolutionMessageIds,
     evolutionResponseStatus,
-    sessionRestarted: attempts.some((attempt) => attempt.restarted),
-    sessionOwnerJid: usedOwnerJid,
+    sessionRestarted,
+    sessionOwnerJid: sessionOwnerJid,
     logId,
   };
 
@@ -1427,73 +1266,6 @@ export async function sendSystemNotification(
     if (outcome) {
       deliveryStatus = outcome.status;
       deliveryError = outcome.error;
-    }
-
-    const whatsappRejected =
-      deliveryStatus === "delivery_failed" &&
-      typeof deliveryError === "string" &&
-      deliveryError.toUpperCase().includes("ERROR") &&
-      usedInstanceLabel === "system" &&
-      fallbackInstance &&
-      fallbackInstance.instanceName !== usedInstance;
-
-    if (whatsappRejected) {
-      console.warn("[system-agent] whatsapp_error_fallback_commercial", {
-        primaryInstance: usedInstance,
-        fallbackInstance: fallbackInstance.instanceName,
-        logId,
-      });
-
-      for (const candidate of candidateNumbers) {
-        const fallbackAttempt = await sendEvolutionTextWithRestartRetry({
-          instanceName: fallbackInstance.instanceName,
-          number: candidate,
-          text: message.slice(0, 4000),
-        });
-        const fallbackMessageId = fallbackAttempt.ok ? extractEvolutionMessageId(fallbackAttempt.data) : null;
-        if (!fallbackAttempt.ok || !fallbackMessageId) continue;
-
-        const sb = createSupabaseServiceClient();
-        await sb
-          .from("system_notifications_log")
-          .update({
-            status: "sent",
-            error: null,
-            metadata: {
-              ...(options?.metadata ?? {}),
-              instance_name: fallbackInstance.instanceName,
-              instance_label: "fallback_commercial",
-              number_sent: candidate,
-              numbers_tried: [...tried, `fallback:${candidate}`],
-              evolution_message_id: fallbackMessageId,
-              evolution_fallback_after_error: true,
-              session_owner_jid: fallbackInstance.waJid,
-            },
-          })
-          .eq("id", logId);
-
-        usedOwnerJid = fallbackInstance.waJid;
-        const fallbackOutcome = await waitForSystemNotificationOutcome(logId, options?.waitForOutcomeMs ?? 5000);
-        if (fallbackOutcome) {
-          deliveryStatus = fallbackOutcome.status;
-          deliveryError = fallbackOutcome.error;
-        }
-        if (deliveryStatus !== "delivery_failed" && deliveryStatus !== "failed") {
-          return {
-            ok: true,
-            deliveryStatus: deliveryStatus ?? "sent",
-            deliveryError,
-            debug: {
-              ...debugBase,
-              deliveryStatus,
-              numberSent: candidate,
-              evolutionMessageId: fallbackMessageId,
-              sessionOwnerJid: fallbackInstance.waJid,
-            },
-          };
-        }
-        break;
-      }
     }
   }
 
