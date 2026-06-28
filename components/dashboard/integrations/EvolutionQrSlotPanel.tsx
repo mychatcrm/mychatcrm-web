@@ -119,6 +119,7 @@ export function EvolutionQrSlotPanel({
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [pairingCode, setPairingCode] = useState<string | null>(null);
   const [waJid, setWaJid] = useState<string | null>(null);
+  const [instanceName, setInstanceName] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -175,6 +176,9 @@ export function EvolutionQrSlotPanel({
         : null,
     );
     if (j.waJid) setWaJid(j.waJid);
+    if (typeof j.instanceName === "string" && j.instanceName.trim()) {
+      setInstanceName(j.instanceName.trim());
+    }
     // Reset countdown only when QR image actually changes
     if (j.qrDataUrl) {
       const fingerprint = j.qrDataUrl.slice(-60);
@@ -231,11 +235,23 @@ export function EvolutionQrSlotPanel({
       return;
     }
     setDisconnecting(true);
+    let deleteWarning: string | null = null;
     try {
-      await fetch(`${sessionApiPath}?slotIndex=${slotIndex}`, {
+      const res = await fetch(`${sessionApiPath}?slotIndex=${slotIndex}`, {
         method: "DELETE",
         credentials: "same-origin",
       });
+      const json = (await res.json().catch(() => ({}))) as {
+        evolutionVerifiedAbsent?: boolean;
+        evolutionError?: string | null;
+        error?: string;
+      };
+      if (!res.ok) {
+        deleteWarning = json.error ?? "Falha ao apagar a instância.";
+      } else if (json.evolutionVerifiedAbsent === false) {
+        deleteWarning =
+          "A instância foi removida do MyChatCRM, mas ainda aparece na Evolution. Apague manualmente no Evolution Manager (botão Delete) e reconecte.";
+      }
     } finally {
       // Desconectar = apagar de vez. Nunca recriamos automaticamente aqui;
       // o usuário religa pelo CTA "Conectar".
@@ -243,7 +259,8 @@ export function EvolutionQrSlotPanel({
       setQrDataUrl(null);
       setPairingCode(null);
       setWaJid(null);
-      setError(null);
+      setInstanceName(null);
+      setError(deleteWarning);
       prevQrFingerprintRef.current = null;
       qrReceivedAtRef.current = null;
       setQrSecondsLeft(QR_TTL_SECONDS);
@@ -355,6 +372,11 @@ export function EvolutionQrSlotPanel({
         ) : (
           <p className="mt-1 text-sm text-content-secondary">Sessão ativa</p>
         )}
+        {instanceName ? (
+          <p className="mt-1 break-all font-mono text-[10px] text-content-muted" title={instanceName}>
+            Instância: {instanceName}
+          </p>
+        ) : null}
         <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-400">
           As mensagens recebidas são processadas automaticamente.
         </p>

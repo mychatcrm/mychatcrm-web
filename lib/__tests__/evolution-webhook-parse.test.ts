@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildEvolutionInstanceName } from "@/lib/integrations/evolution-api";
+import { buildEvolutionInstanceName, buildFreshEvolutionInstanceName } from "@/lib/integrations/evolution-api";
 import {
   extractInboundTextsFromEvolutionPayload,
   extractInstanceJid,
@@ -16,6 +16,18 @@ describe("buildEvolutionInstanceName", () => {
     const n = buildEvolutionInstanceName("tenant_x", 2);
     expect(n.startsWith("mc")).toBe(true);
     expect(n.length).toBeLessThanOrEqual(32);
+  });
+});
+
+describe("buildFreshEvolutionInstanceName", () => {
+  it("extends base name with random suffix", () => {
+    const base = buildEvolutionInstanceName("tenant_x", 0);
+    const fresh = buildFreshEvolutionInstanceName("tenant_x", 0);
+    expect(fresh.startsWith(base)).toBe(true);
+    expect(fresh.length).toBe(base.length + 8);
+    expect(buildFreshEvolutionInstanceName("tenant_x", 0)).not.toBe(
+      buildFreshEvolutionInstanceName("tenant_x", 0),
+    );
   });
 });
 

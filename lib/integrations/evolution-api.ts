@@ -5,6 +5,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { randomBytes } from "node:crypto";
 
 const DEFAULT_TIMEOUT_MS = 25_000;
 
@@ -67,6 +68,14 @@ export function normalizeEvolutionConnectionState(raw: unknown, fallback = "clos
 export function buildEvolutionInstanceName(tenantId: string, slotIndex: number): string {
   const h = createHash("sha256").update(`mychatcrm\0${tenantId}\0${slotIndex}`).digest("hex").slice(0, 28);
   return `mc${h}`;
+}
+
+/**
+ * Nome único após apagar/reconectar: prefixo determinístico + sufixo aleatório.
+ * Garante sessão Baileys nova na Evolution (evita reaproveitar arquivos corrompidos).
+ */
+export function buildFreshEvolutionInstanceName(tenantId: string, slotIndex: number): string {
+  return `${buildEvolutionInstanceName(tenantId, slotIndex)}${randomBytes(4).toString("hex")}`;
 }
 
 export async function evolutionFetchJson<T>(
@@ -371,8 +380,62 @@ export async function evolutionSetWebhook(params: {
 }
 
 export async function evolutionDeleteInstance(instanceName: string): Promise<EvolutionFetchResult<unknown>> {
-  const enc = encodeURIComponent(instanceName);
+  const enc = encodeURIComponent(instanceName.trim());
   return evolutionFetchJson(`/instance/delete/${enc}`, { method: "DELETE" });
+}
+
+export type EvolutionRemoveInstanceResult = {
+  ok: boolean;
+  deleted: boolean;
+  verifiedAbsent: boolean;
+  error: string | null;
+  status: number | null;
+};
+
+async function evolutionInstanceExists(instanceName: string): Promise<boolean> {
+  const res = await evolutionFetchInstances(instanceName.trim());
+  if (!res.ok) return false;
+  return pickEvolutionInstanceInfo(res.data, instanceName.trim()) !== null;
+}
+
+/**
+ * Remove instância da Evolution de forma completa: logout (best-effort), delete e verificação.
+ * O endpoint delete da Evolution já faz logout internamente; repetimos logout antes por compatibilidade.
+ */
+export async function evolutionRemoveInstanceCompletely(
+  instanceName: string,
+): Promise<EvolutionRemoveInstanceResult> {
+  const trimmed = instanceName.trim();
+  if (!trimmed) {
+    return { ok: false, deleted: false, verifiedAbsent: false, error: "empty_instance_name", status: null };
+  }
+
+  await evolutionLogoutInstance(trimmed).catch(() => null);
+
+  let del = await evolutionDeleteInstance(trimmed);
+  if (!del.ok && del.status !== 404) {
+    // Segunda tentativa (alguns builds falham se logout anterior deixou estado inconsistente).
+    del = await evolutionDeleteInstance(trimmed);
+  }
+
+  if (!del.ok && del.status !== 404) {
+    return {
+      ok: false,
+      deleted: false,
+      verifiedAbsent: false,
+      error: del.error,
+      status: del.status,
+    };
+  }
+
+  const stillThere = await evolutionInstanceExists(trimmed);
+  return {
+    ok: !stillThere,
+    deleted: true,
+    verifiedAbsent: !stillThere,
+    error: stillThere ? "instance_still_present_after_delete" : null,
+    status: del.status,
+  };
 }
 
 /** Reinicia a sessão WhatsApp (útil quando connectionState diz open mas envios falham). */

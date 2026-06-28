@@ -7,11 +7,11 @@ import {
 import { buildEvolutionWebhookUrl, getPublicBaseUrlFromRequest } from "@/lib/integrations/evolution-webhook-url";
 import {
   buildEvolutionInstanceName,
+  buildFreshEvolutionInstanceName,
   evolutionConnectionState,
   evolutionCreateInstance,
-  evolutionDeleteInstance,
   evolutionInstanceConnect,
-  evolutionLogoutInstance,
+  evolutionRemoveInstanceCompletely,
   evolutionSetWebhook,
   isEvolutionApiConfigured,
   normalizeEvolutionConnectionState,
@@ -71,7 +71,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "slotIndex inválido" }, { status: 400 });
   }
 
-  const instanceName = buildEvolutionInstanceName(session.tenantId, slotIndex);
+  const existingRow = await getEvolutionInstanceByTenantSlot(session.tenantId, slotIndex);
+  // Reusa o nome se já existe registro; após apagar, gera nome NOVO (sufixo aleatório).
+  const instanceName =
+    existingRow?.instance_name?.trim() || buildFreshEvolutionInstanceName(session.tenantId, slotIndex);
   const publicBase = getPublicBaseUrlFromRequest(request);
   const webhookUrl = buildEvolutionWebhookUrl(publicBase, webhookSecret);
   const defaultAgentId = process.env.EVOLUTION_DEFAULT_AGENT_ID?.trim() || null;
@@ -302,11 +305,9 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Erro interno ao consultar instância." }, { status: 503 });
   }
   if (row) {
-    // Logout encerra a sessão WhatsApp; delete remove a instância e seus arquivos de sessão.
-    await evolutionLogoutInstance(row.instance_name).catch(() => null);
-    const del = await evolutionDeleteInstance(row.instance_name);
-    if (!del.ok && del.status !== 404) {
-      console.warn("[evolution/session] delete instance", del.status, del.error);
+    const removal = await evolutionRemoveInstanceCompletely(row.instance_name);
+    if (!removal.ok) {
+      console.warn("[evolution/session] delete instance", removal.status, removal.error);
     }
     try {
       await deleteTenantEvolutionInstanceRow(session.tenantId, slotIndex);
@@ -326,12 +327,22 @@ export async function DELETE(request: Request) {
         metadata: {
           slot_index: slotIndex,
           wa_jid: row.wa_jid ?? null,
+          evolution_removed: removal.verifiedAbsent,
+          evolution_error: removal.error,
         },
       });
     } catch (notifyError) {
       console.warn("[evolution/session] manual disconnect notification failed", notifyError);
     }
+
+    return NextResponse.json({
+      ok: true,
+      deletedInstance: row.instance_name,
+      evolutionRemoved: removal.deleted,
+      evolutionVerifiedAbsent: removal.verifiedAbsent,
+      evolutionError: removal.error,
+    });
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, deletedInstance: null, evolutionVerifiedAbsent: true });
 }

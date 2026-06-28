@@ -49,19 +49,6 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
 
   const bump = useCallback(() => setRevision((r) => r + 1), []);
 
-  const prefetchEvolutionSessionForSlot = useCallback(async (slotIndex: number) => {
-    try {
-      await fetch("/api/client/whatsapp/evolution/session", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slotIndex }),
-      });
-    } catch {
-      /* ignorar — EvolutionQrSlotPanel faz GET/POST de seguida */
-    }
-  }, []);
-
   useEffect(() => {
     bump();
   }, [bump, tenantId]);
@@ -362,10 +349,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                         <div className="grid gap-3 sm:grid-cols-2">
                           <button
                             type="button"
-                            onClick={async () => {
-                              await prefetchEvolutionSessionForSlot(slotIndex);
-                              setWhatsAppSlotMethod(tenantId, slotIndex, "qr");
-                            }}
+                            onClick={() => setWhatsAppSlotMethod(tenantId, slotIndex, "qr")}
                             className={cn(
                               "flex min-h-[44px] flex-col items-start gap-2 rounded-xl border p-4 text-left transition",
                               "border-line bg-surface-elevated/40 hover:border-line/80 hover:bg-surface-elevated/60",
