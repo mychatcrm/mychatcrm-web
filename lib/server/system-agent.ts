@@ -1141,6 +1141,8 @@ export async function sendSystemNotification(
     evolutionResponseStatus?: unknown;
     sessionRestarted?: boolean;
     sessionOwnerJid?: string | null;
+    logId?: string | null;
+    deliveryStatus?: string;
   };
 }> {
   const rawDigits = toNumber.replace(/\D/g, "");
@@ -1311,7 +1313,10 @@ export async function sendSystemNotification(
       ].filter((candidate): candidate is string => Boolean(candidate && candidate.length >= 8)),
     ),
   );
-  resolvedJid = resolution.jid ?? conversationHint?.remoteJid ?? null;
+  resolvedJid =
+    (resolution.status === "exists" || resolution.status === "not_found" ? resolution.jid : null) ??
+    conversationHint?.remoteJid ??
+    null;
 
   await sendPresence(
     resolvedInstance,
@@ -1521,12 +1526,15 @@ export async function sendSystemNotification(
               numbers_tried: [...tried, ...retryCandidates],
               evolution_message_id: retryMessageId,
               evolution_whatsapp_error_retry: true,
-              evolution_whatsapp_check_jid: retryResolution.jid ?? null,
+              evolution_whatsapp_check_jid:
+                retryResolution.status === "exists" || retryResolution.status === "not_found"
+                  ? retryResolution.jid
+                  : null,
             },
           })
           .eq("id", logId);
 
-        const retryOutcome = await waitForSystemNotificationOutcome(logId, options.waitForOutcomeMs ?? 5000);
+        const retryOutcome = await waitForSystemNotificationOutcome(logId, options?.waitForOutcomeMs ?? 5000);
         if (retryOutcome) {
           deliveryStatus = retryOutcome.status;
           deliveryError = retryOutcome.error;
