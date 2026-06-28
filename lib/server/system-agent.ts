@@ -1,7 +1,6 @@
 import {
   brazilianMobileAlternateVariant,
   buildEvolutionInstanceName,
-  buildEvolutionSendCandidates,
   ensureBrazilianMobileWhatsappDigits,
   evolutionConnectionState,
   evolutionFetchInstances,
@@ -17,8 +16,6 @@ import {
   normalizeEvolutionConnectionState,
   parseEvolutionConnectionStatePayload,
   pickEvolutionInstanceInfo,
-  remoteJidToEvoNumber,
-  resolveEvolutionSendNumber,
 } from "@/lib/integrations/evolution-api";
 import { extractInstanceJid } from "@/lib/integrations/evolution-webhook-parse";
 import { sendPresence, typingDelayMs } from "@/lib/server/evolution-presence";
@@ -431,49 +428,63 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-type SystemConversationSendHint = {
-  remoteJid: string;
-  sendNumber: string;
+type NotificationInstanceTarget = {
+  instanceName: string;
+  label: "system" | "fallback_commercial";
+  waJid: string | null;
 };
 
-/** Usa thread existente no tenant interno (ex.: cliente respondeu "oi" ao número do sistema). */
-async function findSystemConversationSendHint(
-  platformNumber: string,
-): Promise<SystemConversationSendHint | null> {
+/** Linha comercial que entregava antes (+556282194839 / instância Sofia). */
+async function getSystemNotificationFallbackInstance(): Promise<NotificationInstanceTarget | null> {
+  const explicit = process.env.SYSTEM_AGENT_FALLBACK_INSTANCE?.trim();
+  const resolveRow = async (
+    instanceName: string,
+    waJid: string | null,
+  ): Promise<NotificationInstanceTarget | null> => {
+    const res = await evolutionFetchInstances(instanceName);
+    const info = res.ok ? pickEvolutionInstanceInfo(res.data, instanceName) : null;
+    if (!info || info.connectionStatus !== "open" || !info.ownerJid) return null;
+    return {
+      instanceName,
+      label: "fallback_commercial",
+      waJid: info.ownerJid ?? waJid,
+    };
+  };
+
+  if (explicit) {
+    return resolveRow(explicit, null);
+  }
+
   try {
-    const alternate = brazilianMobileAlternateVariant(platformNumber);
-    const jidVariants = Array.from(
-      new Set(
-        [platformNumber, alternate]
-          .filter((digits): digits is string => Boolean(digits && digits.length >= 12))
-          .map((digits) => `${digits}@s.whatsapp.net`),
-      ),
-    );
-    if (!jidVariants.length) return null;
-
     const sb = createSupabaseServiceClient();
-    const { data: recentRows } = await sb
-      .from("whatsapp_messages")
-      .select("remote_jid")
-      .eq("tenant_id", SYSTEM_TENANT_ID)
-      .in("remote_jid", jidVariants)
-      .order("created_at", { ascending: false })
+    const { data } = await sb
+      .from("tenant_evolution_instances")
+      .select("instance_name, wa_jid")
+      .neq("tenant_id", SYSTEM_TENANT_ID)
+      .like("wa_jid", "%82194839%")
+      .order("updated_at", { ascending: false })
       .limit(1);
-
-    if (!recentRows?.length) return null;
-
-    const remoteJid =
-      typeof recentRows[0]?.remote_jid === "string" ? recentRows[0].remote_jid.trim() : "";
-    if (!remoteJid) return null;
-
-    const sendNumber = remoteJidToEvoNumber(remoteJid) ?? platformNumber;
-    return { remoteJid, sendNumber };
+    const row = data?.[0];
+    if (row && typeof row.instance_name === "string" && row.instance_name.trim()) {
+      const instanceName = row.instance_name.trim();
+      const waJid = typeof row.wa_jid === "string" ? row.wa_jid : null;
+      return resolveRow(instanceName, waJid);
+    }
   } catch (error) {
-    console.warn("[system-agent] conversation_hint_lookup_failed", {
+    console.warn("[system-agent] fallback_instance_lookup_failed", {
       error: error instanceof Error ? error.message : "lookup_failed",
     });
-    return null;
   }
+  return null;
+}
+
+function buildReliableBrazilianSendNumbers(platformNumber: string, tryAlternates: boolean): string[] {
+  const wanted = ensureBrazilianMobileWhatsappDigits(platformNumber);
+  const alternate = brazilianMobileAlternateVariant(wanted);
+  if (tryAlternates && alternate && alternate !== wanted) {
+    return [wanted, alternate];
+  }
+  return [wanted];
 }
 
 async function sendEvolutionTextWithRestartRetry(params: {
@@ -1257,75 +1268,19 @@ export async function sendSystemNotification(
     }
   }
 
-  let numberCheck: string;
-  let candidateNumbers: string[];
-  let resolvedJid: string | null = null;
-  const conversationHint = await findSystemConversationSendHint(platformNumber);
-  const resolution = await resolveEvolutionSendNumber({
-    instanceName: resolvedInstance,
-    number: platformNumber,
-  });
+  const candidateNumbers = buildReliableBrazilianSendNumbers(platformNumber, tryAllCriticalVariants);
+  const numberCheck = "conversas_style";
 
-  if (resolution.status === "not_found" && !tryAllCriticalVariants) {
-    await logSystemNotification({
-      type: options?.type ?? "generic",
-      toNumber: platformNumber,
-      message,
-      status: "failed",
-      error: "number_not_on_whatsapp",
-      metadata: {
-        ...(options?.metadata ?? {}),
-        instance_name: resolvedInstance,
-        number_raw: rawDigits,
-        number_normalized: platformNumber,
-        evolution_connection_state: liveState,
-        evolution_number_check: "not_found",
-        resolved_jid: resolution.jid,
-      },
-    });
-    return { ok: false, error: "number_not_on_whatsapp" };
+  const instanceTargets: NotificationInstanceTarget[] = [];
+  const fallbackInstance = await getSystemNotificationFallbackInstance();
+  if (fallbackInstance && fallbackInstance.instanceName !== resolvedInstance) {
+    instanceTargets.push(fallbackInstance);
   }
-
-  numberCheck =
-    resolution.status === "exists"
-      ? conversationHint
-        ? "conversation_jid_check"
-        : resolution.status
-      : resolution.status;
-
-  const preferredSendNumber =
-    resolution.status === "exists" ? resolution.sendNumber : platformNumber;
-
-  candidateNumbers = Array.from(
-    new Set(
-      [
-        ...(conversationHint ? [conversationHint.remoteJid, conversationHint.sendNumber] : []),
-        ...buildEvolutionSendCandidates({
-          platformNumber,
-          jid: resolution.status === "exists" ? resolution.jid : null,
-          alternateDigits: brazilianMobileAlternateVariant(platformNumber),
-        }),
-        ...(resolution.status === "exists" || resolution.status === "check_failed"
-          ? resolution.candidateNumbers
-          : []),
-        preferredSendNumber,
-        platformNumber,
-      ].filter((candidate): candidate is string => Boolean(candidate && candidate.length >= 8)),
-    ),
-  );
-  resolvedJid =
-    (resolution.status === "exists" || resolution.status === "not_found" ? resolution.jid : null) ??
-    conversationHint?.remoteJid ??
-    null;
-
-  await sendPresence(
-    resolvedInstance,
-    remoteJidToEvoNumber(candidateNumbers[0] ?? "") ?? platformNumber,
-    "composing",
-    typingDelayMs(message),
-  );
+  instanceTargets.push({ instanceName: resolvedInstance, label: "system", waJid: sessionOwnerJid });
 
   type SendAttempt = {
+    instanceName: string;
+    instanceLabel: string;
     number: string;
     ok: boolean;
     error: string | null;
@@ -1338,51 +1293,55 @@ export async function sendSystemNotification(
   const attempts: SendAttempt[] = [];
   const successfulAttempts: SendAttempt[] = [];
   let sendNumber = candidateNumbers[0] ?? platformNumber;
+  let usedInstance = resolvedInstance;
+  let usedInstanceLabel = "system";
+  let usedOwnerJid = sessionOwnerJid;
   const tried: string[] = [];
 
-  for (const candidate of candidateNumbers) {
-    tried.push(candidate);
-    const attempt = await sendEvolutionTextWithRestartRetry({
-      instanceName: resolvedInstance,
-      number: candidate,
-      text: message.slice(0, 4000),
-    });
-    sendNumber = candidate;
-    const attemptFailure = attempt.ok ? detectEvolutionPayloadFailure(attempt.data) : null;
-    const messageId = attempt.ok ? extractEvolutionMessageId(attempt.data) : null;
-    const responseStatus = attempt.ok ? extractEvolutionResponseStatus(attempt.data) : null;
-    const sendAttempt: SendAttempt = {
-      number: candidate,
-      ok: attempt.ok,
-      error: attempt.ok ? null : attempt.error,
-      payloadFailure: attemptFailure,
-      messageId,
-      responseStatus,
-      restarted: attempt.restarted === true,
-    };
-    attempts.push(sendAttempt);
+  for (const target of instanceTargets) {
+    await sendPresence(
+      target.instanceName,
+      candidateNumbers[0] ?? platformNumber,
+      "composing",
+      typingDelayMs(message),
+    );
 
-    if (attempt.ok && !attemptFailure && messageId) {
-      successfulAttempts.push(sendAttempt);
-      break;
+    for (const candidate of candidateNumbers) {
+      tried.push(`${target.label}:${candidate}`);
+      const attempt = await sendEvolutionTextWithRestartRetry({
+        instanceName: target.instanceName,
+        number: candidate,
+        text: message.slice(0, 4000),
+      });
+      sendNumber = candidate;
+      const attemptFailure = attempt.ok ? detectEvolutionPayloadFailure(attempt.data) : null;
+      const messageId = attempt.ok ? extractEvolutionMessageId(attempt.data) : null;
+      const responseStatus = attempt.ok ? extractEvolutionResponseStatus(attempt.data) : null;
+      const sendAttempt: SendAttempt = {
+        instanceName: target.instanceName,
+        instanceLabel: target.label,
+        number: candidate,
+        ok: attempt.ok,
+        error: attempt.ok ? null : attempt.error,
+        payloadFailure: attemptFailure,
+        messageId,
+        responseStatus,
+        restarted: attempt.restarted === true,
+      };
+      attempts.push(sendAttempt);
+
+      if (attempt.ok && !attemptFailure && messageId) {
+        successfulAttempts.push(sendAttempt);
+        usedInstance = target.instanceName;
+        usedInstanceLabel = target.label;
+        usedOwnerJid = target.waJid;
+        break;
+      }
+      if (tryAllCriticalVariants && candidateNumbers.indexOf(candidate) < candidateNumbers.length - 1) {
+        continue;
+      }
     }
-    if (tryAllCriticalVariants && tried.length < candidateNumbers.length) {
-      const hardFailure =
-        (attempt.ok && !messageId) ||
-        (!attempt.ok && !isEvolutionConnectionClosedError(attempt.error)) ||
-        (Boolean(attemptFailure) && !isEvolutionConnectionClosedError(attemptFailure));
-      if (hardFailure) continue;
-    }
-    if (attempt.ok && !attemptFailure && !messageId) {
-      continue;
-    }
-    if (!attempt.ok && !isEvolutionConnectionClosedError(attempt.error)) {
-      continue;
-    }
-    if (attemptFailure && !isEvolutionConnectionClosedError(attemptFailure)) {
-      continue;
-    }
-    break;
+    if (successfulAttempts.length) break;
   }
 
   if (!attempts.length) {
@@ -1413,22 +1372,23 @@ export async function sendSystemNotification(
     error: finalOk ? null : finalError,
     metadata: {
       ...(options?.metadata ?? {}),
-      instance_name: resolvedInstance,
+      instance_name: usedInstance,
+      instance_label: usedInstanceLabel,
+      fallback_instance_available: Boolean(fallbackInstance),
       number_raw: rawDigits,
       number_normalized: platformNumber,
       number_sent: successfulAttempt?.number ?? sendNumber,
       numbers_tried: tried,
-      resolved_jid: resolvedJid,
-      session_owner_jid: sessionOwnerJid,
+      session_owner_jid: usedOwnerJid,
       session_connection_status: sessionConnectionStatus,
       evolution_number_check: numberCheck,
       evolution_connection_state: liveState,
-      conversation_remote_jid: conversationHint?.remoteJid ?? null,
-      evolution_whatsapp_check_jid: resolvedJid,
       evolution_message_id: evolutionMessageId,
       evolution_message_ids: evolutionMessageIds,
       evolution_response_status: evolutionResponseStatus,
       evolution_attempts: attempts.map((attempt) => ({
+        instance_name: attempt.instanceName,
+        instance_label: attempt.instanceLabel,
         number: attempt.number,
         ok: attempt.ok,
         error: attempt.error,
@@ -1456,7 +1416,7 @@ export async function sendSystemNotification(
     evolutionMessageIds,
     evolutionResponseStatus,
     sessionRestarted: attempts.some((attempt) => attempt.restarted),
-    sessionOwnerJid,
+    sessionOwnerJid: usedOwnerJid,
     logId,
   };
 
@@ -1472,46 +1432,26 @@ export async function sendSystemNotification(
     const whatsappRejected =
       deliveryStatus === "delivery_failed" &&
       typeof deliveryError === "string" &&
-      deliveryError.toUpperCase().includes("ERROR");
+      deliveryError.toUpperCase().includes("ERROR") &&
+      usedInstanceLabel === "system" &&
+      fallbackInstance &&
+      fallbackInstance.instanceName !== usedInstance;
 
     if (whatsappRejected) {
-      console.warn("[system-agent] whatsapp_error_retry", {
-        instanceName: resolvedInstance,
+      console.warn("[system-agent] whatsapp_error_fallback_commercial", {
+        primaryInstance: usedInstance,
+        fallbackInstance: fallbackInstance.instanceName,
         logId,
-        tried,
       });
-      await evolutionRestartInstance(resolvedInstance);
-      await applySystemEvolutionInstanceSettings(resolvedInstance);
-      await sleep(3000);
 
-      const retryResolution = await resolveEvolutionSendNumber({
-        instanceName: resolvedInstance,
-        number: platformNumber,
-      });
-      const retryCandidates = Array.from(
-        new Set(
-          [
-            ...buildEvolutionSendCandidates({
-              platformNumber,
-              jid: retryResolution.status === "exists" ? retryResolution.jid : null,
-              alternateDigits: brazilianMobileAlternateVariant(platformNumber),
-            }),
-            ...(retryResolution.status === "exists" || retryResolution.status === "check_failed"
-              ? retryResolution.candidateNumbers
-              : []),
-            platformNumber,
-          ].filter((candidate): candidate is string => Boolean(candidate && candidate.length >= 8)),
-        ),
-      );
-
-      for (const candidate of retryCandidates) {
-        const retryAttempt = await sendEvolutionTextWithRestartRetry({
-          instanceName: resolvedInstance,
+      for (const candidate of candidateNumbers) {
+        const fallbackAttempt = await sendEvolutionTextWithRestartRetry({
+          instanceName: fallbackInstance.instanceName,
           number: candidate,
           text: message.slice(0, 4000),
         });
-        const retryMessageId = retryAttempt.ok ? extractEvolutionMessageId(retryAttempt.data) : null;
-        if (!retryAttempt.ok || !retryMessageId) continue;
+        const fallbackMessageId = fallbackAttempt.ok ? extractEvolutionMessageId(fallbackAttempt.data) : null;
+        if (!fallbackAttempt.ok || !fallbackMessageId) continue;
 
         const sb = createSupabaseServiceClient();
         await sb
@@ -1521,30 +1461,35 @@ export async function sendSystemNotification(
             error: null,
             metadata: {
               ...(options?.metadata ?? {}),
-              instance_name: resolvedInstance,
+              instance_name: fallbackInstance.instanceName,
+              instance_label: "fallback_commercial",
               number_sent: candidate,
-              numbers_tried: [...tried, ...retryCandidates],
-              evolution_message_id: retryMessageId,
-              evolution_whatsapp_error_retry: true,
-              evolution_whatsapp_check_jid:
-                retryResolution.status === "exists" || retryResolution.status === "not_found"
-                  ? retryResolution.jid
-                  : null,
+              numbers_tried: [...tried, `fallback:${candidate}`],
+              evolution_message_id: fallbackMessageId,
+              evolution_fallback_after_error: true,
+              session_owner_jid: fallbackInstance.waJid,
             },
           })
           .eq("id", logId);
 
-        const retryOutcome = await waitForSystemNotificationOutcome(logId, options?.waitForOutcomeMs ?? 5000);
-        if (retryOutcome) {
-          deliveryStatus = retryOutcome.status;
-          deliveryError = retryOutcome.error;
+        usedOwnerJid = fallbackInstance.waJid;
+        const fallbackOutcome = await waitForSystemNotificationOutcome(logId, options?.waitForOutcomeMs ?? 5000);
+        if (fallbackOutcome) {
+          deliveryStatus = fallbackOutcome.status;
+          deliveryError = fallbackOutcome.error;
         }
         if (deliveryStatus !== "delivery_failed" && deliveryStatus !== "failed") {
           return {
             ok: true,
             deliveryStatus: deliveryStatus ?? "sent",
             deliveryError,
-            debug: { ...debugBase, deliveryStatus, numberSent: candidate, evolutionMessageId: retryMessageId },
+            debug: {
+              ...debugBase,
+              deliveryStatus,
+              numberSent: candidate,
+              evolutionMessageId: fallbackMessageId,
+              sessionOwnerJid: fallbackInstance.waJid,
+            },
           };
         }
         break;

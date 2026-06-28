@@ -157,7 +157,7 @@ function humanizeNotificationError(error: string | null): string | null {
     return "Não houve confirmação de entrega em 60s — mensagem provavelmente não chegou no celular";
   }
   if (error === "whatsapp_delivery_failed" || error.startsWith("delivery_status:ERROR")) {
-    return "WhatsApp recusou a entrega (ERROR). A Evolution aceita o envio, mas o WhatsApp bloqueia — sessão Baileys na VPS provavelmente degradada. Use «Reparar sessão» no diagnóstico ou reconecte o QR; se /conversas também não enviar, reinicie o container Evolution na VPS.";
+    return "WhatsApp recusou a entrega. Se o número comercial (+556282194839) também falhar, reconecte a sessão Sofia em Integrações ou use «Reparar sessão».";
   }
   if (error.startsWith("delivery_status:")) {
     return `WhatsApp reportou falha na entrega (${error.split(":").slice(1).join(":")})`;

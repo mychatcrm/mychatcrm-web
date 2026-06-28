@@ -198,18 +198,11 @@ describe("sendSystemNotification", () => {
     );
   });
 
-  it("prioritizes the Evolution JID digits before the platform number with 9", async () => {
+  it("sends platform number with 9 first (conversas style)", async () => {
     evolutionConnectionStateMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
       data: { instance: { state: "open" } },
-    });
-    resolveEvolutionSendNumberMock.mockResolvedValueOnce({
-      status: "exists",
-      sendNumber: "556293580574",
-      jid: "556293580574@s.whatsapp.net",
-      platformNumber: "5562993580574",
-      candidateNumbers: ["5562993580574", "556293580574"],
     });
     evolutionSendTextMock.mockResolvedValueOnce({
       ok: true,
@@ -223,7 +216,7 @@ describe("sendSystemNotification", () => {
 
     expect(result.ok).toBe(true);
     expect(evolutionSendTextMock).toHaveBeenCalledWith(
-      expect.objectContaining({ number: "556293580574@s.whatsapp.net" }),
+      expect.objectContaining({ number: "5562993580574" }),
     );
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -231,7 +224,8 @@ describe("sendSystemNotification", () => {
         to_number: "5562993580574",
         metadata: expect.objectContaining({
           number_normalized: "5562993580574",
-          number_sent: "556293580574@s.whatsapp.net",
+          number_sent: "5562993580574",
+          evolution_number_check: "conversas_style",
         }),
       }),
     );
@@ -242,13 +236,6 @@ describe("sendSystemNotification", () => {
       ok: true,
       status: 200,
       data: { instance: { state: "open" } },
-    });
-    resolveEvolutionSendNumberMock.mockResolvedValueOnce({
-      status: "exists",
-      sendNumber: "5562993580574@s.whatsapp.net",
-      jid: "5562993580574@s.whatsapp.net",
-      platformNumber: "5562993580574",
-      candidateNumbers: ["5562993580574@s.whatsapp.net", "5562993580574", "556293580574"],
     });
     evolutionSendTextMock.mockResolvedValueOnce({
       ok: true,
@@ -263,7 +250,7 @@ describe("sendSystemNotification", () => {
     expect(result.ok).toBe(true);
     expect(evolutionSendTextMock).toHaveBeenCalledTimes(1);
     expect(evolutionSendTextMock).toHaveBeenCalledWith(
-      expect.objectContaining({ number: "5562993580574@s.whatsapp.net" }),
+      expect.objectContaining({ number: "5562993580574" }),
     );
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -276,40 +263,24 @@ describe("sendSystemNotification", () => {
     );
   });
 
-  it("prefers conversation remote_jid when the system tenant already has messages from the recipient", async () => {
-    whatsappMessagesSelectMock.mockResolvedValueOnce({
-      data: [{ remote_jid: "5562993580574@s.whatsapp.net" }],
-      error: null,
-    });
-    resolveEvolutionSendNumberMock.mockResolvedValueOnce({
-      status: "exists",
-      sendNumber: "5562993580574",
-      jid: "5562993580574@s.whatsapp.net",
-      platformNumber: "5562993580574",
-      candidateNumbers: ["5562993580574@s.whatsapp.net", "5562993580574"],
-    });
+  it("uses conversas_style for admin_test without pre-checking whatsappNumbers", async () => {
     evolutionSendTextMock.mockResolvedValueOnce({
       ok: true,
       status: 201,
-      data: { key: { id: "MSG_REPLY" }, status: "PENDING" },
+      data: { key: { id: "FAST1" }, status: "PENDING" },
     });
 
-    const result = await sendSystemNotification("5562993580574", "Teste resposta", "system-instance", {
+    await sendSystemNotification("5562993580574", "Teste", "system-instance", {
       type: "admin_test",
     });
 
-    expect(result.ok).toBe(true);
+    expect(resolveEvolutionSendNumberMock).not.toHaveBeenCalled();
     expect(evolutionSendTextMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        number: "5562993580574@s.whatsapp.net",
-      }),
+      expect.objectContaining({ number: "5562993580574" }),
     );
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        metadata: expect.objectContaining({
-          evolution_number_check: "conversation_jid_check",
-          conversation_remote_jid: "5562993580574@s.whatsapp.net",
-        }),
+        metadata: expect.objectContaining({ evolution_number_check: "conversas_style" }),
       }),
     );
   });
@@ -319,13 +290,6 @@ describe("sendSystemNotification", () => {
       ok: true,
       status: 200,
       data: { instance: { state: "open" } },
-    });
-    resolveEvolutionSendNumberMock.mockResolvedValueOnce({
-      status: "exists",
-      sendNumber: "556293580574",
-      jid: "556293580574@s.whatsapp.net",
-      platformNumber: "5562993580574",
-      candidateNumbers: ["5562993580574", "556293580574"],
     });
     evolutionSendTextMock
       .mockResolvedValueOnce({
@@ -400,42 +364,11 @@ describe("sendSystemNotification", () => {
     expect(evolutionSendTextMock).not.toHaveBeenCalled();
   });
 
-  it("checks whatsappNumbers before critical notifications", async () => {
-    resolveEvolutionSendNumberMock.mockResolvedValueOnce({
-      status: "exists",
-      sendNumber: "5562993580574@s.whatsapp.net",
-      jid: "5562993580574@s.whatsapp.net",
-      platformNumber: "5562993580574",
-      candidateNumbers: ["5562993580574@s.whatsapp.net", "5562993580574"],
-    });
-    evolutionSendTextMock.mockResolvedValueOnce({
-      ok: true,
-      status: 201,
-      data: { key: { id: "FAST1" }, status: "PENDING" },
-    });
-
-    await sendSystemNotification("5562993580574", "Teste", "system-instance", {
-      type: "admin_test",
-    });
-
-    expect(resolveEvolutionSendNumberMock).toHaveBeenCalled();
-    expect(evolutionSendTextMock).toHaveBeenCalledWith(
-      expect.objectContaining({ number: "5562993580574@s.whatsapp.net" }),
-    );
-  });
-
   it("sends once for handoff_alert when Evolution returns numeric PENDING (1)", async () => {
     evolutionConnectionStateMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
       data: { instance: { state: "open" } },
-    });
-    resolveEvolutionSendNumberMock.mockResolvedValueOnce({
-      status: "exists",
-      sendNumber: "556293580574",
-      jid: "556293580574@s.whatsapp.net",
-      platformNumber: "5562993580574",
-      candidateNumbers: ["5562993580574", "556293580574"],
     });
     evolutionSendTextMock.mockResolvedValueOnce({
       ok: true,
@@ -567,17 +500,16 @@ describe("sendSystemNotification", () => {
     expect(evolutionSendTextMock).not.toHaveBeenCalled();
   });
 
-  it("fails clearly without sending when the destination is not on WhatsApp", async () => {
+  it("attempts send even when whatsappNumbers would report not found", async () => {
     evolutionConnectionStateMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
       data: { instance: { state: "open" } },
     });
-    resolveEvolutionSendNumberMock.mockResolvedValueOnce({
-      status: "not_found",
-      jid: null,
-      platformNumber: "5562993580574",
-      candidateNumbers: ["5562993580574", "556293580574"],
+    evolutionSendTextMock.mockResolvedValue({
+      ok: true,
+      status: 201,
+      data: { status: "PENDING" },
     });
 
     const result = await sendSystemNotification("5562993580574", "Teste", "system-instance", {
@@ -585,27 +517,17 @@ describe("sendSystemNotification", () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.error).toBe("number_not_on_whatsapp");
-    expect(evolutionSendTextMock).not.toHaveBeenCalled();
-    expect(insertMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: "failed",
-        error: "number_not_on_whatsapp",
-      }),
+    expect(result.error).toBe("missing_evolution_message_id");
+    expect(evolutionSendTextMock).toHaveBeenCalledWith(
+      expect.objectContaining({ number: "5562993580574" }),
     );
   });
 
-  it("still sends with the normalized number when the WhatsApp check fails", async () => {
+  it("sends with the normalized platform number (conversas style)", async () => {
     evolutionConnectionStateMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
       data: { instance: { state: "open" } },
-    });
-    resolveEvolutionSendNumberMock.mockResolvedValueOnce({
-      status: "check_failed",
-      error: "timeout",
-      platformNumber: "5562999991111",
-      candidateNumbers: ["5562999991111"],
     });
     evolutionSendTextMock.mockResolvedValueOnce({
       ok: true,
@@ -624,7 +546,7 @@ describe("sendSystemNotification", () => {
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "sent",
-        metadata: expect.objectContaining({ evolution_number_check: "check_failed" }),
+        metadata: expect.objectContaining({ evolution_number_check: "conversas_style" }),
       }),
     );
   });

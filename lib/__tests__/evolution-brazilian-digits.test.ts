@@ -24,16 +24,17 @@ describe("Brazilian WhatsApp digit normalization", () => {
     expect(brazilianMobileAlternateVariant("556293580574")).toBe("5562993580574");
   });
 
-  it("builds send candidates with full @lid JIDs", () => {
+  it("builds send candidates with @lid JIDs only as full addresses", () => {
     const candidates = buildEvolutionSendCandidates({
       platformNumber: "5562993580574",
       jid: "5562993580574@s.whatsapp.net",
       jidAlt: "123456789@lid",
     });
-    expect(candidates).toContain("5562993580574@s.whatsapp.net");
+    expect(candidates).not.toContain("5562993580574@s.whatsapp.net");
     expect(candidates).toContain("123456789@lid");
     expect(candidates).toContain("5562993580574");
     expect(formatEvolutionSendAddress("123456789@lid", "5562993580574")).toBe("123456789@lid");
+    expect(formatEvolutionSendAddress("5562993580574", "5562993580574")).toBe("5562993580574");
   });
 });
 

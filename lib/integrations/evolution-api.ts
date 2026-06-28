@@ -505,18 +505,21 @@ export function jidToDigits(jid: string | null | undefined): string {
 }
 
 /**
- * Endereço preferido para sendText: usa JID completo (@lid / @s.whatsapp.net) quando
- * a Evolution devolve um; senão cai nos dígitos E.164.
+ * Endereço preferido para sendText: normaliza BR com 9; só usa JID completo para @lid.
  */
 export function formatEvolutionSendAddress(jid: string | null | undefined, fallbackDigits: string): string {
+  const wanted = ensureBrazilianMobileWhatsappDigits(fallbackDigits.replace(/\D/g, ""));
   const trimmed = typeof jid === "string" ? jid.trim() : "";
-  if (trimmed.includes("@")) return trimmed;
+  if (trimmed.endsWith("@lid")) return trimmed;
+  if (trimmed.includes("@s.whatsapp.net")) {
+    return ensureBrazilianMobileWhatsappDigits(jidToDigits(trimmed)) || wanted;
+  }
   const digits = trimmed.replace(/\D/g, "");
-  if (digits.length >= 8) return digits;
-  return fallbackDigits.replace(/\D/g, "");
+  if (digits.length >= 12) return ensureBrazilianMobileWhatsappDigits(digits);
+  return wanted;
 }
 
-/** Candidatos de envio (dígitos + JIDs completos) para contornar @lid e variantes BR. */
+/** Candidatos de envio — sempre prioriza dígitos com 9 (igual /conversas/send). */
 export function buildEvolutionSendCandidates(params: {
   platformNumber: string;
   jid?: string | null;
@@ -532,14 +535,10 @@ export function buildEvolutionSendCandidates(params: {
     out.push(v);
   };
 
-  for (const jid of [params.jid, params.jidAlt]) {
-    if (jid?.includes("@")) add(jid);
-  }
   add(wanted);
   add(alternate);
-  for (const jid of [params.jid, params.jidAlt]) {
-    const digits = jidToDigits(jid);
-    if (digits.length >= 12) add(digits);
+  for (const jid of [params.jidAlt, params.jid]) {
+    if (jid?.endsWith("@lid")) add(jid);
   }
 
   return out.filter((v) => v.length >= 8);
