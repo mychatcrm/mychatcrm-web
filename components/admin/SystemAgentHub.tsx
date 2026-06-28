@@ -39,12 +39,21 @@ type DiagnoseResult = {
     lastDeliveredAt: string | null;
     recentPendingCount: number;
     webhookUpdatesWorking: boolean;
+    pendingOrphanEventsCount?: number;
+    lastOrphanReconcileAt?: string | null;
+    lastOrphanReconcileApplied?: number | null;
+    lastOrphanReconcileRemaining?: number | null;
+    webhookBottleneck?: boolean;
   };
   webhook?: {
     lastMessagesUpdateAt: string | null;
     lastMessagesUpdateMessageId: string | null;
     lastMessagesUpdateStatus: unknown;
     lastMessagesUpdateInstance: string | null;
+    pendingOrphanEventsCount?: number;
+    lastOrphanReconcileAt?: string | null;
+    lastOrphanReconcileApplied?: number | null;
+    lastOrphanReconcileRemaining?: number | null;
   };
   webhookReapply?: {
     ok: boolean;
@@ -86,6 +95,31 @@ function notificationStatusLabel(status: string): { label: string; tone: string 
     return { label: "não enviado — sem telefone de alertas", tone: "text-amber-400" };
   }
   return { label: status, tone: "text-rose-400" };
+}
+
+const E2E_REQUIRED_FLOWS = [
+  { type: "admin_test", label: "Teste admin" },
+  { type: "phone_verification_code", label: "Código de verificação" },
+  { type: "handoff_alert", label: "Handoff" },
+  { type: "integration_disconnected", label: "Integração desconectada" },
+  { type: "account_phone_removed", label: "Telefone removido" },
+] as const;
+
+function evaluateE2EFlow(logs: SystemNotificationLogItem[], type: string): "pass" | "fail" | "pending" | "none" {
+  const latest = logs.find((item) => item.type === type);
+  if (!latest) return "none";
+  if (latest.status === "delivered") {
+    const meta = latest.metadata ?? {};
+    const deliveredAt =
+      typeof meta.delivered_at === "string" ? Date.parse(meta.delivered_at) : Number.NaN;
+    const createdAt = Date.parse(latest.created_at);
+    if (Number.isFinite(deliveredAt) && Number.isFinite(createdAt) && deliveredAt - createdAt <= 60_000) {
+      return "pass";
+    }
+    return "fail";
+  }
+  if (latest.status === "delivery_failed" || latest.status === "failed") return "fail";
+  return "pending";
 }
 
 function humanizeNotificationError(error: string | null): string | null {
@@ -161,6 +195,7 @@ export function SystemAgentHub(props: {
   const [resetBusy, setResetBusy] = useState(false);
   const [diagnoseBusy, setDiagnoseBusy] = useState(false);
   const [webhookReapplyBusy, setWebhookReapplyBusy] = useState(false);
+  const [orphanReconcileBusy, setOrphanReconcileBusy] = useState(false);
   const [diagnose, setDiagnose] = useState<DiagnoseResult | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [qrPanelRevision, setQrPanelRevision] = useState(0);
@@ -271,6 +306,37 @@ export function SystemAgentHub(props: {
       setWebhookReapplyBusy(false);
     }
   }, []);
+
+  const reconcileOrphans = useCallback(async () => {
+    setOrphanReconcileBusy(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch("/api/admin/system-agent/evolution/diagnose", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reconcile_orphans" }),
+      });
+      const json = (await res.json().catch(() => null)) as (DiagnoseResult & {
+        error?: string;
+        reconcile?: { orphansApplied: number; orphansRemaining: number; timedOut: number };
+      }) | null;
+      if (!res.ok || !json || json.error || !json.session) {
+        setActionMessage(json?.error || "Falha ao reconciliar eventos órfãos.");
+        return;
+      }
+      setDiagnose(json);
+      void refreshLogs();
+      const r = json.reconcile;
+      setActionMessage(
+        r
+          ? `Reconciliação: ${r.orphansApplied} órfão(s) aplicado(s), ${r.orphansRemaining} pendente(s), ${r.timedOut} timeout(s).`
+          : "Reconciliação concluída.",
+      );
+    } finally {
+      setOrphanReconcileBusy(false);
+    }
+  }, [refreshLogs]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -489,6 +555,14 @@ export function SystemAgentHub(props: {
           >
             {webhookReapplyBusy ? "Aplicando…" : "Re-aplicar webhook"}
           </button>
+          <button
+            type="button"
+            disabled={orphanReconcileBusy}
+            onClick={() => void reconcileOrphans()}
+            className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-content-secondary disabled:opacity-60"
+          >
+            {orphanReconcileBusy ? "Reconciliando…" : "Reconciliar órfãos"}
+          </button>
         </div>
         {actionMessage ? <p className="mt-3 text-xs text-content-muted">{actionMessage}</p> : null}
 
@@ -549,14 +623,44 @@ export function SystemAgentHub(props: {
                   </span>
                 </p>
                 {diagnose.delivery ? (
-                  <p className="text-content-faint">
-                    Entregas confirmadas via webhook:{" "}
-                    <strong className={diagnose.delivery.webhookUpdatesWorking ? "text-emerald-400" : "text-amber-400"}>
-                      {diagnose.delivery.webhookUpdatesWorking
-                        ? `sim (última: ${diagnose.delivery.lastDeliveredAt ? new Date(diagnose.delivery.lastDeliveredAt).toLocaleString("pt-BR") : diagnose.webhook?.lastMessagesUpdateAt ? new Date(diagnose.webhook.lastMessagesUpdateAt).toLocaleString("pt-BR") : "—"})`
-                        : `nenhuma ainda (${diagnose.delivery.recentPendingCount} pendentes recentes)`}
-                    </strong>
-                  </p>
+                  <>
+                    <p className="text-content-faint">
+                      Entregas confirmadas via webhook:{" "}
+                      <strong className={diagnose.delivery.webhookUpdatesWorking ? "text-emerald-400" : "text-amber-400"}>
+                        {diagnose.delivery.webhookUpdatesWorking
+                          ? `sim (última: ${diagnose.delivery.lastDeliveredAt ? new Date(diagnose.delivery.lastDeliveredAt).toLocaleString("pt-BR") : diagnose.webhook?.lastMessagesUpdateAt ? new Date(diagnose.webhook.lastMessagesUpdateAt).toLocaleString("pt-BR") : "—"})`
+                          : `nenhuma ainda (${diagnose.delivery.recentPendingCount} pendentes recentes)`}
+                      </strong>
+                    </p>
+                    {(diagnose.delivery.pendingOrphanEventsCount ?? diagnose.webhook?.pendingOrphanEventsCount ?? 0) >
+                    0 ? (
+                      <p className="text-amber-300">
+                        Eventos órfãos pendentes:{" "}
+                        <strong>
+                          {diagnose.delivery.pendingOrphanEventsCount ??
+                            diagnose.webhook?.pendingOrphanEventsCount ??
+                            0}
+                        </strong>
+                        {" · "}
+                        Use &quot;Reconciliar órfãos&quot; após envios ou se webhook chegou antes do log.
+                      </p>
+                    ) : null}
+                    {diagnose.delivery.webhookBottleneck ? (
+                      <p className="text-amber-300">
+                        Gargalo provável: <strong>webhook MESSAGES_UPDATE</strong> (sessão OK, mas confirmação não
+                        fecha no log). Re-aplique webhook e reconcilie órfãos.
+                      </p>
+                    ) : null}
+                    {diagnose.delivery.lastOrphanReconcileAt ? (
+                      <p className="text-content-faint">
+                        Última reconciliação de órfãos:{" "}
+                        {new Date(diagnose.delivery.lastOrphanReconcileAt).toLocaleString("pt-BR")}
+                        {typeof diagnose.delivery.lastOrphanReconcileApplied === "number"
+                          ? ` · aplicados: ${diagnose.delivery.lastOrphanReconcileApplied}`
+                          : null}
+                      </p>
+                    ) : null}
+                  </>
                 ) : null}
                 {diagnose.webhook?.lastMessagesUpdateAt ? (
                   <p className="text-content-faint">
@@ -619,11 +723,70 @@ export function SystemAgentHub(props: {
 
       <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">
+          Runbook operacional (VPS / Evolution)
+        </h2>
+        <ol className="mt-3 list-decimal space-y-2 pl-5 text-xs text-content-secondary">
+          <li>
+            <strong>Reconectar sessão</strong> — &quot;Forçar reconexão (QR)&quot; ou apagar conexão → Conectar → QR
+            com o número oficial do sistema
+          </li>
+          <li>
+            <strong>Re-aplicar webhook</strong> — botão acima; confirme MESSAGES_UPDATE + CONNECTION_UPDATE no Manager
+          </li>
+          <li>
+            <strong>Reconciliar órfãos</strong> — após envios ou se diagnóstico mostrar eventos órfãos pendentes
+          </li>
+          <li>
+            <strong>Restart VPS</strong> — no hPanel/SSH:{" "}
+            <code className="font-mono">scripts/evolution-vps-maintenance.sh restart</code>
+          </li>
+          <li>
+            <strong>Limpar instâncias órfãs</strong> — no Manager, apague só{" "}
+            <code className="font-mono">mc049357*</code> (nunca <code className="font-mono">mc976b7b*</code> de
+            clientes). Script:{" "}
+            <code className="font-mono">scripts/evolution-vps-maintenance.sh orphans</code>
+          </li>
+        </ol>
+      </section>
+
+      <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">
           Checklist de validação (E2E)
         </h2>
         <p className="mt-2 text-xs leading-relaxed text-content-muted">
           Após reconectar, valide cada fluxo. Sucesso = mensagem no celular <strong>e</strong> log com status{" "}
           <span className="text-emerald-400">entregue ✓</span> em até 60s.
+        </p>
+        <ul className="mt-3 space-y-2 text-xs">
+          {E2E_REQUIRED_FLOWS.map((flow) => {
+            const result = evaluateE2EFlow(logs, flow.type);
+            const tone =
+              result === "pass"
+                ? "text-emerald-400"
+                : result === "fail"
+                  ? "text-rose-400"
+                  : result === "pending"
+                    ? "text-amber-400"
+                    : "text-content-muted";
+            const label =
+              result === "pass"
+                ? "✓ OK (≤60s)"
+                : result === "fail"
+                  ? "✗ falhou"
+                  : result === "pending"
+                    ? "… em andamento"
+                    : "— não testado";
+            return (
+              <li key={flow.type} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line/60 px-3 py-2">
+                <span className="text-content-secondary">{flow.label}</span>
+                <span className={`font-medium ${tone}`}>{label}</span>
+              </li>
+            );
+          })}
+        </ul>
+        <p className="mt-3 text-[11px] text-content-faint">
+          Meta de aceite: <strong>5/5 OK</strong>. Pending ou sent &gt;60s viram automaticamente &quot;não entregue no
+          celular&quot;.
         </p>
         <ol className="mt-3 list-decimal space-y-2 pl-5 text-xs text-content-secondary">
           <li>

@@ -12,7 +12,8 @@ import {
   getSystemAgentInstanceName,
   getSystemAgentSession,
   getSystemWebhookDiagnostics,
-  reconcileStalePendingNotifications,
+  reconcileOrphanDeliveryEvents,
+  reconcileUndeliveredNotifications,
 } from "@/lib/server/system-agent";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
@@ -112,6 +113,14 @@ async function buildDiagnosePayload(request: Request) {
       recentPendingCount: pendingCount,
       webhookUpdatesWorking:
         lastDeliveredAt !== null || webhookDiagnostics.lastMessagesUpdateAt !== null,
+      pendingOrphanEventsCount: webhookDiagnostics.pendingOrphanEventsCount,
+      lastOrphanReconcileAt: webhookDiagnostics.lastOrphanReconcileAt,
+      lastOrphanReconcileApplied: webhookDiagnostics.lastOrphanReconcileApplied,
+      lastOrphanReconcileRemaining: webhookDiagnostics.lastOrphanReconcileRemaining,
+      webhookBottleneck:
+        webhookDiagnostics.lastMessagesUpdateAt !== null &&
+        lastDeliveredAt === null &&
+        webhookDiagnostics.pendingOrphanEventsCount > 0,
     },
     recent,
   };
@@ -132,7 +141,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Evolution API não configurada no servidor." }, { status: 503 });
   }
 
-  await reconcileStalePendingNotifications(60);
+  await reconcileUndeliveredNotifications(60);
+  await reconcileOrphanDeliveryEvents();
 
   return NextResponse.json(await buildDiagnosePayload(request));
 }
@@ -148,6 +158,20 @@ export async function POST(request: Request) {
   }
 
   const body = (await request.json().catch(() => ({}))) as { action?: string };
+  if (body.action === "reconcile_orphans") {
+    const orphanResult = await reconcileOrphanDeliveryEvents();
+    const timedOut = await reconcileUndeliveredNotifications(60);
+    const payload = await buildDiagnosePayload(request);
+    return NextResponse.json({
+      ...payload,
+      reconcile: {
+        orphansApplied: orphanResult.applied,
+        orphansRemaining: orphanResult.remaining,
+        timedOut,
+      },
+    });
+  }
+
   if (body.action !== "reapply_webhook") {
     return NextResponse.json({ error: "Ação inválida." }, { status: 400 });
   }

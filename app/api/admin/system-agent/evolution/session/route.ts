@@ -33,6 +33,11 @@ export const dynamic = "force-dynamic";
 
 const SYSTEM_SLOT_INDEX = 0;
 
+function displayConnectionState(connectionState: string, authenticated: boolean): string {
+  if (connectionState === "open" && !authenticated) return "connecting";
+  return connectionState;
+}
+
 function buildFreshSystemInstanceName(): string {
   return buildFreshEvolutionInstanceName(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
 }
@@ -134,12 +139,16 @@ export async function POST(request: Request) {
   }
 
   if (remoteState === "open") {
+    const identity = await resolveSystemInstanceIdentity(instanceName, remoteState, null);
+    const displayState = displayConnectionState(identity.connectionState, identity.authenticated);
     return NextResponse.json({
       instanceName,
-      connectionState: remoteState,
+      connectionState: displayState,
       qrDataUrl: null,
       pairingCode: null,
-      waJid: null,
+      waJid: identity.waJid ?? null,
+      authenticated: identity.authenticated,
+      profileName: identity.profileName,
     });
   }
 
@@ -191,6 +200,8 @@ export async function GET(request: Request) {
 
   const identity = await resolveSystemInstanceIdentity(row.instance_name, row.connection_state, row.wa_jid);
 
+  const displayState = displayConnectionState(identity.connectionState, identity.authenticated);
+
   await upsertTenantEvolutionInstance({
     tenantId: SYSTEM_TENANT_ID,
     slotIndex: SYSTEM_SLOT_INDEX,
@@ -200,10 +211,10 @@ export async function GET(request: Request) {
     defaultAgentId: SYSTEM_AGENT_ID,
   });
 
-  if (identity.connectionState === "open") {
+  if (identity.connectionState === "open" && identity.authenticated) {
     return NextResponse.json({
       instanceName: row.instance_name,
-      connectionState: identity.connectionState,
+      connectionState: displayState,
       qrDataUrl: null,
       pairingCode: null,
       waJid: identity.waJid ?? null,
@@ -215,7 +226,7 @@ export async function GET(request: Request) {
   const connectRes = await evolutionInstanceConnect(row.instance_name);
   return NextResponse.json({
     instanceName: row.instance_name,
-    connectionState: identity.connectionState,
+    connectionState: displayState,
     qrDataUrl: connectRes.ok ? normalizeInstanceConnectToQrDataUrl(connectRes.data as unknown) : null,
     pairingCode: connectRes.ok ? extractPairingCodeFromConnectPayload(connectRes.data as unknown) : null,
     waJid: identity.waJid ?? null,
@@ -275,6 +286,8 @@ export async function PATCH(request: Request) {
   const fallbackJid = action === "reconnect" ? null : row.wa_jid;
   const identity = await resolveSystemInstanceIdentity(row.instance_name, "close", fallbackJid);
 
+  const displayState = displayConnectionState(identity.connectionState, identity.authenticated);
+
   await upsertTenantEvolutionInstance({
     tenantId: SYSTEM_TENANT_ID,
     slotIndex: SYSTEM_SLOT_INDEX,
@@ -284,10 +297,10 @@ export async function PATCH(request: Request) {
     defaultAgentId: SYSTEM_AGENT_ID,
   });
 
-  if (identity.connectionState === "open") {
+  if (identity.connectionState === "open" && identity.authenticated) {
     return NextResponse.json({
       ok: true,
-      connectionState: identity.connectionState,
+      connectionState: displayState,
       waJid: identity.waJid ?? null,
       authenticated: identity.authenticated,
     });
@@ -296,7 +309,7 @@ export async function PATCH(request: Request) {
   const connectRes = await evolutionInstanceConnect(row.instance_name);
   return NextResponse.json({
     ok: true,
-    connectionState: identity.connectionState,
+    connectionState: displayState,
     qrDataUrl: connectRes.ok ? normalizeInstanceConnectToQrDataUrl(connectRes.data as unknown) : null,
     pairingCode: connectRes.ok ? extractPairingCodeFromConnectPayload(connectRes.data as unknown) : null,
     waJid: identity.waJid ?? null,

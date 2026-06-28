@@ -3,6 +3,7 @@ import { buildEvolutionInstanceName, buildFreshEvolutionInstanceName } from "@/l
 import {
   extractInboundTextsFromEvolutionPayload,
   extractInstanceJid,
+  extractMessageDeliveryUpdates,
 } from "@/lib/integrations/evolution-webhook-parse";
 
 describe("buildEvolutionInstanceName", () => {
@@ -81,5 +82,45 @@ describe("extractInboundTextsFromEvolutionPayload", () => {
       },
     });
     expect(texts).toHaveLength(0);
+  });
+});
+
+describe("extractMessageDeliveryUpdates", () => {
+  it("reads classic Evolution MESSAGES_UPDATE shape", () => {
+    const updates = extractMessageDeliveryUpdates({
+      event: "MESSAGES_UPDATE",
+      data: {
+        key: { id: "MSG1", fromMe: true },
+        update: { status: 3 },
+      },
+    });
+    expect(updates).toEqual([{ messageId: "MSG1", fromMe: true, status: 3 }]);
+  });
+
+  it("reads row.status when update.status is absent", () => {
+    const updates = extractMessageDeliveryUpdates({
+      event: "MESSAGES_UPDATE",
+      data: [{ key: { id: "MSG2", fromMe: true }, status: 2 }],
+    });
+    expect(updates[0]).toEqual({ messageId: "MSG2", fromMe: true, status: 2 });
+  });
+
+  it("reads nested message.key and ack fields", () => {
+    const updates = extractMessageDeliveryUpdates({
+      event: "messages.update",
+      data: {
+        message: { key: { id: "MSG3", fromMe: true } },
+        ack: 3,
+      },
+    });
+    expect(updates[0]).toEqual({ messageId: "MSG3", fromMe: true, status: 3 });
+  });
+
+  it("reads statusAck and keyId fallbacks", () => {
+    const updates = extractMessageDeliveryUpdates({
+      event: "MESSAGES_UPDATE",
+      data: [{ keyId: "MSG4", fromMe: true, statusAck: 4 }],
+    });
+    expect(updates[0]).toEqual({ messageId: "MSG4", fromMe: true, status: 4 });
   });
 });

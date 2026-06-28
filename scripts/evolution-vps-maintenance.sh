@@ -8,6 +8,7 @@
 #   ./scripts/evolution-vps-maintenance.sh logs
 #   ./scripts/evolution-vps-maintenance.sh update   # pull + up -d (faça snapshot antes)
 #   ./scripts/evolution-vps-maintenance.sh orphans    # lista instâncias mc049357* (sistema)
+#   ./scripts/evolution-vps-maintenance.sh runbook    # passos rápidos para agente do sistema
 
 set -euo pipefail
 
@@ -80,9 +81,21 @@ case "$cmd" in
     fi
     docker logs --tail 500 "$c" 2>/dev/null | grep -o 'mc049357[a-f0-9]*' | sort -u || echo "(nenhuma encontrada nos logs recentes)"
     ;;
+  runbook)
+    cat <<'EOF'
+=== Runbook — Agente do sistema MyChatCRM ===
+1) No /admin/system-agent: apagar conexão → Conectar → QR com número oficial
+2) Re-aplicar webhook (botão no painel admin)
+3) Reconciliar órfãos se diagnóstico mostrar eventos pendentes
+4) Restart Evolution: ./scripts/evolution-vps-maintenance.sh restart
+5) Limpar instâncias órfãs mc049357* no Evolution Manager (NUNCA mc976b7b*)
+6) Warm-up: destino manda "oi" antes de teste/código
+7) Aceite E2E: 5 fluxos com delivered em <=60s no painel
+EOF
+    ;;
   *)
     echo "Comando desconhecido: $cmd"
-    echo "Uso: $0 {status|restart|logs|update|orphans}"
+    echo "Uso: $0 {status|restart|logs|update|orphans|runbook}"
     exit 1
     ;;
 esac

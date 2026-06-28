@@ -341,28 +341,105 @@ export type EvolutionMessageDeliveryUpdate = {
   status: unknown;
 };
 
+function readDeliveryKey(row: Record<string, unknown>): Record<string, unknown> | null {
+  const key = row.key;
+  if (key && typeof key === "object") return key as Record<string, unknown>;
+
+  const message = row.message;
+  if (message && typeof message === "object") {
+    const messageKey = (message as Record<string, unknown>).key;
+    if (messageKey && typeof messageKey === "object") return messageKey as Record<string, unknown>;
+  }
+
+  return null;
+}
+
+function readDeliveryStatus(row: Record<string, unknown>): unknown {
+  const update = row.update;
+  if (update && typeof update === "object") {
+    const updateObj = update as Record<string, unknown>;
+    if (updateObj.status !== undefined) return updateObj.status;
+    if (updateObj.ack !== undefined) return updateObj.ack;
+    if (updateObj.statusAck !== undefined) return updateObj.statusAck;
+  }
+
+  if (row.status !== undefined) return row.status;
+  if (row.statusAck !== undefined) return row.statusAck;
+  if (row.ack !== undefined) return row.ack;
+
+  const message = row.message;
+  if (message && typeof message === "object") {
+    const messageObj = message as Record<string, unknown>;
+    if (messageObj.status !== undefined) return messageObj.status;
+  }
+
+  return null;
+}
+
+function readDeliveryMessageId(row: Record<string, unknown>, keyObj: Record<string, unknown>): string {
+  const fromKey = typeof keyObj.id === "string" ? keyObj.id.trim() : "";
+  if (fromKey) return fromKey;
+
+  for (const candidate of [row.messageId, row.keyId, row.id]) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  }
+
+  return "";
+}
+
+function readDeliveryFromMe(keyObj: Record<string, unknown>, row: Record<string, unknown>): boolean {
+  if (keyObj.fromMe === true) return true;
+  if (row.fromMe === true) return true;
+
+  const update = row.update;
+  if (update && typeof update === "object" && (update as Record<string, unknown>).fromMe === true) {
+    return true;
+  }
+
+  return false;
+}
+
 /** Extrai atualizações de entrega de payloads MESSAGES_UPDATE / messages.update. */
 export function extractMessageDeliveryUpdates(payload: Record<string, unknown>): EvolutionMessageDeliveryUpdate[] {
   const raw = payload.data;
-  const items = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? [raw] : [];
+  let items: unknown[] = [];
+
+  if (Array.isArray(raw)) {
+    items = raw;
+  } else if (raw && typeof raw === "object") {
+    const dataObj = raw as Record<string, unknown>;
+    if (Array.isArray(dataObj.messages)) items = dataObj.messages;
+    else items = [raw];
+  } else if (payload.key && typeof payload.key === "object") {
+    items = [payload];
+  }
+
   const updates: EvolutionMessageDeliveryUpdate[] = [];
 
   for (const item of items) {
     if (!item || typeof item !== "object") continue;
     const row = item as Record<string, unknown>;
-    const key = row.key;
-    const update = row.update;
-    if (!key || typeof key !== "object") continue;
+    const keyObj = readDeliveryKey(row);
 
-    const keyObj = key as Record<string, unknown>;
-    const messageId = typeof keyObj.id === "string" ? keyObj.id.trim() : "";
+    if (!keyObj) {
+      const messageId = readDeliveryMessageId(row, {});
+      if (!messageId) continue;
+      updates.push({
+        messageId,
+        fromMe: readDeliveryFromMe({}, row),
+        status: readDeliveryStatus(row),
+      });
+      continue;
+    }
+
+    const messageId = readDeliveryMessageId(row, keyObj);
     if (!messageId) continue;
 
-    const fromMe = keyObj.fromMe === true;
-    const status =
-      update && typeof update === "object" ? (update as Record<string, unknown>).status : row.status;
-
-    updates.push({ messageId, fromMe, status });
+    updates.push({
+      messageId,
+      fromMe: readDeliveryFromMe(keyObj, row),
+      status: readDeliveryStatus(row),
+    });
   }
 
   return updates;

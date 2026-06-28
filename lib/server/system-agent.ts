@@ -4,6 +4,7 @@ import {
   evolutionRestartInstance,
   evolutionSendText,
   isEvolutionConnectionClosedError,
+  isEvolutionDeliveredStatus,
   isEvolutionDeliveryErrorStatus,
   isEvolutionPendingStatus,
   isEvolutionSentAckStatus,
@@ -12,6 +13,7 @@ import {
   pickEvolutionInstanceInfo,
   resolveEvolutionSendNumber,
 } from "@/lib/integrations/evolution-api";
+import { extractInstanceJid } from "@/lib/integrations/evolution-webhook-parse";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
 
@@ -72,13 +74,17 @@ export async function getSystemAgentSession(): Promise<SystemAgentSession> {
   const connectionState = state.ok
     ? normalizeEvolutionConnectionState(parseEvolutionConnectionStatePayload(state.data), "close")
     : "unknown";
+  const ownerJid =
+    state.ok && state.data
+      ? extractInstanceJid(state.data as Record<string, unknown>)
+      : null;
 
   return {
     instanceName,
     connectionState,
-    ownerJid: null,
+    ownerJid,
     profileName: null,
-    authenticated: state.ok && connectionState === "open",
+    authenticated: state.ok && connectionState === "open" && Boolean(ownerJid),
     source: "connectionState",
   };
 }
@@ -256,6 +262,26 @@ async function sendEvolutionTextWithRestartRetry(params: {
 
 type SystemNotificationRow = { id: string; status: string; metadata: Record<string, unknown> | null };
 
+const ORPHAN_EVENTS_KEY = "system_webhook_pending_delivery_events";
+const MAX_ORPHAN_EVENTS = 50;
+const LOOKUP_MAX_RETRIES = 5;
+const LOOKUP_RETRY_DELAY_MS = 350;
+
+export type PendingDeliveryEvent = {
+  messageId: string;
+  status: unknown;
+  instanceName: string;
+  receivedAt: string;
+};
+
+export type SystemDeliveryUpdateResult =
+  | "delivered"
+  | "sent"
+  | "delivery_failed"
+  | "buffered"
+  | "no_row"
+  | "skipped";
+
 /**
  * Localiza a notificação do sistema correspondente a um message_id da Evolution.
  * Considera tanto o `evolution_message_id` primário quanto o array `evolution_message_ids`
@@ -283,30 +309,287 @@ async function findSystemNotificationByMessageId(
   return (inArray.data?.[0] as SystemNotificationRow | undefined) ?? null;
 }
 
+/** Retry curto para corrida webhook (MESSAGES_UPDATE) antes do INSERT no log. */
+async function findSystemNotificationByMessageIdWithRetry(
+  sb: ReturnType<typeof createSupabaseServiceClient>,
+  evolutionMessageId: string,
+  opts?: { retries?: number; delayMs?: number },
+): Promise<SystemNotificationRow | null> {
+  const retries = opts?.retries ?? LOOKUP_MAX_RETRIES;
+  const delayMs = opts?.delayMs ?? LOOKUP_RETRY_DELAY_MS;
+
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    const row = await findSystemNotificationByMessageId(sb, evolutionMessageId);
+    if (row) return row;
+    if (attempt < retries - 1) await sleep(delayMs);
+  }
+  return null;
+}
+
+async function readSystemAgentMetadataRecord(): Promise<Record<string, unknown>> {
+  try {
+    const sb = createSupabaseServiceClient();
+    const { data } = await sb
+      .from("tenant_agents")
+      .select("metadata")
+      .eq("tenant_id", SYSTEM_TENANT_ID)
+      .eq("agent_id", SYSTEM_AGENT_ID)
+      .maybeSingle();
+    return (data?.metadata ?? {}) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+async function patchSystemAgentMetadata(patch: Record<string, unknown>): Promise<void> {
+  try {
+    const sb = createSupabaseServiceClient();
+    const prev = await readSystemAgentMetadataRecord();
+    await sb
+      .from("tenant_agents")
+      .update({
+        metadata: { ...prev, ...patch },
+        updated_at: new Date().toISOString(),
+      })
+      .eq("tenant_id", SYSTEM_TENANT_ID)
+      .eq("agent_id", SYSTEM_AGENT_ID);
+  } catch (error) {
+    console.warn("[system-agent] metadata_patch_failed", {
+      error: error instanceof Error ? error.message : "patch_failed",
+    });
+  }
+}
+
+function parsePendingDeliveryEvents(meta: Record<string, unknown>): PendingDeliveryEvent[] {
+  const raw = meta[ORPHAN_EVENTS_KEY];
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((item): item is PendingDeliveryEvent => {
+      if (!item || typeof item !== "object") return false;
+      const row = item as PendingDeliveryEvent;
+      return typeof row.messageId === "string" && row.messageId.trim().length > 0;
+    })
+    .map((item) => ({
+      messageId: item.messageId.trim(),
+      status: item.status ?? null,
+      instanceName: typeof item.instanceName === "string" ? item.instanceName : "",
+      receivedAt: typeof item.receivedAt === "string" ? item.receivedAt : new Date().toISOString(),
+    }));
+}
+
+/** Persiste evento MESSAGES_UPDATE órfão (webhook chegou antes do log). */
+export async function bufferOrphanDeliveryEvent(params: {
+  messageId: string;
+  status: unknown;
+  instanceName: string;
+}): Promise<void> {
+  const messageId = params.messageId.trim();
+  if (!messageId) return;
+
+  const prev = await readSystemAgentMetadataRecord();
+  const events = parsePendingDeliveryEvents(prev).filter((e) => e.messageId !== messageId);
+  events.unshift({
+    messageId,
+    status: params.status ?? null,
+    instanceName: params.instanceName,
+    receivedAt: new Date().toISOString(),
+  });
+
+  await patchSystemAgentMetadata({
+    [ORPHAN_EVENTS_KEY]: events.slice(0, MAX_ORPHAN_EVENTS),
+  });
+}
+
+async function applyDeliveryFailedToRow(
+  sb: ReturnType<typeof createSupabaseServiceClient>,
+  row: SystemNotificationRow,
+  reason: string,
+): Promise<boolean> {
+  if (row.status === "delivery_failed") return false;
+
+  const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
+  const { error: updateError } = await sb
+    .from("system_notifications_log")
+    .update({
+      status: "delivery_failed",
+      error: reason.slice(0, 500),
+      metadata: {
+        ...meta,
+        delivery_failed_at: new Date().toISOString(),
+        delivery_failure_reason: reason.slice(0, 500),
+      },
+    })
+    .eq("id", row.id);
+  return !updateError;
+}
+
+async function applyDeliveredToRow(
+  sb: ReturnType<typeof createSupabaseServiceClient>,
+  row: SystemNotificationRow,
+  status: unknown,
+): Promise<boolean> {
+  if (row.status === "delivered" || row.status === "delivery_failed") return false;
+
+  const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
+  const { error: updateError } = await sb
+    .from("system_notifications_log")
+    .update({
+      status: "delivered",
+      error: null,
+      metadata: {
+        ...meta,
+        delivered_at: new Date().toISOString(),
+        delivery_status: status ?? null,
+      },
+    })
+    .eq("id", row.id);
+  return !updateError;
+}
+
+async function applyServerAckToRow(
+  sb: ReturnType<typeof createSupabaseServiceClient>,
+  row: SystemNotificationRow,
+  status: unknown,
+): Promise<boolean> {
+  if (row.status !== "pending") return false;
+
+  const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
+  const { error: updateError } = await sb
+    .from("system_notifications_log")
+    .update({
+      status: "sent",
+      error: null,
+      metadata: {
+        ...meta,
+        server_ack_at: new Date().toISOString(),
+        server_ack_status: status ?? null,
+      },
+    })
+    .eq("id", row.id);
+  return !updateError;
+}
+
+async function applySystemDeliveryUpdate(params: {
+  evolutionMessageId: string;
+  status: unknown;
+  instanceName?: string;
+  allowBuffer?: boolean;
+  useRetry?: boolean;
+}): Promise<SystemDeliveryUpdateResult> {
+  const sb = createSupabaseServiceClient();
+  const row = params.useRetry !== false
+    ? await findSystemNotificationByMessageIdWithRetry(sb, params.evolutionMessageId)
+    : await findSystemNotificationByMessageId(sb, params.evolutionMessageId);
+
+  if (!row) {
+    if (params.allowBuffer && params.instanceName) {
+      await bufferOrphanDeliveryEvent({
+        messageId: params.evolutionMessageId,
+        status: params.status,
+        instanceName: params.instanceName,
+      });
+      return "buffered";
+    }
+    return "no_row";
+  }
+
+  if (isEvolutionDeliveryErrorStatus(params.status)) {
+    const updated = await applyDeliveryFailedToRow(
+      sb,
+      row,
+      `delivery_status:${String(params.status)}`,
+    );
+    return updated ? "delivery_failed" : "skipped";
+  }
+
+  if (isEvolutionDeliveredStatus(params.status)) {
+    const updated = await applyDeliveredToRow(sb, row, params.status);
+    return updated ? "delivered" : "skipped";
+  }
+
+  if (isEvolutionSentAckStatus(params.status)) {
+    const updated = await applyServerAckToRow(sb, row, params.status);
+    return updated ? "sent" : "skipped";
+  }
+
+  return "skipped";
+}
+
+/** Reaplica eventos órfãos de MESSAGES_UPDATE após o log existir. */
+export async function reconcileOrphanDeliveryEvents(opts?: {
+  preferMessageIds?: string[];
+}): Promise<{ applied: number; remaining: number }> {
+  const prev = await readSystemAgentMetadataRecord();
+  const events = parsePendingDeliveryEvents(prev);
+  if (!events.length) return { applied: 0, remaining: 0 };
+
+  const prefer = new Set((opts?.preferMessageIds ?? []).map((id) => id.trim()).filter(Boolean));
+  const ordered = [
+    ...events.filter((e) => prefer.has(e.messageId)),
+    ...events.filter((e) => !prefer.has(e.messageId)),
+  ];
+
+  let applied = 0;
+  const remaining: PendingDeliveryEvent[] = [];
+
+  for (const event of ordered) {
+    const result = await applySystemDeliveryUpdate({
+      evolutionMessageId: event.messageId,
+      status: event.status,
+      instanceName: event.instanceName,
+      allowBuffer: false,
+      useRetry: true,
+    });
+    if (result === "delivered" || result === "sent" || result === "delivery_failed") {
+      applied += 1;
+    } else {
+      remaining.push(event);
+    }
+  }
+
+  await patchSystemAgentMetadata({
+    [ORPHAN_EVENTS_KEY]: remaining.slice(0, MAX_ORPHAN_EVENTS),
+    system_webhook_last_orphan_reconcile_at: new Date().toISOString(),
+    system_webhook_last_orphan_reconcile_applied: applied,
+    system_webhook_last_orphan_reconcile_remaining: remaining.length,
+  });
+
+  return { applied, remaining: remaining.length };
+}
+
+/** Entrada única do webhook MESSAGES_UPDATE para o agente do sistema. */
+export async function processSystemMessagesUpdate(params: {
+  instanceName: string;
+  messageId: string;
+  status: unknown;
+  fromMe: boolean;
+}): Promise<SystemDeliveryUpdateResult> {
+  if (!params.fromMe) return "skipped";
+
+  await recordSystemWebhookMessagesUpdate({
+    instanceName: params.instanceName,
+    messageId: params.messageId,
+    status: params.status,
+  });
+
+  return applySystemDeliveryUpdate({
+    evolutionMessageId: params.messageId,
+    status: params.status,
+    instanceName: params.instanceName,
+    allowBuffer: true,
+    useRetry: true,
+  });
+}
+
 export async function markSystemNotificationDeliveryFailed(params: {
   evolutionMessageId: string;
   reason: string;
 }): Promise<boolean> {
   try {
     const sb = createSupabaseServiceClient();
-    const row = await findSystemNotificationByMessageId(sb, params.evolutionMessageId);
+    const row = await findSystemNotificationByMessageIdWithRetry(sb, params.evolutionMessageId);
     if (!row || row.status === "delivery_failed") return false;
-
-    const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
-
-    await sb
-      .from("system_notifications_log")
-      .update({
-        status: "delivery_failed",
-        error: params.reason.slice(0, 500),
-        metadata: {
-          ...meta,
-          delivery_failed_at: new Date().toISOString(),
-          delivery_failure_reason: params.reason.slice(0, 500),
-        },
-      })
-      .eq("id", row.id);
-    return true;
+    return applyDeliveryFailedToRow(sb, row, params.reason);
   } catch (error) {
     console.error("[system-agent] delivery_failed_update", {
       evolutionMessageId: params.evolutionMessageId,
@@ -322,25 +605,13 @@ export async function markSystemNotificationDelivered(params: {
   status?: unknown;
 }): Promise<boolean> {
   try {
-    const sb = createSupabaseServiceClient();
-    const row = await findSystemNotificationByMessageId(sb, params.evolutionMessageId);
-    if (!row || row.status === "delivered" || row.status === "delivery_failed") return false;
-
-    const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
-
-    await sb
-      .from("system_notifications_log")
-      .update({
-        status: "delivered",
-        error: null,
-        metadata: {
-          ...meta,
-          delivered_at: new Date().toISOString(),
-          delivery_status: params.status ?? null,
-        },
-      })
-      .eq("id", row.id);
-    return true;
+    const result = await applySystemDeliveryUpdate({
+      evolutionMessageId: params.evolutionMessageId,
+      status: params.status,
+      allowBuffer: false,
+      useRetry: true,
+    });
+    return result === "delivered";
   } catch (error) {
     console.error("[system-agent] delivered_update", {
       evolutionMessageId: params.evolutionMessageId,
@@ -356,25 +627,13 @@ export async function markSystemNotificationServerAck(params: {
   status?: unknown;
 }): Promise<boolean> {
   try {
-    const sb = createSupabaseServiceClient();
-    const row = await findSystemNotificationByMessageId(sb, params.evolutionMessageId);
-    if (!row || row.status !== "pending") return false;
-
-    const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
-
-    await sb
-      .from("system_notifications_log")
-      .update({
-        status: "sent",
-        error: null,
-        metadata: {
-          ...meta,
-          server_ack_at: new Date().toISOString(),
-          server_ack_status: params.status ?? null,
-        },
-      })
-      .eq("id", row.id);
-    return true;
+    const result = await applySystemDeliveryUpdate({
+      evolutionMessageId: params.evolutionMessageId,
+      status: params.status,
+      allowBuffer: false,
+      useRetry: true,
+    });
+    return result === "sent";
   } catch (error) {
     console.error("[system-agent] server_ack_update", {
       evolutionMessageId: params.evolutionMessageId,
@@ -389,6 +648,10 @@ export type SystemWebhookDiagnostics = {
   lastMessagesUpdateMessageId: string | null;
   lastMessagesUpdateStatus: unknown;
   lastMessagesUpdateInstance: string | null;
+  pendingOrphanEventsCount: number;
+  lastOrphanReconcileAt: string | null;
+  lastOrphanReconcileApplied: number | null;
+  lastOrphanReconcileRemaining: number | null;
 };
 
 /** Persiste heartbeat do último MESSAGES_UPDATE da instância sistema (metadata do agente interno). */
@@ -437,6 +700,7 @@ export async function getSystemWebhookDiagnostics(): Promise<SystemWebhookDiagno
       .eq("agent_id", SYSTEM_AGENT_ID)
       .maybeSingle();
     const meta = (data?.metadata ?? {}) as Record<string, unknown>;
+    const orphanEvents = parsePendingDeliveryEvents(meta);
     return {
       lastMessagesUpdateAt:
         typeof meta.system_webhook_last_messages_update_at === "string"
@@ -451,6 +715,19 @@ export async function getSystemWebhookDiagnostics(): Promise<SystemWebhookDiagno
         typeof meta.system_webhook_last_messages_update_instance === "string"
           ? meta.system_webhook_last_messages_update_instance
           : null,
+      pendingOrphanEventsCount: orphanEvents.length,
+      lastOrphanReconcileAt:
+        typeof meta.system_webhook_last_orphan_reconcile_at === "string"
+          ? meta.system_webhook_last_orphan_reconcile_at
+          : null,
+      lastOrphanReconcileApplied:
+        typeof meta.system_webhook_last_orphan_reconcile_applied === "number"
+          ? meta.system_webhook_last_orphan_reconcile_applied
+          : null,
+      lastOrphanReconcileRemaining:
+        typeof meta.system_webhook_last_orphan_reconcile_remaining === "number"
+          ? meta.system_webhook_last_orphan_reconcile_remaining
+          : null,
     };
   } catch {
     return {
@@ -458,19 +735,23 @@ export async function getSystemWebhookDiagnostics(): Promise<SystemWebhookDiagno
       lastMessagesUpdateMessageId: null,
       lastMessagesUpdateStatus: null,
       lastMessagesUpdateInstance: null,
+      pendingOrphanEventsCount: 0,
+      lastOrphanReconcileAt: null,
+      lastOrphanReconcileApplied: null,
+      lastOrphanReconcileRemaining: null,
     };
   }
 }
 
-/** Marca notificações pending antigas como delivery_failed (timeout). */
-export async function reconcileStalePendingNotifications(maxAgeSeconds = 60): Promise<number> {
+/** Marca pending/sent sem confirmação final como delivery_failed após timeout. */
+export async function reconcileUndeliveredNotifications(maxAgeSeconds = 60): Promise<number> {
   try {
     const sb = createSupabaseServiceClient();
     const cutoff = new Date(Date.now() - maxAgeSeconds * 1000).toISOString();
     const { data, error } = await sb
       .from("system_notifications_log")
-      .select("id, metadata")
-      .eq("status", "pending")
+      .select("id, status, metadata")
+      .in("status", ["pending", "sent"])
       .lt("created_at", cutoff)
       .limit(100);
     if (error || !data?.length) return 0;
@@ -478,6 +759,8 @@ export async function reconcileStalePendingNotifications(maxAgeSeconds = 60): Pr
     let updated = 0;
     for (const row of data) {
       const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
+      if (row.status === "sent" && typeof meta.delivered_at === "string") continue;
+
       const { error: updateError } = await sb
         .from("system_notifications_log")
         .update({
@@ -490,16 +773,21 @@ export async function reconcileStalePendingNotifications(maxAgeSeconds = 60): Pr
           },
         })
         .eq("id", row.id)
-        .eq("status", "pending");
+        .in("status", ["pending", "sent"]);
       if (!updateError) updated += 1;
     }
     return updated;
   } catch (error) {
-    console.error("[system-agent] reconcile_pending_failed", {
+    console.error("[system-agent] reconcile_undelivered_failed", {
       error: error instanceof Error ? error.message : "reconcile_failed",
     });
     return 0;
   }
+}
+
+/** @deprecated Use reconcileUndeliveredNotifications — mantido por compatibilidade. */
+export async function reconcileStalePendingNotifications(maxAgeSeconds = 60): Promise<number> {
+  return reconcileUndeliveredNotifications(maxAgeSeconds);
 }
 
 export async function sendSystemNotification(
@@ -802,6 +1090,16 @@ export async function sendSystemNotification(
       evolution_session_restarted: attempts.some((attempt) => attempt.restarted),
     },
   });
+
+  if (finalOk && evolutionMessageIds.length) {
+    try {
+      await reconcileOrphanDeliveryEvents({ preferMessageIds: evolutionMessageIds });
+    } catch (error) {
+      console.warn("[system-agent] orphan_reconcile_after_send", {
+        error: error instanceof Error ? error.message : "reconcile_failed",
+      });
+    }
+  }
 
   const debug = {
     numberSent: successfulAttempt?.number ?? sendNumber,

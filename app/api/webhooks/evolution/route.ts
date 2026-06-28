@@ -17,9 +17,6 @@ import {
 } from "@/lib/integrations/evolution-webhook-parse";
 import {
   evolutionSendText,
-  isEvolutionDeliveredStatus,
-  isEvolutionDeliveryErrorStatus,
-  isEvolutionSentAckStatus,
   remoteJidToEvoNumber,
 } from "@/lib/integrations/evolution-api";
 import { isElevenlabsConfigured } from "@/lib/integrations/elevenlabs";
@@ -53,10 +50,7 @@ import {
 } from "@/lib/server/integration-disconnect-notifications";
 import {
   SYSTEM_TENANT_ID,
-  markSystemNotificationDelivered,
-  markSystemNotificationDeliveryFailed,
-  markSystemNotificationServerAck,
-  recordSystemWebhookMessagesUpdate,
+  processSystemMessagesUpdate,
 } from "@/lib/server/system-agent";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import {
@@ -494,42 +488,17 @@ export async function POST(request: Request) {
             status: update.status,
           });
 
-          await recordSystemWebhookMessagesUpdate({
+          const result = await processSystemMessagesUpdate({
             instanceName,
             messageId: update.messageId,
             status: update.status,
+            fromMe: update.fromMe,
           });
 
-          if (isEvolutionDeliveryErrorStatus(update.status)) {
-            const updated = await markSystemNotificationDeliveryFailed({
-              evolutionMessageId: update.messageId,
-              reason: `delivery_status:${String(update.status)}`,
+          if (result === "buffered") {
+            console.info("[webhooks/evolution] system_delivery_buffered_orphan", {
+              messageId: update.messageId,
             });
-            if (!updated) {
-              console.warn("[webhooks/evolution] system_delivery_failed_no_row", {
-                messageId: update.messageId,
-              });
-            }
-          } else if (isEvolutionDeliveredStatus(update.status)) {
-            const updated = await markSystemNotificationDelivered({
-              evolutionMessageId: update.messageId,
-              status: update.status,
-            });
-            if (!updated) {
-              console.warn("[webhooks/evolution] system_delivered_no_row", {
-                messageId: update.messageId,
-              });
-            }
-          } else if (isEvolutionSentAckStatus(update.status)) {
-            const updated = await markSystemNotificationServerAck({
-              evolutionMessageId: update.messageId,
-              status: update.status,
-            });
-            if (!updated) {
-              console.warn("[webhooks/evolution] system_server_ack_no_row", {
-                messageId: update.messageId,
-              });
-            }
           }
         }
       } catch (e) {
