@@ -157,7 +157,7 @@ function humanizeNotificationError(error: string | null): string | null {
     return "Não houve confirmação de entrega em 60s — mensagem provavelmente não chegou no celular";
   }
   if (error === "whatsapp_delivery_failed" || error.startsWith("delivery_status:ERROR")) {
-    return "WhatsApp recusou a entrega (ERROR). A sessão Baileys na VPS está degradada — use «Reparar sessão» ou reconecte o QR no Evolution Manager.";
+    return "WhatsApp recusou a entrega (ERROR). A sessão do número conectado aqui está degradada na VPS — clique «Reparar sessão» e escaneie o QR de novo com o celular desse número.";
   }
   if (error.startsWith("delivery_status:")) {
     return `WhatsApp reportou falha na entrega (${error.split(":").slice(1).join(":")})`;

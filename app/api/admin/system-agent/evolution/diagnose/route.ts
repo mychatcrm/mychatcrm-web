@@ -3,6 +3,7 @@ import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
 import { buildEvolutionWebhookUrl, getPublicBaseUrlFromRequest } from "@/lib/integrations/evolution-webhook-url";
 import {
   evolutionFetchInstances,
+  evolutionLogoutInstance,
   evolutionPing,
   evolutionRestartInstance,
   evolutionSetWebhook,
@@ -227,6 +228,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Instância do sistema não configurada." }, { status: 400 });
     }
     await applySystemEvolutionInstanceSettings(instanceName);
+    const logout = await evolutionLogoutInstance(instanceName);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
     const restart = await evolutionRestartInstance(instanceName);
     const webhookSecret = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
     let webhookOk = false;
@@ -242,7 +245,9 @@ export async function POST(request: Request) {
       repair: {
         ok: restart.ok,
         error: restart.ok ? null : restart.error,
+        logoutAttempted: logout.ok,
         webhookReapplied: webhookOk,
+        requiresQrScan: true,
       },
     });
   }

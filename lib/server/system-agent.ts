@@ -1,4 +1,5 @@
 import {
+  brazilianMobileAlternateVariant,
   buildEvolutionInstanceName,
   ensureBrazilianMobileWhatsappDigits,
   evolutionConnectionState,
@@ -15,6 +16,7 @@ import {
   normalizeEvolutionConnectionState,
   parseEvolutionConnectionStatePayload,
   pickEvolutionInstanceInfo,
+  remoteJidToEvoNumber,
 } from "@/lib/integrations/evolution-api";
 import { extractInstanceJid } from "@/lib/integrations/evolution-webhook-parse";
 import { sendPresence, typingDelayMs } from "@/lib/server/evolution-presence";
@@ -413,6 +415,61 @@ function resolveNotificationLogStatus(responseStatus: unknown): "sent" | "pendin
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Responde na thread existente quando o destinatário já mandou mensagem ao número do sistema. */
+async function findSystemInboundReplyContext(platformNumber: string): Promise<{
+  sendNumber: string;
+  quoted: {
+    messageId: string;
+    remoteJid: string;
+    fromMe: false;
+    conversation: string;
+  };
+} | null> {
+  try {
+    const alternate = brazilianMobileAlternateVariant(platformNumber);
+    const jidVariants = Array.from(
+      new Set(
+        [platformNumber, alternate]
+          .filter((digits): digits is string => Boolean(digits && digits.length >= 12))
+          .map((digits) => `${digits}@s.whatsapp.net`),
+      ),
+    );
+    if (!jidVariants.length) return null;
+
+    const sb = createSupabaseServiceClient();
+    const { data } = await sb
+      .from("whatsapp_messages")
+      .select("remote_jid, message_id, content")
+      .eq("tenant_id", SYSTEM_TENANT_ID)
+      .eq("direction", "inbound")
+      .in("remote_jid", jidVariants)
+      .not("message_id", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    const row = data?.[0];
+    const remoteJid = typeof row?.remote_jid === "string" ? row.remote_jid.trim() : "";
+    const messageId = typeof row?.message_id === "string" ? row.message_id.trim() : "";
+    if (!remoteJid || !messageId) return null;
+
+    const sendNumber = remoteJidToEvoNumber(remoteJid) ?? platformNumber;
+    return {
+      sendNumber,
+      quoted: {
+        messageId,
+        remoteJid,
+        fromMe: false,
+        conversation: typeof row?.content === "string" ? row.content : "",
+      },
+    };
+  } catch (error) {
+    console.warn("[system-agent] inbound_reply_context_failed", {
+      error: error instanceof Error ? error.message : "lookup_failed",
+    });
+    return null;
+  }
 }
 
 async function sendEvolutionTextWithRestartRetry(params: {
@@ -1196,12 +1253,15 @@ export async function sendSystemNotification(
   }
 
   const sendNumber = ensureBrazilianMobileWhatsappDigits(platformNumber);
+  const replyContext = await findSystemInboundReplyContext(platformNumber);
+  const numberToSend = replyContext?.sendNumber ?? sendNumber;
 
-  await sendPresence(resolvedInstance, sendNumber, "composing", typingDelayMs(message));
+  await sendPresence(resolvedInstance, numberToSend, "composing", typingDelayMs(message));
   const attempt = await sendEvolutionTextWithRestartRetry({
     instanceName: resolvedInstance,
-    number: sendNumber,
+    number: numberToSend,
     text: message.slice(0, 4000),
+    quoted: replyContext?.quoted ?? null,
   });
 
   const payloadFailure = attempt.ok ? detectEvolutionPayloadFailure(attempt.data) : null;
@@ -1229,7 +1289,9 @@ export async function sendSystemNotification(
       instance_name: resolvedInstance,
       number_raw: rawDigits,
       number_normalized: platformNumber,
-      number_sent: sendNumber,
+      number_sent: numberToSend,
+      reply_to_inbound: Boolean(replyContext),
+      reply_message_id: replyContext?.quoted.messageId ?? null,
       session_owner_jid: sessionOwnerJid,
       session_connection_status: sessionConnectionStatus,
       evolution_number_check: "conversas_style",
@@ -1250,7 +1312,7 @@ export async function sendSystemNotification(
   }
 
   const debugBase = {
-    numberSent: sendNumber,
+    numberSent: numberToSend,
     evolutionMessageId,
     evolutionMessageIds,
     evolutionResponseStatus,

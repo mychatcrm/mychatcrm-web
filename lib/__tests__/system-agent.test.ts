@@ -6,12 +6,14 @@ const {
   evolutionRestartInstanceMock,
   evolutionSendTextMock,
   insertMock,
+  whatsappMessagesSelectMock,
 } = vi.hoisted(() => ({
   evolutionConnectionStateMock: vi.fn(),
   evolutionFetchInstancesMock: vi.fn(),
   evolutionRestartInstanceMock: vi.fn(),
   evolutionSendTextMock: vi.fn(),
   insertMock: vi.fn(),
+  whatsappMessagesSelectMock: vi.fn(),
 }));
 
 vi.mock("@/lib/server/evolution-presence", () => ({
@@ -32,9 +34,28 @@ vi.mock("@/lib/integrations/evolution-api", async (importOriginal) => {
 
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServiceClient: () => ({
-    from: () => ({
-      insert: insertMock,
-    }),
+    from: (table: string) => {
+      if (table === "whatsapp_messages") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                in: () => ({
+                  not: () => ({
+                    order: () => ({
+                      limit: whatsappMessagesSelectMock,
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      return {
+        insert: insertMock,
+      };
+    },
   }),
 }));
 
@@ -48,6 +69,7 @@ import { isSystemAgentReady, sendSystemNotification } from "@/lib/server/system-
 describe("sendSystemNotification", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    whatsappMessagesSelectMock.mockResolvedValue({ data: [], error: null });
     insertMock.mockReturnValue({
       select: () => ({
         single: () => Promise.resolve({ data: { id: "log-test-id" }, error: null }),
@@ -252,6 +274,49 @@ describe("sendSystemNotification", () => {
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
         metadata: expect.objectContaining({ evolution_number_check: "conversas_style" }),
+      }),
+    );
+  });
+
+  it("replies in existing inbound thread when the system tenant has messages from the recipient", async () => {
+    whatsappMessagesSelectMock.mockResolvedValueOnce({
+      data: [
+        {
+          remote_jid: "5562993580574@s.whatsapp.net",
+          message_id: "2A79F14121E19C82EB13",
+          content: "Oi",
+        },
+      ],
+      error: null,
+    });
+    evolutionSendTextMock.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      data: { key: { id: "MSG_REPLY" }, status: "PENDING" },
+    });
+
+    const result = await sendSystemNotification("5562993580574", "Teste resposta", "system-instance", {
+      type: "admin_test",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(evolutionSendTextMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        number: "5562993580574",
+        quoted: expect.objectContaining({
+          messageId: "2A79F14121E19C82EB13",
+          remoteJid: "5562993580574@s.whatsapp.net",
+          fromMe: false,
+          conversation: "Oi",
+        }),
+      }),
+    );
+    expect(insertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          reply_to_inbound: true,
+          reply_message_id: "2A79F14121E19C82EB13",
+        }),
       }),
     );
   });
