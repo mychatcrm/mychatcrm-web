@@ -15,9 +15,11 @@ import {
   normalizeEvolutionConnectionState,
   parseEvolutionConnectionStatePayload,
   pickEvolutionInstanceInfo,
+  remoteJidToEvoNumber,
   resolveEvolutionSendNumber,
 } from "@/lib/integrations/evolution-api";
 import { extractInstanceJid } from "@/lib/integrations/evolution-webhook-parse";
+import { sendPresence, typingDelayMs } from "@/lib/server/evolution-presence";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
   deleteTenantEvolutionInstanceRow,
@@ -403,10 +405,83 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+type SystemConversationSendHint = {
+  remoteJid: string;
+  sendNumber: string;
+  quoted: {
+    messageId: string;
+    remoteJid: string;
+    fromMe: boolean;
+    conversation: string;
+  } | null;
+};
+
+/** Usa thread existente no tenant interno (ex.: cliente respondeu "oi" ao número do sistema). */
+async function findSystemConversationSendHint(
+  platformNumber: string,
+): Promise<SystemConversationSendHint | null> {
+  try {
+    const alternate = brazilianMobileAlternateVariant(platformNumber);
+    const jidVariants = Array.from(
+      new Set(
+        [platformNumber, alternate]
+          .filter((digits): digits is string => Boolean(digits && digits.length >= 12))
+          .map((digits) => `${digits}@s.whatsapp.net`),
+      ),
+    );
+    if (!jidVariants.length) return null;
+
+    const sb = createSupabaseServiceClient();
+    const { data: recentRows } = await sb
+      .from("whatsapp_messages")
+      .select("remote_jid, direction, message_id, content")
+      .eq("tenant_id", SYSTEM_TENANT_ID)
+      .in("remote_jid", jidVariants)
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (!recentRows?.length) return null;
+
+    const remoteJid =
+      typeof recentRows[0]?.remote_jid === "string" ? recentRows[0].remote_jid.trim() : "";
+    if (!remoteJid) return null;
+
+    const sendNumber = remoteJidToEvoNumber(remoteJid) ?? platformNumber;
+    const inbound = recentRows.find(
+      (row) =>
+        row.direction === "inbound" &&
+        typeof row.message_id === "string" &&
+        row.message_id.trim().length > 0,
+    );
+
+    const quoted = inbound
+      ? {
+          messageId: inbound.message_id as string,
+          remoteJid: typeof inbound.remote_jid === "string" ? inbound.remote_jid : remoteJid,
+          fromMe: false,
+          conversation: typeof inbound.content === "string" ? inbound.content : "",
+        }
+      : null;
+
+    return { remoteJid, sendNumber, quoted };
+  } catch (error) {
+    console.warn("[system-agent] conversation_hint_lookup_failed", {
+      error: error instanceof Error ? error.message : "lookup_failed",
+    });
+    return null;
+  }
+}
+
 async function sendEvolutionTextWithRestartRetry(params: {
   instanceName: string;
   number: string;
   text: string;
+  quoted?: {
+    messageId: string;
+    remoteJid: string;
+    fromMe?: boolean;
+    conversation?: string;
+  } | null;
 }): Promise<Awaited<ReturnType<typeof evolutionSendText>> & { restarted?: boolean }> {
   let restarted = false;
 
@@ -415,6 +490,7 @@ async function sendEvolutionTextWithRestartRetry(params: {
       instanceName: params.instanceName,
       number: params.number,
       text: params.text,
+      quoted: params.quoted,
     });
 
   let send = await attempt();
@@ -1178,14 +1254,21 @@ export async function sendSystemNotification(
   let numberCheck: string;
   let candidateNumbers: string[];
   let resolvedJid: string | null = null;
+  const conversationHint = await findSystemConversationSendHint(platformNumber);
 
   if (tryAllCriticalVariants) {
-    // Caminho rápido (igual /conversas/send): dispara direto sem checkWhatsappNumbers.
     const alternate = brazilianMobileAlternateVariant(platformNumber);
     candidateNumbers = Array.from(
-      new Set([platformNumber, alternate].filter((n): n is string => Boolean(n && n.length >= 12))),
+      new Set(
+        [
+          ...(conversationHint ? [conversationHint.sendNumber] : []),
+          platformNumber,
+          alternate,
+        ].filter((n): n is string => Boolean(n && n.length >= 12)),
+      ),
     );
-    numberCheck = "fast_path";
+    numberCheck = conversationHint?.quoted ? "conversation_reply" : "fast_path";
+    resolvedJid = conversationHint?.remoteJid ?? null;
   } else {
     const resolution = await resolveEvolutionSendNumber({ instanceName: resolvedInstance, number: platformNumber });
 
@@ -1215,6 +1298,7 @@ export async function sendSystemNotification(
     candidateNumbers = Array.from(
       new Set(
         [
+          ...(conversationHint ? [conversationHint.sendNumber] : []),
           preferredSendNumber,
           ...(resolution.status === "exists" || resolution.status === "check_failed"
             ? resolution.candidateNumbers
@@ -1223,7 +1307,12 @@ export async function sendSystemNotification(
         ].filter((candidate): candidate is string => Boolean(candidate && candidate.length >= 12)),
       ),
     );
-    resolvedJid = resolution.status === "exists" ? resolution.jid : null;
+    resolvedJid = resolution.status === "exists" ? resolution.jid : conversationHint?.remoteJid ?? null;
+  }
+
+  const quotedReply = conversationHint?.quoted ?? null;
+  if (quotedReply) {
+    await sendPresence(resolvedInstance, candidateNumbers[0] ?? platformNumber, "composing", typingDelayMs(message));
   }
 
   type SendAttempt = {
@@ -1247,6 +1336,7 @@ export async function sendSystemNotification(
       instanceName: resolvedInstance,
       number: candidate,
       text: message.slice(0, 4000),
+      quoted: quotedReply,
     });
     sendNumber = candidate;
     const attemptFailure = attempt.ok ? detectEvolutionPayloadFailure(attempt.data) : null;
@@ -1324,6 +1414,8 @@ export async function sendSystemNotification(
       session_connection_status: sessionConnectionStatus,
       evolution_number_check: numberCheck,
       evolution_connection_state: liveState,
+      conversation_remote_jid: conversationHint?.remoteJid ?? null,
+      conversation_quoted_message_id: quotedReply?.messageId ?? null,
       evolution_message_id: evolutionMessageId,
       evolution_message_ids: evolutionMessageIds,
       evolution_response_status: evolutionResponseStatus,

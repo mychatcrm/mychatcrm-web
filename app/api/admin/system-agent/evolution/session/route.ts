@@ -14,6 +14,7 @@ import {
   evolutionFetchInstances,
   evolutionInstanceConnect,
   evolutionRestartInstance,
+  evolutionSetInstanceSettings,
   evolutionSetWebhook,
   isEvolutionApiConfigured,
   normalizeEvolutionConnectionState,
@@ -106,6 +107,16 @@ async function provisionFreshSystemEvolutionSession(request: Request) {
   } else {
     await evolutionSetWebhook({ instanceName, url: webhookUrl });
   }
+
+  void evolutionSetInstanceSettings({
+    instanceName,
+    settings: {
+      alwaysOnline: true,
+      readMessages: false,
+      readStatus: false,
+      groupsIgnore: true,
+    },
+  });
 
   const stateRes = await evolutionConnectionState(instanceName);
   const remoteState = normalizeEvolutionConnectionState(
