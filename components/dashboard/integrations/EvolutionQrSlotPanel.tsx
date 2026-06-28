@@ -98,6 +98,7 @@ export function EvolutionQrSlotPanel({
   sessionApiPath = "/api/client/whatsapp/evolution/session",
   statusApiPath = "/api/client/whatsapp/evolution/status",
   autoProvision = true,
+  seedQrDataUrl = null,
 }: {
   slotIndex: number;
   sessionApiPath?: string;
@@ -108,6 +109,8 @@ export function EvolutionQrSlotPanel({
    * permitir apagar de vez (e trocar de número) sem recriação automática. Default true (clientes).
    */
   autoProvision?: boolean;
+  /** QR injetado pelo hub após "Forçar reconexão" (PATCH session). */
+  seedQrDataUrl?: string | null;
 }) {
   const { isLight } = usePanelAppearance();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -147,6 +150,16 @@ export function EvolutionQrSlotPanel({
     const id = requestAnimationFrame(() => setConnectedVisible(true));
     return () => cancelAnimationFrame(id);
   }, [connectionState]);
+
+  // QR vindo do hub (reconnect PATCH) — força exibição mesmo se o painel achava "open".
+  useEffect(() => {
+    if (!seedQrDataUrl) return;
+    setQrDataUrl(seedQrDataUrl);
+    setConnectionState("connecting");
+    setManuallyDisconnected(false);
+    qrReceivedAtRef.current = Date.now();
+    setQrSecondsLeft(QR_TTL_SECONDS);
+  }, [seedQrDataUrl]);
 
   // QR countdown
   useEffect(() => {
@@ -243,14 +256,18 @@ export function EvolutionQrSlotPanel({
       });
       const json = (await res.json().catch(() => ({}))) as {
         evolutionVerifiedAbsent?: boolean;
+        evolutionRemoved?: boolean;
         evolutionError?: string | null;
         error?: string;
       };
       if (!res.ok) {
         deleteWarning = json.error ?? "Falha ao apagar a instância.";
-      } else if (json.evolutionVerifiedAbsent === false) {
-        deleteWarning =
-          "A instância foi removida do MyChatCRM, mas ainda aparece na Evolution. Apague manualmente no Evolution Manager (botão Delete) e reconecte.";
+      } else {
+        const verifiedAbsent = json.evolutionVerifiedAbsent ?? json.evolutionRemoved ?? true;
+        if (verifiedAbsent === false) {
+          deleteWarning =
+            "A instância foi removida do MyChatCRM, mas ainda aparece na Evolution. Apague manualmente no Evolution Manager (botão Delete) e reconecte.";
+        }
       }
     } finally {
       // Desconectar = apagar de vez. Nunca recriamos automaticamente aqui;

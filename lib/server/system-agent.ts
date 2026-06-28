@@ -5,6 +5,8 @@ import {
   evolutionSendText,
   isEvolutionConnectionClosedError,
   isEvolutionDeliveryErrorStatus,
+  isEvolutionPendingStatus,
+  isEvolutionSentAckStatus,
   normalizeEvolutionConnectionState,
   parseEvolutionConnectionStatePayload,
   pickEvolutionInstanceInfo,
@@ -120,7 +122,7 @@ async function logSystemNotification(params: {
   type: string;
   toNumber: string;
   message: string;
-  status: "sent" | "failed" | "delivery_failed" | "delivered";
+  status: "sent" | "failed" | "delivery_failed" | "delivered" | "pending" | "skipped";
   error?: string | null;
   metadata?: Record<string, unknown> | null;
 }): Promise<void> {
@@ -191,16 +193,20 @@ function extractEvolutionResponseStatus(payload: unknown): unknown {
   return (payload as Record<string, unknown>).status ?? null;
 }
 
-function isEvolutionPendingStatus(status: unknown): boolean {
-  return typeof status === "string" && status.trim().toUpperCase() === "PENDING";
-}
-
 const CRITICAL_SYSTEM_NOTIFICATION_TYPES = new Set([
   "account_phone_removed",
   "admin_test",
+  "handoff_alert",
   "integration_disconnected",
   "phone_verification_code",
 ]);
+
+function resolveNotificationLogStatus(responseStatus: unknown): "sent" | "pending" {
+  if (isEvolutionSentAckStatus(responseStatus)) return "sent";
+  if (isEvolutionPendingStatus(responseStatus)) return "pending";
+  // message_id sem status explícito — conservador: aguardando WhatsApp
+  return "pending";
+}
 
 function shouldTryReliableBrazilianVariants(type: string | undefined): boolean {
   return Boolean(type && CRITICAL_SYSTEM_NOTIFICATION_TYPES.has(type));
@@ -301,7 +307,8 @@ export async function markSystemNotificationDeliveryFailed(params: {
       })
       .eq("id", row.id);
   } catch (error) {
-    console.warn("[system-agent] delivery_failed_update", {
+    console.error("[system-agent] delivery_failed_update", {
+      evolutionMessageId: params.evolutionMessageId,
       error: error instanceof Error ? error.message : "update_failed",
     });
   }
@@ -315,7 +322,6 @@ export async function markSystemNotificationDelivered(params: {
   try {
     const sb = createSupabaseServiceClient();
     const row = await findSystemNotificationByMessageId(sb, params.evolutionMessageId);
-    // Não rebaixa um estado de falha já registado; só confirma envios pendentes/enviados.
     if (!row || row.status === "delivered" || row.status === "delivery_failed") return;
 
     const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
@@ -333,7 +339,8 @@ export async function markSystemNotificationDelivered(params: {
       })
       .eq("id", row.id);
   } catch (error) {
-    console.warn("[system-agent] delivered_update", {
+    console.error("[system-agent] delivered_update", {
+      evolutionMessageId: params.evolutionMessageId,
       error: error instanceof Error ? error.message : "update_failed",
     });
   }
@@ -412,41 +419,74 @@ export async function sendSystemNotification(
   }
 
   // Fonte de verdade da identidade: fetchInstances traz ownerJid quando a sessão está REALMENTE
-  // autenticada. "open" sem ownerJid = sessão zumbi (a Evolution aceita o sendText e devolve
-  // message_id, mas o WhatsApp nunca entrega). Bloqueamos com erro claro e acionável.
+  // autenticada. Falha fechada: sem fetchInstances não enviamos (evita sessão zumbi).
   let sessionOwnerJid: string | null = null;
   let sessionConnectionStatus: string | null = null;
   const instancesRes = await evolutionFetchInstances(resolvedInstance);
-  if (instancesRes.ok) {
-    const info = pickEvolutionInstanceInfo(instancesRes.data, resolvedInstance);
-    if (info) {
-      sessionOwnerJid = info.ownerJid;
-      sessionConnectionStatus = info.connectionStatus;
-      const authenticated = info.connectionStatus === "open" && Boolean(info.ownerJid);
-      if (!authenticated) {
-        const reason =
-          info.connectionStatus && info.connectionStatus !== "open"
-            ? `system_session_not_authenticated:${info.connectionStatus}`
-            : "system_session_not_authenticated:no_owner";
-        await logSystemNotification({
-          type: options?.type ?? "generic",
-          toNumber: digits,
-          message,
-          status: "failed",
-          error: reason,
-          metadata: {
-            ...(options?.metadata ?? {}),
-            instance_name: resolvedInstance,
-            number_raw: rawDigits,
-            number_normalized: digits,
-            evolution_connection_state: liveState,
-            session_connection_status: info.connectionStatus,
-            session_owner_jid: info.ownerJid,
-          },
-        });
-        return { ok: false, error: reason };
-      }
-    }
+  if (!instancesRes.ok) {
+    const reason = `system_session_check_failed:${instancesRes.error ?? "fetchInstances_failed"}`;
+    await logSystemNotification({
+      type: options?.type ?? "generic",
+      toNumber: digits,
+      message,
+      status: "failed",
+      error: reason,
+      metadata: {
+        ...(options?.metadata ?? {}),
+        instance_name: resolvedInstance,
+        number_raw: rawDigits,
+        number_normalized: digits,
+        evolution_connection_state: liveState,
+      },
+    });
+    return { ok: false, error: reason };
+  }
+
+  const info = pickEvolutionInstanceInfo(instancesRes.data, resolvedInstance);
+  if (!info) {
+    const reason = "system_session_not_found_in_evolution";
+    await logSystemNotification({
+      type: options?.type ?? "generic",
+      toNumber: digits,
+      message,
+      status: "failed",
+      error: reason,
+      metadata: {
+        ...(options?.metadata ?? {}),
+        instance_name: resolvedInstance,
+        number_raw: rawDigits,
+        number_normalized: digits,
+        evolution_connection_state: liveState,
+      },
+    });
+    return { ok: false, error: reason };
+  }
+
+  sessionOwnerJid = info.ownerJid;
+  sessionConnectionStatus = info.connectionStatus;
+  const authenticated = info.connectionStatus === "open" && Boolean(info.ownerJid);
+  if (!authenticated) {
+    const reason =
+      info.connectionStatus && info.connectionStatus !== "open"
+        ? `system_session_not_authenticated:${info.connectionStatus}`
+        : "system_session_not_authenticated:no_owner";
+    await logSystemNotification({
+      type: options?.type ?? "generic",
+      toNumber: digits,
+      message,
+      status: "failed",
+      error: reason,
+      metadata: {
+        ...(options?.metadata ?? {}),
+        instance_name: resolvedInstance,
+        number_raw: rawDigits,
+        number_normalized: digits,
+        evolution_connection_state: liveState,
+        session_connection_status: info.connectionStatus,
+        session_owner_jid: info.ownerJid,
+      },
+    });
+    return { ok: false, error: reason };
   }
 
   // Valida existência no WhatsApp e prepara as variantes brasileiras reconhecidas pela Evolution.
@@ -569,11 +609,13 @@ export async function sendSystemNotification(
       ? lastAttempt.payloadFailure ?? "missing_evolution_message_id"
       : lastAttempt.error;
 
+  const logStatus = finalOk ? resolveNotificationLogStatus(evolutionResponseStatus) : "failed";
+
   await logSystemNotification({
     type: options?.type ?? "generic",
     toNumber: platformNumber,
     message,
-    status: finalOk ? "sent" : "failed",
+    status: logStatus,
     error: finalOk ? null : finalError,
     metadata: {
       ...(options?.metadata ?? {}),

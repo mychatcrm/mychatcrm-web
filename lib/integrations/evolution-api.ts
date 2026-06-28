@@ -662,6 +662,28 @@ export function isEvolutionDeliveredStatus(status: unknown): boolean {
   return false;
 }
 
+/** PENDING (1 ou string) — aceito pela Evolution, aguardando confirmação WhatsApp. */
+export function isEvolutionPendingStatus(status: unknown): boolean {
+  if (typeof status === "number" && status === 1) return true;
+  if (typeof status === "string" && status.trim().toUpperCase() === "PENDING") return true;
+  return false;
+}
+
+/** SERVER_ACK (2+) ou equivalente — WhatsApp confirmou recepção no servidor (melhor que PENDING). */
+export function isEvolutionSentAckStatus(status: unknown): boolean {
+  if (typeof status === "number" && status >= 2) return true;
+  if (typeof status === "string") {
+    const normalized = status.trim().toUpperCase();
+    return (
+      normalized === "SERVER_ACK" ||
+      normalized === "DELIVERY_ACK" ||
+      normalized === "READ" ||
+      normalized === "PLAYED"
+    );
+  }
+  return false;
+}
+
 /**
  * Envia mídia (imagem, vídeo, documento) via Evolution API v2.
  * POST /message/sendMedia/{instance}

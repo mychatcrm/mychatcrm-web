@@ -153,7 +153,7 @@ describe("sendSystemNotification", () => {
     expect(result.ok).toBe(true);
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: "sent",
+        status: "pending",
         error: null,
         metadata: expect.objectContaining({
           evolution_connection_state: "open",
@@ -192,7 +192,7 @@ describe("sendSystemNotification", () => {
     );
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: "sent",
+        status: "pending",
         to_number: "5562993580574",
         metadata: expect.objectContaining({
           number_normalized: "5562993580574",
@@ -244,7 +244,7 @@ describe("sendSystemNotification", () => {
     );
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: "sent",
+        status: "pending",
         to_number: "5562993580574",
         metadata: expect.objectContaining({
           number_normalized: "5562993580574",
@@ -252,6 +252,94 @@ describe("sendSystemNotification", () => {
           numbers_tried: ["556293580574", "5562993580574"],
           evolution_message_id: "MSG_WITH_9",
           evolution_message_ids: ["MSG_NO_9", "MSG_WITH_9"],
+        }),
+      }),
+    );
+  });
+
+  it("logs sent when Evolution returns SERVER_ACK (numeric 2)", async () => {
+    evolutionConnectionStateMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { instance: { state: "open" } },
+    });
+    evolutionSendTextMock.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      data: { key: { id: "MSG_ACK" }, status: 2 },
+    });
+
+    const result = await sendSystemNotification("62999991111", "Teste", "system-instance", {
+      type: "test",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(insertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "sent",
+        metadata: expect.objectContaining({ evolution_message_id: "MSG_ACK" }),
+      }),
+    );
+  });
+
+  it("does not send when fetchInstances fails (fail closed)", async () => {
+    evolutionConnectionStateMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { instance: { state: "open" } },
+    });
+    evolutionFetchInstancesMock.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      error: "Evolution unavailable",
+    });
+
+    const result = await sendSystemNotification("62999991111", "Teste", "system-instance", {
+      type: "admin_test",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("system_session_check_failed");
+    expect(evolutionSendTextMock).not.toHaveBeenCalled();
+  });
+
+  it("tries alternate Brazilian format for handoff_alert with numeric PENDING (1)", async () => {
+    evolutionConnectionStateMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { instance: { state: "open" } },
+    });
+    resolveEvolutionSendNumberMock.mockResolvedValueOnce({
+      status: "exists",
+      sendNumber: "556293580574",
+      jid: "556293580574@s.whatsapp.net",
+      platformNumber: "5562993580574",
+      candidateNumbers: ["5562993580574", "556293580574"],
+    });
+    evolutionSendTextMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        data: { key: { id: "H1" }, status: 1 },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        data: { key: { id: "H2" }, status: 1 },
+      });
+
+    const result = await sendSystemNotification("5562993580574", "Handoff", "system-instance", {
+      type: "handoff_alert",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(evolutionSendTextMock).toHaveBeenCalledTimes(2);
+    expect(insertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "pending",
+        metadata: expect.objectContaining({
+          evolution_message_id: "H2",
+          evolution_message_ids: ["H1", "H2"],
         }),
       }),
     );
@@ -420,7 +508,7 @@ describe("sendSystemNotification", () => {
     );
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: "sent",
+        status: "pending",
         metadata: expect.objectContaining({ evolution_number_check: "check_failed" }),
       }),
     );

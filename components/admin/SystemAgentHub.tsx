@@ -28,6 +28,18 @@ type DiagnoseResult = {
   instanceInfo: { connectionStatus: string | null; ownerJid: string | null; profileName: string | null } | null;
   fetchInstancesOk: boolean;
   fetchInstancesError: string | null;
+  infrastructure?: {
+    evolutionReachable: boolean;
+    evolutionPingError: string | null;
+    webhookSecretConfigured: boolean;
+    expectedWebhookUrl: string | null;
+    publicBaseUrl: string | null;
+  };
+  delivery?: {
+    lastDeliveredAt: string | null;
+    recentPendingCount: number;
+    webhookUpdatesWorking: boolean;
+  };
   recent: Array<{
     type: string;
     status: string;
@@ -54,7 +66,8 @@ function connectionLabel(state: string): { label: string; tone: string } {
 
 function notificationStatusLabel(status: string): { label: string; tone: string } {
   if (status === "delivered") return { label: "entregue ✓", tone: "text-emerald-400" };
-  if (status === "sent") return { label: "enviado (sem confirmação)", tone: "text-amber-400" };
+  if (status === "pending") return { label: "aguardando WhatsApp…", tone: "text-amber-400" };
+  if (status === "sent") return { label: "aceito pelo servidor (SERVER_ACK)", tone: "text-amber-400" };
   if (status === "delivery_failed") {
     return { label: "falha na entrega", tone: "text-rose-400" };
   }
@@ -83,6 +96,12 @@ function humanizeNotificationError(error: string | null): string | null {
   }
   if (error.startsWith("system_session_not_authenticated:")) {
     return "Sessão conectada na API mas sem número WhatsApp ativo (sessão zumbi). Reconecte escaneando o QR.";
+  }
+  if (error.startsWith("system_session_check_failed:")) {
+    return "Não foi possível verificar a sessão na Evolution (fetchInstances). Tente reconectar.";
+  }
+  if (error === "system_session_not_found_in_evolution") {
+    return "Instância não encontrada na Evolution — apague e reconecte pelo painel.";
   }
   if (error === "number_not_on_whatsapp") {
     return "Número de destino não está no WhatsApp";
@@ -129,6 +148,8 @@ export function SystemAgentHub(props: {
   const [diagnoseBusy, setDiagnoseBusy] = useState(false);
   const [diagnose, setDiagnose] = useState<DiagnoseResult | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [qrPanelRevision, setQrPanelRevision] = useState(0);
+  const [seedQrDataUrl, setSeedQrDataUrl] = useState<string | null>(null);
   const conn = connectionLabel(connectionState);
   const senderLine = formatWaJid(waJid);
   // Sessão "open" sem número conectado = sessão zumbi (API aceita, WhatsApp não entrega).
@@ -244,6 +265,9 @@ export function SystemAgentHub(props: {
       }
       if (typeof json.connectionState === "string") setConnectionState(json.connectionState);
       if (json.qrDataUrl) {
+        setSeedQrDataUrl(json.qrDataUrl);
+        setConnectionState(json.connectionState ?? "close");
+        setQrPanelRevision((r) => r + 1);
         setActionMessage(
           `Escaneie o QR Code abaixo com o celular do número ${senderLine}. Sem isso, o WhatsApp aceita o envio na API mas não entrega no celular.`,
         );
@@ -270,14 +294,17 @@ export function SystemAgentHub(props: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ toNumber: testNumber.trim() }),
       });
-      const json = (await res.json().catch(() => ({}))) as { error?: string; debug?: { numberSent?: string; candidatesTried?: string[] } };
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        debug?: { numberSent?: string; candidatesTried?: string[]; evolutionResponseStatus?: unknown };
+      };
       if (!res.ok) {
         setActionMessage(json.error ?? "Falha no envio de teste.");
         return;
       }
       const tried = json.debug?.candidatesTried?.join(", ") ?? json.debug?.numberSent ?? testNumber.trim();
       setActionMessage(
-        `API aceitou o envio (${tried}). Verifique o WhatsApp de ${senderLine} → conversa com seu número, ou Solicitações. Se não chegar em 1 min, clique em "Forçar reconexão (QR)".`,
+        `Aceito pela Evolution (${tried}) — aguardando confirmação do WhatsApp. Verifique o celular de ${senderLine} → conversa ou Solicitações. Se não chegar em 1 min, use "Forçar reconexão (QR)" ou reinicie a Evolution na VPS.`,
       );
       await refreshLogs();
     } finally {
@@ -431,6 +458,32 @@ export function SystemAgentHub(props: {
                 Não foi possível ler fetchInstances: {diagnose.fetchInstancesError ?? "erro desconhecido"}
               </p>
             ) : null}
+            {diagnose.infrastructure ? (
+              <div className="mt-2 space-y-1 border-t border-line/40 pt-2">
+                <p className="text-content-faint">
+                  Evolution VPS:{" "}
+                  <strong className={diagnose.infrastructure.evolutionReachable ? "text-emerald-400" : "text-rose-400"}>
+                    {diagnose.infrastructure.evolutionReachable ? "alcançável" : "inacessível"}
+                  </strong>
+                </p>
+                <p className="break-all text-content-faint">
+                  Webhook esperado:{" "}
+                  <span className="font-mono text-content-secondary">
+                    {diagnose.infrastructure.expectedWebhookUrl ?? "EVOLUTION_WEBHOOK_SECRET em falta"}
+                  </span>
+                </p>
+                {diagnose.delivery ? (
+                  <p className="text-content-faint">
+                    Entregas confirmadas via webhook:{" "}
+                    <strong className={diagnose.delivery.webhookUpdatesWorking ? "text-emerald-400" : "text-amber-400"}>
+                      {diagnose.delivery.webhookUpdatesWorking
+                        ? `sim (última: ${diagnose.delivery.lastDeliveredAt ? new Date(diagnose.delivery.lastDeliveredAt).toLocaleString("pt-BR") : "—"})`
+                        : `nenhuma ainda (${diagnose.delivery.recentPendingCount} pendentes recentes)`}
+                    </strong>
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             {diagnose.recent.length ? (
               <div className="mt-2">
                 <p className="mb-1 text-content-faint">Últimos envios (status real):</p>
@@ -443,7 +496,7 @@ export function SystemAgentHub(props: {
                         className={
                           r.status === "delivered"
                             ? "text-emerald-400"
-                            : r.status === "sent"
+                            : r.status === "pending" || r.status === "sent"
                               ? "text-amber-400"
                               : "text-rose-400"
                         }
@@ -468,11 +521,53 @@ export function SystemAgentHub(props: {
           </h2>
         </div>
         <EvolutionQrSlotPanel
+          key={`system-agent-qr-${qrPanelRevision}`}
           slotIndex={0}
           sessionApiPath="/api/admin/system-agent/evolution/session"
           statusApiPath="/api/admin/system-agent/evolution/status"
           autoProvision={false}
+          seedQrDataUrl={seedQrDataUrl}
         />
+      </section>
+
+      <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">
+          Checklist de validação (E2E)
+        </h2>
+        <p className="mt-2 text-xs leading-relaxed text-content-muted">
+          Após reconectar, valide cada fluxo. Sucesso = mensagem no celular <strong>e</strong> log com status{" "}
+          <span className="text-emerald-400">entregue ✓</span> em até 60s.
+        </p>
+        <ol className="mt-3 list-decimal space-y-2 pl-5 text-xs text-content-secondary">
+          <li>
+            <strong>Reconectar sessão limpa</strong> — apagar conexão → Conectar → escanear QR → aguardar
+            Connected
+          </li>
+          <li>
+            <strong>Validar webhook</strong> — Diagnóstico avançado → URL esperada deve coincidir com a instância no
+            Evolution Manager (eventos: MESSAGES_UPDATE, CONNECTION_UPDATE)
+          </li>
+          <li>
+            <strong>Enviar teste</strong> — número de destino acima
+          </li>
+          <li>
+            <strong>Código de verificação</strong> — Configurações → confirmar telefone
+          </li>
+          <li>
+            <strong>Handoff</strong> — conversa com handoffNumero configurado no agente
+          </li>
+          <li>
+            <strong>Integração desconectada</strong> — desconectar WhatsApp do cliente → alerta ao dono
+          </li>
+          <li>
+            <strong>Telefone removido</strong> — remover telefone da conta
+          </li>
+        </ol>
+        <p className="mt-3 text-[11px] text-content-faint">
+          Se todos ficarem em &quot;aguardando WhatsApp…&quot; e nada chegar no celular: reinicie a Evolution na VPS (
+          script <code className="font-mono">scripts/evolution-vps-maintenance.sh</code>) ou apague e reconecte a
+          instância do sistema.
+        </p>
       </section>
 
       <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">

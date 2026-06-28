@@ -4,6 +4,8 @@ import {
   ensureBrazilianMobileWhatsappDigits,
   isEvolutionDeliveredStatus,
   isEvolutionDeliveryErrorStatus,
+  isEvolutionPendingStatus,
+  isEvolutionSentAckStatus,
   pickEvolutionInstanceInfo,
   type EvolutionInstanceInfo,
 } from "@/lib/integrations/evolution-api";
@@ -50,6 +52,14 @@ describe("Evolution delivery helpers", () => {
     expect(isEvolutionDeliveredStatus(2)).toBe(false);
     expect(isEvolutionDeliveredStatus("PENDING")).toBe(false);
     expect(isEvolutionDeliveredStatus("SERVER_ACK")).toBe(false);
+  });
+
+  it("recognizes PENDING as numeric 1 or string", () => {
+    expect(isEvolutionPendingStatus(1)).toBe(true);
+    expect(isEvolutionPendingStatus("PENDING")).toBe(true);
+    expect(isEvolutionPendingStatus(2)).toBe(false);
+    expect(isEvolutionSentAckStatus(2)).toBe(true);
+    expect(isEvolutionSentAckStatus("SERVER_ACK")).toBe(true);
   });
 });
 
