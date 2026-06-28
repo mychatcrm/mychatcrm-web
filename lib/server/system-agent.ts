@@ -1139,20 +1139,28 @@ export async function sendSystemNotification(
       : digits;
   const preferredSendNumber =
     resolution.status === "exists" && resolution.sendNumber ? resolution.sendNumber : platformNumber;
-  const candidateNumbers = Array.from(
-    new Set(
-      [
+  const tryAllCriticalVariants = shouldTryReliableBrazilianVariants(options?.type);
+  const candidateSeed = tryAllCriticalVariants
+    ? [
+        // Para fluxos críticos do sistema, priorizamos o número canônico com 9
+        // (platformNumber). Se falhar, tentamos os alternates retornados pela Evolution.
+        platformNumber,
+        preferredSendNumber,
+        ...(resolution.status === "exists" || resolution.status === "check_failed"
+          ? resolution.candidateNumbers
+          : []),
+      ]
+    : [
         preferredSendNumber,
         ...(resolution.status === "exists" || resolution.status === "check_failed"
           ? resolution.candidateNumbers
           : []),
         platformNumber,
-      ].filter((candidate): candidate is string => Boolean(candidate && candidate.length >= 12)),
-    ),
+      ];
+  const candidateNumbers = Array.from(
+    new Set(candidateSeed.filter((candidate): candidate is string => Boolean(candidate && candidate.length >= 12))),
   );
   const resolvedJid = resolution.status === "exists" ? resolution.jid : null;
-
-  const tryAllCriticalVariants = shouldTryReliableBrazilianVariants(options?.type);
   type SendAttempt = {
     number: string;
     ok: boolean;

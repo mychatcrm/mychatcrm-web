@@ -153,7 +153,7 @@ describe("sendSystemNotification", () => {
     expect(result.ok).toBe(true);
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: "pending",
+        status: "sent",
         error: null,
         metadata: expect.objectContaining({
           evolution_connection_state: "open",
@@ -192,7 +192,7 @@ describe("sendSystemNotification", () => {
     );
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: "pending",
+        status: "sent",
         to_number: "5562993580574",
         metadata: expect.objectContaining({
           number_normalized: "5562993580574",
@@ -229,15 +229,15 @@ describe("sendSystemNotification", () => {
     expect(result.ok).toBe(true);
     expect(evolutionSendTextMock).toHaveBeenCalledTimes(1);
     expect(evolutionSendTextMock).toHaveBeenCalledWith(
-      expect.objectContaining({ number: "556293580574" }),
+      expect.objectContaining({ number: "5562993580574" }),
     );
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: "pending",
+        status: "sent",
         metadata: expect.objectContaining({
           evolution_message_id: "MSG_NO_9",
           evolution_message_ids: ["MSG_NO_9"],
-          numbers_tried: ["556293580574"],
+          numbers_tried: ["5562993580574"],
         }),
       }),
     );
@@ -278,7 +278,7 @@ describe("sendSystemNotification", () => {
       expect.objectContaining({
         metadata: expect.objectContaining({
           evolution_message_id: "MSG_WITH_9",
-          numbers_tried: ["556293580574", "5562993580574"],
+          numbers_tried: ["5562993580574", "556293580574"],
         }),
       }),
     );
@@ -357,7 +357,7 @@ describe("sendSystemNotification", () => {
     expect(evolutionSendTextMock).toHaveBeenCalledTimes(1);
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: "pending",
+        status: "sent",
         metadata: expect.objectContaining({
           evolution_message_id: "H1",
           evolution_message_ids: ["H1"],
@@ -529,7 +529,7 @@ describe("sendSystemNotification", () => {
     );
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: "pending",
+        status: "sent",
         metadata: expect.objectContaining({ evolution_number_check: "check_failed" }),
       }),
     );
