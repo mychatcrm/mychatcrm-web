@@ -268,10 +268,13 @@ const CRITICAL_SYSTEM_NOTIFICATION_TYPES = new Set([
 ]);
 
 function resolveNotificationLogStatus(responseStatus: unknown): "sent" | "pending" {
-  if (isEvolutionSentAckStatus(responseStatus)) return "sent";
-  if (isEvolutionPendingStatus(responseStatus)) return "pending";
-  // message_id sem status explícito — conservador: aguardando WhatsApp
-  return "pending";
+  // Esta função só é chamada quando a Evolution aceitou o envio (há message_id).
+  // Aceitação da Evolution = mensagem enfileirada/enviada com sucesso. Esse é o
+  // melhor sinal confiável que temos: o webhook MESSAGES_UPDATE (confirmação de
+  // entrega no aparelho) é opcional e, quando ausente, NÃO deve transformar um
+  // envio aceito em falha. Por isso tratamos PENDING/SERVER_ACK como "sent".
+  void responseStatus;
+  return "sent";
 }
 
 function shouldTryReliableBrazilianVariants(type: string | undefined): boolean {
@@ -838,7 +841,17 @@ export async function getSystemWebhookDiagnostics(): Promise<SystemWebhookDiagno
   }
 }
 
-/** Marca pending/sent sem confirmação final como delivery_failed após timeout. */
+/**
+ * Reconcilia notificações antigas que ficaram em `pending`.
+ *
+ * Regra (honesta, sem mentir nos dois sentidos):
+ * - Se a Evolution ACEITOU o envio (existe `evolution_message_id`), a mensagem
+ *   foi enfileirada/enviada com sucesso → promovemos `pending` → `sent`. NUNCA
+ *   marcamos como `delivery_failed` só porque o webhook de confirmação não veio:
+ *   o webhook MESSAGES_UPDATE é opcional e frequentemente indisponível.
+ * - Se a Evolution NÃO aceitou (sem `evolution_message_id`) e a notificação
+ *   continua presa em `pending` após o timeout, aí sim é uma falha real de envio.
+ */
 export async function reconcileUndeliveredNotifications(maxAgeSeconds = 60): Promise<number> {
   try {
     const sb = createSupabaseServiceClient();
@@ -846,7 +859,7 @@ export async function reconcileUndeliveredNotifications(maxAgeSeconds = 60): Pro
     const { data, error } = await sb
       .from("system_notifications_log")
       .select("id, status, metadata")
-      .in("status", ["pending", "sent"])
+      .eq("status", "pending")
       .lt("created_at", cutoff)
       .limit(100);
     if (error || !data?.length) return 0;
@@ -854,21 +867,39 @@ export async function reconcileUndeliveredNotifications(maxAgeSeconds = 60): Pro
     let updated = 0;
     for (const row of data) {
       const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
-      if (row.status === "sent" && typeof meta.delivered_at === "string") continue;
+      const acceptedMessageId =
+        typeof meta.evolution_message_id === "string" && meta.evolution_message_id.trim().length > 0
+          ? meta.evolution_message_id.trim()
+          : Array.isArray(meta.evolution_message_ids) && meta.evolution_message_ids.length > 0;
 
+      if (acceptedMessageId) {
+        // Evolution aceitou → sucesso. Promove para "sent" (envio confirmado pelo servidor).
+        const { error: upgradeError } = await sb
+          .from("system_notifications_log")
+          .update({
+            status: "sent",
+            metadata: { ...meta, sent_reconciled_at: new Date().toISOString() },
+          })
+          .eq("id", row.id)
+          .eq("status", "pending");
+        if (!upgradeError) updated += 1;
+        continue;
+      }
+
+      // Sem message_id → a Evolution nunca aceitou: falha real de envio.
       const { error: updateError } = await sb
         .from("system_notifications_log")
         .update({
-          status: "delivery_failed",
-          error: "delivery_timeout",
+          status: "failed",
+          error: "evolution_not_accepted",
           metadata: {
             ...meta,
             delivery_failed_at: new Date().toISOString(),
-            delivery_failure_reason: "delivery_timeout",
+            delivery_failure_reason: "evolution_not_accepted",
           },
         })
         .eq("id", row.id)
-        .in("status", ["pending", "sent"]);
+        .eq("status", "pending");
       if (!updateError) updated += 1;
     }
     return updated;

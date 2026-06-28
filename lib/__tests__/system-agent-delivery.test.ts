@@ -178,27 +178,26 @@ describe("system notification delivery helpers", () => {
     expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ status: "delivered" }));
   });
 
-  it("reconciles stale pending and sent notifications to delivery_failed", async () => {
-    selectChain.in.mockReturnValue({
-      lt: () => ({
-        limit: () =>
-          Promise.resolve({
-            data: [
-              { id: "old-pending", status: "pending", metadata: {} },
-              { id: "old-sent", status: "sent", metadata: {} },
-            ],
-            error: null,
-          }),
-      }),
+  it("promotes accepted pending to sent and only fails sends Evolution never accepted", async () => {
+    selectChain.limit.mockResolvedValue({
+      data: [
+        { id: "accepted", status: "pending", metadata: { evolution_message_id: "MID1" } },
+        { id: "never-accepted", status: "pending", metadata: {} },
+      ],
+      error: null,
     });
 
     const count = await reconcileUndeliveredNotifications(60);
     expect(count).toBe(2);
+    // Envio aceito pela Evolution → promovido a "sent" (nunca "delivery_failed").
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ status: "sent" }));
+    // Envio que a Evolution nunca aceitou → falha real.
     expect(updateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: "delivery_failed",
-        error: "delivery_timeout",
-      }),
+      expect.objectContaining({ status: "failed", error: "evolution_not_accepted" }),
+    );
+    // Garante que NUNCA marcamos como "delivery_failed" por timeout de webhook.
+    expect(updateMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ error: "delivery_timeout" }),
     );
   });
 
