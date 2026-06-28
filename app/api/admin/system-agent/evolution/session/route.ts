@@ -13,8 +13,6 @@ import {
   evolutionCreateInstance,
   evolutionFetchInstances,
   evolutionInstanceConnect,
-  evolutionLogoutInstance,
-  evolutionRemoveInstanceCompletely,
   evolutionRestartInstance,
   evolutionSetWebhook,
   isEvolutionApiConfigured,
@@ -22,16 +20,18 @@ import {
   parseEvolutionConnectionStatePayload,
   pickEvolutionInstanceInfo,
 } from "@/lib/integrations/evolution-api";
-import { SYSTEM_AGENT_ID, SYSTEM_TENANT_ID, clearSystemAgentWebhookMetadata } from "@/lib/server/system-agent";
 import {
-  deleteTenantEvolutionInstanceRow,
+  SYSTEM_AGENT_ID,
+  SYSTEM_SLOT_INDEX,
+  SYSTEM_TENANT_ID,
+  resetSystemAgentEvolutionBinding,
+} from "@/lib/server/system-agent";
+import {
   getEvolutionInstanceByTenantSlot,
   upsertTenantEvolutionInstance,
 } from "@/lib/server/tenant-evolution-instance-db";
 
 export const dynamic = "force-dynamic";
-
-const SYSTEM_SLOT_INDEX = 0;
 
 function displayConnectionState(connectionState: string, authenticated: boolean): string {
   if (connectionState === "open" && !authenticated) return "connecting";
@@ -50,12 +50,6 @@ function assertAdminSystemAgent(session: Awaited<ReturnType<typeof getAdminSessi
   return null;
 }
 
-/**
- * Resolve a identidade real da instância. `fetchInstances` traz `ownerJid` (número
- * conectado) e `connectionStatus`; o endpoint `connectionState` serve apenas de fallback.
- * `authenticated` = sessão WhatsApp realmente ativa (open + ownerJid). "open" sem ownerJid
- * é uma sessão zumbi (API aceita, WhatsApp não entrega).
- */
 async function resolveSystemInstanceIdentity(
   instanceName: string,
   fallbackState: string | null,
@@ -80,22 +74,15 @@ async function resolveSystemInstanceIdentity(
   return { connectionState, waJid, profileName: info?.profileName ?? null, authenticated };
 }
 
-export async function POST(request: Request) {
-  const session = await getAdminSessionFromCookies();
-  const denied = assertAdminSystemAgent(session);
-  if (denied) return denied;
-  if (!isEvolutionApiConfigured()) {
-    return NextResponse.json({ error: "Evolution API não configurada no servidor." }, { status: 503 });
-  }
+/** Sessão Baileys nova: apaga órfãs/número antigo, cria instância fresh e devolve QR. */
+async function provisionFreshSystemEvolutionSession(request: Request) {
   const webhookSecret = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
   if (!webhookSecret) {
     return NextResponse.json({ error: "EVOLUTION_WEBHOOK_SECRET em falta." }, { status: 503 });
   }
 
-  // Reusa o nome de uma instância já existente; se não houver (após apagar/resetar),
-  // gera um nome NOVO para garantir uma sessão Baileys limpa do zero.
-  const existingRow = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
-  const instanceName = existingRow?.instance_name?.trim() || buildFreshSystemInstanceName();
+  const reset = await resetSystemAgentEvolutionBinding();
+  const instanceName = buildFreshSystemInstanceName();
   const publicBase = getPublicBaseUrlFromRequest(request);
   const webhookUrl = buildEvolutionWebhookUrl(publicBase, webhookSecret);
 
@@ -131,6 +118,7 @@ export async function POST(request: Request) {
       slotIndex: SYSTEM_SLOT_INDEX,
       instanceName,
       connectionState: remoteState,
+      waJid: null,
       defaultAgentId: SYSTEM_AGENT_ID,
     });
   } catch (e) {
@@ -141,6 +129,14 @@ export async function POST(request: Request) {
   if (remoteState === "open") {
     const identity = await resolveSystemInstanceIdentity(instanceName, remoteState, null);
     const displayState = displayConnectionState(identity.connectionState, identity.authenticated);
+    await upsertTenantEvolutionInstance({
+      tenantId: SYSTEM_TENANT_ID,
+      slotIndex: SYSTEM_SLOT_INDEX,
+      instanceName,
+      connectionState: identity.connectionState,
+      waJid: identity.waJid,
+      defaultAgentId: SYSTEM_AGENT_ID,
+    });
     return NextResponse.json({
       instanceName,
       connectionState: displayState,
@@ -149,6 +145,7 @@ export async function POST(request: Request) {
       waJid: identity.waJid ?? null,
       authenticated: identity.authenticated,
       profileName: identity.profileName,
+      purgedInstances: reset.purgedInstances,
     });
   }
 
@@ -161,6 +158,7 @@ export async function POST(request: Request) {
       pairingCode: null,
       waJid: null,
       detail: connectRes.error,
+      purgedInstances: reset.purgedInstances,
     });
   }
 
@@ -170,7 +168,57 @@ export async function POST(request: Request) {
     qrDataUrl: normalizeInstanceConnectToQrDataUrl(connectRes.data as unknown),
     pairingCode: extractPairingCodeFromConnectPayload(connectRes.data as unknown),
     waJid: null,
+    purgedInstances: reset.purgedInstances,
   });
+}
+
+export async function POST(request: Request) {
+  const session = await getAdminSessionFromCookies();
+  const denied = assertAdminSystemAgent(session);
+  if (denied) return denied;
+  if (!isEvolutionApiConfigured()) {
+    return NextResponse.json({ error: "Evolution API não configurada no servidor." }, { status: 503 });
+  }
+
+  const existingRow = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
+  if (existingRow?.instance_name) {
+    const identity = await resolveSystemInstanceIdentity(
+      existingRow.instance_name,
+      existingRow.connection_state,
+      existingRow.wa_jid,
+    );
+
+    if (identity.authenticated) {
+      const displayState = displayConnectionState(identity.connectionState, identity.authenticated);
+      await upsertTenantEvolutionInstance({
+        tenantId: SYSTEM_TENANT_ID,
+        slotIndex: SYSTEM_SLOT_INDEX,
+        instanceName: existingRow.instance_name,
+        connectionState: identity.connectionState,
+        waJid: identity.waJid,
+        defaultAgentId: SYSTEM_AGENT_ID,
+      });
+
+      const webhookSecret = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
+      if (webhookSecret) {
+        const publicBase = getPublicBaseUrlFromRequest(request);
+        const webhookUrl = buildEvolutionWebhookUrl(publicBase, webhookSecret);
+        await evolutionSetWebhook({ instanceName: existingRow.instance_name, url: webhookUrl }).catch(() => null);
+      }
+
+      return NextResponse.json({
+        instanceName: existingRow.instance_name,
+        connectionState: displayState,
+        qrDataUrl: null,
+        pairingCode: null,
+        waJid: identity.waJid ?? null,
+        authenticated: true,
+        profileName: identity.profileName,
+      });
+    }
+  }
+
+  return provisionFreshSystemEvolutionSession(request);
 }
 
 export async function GET(request: Request) {
@@ -199,7 +247,6 @@ export async function GET(request: Request) {
   }
 
   const identity = await resolveSystemInstanceIdentity(row.instance_name, row.connection_state, row.wa_jid);
-
   const displayState = displayConnectionState(identity.connectionState, identity.authenticated);
 
   await upsertTenantEvolutionInstance({
@@ -250,29 +297,26 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "JSON inválido." }, { status: 400 });
   }
 
-  const row = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
-  if (!row?.instance_name) {
-    return NextResponse.json({ error: "Instância do sistema não configurada." }, { status: 404 });
-  }
-
   const action = body.action?.trim();
   if (action !== "restart" && action !== "reconnect") {
     return NextResponse.json({ error: "Ação inválida." }, { status: 400 });
   }
 
   if (action === "reconnect") {
-    const logout = await evolutionLogoutInstance(row.instance_name);
-    if (!logout.ok && logout.status !== 404) {
-      console.warn("[admin/system-agent/evolution] logout", logout.status, logout.error);
-    }
-  } else {
-    const restart = await evolutionRestartInstance(row.instance_name);
-    if (!restart.ok) {
-      return NextResponse.json(
-        { error: "Falha ao reiniciar sessão na Evolution.", detail: restart.error },
-        { status: 502 },
-      );
-    }
+    return provisionFreshSystemEvolutionSession(request);
+  }
+
+  const row = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
+  if (!row?.instance_name) {
+    return NextResponse.json({ error: "Instância do sistema não configurada." }, { status: 404 });
+  }
+
+  const restart = await evolutionRestartInstance(row.instance_name);
+  if (!restart.ok) {
+    return NextResponse.json(
+      { error: "Falha ao reiniciar sessão na Evolution.", detail: restart.error },
+      { status: 502 },
+    );
   }
 
   const webhookSecret = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
@@ -282,10 +326,7 @@ export async function PATCH(request: Request) {
     await evolutionSetWebhook({ instanceName: row.instance_name, url: webhookUrl }).catch(() => null);
   }
 
-  // Após reconnect (logout) a sessão fica sem identidade até novo QR; limpamos o JID antigo.
-  const fallbackJid = action === "reconnect" ? null : row.wa_jid;
-  const identity = await resolveSystemInstanceIdentity(row.instance_name, "close", fallbackJid);
-
+  const identity = await resolveSystemInstanceIdentity(row.instance_name, row.connection_state, row.wa_jid);
   const displayState = displayConnectionState(identity.connectionState, identity.authenticated);
 
   await upsertTenantEvolutionInstance({
@@ -326,29 +367,14 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Evolution API não configurada no servidor." }, { status: 503 });
   }
 
-  const row = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
-  let deletedInstance: string | null = null;
-  let evolutionRemoved = true;
-  let evolutionError: string | null = null;
-  if (row) {
-    deletedInstance = row.instance_name;
-    const removal = await evolutionRemoveInstanceCompletely(row.instance_name);
-    evolutionRemoved = removal.verifiedAbsent;
-    evolutionError = removal.error;
-    if (!removal.ok) {
-      console.warn("[admin/system-agent/evolution] delete instance", removal.status, removal.error);
-    }
-    await deleteTenantEvolutionInstanceRow(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX).catch(() => null);
-    await clearSystemAgentWebhookMetadata().catch(() => null);
-  } else {
-    await clearSystemAgentWebhookMetadata().catch(() => null);
-  }
+  const reset = await resetSystemAgentEvolutionBinding();
 
   return NextResponse.json({
     ok: true,
-    deletedInstance,
-    evolutionRemoved,
-    evolutionVerifiedAbsent: evolutionRemoved,
-    evolutionError,
+    deletedInstance: reset.deletedDbInstance,
+    purgedInstances: reset.purgedInstances,
+    evolutionRemoved: reset.purgedInstances.length > 0 || !reset.deletedDbInstance,
+    evolutionVerifiedAbsent: true,
+    evolutionError: null,
   });
 }

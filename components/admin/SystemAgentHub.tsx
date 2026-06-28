@@ -379,7 +379,7 @@ export function SystemAgentHub(props: {
         setConnectionState(json.connectionState ?? "close");
         setQrPanelRevision((r) => r + 1);
         setActionMessage(
-          `Escaneie o QR Code abaixo com o celular do número ${senderLine}. Sem isso, o WhatsApp aceita o envio na API mas não entrega no celular.`,
+          `Escaneie o QR com o número NOVO. Instâncias antigas do sistema foram removidas da Evolution. Sem QR, o WhatsApp não entrega.`,
         );
       } else {
         setActionMessage("Sessão reiniciada. Se ainda não receber, desconecte e escaneie o QR novamente.");
@@ -406,15 +406,24 @@ export function SystemAgentHub(props: {
       });
       const json = (await res.json().catch(() => ({}))) as {
         error?: string;
-        debug?: { numberSent?: string; candidatesTried?: string[]; evolutionResponseStatus?: unknown };
+        debug?: {
+          numberSent?: string;
+          candidatesTried?: string[];
+          evolutionResponseStatus?: unknown;
+          sessionOwnerJid?: string | null;
+        };
       };
       if (!res.ok) {
         setActionMessage(json.error ?? "Falha no envio de teste.");
         return;
       }
+      const sender =
+        json.debug?.sessionOwnerJid?.split("@")[0]?.replace(/\D/g, "") ??
+        waJid?.split("@")[0]?.replace(/\D/g, "");
+      const senderLabel = sender ? `+${sender}` : senderLine;
       const tried = json.debug?.candidatesTried?.join(", ") ?? json.debug?.numberSent ?? testNumber.trim();
       setActionMessage(
-        `Aceito pela Evolution (${tried}) — aguardando confirmação do WhatsApp. Verifique o celular de ${senderLine} → conversa ou Solicitações. Se não chegar em 1 min, use "Forçar reconexão (QR)" ou reinicie a Evolution na VPS.`,
+        `Enviado de ${senderLabel} para ${tried}. Verifique o celular de destino (e Solicitações). Se não chegar em 1 min, use "Forçar reconexão (QR)" com o número novo.`,
       );
       await refreshLogs();
     } finally {

@@ -12,6 +12,7 @@ import {
   getSystemAgentInstanceName,
   getSystemAgentSession,
   getSystemWebhookDiagnostics,
+  purgeSystemEvolutionInstances,
   reconcileOrphanDeliveryEvents,
   reconcileUndeliveredNotifications,
 } from "@/lib/server/system-agent";
@@ -169,6 +170,16 @@ export async function POST(request: Request) {
         orphansRemaining: orphanResult.remaining,
         timedOut,
       },
+    });
+  }
+
+  if (body.action === "purge_system_instances") {
+    const instanceName = await getSystemAgentInstanceName();
+    const purged = await purgeSystemEvolutionInstances(instanceName);
+    const payload = await buildDiagnosePayload(request);
+    return NextResponse.json({
+      ...payload,
+      purge: { purgedInstances: purged, keptInstance: instanceName },
     });
   }
 

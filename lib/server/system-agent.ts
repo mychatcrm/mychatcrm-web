@@ -1,6 +1,8 @@
 import {
+  buildEvolutionInstanceName,
   evolutionConnectionState,
   evolutionFetchInstances,
+  evolutionRemoveInstanceCompletely,
   evolutionRestartInstance,
   evolutionSendText,
   isEvolutionConnectionClosedError,
@@ -15,10 +17,67 @@ import {
 } from "@/lib/integrations/evolution-api";
 import { extractInstanceJid } from "@/lib/integrations/evolution-webhook-parse";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
+import {
+  deleteTenantEvolutionInstanceRow,
+  getEvolutionInstanceByTenantId,
+  getEvolutionInstanceByTenantSlot,
+} from "@/lib/server/tenant-evolution-instance-db";
 
 export const SYSTEM_AGENT_ID = "mychatcrm-system-agent";
 export const SYSTEM_TENANT_ID = "tenant-system-internal";
+export const SYSTEM_SLOT_INDEX = 0;
+
+/** Prefixo estável das instâncias Evolution do agente do sistema (mc…). */
+export function getSystemEvolutionInstancePrefix(): string {
+  return buildEvolutionInstanceName(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
+}
+
+/** Remove instâncias órfãs do sistema na Evolution (sessões Baileys antigas / número anterior). */
+export async function purgeSystemEvolutionInstances(keepInstanceName?: string | null): Promise<string[]> {
+  const prefix = getSystemEvolutionInstancePrefix();
+  const keep = keepInstanceName?.trim() || null;
+  const res = await evolutionFetchInstances();
+  if (!res.ok) return [];
+
+  const purged: string[] = [];
+  for (const item of res.data) {
+    if (!item.name.startsWith(prefix)) continue;
+    if (keep && item.name === keep) continue;
+
+    const removal = await evolutionRemoveInstanceCompletely(item.name);
+    if (removal.deleted || removal.verifiedAbsent) {
+      purged.push(item.name);
+    } else {
+      console.warn("[system-agent] purge_instance_failed", {
+        instanceName: item.name,
+        error: removal.error,
+      });
+    }
+  }
+  return purged;
+}
+
+/** Apaga vínculo completo: Evolution (todas mc* do sistema) + DB + metadata webhook. */
+export async function resetSystemAgentEvolutionBinding(): Promise<{
+  purgedInstances: string[];
+  deletedDbInstance: string | null;
+}> {
+  const row = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
+  const purgedInstances = await purgeSystemEvolutionInstances(null);
+
+  if (row?.instance_name?.trim() && !purgedInstances.includes(row.instance_name.trim())) {
+    const removal = await evolutionRemoveInstanceCompletely(row.instance_name.trim());
+    if (removal.deleted || removal.verifiedAbsent) {
+      purgedInstances.push(row.instance_name.trim());
+    }
+  }
+
+  const deletedDbInstance = row?.instance_name?.trim() ?? null;
+  await deleteTenantEvolutionInstanceRow(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX).catch(() => null);
+  await clearSystemAgentWebhookMetadata().catch(() => null);
+
+  return { purgedInstances, deletedDbInstance };
+}
 
 export async function getSystemAgentInstanceName(): Promise<string | null> {
   const row = await getEvolutionInstanceByTenantId(SYSTEM_TENANT_ID);
@@ -843,6 +902,7 @@ export async function sendSystemNotification(
     evolutionMessageIds?: string[];
     evolutionResponseStatus?: unknown;
     sessionRestarted?: boolean;
+    sessionOwnerJid?: string | null;
   };
 }> {
   const rawDigits = toNumber.replace(/\D/g, "");
@@ -1127,13 +1187,11 @@ export async function sendSystemNotification(
   });
 
   if (finalOk && evolutionMessageIds.length) {
-    try {
-      await reconcileOrphanDeliveryEvents({ preferMessageIds: evolutionMessageIds });
-    } catch (error) {
+    void reconcileOrphanDeliveryEvents({ preferMessageIds: evolutionMessageIds }).catch((error) => {
       console.warn("[system-agent] orphan_reconcile_after_send", {
         error: error instanceof Error ? error.message : "reconcile_failed",
       });
-    }
+    });
   }
 
   const debug = {
@@ -1143,6 +1201,7 @@ export async function sendSystemNotification(
     evolutionMessageIds,
     evolutionResponseStatus,
     sessionRestarted: attempts.some((attempt) => attempt.restarted),
+    sessionOwnerJid,
   };
 
   if (!finalOk) return { ok: false, error: finalError ?? "evolution_send_failed", debug };
