@@ -1253,15 +1253,13 @@ export async function sendSystemNotification(
   }
 
   const sendNumber = ensureBrazilianMobileWhatsappDigits(platformNumber);
-  const replyContext = await findSystemInboundReplyContext(platformNumber);
-  const numberToSend = replyContext?.sendNumber ?? sendNumber;
 
-  await sendPresence(resolvedInstance, numberToSend, "composing", typingDelayMs(message));
+  await sendPresence(resolvedInstance, sendNumber, "composing", typingDelayMs(message));
   const attempt = await sendEvolutionTextWithRestartRetry({
     instanceName: resolvedInstance,
-    number: numberToSend,
+    number: sendNumber,
     text: message.slice(0, 4000),
-    quoted: replyContext?.quoted ?? null,
+    quoted: null,
   });
 
   const payloadFailure = attempt.ok ? detectEvolutionPayloadFailure(attempt.data) : null;
@@ -1289,9 +1287,7 @@ export async function sendSystemNotification(
       instance_name: resolvedInstance,
       number_raw: rawDigits,
       number_normalized: platformNumber,
-      number_sent: numberToSend,
-      reply_to_inbound: Boolean(replyContext),
-      reply_message_id: replyContext?.quoted.messageId ?? null,
+      number_sent: sendNumber,
       session_owner_jid: sessionOwnerJid,
       session_connection_status: sessionConnectionStatus,
       evolution_number_check: "conversas_style",
@@ -1312,7 +1308,7 @@ export async function sendSystemNotification(
   }
 
   const debugBase = {
-    numberSent: numberToSend,
+    numberSent: sendNumber,
     evolutionMessageId,
     evolutionMessageIds,
     evolutionResponseStatus,

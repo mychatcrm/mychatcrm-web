@@ -24,7 +24,6 @@ import {
   SYSTEM_AGENT_ID,
   SYSTEM_SLOT_INDEX,
   SYSTEM_TENANT_ID,
-  applySystemEvolutionInstanceSettings,
   getSystemAgentInstanceName,
   resetSystemAgentEvolutionBinding,
 } from "@/lib/server/system-agent";
@@ -88,7 +87,15 @@ async function provisionFreshSystemEvolutionSession(request: Request) {
   const publicBase = getPublicBaseUrlFromRequest(request);
   const webhookUrl = buildEvolutionWebhookUrl(publicBase, webhookSecret);
 
-  let createResult = await evolutionCreateInstance({ instanceName, webhookUrl });
+  let createResult = await evolutionCreateInstance({
+    instanceName,
+    webhookUrl,
+    settings: {
+      groupsIgnore: true,
+      readMessages: false,
+      readStatus: false,
+    },
+  });
   if (!createResult.ok && createResult.status === 403) {
     const probe = await evolutionConnectionState(instanceName);
     if (!probe.ok && probe.status === 404) {
@@ -107,8 +114,6 @@ async function provisionFreshSystemEvolutionSession(request: Request) {
   } else {
     await evolutionSetWebhook({ instanceName, url: webhookUrl });
   }
-
-  void applySystemEvolutionInstanceSettings(instanceName);
 
   const stateRes = await evolutionConnectionState(instanceName);
   const remoteState = normalizeEvolutionConnectionState(
@@ -258,8 +263,6 @@ export async function GET(request: Request) {
       waJid: null,
     });
   }
-
-  void applySystemEvolutionInstanceSettings(row.instance_name);
 
   const identity = await resolveSystemInstanceIdentity(row.instance_name, row.connection_state, row.wa_jid);
   const displayState = displayConnectionState(identity.connectionState, identity.authenticated);
