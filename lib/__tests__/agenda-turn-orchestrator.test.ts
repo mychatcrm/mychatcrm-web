@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AGENDA_SUCCESS_REPLY_CANCELLED,
   AGENDA_SUCCESS_REPLY_RESCHEDULED,
@@ -129,6 +129,11 @@ describe("priorAgendaAssistantTextFromMessages", () => {
 
 describe("resolveAgendaTurn", () => {
   beforeEach(() => {
+    // Fixa "hoje" antes das datas hardcoded dos testes (10/06 e 15/06/2026) para
+    // que continuem sendo futuras — senão o orquestrador (corretamente) recusa
+    // agendar no passado e os testes quebram conforme o calendário avança.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-01T12:00:00-03:00"));
     vi.clearAllMocks();
     getGoogleCalendarTokenMock.mockResolvedValue(null);
     insertAgendaEventMock.mockImplementation(async (row: { start_at: string }) => ({
@@ -138,6 +143,10 @@ describe("resolveAgendaTurn", () => {
     cancelAgendaEventMock.mockResolvedValue(undefined);
     cancelAgendaRemindersForEventMock.mockResolvedValue(undefined);
     scheduleAgendaRemindersForEventMock.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("criar sem confirmação não executa", async () => {
