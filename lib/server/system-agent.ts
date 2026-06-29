@@ -1179,7 +1179,7 @@ export async function sendSystemNotification(
     dbRow?.instance_name === resolvedInstance &&
     dbRow.connection_state === "open" &&
     Boolean(dbRow.wa_jid?.trim()) &&
-    dbAgeMs < 120_000;
+    dbAgeMs < 5_000;
 
   let sessionOwnerJid: string | null = trustDbSession ? dbRow?.wa_jid ?? null : null;
   let sessionConnectionStatus: string | null = trustDbSession ? "open" : null;

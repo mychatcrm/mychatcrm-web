@@ -9,6 +9,7 @@ import { extractInstanceJid } from "@/lib/integrations/evolution-webhook-parse";
 import {
   buildEvolutionInstanceName,
   buildFreshEvolutionInstanceName,
+  checkEvolutionSessionAlive,
   evolutionConnectionState,
   evolutionCreateInstance,
   evolutionFetchInstances,
@@ -70,7 +71,18 @@ async function resolveSystemInstanceIdentity(
   const jidFromState =
     stateRes.ok && stateRes.data ? extractInstanceJid(stateRes.data as Record<string, unknown>) : null;
   const waJid = info?.ownerJid ?? jidFromState ?? fallbackJid ?? null;
-  const authenticated = connectionState === "open" && Boolean(info?.ownerJid ?? jidFromState);
+  let authenticated = connectionState === "open" && Boolean(info?.ownerJid ?? jidFromState);
+
+  // Health check real: verifica se a sessão Baileys tem chaves na tabela Session.
+  // ownerJid presente no Instance table não garante isso — daí a zombie session:
+  // connectionStatus=open + ownerJid setado mas Session table vazia → ERROR em todos os envios.
+  if (authenticated && waJid) {
+    const digits = waJid.split("@")[0] ?? "";
+    if (digits.length >= 8) {
+      const alive = await checkEvolutionSessionAlive(instanceName, digits);
+      if (!alive) authenticated = false;
+    }
+  }
 
   return { connectionState, waJid, profileName: info?.profileName ?? null, authenticated };
 }

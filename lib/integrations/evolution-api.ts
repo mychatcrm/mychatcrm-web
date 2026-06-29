@@ -618,6 +618,26 @@ export async function evolutionCheckWhatsappNumbers(params: {
 }
 
 /**
+ * Testa se a sessão Baileys tem chaves criptográficas reais na tabela Session do Evolution.
+ * Retorna true se a Evolution conseguiu processar a requisição (sessão com chaves válidas).
+ * Retorna false se a chamada falhou ou excedeu 5s (sessão zumbi: connectionStatus=open mas
+ * Session table vazia → WhatsApp rejeita todos os envios com ERROR imediatamente).
+ *
+ * Usa Promise.race porque evolutionCheckWhatsappNumbers hardcoda 12s de timeout internamente
+ * e não aceita timeoutMs externo — 12s bloquearia o poll de sessão da UI.
+ */
+export async function checkEvolutionSessionAlive(
+  instanceName: string,
+  ownerJidDigits: string,
+): Promise<boolean> {
+  const check = evolutionCheckWhatsappNumbers({ instanceName, numbers: [ownerJidDigits] });
+  const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000));
+  const result = await Promise.race([check, timeout]);
+  if (result === null) return false;
+  return result.ok;
+}
+
+/**
  * Valida existência no WhatsApp e devolve o número de envio que a Evolution reconhece.
  * Quando a API retorna um JID, usamos os dígitos desse JID no sendText — é o endereço
  * que o Baileys/Evolution usa para rotear a mensagem.

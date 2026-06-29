@@ -10,12 +10,14 @@ import {
   buildFreshEvolutionInstanceName,
   evolutionConnectionState,
   evolutionCreateInstance,
+  evolutionFetchInstances,
   evolutionInstanceConnect,
   evolutionRemoveInstanceCompletely,
   evolutionSetWebhook,
   isEvolutionApiConfigured,
   normalizeEvolutionConnectionState,
   parseEvolutionConnectionStatePayload,
+  pickEvolutionInstanceInfo,
 } from "@/lib/integrations/evolution-api";
 import {
   deleteTenantEvolutionInstanceRow,
@@ -204,10 +206,25 @@ export async function GET(request: Request) {
   }
 
   const stateRes = await evolutionConnectionState(row.instance_name);
-  const remoteState = normalizeEvolutionConnectionState(
+  let remoteState = normalizeEvolutionConnectionState(
     stateRes.ok ? parseEvolutionConnectionStatePayload(stateRes.data) : row.connection_state,
     normalizeEvolutionConnectionState(row.connection_state, "close"),
   );
+
+  // Zombie check: connectionStatus="open" não garante que Session table tem chaves Baileys.
+  // Se fetchInstances retornar ownerJid ausente → sessão zumbi → forçar reconexão com QR.
+  let resolvedWaJid = row.wa_jid;
+  if (remoteState === "open") {
+    const fetchResult = await evolutionFetchInstances(row.instance_name);
+    if (fetchResult.ok) {
+      const instanceInfo = pickEvolutionInstanceInfo(fetchResult.data, row.instance_name);
+      if (!instanceInfo?.ownerJid) {
+        remoteState = "close";
+      } else {
+        resolvedWaJid = instanceInfo.ownerJid;
+      }
+    }
+  }
 
   try {
     await upsertTenantEvolutionInstance({
@@ -215,7 +232,7 @@ export async function GET(request: Request) {
       slotIndex,
       instanceName: row.instance_name,
       connectionState: remoteState,
-      waJid: row.wa_jid,
+      waJid: resolvedWaJid,
       defaultAgentId: row.default_agent_id,
     });
   } catch (e) {
@@ -229,7 +246,7 @@ export async function GET(request: Request) {
         connectionState: remoteState,
         qrDataUrl: null as string | null,
         pairingCode: null as string | null,
-        waJid: row.wa_jid ?? null,
+        waJid: resolvedWaJid ?? null,
       },
       { status: 503 },
     );
@@ -248,7 +265,7 @@ export async function GET(request: Request) {
         manual: false,
         metadata: {
           slot_index: slotIndex,
-          wa_jid: row.wa_jid ?? null,
+          wa_jid: resolvedWaJid ?? null,
         },
       });
     } catch (notifyError) {
@@ -262,7 +279,7 @@ export async function GET(request: Request) {
       connectionState: remoteState,
       qrDataUrl: null as string | null,
       pairingCode: null as string | null,
-      waJid: row.wa_jid ?? null,
+      waJid: resolvedWaJid ?? null,
     });
   }
 
@@ -276,7 +293,7 @@ export async function GET(request: Request) {
     connectionState: remoteState,
     qrDataUrl,
     pairingCode,
-    waJid: row.wa_jid ?? null,
+    waJid: resolvedWaJid ?? null,
   });
 }
 
