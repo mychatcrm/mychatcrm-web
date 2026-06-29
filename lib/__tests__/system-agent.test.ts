@@ -278,7 +278,10 @@ describe("sendSystemNotification", () => {
     );
   });
 
-  it("replies in existing inbound thread when the system tenant has messages from the recipient", async () => {
+  it("sends without quoting even when the system tenant has inbound history from the recipient", async () => {
+    // O PR fix/system-agent-no-quoted removeu o reply-in-thread: citar um message_id
+    // de uma sessão Baileys antiga/morta causava ERROR no envio. Agora envia sempre
+    // plano (quoted: null), independentemente de existir histórico inbound.
     whatsappMessagesSelectMock.mockResolvedValueOnce({
       data: [
         {
@@ -303,20 +306,7 @@ describe("sendSystemNotification", () => {
     expect(evolutionSendTextMock).toHaveBeenCalledWith(
       expect.objectContaining({
         number: "5562993580574",
-        quoted: expect.objectContaining({
-          messageId: "2A79F14121E19C82EB13",
-          remoteJid: "5562993580574@s.whatsapp.net",
-          fromMe: false,
-          conversation: "Oi",
-        }),
-      }),
-    );
-    expect(insertMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        metadata: expect.objectContaining({
-          reply_to_inbound: true,
-          reply_message_id: "2A79F14121E19C82EB13",
-        }),
+        quoted: null,
       }),
     );
   });

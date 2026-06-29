@@ -345,7 +345,14 @@ export async function waitForSystemNotificationOutcome(
   while (Date.now() < deadline) {
     const row = await readSystemNotificationStatus(logId);
     if (!row) return null;
-    if (row.status === "delivered" || row.status === "delivery_failed" || row.status === "failed") {
+    // "sent" aqui = SERVER_ACK confirmado pelo webhook (no teste verídico o status
+    // inicial é "pending" e só vira "sent" quando o WhatsApp confirma o envio).
+    if (
+      row.status === "delivered" ||
+      row.status === "sent" ||
+      row.status === "delivery_failed" ||
+      row.status === "failed"
+    ) {
       return row;
     }
     await sleep(400);
@@ -1273,7 +1280,16 @@ export async function sendSystemNotification(
       : attempt.error;
   const sessionRestarted = attempt.restarted === true;
 
-  const logStatus = finalOk ? resolveNotificationLogStatus(evolutionResponseStatus) : "failed";
+  // Teste verídico (waitForOutcomeMs > 0): grava "pending" e só vira "sent" quando o
+  // webhook MESSAGES_UPDATE confirmar SERVER_ACK. Assim distinguimos um envio que o
+  // WhatsApp realmente aceitou de um que ficou preso (PENDING) e nunca saiu.
+  // Envios de background (waitForOutcomeMs == 0) seguem otimistas como antes.
+  const verifiedTest = (options?.waitForOutcomeMs ?? 0) > 0;
+  const logStatus = finalOk
+    ? verifiedTest
+      ? "pending"
+      : resolveNotificationLogStatus(evolutionResponseStatus)
+    : "failed";
   const evolutionMessageIds = evolutionMessageId ? [evolutionMessageId] : [];
 
   const logId = await logSystemNotification({
@@ -1336,6 +1352,20 @@ export async function sendSystemNotification(
       ok: false,
       error: deliveryError ?? "whatsapp_delivery_failed",
       deliveryStatus,
+      deliveryError,
+      debug,
+    };
+  }
+
+  // Teste verídico: se a janela esgotou sem o WhatsApp confirmar (continua "pending"
+  // ou sem confirmação), a mensagem ficou presa e NÃO foi entregue. Reportar a
+  // verdade em vez de "enviado" — é o que distingue um número que entrega de um
+  // número que o Baileys aceita localmente mas o WhatsApp nunca confirma.
+  if (verifiedTest && deliveryStatus !== "delivered" && deliveryStatus !== "sent") {
+    return {
+      ok: false,
+      error: "whatsapp_nao_confirmou_pending",
+      deliveryStatus: deliveryStatus ?? "pending",
       deliveryError,
       debug,
     };

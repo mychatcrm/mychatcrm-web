@@ -156,6 +156,9 @@ function humanizeNotificationError(error: string | null): string | null {
   if (error === "delivery_timeout") {
     return "Não houve confirmação de entrega em 60s — mensagem provavelmente não chegou no celular";
   }
+  if (error === "whatsapp_nao_confirmou_pending") {
+    return "Não confirmado: o WhatsApp não confirmou o envio (mensagem presa em PENDING). Este número não está entregando via Evolution/Baileys — conecte outro número e teste de novo.";
+  }
   if (error === "whatsapp_delivery_failed" || error.startsWith("delivery_status:ERROR")) {
     return "WhatsApp recusou a entrega (ERROR). A sessão do número conectado aqui está degradada na VPS — clique «Reparar sessão» e escaneie o QR de novo com o celular desse número.";
   }
@@ -453,25 +456,35 @@ export function SystemAgentHub(props: {
           sessionOwnerJid?: string | null;
         };
       };
-      if (!res.ok) {
-        setActionMessage(
-          humanizeNotificationError(json.error ?? json.deliveryError ?? null) ??
-            json.error ??
-            "Falha no envio de teste.",
-        );
-        await refreshLogs();
-        return;
-      }
       const sender =
         json.debug?.sessionOwnerJid?.split("@")[0]?.replace(/\D/g, "") ??
         waJid?.split("@")[0]?.replace(/\D/g, "");
       const senderLabel = sender ? `+${sender}` : senderLine;
       const tried = json.debug?.candidatesTried?.join(", ") ?? json.debug?.numberSent ?? testNumber.trim();
+
+      if (!res.ok) {
+        // ⚠️ Não confirmado (preso em PENDING) tem mensagem própria via humanize;
+        // demais erros (sessão caída, número inválido) caem no fallback ❌.
+        setActionMessage(
+          humanizeNotificationError(json.error ?? json.deliveryError ?? null) ??
+            json.error ??
+            "❌ Falha no envio de teste.",
+        );
+        await refreshLogs();
+        return;
+      }
+
       if (json.deliveryStatus === "delivered") {
-        setActionMessage(`Entregue ✓ — enviado de ${senderLabel} para ${tried}.`);
+        setActionMessage(`✅ Entregue e confirmado no aparelho — enviado de ${senderLabel} para ${tried}.`);
+      } else if (json.deliveryStatus === "sent") {
+        // SERVER_ACK: o WhatsApp aceitou e a mensagem SAIU de verdade — o número
+        // funciona. A confirmação de entrega no aparelho pode chegar logo depois.
+        setActionMessage(
+          `✅ Enviado e aceito pelo WhatsApp (SERVER_ACK) de ${senderLabel} para ${tried} — este número está entregando. Aguardando confirmação de leitura no aparelho.`,
+        );
       } else {
         setActionMessage(
-          `Disparado de ${senderLabel} para ${tried}. Aguardando confirmação no celular (pode levar alguns segundos). Se não chegar, salve ${senderLabel} nos contatos e responda \"oi\" antes de testar de novo.`,
+          `Disparado de ${senderLabel} para ${tried}. Aguardando confirmação do WhatsApp…`,
         );
       }
       await refreshLogs();

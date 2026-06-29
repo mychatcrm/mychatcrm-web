@@ -34,8 +34,11 @@ export async function POST(request: Request) {
 
   const result = await sendSystemNotification(toNumber, message, instanceName, {
     type: "admin_test",
+    // Janela para o webhook MESSAGES_UPDATE confirmar SERVER_ACK (ida e volta
+    // WhatsApp → Evolution → webhook → banco). Resolve assim que confirma; só
+    // chega ao teto quando o número não entrega (fica preso em PENDING).
     metadata: { requested_by: session.email ?? "admin" },
-    waitForOutcomeMs: 5000,
+    waitForOutcomeMs: 12000,
   });
 
   if (!result.ok) {
