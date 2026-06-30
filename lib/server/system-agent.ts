@@ -127,11 +127,13 @@ async function discoverAndPersistSystemInstanceFromEvolution(): Promise<string |
   );
   if (!candidates.length) return null;
 
-  // Prefere a sessão realmente autenticada (open + ownerJid); senão a primeira.
-  const authenticated = candidates.find(
+  // Só auto-heal se a sessão está realmente autenticada (open + ownerJid).
+  // Não pegar candidates[0] sem autenticação: após um delete intencional a instância
+  // pode ainda existir na Evolution por breve momento — isso causaria re-criação indesejada da linha.
+  const chosen = candidates.find(
     (item) => item.connectionStatus === "open" && Boolean(item.ownerJid),
   );
-  const chosen = authenticated ?? candidates[0];
+  if (!chosen) return null;
   const instanceName = chosen.name.trim();
   if (!instanceName) return null;
 

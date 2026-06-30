@@ -4,7 +4,6 @@ import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
 import {
   SYSTEM_AGENT_ID,
   SYSTEM_TENANT_ID,
-  getSystemAgentInstanceName,
   getSystemAgentMetaConfig,
 } from "@/lib/server/system-agent";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
@@ -22,7 +21,9 @@ export default async function SystemAgentAdminPage() {
     getEvolutionInstanceByTenantId(SYSTEM_TENANT_ID),
     getSystemAgentMetaConfig(),
   ]);
-  const instanceName = instance?.instance_name ?? (await getSystemAgentInstanceName());
+  // Não usar getSystemAgentInstanceName() como fallback: o auto-healing re-cria a linha
+  // do DB a partir da Evolution, revertendo um delete intencional do admin.
+  const instanceName = instance?.instance_name ?? null;
 
   const { data: logs } = await sb
     .from("system_notifications_log")
