@@ -336,11 +336,13 @@ export function EvolutionQrSlotPanel({
   useEffect(() => {
     clearPoll();
     if (connectionState === "open") return;
+    // Não pollar após desconexão manual: evita re-descoberta da instância pela Evolution.
+    if (manuallyDisconnected) return;
     pollRef.current = setInterval(() => {
       void refresh();
     }, 3_000);
     return clearPoll;
-  }, [connectionState, refresh, clearPoll]);
+  }, [connectionState, refresh, clearPoll, manuallyDisconnected]);
 
   const unifiedAlert = useMemo(() => deriveUnifiedAlert(infraHint, error), [infraHint, error]);
   const waNumber = formatWaNumber(waJid);

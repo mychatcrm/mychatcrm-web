@@ -25,7 +25,6 @@ import {
   SYSTEM_AGENT_ID,
   SYSTEM_SLOT_INDEX,
   SYSTEM_TENANT_ID,
-  getSystemAgentInstanceName,
   resetSystemAgentEvolutionBinding,
 } from "@/lib/server/system-agent";
 import {
@@ -256,16 +255,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "slotIndex inválido para agente do sistema." }, { status: 400 });
   }
 
-  let row = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
-  if (!row) {
-    // Auto-reparo: a linha pode ter sumido (reset/reconexão) enquanto a instância
-    // segue viva na Evolution. getSystemAgentInstanceName descobre pelo prefixo e
-    // re-grava a linha — evita mostrar "desconectado" e perder o webhook de entrega.
-    const healed = await getSystemAgentInstanceName();
-    if (healed) {
-      row = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
-    }
-  }
+  const row = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
   if (!row) {
     return NextResponse.json({
       instanceName: buildEvolutionInstanceName(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX),
@@ -399,12 +389,17 @@ export async function DELETE(request: Request) {
 
   const reset = await resetSystemAgentEvolutionBinding();
 
+  const evolutionVerifiedAbsent =
+    !reset.deletedDbInstance || reset.purgedInstances.includes(reset.deletedDbInstance);
+
   return NextResponse.json({
     ok: true,
     deletedInstance: reset.deletedDbInstance,
     purgedInstances: reset.purgedInstances,
-    evolutionRemoved: reset.purgedInstances.length > 0 || !reset.deletedDbInstance,
-    evolutionVerifiedAbsent: true,
-    evolutionError: null,
+    evolutionRemoved: reset.purgedInstances.length > 0,
+    evolutionVerifiedAbsent,
+    evolutionError: evolutionVerifiedAbsent
+      ? null
+      : "Instância apagada do MyChatCRM mas ainda presente na Evolution. Se persistir, apague manualmente no Evolution Manager e reconecte.",
   });
 }
