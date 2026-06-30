@@ -67,6 +67,67 @@ export async function upsertTenantEvolutionInstance(params: {
   return data as TenantEvolutionInstanceRow;
 }
 
+export async function reserveTenantEvolutionInstance(params: {
+  tenantId: string;
+  slotIndex: number;
+  instanceName: string;
+  defaultAgentId?: string | null;
+}): Promise<{ reserved: boolean; row: TenantEvolutionInstanceRow }> {
+  const sb = createSupabaseServiceClient();
+  const payload = {
+    tenant_id: params.tenantId,
+    slot_index: params.slotIndex,
+    instance_name: params.instanceName,
+    connection_state: "provisioning",
+    wa_jid: null,
+    default_agent_id: params.defaultAgentId ?? null,
+    updated_at: new Date().toISOString(),
+  };
+  const { data, error } = await sb
+    .from("tenant_evolution_instances")
+    .insert(payload)
+    .select("*")
+    .single();
+
+  if (!error && data) {
+    return { reserved: true, row: data as TenantEvolutionInstanceRow };
+  }
+  if (error?.code !== "23505") {
+    throw new Error(`[tenant-evolution-instance-db] reserve: ${error?.message ?? "unknown_error"}`);
+  }
+
+  const existing = await getEvolutionInstanceByTenantSlot(params.tenantId, params.slotIndex);
+  if (!existing) {
+    throw new Error("[tenant-evolution-instance-db] reserve conflict without existing slot");
+  }
+  return { reserved: false, row: existing };
+}
+
+export async function finalizeTenantEvolutionInstanceReservation(params: {
+  tenantId: string;
+  slotIndex: number;
+  instanceName: string;
+  connectionState: string;
+  waJid?: string | null;
+}): Promise<TenantEvolutionInstanceRow> {
+  const sb = createSupabaseServiceClient();
+  const { data, error } = await sb
+    .from("tenant_evolution_instances")
+    .update({
+      connection_state: params.connectionState,
+      wa_jid: params.waJid ?? null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("tenant_id", params.tenantId)
+    .eq("slot_index", params.slotIndex)
+    .eq("instance_name", params.instanceName)
+    .select("*")
+    .maybeSingle();
+  if (error) throw new Error(`[tenant-evolution-instance-db] finalize reservation: ${error.message}`);
+  if (!data) throw new Error("[tenant-evolution-instance-db] reservation no longer owns slot");
+  return data as TenantEvolutionInstanceRow;
+}
+
 export async function updateEvolutionInstanceStateByName(params: {
   instanceName: string;
   connectionState: string;
@@ -102,4 +163,21 @@ export async function deleteTenantEvolutionInstanceRow(tenantId: string, slotInd
   const sb = createSupabaseServiceClient();
   const { error } = await sb.from("tenant_evolution_instances").delete().eq("tenant_id", tenantId).eq("slot_index", slotIndex);
   if (error) throw new Error(`[tenant-evolution-instance-db] delete: ${error.message}`);
+}
+
+export async function deleteTenantEvolutionInstanceRowIfName(
+  tenantId: string,
+  slotIndex: number,
+  instanceName: string,
+): Promise<boolean> {
+  const sb = createSupabaseServiceClient();
+  const { data, error } = await sb
+    .from("tenant_evolution_instances")
+    .delete()
+    .eq("tenant_id", tenantId)
+    .eq("slot_index", slotIndex)
+    .eq("instance_name", instanceName)
+    .select("id");
+  if (error) throw new Error(`[tenant-evolution-instance-db] conditional delete: ${error.message}`);
+  return Array.isArray(data) && data.length > 0;
 }

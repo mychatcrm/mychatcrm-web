@@ -98,6 +98,7 @@ export function EvolutionQrSlotPanel({
   sessionApiPath = "/api/client/whatsapp/evolution/session",
   statusApiPath = "/api/client/whatsapp/evolution/status",
   autoProvision = true,
+  strictVerifiedRemoval = false,
   seedQrDataUrl = null,
 }: {
   slotIndex: number;
@@ -109,6 +110,8 @@ export function EvolutionQrSlotPanel({
    * permitir apagar de vez (e trocar de número) sem recriação automática. Default true (clientes).
    */
   autoProvision?: boolean;
+  /** Só limpa a UI após o servidor provar que a instância não existe mais na Evolution. */
+  strictVerifiedRemoval?: boolean;
   /** QR injetado pelo hub após "Forçar reconexão" (PATCH session). */
   seedQrDataUrl?: string | null;
 }) {
@@ -217,7 +220,7 @@ export function EvolutionQrSlotPanel({
     const j = await readSessionJson(res);
     applySessionPayload(res, j);
     if ((j.connectionState ?? "") === "open") clearPoll();
-  }, [applySessionPayload, clearPoll, slotIndex]);
+  }, [applySessionPayload, clearPoll, sessionApiPath, slotIndex]);
 
   const startOrRefreshSession = useCallback(async () => {
     setBusy(true);
@@ -236,7 +239,7 @@ export function EvolutionQrSlotPanel({
     } finally {
       setBusy(false);
     }
-  }, [applySessionPayload, slotIndex]);
+  }, [applySessionPayload, sessionApiPath, slotIndex]);
 
   const handleDisconnect = useCallback(async () => {
     if (
@@ -248,6 +251,7 @@ export function EvolutionQrSlotPanel({
       return;
     }
     setDisconnecting(true);
+    setError(null);
     let deleteWarning: string | null = null;
     try {
       const res = await fetch(`${sessionApiPath}?slotIndex=${slotIndex}`, {
@@ -262,14 +266,26 @@ export function EvolutionQrSlotPanel({
       };
       if (!res.ok) {
         deleteWarning = json.error ?? "Falha ao apagar a instância.";
+        if (strictVerifiedRemoval) {
+          setError(
+            deleteWarning === "Falha ao apagar a instância."
+              ? "Não foi possível confirmar a exclusão. Tente novamente."
+              : deleteWarning,
+          );
+          return;
+        }
       } else {
         const verifiedAbsent = json.evolutionVerifiedAbsent ?? json.evolutionRemoved ?? true;
         if (verifiedAbsent === false) {
           deleteWarning =
             "A instância foi removida do MyChatCRM, mas ainda aparece na Evolution. Apague manualmente no Evolution Manager (botão Delete) e reconecte.";
+          if (strictVerifiedRemoval) {
+            setError("Não foi possível confirmar a exclusão. Tente novamente.");
+            return;
+          }
         }
       }
-    } finally {
+
       // Desconectar = apagar de vez. Nunca recriamos automaticamente aqui;
       // o usuário religa pelo CTA "Conectar".
       setConnectionState("none");
@@ -282,9 +298,12 @@ export function EvolutionQrSlotPanel({
       qrReceivedAtRef.current = null;
       setQrSecondsLeft(QR_TTL_SECONDS);
       setManuallyDisconnected(true);
+    } catch {
+      setError("Não foi possível confirmar a exclusão. Tente novamente.");
+    } finally {
       setDisconnecting(false);
     }
-  }, [slotIndex, sessionApiPath]);
+  }, [slotIndex, sessionApiPath, strictVerifiedRemoval]);
 
   // Infra check on mount
   useEffect(() => {
@@ -308,7 +327,7 @@ export function EvolutionQrSlotPanel({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [statusApiPath]);
 
   // Initial session load + auto-start
   useEffect(() => {
@@ -330,7 +349,7 @@ export function EvolutionQrSlotPanel({
     return () => {
       cancelled = true;
     };
-  }, [applySessionPayload, slotIndex, startOrRefreshSession, autoProvision]);
+  }, [applySessionPayload, slotIndex, startOrRefreshSession, autoProvision, sessionApiPath]);
 
   // Polling while not connected
   useEffect(() => {
@@ -351,6 +370,8 @@ export function EvolutionQrSlotPanel({
   const showConnectCta =
     (!autoProvision || manuallyDisconnected) &&
     connectionState !== "open" &&
+    connectionState !== "provisioning" &&
+    connectionState !== "deleting" &&
     !qrDataUrl &&
     !busy &&
     !error;
@@ -414,6 +435,11 @@ export function EvolutionQrSlotPanel({
             {disconnecting ? "A desligar…" : "Desconectar"}
           </button>
         </div>
+        {error ? (
+          <p className="mx-auto mt-3 max-w-md rounded-lg bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
+            {error}
+          </p>
+        ) : null}
       </div>
     );
   }

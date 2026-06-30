@@ -4,6 +4,7 @@ import {
   ensureBrazilianMobileWhatsappDigits,
   evolutionConnectionState,
   evolutionFetchInstances,
+  evolutionGetInstancePresence,
   evolutionRemoveInstanceCompletely,
   evolutionRestartInstance,
   evolutionSendText,
@@ -23,7 +24,7 @@ import { sendWhatsAppTextMessage } from "@/lib/integrations/whatsapp-cloud";
 import { sendPresence, typingDelayMs } from "@/lib/server/evolution-presence";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
-  deleteTenantEvolutionInstanceRow,
+  deleteTenantEvolutionInstanceRowIfName,
   getEvolutionInstanceByTenantId,
   getEvolutionInstanceByTenantSlot,
   upsertTenantEvolutionInstance,
@@ -62,52 +63,232 @@ export async function applySystemEvolutionInstanceSettings(instanceName: string)
   }
 }
 
-/** Remove instâncias órfãs do sistema na Evolution (sessões Baileys antigas / número anterior). */
-export async function purgeSystemEvolutionInstances(keepInstanceName?: string | null): Promise<string[]> {
+export type SystemEvolutionInstanceFailure = {
+  instanceName: string;
+  presence: "present" | "absent" | "unknown";
+  status: number | null;
+  error: string;
+};
+
+export type SystemEvolutionPurgeResult = {
+  inventoryVerified: boolean;
+  removedInstances: string[];
+  failedInstances: SystemEvolutionInstanceFailure[];
+  remainingInstances: string[];
+  error: string | null;
+};
+
+export type SystemEvolutionResetResult = SystemEvolutionPurgeResult & {
+  currentInstance: string | null;
+  currentInstanceRemoved: boolean;
+  databaseBindingCleared: boolean;
+};
+
+/** Remove instâncias órfãs do sistema sem confundir falha de inventário com ausência. */
+export async function purgeSystemEvolutionInstances(
+  keepInstanceName?: string | null,
+): Promise<SystemEvolutionPurgeResult> {
   const prefix = getSystemEvolutionInstancePrefix();
   const keep = keepInstanceName?.trim() || null;
-  const res = await evolutionFetchInstances();
-  if (!res.ok) return [];
+  const initialInventory = await evolutionFetchInstances();
+  if (!initialInventory.ok) {
+    return {
+      inventoryVerified: false,
+      removedInstances: [],
+      failedInstances: [],
+      remainingInstances: [],
+      error: initialInventory.error ?? "evolution_inventory_unavailable",
+    };
+  }
 
-  const purged: string[] = [];
-  for (const item of res.data) {
+  const targets: string[] = [];
+  for (const item of initialInventory.data) {
     const name = item.name?.trim();
     if (!name || !name.startsWith(prefix)) continue;
     if (keep && name === keep) continue;
-
-    const removal = await evolutionRemoveInstanceCompletely(name);
-    if (removal.deleted || removal.verifiedAbsent) {
-      purged.push(name);
-    } else {
-      console.warn("[system-agent] purge_instance_failed", {
-        instanceName: name,
-        error: removal.error,
-      });
-    }
+    targets.push(name);
   }
-  return purged;
+
+  const removalResults = new Map<string, Awaited<ReturnType<typeof evolutionRemoveInstanceCompletely>>>();
+  for (const name of targets) {
+    const removal = await evolutionRemoveInstanceCompletely(name);
+    removalResults.set(name, removal);
+  }
+
+  const finalInventory = await evolutionFetchInstances();
+  if (!finalInventory.ok) {
+    return {
+      inventoryVerified: false,
+      removedInstances: [],
+      failedInstances: targets.map((instanceName) => {
+        const removal = removalResults.get(instanceName);
+        return {
+          instanceName,
+          presence: "unknown",
+          status: removal?.status ?? finalInventory.status,
+          error:
+            finalInventory.error ??
+            removal?.error ??
+            "evolution_inventory_unavailable_after_removal",
+        };
+      }),
+      remainingInstances: [],
+      error: finalInventory.error ?? "evolution_inventory_unavailable_after_removal",
+    };
+  }
+
+  const remainingInstances = finalInventory.data
+    .map((item) => item.name?.trim() ?? "")
+    .filter((name) => name.startsWith(prefix) && (!keep || name !== keep));
+  const remaining = new Set(remainingInstances);
+  const removedInstances = targets.filter((name) => !remaining.has(name));
+  const failedInstances = remainingInstances.map((instanceName) => {
+    const removal = removalResults.get(instanceName);
+    return {
+      instanceName,
+      presence: "present" as const,
+      status: removal?.status ?? finalInventory.status,
+      error: removal?.error ?? "unexpected_system_instance_present_after_cleanup",
+    };
+  });
+
+  for (const failure of failedInstances) {
+    console.warn("[system-agent] purge_instance_failed", failure);
+  }
+
+  return {
+    inventoryVerified: true,
+    removedInstances,
+    failedInstances,
+    remainingInstances,
+    error: failedInstances.length ? "one_or_more_system_instances_remain" : null,
+  };
 }
 
-/** Apaga vínculo completo: Evolution (todas mc* do sistema) + DB + metadata webhook. */
-export async function resetSystemAgentEvolutionBinding(): Promise<{
-  purgedInstances: string[];
-  deletedDbInstance: string | null;
-}> {
+/** Apaga o vínculo somente depois de provar que todas as instâncias remotas sumiram. */
+export async function resetSystemAgentEvolutionBinding(): Promise<SystemEvolutionResetResult> {
   const row = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
-  const purgedInstances = await purgeSystemEvolutionInstances(null);
+  const currentInstance = row?.instance_name?.trim() ?? null;
+  const purge = await purgeSystemEvolutionInstances(null);
 
-  if (row?.instance_name?.trim() && !purgedInstances.includes(row.instance_name.trim())) {
-    const removal = await evolutionRemoveInstanceCompletely(row.instance_name.trim());
-    if (removal.deleted || removal.verifiedAbsent) {
-      purgedInstances.push(row.instance_name.trim());
+  let currentInstanceRemoved = currentInstance === null;
+  if (currentInstance) {
+    if (purge.removedInstances.includes(currentInstance)) {
+      currentInstanceRemoved = true;
+    } else if (purge.failedInstances.some((item) => item.instanceName === currentInstance)) {
+      currentInstanceRemoved = false;
+    } else if (purge.inventoryVerified) {
+      const presence = await evolutionGetInstancePresence(currentInstance);
+      currentInstanceRemoved = presence.state === "absent";
+      if (presence.state === "present") {
+        const removal = await evolutionRemoveInstanceCompletely(currentInstance);
+        currentInstanceRemoved = removal.verifiedAbsent;
+        if (currentInstanceRemoved && !purge.removedInstances.includes(currentInstance)) {
+          purge.removedInstances.push(currentInstance);
+        } else if (!currentInstanceRemoved) {
+          purge.failedInstances.push({
+            instanceName: currentInstance,
+            presence: removal.presence,
+            status: removal.status,
+            error: removal.error ?? "instance_still_present_after_delete",
+          });
+        }
+      } else if (presence.state === "unknown") {
+        purge.inventoryVerified = false;
+        purge.error = presence.error ?? "current_instance_presence_unknown";
+        purge.failedInstances.push({
+          instanceName: currentInstance,
+          presence: "unknown",
+          status: presence.status,
+          error: presence.error ?? "current_instance_presence_unknown",
+        });
+      }
     }
   }
 
-  const deletedDbInstance = row?.instance_name?.trim() ?? null;
-  await deleteTenantEvolutionInstanceRow(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX).catch(() => null);
-  await clearSystemAgentWebhookMetadata().catch(() => null);
+  // Última barreira contra corridas: nenhuma instância do prefixo pode ter
+  // reaparecido entre a limpeza e a remoção do vínculo no banco.
+  const finalInventory = await evolutionFetchInstances();
+  if (!finalInventory.ok) {
+    purge.inventoryVerified = false;
+    purge.error = finalInventory.error ?? "final_system_inventory_unavailable";
+    if (
+      currentInstance &&
+      !purge.failedInstances.some((item) => item.instanceName === currentInstance)
+    ) {
+      purge.failedInstances.push({
+        instanceName: currentInstance,
+        presence: "unknown",
+        status: finalInventory.status,
+        error: purge.error,
+      });
+    }
+    currentInstanceRemoved = currentInstance === null ? true : false;
+  } else {
+    const finalNames = new Set(
+      finalInventory.data.map((item) => item.name?.trim() ?? "").filter(Boolean),
+    );
+    const remainingSystemInstances = [...finalNames].filter((name) =>
+      name.startsWith(getSystemEvolutionInstancePrefix()),
+    );
+    purge.inventoryVerified = true;
+    purge.remainingInstances = remainingSystemInstances;
+    purge.failedInstances = remainingSystemInstances.map((instanceName) => ({
+      instanceName,
+      presence: "present",
+      status: finalInventory.status,
+      error: "system_instance_present_at_final_verification",
+    }));
+    if (
+      currentInstance &&
+      finalNames.has(currentInstance) &&
+      !purge.failedInstances.some((item) => item.instanceName === currentInstance)
+    ) {
+      purge.failedInstances.push({
+        instanceName: currentInstance,
+        presence: "present",
+        status: finalInventory.status,
+        error: "current_instance_present_at_final_verification",
+      });
+    }
+    currentInstanceRemoved = currentInstance === null || !finalNames.has(currentInstance);
+    purge.error = purge.failedInstances.length ? "one_or_more_system_instances_remain" : null;
+  }
 
-  return { purgedInstances, deletedDbInstance };
+  if (!purge.inventoryVerified || purge.failedInstances.length > 0 || !currentInstanceRemoved) {
+    return {
+      ...purge,
+      currentInstance,
+      currentInstanceRemoved,
+      databaseBindingCleared: false,
+    };
+  }
+
+  let databaseBindingCleared = currentInstance === null;
+  if (currentInstance) {
+    databaseBindingCleared = await deleteTenantEvolutionInstanceRowIfName(
+      SYSTEM_TENANT_ID,
+      SYSTEM_SLOT_INDEX,
+      currentInstance,
+    );
+    if (!databaseBindingCleared) {
+      return {
+        ...purge,
+        error: "system_agent_slot_changed_during_reset",
+        currentInstance,
+        currentInstanceRemoved,
+        databaseBindingCleared: false,
+      };
+    }
+  }
+
+  await clearSystemAgentWebhookMetadata();
+  return {
+    ...purge,
+    currentInstance,
+    currentInstanceRemoved,
+    databaseBindingCleared,
+  };
 }
 
 /**

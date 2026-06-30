@@ -214,11 +214,11 @@ export async function POST(request: Request) {
 
   if (body.action === "purge_system_instances") {
     const instanceName = await getSystemAgentInstanceName();
-    const purged = await purgeSystemEvolutionInstances(instanceName);
+    const purge = await purgeSystemEvolutionInstances(instanceName);
     const payload = await buildDiagnosePayload(request);
     return NextResponse.json({
       ...payload,
-      purge: { purgedInstances: purged, keptInstance: instanceName },
+      purge: { ...purge, keptInstance: instanceName },
     });
   }
 

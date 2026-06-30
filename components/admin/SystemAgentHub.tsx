@@ -760,6 +760,7 @@ export function SystemAgentHub(props: {
                 sessionApiPath="/api/admin/system-agent/evolution/session"
                 statusApiPath="/api/admin/system-agent/evolution/status"
                 autoProvision={false}
+                strictVerifiedRemoval
                 seedQrDataUrl={seedQrDataUrl}
               />
             )}

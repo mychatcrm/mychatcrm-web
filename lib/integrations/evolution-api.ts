@@ -9,25 +9,38 @@ import { randomBytes } from "node:crypto";
 
 const DEFAULT_TIMEOUT_MS = 25_000;
 
+function stringifyEvolutionErrorPart(value: unknown): string | null {
+  if (typeof value === "string") return value.trim() || null;
+  if (value === null || value === undefined) return null;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
 /** Mensagem legível a partir do JSON típico da Evolution (`response.message[]`, `error`, string). */
 export function formatEvolutionHttpErrorBody(data: unknown, statusText: string): string {
   if (typeof data === "string") return data.slice(0, 800).trim() || statusText;
   if (!data || typeof data !== "object") return statusText;
   const o = data as Record<string, unknown>;
   const parts: string[] = [];
-  if (typeof o.error === "string" && o.error.trim()) parts.push(o.error.trim());
+  const errorPart = stringifyEvolutionErrorPart(o.error);
+  if (errorPart) parts.push(errorPart);
   const resp = o.response;
   if (resp && typeof resp === "object") {
     const r = resp as Record<string, unknown>;
     const msg = r.message;
     if (Array.isArray(msg)) {
-      const lines = msg.filter((x): x is string => typeof x === "string").map((x) => x.trim()).filter(Boolean);
+      const lines = msg.map(stringifyEvolutionErrorPart).filter((line): line is string => Boolean(line));
       if (lines.length) parts.push(lines.join(" · "));
-    } else if (typeof msg === "string" && msg.trim()) {
-      parts.push(msg.trim());
+    } else {
+      const messagePart = stringifyEvolutionErrorPart(msg);
+      if (messagePart) parts.push(messagePart);
     }
   }
-  if (typeof o.message === "string" && o.message.trim()) parts.push(o.message.trim());
+  const messagePart = stringifyEvolutionErrorPart(o.message);
+  if (messagePart) parts.push(messagePart);
   const out = parts.join(" — ").slice(0, 800);
   return out || JSON.stringify(data).slice(0, 500);
 }
@@ -381,27 +394,57 @@ export async function evolutionSetWebhook(params: {
 
 export async function evolutionDeleteInstance(instanceName: string): Promise<EvolutionFetchResult<unknown>> {
   const enc = encodeURIComponent(instanceName.trim());
-  // Tenta DELETE; se bloqueado (405/403/0) cai para POST (Evolution suporta ambos).
+  // Alguns builds/proxies da Evolution 2.3.x rejeitam DELETE com 400/403/405.
+  // POST é usado apenas como fallback; a ausência ainda é verificada depois.
   const del = await evolutionFetchJson(`/instance/delete/${enc}`, { method: "DELETE" });
   if (del.ok || del.status === 404) return del;
-  if (del.status === 405 || del.status === 403 || del.status === 0) {
+  if (del.status === 400 || del.status === 405 || del.status === 403 || del.status === 0) {
     return evolutionFetchJson(`/instance/delete/${enc}`, { method: "POST" });
   }
   return del;
 }
 
+export type EvolutionInstancePresence = {
+  state: "present" | "absent" | "unknown";
+  status: number | null;
+  error: string | null;
+};
+
 export type EvolutionRemoveInstanceResult = {
   ok: boolean;
   deleted: boolean;
   verifiedAbsent: boolean;
+  presence: EvolutionInstancePresence["state"];
   error: string | null;
   status: number | null;
 };
 
-async function evolutionInstanceExists(instanceName: string): Promise<boolean> {
+export async function evolutionGetInstancePresence(
+  instanceName: string,
+): Promise<EvolutionInstancePresence> {
+  const trimmed = instanceName.trim();
+  if (!trimmed) {
+    return { state: "unknown", status: null, error: "empty_instance_name" };
+  }
   const res = await evolutionFetchInstances(instanceName.trim());
-  if (!res.ok) return false;
-  return pickEvolutionInstanceInfo(res.data, instanceName.trim()) !== null;
+  if (!res.ok) {
+    return { state: "unknown", status: res.status, error: res.error };
+  }
+  const present = res.data.some((item) => item.name?.trim() === trimmed);
+  return { state: present ? "present" : "absent", status: res.status, error: null };
+}
+
+async function verifyEvolutionInstanceAbsent(
+  instanceName: string,
+): Promise<EvolutionInstancePresence> {
+  const delays = [0, 350, 900];
+  let last: EvolutionInstancePresence = { state: "unknown", status: null, error: "not_checked" };
+  for (const delay of delays) {
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    last = await evolutionGetInstancePresence(instanceName);
+    if (last.state === "absent") return last;
+  }
+  return last;
 }
 
 /**
@@ -413,7 +456,14 @@ export async function evolutionRemoveInstanceCompletely(
 ): Promise<EvolutionRemoveInstanceResult> {
   const trimmed = instanceName.trim();
   if (!trimmed) {
-    return { ok: false, deleted: false, verifiedAbsent: false, error: "empty_instance_name", status: null };
+    return {
+      ok: false,
+      deleted: false,
+      verifiedAbsent: false,
+      presence: "unknown",
+      error: "empty_instance_name",
+      status: null,
+    };
   }
 
   await evolutionLogoutInstance(trimmed).catch(() => null);
@@ -423,27 +473,48 @@ export async function evolutionRemoveInstanceCompletely(
     del = await evolutionDeleteInstance(trimmed);
   }
 
+  const presence = await verifyEvolutionInstanceAbsent(trimmed);
+  if (presence.state === "absent") {
+    return {
+      ok: true,
+      deleted: true,
+      verifiedAbsent: true,
+      presence: "absent",
+      error: null,
+      status: del.status,
+    };
+  }
+
   if (!del.ok && del.status !== 404) {
     console.error("[evolution-api] delete_instance_failed", {
       instanceName: trimmed,
       status: del.status,
       error: del.error,
+      presence: presence.state,
+      verificationError: presence.error,
     });
     return {
       ok: false,
       deleted: false,
       verifiedAbsent: false,
-      error: del.error,
+      presence: presence.state,
+      error:
+        presence.state === "unknown"
+          ? `instance_removal_unverified: ${presence.error ?? del.error}`
+          : del.error,
       status: del.status,
     };
   }
 
-  const stillThere = await evolutionInstanceExists(trimmed);
   return {
-    ok: !stillThere,
-    deleted: !stillThere,
-    verifiedAbsent: !stillThere,
-    error: stillThere ? "instance_still_present_after_delete" : null,
+    ok: false,
+    deleted: false,
+    verifiedAbsent: false,
+    presence: presence.state,
+    error:
+      presence.state === "unknown"
+        ? `instance_removal_unverified: ${presence.error ?? "inventory_unavailable"}`
+        : "instance_still_present_after_delete",
     status: del.status,
   };
 }

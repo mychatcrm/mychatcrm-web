@@ -13,7 +13,9 @@ import {
   evolutionConnectionState,
   evolutionCreateInstance,
   evolutionFetchInstances,
+  evolutionGetInstancePresence,
   evolutionInstanceConnect,
+  evolutionRemoveInstanceCompletely,
   evolutionRestartInstance,
   evolutionSetWebhook,
   isEvolutionApiConfigured,
@@ -28,7 +30,11 @@ import {
   resetSystemAgentEvolutionBinding,
 } from "@/lib/server/system-agent";
 import {
+  deleteTenantEvolutionInstanceRowIfName,
+  finalizeTenantEvolutionInstanceReservation,
   getEvolutionInstanceByTenantSlot,
+  reserveTenantEvolutionInstance,
+  updateEvolutionInstanceStateByName,
   upsertTenantEvolutionInstance,
 } from "@/lib/server/tenant-evolution-instance-db";
 
@@ -41,6 +47,12 @@ function displayConnectionState(connectionState: string, authenticated: boolean)
 
 function buildFreshSystemInstanceName(): string {
   return buildFreshEvolutionInstanceName(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
+}
+
+function isRecentLifecycleOperation(connectionState: string, updatedAt: string): boolean {
+  if (connectionState !== "provisioning" && connectionState !== "deleting") return false;
+  const updatedAtMs = Date.parse(updatedAt);
+  return Number.isFinite(updatedAtMs) && Date.now() - updatedAtMs < 2 * 60 * 1000;
 }
 
 function assertAdminSystemAgent(session: Awaited<ReturnType<typeof getAdminSessionFromCookies>>) {
@@ -86,6 +98,31 @@ async function resolveSystemInstanceIdentity(
   return { connectionState, waJid, profileName: info?.profileName ?? null, authenticated };
 }
 
+async function rollbackProvisionedSystemInstance(instanceName: string): Promise<{
+  verifiedAbsent: boolean;
+  error: string | null;
+}> {
+  const removal = await evolutionRemoveInstanceCompletely(instanceName);
+  if (removal.verifiedAbsent) {
+    await deleteTenantEvolutionInstanceRowIfName(
+      SYSTEM_TENANT_ID,
+      SYSTEM_SLOT_INDEX,
+      instanceName,
+    );
+    return { verifiedAbsent: true, error: null };
+  }
+
+  await updateEvolutionInstanceStateByName({
+    instanceName,
+    connectionState: "provisioning_failed",
+    waJid: null,
+  }).catch(() => null);
+  return {
+    verifiedAbsent: false,
+    error: removal.error ?? "rollback_not_verified",
+  };
+}
+
 /** Sessão Baileys nova: apaga órfãs/número antigo, cria instância fresh e devolve QR. */
 async function provisionFreshSystemEvolutionSession(request: Request) {
   const webhookSecret = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
@@ -94,9 +131,64 @@ async function provisionFreshSystemEvolutionSession(request: Request) {
   }
 
   const reset = await resetSystemAgentEvolutionBinding();
+  if (
+    !reset.inventoryVerified ||
+    !reset.currentInstanceRemoved ||
+    reset.failedInstances.length > 0 ||
+    !reset.databaseBindingCleared
+  ) {
+    const hasConfirmedPresent = reset.failedInstances.some((item) => item.presence === "present");
+    return NextResponse.json(
+      {
+        error: hasConfirmedPresent
+          ? "Ainda existe uma instância antiga do agente do sistema na Evolution."
+          : "Não foi possível confirmar a remoção da instância antiga na Evolution.",
+        code: hasConfirmedPresent
+          ? "system_evolution_instance_still_present"
+          : "system_evolution_inventory_unavailable",
+        inventoryVerified: reset.inventoryVerified,
+        currentInstanceRemoved: reset.currentInstanceRemoved,
+        databaseBindingCleared: reset.databaseBindingCleared,
+        failedInstances: reset.failedInstances,
+        detail: reset.error,
+      },
+      { status: hasConfirmedPresent ? 409 : 502 },
+    );
+  }
+
   const instanceName = buildFreshSystemInstanceName();
   const publicBase = getPublicBaseUrlFromRequest(request);
   const webhookUrl = buildEvolutionWebhookUrl(publicBase, webhookSecret);
+
+  let reservation;
+  try {
+    reservation = await reserveTenantEvolutionInstance({
+      tenantId: SYSTEM_TENANT_ID,
+      slotIndex: SYSTEM_SLOT_INDEX,
+      instanceName,
+      defaultAgentId: SYSTEM_AGENT_ID,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: "Não foi possível reservar a conexão do agente do sistema.",
+        detail: error instanceof Error ? error.message : "reservation_failed",
+      },
+      { status: 503 },
+    );
+  }
+
+  if (!reservation.reserved) {
+    return NextResponse.json(
+      {
+        error: "Já existe uma operação de conexão em andamento.",
+        code: "system_evolution_operation_in_progress",
+        instanceName: reservation.row.instance_name,
+        connectionState: reservation.row.connection_state,
+      },
+      { status: 409 },
+    );
+  }
 
   let createResult = await evolutionCreateInstance({
     instanceName,
@@ -107,23 +199,51 @@ async function provisionFreshSystemEvolutionSession(request: Request) {
       readStatus: false,
     },
   });
-  if (!createResult.ok && createResult.status === 403) {
-    const probe = await evolutionConnectionState(instanceName);
-    if (!probe.ok && probe.status === 404) {
+  if (!createResult.ok) {
+    const presence = await evolutionGetInstancePresence(instanceName);
+    if (presence.state === "present") {
+      createResult = { ok: true, status: createResult.status, data: {} };
+    } else {
+      const rollback = await rollbackProvisionedSystemInstance(instanceName);
       return NextResponse.json(
-        { error: "Nome de instância em conflito na Evolution (403 sem instância). Contacte suporte." },
-        { status: 409 },
+        {
+          error: "Falha ao criar instância na Evolution.",
+          detail: createResult.error,
+          rollbackVerified: rollback.verifiedAbsent,
+          rollbackError: rollback.error,
+        },
+        { status: 502 },
       );
     }
-    await evolutionSetWebhook({ instanceName, url: webhookUrl });
-    createResult = { ok: true, status: 200, data: {} };
-  } else if (!createResult.ok) {
+  }
+
+  const webhookResult = await evolutionSetWebhook({ instanceName, url: webhookUrl });
+  if (!webhookResult.ok) {
+    const rollback = await rollbackProvisionedSystemInstance(instanceName);
     return NextResponse.json(
-      { error: "Falha ao criar instância na Evolution.", detail: createResult.error },
+      {
+        error: "A instância foi criada, mas o webhook não pôde ser configurado.",
+        detail: webhookResult.error,
+        rollbackVerified: rollback.verifiedAbsent,
+        rollbackError: rollback.error,
+      },
       { status: 502 },
     );
-  } else {
-    await evolutionSetWebhook({ instanceName, url: webhookUrl });
+  }
+
+  const createdPresence = await evolutionGetInstancePresence(instanceName);
+  if (createdPresence.state !== "present") {
+    const rollback = await rollbackProvisionedSystemInstance(instanceName);
+    return NextResponse.json(
+      {
+        error: "Não foi possível confirmar a nova instância no inventário da Evolution.",
+        detail: createdPresence.error,
+        presence: createdPresence.state,
+        rollbackVerified: rollback.verifiedAbsent,
+        rollbackError: rollback.error,
+      },
+      { status: 502 },
+    );
   }
 
   const stateRes = await evolutionConnectionState(instanceName);
@@ -133,62 +253,76 @@ async function provisionFreshSystemEvolutionSession(request: Request) {
   );
 
   try {
-    await upsertTenantEvolutionInstance({
+    await finalizeTenantEvolutionInstanceReservation({
       tenantId: SYSTEM_TENANT_ID,
       slotIndex: SYSTEM_SLOT_INDEX,
       instanceName,
       connectionState: remoteState,
       waJid: null,
-      defaultAgentId: SYSTEM_AGENT_ID,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: "Erro ao gravar instância do sistema.", detail: msg.slice(0, 400) }, { status: 503 });
+    const rollback = await rollbackProvisionedSystemInstance(instanceName);
+    return NextResponse.json(
+      {
+        error: "Erro ao gravar instância do sistema.",
+        detail: msg.slice(0, 400),
+        rollbackVerified: rollback.verifiedAbsent,
+        rollbackError: rollback.error,
+      },
+      { status: 503 },
+    );
   }
 
+  let responseState = remoteState;
   if (remoteState === "open") {
     const identity = await resolveSystemInstanceIdentity(instanceName, remoteState, null);
-    const displayState = displayConnectionState(identity.connectionState, identity.authenticated);
-    await upsertTenantEvolutionInstance({
+    responseState = displayConnectionState(identity.connectionState, identity.authenticated);
+    await finalizeTenantEvolutionInstanceReservation({
       tenantId: SYSTEM_TENANT_ID,
       slotIndex: SYSTEM_SLOT_INDEX,
       instanceName,
       connectionState: identity.connectionState,
       waJid: identity.waJid,
-      defaultAgentId: SYSTEM_AGENT_ID,
     });
-    return NextResponse.json({
-      instanceName,
-      connectionState: displayState,
-      qrDataUrl: null,
-      pairingCode: null,
-      waJid: identity.waJid ?? null,
-      authenticated: identity.authenticated,
-      profileName: identity.profileName,
-      purgedInstances: reset.purgedInstances,
-    });
+    if (identity.authenticated) {
+      return NextResponse.json({
+        instanceName,
+        connectionState: responseState,
+        qrDataUrl: null,
+        pairingCode: null,
+        waJid: identity.waJid ?? null,
+        authenticated: true,
+        profileName: identity.profileName,
+        removedInstances: reset.removedInstances,
+      });
+    }
   }
 
   const connectRes = await evolutionInstanceConnect(instanceName);
   if (!connectRes.ok) {
-    return NextResponse.json({
-      instanceName,
-      connectionState: remoteState,
-      qrDataUrl: null,
-      pairingCode: null,
-      waJid: null,
-      detail: connectRes.error,
-      purgedInstances: reset.purgedInstances,
-    });
+    return NextResponse.json(
+      {
+        error: "A instância foi criada, mas o QR Code não pôde ser gerado.",
+        instanceName,
+        connectionState: responseState,
+        qrDataUrl: null,
+        pairingCode: null,
+        waJid: null,
+        detail: connectRes.error,
+        removedInstances: reset.removedInstances,
+      },
+      { status: 502 },
+    );
   }
 
   return NextResponse.json({
     instanceName,
-    connectionState: remoteState,
+    connectionState: responseState,
     qrDataUrl: normalizeInstanceConnectToQrDataUrl(connectRes.data as unknown),
     pairingCode: extractPairingCodeFromConnectPayload(connectRes.data as unknown),
     waJid: null,
-    purgedInstances: reset.purgedInstances,
+    removedInstances: reset.removedInstances,
   });
 }
 
@@ -202,6 +336,21 @@ export async function POST(request: Request) {
 
   const existingRow = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
   if (existingRow?.instance_name) {
+    if (isRecentLifecycleOperation(existingRow.connection_state, existingRow.updated_at)) {
+      return NextResponse.json(
+        {
+          error:
+            existingRow.connection_state === "deleting"
+              ? "A desconexão ainda está em andamento."
+              : "A conexão ainda está sendo preparada.",
+          code: "system_evolution_operation_in_progress",
+          instanceName: existingRow.instance_name,
+          connectionState: existingRow.connection_state,
+        },
+        { status: 409 },
+      );
+    }
+
     const identity = await resolveSystemInstanceIdentity(
       existingRow.instance_name,
       existingRow.connection_state,
@@ -263,6 +412,17 @@ export async function GET(request: Request) {
       qrDataUrl: null,
       pairingCode: null,
       waJid: null,
+    });
+  }
+
+  if (row.connection_state === "provisioning" || row.connection_state === "deleting") {
+    return NextResponse.json({
+      instanceName: row.instance_name,
+      connectionState: row.connection_state,
+      qrDataUrl: null,
+      pairingCode: null,
+      waJid: row.wa_jid,
+      operationPending: true,
     });
   }
 
@@ -387,19 +547,66 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Evolution API não configurada no servidor." }, { status: 503 });
   }
 
-  const reset = await resetSystemAgentEvolutionBinding();
+  const existingRow = await getEvolutionInstanceByTenantSlot(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX);
+  if (existingRow?.instance_name) {
+    try {
+      await updateEvolutionInstanceStateByName({
+        instanceName: existingRow.instance_name,
+        connectionState: "deleting",
+        waJid: existingRow.wa_jid,
+      });
+    } catch (error) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Não foi possível iniciar a desconexão com segurança.",
+          detail: error instanceof Error ? error.message : "delete_lock_failed",
+        },
+        { status: 503 },
+      );
+    }
+  }
 
+  const reset = await resetSystemAgentEvolutionBinding();
   const evolutionVerifiedAbsent =
-    !reset.deletedDbInstance || reset.purgedInstances.includes(reset.deletedDbInstance);
+    reset.inventoryVerified &&
+    reset.currentInstanceRemoved &&
+    reset.failedInstances.length === 0;
+  const ok = evolutionVerifiedAbsent && reset.databaseBindingCleared;
+
+  if (!ok) {
+    if (existingRow?.instance_name && !reset.databaseBindingCleared) {
+      await updateEvolutionInstanceStateByName({
+        instanceName: existingRow.instance_name,
+        connectionState: existingRow.connection_state,
+        waJid: existingRow.wa_jid,
+      }).catch(() => null);
+    }
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Não foi possível confirmar a exclusão na Evolution. O vínculo foi preservado.",
+        deletedInstance: reset.currentInstance,
+        removedInstances: reset.removedInstances,
+        failedInstances: reset.failedInstances,
+        inventoryVerified: reset.inventoryVerified,
+        databaseBindingCleared: reset.databaseBindingCleared,
+        evolutionVerifiedAbsent,
+        evolutionError: reset.error,
+      },
+      { status: reset.failedInstances.some((item) => item.presence === "present") ? 409 : 502 },
+    );
+  }
 
   return NextResponse.json({
     ok: true,
-    deletedInstance: reset.deletedDbInstance,
-    purgedInstances: reset.purgedInstances,
-    evolutionRemoved: reset.purgedInstances.length > 0,
-    evolutionVerifiedAbsent,
-    evolutionError: evolutionVerifiedAbsent
-      ? null
-      : "Instância apagada do MyChatCRM mas ainda presente na Evolution. Se persistir, apague manualmente no Evolution Manager e reconecte.",
+    deletedInstance: reset.currentInstance,
+    removedInstances: reset.removedInstances,
+    failedInstances: [],
+    inventoryVerified: true,
+    databaseBindingCleared: true,
+    evolutionRemoved: reset.removedInstances.length > 0,
+    evolutionVerifiedAbsent: true,
+    evolutionError: null,
   });
 }
