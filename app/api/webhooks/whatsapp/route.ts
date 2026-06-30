@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
 import {
+  parseWhatsAppCloudInbound,
   parseWhatsAppCloudPayload,
   parseWhatsAppCloudStatuses,
   sendWhatsAppTextMessage,
   verifyMetaSignature256,
 } from "@/lib/integrations/whatsapp-cloud";
 import { applyMetaSystemNotificationStatus } from "@/lib/server/system-agent";
+import { handleSystemMetaInbound } from "@/lib/server/system-meta-inbound";
 import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { resolveDirectWhatsAppAgentFromRules } from "@/lib/server/agent-channel-authorization";
@@ -62,6 +64,19 @@ export async function POST(request: Request) {
       });
     }
     return NextResponse.json({ ok: true });
+  }
+
+  // Inbound destinado ao número Meta do agente do sistema → pipeline próprio
+  // (salva no chat de monitoramento, interpreta áudio/imagem e responde com IA).
+  const systemInbound = parseWhatsAppCloudInbound(json);
+  if (systemInbound) {
+    const handled = await handleSystemMetaInbound(systemInbound).catch((error) => {
+      console.warn("[webhooks/whatsapp] system_meta_inbound_failed", {
+        error: error instanceof Error ? error.message : "handle_failed",
+      });
+      return false;
+    });
+    if (handled) return NextResponse.json({ ok: true });
   }
 
   const inbound = parseWhatsAppCloudPayload(json);

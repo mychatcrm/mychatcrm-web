@@ -1187,6 +1187,22 @@ export async function clearSystemAgentMetaConfig(): Promise<void> {
     .eq("agent_id", SYSTEM_AGENT_ID);
 }
 
+export type SystemActiveProvider = "evolution" | "meta";
+
+/**
+ * Chave (toggle) que decide qual provedor atende: "evolution" (QR) ou "meta" (API oficial).
+ * Não apaga credenciais — apenas alterna meta_provider_active. Trocar para "meta" só faz sentido
+ * se já houver credenciais Meta salvas (a UI desabilita o switch caso contrário).
+ */
+export async function setSystemActiveProvider(provider: SystemActiveProvider): Promise<void> {
+  await patchSystemAgentMetadata({ meta_provider_active: provider === "meta" });
+}
+
+/** Provedor ativo atual, derivado de isMetaProviderActive(). */
+export async function getSystemActiveProvider(): Promise<SystemActiveProvider> {
+  return (await isMetaProviderActive()) ? "meta" : "evolution";
+}
+
 async function sendSystemNotificationViaMeta(
   toNumber: string,
   message: string,

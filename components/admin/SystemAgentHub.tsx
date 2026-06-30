@@ -1,8 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Bot, History, Smartphone } from "lucide-react";
+import {
+  Bot,
+  History,
+  Smartphone,
+  QrCode,
+  Cloud,
+  Wrench,
+  CheckCircle2,
+  AlertTriangle,
+  Circle,
+  Clock,
+} from "lucide-react";
 import { EvolutionQrSlotPanel } from "@/components/dashboard/integrations/EvolutionQrSlotPanel";
+import { LiveConversationsPanel } from "@/components/admin/system-agent/LiveConversationsPanel";
+import { NotificationsModal } from "@/components/admin/system-agent/NotificationsModal";
 import { cn } from "@/lib/utils";
 
 type MetaConfig = {
@@ -111,11 +124,31 @@ function notificationStatusLabel(status: string): { label: string; tone: string 
 }
 
 const E2E_REQUIRED_FLOWS = [
-  { type: "admin_test", label: "Teste admin" },
-  { type: "phone_verification_code", label: "Código de verificação" },
-  { type: "handoff_alert", label: "Handoff" },
-  { type: "integration_disconnected", label: "Integração desconectada" },
-  { type: "account_phone_removed", label: "Telefone removido" },
+  {
+    type: "admin_test",
+    label: "Teste de envio",
+    hint: "Confirma que o agente consegue mandar uma mensagem e ela chega no celular.",
+  },
+  {
+    type: "phone_verification_code",
+    label: "Código de verificação",
+    hint: "Código que o cliente recebe ao confirmar o telefone na conta.",
+  },
+  {
+    type: "handoff_alert",
+    label: "Aviso de atendimento humano",
+    hint: "Alerta enviado quando uma conversa precisa de um humano.",
+  },
+  {
+    type: "integration_disconnected",
+    label: "Aviso de WhatsApp desconectado",
+    hint: "Avisa o dono da conta quando o WhatsApp dele cai.",
+  },
+  {
+    type: "account_phone_removed",
+    label: "Aviso de telefone removido",
+    hint: "Avisa quando um telefone é removido da conta.",
+  },
 ] as const;
 
 function evaluateE2EFlow(logs: SystemNotificationLogItem[], type: string): "pass" | "fail" | "pending" | "none" {
@@ -208,7 +241,6 @@ export function SystemAgentHub(props: {
   const [testNumber, setTestNumber] = useState("");
   const [testBusy, setTestBusy] = useState(false);
   const [restartBusy, setRestartBusy] = useState(false);
-  const [resetBusy, setResetBusy] = useState(false);
   const [diagnoseBusy, setDiagnoseBusy] = useState(false);
   const [webhookReapplyBusy, setWebhookReapplyBusy] = useState(false);
   const [orphanReconcileBusy, setOrphanReconcileBusy] = useState(false);
@@ -222,7 +254,10 @@ export function SystemAgentHub(props: {
   const [metaPhoneNumberId, setMetaPhoneNumberId] = useState("");
   const [metaAccessToken, setMetaAccessToken] = useState("");
   const [metaError, setMetaError] = useState<string | null>(null);
+  const [notifModalOpen, setNotifModalOpen] = useState(false);
   const conn = connectionLabel(connectionState);
+  const metaActive = metaConfig?.active === true;
+  const metaConfigured = Boolean(metaConfig?.phone_number_id);
   const senderLine = formatWaJid(waJid);
   // Sessão "open" sem número conectado = sessão zumbi (API aceita, WhatsApp não entrega).
   const zombieSession = connectionState === "open" && (authenticated === false || (!waJid && authenticated !== null));
@@ -251,35 +286,33 @@ export function SystemAgentHub(props: {
     if (typeof json.authenticated === "boolean") setAuthenticated(json.authenticated);
   }, []);
 
-  const resetAgent = useCallback(async () => {
-    const confirmed = window.confirm(
-      "Isto vai APAGAR a instância do agente do sistema no MyChatCRM e na Evolution API, deixando a conexão VAZIA. " +
-        "Nenhuma instância nova é criada automaticamente — depois é só clicar em \"Conectar\" e escanear o QR com o número que quiser. Continuar?",
-    );
-    if (!confirmed) return;
-    setResetBusy(true);
-    setActionMessage(null);
-    try {
-      const res = await fetch("/api/admin/system-agent/evolution/session?slotIndex=0", {
-        method: "DELETE",
-        credentials: "same-origin",
-      });
-      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; deletedInstance?: string | null };
-      if (!res.ok) {
-        setActionMessage(json.error ?? "Falha ao apagar a instância.");
-        setResetBusy(false);
+  const setActiveProvider = useCallback(
+    async (provider: "evolution" | "meta") => {
+      if (provider === "meta" && !metaConfigured) {
+        setMetaError("Conecte as credenciais da API Meta antes de ativá-la.");
         return;
       }
-      const deleted = json.deletedInstance ? ` (${json.deletedInstance})` : "";
-      setActionMessage(
-        `Instância apagada${deleted} no sistema e na Evolution. Recarregando — a conexão ficará vazia até você clicar em "Conectar".`,
-      );
-      setTimeout(() => window.location.reload(), 1400);
-    } catch {
-      setActionMessage("Falha ao apagar a instância.");
-      setResetBusy(false);
-    }
-  }, []);
+      setMetaBusy(true);
+      setMetaError(null);
+      try {
+        const res = await fetch("/api/admin/system-agent/meta/config", {
+          method: "PATCH",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ active_provider: provider }),
+        });
+        const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+        if (!res.ok) {
+          setMetaError(json.error ?? "Falha ao alternar provedor.");
+          return;
+        }
+        setMetaConfig((prev) => (prev ? { ...prev, active: provider === "meta" } : prev));
+      } finally {
+        setMetaBusy(false);
+      }
+    },
+    [metaConfigured],
+  );
 
   const runDiagnose = useCallback(async () => {
     setDiagnoseBusy(true);
@@ -591,76 +624,244 @@ export function SystemAgentHub(props: {
         </div>
       </header>
 
+      {/* Status amigável */}
       <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Identidade</h2>
-        <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
-          <div>
-            <dt className="text-content-faint">Agent ID</dt>
-            <dd className="font-mono text-content-secondary">{props.agentId}</dd>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="rounded-lg border border-line/60 bg-surface-elevated/30 p-3">
+            <p className="text-[11px] uppercase tracking-wide text-content-faint">Conexão</p>
+            <p className={cn("mt-1 flex items-center gap-1.5 text-sm font-semibold", conn.tone)}>
+              <span className={cn("h-2 w-2 rounded-full", connectionState === "open" ? "bg-emerald-400" : connectionState === "connecting" ? "bg-amber-400" : "bg-rose-400")} />
+              {conn.label}
+            </p>
           </div>
-          <div>
-            <dt className="text-content-faint">Tenant interno</dt>
-            <dd className="font-mono text-content-secondary">{props.tenantId}</dd>
+          <div className="rounded-lg border border-line/60 bg-surface-elevated/30 p-3">
+            <p className="text-[11px] uppercase tracking-wide text-content-faint">Número que atende</p>
+            <p className="mt-1 font-mono text-sm text-content-secondary">{metaActive ? (metaConfig?.display_phone ?? "API Meta") : formatWaJid(waJid)}</p>
           </div>
-          <div className="sm:col-span-2">
-            <dt className="text-content-faint">Instância Evolution</dt>
-            <dd className="break-all font-mono text-content-secondary">{props.instanceName ?? "—"}</dd>
+          <div className="rounded-lg border border-line/60 bg-surface-elevated/30 p-3">
+            <p className="text-[11px] uppercase tracking-wide text-content-faint">Método de envio</p>
+            <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-content-secondary">
+              {metaActive ? <Cloud className="h-3.5 w-3.5 text-primary" /> : <QrCode className="h-3.5 w-3.5 text-primary" />}
+              {metaActive ? "API Oficial Meta" : "QR Code (Evolution)"}
+            </p>
           </div>
-          <div>
-            <dt className="text-content-faint">Status</dt>
-            <dd className={cn("font-medium", conn.tone)}>{conn.label}</dd>
-          </div>
-          <div>
-            <dt className="text-content-faint">Número conectado</dt>
-            <dd className="text-content-secondary">{formatWaJid(waJid)}</dd>
-          </div>
-        </dl>
+        </div>
+
         {zombieSession ? (
-          <div className="mt-4 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-3 text-xs leading-relaxed text-rose-100">
-            <strong>Sessão zumbi detectada.</strong> O status diz &quot;Conectado&quot;, mas a sessão não tem um
-            número WhatsApp ativo (sem identidade). A Evolution aceita os envios, porém o WhatsApp não entrega
-            nada. <strong>Solução:</strong> clique em &quot;Forçar reconexão (QR)&quot; abaixo e escaneie o QR com o
-            celular do chip do agente.
+          <div className="mt-3 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-3 text-xs leading-relaxed text-rose-100">
+            <strong>Sessão sem número ativo.</strong> O status diz &quot;Conectado&quot;, mas não há um número WhatsApp
+            de verdade na sessão — a Evolution aceita os envios, porém o WhatsApp não entrega.{" "}
+            <strong>Solução:</strong> em &quot;Método de envio&quot;, desconecte e reconecte escaneando o QR.
           </div>
         ) : null}
-        <p className="mt-4 text-xs leading-relaxed text-content-muted">
-          Este agente é crítico para o produto. Não desative nem remova do banco. As notificações de handoff e
-          automações internas usam a instância WhatsApp configurada abaixo.
-        </p>
-        {senderLine !== "—" ? (
+        {!metaActive && senderLine !== "—" ? (
           <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-100">
-            As notificações são enviadas do número <strong>{senderLine}</strong>. No celular, procure essa conversa
-            (ou em Solicitações) — não confunda com o WhatsApp comercial do seu tenant.
+            As notificações saem do número <strong>{senderLine}</strong>. No celular, procure essa conversa (ou em
+            Solicitações) — não confunda com o WhatsApp comercial do seu tenant.
           </p>
         ) : null}
+
+        <details className="mt-3 text-xs">
+          <summary className="cursor-pointer text-content-faint hover:text-content-secondary">Detalhes técnicos</summary>
+          <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+            <div>
+              <dt className="text-content-faint">Agent ID</dt>
+              <dd className="font-mono text-content-secondary">{props.agentId}</dd>
+            </div>
+            <div>
+              <dt className="text-content-faint">Tenant interno</dt>
+              <dd className="font-mono text-content-secondary">{props.tenantId}</dd>
+            </div>
+            <div className="sm:col-span-2">
+              <dt className="text-content-faint">Instância Evolution</dt>
+              <dd className="break-all font-mono text-content-secondary">{props.instanceName ?? "—"}</dd>
+            </div>
+          </dl>
+        </details>
       </section>
 
+      {/* Método de envio com chave de provedor */}
       <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">
-          Isolamento (Evolution Manager)
-        </h2>
-        <p className="mt-2 text-xs leading-relaxed text-content-muted">
-          Antes de culpar o MyChatCRM, teste envio manual no Evolution Manager para o mesmo número de destino:
-        </p>
-        <ol className="mt-3 list-decimal space-y-2 pl-5 text-xs text-content-secondary">
-          <li>
-            Instância <strong>sistema</strong> (nome completo acima) → enviar texto para o número de teste
-          </li>
-          <li>
-            Instância <strong>cliente Sofia</strong> (<code className="font-mono">mc976b7b…</code>) → mesmo número
-          </li>
-          <li>
-            <strong>Enviar teste</strong> abaixo no MyChatCRM → comparar os três
-          </li>
-        </ol>
-        <p className="mt-3 text-[11px] text-content-faint">
-          Se nenhum entregar → VPS/Baileys. Só Sofia entregar → reconectar sessão sistema. Manager sistema entregar
-          mas MyChatCRM não → bug de formato/número no app.
-        </p>
+        <div className="mb-3 flex items-center gap-2">
+          <Smartphone className="h-4 w-4 text-primary" aria-hidden />
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">
+            Método de envio WhatsApp
+          </h2>
+        </div>
+
+        {/* Chave de seleção do provedor */}
+        <div className="mb-4 flex flex-col gap-2 rounded-lg border border-line/60 bg-surface-elevated/30 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-xs text-content-muted">
+            Quem atende as conversas do agente: escolha <strong>um</strong> método.
+          </div>
+          <div className="flex items-center gap-1 rounded-lg border border-line bg-surface-card p-1">
+            <button
+              type="button"
+              disabled={metaBusy}
+              onClick={() => void setActiveProvider("evolution")}
+              className={cn(
+                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-60",
+                !metaActive ? "bg-primary text-white" : "text-content-secondary hover:bg-surface-elevated/60",
+              )}
+            >
+              <QrCode className="h-3.5 w-3.5" /> QR Code
+            </button>
+            <button
+              type="button"
+              disabled={metaBusy || !metaConfigured}
+              title={!metaConfigured ? "Conecte as credenciais da API Meta primeiro" : undefined}
+              onClick={() => void setActiveProvider("meta")}
+              className={cn(
+                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40",
+                metaActive ? "bg-primary text-white" : "text-content-secondary hover:bg-surface-elevated/60",
+              )}
+            >
+              <Cloud className="h-3.5 w-3.5" /> API Meta
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          {/* Card QR Scan (Evolution) */}
+          <div
+            className={cn(
+              "rounded-lg border p-4 transition-opacity",
+              metaActive ? "border-line/40 bg-surface-elevated/20 opacity-60" : "border-primary/30 bg-primary/5",
+            )}
+          >
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-content-secondary">
+                <QrCode className="h-3.5 w-3.5" /> QR Code (Evolution)
+              </span>
+              {metaActive ? (
+                <span className="rounded-full bg-content-faint/10 px-2 py-0.5 text-[10px] font-medium text-content-faint">
+                  inativo
+                </span>
+              ) : (
+                <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+                  ativo
+                </span>
+              )}
+            </div>
+            {metaActive ? (
+              <p className="text-xs text-content-muted">
+                Para usar o QR Code, mude a chave acima para &quot;QR Code&quot;.
+              </p>
+            ) : (
+              <EvolutionQrSlotPanel
+                key={`system-agent-qr-${qrPanelRevision}`}
+                slotIndex={0}
+                sessionApiPath="/api/admin/system-agent/evolution/session"
+                statusApiPath="/api/admin/system-agent/evolution/status"
+                autoProvision={false}
+                seedQrDataUrl={seedQrDataUrl}
+              />
+            )}
+          </div>
+
+          {/* Card API Oficial Meta */}
+          <div
+            className={cn(
+              "rounded-lg border p-4 transition-opacity",
+              metaActive ? "border-primary/30 bg-primary/5" : "border-line/40 bg-surface-elevated/20",
+            )}
+          >
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-content-secondary">
+                <Cloud className="h-3.5 w-3.5" /> API Oficial Meta
+              </span>
+              {metaActive ? (
+                <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+                  ativo
+                </span>
+              ) : metaConfigured ? (
+                <span className="rounded-full bg-content-faint/10 px-2 py-0.5 text-[10px] font-medium text-content-faint">
+                  conectado · inativo
+                </span>
+              ) : (
+                <span className="rounded-full bg-content-faint/10 px-2 py-0.5 text-[10px] font-medium text-content-faint">
+                  não conectado
+                </span>
+              )}
+            </div>
+
+            {metaConfigured ? (
+              <div className="space-y-3">
+                <dl className="grid gap-1.5 text-xs">
+                  <div>
+                    <dt className="text-content-faint">Número</dt>
+                    <dd className="font-mono text-content-secondary">
+                      {metaConfig?.display_phone ?? metaConfig?.phone_number_id ?? "—"}
+                    </dd>
+                  </div>
+                  {metaConfig?.verified_name ? (
+                    <div>
+                      <dt className="text-content-faint">Nome verificado</dt>
+                      <dd className="text-content-secondary">{metaConfig.verified_name}</dd>
+                    </div>
+                  ) : null}
+                </dl>
+                <button
+                  type="button"
+                  disabled={metaBusy}
+                  onClick={() => void disconnectMeta()}
+                  className="rounded-lg border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-100 hover:bg-rose-500/20 disabled:opacity-60"
+                >
+                  {metaBusy ? "Removendo…" : "Remover credenciais Meta"}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs leading-relaxed text-content-muted">
+                  Para números WhatsApp Business registrados na Meta Cloud API (ex.:{" "}
+                  <span className="font-mono">556282067910</span>).
+                </p>
+                <label className="block text-xs">
+                  <span className="mb-1 block text-content-faint">Phone Number ID</span>
+                  <input
+                    type="text"
+                    value={metaPhoneNumberId}
+                    onChange={(e) => setMetaPhoneNumberId(e.target.value)}
+                    placeholder="123456789012345"
+                    className="w-full rounded-lg border border-line bg-surface-elevated px-3 py-2 text-content"
+                  />
+                </label>
+                <label className="block text-xs">
+                  <span className="mb-1 block text-content-faint">Access Token</span>
+                  <input
+                    type="password"
+                    value={metaAccessToken}
+                    onChange={(e) => setMetaAccessToken(e.target.value)}
+                    placeholder="EAABn…"
+                    className="w-full rounded-lg border border-line bg-surface-elevated px-3 py-2 text-content"
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={metaBusy || !metaPhoneNumberId.trim() || !metaAccessToken.trim()}
+                  onClick={() => void connectMeta()}
+                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+                >
+                  {metaBusy ? "Conectando…" : "Conectar API Meta"}
+                </button>
+              </div>
+            )}
+            {metaError ? <p className="mt-2 text-xs text-rose-300">{metaError}</p> : null}
+          </div>
+        </div>
       </section>
 
+      {/* Conversas ao vivo (somente leitura) */}
+      <LiveConversationsPanel systemTenantId={props.tenantId} />
+
+      {/* Diagnóstico e manutenção */}
       <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">Diagnóstico</h2>
+        <div className="mb-1 flex items-center gap-2">
+          <Wrench className="h-4 w-4 text-primary" aria-hidden />
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">
+            Diagnóstico e manutenção
+          </h2>
+        </div>
         <p className="mt-2 text-xs leading-relaxed text-content-muted">
           <strong className="text-emerald-400">entregue ✓</strong> (verde) = o WhatsApp confirmou a entrega no
           aparelho — só isso é sucesso de verdade. <strong className="text-amber-400">enviado</strong> (amarelo) = a
@@ -730,23 +931,38 @@ export function SystemAgentHub(props: {
         </div>
         {actionMessage ? <p className="mt-3 text-xs text-content-muted">{actionMessage}</p> : null}
 
-        <div className="mt-4 rounded-lg border border-rose-500/30 bg-rose-500/[0.06] p-3">
-          <p className="text-xs font-semibold text-rose-200">Zona de risco — apagar conexão</p>
-          <p className="mt-1 text-xs leading-relaxed text-content-muted">
-            Apaga a instância no MyChatCRM <strong>e</strong> na Evolution API, deixando a conexão
-            <strong> vazia</strong> (não recria sozinho). Depois é só clicar em <strong>Conectar</strong> na
-            seção do WhatsApp acima para criar uma instância <strong>nova (nome e sessão limpos)</strong> e
-            escanear o QR com o número que quiser — útil quando a sessão fica presa ou para trocar de número.
+        <details className="mt-4 rounded-lg border border-line/60 bg-surface-elevated/20 p-3 text-xs">
+          <summary className="cursor-pointer font-medium text-content-secondary">
+            Como usar estes controles (runbook)
+          </summary>
+          <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-content-muted">
+            <li><strong>Enviar teste</strong> — confirma que o número que atende consegue entregar uma mensagem.</li>
+            <li><strong>Forçar reconexão (QR)</strong> — gera um QR novo para reconectar o número (limpa instâncias antigas).</li>
+            <li><strong>Reparar sessão (VPS)</strong> — reinicia a sessão na Evolution quando &quot;Conectado&quot; mas não entrega.</li>
+            <li><strong>Re-aplicar webhook</strong> — reconfigura o webhook (MESSAGES_UPDATE + CONNECTION_UPDATE) na instância.</li>
+            <li><strong>Reconciliar órfãos</strong> — fecha confirmações de entrega que chegaram antes do log.</li>
+            <li><strong>Restart VPS</strong> — via SSH: <code className="font-mono">scripts/evolution-vps-maintenance.sh restart</code>.</li>
+          </ol>
+        </details>
+
+        <details className="mt-2 rounded-lg border border-line/60 bg-surface-elevated/20 p-3 text-xs">
+          <summary className="cursor-pointer font-medium text-content-secondary">
+            Teste de isolamento (Evolution Manager)
+          </summary>
+          <p className="mt-2 text-content-muted">
+            Para descobrir se o problema é o app ou a VPS, teste o envio direto no Evolution Manager para o mesmo
+            número:
           </p>
-          <button
-            type="button"
-            disabled={resetBusy}
-            onClick={() => void resetAgent()}
-            className="mt-3 rounded-lg border border-rose-500/50 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-100 hover:bg-rose-500/20 disabled:opacity-60"
-          >
-            {resetBusy ? "Apagando…" : "Apagar conexão (sistema + Evolution)"}
-          </button>
-        </div>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-content-muted">
+            <li>Instância do <strong>sistema</strong> → envie texto para o número de teste.</li>
+            <li>Instância de um <strong>cliente</strong> → mesmo número.</li>
+            <li><strong>Enviar teste</strong> aqui no MyChatCRM → compare os três.</li>
+          </ol>
+          <p className="mt-2 text-[11px] text-content-faint">
+            Nenhum entregar → VPS/Baileys. Só o cliente entregar → reconecte a sessão do sistema. Manager do sistema
+            entregar mas o app não → bug de formato/número no app.
+          </p>
+        </details>
         {diagnose ? (
           <div className="mt-4 space-y-2 rounded-lg border border-line/80 bg-surface-elevated/40 p-3 text-xs">
             <div className="grid gap-1 sm:grid-cols-2">
@@ -879,254 +1095,40 @@ export function SystemAgentHub(props: {
       </section>
 
       <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
-        <div className="mb-4 flex items-center gap-2">
-          <Smartphone className="h-4 w-4 text-primary" aria-hidden />
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">
-            Método de envio WhatsApp
-          </h2>
-        </div>
-        <p className="mb-4 text-xs text-content-muted">
-          Escolha <strong>um</strong> método de envio. Somente um pode estar ativo por vez.
-        </p>
-        <div className="grid gap-4 lg:grid-cols-2">
-          {/* Card QR Scan (Evolution) */}
-          <div
-            className={cn(
-              "rounded-lg border p-4 transition-opacity",
-              metaConfig?.active
-                ? "border-line/40 bg-surface-elevated/20 opacity-60"
-                : "border-primary/30 bg-primary/5",
-            )}
-          >
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-content-secondary">QR Scan (Evolution/Baileys)</span>
-              {metaConfig?.active ? (
-                <span className="rounded-full bg-content-faint/10 px-2 py-0.5 text-[10px] font-medium text-content-faint">
-                  inativo — API Meta ativa
-                </span>
-              ) : (
-                <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
-                  ativo
-                </span>
-              )}
-            </div>
-            {metaConfig?.active ? (
-              <p className="text-xs text-content-muted">
-                Para usar QR Scan, desconecte a API Meta no card ao lado.
-              </p>
-            ) : (
-              <EvolutionQrSlotPanel
-                key={`system-agent-qr-${qrPanelRevision}`}
-                slotIndex={0}
-                sessionApiPath="/api/admin/system-agent/evolution/session"
-                statusApiPath="/api/admin/system-agent/evolution/status"
-                autoProvision={false}
-                seedQrDataUrl={seedQrDataUrl}
-              />
-            )}
-          </div>
-
-          {/* Card API Oficial Meta */}
-          <div
-            className={cn(
-              "rounded-lg border p-4 transition-opacity",
-              metaConfig?.active
-                ? "border-primary/30 bg-primary/5"
-                : "border-line/40 bg-surface-elevated/20",
-            )}
-          >
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-content-secondary">API Oficial Meta</span>
-              {metaConfig?.active ? (
-                <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
-                  ativo
-                </span>
-              ) : (
-                <span className="rounded-full bg-content-faint/10 px-2 py-0.5 text-[10px] font-medium text-content-faint">
-                  inativo
-                </span>
-              )}
-            </div>
-
-            {metaConfig?.active ? (
-              <div className="space-y-3">
-                <dl className="grid gap-1.5 text-xs">
-                  <div>
-                    <dt className="text-content-faint">Número</dt>
-                    <dd className="font-mono text-content-secondary">
-                      {metaConfig.display_phone ?? metaConfig.phone_number_id ?? "—"}
-                    </dd>
-                  </div>
-                  {metaConfig.verified_name ? (
-                    <div>
-                      <dt className="text-content-faint">Nome verificado</dt>
-                      <dd className="text-content-secondary">{metaConfig.verified_name}</dd>
-                    </div>
-                  ) : null}
-                  <div>
-                    <dt className="text-content-faint">Phone Number ID</dt>
-                    <dd className="break-all font-mono text-content-secondary">
-                      {metaConfig.phone_number_id ?? "—"}
-                    </dd>
-                  </div>
-                </dl>
-                <button
-                  type="button"
-                  disabled={metaBusy}
-                  onClick={() => void disconnectMeta()}
-                  className="rounded-lg border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-100 hover:bg-rose-500/20 disabled:opacity-60"
-                >
-                  {metaBusy ? "Desconectando…" : "Desconectar API Meta"}
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <p className="text-xs leading-relaxed text-content-muted">
-                  Para números WhatsApp Business registrados na Meta Cloud API (ex.:{" "}
-                  <span className="font-mono">556282067910</span>). Não usa Evolution/Baileys.
-                </p>
-                <label className="block text-xs">
-                  <span className="mb-1 block text-content-faint">Phone Number ID</span>
-                  <input
-                    type="text"
-                    value={metaPhoneNumberId}
-                    onChange={(e) => setMetaPhoneNumberId(e.target.value)}
-                    placeholder="123456789012345"
-                    className="w-full rounded-lg border border-line bg-surface-elevated px-3 py-2 text-content"
-                  />
-                </label>
-                <label className="block text-xs">
-                  <span className="mb-1 block text-content-faint">Access Token</span>
-                  <input
-                    type="password"
-                    value={metaAccessToken}
-                    onChange={(e) => setMetaAccessToken(e.target.value)}
-                    placeholder="EAABn…"
-                    className="w-full rounded-lg border border-line bg-surface-elevated px-3 py-2 text-content"
-                  />
-                </label>
-                <button
-                  type="button"
-                  disabled={metaBusy || !metaPhoneNumberId.trim() || !metaAccessToken.trim()}
-                  onClick={() => void connectMeta()}
-                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
-                >
-                  {metaBusy ? "Conectando…" : "Conectar API Meta"}
-                </button>
-                {metaError ? <p className="text-xs text-rose-300">{metaError}</p> : null}
-              </div>
-            )}
-          </div>
-        </div>
-      </section>
-
-      <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">
-          Runbook operacional (VPS / Evolution)
+          Checklist de validação
         </h2>
-        <ol className="mt-3 list-decimal space-y-2 pl-5 text-xs text-content-secondary">
-          <li>
-            <strong>Reconectar sessão</strong> — &quot;Forçar reconexão (QR)&quot; ou apagar conexão → Conectar → QR
-            com o número oficial do sistema
-          </li>
-          <li>
-            <strong>Re-aplicar webhook</strong> — botão acima; confirme MESSAGES_UPDATE + CONNECTION_UPDATE no Manager
-          </li>
-          <li>
-            <strong>Reconciliar órfãos</strong> — após envios ou se diagnóstico mostrar eventos órfãos pendentes
-          </li>
-          <li>
-            <strong>Restart VPS</strong> — no hPanel/SSH:{" "}
-            <code className="font-mono">scripts/evolution-vps-maintenance.sh restart</code>
-          </li>
-          <li>
-            <strong>Limpar instâncias órfãs</strong> — no Manager, apague só{" "}
-            <code className="font-mono">mc049357*</code> (nunca <code className="font-mono">mc976b7b*</code> de
-            clientes). Script:{" "}
-            <code className="font-mono">scripts/evolution-vps-maintenance.sh orphans</code>
-          </li>
-        </ol>
-      </section>
-
-      <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">
-          Checklist de validação (E2E)
-        </h2>
-        <p className="mt-2 text-xs leading-relaxed text-content-muted">
-          Após reconectar, valide cada fluxo. Sucesso = mensagem no celular <strong>e</strong> log com status{" "}
-          <span className="text-emerald-400">entregue ✓</span> em até 60s.
+        <p className="mt-1 text-xs leading-relaxed text-content-muted">
+          Cada item abaixo é um tipo de aviso que o agente do sistema envia. O status mostra se o último envio
+          daquele tipo <strong>chegou no celular</strong> (verde), ainda está <strong>aguardando</strong> (âmbar),
+          <strong> falhou</strong> (vermelho) ou <strong>nunca foi testado</strong> (cinza).
         </p>
-        <ul className="mt-3 space-y-2 text-xs">
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
           {E2E_REQUIRED_FLOWS.map((flow) => {
             const result = evaluateE2EFlow(logs, flow.type);
-            const tone =
+            const meta =
               result === "pass"
-                ? "text-emerald-400"
+                ? { Icon: CheckCircle2, tone: "text-emerald-400", ring: "border-emerald-500/30 bg-emerald-500/[0.05]", label: "Entregue" }
                 : result === "fail"
-                  ? "text-rose-400"
+                  ? { Icon: AlertTriangle, tone: "text-rose-400", ring: "border-rose-500/30 bg-rose-500/[0.05]", label: "Falhou" }
                   : result === "pending"
-                    ? "text-amber-400"
-                    : "text-content-muted";
-            const label =
-              result === "pass"
-                ? "✓ OK (≤60s)"
-                : result === "fail"
-                  ? "✗ falhou"
-                  : result === "pending"
-                    ? "… em andamento"
-                    : "— não testado";
+                    ? { Icon: Clock, tone: "text-amber-400", ring: "border-amber-500/30 bg-amber-500/[0.05]", label: "Aguardando" }
+                    : { Icon: Circle, tone: "text-content-muted", ring: "border-line/60", label: "Não testado" };
+            const Icon = meta.Icon;
             return (
-              <li key={flow.type} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line/60 px-3 py-2">
-                <span className="text-content-secondary">{flow.label}</span>
-                <span className={`font-medium ${tone}`}>{label}</span>
-              </li>
+              <div key={flow.type} className={cn("flex items-start gap-3 rounded-lg border p-3", meta.ring)}>
+                <Icon className={cn("mt-0.5 h-4 w-4 flex-shrink-0", meta.tone)} aria-hidden />
+                <div className="min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium text-content">{flow.label}</p>
+                    <span className={cn("text-[11px] font-medium", meta.tone)}>{meta.label}</span>
+                  </div>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-content-muted">{flow.hint}</p>
+                </div>
+              </div>
             );
           })}
-        </ul>
-        <p className="mt-3 text-[11px] text-content-faint">
-          Meta real: <strong>5/5 entregue ✓</strong> (confirmado no aparelho pelo webhook). &quot;enviado&quot;
-          (amarelo) = aceito pela Evolution, mas entrega ainda não confirmada. &quot;falha&quot; = Evolution recusou o
-          envio.
-        </p>
-        <ol className="mt-3 list-decimal space-y-2 pl-5 text-xs text-content-secondary">
-          <li>
-            <strong>Reconectar sessão limpa</strong> — apagar conexão → Conectar → escanear QR → aguardar
-            Connected
-          </li>
-          <li>
-            <strong>Validar webhook</strong> — Diagnóstico avançado → URL esperada deve coincidir com a instância no
-            Evolution Manager (eventos: MESSAGES_UPDATE, CONNECTION_UPDATE)
-          </li>
-          <li>
-            <strong>Re-aplicar webhook</strong> — botão acima ou confirmar URL no Evolution Manager
-          </li>
-          <li>
-            <strong>Enviar teste</strong> — número de destino acima (verifique também Solicitações no WhatsApp)
-          </li>
-          <li>
-            <strong>Warm-up anti-spam</strong> — do celular destino, mande &quot;oi&quot; para {senderLine} antes do
-            teste/código
-          </li>
-          <li>
-            <strong>Código de verificação</strong> — Configurações → confirmar telefone
-          </li>
-          <li>
-            <strong>Handoff</strong> — conversa com handoffNumero configurado no agente
-          </li>
-          <li>
-            <strong>Integração desconectada</strong> — desconectar WhatsApp do cliente → alerta ao dono
-          </li>
-          <li>
-            <strong>Telefone removido</strong> — remover telefone da conta
-          </li>
-        </ol>
-        <p className="mt-3 text-[11px] text-content-faint">
-          Se aparece &quot;enviado ✓&quot; mas nada chega no celular: o problema é a sessão/número na VPS. Reinicie a
-          Evolution (<code className="font-mono">scripts/evolution-vps-maintenance.sh restart</code>), apague
-          instâncias órfãs <code className="font-mono">mc049357*</code> no Manager (nunca{" "}
-          <code className="font-mono">mc976b7b*</code>), ou apague e reconecte a instância do sistema escaneando o QR
-          com o número que vai disparar as notificações.
-        </p>
+        </div>
       </section>
 
       <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
@@ -1139,17 +1141,17 @@ export function SystemAgentHub(props: {
           </div>
           <button
             type="button"
-            onClick={() => void refreshLogs()}
+            onClick={() => setNotifModalOpen(true)}
             className="text-xs font-medium text-primary hover:underline"
           >
-            Atualizar
+            Ver todas
           </button>
         </div>
         {logs.length === 0 ? (
           <p className="text-sm text-content-muted">Nenhuma notificação registrada ainda.</p>
         ) : (
           <ul className="space-y-3">
-            {logs.map((item) => {
+            {logs.slice(0, 3).map((item) => {
               const status = notificationStatusLabel(item.status);
               const metaLine = formatLogMetadata(item);
               const errorLine = humanizeNotificationError(item.error);
@@ -1171,7 +1173,24 @@ export function SystemAgentHub(props: {
             })}
           </ul>
         )}
+        {logs.length > 3 ? (
+          <button
+            type="button"
+            onClick={() => setNotifModalOpen(true)}
+            className="mt-3 w-full rounded-lg border border-line px-3 py-2 text-xs font-medium text-content-secondary hover:bg-surface-elevated/40"
+          >
+            Ver todas as notificações ({logs.length >= 10 ? "10+" : logs.length})
+          </button>
+        ) : null}
       </section>
+
+      <NotificationsModal
+        open={notifModalOpen}
+        onClose={() => {
+          setNotifModalOpen(false);
+          void refreshLogs();
+        }}
+      />
     </div>
   );
 }
