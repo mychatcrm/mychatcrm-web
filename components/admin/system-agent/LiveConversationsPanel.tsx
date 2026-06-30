@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MessageSquare, RefreshCw, Bot, User } from "lucide-react";
+import { MessageSquare, RefreshCw, Bot, User, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   subscribeToWhatsappMessages,
@@ -52,6 +52,8 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [loadingThread, setLoadingThread] = useState(false);
+  const [deletingJid, setDeletingJid] = useState<string | null>(null);
+  const [deletingAll, setDeletingAll] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
   const activeJidRef = useRef<string | null>(null);
   activeJidRef.current = activeJid;
@@ -75,6 +77,34 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
     );
     setLoadingThread(false);
   }, []);
+
+  const deleteConversation = useCallback(async (jid: string) => {
+    if (!window.confirm(`Apagar todas as mensagens de ${formatJid(jid)}?`)) return;
+    setDeletingJid(jid);
+    await fetch(`/api/admin/system-agent/conversations?jid=${encodeURIComponent(jid)}`, {
+      method: "DELETE",
+      credentials: "same-origin",
+    }).catch(() => null);
+    setDeletingJid(null);
+    if (activeJidRef.current === jid) {
+      setActiveJid(null);
+      setMessages([]);
+    }
+    void loadConversations();
+  }, [loadConversations]);
+
+  const deleteAll = useCallback(async () => {
+    if (!window.confirm("Apagar TODAS as conversas do agente do sistema? Esta ação não pode ser desfeita.")) return;
+    setDeletingAll(true);
+    await fetch("/api/admin/system-agent/conversations?all=true", {
+      method: "DELETE",
+      credentials: "same-origin",
+    }).catch(() => null);
+    setDeletingAll(false);
+    setActiveJid(null);
+    setMessages([]);
+    void loadConversations();
+  }, [loadConversations]);
 
   useEffect(() => {
     void loadConversations();
@@ -139,16 +169,29 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
             Conversas ao vivo
           </h2>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            void loadConversations();
-            if (activeJid) void loadMessages(activeJid);
-          }}
-          className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
-        >
-          <RefreshCw className="h-3.5 w-3.5" /> Atualizar
-        </button>
+        <div className="flex items-center gap-3">
+          {conversations.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void deleteAll()}
+              disabled={deletingAll}
+              className="flex items-center gap-1.5 text-xs font-medium text-red-500 hover:underline disabled:opacity-50"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              {deletingAll ? "Apagando…" : "Apagar todas"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              void loadConversations();
+              if (activeJid) void loadMessages(activeJid);
+            }}
+            className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> Atualizar
+          </button>
+        </div>
       </div>
       <p className="mb-4 text-xs text-content-muted">
         Monitoramento (somente leitura) das conversas que o agente do sistema atende automaticamente —
@@ -165,12 +208,12 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
           ) : (
             <ul className="divide-y divide-line/40">
               {conversations.map((c) => (
-                <li key={c.remoteJid}>
+                <li key={c.remoteJid} className="group relative">
                   <button
                     type="button"
                     onClick={() => setActiveJid(c.remoteJid)}
                     className={cn(
-                      "flex w-full flex-col items-start gap-0.5 px-3 py-2.5 text-left transition-colors hover:bg-surface-elevated/40",
+                      "flex w-full flex-col items-start gap-0.5 py-2.5 pl-3 pr-9 text-left transition-colors hover:bg-surface-elevated/40",
                       activeJid === c.remoteJid ? "bg-primary/5" : "",
                     )}
                   >
@@ -184,6 +227,20 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
                     <span className="text-[10px] text-content-faint">
                       {new Date(c.lastAt).toLocaleString("pt-BR")}
                     </span>
+                  </button>
+                  {/* Botão de lixeira — aparece ao hover */}
+                  <button
+                    type="button"
+                    title="Apagar conversa"
+                    disabled={deletingJid === c.remoteJid}
+                    onClick={(e) => { e.stopPropagation(); void deleteConversation(c.remoteJid); }}
+                    className={cn(
+                      "absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-content-muted transition-opacity hover:text-red-500",
+                      "opacity-0 group-hover:opacity-100 focus:opacity-100",
+                      deletingJid === c.remoteJid ? "opacity-100" : "",
+                    )}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </li>
               ))}

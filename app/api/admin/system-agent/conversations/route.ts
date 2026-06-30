@@ -1,11 +1,11 @@
 /**
- * GET /api/admin/system-agent/conversations
- * Lista as conversas do agente do sistema (tenant interno), agrupadas por remote_jid,
- * com a última mensagem de cada uma. Read-only — para monitoramento no /admin/system-agent.
+ * GET  /api/admin/system-agent/conversations  — lista conversas do agente do sistema.
+ * DELETE /api/admin/system-agent/conversations?jid=<encoded>  — apaga uma conversa.
+ * DELETE /api/admin/system-agent/conversations?all=true       — apaga todas.
  */
 import { NextResponse } from "next/server";
 import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
-import { SYSTEM_TENANT_ID } from "@/lib/server/system-agent";
+import { SYSTEM_AGENT_ID, SYSTEM_TENANT_ID } from "@/lib/server/system-agent";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -19,25 +19,26 @@ type Row = {
   created_at: string;
 };
 
-export async function GET() {
+async function authAdmin() {
   const session = await getAdminSessionFromCookies();
-  if (!session) return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
-  if (!hasAdminAccess(session, "system-agent")) {
-    return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
-  }
+  if (!session) return null;
+  if (!hasAdminAccess(session, "system-agent")) return null;
+  return session;
+}
+
+export async function GET() {
+  if (!(await authAdmin())) return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
 
   const sb = createSupabaseServiceClient();
-  // Puxa as mensagens recentes do tenant do sistema e agrupa por remote_jid no app.
   const { data, error } = await sb
     .from("whatsapp_messages")
     .select("remote_jid, direction, kind, content, agent_id, created_at")
     .eq("tenant_id", SYSTEM_TENANT_ID)
+    .eq("agent_id", SYSTEM_AGENT_ID)
     .order("created_at", { ascending: false })
     .limit(400);
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const byJid = new Map<
     string,
@@ -61,4 +62,32 @@ export async function GET() {
 
   const conversations = Array.from(byJid.values()).sort((a, b) => b.lastAt.localeCompare(a.lastAt));
   return NextResponse.json({ conversations }, { headers: { "Cache-Control": "no-store" } });
+}
+
+export async function DELETE(request: Request) {
+  if (!(await authAdmin())) return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
+
+  const url = new URL(request.url);
+  const jid = url.searchParams.get("jid");
+  const all = url.searchParams.get("all") === "true";
+
+  const sb = createSupabaseServiceClient();
+  const base = sb
+    .from("whatsapp_messages")
+    .delete()
+    .eq("tenant_id", SYSTEM_TENANT_ID)
+    .eq("agent_id", SYSTEM_AGENT_ID);
+
+  let q;
+  if (all) {
+    q = base;
+  } else if (jid) {
+    q = base.eq("remote_jid", decodeURIComponent(jid));
+  } else {
+    return NextResponse.json({ error: "Informe jid ou all=true." }, { status: 400 });
+  }
+
+  const { error } = await q;
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true });
 }
