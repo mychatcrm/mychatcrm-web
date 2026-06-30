@@ -78,7 +78,7 @@ export async function sendWhatsAppTextMessage(params: {
   text: string;
   phoneNumberId: string;
   accessToken: string;
-}): Promise<{ ok: boolean; status: number; error?: string }> {
+}): Promise<{ ok: boolean; status: number; messageId?: string; error?: string }> {
   const url = `${GRAPH_API}/${encodeURIComponent(params.phoneNumberId)}/messages`;
   const res = await fetch(url, {
     method: "POST",
@@ -97,5 +97,38 @@ export async function sendWhatsAppTextMessage(params: {
     const t = await res.text().catch(() => "");
     return { ok: false, status: res.status, error: t.slice(0, 500) };
   }
-  return { ok: true, status: res.status };
+  const data = await res.json().catch(() => ({})) as { messages?: Array<{ id?: string }> };
+  return { ok: true, status: res.status, messageId: data.messages?.[0]?.id };
+}
+
+export type WhatsAppCloudStatus = {
+  id: string;
+  status: string;
+  recipientId: string;
+};
+
+export function parseWhatsAppCloudStatuses(body: unknown): WhatsAppCloudStatus[] {
+  const root = body as { entry?: Array<{ changes?: Array<{ value?: unknown }> }> };
+  const entries = root.entry;
+  if (!Array.isArray(entries)) return [];
+  const result: WhatsAppCloudStatus[] = [];
+  for (const ent of entries) {
+    const changes = ent.changes;
+    if (!Array.isArray(changes)) continue;
+    for (const ch of changes) {
+      const value = ch.value as Record<string, unknown> | undefined;
+      if (!value || typeof value !== "object") continue;
+      const statuses = value.statuses as unknown[] | undefined;
+      if (!Array.isArray(statuses)) continue;
+      for (const s of statuses) {
+        if (!s || typeof s !== "object") continue;
+        const row = s as Record<string, unknown>;
+        const id = typeof row.id === "string" ? row.id.trim() : "";
+        const status = typeof row.status === "string" ? row.status.trim() : "";
+        const recipientId = typeof row.recipient_id === "string" ? row.recipient_id.trim() : "";
+        if (id && status) result.push({ id, status, recipientId });
+      }
+    }
+  }
+  return result;
 }

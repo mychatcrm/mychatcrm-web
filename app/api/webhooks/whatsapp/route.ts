@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
 import {
   parseWhatsAppCloudPayload,
+  parseWhatsAppCloudStatuses,
   sendWhatsAppTextMessage,
   verifyMetaSignature256,
 } from "@/lib/integrations/whatsapp-cloud";
+import { applyMetaSystemNotificationStatus } from "@/lib/server/system-agent";
 import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { resolveDirectWhatsAppAgentFromRules } from "@/lib/server/agent-channel-authorization";
@@ -44,6 +46,21 @@ export async function POST(request: Request) {
   try {
     json = rawBody ? JSON.parse(rawBody) : {};
   } catch {
+    return NextResponse.json({ ok: true });
+  }
+
+  // Delivery status updates from Meta (outgoing messages: sent/delivered/read/failed).
+  const statuses = parseWhatsAppCloudStatuses(json);
+  if (statuses.length > 0) {
+    for (const s of statuses) {
+      await applyMetaSystemNotificationStatus({ wamid: s.id, status: s.status }).catch((error) => {
+        console.warn("[webhooks/whatsapp] meta_status_update_failed", {
+          wamid: s.id,
+          status: s.status,
+          error: error instanceof Error ? error.message : "update_failed",
+        });
+      });
+    }
     return NextResponse.json({ ok: true });
   }
 

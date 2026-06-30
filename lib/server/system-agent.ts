@@ -19,6 +19,7 @@ import {
   remoteJidToEvoNumber,
 } from "@/lib/integrations/evolution-api";
 import { extractInstanceJid } from "@/lib/integrations/evolution-webhook-parse";
+import { sendWhatsAppTextMessage } from "@/lib/integrations/whatsapp-cloud";
 import { sendPresence, typingDelayMs } from "@/lib/server/evolution-presence";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
@@ -1121,6 +1122,216 @@ export async function reconcileStalePendingNotifications(maxAgeSeconds = 60): Pr
   return reconcileUndeliveredNotifications(maxAgeSeconds);
 }
 
+// ─── Meta Cloud API provider ─────────────────────────────────────────────────
+
+export type SystemAgentMetaConfig = {
+  phoneNumberId: string;
+  accessToken: string;
+  displayPhone: string | null;
+  verifiedName: string | null;
+  active: boolean;
+};
+
+export async function getSystemAgentMetaConfig(): Promise<SystemAgentMetaConfig | null> {
+  try {
+    const meta = await readSystemAgentMetadataRecord();
+    const phoneNumberId = typeof meta.meta_phone_number_id === "string" ? meta.meta_phone_number_id.trim() : "";
+    const accessToken = typeof meta.meta_access_token === "string" ? meta.meta_access_token.trim() : "";
+    if (!phoneNumberId || !accessToken) return null;
+    return {
+      phoneNumberId,
+      accessToken,
+      displayPhone: typeof meta.meta_display_phone === "string" ? meta.meta_display_phone : null,
+      verifiedName: typeof meta.meta_verified_name === "string" ? meta.meta_verified_name : null,
+      active: meta.meta_provider_active === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function isMetaProviderActive(): Promise<boolean> {
+  const config = await getSystemAgentMetaConfig();
+  return config?.active === true;
+}
+
+export async function saveSystemAgentMetaConfig(params: {
+  phoneNumberId: string;
+  accessToken: string;
+  displayPhone: string | null;
+  verifiedName: string | null;
+}): Promise<void> {
+  await patchSystemAgentMetadata({
+    meta_phone_number_id: params.phoneNumberId,
+    meta_access_token: params.accessToken,
+    meta_display_phone: params.displayPhone ?? null,
+    meta_verified_name: params.verifiedName ?? null,
+    meta_provider_active: true,
+  });
+}
+
+export async function clearSystemAgentMetaConfig(): Promise<void> {
+  const prev = await readSystemAgentMetadataRecord();
+  const next: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(prev)) {
+    if (!key.startsWith("meta_")) next[key] = value;
+  }
+  next.meta_provider_active = false;
+  const sb = createSupabaseServiceClient();
+  await sb
+    .from("tenant_agents")
+    .update({ metadata: next, updated_at: new Date().toISOString() })
+    .eq("tenant_id", SYSTEM_TENANT_ID)
+    .eq("agent_id", SYSTEM_AGENT_ID);
+}
+
+async function sendSystemNotificationViaMeta(
+  toNumber: string,
+  message: string,
+  options?: {
+    type?: string;
+    metadata?: Record<string, unknown> | null;
+    waitForOutcomeMs?: number;
+  },
+): Promise<{
+  ok: boolean;
+  error?: string;
+  deliveryStatus?: string;
+  deliveryError?: string | null;
+  debug?: {
+    numberSent?: string;
+    candidatesTried?: string[];
+    evolutionMessageId?: string | null;
+    evolutionMessageIds?: string[];
+    evolutionResponseStatus?: unknown;
+    sessionRestarted?: boolean;
+    sessionOwnerJid?: string | null;
+    logId?: string | null;
+    deliveryStatus?: string;
+  };
+}> {
+  const config = await getSystemAgentMetaConfig();
+  if (!config?.active) {
+    return { ok: false, error: "meta_provider_not_configured" };
+  }
+
+  const rawDigits = toNumber.replace(/\D/g, "");
+  const toWaId = rawDigits.startsWith("55") ? rawDigits : `55${rawDigits}`;
+
+  const send = await sendWhatsAppTextMessage({
+    toWaId,
+    text: message.slice(0, 4096),
+    phoneNumberId: config.phoneNumberId,
+    accessToken: config.accessToken,
+  });
+
+  const verifiedTest = (options?.waitForOutcomeMs ?? 0) > 0;
+  const logStatus = send.ok ? (verifiedTest ? "pending" : "sent") : "failed";
+
+  const logId = await logSystemNotification({
+    type: options?.type ?? "generic",
+    toNumber: toWaId,
+    message,
+    status: logStatus,
+    error: send.ok ? null : (send.error ?? "meta_send_failed"),
+    metadata: {
+      ...(options?.metadata ?? {}),
+      provider: "meta_cloud",
+      meta_phone_number_id: config.phoneNumberId,
+      number_raw: rawDigits,
+      number_normalized: toWaId,
+      meta_message_id: send.messageId ?? null,
+    },
+  });
+
+  const debug = {
+    numberSent: toWaId,
+    logId,
+  };
+
+  if (!send.ok) {
+    return { ok: false, error: send.error ?? "meta_send_failed", debug };
+  }
+
+  let deliveryStatus: string | undefined;
+  let deliveryError: string | null | undefined;
+  if (logId && verifiedTest) {
+    const outcome = await waitForSystemNotificationOutcome(logId, options?.waitForOutcomeMs);
+    if (outcome) {
+      deliveryStatus = outcome.status;
+      deliveryError = outcome.error;
+    }
+  }
+
+  const debugFinal = { ...debug, deliveryStatus };
+
+  if (deliveryStatus === "delivery_failed" || deliveryStatus === "failed") {
+    return {
+      ok: false,
+      error: deliveryError ?? "meta_delivery_failed",
+      deliveryStatus,
+      deliveryError,
+      debug: debugFinal,
+    };
+  }
+
+  if (verifiedTest && deliveryStatus !== "delivered" && deliveryStatus !== "sent") {
+    return {
+      ok: false,
+      error: "whatsapp_nao_confirmou_pending",
+      deliveryStatus: deliveryStatus ?? "pending",
+      deliveryError,
+      debug: debugFinal,
+    };
+  }
+
+  return {
+    ok: true,
+    deliveryStatus: deliveryStatus ?? logStatus,
+    deliveryError,
+    debug: debugFinal,
+  };
+}
+
+/** Atualiza status de notificação do sistema a partir de webhook de entrega Meta Cloud API. */
+export async function applyMetaSystemNotificationStatus(params: {
+  wamid: string;
+  status: string;
+}): Promise<SystemDeliveryUpdateResult> {
+  const wamid = params.wamid.trim();
+  if (!wamid) return "skipped";
+
+  const sb = createSupabaseServiceClient();
+  const { data } = await sb
+    .from("system_notifications_log")
+    .select("id, status, metadata")
+    .filter("metadata->>meta_message_id", "eq", wamid)
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  const row = data?.[0] as SystemNotificationRow | undefined;
+  if (!row) return "no_row";
+
+  const st = params.status.toLowerCase();
+
+  if (st === "failed" || st === "error") {
+    const updated = await applyDeliveryFailedToRow(sb, row, `meta_status:${params.status}`);
+    return updated ? "delivery_failed" : "skipped";
+  }
+
+  if (st === "delivered" || st === "read") {
+    const updated = await applyDeliveredToRow(sb, row, params.status);
+    return updated ? "delivered" : "skipped";
+  }
+
+  if (st === "sent") {
+    const updated = await applyServerAckToRow(sb, row, params.status);
+    return updated ? "sent" : "skipped";
+  }
+
+  return "skipped";
+}
+
 export async function sendSystemNotification(
   toNumber: string,
   message: string,
@@ -1148,6 +1359,11 @@ export async function sendSystemNotification(
     deliveryStatus?: string;
   };
 }> {
+  // Router: se API Meta Cloud está ativa como provider, delegar para ela.
+  if (await isMetaProviderActive()) {
+    return sendSystemNotificationViaMeta(toNumber, message, options);
+  }
+
   const rawDigits = toNumber.replace(/\D/g, "");
   const digits = normalizeBrazilianPhoneNumber(rawDigits);
 

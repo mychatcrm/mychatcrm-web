@@ -5,6 +5,13 @@ import { Bot, History, Smartphone } from "lucide-react";
 import { EvolutionQrSlotPanel } from "@/components/dashboard/integrations/EvolutionQrSlotPanel";
 import { cn } from "@/lib/utils";
 
+type MetaConfig = {
+  active: boolean;
+  phone_number_id: string | null;
+  display_phone: string | null;
+  verified_name: string | null;
+};
+
 export type SystemNotificationLogItem = {
   id: string;
   type: string;
@@ -192,6 +199,7 @@ export function SystemAgentHub(props: {
   connectionState: string;
   waJid: string | null;
   initialLogs: SystemNotificationLogItem[];
+  initialMetaConfig?: MetaConfig | null;
 }) {
   const [logs, setLogs] = useState(props.initialLogs);
   const [connectionState, setConnectionState] = useState(props.connectionState);
@@ -209,6 +217,11 @@ export function SystemAgentHub(props: {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [qrPanelRevision, setQrPanelRevision] = useState(0);
   const [seedQrDataUrl, setSeedQrDataUrl] = useState<string | null>(null);
+  const [metaConfig, setMetaConfig] = useState<MetaConfig | null>(props.initialMetaConfig ?? null);
+  const [metaBusy, setMetaBusy] = useState(false);
+  const [metaPhoneNumberId, setMetaPhoneNumberId] = useState("");
+  const [metaAccessToken, setMetaAccessToken] = useState("");
+  const [metaError, setMetaError] = useState<string | null>(null);
   const conn = connectionLabel(connectionState);
   const senderLine = formatWaJid(waJid);
   // Sessão "open" sem número conectado = sessão zumbi (API aceita, WhatsApp não entrega).
@@ -393,6 +406,75 @@ export function SystemAgentHub(props: {
     }, 15_000);
     return () => clearInterval(timer);
   }, [refreshIdentity]);
+
+  const refreshMetaConfig = useCallback(async () => {
+    const res = await fetch("/api/admin/system-agent/meta/config", { credentials: "same-origin" });
+    if (!res.ok) return;
+    const json = (await res.json()) as MetaConfig & { error?: string };
+    if (!json.error) setMetaConfig(json);
+  }, []);
+
+  useEffect(() => {
+    void refreshMetaConfig();
+  }, [refreshMetaConfig]);
+
+  const connectMeta = useCallback(async () => {
+    const phoneNumberId = metaPhoneNumberId.trim();
+    const accessToken = metaAccessToken.trim();
+    if (!phoneNumberId || !accessToken) {
+      setMetaError("Preencha o Phone Number ID e o Access Token.");
+      return;
+    }
+    setMetaBusy(true);
+    setMetaError(null);
+    try {
+      const res = await fetch("/api/admin/system-agent/meta/config", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone_number_id: phoneNumberId, access_token: accessToken }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        detail?: string;
+        active?: boolean;
+        phone_number_id?: string | null;
+        display_phone?: string | null;
+        verified_name?: string | null;
+      };
+      if (!res.ok) {
+        setMetaError(json.error ?? "Falha ao conectar API Meta.");
+        return;
+      }
+      setMetaConfig({
+        active: true,
+        phone_number_id: json.phone_number_id ?? phoneNumberId,
+        display_phone: json.display_phone ?? null,
+        verified_name: json.verified_name ?? null,
+      });
+      setMetaPhoneNumberId("");
+      setMetaAccessToken("");
+    } finally {
+      setMetaBusy(false);
+    }
+  }, [metaPhoneNumberId, metaAccessToken]);
+
+  const disconnectMeta = useCallback(async () => {
+    setMetaBusy(true);
+    setMetaError(null);
+    try {
+      const res = await fetch("/api/admin/system-agent/meta/config", {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      if (res.ok) {
+        setMetaConfig({ active: false, phone_number_id: null, display_phone: null, verified_name: null });
+      }
+    } finally {
+      setMetaBusy(false);
+    }
+  }, []);
 
   const restartSession = useCallback(async () => {
     setRestartBusy(true);
@@ -800,17 +882,142 @@ export function SystemAgentHub(props: {
         <div className="mb-4 flex items-center gap-2">
           <Smartphone className="h-4 w-4 text-primary" aria-hidden />
           <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">
-            WhatsApp do agente do sistema
+            Método de envio WhatsApp
           </h2>
         </div>
-        <EvolutionQrSlotPanel
-          key={`system-agent-qr-${qrPanelRevision}`}
-          slotIndex={0}
-          sessionApiPath="/api/admin/system-agent/evolution/session"
-          statusApiPath="/api/admin/system-agent/evolution/status"
-          autoProvision={false}
-          seedQrDataUrl={seedQrDataUrl}
-        />
+        <p className="mb-4 text-xs text-content-muted">
+          Escolha <strong>um</strong> método de envio. Somente um pode estar ativo por vez.
+        </p>
+        <div className="grid gap-4 lg:grid-cols-2">
+          {/* Card QR Scan (Evolution) */}
+          <div
+            className={cn(
+              "rounded-lg border p-4 transition-opacity",
+              metaConfig?.active
+                ? "border-line/40 bg-surface-elevated/20 opacity-60"
+                : "border-primary/30 bg-primary/5",
+            )}
+          >
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-content-secondary">QR Scan (Evolution/Baileys)</span>
+              {metaConfig?.active ? (
+                <span className="rounded-full bg-content-faint/10 px-2 py-0.5 text-[10px] font-medium text-content-faint">
+                  inativo — API Meta ativa
+                </span>
+              ) : (
+                <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+                  ativo
+                </span>
+              )}
+            </div>
+            {metaConfig?.active ? (
+              <p className="text-xs text-content-muted">
+                Para usar QR Scan, desconecte a API Meta no card ao lado.
+              </p>
+            ) : (
+              <EvolutionQrSlotPanel
+                key={`system-agent-qr-${qrPanelRevision}`}
+                slotIndex={0}
+                sessionApiPath="/api/admin/system-agent/evolution/session"
+                statusApiPath="/api/admin/system-agent/evolution/status"
+                autoProvision={false}
+                seedQrDataUrl={seedQrDataUrl}
+              />
+            )}
+          </div>
+
+          {/* Card API Oficial Meta */}
+          <div
+            className={cn(
+              "rounded-lg border p-4 transition-opacity",
+              metaConfig?.active
+                ? "border-primary/30 bg-primary/5"
+                : "border-line/40 bg-surface-elevated/20",
+            )}
+          >
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-content-secondary">API Oficial Meta</span>
+              {metaConfig?.active ? (
+                <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+                  ativo
+                </span>
+              ) : (
+                <span className="rounded-full bg-content-faint/10 px-2 py-0.5 text-[10px] font-medium text-content-faint">
+                  inativo
+                </span>
+              )}
+            </div>
+
+            {metaConfig?.active ? (
+              <div className="space-y-3">
+                <dl className="grid gap-1.5 text-xs">
+                  <div>
+                    <dt className="text-content-faint">Número</dt>
+                    <dd className="font-mono text-content-secondary">
+                      {metaConfig.display_phone ?? metaConfig.phone_number_id ?? "—"}
+                    </dd>
+                  </div>
+                  {metaConfig.verified_name ? (
+                    <div>
+                      <dt className="text-content-faint">Nome verificado</dt>
+                      <dd className="text-content-secondary">{metaConfig.verified_name}</dd>
+                    </div>
+                  ) : null}
+                  <div>
+                    <dt className="text-content-faint">Phone Number ID</dt>
+                    <dd className="break-all font-mono text-content-secondary">
+                      {metaConfig.phone_number_id ?? "—"}
+                    </dd>
+                  </div>
+                </dl>
+                <button
+                  type="button"
+                  disabled={metaBusy}
+                  onClick={() => void disconnectMeta()}
+                  className="rounded-lg border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-100 hover:bg-rose-500/20 disabled:opacity-60"
+                >
+                  {metaBusy ? "Desconectando…" : "Desconectar API Meta"}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs leading-relaxed text-content-muted">
+                  Para números WhatsApp Business registrados na Meta Cloud API (ex.:{" "}
+                  <span className="font-mono">556282067910</span>). Não usa Evolution/Baileys.
+                </p>
+                <label className="block text-xs">
+                  <span className="mb-1 block text-content-faint">Phone Number ID</span>
+                  <input
+                    type="text"
+                    value={metaPhoneNumberId}
+                    onChange={(e) => setMetaPhoneNumberId(e.target.value)}
+                    placeholder="123456789012345"
+                    className="w-full rounded-lg border border-line bg-surface-elevated px-3 py-2 text-content"
+                  />
+                </label>
+                <label className="block text-xs">
+                  <span className="mb-1 block text-content-faint">Access Token</span>
+                  <input
+                    type="password"
+                    value={metaAccessToken}
+                    onChange={(e) => setMetaAccessToken(e.target.value)}
+                    placeholder="EAABn…"
+                    className="w-full rounded-lg border border-line bg-surface-elevated px-3 py-2 text-content"
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={metaBusy || !metaPhoneNumberId.trim() || !metaAccessToken.trim()}
+                  onClick={() => void connectMeta()}
+                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+                >
+                  {metaBusy ? "Conectando…" : "Conectar API Meta"}
+                </button>
+                {metaError ? <p className="text-xs text-rose-300">{metaError}</p> : null}
+              </div>
+            )}
+          </div>
+        </div>
       </section>
 
       <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
