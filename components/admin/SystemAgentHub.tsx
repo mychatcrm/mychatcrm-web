@@ -17,6 +17,7 @@ import {
   Activity,
   Link2,
   GitMerge,
+  ChevronDown,
 } from "lucide-react";
 import { EvolutionQrSlotPanel } from "@/components/dashboard/integrations/EvolutionQrSlotPanel";
 import { LiveConversationsPanel } from "@/components/admin/system-agent/LiveConversationsPanel";
@@ -861,148 +862,188 @@ export function SystemAgentHub(props: {
 
       {/* Diagnóstico e manutenção */}
       <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
-        <div className="mb-4 flex items-center gap-2">
+        <div className="mb-5 flex items-center gap-2">
           <Wrench className="h-4 w-4 text-primary" aria-hidden />
           <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">
             Diagnóstico e manutenção
           </h2>
         </div>
 
-        {/* Legenda compacta */}
-        <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-lg border border-line/50 bg-surface-elevated/30 px-3 py-2.5 text-xs text-content-muted">
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2 w-2 rounded-full bg-emerald-400" />
-            <strong className="text-emerald-400">entregue</strong> — WhatsApp confirmou no aparelho
-          </span>
-          <span className="hidden text-line sm:inline">·</span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
-            <strong className="text-amber-400">enviado</strong> — Evolution aceitou, sem confirmação ainda
-          </span>
-          <span className="hidden text-line sm:inline">·</span>
-          <span className="text-content-faint">Preso em "enviado"? Reconecte o QR e peça ao destinatário salvar o número.</span>
-        </div>
-
-        {/* Enviar teste — ação primária */}
-        <div className="mb-4 rounded-lg border border-line/60 bg-surface-elevated/20 p-3">
-          <p className="mb-2 text-xs font-medium text-content-secondary">Verificar entrega</p>
-          <div className="flex gap-2">
+        {/* Verificar entrega — ação principal (hero) */}
+        <div className="rounded-xl border border-line/70 bg-gradient-to-b from-surface-elevated/40 to-surface-elevated/10 p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-primary">
+              <Send className="h-3.5 w-3.5" />
+            </span>
+            <div>
+              <p className="text-xs font-semibold text-content">Verificar entrega</p>
+              <p className="text-[11px] text-content-faint">Envie uma mensagem de teste e veja se chega no aparelho.</p>
+            </div>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
             <input
               type="tel"
               value={testNumber}
               onChange={(e) => setTestNumber(e.target.value)}
               placeholder="62993580574"
-              className="flex-1 rounded-lg border border-line bg-surface-card px-3 py-2 text-sm text-content placeholder:text-content-faint focus:outline-none focus:ring-1 focus:ring-primary/50"
+              className="flex-1 rounded-lg border border-line bg-surface-card px-3 py-2.5 text-sm text-content placeholder:text-content-faint focus:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/20"
             />
             <button
               type="button"
               disabled={testBusy}
               onClick={() => void sendTest()}
-              className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+              className="flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-60"
             >
-              <Send className="h-3.5 w-3.5" />
+              <Send className="h-4 w-4" />
               {testBusy ? "Enviando…" : "Enviar teste"}
             </button>
           </div>
+
+          {/* Legenda de resultado */}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/5 px-2.5 py-1 text-[11px]">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              <strong className="font-medium text-emerald-400">entregue</strong>
+              <span className="text-content-faint">chegou no aparelho</span>
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/5 px-2.5 py-1 text-[11px]">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              <strong className="font-medium text-amber-400">enviado</strong>
+              <span className="text-content-faint">aceito, aguardando confirmação</span>
+            </span>
+          </div>
+
+          {actionMessage ? (
+            <p className="mt-3 rounded-lg border border-line/60 bg-surface-card px-3 py-2 text-xs leading-relaxed text-content-secondary">
+              {actionMessage}
+            </p>
+          ) : (
+            <p className="mt-2 text-[11px] text-content-faint">
+              Preso em &quot;enviado&quot;? Reconecte o QR e confirme que o destinatário salvou o número (anti-spam de número novo).
+            </p>
+          )}
         </div>
 
-        {/* Grade de ferramentas */}
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {/* Ferramentas de manutenção */}
+        <p className="mb-2.5 mt-5 text-[11px] font-semibold uppercase tracking-wider text-content-faint">
+          Ferramentas de manutenção
+        </p>
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
           <button
             type="button"
             disabled={restartBusy}
             onClick={() => void restartSession()}
-            className="flex flex-col items-start gap-1.5 rounded-lg border border-line bg-surface-elevated/20 px-3 py-2.5 text-left transition-colors hover:bg-surface-elevated/50 disabled:opacity-60"
+            className="group flex items-center gap-3 rounded-xl border border-line bg-surface-elevated/20 p-3 text-left transition-all hover:border-primary/30 hover:bg-surface-elevated/40 disabled:opacity-60"
           >
-            <RotateCcw className="h-4 w-4 text-content-secondary" />
-            <span className="text-xs font-medium text-content-secondary">
-              {restartBusy ? "Reconectando…" : "Forçar reconexão"}
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line/60 bg-surface-card text-content-secondary transition-colors group-hover:text-primary">
+              <RotateCcw className="h-4 w-4" />
             </span>
-            <span className="text-[10px] leading-tight text-content-faint">Gera novo QR</span>
+            <span className="min-w-0">
+              <span className="block text-xs font-semibold text-content-secondary">
+                {restartBusy ? "Reconectando…" : "Forçar reconexão"}
+              </span>
+              <span className="block text-[11px] leading-tight text-content-faint">Gera um QR novo para reconectar</span>
+            </span>
           </button>
+
           <button
             type="button"
             disabled={repairBusy}
             onClick={() => void repairSession()}
-            className="flex flex-col items-start gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-left transition-colors hover:bg-amber-500/10 disabled:opacity-60"
+            className="group flex items-center gap-3 rounded-xl border border-line bg-surface-elevated/20 p-3 text-left transition-all hover:border-amber-500/40 hover:bg-amber-500/5 disabled:opacity-60"
           >
-            <Wrench className="h-4 w-4 text-amber-400" />
-            <span className="text-xs font-medium text-amber-300">
-              {repairBusy ? "Reparando…" : "Reparar sessão"}
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400">
+              <Wrench className="h-4 w-4" />
             </span>
-            <span className="text-[10px] leading-tight text-amber-400/60">Reinicia na VPS</span>
+            <span className="min-w-0">
+              <span className="block text-xs font-semibold text-content-secondary">
+                {repairBusy ? "Reparando…" : "Reparar sessão"}
+              </span>
+              <span className="block text-[11px] leading-tight text-content-faint">Reinicia a sessão na VPS</span>
+            </span>
           </button>
+
           <button
             type="button"
             disabled={webhookReapplyBusy}
             onClick={() => void reapplyWebhook()}
-            className="flex flex-col items-start gap-1.5 rounded-lg border border-line bg-surface-elevated/20 px-3 py-2.5 text-left transition-colors hover:bg-surface-elevated/50 disabled:opacity-60"
+            className="group flex items-center gap-3 rounded-xl border border-line bg-surface-elevated/20 p-3 text-left transition-all hover:border-primary/30 hover:bg-surface-elevated/40 disabled:opacity-60"
           >
-            <Link2 className="h-4 w-4 text-content-secondary" />
-            <span className="text-xs font-medium text-content-secondary">
-              {webhookReapplyBusy ? "Aplicando…" : "Re-aplicar webhook"}
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line/60 bg-surface-card text-content-secondary transition-colors group-hover:text-primary">
+              <Link2 className="h-4 w-4" />
             </span>
-            <span className="text-[10px] leading-tight text-content-faint">Reconfigura na Evolution</span>
+            <span className="min-w-0">
+              <span className="block text-xs font-semibold text-content-secondary">
+                {webhookReapplyBusy ? "Aplicando…" : "Re-aplicar webhook"}
+              </span>
+              <span className="block text-[11px] leading-tight text-content-faint">Reconfigura o webhook na Evolution</span>
+            </span>
           </button>
+
           <button
             type="button"
             disabled={orphanReconcileBusy}
             onClick={() => void reconcileOrphans()}
-            className="flex flex-col items-start gap-1.5 rounded-lg border border-line bg-surface-elevated/20 px-3 py-2.5 text-left transition-colors hover:bg-surface-elevated/50 disabled:opacity-60"
+            className="group flex items-center gap-3 rounded-xl border border-line bg-surface-elevated/20 p-3 text-left transition-all hover:border-primary/30 hover:bg-surface-elevated/40 disabled:opacity-60"
           >
-            <GitMerge className="h-4 w-4 text-content-secondary" />
-            <span className="text-xs font-medium text-content-secondary">
-              {orphanReconcileBusy ? "Reconciliando…" : "Reconciliar órfãos"}
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line/60 bg-surface-card text-content-secondary transition-colors group-hover:text-primary">
+              <GitMerge className="h-4 w-4" />
             </span>
-            <span className="text-[10px] leading-tight text-content-faint">Fecha logs pendentes</span>
+            <span className="min-w-0">
+              <span className="block text-xs font-semibold text-content-secondary">
+                {orphanReconcileBusy ? "Reconciliando…" : "Reconciliar órfãos"}
+              </span>
+              <span className="block text-[11px] leading-tight text-content-faint">Fecha confirmações pendentes</span>
+            </span>
           </button>
         </div>
 
-        {/* Diagnóstico avançado — destacado abaixo da grade */}
+        {/* Diagnóstico avançado */}
         <button
           type="button"
           disabled={diagnoseBusy}
           onClick={() => void runDiagnose()}
-          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-line/60 bg-surface-elevated/10 px-4 py-2 text-xs font-medium text-content-secondary transition-colors hover:bg-surface-elevated/40 disabled:opacity-60"
+          className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line px-4 py-2.5 text-xs font-medium text-content-secondary transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-60"
         >
           <Activity className="h-3.5 w-3.5" />
           {diagnoseBusy ? "Verificando…" : "Diagnóstico avançado"}
         </button>
 
-        {actionMessage ? (
-          <p className="mt-3 rounded-lg bg-surface-elevated/30 px-3 py-2 text-xs text-content-muted">{actionMessage}</p>
-        ) : null}
+        {/* Ajuda colapsável */}
+        <div className="mt-4 space-y-2">
+          <details className="group rounded-xl border border-line/60 bg-surface-elevated/15 px-3.5 py-3 text-xs">
+            <summary className="flex cursor-pointer list-none items-center justify-between font-medium text-content-secondary">
+              Como usar estes controles (runbook)
+              <ChevronDown className="h-4 w-4 text-content-faint transition-transform group-open:rotate-180" />
+            </summary>
+            <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-content-muted">
+              <li><strong>Enviar teste</strong> — confirma que o número consegue entregar.</li>
+              <li><strong>Forçar reconexão</strong> — gera QR novo (limpa instâncias antigas).</li>
+              <li><strong>Reparar sessão</strong> — reinicia na Evolution quando &quot;Conectado&quot; mas não entrega.</li>
+              <li><strong>Re-aplicar webhook</strong> — reconfigura MESSAGES_UPDATE + CONNECTION_UPDATE.</li>
+              <li><strong>Reconciliar órfãos</strong> — fecha confirmações que chegaram antes do log.</li>
+              <li><strong>Restart VPS</strong> — via SSH: <code className="font-mono">scripts/evolution-vps-maintenance.sh restart</code>.</li>
+            </ol>
+          </details>
 
-        <details className="mt-4 rounded-lg border border-line/60 bg-surface-elevated/20 p-3 text-xs">
-          <summary className="cursor-pointer font-medium text-content-secondary">
-            Como usar estes controles (runbook)
-          </summary>
-          <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-content-muted">
-            <li><strong>Enviar teste</strong> — confirma que o número consegue entregar.</li>
-            <li><strong>Forçar reconexão</strong> — gera QR novo (limpa instâncias antigas).</li>
-            <li><strong>Reparar sessão</strong> — reinicia na Evolution quando "Conectado" mas não entrega.</li>
-            <li><strong>Re-aplicar webhook</strong> — reconfigura MESSAGES_UPDATE + CONNECTION_UPDATE.</li>
-            <li><strong>Reconciliar órfãos</strong> — fecha confirmações que chegaram antes do log.</li>
-            <li><strong>Restart VPS</strong> — via SSH: <code className="font-mono">scripts/evolution-vps-maintenance.sh restart</code>.</li>
-          </ol>
-        </details>
-
-        <details className="mt-2 rounded-lg border border-line/60 bg-surface-elevated/20 p-3 text-xs">
-          <summary className="cursor-pointer font-medium text-content-secondary">
-            Teste de isolamento (Evolution Manager)
-          </summary>
-          <p className="mt-2 text-content-muted">
-            Para descobrir se o problema é o app ou a VPS, compare o envio direto no Evolution Manager:
-          </p>
-          <ol className="mt-2 list-decimal space-y-1 pl-5 text-content-muted">
-            <li>Instância do <strong>sistema</strong> → envie texto para o número de teste.</li>
-            <li>Instância de um <strong>cliente</strong> → mesmo número.</li>
-            <li><strong>Enviar teste</strong> aqui no MyChatCRM → compare os três.</li>
-          </ol>
-          <p className="mt-2 text-[11px] text-content-faint">
-            Nenhum entrega → VPS/Baileys. Só cliente entrega → reconecte a sessão do sistema. Manager entrega mas app não → bug de formato no app.
-          </p>
-        </details>
+          <details className="group rounded-xl border border-line/60 bg-surface-elevated/15 px-3.5 py-3 text-xs">
+            <summary className="flex cursor-pointer list-none items-center justify-between font-medium text-content-secondary">
+              Teste de isolamento (Evolution Manager)
+              <ChevronDown className="h-4 w-4 text-content-faint transition-transform group-open:rotate-180" />
+            </summary>
+            <p className="mt-3 text-content-muted">
+              Para descobrir se o problema é o app ou a VPS, compare o envio direto no Evolution Manager:
+            </p>
+            <ol className="mt-2 list-decimal space-y-1 pl-5 text-content-muted">
+              <li>Instância do <strong>sistema</strong> → envie texto para o número de teste.</li>
+              <li>Instância de um <strong>cliente</strong> → mesmo número.</li>
+              <li><strong>Enviar teste</strong> aqui no MyChatCRM → compare os três.</li>
+            </ol>
+            <p className="mt-2 text-[11px] text-content-faint">
+              Nenhum entrega → VPS/Baileys. Só cliente entrega → reconecte a sessão do sistema. Manager entrega mas app não → bug de formato no app.
+            </p>
+          </details>
+        </div>
         {diagnose ? (
           <div className="mt-4 space-y-2 rounded-lg border border-line/80 bg-surface-elevated/40 p-3 text-xs">
             <div className="grid gap-1 sm:grid-cols-2">
