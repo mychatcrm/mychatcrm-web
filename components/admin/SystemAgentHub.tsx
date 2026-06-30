@@ -12,6 +12,11 @@ import {
   AlertTriangle,
   Circle,
   Clock,
+  Send,
+  RotateCcw,
+  Activity,
+  Link2,
+  GitMerge,
 } from "lucide-react";
 import { EvolutionQrSlotPanel } from "@/components/dashboard/integrations/EvolutionQrSlotPanel";
 import { LiveConversationsPanel } from "@/components/admin/system-agent/LiveConversationsPanel";
@@ -856,91 +861,128 @@ export function SystemAgentHub(props: {
 
       {/* Diagnóstico e manutenção */}
       <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
-        <div className="mb-1 flex items-center gap-2">
+        <div className="mb-4 flex items-center gap-2">
           <Wrench className="h-4 w-4 text-primary" aria-hidden />
           <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">
             Diagnóstico e manutenção
           </h2>
         </div>
-        <p className="mt-2 text-xs leading-relaxed text-content-muted">
-          <strong className="text-emerald-400">entregue ✓</strong> (verde) = o WhatsApp confirmou a entrega no
-          aparelho — só isso é sucesso de verdade. <strong className="text-amber-400">enviado</strong> (amarelo) = a
-          Evolution aceitou, mas a entrega ainda não foi confirmada pelo webhook. Se fica preso em
-          &quot;enviado&quot;, a mensagem provavelmente não chegou: reconecte com QR o número {senderLine} e confirme
-          que o destinatário tem o número salvo / respondeu (anti-spam de número novo).
-        </p>
-        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
-          <label className="flex-1 text-sm">
-            <span className="mb-1 block text-content-faint">Número de teste</span>
+
+        {/* Legenda compacta */}
+        <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-lg border border-line/50 bg-surface-elevated/30 px-3 py-2.5 text-xs text-content-muted">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2 w-2 rounded-full bg-emerald-400" />
+            <strong className="text-emerald-400">entregue</strong> — WhatsApp confirmou no aparelho
+          </span>
+          <span className="hidden text-line sm:inline">·</span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
+            <strong className="text-amber-400">enviado</strong> — Evolution aceitou, sem confirmação ainda
+          </span>
+          <span className="hidden text-line sm:inline">·</span>
+          <span className="text-content-faint">Preso em "enviado"? Reconecte o QR e peça ao destinatário salvar o número.</span>
+        </div>
+
+        {/* Enviar teste — ação primária */}
+        <div className="mb-4 rounded-lg border border-line/60 bg-surface-elevated/20 p-3">
+          <p className="mb-2 text-xs font-medium text-content-secondary">Verificar entrega</p>
+          <div className="flex gap-2">
             <input
               type="tel"
               value={testNumber}
               onChange={(e) => setTestNumber(e.target.value)}
               placeholder="62993580574"
-              className="w-full rounded-lg border border-line bg-surface-elevated px-3 py-2 text-content"
+              className="flex-1 rounded-lg border border-line bg-surface-card px-3 py-2 text-sm text-content placeholder:text-content-faint focus:outline-none focus:ring-1 focus:ring-primary/50"
             />
-          </label>
-          <button
-            type="button"
-            disabled={testBusy}
-            onClick={() => void sendTest()}
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-          >
-            {testBusy ? "Enviando…" : "Enviar teste"}
-          </button>
+            <button
+              type="button"
+              disabled={testBusy}
+              onClick={() => void sendTest()}
+              className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+            >
+              <Send className="h-3.5 w-3.5" />
+              {testBusy ? "Enviando…" : "Enviar teste"}
+            </button>
+          </div>
+        </div>
+
+        {/* Grade de ferramentas */}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <button
             type="button"
             disabled={restartBusy}
             onClick={() => void restartSession()}
-            className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-content-secondary disabled:opacity-60"
+            className="flex flex-col items-start gap-1.5 rounded-lg border border-line bg-surface-elevated/20 px-3 py-2.5 text-left transition-colors hover:bg-surface-elevated/50 disabled:opacity-60"
           >
-            {restartBusy ? "Reconectando…" : "Forçar reconexão (QR)"}
-          </button>
-          <button
-            type="button"
-            disabled={diagnoseBusy}
-            onClick={() => void runDiagnose()}
-            className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-content-secondary disabled:opacity-60"
-          >
-            {diagnoseBusy ? "Verificando…" : "Diagnóstico avançado"}
+            <RotateCcw className="h-4 w-4 text-content-secondary" />
+            <span className="text-xs font-medium text-content-secondary">
+              {restartBusy ? "Reconectando…" : "Forçar reconexão"}
+            </span>
+            <span className="text-[10px] leading-tight text-content-faint">Gera novo QR</span>
           </button>
           <button
             type="button"
             disabled={repairBusy}
             onClick={() => void repairSession()}
-            className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-100 disabled:opacity-60"
+            className="flex flex-col items-start gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-left transition-colors hover:bg-amber-500/10 disabled:opacity-60"
           >
-            {repairBusy ? "Reparando…" : "Reparar sessão (VPS)"}
+            <Wrench className="h-4 w-4 text-amber-400" />
+            <span className="text-xs font-medium text-amber-300">
+              {repairBusy ? "Reparando…" : "Reparar sessão"}
+            </span>
+            <span className="text-[10px] leading-tight text-amber-400/60">Reinicia na VPS</span>
           </button>
           <button
             type="button"
             disabled={webhookReapplyBusy}
             onClick={() => void reapplyWebhook()}
-            className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-content-secondary disabled:opacity-60"
+            className="flex flex-col items-start gap-1.5 rounded-lg border border-line bg-surface-elevated/20 px-3 py-2.5 text-left transition-colors hover:bg-surface-elevated/50 disabled:opacity-60"
           >
-            {webhookReapplyBusy ? "Aplicando…" : "Re-aplicar webhook"}
+            <Link2 className="h-4 w-4 text-content-secondary" />
+            <span className="text-xs font-medium text-content-secondary">
+              {webhookReapplyBusy ? "Aplicando…" : "Re-aplicar webhook"}
+            </span>
+            <span className="text-[10px] leading-tight text-content-faint">Reconfigura na Evolution</span>
           </button>
           <button
             type="button"
             disabled={orphanReconcileBusy}
             onClick={() => void reconcileOrphans()}
-            className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-content-secondary disabled:opacity-60"
+            className="flex flex-col items-start gap-1.5 rounded-lg border border-line bg-surface-elevated/20 px-3 py-2.5 text-left transition-colors hover:bg-surface-elevated/50 disabled:opacity-60"
           >
-            {orphanReconcileBusy ? "Reconciliando…" : "Reconciliar órfãos"}
+            <GitMerge className="h-4 w-4 text-content-secondary" />
+            <span className="text-xs font-medium text-content-secondary">
+              {orphanReconcileBusy ? "Reconciliando…" : "Reconciliar órfãos"}
+            </span>
+            <span className="text-[10px] leading-tight text-content-faint">Fecha logs pendentes</span>
           </button>
         </div>
-        {actionMessage ? <p className="mt-3 text-xs text-content-muted">{actionMessage}</p> : null}
+
+        {/* Diagnóstico avançado — destacado abaixo da grade */}
+        <button
+          type="button"
+          disabled={diagnoseBusy}
+          onClick={() => void runDiagnose()}
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-line/60 bg-surface-elevated/10 px-4 py-2 text-xs font-medium text-content-secondary transition-colors hover:bg-surface-elevated/40 disabled:opacity-60"
+        >
+          <Activity className="h-3.5 w-3.5" />
+          {diagnoseBusy ? "Verificando…" : "Diagnóstico avançado"}
+        </button>
+
+        {actionMessage ? (
+          <p className="mt-3 rounded-lg bg-surface-elevated/30 px-3 py-2 text-xs text-content-muted">{actionMessage}</p>
+        ) : null}
 
         <details className="mt-4 rounded-lg border border-line/60 bg-surface-elevated/20 p-3 text-xs">
           <summary className="cursor-pointer font-medium text-content-secondary">
             Como usar estes controles (runbook)
           </summary>
           <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-content-muted">
-            <li><strong>Enviar teste</strong> — confirma que o número que atende consegue entregar uma mensagem.</li>
-            <li><strong>Forçar reconexão (QR)</strong> — gera um QR novo para reconectar o número (limpa instâncias antigas).</li>
-            <li><strong>Reparar sessão (VPS)</strong> — reinicia a sessão na Evolution quando &quot;Conectado&quot; mas não entrega.</li>
-            <li><strong>Re-aplicar webhook</strong> — reconfigura o webhook (MESSAGES_UPDATE + CONNECTION_UPDATE) na instância.</li>
-            <li><strong>Reconciliar órfãos</strong> — fecha confirmações de entrega que chegaram antes do log.</li>
+            <li><strong>Enviar teste</strong> — confirma que o número consegue entregar.</li>
+            <li><strong>Forçar reconexão</strong> — gera QR novo (limpa instâncias antigas).</li>
+            <li><strong>Reparar sessão</strong> — reinicia na Evolution quando "Conectado" mas não entrega.</li>
+            <li><strong>Re-aplicar webhook</strong> — reconfigura MESSAGES_UPDATE + CONNECTION_UPDATE.</li>
+            <li><strong>Reconciliar órfãos</strong> — fecha confirmações que chegaram antes do log.</li>
             <li><strong>Restart VPS</strong> — via SSH: <code className="font-mono">scripts/evolution-vps-maintenance.sh restart</code>.</li>
           </ol>
         </details>
@@ -950,8 +992,7 @@ export function SystemAgentHub(props: {
             Teste de isolamento (Evolution Manager)
           </summary>
           <p className="mt-2 text-content-muted">
-            Para descobrir se o problema é o app ou a VPS, teste o envio direto no Evolution Manager para o mesmo
-            número:
+            Para descobrir se o problema é o app ou a VPS, compare o envio direto no Evolution Manager:
           </p>
           <ol className="mt-2 list-decimal space-y-1 pl-5 text-content-muted">
             <li>Instância do <strong>sistema</strong> → envie texto para o número de teste.</li>
@@ -959,8 +1000,7 @@ export function SystemAgentHub(props: {
             <li><strong>Enviar teste</strong> aqui no MyChatCRM → compare os três.</li>
           </ol>
           <p className="mt-2 text-[11px] text-content-faint">
-            Nenhum entregar → VPS/Baileys. Só o cliente entregar → reconecte a sessão do sistema. Manager do sistema
-            entregar mas o app não → bug de formato/número no app.
+            Nenhum entrega → VPS/Baileys. Só cliente entrega → reconecte a sessão do sistema. Manager entrega mas app não → bug de formato no app.
           </p>
         </details>
         {diagnose ? (
