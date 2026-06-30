@@ -381,7 +381,13 @@ export async function evolutionSetWebhook(params: {
 
 export async function evolutionDeleteInstance(instanceName: string): Promise<EvolutionFetchResult<unknown>> {
   const enc = encodeURIComponent(instanceName.trim());
-  return evolutionFetchJson(`/instance/delete/${enc}`, { method: "DELETE" });
+  // Tenta DELETE; se bloqueado (405/403/0) cai para POST (Evolution suporta ambos).
+  const del = await evolutionFetchJson(`/instance/delete/${enc}`, { method: "DELETE" });
+  if (del.ok || del.status === 404) return del;
+  if (del.status === 405 || del.status === 403 || del.status === 0) {
+    return evolutionFetchJson(`/instance/delete/${enc}`, { method: "POST" });
+  }
+  return del;
 }
 
 export type EvolutionRemoveInstanceResult = {
@@ -400,7 +406,7 @@ async function evolutionInstanceExists(instanceName: string): Promise<boolean> {
 
 /**
  * Remove instância da Evolution de forma completa: logout (best-effort), delete e verificação.
- * O endpoint delete da Evolution já faz logout internamente; repetimos logout antes por compatibilidade.
+ * Tenta DELETE e POST como fallback (alguns proxies bloqueiam DELETE).
  */
 export async function evolutionRemoveInstanceCompletely(
   instanceName: string,
@@ -414,11 +420,15 @@ export async function evolutionRemoveInstanceCompletely(
 
   let del = await evolutionDeleteInstance(trimmed);
   if (!del.ok && del.status !== 404) {
-    // Segunda tentativa (alguns builds falham se logout anterior deixou estado inconsistente).
     del = await evolutionDeleteInstance(trimmed);
   }
 
   if (!del.ok && del.status !== 404) {
+    console.error("[evolution-api] delete_instance_failed", {
+      instanceName: trimmed,
+      status: del.status,
+      error: del.error,
+    });
     return {
       ok: false,
       deleted: false,
@@ -431,7 +441,7 @@ export async function evolutionRemoveInstanceCompletely(
   const stillThere = await evolutionInstanceExists(trimmed);
   return {
     ok: !stillThere,
-    deleted: true,
+    deleted: !stillThere,
     verifiedAbsent: !stillThere,
     error: stillThere ? "instance_still_present_after_delete" : null,
     status: del.status,
@@ -451,7 +461,9 @@ export async function evolutionRestartInstance(instanceName: string): Promise<Ev
 
 export async function evolutionLogoutInstance(instanceName: string): Promise<EvolutionFetchResult<unknown>> {
   const enc = encodeURIComponent(instanceName);
-  return evolutionFetchJson(`/instance/logout/${enc}`, { method: "DELETE" });
+  const res = await evolutionFetchJson(`/instance/logout/${enc}`, { method: "DELETE" });
+  if (res.ok || (res.status !== 405 && res.status !== 403 && res.status !== 0)) return res;
+  return evolutionFetchJson(`/instance/logout/${enc}`, { method: "POST" });
 }
 
 export async function evolutionSendText(params: {
