@@ -70,6 +70,25 @@ describe("Evolution instance removal verification", () => {
     expect(result.verifiedAbsent).toBe(true);
   });
 
+  it("treats Evolution 2.3.7 filtered inventory 404 as confirmed absence", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/instance/logout/")) return jsonResponse(404, { message: "not found" });
+      if (url.includes("/instance/delete/")) return jsonResponse(404, { message: "not found" });
+      if (url.includes("/instance/fetchInstances")) {
+        return jsonResponse(404, { message: 'Instance "mc-system-old" not found' });
+      }
+      return jsonResponse(404, {});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await evolutionRemoveInstanceCompletely("mc-system-old");
+
+    expect(result.ok).toBe(true);
+    expect(result.presence).toBe("absent");
+    expect(result.verifiedAbsent).toBe(true);
+  });
+
   it("returns unknown when the verification inventory cannot be queried", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

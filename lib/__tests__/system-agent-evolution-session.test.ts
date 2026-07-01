@@ -169,6 +169,18 @@ describe("system agent Evolution session transaction", () => {
 
     expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
     expect(evolutionCreateInstance).toHaveBeenCalledTimes(1);
+    expect(evolutionCreateInstance).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instanceName: expect.any(String),
+        settings: {
+          groupsIgnore: true,
+          readMessages: false,
+          readStatus: false,
+        },
+      }),
+    );
+    expect(evolutionCreateInstance.mock.calls[0]?.[0]).not.toHaveProperty("webhookUrl");
+    expect(evolutionSetWebhook).toHaveBeenCalledTimes(1);
   });
 
   it("removes the new instance and reservation when webhook configuration fails", async () => {

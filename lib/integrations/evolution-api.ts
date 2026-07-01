@@ -428,6 +428,11 @@ export async function evolutionGetInstancePresence(
   }
   const res = await evolutionFetchInstances(instanceName.trim());
   if (!res.ok) {
+    // Evolution 2.3.7 returns 404 when the filtered instance does not exist.
+    // This is positive proof of absence, not an unavailable inventory.
+    if (res.status === 404) {
+      return { state: "absent", status: res.status, error: null };
+    }
     return { state: "unknown", status: res.status, error: res.error };
   }
   const present = res.data.some((item) => item.name?.trim() === trimmed);

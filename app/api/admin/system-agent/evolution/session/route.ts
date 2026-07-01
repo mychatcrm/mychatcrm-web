@@ -192,7 +192,6 @@ async function provisionFreshSystemEvolutionSession(request: Request) {
 
   let createResult = await evolutionCreateInstance({
     instanceName,
-    webhookUrl,
     settings: {
       groupsIgnore: true,
       readMessages: false,
