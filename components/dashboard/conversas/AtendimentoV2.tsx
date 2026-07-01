@@ -6,9 +6,12 @@ import {
   Calendar,
   Check,
   CheckCheck,
+  CheckSquare,
   ChevronDown,
+  Filter,
   MessageCircle,
   Mic,
+  MoreVertical,
   Paperclip,
   Phone,
   Play,
@@ -16,11 +19,13 @@ import {
   Send,
   Smile,
   Tag,
+  Trash2,
   User,
   X,
 } from "lucide-react";
 import type { ClientSession } from "@/lib/client-auth";
 import { cn } from "@/lib/utils";
+import { DsButton } from "@/components/ds";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -57,6 +62,9 @@ type WaMessage = {
 };
 
 type InboxTab = "all" | "ia" | "unread";
+
+type AttendantFilter = "all" | "automation" | "human" | "waiting_human";
+type PeriodFilter = "all" | "today" | "7d" | "30d" | "custom";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -121,6 +129,43 @@ const MODE_DOT: Record<ConvMode, string> = {
   human: "bg-indigo-400",
 };
 
+const ATTENDANT_OPTIONS: { key: AttendantFilter; label: string }[] = [
+  { key: "all", label: "Todos" },
+  { key: "automation", label: "IA" },
+  { key: "human", label: "Humano" },
+  { key: "waiting_human", label: "Aguardando humano" },
+];
+
+const PERIOD_OPTIONS: { key: PeriodFilter; label: string }[] = [
+  { key: "all", label: "Todo período" },
+  { key: "today", label: "Hoje" },
+  { key: "7d", label: "Últimos 7 dias" },
+  { key: "30d", label: "Últimos 30 dias" },
+  { key: "custom", label: "Personalizado" },
+];
+
+function periodStart(period: PeriodFilter, customFrom: string): Date | null {
+  const now = new Date();
+  if (period === "today") return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (period === "7d") return new Date(now.getTime() - 7 * 86_400_000);
+  if (period === "30d") return new Date(now.getTime() - 30 * 86_400_000);
+  if (period === "custom" && customFrom) return new Date(`${customFrom}T00:00:00`);
+  return null;
+}
+
+/** Fecha popover/menu ao clicar fora do elemento referenciado. */
+function useClickOutside(ref: React.RefObject<HTMLElement | null>, active: boolean, onOutside: () => void) {
+  useEffect(() => {
+    if (!active) return;
+    function handlePointerDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onOutside();
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
+}
+
 // ---------------------------------------------------------------------------
 // API helpers (local — same endpoints as OperacaoConversasHub)
 // ---------------------------------------------------------------------------
@@ -164,6 +209,23 @@ async function apiSendMessage(remoteJid: string, text: string): Promise<boolean>
   return res.ok;
 }
 
+async function apiDeleteAllConversations(): Promise<void> {
+  const res = await fetch("/api/client/conversas/all", { method: "DELETE" });
+  if (!res.ok) throw new Error(`Erro ${res.status} ao limpar conversas.`);
+}
+
+async function apiBulkDeleteConversations(remoteJids: string[]): Promise<void> {
+  const res = await fetch("/api/client/conversas/bulk-delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ remoteJids }),
+  });
+  if (!res.ok) {
+    const detail = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(detail.error ?? `Erro ${res.status} ao excluir conversas selecionadas.`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
@@ -172,24 +234,46 @@ function ConvItem({
   conv,
   selected,
   onClick,
+  selectionMode = false,
+  checked = false,
+  onToggleCheck,
 }: {
   conv: WaConversation;
   selected: boolean;
   onClick: () => void;
+  selectionMode?: boolean;
+  checked?: boolean;
+  onToggleCheck?: () => void;
 }) {
   const name = convDisplayName(conv);
   const mode = conv.conversation_mode ?? "automation";
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={selectionMode ? onToggleCheck : onClick}
       className={cn(
         "flex w-full items-start gap-3 rounded-mc-base px-3 py-3 text-left transition-colors",
-        selected
+        selectionMode
+          ? checked
+            ? "border border-[rgba(242,68,0,0.3)] bg-[rgba(242,68,0,0.06)]"
+            : "border border-transparent hover:bg-mc-surface-2"
+          : selected
           ? "bg-[rgba(242,68,0,0.08)] border border-[rgba(242,68,0,0.2)]"
           : "border border-transparent hover:bg-mc-surface-2",
       )}
     >
+      {/* Checkbox (apenas em modo seleção) */}
+      {selectionMode && (
+        <span
+          aria-hidden
+          className={cn(
+            "mt-1.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px] border-2 transition-colors",
+            checked ? "border-[#F24400] bg-[#F24400] text-white" : "border-mc-border bg-mc-surface",
+          )}
+        >
+          {checked && <Check size={12} strokeWidth={3} />}
+        </span>
+      )}
       {/* Avatar with mode dot */}
       <div className="relative shrink-0">
         <div className="flex h-10 w-10 items-center justify-center rounded-full bg-mc-surface-2 text-[13px] font-bold text-mc-muted">
@@ -220,7 +304,7 @@ function ConvItem({
         {conv.conversation_mode && (
           <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-mc-muted">
             <span className={cn("h-1.5 w-1.5 rounded-full", MODE_DOT[mode])} />
-            {MODE_LABEL[mode]}
+            {mode === "human" && conv.assigned_human_name ? conv.assigned_human_name : MODE_LABEL[mode]}
           </span>
         )}
       </div>
@@ -303,8 +387,28 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
   const [sending, setSending] = useState(false);
   const [showCrm, setShowCrm] = useState(true);
 
+  // Seleção múltipla + limpeza de conversas
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedForDeletion, setSelectedForDeletion] = useState<Set<string>>(new Set());
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<"all" | "selected" | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+
+  // Filtros avançados (período + atendente)
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [attendantFilter, setAttendantFilter] = useState<AttendantFilter>("all");
+  const [periodFilter, setPeriodFilter] = useState<PeriodFilter>("all");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const headerMenuRef = useRef<HTMLDivElement>(null);
+  const filtersRef = useRef<HTMLDivElement>(null);
+
+  useClickOutside(headerMenuRef, headerMenuOpen, () => setHeaderMenuOpen(false));
+  useClickOutside(filtersRef, filtersOpen, () => setFiltersOpen(false));
 
   // Load conversations
   useEffect(() => {
@@ -344,6 +448,7 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
 
   const iaCount = conversations.filter((c) => c.conversation_mode === "automation").length;
   const unreadCount = conversations.filter((c) => c.unreadCount > 0).length;
+  const filtersActive = attendantFilter !== "all" || periodFilter !== "all";
 
   const filtered = conversations.filter((c) => {
     const name = convDisplayName(c).toLowerCase();
@@ -352,8 +457,75 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
       tab === "all" ||
       (tab === "ia" && c.conversation_mode === "automation") ||
       (tab === "unread" && c.unreadCount > 0);
-    return matchSearch && matchTab;
+    const matchAttendant =
+      attendantFilter === "all" || (c.conversation_mode ?? "automation") === attendantFilter;
+
+    let matchPeriod = true;
+    if (periodFilter !== "all") {
+      const convDate = new Date(c.lastAt);
+      const start = periodStart(periodFilter, customFrom);
+      if (start && convDate < start) matchPeriod = false;
+      if (periodFilter === "custom" && customTo) {
+        const end = new Date(`${customTo}T23:59:59`);
+        if (convDate > end) matchPeriod = false;
+      }
+    }
+
+    return matchSearch && matchTab && matchAttendant && matchPeriod;
   });
+
+  const clearFilters = () => {
+    setAttendantFilter("all");
+    setPeriodFilter("all");
+    setCustomFrom("");
+    setCustomTo("");
+  };
+
+  const enterSelectionMode = () => {
+    setHeaderMenuOpen(false);
+    setSelectionMode(true);
+    setSelectedForDeletion(new Set());
+  };
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedForDeletion(new Set());
+  };
+
+  const toggleSelectForDeletion = (jid: string) => {
+    setSelectedForDeletion((prev) => {
+      const next = new Set(prev);
+      if (next.has(jid)) next.delete(jid);
+      else next.add(jid);
+      return next;
+    });
+  };
+
+  const handleConfirmDelete = async () => {
+    if (deleteBusy || !confirmAction) return;
+    setDeleteBusy(true);
+    setActionError(null);
+    const jids = confirmAction === "all" ? conversations.map((c) => c.remoteJid) : Array.from(selectedForDeletion);
+    const jidSet = new Set(jids);
+    const previous = conversations;
+    setConversations((prev) => prev.filter((c) => !jidSet.has(c.remoteJid)));
+    if (selectedJid && jidSet.has(selectedJid)) setSelectedJid(null);
+    try {
+      if (confirmAction === "all") {
+        await apiDeleteAllConversations();
+      } else {
+        await apiBulkDeleteConversations(jids);
+      }
+      setConfirmAction(null);
+      setSelectionMode(false);
+      setSelectedForDeletion(new Set());
+    } catch (e) {
+      setConversations(previous);
+      setActionError(e instanceof Error ? e.message : "Erro ao limpar conversas.");
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
 
   const handleSend = async () => {
     if (!selectedJid || !compose.trim() || sending) return;
@@ -388,50 +560,204 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
         <div className="border-b border-mc-border px-5 pb-3 pt-5">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-xl font-extrabold tracking-tight text-mc-text">Conversas</h2>
-            <button
-              type="button"
-              className="flex h-9 w-9 items-center justify-center rounded-mc-base text-white transition-colors active:scale-[0.98]"
-              style={{ backgroundColor: "var(--color-brand)" }}
-              aria-label="Nova conversa"
-            >
-              <span className="text-xl font-light leading-none">+</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="flex h-9 w-9 items-center justify-center rounded-mc-base text-white transition-colors active:scale-[0.98]"
+                style={{ backgroundColor: "var(--color-brand)" }}
+                aria-label="Nova conversa"
+              >
+                <span className="text-xl font-light leading-none">+</span>
+              </button>
+              <div className="relative" ref={headerMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setHeaderMenuOpen((v) => !v)}
+                  className="flex h-9 w-9 items-center justify-center rounded-mc-base text-mc-muted transition-colors hover:bg-mc-surface-2"
+                  aria-label="Mais opções"
+                  aria-expanded={headerMenuOpen}
+                >
+                  <MoreVertical size={18} strokeWidth={1.9} />
+                </button>
+                {headerMenuOpen && (
+                  <div className="absolute right-0 top-11 z-20 w-56 overflow-hidden rounded-mc-base border border-mc-border bg-mc-surface py-1.5">
+                    <button
+                      type="button"
+                      onClick={enterSelectionMode}
+                      disabled={conversations.length === 0}
+                      className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-[13px] font-medium text-mc-text transition-colors hover:bg-mc-surface-2 disabled:opacity-40"
+                    >
+                      <CheckSquare size={15} strokeWidth={1.9} />
+                      Selecionar conversas
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHeaderMenuOpen(false);
+                        setConfirmAction("all");
+                      }}
+                      disabled={conversations.length === 0}
+                      className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-[13px] font-medium text-error transition-colors hover:bg-mc-surface-2 disabled:opacity-40"
+                    >
+                      <Trash2 size={15} strokeWidth={1.9} />
+                      Limpar todas as conversas
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
-          {/* Search */}
-          <div className="flex items-center gap-2.5 rounded-mc-base bg-mc-surface-2 px-4 py-2.5">
-            <Search size={14} strokeWidth={1.9} className="shrink-0 text-mc-muted" />
-            <input
-              type="search"
-              placeholder="Buscar contato ou mensagem…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full bg-transparent text-[13.5px] text-mc-text placeholder:text-mc-muted focus:outline-none"
-            />
+          {/* Search + filtros */}
+          <div className="flex items-center gap-2">
+            <div className="flex flex-1 items-center gap-2.5 rounded-mc-base bg-mc-surface-2 px-4 py-2.5">
+              <Search size={14} strokeWidth={1.9} className="shrink-0 text-mc-muted" />
+              <input
+                type="search"
+                placeholder="Buscar contato ou mensagem…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full bg-transparent text-[13.5px] text-mc-text placeholder:text-mc-muted focus:outline-none"
+              />
+            </div>
+            <div className="relative shrink-0" ref={filtersRef}>
+              <button
+                type="button"
+                onClick={() => setFiltersOpen((v) => !v)}
+                className={cn(
+                  "relative flex h-[38px] w-[38px] items-center justify-center rounded-mc-base transition-colors",
+                  filtersActive || filtersOpen
+                    ? "bg-mc-rail text-white"
+                    : "bg-mc-surface-2 text-mc-muted hover:text-mc-text",
+                )}
+                aria-label="Filtros"
+                aria-expanded={filtersOpen}
+              >
+                <Filter size={15} strokeWidth={1.9} />
+                {filtersActive && (
+                  <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-[#F24400] ring-2 ring-mc-surface" />
+                )}
+              </button>
+              {filtersOpen && (
+                <div className="absolute right-0 top-11 z-20 w-72 rounded-mc-base border border-mc-border bg-mc-surface p-4">
+                  <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.08em] text-mc-muted">
+                    Atendente
+                  </p>
+                  <div className="mb-4 flex flex-wrap gap-1.5">
+                    {ATTENDANT_OPTIONS.map(({ key, label }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setAttendantFilter(key)}
+                        className={cn(
+                          "rounded-full px-3 py-1.5 text-[12px] font-semibold transition-colors",
+                          attendantFilter === key
+                            ? "bg-mc-rail text-white"
+                            : "bg-mc-surface-2 text-mc-muted hover:text-mc-text",
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.08em] text-mc-muted">
+                    Período
+                  </p>
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {PERIOD_OPTIONS.map(({ key, label }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setPeriodFilter(key)}
+                        className={cn(
+                          "rounded-full px-3 py-1.5 text-[12px] font-semibold transition-colors",
+                          periodFilter === key
+                            ? "bg-mc-rail text-white"
+                            : "bg-mc-surface-2 text-mc-muted hover:text-mc-text",
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {periodFilter === "custom" && (
+                    <div className="mb-1 mt-3 flex items-center gap-2">
+                      <input
+                        type="date"
+                        value={customFrom}
+                        onChange={(e) => setCustomFrom(e.target.value)}
+                        className="w-full rounded-mc-base border border-mc-border bg-mc-surface px-2.5 py-1.5 text-[12px] text-mc-text focus:outline-none"
+                      />
+                      <span className="shrink-0 text-[11px] text-mc-muted">até</span>
+                      <input
+                        type="date"
+                        value={customTo}
+                        onChange={(e) => setCustomTo(e.target.value)}
+                        className="w-full rounded-mc-base border border-mc-border bg-mc-surface px-2.5 py-1.5 text-[12px] text-mc-text focus:outline-none"
+                      />
+                    </div>
+                  )}
+                  <div className="mt-4 flex items-center justify-between border-t border-mc-border pt-3">
+                    <button
+                      type="button"
+                      onClick={clearFilters}
+                      className="text-[12px] font-semibold text-mc-muted transition-colors hover:text-mc-text"
+                    >
+                      Limpar filtros
+                    </button>
+                    <DsButton size="sm" onClick={() => setFiltersOpen(false)}>
+                      Aplicar
+                    </DsButton>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Filter tabs */}
-        <div className="flex gap-2 border-b border-mc-border px-5 py-3">
-          {([
-            { key: "all", label: "Todas" },
-            { key: "ia", label: `IA · ${iaCount}` },
-            { key: "unread", label: `Não lidas · ${unreadCount}` },
-          ] as { key: InboxTab; label: string }[]).map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setTab(key)}
-              className={cn(
-                "rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors",
-                tab === key
-                  ? "bg-mc-rail text-white"
-                  : "bg-mc-surface-2 text-mc-muted hover:text-mc-text",
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        {/* Filter tabs / barra de seleção */}
+        {selectionMode ? (
+          <div className="flex items-center justify-between gap-2 border-b border-mc-border px-5 py-3">
+            <span className="text-[12.5px] font-semibold text-mc-text">
+              {selectedForDeletion.size} selecionada{selectedForDeletion.size === 1 ? "" : "s"}
+            </span>
+            <div className="flex items-center gap-2">
+              <DsButton variant="ghost" size="sm" onClick={exitSelectionMode}>
+                Cancelar
+              </DsButton>
+              <DsButton
+                variant="danger"
+                size="sm"
+                disabled={selectedForDeletion.size === 0}
+                onClick={() => setConfirmAction("selected")}
+              >
+                <Trash2 size={14} strokeWidth={1.9} />
+                Excluir
+              </DsButton>
+            </div>
+          </div>
+        ) : (
+          <div className="flex gap-2 border-b border-mc-border px-5 py-3">
+            {([
+              { key: "all", label: "Todas" },
+              { key: "ia", label: `IA · ${iaCount}` },
+              { key: "unread", label: `Não lidas · ${unreadCount}` },
+            ] as { key: InboxTab; label: string }[]).map(({ key, label }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setTab(key)}
+                className={cn(
+                  "rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors",
+                  tab === key
+                    ? "bg-mc-rail text-white"
+                    : "bg-mc-surface-2 text-mc-muted hover:text-mc-text",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* List */}
         <div className="flex-1 overflow-y-auto p-3">
@@ -455,6 +781,9 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
                 conv={conv}
                 selected={conv.remoteJid === selectedJid}
                 onClick={() => setSelectedJid(conv.remoteJid)}
+                selectionMode={selectionMode}
+                checked={selectedForDeletion.has(conv.remoteJid)}
+                onToggleCheck={() => toggleSelectForDeletion(conv.remoteJid)}
               />
             ))}
           </div>
@@ -721,6 +1050,35 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
                   ? `Atendido por agente ${selectedConv.agent_id}.`
                   : "Sem notas adicionais para este contato."}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de confirmação — limpar todas / limpar selecionadas */}
+      {confirmAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-mc-base border border-mc-border bg-mc-surface p-6">
+            <p className="text-[15px] font-bold text-mc-text">
+              {confirmAction === "all"
+                ? "Limpar todas as conversas?"
+                : `Excluir ${selectedForDeletion.size} conversa${selectedForDeletion.size === 1 ? "" : "s"}?`}
+            </p>
+            <p className="mt-2 text-[13px] leading-relaxed text-mc-muted">
+              {confirmAction === "all"
+                ? "As conversas somem da sua caixa de entrada. O histórico e os dados do lead continuam guardados, e a conversa volta a aparecer automaticamente se o contato mandar uma nova mensagem."
+                : "As conversas selecionadas somem da caixa de entrada. O histórico e os dados do lead continuam guardados, e voltam a aparecer se o contato mandar nova mensagem."}
+            </p>
+            {actionError && (
+              <p className="mt-3 text-[12.5px] font-semibold text-error">{actionError}</p>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <DsButton variant="ghost" size="sm" onClick={() => setConfirmAction(null)} disabled={deleteBusy}>
+                Cancelar
+              </DsButton>
+              <DsButton variant="danger" size="sm" onClick={() => void handleConfirmDelete()} isLoading={deleteBusy}>
+                {confirmAction === "all" ? "Limpar tudo" : "Excluir"}
+              </DsButton>
             </div>
           </div>
         </div>
