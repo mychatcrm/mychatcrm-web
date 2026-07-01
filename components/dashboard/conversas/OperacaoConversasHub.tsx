@@ -67,23 +67,22 @@ const EmojiPicker = dynamic(
 // MyChatCRM panel palette
 // ─────────────────────────────────────────────────────────────────────────────
 const W = {
-  bgApp:      "var(--panel-workspace-fill)",
-  bgSidebar:  "var(--panel-card-fill)",
-  bgHeader:   "var(--panel-topbar-fill)",
-  bgBorder:   "rgb(var(--color-line) / 0.82)",
-  bgInput:    "var(--panel-section-fill)",
-  bgChat:     "var(--panel-workspace-fill)",
-  bubbleIn:   "var(--panel-card-fill)",
+  bgApp:      "#F2F2F2",
+  bgSidebar:  "#FFFFFF",
+  bgHeader:   "#FFFFFF",
+  bgBorder:   "#E2E8F0",
+  bgInput:    "#F8FAFC",
+  bgChat:     "#F2F2F2",
+  bubbleIn:   "#FFFFFF",
   bubbleOut:  "#F24400",
-  text:       "rgb(var(--color-content) / 1)",
-  muted:      "rgb(var(--color-content-muted) / 1)",
+  text:       "#09090B",
+  muted:      "#71717A",
   green:      "#F24400",
 } as const;
 
 // Chat background: flat surface from the design system.
 const CHAT_BG_STYLE: React.CSSProperties = {
-  background:
-    "radial-gradient(circle at 20% 0%, rgb(242 68 0 / 0.10), transparent 26rem), var(--panel-workspace-fill)",
+  background: W.bgChat,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
