@@ -63,6 +63,7 @@ type InboundRevealPatch = {
   pausedBy?: null;
   pausedReason?: null;
   conversationMode?: "automation";
+  activeJourneyId?: string | null;
 };
 
 export function buildInboundRevealPatch(
@@ -71,6 +72,7 @@ export function buildInboundRevealPatch(
     leadId?: string | null;
     agentId?: string | null;
     lastMessageAt?: string | null;
+    activeJourneyId?: string | null;
   } = {},
 ): InboundRevealPatch {
   const patch: InboundRevealPatch = {
@@ -129,6 +131,7 @@ export async function revealConversationOnInbound(params: {
   agentId?: string | null;
   lastMessageAt?: string | null;
   previousState?: ConversationState | null;
+  activeJourneyId?: string | null;
 }): Promise<ConversationState | null> {
   const sb = params.sb ?? createSupabaseServiceClient();
   const previous =
@@ -148,6 +151,7 @@ export async function revealConversationOnInbound(params: {
       leadId: params.leadId,
       agentId: params.agentId,
       lastMessageAt: params.lastMessageAt,
+      activeJourneyId: params.activeJourneyId,
     }),
   });
 

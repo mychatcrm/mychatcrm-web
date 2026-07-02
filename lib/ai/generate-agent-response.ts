@@ -152,6 +152,7 @@ export async function buildAgentDebugSystemPrompt(params: {
   tenantId: string;
   agentId: string;
   conversationId?: string | null;
+  journeyId?: string | null;
   message?: string | null;
 }): Promise<
   | {
@@ -222,6 +223,7 @@ export async function generateAgentResponse(params: {
   tenantId: string;
   agentId: string;
   conversationId?: string | null;
+  journeyId?: string | null;
   accountId?: string | null;
   userId?: string | null;
   customerId?: string | null;
@@ -333,6 +335,7 @@ export async function generateAgentResponse(params: {
       tenantId: params.tenantId,
       agentId: params.agentId,
       remoteJid: params.conversationId,
+      journeyId: params.journeyId,
       excludeMessageIds: params.excludeMessageIds,
       sourceOptions: {
         includeCrm: params.contextSources?.includeCrm,

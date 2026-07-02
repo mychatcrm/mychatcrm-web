@@ -56,6 +56,7 @@ export async function runInboundSmartWaitFlow(params: {
   tenantId: string;
   remoteJid: string;
   leadId?: string | null;
+  journeyId?: string | null;
   agentId: string;
   instanceName: string;
   inboundMessageKey: string;
@@ -75,6 +76,7 @@ export async function runInboundSmartWaitFlow(params: {
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,
     leadId: params.leadId,
+    journeyId: params.journeyId,
     agentId: params.agentId,
     instanceName: params.instanceName,
     whatsappMessageId: params.inboundMessageKey,

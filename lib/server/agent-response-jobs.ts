@@ -15,6 +15,10 @@ import {
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { processAgentResponseJob } from "@/lib/server/evolution-agent-reply";
 import { getInternalApiToken, internalApiAuthHeaders } from "@/lib/server/internal-api-auth";
+import {
+  authorizeActiveJourney,
+  isJourneyIsolationEnabled,
+} from "@/lib/server/lead-journeys";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -26,6 +30,7 @@ export type AgentResponseJobRow = {
   id: string;
   tenant_id: string;
   lead_id: string | null;
+  journey_id: string | null;
   remote_jid: string;
   agent_id: string;
   instance_name: string;
@@ -55,6 +60,7 @@ function rowFromDb(data: Record<string, unknown>): AgentResponseJobRow {
     id: String(data.id),
     tenant_id: String(data.tenant_id),
     lead_id: typeof data.lead_id === "string" ? data.lead_id : null,
+    journey_id: typeof data.journey_id === "string" ? data.journey_id : null,
     remote_jid: String(data.remote_jid),
     agent_id: String(data.agent_id),
     instance_name: String(data.instance_name),
@@ -113,7 +119,23 @@ export async function shouldScheduleAgentResponse(params: {
   tenantId: string;
   remoteJid: string;
   agentId: string;
+  journeyId?: string | null;
 }): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (isJourneyIsolationEnabled()) {
+    if (!params.journeyId) return { ok: false, reason: "missing_active_journey" };
+    const journey = await authorizeActiveJourney({
+      sb: params.sb,
+      tenantId: params.tenantId,
+      remoteJid: params.remoteJid,
+      preferredAgentId: params.agentId,
+    });
+    if (!journey.ok || journey.journey?.id !== params.journeyId) {
+      return {
+        ok: false,
+        reason: journey.ok ? "journey_id_mismatch" : journey.reason,
+      };
+    }
+  }
   const allowed = await isAgentAutomationAllowed({
     sb: params.sb,
     tenantId: params.tenantId,
@@ -153,6 +175,7 @@ async function rescheduleExistingJob(params: {
   tenantId: string;
   remoteJid: string;
   leadId?: string | null;
+  journeyId?: string | null;
   agentId: string;
   instanceName: string;
   whatsappMessageId: string;
@@ -185,6 +208,7 @@ async function rescheduleExistingJob(params: {
 
   const patch: Record<string, unknown> = {
     lead_id: params.leadId ?? current.lead_id,
+    journey_id: params.journeyId ?? current.journey_id,
     agent_id: params.agentId,
     instance_name: params.instanceName,
     last_message_at: occurredAt.toISOString(),
@@ -252,6 +276,7 @@ export async function scheduleAgentResponseJob(params: {
   tenantId: string;
   remoteJid: string;
   leadId?: string | null;
+  journeyId?: string | null;
   agentId: string;
   instanceName: string;
   whatsappMessageId: string;
@@ -276,6 +301,7 @@ export async function scheduleAgentResponseJob(params: {
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,
     agentId: params.agentId,
+    journeyId: params.journeyId,
   });
   if (!eligible.ok) {
     logJobEvent("schedule_skipped", {
@@ -292,6 +318,8 @@ export async function scheduleAgentResponseJob(params: {
     agentId: params.agentId,
     leadId: params.leadId,
     phone: params.remoteJid,
+    remoteJid: params.remoteJid,
+    journeyId: params.journeyId,
     triggerSource: "agent_response_job_schedule",
   });
   if (!autoContactGuard.ok) {
@@ -309,13 +337,16 @@ export async function scheduleAgentResponseJob(params: {
   const now = new Date();
   const occurredAt = params.occurredAt ? new Date(params.occurredAt) : now;
 
-  const { data: existing } = await sb
+  let existingQuery = sb
     .from("agent_response_jobs")
     .select("*")
     .eq("tenant_id", params.tenantId)
     .eq("remote_jid", params.remoteJid)
-    .in("status", ["pending", "processing"])
-    .maybeSingle();
+    .in("status", ["pending", "processing"]);
+  existingQuery = params.journeyId
+    ? existingQuery.eq("journey_id", params.journeyId)
+    : existingQuery.is("journey_id", null);
+  const { data: existing } = await existingQuery.maybeSingle();
 
   if (existing) {
     return rescheduleExistingJob({
@@ -324,6 +355,7 @@ export async function scheduleAgentResponseJob(params: {
       tenantId: params.tenantId,
       remoteJid: params.remoteJid,
       leadId: params.leadId,
+      journeyId: params.journeyId,
       agentId: params.agentId,
       instanceName: params.instanceName,
       whatsappMessageId: params.whatsappMessageId,
@@ -346,6 +378,7 @@ export async function scheduleAgentResponseJob(params: {
     .insert({
       tenant_id: params.tenantId,
       lead_id: params.leadId ?? null,
+      journey_id: params.journeyId ?? null,
       remote_jid: params.remoteJid,
       agent_id: params.agentId,
       instance_name: params.instanceName,
@@ -365,13 +398,16 @@ export async function scheduleAgentResponseJob(params: {
     const isConflict = error.code === "23505" || error.message.includes("duplicate");
     if (isConflict) {
       logJobEvent("schedule_conflict", { tenant_id: params.tenantId });
-      const { data: retryExisting } = await sb
+      let retryQuery = sb
         .from("agent_response_jobs")
         .select("*")
         .eq("tenant_id", params.tenantId)
         .eq("remote_jid", params.remoteJid)
-        .in("status", ["pending", "processing"])
-        .maybeSingle();
+        .in("status", ["pending", "processing"]);
+      retryQuery = params.journeyId
+        ? retryQuery.eq("journey_id", params.journeyId)
+        : retryQuery.is("journey_id", null);
+      const { data: retryExisting } = await retryQuery.maybeSingle();
       if (retryExisting) {
         return rescheduleExistingJob({
           sb,
@@ -379,6 +415,7 @@ export async function scheduleAgentResponseJob(params: {
           tenantId: params.tenantId,
           remoteJid: params.remoteJid,
           leadId: params.leadId,
+          journeyId: params.journeyId,
           agentId: params.agentId,
           instanceName: params.instanceName,
           whatsappMessageId: params.whatsappMessageId,

@@ -19,6 +19,10 @@ import {
 } from "@/lib/server/follow-up-engine";
 import { buildFollowUpEvalContext } from "@/lib/server/follow-up-evaluate";
 import { findNextActiveAgendaEvent } from "@/lib/server/agent-cta-scheduler";
+import {
+  authorizeActiveJourney,
+  isJourneyIsolationEnabled,
+} from "@/lib/server/lead-journeys";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -28,6 +32,7 @@ export type FollowUpJobRow = {
   agent_id: string;
   remote_jid: string;
   lead_id: string | null;
+  journey_id: string | null;
   scheduled_at: string;
   attempts: number;
   max_attempts: number;
@@ -57,6 +62,7 @@ function rowFromDb(data: Record<string, unknown>): FollowUpJobRow {
     agent_id: String(data.agent_id),
     remote_jid: String(data.remote_jid),
     lead_id: typeof data.lead_id === "string" ? data.lead_id : null,
+    journey_id: typeof data.journey_id === "string" ? data.journey_id : null,
     scheduled_at: String(data.scheduled_at),
     attempts: Number(data.attempts ?? 0),
     max_attempts: Number(data.max_attempts ?? 3),
@@ -126,6 +132,7 @@ async function saveOutboundFollowUp(params: {
   agentId: string;
   content: string;
   leadId?: string | null;
+  journeyId?: string | null;
 }): Promise<void> {
   await params.sb.from("whatsapp_messages").insert({
     tenant_id: params.tenantId,
@@ -135,6 +142,7 @@ async function saveOutboundFollowUp(params: {
     content: params.content.slice(0, 4000),
     agent_id: params.agentId,
     lead_id: params.leadId ?? null,
+    journey_id: params.journeyId ?? null,
   });
 }
 
@@ -287,9 +295,10 @@ export async function cancelPendingFollowUpJobs(params: {
   tenantId: string;
   remoteJid: string;
   reason?: string;
+  journeyId?: string | null;
 }): Promise<number> {
   const now = new Date().toISOString();
-  const { data, error } = await params.sb
+  let query = params.sb
     .from("follow_up_jobs")
     .update({
       status: "cancelled",
@@ -298,8 +307,9 @@ export async function cancelPendingFollowUpJobs(params: {
     })
     .eq("tenant_id", params.tenantId)
     .eq("remote_jid", params.remoteJid)
-    .eq("status", "pending")
-    .select("id");
+    .eq("status", "pending");
+  if (params.journeyId) query = query.eq("journey_id", params.journeyId);
+  const { data, error } = await query.select("id");
   if (error) {
     logFollowUp("cancel_failed", { tenant_id: params.tenantId, error: error.message });
     return 0;
@@ -315,6 +325,7 @@ export async function scheduleRetomadaJob(params: {
   agentId: string;
   remoteJid: string;
   leadId?: string | null;
+  journeyId?: string | null;
   scheduledAt: Date;
   maxAttempts?: number;
 }): Promise<void> {
@@ -339,6 +350,7 @@ export async function scheduleFollowUpAfterInbound(params: {
   agentId: string;
   remoteJid: string;
   leadId?: string | null;
+  journeyId?: string | null;
   settings: AgentFollowUpInteligente;
 }): Promise<string | null> {
   if (!params.settings.ativo) return null;
@@ -354,7 +366,31 @@ export async function scheduleFollowUpAfterInbound(params: {
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,
     reason: "inbound_reset",
+    journeyId: params.journeyId,
   });
+
+  if (isJourneyIsolationEnabled()) {
+    if (!params.journeyId) {
+      logFollowUp("schedule_blocked", {
+        tenant_id: params.tenantId,
+        reason: "missing_active_journey",
+      });
+      return null;
+    }
+    const journeyAuth = await authorizeActiveJourney({
+      sb,
+      tenantId: params.tenantId,
+      remoteJid: params.remoteJid,
+      preferredAgentId: params.agentId,
+    });
+    if (!journeyAuth.ok || journeyAuth.journey?.id !== params.journeyId) {
+      logFollowUp("schedule_blocked", {
+        tenant_id: params.tenantId,
+        reason: journeyAuth.ok ? "journey_id_mismatch" : journeyAuth.reason,
+      });
+      return null;
+    }
+  }
 
   const guard = await canAgentAutoContactLead({
     sb,
@@ -362,6 +398,8 @@ export async function scheduleFollowUpAfterInbound(params: {
     agentId: params.agentId,
     leadId: params.leadId,
     phone: phoneFromRemoteJid(params.remoteJid),
+    remoteJid: params.remoteJid,
+    journeyId: params.journeyId,
     triggerSource: "follow_up_schedule",
   });
   if (!guard.ok) {
@@ -383,6 +421,7 @@ export async function scheduleFollowUpAfterInbound(params: {
       agent_id: params.agentId,
       remote_jid: params.remoteJid,
       lead_id: params.leadId ?? null,
+      journey_id: params.journeyId ?? null,
       scheduled_at: scheduledAt.toISOString(),
       max_attempts: params.settings.tentativasContato,
       attempts: 0,
@@ -464,6 +503,38 @@ export async function processFollowUpJob(
     remoteJid: job.remote_jid,
     jobId: job.id,
   };
+
+  if (!isHumanAbandonedJob && isJourneyIsolationEnabled()) {
+    const journeyAuth = job.journey_id
+      ? await authorizeActiveJourney({
+          sb: client,
+          tenantId: job.tenant_id,
+          remoteJid: job.remote_jid,
+          preferredAgentId: job.agent_id,
+        })
+      : null;
+    if (!job.journey_id || !journeyAuth?.ok || journeyAuth.journey?.id !== job.journey_id) {
+      const reason =
+        !job.journey_id
+          ? "missing_active_journey"
+          : journeyAuth?.ok
+            ? "journey_id_mismatch"
+            : journeyAuth?.reason ?? "journey_not_authorized";
+      await client
+        .from("follow_up_jobs")
+        .update({
+          status: "cancelled",
+          last_error: reason,
+          updated_at: nowIso,
+        })
+        .eq("id", job.id);
+      logFollowUp("cancelled_journey_authorization", {
+        job_id: job.id,
+        reason,
+      });
+      return "cancelled";
+    }
+  }
 
   // Hoisted so the catch block can record events with the real activation state.
   // Starts false (safe default) and is set to settings.ativo once the agent row loads.
@@ -867,6 +938,7 @@ export async function processFollowUpJob(
           tenantId: job.tenant_id,
           remoteJid: job.remote_jid,
           limit: 20,
+          journeyId: job.journey_id,
         })
       : [];
 
@@ -881,6 +953,7 @@ export async function processFollowUpJob(
       tenantId: job.tenant_id,
       agentId: job.agent_id,
       conversationId: job.remote_jid,
+      journeyId: job.journey_id,
       customerId: job.remote_jid,
       feature: "agent_chat",
       contextSources: {
@@ -967,6 +1040,7 @@ export async function processFollowUpJob(
       agentId: job.agent_id,
       content: replyText,
       leadId: lead?.id ?? null,
+      journeyId: job.journey_id,
     });
 
     const nextAttempts = job.attempts + 1;

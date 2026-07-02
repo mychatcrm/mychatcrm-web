@@ -13,6 +13,7 @@ import {
   Send,
   ShieldCheck,
   Sparkles,
+  Square,
   Trash2,
   Users,
   Zap,
@@ -69,6 +70,30 @@ function previewBody(body: string) {
 
 const MAX_DRAFTS = 30;
 
+type CampaignConnection = {
+  id: string;
+  slot_index: number;
+  instance_name: string;
+  connection_state: string;
+  wa_jid: string | null;
+};
+
+type CampaignAgent = {
+  agent_id: string;
+  display_name: string | null;
+};
+
+type CampaignRow = {
+  id: string;
+  name: string;
+  status: "draft" | "scheduled" | "processing" | "completed" | "cancelled" | "failed";
+  total_recipients: number;
+  total_sent: number;
+  total_failed: number;
+  scheduled_at: string | null;
+  created_at: string;
+};
+
 function newDraftId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
   return `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -85,10 +110,44 @@ export function DisparosMassaHub({ campaignItems }: { campaignItems: string[] })
   const [drafts, setDrafts] = useState<DisparosDraft[]>([]);
   const [draftNotice, setDraftNotice] = useState<string | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
+  const [connections, setConnections] = useState<CampaignConnection[]>([]);
+  const [agents, setAgents] = useState<CampaignAgent[]>([]);
+  const [campaigns, setCampaigns] = useState<CampaignRow[]>([]);
+  const [connectionId, setConnectionId] = useState("");
+  const [agentId, setAgentId] = useState("");
+  const [audienceValue, setAudienceValue] = useState("");
+  const [eligibleRecipients, setEligibleRecipients] = useState(0);
+  const [campaignBusy, setCampaignBusy] = useState(false);
+  const [campaignError, setCampaignError] = useState<string | null>(null);
 
   useEffect(() => {
     setDrafts(loadDisparosDrafts());
   }, []);
+
+  const loadCampaignData = useCallback(async () => {
+    try {
+      const response = await fetch("/api/client/whatsapp-campaigns", { cache: "no-store" });
+      const payload = (await response.json()) as {
+        error?: string;
+        campaigns?: CampaignRow[];
+        connections?: CampaignConnection[];
+        agents?: CampaignAgent[];
+        eligibleRecipients?: number;
+      };
+      if (!response.ok) throw new Error(payload.error ?? "Não foi possível carregar campanhas.");
+      setCampaigns(payload.campaigns ?? []);
+      setConnections(payload.connections ?? []);
+      setAgents(payload.agents ?? []);
+      setEligibleRecipients(payload.eligibleRecipients ?? 0);
+      setConnectionId((current) => current || payload.connections?.[0]?.id || "");
+    } catch (error) {
+      setCampaignError(error instanceof Error ? error.message : "Não foi possível carregar campanhas.");
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadCampaignData();
+  }, [loadCampaignData]);
 
   const audience = useMemo(() => AUDIENCE.find((a) => a.id === audienceId)!, [audienceId]);
   const charCount = body.length;
@@ -158,22 +217,69 @@ export function DisparosMassaHub({ campaignItems }: { campaignItems: string[] })
     window.setTimeout(() => setDraftNotice(null), 3500);
   }, [campaignName]);
 
-  const history = useMemo(() => {
-    const delivered = [93, 87, 98, 91, 88];
-    const statuses: Array<"concluido" | "agendado" | "em fila"> = ["concluido", "concluido", "agendado", "em fila", "concluido"];
-    return campaignItems.map((name, i) => ({
-      name,
-      delivered: delivered[i % delivered.length],
-      status: statuses[i % statuses.length],
-      window: i % 2 === 0 ? "09h–18h" : "10h–20h",
-    }));
-  }, [campaignItems]);
+  const history = useMemo(
+    () =>
+      campaigns.map((campaign) => ({
+        id: campaign.id,
+        name: campaign.name,
+        delivered:
+          campaign.total_recipients > 0
+            ? Math.round((campaign.total_sent / campaign.total_recipients) * 100)
+            : 0,
+        status: campaign.status,
+        window: campaign.scheduled_at
+          ? new Date(campaign.scheduled_at).toLocaleString("pt-BR", {
+              dateStyle: "short",
+              timeStyle: "short",
+            })
+          : "Imediato",
+      })),
+    [campaigns],
+  );
 
-  const statusLabel = (s: "concluido" | "agendado" | "em fila") => {
-    if (s === "concluido") return "Concluido";
-    if (s === "agendado") return "Agendado";
-    return "Em fila";
+  const statusLabel = (status: CampaignRow["status"]) => {
+    if (status === "completed") return "Concluída";
+    if (status === "scheduled") return "Agendada";
+    if (status === "processing") return "Processando";
+    if (status === "cancelled") return "Cancelada";
+    if (status === "failed") return "Falhou";
+    return "Rascunho";
   };
+
+  const handleScheduleCampaign = useCallback(async () => {
+    setCampaignBusy(true);
+    setCampaignError(null);
+    try {
+      const response = await fetch("/api/client/whatsapp-campaigns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: campaignName,
+          connectionId,
+          agentId: agentId || null,
+          audienceType: audienceId === "etapa" ? "funnel_stage" : audienceId,
+          audienceValue: audienceId === "todos" ? null : audienceValue,
+          messageTemplate: body,
+          scheduledAt: schedule || null,
+        }),
+      });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Não foi possível agendar a campanha.");
+      setDraftNotice("Campanha persistida e pronta para processamento.");
+      await loadCampaignData();
+    } catch (error) {
+      setCampaignError(error instanceof Error ? error.message : "Não foi possível agendar a campanha.");
+    } finally {
+      setCampaignBusy(false);
+    }
+  }, [agentId, audienceId, audienceValue, body, campaignName, connectionId, loadCampaignData, schedule]);
+
+  const handleCancelCampaign = useCallback(async (campaignId: string) => {
+    const response = await fetch(`/api/client/whatsapp-campaigns/${encodeURIComponent(campaignId)}`, {
+      method: "DELETE",
+    });
+    if (response.ok) await loadCampaignData();
+  }, [loadCampaignData]);
 
   return (
     <div className="space-y-6">
@@ -199,7 +305,9 @@ export function DisparosMassaHub({ campaignItems }: { campaignItems: string[] })
                   Canal WhatsApp Business
                 </span>
               </Badge>
-              <Badge className="border-primary/35 bg-primary/10 text-primary">Cloud API · demo</Badge>
+              <Badge className="border-primary/35 bg-primary/10 text-primary">
+                Evolution · campanhas reais
+              </Badge>
             </div>
             <h3 className="text-balance text-2xl font-semibold tracking-tight text-content sm:text-3xl">
               Centro de disparo em massa
@@ -211,13 +319,13 @@ export function DisparosMassaHub({ campaignItems }: { campaignItems: string[] })
             <div className="flex flex-wrap gap-3 pt-1">
               <div className="flex items-center gap-2 rounded-xl border border-line bg-surface-card px-4 py-2 text-xs text-content-secondary">
                 <ShieldCheck className="size-4 shrink-0 text-emerald-500" aria-hidden />
-                Conformidade: opt-in e politica de bloqueio simulados neste ambiente.
+                Somente leads com opt-in WhatsApp ativo entram no público.
               </div>
             </div>
           </div>
           <div className="grid min-w-0 shrink-0 grid-cols-1 gap-2 min-[390px]:grid-cols-3 sm:gap-3 lg:w-[min(100%,380px)]">
             {[
-              { icon: Users, label: "Alcance", value: audience.reach, tone: "text-primary/85" },
+              { icon: Users, label: "Opt-ins ativos", value: eligibleRecipients.toLocaleString("pt-BR"), tone: "text-primary/85" },
               { icon: Activity, label: "Throughput", value: throughput === "suave" ? "12/s" : throughput === "normal" ? "28/s" : "45/s", tone: "text-primary" },
               {
                 icon: MessageSquareMore,
@@ -255,6 +363,42 @@ export function DisparosMassaHub({ campaignItems }: { campaignItems: string[] })
               Missao da campanha
             </div>
             <div className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-content-secondary">
+                    WhatsApp de envio
+                  </label>
+                  <select
+                    value={connectionId}
+                    onChange={(event) => setConnectionId(event.target.value)}
+                    className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                  >
+                    <option value="">Selecione uma conexão</option>
+                    {connections.map((connection) => (
+                      <option key={connection.id} value={connection.id}>
+                        Linha {connection.slot_index + 1} · {connection.wa_jid?.split("@")[0] || connection.instance_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-content-secondary">
+                    Agente para respostas
+                  </label>
+                  <select
+                    value={agentId}
+                    onChange={(event) => setAgentId(event.target.value)}
+                    className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                  >
+                    <option value="">Equipe humana (sem automação)</option>
+                    {agents.map((agent) => (
+                      <option key={agent.agent_id} value={agent.agent_id}>
+                        {agent.display_name || agent.agent_id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
               <div>
                 <label className="mb-1.5 block text-xs font-medium text-content-secondary">Nome interno</label>
                 <Input
@@ -288,6 +432,14 @@ export function DisparosMassaHub({ campaignItems }: { campaignItems: string[] })
                     );
                   })}
                 </div>
+                {audienceId !== "todos" ? (
+                  <Input
+                    value={audienceValue}
+                    onChange={(event) => setAudienceValue(event.target.value)}
+                    placeholder={audienceId === "tag" ? "Tag exata do lead" : "ID da etapa do funil"}
+                    className="mt-3 rounded-xl"
+                  />
+                ) : null}
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
@@ -428,8 +580,20 @@ export function DisparosMassaHub({ campaignItems }: { campaignItems: string[] })
                 {draftNotice}
               </div>
             ) : null}
+            {campaignError ? (
+              <div className="mt-3 rounded-xl border border-rose-500/35 bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-500" role="alert">
+                {campaignError}
+              </div>
+            ) : null}
             <div className="mt-4 flex flex-wrap gap-3">
-              <Button type="button" variant="gradient" className="gap-2 ">
+              <Button
+                type="button"
+                variant="gradient"
+                className="gap-2"
+                onClick={handleScheduleCampaign}
+                isLoading={campaignBusy}
+                disabled={!connectionId || !campaignName.trim() || !body.trim()}
+              >
                 <Zap className="size-4" aria-hidden />
                 Agendar disparo
               </Button>
@@ -539,12 +703,16 @@ export function DisparosMassaHub({ campaignItems }: { campaignItems: string[] })
           >
             <div className="mb-4 flex items-center justify-between gap-2">
               <span className="text-sm font-semibold text-content">Historico de campanhas</span>
-              <Badge className="text-[10px]">Telemetria demo</Badge>
+              <Badge className="text-[10px]">Dados persistidos</Badge>
             </div>
-            <ul className="space-y-3">
+            {history.length === 0 ? (
+              <p className="text-xs text-content-secondary">
+                Nenhuma campanha persistida ainda. Campanhas só aceitam leads com opt-in ativo.
+              </p>
+            ) : <ul className="space-y-3">
               {history.map((row) => (
                 <li
-                  key={row.name}
+                  key={row.id}
                   className={cn(
                     "flex items-center gap-4 rounded-xl border px-4 py-3",
                     isLight ? "border-slate-200/80 bg-slate-50/80" : "border-line/80 bg-surface-card/40",
@@ -572,12 +740,22 @@ export function DisparosMassaHub({ campaignItems }: { campaignItems: string[] })
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-content-secondary">
                       <span>{statusLabel(row.status)}</span>
                       <span className="text-content-secondary/50">·</span>
-                      <span>Janela {row.window}</span>
+                      <span>{row.window}</span>
                     </div>
                   </div>
+                  {["draft", "scheduled", "processing"].includes(row.status) ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleCancelCampaign(row.id)}
+                      className="grid size-9 shrink-0 place-items-center rounded-lg text-content-secondary transition-colors hover:bg-rose-500/10 hover:text-rose-500"
+                      aria-label={`Cancelar campanha ${row.name}`}
+                    >
+                      <Square className="size-4" aria-hidden />
+                    </button>
+                  ) : null}
                 </li>
               ))}
-            </ul>
+            </ul>}
           </div>
         </div>
       </div>

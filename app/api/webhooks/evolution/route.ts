@@ -23,8 +23,6 @@ import { isElevenlabsConfigured } from "@/lib/integrations/elevenlabs";
 import { deliverAgentReplyWithOptionalTts } from "@/lib/server/agent-tts-outbound";
 import { resolveOutboundMediaForAgentResponse } from "@/lib/server/agent-media-files";
 import { sendAgentOutboundMediaViaEvolution } from "@/lib/server/send-agent-outbound-media-evolution";
-import { resolveEvolutionAgentId } from "@/lib/server/evolution-agent-resolve";
-import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 import { getEvolutionInstanceByName, updateEvolutionInstanceStateByName } from "@/lib/server/tenant-evolution-instance-db";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { uploadMediaToR2 } from "@/lib/integrations/r2-storage";
@@ -61,6 +59,16 @@ import {
   shouldDeferHandoffForAgendaResult,
 } from "@/lib/server/agent-cta-scheduler";
 import type { AgentFollowUpInteligente } from "@/lib/types";
+import {
+  authorizeActiveJourney,
+  isJourneyIsolationEnabled,
+  resolveDirectJourneyAgent,
+  touchLeadJourney,
+} from "@/lib/server/lead-journeys";
+import {
+  cancelLeadRedistributionTrigger,
+  scheduleLeadRedistribution,
+} from "@/lib/server/lead-redistribution";
 
 
 export const dynamic = "force-dynamic";
@@ -335,6 +343,7 @@ async function saveMessage(opts: {
   messageId?: string | null;
   agentId?: string | null;
   leadId?: string | null;
+  journeyId?: string | null;
   mediaUrl?: string | null;
   mimeType?: string | null;
   storageKey?: string | null;
@@ -357,6 +366,7 @@ async function saveMessage(opts: {
         message_id: opts.messageId ?? null,
         agent_id: opts.agentId ?? null,
         lead_id: opts.leadId ?? null,
+        journey_id: opts.journeyId ?? null,
         media_url: opts.mediaUrl ?? null,
         mime_type: opts.mimeType ?? null,
         storage_key: opts.storageKey ?? null,
@@ -552,8 +562,6 @@ export async function POST(request: Request) {
       console.warn("[webhooks/evolution] instance not registered", instanceName);
       continue;
     }
-    const instanceJid = row.wa_jid ?? extractInstanceJid(payload);
-
     const inbound = extractInboundMessagesFromEvolutionPayload(payload);
 
     // Bug 3 fix: split the per-message loop into two serial phases so that ALL messages
@@ -568,7 +576,15 @@ export async function POST(request: Request) {
       inbound.map(async (msg) => {
         try {
           const leadPhone = remoteJidToEvoNumber(msg.remoteJid);
-          const agentId = await resolveEvolutionAgentId(row.tenant_id, row.default_agent_id, leadPhone, instanceName);
+          const sbJourney = createSupabaseServiceClient();
+          const journeyAuth = await resolveDirectJourneyAgent({
+            sb: sbJourney,
+            tenantId: row.tenant_id,
+            remoteJid: msg.remoteJid,
+            connectionId: row.id,
+          });
+          const journey = journeyAuth.journey;
+          const agentId = journeyAuth.ok ? journeyAuth.agentId : null;
 
           let inboundMedia: Awaited<ReturnType<typeof downloadAndStoreMedia>> = null;
           if (msg.type === "audio" || msg.type === "image" || msg.type === "video" || msg.type === "document") {
@@ -576,17 +592,20 @@ export async function POST(request: Request) {
           }
 
           const contactName = extractContactNameFromPayload(payload, msg);
-          const upsertedLead = await upsertLeadFromWhatsAppContact({
-            tenantId: row.tenant_id,
-            remoteJid: msg.remoteJid,
-            senderJid: msg.remoteJid,
-            instanceJid,
-            contactName,
-            direction: "inbound",
-            agentId,
-            conversationId: msg.remoteJid,
-          });
-          const leadId = upsertedLead?.lead?.id ?? null;
+          const { data: existingLead } = leadPhone
+            ? await sbJourney
+                .from("leads")
+                .select("id")
+                .eq("tenant_id", row.tenant_id)
+                .eq("phone", leadPhone)
+                .order("updated_at", { ascending: false })
+                .limit(1)
+                .maybeSingle()
+            : { data: null };
+          const leadId =
+            (existingLead as { id?: string } | null)?.id ??
+            journey?.leadId ??
+            null;
 
           const inboundSaved = await saveMessage({
             tenantId: row.tenant_id,
@@ -596,6 +615,7 @@ export async function POST(request: Request) {
             content: contentFromMsg(msg),
             messageId: msg.messageId,
             leadId,
+            journeyId: journey?.id ?? null,
             mediaUrl: inboundMedia?.mediaUrl ?? null,
             mimeType: inboundMedia?.mimeType ?? ("mimetype" in msg ? msg.mimetype : null),
             storageKey: inboundMedia?.storageKey ?? null,
@@ -629,6 +649,7 @@ export async function POST(request: Request) {
             leadId,
             agentId,
             lastMessageAt: savedAt,
+            activeJourneyId: journey?.id ?? null,
           });
 
           await applyHumanConversationCommand({
@@ -659,6 +680,7 @@ export async function POST(request: Request) {
                 agentId,
                 remoteJid: msg.remoteJid,
                 leadId,
+                journeyId: journey?.id ?? null,
                 settings: followUpInteligenteFromMetadata(agentMetadata),
               });
             }
@@ -677,7 +699,34 @@ export async function POST(request: Request) {
 
           const inboundLanguageCode = detectSupportedLanguageCode(inboundLanguageSource(msg));
 
-          return { msg, agentId, inboundMedia, contactName, leadId, inboundSaved, state, inboundLanguageCode };
+          if (journey) {
+            await cancelLeadRedistributionTrigger({
+              sb: sbJourney,
+              tenantId: row.tenant_id,
+              journeyId: journey.id,
+              trigger: "customer_silence",
+              reason: "customer_replied",
+            });
+            await touchLeadJourney({
+              sb: sbJourney,
+              tenantId: row.tenant_id,
+              journeyId: journey.id,
+              leadId,
+              occurredAt: savedAt,
+            });
+          }
+
+          return {
+            msg,
+            agentId,
+            inboundMedia,
+            contactName,
+            leadId,
+            journey,
+            inboundSaved,
+            state,
+            inboundLanguageCode,
+          };
         } catch (e) {
           console.warn("[webhooks/evolution] Phase 1 save error", e instanceof Error ? e.message : e);
           return null;
@@ -689,7 +738,16 @@ export async function POST(request: Request) {
     await Promise.all(
       savedContexts.map(async (ctx) => {
         if (!ctx) return;
-        const { msg, agentId, contactName, leadId, inboundSaved, state, inboundLanguageCode } = ctx;
+        const {
+          msg,
+          agentId,
+          contactName,
+          leadId,
+          journey,
+          inboundSaved,
+          state,
+          inboundLanguageCode,
+        } = ctx;
         try {
           if (!agentId) {
             console.info("[webhooks/evolution] agent skipped", {
@@ -740,6 +798,7 @@ export async function POST(request: Request) {
                 tenantId: row.tenant_id,
                 remoteJid: msg.remoteJid,
                 leadId,
+                journeyId: journey?.id ?? null,
                 agentId,
                 instanceName,
                 inboundMessageKey,
@@ -785,6 +844,8 @@ export async function POST(request: Request) {
             agentId,
             leadId,
             phone: msg.remoteJid,
+            remoteJid: msg.remoteJid,
+            journeyId: journey?.id ?? null,
             triggerSource: "evolution_inbound_auto_reply",
           });
           if (!autoContactGuard.ok) {
@@ -807,6 +868,7 @@ export async function POST(request: Request) {
             tenantId: row.tenant_id,
             agentId,
             conversationId: msg.remoteJid,
+            journeyId: journey?.id ?? null,
             customerId: msg.remoteJid,
             feature: "agent_chat",
             messages: [],
@@ -841,6 +903,7 @@ export async function POST(request: Request) {
               tenantId: row.tenant_id,
               remoteJid: msg.remoteJid,
               limit: 12,
+              journeyId: journey?.id ?? null,
             }),
           );
           const agendaTurn = await resolveAgendaTurn({
@@ -1036,6 +1099,21 @@ export async function POST(request: Request) {
           });
 
           const languageCode = detectSupportedLanguageCode(inboundLanguageSource(msg, replyText));
+          if (isJourneyIsolationEnabled()) {
+            const currentJourney = await authorizeActiveJourney({
+              sb: sbState,
+              tenantId: row.tenant_id,
+              remoteJid: msg.remoteJid,
+              preferredAgentId: agentId,
+            });
+            if (!currentJourney.ok || currentJourney.journey?.id !== journey?.id) {
+              console.info("[webhooks/evolution] response cancelled before send", {
+                tenant_id: row.tenant_id,
+                reason: currentJourney.ok ? "journey_superseded_before_send" : currentJourney.reason,
+              });
+              return;
+            }
+          }
           const delivery = await deliverAgentReplyWithOptionalTts({
             instanceName,
             number,
@@ -1066,18 +1144,36 @@ export async function POST(request: Request) {
               kind: delivery.channel === "audio" ? "audio" : "text",
               content: replyText.slice(0, 4000),
               agentId,
+              leadId,
+              journeyId: journey?.id ?? null,
               mediaUrl: delivery.mediaUrl,
             });
-            await upsertLeadFromWhatsAppContact({
-              tenantId: row.tenant_id,
-              remoteJid: msg.remoteJid,
-              recipientJid: msg.remoteJid,
-              instanceJid,
-              contactName,
-              direction: "outbound",
-              agentId,
-              conversationId: msg.remoteJid,
-            });
+            if (leadId) {
+              await sbState
+                .from("leads")
+                .update({
+                  last_message_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("tenant_id", row.tenant_id)
+                .eq("id", leadId);
+            }
+            if (journey) {
+              await touchLeadJourney({
+                sb: sbState,
+                tenantId: row.tenant_id,
+                journeyId: journey.id,
+                leadId,
+              });
+              await scheduleLeadRedistribution({
+                sb: sbState,
+                tenantId: row.tenant_id,
+                journeyId: journey.id,
+                ruleId: journey.ruleId,
+                currentAgentId: agentId,
+                trigger: "customer_silence",
+              });
+            }
             await sendOutboundMediaSafe();
           } else {
             console.error("[webhooks/evolution] outbound send failed after TTS gate");

@@ -39,7 +39,10 @@ export async function GET() {
       )
       .eq("tenant_id", session.tenantId)
       .eq("channel", "whatsapp"),
-    sb.from("leads").select("id, phone, name").eq("tenant_id", session.tenantId),
+    sb
+      .from("leads")
+      .select("id, phone, name, status, crm_funnel_id, suggested_next_action")
+      .eq("tenant_id", session.tenantId),
   ]);
 
   if (error) {
@@ -47,14 +50,29 @@ export async function GET() {
     return NextResponse.json({ error: "Erro ao carregar conversas." }, { status: 503 });
   }
 
-  const phoneToLead = new Map<string, { id: string; name: string | null }>();
-  const leadById = new Map<string, { id: string; name: string | null }>();
+  type LeadSummary = {
+    id: string;
+    name: string | null;
+    status: string | null;
+    crmFunnelId: string | null;
+    suggestedNextAction: string | null;
+  };
+  const phoneToLead = new Map<string, LeadSummary>();
+  const leadById = new Map<string, LeadSummary>();
   for (const row of leads ?? []) {
     const id = String(row.id ?? "");
     const name = typeof row.name === "string" ? row.name.trim() || null : null;
-    leadById.set(id, { id, name });
+    const summary: LeadSummary = {
+      id,
+      name,
+      status: typeof row.status === "string" ? row.status : null,
+      crmFunnelId: typeof row.crm_funnel_id === "string" ? row.crm_funnel_id : null,
+      suggestedNextAction:
+        typeof row.suggested_next_action === "string" ? row.suggested_next_action : null,
+    };
+    leadById.set(id, summary);
     const phone = digitsOnly(String(row.phone ?? ""));
-    if (phone) phoneToLead.set(phone, { id, name });
+    if (phone) phoneToLead.set(phone, summary);
   }
 
   const hiddenJids = new Set(
@@ -85,6 +103,9 @@ export async function GET() {
       handoff_suggested: boolean;
       lead_id: string | null;
       lead_name: string | null;
+      lead_status: string | null;
+      lead_crm_funnel_id: string | null;
+      lead_suggested_next_action: string | null;
     }
   >();
 
@@ -121,6 +142,9 @@ export async function GET() {
         handoff_suggested: stateRow?.handoff_suggested === true,
         lead_id: leadId,
         lead_name: leadName,
+        lead_status: leadRecord?.status ?? null,
+        lead_crm_funnel_id: leadRecord?.crmFunnelId ?? null,
+        lead_suggested_next_action: leadRecord?.suggestedNextAction ?? null,
       });
     } else if (row.direction === "inbound") {
       const existing = seen.get(row.remote_jid)!;

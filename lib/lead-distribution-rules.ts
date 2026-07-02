@@ -41,6 +41,10 @@ export type LeadDistributionRule = {
   order: number;
   source: LeadRuleSource;
   active?: boolean;
+  transport?: "evolution" | "cloud_api";
+  connectionId?: string | null;
+  conflictPolicy?: "latest_wins" | "priority_wins" | "keep_until_inactive" | "manual_review";
+  conflictInactivityMinutes?: number;
   redistribution: boolean;
   distributionType: LeadDistributionType;
   /** Quando `specific_agents` ou `automation_agent` (este: um único id). */
@@ -67,6 +71,13 @@ export type LeadDistributionRule = {
     agent_ids: string[];
     employee_ids: string[];
     executar_anteriores: boolean;
+    triggers?: {
+      agent_unavailable: boolean;
+      delivery_failed: boolean;
+      human_timeout: boolean;
+      customer_silence: boolean;
+    };
+    final_destination?: "next_agent" | "human_team" | "crm_only";
   };
   createdBy: string;
   createdAtLabel: string;

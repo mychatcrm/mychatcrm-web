@@ -22,6 +22,7 @@ export type ConversationState = {
   isHidden: boolean;
   archivedAt: string | null;
   conversationMode?: string | null;
+  activeJourneyId?: string | null;
 };
 
 export type ConversationSummary = {
@@ -94,6 +95,7 @@ function rowToState(row: Record<string, unknown>): ConversationState {
     isHidden: row.is_hidden === true,
     archivedAt: textOrNull(row.archived_at),
     conversationMode: textOrNull(row.conversation_mode),
+    activeJourneyId: textOrNull(row.active_journey_id),
   };
 }
 
@@ -182,6 +184,7 @@ export async function upsertConversationState(params: {
   hiddenAt?: string | null;
   hiddenBy?: string | null;
   conversationMode?: string | null;
+  activeJourneyId?: string | null;
 }): Promise<ConversationState | null> {
   const sb = params.sb ?? createSupabaseServiceClient();
   const now = new Date().toISOString();
@@ -212,6 +215,7 @@ export async function upsertConversationState(params: {
   if (params.hiddenAt !== undefined) patch.hidden_at = params.hiddenAt;
   if (params.hiddenBy !== undefined) patch.hidden_by = params.hiddenBy;
   if (params.conversationMode !== undefined) patch.conversation_mode = params.conversationMode;
+  if (params.activeJourneyId !== undefined) patch.active_journey_id = params.activeJourneyId;
 
   const { data, error } = await sb
     .from("conversation_states")
@@ -252,13 +256,16 @@ export async function getRecentConversationMessages(params: {
   tenantId: string;
   remoteJid: string;
   limit?: number;
+  journeyId?: string | null;
 }): Promise<ConversationMessageContext[]> {
   const sb = params.sb ?? createSupabaseServiceClient();
-  const { data, error } = await sb
+  let query = sb
     .from("whatsapp_messages")
     .select("id,direction,kind,content,agent_id,created_at")
     .eq("tenant_id", params.tenantId)
-    .eq("remote_jid", params.remoteJid)
+    .eq("remote_jid", params.remoteJid);
+  if (params.journeyId) query = query.eq("journey_id", params.journeyId);
+  const { data, error } = await query
     .order("created_at", { ascending: false })
     .limit(params.limit ?? 24);
   if (error) {
@@ -272,15 +279,16 @@ export async function getLatestConversationSummary(params: {
   sb?: SupabaseServiceClient;
   tenantId: string;
   remoteJid: string;
+  journeyId?: string | null;
 }): Promise<ConversationSummary | null> {
   const sb = params.sb ?? createSupabaseServiceClient();
-  const { data, error } = await sb
+  let query = sb
     .from("conversation_summaries")
     .select("*")
     .eq("tenant_id", params.tenantId)
-    .eq("remote_jid", params.remoteJid)
-    .order("created_at", { ascending: false })
-    .limit(1);
+    .eq("remote_jid", params.remoteJid);
+  if (params.journeyId) query = query.eq("journey_id", params.journeyId);
+  const { data, error } = await query.order("created_at", { ascending: false }).limit(1);
   if (error) {
     console.warn("[conversation-memory] summary", error.code, error.message);
     return null;
@@ -321,6 +329,7 @@ export async function loadAgentRuntimeContext(params: {
   tenantId: string;
   agentId: string;
   remoteJid?: string | null;
+  journeyId?: string | null;
 }): Promise<AgentRuntimeContext> {
   const sb = createSupabaseServiceClient();
   if (!params.remoteJid) {
@@ -330,11 +339,26 @@ export async function loadAgentRuntimeContext(params: {
     ]);
     return { state: null, lead: null, summary: null, recentMessages: [], knowledgeSnippets, outboundMediaLines };
   }
-  const [state, lead, summary, recentMessages, knowledgeSnippets, outboundMediaLines] = await Promise.all([
-    getConversationState({ sb, tenantId: params.tenantId, remoteJid: params.remoteJid }),
+  const state = await getConversationState({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+  });
+  const journeyId = params.journeyId ?? state?.activeJourneyId ?? null;
+  const [lead, summary, recentMessages, knowledgeSnippets, outboundMediaLines] = await Promise.all([
     findLeadForConversation({ sb, tenantId: params.tenantId, remoteJid: params.remoteJid }),
-    getLatestConversationSummary({ sb, tenantId: params.tenantId, remoteJid: params.remoteJid }),
-    getRecentConversationMessages({ sb, tenantId: params.tenantId, remoteJid: params.remoteJid }),
+    getLatestConversationSummary({
+      sb,
+      tenantId: params.tenantId,
+      remoteJid: params.remoteJid,
+      journeyId,
+    }),
+    getRecentConversationMessages({
+      sb,
+      tenantId: params.tenantId,
+      remoteJid: params.remoteJid,
+      journeyId,
+    }),
     getAgentKnowledgeSnippets({ sb, tenantId: params.tenantId, agentId: params.agentId }),
     getAgentOutboundMediaPromptLines({ sb, tenantId: params.tenantId, agentId: params.agentId }),
   ]);
@@ -477,6 +501,7 @@ export async function saveConversationSummary(params: {
   stateId?: string | null;
   leadId?: string | null;
   agentId?: string | null;
+  journeyId?: string | null;
   summary: Omit<ConversationSummary, "createdAt">;
 }): Promise<void> {
   const sb = params.sb ?? createSupabaseServiceClient();
@@ -487,6 +512,7 @@ export async function saveConversationSummary(params: {
     conversation_state_id: params.stateId ?? null,
     lead_id: params.leadId ?? null,
     agent_id: params.agentId ?? null,
+    journey_id: params.journeyId ?? null,
     summary: params.summary.summary,
     customer_intent: params.summary.customerIntent,
     lead_temperature: params.summary.leadTemperature,
@@ -516,5 +542,6 @@ export async function saveConversationSummary(params: {
     agentId: params.agentId,
     lastMessageAt: now,
     lastSummaryAt: now,
+    activeJourneyId: params.journeyId,
   });
 }

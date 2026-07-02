@@ -17,10 +17,24 @@ export type ChatbotHistoryMessage = {
   transcription_status: string | null;
   analysis_status: string | null;
   ai_description: string | null;
+  journey_id: string | null;
   agent_id: string | null;
   agent_name: string | null;
   channel: string;
   created_at: string;
+};
+
+export type ChatbotHistoryJourney = {
+  id: string;
+  source: string;
+  form_id: string | null;
+  campaign_id: string | null;
+  agent_id: string | null;
+  agent_name: string | null;
+  status: string;
+  started_at: string;
+  ended_at: string | null;
+  metadata: Record<string, unknown>;
 };
 
 export type ChatbotHistorySummary = {
@@ -78,6 +92,7 @@ function toMessage(row: Record<string, unknown>, agentNames: Map<string, string>
       typeof row.transcription_status === "string" ? row.transcription_status : null,
     analysis_status: typeof row.analysis_status === "string" ? row.analysis_status : null,
     ai_description: typeof row.ai_description === "string" ? row.ai_description : null,
+    journey_id: typeof row.journey_id === "string" ? row.journey_id : null,
     agent_id: agentId,
     agent_name: agentId ? agentNames.get(agentId) ?? agentId : null,
     channel: "whatsapp",
@@ -95,6 +110,7 @@ export async function loadLeadChatbotHistory(params: {
   timeline: ReturnType<typeof buildConversationTimeline<ChatbotHistoryMessage>>;
   summary: ChatbotHistorySummary | null;
   conversationState: ChatbotConversationState | null;
+  journeys: ChatbotHistoryJourney[];
 }> {
   const sb = createSupabaseServiceClient();
   const { data: lead, error: leadError } = await sb
@@ -109,17 +125,17 @@ export async function loadLeadChatbotHistory(params: {
 
   const phone = normalizeLeadPhone((lead as { phone?: unknown }).phone);
   if (!phone) {
-    return { messages: [], events: [], timeline: [], summary: null, conversationState: null };
+    return { messages: [], events: [], timeline: [], summary: null, conversationState: null, journeys: [] };
   }
 
   const remoteJidPattern = `${phone}%`;
   const limit = params.limit ?? 200;
 
-  const [messagesRes, summaryRes, stateRes] = await Promise.all([
+  const [messagesRes, summaryRes, stateRes, journeysRes] = await Promise.all([
     sb
       .from("whatsapp_messages")
       .select(
-        "id, remote_jid, direction, kind, content, media_url, mime_type, storage_key, file_name, caption, media_duration_seconds, thumbnail_url, transcription_status, analysis_status, ai_description, agent_id, created_at",
+        "id, remote_jid, direction, kind, content, media_url, mime_type, storage_key, file_name, caption, media_duration_seconds, thumbnail_url, transcription_status, analysis_status, ai_description, journey_id, agent_id, created_at",
       )
       .eq("tenant_id", params.tenantId)
       .ilike("remote_jid", remoteJidPattern)
@@ -143,6 +159,12 @@ export async function loadLeadChatbotHistory(params: {
       .eq("lead_id", params.leadId)
       .order("updated_at", { ascending: false })
       .limit(5),
+    sb
+      .from("lead_journeys")
+      .select("id, source, form_id, campaign_id, agent_id, status, started_at, ended_at, metadata")
+      .eq("tenant_id", params.tenantId)
+      .eq("lead_id", params.leadId)
+      .order("started_at", { ascending: true }),
   ]);
 
   if (messagesRes.error) throw new Error("MESSAGES_QUERY_FAILED");
@@ -172,6 +194,27 @@ export async function loadLeadChatbotHistory(params: {
   const messages = ((messagesRes.data ?? []) as Array<Record<string, unknown>>).map((row) =>
     toMessage(row, agentNames),
   );
+  const journeys: ChatbotHistoryJourney[] = (
+    journeysRes.error ? [] : (journeysRes.data ?? [])
+  ).map((raw) => {
+    const row = raw as Record<string, unknown>;
+    const agentId = typeof row.agent_id === "string" ? row.agent_id : null;
+    return {
+      id: String(row.id),
+      source: String(row.source ?? "manual"),
+      form_id: typeof row.form_id === "string" ? row.form_id : null,
+      campaign_id: typeof row.campaign_id === "string" ? row.campaign_id : null,
+      agent_id: agentId,
+      agent_name: agentId ? agentNames.get(agentId) ?? agentId : null,
+      status: String(row.status ?? ""),
+      started_at: String(row.started_at ?? ""),
+      ended_at: typeof row.ended_at === "string" ? row.ended_at : null,
+      metadata:
+        row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+          ? (row.metadata as Record<string, unknown>)
+          : {},
+    };
+  });
 
   const summaryRow = summaryRes.error ? null : summaryRes.data?.[0];
   const summary: ChatbotHistorySummary | null = summaryRow
@@ -238,5 +281,5 @@ export async function loadLeadChatbotHistory(params: {
   });
   const timeline = buildConversationTimeline(messages, events);
 
-  return { messages, events, timeline, summary, conversationState };
+  return { messages, events, timeline, summary, conversationState, journeys };
 }

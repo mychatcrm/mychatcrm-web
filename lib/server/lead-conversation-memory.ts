@@ -134,16 +134,17 @@ async function getLatestSummaryForLead(params: {
   tenantId: string;
   leadId?: string | null;
   remoteJid?: string | null;
+  journeyId?: string | null;
 }): Promise<ConversationSummary | null> {
   const sb = createSupabaseServiceClient();
   if (params.leadId) {
-    const { data } = await sb
+    let query = sb
       .from("conversation_summaries")
       .select("*")
       .eq("tenant_id", params.tenantId)
-      .eq("lead_id", params.leadId)
-      .order("created_at", { ascending: false })
-      .limit(1);
+      .eq("lead_id", params.leadId);
+    if (params.journeyId) query = query.eq("journey_id", params.journeyId);
+    const { data } = await query.order("created_at", { ascending: false }).limit(1);
     const row = (data ?? [])[0] as Record<string, unknown> | undefined;
     if (row) {
       return {
@@ -164,13 +165,13 @@ async function getLatestSummaryForLead(params: {
   }
 
   if (!params.remoteJid) return null;
-  const { data } = await sb
+  let query = sb
     .from("conversation_summaries")
     .select("*")
     .eq("tenant_id", params.tenantId)
-    .eq("remote_jid", params.remoteJid)
-    .order("created_at", { ascending: false })
-    .limit(1);
+    .eq("remote_jid", params.remoteJid);
+  if (params.journeyId) query = query.eq("journey_id", params.journeyId);
+  const { data } = await query.order("created_at", { ascending: false }).limit(1);
   const row = (data ?? [])[0] as Record<string, unknown> | undefined;
   if (!row) return null;
   return {
@@ -195,6 +196,7 @@ export async function buildLeadConversationMemory(params: {
   agentId: string;
   remoteJid?: string | null;
   leadId?: string | null;
+  journeyId?: string | null;
   messageLimit?: number;
   excludeMessageIds?: string[];
   sourceOptions?: LeadMemorySourceOptions;
@@ -293,6 +295,7 @@ export async function buildLeadConversationMemory(params: {
   const remoteJid =
     params.remoteJid ??
     (lead?.phone ? `${lead.phone.replace(/\D/g, "")}@s.whatsapp.net` : null);
+  const journeyId = params.journeyId ?? state?.activeJourneyId ?? null;
 
   const recentMessages: ConversationMessageContext[] = remoteJid
     ? await getRecentConversationMessages({
@@ -300,6 +303,7 @@ export async function buildLeadConversationMemory(params: {
         tenantId: params.tenantId,
         remoteJid,
         limit: params.messageLimit ?? DEFAULT_MESSAGE_LIMIT,
+        journeyId,
       })
     : [];
 
@@ -307,6 +311,7 @@ export async function buildLeadConversationMemory(params: {
     tenantId: params.tenantId,
     leadId: lead?.id ?? params.leadId ?? state?.leadId ?? null,
     remoteJid,
+    journeyId,
   });
 
   const lastInteractionAt =

@@ -57,6 +57,7 @@ import {
   type ParsedMetaLeadProfile,
 } from "@/lib/meta-leads/form-metadata";
 import styles from "./crm-premium.module.css";
+import { CrmWhatsAppOptInControl } from "./CrmWhatsAppOptInControl";
 
 type Tab = "informacoes" | "historico" | "chatbot" | "tarefas" | "ia";
 
@@ -636,6 +637,7 @@ export function CrmLeadWorkspaceModal({
                   alimentam segmentação e o histórico de interações.
                 </p>
               </div>
+              <CrmWhatsAppOptInControl leadId={lead.id} />
             </div>
             </div>
           </div>

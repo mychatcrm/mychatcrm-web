@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Bot,
-  Calendar,
   Check,
   CheckCheck,
   CheckSquare,
@@ -18,7 +17,6 @@ import {
   Search,
   Send,
   Smile,
-  Tag,
   Trash2,
   User,
   X,
@@ -46,6 +44,9 @@ type WaConversation = {
   handoff_suggested?: boolean;
   lead_id?: string | null;
   lead_name?: string | null;
+  lead_status?: string | null;
+  lead_crm_funnel_id?: string | null;
+  lead_suggested_next_action?: string | null;
   messages: WaMessage[];
   messagesLoaded: boolean;
 };
@@ -207,6 +208,31 @@ async function apiSendMessage(remoteJid: string, text: string): Promise<boolean>
     body: JSON.stringify({ text }),
   });
   return res.ok;
+}
+
+async function apiSaveConversationToCrm(
+  remoteJid: string,
+  name: string,
+): Promise<{ id: string; name: string | null; status: string | null; crm_funnel_id: string | null }> {
+  const enc = encodeURIComponent(remoteJid);
+  const res = await fetch(`/api/client/conversas/${enc}/save-to-crm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    error?: string;
+    lead?: {
+      id: string;
+      name: string | null;
+      status: string | null;
+      crm_funnel_id: string | null;
+    };
+  };
+  if (!res.ok || !data.lead) {
+    throw new Error(data.error ?? "Não foi possível salvar o contato no CRM.");
+  }
+  return data.lead;
 }
 
 async function apiDeleteAllConversations(): Promise<void> {
@@ -386,6 +412,8 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
   const [compose, setCompose] = useState("");
   const [sending, setSending] = useState(false);
   const [showCrm, setShowCrm] = useState(true);
+  const [savingToCrm, setSavingToCrm] = useState(false);
+  const [saveToCrmError, setSaveToCrmError] = useState<string | null>(null);
 
   // Seleção múltipla + limpeza de conversas
   const [selectionMode, setSelectionMode] = useState(false);
@@ -544,6 +572,34 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void handleSend();
+    }
+  };
+
+  const handleSaveToCrm = async () => {
+    if (!selectedConv || selectedConv.lead_id || savingToCrm) return;
+    setSavingToCrm(true);
+    setSaveToCrmError(null);
+    try {
+      const lead = await apiSaveConversationToCrm(selectedConv.remoteJid, selectedName);
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.remoteJid === selectedConv.remoteJid
+            ? {
+                ...conversation,
+                lead_id: lead.id,
+                lead_name: lead.name,
+                lead_status: lead.status,
+                lead_crm_funnel_id: lead.crm_funnel_id,
+              }
+            : conversation,
+        ),
+      );
+    } catch (error) {
+      setSaveToCrmError(
+        error instanceof Error ? error.message : "Não foi possível salvar o contato no CRM.",
+      );
+    } finally {
+      setSavingToCrm(false);
     }
   };
 
@@ -960,11 +1016,26 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
                   <Phone size={12} strokeWidth={1.9} className="mr-1.5 inline" />
                   Ligar
                 </button>
-                <button type="button" className="rounded-mc-base bg-mc-surface-2 px-4 py-2 text-[12.5px] font-semibold text-mc-text transition hover:bg-mc-border">
-                  <User size={12} strokeWidth={1.9} className="mr-1.5 inline" />
-                  Perfil
-                </button>
+                {selectedConv.lead_id ? (
+                  <span className="rounded-mc-base bg-emerald-500/10 px-4 py-2 text-[12.5px] font-semibold text-emerald-600">
+                    <Check size={12} strokeWidth={2} className="mr-1.5 inline" />
+                    Salvo no CRM
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveToCrm()}
+                    disabled={savingToCrm}
+                    className="rounded-mc-base bg-[#F24400] px-4 py-2 text-[12.5px] font-semibold text-white transition hover:brightness-110 disabled:opacity-50"
+                  >
+                    <User size={12} strokeWidth={1.9} className="mr-1.5 inline" />
+                    {savingToCrm ? "Salvando..." : "Salvar no CRM"}
+                  </button>
+                )}
               </div>
+              {saveToCrmError ? (
+                <p className="mt-3 text-[11.5px] font-semibold text-error">{saveToCrmError}</p>
+              ) : null}
             </div>
 
             {/* Pipeline stage */}
@@ -972,49 +1043,32 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
               <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-mc-muted">
                 Etapa no funil
               </p>
-              <div className="mb-3 flex items-center gap-1.5">
-                {["Captado", "Qualificado", "Agendado", "Fechado"].map((step, i) => (
-                  <div
-                    key={step}
-                    className={cn(
-                      "h-1.5 flex-1 rounded-full",
-                      i <= 2 ? "" : "bg-mc-border",
-                    )}
-                    style={i <= 2 ? { backgroundColor: i === 2 ? "var(--color-brand)" : "#00A650" } : {}}
-                  />
-                ))}
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[14px] font-semibold text-mc-text">Agendado</span>
-                <button
-                  type="button"
-                  className="text-[12px] font-semibold transition"
-                  style={{ color: "var(--color-brand)" }}
-                >
-                  Mover →
-                </button>
-              </div>
-            </div>
-
-            {/* Next event */}
-            <div className="border-b border-mc-border py-5">
-              <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-mc-muted">
-                Próximo evento
-              </p>
-              <div className="flex items-center gap-3 rounded-mc-base bg-mc-surface-2 p-3.5">
-                <div className="flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-[10px] bg-mc-surface leading-none">
-                  <span className="text-[9px] font-bold uppercase" style={{ color: "var(--color-brand)" }}>QUI</span>
-                  <span className="mt-0.5 text-[17px] font-extrabold text-mc-text">18</span>
-                </div>
-                <div>
-                  <p className="text-[13.5px] font-semibold text-mc-text">Avaliação gratuita</p>
-                  <p className="text-[11.5px] text-mc-muted">
-                    <Calendar size={10} strokeWidth={1.9} className="mr-1 inline" />
-                    10:00 · Próxima semana
+              {selectedConv.lead_id ? (
+                <div className="rounded-mc-base bg-mc-surface-2 px-3.5 py-3">
+                  <p className="text-[14px] font-semibold capitalize text-mc-text">
+                    {selectedConv.lead_status ?? "novo"}
+                  </p>
+                  <p className="mt-1 text-[11.5px] text-mc-muted">
+                    Funil: {selectedConv.lead_crm_funnel_id ?? "funil-default"}
                   </p>
                 </div>
-              </div>
+              ) : (
+                <p className="text-[12.5px] leading-relaxed text-mc-muted">
+                  Este contato ainda não foi salvo no CRM.
+                </p>
+              )}
             </div>
+
+            {selectedConv.lead_suggested_next_action ? (
+              <div className="border-b border-mc-border py-5">
+                <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-mc-muted">
+                  Próxima ação
+                </p>
+                <div className="rounded-mc-base bg-mc-surface-2 p-3.5 text-[12.5px] leading-relaxed text-mc-text">
+                  {selectedConv.lead_suggested_next_action}
+                </div>
+              </div>
+            ) : null}
 
             {/* Tags */}
             <div className="border-b border-mc-border py-5">
@@ -1030,13 +1084,6 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
                 <span className="rounded-full border border-[#c9efd6] bg-[#ecfdf3] px-2.5 py-1 text-[11.5px] font-semibold text-[#067a3c]">
                   {selectedConv.conversation_mode === "automation" ? "IA" : "Humano"}
                 </span>
-                <button
-                  type="button"
-                  className="rounded-full bg-mc-surface-2 px-2.5 py-1 text-[11.5px] font-semibold text-mc-muted transition hover:bg-mc-border"
-                >
-                  <Tag size={10} strokeWidth={1.9} className="mr-1 inline" />
-                  Adicionar
-                </button>
               </div>
             </div>
 

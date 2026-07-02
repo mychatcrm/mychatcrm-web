@@ -8,6 +8,10 @@ import {
   isAgentAuthorizedForDirectWhatsApp,
   isDirectWhatsAppAutomationTrigger,
 } from "@/lib/server/agent-channel-authorization";
+import {
+  authorizeActiveJourney,
+  isJourneyIsolationEnabled,
+} from "@/lib/server/lead-journeys";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -101,6 +105,7 @@ async function loadLead(params: {
   tenantId: string;
   leadId?: string | null;
   phone?: string | null;
+  remoteJid?: string | null;
 }): Promise<LeadContactSnapshot | null> {
   if (params.leadId) {
     const { data } = await params.sb
@@ -151,6 +156,8 @@ export async function canAgentAutoContactLead(params: {
   formId?: string | null;
   pageId?: string | null;
   leadgenId?: string | null;
+  remoteJid?: string | null;
+  journeyId?: string | null;
   triggerSource: string;
 }): Promise<AutoContactGuardResult> {
   const agentId = params.agentId?.trim() ?? "";
@@ -163,6 +170,29 @@ export async function canAgentAutoContactLead(params: {
 
   if (!agent.active || agent.status === "inativo" || agent.status === "pausado") {
     return { ok: false, reason: "agent_inactive", leadId: lead?.id ?? params.leadId ?? null, formId: params.formId ?? null };
+  }
+
+  if (isJourneyIsolationEnabled() && params.journeyId) {
+    const journey = await authorizeActiveJourney({
+      sb: params.sb,
+      tenantId: params.tenantId,
+      remoteJid: params.remoteJid ?? params.phone ?? lead?.phone ?? "",
+      preferredAgentId: agentId,
+    });
+    if (!journey.ok || journey.journey?.id !== params.journeyId) {
+      return {
+        ok: false,
+        reason: journey.ok ? "journey_id_mismatch" : journey.reason,
+        leadId: lead?.id ?? params.leadId ?? null,
+        formId: params.formId ?? null,
+      };
+    }
+    return {
+      ok: true,
+      reason: "allowed",
+      leadId: lead?.id ?? params.leadId ?? null,
+      formId: journey.journey.formId,
+    };
   }
 
   const meta = metadataObject(lead?.profile_metadata);

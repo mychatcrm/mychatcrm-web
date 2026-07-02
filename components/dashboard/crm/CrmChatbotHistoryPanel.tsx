@@ -7,6 +7,7 @@ import { subscribeToWhatsappMessages } from "@/lib/conversas/whatsapp-messages-r
 import type {
   ChatbotConversationState,
   ChatbotHistoryEvent,
+  ChatbotHistoryJourney,
   ChatbotHistoryMessage,
   ChatbotHistorySummary,
 } from "@/lib/server/lead-chatbot-history";
@@ -105,6 +106,7 @@ export function CrmChatbotHistoryPanel({
   const [timeline, setTimeline] = useState<Array<TimelineItem<ChatbotHistoryMessage>>>([]);
   const [summary, setSummary] = useState<ChatbotHistorySummary | null>(null);
   const [state, setState] = useState<ChatbotConversationState | null>(null);
+  const [journeys, setJourneys] = useState<ChatbotHistoryJourney[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -118,6 +120,7 @@ export function CrmChatbotHistoryPanel({
       events?: ChatbotHistoryEvent[];
       summary?: ChatbotHistorySummary | null;
       conversationState?: ChatbotConversationState | null;
+      journeys?: ChatbotHistoryJourney[];
       error?: string;
     };
     if (!response.ok) throw new Error(data.error || "Erro ao carregar histórico de conversas.");
@@ -125,6 +128,7 @@ export function CrmChatbotHistoryPanel({
     setTimeline(Array.isArray(data.timeline) ? data.timeline : []);
     setSummary(data.summary ?? null);
     setState(data.conversationState ?? null);
+    setJourneys(Array.isArray(data.journeys) ? data.journeys : []);
   }, [leadId]);
 
   useEffect(() => {
@@ -138,6 +142,7 @@ export function CrmChatbotHistoryPanel({
         setTimeline([]);
         setSummary(null);
         setState(null);
+        setJourneys([]);
         setError(err instanceof Error ? err.message : "Erro ao carregar histórico do chatbot.");
       })
       .finally(() => {
@@ -247,7 +252,7 @@ export function CrmChatbotHistoryPanel({
         ) : null}
         {timeline.length > 0 ? (
           <ul className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
-            {timeline.map((item) => {
+            {timeline.map((item, itemIndex) => {
               if (item.kind === "event") {
                 return (
                   <li key={`event-${item.id}`} className="flex justify-center">
@@ -266,8 +271,37 @@ export function CrmChatbotHistoryPanel({
               const message = item.message;
               const outbound = message.direction === "outbound";
               const isHuman = message.agent_id === "human";
+              const journey = message.journey_id
+                ? journeys.find((candidate) => candidate.id === message.journey_id)
+                : null;
+              const previousMessage = [...timeline.slice(0, itemIndex)]
+                .reverse()
+                .find((candidate) => candidate.kind === "message");
+              const startsJourney =
+                Boolean(message.journey_id) &&
+                (previousMessage?.kind !== "message" ||
+                  previousMessage.message.journey_id !== message.journey_id);
+              const sourceLabel =
+                journey?.source === "meta_form"
+                  ? `Formulário ${String(journey.metadata.form_name ?? journey.form_id ?? "")}`.trim()
+                  : journey?.source === "whatsapp_campaign"
+                    ? `Campanha ${String(journey.metadata.campaign_name ?? "")}`.trim()
+                    : journey?.source === "whatsapp_direct"
+                      ? "Atendimento direto autorizado"
+                      : "Histórico anterior";
               return (
-                <li key={message.id} className={cn("flex", outbound ? "justify-end" : "justify-start")}>
+                <li key={message.id} className="space-y-2">
+                  {startsJourney ? (
+                    <div className="flex items-center gap-2 py-1">
+                      <span className="h-px flex-1 bg-line/60" />
+                      <span className="rounded-full bg-surface-elevated px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-content-muted">
+                        {sourceLabel}
+                        {journey?.agent_name ? ` · ${journey.agent_name}` : ""}
+                      </span>
+                      <span className="h-px flex-1 bg-line/60" />
+                    </div>
+                  ) : null}
+                  <div className={cn("flex", outbound ? "justify-end" : "justify-start")}>
                   <div
                     className={cn(
                       "max-w-[88%] rounded-[1.15rem] px-3 py-2 text-sm",
@@ -303,6 +337,7 @@ export function CrmChatbotHistoryPanel({
                         {message.content}
                       </p>
                     ) : null}
+                  </div>
                   </div>
                 </li>
               );

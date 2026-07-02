@@ -38,6 +38,13 @@ import {
   type AppliedLeadRuleMapping,
 } from "@/lib/lead-rule-field-mapping";
 import type { LeadFieldMapping } from "@/lib/lead-distribution-rules";
+import {
+  activateLeadJourney,
+  authorizeActiveJourney,
+  isJourneyIsolationEnabled,
+  touchLeadJourney,
+} from "@/lib/server/lead-journeys";
+import { scheduleLeadRedistribution } from "@/lib/server/lead-redistribution";
 
 type MetaConnectionRow = {
   tenant_id: string;
@@ -66,6 +73,7 @@ async function revealMetaConversation(params: {
   leadId: string;
   agentId: string;
   lastMessageAt: string;
+  journeyId?: string | null;
 }) {
   return upsertConversationState({
     sb: params.sb,
@@ -81,6 +89,7 @@ async function revealMetaConversation(params: {
     archivedAt: null,
     hiddenAt: null,
     hiddenBy: null,
+    activeJourneyId: params.journeyId ?? null,
   });
 }
 
@@ -720,6 +729,8 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     agentId,
     leadId,
     phone,
+    remoteJid,
+    journeyId: null,
     source: "lead_ads",
     formId: resolvedFormId,
     pageId: page_id,
@@ -747,6 +758,56 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     return;
   }
 
+  const journeyIsolationEnabled = isJourneyIsolationEnabled();
+  const journey = await activateLeadJourney({
+    sb,
+    tenantId: tenant_id,
+    remoteJid,
+    phone,
+    leadId,
+    agentId,
+    ruleId,
+    connectionId: instance.id,
+    source: "meta_form",
+    sourceRef: leadgen_id,
+    pageId: page_id,
+    formId: resolvedFormId,
+    metadata: {
+      form_name: formName,
+      campaign_id: attribution.campaignId ?? null,
+      campaign_name: attribution.campaignName ?? null,
+      adset_id: attribution.adsetId ?? null,
+      ad_id: attribution.adId ?? null,
+    },
+  });
+  if (journeyIsolationEnabled && (!journey || journey.status !== "active")) {
+    const reason =
+      journey?.status === "manual_review"
+        ? "journey_requires_manual_review"
+        : journey?.status === "superseded"
+          ? "journey_conflict_kept_existing"
+          : "journey_activation_failed";
+    await eventRecorder.step("automation_blocked_by_journey", {
+      reason,
+      journey_id: journey?.id ?? null,
+      journey_status: journey?.status ?? null,
+    });
+    await eventRecorder.patch({
+      whatsapp_status: "blocked",
+      error_message: reason,
+      current_step: "automation_blocked_by_journey",
+    });
+    console.warn("[meta-webhook] Journey did not acquire automation", {
+      tenant_id,
+      lead_id: leadId,
+      agent_id: agentId,
+      journey_id: journey?.id ?? null,
+      journey_status: journey?.status ?? null,
+    });
+    return;
+  }
+  const journeyId = journey?.id ?? null;
+
   const initialMessageExternalId = `meta:${leadgen_id}:initial`;
   const { data: existingInitialMessage } = await sb
     .from("whatsapp_messages")
@@ -755,6 +816,12 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     .eq("message_id", initialMessageExternalId)
     .maybeSingle();
   if (existingInitialMessage?.id) {
+    await sb
+      .from("whatsapp_messages")
+      .update({ journey_id: journeyId })
+      .eq("tenant_id", tenant_id)
+      .eq("id", existingInitialMessage.id)
+      .is("journey_id", null);
     const alreadySent = existingInitialMessage.delivery_status === "sent";
     if (alreadySent) {
       await revealMetaConversation({
@@ -763,6 +830,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         remoteJid,
         leadId,
         agentId,
+        journeyId,
         lastMessageAt:
           typeof existingInitialMessage.sent_at === "string"
             ? existingInitialMessage.sent_at
@@ -811,6 +879,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     remoteJid,
     leadId,
     agentId,
+    journeyId,
     lastMessageAt: new Date().toISOString(),
   });
   await eventRecorder.step("conversation_state_created", { state_id: state?.id ?? null });
@@ -839,6 +908,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     tenantId: tenant_id,
     agentId,
     conversationId: remoteJid,
+    journeyId,
     customerId: remoteJid,
     feature: "agent_chat",
     messages: [{ role: "user", content: aiPrompt }],
@@ -872,6 +942,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       message_id: initialMessageExternalId,
       agent_id: agentId,
       lead_id: leadId,
+      journey_id: journeyId,
       delivery_status: "pending",
     })
     .select("id")
@@ -889,6 +960,29 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
   }
 
   try {
+    if (journeyIsolationEnabled) {
+      const currentJourney = await authorizeActiveJourney({
+        sb,
+        tenantId: tenant_id,
+        remoteJid,
+        preferredAgentId: agentId,
+      });
+      if (!currentJourney.ok || currentJourney.journey?.id !== journeyId) {
+        await eventRecorder.step("automation_blocked_by_journey", {
+          reason: currentJourney.ok ? "journey_superseded_before_send" : currentJourney.reason,
+          journey_id: journeyId,
+        });
+        await sb
+          .from("whatsapp_messages")
+          .update({
+            delivery_status: "failed",
+            failed_reason: "journey_superseded_before_send",
+          })
+          .eq("tenant_id", tenant_id)
+          .eq("id", savedMessage.id);
+        return;
+      }
+    }
     const send = await evolutionSendText({
       instanceName: instance.instance_name,
       number: evoNumber,
@@ -916,6 +1010,14 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         })
         .eq("tenant_id", tenant_id)
         .eq("id", savedMessage.id);
+      await scheduleLeadRedistribution({
+        sb,
+        tenantId: tenant_id,
+        journeyId,
+        ruleId,
+        currentAgentId: agentId,
+        trigger: "delivery_failed",
+      });
       return;
     }
 
@@ -945,6 +1047,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         remoteJid,
         leadId,
         agentId,
+        activeJourneyId: journeyId,
         channel: "whatsapp",
         status: "active",
         humanPaused: false,
@@ -955,7 +1058,24 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         hiddenBy: null,
       }),
       promoteLeadToContatoOnAgentEngagement({ sb, tenantId: tenant_id, leadId }),
+      journeyId
+        ? touchLeadJourney({
+            sb,
+            tenantId: tenant_id,
+            journeyId,
+            leadId,
+            occurredAt: sentAt,
+          })
+        : Promise.resolve(),
     ]);
+    await scheduleLeadRedistribution({
+      sb,
+      tenantId: tenant_id,
+      journeyId,
+      ruleId,
+      currentAgentId: agentId,
+      trigger: "customer_silence",
+    });
 
     await eventRecorder.step("whatsapp_sent", { message_id: savedMessage.id });
     await eventRecorder.patch({ whatsapp_status: "sent" });

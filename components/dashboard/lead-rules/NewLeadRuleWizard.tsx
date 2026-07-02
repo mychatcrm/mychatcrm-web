@@ -355,6 +355,10 @@ type Draft = {
   redistribution: boolean;
   /** `null` = utilizador ainda não escolheu (só em criação). */
   source: LeadRuleSource | null;
+  transport: "evolution" | "cloud_api";
+  connectionId: string;
+  conflictPolicy: NonNullable<LeadDistributionRule["conflictPolicy"]>;
+  conflictInactivityMinutes: number;
   pageLabel: string;
   pageId: string;
   useAllForms: boolean;
@@ -382,6 +386,10 @@ const emptyDraft = (): Draft => ({
   name: "",
   redistribution: false,
   source: null,
+  transport: "evolution",
+  connectionId: "",
+  conflictPolicy: "latest_wins",
+  conflictInactivityMinutes: 1440,
   pageLabel: "",
   pageId: "",
   useAllForms: false,
@@ -401,6 +409,13 @@ const emptyDraft = (): Draft => ({
     agent_ids: [],
     employee_ids: [],
     executar_anteriores: true,
+    triggers: {
+      agent_unavailable: true,
+      delivery_failed: true,
+      human_timeout: false,
+      customer_silence: false,
+    },
+    final_destination: "next_agent",
   },
 });
 
@@ -409,6 +424,10 @@ function ruleToDraft(r: LeadDistributionRule): Draft {
     name: r.name,
     redistribution: r.redistribution,
     source: r.source,
+    transport: r.transport ?? (r.source === "whatsapp_api" ? "cloud_api" : "evolution"),
+    connectionId: r.connectionId ?? "",
+    conflictPolicy: r.conflictPolicy ?? "latest_wins",
+    conflictInactivityMinutes: r.conflictInactivityMinutes ?? 1440,
     pageLabel: r.pageLabel ?? "",
     pageId: r.pageId ?? "",
     useAllForms: r.useAllForms ?? true,
@@ -428,6 +447,13 @@ function ruleToDraft(r: LeadDistributionRule): Draft {
       agent_ids: [],
       employee_ids: [],
       executar_anteriores: true,
+      triggers: {
+        agent_unavailable: true,
+        delivery_failed: true,
+        human_timeout: false,
+        customer_silence: false,
+      },
+      final_destination: "next_agent",
     },
   };
 }
@@ -460,6 +486,15 @@ export function NewLeadRuleWizard({
   const [distPickerOpen, setDistPickerOpen] = useState(false);
   const [distQuery, setDistQuery] = useState("");
   const [metaPages, setMetaPages] = useState<MetaStatusPage[]>([]);
+  const [whatsAppConnections, setWhatsAppConnections] = useState<
+    Array<{
+      id: string;
+      slot_index: number;
+      instance_name: string;
+      connection_state: string;
+      wa_jid: string | null;
+    }>
+  >([]);
   const [availableForms, setAvailableForms] = useState<MetaFormsForm[]>([]);
   const [formsLoading, setFormsLoading] = useState(false);
   const [formsError, setFormsError] = useState<string | null>(null);
@@ -504,6 +539,26 @@ export function NewLeadRuleWizard({
       .then((r) => (r.ok ? r.json() : null))
       .then((d: { pages?: MetaStatusPage[] } | null) => setMetaPages(d?.pages || []))
       .catch(() => setMetaPages([]));
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    fetch("/api/client/lead-rules/connections", { credentials: "same-origin" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then(
+        (
+          payload: {
+            connections?: Array<{
+              id: string;
+              slot_index: number;
+              instance_name: string;
+              connection_state: string;
+              wa_jid: string | null;
+            }>;
+          } | null,
+        ) => setWhatsAppConnections(payload?.connections ?? []),
+      )
+      .catch(() => setWhatsAppConnections([]));
   }, [open]);
 
   const syncDistPopoverRect = useCallback(() => {
@@ -896,6 +951,10 @@ export function NewLeadRuleWizard({
         ...initialRule,
         name: draft.name.trim(),
         source: draft.source,
+        transport: draft.transport,
+        connectionId: draft.connectionId || null,
+        conflictPolicy: draft.conflictPolicy,
+        conflictInactivityMinutes: draft.conflictInactivityMinutes,
         redistribution: draft.redistribution,
         distributionType: dist,
         agentIds:
@@ -927,6 +986,10 @@ export function NewLeadRuleWizard({
       name: draft.name.trim(),
       order: 999,
       source: draft.source,
+      transport: draft.transport,
+      connectionId: draft.connectionId || null,
+      conflictPolicy: draft.conflictPolicy,
+      conflictInactivityMinutes: draft.conflictInactivityMinutes,
       redistribution: draft.redistribution,
       distributionType: dist,
       agentIds:
@@ -1085,15 +1148,9 @@ export function NewLeadRuleWizard({
                       iconBg: isLight ? "bg-blue-500/15 text-blue-600" : "bg-blue-500/15 text-blue-300",
                     },
                     {
-                      id: "whatsapp_api" as const,
-                      title: "WhatsApp Business",
-                      sub: "API oficial da Meta",
-                      iconBg: isLight ? "bg-emerald-500/15 text-emerald-600" : "bg-emerald-500/15 text-emerald-300",
-                    },
-                    {
-                      id: "whatsapp_qr" as const,
-                      title: "WhatsApp",
-                      sub: "Ligação por QR Code",
+                      id: ORGANIC_WHATSAPP_SOURCE,
+                      title: "WhatsApp direto",
+                      sub: "Mensagens espontâneas no privado",
                       iconBg: isLight ? "bg-emerald-500/12 text-emerald-700" : "bg-emerald-500/12 text-emerald-200",
                     },
                   ] as const
@@ -1124,7 +1181,7 @@ export function NewLeadRuleWizard({
                         </span>
                       ) : null}
                       <span className={cn("mb-3 flex h-12 w-12 items-center justify-center rounded-xl", card.iconBg)}>
-                        {card.id === "whatsapp_api" ? (
+                        {card.id === ORGANIC_WHATSAPP_SOURCE ? (
                           <WhatsAppGlyph className="h-7 w-7 shrink-0" aria-hidden />
                         ) : card.id === "meta_form" ? (
                           <FacebookMark className="h-7 w-7" />
@@ -1138,7 +1195,7 @@ export function NewLeadRuleWizard({
                   );
                 })}
               </div>
-              {draft.source === ORGANIC_WHATSAPP_SOURCE || draft.source === "other" ? (
+              {draft.source === "other" ? (
                 <p className={cn("mt-3 text-xs leading-relaxed", isLight ? "text-amber-800" : "text-amber-300/90")}>
                   Esta regra está ligada a <strong className="text-content">{sourceLabel(draft.source)}</strong>, uma origem que já não é escolhível aqui. Para mudar o canal,
                   toque num dos cartões acima; caso contrário, pode continuar a editar com a origem actual.
@@ -1566,25 +1623,58 @@ export function NewLeadRuleWizard({
               </div>
             ) : null}
 
-            {draft.source === "whatsapp_api" ? (
+            {draft.source === ORGANIC_WHATSAPP_SOURCE ? (
               <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] p-4 text-sm text-content-secondary">
-                <p className="font-medium text-content">WhatsApp Business (API)</p>
+                <p className="font-medium text-content">Transporte do WhatsApp direto</p>
                 <p className="mt-1 text-xs leading-relaxed">
-                  Ideal para número verificado, templates e volume. Confirme em{" "}
-                  <Link href="/dashboard/integracoes#canal-whatsapp" className="font-semibold text-primary underline-offset-2 hover:underline">
-                    Integrações
-                  </Link>{" "}
-                  se escolheu a API oficial no assistente WhatsApp.
+                  O transporte conecta o número. Esta regra é o que autoriza o agente a responder mensagens espontâneas.
                 </p>
-              </div>
-            ) : null}
-
-            {draft.source === "whatsapp_qr" ? (
-              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] p-4 text-sm text-content-secondary">
-                <p className="font-medium text-content">WhatsApp por QR Code</p>
-                <p className="mt-1 text-xs leading-relaxed">
-                  Bom para testar rápido no telemóvel. O mesmo ecrã de Integrações deixa escolher QR ou API — use o que estiver ligado à empresa.
-                </p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {[
+                    { value: "evolution" as const, label: "QR Code / Evolution" },
+                    { value: "cloud_api" as const, label: "Cloud API oficial" },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setDraft((current) => ({ ...current, transport: option.value }))}
+                      className={cn(
+                        "rounded-lg px-3 py-2 text-left text-xs font-semibold transition",
+                        draft.transport === option.value
+                          ? "bg-primary text-white"
+                          : "bg-surface-card text-content hover:bg-surface-deep",
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                {draft.transport === "evolution" ? (
+                  <div className="mt-3">
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-content-muted">
+                      Número / conexão autorizada
+                    </label>
+                    <select
+                      value={draft.connectionId}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          connectionId: event.target.value,
+                        }))
+                      }
+                      className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                    >
+                      <option value="">Qualquer conexão do tenant (compatibilidade)</option>
+                      {whatsAppConnections.map((connection) => (
+                        <option key={connection.id} value={connection.id}>
+                          Linha {connection.slot_index + 1} ·{" "}
+                          {connection.wa_jid?.split("@")[0] || connection.instance_name}
+                          {connection.connection_state === "open" ? " · conectada" : " · desconectada"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -1963,6 +2053,56 @@ export function NewLeadRuleWizard({
             )}
 
             <div className="mt-4 rounded-xl border border-line bg-surface-deep/25 p-3">
+              <p className="text-xs font-semibold text-content">Conflitos e continuidade</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-content-muted">
+                Define qual jornada assume quando o mesmo telefone entra por outra campanha ou formulário.
+              </p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-conflict-policy`}>
+                    Política
+                  </label>
+                  <Select
+                    id={`${formId}-conflict-policy`}
+                    className="mt-1.5 h-10 rounded-xl"
+                    value={draft.conflictPolicy}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        conflictPolicy: event.target.value as Draft["conflictPolicy"],
+                      }))
+                    }
+                  >
+                    <option value="latest_wins">Campanha explícita mais recente assume</option>
+                    <option value="priority_wins">Regra de maior prioridade assume</option>
+                    <option value="keep_until_inactive">Manter jornada até inatividade</option>
+                    <option value="manual_review">Pausar e solicitar decisão humana</option>
+                  </Select>
+                </div>
+                {draft.conflictPolicy === "keep_until_inactive" ? (
+                  <div>
+                    <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-conflict-inactivity`}>
+                      Inatividade em minutos
+                    </label>
+                    <Input
+                      id={`${formId}-conflict-inactivity`}
+                      type="number"
+                      min={1}
+                      className="mt-1.5 h-10 rounded-xl"
+                      value={draft.conflictInactivityMinutes}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          conflictInactivityMinutes: Math.max(1, Number(event.target.value) || 1),
+                        }))
+                      }
+                    />
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-xl border border-line bg-surface-deep/25 p-3">
               <Toggle
                 id={`${formId}-redistribution`}
                 checked={draft.redistribution}
@@ -1979,6 +2119,13 @@ export function NewLeadRuleWizard({
                           agent_ids: [],
                           employee_ids: [],
                           executar_anteriores: true,
+                          triggers: {
+                            agent_unavailable: true,
+                            delivery_failed: true,
+                            human_timeout: false,
+                            customer_silence: false,
+                          },
+                          final_destination: "next_agent",
                         },
                   }))
                 }
@@ -1986,6 +2133,7 @@ export function NewLeadRuleWizard({
                 description="Se o primeiro destino não avançar no prazo definido, a regra pode tentar outro destino."
               />
               {draft.redistribution ? (
+                <>
                 <div className="mt-4 grid gap-3 sm:grid-cols-3">
                   <div>
                     <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-redistribution-minutes`}>
@@ -2055,6 +2203,84 @@ export function NewLeadRuleWizard({
                     </Select>
                   </div>
                 </div>
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  {[
+                    {
+                      key: "agent_unavailable" as const,
+                      label: "Agente desativado ou indisponível",
+                    },
+                    {
+                      key: "delivery_failed" as const,
+                      label: "Falha definitiva no envio",
+                    },
+                    {
+                      key: "human_timeout" as const,
+                      label: "Equipe humana não aceitou no prazo",
+                    },
+                    {
+                      key: "customer_silence" as const,
+                      label: "Cliente permaneceu em silêncio",
+                    },
+                  ].map((trigger) => (
+                    <label
+                      key={trigger.key}
+                      className="flex items-center gap-2 rounded-lg bg-surface-card px-3 py-2 text-xs text-content"
+                    >
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-primary"
+                        checked={draft.redistributionConfig.triggers?.[trigger.key] === true}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            redistributionConfig: {
+                              ...current.redistributionConfig,
+                              triggers: {
+                                agent_unavailable:
+                                  current.redistributionConfig.triggers?.agent_unavailable ?? true,
+                                delivery_failed:
+                                  current.redistributionConfig.triggers?.delivery_failed ?? true,
+                                human_timeout:
+                                  current.redistributionConfig.triggers?.human_timeout ?? false,
+                                customer_silence:
+                                  current.redistributionConfig.triggers?.customer_silence ?? false,
+                                [trigger.key]: event.target.checked,
+                              },
+                            },
+                          }))
+                        }
+                      />
+                      {trigger.label}
+                    </label>
+                  ))}
+                </div>
+                <div className="mt-3">
+                  <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-redistribution-final`}>
+                    Destino final
+                  </label>
+                  <Select
+                    id={`${formId}-redistribution-final`}
+                    className="mt-1.5 h-10 rounded-xl"
+                    value={draft.redistributionConfig.final_destination ?? "next_agent"}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        redistributionConfig: {
+                          ...current.redistributionConfig,
+                          final_destination: event.target.value as
+                            | "next_agent"
+                            | "human_team"
+                            | "crm_only",
+                        },
+                      }))
+                    }
+                  >
+                    <option value="next_agent">Próximo agente autorizado na regra</option>
+                    <option value="human_team">Equipe humana</option>
+                    <option value="crm_only">Somente CRM</option>
+                  </Select>
+                </div>
+                </>
               ) : null}
             </div>
 

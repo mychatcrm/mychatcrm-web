@@ -28,6 +28,7 @@ export const META_LEAD_EVENT_STEPS = [
   "blocked_ambiguous_meta_page_form_tenant",
   "blocked_missing_meta_connection_for_resolved_tenant",
   "blocked_historical_lead",
+  "automation_blocked_by_journey",
 ] as const;
 
 export type MetaLeadEventStep = (typeof META_LEAD_EVENT_STEPS)[number];

@@ -67,7 +67,13 @@ function normalizeSource(value: string): string {
 
 function sourceDisplay(source: string): { origem: string; tag: string; tags: string[] } {
   const normalized = normalizeSource(source);
-  if (normalized === "whatsapp") return { origem: "WhatsApp", tag: "WhatsApp", tags: ["WhatsApp", "Novo"] };
+  if (normalized.includes("whatsapp")) {
+    return {
+      origem: normalized.includes("campaign") ? "Campanha WhatsApp" : "WhatsApp",
+      tag: "WhatsApp",
+      tags: normalized.includes("campaign") ? ["WhatsApp", "Campanha"] : ["WhatsApp", "Novo"],
+    };
+  }
   if (normalized.includes("facebook") || normalized.includes("meta") || normalized.includes("lead_ads") || normalized.includes("form")) {
     return { origem: "Meta / Facebook", tag: "Meta", tags: ["Meta", "Formulário"] };
   }

@@ -24,6 +24,10 @@ export type LeadDistributionRuleRow = {
   source: LeadRuleSource;
   order_index: number;
   active: boolean;
+  transport: "evolution" | "cloud_api" | null;
+  connection_id: string | null;
+  conflict_policy: LeadDistributionRule["conflictPolicy"] | null;
+  conflict_inactivity_minutes: number | null;
   redistribution: boolean;
   distribution_type: LeadDistributionType;
   agent_ids: unknown;
@@ -72,6 +76,10 @@ export function leadRuleRowToClient(row: LeadDistributionRuleRow): LeadDistribut
     order: row.order_index,
     source: row.source,
     active: row.active,
+    transport: row.transport ?? undefined,
+    connectionId: row.connection_id,
+    conflictPolicy: row.conflict_policy ?? "latest_wins",
+    conflictInactivityMinutes: row.conflict_inactivity_minutes ?? 1440,
     redistribution: row.redistribution,
     distributionType: row.distribution_type,
     agentIds: stringArray(row.agent_ids),
@@ -109,6 +117,13 @@ export function leadRuleClientToDbPayload(
 
   const useAllForms = body.useAllForms ?? body.use_all_forms;
   const redistributionConfig = body.redistributionConfig ?? body.redistribution_config ?? {};
+  const conflictPolicy = body.conflictPolicy ?? body.conflict_policy;
+  const allowedConflictPolicies = new Set([
+    "latest_wins",
+    "priority_wins",
+    "keep_until_inactive",
+    "manual_review",
+  ]);
 
   return {
     tenant_id: tenantId,
@@ -116,6 +131,34 @@ export function leadRuleClientToDbPayload(
     source,
     order_index: typeof body.order === "number" ? body.order : typeof body.order_index === "number" ? body.order_index : fallbackOrder,
     active: typeof body.active === "boolean" ? body.active : true,
+    transport:
+      body.transport === "cloud_api" || body.transport === "evolution"
+        ? body.transport
+        : source === "whatsapp_api"
+          ? "cloud_api"
+          : source === "whatsapp_qr"
+            ? "evolution"
+            : null,
+    connection_id:
+      typeof (body.connectionId ?? body.connection_id) === "string"
+        ? String(body.connectionId ?? body.connection_id).trim() || null
+        : null,
+    conflict_policy:
+      typeof conflictPolicy === "string" && allowedConflictPolicies.has(conflictPolicy)
+        ? conflictPolicy
+        : "latest_wins",
+    conflict_inactivity_minutes:
+      typeof (body.conflictInactivityMinutes ?? body.conflict_inactivity_minutes) === "number"
+        ? Math.max(
+            1,
+            Math.min(
+              525600,
+              Math.floor(
+                Number(body.conflictInactivityMinutes ?? body.conflict_inactivity_minutes),
+              ),
+            ),
+          )
+        : 1440,
     redistribution: typeof body.redistribution === "boolean" ? body.redistribution : false,
     distribution_type: distributionType,
     agent_ids: stringArray(body.agentIds ?? body.agent_ids),

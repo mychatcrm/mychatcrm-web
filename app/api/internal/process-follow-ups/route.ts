@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { processDueFollowUpJobs } from "@/lib/server/follow-up-jobs";
 import { verifyInternalApiRequest } from "@/lib/server/internal-api-auth";
+import { processDueLeadRedistributions } from "@/lib/server/lead-redistribution";
 import { processRecentMetaLeadAds } from "@/lib/server/meta-lead-poller";
+import { processDueWhatsAppCampaigns } from "@/lib/server/whatsapp-campaigns";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -35,8 +37,32 @@ export async function POST(request: Request) {
       console.info("[meta-lead-poller]", { event: "follow_up_hook_skipped", reason: "poller_disabled_by_default" });
     }
 
+    let omnichannel: {
+      campaigns: Awaited<ReturnType<typeof processDueWhatsAppCampaigns>>;
+      redistributions: Awaited<ReturnType<typeof processDueLeadRedistributions>>;
+    } | null = null;
+    if (process.env.OMNICHANNEL_JOURNEYS_ENABLED === "true") {
+      try {
+        const sb = createSupabaseServiceClient();
+        const [campaigns, redistributions] = await Promise.all([
+          processDueWhatsAppCampaigns(sb),
+          processDueLeadRedistributions(sb),
+        ]);
+        omnichannel = { campaigns, redistributions };
+        console.info("[omnichannel-processor]", { event: "follow_up_hook_completed", ...omnichannel });
+      } catch (omnichannelErr) {
+        const message = omnichannelErr instanceof Error ? omnichannelErr.message : String(omnichannelErr);
+        console.warn("[omnichannel-processor]", { event: "follow_up_hook_failed", error: message });
+      }
+    } else {
+      console.info("[omnichannel-processor]", {
+        event: "follow_up_hook_skipped",
+        reason: "journeys_disabled",
+      });
+    }
+
     console.info("[follow-up-jobs]", { event: "process_completed", ...result });
-    return NextResponse.json({ ok: true, ...result, metaLeadPoll });
+    return NextResponse.json({ ok: true, ...result, metaLeadPoll, omnichannel });
   } catch (error) {
     const message = error instanceof Error ? error.message : "process_failed";
     console.error("[follow-up-jobs]", { event: "process_error", error: message });

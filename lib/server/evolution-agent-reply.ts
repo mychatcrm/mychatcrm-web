@@ -17,7 +17,6 @@ import { detectOutboundRepetition } from "@/lib/conversas/outbound-repetition-gu
 import { isElevenlabsConfigured } from "@/lib/integrations/elevenlabs";
 import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import { deliverAgentReplyWithOptionalTts } from "@/lib/server/agent-tts-outbound";
-import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 import { promoteLeadToContatoOnAgentEngagement } from "@/lib/server/crm-lead-lifecycle";
 import { resolveOutboundMediaForAgentResponse } from "@/lib/server/agent-media-files";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
@@ -45,6 +44,12 @@ import {
   shouldDeferHandoffForAgendaResult,
 } from "@/lib/server/agent-cta-scheduler";
 import type { AgentFollowUpInteligente } from "@/lib/types";
+import {
+  authorizeActiveJourney,
+  isJourneyIsolationEnabled,
+  touchLeadJourney,
+} from "@/lib/server/lead-journeys";
+import { scheduleLeadRedistribution } from "@/lib/server/lead-redistribution";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -78,6 +83,7 @@ async function saveOutboundMessage(opts: {
   content: string;
   agentId: string;
   leadId?: string | null;
+  journeyId?: string | null;
   mediaUrl?: string | null;
 }): Promise<void> {
   const sb = createSupabaseServiceClient();
@@ -89,6 +95,7 @@ async function saveOutboundMessage(opts: {
     content: opts.content,
     agent_id: opts.agentId,
     lead_id: opts.leadId ?? null,
+    journey_id: opts.journeyId ?? null,
     media_url: opts.mediaUrl ?? null,
   });
 }
@@ -131,6 +138,7 @@ async function generateReplyForUnit(params: {
     tenantId: params.job.tenant_id,
     agentId: params.job.agent_id,
     conversationId: params.job.remote_jid,
+    journeyId: params.job.journey_id,
     customerId: params.job.remote_jid,
     feature: "agent_chat",
     messages: unitPrompt ? [{ role: "user", content: unitPrompt }] : [],
@@ -155,6 +163,7 @@ async function generateReplyForUnit(params: {
         tenantId: params.job.tenant_id,
         remoteJid: params.job.remote_jid,
         limit: 8,
+        journeyId: params.job.journey_id,
       })
     )
       .filter((m) => m.role === "assistant")
@@ -166,6 +175,7 @@ async function generateReplyForUnit(params: {
         tenantId: params.job.tenant_id,
         agentId: params.job.agent_id,
         conversationId: params.job.remote_jid,
+        journeyId: params.job.journey_id,
         customerId: params.job.remote_jid,
         feature: "agent_chat",
         messages: [
@@ -200,12 +210,59 @@ export async function processAgentResponseJob(
   const generation = claimedGeneration ?? job.burst_generation;
   const skipGenerationCheck = options?.skipGenerationCheck === true;
 
+  if (isJourneyIsolationEnabled()) {
+    const journeyAuth = job.journey_id
+      ? await authorizeActiveJourney({
+          sb,
+          tenantId: job.tenant_id,
+          remoteJid: job.remote_jid,
+          preferredAgentId: job.agent_id,
+        })
+      : null;
+    if (!job.journey_id || !journeyAuth?.ok || journeyAuth.journey?.id !== job.journey_id) {
+      const reason =
+        !job.journey_id
+          ? "missing_active_journey"
+          : journeyAuth?.ok
+            ? "journey_id_mismatch"
+            : journeyAuth?.reason ?? "journey_not_authorized";
+      await sb
+        .from("agent_response_jobs")
+        .update({
+          status: "cancelled",
+          failed_reason: reason,
+          completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", job.id);
+      if (
+        job.journey_id &&
+        journeyAuth &&
+        !journeyAuth.ok &&
+        journeyAuth.journey?.ruleId &&
+        journeyAuth.reason === "journey_agent_inactive"
+      ) {
+        await scheduleLeadRedistribution({
+          sb,
+          tenantId: job.tenant_id,
+          journeyId: job.journey_id,
+          ruleId: journeyAuth.journey.ruleId,
+          currentAgentId: job.agent_id,
+          trigger: "agent_unavailable",
+        });
+      }
+      return { ok: false, error: reason, dedupedCount: 0 };
+    }
+  }
+
   const autoContactGuard = await canAgentAutoContactLead({
     sb,
     tenantId: job.tenant_id,
     agentId: job.agent_id,
     leadId: job.lead_id,
     phone: job.remote_jid,
+    remoteJid: job.remote_jid,
+    journeyId: job.journey_id,
     triggerSource: "agent_response_job",
   });
   if (!autoContactGuard.ok) {
@@ -234,15 +291,18 @@ export async function processAgentResponseJob(
   // JS toISOString() truncates to ms ("14:15:51.051"), causing .lte() to exclude the last
   // message of every burst. Adding 1ms ensures the filter covers the full window.
   const windowEnd = new Date(new Date(job.last_message_at).getTime() + 1).toISOString();
-  const { data: rowsByWindow, error: windowError } = await sb
+  let windowQuery = sb
     .from("whatsapp_messages")
     .select("id, content, kind, message_id, remote_jid, created_at, storage_key, mime_type")
     .eq("tenant_id", job.tenant_id)
     .eq("remote_jid", job.remote_jid)
     .eq("direction", "inbound")
     .gte("created_at", job.first_message_at)
-    .lte("created_at", windowEnd)
-    .order("created_at", { ascending: true });
+    .lte("created_at", windowEnd);
+  if (job.journey_id) windowQuery = windowQuery.eq("journey_id", job.journey_id);
+  const { data: rowsByWindow, error: windowError } = await windowQuery.order("created_at", {
+    ascending: true,
+  });
   if (windowError) return { ok: false, error: windowError.message };
 
   let inboundRows = (rowsByWindow ?? []) as PendingInboundRow[];
@@ -427,6 +487,7 @@ export async function processAgentResponseJob(
         content: apology,
         agentId: job.agent_id,
         leadId: job.lead_id,
+        journeyId: job.journey_id,
       });
     }
     console.info("[agent-response-jobs]", {
@@ -508,6 +569,7 @@ export async function processAgentResponseJob(
         tenantId: job.tenant_id,
         remoteJid: job.remote_jid,
         limit: 12,
+        journeyId: job.journey_id,
       }),
     );
     const agendaTurn = await resolveAgendaTurn({
@@ -636,6 +698,22 @@ export async function processAgentResponseJob(
       await sendPresence(job.instance_name, number, "composing", typingDelayMs(textToSend));
     }
 
+    if (isJourneyIsolationEnabled()) {
+      const currentJourney = await authorizeActiveJourney({
+        sb,
+        tenantId: job.tenant_id,
+        remoteJid: job.remote_jid,
+        preferredAgentId: job.agent_id,
+      });
+      if (!currentJourney.ok || currentJourney.journey?.id !== job.journey_id) {
+        return {
+          ok: false,
+          error: currentJourney.ok ? "journey_superseded_before_send" : currentJourney.reason,
+          dedupedCount: burst.dedupedCount,
+        };
+      }
+    }
+
     const delivery = await deliverAgentReplyWithOptionalTts({
       instanceName: job.instance_name,
       number,
@@ -661,6 +739,22 @@ export async function processAgentResponseJob(
     });
 
     if (!delivery.sent) {
+      const journey = job.journey_id
+        ? await authorizeActiveJourney({
+            sb,
+            tenantId: job.tenant_id,
+            remoteJid: job.remote_jid,
+            preferredAgentId: job.agent_id,
+          })
+        : null;
+      await scheduleLeadRedistribution({
+        sb,
+        tenantId: job.tenant_id,
+        journeyId: job.journey_id,
+        ruleId: journey?.journey?.ruleId,
+        currentAgentId: job.agent_id,
+        trigger: "delivery_failed",
+      });
       return { ok: false, error: "outbound_send_failed", dedupedCount: burst.dedupedCount };
     }
 
@@ -671,7 +765,26 @@ export async function processAgentResponseJob(
       content: textToSend.slice(0, 4000),
       agentId: job.agent_id,
       leadId: job.lead_id,
+      journeyId: job.journey_id,
       mediaUrl: delivery.mediaUrl,
+    });
+    await scheduleLeadRedistribution({
+      sb,
+      tenantId: job.tenant_id,
+      journeyId: job.journey_id,
+      ruleId:
+        job.journey_id
+          ? (
+              await authorizeActiveJourney({
+                sb,
+                tenantId: job.tenant_id,
+                remoteJid: job.remote_jid,
+                preferredAgentId: job.agent_id,
+              })
+            ).journey?.ruleId
+          : null,
+      currentAgentId: job.agent_id,
+      trigger: "customer_silence",
     });
     await sendOutboundMediaSafe();
 
@@ -691,6 +804,7 @@ export async function processAgentResponseJob(
       sb,
       tenantId: job.tenant_id,
       remoteJid: job.remote_jid,
+      journeyId: job.journey_id,
     });
     const summary = buildDeterministicHandoffSummary({
       lead: job.lead_id
@@ -718,6 +832,7 @@ export async function processAgentResponseJob(
       remoteJid: job.remote_jid,
       leadId: job.lead_id,
       agentId: job.agent_id,
+      journeyId: job.journey_id,
       summary,
     });
     await markWaitingForHuman({
@@ -764,19 +879,19 @@ export async function processAgentResponseJob(
     }
   }
 
-  const leadUpsert = await upsertLeadFromWhatsAppContact({
-    tenantId: job.tenant_id,
-    remoteJid: job.remote_jid,
-    recipientJid: job.remote_jid,
-    direction: "outbound",
-    agentId: job.agent_id,
-    conversationId: job.remote_jid,
-  });
   await promoteLeadToContatoOnAgentEngagement({
     sb,
     tenantId: job.tenant_id,
-    leadId: job.lead_id ?? leadUpsert.lead?.id ?? null,
+    leadId: job.lead_id,
   });
+  if (job.journey_id) {
+    await touchLeadJourney({
+      sb,
+      tenantId: job.tenant_id,
+      journeyId: job.journey_id,
+      leadId: job.lead_id,
+    });
+  }
 
   console.info("[agent-response-jobs]", {
     event: "sequential_replies_completed",

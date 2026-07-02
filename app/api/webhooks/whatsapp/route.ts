@@ -9,10 +9,19 @@ import {
 } from "@/lib/integrations/whatsapp-cloud";
 import { applyMetaSystemNotificationStatus } from "@/lib/server/system-agent";
 import { handleSystemMetaInbound } from "@/lib/server/system-meta-inbound";
-import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
-import { resolveDirectWhatsAppAgentFromRules } from "@/lib/server/agent-channel-authorization";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import {
+  authorizeActiveJourney,
+  isJourneyIsolationEnabled,
+  resolveDirectJourneyAgent,
+  touchLeadJourney,
+} from "@/lib/server/lead-journeys";
+import {
+  cancelLeadRedistributionTrigger,
+  scheduleLeadRedistribution,
+} from "@/lib/server/lead-redistribution";
+import { revealConversationOnInbound } from "@/lib/server/conversation-visibility";
 
 export const dynamic = "force-dynamic";
 
@@ -85,25 +94,76 @@ export async function POST(request: Request) {
   }
 
   const tenantId = process.env.WHATSAPP_DEFAULT_TENANT_ID?.trim() || "public";
-  const preferredAgentId = process.env.WHATSAPP_DEFAULT_AGENT_ID?.trim() || null;
   const sb = createSupabaseServiceClient();
-  const organic = await resolveDirectWhatsAppAgentFromRules({
+  const journeyAuth = await resolveDirectJourneyAgent({
     sb,
     tenantId,
-    preferredAgentId,
+    remoteJid: inbound.fromWaId,
+    connectionId: inbound.phoneNumberId,
   });
-  const agentId = organic?.agentId ?? null;
+  const journey = journeyAuth.journey;
+  const agentId = journeyAuth.ok ? journeyAuth.agentId : null;
+  const phone = inbound.fromWaId.replace(/\D/g, "");
+  const { data: existingLead } = await sb
+    .from("leads")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("phone", phone)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const leadId =
+    (existingLead as { id?: string } | null)?.id ??
+    journey?.leadId ??
+    null;
+  const receivedAt = new Date().toISOString();
 
-  await upsertLeadFromWhatsAppContact({
-    tenantId,
-    phone: inbound.fromWaId,
-    senderJid: inbound.fromWaId,
-    instancePhone: inbound.displayPhoneNumber,
-    contactName: inbound.contactName,
+  const { error: inboundInsertError } = await sb.from("whatsapp_messages").insert({
+    tenant_id: tenantId,
+    remote_jid: inbound.fromWaId,
     direction: "inbound",
-    agentId,
-    conversationId: inbound.fromWaId,
+    kind: "text",
+    content: inbound.text,
+    message_id: inbound.messageId || null,
+    agent_id: null,
+    lead_id: leadId,
+    journey_id: journey?.id ?? null,
   });
+  if (inboundInsertError?.code === "23505") {
+    return NextResponse.json({ ok: true });
+  }
+  if (inboundInsertError) {
+    console.warn("[webhooks/whatsapp] inbound_persist_failed", {
+      tenant_id: tenantId,
+      error: inboundInsertError.message,
+    });
+  }
+
+  await revealConversationOnInbound({
+    sb,
+    tenantId,
+    remoteJid: inbound.fromWaId,
+    leadId,
+    agentId,
+    activeJourneyId: journey?.id ?? null,
+    lastMessageAt: receivedAt,
+  });
+  if (journey) {
+    await cancelLeadRedistributionTrigger({
+      sb,
+      tenantId,
+      journeyId: journey.id,
+      trigger: "customer_silence",
+      reason: "customer_replied",
+    });
+    await touchLeadJourney({
+      sb,
+      tenantId,
+      journeyId: journey.id,
+      leadId,
+      occurredAt: receivedAt,
+    });
+  }
 
   if (!agentId) {
     console.info("[webhooks/whatsapp] agent skipped", {
@@ -118,7 +178,9 @@ export async function POST(request: Request) {
     sb,
     tenantId,
     agentId,
-    phone: inbound.fromWaId,
+    phone,
+    remoteJid: inbound.fromWaId,
+    journeyId: journey?.id ?? null,
     triggerSource: "whatsapp_cloud_inbound_auto_reply",
   });
   if (!guard.ok) {
@@ -135,6 +197,7 @@ export async function POST(request: Request) {
     tenantId,
     agentId,
     conversationId: inbound.fromWaId,
+    journeyId: journey?.id ?? null,
     customerId: inbound.fromWaId,
     feature: "agent_chat",
     messages: [{ role: "user", content: inbound.text }],
@@ -146,6 +209,21 @@ export async function POST(request: Request) {
     : "Não consegui gerar uma resposta agora. Por favor tente de novo em instantes.";
 
   if (token) {
+    if (isJourneyIsolationEnabled()) {
+      const currentJourney = await authorizeActiveJourney({
+        sb,
+        tenantId,
+        remoteJid: inbound.fromWaId,
+        preferredAgentId: agentId,
+      });
+      if (!currentJourney.ok || currentJourney.journey?.id !== journey?.id) {
+        console.info("[webhooks/whatsapp] response cancelled before send", {
+          tenant_id: tenantId,
+          reason: currentJourney.ok ? "journey_superseded_before_send" : currentJourney.reason,
+        });
+        return NextResponse.json({ ok: true });
+      }
+    }
     const send = await sendWhatsAppTextMessage({
       toWaId: inbound.fromWaId,
       text: replyText.slice(0, 4000),
@@ -155,16 +233,42 @@ export async function POST(request: Request) {
     if (!send.ok) {
       console.error("[webhooks/whatsapp] send failed", send.status, send.error);
     } else {
-      await upsertLeadFromWhatsAppContact({
-        tenantId,
-        phone: inbound.fromWaId,
-        recipientJid: inbound.fromWaId,
-        instancePhone: inbound.displayPhoneNumber,
-        contactName: inbound.contactName,
+      const sentAt = new Date().toISOString();
+      await sb.from("whatsapp_messages").insert({
+        tenant_id: tenantId,
+        remote_jid: inbound.fromWaId,
         direction: "outbound",
-        agentId,
-        conversationId: inbound.fromWaId,
+        kind: "text",
+        content: replyText.slice(0, 4000),
+        message_id: send.messageId ?? null,
+        agent_id: agentId,
+        lead_id: leadId,
+        journey_id: journey?.id ?? null,
       });
+      if (leadId) {
+        await sb
+          .from("leads")
+          .update({ last_message_at: sentAt, updated_at: sentAt })
+          .eq("tenant_id", tenantId)
+          .eq("id", leadId);
+      }
+      if (journey) {
+        await touchLeadJourney({
+          sb,
+          tenantId,
+          journeyId: journey.id,
+          leadId,
+          occurredAt: sentAt,
+        });
+        await scheduleLeadRedistribution({
+          sb,
+          tenantId,
+          journeyId: journey.id,
+          ruleId: journey.ruleId,
+          currentAgentId: agentId,
+          trigger: "customer_silence",
+        });
+      }
     }
   } else {
     console.warn("[webhooks/whatsapp] WHATSAPP_ACCESS_TOKEN ausente — inferência registada mas sem envio de resposta.");
