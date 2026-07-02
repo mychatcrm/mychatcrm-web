@@ -7,8 +7,9 @@ import { DashboardOverviewDateFilter } from "./DashboardWorkspace";
 import Link from "next/link";
 import { Drawer } from "@/components/ui/Drawer";
 import type { ClientSession } from "@/lib/client-auth";
-import { dashboardNavPinnedItems } from "./navigation";
+import { dashboardNavPinnedItems, dashboardSettingsHelp } from "./navigation";
 import { PanelAppearanceProvider, type PanelAppearanceMode } from "@/components/panel/PanelAppearance";
+import { PanelHelp } from "@/components/panel/ui/PanelHelp";
 import { CrmFunnelsProvider } from "./CrmFunnelsContext";
 import { cn } from "@/lib/utils";
 import { Bell, Menu, Search } from "lucide-react";
@@ -33,14 +34,32 @@ function DashboardShellInner({
     return () => mq.removeEventListener("change", sync);
   }, []);
 
-  const pageTitle = useMemo(() => {
+  const pageContext = useMemo(() => {
     const path = pathname ?? "";
     if (path === "/dashboard/configuracoes" || path.startsWith("/dashboard/configuracoes/")) {
-      return "Configurações";
+      return {
+        title: "Configurações",
+        help: dashboardSettingsHelp,
+      };
     }
-    const pinned = dashboardNavPinnedItems.find((entry) => entry.href === path);
-    if (pinned) return pinned.headerTitle ?? pinned.label;
-    return "Painel do cliente";
+    const pinned = dashboardNavPinnedItems.find(
+      (entry) =>
+        entry.href === path ||
+        (entry.href !== "/dashboard" && path.startsWith(`${entry.href}/`)),
+    );
+    if (pinned) {
+      return {
+        title: pinned.headerTitle ?? pinned.label,
+        help: pinned.help,
+      };
+    }
+    return {
+      title: "Painel do cliente",
+      help: {
+        title: "Painel do cliente",
+        summary: "Use o menu lateral para acessar as ferramentas disponíveis na sua conta.",
+      },
+    };
   }, [pathname]);
 
   /** Controles do shell — flat (design system): só cor/borda. */
@@ -96,12 +115,19 @@ function DashboardShellInner({
               >
                 {collapsed ? "⟩" : "⟨"}
               </button>
-              <div className="hidden items-center gap-2 sm:flex">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-content-faint">Painel</span>
-                <span className="text-content-faint/40">·</span>
-                <span className="truncate text-sm font-medium text-content">{pageTitle}</span>
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="hidden text-[11px] font-semibold uppercase tracking-[0.18em] text-content-faint sm:inline">
+                  Painel
+                </span>
+                <span className="hidden text-content-faint/40 sm:inline">·</span>
+                <span className="min-w-0 truncate text-sm font-medium text-content">
+                  {pageContext.title}
+                </span>
+                <PanelHelp
+                  content={pageContext.help}
+                  ariaLabel={`Entenda a ferramenta ${pageContext.title}`}
+                />
               </div>
-              <span className="min-w-0 flex-1 truncate text-sm font-medium text-content sm:hidden">{pageTitle}</span>
             </div>
 
             <div className="flex shrink-0 items-center gap-2">

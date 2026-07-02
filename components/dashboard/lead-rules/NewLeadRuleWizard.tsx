@@ -23,6 +23,7 @@ import {
 import { WhatsAppGlyph, WhatsAppQrMark } from "@/components/dashboard/crm/crm-phone";
 import { PanelAppearancePortalBridge, usePanelAppearance } from "@/components/panel/PanelAppearance";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
+import { PanelHelp, type PanelHelpContent } from "@/components/panel/ui/PanelHelp";
 import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
 import { Modal } from "@/components/ui/Modal";
 import { PanelSelect as Select } from "@/components/panel/ui/PanelSelect";
@@ -61,6 +62,73 @@ import { loadTeamEmployees, TEAM_EMPLOYEES_UPDATED_EVENT } from "@/lib/team-empl
 import { typography } from "@/lib/typography";
 
 const STEPS = ["Entrada", "Mapeamento", "Distribuição", "Resumo"] as const;
+
+const DISTRIBUTION_HELP = {
+  type: {
+    title: "Tipo de distribuição",
+    summary: "Define o que acontece com o lead assim que esta regra for acionada.",
+    items: [
+      "CRM apenas: salva o lead sem iniciar atendimento automático.",
+      "Equipe humana: encaminha para os colaboradores selecionados.",
+      "Agente de IA: autoriza somente o agente escolhido a iniciar o atendimento.",
+    ],
+  },
+  policy: {
+    title: "Política de conflitos",
+    summary: "Decide qual jornada fica ativa quando o mesmo telefone entra por outra campanha ou formulário.",
+    items: [
+      "Mais recente: a nova campanha assume o atendimento.",
+      "Maior prioridade: vence a regra posicionada acima das demais.",
+      "Até inatividade: mantém o atendimento atual pelo tempo configurado.",
+      "Decisão humana: pausa a automação para a equipe escolher.",
+    ],
+  },
+  inactivity: {
+    title: "Tempo de inatividade",
+    summary: "Período sem novas mensagens necessário para outra jornada assumir o contato.",
+    example: "Com 30 minutos, a jornada atual permanece responsável até passar meia hora sem interação.",
+  },
+  redistribution: {
+    title: "Redistribuição",
+    summary: "Permite tentar outro destino quando o atendimento inicial não consegue avançar.",
+    items: [
+      "Só ocorre nos gatilhos marcados abaixo.",
+      "Nunca autoriza um agente que esteja fora desta regra.",
+      "Desativada, o lead permanece no destino inicialmente escolhido.",
+    ],
+  },
+  deadline: {
+    title: "Prazo da tentativa",
+    summary: "Tempo aguardado antes de considerar o destino atual sem avanço e avaliar uma redistribuição.",
+  },
+  attempts: {
+    title: "Quantidade de tentativas",
+    summary: "Limita quantas redistribuições podem ocorrer para o mesmo lead nesta regra.",
+  },
+  redistributionType: {
+    title: "Tipo de redistribuição",
+    summary: "Escolhe a estratégia usada para encontrar o próximo destino autorizado.",
+  },
+  triggers: {
+    title: "Quando redistribuir",
+    summary: "A redistribuição só é considerada quando pelo menos uma destas situações marcadas acontecer.",
+    items: [
+      "Agente indisponível: o agente está pausado ou não pode atender.",
+      "Falha no envio: a mensagem não foi entregue após as tentativas.",
+      "Equipe sem aceite: ninguém assumiu dentro do prazo.",
+      "Silêncio do cliente: transfere a jornada antes do próximo acompanhamento.",
+    ],
+  },
+  finalDestination: {
+    title: "Destino final",
+    summary: "Define o que fazer quando as tentativas de redistribuição terminarem sem sucesso.",
+    items: [
+      "Próximo agente: tenta outro agente já autorizado nesta regra.",
+      "Equipe humana: deixa o atendimento para os colaboradores.",
+      "Somente CRM: mantém o lead registrado sem nova automação.",
+    ],
+  },
+} satisfies Record<string, PanelHelpContent>;
 
 /** Logótipo Facebook (círculo “f” oficial, cor de marca Meta #1877F2). */
 function FacebookMark({ className }: { className?: string }) {
@@ -1962,9 +2030,12 @@ export function NewLeadRuleWizard({
               </div>
             ) : (
               <div className="relative">
-                <label className="text-xs font-semibold text-content-muted" id={`${formId}-dist-label`}>
-                  Tipo de distribuição <span className="text-primary">*</span>
-                </label>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-xs font-semibold text-content-muted" id={`${formId}-dist-label`}>
+                    Tipo de distribuição <span className="text-primary">*</span>
+                  </label>
+                  <PanelHelp content={DISTRIBUTION_HELP.type} />
+                </div>
                 <button
                   ref={distButtonRef}
                   type="button"
@@ -2096,9 +2167,12 @@ export function NewLeadRuleWizard({
               </p>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-conflict-policy`}>
-                    Política
-                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-conflict-policy`}>
+                      Política
+                    </label>
+                    <PanelHelp content={DISTRIBUTION_HELP.policy} />
+                  </div>
                   <Select
                     id={`${formId}-conflict-policy`}
                     className="mt-1.5 rounded-xl"
@@ -2118,9 +2192,12 @@ export function NewLeadRuleWizard({
                 </div>
                 {draft.conflictPolicy === "keep_until_inactive" ? (
                   <div>
-                    <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-conflict-inactivity`}>
-                      Inatividade em minutos
-                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-conflict-inactivity`}>
+                        Inatividade em minutos
+                      </label>
+                      <PanelHelp content={DISTRIBUTION_HELP.inactivity} />
+                    </div>
                     <Input
                       id={`${formId}-conflict-inactivity`}
                       type="number"
@@ -2140,42 +2217,50 @@ export function NewLeadRuleWizard({
             </div>
 
             <div className="mt-4 rounded-xl border border-line bg-surface-deep/25 p-3">
-              <Toggle
-                id={`${formId}-redistribution`}
-                checked={draft.redistribution}
-                onChange={(checked) =>
-                  setDraft((d) => ({
-                    ...d,
-                    redistribution: checked,
-                    redistributionConfig: checked
-                      ? d.redistributionConfig
-                      : {
-                          prazo_minutos: 5,
-                          quantidade: 2,
-                          tipo: "round_robin",
-                          agent_ids: [],
-                          employee_ids: [],
-                          executar_anteriores: true,
-                          triggers: {
-                            agent_unavailable: true,
-                            delivery_failed: true,
-                            human_timeout: false,
-                            customer_silence: false,
-                          },
-                          final_destination: "next_agent",
-                        },
-                  }))
-                }
-                label="Ativar redistribuição?"
-                description="Se o primeiro destino não avançar no prazo definido, a regra pode tentar outro destino."
-              />
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <Toggle
+                    id={`${formId}-redistribution`}
+                    checked={draft.redistribution}
+                    onChange={(checked) =>
+                      setDraft((d) => ({
+                        ...d,
+                        redistribution: checked,
+                        redistributionConfig: checked
+                          ? d.redistributionConfig
+                          : {
+                              prazo_minutos: 5,
+                              quantidade: 2,
+                              tipo: "round_robin",
+                              agent_ids: [],
+                              employee_ids: [],
+                              executar_anteriores: true,
+                              triggers: {
+                                agent_unavailable: true,
+                                delivery_failed: true,
+                                human_timeout: false,
+                                customer_silence: false,
+                              },
+                              final_destination: "next_agent",
+                            },
+                      }))
+                    }
+                    label="Ativar redistribuição?"
+                    description="Se o primeiro destino não avançar no prazo definido, a regra pode tentar outro destino."
+                  />
+                </div>
+                <PanelHelp content={DISTRIBUTION_HELP.redistribution} className="mt-0.5" />
+              </div>
               {draft.redistribution ? (
                 <>
                 <div className="mt-4 grid gap-3 sm:grid-cols-3">
                   <div>
-                    <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-redistribution-minutes`}>
-                      Prazo em minutos
-                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-redistribution-minutes`}>
+                        Prazo em minutos
+                      </label>
+                      <PanelHelp content={DISTRIBUTION_HELP.deadline} />
+                    </div>
                     <Input
                       id={`${formId}-redistribution-minutes`}
                       type="number"
@@ -2194,9 +2279,12 @@ export function NewLeadRuleWizard({
                     />
                   </div>
                   <div>
-                    <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-redistribution-count`}>
-                      Quantidade de tentativas
-                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-redistribution-count`}>
+                        Quantidade de tentativas
+                      </label>
+                      <PanelHelp content={DISTRIBUTION_HELP.attempts} />
+                    </div>
                     <Input
                       id={`${formId}-redistribution-count`}
                       type="number"
@@ -2215,9 +2303,12 @@ export function NewLeadRuleWizard({
                     />
                   </div>
                   <div>
-                    <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-redistribution-type`}>
-                      Tipo de redistribuição
-                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-redistribution-type`}>
+                        Tipo de redistribuição
+                      </label>
+                      <PanelHelp content={DISTRIBUTION_HELP.redistributionType} />
+                    </div>
                     <Select
                       id={`${formId}-redistribution-type`}
                       className="mt-1.5 h-10 rounded-xl"
@@ -2240,7 +2331,11 @@ export function NewLeadRuleWizard({
                     </Select>
                   </div>
                 </div>
-                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                <div className="mt-4 flex items-center gap-1.5">
+                  <p className="text-[11px] font-semibold text-content-muted">Quando redistribuir</p>
+                  <PanelHelp content={DISTRIBUTION_HELP.triggers} />
+                </div>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
                   {[
                     {
                       key: "agent_unavailable" as const,
@@ -2292,9 +2387,12 @@ export function NewLeadRuleWizard({
                   ))}
                 </div>
                 <div className="mt-3">
-                  <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-redistribution-final`}>
-                    Destino final
-                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-[11px] font-semibold text-content-muted" htmlFor={`${formId}-redistribution-final`}>
+                      Destino final
+                    </label>
+                    <PanelHelp content={DISTRIBUTION_HELP.finalDestination} />
+                  </div>
                   <Select
                     id={`${formId}-redistribution-final`}
                     className="mt-1.5 h-10 rounded-xl"
