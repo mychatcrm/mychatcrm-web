@@ -24,12 +24,29 @@ async function syncOrganicAgentId(
   sb: ReturnType<typeof createSupabaseServiceClient>,
   tenantId: string,
   agentIds: unknown,
+  connectionId: unknown,
+  transport: unknown,
 ): Promise<void> {
+  if (transport === "cloud_api") return;
   const ids = Array.isArray(agentIds)
     ? (agentIds as unknown[]).filter((x): x is string => typeof x === "string" && x.trim().length > 0)
     : [];
   const firstAgentId = ids[0];
   if (!firstAgentId) return;
+
+  const explicitConnectionId =
+    typeof connectionId === "string" ? connectionId.trim() : "";
+  if (explicitConnectionId) {
+    const { error } = await sb
+      .from("tenant_evolution_instances")
+      .update({ organic_agent_id: firstAgentId, updated_at: new Date().toISOString() })
+      .eq("tenant_id", tenantId)
+      .eq("id", explicitConnectionId);
+    if (error) {
+      console.warn("[lead-rules/[id]] Failed to sync organic_agent_id", error.message);
+    }
+    return;
+  }
 
   const { data: agentRow } = await sb
     .from("tenant_agents")
@@ -58,14 +75,21 @@ async function clearOrganicAgentId(
   sb: ReturnType<typeof createSupabaseServiceClient>,
   tenantId: string,
   agentIds: unknown,
+  connectionId?: unknown,
+  transport?: unknown,
 ): Promise<void> {
+  if (transport === "cloud_api") return;
   const ids = stringArray(agentIds);
   let query = sb
     .from("tenant_evolution_instances")
     .update({ organic_agent_id: null, updated_at: new Date().toISOString() })
     .eq("tenant_id", tenantId);
 
-  if (ids.length > 0) {
+  const explicitConnectionId =
+    typeof connectionId === "string" ? connectionId.trim() : "";
+  if (explicitConnectionId) {
+    query = query.eq("id", explicitConnectionId);
+  } else if (ids.length > 0) {
     query = query.in("organic_agent_id", ids);
   }
 
@@ -81,6 +105,17 @@ function validateOrganicRulePayload(payload: Record<string, unknown>): NextRespo
   if (!ORGANIC_AGENT_DISTRIBUTION_TYPES.has(String(payload.distribution_type)) || agentIds.length !== 1) {
     return NextResponse.json(
       { error: "Selecione exatamente um agente de IA ativo para atendimento direto no WhatsApp." },
+      { status: 400 },
+    );
+  }
+  if (typeof payload.connection_id !== "string" || !payload.connection_id.trim()) {
+    return NextResponse.json(
+      {
+        error:
+          payload.transport === "cloud_api"
+            ? "Informe o Phone Number ID da conexão Cloud API."
+            : "Selecione o número/conexão Evolution que esta regra autoriza.",
+      },
       { status: 400 },
     );
   }
@@ -133,13 +168,18 @@ export async function PUT(req: NextRequest, { params }: RouteContext): Promise<N
   const organicValidationError = validateOrganicRulePayload(payload);
   if (organicValidationError) return organicValidationError;
 
-  // Block editing to whatsapp_organico if another rule of this type already exists
+  // Impede conflito apenas na mesma conexão; números diferentes podem ter
+  // agentes diretos independentes dentro do mesmo tenant.
   if (payload.source === "whatsapp_organico") {
+    const connectionId = String(payload.connection_id);
+    const transport = String(payload.transport ?? "evolution");
     const { count: organicCount } = await sb
       .from("lead_distribution_rules")
       .select("id", { count: "exact", head: true })
       .eq("tenant_id", session.tenantId)
       .eq("source", "whatsapp_organico")
+      .eq("transport", transport)
+      .eq("connection_id", connectionId)
       .neq("id", params.id); // exclude the rule being edited
 
     if ((organicCount ?? 0) > 0) {
@@ -178,7 +218,13 @@ export async function PUT(req: NextRequest, { params }: RouteContext): Promise<N
   }
 
   if (existing.source === "whatsapp_organico" && data.source !== "whatsapp_organico") {
-    await clearOrganicAgentId(sb, session.tenantId, existing.agent_ids);
+    await clearOrganicAgentId(
+      sb,
+      session.tenantId,
+      existing.agent_ids,
+      existing.connection_id,
+      existing.transport,
+    );
   }
 
   // Keep organic_agent_id in sync for organic WhatsApp rules
@@ -187,11 +233,25 @@ export async function PUT(req: NextRequest, { params }: RouteContext): Promise<N
       const previousIds = stringArray(existing.agent_ids);
       const nextIds = stringArray(data.agent_ids);
       const staleIds = previousIds.filter((id) => !nextIds.includes(id));
-      if (staleIds.length > 0) {
-        await clearOrganicAgentId(sb, session.tenantId, staleIds);
+      const connectionChanged =
+        existing.connection_id !== data.connection_id || existing.transport !== data.transport;
+      if (staleIds.length > 0 || connectionChanged) {
+        await clearOrganicAgentId(
+          sb,
+          session.tenantId,
+          staleIds.length > 0 ? staleIds : existing.agent_ids,
+          existing.connection_id,
+          existing.transport,
+        );
       }
     }
-    await syncOrganicAgentId(sb, session.tenantId, data.agent_ids);
+    await syncOrganicAgentId(
+      sb,
+      session.tenantId,
+      data.agent_ids,
+      data.connection_id,
+      data.transport,
+    );
   }
 
   return NextResponse.json({ rule: leadRuleRowToClient(data), metaWebhookSubscription });
@@ -217,7 +277,13 @@ export async function DELETE(_req: NextRequest, { params }: RouteContext): Promi
     await deleteMetaFormMappingsForRule(sb, existing);
   }
   if (existing.source === "whatsapp_organico") {
-    await clearOrganicAgentId(sb, session.tenantId, existing.agent_ids);
+    await clearOrganicAgentId(
+      sb,
+      session.tenantId,
+      existing.agent_ids,
+      existing.connection_id,
+      existing.transport,
+    );
   }
 
   const ruleId = params.id;

@@ -10,6 +10,7 @@ import {
 import { applyMetaSystemNotificationStatus } from "@/lib/server/system-agent";
 import { handleSystemMetaInbound } from "@/lib/server/system-meta-inbound";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
+import { resolveCloudApiTenantByConnection } from "@/lib/server/agent-channel-authorization";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
   authorizeActiveJourney,
@@ -40,7 +41,7 @@ export async function GET(request: Request) {
 
 /**
  * Webhook WhatsApp Cloud API → mesma OPENAI_API_KEY central via generateAgentResponse.
- * Configure WHATSAPP_APP_SECRET, WHATSAPP_ACCESS_TOKEN, WHATSAPP_DEFAULT_TENANT_ID, WHATSAPP_DEFAULT_AGENT_ID.
+ * O tenant é resolvido pelo phone_number_id explicitamente cadastrado na regra.
  */
 export async function POST(request: Request) {
   const appSecret = process.env.WHATSAPP_APP_SECRET?.trim();
@@ -93,8 +94,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  const tenantId = process.env.WHATSAPP_DEFAULT_TENANT_ID?.trim() || "public";
   const sb = createSupabaseServiceClient();
+  const tenantResolution = await resolveCloudApiTenantByConnection({
+    sb,
+    connectionId: inbound.phoneNumberId,
+  });
+  if (!tenantResolution.ok) {
+    console.warn("[webhooks/whatsapp] inbound_without_tenant_connection", {
+      connection_id: inbound.phoneNumberId,
+      reason: tenantResolution.reason,
+      message_id: inbound.messageId || null,
+    });
+    return NextResponse.json({ ok: true, blocked: tenantResolution.reason });
+  }
+  const tenantId = tenantResolution.tenantId;
   const journeyAuth = await resolveDirectJourneyAgent({
     sb,
     tenantId,

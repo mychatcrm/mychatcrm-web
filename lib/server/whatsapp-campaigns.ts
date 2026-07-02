@@ -225,6 +225,37 @@ async function processRecipient(params: {
     String(params.campaign.message_template),
     lead as Record<string, unknown>,
   );
+  const pendingAt = new Date().toISOString();
+  const { data: message, error: messageInsertError } = await params.sb
+    .from("whatsapp_messages")
+    .insert({
+      tenant_id: tenantId,
+      remote_jid: jid,
+      direction: "outbound",
+      kind: "text",
+      content,
+      agent_id: text(params.campaign.agent_id),
+      lead_id: lead.id,
+      journey_id: journey.id,
+      client_temp_id: `campaign:${recipientId}:${attempts}`,
+      delivery_status: "pending",
+    })
+    .select("id")
+    .single();
+  if (messageInsertError || !message?.id) {
+    const terminal = attempts >= maxAttempts;
+    await params.sb
+      .from("whatsapp_campaign_recipients")
+      .update({
+        status: terminal ? "failed" : "pending",
+        next_attempt_at: new Date(Date.now() + Math.min(30, attempts * 5) * 60_000).toISOString(),
+        last_error: `message_persistence_failed:${messageInsertError?.message ?? "missing_id"}`,
+        updated_at: pendingAt,
+      })
+      .eq("id", recipientId);
+    return terminal ? "failed" : "persistence_retry";
+  }
+
   const delivery = await evolutionSendText({
     instanceName: params.instanceName,
     number: phone,
@@ -232,15 +263,25 @@ async function processRecipient(params: {
   });
   if (!delivery.ok) {
     const terminal = attempts >= maxAttempts;
-    await params.sb
-      .from("whatsapp_campaign_recipients")
-      .update({
-        status: terminal ? "failed" : "pending",
-        next_attempt_at: new Date(Date.now() + Math.min(30, attempts * 5) * 60_000).toISOString(),
-        last_error: delivery.error ?? `evolution_${delivery.status}`,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", recipientId);
+    await Promise.all([
+      params.sb
+        .from("whatsapp_messages")
+        .update({
+          delivery_status: "failed",
+          failed_reason: delivery.error ?? `evolution_${delivery.status}`,
+        })
+        .eq("tenant_id", tenantId)
+        .eq("id", message.id),
+      params.sb
+        .from("whatsapp_campaign_recipients")
+        .update({
+          status: terminal ? "failed" : "pending",
+          next_attempt_at: new Date(Date.now() + Math.min(30, attempts * 5) * 60_000).toISOString(),
+          last_error: delivery.error ?? `evolution_${delivery.status}`,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", recipientId),
+    ]);
     await scheduleLeadRedistribution({
       sb: params.sb,
       tenantId,
@@ -253,27 +294,31 @@ async function processRecipient(params: {
   }
 
   const now = new Date().toISOString();
-  const { data: message } = await params.sb
+  const { error: messageUpdateError } = await params.sb
     .from("whatsapp_messages")
-    .insert({
-      tenant_id: tenantId,
-      remote_jid: jid,
-      direction: "outbound",
-      kind: "text",
-      content,
-      agent_id: text(params.campaign.agent_id),
-      lead_id: lead.id,
-      journey_id: journey.id,
+    .update({
+      delivery_status: "sent",
+      sent_at: now,
+      failed_reason: null,
     })
-    .select("id")
-    .single();
+    .eq("tenant_id", tenantId)
+    .eq("id", message.id);
+  if (messageUpdateError) {
+    console.error("[whatsapp-campaigns] sent_message_status_update_failed", {
+      tenant_id: tenantId,
+      campaign_id: params.campaign.id,
+      recipient_id: recipientId,
+      message_id: message.id,
+      error: messageUpdateError.message,
+    });
+  }
   await Promise.all([
     params.sb
       .from("whatsapp_campaign_recipients")
       .update({
         status: "sent",
         sent_at: now,
-        message_id: message?.id ?? null,
+        message_id: message.id,
         last_error: null,
         updated_at: now,
       })

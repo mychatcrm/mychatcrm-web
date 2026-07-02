@@ -429,12 +429,28 @@ export async function resolveDirectJourneyAgent(params: {
   if (error) {
     return { ok: false, reason: "direct_rule_query_failed", journey: null };
   }
-  const rule =
-    ((data ?? []) as Array<Record<string, unknown>>).find((candidate) => {
+  const matchingRules = ((data ?? []) as Array<Record<string, unknown>>).filter((candidate) => {
       const ruleConnection = text(candidate.connection_id);
       return !ruleConnection || ruleConnection === params.connectionId;
-    }) ?? null;
-  const agentId = rule ? stringArray(rule.agent_ids)[0] ?? null : null;
+    });
+  if (matchingRules.length > 1) {
+    console.error("[lead-journeys] direct_rule_ambiguous", {
+      tenant_id: params.tenantId,
+      connection_id: params.connectionId ?? null,
+      rule_count: matchingRules.length,
+    });
+    return { ok: false, reason: "direct_rule_ambiguous", journey: null };
+  }
+  const rule = matchingRules[0] ?? null;
+  const ruleAgentIds = rule ? stringArray(rule.agent_ids) : [];
+  if (rule && ruleAgentIds.length !== 1) {
+    return {
+      ok: false,
+      reason: "direct_rule_invalid_agent_count",
+      journey: null,
+    };
+  }
+  const agentId = ruleAgentIds[0] ?? null;
   if (!rule || !agentId) {
     return { ok: false, reason: "blocked_no_direct_whatsapp_rule", journey: null };
   }

@@ -139,7 +139,7 @@ export async function loadLeadChatbotHistory(params: {
       )
       .eq("tenant_id", params.tenantId)
       .ilike("remote_jid", remoteJidPattern)
-      .order("created_at", { ascending: true })
+      .order("created_at", { ascending: false })
       .limit(limit),
     sb
       .from("conversation_summaries")
@@ -191,9 +191,9 @@ export async function loadLeadChatbotHistory(params: {
     }
   }
 
-  const messages = ((messagesRes.data ?? []) as Array<Record<string, unknown>>).map((row) =>
-    toMessage(row, agentNames),
-  );
+  const messages = ((messagesRes.data ?? []) as Array<Record<string, unknown>>)
+    .map((row) => toMessage(row, agentNames))
+    .reverse();
   const journeys: ChatbotHistoryJourney[] = (
     journeysRes.error ? [] : (journeysRes.data ?? [])
   ).map((raw) => {

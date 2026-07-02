@@ -603,24 +603,32 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     .maybeSingle();
 
   const isNewLead = !existingLead;
+  const journeyIsolationEnabled = isJourneyIsolationEnabled();
+  const deferJourneyAttribution =
+    journeyIsolationEnabled && Boolean(agentId && agentResolution.authorized);
+  const attributionPayload = {
+    agent_id: agentId ?? existingLead?.agent_id ?? null,
+    campaign_agent_id: agentId,
+    campaign_active: Boolean(agentId),
+    agent_assignment_source: agentId ? "meta_rule" : "unassigned",
+    rule_id: ruleId,
+    campaign_rule_id: ruleId,
+    profile_metadata: isNewLead
+      ? leadMetadata
+      : mergeLeadProfileMetadata(existingLead?.profile_metadata, leadMetadata),
+  };
 
-  const upsertPayload = isNewLead
+  const upsertPayload: Record<string, unknown> = isNewLead
     ? {
         tenant_id,
         phone,
         name: fullName,
         email: email ?? undefined,
         source: "lead_ads",
-        agent_id: agentId,
-        campaign_agent_id: agentId,
-        campaign_active: Boolean(agentId),
-        campaign_rule_id: ruleId,
-        agent_assignment_source: agentId ? "meta_rule" : "unassigned",
-        rule_id: ruleId,
-        profile_metadata: leadMetadata,
         last_seen: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         ...newLeadCrm,
+        ...(deferJourneyAttribution ? {} : attributionPayload),
       }
     : {
         tenant_id,
@@ -628,16 +636,9 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         name: fullName,
         email: email ?? undefined,
         source: "lead_ads",
-        agent_id: agentId ?? existingLead?.agent_id ?? null,
-        campaign_agent_id: agentId,
-        campaign_active: Boolean(agentId),
-        agent_assignment_source: agentId ? "meta_rule" : "unassigned",
-        rule_id: ruleId,
-        campaign_rule_id: ruleId,
-        profile_metadata: mergeLeadProfileMetadata(existingLead?.profile_metadata, leadMetadata),
         last_seen: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-        ...crmFunnel,
+        ...(deferJourneyAttribution ? {} : { ...attributionPayload, ...crmFunnel }),
       };
 
   const { data: upsertedLead, error: upsertErr } = await sb
@@ -690,14 +691,6 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       source: agentResolution.source,
       reason: agentResolution.reason,
     });
-    return;
-  }
-
-  const instance = await getEvolutionInstanceByTenantId(tenant_id);
-  if (!instance?.instance_name) {
-    await eventRecorder.step("skipped_no_evolution");
-    await eventRecorder.patch({ whatsapp_status: "skipped", error_message: "no_evolution_instance" });
-    console.warn("[meta-webhook] No Evolution instance for tenant — skipping initial message", { tenant_id });
     return;
   }
 
@@ -758,7 +751,6 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     return;
   }
 
-  const journeyIsolationEnabled = isJourneyIsolationEnabled();
   const journey = await activateLeadJourney({
     sb,
     tenantId: tenant_id,
@@ -767,13 +759,14 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     leadId,
     agentId,
     ruleId,
-    connectionId: instance.id,
+    connectionId: null,
     source: "meta_form",
     sourceRef: leadgen_id,
     pageId: page_id,
     formId: resolvedFormId,
     metadata: {
       form_name: formName,
+      lead_profile: leadMetadata,
       campaign_id: attribution.campaignId ?? null,
       campaign_name: attribution.campaignName ?? null,
       adset_id: attribution.adsetId ?? null,
@@ -807,6 +800,55 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     return;
   }
   const journeyId = journey?.id ?? null;
+
+  if (deferJourneyAttribution) {
+    const { error: attributionError } = await sb
+      .from("leads")
+      .update({
+        ...attributionPayload,
+        ...crmFunnel,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("tenant_id", tenant_id)
+      .eq("id", leadId);
+    if (attributionError) {
+      await eventRecorder.step("crm_attribution_failed", {
+        error: attributionError.message,
+        journey_id: journeyId,
+      });
+      await eventRecorder.patch({
+        whatsapp_status: "blocked",
+        error_message: "crm_attribution_failed",
+      });
+      console.error("[meta-webhook] Failed to persist winning journey attribution", {
+        tenant_id,
+        lead_id: leadId,
+        journey_id: journeyId,
+        error: attributionError.message,
+      });
+      return;
+    }
+    await eventRecorder.step("crm_attribution_committed", {
+      journey_id: journeyId,
+      agent_id: agentId,
+      rule_id: ruleId,
+    });
+  }
+
+  const instance = await getEvolutionInstanceByTenantId(tenant_id);
+  if (!instance?.instance_name) {
+    await eventRecorder.step("skipped_no_evolution");
+    await eventRecorder.patch({ whatsapp_status: "skipped", error_message: "no_evolution_instance" });
+    console.warn("[meta-webhook] No Evolution instance for tenant — skipping initial message", { tenant_id });
+    return;
+  }
+  if (journeyId) {
+    await sb
+      .from("lead_journeys")
+      .update({ connection_id: instance.id, updated_at: new Date().toISOString() })
+      .eq("tenant_id", tenant_id)
+      .eq("id", journeyId);
+  }
 
   const initialMessageExternalId = `meta:${leadgen_id}:initial`;
   const { data: existingInitialMessage } = await sb

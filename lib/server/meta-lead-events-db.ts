@@ -11,6 +11,8 @@ export const META_LEAD_EVENT_STEPS = [
   "skipped_no_phone",
   "crm_lead_created",
   "crm_lead_updated",
+  "crm_attribution_committed",
+  "crm_attribution_failed",
   "crm_lead_failed",
   "form_fields_saved",
   "agent_resolved",

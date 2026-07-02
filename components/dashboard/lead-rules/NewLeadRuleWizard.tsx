@@ -861,6 +861,9 @@ export function NewLeadRuleWizard({
         if (!draft.pageId.trim()) return false;
         if (!draft.useAllForms && draft.includedFormIds.length === 0) return false;
       }
+      if (draft.source === ORGANIC_WHATSAPP_SOURCE && !draft.connectionId.trim()) {
+        return false;
+      }
       return base;
     }
     if (step === 1) {
@@ -891,6 +894,7 @@ export function NewLeadRuleWizard({
     return true;
   }, [
     draft.agentIds.length,
+    draft.connectionId,
     draft.distributionType,
     draft.employeeIds.length,
     draft.includedFormIds.length,
@@ -1637,7 +1641,14 @@ export function NewLeadRuleWizard({
                     <button
                       key={option.value}
                       type="button"
-                      onClick={() => setDraft((current) => ({ ...current, transport: option.value }))}
+                      onClick={() =>
+                        setDraft((current) => ({
+                          ...current,
+                          transport: option.value,
+                          connectionId:
+                            current.transport === option.value ? current.connectionId : "",
+                        }))
+                      }
                       className={cn(
                         "rounded-lg px-3 py-2 text-left text-xs font-semibold transition",
                         draft.transport === option.value
@@ -1664,7 +1675,7 @@ export function NewLeadRuleWizard({
                       }
                       className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
                     >
-                      <option value="">Qualquer conexão do tenant (compatibilidade)</option>
+                      <option value="">Selecione uma conexão</option>
                       {whatsAppConnections.map((connection) => (
                         <option key={connection.id} value={connection.id}>
                           Linha {connection.slot_index + 1} ·{" "}
@@ -1674,7 +1685,33 @@ export function NewLeadRuleWizard({
                       ))}
                     </select>
                   </div>
-                ) : null}
+                ) : (
+                  <div className="mt-3">
+                    <label
+                      htmlFor={`${formId}-cloud-phone-number-id`}
+                      className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-content-muted"
+                    >
+                      Phone Number ID da Cloud API
+                    </label>
+                    <input
+                      id={`${formId}-cloud-phone-number-id`}
+                      value={draft.connectionId}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          connectionId: event.target.value.replace(/\D/g, ""),
+                        }))
+                      }
+                      inputMode="numeric"
+                      autoComplete="off"
+                      placeholder="Ex.: 123456789012345"
+                      className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                    />
+                    <p className="mt-1.5 text-[11px] leading-relaxed text-content-muted">
+                      Identificador do número exibido no painel da Meta. Ele resolve o tenant correto no webhook.
+                    </p>
+                  </div>
+                )}
               </div>
             ) : null}
 

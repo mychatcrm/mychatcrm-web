@@ -46,6 +46,8 @@ describe("buildAgentSystemPrompt", () => {
     });
 
     expect(prompt.startsWith("CRITICAL INSTRUCTION - LANGUAGE")).toBe(true);
+    expect(prompt).toContain("REGRA UNIVERSAL DE CONTEXTO");
+    expect(prompt).toContain("não misture informações de outras campanhas");
     expect(prompt).toContain(
       "Ao confirmar um agendamento, sempre repita a data, horário e local na sua resposta de confirmação.",
     );

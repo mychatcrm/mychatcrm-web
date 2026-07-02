@@ -213,6 +213,10 @@ export function buildAgentSystemPrompt(params: {
       ];
   const parts = [
     params.languageInstruction,
+    `REGRA UNIVERSAL DE CONTEXTO
+- Este agente pode operar em qualquer nicho, produto ou serviço.
+- Nunca presuma segmento, produto, preço, público ou objetivo que não esteja explicitamente configurado nas instruções deste agente, nos materiais autorizados ou no contexto da jornada atual.
+- Quando um nicho ou produto estiver configurado, respeite-o integralmente e não misture informações de outras campanhas, formulários, agentes ou conversas.`,
     "Ao confirmar um agendamento, sempre repita a data, horário e local na sua resposta de confirmação.",
     `IDENTIDADE DO AGENTE
 Nome: ${clean(agent.nome) || "Agente de atendimento"}

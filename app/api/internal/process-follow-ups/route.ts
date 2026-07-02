@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { processDueFollowUpJobs } from "@/lib/server/follow-up-jobs";
 import { verifyInternalApiRequest } from "@/lib/server/internal-api-auth";
 import { processDueLeadRedistributions } from "@/lib/server/lead-redistribution";
+import { isJourneyIsolationEnabled } from "@/lib/server/lead-journeys";
 import { processRecentMetaLeadAds } from "@/lib/server/meta-lead-poller";
 import { processDueWhatsAppCampaigns } from "@/lib/server/whatsapp-campaigns";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
@@ -41,7 +42,7 @@ export async function POST(request: Request) {
       campaigns: Awaited<ReturnType<typeof processDueWhatsAppCampaigns>>;
       redistributions: Awaited<ReturnType<typeof processDueLeadRedistributions>>;
     } | null = null;
-    if (process.env.OMNICHANNEL_JOURNEYS_ENABLED === "true") {
+    if (isJourneyIsolationEnabled()) {
       try {
         const sb = createSupabaseServiceClient();
         const [campaigns, redistributions] = await Promise.all([

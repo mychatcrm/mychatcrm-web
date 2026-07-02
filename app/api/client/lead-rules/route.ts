@@ -27,14 +27,31 @@ async function syncOrganicAgentId(
   sb: ReturnType<typeof createSupabaseServiceClient>,
   tenantId: string,
   agentIds: unknown,
+  connectionId: unknown,
+  transport: unknown,
 ): Promise<void> {
+  if (transport === "cloud_api") return;
   const ids = Array.isArray(agentIds)
     ? (agentIds as unknown[]).filter((x): x is string => typeof x === "string" && x.trim().length > 0)
     : [];
   const firstAgentId = ids[0];
   if (!firstAgentId) return;
 
-  // Look up the agent's WhatsApp slot index from its metadata
+  const explicitConnectionId =
+    typeof connectionId === "string" ? connectionId.trim() : "";
+  if (explicitConnectionId) {
+    const { error } = await sb
+      .from("tenant_evolution_instances")
+      .update({ organic_agent_id: firstAgentId, updated_at: new Date().toISOString() })
+      .eq("tenant_id", tenantId)
+      .eq("id", explicitConnectionId);
+    if (error) {
+      console.warn("[lead-rules] Failed to sync organic_agent_id", error.message);
+    }
+    return;
+  }
+
+  // Compatibilidade para regras antigas sem connection_id.
   const { data: agentRow } = await sb
     .from("tenant_agents")
     .select("metadata")
@@ -65,6 +82,17 @@ function validateOrganicRulePayload(payload: Record<string, unknown>): NextRespo
   if (!ORGANIC_AGENT_DISTRIBUTION_TYPES.has(String(payload.distribution_type)) || agentIds.length !== 1) {
     return NextResponse.json(
       { error: "Selecione exatamente um agente de IA ativo para atendimento direto no WhatsApp." },
+      { status: 400 },
+    );
+  }
+  if (typeof payload.connection_id !== "string" || !payload.connection_id.trim()) {
+    return NextResponse.json(
+      {
+        error:
+          payload.transport === "cloud_api"
+            ? "Informe o Phone Number ID da conexão Cloud API."
+            : "Selecione o número/conexão Evolution que esta regra autoriza.",
+      },
       { status: 400 },
     );
   }
@@ -126,13 +154,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const organicValidationError = validateOrganicRulePayload(payload);
   if (organicValidationError) return organicValidationError;
 
-  // Block creation of a second whatsapp_organico rule — only one organic agent per tenant
+  // Uma conexão pode autorizar somente um agente direto, mas o tenant pode ter
+  // várias conexões e uma regra independente para cada uma.
   if (payload.source === "whatsapp_organico") {
+    const connectionId = String(payload.connection_id);
+    const transport = String(payload.transport ?? "evolution");
     const { count: organicCount } = await sb
       .from("lead_distribution_rules")
       .select("id", { count: "exact", head: true })
       .eq("tenant_id", session.tenantId)
-      .eq("source", "whatsapp_organico");
+      .eq("source", "whatsapp_organico")
+      .eq("transport", transport)
+      .eq("connection_id", connectionId);
 
     if ((organicCount ?? 0) > 0) {
       return NextResponse.json(
@@ -162,7 +195,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   // Keep organic_agent_id in sync for organic WhatsApp rules
   if (data.source === "whatsapp_organico") {
-    await syncOrganicAgentId(sb, session.tenantId, data.agent_ids);
+    await syncOrganicAgentId(
+      sb,
+      session.tenantId,
+      data.agent_ids,
+      data.connection_id,
+      data.transport,
+    );
   }
 
   return NextResponse.json({ rule: leadRuleRowToClient(data), metaWebhookSubscription }, { status: 201 });
