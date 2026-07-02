@@ -2101,7 +2101,7 @@ export function NewLeadRuleWizard({
                   </label>
                   <Select
                     id={`${formId}-conflict-policy`}
-                    className="mt-1.5 h-10 rounded-xl"
+                    className="mt-1.5 rounded-xl"
                     value={draft.conflictPolicy}
                     onChange={(event) =>
                       setDraft((current) => ({
