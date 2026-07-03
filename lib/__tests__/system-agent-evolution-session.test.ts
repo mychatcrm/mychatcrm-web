@@ -21,6 +21,8 @@ const evolutionGetInstancePresence = vi.hoisted(() => vi.fn());
 const evolutionConnectionState = vi.hoisted(() => vi.fn());
 const evolutionInstanceConnect = vi.hoisted(() => vi.fn());
 const evolutionRemoveInstanceCompletely = vi.hoisted(() => vi.fn());
+const evolutionFetchInstances = vi.hoisted(() => vi.fn());
+const checkEvolutionSessionAlive = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/integrations/evolution-api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/integrations/evolution-api")>();
@@ -33,8 +35,8 @@ vi.mock("@/lib/integrations/evolution-api", async (importOriginal) => {
     evolutionConnectionState,
     evolutionInstanceConnect,
     evolutionRemoveInstanceCompletely,
-    evolutionFetchInstances: vi.fn(),
-    checkEvolutionSessionAlive: vi.fn(),
+    evolutionFetchInstances,
+    checkEvolutionSessionAlive,
   };
 });
 
@@ -54,7 +56,7 @@ vi.mock("@/lib/server/tenant-evolution-instance-db", () => ({
   upsertTenantEvolutionInstance,
 }));
 
-import { DELETE, POST } from "@/app/api/admin/system-agent/evolution/session/route";
+import { DELETE, GET, POST } from "@/app/api/admin/system-agent/evolution/session/route";
 
 function resetSuccess() {
   return {
@@ -101,6 +103,12 @@ describe("system agent Evolution session transaction", () => {
       status: 200,
       data: { instance: { state: "close" } },
     });
+    evolutionFetchInstances.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: [],
+    });
+    checkEvolutionSessionAlive.mockResolvedValue(false);
     evolutionInstanceConnect.mockResolvedValue({
       ok: true,
       status: 200,
@@ -200,9 +208,35 @@ describe("system agent Evolution session transaction", () => {
     }));
 
     expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({ phase: "webhook" });
     expect(evolutionRemoveInstanceCompletely).toHaveBeenCalledTimes(1);
     expect(deleteTenantEvolutionInstanceRowIfName).toHaveBeenCalledTimes(1);
     expect(finalizeTenantEvolutionInstanceReservation).not.toHaveBeenCalled();
+  });
+
+  it("returns a visible error when an existing session cannot refresh its QR", async () => {
+    const existing = row("mc-existing", "close");
+    getEvolutionInstanceByTenantSlot.mockResolvedValue(existing);
+    evolutionFetchInstances.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: [{ name: existing.instance_name, connectionStatus: "close", ownerJid: null }],
+    });
+    evolutionInstanceConnect.mockResolvedValue({
+      ok: false,
+      status: 500,
+      error: "connect failed",
+    });
+
+    const response = await GET(new Request(
+      "https://www.mychatcrm.com.br/api/admin/system-agent/evolution/session?slotIndex=0",
+    ));
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({
+      phase: "connect_refresh",
+      detail: "connect failed",
+    });
   });
 
   it("rolls back the remote instance when the reservation cannot be finalized", async () => {

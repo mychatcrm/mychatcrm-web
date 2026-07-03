@@ -142,6 +142,12 @@ export async function evolutionFetchJson<T>(
 
 export type EvolutionCreateInstanceResponse = {
   instance?: { instanceName?: string; status?: string };
+  qrcode?: {
+    count?: number;
+    pairingCode?: string;
+    base64?: string;
+    code?: string;
+  };
 };
 
 export async function evolutionCreateInstance(params: {
@@ -379,15 +385,30 @@ export async function evolutionSetWebhook(params: {
   url: string;
 }): Promise<EvolutionFetchResult<unknown>> {
   const enc = encodeURIComponent(params.instanceName);
+  const webhook = {
+    enabled: true,
+    url: params.url,
+    byEvents: false,
+    base64: true,
+    events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
+  };
+  const current = await evolutionFetchJson(`/webhook/set/${enc}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ webhook }),
+  });
+  if (current.ok || (current.status !== 400 && current.status !== 422)) return current;
+
+  // Compatibilidade com builds anteriores que aceitavam o payload legado sem wrapper.
   return evolutionFetchJson(`/webhook/set/${enc}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      enabled: true,
-      url: params.url,
-      webhookByEvents: false,
-      webhookBase64: true,
-      events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
+      enabled: webhook.enabled,
+      url: webhook.url,
+      webhookByEvents: webhook.byEvents,
+      webhookBase64: webhook.base64,
+      events: webhook.events,
     }),
   });
 }

@@ -15,6 +15,7 @@ type SessionJson = {
   waJid?: string | null;
   error?: string;
   detail?: string;
+  phase?: string;
 };
 
 type EvolutionStatusJson = {
@@ -355,13 +356,14 @@ export function EvolutionQrSlotPanel({
   useEffect(() => {
     clearPoll();
     if (connectionState === "open") return;
+    if (error) return;
     // Não pollar após desconexão manual: evita re-descoberta da instância pela Evolution.
     if (manuallyDisconnected) return;
     pollRef.current = setInterval(() => {
       void refresh();
     }, 3_000);
     return clearPoll;
-  }, [connectionState, refresh, clearPoll, manuallyDisconnected]);
+  }, [connectionState, refresh, clearPoll, manuallyDisconnected, error]);
 
   const unifiedAlert = useMemo(() => deriveUnifiedAlert(infraHint, error), [infraHint, error]);
   const waNumber = formatWaNumber(waJid);

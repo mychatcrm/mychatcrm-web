@@ -63,6 +63,20 @@ function assertAdminSystemAgent(session: Awaited<ReturnType<typeof getAdminSessi
   return null;
 }
 
+function logProvisionFailure(
+  phase: string,
+  instanceName: string | null,
+  detail: string | null | undefined,
+  status?: number | null,
+) {
+  console.error("[system-agent-evolution] provision_failed", {
+    phase,
+    instanceName,
+    status: status ?? null,
+    detail: detail ?? null,
+  });
+}
+
 async function resolveSystemInstanceIdentity(
   instanceName: string,
   fallbackState: string | null,
@@ -127,6 +141,7 @@ async function rollbackProvisionedSystemInstance(instanceName: string): Promise<
 async function provisionFreshSystemEvolutionSession(request: Request) {
   const webhookSecret = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
   if (!webhookSecret) {
+    logProvisionFailure("configuration", null, "EVOLUTION_WEBHOOK_SECRET em falta.", 503);
     return NextResponse.json({ error: "EVOLUTION_WEBHOOK_SECRET em falta." }, { status: 503 });
   }
 
@@ -138,6 +153,12 @@ async function provisionFreshSystemEvolutionSession(request: Request) {
     !reset.databaseBindingCleared
   ) {
     const hasConfirmedPresent = reset.failedInstances.some((item) => item.presence === "present");
+    logProvisionFailure(
+      "cleanup",
+      reset.currentInstance,
+      reset.error,
+      hasConfirmedPresent ? 409 : 502,
+    );
     return NextResponse.json(
       {
         error: hasConfirmedPresent
@@ -151,6 +172,7 @@ async function provisionFreshSystemEvolutionSession(request: Request) {
         databaseBindingCleared: reset.databaseBindingCleared,
         failedInstances: reset.failedInstances,
         detail: reset.error,
+        phase: "cleanup",
       },
       { status: hasConfirmedPresent ? 409 : 502 },
     );
@@ -169,22 +191,32 @@ async function provisionFreshSystemEvolutionSession(request: Request) {
       defaultAgentId: SYSTEM_AGENT_ID,
     });
   } catch (error) {
+    const detail = error instanceof Error ? error.message : "reservation_failed";
+    logProvisionFailure("reservation", instanceName, detail, 503);
     return NextResponse.json(
       {
         error: "Não foi possível reservar a conexão do agente do sistema.",
-        detail: error instanceof Error ? error.message : "reservation_failed",
+        detail,
+        phase: "reservation",
       },
       { status: 503 },
     );
   }
 
   if (!reservation.reserved) {
+    logProvisionFailure(
+      "reservation",
+      reservation.row.instance_name,
+      "system_evolution_operation_in_progress",
+      409,
+    );
     return NextResponse.json(
       {
         error: "Já existe uma operação de conexão em andamento.",
         code: "system_evolution_operation_in_progress",
         instanceName: reservation.row.instance_name,
         connectionState: reservation.row.connection_state,
+        phase: "reservation",
       },
       { status: 409 },
     );
@@ -204,10 +236,12 @@ async function provisionFreshSystemEvolutionSession(request: Request) {
       createResult = { ok: true, status: createResult.status, data: {} };
     } else {
       const rollback = await rollbackProvisionedSystemInstance(instanceName);
+      logProvisionFailure("create", instanceName, createResult.error, createResult.status);
       return NextResponse.json(
         {
           error: "Falha ao criar instância na Evolution.",
           detail: createResult.error,
+          phase: "create",
           rollbackVerified: rollback.verifiedAbsent,
           rollbackError: rollback.error,
         },
@@ -219,10 +253,12 @@ async function provisionFreshSystemEvolutionSession(request: Request) {
   const webhookResult = await evolutionSetWebhook({ instanceName, url: webhookUrl });
   if (!webhookResult.ok) {
     const rollback = await rollbackProvisionedSystemInstance(instanceName);
+    logProvisionFailure("webhook", instanceName, webhookResult.error, webhookResult.status);
     return NextResponse.json(
       {
         error: "A instância foi criada, mas o webhook não pôde ser configurado.",
         detail: webhookResult.error,
+        phase: "webhook",
         rollbackVerified: rollback.verifiedAbsent,
         rollbackError: rollback.error,
       },
@@ -233,10 +269,12 @@ async function provisionFreshSystemEvolutionSession(request: Request) {
   const createdPresence = await evolutionGetInstancePresence(instanceName);
   if (createdPresence.state !== "present") {
     const rollback = await rollbackProvisionedSystemInstance(instanceName);
+    logProvisionFailure("inventory", instanceName, createdPresence.error, createdPresence.status);
     return NextResponse.json(
       {
         error: "Não foi possível confirmar a nova instância no inventário da Evolution.",
         detail: createdPresence.error,
+        phase: "inventory",
         presence: createdPresence.state,
         rollbackVerified: rollback.verifiedAbsent,
         rollbackError: rollback.error,
@@ -262,10 +300,12 @@ async function provisionFreshSystemEvolutionSession(request: Request) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const rollback = await rollbackProvisionedSystemInstance(instanceName);
+    logProvisionFailure("persistence", instanceName, msg, 503);
     return NextResponse.json(
       {
         error: "Erro ao gravar instância do sistema.",
         detail: msg.slice(0, 400),
+        phase: "persistence",
         rollbackVerified: rollback.verifiedAbsent,
         rollbackError: rollback.error,
       },
@@ -298,8 +338,22 @@ async function provisionFreshSystemEvolutionSession(request: Request) {
     }
   }
 
+  const createQrDataUrl = normalizeInstanceConnectToQrDataUrl(createResult.data as unknown);
+  const createPairingCode = extractPairingCodeFromConnectPayload(createResult.data as unknown);
+  if (createQrDataUrl || createPairingCode) {
+    return NextResponse.json({
+      instanceName,
+      connectionState: responseState,
+      qrDataUrl: createQrDataUrl,
+      pairingCode: createPairingCode,
+      waJid: null,
+      removedInstances: reset.removedInstances,
+    });
+  }
+
   const connectRes = await evolutionInstanceConnect(instanceName);
   if (!connectRes.ok) {
+    logProvisionFailure("connect", instanceName, connectRes.error, connectRes.status);
     return NextResponse.json(
       {
         error: "A instância foi criada, mas o QR Code não pôde ser gerado.",
@@ -309,6 +363,7 @@ async function provisionFreshSystemEvolutionSession(request: Request) {
         pairingCode: null,
         waJid: null,
         detail: connectRes.error,
+        phase: "connect",
         removedInstances: reset.removedInstances,
       },
       { status: 502 },
@@ -450,11 +505,29 @@ export async function GET(request: Request) {
   }
 
   const connectRes = await evolutionInstanceConnect(row.instance_name);
+  if (!connectRes.ok) {
+    logProvisionFailure("connect_refresh", row.instance_name, connectRes.error, connectRes.status);
+    return NextResponse.json(
+      {
+        error: "O QR Code não pôde ser atualizado na Evolution.",
+        detail: connectRes.error,
+        phase: "connect_refresh",
+        instanceName: row.instance_name,
+        connectionState: displayState,
+        qrDataUrl: null,
+        pairingCode: null,
+        waJid: identity.waJid ?? null,
+        authenticated: identity.authenticated,
+        profileName: identity.profileName,
+      },
+      { status: 502 },
+    );
+  }
   return NextResponse.json({
     instanceName: row.instance_name,
     connectionState: displayState,
-    qrDataUrl: connectRes.ok ? normalizeInstanceConnectToQrDataUrl(connectRes.data as unknown) : null,
-    pairingCode: connectRes.ok ? extractPairingCodeFromConnectPayload(connectRes.data as unknown) : null,
+    qrDataUrl: normalizeInstanceConnectToQrDataUrl(connectRes.data as unknown),
+    pairingCode: extractPairingCodeFromConnectPayload(connectRes.data as unknown),
     waJid: identity.waJid ?? null,
     authenticated: identity.authenticated,
     profileName: identity.profileName,
