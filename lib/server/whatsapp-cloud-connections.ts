@@ -1,0 +1,71 @@
+import "server-only";
+import { createSupabaseServiceClient } from "@/lib/supabase/server";
+
+export type WhatsAppCloudConnection = {
+  id: string;
+  tenant_id: string;
+  phone_number_id: string;
+  waba_id: string | null;
+  access_token: string;
+  display_phone: string | null;
+  verified_name: string | null;
+  active: boolean;
+  connected_at: string;
+  updated_at: string;
+};
+
+export async function getWhatsAppCloudConnection(tenantId: string): Promise<WhatsAppCloudConnection | null> {
+  const sb = createSupabaseServiceClient();
+  const { data } = await sb
+    .from("whatsapp_cloud_connections")
+    .select("*")
+    .eq("tenant_id", tenantId)
+    .eq("active", true)
+    .order("connected_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data as WhatsAppCloudConnection | null) ?? null;
+}
+
+export async function upsertWhatsAppCloudConnection(params: {
+  tenantId: string;
+  phoneNumberId: string;
+  wabaId: string | null;
+  accessToken: string;
+  displayPhone: string | null;
+  verifiedName: string | null;
+}): Promise<{ error: string | null }> {
+  const sb = createSupabaseServiceClient();
+  const { error } = await sb.from("whatsapp_cloud_connections").upsert(
+    {
+      tenant_id: params.tenantId,
+      phone_number_id: params.phoneNumberId,
+      waba_id: params.wabaId,
+      access_token: params.accessToken,
+      display_phone: params.displayPhone,
+      verified_name: params.verifiedName,
+      active: true,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "phone_number_id" },
+  );
+  return { error: error?.message ?? null };
+}
+
+export async function deleteWhatsAppCloudConnection(tenantId: string): Promise<void> {
+  const sb = createSupabaseServiceClient();
+  await sb.from("whatsapp_cloud_connections").delete().eq("tenant_id", tenantId);
+}
+
+export async function lookupWhatsAppCloudConnectionByPhoneNumberId(
+  phoneNumberId: string,
+): Promise<WhatsAppCloudConnection | null> {
+  const sb = createSupabaseServiceClient();
+  const { data } = await sb
+    .from("whatsapp_cloud_connections")
+    .select("*")
+    .eq("phone_number_id", phoneNumberId)
+    .eq("active", true)
+    .maybeSingle();
+  return (data as WhatsAppCloudConnection | null) ?? null;
+}

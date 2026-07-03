@@ -10,6 +10,7 @@ import { SITE_URL } from "@/lib/constants";
 import { buildClientSessionForTenant } from "@/lib/server/client-session-from-tenant";
 import { verifyMetaOAuthState } from "@/lib/server/meta-oauth-state";
 import { subscribePageToLeadgenWebhooks } from "@/lib/server/meta-page-webhook-subscribe";
+import { upsertWhatsAppCloudConnection } from "@/lib/server/whatsapp-cloud-connections";
 
 export const dynamic = "force-dynamic";
 
@@ -156,6 +157,129 @@ async function redirectToIntegracoes(
   return response;
 }
 
+type WabaListResponse = { data?: { id: string }[]; error?: { message: string } };
+type WaPhoneNumbersResponse = {
+  data?: { id: string; display_phone_number?: string; verified_name?: string }[];
+  error?: { message: string };
+};
+
+/**
+ * WhatsApp Cloud API branch — triggered when oauthState.flow === "whatsapp".
+ * Exchanges code for a long-lived token, discovers the first phone number from the
+ * connected WABA, and saves it to whatsapp_cloud_connections.
+ * 100% isolated from the Lead Ads flow.
+ */
+async function handleWhatsAppCloudCallback(
+  req: NextRequest,
+  code: string,
+  sessionRestore: { tenantId: string; employeeId?: string; employeeEmail?: string },
+  tokenExchangeSiteUrl: string,
+): Promise<NextResponse> {
+  const { tenantId } = sessionRestore;
+
+  const appId = process.env.META_APP_ID?.trim();
+  const appSecret = process.env.META_APP_SECRET?.trim();
+  if (!appId || !appSecret) {
+    console.error("[meta-callback/whatsapp] META_APP_ID or META_APP_SECRET not set");
+    return redirectToIntegracoes(req, "whatsapp=error&reason=server_config", sessionRestore);
+  }
+
+  const redirectUri = metaOAuthRedirectUri(tokenExchangeSiteUrl);
+
+  // 1. Exchange code → short-lived token
+  const tokenUrl = new URL(`${GRAPH}/oauth/access_token`);
+  tokenUrl.searchParams.set("client_id", appId);
+  tokenUrl.searchParams.set("client_secret", appSecret);
+  tokenUrl.searchParams.set("redirect_uri", redirectUri);
+  tokenUrl.searchParams.set("code", code);
+
+  let shortLivedToken: string;
+  try {
+    const tokenRes = await fetch(tokenUrl.toString(), { signal: AbortSignal.timeout(10_000) });
+    const tokenData = (await tokenRes.json()) as TokenResponse;
+    if (!tokenData.access_token) {
+      console.error("[meta-callback/whatsapp] Token exchange failed", tokenData.error?.message);
+      return redirectToIntegracoes(req, "whatsapp=error&reason=token_exchange", sessionRestore);
+    }
+    shortLivedToken = tokenData.access_token;
+  } catch (err) {
+    console.error("[meta-callback/whatsapp] Token exchange request failed", err instanceof Error ? err.message : String(err));
+    return redirectToIntegracoes(req, "whatsapp=error&reason=network", sessionRestore);
+  }
+
+  // 2. Exchange → long-lived token
+  const longLivedUrl = new URL(`${GRAPH}/oauth/access_token`);
+  longLivedUrl.searchParams.set("grant_type", "fb_exchange_token");
+  longLivedUrl.searchParams.set("client_id", appId);
+  longLivedUrl.searchParams.set("client_secret", appSecret);
+  longLivedUrl.searchParams.set("fb_exchange_token", shortLivedToken);
+
+  let accessToken: string;
+  try {
+    const llRes = await fetch(longLivedUrl.toString(), { signal: AbortSignal.timeout(10_000) });
+    const llData = (await llRes.json()) as LongLivedTokenResponse;
+    accessToken = llData.access_token ?? shortLivedToken;
+  } catch {
+    accessToken = shortLivedToken;
+  }
+
+  // 3. List WABAs accessible with this token
+  const wabasUrl = `${GRAPH}/me/whatsapp_business_accounts?access_token=${encodeURIComponent(accessToken)}&fields=id`;
+  let wabaId: string | null = null;
+  try {
+    const wabasRes = await fetch(wabasUrl, { signal: AbortSignal.timeout(10_000) });
+    const wabasData = (await wabasRes.json()) as WabaListResponse;
+    wabaId = wabasData.data?.[0]?.id ?? null;
+    console.info("[meta-callback/whatsapp] WABAs fetched", { tenantId, count: wabasData.data?.length ?? 0, wabaId, apiError: wabasData.error?.message ?? null });
+  } catch (err) {
+    console.warn("[meta-callback/whatsapp] WABA list failed", err instanceof Error ? err.message : String(err));
+  }
+
+  // 4. Get phone numbers from the first WABA
+  let phoneNumberId: string | null = null;
+  let displayPhone: string | null = null;
+  let verifiedName: string | null = null;
+
+  if (wabaId) {
+    const phonesUrl = `${GRAPH}/${encodeURIComponent(wabaId)}/phone_numbers?access_token=${encodeURIComponent(accessToken)}&fields=id,display_phone_number,verified_name`;
+    try {
+      const phonesRes = await fetch(phonesUrl, { signal: AbortSignal.timeout(10_000) });
+      const phonesData = (await phonesRes.json()) as WaPhoneNumbersResponse;
+      const first = phonesData.data?.[0];
+      if (first) {
+        phoneNumberId = first.id;
+        displayPhone = first.display_phone_number ?? null;
+        verifiedName = first.verified_name ?? null;
+      }
+      console.info("[meta-callback/whatsapp] Phone numbers fetched", { tenantId, wabaId, count: phonesData.data?.length ?? 0, phoneNumberId, apiError: phonesData.error?.message ?? null });
+    } catch (err) {
+      console.warn("[meta-callback/whatsapp] Phone numbers fetch failed", err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  if (!phoneNumberId) {
+    console.warn("[meta-callback/whatsapp] No phone number found for tenant", { tenantId, wabaId });
+    return redirectToIntegracoes(req, "whatsapp=no_numbers", sessionRestore);
+  }
+
+  // 5. Save to DB
+  const { error: dbErr } = await upsertWhatsAppCloudConnection({
+    tenantId,
+    phoneNumberId,
+    wabaId,
+    accessToken,
+    displayPhone,
+    verifiedName,
+  });
+  if (dbErr) {
+    console.error("[meta-callback/whatsapp] DB save failed", dbErr);
+    return redirectToIntegracoes(req, "whatsapp=error&reason=db_save", sessionRestore);
+  }
+
+  console.info("[meta-callback/whatsapp] Connected WhatsApp Cloud for tenant", { tenantId, phoneNumberId, displayPhone });
+  return redirectToIntegracoes(req, "whatsapp=connected", sessionRestore);
+}
+
 /** Handles the Facebook OAuth callback — exchanges code for tokens and saves pages. */
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const params = req.nextUrl.searchParams;
@@ -184,6 +308,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const { tenantId, employeeId, employeeEmail } = oauthState;
   const sessionRestore = { tenantId, employeeId, employeeEmail };
 
+  // ── WhatsApp Cloud API (Embedded Signup) — completely isolated branch ─────
+  if (oauthState.flow === "whatsapp") {
+    return handleWhatsAppCloudCallback(req, code, sessionRestore, tokenExchangeSiteUrl);
+  }
+
+  // ── Lead Ads OAuth (existing code below, untouched) ───────────────────────
   const appId = process.env.META_APP_ID?.trim();
   const appSecret = process.env.META_APP_SECRET?.trim();
   if (!appId || !appSecret) {

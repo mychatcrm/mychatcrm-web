@@ -7,12 +7,16 @@ export type MetaOAuthStateInput = {
   tenantId: string;
   employeeId?: string;
   employeeEmail?: string;
+  /** Distinguishes OAuth flows; omit for Lead Ads (default). */
+  flow?: string;
 };
 
 export type MetaOAuthStatePayload = {
   tenantId: string;
   employeeId?: string;
   employeeEmail?: string;
+  /** Distinguishes OAuth flows; absent on legacy Lead Ads tokens. */
+  flow?: string;
 };
 
 function resolveSigningSecret(): string | null {
@@ -46,6 +50,7 @@ export async function signMetaOAuthState(input: MetaOAuthStateInput): Promise<st
     tenantId: input.tenantId,
     ...(input.employeeId ? { employeeId: input.employeeId } : {}),
     ...(input.employeeEmail ? { employeeEmail: input.employeeEmail.trim().toLowerCase() } : {}),
+    ...(input.flow ? { flow: input.flow } : {}),
     timestamp: Date.now(),
   });
   const payloadBytes = new TextEncoder().encode(payload);
@@ -82,6 +87,7 @@ export async function verifyMetaOAuthState(state: string): Promise<MetaOAuthStat
       tenantId?: string;
       employeeId?: string;
       employeeEmail?: string;
+      flow?: string;
       timestamp?: number;
       /** Legado: states assinados antes da migração para `timestamp`. */
       exp?: number;
@@ -102,6 +108,7 @@ export async function verifyMetaOAuthState(state: string): Promise<MetaOAuthStat
       tenantId: parsed.tenantId,
       ...(parsed.employeeId ? { employeeId: parsed.employeeId } : {}),
       ...(parsed.employeeEmail ? { employeeEmail: parsed.employeeEmail } : {}),
+      ...(parsed.flow ? { flow: parsed.flow } : {}),
     };
   } catch {
     return null;

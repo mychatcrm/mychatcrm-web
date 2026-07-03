@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, BadgeCheck, Check, ChevronDown, ExternalLink, Loader2, Plug, QrCode, Share2, Unlink } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
-import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
 import { Modal } from "@/components/ui/Modal";
 import { cn, formatBRL } from "@/lib/utils";
 import { WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL } from "@/lib/plans";
@@ -46,6 +45,15 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const [formMappingValues, setFormMappingValues] = useState<Record<string, string>>({});
   const [metaBanner, setMetaBanner] = useState<string | null>(null);
   const [disconnectModalOpen, setDisconnectModalOpen] = useState(false);
+
+  // ── WhatsApp Cloud API (Embedded Signup) state ───────────────────────────
+  type WaCloudState =
+    | { connected: false }
+    | { connected: true; phone_number_id: string; display_phone: string | null; verified_name: string | null };
+  const [waCloudStatus, setWaCloudStatus] = useState<WaCloudState | null>(null);
+  const [waCloudLoading, setWaCloudLoading] = useState(true);
+  const [waCloudDisconnecting, setWaCloudDisconnecting] = useState(false);
+  const [waCloudBanner, setWaCloudBanner] = useState<string | null>(null);
 
   const bump = useCallback(() => setRevision((r) => r + 1), []);
 
@@ -124,6 +132,27 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     void loadMetaStatus();
   }, [loadMetaStatus]);
 
+  // ── WhatsApp Cloud status ─────────────────────────────────────────────────
+  const loadWaCloudStatus = useCallback(async (): Promise<WaCloudState | null> => {
+    setWaCloudLoading(true);
+    try {
+      const res = await fetch("/api/client/whatsapp-cloud/status", { credentials: "same-origin" });
+      if (!res.ok) throw new Error("Unable to load WhatsApp Cloud status");
+      const data = (await res.json()) as WaCloudState;
+      setWaCloudStatus(data);
+      return data;
+    } catch {
+      setWaCloudStatus({ connected: false });
+      return null;
+    } finally {
+      setWaCloudLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadWaCloudStatus();
+  }, [loadWaCloudStatus]);
+
   // Show banner if redirected back from OAuth
   useEffect(() => {
     const meta = searchParams.get("meta");
@@ -139,6 +168,21 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
       setMetaBanner("Erro ao conectar com a Meta. Tente novamente.");
     }
   }, [searchParams, loadMetaStatus]);
+
+  useEffect(() => {
+    const wa = searchParams.get("whatsapp");
+    if (wa === "connected") {
+      void loadWaCloudStatus().then((status) => {
+        setWaCloudBanner(status?.connected ? "✅ WhatsApp API Oficial conectado com sucesso!" : "Nenhum número WhatsApp Business encontrado.");
+      });
+    } else if (wa === "denied") {
+      setWaCloudBanner("Conexão cancelada. Tente novamente.");
+    } else if (wa === "no_numbers") {
+      setWaCloudBanner("Nenhum número WhatsApp Business encontrado na conta Meta.");
+    } else if (wa === "error") {
+      setWaCloudBanner("Erro ao conectar com a Meta. Tente novamente.");
+    }
+  }, [searchParams, loadWaCloudStatus]);
 
   // ── Load agents for form → agent selector ────────────────────────────────
   useEffect(() => {
@@ -187,6 +231,20 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
       setMetaDisconnecting(false);
     }
   }, [loadMetaStatus, router]);
+
+  const disconnectWaCloud = useCallback(async () => {
+    setWaCloudDisconnecting(true);
+    try {
+      const res = await fetch("/api/client/whatsapp-cloud/disconnect", { method: "DELETE", credentials: "same-origin" });
+      if (!res.ok) throw new Error("Unable to disconnect");
+      setWaCloudStatus({ connected: false });
+      setWaCloudBanner(null);
+    } catch {
+      setWaCloudBanner("Erro ao desconectar. Tente novamente.");
+    } finally {
+      setWaCloudDisconnecting(false);
+    }
+  }, []);
 
   const waExtraSlots = useMemo(() => {
     void revision;
@@ -411,25 +469,98 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                       </div>
                     ) : null}
                     {method === "meta" ? (
-                      <div className="space-y-3 rounded-xl border border-line bg-surface-deep/30 p-4 text-sm text-content-secondary">
-                        <p className={typography.ui.overline}>Fluxo API Meta (demo) — linha {slotIndex + 1}</p>
-                        <p>
-                          Aqui entraria o assistente ao Business Manager, verificacao do numero e System User — neste ambiente e apenas simulacao; nunca cole chaves de API reais no
-                          browser.
-                        </p>
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <Input readOnly defaultValue="waba_••••••••••••••••" placeholder="ID do WABA" aria-label="ID do WABA (demo)" />
-                          <Input readOnly type="password" defaultValue="EAAG••••••••••••••" placeholder="Chave de acesso" aria-label="Chave de acesso (demo)" />
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <Button type="button">Validar credenciais</Button>
-                          <Button type="button" variant="secondary">
-                            Abrir documentacao Meta
-                          </Button>
-                          <Button type="button" variant="outline" onClick={() => setWhatsAppSlotMethod(tenantId, slotIndex, null)}>
-                            Desligar esta linha
-                          </Button>
-                        </div>
+                      <div className="space-y-4">
+                        {waCloudBanner ? (
+                          <div
+                            className={cn(
+                              "flex items-start gap-2 rounded-lg border px-4 py-3 text-sm",
+                              waCloudBanner.startsWith("✅")
+                                ? isLight
+                                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                                  : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                                : isLight
+                                  ? "border-amber-200 bg-amber-50 text-amber-800"
+                                  : "border-amber-500/30 bg-amber-500/10 text-amber-300",
+                            )}
+                          >
+                            <span className="mt-0.5 shrink-0">
+                              {waCloudBanner.startsWith("✅") ? <BadgeCheck className="size-4" aria-hidden /> : <AlertTriangle className="size-4" aria-hidden />}
+                            </span>
+                            <p>{waCloudBanner}</p>
+                          </div>
+                        ) : null}
+
+                        {waCloudLoading ? (
+                          <div className="flex items-center gap-2 text-sm text-content-muted">
+                            <Loader2 className="size-4 animate-spin" aria-hidden />
+                            A verificar conexão…
+                          </div>
+                        ) : waCloudStatus?.connected ? (
+                          <div className="space-y-3">
+                            <div
+                              className={cn(
+                                "flex items-center gap-3 rounded-xl border p-4",
+                                isLight ? "border-emerald-200 bg-emerald-50/60" : "border-emerald-500/25 bg-emerald-500/[0.07]",
+                              )}
+                            >
+                              <BadgeCheck className={cn("size-5 shrink-0", isLight ? "text-emerald-600" : "text-emerald-400")} aria-hidden />
+                              <div className="min-w-0 flex-1">
+                                <p className="font-semibold text-content">{waCloudStatus.display_phone ?? waCloudStatus.phone_number_id}</p>
+                                {waCloudStatus.verified_name ? (
+                                  <p className="text-xs text-content-secondary">{waCloudStatus.verified_name}</p>
+                                ) : null}
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="shrink-0 border-rose-500/30 text-rose-600 hover:border-rose-500/50 hover:bg-rose-500/5 dark:text-rose-400"
+                                isLoading={waCloudDisconnecting}
+                                onClick={disconnectWaCloud}
+                              >
+                                <Unlink className="size-4" aria-hidden />
+                                Desconectar API Oficial
+                              </Button>
+                              <Button type="button" variant="outline" onClick={() => setWhatsAppSlotMethod(tenantId, slotIndex, null)}>
+                                Desligar esta linha
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            <p className="text-sm text-content-secondary">
+                              Conecte sua conta <strong className="text-content">WhatsApp Business</strong> via Meta API Oficial. O processo é guiado pela própria Meta — sem copiar
+                              chaves ou configurações manuais.
+                            </p>
+                            <ul className="space-y-1 text-xs text-content-muted">
+                              <li className="flex items-center gap-1.5">
+                                <BadgeCheck className="size-3 shrink-0 text-primary" aria-hidden />
+                                Número verificado e suportado pela Meta
+                              </li>
+                              <li className="flex items-center gap-1.5">
+                                <BadgeCheck className="size-3 shrink-0 text-primary" aria-hidden />
+                                Envios em escala com templates aprovados
+                              </li>
+                              <li className="flex items-center gap-1.5">
+                                <BadgeCheck className="size-3 shrink-0 text-primary" aria-hidden />
+                                Sem necessidade de aparelho ligado
+                              </li>
+                            </ul>
+                            <div className="flex flex-wrap gap-2">
+                              <a
+                                href="/api/client/whatsapp-cloud/connect"
+                                className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-hover"
+                              >
+                                <ExternalLink className="size-4" aria-hidden />
+                                Conectar WhatsApp API Oficial
+                              </a>
+                              <Button type="button" variant="outline" onClick={() => setWhatsAppSlotMethod(tenantId, slotIndex, null)}>
+                                Cancelar
+                              </Button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ) : null}
                   </div>
