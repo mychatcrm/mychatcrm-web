@@ -42,14 +42,14 @@ declare global {
 function loadFbSdk(appId: string): Promise<void> {
   return new Promise((resolve, reject) => {
     if (window.FB) {
-      window.FB.init({ appId, autoLogAppEvents: true, xfbml: false, version: "v19.0" });
+      window.FB.init({ appId, autoLogAppEvents: true, xfbml: false, version: "v24.0" });
       resolve();
       return;
     }
     const timer = setTimeout(() => reject(new Error("FB SDK load timeout")), 15_000);
     window.fbAsyncInit = () => {
       clearTimeout(timer);
-      window.FB!.init({ appId, autoLogAppEvents: true, xfbml: false, version: "v19.0" });
+      window.FB!.init({ appId, autoLogAppEvents: true, xfbml: false, version: "v24.0" });
       resolve();
     };
     const script = document.createElement("script");
@@ -100,6 +100,8 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const [waCloudBanner, setWaCloudBanner] = useState<string | null>(null);
   // Pre-loaded SDK config so FB.login() can be called synchronously on click
   const waCloudConfigRef = useRef<{ app_id: string; config_id: string } | null>(null);
+  // Why the SDK pre-load failed (ad blocker, CDN down) — shown on click for a precise message
+  const waCloudSdkErrorRef = useRef<string | null>(null);
 
   const bump = useCallback(() => setRevision((r) => r + 1), []);
 
@@ -208,12 +210,16 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     void (async () => {
       try {
         const res = await fetch("/api/client/whatsapp-cloud/sdk-config", { credentials: "same-origin" });
-        if (!res.ok) return;
+        if (!res.ok) {
+          waCloudSdkErrorRef.current = `sdk-config ${res.status}`;
+          return;
+        }
         const cfg = (await res.json()) as { app_id: string; config_id: string };
         await loadFbSdk(cfg.app_id);
         waCloudConfigRef.current = cfg;
-      } catch {
-        // Non-critical — if pre-load fails, connectWaCloud shows a clear error
+        waCloudSdkErrorRef.current = null;
+      } catch (err) {
+        waCloudSdkErrorRef.current = err instanceof Error ? err.message : String(err);
       }
     })();
   }, [waCloudStatus]);
@@ -317,7 +323,12 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const connectWaCloud = useCallback(() => {
     const cfg = waCloudConfigRef.current;
     if (!window.FB || !cfg) {
-      setWaCloudBanner("SDK Meta ainda carregando. Aguarde um instante e tente novamente.");
+      const reason = waCloudSdkErrorRef.current;
+      setWaCloudBanner(
+        reason
+          ? `Não foi possível carregar o SDK da Meta (${reason}). Desative bloqueadores de anúncio para este site e recarregue a página.`
+          : "SDK Meta ainda carregando. Aguarde um instante e tente novamente.",
+      );
       return;
     }
 
@@ -408,11 +419,13 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
         },
       );
     } catch (err) {
-      // FB.login() threw synchronously (e.g., invalid config, popup blocked at SDK level)
+      // FB.login() threw synchronously (e.g., invalid config, popup blocked at SDK level).
+      // Surface the real SDK message so failures are diagnosable from the screen.
       clearTimeout(safetyTimer);
       cleanup();
-      setWaCloudBanner("Erro ao iniciar conexão Meta. Tente novamente.");
-      console.error("[connectWaCloud]", err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      setWaCloudBanner(`Erro ao iniciar conexão Meta: ${msg}. Tente novamente.`);
+      console.error("[connectWaCloud]", msg);
       setWaCloudConnecting(false);
     }
   }, []);

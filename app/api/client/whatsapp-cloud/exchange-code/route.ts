@@ -4,7 +4,7 @@ import { upsertWhatsAppCloudConnection } from "@/lib/server/whatsapp-cloud-conne
 
 export const dynamic = "force-dynamic";
 
-const GRAPH = "https://graph.facebook.com/v19.0";
+const GRAPH = "https://graph.facebook.com/v24.0";
 
 type TokenResponse = { access_token?: string; error?: { message: string } };
 type LongLivedTokenResponse = { access_token?: string; error?: { message: string } };
