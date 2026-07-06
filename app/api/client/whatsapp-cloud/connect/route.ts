@@ -5,10 +5,15 @@ import { SITE_URL } from "@/lib/constants";
 
 export const dynamic = "force-dynamic";
 
+// Use the standard Facebook OAuth dialog for redirect mode.
+// The business.facebook.com/messaging/whatsapp/onboard/ URL is designed for the
+// JS SDK popup flow and closes the popup without redirecting to our callback.
+// The OAuth dialog supports the same config_id-driven WhatsApp signup and
+// redirects the full browser window to redirect_uri after completion.
 const WA_EXTRAS = JSON.stringify({
-  version: "v4",
-  sessionInfoVersion: "3",
+  setup: {},
   featureType: "whatsapp_business_app_onboarding",
+  sessionInfoVersion: "3",
 });
 
 /** Redirects the authenticated tenant to the Meta Embedded Signup for WhatsApp Business. */
@@ -41,12 +46,14 @@ export async function GET(): Promise<NextResponse> {
   const siteUrl = SITE_URL.replace(/\/$/, "");
   const redirectUri = `${siteUrl}/api/meta/callback`;
 
-  const signupUrl = new URL("https://business.facebook.com/messaging/whatsapp/onboard/");
-  signupUrl.searchParams.set("app_id", appId);
+  const signupUrl = new URL("https://www.facebook.com/dialog/oauth");
+  signupUrl.searchParams.set("client_id", appId);
+  signupUrl.searchParams.set("redirect_uri", redirectUri);
+  signupUrl.searchParams.set("scope", "whatsapp_business_management,whatsapp_business_messaging");
+  signupUrl.searchParams.set("response_type", "code");
+  signupUrl.searchParams.set("state", state);
   signupUrl.searchParams.set("config_id", configId);
   signupUrl.searchParams.set("extras", WA_EXTRAS);
-  signupUrl.searchParams.set("redirect_uri", redirectUri);
-  signupUrl.searchParams.set("state", state);
 
   return NextResponse.redirect(signupUrl.toString());
 }
