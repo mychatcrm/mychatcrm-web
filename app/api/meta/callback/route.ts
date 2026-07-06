@@ -223,16 +223,68 @@ async function handleWhatsAppCloudCallback(
     accessToken = shortLivedToken;
   }
 
-  // 3. List WABAs accessible with this token
-  const wabasUrl = `${GRAPH}/me/whatsapp_business_accounts?access_token=${encodeURIComponent(accessToken)}&fields=id`;
+  // 3. List WABAs accessible with this token.
+  //    Try /me/whatsapp_business_accounts first; if empty, fall back to
+  //    WABAs accessible via Business Manager portfolios the user manages.
+  //    (Businesses owned through BM are NOT returned by the direct /me endpoint.)
   let wabaId: string | null = null;
+
   try {
+    const wabasUrl = `${GRAPH}/me/whatsapp_business_accounts?access_token=${encodeURIComponent(accessToken)}&fields=id&limit=5`;
     const wabasRes = await fetch(wabasUrl, { signal: AbortSignal.timeout(10_000) });
     const wabasData = (await wabasRes.json()) as WabaListResponse;
     wabaId = wabasData.data?.[0]?.id ?? null;
-    console.info("[meta-callback/whatsapp] WABAs fetched", { tenantId, count: wabasData.data?.length ?? 0, wabaId, apiError: wabasData.error?.message ?? null });
+    console.info("[meta-callback/whatsapp] WABAs (me/whatsapp_business_accounts)", {
+      tenantId, count: wabasData.data?.length ?? 0, wabaId, apiError: wabasData.error?.message ?? null,
+    });
   } catch (err) {
-    console.warn("[meta-callback/whatsapp] WABA list failed", err instanceof Error ? err.message : String(err));
+    console.warn("[meta-callback/whatsapp] WABA list (me) failed", err instanceof Error ? err.message : String(err));
+  }
+
+  // Fallback: enumerate Business Manager portfolios the user manages and look for WABAs there.
+  if (!wabaId) {
+    try {
+      const bizUrl = `${GRAPH}/me/businesses?access_token=${encodeURIComponent(accessToken)}&fields=id,name&limit=10`;
+      const bizRes = await fetch(bizUrl, { signal: AbortSignal.timeout(10_000) });
+      const bizData = (await bizRes.json()) as { data?: { id: string; name?: string }[]; error?: { message: string } };
+      console.info("[meta-callback/whatsapp] businesses (me/businesses)", {
+        tenantId, count: bizData.data?.length ?? 0, apiError: bizData.error?.message ?? null,
+      });
+
+      for (const biz of bizData.data ?? []) {
+        if (wabaId) break;
+
+        // Owned WABAs
+        try {
+          const ownedUrl = `${GRAPH}/${encodeURIComponent(biz.id)}/owned_whatsapp_business_accounts?access_token=${encodeURIComponent(accessToken)}&fields=id&limit=5`;
+          const ownedRes = await fetch(ownedUrl, { signal: AbortSignal.timeout(10_000) });
+          const ownedData = (await ownedRes.json()) as WabaListResponse;
+          wabaId = ownedData.data?.[0]?.id ?? null;
+          console.info("[meta-callback/whatsapp] owned WABAs", {
+            tenantId, bizId: biz.id, bizName: biz.name ?? null, count: ownedData.data?.length ?? 0, wabaId, apiError: ownedData.error?.message ?? null,
+          });
+        } catch (e) {
+          console.warn("[meta-callback/whatsapp] owned WABAs fetch failed", e instanceof Error ? e.message : String(e));
+        }
+
+        if (wabaId) break;
+
+        // Client WABAs
+        try {
+          const clientUrl = `${GRAPH}/${encodeURIComponent(biz.id)}/client_whatsapp_business_accounts?access_token=${encodeURIComponent(accessToken)}&fields=id&limit=5`;
+          const clientRes = await fetch(clientUrl, { signal: AbortSignal.timeout(10_000) });
+          const clientData = (await clientRes.json()) as WabaListResponse;
+          wabaId = clientData.data?.[0]?.id ?? null;
+          console.info("[meta-callback/whatsapp] client WABAs", {
+            tenantId, bizId: biz.id, bizName: biz.name ?? null, count: clientData.data?.length ?? 0, wabaId, apiError: clientData.error?.message ?? null,
+          });
+        } catch (e) {
+          console.warn("[meta-callback/whatsapp] client WABAs fetch failed", e instanceof Error ? e.message : String(e));
+        }
+      }
+    } catch (err) {
+      console.warn("[meta-callback/whatsapp] businesses fallback failed", err instanceof Error ? err.message : String(err));
+    }
   }
 
   // 4. Get phone numbers from the first WABA
