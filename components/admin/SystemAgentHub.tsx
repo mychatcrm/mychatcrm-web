@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bot,
   History,
@@ -22,6 +22,7 @@ import {
 import { EvolutionQrSlotPanel } from "@/components/dashboard/integrations/EvolutionQrSlotPanel";
 import { LiveConversationsPanel } from "@/components/admin/system-agent/LiveConversationsPanel";
 import { NotificationsModal } from "@/components/admin/system-agent/NotificationsModal";
+import { loadFbSdk } from "@/lib/client/facebook-sdk";
 import { cn } from "@/lib/utils";
 
 type MetaConfig = {
@@ -260,7 +261,11 @@ export function SystemAgentHub(props: {
   const [metaPhoneNumberId, setMetaPhoneNumberId] = useState("");
   const [metaAccessToken, setMetaAccessToken] = useState("");
   const [metaError, setMetaError] = useState<string | null>(null);
+  const [metaEmbeddedBusy, setMetaEmbeddedBusy] = useState(false);
   const [notifModalOpen, setNotifModalOpen] = useState(false);
+  // Pre-loaded FB SDK config so FB.login() can be called synchronously on click
+  const metaSdkConfigRef = useRef<{ app_id: string; config_id: string } | null>(null);
+  const metaSdkErrorRef = useRef<string | null>(null);
   const conn = connectionLabel(connectionState);
   const metaActive = metaConfig?.active === true;
   const metaConfigured = Boolean(metaConfig?.phone_number_id);
@@ -456,6 +461,154 @@ export function SystemAgentHub(props: {
   useEffect(() => {
     void refreshMetaConfig();
   }, [refreshMetaConfig]);
+
+  // Pre-load the FB SDK as soon as we know Meta isn't connected yet, so
+  // FB.login() can be called synchronously within the click gesture later.
+  useEffect(() => {
+    if (metaConfigured) return;
+    if (metaSdkConfigRef.current) return;
+    void (async () => {
+      try {
+        const res = await fetch("/api/admin/system-agent/meta/sdk-config", { credentials: "same-origin" });
+        if (!res.ok) {
+          metaSdkErrorRef.current = `sdk-config ${res.status}`;
+          return;
+        }
+        const cfg = (await res.json()) as { app_id: string; config_id: string };
+        await loadFbSdk(cfg.app_id);
+        metaSdkConfigRef.current = cfg;
+        metaSdkErrorRef.current = null;
+      } catch (err) {
+        metaSdkErrorRef.current = err instanceof Error ? err.message : String(err);
+      }
+    })();
+  }, [metaConfigured]);
+
+  // FB.login() must be called synchronously within the user-gesture context —
+  // no awaits before it. Mirrors connectWaCloud in IntegracoesHub.tsx.
+  const connectMetaEmbedded = useCallback(() => {
+    const cfg = metaSdkConfigRef.current;
+    if (!window.FB || !cfg) {
+      const reason = metaSdkErrorRef.current;
+      setMetaError(
+        reason
+          ? `Não foi possível carregar o SDK da Meta (${reason}). Recarregue a página e tente novamente.`
+          : "SDK Meta ainda carregando. Aguarde um instante e tente novamente.",
+      );
+      return;
+    }
+
+    setMetaEmbeddedBusy(true);
+    setMetaError(null);
+
+    let wabaId: string | null = null;
+    let phoneNumberId: string | null = null;
+    let callbackFired = false;
+
+    const onMessage = (event: MessageEvent) => {
+      if (typeof event.origin !== "string" || !event.origin.endsWith("facebook.com")) return;
+      try {
+        const data = (typeof event.data === "string" ? JSON.parse(event.data) : event.data) as {
+          type?: string;
+          event?: string;
+          data?: { waba_id?: string; phone_number_id?: string };
+        } | null;
+        if (!data || data.type !== "WA_EMBEDDED_SIGNUP") return;
+        if (data.event === "FINISH" || data.event === "FINISH_ONLY_WABA") {
+          wabaId = data.data?.waba_id ?? null;
+          phoneNumberId = data.data?.phone_number_id ?? null;
+        } else if (data.event === "CANCEL" || data.event === "ERROR") {
+          console.warn("[wa-embedded-signup/admin]", data.event, data.data);
+        }
+      } catch {
+        // postMessage from unrelated facebook widgets — ignore
+      }
+    };
+
+    const cleanup = () => {
+      window.removeEventListener("message", onMessage);
+    };
+
+    const safetyTimer = setTimeout(() => {
+      if (!callbackFired) {
+        cleanup();
+        setMetaError("O popup do Facebook não respondeu. Permita popups para este site e tente novamente.");
+        setMetaEmbeddedBusy(false);
+      }
+    }, 120_000);
+
+    window.addEventListener("message", onMessage);
+
+    try {
+      window.FB.login(
+        (response) => {
+          callbackFired = true;
+          clearTimeout(safetyTimer);
+          void (async () => {
+            if (!response.authResponse?.code) {
+              cleanup();
+              setMetaError("Conexão cancelada ou não autorizada.");
+              setMetaEmbeddedBusy(false);
+              return;
+            }
+
+            for (let i = 0; i < 30 && (!wabaId || !phoneNumberId); i++) {
+              await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+            cleanup();
+
+            if (!wabaId || !phoneNumberId) {
+              setMetaError("Nenhum número WhatsApp Business encontrado. Tente novamente.");
+              setMetaEmbeddedBusy(false);
+              return;
+            }
+
+            try {
+              const exchRes = await fetch("/api/admin/system-agent/meta/exchange-code", {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ code: response.authResponse.code, waba_id: wabaId, phone_number_id: phoneNumberId }),
+              });
+              const exchData = (await exchRes.json()) as {
+                connected?: boolean;
+                phone_number_id?: string;
+                display_phone?: string | null;
+                verified_name?: string | null;
+              };
+              if (exchData.connected && exchData.phone_number_id) {
+                setMetaConfig({
+                  active: true,
+                  phone_number_id: exchData.phone_number_id,
+                  display_phone: exchData.display_phone ?? null,
+                  verified_name: exchData.verified_name ?? null,
+                });
+              } else {
+                setMetaError("Erro ao salvar conexão. Tente novamente.");
+              }
+            } catch {
+              setMetaError("Erro de rede ao salvar conexão. Tente novamente.");
+            } finally {
+              setMetaEmbeddedBusy(false);
+            }
+          })();
+        },
+        {
+          config_id: cfg.config_id,
+          response_type: "code",
+          override_default_response_type: true,
+          extras: { setup: {}, featureType: "", sessionInfoVersion: "3" },
+        },
+      );
+    } catch (err) {
+      clearTimeout(safetyTimer);
+      cleanup();
+      const msg = err instanceof Error ? err.message : String(err);
+      setMetaError(`Erro ao iniciar conexão Meta: ${msg}. Tente novamente.`);
+      console.error("[connectMetaEmbedded]", msg);
+      setMetaEmbeddedBusy(false);
+    }
+  }, []);
 
   const connectMeta = useCallback(async () => {
     const phoneNumberId = metaPhoneNumberId.trim();
@@ -823,6 +976,19 @@ export function SystemAgentHub(props: {
                   Para números WhatsApp Business registrados na Meta Cloud API (ex.:{" "}
                   <span className="font-mono">556282067910</span>).
                 </p>
+                <button
+                  type="button"
+                  disabled={metaEmbeddedBusy}
+                  onClick={() => connectMetaEmbedded()}
+                  className="w-full rounded-lg bg-primary px-3 py-2 text-xs font-medium text-white disabled:opacity-60"
+                >
+                  {metaEmbeddedBusy ? "Conectando…" : "Conectar via Facebook (recomendado)"}
+                </button>
+
+                <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-content-faint">
+                  <div className="h-px flex-1 bg-line/40" /> ou preencha manualmente <div className="h-px flex-1 bg-line/40" />
+                </div>
+
                 <label className="block text-xs">
                   <span className="mb-1 block text-content-faint">Phone Number ID</span>
                   <input
@@ -847,7 +1013,7 @@ export function SystemAgentHub(props: {
                   type="button"
                   disabled={metaBusy || !metaPhoneNumberId.trim() || !metaAccessToken.trim()}
                   onClick={() => void connectMeta()}
-                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+                  className="rounded-lg bg-surface-elevated px-3 py-1.5 text-xs font-medium text-content-secondary border border-line disabled:opacity-60"
                 >
                   {metaBusy ? "Conectando…" : "Conectar API Meta"}
                 </button>
