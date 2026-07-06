@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, BadgeCheck, Check, ChevronDown, ExternalLink, Loader2, Plug, QrCode, Share2, Unlink } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
@@ -40,13 +40,15 @@ declare global {
 }
 
 function loadFbSdk(appId: string): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     if (window.FB) {
       window.FB.init({ appId, autoLogAppEvents: true, xfbml: false, version: "v19.0" });
       resolve();
       return;
     }
+    const timer = setTimeout(() => reject(new Error("FB SDK load timeout")), 15_000);
     window.fbAsyncInit = () => {
+      clearTimeout(timer);
       window.FB!.init({ appId, autoLogAppEvents: true, xfbml: false, version: "v19.0" });
       resolve();
     };
@@ -54,6 +56,10 @@ function loadFbSdk(appId: string): Promise<void> {
     script.src = "https://connect.facebook.net/pt_BR/sdk.js";
     script.async = true;
     script.defer = true;
+    script.onerror = () => {
+      clearTimeout(timer);
+      reject(new Error("FB SDK failed to load"));
+    };
     document.head.appendChild(script);
   });
 }
@@ -92,6 +98,8 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const [waCloudConnecting, setWaCloudConnecting] = useState(false);
   const [waCloudDisconnecting, setWaCloudDisconnecting] = useState(false);
   const [waCloudBanner, setWaCloudBanner] = useState<string | null>(null);
+  // Pre-loaded SDK config so FB.login() can be called synchronously on click
+  const waCloudConfigRef = useRef<{ app_id: string; config_id: string } | null>(null);
 
   const bump = useCallback(() => setRevision((r) => r + 1), []);
 
@@ -191,6 +199,25 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     void loadWaCloudStatus();
   }, [loadWaCloudStatus]);
 
+  // Pre-load the FB SDK as soon as we know the tenant hasn't connected yet.
+  // This ensures window.FB is ready before the user clicks, so FB.login() can
+  // be called synchronously within the user-gesture context (no popup blocker).
+  useEffect(() => {
+    if (waCloudStatus?.connected !== false) return;
+    if (waCloudConfigRef.current) return; // already loaded
+    void (async () => {
+      try {
+        const res = await fetch("/api/client/whatsapp-cloud/sdk-config", { credentials: "same-origin" });
+        if (!res.ok) return;
+        const cfg = (await res.json()) as { app_id: string; config_id: string };
+        await loadFbSdk(cfg.app_id);
+        waCloudConfigRef.current = cfg;
+      } catch {
+        // Non-critical — if pre-load fails, connectWaCloud shows a clear error
+      }
+    })();
+  }, [waCloudStatus]);
+
   // Show banner if redirected back from OAuth
   useEffect(() => {
     const meta = searchParams.get("meta");
@@ -284,95 +311,84 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     }
   }, []);
 
-  const connectWaCloud = useCallback(async () => {
+  // FB.login() must be called synchronously within the user-gesture context.
+  // The SDK and config_id are pre-loaded on mount (see useEffect above) so no
+  // awaits are needed before calling FB.login(), preventing popup blockers.
+  const connectWaCloud = useCallback(() => {
+    const cfg = waCloudConfigRef.current;
+    if (!window.FB || !cfg) {
+      setWaCloudBanner("SDK Meta ainda carregando. Aguarde um instante e tente novamente.");
+      return;
+    }
+
     setWaCloudConnecting(true);
     setWaCloudBanner(null);
-    try {
-      // Fetch public app config from server (keeps secrets server-side)
-      const cfgRes = await fetch("/api/client/whatsapp-cloud/sdk-config", { credentials: "same-origin" });
-      if (!cfgRes.ok) throw new Error("sdk-config unavailable");
-      const cfg = (await cfgRes.json()) as { app_id: string; config_id: string };
 
-      await loadFbSdk(cfg.app_id);
+    let wabaId: string | null = null;
+    let phoneNumberId: string | null = null;
 
-      if (!window.FB) throw new Error("FB SDK not loaded");
+    const onSuccess = (data: unknown) => {
+      const d = data as { waba_id?: string; phone_number_id?: string };
+      wabaId = d.waba_id ?? null;
+      phoneNumberId = d.phone_number_id ?? null;
+    };
 
-      await new Promise<void>((resolve, reject) => {
-        // The WhatsAppOnboardingSuccess event delivers waba_id + phone_number_id
-        // directly from the SDK — no Graph API discovery needed.
-        let wabaId: string | null = null;
-        let phoneNumberId: string | null = null;
+    window.FB.Event.subscribe("WhatsAppOnboardingSuccess", onSuccess);
 
-        const onSuccess = (data: unknown) => {
-          const d = data as { waba_id?: string; phone_number_id?: string };
-          wabaId = d.waba_id ?? null;
-          phoneNumberId = d.phone_number_id ?? null;
-        };
-        window.FB!.Event.subscribe("WhatsAppOnboardingSuccess", onSuccess);
+    window.FB.login(
+      async (response) => {
+        window.FB!.Event.unsubscribe("WhatsAppOnboardingSuccess", onSuccess);
 
-        window.FB!.login(
-          async (response) => {
-            window.FB!.Event.unsubscribe("WhatsAppOnboardingSuccess", onSuccess);
+        if (!response.authResponse?.code) {
+          setWaCloudBanner("Conexão cancelada ou não autorizada.");
+          setWaCloudConnecting(false);
+          return;
+        }
 
-            if (!response.authResponse?.code) {
-              setWaCloudBanner("Conexão cancelada ou não autorizada.");
-              setWaCloudConnecting(false);
-              resolve();
-              return;
-            }
+        if (!wabaId || !phoneNumberId) {
+          setWaCloudBanner("Nenhum número WhatsApp Business encontrado. Tente novamente.");
+          setWaCloudConnecting(false);
+          return;
+        }
 
-            if (!wabaId || !phoneNumberId) {
-              setWaCloudBanner("Nenhum número WhatsApp Business encontrado. Tente novamente.");
-              setWaCloudConnecting(false);
-              resolve();
-              return;
-            }
-
-            try {
-              const exchRes = await fetch("/api/client/whatsapp-cloud/exchange-code", {
-                method: "POST",
-                credentials: "same-origin",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ code: response.authResponse.code, waba_id: wabaId, phone_number_id: phoneNumberId }),
-              });
-              const exchData = (await exchRes.json()) as {
-                connected?: boolean;
-                phone_number_id?: string;
-                display_phone?: string | null;
-                verified_name?: string | null;
-                error?: string;
-              };
-              if (exchData.connected && exchData.phone_number_id) {
-                setWaCloudStatus({
-                  connected: true,
-                  phone_number_id: exchData.phone_number_id,
-                  display_phone: exchData.display_phone ?? null,
-                  verified_name: exchData.verified_name ?? null,
-                });
-                setWaCloudBanner("✅ WhatsApp API Oficial conectado com sucesso!");
-              } else {
-                setWaCloudBanner("Erro ao salvar conexão. Tente novamente.");
-              }
-            } catch {
-              setWaCloudBanner("Erro de rede ao salvar conexão. Tente novamente.");
-            } finally {
-              setWaCloudConnecting(false);
-              resolve();
-            }
-          },
-          {
-            config_id: cfg.config_id,
-            response_type: "code",
-            override_default_response_type: true,
-            extras: { setup: {}, featureType: "whatsapp_business_app_onboarding", sessionInfoVersion: "3" },
-          },
-        );
-      });
-    } catch (err) {
-      setWaCloudBanner("Erro ao iniciar conexão Meta. Tente novamente.");
-      console.error("[connectWaCloud]", err instanceof Error ? err.message : String(err));
-      setWaCloudConnecting(false);
-    }
+        try {
+          const exchRes = await fetch("/api/client/whatsapp-cloud/exchange-code", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: response.authResponse.code, waba_id: wabaId, phone_number_id: phoneNumberId }),
+          });
+          const exchData = (await exchRes.json()) as {
+            connected?: boolean;
+            phone_number_id?: string;
+            display_phone?: string | null;
+            verified_name?: string | null;
+            error?: string;
+          };
+          if (exchData.connected && exchData.phone_number_id) {
+            setWaCloudStatus({
+              connected: true,
+              phone_number_id: exchData.phone_number_id,
+              display_phone: exchData.display_phone ?? null,
+              verified_name: exchData.verified_name ?? null,
+            });
+            setWaCloudBanner("✅ WhatsApp API Oficial conectado com sucesso!");
+          } else {
+            setWaCloudBanner("Erro ao salvar conexão. Tente novamente.");
+          }
+        } catch {
+          setWaCloudBanner("Erro de rede ao salvar conexão. Tente novamente.");
+        } finally {
+          setWaCloudConnecting(false);
+        }
+      },
+      {
+        config_id: cfg.config_id,
+        response_type: "code",
+        override_default_response_type: true,
+        extras: { setup: {}, featureType: "whatsapp_business_app_onboarding", sessionInfoVersion: "3" },
+      },
+    );
   }, []);
 
   const waExtraSlots = useMemo(() => {
