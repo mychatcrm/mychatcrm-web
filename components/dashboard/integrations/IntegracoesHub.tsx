@@ -326,6 +326,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
 
     let wabaId: string | null = null;
     let phoneNumberId: string | null = null;
+    let callbackFired = false;
 
     const onSuccess = (data: unknown) => {
       const d = data as { waba_id?: string; phone_number_id?: string };
@@ -333,62 +334,87 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
       phoneNumberId = d.phone_number_id ?? null;
     };
 
+    const cleanup = () => {
+      window.FB?.Event.unsubscribe("WhatsAppOnboardingSuccess", onSuccess);
+    };
+
+    // Safety valve: if the FB.login callback never fires (popup blocked, SDK bug,
+    // etc.) reset the loading state after 120 s so the button isn't stuck forever.
+    const safetyTimer = setTimeout(() => {
+      if (!callbackFired) {
+        cleanup();
+        setWaCloudBanner("O popup do Facebook não respondeu. Permita popups para este site e tente novamente.");
+        setWaCloudConnecting(false);
+      }
+    }, 120_000);
+
     window.FB.Event.subscribe("WhatsAppOnboardingSuccess", onSuccess);
 
-    window.FB.login(
-      async (response) => {
-        window.FB!.Event.unsubscribe("WhatsAppOnboardingSuccess", onSuccess);
+    try {
+      window.FB.login(
+        async (response) => {
+          callbackFired = true;
+          clearTimeout(safetyTimer);
+          cleanup();
 
-        if (!response.authResponse?.code) {
-          setWaCloudBanner("Conexão cancelada ou não autorizada.");
-          setWaCloudConnecting(false);
-          return;
-        }
-
-        if (!wabaId || !phoneNumberId) {
-          setWaCloudBanner("Nenhum número WhatsApp Business encontrado. Tente novamente.");
-          setWaCloudConnecting(false);
-          return;
-        }
-
-        try {
-          const exchRes = await fetch("/api/client/whatsapp-cloud/exchange-code", {
-            method: "POST",
-            credentials: "same-origin",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ code: response.authResponse.code, waba_id: wabaId, phone_number_id: phoneNumberId }),
-          });
-          const exchData = (await exchRes.json()) as {
-            connected?: boolean;
-            phone_number_id?: string;
-            display_phone?: string | null;
-            verified_name?: string | null;
-            error?: string;
-          };
-          if (exchData.connected && exchData.phone_number_id) {
-            setWaCloudStatus({
-              connected: true,
-              phone_number_id: exchData.phone_number_id,
-              display_phone: exchData.display_phone ?? null,
-              verified_name: exchData.verified_name ?? null,
-            });
-            setWaCloudBanner("✅ WhatsApp API Oficial conectado com sucesso!");
-          } else {
-            setWaCloudBanner("Erro ao salvar conexão. Tente novamente.");
+          if (!response.authResponse?.code) {
+            setWaCloudBanner("Conexão cancelada ou não autorizada.");
+            setWaCloudConnecting(false);
+            return;
           }
-        } catch {
-          setWaCloudBanner("Erro de rede ao salvar conexão. Tente novamente.");
-        } finally {
-          setWaCloudConnecting(false);
-        }
-      },
-      {
-        config_id: cfg.config_id,
-        response_type: "code",
-        override_default_response_type: true,
-        extras: { setup: {}, featureType: "whatsapp_business_app_onboarding", sessionInfoVersion: "3" },
-      },
-    );
+
+          if (!wabaId || !phoneNumberId) {
+            setWaCloudBanner("Nenhum número WhatsApp Business encontrado. Tente novamente.");
+            setWaCloudConnecting(false);
+            return;
+          }
+
+          try {
+            const exchRes = await fetch("/api/client/whatsapp-cloud/exchange-code", {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ code: response.authResponse.code, waba_id: wabaId, phone_number_id: phoneNumberId }),
+            });
+            const exchData = (await exchRes.json()) as {
+              connected?: boolean;
+              phone_number_id?: string;
+              display_phone?: string | null;
+              verified_name?: string | null;
+              error?: string;
+            };
+            if (exchData.connected && exchData.phone_number_id) {
+              setWaCloudStatus({
+                connected: true,
+                phone_number_id: exchData.phone_number_id,
+                display_phone: exchData.display_phone ?? null,
+                verified_name: exchData.verified_name ?? null,
+              });
+              setWaCloudBanner("✅ WhatsApp API Oficial conectado com sucesso!");
+            } else {
+              setWaCloudBanner("Erro ao salvar conexão. Tente novamente.");
+            }
+          } catch {
+            setWaCloudBanner("Erro de rede ao salvar conexão. Tente novamente.");
+          } finally {
+            setWaCloudConnecting(false);
+          }
+        },
+        {
+          config_id: cfg.config_id,
+          response_type: "code",
+          override_default_response_type: true,
+          extras: { setup: {}, featureType: "whatsapp_business_app_onboarding", sessionInfoVersion: "3" },
+        },
+      );
+    } catch (err) {
+      // FB.login() threw synchronously (e.g., invalid config, popup blocked at SDK level)
+      clearTimeout(safetyTimer);
+      cleanup();
+      setWaCloudBanner("Erro ao iniciar conexão Meta. Tente novamente.");
+      console.error("[connectWaCloud]", err instanceof Error ? err.message : String(err));
+      setWaCloudConnecting(false);
+    }
   }, []);
 
   const waExtraSlots = useMemo(() => {
