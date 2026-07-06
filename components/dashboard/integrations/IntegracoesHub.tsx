@@ -21,6 +21,43 @@ import { EvolutionQrSlotPanel } from "@/components/dashboard/integrations/Evolut
 import type { MetaStatusPage, MetaStatusResponse } from "@/app/api/client/meta/status/route";
 import type { Agent } from "@/lib/types";
 
+// FB JS SDK global — loaded dynamically for the WhatsApp Embedded Signup popup.
+declare global {
+  interface Window {
+    FB?: {
+      init: (params: object) => void;
+      login: (
+        callback: (response: { authResponse?: { code?: string } | null; status?: string }) => void,
+        params: object,
+      ) => void;
+      Event: {
+        subscribe: (event: string, callback: (data: unknown) => void) => void;
+        unsubscribe: (event: string, callback: (data: unknown) => void) => void;
+      };
+    };
+    fbAsyncInit?: () => void;
+  }
+}
+
+function loadFbSdk(appId: string): Promise<void> {
+  return new Promise((resolve) => {
+    if (window.FB) {
+      window.FB.init({ appId, autoLogAppEvents: true, xfbml: false, version: "v19.0" });
+      resolve();
+      return;
+    }
+    window.fbAsyncInit = () => {
+      window.FB!.init({ appId, autoLogAppEvents: true, xfbml: false, version: "v19.0" });
+      resolve();
+    };
+    const script = document.createElement("script");
+    script.src = "https://connect.facebook.net/pt_BR/sdk.js";
+    script.async = true;
+    script.defer = true;
+    document.head.appendChild(script);
+  });
+}
+
 function safeRun<T>(fn: () => T, fallback: T): T {
   try {
     return fn();
@@ -52,6 +89,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     | { connected: true; phone_number_id: string; display_phone: string | null; verified_name: string | null };
   const [waCloudStatus, setWaCloudStatus] = useState<WaCloudState | null>(null);
   const [waCloudLoading, setWaCloudLoading] = useState(true);
+  const [waCloudConnecting, setWaCloudConnecting] = useState(false);
   const [waCloudDisconnecting, setWaCloudDisconnecting] = useState(false);
   const [waCloudBanner, setWaCloudBanner] = useState<string | null>(null);
 
@@ -243,6 +281,97 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
       setWaCloudBanner("Erro ao desconectar. Tente novamente.");
     } finally {
       setWaCloudDisconnecting(false);
+    }
+  }, []);
+
+  const connectWaCloud = useCallback(async () => {
+    setWaCloudConnecting(true);
+    setWaCloudBanner(null);
+    try {
+      // Fetch public app config from server (keeps secrets server-side)
+      const cfgRes = await fetch("/api/client/whatsapp-cloud/sdk-config", { credentials: "same-origin" });
+      if (!cfgRes.ok) throw new Error("sdk-config unavailable");
+      const cfg = (await cfgRes.json()) as { app_id: string; config_id: string };
+
+      await loadFbSdk(cfg.app_id);
+
+      if (!window.FB) throw new Error("FB SDK not loaded");
+
+      await new Promise<void>((resolve, reject) => {
+        // The WhatsAppOnboardingSuccess event delivers waba_id + phone_number_id
+        // directly from the SDK — no Graph API discovery needed.
+        let wabaId: string | null = null;
+        let phoneNumberId: string | null = null;
+
+        const onSuccess = (data: unknown) => {
+          const d = data as { waba_id?: string; phone_number_id?: string };
+          wabaId = d.waba_id ?? null;
+          phoneNumberId = d.phone_number_id ?? null;
+        };
+        window.FB!.Event.subscribe("WhatsAppOnboardingSuccess", onSuccess);
+
+        window.FB!.login(
+          async (response) => {
+            window.FB!.Event.unsubscribe("WhatsAppOnboardingSuccess", onSuccess);
+
+            if (!response.authResponse?.code) {
+              setWaCloudBanner("Conexão cancelada ou não autorizada.");
+              setWaCloudConnecting(false);
+              resolve();
+              return;
+            }
+
+            if (!wabaId || !phoneNumberId) {
+              setWaCloudBanner("Nenhum número WhatsApp Business encontrado. Tente novamente.");
+              setWaCloudConnecting(false);
+              resolve();
+              return;
+            }
+
+            try {
+              const exchRes = await fetch("/api/client/whatsapp-cloud/exchange-code", {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ code: response.authResponse.code, waba_id: wabaId, phone_number_id: phoneNumberId }),
+              });
+              const exchData = (await exchRes.json()) as {
+                connected?: boolean;
+                phone_number_id?: string;
+                display_phone?: string | null;
+                verified_name?: string | null;
+                error?: string;
+              };
+              if (exchData.connected && exchData.phone_number_id) {
+                setWaCloudStatus({
+                  connected: true,
+                  phone_number_id: exchData.phone_number_id,
+                  display_phone: exchData.display_phone ?? null,
+                  verified_name: exchData.verified_name ?? null,
+                });
+                setWaCloudBanner("✅ WhatsApp API Oficial conectado com sucesso!");
+              } else {
+                setWaCloudBanner("Erro ao salvar conexão. Tente novamente.");
+              }
+            } catch {
+              setWaCloudBanner("Erro de rede ao salvar conexão. Tente novamente.");
+            } finally {
+              setWaCloudConnecting(false);
+              resolve();
+            }
+          },
+          {
+            config_id: cfg.config_id,
+            response_type: "code",
+            override_default_response_type: true,
+            extras: { setup: {}, featureType: "whatsapp_business_app_onboarding", sessionInfoVersion: "3" },
+          },
+        );
+      });
+    } catch (err) {
+      setWaCloudBanner("Erro ao iniciar conexão Meta. Tente novamente.");
+      console.error("[connectWaCloud]", err instanceof Error ? err.message : String(err));
+      setWaCloudConnecting(false);
     }
   }, []);
 
@@ -548,13 +677,15 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                               </li>
                             </ul>
                             <div className="flex flex-wrap gap-2">
-                              <a
-                                href="/api/client/whatsapp-cloud/connect"
-                                className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-hover"
+                              <Button
+                                type="button"
+                                isLoading={waCloudConnecting}
+                                onClick={connectWaCloud}
+                                className="min-h-[44px] gap-2 bg-primary px-5 text-white hover:bg-primary-hover"
                               >
-                                <ExternalLink className="size-4" aria-hidden />
+                                {!waCloudConnecting && <ExternalLink className="size-4" aria-hidden />}
                                 Conectar WhatsApp API Oficial
-                              </a>
+                              </Button>
                               <Button type="button" variant="outline" onClick={() => setWhatsAppSlotMethod(tenantId, slotIndex, null)}>
                                 Cancelar
                               </Button>
