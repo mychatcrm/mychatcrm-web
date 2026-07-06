@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
 import { upsertWhatsAppCloudConnection } from "@/lib/server/whatsapp-cloud-connections";
@@ -106,11 +107,64 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Failed to save connection" }, { status: 500 });
   }
 
-  console.info("[exchange-code] connected", { tenantId: session.tenantId, phone_number_id, waba_id });
+  // 5. Subscribe our app to the customer's WABA so Meta delivers their inbound
+  // webhooks to us (required per the Tech Provider onboarding guide).
+  let webhookSubscribed = false;
+  try {
+    const subRes = await fetch(`${GRAPH}/${encodeURIComponent(waba_id)}/subscribed_apps`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    const subData = (await subRes.json()) as { success?: boolean; error?: { message?: string } };
+    webhookSubscribed = subData.success === true;
+    console.info("[exchange-code] subscribed_apps", {
+      waba_id,
+      ok: webhookSubscribed,
+      apiError: subData.error?.message ?? null,
+    });
+  } catch (err) {
+    console.warn("[exchange-code] subscribed_apps failed", err instanceof Error ? err.message : String(err));
+  }
+
+  // 6. Register the number for Cloud API sending. The 6-digit two-step PIN is
+  // derived deterministically from the app secret + phone_number_id so future
+  // re-registrations always use the same PIN without storing it.
+  let phoneRegistered = false;
+  try {
+    const digest = createHmac("sha256", appSecret).update(phone_number_id).digest();
+    const pin = String(digest.readUInt32BE(0) % 1_000_000).padStart(6, "0");
+    const regRes = await fetch(`${GRAPH}/${encodeURIComponent(phone_number_id)}/register`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ messaging_product: "whatsapp", pin }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const regData = (await regRes.json()) as { success?: boolean; error?: { message?: string } };
+    const alreadyRegistered = /already/i.test(regData.error?.message ?? "");
+    phoneRegistered = regData.success === true || alreadyRegistered;
+    console.info("[exchange-code] register", {
+      phone_number_id,
+      ok: phoneRegistered,
+      apiError: regData.error?.message ?? null,
+    });
+  } catch (err) {
+    console.warn("[exchange-code] register failed", err instanceof Error ? err.message : String(err));
+  }
+
+  console.info("[exchange-code] connected", {
+    tenantId: session.tenantId,
+    phone_number_id,
+    waba_id,
+    webhookSubscribed,
+    phoneRegistered,
+  });
   return NextResponse.json({
     connected: true,
     phone_number_id,
     display_phone: displayPhone,
     verified_name: verifiedName,
+    webhook_subscribed: webhookSubscribed,
+    phone_registered: phoneRegistered,
   });
 }

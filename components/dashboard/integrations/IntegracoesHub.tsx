@@ -30,10 +30,6 @@ declare global {
         callback: (response: { authResponse?: { code?: string } | null; status?: string }) => void,
         params: object,
       ) => void;
-      Event: {
-        subscribe: (event: string, callback: (data: unknown) => void) => void;
-        unsubscribe: (event: string, callback: (data: unknown) => void) => void;
-      };
     };
     fbAsyncInit?: () => void;
   }
@@ -339,14 +335,32 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     let phoneNumberId: string | null = null;
     let callbackFired = false;
 
-    const onSuccess = (data: unknown) => {
-      const d = data as { waba_id?: string; phone_number_id?: string };
-      wabaId = d.waba_id ?? null;
-      phoneNumberId = d.phone_number_id ?? null;
+    // Official Embedded Signup channel: the popup posts session info to the
+    // opener via postMessage with type WA_EMBEDDED_SIGNUP (FINISH carries
+    // waba_id + phone_number_id). FB.Event.subscribe is a legacy API and no
+    // longer delivers these ids.
+    const onMessage = (event: MessageEvent) => {
+      if (typeof event.origin !== "string" || !event.origin.endsWith("facebook.com")) return;
+      try {
+        const data = (typeof event.data === "string" ? JSON.parse(event.data) : event.data) as {
+          type?: string;
+          event?: string;
+          data?: { waba_id?: string; phone_number_id?: string; current_step?: string };
+        } | null;
+        if (!data || data.type !== "WA_EMBEDDED_SIGNUP") return;
+        if (data.event === "FINISH" || data.event === "FINISH_ONLY_WABA") {
+          wabaId = data.data?.waba_id ?? null;
+          phoneNumberId = data.data?.phone_number_id ?? null;
+        } else if (data.event === "CANCEL" || data.event === "ERROR") {
+          console.warn("[wa-embedded-signup]", data.event, data.data);
+        }
+      } catch {
+        // postMessage from unrelated facebook widgets — ignore
+      }
     };
 
     const cleanup = () => {
-      window.FB?.Event.unsubscribe("WhatsAppOnboardingSuccess", onSuccess);
+      window.removeEventListener("message", onMessage);
     };
 
     // Safety valve: if the FB.login callback never fires (popup blocked, SDK bug,
@@ -359,63 +373,73 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
       }
     }, 120_000);
 
-    window.FB.Event.subscribe("WhatsAppOnboardingSuccess", onSuccess);
+    window.addEventListener("message", onMessage);
 
     try {
+      // FB.login rejects async callbacks ("Expression is of type asyncfunction"),
+      // so the callback is a plain function that starts an async IIFE.
       window.FB.login(
-        async (response) => {
+        (response) => {
           callbackFired = true;
           clearTimeout(safetyTimer);
-          cleanup();
-
-          if (!response.authResponse?.code) {
-            setWaCloudBanner("Conexão cancelada ou não autorizada.");
-            setWaCloudConnecting(false);
-            return;
-          }
-
-          if (!wabaId || !phoneNumberId) {
-            setWaCloudBanner("Nenhum número WhatsApp Business encontrado. Tente novamente.");
-            setWaCloudConnecting(false);
-            return;
-          }
-
-          try {
-            const exchRes = await fetch("/api/client/whatsapp-cloud/exchange-code", {
-              method: "POST",
-              credentials: "same-origin",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ code: response.authResponse.code, waba_id: wabaId, phone_number_id: phoneNumberId }),
-            });
-            const exchData = (await exchRes.json()) as {
-              connected?: boolean;
-              phone_number_id?: string;
-              display_phone?: string | null;
-              verified_name?: string | null;
-              error?: string;
-            };
-            if (exchData.connected && exchData.phone_number_id) {
-              setWaCloudStatus({
-                connected: true,
-                phone_number_id: exchData.phone_number_id,
-                display_phone: exchData.display_phone ?? null,
-                verified_name: exchData.verified_name ?? null,
-              });
-              setWaCloudBanner("✅ WhatsApp API Oficial conectado com sucesso!");
-            } else {
-              setWaCloudBanner("Erro ao salvar conexão. Tente novamente.");
+          void (async () => {
+            if (!response.authResponse?.code) {
+              cleanup();
+              setWaCloudBanner("Conexão cancelada ou não autorizada.");
+              setWaCloudConnecting(false);
+              return;
             }
-          } catch {
-            setWaCloudBanner("Erro de rede ao salvar conexão. Tente novamente.");
-          } finally {
-            setWaCloudConnecting(false);
-          }
+
+            // The FINISH postMessage can land moments after this callback fires —
+            // wait up to 3 s for the ids before concluding no number exists.
+            for (let i = 0; i < 30 && (!wabaId || !phoneNumberId); i++) {
+              await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+            cleanup();
+
+            if (!wabaId || !phoneNumberId) {
+              setWaCloudBanner("Nenhum número WhatsApp Business encontrado. Tente novamente.");
+              setWaCloudConnecting(false);
+              return;
+            }
+
+            try {
+              const exchRes = await fetch("/api/client/whatsapp-cloud/exchange-code", {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ code: response.authResponse.code, waba_id: wabaId, phone_number_id: phoneNumberId }),
+              });
+              const exchData = (await exchRes.json()) as {
+                connected?: boolean;
+                phone_number_id?: string;
+                display_phone?: string | null;
+                verified_name?: string | null;
+                error?: string;
+              };
+              if (exchData.connected && exchData.phone_number_id) {
+                setWaCloudStatus({
+                  connected: true,
+                  phone_number_id: exchData.phone_number_id,
+                  display_phone: exchData.display_phone ?? null,
+                  verified_name: exchData.verified_name ?? null,
+                });
+                setWaCloudBanner("✅ WhatsApp API Oficial conectado com sucesso!");
+              } else {
+                setWaCloudBanner("Erro ao salvar conexão. Tente novamente.");
+              }
+            } catch {
+              setWaCloudBanner("Erro de rede ao salvar conexão. Tente novamente.");
+            } finally {
+              setWaCloudConnecting(false);
+            }
+          })();
         },
         {
           config_id: cfg.config_id,
           response_type: "code",
           override_default_response_type: true,
-          extras: { setup: {}, featureType: "whatsapp_business_app_onboarding", sessionInfoVersion: "3" },
+          extras: { setup: {}, featureType: "", sessionInfoVersion: "3" },
         },
       );
     } catch (err) {

@@ -11,6 +11,7 @@ import { applyMetaSystemNotificationStatus } from "@/lib/server/system-agent";
 import { handleSystemMetaInbound } from "@/lib/server/system-meta-inbound";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { resolveCloudApiTenantByConnection } from "@/lib/server/agent-channel-authorization";
+import { lookupWhatsAppCloudConnectionByPhoneNumberId } from "@/lib/server/whatsapp-cloud-connections";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
   authorizeActiveJourney,
@@ -95,11 +96,25 @@ export async function POST(request: Request) {
   }
 
   const sb = createSupabaseServiceClient();
+  // Connection saved by the client's Embedded Signup (may be null for numbers
+  // routed purely by lead_distribution_rules, e.g. the system agent number).
+  const cloudConnection = await lookupWhatsAppCloudConnectionByPhoneNumberId(inbound.phoneNumberId);
   const tenantResolution = await resolveCloudApiTenantByConnection({
     sb,
     connectionId: inbound.phoneNumberId,
   });
-  if (!tenantResolution.ok) {
+  let tenantId: string;
+  if (tenantResolution.ok) {
+    tenantId = tenantResolution.tenantId;
+  } else if (cloudConnection) {
+    // Distribution rules stay the primary source; the connection table keeps
+    // inbound from being silently dropped before the client creates a rule.
+    tenantId = cloudConnection.tenant_id;
+    console.info("[webhooks/whatsapp] tenant_resolved_via_cloud_connection", {
+      connection_id: inbound.phoneNumberId,
+      tenant_id: tenantId,
+    });
+  } else {
     console.warn("[webhooks/whatsapp] inbound_without_tenant_connection", {
       connection_id: inbound.phoneNumberId,
       reason: tenantResolution.reason,
@@ -107,7 +122,6 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ ok: true, blocked: tenantResolution.reason });
   }
-  const tenantId = tenantResolution.tenantId;
   const journeyAuth = await resolveDirectJourneyAgent({
     sb,
     tenantId,
@@ -216,7 +230,9 @@ export async function POST(request: Request) {
     messages: [{ role: "user", content: inbound.text }],
   });
 
-  const token = process.env.WHATSAPP_ACCESS_TOKEN?.trim();
+  // Send with the connection's own token (client numbers); the global env token
+  // remains the fallback for numbers without a stored connection.
+  const token = cloudConnection?.access_token?.trim() || process.env.WHATSAPP_ACCESS_TOKEN?.trim();
   const replyText = result.ok
     ? result.text
     : "Não consegui gerar uma resposta agora. Por favor tente de novo em instantes.";
