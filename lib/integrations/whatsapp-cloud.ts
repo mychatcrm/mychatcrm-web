@@ -204,10 +204,62 @@ export async function sendWhatsAppTextMessage(params: {
   return { ok: true, status: res.status, messageId: data.messages?.[0]?.id };
 }
 
+/**
+ * Envia um template aprovado — obrigatório para mensagens iniciadas pela
+ * empresa fora da janela de atendimento de 24h (texto livre é aceito mas
+ * descartado pela Meta com erro 131047 nesse cenário).
+ */
+export async function sendWhatsAppTemplateMessage(params: {
+  toWaId: string;
+  templateName: string;
+  languageCode: string;
+  bodyParams?: string[];
+  phoneNumberId: string;
+  accessToken: string;
+}): Promise<{ ok: boolean; status: number; messageId?: string; error?: string }> {
+  const url = `${GRAPH_API}/${encodeURIComponent(params.phoneNumberId)}/messages`;
+  const components =
+    params.bodyParams && params.bodyParams.length > 0
+      ? [
+          {
+            type: "body",
+            parameters: params.bodyParams.map((text) => ({ type: "text", text: text.slice(0, 1024) })),
+          },
+        ]
+      : undefined;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${params.accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to: params.toWaId,
+      type: "template",
+      template: {
+        name: params.templateName,
+        language: { code: params.languageCode },
+        ...(components ? { components } : {}),
+      },
+    }),
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    return { ok: false, status: res.status, error: t.slice(0, 500) };
+  }
+  const data = await res.json().catch(() => ({})) as { messages?: Array<{ id?: string }> };
+  return { ok: true, status: res.status, messageId: data.messages?.[0]?.id };
+}
+
 export type WhatsAppCloudStatus = {
   id: string;
   status: string;
   recipientId: string;
+  /** Motivo real quando status = failed (ex.: 131047 = fora da janela de 24h). */
+  errorCode: number | null;
+  errorTitle: string | null;
+  errorDetail: string | null;
 };
 
 export function parseWhatsAppCloudStatuses(body: unknown): WhatsAppCloudStatus[] {
@@ -229,7 +281,28 @@ export function parseWhatsAppCloudStatuses(body: unknown): WhatsAppCloudStatus[]
         const id = typeof row.id === "string" ? row.id.trim() : "";
         const status = typeof row.status === "string" ? row.status.trim() : "";
         const recipientId = typeof row.recipient_id === "string" ? row.recipient_id.trim() : "";
-        if (id && status) result.push({ id, status, recipientId });
+        if (!id || !status) continue;
+
+        // A Meta explica falhas em statuses[].errors[] — sem isso, um "failed"
+        // fica indistinguível (ex.: 131047 exige template fora da janela de 24h).
+        let errorCode: number | null = null;
+        let errorTitle: string | null = null;
+        let errorDetail: string | null = null;
+        const errors = row.errors as unknown[] | undefined;
+        const firstError = Array.isArray(errors) ? (errors[0] as Record<string, unknown> | undefined) : undefined;
+        if (firstError && typeof firstError === "object") {
+          errorCode = typeof firstError.code === "number" ? firstError.code : null;
+          errorTitle = typeof firstError.title === "string" ? firstError.title : null;
+          const errData = firstError.error_data as Record<string, unknown> | undefined;
+          errorDetail =
+            typeof errData?.details === "string"
+              ? errData.details
+              : typeof firstError.message === "string"
+                ? firstError.message
+                : null;
+        }
+
+        result.push({ id, status, recipientId, errorCode, errorTitle, errorDetail });
       }
     }
   }

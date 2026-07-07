@@ -1,7 +1,7 @@
-import { createHmac } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
 import { saveSystemAgentMetaConfig } from "@/lib/server/system-agent";
+import { registerWhatsAppCloudNumber, subscribeAppToWaba } from "@/lib/server/whatsapp-cloud-onboarding";
 
 export const dynamic = "force-dynamic";
 
@@ -90,45 +90,29 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // 4. Subscribe our app to this WABA's webhooks
-  let webhookSubscribed = false;
-  try {
-    const subRes = await fetch(`${GRAPH}/${encodeURIComponent(waba_id)}/subscribed_apps`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}` },
-      signal: AbortSignal.timeout(10_000),
-    });
-    const subData = (await subRes.json()) as { success?: boolean; error?: { message?: string } };
-    webhookSubscribed = subData.success === true;
-    console.info("[admin/exchange-code] subscribed_apps", { waba_id, ok: webhookSubscribed, apiError: subData.error?.message ?? null });
-  } catch (err) {
-    console.warn("[admin/exchange-code] subscribed_apps failed", err instanceof Error ? err.message : String(err));
-  }
+  const webhookSubscribed = await subscribeAppToWaba({
+    wabaId: waba_id,
+    accessToken,
+    logPrefix: "admin/exchange-code",
+  });
 
-  // 5. Register the number for Cloud API sending (deterministic PIN, same scheme as the client route)
-  let phoneRegistered = false;
-  try {
-    const digest = createHmac("sha256", appSecret).update(phone_number_id).digest();
-    const pin = String(digest.readUInt32BE(0) % 1_000_000).padStart(6, "0");
-    const regRes = await fetch(`${GRAPH}/${encodeURIComponent(phone_number_id)}/register`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ messaging_product: "whatsapp", pin }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    const regData = (await regRes.json()) as { success?: boolean; error?: { message?: string } };
-    const alreadyRegistered = /already/i.test(regData.error?.message ?? "");
-    phoneRegistered = regData.success === true || alreadyRegistered;
-    console.info("[admin/exchange-code] register", { phone_number_id, ok: phoneRegistered, apiError: regData.error?.message ?? null });
-  } catch (err) {
-    console.warn("[admin/exchange-code] register failed", err instanceof Error ? err.message : String(err));
-  }
+  // 5. Register the number for Cloud API sending (deterministic PIN shared with the client route)
+  const phoneRegistered = await registerWhatsAppCloudNumber({
+    phoneNumberId: phone_number_id,
+    accessToken,
+    appSecret,
+    logPrefix: "admin/exchange-code",
+  });
 
-  // 6. Save as the system agent's Meta config
+  // 6. Save as the system agent's Meta config (including onboarding health flags)
   await saveSystemAgentMetaConfig({
     phoneNumberId: phone_number_id,
     accessToken,
     displayPhone,
     verifiedName,
+    wabaId: waba_id,
+    webhookSubscribed,
+    phoneRegistered,
   });
 
   console.info("[admin/exchange-code] connected", { phone_number_id, waba_id, webhookSubscribed, phoneRegistered });

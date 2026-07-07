@@ -71,6 +71,7 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 import {
+  applyMetaSystemNotificationStatus,
   bufferOrphanDeliveryEvent,
   clearSystemAgentWebhookMetadata,
   markSystemNotificationDelivered,
@@ -228,6 +229,39 @@ describe("system notification delivery helpers", () => {
     // A Meta nunca aceitou (sem meta_message_id) → falha real com rótulo correto do provedor.
     expect(updateMock).toHaveBeenCalledWith(
       expect.objectContaining({ status: "failed", error: "meta_not_accepted" }),
+    );
+  });
+
+  it("records the real Meta error code when a status webhook reports failed", async () => {
+    selectChain.filter.mockReturnValue({
+      order: () => ({
+        limit: () =>
+          Promise.resolve({
+            data: [{ id: "meta-fail", status: "sent", metadata: { provider: "meta_cloud", meta_message_id: "wamid.X" } }],
+            error: null,
+          }),
+      }),
+    });
+
+    const result = await applyMetaSystemNotificationStatus({
+      wamid: "wamid.X",
+      status: "failed",
+      errorCode: 131047,
+      errorTitle: "Re-engagement message",
+      errorDetail: "More than 24 hours have passed since the customer last replied",
+    });
+
+    expect(result).toBe("delivery_failed");
+    expect(updateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "delivery_failed",
+        error: "meta_status:failed:131047:Re-engagement message",
+        metadata: expect.objectContaining({
+          meta_error_code: 131047,
+          meta_error_title: "Re-engagement message",
+          meta_error_detail: "More than 24 hours have passed since the customer last replied",
+        }),
+      }),
     );
   });
 

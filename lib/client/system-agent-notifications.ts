@@ -14,10 +14,38 @@ export function notificationProviderBadge(provider: string | null): { label: str
   return null;
 }
 
+/** Códigos de erro da Meta Cloud API traduzidos para ação concreta. */
+const META_ERROR_CODES: Record<number, string> = {
+  131047:
+    "Fora da janela de 24h: a Meta só entrega texto livre se o destinatário mandou mensagem nas últimas 24h. Peça para ele mandar uma mensagem para o número primeiro, ou configure um template aprovado.",
+  131026:
+    "Não entregável: o destinatário não tem WhatsApp, bloqueou o número ou não aceitou os novos Termos.",
+  130472:
+    "O número do destinatário faz parte de um experimento da Meta — a entrega foi suprimida por eles.",
+  131048: "Limite de envio atingido (qualidade/spam do número). Reduza o volume e tente mais tarde.",
+  131049: "A Meta limitou a entrega para proteger o destinatário (muitas mensagens de marketing).",
+  131056: "Muitas mensagens em sequência para este mesmo destinatário. Aguarde alguns minutos.",
+  132000: "O template enviado tem número de parâmetros diferente do aprovado.",
+  132001: "Template não existe (ou não aprovado) para este idioma. Confira o nome e o idioma no gerenciador do WhatsApp.",
+  131031: "A conta WhatsApp Business foi restringida pela Meta. Verifique a Qualidade da conta no Business Manager.",
+  10: "Permissão negada pela Meta — o token não tem acesso a este número. Reconecte a API Meta.",
+  190: "Token de acesso expirado ou inválido. Reconecte a API Meta.",
+};
+
 /** provider: "meta_cloud" quando a notificação foi enviada pela API Oficial Meta, senão Evolution/QR. */
 export function humanizeNotificationError(error: string | null, provider?: string | null): string | null {
   if (!error) return null;
   const isMeta = provider === "meta_cloud";
+
+  // meta_status:failed:131047:Re-engagement message → traduz pelo código real.
+  const metaStatusMatch = error.match(/^meta_status:[^:]+:(\d+)(?::(.*))?$/);
+  if (metaStatusMatch) {
+    const code = Number(metaStatusMatch[1]);
+    const known = META_ERROR_CODES[code];
+    if (known) return known;
+    const title = metaStatusMatch[2]?.trim();
+    return `A Meta recusou a entrega (código ${code}${title ? ` — ${title}` : ""}).`;
+  }
 
   const known: Record<string, string> = {
     missing_tenant_owner_phone: "Conta sem telefone de alertas configurado",

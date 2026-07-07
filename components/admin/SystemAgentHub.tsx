@@ -35,6 +35,10 @@ type MetaConfig = {
   phone_number_id: string | null;
   display_phone: string | null;
   verified_name: string | null;
+  webhook_subscribed?: boolean | null;
+  phone_registered?: boolean | null;
+  template_name?: string | null;
+  template_lang?: string | null;
 };
 
 export type SystemNotificationLogItem = {
@@ -217,6 +221,10 @@ export function SystemAgentHub(props: {
   const [metaBusy, setMetaBusy] = useState(false);
   const [metaError, setMetaError] = useState<string | null>(null);
   const [metaEmbeddedBusy, setMetaEmbeddedBusy] = useState(false);
+  const [metaRepairBusy, setMetaRepairBusy] = useState(false);
+  const [templateNameInput, setTemplateNameInput] = useState("");
+  const [templateLangInput, setTemplateLangInput] = useState("pt_BR");
+  const [templateSaveBusy, setTemplateSaveBusy] = useState(false);
   const [notifModalOpen, setNotifModalOpen] = useState(false);
   // Pre-loaded FB SDK config so FB.login() can be called synchronously on click
   const metaSdkConfigRef = useRef<{ app_id: string; config_id: string } | null>(null);
@@ -417,6 +425,14 @@ export function SystemAgentHub(props: {
     void refreshMetaConfig();
   }, [refreshMetaConfig]);
 
+  // Mantém os inputs do template em sincronia com o que está salvo no servidor.
+  useEffect(() => {
+    if (typeof metaConfig?.template_name === "string") setTemplateNameInput(metaConfig.template_name);
+    if (typeof metaConfig?.template_lang === "string" && metaConfig.template_lang) {
+      setTemplateLangInput(metaConfig.template_lang);
+    }
+  }, [metaConfig?.template_name, metaConfig?.template_lang]);
+
   // Pre-load the FB SDK as soon as we know Meta isn't connected yet, so
   // FB.login() can be called synchronously within the click gesture later.
   useEffect(() => {
@@ -530,6 +546,8 @@ export function SystemAgentHub(props: {
                 phone_number_id?: string;
                 display_phone?: string | null;
                 verified_name?: string | null;
+                webhook_subscribed?: boolean;
+                phone_registered?: boolean;
               };
               if (exchData.connected && exchData.phone_number_id) {
                 setMetaConfig({
@@ -537,7 +555,14 @@ export function SystemAgentHub(props: {
                   phone_number_id: exchData.phone_number_id,
                   display_phone: exchData.display_phone ?? null,
                   verified_name: exchData.verified_name ?? null,
+                  webhook_subscribed: exchData.webhook_subscribed ?? null,
+                  phone_registered: exchData.phone_registered ?? null,
                 });
+                if (exchData.webhook_subscribed === false || exchData.phone_registered === false) {
+                  setMetaError(
+                    "Conectado, mas o onboarding não completou (webhook/registro). Clique em «Reparar conexão Meta» abaixo.",
+                  );
+                }
               } else {
                 setMetaError("Erro ao salvar conexão. Tente novamente.");
               }
@@ -580,6 +605,73 @@ export function SystemAgentHub(props: {
       setMetaBusy(false);
     }
   }, []);
+
+  // Reexecuta subscribed_apps + register com as credenciais salvas — repara
+  // webhook não inscrito ou número não registrado sem reconectar do zero.
+  const repairMeta = useCallback(async () => {
+    setMetaRepairBusy(true);
+    setMetaError(null);
+    try {
+      const res = await fetch("/api/admin/system-agent/meta/repair", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        webhook_subscribed?: boolean;
+        phone_registered?: boolean;
+      };
+      if (!res.ok) {
+        setMetaError(json.error ?? "Falha ao reparar conexão Meta.");
+        return;
+      }
+      setMetaConfig((prev) =>
+        prev
+          ? {
+              ...prev,
+              webhook_subscribed: json.webhook_subscribed ?? prev.webhook_subscribed,
+              phone_registered: json.phone_registered ?? prev.phone_registered,
+            }
+          : prev,
+      );
+      setMetaError(
+        json.ok
+          ? null
+          : `Reparo parcial — webhook: ${json.webhook_subscribed ? "ok" : "falhou"}, registro do número: ${json.phone_registered ? "ok" : "falhou"}.`,
+      );
+    } finally {
+      setMetaRepairBusy(false);
+    }
+  }, []);
+
+  const saveMetaTemplate = useCallback(async () => {
+    setTemplateSaveBusy(true);
+    setMetaError(null);
+    try {
+      const res = await fetch("/api/admin/system-agent/meta/config", {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ template_name: templateNameInput.trim(), template_lang: templateLangInput.trim() }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        template_name?: string | null;
+        template_lang?: string | null;
+      };
+      if (!res.ok) {
+        setMetaError(json.error ?? "Falha ao salvar template.");
+        return;
+      }
+      setMetaConfig((prev) =>
+        prev ? { ...prev, template_name: json.template_name ?? null, template_lang: json.template_lang ?? null } : prev,
+      );
+    } finally {
+      setTemplateSaveBusy(false);
+    }
+  }, [templateNameInput, templateLangInput]);
 
   const restartSession = useCallback(async () => {
     setRestartBusy(true);
@@ -701,10 +793,23 @@ export function SystemAgentHub(props: {
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-lg border border-line/60 bg-surface-elevated/30 p-3">
             <p className="text-[11px] uppercase tracking-wide text-content-faint">Conexão</p>
-            <p className={cn("mt-1 flex items-center gap-1.5 text-sm font-semibold", conn.tone)}>
-              <span className={cn("h-2 w-2 rounded-full", connectionState === "open" ? "bg-emerald-400" : connectionState === "connecting" ? "bg-amber-400" : "bg-rose-400")} />
-              {conn.label}
-            </p>
+            {/* O card reflete o canal ATIVO: com Meta ligada, o estado da Evolution é irrelevante aqui. */}
+            {metaActive ? (
+              <p
+                className={cn(
+                  "mt-1 flex items-center gap-1.5 text-sm font-semibold",
+                  metaConfigured ? "text-emerald-400" : "text-rose-400",
+                )}
+              >
+                <span className={cn("h-2 w-2 rounded-full", metaConfigured ? "bg-emerald-400" : "bg-rose-400")} />
+                {metaConfigured ? "Conectado · API Meta" : "Sem credenciais Meta"}
+              </p>
+            ) : (
+              <p className={cn("mt-1 flex items-center gap-1.5 text-sm font-semibold", conn.tone)}>
+                <span className={cn("h-2 w-2 rounded-full", connectionState === "open" ? "bg-emerald-400" : connectionState === "connecting" ? "bg-amber-400" : "bg-rose-400")} />
+                {conn.label}
+              </p>
+            )}
           </div>
           <div className="rounded-lg border border-line/60 bg-surface-elevated/30 p-3">
             <p className="text-[11px] uppercase tracking-wide text-content-faint">Número que atende</p>
@@ -719,7 +824,7 @@ export function SystemAgentHub(props: {
           </div>
         </div>
 
-        {zombieSession ? (
+        {!metaActive && zombieSession ? (
           <div className="mt-3 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-3 text-xs leading-relaxed text-rose-100">
             <strong>Sessão sem número ativo.</strong> O status diz &quot;Conectado&quot;, mas não há um número WhatsApp
             de verdade na sessão — a Evolution aceita os envios, porém o WhatsApp não entrega.{" "}
@@ -908,14 +1013,87 @@ export function SystemAgentHub(props: {
                     </div>
                   ) : null}
                 </dl>
-                <button
-                  type="button"
-                  disabled={metaBusy}
-                  onClick={() => void disconnectMeta()}
-                  className="rounded-lg border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-100 hover:bg-rose-500/20 disabled:opacity-60"
-                >
-                  {metaBusy ? "Removendo…" : "Remover credenciais Meta"}
-                </button>
+
+                {/* Saúde do onboarding (webhook + registro) — null = conexão antiga, estado desconhecido */}
+                {metaConfig?.webhook_subscribed === false || metaConfig?.phone_registered === false ? (
+                  <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-100">
+                    {metaConfig?.webhook_subscribed === false ? (
+                      <p>
+                        ⚠ <strong>Webhook não inscrito</strong> — mensagens recebidas e confirmações de entrega não
+                        chegarão.
+                      </p>
+                    ) : null}
+                    {metaConfig?.phone_registered === false ? (
+                      <p>
+                        ⚠ <strong>Número não registrado na Cloud API</strong> — envios podem falhar.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {/* Template para mensagens iniciadas pela empresa (fora da janela de 24h) */}
+                <div className="rounded-lg border border-line/50 bg-surface-elevated/20 p-2.5">
+                  <p className="text-[11px] font-semibold text-content-secondary">Template de notificações (opcional)</p>
+                  <p className="mt-0.5 text-[10px] leading-relaxed text-content-faint">
+                    Necessário para a Meta entregar mensagens iniciadas pela empresa fora da janela de 24h. Crie um
+                    template utilitário com <span className="font-mono">{"{{1}}"}</span> no corpo, no gerenciador do
+                    WhatsApp, e informe o nome aqui.
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={templateNameInput}
+                      onChange={(e) => setTemplateNameInput(e.target.value)}
+                      placeholder="ex.: system_notification"
+                      className="min-w-0 flex-1 rounded-lg border border-line bg-surface-elevated px-2.5 py-1.5 text-xs text-content"
+                    />
+                    <input
+                      type="text"
+                      value={templateLangInput}
+                      onChange={(e) => setTemplateLangInput(e.target.value)}
+                      placeholder="pt_BR"
+                      className="w-20 rounded-lg border border-line bg-surface-elevated px-2.5 py-1.5 text-xs text-content"
+                    />
+                    <button
+                      type="button"
+                      disabled={templateSaveBusy}
+                      onClick={() => void saveMetaTemplate()}
+                      className="rounded-lg bg-surface-elevated px-2.5 py-1.5 text-xs font-medium text-content-secondary border border-line disabled:opacity-60"
+                    >
+                      {templateSaveBusy ? "Salvando…" : "Salvar"}
+                    </button>
+                  </div>
+                  {metaConfig?.template_name ? (
+                    <p className="mt-1.5 text-[10px] text-emerald-400">
+                      ✓ Notificações serão enviadas via template «{metaConfig.template_name}» (
+                      {metaConfig.template_lang ?? "pt_BR"}).
+                    </p>
+                  ) : (
+                    <p className="mt-1.5 text-[10px] text-content-faint">
+                      Sem template: envio em texto livre — só entrega se o destinatário mandou mensagem nas últimas
+                      24h.
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={metaRepairBusy}
+                    onClick={() => void repairMeta()}
+                    className="rounded-lg border border-line bg-surface-elevated px-3 py-1.5 text-xs font-medium text-content-secondary hover:bg-surface-elevated/60 disabled:opacity-60"
+                  >
+                    {metaRepairBusy ? "Reparando…" : "Reparar conexão Meta"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={metaBusy}
+                    onClick={() => void disconnectMeta()}
+                    className="rounded-lg border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-100 hover:bg-rose-500/20 disabled:opacity-60"
+                  >
+                    {metaBusy ? "Removendo…" : "Remover credenciais Meta"}
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="space-y-3">
@@ -1000,7 +1178,9 @@ export function SystemAgentHub(props: {
             </p>
           ) : (
             <p className="mt-2 text-[11px] text-content-faint">
-              Preso em &quot;enviado&quot;? Reconecte o QR e confirme que o destinatário salvou o número (anti-spam de número novo).
+              {metaActive
+                ? "Preso em “enviado”? Fora da janela de 24h a Meta descarta texto livre: peça para o destinatário mandar uma mensagem para o número primeiro, ou configure um template aprovado."
+                : "Preso em “enviado”? Reconecte o QR e confirme que o destinatário salvou o número (anti-spam de número novo)."}
             </p>
           )}
         </div>
@@ -1009,7 +1189,13 @@ export function SystemAgentHub(props: {
         <p className="mb-2.5 mt-5 text-[11px] font-semibold uppercase tracking-wider text-content-faint">
           Ferramentas de manutenção
         </p>
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        {metaActive ? (
+          <div className="mb-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-100">
+            ⚠ Estas ferramentas são do <strong>QR Code (Evolution)</strong>. O método ativo agora é a API Meta —
+            use-as apenas para manutenção da conexão QR.
+          </div>
+        ) : null}
+        <div className={cn("grid grid-cols-1 gap-2.5 sm:grid-cols-2", metaActive ? "opacity-60" : "")}>
           <button
             type="button"
             disabled={restartBusy}

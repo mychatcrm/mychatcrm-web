@@ -66,7 +66,13 @@ export async function POST(request: Request) {
   const statuses = parseWhatsAppCloudStatuses(json);
   if (statuses.length > 0) {
     for (const s of statuses) {
-      await applyMetaSystemNotificationStatus({ wamid: s.id, status: s.status }).catch((error) => {
+      await applyMetaSystemNotificationStatus({
+        wamid: s.id,
+        status: s.status,
+        errorCode: s.errorCode,
+        errorTitle: s.errorTitle,
+        errorDetail: s.errorDetail,
+      }).catch((error) => {
         console.warn("[webhooks/whatsapp] meta_status_update_failed", {
           wamid: s.id,
           status: s.status,

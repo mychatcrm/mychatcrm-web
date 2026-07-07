@@ -20,7 +20,7 @@ import {
   remoteJidToEvoNumber,
 } from "@/lib/integrations/evolution-api";
 import { extractInstanceJid } from "@/lib/integrations/evolution-webhook-parse";
-import { sendWhatsAppTextMessage } from "@/lib/integrations/whatsapp-cloud";
+import { sendWhatsAppTemplateMessage, sendWhatsAppTextMessage } from "@/lib/integrations/whatsapp-cloud";
 import { sendPresence, typingDelayMs } from "@/lib/server/evolution-presence";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
@@ -883,6 +883,7 @@ async function applyDeliveryFailedToRow(
   sb: ReturnType<typeof createSupabaseServiceClient>,
   row: SystemNotificationRow,
   reason: string,
+  extraMetadata?: Record<string, unknown>,
 ): Promise<boolean> {
   if (row.status === "delivery_failed") return false;
 
@@ -894,6 +895,7 @@ async function applyDeliveryFailedToRow(
       error: reason.slice(0, 500),
       metadata: {
         ...meta,
+        ...(extraMetadata ?? {}),
         delivery_failed_at: new Date().toISOString(),
         delivery_failure_reason: reason.slice(0, 500),
       },
@@ -1317,6 +1319,13 @@ export type SystemAgentMetaConfig = {
   displayPhone: string | null;
   verifiedName: string | null;
   active: boolean;
+  wabaId: string | null;
+  /** Resultado do onboarding server-side (subscribed_apps / register) — null = desconhecido (conexões antigas). */
+  webhookSubscribed: boolean | null;
+  phoneRegistered: boolean | null;
+  /** Template aprovado para mensagens iniciadas pela empresa fora da janela de 24h. */
+  templateName: string | null;
+  templateLang: string | null;
 };
 
 export async function getSystemAgentMetaConfig(): Promise<SystemAgentMetaConfig | null> {
@@ -1331,6 +1340,17 @@ export async function getSystemAgentMetaConfig(): Promise<SystemAgentMetaConfig 
       displayPhone: typeof meta.meta_display_phone === "string" ? meta.meta_display_phone : null,
       verifiedName: typeof meta.meta_verified_name === "string" ? meta.meta_verified_name : null,
       active: meta.meta_provider_active === true,
+      wabaId: typeof meta.meta_waba_id === "string" ? meta.meta_waba_id : null,
+      webhookSubscribed: typeof meta.meta_webhook_subscribed === "boolean" ? meta.meta_webhook_subscribed : null,
+      phoneRegistered: typeof meta.meta_phone_registered === "boolean" ? meta.meta_phone_registered : null,
+      templateName:
+        typeof meta.meta_template_name === "string" && meta.meta_template_name.trim()
+          ? meta.meta_template_name.trim()
+          : null,
+      templateLang:
+        typeof meta.meta_template_lang === "string" && meta.meta_template_lang.trim()
+          ? meta.meta_template_lang.trim()
+          : null,
     };
   } catch {
     return null;
@@ -1347,6 +1367,9 @@ export async function saveSystemAgentMetaConfig(params: {
   accessToken: string;
   displayPhone: string | null;
   verifiedName: string | null;
+  wabaId?: string | null;
+  webhookSubscribed?: boolean | null;
+  phoneRegistered?: boolean | null;
 }): Promise<void> {
   await patchSystemAgentMetadata({
     meta_phone_number_id: params.phoneNumberId,
@@ -1354,6 +1377,31 @@ export async function saveSystemAgentMetaConfig(params: {
     meta_display_phone: params.displayPhone ?? null,
     meta_verified_name: params.verifiedName ?? null,
     meta_provider_active: true,
+    ...(params.wabaId !== undefined ? { meta_waba_id: params.wabaId } : {}),
+    ...(params.webhookSubscribed !== undefined ? { meta_webhook_subscribed: params.webhookSubscribed } : {}),
+    ...(params.phoneRegistered !== undefined ? { meta_phone_registered: params.phoneRegistered } : {}),
+  });
+}
+
+/** Atualiza só os flags de saúde do onboarding Meta (usado pelo botão "Reparar conexão Meta"). */
+export async function saveSystemAgentMetaOnboardingFlags(params: {
+  webhookSubscribed: boolean;
+  phoneRegistered: boolean;
+}): Promise<void> {
+  await patchSystemAgentMetadata({
+    meta_webhook_subscribed: params.webhookSubscribed,
+    meta_phone_registered: params.phoneRegistered,
+  });
+}
+
+/** Salva o template aprovado usado para mensagens iniciadas pela empresa (fora da janela de 24h). */
+export async function saveSystemAgentMetaTemplate(params: {
+  templateName: string | null;
+  templateLang: string | null;
+}): Promise<void> {
+  await patchSystemAgentMetadata({
+    meta_template_name: params.templateName ?? null,
+    meta_template_lang: params.templateLang ?? null,
   });
 }
 
@@ -1421,12 +1469,25 @@ async function sendSystemNotificationViaMeta(
   const rawDigits = toNumber.replace(/\D/g, "");
   const toWaId = rawDigits.startsWith("55") ? rawDigits : `55${rawDigits}`;
 
-  const send = await sendWhatsAppTextMessage({
-    toWaId,
-    text: message.slice(0, 4096),
-    phoneNumberId: config.phoneNumberId,
-    accessToken: config.accessToken,
-  });
+  // Mensagens iniciadas pela empresa fora da janela de 24h só são entregues
+  // como template aprovado — texto livre é aceito e descartado (131047).
+  // Com template configurado, enviamos a mensagem como {{1}} do template.
+  const useTemplate = Boolean(config.templateName);
+  const send = useTemplate
+    ? await sendWhatsAppTemplateMessage({
+        toWaId,
+        templateName: config.templateName!,
+        languageCode: config.templateLang || "pt_BR",
+        bodyParams: [message.slice(0, 1024)],
+        phoneNumberId: config.phoneNumberId,
+        accessToken: config.accessToken,
+      })
+    : await sendWhatsAppTextMessage({
+        toWaId,
+        text: message.slice(0, 4096),
+        phoneNumberId: config.phoneNumberId,
+        accessToken: config.accessToken,
+      });
 
   const verifiedTest = (options?.waitForOutcomeMs ?? 0) > 0;
   const logStatus = send.ok ? (verifiedTest ? "pending" : "sent") : "failed";
@@ -1444,6 +1505,8 @@ async function sendSystemNotificationViaMeta(
       number_raw: rawDigits,
       number_normalized: toWaId,
       meta_message_id: send.messageId ?? null,
+      meta_send_kind: useTemplate ? "template" : "text",
+      ...(useTemplate ? { meta_template_name: config.templateName } : {}),
     },
   });
 
@@ -1500,6 +1563,9 @@ async function sendSystemNotificationViaMeta(
 export async function applyMetaSystemNotificationStatus(params: {
   wamid: string;
   status: string;
+  errorCode?: number | null;
+  errorTitle?: string | null;
+  errorDetail?: string | null;
 }): Promise<SystemDeliveryUpdateResult> {
   const wamid = params.wamid.trim();
   if (!wamid) return "skipped";
@@ -1518,7 +1584,20 @@ export async function applyMetaSystemNotificationStatus(params: {
   const st = params.status.toLowerCase();
 
   if (st === "failed" || st === "error") {
-    const updated = await applyDeliveryFailedToRow(sb, row, `meta_status:${params.status}`);
+    // Motivo composto com o código real da Meta (ex.: 131047 = fora da janela
+    // de 24h) para a UI traduzir em vez de mostrar só "failed" genérico.
+    const reason = [
+      `meta_status:${params.status}`,
+      params.errorCode != null ? String(params.errorCode) : null,
+      params.errorTitle?.trim() || null,
+    ]
+      .filter(Boolean)
+      .join(":");
+    const updated = await applyDeliveryFailedToRow(sb, row, reason, {
+      meta_error_code: params.errorCode ?? null,
+      meta_error_title: params.errorTitle ?? null,
+      meta_error_detail: params.errorDetail ?? null,
+    });
     return updated ? "delivery_failed" : "skipped";
   }
 
