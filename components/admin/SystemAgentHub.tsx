@@ -258,8 +258,6 @@ export function SystemAgentHub(props: {
   const [seedQrDataUrl, setSeedQrDataUrl] = useState<string | null>(null);
   const [metaConfig, setMetaConfig] = useState<MetaConfig | null>(props.initialMetaConfig ?? null);
   const [metaBusy, setMetaBusy] = useState(false);
-  const [metaPhoneNumberId, setMetaPhoneNumberId] = useState("");
-  const [metaAccessToken, setMetaAccessToken] = useState("");
   const [metaError, setMetaError] = useState<string | null>(null);
   const [metaEmbeddedBusy, setMetaEmbeddedBusy] = useState(false);
   const [notifModalOpen, setNotifModalOpen] = useState(false);
@@ -610,48 +608,6 @@ export function SystemAgentHub(props: {
     }
   }, []);
 
-  const connectMeta = useCallback(async () => {
-    const phoneNumberId = metaPhoneNumberId.trim();
-    const accessToken = metaAccessToken.trim();
-    if (!phoneNumberId || !accessToken) {
-      setMetaError("Preencha o Phone Number ID e o Access Token.");
-      return;
-    }
-    setMetaBusy(true);
-    setMetaError(null);
-    try {
-      const res = await fetch("/api/admin/system-agent/meta/config", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone_number_id: phoneNumberId, access_token: accessToken }),
-      });
-      const json = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        error?: string;
-        detail?: string;
-        active?: boolean;
-        phone_number_id?: string | null;
-        display_phone?: string | null;
-        verified_name?: string | null;
-      };
-      if (!res.ok) {
-        setMetaError(json.error ?? "Falha ao conectar API Meta.");
-        return;
-      }
-      setMetaConfig({
-        active: true,
-        phone_number_id: json.phone_number_id ?? phoneNumberId,
-        display_phone: json.display_phone ?? null,
-        verified_name: json.verified_name ?? null,
-      });
-      setMetaPhoneNumberId("");
-      setMetaAccessToken("");
-    } finally {
-      setMetaBusy(false);
-    }
-  }, [metaPhoneNumberId, metaAccessToken]);
-
   const disconnectMeta = useCallback(async () => {
     setMetaBusy(true);
     setMetaError(null);
@@ -849,33 +805,67 @@ export function SystemAgentHub(props: {
         </div>
 
         {/* Chave de seleção do provedor */}
-        <div className="mb-4 flex flex-col gap-2 rounded-lg border border-line/60 bg-surface-elevated/30 p-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-xs text-content-muted">
-            Quem atende as conversas do agente: escolha <strong>um</strong> método.
+        <div className="mb-4 rounded-lg border border-line/60 bg-surface-elevated/30 p-4">
+          <div className="mb-3">
+            <p className="text-xs font-semibold text-content">Qual número atende as conversas automaticamente?</p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-content-faint">
+              Só o método marcado como <strong className="text-emerald-400">ativo</strong> responde às mensagens.
+              Trocar aqui não desconecta o outro — ele continua salvo, só fica em espera.
+            </p>
           </div>
-          <div className="flex items-center gap-1 rounded-lg border border-line bg-surface-card p-1">
+          <div className="flex flex-col gap-2 sm:flex-row">
             <button
               type="button"
               disabled={metaBusy}
               onClick={() => void setActiveProvider("evolution")}
               className={cn(
-                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-60",
-                !metaActive ? "bg-primary text-white" : "text-content-secondary hover:bg-surface-elevated/60",
+                "flex flex-1 items-center gap-2.5 rounded-lg border-2 px-3 py-2.5 text-left transition-colors disabled:opacity-60",
+                !metaActive
+                  ? "border-primary bg-primary/10"
+                  : "border-line/40 bg-surface-card hover:border-line",
               )}
             >
-              <QrCode className="h-3.5 w-3.5" /> QR Code
+              <QrCode className={cn("h-4 w-4 shrink-0", !metaActive ? "text-primary" : "text-content-faint")} aria-hidden />
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs font-semibold text-content">QR Code (Evolution)</span>
+                <span className="block text-[10px] text-content-faint">
+                  {!metaActive
+                    ? "Atendendo agora"
+                    : connectionState === "open"
+                      ? "Conectado, em espera"
+                      : "Desconectado"}
+                </span>
+              </span>
+              {!metaActive ? (
+                <span className="shrink-0 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
+                  ativo
+                </span>
+              ) : null}
             </button>
             <button
               type="button"
               disabled={metaBusy || !metaConfigured}
-              title={!metaConfigured ? "Conecte as credenciais da API Meta primeiro" : undefined}
+              title={!metaConfigured ? "Conecte a API Meta primeiro" : undefined}
               onClick={() => void setActiveProvider("meta")}
               className={cn(
-                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40",
-                metaActive ? "bg-primary text-white" : "text-content-secondary hover:bg-surface-elevated/60",
+                "flex flex-1 items-center gap-2.5 rounded-lg border-2 px-3 py-2.5 text-left transition-colors disabled:opacity-40",
+                metaActive
+                  ? "border-primary bg-primary/10"
+                  : "border-line/40 bg-surface-card hover:border-line",
               )}
             >
-              <Cloud className="h-3.5 w-3.5" /> API Meta
+              <Cloud className={cn("h-4 w-4 shrink-0", metaActive ? "text-primary" : "text-content-faint")} aria-hidden />
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs font-semibold text-content">API Meta</span>
+                <span className="block text-[10px] text-content-faint">
+                  {!metaConfigured ? "Não conectado" : metaActive ? "Atendendo agora" : "Conectado, em espera"}
+                </span>
+              </span>
+              {metaActive ? (
+                <span className="shrink-0 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
+                  ativo
+                </span>
+              ) : null}
             </button>
           </div>
         </div>
@@ -982,40 +972,7 @@ export function SystemAgentHub(props: {
                   onClick={() => connectMetaEmbedded()}
                   className="w-full rounded-lg bg-primary px-3 py-2 text-xs font-medium text-white disabled:opacity-60"
                 >
-                  {metaEmbeddedBusy ? "Conectando…" : "Conectar via Facebook (recomendado)"}
-                </button>
-
-                <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-content-faint">
-                  <div className="h-px flex-1 bg-line/40" /> ou preencha manualmente <div className="h-px flex-1 bg-line/40" />
-                </div>
-
-                <label className="block text-xs">
-                  <span className="mb-1 block text-content-faint">Phone Number ID</span>
-                  <input
-                    type="text"
-                    value={metaPhoneNumberId}
-                    onChange={(e) => setMetaPhoneNumberId(e.target.value)}
-                    placeholder="123456789012345"
-                    className="w-full rounded-lg border border-line bg-surface-elevated px-3 py-2 text-content"
-                  />
-                </label>
-                <label className="block text-xs">
-                  <span className="mb-1 block text-content-faint">Access Token</span>
-                  <input
-                    type="password"
-                    value={metaAccessToken}
-                    onChange={(e) => setMetaAccessToken(e.target.value)}
-                    placeholder="EAABn…"
-                    className="w-full rounded-lg border border-line bg-surface-elevated px-3 py-2 text-content"
-                  />
-                </label>
-                <button
-                  type="button"
-                  disabled={metaBusy || !metaPhoneNumberId.trim() || !metaAccessToken.trim()}
-                  onClick={() => void connectMeta()}
-                  className="rounded-lg bg-surface-elevated px-3 py-1.5 text-xs font-medium text-content-secondary border border-line disabled:opacity-60"
-                >
-                  {metaBusy ? "Conectando…" : "Conectar API Meta"}
+                  {metaEmbeddedBusy ? "Conectando…" : "Conectar via Facebook"}
                 </button>
               </div>
             )}

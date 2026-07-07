@@ -85,7 +85,10 @@ async function saveSystemMessage(args: SaveArgs): Promise<string | null> {
  */
 export async function handleSystemMetaInbound(inbound: WhatsAppInboundMessage): Promise<boolean> {
   const config = await getSystemAgentMetaConfig();
-  if (!config) return false;
+  // config.active reflects the QR/Meta toggle (meta_provider_active) — the
+  // Meta channel must not process/reply while the admin has QR Code chosen,
+  // even if credentials are still saved.
+  if (!config || !config.active) return false;
   // Só trata se o inbound é para o número Meta do sistema.
   if (inbound.phoneNumberId !== config.phoneNumberId) return false;
 

@@ -49,6 +49,7 @@ import {
 import {
   SYSTEM_TENANT_ID,
   getSystemEvolutionInstancePrefix,
+  isMetaProviderActive,
   processSystemMessagesUpdate,
 } from "@/lib/server/system-agent";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
@@ -562,6 +563,16 @@ export async function POST(request: Request) {
       console.warn("[webhooks/evolution] instance not registered", instanceName);
       continue;
     }
+
+    // The active-provider toggle must be obeyed 100%: while Meta is the chosen
+    // channel for the system agent, inbound on its old Evolution number must
+    // not be processed or auto-replied to — otherwise both channels could
+    // answer the same contact inconsistently.
+    if (row.tenant_id === SYSTEM_TENANT_ID && (await isMetaProviderActive())) {
+      console.info("[webhooks/evolution] system_inbound_skipped_meta_active", { instanceName });
+      continue;
+    }
+
     const inbound = extractInboundMessagesFromEvolutionPayload(payload);
 
     // Bug 3 fix: split the per-message loop into two serial phases so that ALL messages
