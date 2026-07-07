@@ -621,6 +621,7 @@ export function SystemAgentHub(props: {
         error?: string;
         webhook_subscribed?: boolean;
         phone_registered?: boolean;
+        waba_id_known?: boolean;
       };
       if (!res.ok) {
         setMetaError(json.error ?? "Falha ao reparar conexão Meta.");
@@ -638,7 +639,9 @@ export function SystemAgentHub(props: {
       setMetaError(
         json.ok
           ? null
-          : `Reparo parcial — webhook: ${json.webhook_subscribed ? "ok" : "falhou"}, registro do número: ${json.phone_registered ? "ok" : "falhou"}.`,
+          : json.waba_id_known === false
+            ? "Esta conexão foi feita antes desta correção e não tem o ID da conta WhatsApp Business (WABA) salvo — sem ele não dá pra inscrever o webhook. Clique em «Remover credenciais Meta» e depois «Conectar via Facebook» de novo: a reconexão salva tudo certinho."
+            : `Reparo parcial — webhook: ${json.webhook_subscribed ? "ok" : "falhou"}, registro do número: ${json.phone_registered ? "ok" : "falhou"}.`,
       );
     } finally {
       setMetaRepairBusy(false);
