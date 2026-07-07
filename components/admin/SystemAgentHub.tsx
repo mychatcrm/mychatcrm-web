@@ -735,17 +735,21 @@ export function SystemAgentHub(props: {
           sessionOwnerJid?: string | null;
         };
       };
-      const sender =
-        json.debug?.sessionOwnerJid?.split("@")[0]?.replace(/\D/g, "") ??
-        waJid?.split("@")[0]?.replace(/\D/g, "");
-      const senderLabel = sender ? `+${sender}` : senderLine;
+      // Com Meta ativa, sessionOwnerJid/waJid são da Evolution (irrelevantes aqui)
+      // — o remetente real é o número Meta salvo.
+      const sender = metaActive
+        ? null
+        : (json.debug?.sessionOwnerJid?.split("@")[0]?.replace(/\D/g, "") ?? waJid?.split("@")[0]?.replace(/\D/g, ""));
+      const senderLabel = metaActive ? (metaConfig?.display_phone ?? "API Meta") : sender ? `+${sender}` : senderLine;
       const tried = json.debug?.candidatesTried?.join(", ") ?? json.debug?.numberSent ?? testNumber.trim();
 
       if (!res.ok) {
         // ⚠️ Não confirmado (preso em PENDING) tem mensagem própria via humanize;
         // demais erros (sessão caída, número inválido) caem no fallback ❌.
+        // provider explícito: sem isso, cai no texto de Evolution mesmo quando
+        // o teste rodou pela API Meta.
         setActionMessage(
-          humanizeNotificationError(json.error ?? json.deliveryError ?? null) ??
+          humanizeNotificationError(json.error ?? json.deliveryError ?? null, metaActive ? "meta_cloud" : null) ??
             json.error ??
             "❌ Falha no envio de teste.",
         );
@@ -770,7 +774,7 @@ export function SystemAgentHub(props: {
     } finally {
       setTestBusy(false);
     }
-  }, [refreshLogs, senderLine, testNumber]);
+  }, [refreshLogs, senderLine, testNumber, metaActive, metaConfig?.display_phone, waJid]);
 
   return (
     <div className="mx-auto max-w-4xl space-y-8 px-4 py-6 sm:px-6 sm:py-8">
