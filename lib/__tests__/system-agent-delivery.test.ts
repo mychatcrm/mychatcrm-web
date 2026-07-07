@@ -201,6 +201,36 @@ describe("system notification delivery helpers", () => {
     );
   });
 
+  it("recognizes Meta Cloud API acceptance via meta_message_id (regression: used to be mislabeled evolution_not_accepted)", async () => {
+    selectChain.limit.mockResolvedValue({
+      data: [
+        {
+          id: "meta-accepted",
+          status: "pending",
+          metadata: { provider: "meta_cloud", meta_message_id: "wamid.ABC123" },
+        },
+        {
+          id: "meta-never-accepted",
+          status: "pending",
+          metadata: { provider: "meta_cloud" },
+        },
+      ],
+      error: null,
+    });
+
+    const count = await reconcileUndeliveredNotifications(60);
+    expect(count).toBe(2);
+    // A Meta aceitou (meta_message_id existe) → promovido a "sent", NUNCA "evolution_not_accepted".
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ status: "sent" }));
+    expect(updateMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ error: "evolution_not_accepted" }),
+    );
+    // A Meta nunca aceitou (sem meta_message_id) → falha real com rótulo correto do provedor.
+    expect(updateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed", error: "meta_not_accepted" }),
+    );
+  });
+
   it("dedupes orphan buffer by message id", async () => {
     await bufferOrphanDeliveryEvent({
       messageId: "DEDUP",

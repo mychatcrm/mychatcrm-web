@@ -1233,13 +1233,15 @@ export async function getSystemWebhookDiagnostics(): Promise<SystemWebhookDiagno
 /**
  * Reconcilia notificações antigas que ficaram em `pending`.
  *
- * Regra (honesta, sem mentir nos dois sentidos):
- * - Se a Evolution ACEITOU o envio (existe `evolution_message_id`), a mensagem
- *   foi enfileirada/enviada com sucesso → promovemos `pending` → `sent`. NUNCA
- *   marcamos como `delivery_failed` só porque o webhook de confirmação não veio:
- *   o webhook MESSAGES_UPDATE é opcional e frequentemente indisponível.
- * - Se a Evolution NÃO aceitou (sem `evolution_message_id`) e a notificação
- *   continua presa em `pending` após o timeout, aí sim é uma falha real de envio.
+ * Regra (honesta, sem mentir nos dois sentidos) — vale para os dois provedores,
+ * Evolution e Meta Cloud API:
+ * - Se o provedor ACEITOU o envio (existe `evolution_message_id`/`evolution_message_ids`
+ *   para Evolution, ou `meta_message_id` para Meta), a mensagem foi enfileirada/enviada
+ *   com sucesso → promovemos `pending` → `sent`. NUNCA marcamos como `delivery_failed`
+ *   só porque o webhook de confirmação não veio: esse webhook é opcional e
+ *   frequentemente indisponível ou atrasado nos dois provedores.
+ * - Se o provedor NÃO aceitou (sem nenhum message id) e a notificação continua presa
+ *   em `pending` após o timeout, aí sim é uma falha real de envio.
  */
 export async function reconcileUndeliveredNotifications(maxAgeSeconds = 60): Promise<number> {
   try {
@@ -1256,13 +1258,14 @@ export async function reconcileUndeliveredNotifications(maxAgeSeconds = 60): Pro
     let updated = 0;
     for (const row of data) {
       const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
-      const acceptedMessageId =
-        typeof meta.evolution_message_id === "string" && meta.evolution_message_id.trim().length > 0
-          ? meta.evolution_message_id.trim()
-          : Array.isArray(meta.evolution_message_ids) && meta.evolution_message_ids.length > 0;
+      const isMeta = meta.provider === "meta_cloud";
+      const acceptedMessageId = isMeta
+        ? typeof meta.meta_message_id === "string" && meta.meta_message_id.trim().length > 0
+        : (typeof meta.evolution_message_id === "string" && meta.evolution_message_id.trim().length > 0) ||
+          (Array.isArray(meta.evolution_message_ids) && meta.evolution_message_ids.length > 0);
 
       if (acceptedMessageId) {
-        // Evolution aceitou → sucesso. Promove para "sent" (envio confirmado pelo servidor).
+        // Provedor aceitou → sucesso. Promove para "sent" (envio confirmado pelo servidor).
         const { error: upgradeError } = await sb
           .from("system_notifications_log")
           .update({
@@ -1275,16 +1278,17 @@ export async function reconcileUndeliveredNotifications(maxAgeSeconds = 60): Pro
         continue;
       }
 
-      // Sem message_id → a Evolution nunca aceitou: falha real de envio.
+      // Sem message id → o provedor nunca aceitou: falha real de envio.
+      const reason = isMeta ? "meta_not_accepted" : "evolution_not_accepted";
       const { error: updateError } = await sb
         .from("system_notifications_log")
         .update({
           status: "failed",
-          error: "evolution_not_accepted",
+          error: reason,
           metadata: {
             ...meta,
             delivery_failed_at: new Date().toISOString(),
-            delivery_failure_reason: "evolution_not_accepted",
+            delivery_failure_reason: reason,
           },
         })
         .eq("id", row.id)

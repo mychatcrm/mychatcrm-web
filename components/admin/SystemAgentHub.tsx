@@ -23,6 +23,11 @@ import { EvolutionQrSlotPanel } from "@/components/dashboard/integrations/Evolut
 import { LiveConversationsPanel } from "@/components/admin/system-agent/LiveConversationsPanel";
 import { NotificationsModal } from "@/components/admin/system-agent/NotificationsModal";
 import { loadFbSdk } from "@/lib/client/facebook-sdk";
+import {
+  humanizeNotificationError,
+  notificationProvider,
+  notificationProviderBadge,
+} from "@/lib/client/system-agent-notifications";
 import { cn } from "@/lib/utils";
 
 type MetaConfig = {
@@ -166,54 +171,6 @@ function evaluateE2EFlow(logs: SystemNotificationLogItem[], type: string): "pass
   if (latest.status === "delivered") return "pass";
   if (latest.status === "delivery_failed" || latest.status === "failed") return "fail";
   return "pending";
-}
-
-function humanizeNotificationError(error: string | null): string | null {
-  if (!error) return null;
-
-  const known: Record<string, string> = {
-    missing_tenant_owner_phone: "Conta sem telefone de alertas configurado",
-    missing_system_instance: "Instância do agente do sistema não configurada",
-    invalid_number: "Número de destino inválido",
-  };
-  if (known[error]) return known[error];
-
-  if (error.startsWith("system_instance_not_open:")) {
-    const state = error.split(":")[1] ?? "?";
-    return `Agente do sistema desconectado (${state})`;
-  }
-  if (error.startsWith("system_instance_state_check_failed:")) {
-    return "Não foi possível verificar o estado do agente do sistema";
-  }
-  if (error.startsWith("system_session_not_authenticated:")) {
-    return "Sessão conectada na API mas sem número WhatsApp ativo (sessão zumbi). Reconecte escaneando o QR.";
-  }
-  if (error.startsWith("system_session_check_failed:")) {
-    return "Não foi possível verificar a sessão na Evolution (fetchInstances). Tente reconectar.";
-  }
-  if (error === "system_session_not_found_in_evolution") {
-    return "Instância não encontrada na Evolution — apague e reconecte pelo painel.";
-  }
-  if (error === "number_not_on_whatsapp") {
-    return "Número de destino não está no WhatsApp";
-  }
-  if (error === "missing_evolution_message_id") {
-    return "Evolution aceitou mas não devolveu ID — envio não confirmado";
-  }
-  if (error === "delivery_timeout") {
-    return "Não houve confirmação de entrega em 60s — mensagem provavelmente não chegou no celular";
-  }
-  if (error === "whatsapp_nao_confirmou_pending") {
-    return "Não confirmado: o WhatsApp não confirmou o envio (mensagem presa em PENDING). Este número não está entregando via Evolution/Baileys — conecte outro número e teste de novo.";
-  }
-  if (error === "whatsapp_delivery_failed" || error.startsWith("delivery_status:ERROR")) {
-    return "WhatsApp recusou a entrega (ERROR). A sessão do número conectado aqui está degradada na VPS — clique «Reparar sessão» e escaneie o QR de novo com o celular desse número.";
-  }
-  if (error.startsWith("delivery_status:")) {
-    return `WhatsApp reportou falha na entrega (${error.split(":").slice(1).join(":")})`;
-  }
-
-  return error;
 }
 
 function formatLogMetadata(item: SystemNotificationLogItem): string | null {
@@ -1359,12 +1316,21 @@ export function SystemAgentHub(props: {
             {logs.slice(0, 3).map((item) => {
               const status = notificationStatusLabel(item.status);
               const metaLine = formatLogMetadata(item);
-              const errorLine = humanizeNotificationError(item.error);
+              const provider = notificationProvider(item.metadata);
+              const providerBadge = notificationProviderBadge(provider);
+              const errorLine = humanizeNotificationError(item.error, provider);
 
               return (
                 <li key={item.id} className="rounded-lg border border-line/80 bg-surface-elevated/30 p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <span className="font-semibold uppercase tracking-wide text-content-secondary">{item.type}</span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="font-semibold uppercase tracking-wide text-content-secondary">{item.type}</span>
+                      {providerBadge ? (
+                        <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-medium", providerBadge.tone)}>
+                          {providerBadge.label}
+                        </span>
+                      ) : null}
+                    </span>
                     <span className={status.tone}>{status.label}</span>
                   </div>
                   <p className="mt-1 text-xs text-content-faint">

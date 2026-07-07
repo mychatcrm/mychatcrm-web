@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Trash2, X, Search, Loader2 } from "lucide-react";
+import {
+  humanizeNotificationError,
+  notificationProvider,
+  notificationProviderBadge,
+} from "@/lib/client/system-agent-notifications";
 import { cn } from "@/lib/utils";
 
 export type NotificationItem = {
@@ -265,6 +270,9 @@ export function NotificationsModal({ open, onClose }: { open: boolean; onClose: 
             <ul className="space-y-2">
               {items.map((item) => {
                 const st = statusLabel(item.status);
+                const provider = notificationProvider(item.metadata);
+                const providerBadge = notificationProviderBadge(provider);
+                const errorLine = humanizeNotificationError(item.error, provider);
                 return (
                   <li
                     key={item.id}
@@ -276,6 +284,11 @@ export function NotificationsModal({ open, onClose }: { open: boolean; onClose: 
                           <span className="font-semibold uppercase tracking-wide text-content-secondary">
                             {item.type}
                           </span>
+                          {providerBadge ? (
+                            <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-medium", providerBadge.tone)}>
+                              {providerBadge.label}
+                            </span>
+                          ) : null}
                           <span className={st.tone}>{st.label}</span>
                         </div>
                         <p className="mt-1 text-xs text-content-faint">
@@ -284,7 +297,7 @@ export function NotificationsModal({ open, onClose }: { open: boolean; onClose: 
                         <p className="mt-1.5 whitespace-pre-wrap break-words text-sm text-content-secondary">
                           {item.message}
                         </p>
-                        {item.error ? <p className="mt-1 text-xs text-rose-300">{item.error}</p> : null}
+                        {errorLine ? <p className="mt-1 text-xs text-rose-300">{errorLine}</p> : null}
                       </div>
                       <button
                         type="button"
