@@ -16,7 +16,10 @@ import {
   type EvolutionInboundMessage,
 } from "@/lib/integrations/evolution-webhook-parse";
 import {
+  evolutionFetchInstances,
   evolutionSendText,
+  normalizeEvolutionConnectionState,
+  pickEvolutionInstanceInfo,
   remoteJidToEvoNumber,
 } from "@/lib/integrations/evolution-api";
 import { isElevenlabsConfigured } from "@/lib/integrations/elevenlabs";
@@ -452,17 +455,40 @@ export async function POST(request: Request) {
       if (state) {
         try {
           const previousRow = await getEvolutionInstanceByName(instanceName);
+
+          // O evento CONNECTION_UPDATE pode reportar um estado não-"open" num blip
+          // momentâneo de rede que o Baileys resolve sozinho (reconexão automática),
+          // não necessariamente um logout real. Antes de tratar como desconexão de
+          // verdade, confirma via fetchInstances (fonte de verdade já usada para
+          // validar conexões — ver evolution-api.ts) se ainda há uma sessão viva.
+          let confirmedState = state;
+          let confirmedWaJid = waJid;
+          if (
+            previousRow &&
+            normalizeEvolutionConnectionState(previousRow.connection_state, "close") === "open" &&
+            normalizeEvolutionConnectionState(state, "close") !== "open"
+          ) {
+            const fetchResult = await evolutionFetchInstances(instanceName);
+            if (fetchResult.ok) {
+              const instanceInfo = pickEvolutionInstanceInfo(fetchResult.data, instanceName);
+              if (instanceInfo?.ownerJid) {
+                confirmedState = "open";
+                confirmedWaJid = instanceInfo.ownerJid;
+              }
+            }
+          }
+
           await updateEvolutionInstanceStateByName({
             instanceName,
-            connectionState: state,
-            waJid: waJid ?? undefined,
+            connectionState: confirmedState,
+            waJid: confirmedWaJid ?? undefined,
           });
           if (
             previousRow &&
             previousRow.tenant_id !== SYSTEM_TENANT_ID &&
             shouldNotifyWhatsappDisconnect({
               previousState: previousRow.connection_state,
-              nextState: state,
+              nextState: confirmedState,
             })
           ) {
             try {
@@ -472,28 +498,29 @@ export async function POST(request: Request) {
                 source: "evolution_connection_update",
                 sourceKey: previousRow.instance_name,
                 instanceName: previousRow.instance_name,
-                state,
+                state: confirmedState,
                 previousState: previousRow.connection_state,
                 manual: false,
                 metadata: {
                   slot_index: previousRow.slot_index,
-                  wa_jid: waJid ?? previousRow.wa_jid ?? null,
+                  wa_jid: confirmedWaJid ?? previousRow.wa_jid ?? null,
                 },
               });
             } catch (notifyError) {
               console.warn("[webhooks/evolution] disconnect notification failed", notifyError);
             }
           }
-          // Exige um waJid fresco DESTE evento (não o valor antigo em cache de
-          // previousRow.wa_jid) — uma conexão genuína sempre traz o JID junto;
-          // sem ele, não há prova de que "open" é uma sessão nova de verdade.
+          // Exige um waJid fresco (do evento, ou confirmado acima via fetchInstances) —
+          // não o valor antigo em cache de previousRow.wa_jid. Uma conexão genuína
+          // sempre traz o JID junto; sem ele, não há prova de que "open" é uma sessão
+          // nova de verdade.
           if (
             previousRow &&
             previousRow.tenant_id !== SYSTEM_TENANT_ID &&
-            waJid &&
+            confirmedWaJid &&
             shouldNotifyWhatsappConnect({
               previousState: previousRow.connection_state,
-              nextState: state,
+              nextState: confirmedState,
             })
           ) {
             try {
@@ -503,7 +530,7 @@ export async function POST(request: Request) {
                 source: "evolution_connection_update",
                 sourceKey: previousRow.instance_name,
                 instanceName: previousRow.instance_name,
-                waJid,
+                waJid: confirmedWaJid,
                 metadata: {
                   slot_index: previousRow.slot_index,
                 },

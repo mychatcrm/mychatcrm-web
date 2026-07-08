@@ -90,13 +90,13 @@ describe("omnichannel runtime contracts", () => {
     // remoteState === "open" alone sent a false "you just connected" alert for
     // an instance that had actually been disconnected hours earlier.
 
-    // Webhook path: requires a fresh waJid from THIS event before notifying connect.
+    // Webhook path: requires a fresh/confirmed waJid before notifying connect.
     const webhookSource = source("app/api/webhooks/evolution/route.ts");
     const webhookConnectBlock = webhookSource.indexOf("notifyTenantIntegrationConnected({");
     const webhookGuardStart = webhookSource.lastIndexOf("if (", webhookConnectBlock);
     const webhookGuard = webhookSource.slice(webhookGuardStart, webhookConnectBlock);
-    expect(webhookGuard).toContain("waJid &&");
-    expect(webhookSource.slice(webhookConnectBlock, webhookConnectBlock + 500)).toContain("waJid,");
+    expect(webhookGuard).toContain("confirmedWaJid &&");
+    expect(webhookSource.slice(webhookConnectBlock, webhookConnectBlock + 500)).toContain("confirmedWaJid,");
 
     // Client status-poll path: requires the zombie-check to have freshly
     // confirmed an ownerJid THIS poll cycle, not a stale cached wa_jid.
@@ -110,5 +110,29 @@ describe("omnichannel runtime contracts", () => {
     expect(ownerJidConfirmedDeclared).toBeGreaterThan(0);
     expect(ownerJidConfirmedSet).toBeGreaterThan(ownerJidConfirmedDeclared);
     expect(pollGuard).toContain("ownerJidConfirmedThisPoll &&");
+  });
+
+  it("re-verifies with fetchInstances before trusting a WhatsApp 'disconnected' alert", () => {
+    // Regression: a tenant got a false "your WhatsApp disconnected" alert while it was
+    // still connected. Evolution/Baileys can report a transient non-"open" state during
+    // an automatic reconnect blip, and neither the webhook nor the poll route had any
+    // corroborating check before firing the disconnect alert (unlike the connect side,
+    // which already required a fresh ownerJid). This locks in the symmetric fix.
+
+    // Webhook path: re-checks fetchInstances before accepting open -> non-open.
+    const webhookSource = source("app/api/webhooks/evolution/route.ts");
+    const webhookFetchInstancesIdx = webhookSource.indexOf("evolutionFetchInstances(instanceName)");
+    const webhookDisconnectBlock = webhookSource.indexOf("notifyTenantIntegrationDisconnected({");
+    expect(webhookFetchInstancesIdx).toBeGreaterThan(0);
+    expect(webhookFetchInstancesIdx).toBeLessThan(webhookDisconnectBlock);
+    expect(webhookSource.slice(0, webhookDisconnectBlock)).toContain("confirmedState");
+
+    // Client status-poll path: mirrors the "open" zombie-check with a reverse branch
+    // that re-verifies via fetchInstances before accepting a transition away from open.
+    const pollSource = source("app/api/client/whatsapp/evolution/session/route.ts");
+    const reverseCheckComment = pollSource.indexOf("Reverse zombie check");
+    const pollDisconnectBlock = pollSource.indexOf("notifyTenantIntegrationDisconnected({");
+    expect(reverseCheckComment).toBeGreaterThan(0);
+    expect(reverseCheckComment).toBeLessThan(pollDisconnectBlock);
   });
 });

@@ -232,6 +232,22 @@ export async function GET(request: Request) {
         ownerJidConfirmedThisPoll = true;
       }
     }
+  } else if (normalizeEvolutionConnectionState(row.connection_state, "close") === "open") {
+    // Reverse zombie check: sair de "open" também não garante desconexão real — o
+    // Baileys reconecta sozinho após blips momentâneos de rede, e connectionState pode
+    // reportar "close" por um instante sem o WhatsApp ter sido deslogado de verdade.
+    // Confirma via fetchInstances (mesma fonte de verdade do check acima); se ainda
+    // achar um dono de sessão vivo, trata como se a transição não tivesse acontecido —
+    // evita um alerta falso de "desconectado" e um "piscar" do status no painel.
+    const fetchResult = await evolutionFetchInstances(row.instance_name);
+    if (fetchResult.ok) {
+      const instanceInfo = pickEvolutionInstanceInfo(fetchResult.data, row.instance_name);
+      if (instanceInfo?.ownerJid) {
+        remoteState = "open";
+        resolvedWaJid = instanceInfo.ownerJid;
+        ownerJidConfirmedThisPoll = true;
+      }
+    }
   }
 
   try {
