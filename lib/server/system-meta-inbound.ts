@@ -1,20 +1,18 @@
 /**
  * Pipeline de inbound da API Oficial Meta para o agente do sistema.
  *
- * Quando o número Meta configurado no /admin/system-agent recebe uma mensagem:
- *  1. salva a mensagem (texto/áudio/imagem) em whatsapp_messages sob o tenant do sistema
- *     (para aparecer no chat de monitoramento);
- *  2. interpreta áudio (Whisper) e imagem (GPT-4o vision) para texto;
- *  3. gera resposta automática com a IA (generateAgentResponse);
- *  4. envia a resposta via Cloud API e salva o outbound.
- *
- * Reusa os mesmos helpers do pipeline Evolution — sem duplicar lógica de IA.
+ * O agente do sistema é só de notificação — não atende clientes. Quando o
+ * número Meta configurado no /admin/system-agent recebe uma mensagem, ela é:
+ *  1. salva (texto/áudio/imagem) em whatsapp_messages sob o tenant do sistema
+ *     (aparece em "Conversas ao vivo" para monitoramento);
+ *  2. interpretada (Whisper/GPT-4o vision) só para exibir um resumo legível
+ *     no monitor — nunca gera nem envia resposta automática. Quem manda
+ *     mensagem pra esse número é ignorado; o único envio deste agente é via
+ *     sendSystemNotification (handoff, desconexão, teste, etc.).
  */
-import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
 import { describeImageFromBuffer, transcribeAudioFromBuffer } from "@/lib/ai/media-processor";
 import {
   fetchWhatsAppCloudMedia,
-  sendWhatsAppTextMessage,
   type WhatsAppInboundMessage,
 } from "@/lib/integrations/whatsapp-cloud";
 import { uploadMediaToR2 } from "@/lib/integrations/r2-storage";
@@ -160,42 +158,6 @@ export async function handleSystemMetaInbound(inbound: WhatsAppInboundMessage): 
     caption: inbound.caption,
   });
 
-  if (!promptText.trim()) return true;
-
-  // Resposta automática da IA.
-  const result = await generateAgentResponse({
-    tenantId: SYSTEM_TENANT_ID,
-    agentId: SYSTEM_AGENT_ID,
-    conversationId: remoteJid,
-    customerId: inbound.fromWaId,
-    feature: "agent_chat",
-    messages: [{ role: "user", content: promptText.slice(0, 4000) }],
-  }).catch(() => null);
-
-  const replyText = result?.ok
-    ? result.text
-    : "Não consegui gerar uma resposta agora. Por favor tente de novo em instantes.";
-
-  const send = await sendWhatsAppTextMessage({
-    toWaId: inbound.fromWaId,
-    text: replyText.slice(0, 4000),
-    phoneNumberId: config.phoneNumberId,
-    accessToken: config.accessToken,
-  });
-
-  await saveSystemMessage({
-    remoteJid,
-    direction: "outbound",
-    kind: "text",
-    content: replyText,
-    messageId: send.messageId ?? null,
-    leadId,
-    deliveryStatus: send.ok ? "sent" : "failed",
-  });
-
-  if (!send.ok) {
-    console.warn("[system-meta-inbound] send_failed", send.status, send.error);
-  }
-
+  // Nunca responde — só monitora. A mensagem já foi salva acima.
   return true;
 }

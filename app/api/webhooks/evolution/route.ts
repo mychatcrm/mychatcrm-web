@@ -752,6 +752,11 @@ export async function POST(request: Request) {
     await Promise.all(
       savedContexts.map(async (ctx) => {
         if (!ctx) return;
+        // O agente do sistema é só de notificação — nunca gera resposta
+        // automática para quem manda mensagem pra ele, mesmo com Evolution/QR
+        // ativo. A mensagem já foi salva na Phase 1 (aparece em "Conversas ao
+        // vivo" para monitoramento); só o Phase 2 (IA/auto-reply) é pulado.
+        if (row.tenant_id === SYSTEM_TENANT_ID) return;
         const {
           msg,
           agentId,

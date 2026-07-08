@@ -121,7 +121,7 @@ describe("handleSystemMetaInbound — respects the QR/Meta toggle", () => {
     expect(sendWhatsAppTextMessageMock).not.toHaveBeenCalled();
   });
 
-  it("processes and replies when the toggle is on Meta and the phone number matches", async () => {
+  it("saves the inbound message for monitoring but never auto-replies, even when the toggle is on Meta", async () => {
     getSystemAgentMetaConfigMock.mockResolvedValueOnce({
       phoneNumberId: "123456789012345",
       accessToken: "token-abc",
@@ -134,13 +134,14 @@ describe("handleSystemMetaInbound — respects the QR/Meta toggle", () => {
 
     expect(handled).toBe(true);
     expect(upsertLeadMock).toHaveBeenCalledTimes(1);
-    expect(generateAgentResponseMock).toHaveBeenCalledTimes(1);
-    expect(sendWhatsAppTextMessageMock).toHaveBeenCalledWith(
-      expect.objectContaining({ phoneNumberId: "123456789012345", toWaId: "5562999990000" }),
-    );
+    // O agente do sistema é só de notificação — nunca gera nem envia resposta
+    // automática para quem manda mensagem pra ele.
+    expect(generateAgentResponseMock).not.toHaveBeenCalled();
+    expect(sendWhatsAppTextMessageMock).not.toHaveBeenCalled();
+    expect(insertMock).toHaveBeenCalledTimes(1);
   });
 
-  it("tags every saved message with channel: meta_cloud, for the live-conversations channel filter", async () => {
+  it("tags the saved (inbound-only) message with channel: meta_cloud, for the live-conversations channel filter", async () => {
     getSystemAgentMetaConfigMock.mockResolvedValueOnce({
       phoneNumberId: "123456789012345",
       accessToken: "token-abc",
@@ -151,9 +152,7 @@ describe("handleSystemMetaInbound — respects the QR/Meta toggle", () => {
 
     await handleSystemMetaInbound(inboundFixture());
 
-    expect(insertMock).toHaveBeenCalledTimes(2);
-    for (const call of insertMock.mock.calls) {
-      expect(call[0]).toMatchObject({ channel: "meta_cloud" });
-    }
+    expect(insertMock).toHaveBeenCalledTimes(1);
+    expect(insertMock.mock.calls[0]?.[0]).toMatchObject({ channel: "meta_cloud", direction: "inbound" });
   });
 });

@@ -68,4 +68,18 @@ describe("omnichannel runtime contracts", () => {
     expect(content).toContain('.order("created_at", { ascending: false })');
     expect(content).toContain(".reverse()");
   });
+
+  it("skips Phase 2 automation for the system agent's own tenant, so it never auto-replies over Evolution/QR", () => {
+    // The system agent is notification-only — Phase 1 (message persistence,
+    // for "Conversas ao vivo") must still run, but Phase 2 (AI reply
+    // generation) must bail out before ever calling generateAgentResponse.
+    const content = source("app/api/webhooks/evolution/route.ts");
+    const phase2Start = content.indexOf("// ── Phase 2: run automation flows in parallel");
+    const guard = content.indexOf("if (row.tenant_id === SYSTEM_TENANT_ID) return;", phase2Start);
+    const generateCall = content.indexOf("await generateAgentResponse({", phase2Start);
+
+    expect(phase2Start).toBeGreaterThan(0);
+    expect(guard).toBeGreaterThan(phase2Start);
+    expect(generateCall).toBeGreaterThan(guard);
+  });
 });
