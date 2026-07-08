@@ -10,7 +10,7 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(_request: Request, { params }: { params: { jid: string } }) {
+export async function GET(request: Request, { params }: { params: { jid: string } }) {
   const session = await getAdminSessionFromCookies();
   if (!session) return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
   if (!hasAdminAccess(session, "system-agent")) {
@@ -20,15 +20,20 @@ export async function GET(_request: Request, { params }: { params: { jid: string
   const remoteJid = decodeURIComponent(params.jid);
   if (!remoteJid) return NextResponse.json({ error: "jid em falta" }, { status: 400 });
 
+  const rawChannel = new URL(request.url).searchParams.get("channel");
+  const channel = rawChannel === "evolution" || rawChannel === "meta_cloud" ? rawChannel : null;
+
   const sb = createSupabaseServiceClient();
-  const { data, error } = await sb
+  let query = sb
     .from("whatsapp_messages")
-    .select("id, direction, kind, content, media_url, agent_id, created_at, delivery_status")
+    .select("id, direction, kind, content, media_url, agent_id, created_at, delivery_status, channel")
     .eq("tenant_id", SYSTEM_TENANT_ID)
     .eq("agent_id", SYSTEM_AGENT_ID)
     .eq("remote_jid", remoteJid)
     .order("created_at", { ascending: false })
     .limit(80);
+  if (channel) query = query.eq("channel", channel);
+  const { data, error } = await query;
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

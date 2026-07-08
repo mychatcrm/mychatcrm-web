@@ -1,13 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MessageSquare, RefreshCw, Bot, User, Trash2 } from "lucide-react";
+import { MessageSquare, RefreshCw, Bot, User, Trash2, QrCode, Cloud } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   subscribeToWhatsappMessages,
   type WhatsappMessageRealtimeRow,
 } from "@/lib/conversas/whatsapp-messages-realtime";
 import { AudioBubble, ImageBubble, VideoBubble } from "@/components/chat/media/ChatMediaBubbles";
+
+type Channel = "evolution" | "meta_cloud" | null;
+type ChannelFilter = "all" | "evolution" | "meta_cloud";
 
 type Conversation = {
   remoteJid: string;
@@ -16,6 +19,7 @@ type Conversation = {
   lastDirection: string;
   lastAt: string;
   count: number;
+  channel: Channel;
 };
 
 type ChatMessage = {
@@ -27,7 +31,14 @@ type ChatMessage = {
   agent_id: string | null;
   created_at: string;
   delivery_status?: string | null;
+  channel?: Channel;
 };
+
+function channelBadge(channel: Channel): { label: string; Icon: typeof QrCode; tone: string } | null {
+  if (channel === "meta_cloud") return { label: "API Meta", Icon: Cloud, tone: "text-sky-400" };
+  if (channel === "evolution") return { label: "QR Code", Icon: QrCode, tone: "text-emerald-400" };
+  return null;
+}
 
 function formatJid(jid: string): string {
   const digits = jid.split("@")[0]?.replace(/\D/g, "");
@@ -54,21 +65,26 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
   const [loadingThread, setLoadingThread] = useState(false);
   const [deletingJid, setDeletingJid] = useState<string | null>(null);
   const [deletingAll, setDeletingAll] = useState(false);
+  const [channelFilter, setChannelFilter] = useState<ChannelFilter>("all");
   const threadRef = useRef<HTMLDivElement>(null);
   const activeJidRef = useRef<string | null>(null);
   activeJidRef.current = activeJid;
+  const channelFilterRef = useRef<ChannelFilter>("all");
+  channelFilterRef.current = channelFilter;
 
-  const loadConversations = useCallback(async () => {
-    const res = await fetch("/api/admin/system-agent/conversations", { credentials: "same-origin" });
+  const loadConversations = useCallback(async (filter: ChannelFilter) => {
+    const qs = filter === "all" ? "" : `?channel=${filter}`;
+    const res = await fetch(`/api/admin/system-agent/conversations${qs}`, { credentials: "same-origin" });
     const json = (await res.json().catch(() => ({}))) as { conversations?: Conversation[] };
     setConversations(json.conversations ?? []);
     setLoadingList(false);
   }, []);
 
-  const loadMessages = useCallback(async (jid: string) => {
+  const loadMessages = useCallback(async (jid: string, filter: ChannelFilter) => {
     setLoadingThread(true);
+    const qs = filter === "all" ? "" : `?channel=${filter}`;
     const res = await fetch(
-      `/api/admin/system-agent/conversations/${encodeURIComponent(jid)}/messages`,
+      `/api/admin/system-agent/conversations/${encodeURIComponent(jid)}/messages${qs}`,
       { credentials: "same-origin" },
     );
     const json = (await res.json().catch(() => ({}))) as { messages?: ChatMessage[] };
@@ -90,7 +106,7 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
       setActiveJid(null);
       setMessages([]);
     }
-    void loadConversations();
+    void loadConversations(channelFilterRef.current);
   }, [loadConversations]);
 
   const deleteAll = useCallback(async () => {
@@ -103,16 +119,25 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
     setDeletingAll(false);
     setActiveJid(null);
     setMessages([]);
-    void loadConversations();
+    void loadConversations(channelFilterRef.current);
   }, [loadConversations]);
 
-  useEffect(() => {
-    void loadConversations();
-  }, [loadConversations]);
+  // Trocar de aba deseleciona a conversa aberta — evita mostrar uma thread
+  // "vazia" quando a conversa ativa não tem mensagens no canal escolhido.
+  const changeChannelFilter = useCallback((next: ChannelFilter) => {
+    setChannelFilter(next);
+    setActiveJid(null);
+    setMessages([]);
+  }, []);
 
   useEffect(() => {
-    if (activeJid) void loadMessages(activeJid);
-  }, [activeJid, loadMessages]);
+    setLoadingList(true);
+    void loadConversations(channelFilter);
+  }, [loadConversations, channelFilter]);
+
+  useEffect(() => {
+    if (activeJid) void loadMessages(activeJid, channelFilter);
+  }, [activeJid, channelFilter, loadMessages]);
 
   // Auto-scroll para o fim quando novas mensagens chegam.
   useEffect(() => {
@@ -120,12 +145,16 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  // Realtime: novas mensagens do tenant do sistema.
+  // Realtime: novas mensagens do tenant do sistema. Sem mudar a assinatura do
+  // hook compartilhado (também usado em /dashboard/conversas) — o filtro por
+  // canal é aplicado aqui, no cliente, sobre as linhas que já chegam.
   useEffect(() => {
     const unsub = subscribeToWhatsappMessages({
       tenantId: systemTenantId,
       onInsert: (row: WhatsappMessageRealtimeRow) => {
-        void loadConversations();
+        void loadConversations(channelFilterRef.current);
+        const rowChannel = (row as WhatsappMessageRealtimeRow & { channel?: Channel }).channel ?? null;
+        if (channelFilterRef.current !== "all" && rowChannel !== channelFilterRef.current) return;
         if (row.remote_jid === activeJidRef.current) {
           setMessages((prev) => {
             if (prev.some((m) => m.id === row.id)) return prev;
@@ -140,6 +169,7 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
                 agent_id: row.agent_id ?? null,
                 created_at: row.created_at,
                 delivery_status: row.delivery_status ?? null,
+                channel: rowChannel,
               },
             ];
           });
@@ -153,8 +183,8 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
       },
       pollMs: 15_000,
       onPoll: () => {
-        void loadConversations();
-        if (activeJidRef.current) void loadMessages(activeJidRef.current);
+        void loadConversations(channelFilterRef.current);
+        if (activeJidRef.current) void loadMessages(activeJidRef.current, channelFilterRef.current);
       },
     });
     return unsub;
@@ -184,8 +214,8 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
           <button
             type="button"
             onClick={() => {
-              void loadConversations();
-              if (activeJid) void loadMessages(activeJid);
+              void loadConversations(channelFilter);
+              if (activeJid) void loadMessages(activeJid, channelFilter);
             }}
             className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
           >
@@ -193,10 +223,36 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
           </button>
         </div>
       </div>
-      <p className="mb-4 text-xs text-content-muted">
+      <p className="mb-3 text-xs text-content-muted">
         Monitoramento (somente leitura) das conversas que o agente do sistema atende automaticamente —
-        texto, áudio e imagem.
+        texto, áudio e imagem. O mesmo agente atende por 2 números: filtre por canal abaixo.
       </p>
+
+      {/* 3 abas: Todas / QR Code / API Oficial — mesmo padrão visual do toggle QR↔Meta do SystemAgentHub. */}
+      <div className="mb-4 flex items-center gap-1.5 rounded-lg border border-line/60 bg-surface-elevated/30 p-1">
+        {(
+          [
+            { key: "all", label: "Todas", Icon: MessageSquare },
+            { key: "evolution", label: "QR Code", Icon: QrCode },
+            { key: "meta_cloud", label: "API Oficial", Icon: Cloud },
+          ] as const
+        ).map(({ key, label, Icon }) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => changeChannelFilter(key)}
+            className={cn(
+              "flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
+              channelFilter === key
+                ? "bg-primary text-white shadow-sm"
+                : "text-content-muted hover:bg-surface-elevated/60 hover:text-content-secondary",
+            )}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            {label}
+          </button>
+        ))}
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
         {/* Lista de conversas */}
@@ -207,7 +263,9 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
             <p className="p-4 text-xs text-content-muted">Nenhuma conversa ainda.</p>
           ) : (
             <ul className="divide-y divide-line/40">
-              {conversations.map((c) => (
+              {conversations.map((c) => {
+                const badge = channelBadge(c.channel);
+                return (
                 <li key={c.remoteJid} className="group relative">
                   <button
                     type="button"
@@ -217,8 +275,14 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
                       activeJid === c.remoteJid ? "bg-primary/5" : "",
                     )}
                   >
-                    <span className="font-mono text-xs font-medium text-content-secondary">
+                    <span className="flex items-center gap-1.5 font-mono text-xs font-medium text-content-secondary">
                       {formatJid(c.remoteJid)}
+                      {badge && (
+                        <span className={cn("flex items-center gap-0.5 text-[9px] font-sans font-normal", badge.tone)}>
+                          <badge.Icon className="h-2.5 w-2.5" />
+                          {badge.label}
+                        </span>
+                      )}
                     </span>
                     <span className="line-clamp-1 text-[11px] text-content-muted">
                       {c.lastDirection === "outbound" ? "→ " : "← "}
@@ -243,7 +307,8 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           )}
         </div>
@@ -264,6 +329,7 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
           ) : (
             messages.map((m) => {
               const out = m.direction === "outbound";
+              const badge = channelBadge(m.channel ?? null);
               return (
                 <div
                   key={m.id}
@@ -280,6 +346,12 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
                     <div className="mb-0.5 flex items-center gap-1 text-[10px] opacity-70">
                       {out ? <Bot className="h-3 w-3" /> : <User className="h-3 w-3" />}
                       {out ? "Agente" : "Cliente"}
+                      {badge && (
+                        <span className={cn("ml-1 flex items-center gap-0.5", out ? "text-white/80" : badge.tone)}>
+                          <badge.Icon className="h-2.5 w-2.5" />
+                          {badge.label}
+                        </span>
+                      )}
                     </div>
                     {m.kind === "audio" && m.media_url ? (
                       <AudioBubble src={m.media_url} msgId={m.id} />

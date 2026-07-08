@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  fetchWhatsAppMessageTemplateStatus,
   parseWhatsAppCloudInbound,
   parseWhatsAppCloudPayload,
   parseWhatsAppCloudStatuses,
@@ -181,5 +182,98 @@ describe("sendWhatsAppTemplateMessage", () => {
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(String(init.body));
     expect(body.template).toEqual({ name: "hello_world", language: { code: "en_US" } });
+  });
+});
+
+describe("fetchWhatsAppMessageTemplateStatus", () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reports an approved template as found", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ data: [{ name: "system_notification", status: "APPROVED", category: "UTILITY" }] }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const result = await fetchWhatsAppMessageTemplateStatus({
+      wabaId: "WABA1",
+      templateName: "system_notification",
+      accessToken: "token-abc",
+    });
+
+    expect(result).toEqual({ found: true, status: "APPROVED", category: "UTILITY" });
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toContain("/WABA1/message_templates");
+    expect(url).toContain("name=system_notification");
+  });
+
+  it("reports a pending template as found", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ data: [{ name: "system_notification", status: "PENDING", category: "UTILITY" }] }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const result = await fetchWhatsAppMessageTemplateStatus({
+      wabaId: "WABA1",
+      templateName: "system_notification",
+      accessToken: "token-abc",
+    });
+
+    expect(result).toEqual({ found: true, status: "PENDING", category: "UTILITY" });
+  });
+
+  it("reports a rejected template as found", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ data: [{ name: "system_notification", status: "REJECTED", category: "UTILITY" }] }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const result = await fetchWhatsAppMessageTemplateStatus({
+      wabaId: "WABA1",
+      templateName: "system_notification",
+      accessToken: "token-abc",
+    });
+
+    expect(result).toEqual({ found: true, status: "REJECTED", category: "UTILITY" });
+  });
+
+  it("reports not found when the name does not match any template", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: [] }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+
+    const result = await fetchWhatsAppMessageTemplateStatus({
+      wabaId: "WABA1",
+      templateName: "nome_errado",
+      accessToken: "token-abc",
+    });
+
+    expect(result).toEqual({ found: false, status: null, category: null });
+  });
+
+  it("reports not found when the Graph API call fails", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("", { status: 401 }));
+
+    const result = await fetchWhatsAppMessageTemplateStatus({
+      wabaId: "WABA1",
+      templateName: "system_notification",
+      accessToken: "token-invalido",
+    });
+
+    expect(result).toEqual({ found: false, status: null, category: null });
   });
 });

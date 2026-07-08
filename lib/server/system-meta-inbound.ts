@@ -68,6 +68,9 @@ async function saveSystemMessage(args: SaveArgs): Promise<string | null> {
       storage_key: args.storageKey ?? null,
       caption: args.caption ?? null,
       delivery_status: args.deliveryStatus ?? null,
+      // Toda linha gravada por esta função veio da API Oficial Meta — usado
+      // pelo painel "Conversas ao vivo" para filtrar por canal.
+      channel: "meta_cloud",
     })
     .select("id")
     .maybeSingle();

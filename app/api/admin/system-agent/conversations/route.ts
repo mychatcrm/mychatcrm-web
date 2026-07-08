@@ -17,6 +17,7 @@ type Row = {
   content: string;
   agent_id: string | null;
   created_at: string;
+  channel: string | null;
 };
 
 async function authAdmin() {
@@ -26,23 +27,41 @@ async function authAdmin() {
   return session;
 }
 
-export async function GET() {
+/** Canal opcional (?channel=evolution|meta_cloud) para os 3 filtros do painel "Conversas ao vivo". */
+function parseChannelFilter(url: URL): "evolution" | "meta_cloud" | null {
+  const raw = url.searchParams.get("channel");
+  return raw === "evolution" || raw === "meta_cloud" ? raw : null;
+}
+
+export async function GET(request: Request) {
   if (!(await authAdmin())) return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
 
+  const channel = parseChannelFilter(new URL(request.url));
+
   const sb = createSupabaseServiceClient();
-  const { data, error } = await sb
+  let query = sb
     .from("whatsapp_messages")
-    .select("remote_jid, direction, kind, content, agent_id, created_at")
+    .select("remote_jid, direction, kind, content, agent_id, created_at, channel")
     .eq("tenant_id", SYSTEM_TENANT_ID)
     .eq("agent_id", SYSTEM_AGENT_ID)
     .order("created_at", { ascending: false })
     .limit(400);
+  if (channel) query = query.eq("channel", channel);
+  const { data, error } = await query;
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const byJid = new Map<
     string,
-    { remoteJid: string; lastContent: string; lastKind: string; lastDirection: string; lastAt: string; count: number }
+    {
+      remoteJid: string;
+      lastContent: string;
+      lastKind: string;
+      lastDirection: string;
+      lastAt: string;
+      count: number;
+      channel: string | null;
+    }
   >();
   for (const r of (data ?? []) as Row[]) {
     const existing = byJid.get(r.remote_jid);
@@ -50,6 +69,8 @@ export async function GET() {
       existing.count += 1;
       continue;
     }
+    // Ordenado por created_at desc — a primeira ocorrência de cada jid é a mais
+    // recente, então o canal dela representa o canal "atual" da conversa.
     byJid.set(r.remote_jid, {
       remoteJid: r.remote_jid,
       lastContent: r.content ?? "",
@@ -57,6 +78,7 @@ export async function GET() {
       lastDirection: r.direction ?? "inbound",
       lastAt: r.created_at,
       count: 1,
+      channel: r.channel ?? null,
     });
   }
 

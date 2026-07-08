@@ -252,6 +252,30 @@ export async function sendWhatsAppTemplateMessage(params: {
   return { ok: true, status: res.status, messageId: data.messages?.[0]?.id };
 }
 
+/**
+ * Confirma se um template existe e está aprovado na WABA antes de salvá-lo —
+ * evita descobrir um nome errado ou não aprovado só no próximo disparo real.
+ */
+export async function fetchWhatsAppMessageTemplateStatus(params: {
+  wabaId: string;
+  templateName: string;
+  accessToken: string;
+}): Promise<{ found: boolean; status: "APPROVED" | "PENDING" | "REJECTED" | null; category: string | null }> {
+  const url = `${GRAPH_API}/${encodeURIComponent(params.wabaId)}/message_templates?name=${encodeURIComponent(params.templateName)}&fields=name,status,category`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${params.accessToken}` },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) return { found: false, status: null, category: null };
+  const data = (await res.json().catch(() => ({}))) as {
+    data?: Array<{ name?: string; status?: string; category?: string }>;
+  };
+  const match = data.data?.find((t) => t.name === params.templateName);
+  if (!match) return { found: false, status: null, category: null };
+  const status = match.status === "APPROVED" || match.status === "PENDING" || match.status === "REJECTED" ? match.status : null;
+  return { found: true, status, category: match.category ?? null };
+}
+
 export type WhatsAppCloudStatus = {
   id: string;
   status: string;

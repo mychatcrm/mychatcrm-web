@@ -139,4 +139,21 @@ describe("handleSystemMetaInbound — respects the QR/Meta toggle", () => {
       expect.objectContaining({ phoneNumberId: "123456789012345", toWaId: "5562999990000" }),
     );
   });
+
+  it("tags every saved message with channel: meta_cloud, for the live-conversations channel filter", async () => {
+    getSystemAgentMetaConfigMock.mockResolvedValueOnce({
+      phoneNumberId: "123456789012345",
+      accessToken: "token-abc",
+      displayPhone: "+55 62 99999-0000",
+      verifiedName: "MyChatCRM",
+      active: true,
+    });
+
+    await handleSystemMetaInbound(inboundFixture());
+
+    expect(insertMock).toHaveBeenCalledTimes(2);
+    for (const call of insertMock.mock.calls) {
+      expect(call[0]).toMatchObject({ channel: "meta_cloud" });
+    }
+  });
 });

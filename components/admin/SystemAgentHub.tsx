@@ -220,6 +220,7 @@ export function SystemAgentHub(props: {
   const [metaConfig, setMetaConfig] = useState<MetaConfig | null>(props.initialMetaConfig ?? null);
   const [metaBusy, setMetaBusy] = useState(false);
   const [metaError, setMetaError] = useState<string | null>(null);
+  const [templateNotice, setTemplateNotice] = useState<{ tone: "success" | "warning"; text: string } | null>(null);
   const [metaEmbeddedBusy, setMetaEmbeddedBusy] = useState(false);
   const [metaRepairBusy, setMetaRepairBusy] = useState(false);
   const [templateNameInput, setTemplateNameInput] = useState("");
@@ -651,6 +652,7 @@ export function SystemAgentHub(props: {
   const saveMetaTemplate = useCallback(async () => {
     setTemplateSaveBusy(true);
     setMetaError(null);
+    setTemplateNotice(null);
     try {
       const res = await fetch("/api/admin/system-agent/meta/config", {
         method: "PATCH",
@@ -663,6 +665,7 @@ export function SystemAgentHub(props: {
         error?: string;
         template_name?: string | null;
         template_lang?: string | null;
+        warning?: string | null;
       };
       if (!res.ok) {
         setMetaError(json.error ?? "Falha ao salvar template.");
@@ -671,6 +674,11 @@ export function SystemAgentHub(props: {
       setMetaConfig((prev) =>
         prev ? { ...prev, template_name: json.template_name ?? null, template_lang: json.template_lang ?? null } : prev,
       );
+      if (json.warning) {
+        setTemplateNotice({ tone: "warning", text: json.warning });
+      } else if (json.template_name) {
+        setTemplateNotice({ tone: "success", text: `Template «${json.template_name}» aprovado e salvo — disparos agora funcionam sempre.` });
+      }
     } finally {
       setTemplateSaveBusy(false);
     }
@@ -1070,15 +1078,28 @@ export function SystemAgentHub(props: {
                       {templateSaveBusy ? "Salvando…" : "Salvar"}
                     </button>
                   </div>
-                  {metaConfig?.template_name ? (
+                  {templateNotice ? (
+                    <p
+                      className={cn(
+                        "mt-1.5 rounded-lg border px-2 py-1.5 text-[10px] leading-relaxed",
+                        templateNotice.tone === "warning"
+                          ? "border-amber-500/40 bg-amber-500/10 text-amber-100"
+                          : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+                      )}
+                    >
+                      {templateNotice.tone === "warning" ? "⚠ " : "✓ "}
+                      {templateNotice.text}
+                    </p>
+                  ) : metaConfig?.template_name ? (
                     <p className="mt-1.5 text-[10px] text-emerald-400">
                       ✓ Notificações serão enviadas via template «{metaConfig.template_name}» (
                       {metaConfig.template_lang ?? "pt_BR"}).
                     </p>
                   ) : (
-                    <p className="mt-1.5 text-[10px] text-content-faint">
-                      Sem template: envio em texto livre — só entrega se o destinatário mandou mensagem nas últimas
-                      24h.
+                    <p className="mt-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[10px] leading-relaxed text-amber-100">
+                      ⚠ Sem template: os disparos do sistema (teste, handoff, desconexão) só entregam se o
+                      destinatário mandou mensagem nas últimas 24h — fora disso, falham em silêncio. Configure um
+                      template para disparo garantido sempre.
                     </p>
                   )}
                 </div>

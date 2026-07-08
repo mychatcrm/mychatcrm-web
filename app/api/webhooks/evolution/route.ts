@@ -376,6 +376,9 @@ async function saveMessage(opts: {
         media_duration_seconds: opts.mediaDurationSeconds ?? null,
         transcription_status: opts.transcriptionStatus ?? null,
         analysis_status: opts.analysisStatus ?? null,
+        // Toda linha gravada por esta função veio do webhook Evolution — usado
+        // pelo painel "Conversas ao vivo" para filtrar por canal.
+        channel: "evolution",
       })
       // Deduplicação: a constraint UNIQUE (tenant_id, message_id) WHERE message_id IS NOT NULL
       // garante que um retry da Evolution API não crie um segundo job de resposta.

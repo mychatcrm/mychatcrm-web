@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
+import { fetchWhatsAppMessageTemplateStatus } from "@/lib/integrations/whatsapp-cloud";
 import {
   clearSystemAgentMetaConfig,
   getSystemAgentMetaConfig,
@@ -55,11 +56,57 @@ export async function PATCH(request: Request) {
   if (body.template_name !== undefined || body.template_lang !== undefined) {
     const templateName = typeof body.template_name === "string" ? body.template_name.trim() : "";
     const templateLang = typeof body.template_lang === "string" ? body.template_lang.trim() : "";
+
+    // Limpar o template (nome vazio) não precisa de validação contra a Meta.
+    if (!templateName) {
+      await saveSystemAgentMetaTemplate({ templateName: null, templateLang: null });
+      return NextResponse.json({ ok: true, template_name: null, template_lang: null });
+    }
+
+    const config = await getSystemAgentMetaConfig();
+    if (!config?.wabaId) {
+      return NextResponse.json(
+        {
+          error:
+            "Não temos o ID da conta WhatsApp Business (WABA) salvo para validar o template — desconecte e reconecte via «Conectar via Facebook» primeiro.",
+        },
+        { status: 422 },
+      );
+    }
+
+    const check = await fetchWhatsAppMessageTemplateStatus({
+      wabaId: config.wabaId,
+      templateName,
+      accessToken: config.accessToken,
+    });
+
+    if (!check.found) {
+      return NextResponse.json(
+        { error: `Template «${templateName}» não existe nessa conta WhatsApp Business — confira o nome exato no gerenciador do WhatsApp.` },
+        { status: 400 },
+      );
+    }
+    if (check.status === "REJECTED") {
+      return NextResponse.json(
+        { error: `Template «${templateName}» foi rejeitado pela Meta — crie outro ou corrija o conteúdo/categoria.` },
+        { status: 400 },
+      );
+    }
+
     await saveSystemAgentMetaTemplate({
-      templateName: templateName || null,
+      templateName,
       templateLang: templateLang || null,
     });
-    return NextResponse.json({ ok: true, template_name: templateName || null, template_lang: templateLang || null });
+
+    return NextResponse.json({
+      ok: true,
+      template_name: templateName,
+      template_lang: templateLang || null,
+      warning:
+        check.status === "PENDING"
+          ? `Template salvo, mas ainda está em análise pela Meta — os disparos vão falhar até ser aprovado.`
+          : null,
+    });
   }
 
   const provider = body.active_provider;
