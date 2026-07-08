@@ -1,9 +1,12 @@
 import "server-only";
 
+import { jidToDigits } from "@/lib/integrations/evolution-api";
 import { SYSTEM_TENANT_ID, sendSystemNotification } from "@/lib/server/system-agent";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
-const SYSTEM_NOTIFICATION_TYPE = "integration_disconnected";
+const INTEGRATION_DISCONNECTED_TYPE = "integration_disconnected";
+const INTEGRATION_CONNECTED_TYPE = "integration_connected";
+type NotificationKind = typeof INTEGRATION_DISCONNECTED_TYPE | typeof INTEGRATION_CONNECTED_TYPE;
 const DEDUPE_WINDOW_MS = 4 * 60 * 60 * 1000;
 const STABLE_DISCONNECT_STATES = new Set(["close", "refused", "deleted", "logout"]);
 
@@ -28,6 +31,17 @@ export function shouldNotifyWhatsappDisconnect(params: {
 }): boolean {
   return (
     normalizeConnectionState(params.previousState) === "open" && isStableDisconnectState(params.nextState)
+  );
+}
+
+/** Espelho invertido: só true numa transição real para conectado, não numa reconfirmação. */
+export function shouldNotifyWhatsappConnect(params: {
+  previousState?: string | null;
+  nextState?: string | null;
+}): boolean {
+  return (
+    normalizeConnectionState(params.previousState) !== "open" &&
+    normalizeConnectionState(params.nextState) === "open"
   );
 }
 
@@ -137,12 +151,13 @@ export async function loadTenantNotificationRecipient(params: {
 }
 
 function buildDedupeMetadata(params: {
+  kind: NotificationKind;
   tenantId: string;
   integration: IntegrationDisconnectKind;
   sourceKey: string;
 }) {
   return {
-    kind: "integration_disconnected",
+    kind: params.kind,
     tenant_id: params.tenantId,
     integration: params.integration,
     source_key: params.sourceKey,
@@ -151,6 +166,7 @@ function buildDedupeMetadata(params: {
 
 async function wasRecentlyNotified(params: {
   sb: ReturnType<typeof createSupabaseServiceClient>;
+  kind: NotificationKind;
   tenantId: string;
   integration: IntegrationDisconnectKind;
   sourceKey: string;
@@ -159,7 +175,7 @@ async function wasRecentlyNotified(params: {
   const { data, error } = await params.sb
     .from("system_notifications_log")
     .select("id")
-    .eq("type", SYSTEM_NOTIFICATION_TYPE)
+    .eq("type", params.kind)
     .gte("created_at", since)
     .contains("metadata", buildDedupeMetadata(params))
     .limit(1);
@@ -178,6 +194,7 @@ async function wasRecentlyNotified(params: {
 
 async function logSkippedNotification(params: {
   sb: ReturnType<typeof createSupabaseServiceClient>;
+  kind: NotificationKind;
   tenantId: string;
   integration: IntegrationDisconnectKind;
   sourceKey: string;
@@ -186,7 +203,7 @@ async function logSkippedNotification(params: {
   metadata: Record<string, unknown>;
 }) {
   await params.sb.from("system_notifications_log").insert({
-    type: SYSTEM_NOTIFICATION_TYPE,
+    type: params.kind,
     to_number: "missing",
     message: params.message.slice(0, 4000),
     status: params.reason === "missing_tenant_owner_phone" ? "skipped" : "failed",
@@ -230,6 +247,46 @@ export function buildIntegrationDisconnectedMessage(params: {
   ].join(" ");
 }
 
+function resolveWhatsappPhoneForMessage(params: { waJid?: string | null; phoneDisplay?: string | null }): string | null {
+  const display = (params.phoneDisplay ?? "").trim();
+  if (display) return display;
+  const digits = jidToDigits(params.waJid);
+  return digits ? `+${digits}` : null;
+}
+
+function formatNameList(names: string[]): string {
+  if (names.length === 0) return "";
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} e ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")} e ${names[names.length - 1]}`;
+}
+
+export function buildIntegrationConnectedMessage(params: {
+  integration: IntegrationDisconnectKind;
+  tenantName: string;
+  ownerName?: string | null;
+  phone?: string | null;
+  pageNames?: string[];
+}): string {
+  const greeting = params.ownerName ? `Olá, ${params.ownerName}.` : "Olá.";
+  if (params.integration === "whatsapp") {
+    const phoneText = params.phone ? ` (número ${params.phone})` : "";
+    return [
+      `${greeting} Aviso do MyChatCRM: uma nova linha de WhatsApp foi conectada com sucesso na conta ${params.tenantName}${phoneText}.`,
+      "A partir de agora, os agentes já podem enviar e receber mensagens automáticas por essa linha.",
+    ].join(" ");
+  }
+
+  const names = params.pageNames ?? [];
+  const plural = names.length > 1;
+  const nameList = formatNameList(names);
+  const pageText = nameList ? ` (${plural ? "páginas" : "página"} ${nameList})` : "";
+  return [
+    `${greeting} Aviso do MyChatCRM: a integração com Meta Lead Ads foi conectada com sucesso na conta ${params.tenantName}${pageText}.`,
+    `Novos leads recebidos por ${plural ? "essas páginas" : "essa página"} já podem entrar automaticamente no seu funil.`,
+  ].join(" ");
+}
+
 export async function notifyTenantIntegrationDisconnected(params: {
   tenantId: string;
   integration: IntegrationDisconnectKind;
@@ -254,7 +311,15 @@ export async function notifyTenantIntegrationDisconnected(params: {
     params.pageId?.trim() ||
     `${params.integration}:${params.source}`;
 
-  if (await wasRecentlyNotified({ sb, tenantId: params.tenantId, integration: params.integration, sourceKey })) {
+  if (
+    await wasRecentlyNotified({
+      sb,
+      kind: INTEGRATION_DISCONNECTED_TYPE,
+      tenantId: params.tenantId,
+      integration: params.integration,
+      sourceKey,
+    })
+  ) {
     console.info("[integration-disconnect] notification deduped", {
       tenant_id: params.tenantId,
       integration: params.integration,
@@ -276,7 +341,7 @@ export async function notifyTenantIntegrationDisconnected(params: {
   });
 
   const metadata = {
-    ...buildDedupeMetadata({ tenantId: params.tenantId, integration: params.integration, sourceKey }),
+    ...buildDedupeMetadata({ kind: INTEGRATION_DISCONNECTED_TYPE, tenantId: params.tenantId, integration: params.integration, sourceKey }),
     source: params.source,
     instance_name: params.instanceName ?? null,
     page_id: params.pageId ?? null,
@@ -292,6 +357,7 @@ export async function notifyTenantIntegrationDisconnected(params: {
   if (!recipient.phone) {
     await logSkippedNotification({
       sb,
+      kind: INTEGRATION_DISCONNECTED_TYPE,
       tenantId: params.tenantId,
       integration: params.integration,
       sourceKey,
@@ -308,7 +374,7 @@ export async function notifyTenantIntegrationDisconnected(params: {
   }
 
   const send = await sendSystemNotification(recipient.phone, message, "", {
-    type: SYSTEM_NOTIFICATION_TYPE,
+    type: INTEGRATION_DISCONNECTED_TYPE,
     metadata,
   });
 
@@ -323,6 +389,116 @@ export async function notifyTenantIntegrationDisconnected(params: {
   }
 
   console.info("[integration-disconnect] system notification sent", {
+    tenant_id: params.tenantId,
+    integration: params.integration,
+    source_key: sourceKey,
+    phone_last4: maskPhoneLast4(recipient.phone),
+  });
+
+  return { ok: true };
+}
+
+/**
+ * Avisa o mesmo destinatário do alerta de desconexão quando uma integração é
+ * conectada com sucesso — mostra o número (WhatsApp) ou o(s) nome(s) de
+ * página (Facebook/Meta). Cada chamador decide, antes de chamar isto, se a
+ * conexão é genuinamente nova (vs. uma reconfirmação/reauth) — esta função
+ * só cuida do dedupe por janela (rede de segurança) e do envio em si.
+ */
+export async function notifyTenantIntegrationConnected(params: {
+  tenantId: string;
+  integration: IntegrationDisconnectKind;
+  source: string;
+  sourceKey: string;
+  instanceName?: string | null;
+  waJid?: string | null;
+  phoneDisplay?: string | null;
+  pageIds?: string[];
+  pageNames?: string[];
+  metadata?: Record<string, unknown>;
+}): Promise<{ ok: boolean; skipped?: string; error?: string }> {
+  if (params.tenantId === SYSTEM_TENANT_ID) {
+    return { ok: true, skipped: "system_tenant" };
+  }
+
+  const sb = createSupabaseServiceClient();
+  const sourceKey = params.sourceKey;
+
+  if (
+    await wasRecentlyNotified({
+      sb,
+      kind: INTEGRATION_CONNECTED_TYPE,
+      tenantId: params.tenantId,
+      integration: params.integration,
+      sourceKey,
+    })
+  ) {
+    console.info("[integration-connect] notification deduped", {
+      tenant_id: params.tenantId,
+      integration: params.integration,
+      source_key: sourceKey,
+      source: params.source,
+    });
+    return { ok: true, skipped: "deduped" };
+  }
+
+  const recipient = await loadTenantNotificationRecipient({ sb, tenantId: params.tenantId });
+  const phone = resolveWhatsappPhoneForMessage({ waJid: params.waJid, phoneDisplay: params.phoneDisplay });
+  const message = buildIntegrationConnectedMessage({
+    integration: params.integration,
+    tenantName: recipient.tenantName ?? "sua conta",
+    ownerName: recipient.ownerName,
+    phone,
+    pageNames: params.pageNames,
+  });
+
+  const metadata = {
+    ...buildDedupeMetadata({ kind: INTEGRATION_CONNECTED_TYPE, tenantId: params.tenantId, integration: params.integration, sourceKey }),
+    source: params.source,
+    instance_name: params.instanceName ?? null,
+    wa_jid: params.waJid ?? null,
+    page_ids: params.pageIds ?? null,
+    page_names: params.pageNames ?? null,
+    recipient_phone_last4: maskPhoneLast4(recipient.phone),
+    recipient_source: recipient.source,
+    ...(params.metadata ?? {}),
+  };
+
+  if (!recipient.phone) {
+    await logSkippedNotification({
+      sb,
+      kind: INTEGRATION_CONNECTED_TYPE,
+      tenantId: params.tenantId,
+      integration: params.integration,
+      sourceKey,
+      reason: "missing_tenant_owner_phone",
+      message,
+      metadata,
+    });
+    console.warn("[integration-connect] missing tenant owner phone", {
+      tenant_id: params.tenantId,
+      integration: params.integration,
+      source_key: sourceKey,
+    });
+    return { ok: false, skipped: "missing_tenant_owner_phone" };
+  }
+
+  const send = await sendSystemNotification(recipient.phone, message, "", {
+    type: INTEGRATION_CONNECTED_TYPE,
+    metadata,
+  });
+
+  if (!send.ok) {
+    console.warn("[integration-connect] system notification failed", {
+      tenant_id: params.tenantId,
+      integration: params.integration,
+      source_key: sourceKey,
+      error: send.error,
+    });
+    return { ok: false, error: send.error };
+  }
+
+  console.info("[integration-connect] system notification sent", {
     tenant_id: params.tenantId,
     integration: params.integration,
     source_key: sourceKey,

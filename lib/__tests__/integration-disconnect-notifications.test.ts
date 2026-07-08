@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildIntegrationConnectedMessage,
   buildIntegrationDisconnectedMessage,
   isDisconnectedConnectionState,
   isStableDisconnectState,
   loadTenantNotificationRecipient,
   normalizeConnectionState,
+  notifyTenantIntegrationConnected,
   notifyTenantIntegrationDisconnected,
+  shouldNotifyWhatsappConnect,
   shouldNotifyWhatsappDisconnect,
 } from "@/lib/server/integration-disconnect-notifications";
 import { SYSTEM_TENANT_ID } from "@/lib/server/system-agent";
@@ -117,6 +120,65 @@ describe("integration disconnect notifications", () => {
       instanceName: "system-instance",
       state: "close",
       previousState: "open",
+    });
+
+    expect(result).toEqual({ ok: true, skipped: "system_tenant" });
+  });
+
+  it("only notifies WhatsApp transition into open (not a reconfirmation of an already-open state)", () => {
+    expect(shouldNotifyWhatsappConnect({ previousState: "connecting", nextState: "open" })).toBe(true);
+    expect(shouldNotifyWhatsappConnect({ previousState: "close", nextState: "open" })).toBe(true);
+    expect(shouldNotifyWhatsappConnect({ previousState: null, nextState: "open" })).toBe(true);
+    expect(shouldNotifyWhatsappConnect({ previousState: "open", nextState: "open" })).toBe(false);
+    expect(shouldNotifyWhatsappConnect({ previousState: "open", nextState: "close" })).toBe(false);
+    expect(shouldNotifyWhatsappConnect({ previousState: "close", nextState: "connecting" })).toBe(false);
+  });
+
+  it("builds a WhatsApp connected message that shows the new phone number", () => {
+    const message = buildIntegrationConnectedMessage({
+      integration: "whatsapp",
+      tenantName: "My Broker Office",
+      ownerName: "Renato",
+      phone: "+55 62 99358-0574",
+    });
+
+    expect(message).toContain("conectada com sucesso");
+    expect(message).toContain("My Broker Office");
+    expect(message).toContain("+55 62 99358-0574");
+  });
+
+  it("formats 1, 2 and 3 connected Facebook page names correctly", () => {
+    const one = buildIntegrationConnectedMessage({
+      integration: "facebook",
+      tenantName: "My Broker Office",
+      pageNames: ["Renato Lagares"],
+    });
+    expect(one).toContain("página Renato Lagares");
+    expect(one).toContain("essa página");
+
+    const two = buildIntegrationConnectedMessage({
+      integration: "facebook",
+      tenantName: "My Broker Office",
+      pageNames: ["Renato Lagares", "My Broker Office"],
+    });
+    expect(two).toContain("páginas Renato Lagares e My Broker Office");
+    expect(two).toContain("essas páginas");
+
+    const three = buildIntegrationConnectedMessage({
+      integration: "facebook",
+      tenantName: "My Broker Office",
+      pageNames: ["A", "B", "C"],
+    });
+    expect(three).toContain("páginas A, B e C");
+  });
+
+  it("skips integration connect notifications for the internal system tenant", async () => {
+    const result = await notifyTenantIntegrationConnected({
+      tenantId: SYSTEM_TENANT_ID,
+      integration: "whatsapp",
+      source: "test",
+      sourceKey: "system-instance",
+      waJid: "556299999999@s.whatsapp.net",
     });
 
     expect(result).toEqual({ ok: true, skipped: "system_tenant" });

@@ -43,7 +43,9 @@ import { isSmartWaitGloballyDisabled, runInboundSmartWaitFlow } from "@/lib/serv
 import { scheduleFollowUpAfterInbound, scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
 import {
+  notifyTenantIntegrationConnected,
   notifyTenantIntegrationDisconnected,
+  shouldNotifyWhatsappConnect,
   shouldNotifyWhatsappDisconnect,
 } from "@/lib/server/integration-disconnect-notifications";
 import {
@@ -480,6 +482,30 @@ export async function POST(request: Request) {
               });
             } catch (notifyError) {
               console.warn("[webhooks/evolution] disconnect notification failed", notifyError);
+            }
+          }
+          if (
+            previousRow &&
+            previousRow.tenant_id !== SYSTEM_TENANT_ID &&
+            shouldNotifyWhatsappConnect({
+              previousState: previousRow.connection_state,
+              nextState: state,
+            })
+          ) {
+            try {
+              await notifyTenantIntegrationConnected({
+                tenantId: previousRow.tenant_id,
+                integration: "whatsapp",
+                source: "evolution_connection_update",
+                sourceKey: previousRow.instance_name,
+                instanceName: previousRow.instance_name,
+                waJid: waJid ?? previousRow.wa_jid ?? null,
+                metadata: {
+                  slot_index: previousRow.slot_index,
+                },
+              });
+            } catch (notifyError) {
+              console.warn("[webhooks/evolution] connect notification failed", notifyError);
             }
           }
         } catch (e) {

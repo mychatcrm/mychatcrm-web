@@ -25,7 +25,9 @@ import {
   upsertTenantEvolutionInstance,
 } from "@/lib/server/tenant-evolution-instance-db";
 import {
+  notifyTenantIntegrationConnected,
   notifyTenantIntegrationDisconnected,
+  shouldNotifyWhatsappConnect,
   shouldNotifyWhatsappDisconnect,
 } from "@/lib/server/integration-disconnect-notifications";
 import { assertSlotIndexAllowed } from "@/lib/server/whatsapp-slot-server";
@@ -270,6 +272,24 @@ export async function GET(request: Request) {
       });
     } catch (notifyError) {
       console.warn("[evolution/session] status disconnect notification failed", notifyError);
+    }
+  }
+
+  if (shouldNotifyWhatsappConnect({ previousState: row.connection_state, nextState: remoteState })) {
+    try {
+      await notifyTenantIntegrationConnected({
+        tenantId: session.tenantId,
+        integration: "whatsapp",
+        source: "evolution_session_status_probe",
+        sourceKey: row.instance_name,
+        instanceName: row.instance_name,
+        waJid: resolvedWaJid ?? null,
+        metadata: {
+          slot_index: slotIndex,
+        },
+      });
+    } catch (notifyError) {
+      console.warn("[evolution/session] status connect notification failed", notifyError);
     }
   }
 

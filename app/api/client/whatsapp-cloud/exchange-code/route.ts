@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
-import { upsertWhatsAppCloudConnection } from "@/lib/server/whatsapp-cloud-connections";
+import { notifyTenantIntegrationConnected } from "@/lib/server/integration-disconnect-notifications";
+import {
+  lookupWhatsAppCloudConnectionByPhoneNumberId,
+  upsertWhatsAppCloudConnection,
+} from "@/lib/server/whatsapp-cloud-connections";
 import { registerWhatsAppCloudNumber, subscribeAppToWaba } from "@/lib/server/whatsapp-cloud-onboarding";
 
 export const dynamic = "force-dynamic";
@@ -93,6 +97,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // 4. Save to DB
+  // Checked before the upsert (whose conflict key is phone_number_id alone,
+  // not tenant-scoped) so we know whether this is a genuinely new connection
+  // for this tenant, vs. a token-refresh reauth of an already-connected number.
+  const existingConnection = await lookupWhatsAppCloudConnectionByPhoneNumberId(phone_number_id);
+  const isNewConnection = !existingConnection || existingConnection.tenant_id !== session.tenantId;
+
   const { error: dbErr } = await upsertWhatsAppCloudConnection({
     tenantId: session.tenantId,
     phoneNumberId: phone_number_id,
@@ -105,6 +115,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (dbErr) {
     console.error("[exchange-code] db save failed", dbErr);
     return NextResponse.json({ error: "Failed to save connection" }, { status: 500 });
+  }
+
+  if (isNewConnection) {
+    try {
+      await notifyTenantIntegrationConnected({
+        tenantId: session.tenantId,
+        integration: "whatsapp",
+        source: "whatsapp_cloud_exchange_code",
+        sourceKey: phone_number_id,
+        phoneDisplay: displayPhone,
+        metadata: { phone_number_id, waba_id, verified_name: verifiedName },
+      });
+    } catch (notifyError) {
+      console.warn("[exchange-code] connect notification failed", notifyError);
+    }
   }
 
   // 5. Subscribe our app to the customer's WABA so Meta delivers their inbound

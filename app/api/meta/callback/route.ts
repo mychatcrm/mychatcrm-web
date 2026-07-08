@@ -8,6 +8,7 @@ import {
 } from "@/lib/client-auth";
 import { SITE_URL } from "@/lib/constants";
 import { buildClientSessionForTenant } from "@/lib/server/client-session-from-tenant";
+import { notifyTenantIntegrationConnected } from "@/lib/server/integration-disconnect-notifications";
 import { verifyMetaOAuthState } from "@/lib/server/meta-oauth-state";
 import { subscribePageToLeadgenWebhooks } from "@/lib/server/meta-page-webhook-subscribe";
 import { upsertWhatsAppCloudConnection } from "@/lib/server/whatsapp-cloud-connections";
@@ -561,6 +562,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   // 4. Upsert all pages into meta_connections
   const sb = createSupabaseServiceClient();
+
+  // Checked before the upsert so we can tell genuinely new pages apart from
+  // pages the tenant is just re-authorizing (upsert alone can't tell us that).
+  const { data: existingPageRows } = await sb
+    .from("meta_connections")
+    .select("page_id")
+    .eq("tenant_id", tenantId)
+    .in("page_id", pages.map((p) => p.id));
+  const existingPageIds = new Set((existingPageRows ?? []).map((r) => (r as { page_id: string }).page_id));
+  const newPages = pages.filter((p) => !existingPageIds.has(p.id));
+
   const rows = pages.map((p) => ({
     tenant_id: tenantId,
     page_id: p.id,
@@ -580,6 +592,22 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
 
   console.info("[meta-callback] Connected Meta pages for tenant", { tenantId, pageCount: pages.length });
+
+  if (newPages.length > 0) {
+    try {
+      await notifyTenantIntegrationConnected({
+        tenantId,
+        integration: "facebook",
+        source: "meta_pages_oauth",
+        sourceKey: newPages.map((p) => p.id).join(","),
+        pageIds: newPages.map((p) => p.id),
+        pageNames: newPages.map((p) => p.name),
+        metadata: { page_count: newPages.length, total_pages_in_request: pages.length },
+      });
+    } catch (notifyError) {
+      console.warn("[meta-callback] connect notification failed", notifyError);
+    }
+  }
 
   for (const page of pages) {
     const sub = await subscribePageToLeadgenWebhooks(page.id, page.access_token);
