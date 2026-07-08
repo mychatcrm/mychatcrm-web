@@ -11,6 +11,7 @@ import {
   Check,
   Clock,
   AlertCircle,
+  User,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -63,6 +64,36 @@ function avatarTone(jid: string): string {
   let hash = 0;
   for (let i = 0; i < jid.length; i++) hash = (hash * 31 + jid.charCodeAt(i)) >>> 0;
   return AVATAR_TONES[hash % AVATAR_TONES.length];
+}
+
+/**
+ * Foto de perfil real do WhatsApp (só disponível via Evolution/QR — a API
+ * Oficial Meta não expõe foto de contatos). Sem foto, cai num ícone
+ * genérico sobre o mesmo círculo colorido usado como fallback.
+ */
+function ContactAvatar({ jid, className }: { jid: string; className: string }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <span
+      className={cn(
+        "relative flex shrink-0 items-center justify-center overflow-hidden rounded-full",
+        className,
+        avatarTone(jid),
+      )}
+    >
+      {failed ? (
+        <User className="h-1/2 w-1/2" aria-hidden />
+      ) : (
+        <img
+          src={`/api/admin/system-agent/conversations/${encodeURIComponent(jid)}/photo`}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+          loading="lazy"
+          onError={() => setFailed(true)}
+        />
+      )}
+    </span>
+  );
 }
 
 function channelBadge(channel: Channel): { label: string; Icon: typeof QrCode; tone: string } | null {
@@ -356,14 +387,7 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
                           )}
                         >
                           {isActive && <span className="absolute inset-y-0 left-0 w-0.5 bg-primary" aria-hidden />}
-                          <span
-                            className={cn(
-                              "flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold",
-                              avatarTone(c.remoteJid),
-                            )}
-                          >
-                            {formatJid(c.remoteJid).slice(-2)}
-                          </span>
+                          <ContactAvatar jid={c.remoteJid} className="h-9 w-9" />
                           <span className="min-w-0 flex-1">
                             <span className="flex items-center justify-between gap-2">
                               <span className="truncate font-mono text-[12.5px] font-medium text-content">
@@ -408,14 +432,7 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
             {activeJid && (
               <div className="flex items-center justify-between gap-2 border-b border-line/50 bg-surface-card px-3.5 py-2.5">
                 <div className="flex items-center gap-2.5">
-                  <span
-                    className={cn(
-                      "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold",
-                      avatarTone(activeJid),
-                    )}
-                  >
-                    {formatJid(activeJid).slice(-2)}
-                  </span>
+                  <ContactAvatar jid={activeJid} className="h-8 w-8" />
                   <div>
                     <p className="font-mono text-[12.5px] font-medium text-content">{formatJid(activeJid)}</p>
                     {activeBadge && (
