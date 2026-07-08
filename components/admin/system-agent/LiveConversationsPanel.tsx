@@ -1,7 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { MessageSquare, RefreshCw, Bot, User, Trash2, QrCode, Cloud } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  MessageSquare,
+  RefreshCw,
+  Trash2,
+  QrCode,
+  Cloud,
+  Search,
+  Check,
+  Clock,
+  AlertCircle,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   subscribeToWhatsappMessages,
@@ -34,15 +44,51 @@ type ChatMessage = {
   channel?: Channel;
 };
 
+const CHANNEL_TABS: { key: ChannelFilter; label: string; Icon: typeof QrCode }[] = [
+  { key: "all", label: "Todas", Icon: MessageSquare },
+  { key: "evolution", label: "QR Code", Icon: QrCode },
+  { key: "meta_cloud", label: "API Oficial", Icon: Cloud },
+];
+
+const AVATAR_TONES = [
+  "bg-primary/15 text-primary",
+  "bg-sky-500/15 text-sky-400",
+  "bg-emerald-500/15 text-emerald-400",
+  "bg-violet-500/15 text-violet-400",
+  "bg-amber-500/15 text-amber-400",
+  "bg-pink-500/15 text-pink-400",
+];
+
+function avatarTone(jid: string): string {
+  let hash = 0;
+  for (let i = 0; i < jid.length; i++) hash = (hash * 31 + jid.charCodeAt(i)) >>> 0;
+  return AVATAR_TONES[hash % AVATAR_TONES.length];
+}
+
 function channelBadge(channel: Channel): { label: string; Icon: typeof QrCode; tone: string } | null {
   if (channel === "meta_cloud") return { label: "API Meta", Icon: Cloud, tone: "text-sky-400" };
   if (channel === "evolution") return { label: "QR Code", Icon: QrCode, tone: "text-emerald-400" };
   return null;
 }
 
+function deliveryStatusIcon(status: string | null | undefined): { Icon: typeof Check; className: string } | null {
+  if (status === "sent") return { Icon: Check, className: "opacity-80" };
+  if (status === "pending") return { Icon: Clock, className: "opacity-70" };
+  if (status === "failed") return { Icon: AlertCircle, className: "text-amber-200" };
+  return null;
+}
+
 function formatJid(jid: string): string {
   const digits = jid.split("@")[0]?.replace(/\D/g, "");
   return digits ? `+${digits}` : jid;
+}
+
+function formatListTimestamp(iso: string): string {
+  const d = new Date(iso);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay
+    ? d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 }
 
 function kindPreview(kind: string, content: string): string {
@@ -66,6 +112,7 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
   const [deletingJid, setDeletingJid] = useState<string | null>(null);
   const [deletingAll, setDeletingAll] = useState(false);
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>("all");
+  const [search, setSearch] = useState("");
   const threadRef = useRef<HTMLDivElement>(null);
   const activeJidRef = useRef<string | null>(null);
   activeJidRef.current = activeJid;
@@ -190,186 +237,265 @@ export function LiveConversationsPanel({ systemTenantId }: { systemTenantId: str
     return unsub;
   }, [systemTenantId, loadConversations, loadMessages]);
 
+  const filteredConversations = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return conversations;
+    return conversations.filter(
+      (c) => formatJid(c.remoteJid).toLowerCase().includes(q) || c.lastContent.toLowerCase().includes(q),
+    );
+  }, [conversations, search]);
+
+  const activeConversation = activeJid ? conversations.find((c) => c.remoteJid === activeJid) ?? null : null;
+  const activeBadge = channelBadge(activeConversation?.channel ?? null);
+
   return (
-    <section className="rounded-xl border border-line bg-surface-card p-4 sm:p-5">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <MessageSquare className="h-4 w-4 text-primary" aria-hidden />
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">
-            Conversas ao vivo
-          </h2>
+    <section className="overflow-hidden rounded-xl border border-line bg-surface-card">
+      <div className="flex items-center justify-between gap-3 border-b border-line/60 px-4 py-3.5 sm:px-5">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <MessageSquare className="h-4 w-4" aria-hidden />
+          </span>
+          <div>
+            <h2 className="text-sm font-semibold text-content">Conversas ao vivo</h2>
+            <p className="text-[11px] text-content-muted">Agente do sistema · 2 números em tempo real</p>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1">
           {conversations.length > 0 && (
             <button
               type="button"
+              title="Apagar todas as conversas"
               onClick={() => void deleteAll()}
               disabled={deletingAll}
-              className="flex items-center gap-1.5 text-xs font-medium text-red-500 hover:underline disabled:opacity-50"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-content-muted transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:opacity-50"
             >
               <Trash2 className="h-3.5 w-3.5" />
-              {deletingAll ? "Apagando…" : "Apagar todas"}
             </button>
           )}
           <button
             type="button"
+            title="Atualizar"
             onClick={() => {
               void loadConversations(channelFilter);
               if (activeJid) void loadMessages(activeJid, channelFilter);
             }}
-            className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-content-muted transition-colors hover:bg-surface-elevated/60 hover:text-primary"
           >
-            <RefreshCw className="h-3.5 w-3.5" /> Atualizar
+            <RefreshCw className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>
-      <p className="mb-3 text-xs text-content-muted">
-        Monitoramento (somente leitura) das conversas que o agente do sistema atende automaticamente —
-        texto, áudio e imagem. O mesmo agente atende por 2 números: filtre por canal abaixo.
-      </p>
 
-      {/* 3 abas: Todas / QR Code / API Oficial — mesmo padrão visual do toggle QR↔Meta do SystemAgentHub. */}
-      <div className="mb-4 flex items-center gap-1.5 rounded-lg border border-line/60 bg-surface-elevated/30 p-1">
-        {(
-          [
-            { key: "all", label: "Todas", Icon: MessageSquare },
-            { key: "evolution", label: "QR Code", Icon: QrCode },
-            { key: "meta_cloud", label: "API Oficial", Icon: Cloud },
-          ] as const
-        ).map(({ key, label, Icon }) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => changeChannelFilter(key)}
-            className={cn(
-              "flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
-              channelFilter === key
-                ? "bg-primary text-white shadow-sm"
-                : "text-content-muted hover:bg-surface-elevated/60 hover:text-content-secondary",
-            )}
-          >
-            <Icon className="h-3.5 w-3.5" />
-            {label}
-          </button>
-        ))}
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
-        {/* Lista de conversas */}
-        <div className="max-h-[460px] overflow-y-auto rounded-lg border border-line/60">
-          {loadingList ? (
-            <p className="p-4 text-xs text-content-muted">Carregando…</p>
-          ) : conversations.length === 0 ? (
-            <p className="p-4 text-xs text-content-muted">Nenhuma conversa ainda.</p>
-          ) : (
-            <ul className="divide-y divide-line/40">
-              {conversations.map((c) => {
-                const badge = channelBadge(c.channel);
-                return (
-                <li key={c.remoteJid} className="group relative">
-                  <button
-                    type="button"
-                    onClick={() => setActiveJid(c.remoteJid)}
-                    className={cn(
-                      "flex w-full flex-col items-start gap-0.5 py-2.5 pl-3 pr-9 text-left transition-colors hover:bg-surface-elevated/40",
-                      activeJid === c.remoteJid ? "bg-primary/5" : "",
-                    )}
-                  >
-                    <span className="flex items-center gap-1.5 font-mono text-xs font-medium text-content-secondary">
-                      {formatJid(c.remoteJid)}
-                      {badge && (
-                        <span className={cn("flex items-center gap-0.5 text-[9px] font-sans font-normal", badge.tone)}>
-                          <badge.Icon className="h-2.5 w-2.5" />
-                          {badge.label}
-                        </span>
-                      )}
-                    </span>
-                    <span className="line-clamp-1 text-[11px] text-content-muted">
-                      {c.lastDirection === "outbound" ? "→ " : "← "}
-                      {kindPreview(c.lastKind, c.lastContent)}
-                    </span>
-                    <span className="text-[10px] text-content-faint">
-                      {new Date(c.lastAt).toLocaleString("pt-BR")}
-                    </span>
-                  </button>
-                  {/* Botão de lixeira — aparece ao hover */}
-                  <button
-                    type="button"
-                    title="Apagar conversa"
-                    disabled={deletingJid === c.remoteJid}
-                    onClick={(e) => { e.stopPropagation(); void deleteConversation(c.remoteJid); }}
-                    className={cn(
-                      "absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-content-muted transition-opacity hover:text-red-500",
-                      "opacity-0 group-hover:opacity-100 focus:opacity-100",
-                      deletingJid === c.remoteJid ? "opacity-100" : "",
-                    )}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </li>
-                );
-              })}
-            </ul>
-          )}
+      <div className="p-4 sm:p-5">
+        {/* 3 abas: Todas / QR Code / API Oficial. */}
+        <div className="mb-3 inline-flex w-full items-center gap-1 rounded-full border border-line/50 bg-surface-elevated/30 p-1">
+          {CHANNEL_TABS.map(({ key, label, Icon }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => changeChannelFilter(key)}
+              className={cn(
+                "flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1.5 text-[11px] font-medium transition-all duration-150",
+                channelFilter === key
+                  ? "bg-primary text-white shadow-sm"
+                  : "text-content-muted hover:bg-surface-elevated/60 hover:text-content-secondary",
+              )}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+            </button>
+          ))}
         </div>
 
-        {/* Thread */}
-        <div
-          ref={threadRef}
-          className="flex max-h-[460px] min-h-[260px] flex-col gap-2 overflow-y-auto rounded-lg border border-line/60 bg-surface-elevated/20 p-3"
-        >
-          {!activeJid ? (
-            <div className="flex flex-1 items-center justify-center text-xs text-content-muted">
-              Selecione uma conversa para acompanhar.
+        <div className="relative mb-4">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-content-faint" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar por número ou mensagem…"
+            className="w-full rounded-lg border border-line/60 bg-surface-elevated/20 py-2 pl-9 pr-3 text-xs text-content placeholder:text-content-faint transition-colors focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/20"
+          />
+        </div>
+
+        <div className="grid gap-3 lg:h-[560px] lg:grid-cols-[300px_1fr]">
+          {/* Lista de conversas */}
+          <div className="flex flex-col overflow-hidden rounded-lg border border-line/50 lg:h-full">
+            <div className="flex-1 overflow-y-auto">
+              {loadingList ? (
+                <div className="space-y-1 p-2">
+                  {[0, 1, 2, 3].map((i) => (
+                    <div key={i} className="flex animate-pulse items-center gap-2.5 px-2 py-2.5">
+                      <div className="h-9 w-9 shrink-0 rounded-full bg-surface-elevated/60" />
+                      <div className="flex-1 space-y-1.5">
+                        <div className="h-2.5 w-24 rounded bg-surface-elevated/60" />
+                        <div className="h-2 w-32 rounded bg-surface-elevated/40" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : filteredConversations.length === 0 ? (
+                <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
+                  <MessageSquare className="h-6 w-6 text-content-faint" aria-hidden />
+                  <p className="text-xs text-content-muted">
+                    {search ? "Nenhuma conversa encontrada." : "Nenhuma conversa ainda."}
+                  </p>
+                </div>
+              ) : (
+                <ul className="divide-y divide-line/40">
+                  {filteredConversations.map((c) => {
+                    const badge = channelBadge(c.channel);
+                    const isActive = activeJid === c.remoteJid;
+                    return (
+                      <li key={c.remoteJid} className="group relative">
+                        <button
+                          type="button"
+                          onClick={() => setActiveJid(c.remoteJid)}
+                          className={cn(
+                            "flex w-full items-center gap-2.5 py-2.5 pl-3 pr-9 text-left transition-colors",
+                            isActive ? "bg-primary/[0.07]" : "hover:bg-surface-elevated/40",
+                          )}
+                        >
+                          {isActive && <span className="absolute inset-y-0 left-0 w-0.5 bg-primary" aria-hidden />}
+                          <span
+                            className={cn(
+                              "flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold",
+                              avatarTone(c.remoteJid),
+                            )}
+                          >
+                            {formatJid(c.remoteJid).slice(-2)}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center justify-between gap-2">
+                              <span className="truncate font-mono text-[12.5px] font-medium text-content">
+                                {formatJid(c.remoteJid)}
+                              </span>
+                              <span className="shrink-0 text-[10px] text-content-faint">
+                                {formatListTimestamp(c.lastAt)}
+                              </span>
+                            </span>
+                            <span className="mt-0.5 flex items-center gap-1">
+                              {badge && <badge.Icon className={cn("h-2.5 w-2.5 shrink-0", badge.tone)} aria-hidden />}
+                              <span className="truncate text-[11px] text-content-muted">
+                                {c.lastDirection === "outbound" ? "Você: " : ""}
+                                {kindPreview(c.lastKind, c.lastContent)}
+                              </span>
+                            </span>
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          title="Apagar conversa"
+                          disabled={deletingJid === c.remoteJid}
+                          onClick={(e) => { e.stopPropagation(); void deleteConversation(c.remoteJid); }}
+                          className={cn(
+                            "absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-content-muted transition-opacity hover:text-red-500",
+                            "opacity-0 group-hover:opacity-100 focus:opacity-100",
+                            deletingJid === c.remoteJid ? "opacity-100" : "",
+                          )}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </div>
-          ) : loadingThread ? (
-            <p className="text-xs text-content-muted">Carregando mensagens…</p>
-          ) : messages.length === 0 ? (
-            <p className="text-xs text-content-muted">Sem mensagens nesta conversa.</p>
-          ) : (
-            messages.map((m) => {
-              const out = m.direction === "outbound";
-              const badge = channelBadge(m.channel ?? null);
-              return (
-                <div
-                  key={m.id}
-                  className={cn("flex w-full", out ? "justify-end" : "justify-start")}
-                >
-                  <div
+          </div>
+
+          {/* Thread */}
+          <div className="flex flex-col overflow-hidden rounded-lg border border-line/50 bg-surface-elevated/10 lg:h-full">
+            {activeJid && (
+              <div className="flex items-center justify-between gap-2 border-b border-line/50 bg-surface-card px-3.5 py-2.5">
+                <div className="flex items-center gap-2.5">
+                  <span
                     className={cn(
-                      "max-w-[78%] rounded-2xl px-3 py-2 text-sm",
-                      out
-                        ? "rounded-br-sm bg-primary text-white"
-                        : "rounded-bl-sm border border-line bg-surface-card text-content",
+                      "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold",
+                      avatarTone(activeJid),
                     )}
                   >
-                    <div className="mb-0.5 flex items-center gap-1 text-[10px] opacity-70">
-                      {out ? <Bot className="h-3 w-3" /> : <User className="h-3 w-3" />}
-                      {out ? "Agente" : "Cliente"}
-                      {badge && (
-                        <span className={cn("ml-1 flex items-center gap-0.5", out ? "text-white/80" : badge.tone)}>
-                          <badge.Icon className="h-2.5 w-2.5" />
-                          {badge.label}
-                        </span>
-                      )}
-                    </div>
-                    {m.kind === "audio" && m.media_url ? (
-                      <AudioBubble src={m.media_url} msgId={m.id} />
-                    ) : m.kind === "image" && m.media_url ? (
-                      <ImageBubble src={m.media_url} caption={m.content} />
-                    ) : m.kind === "video" && m.media_url ? (
-                      <VideoBubble src={m.media_url} caption={m.content} />
-                    ) : (
-                      <p className="whitespace-pre-wrap break-words">{m.content || "—"}</p>
+                    {formatJid(activeJid).slice(-2)}
+                  </span>
+                  <div>
+                    <p className="font-mono text-[12.5px] font-medium text-content">{formatJid(activeJid)}</p>
+                    {activeBadge && (
+                      <span className={cn("flex items-center gap-1 text-[10px]", activeBadge.tone)}>
+                        <activeBadge.Icon className="h-2.5 w-2.5" aria-hidden />
+                        {activeBadge.label}
+                      </span>
                     )}
-                    <div className={cn("mt-1 text-[10px]", out ? "text-white/70" : "text-content-faint")}>
-                      {new Date(m.created_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
-                    </div>
                   </div>
                 </div>
-              );
-            })
-          )}
+                <button
+                  type="button"
+                  title="Apagar conversa"
+                  disabled={deletingJid === activeJid}
+                  onClick={() => void deleteConversation(activeJid)}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg text-content-muted transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:opacity-50"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+
+            <div ref={threadRef} className="flex flex-1 flex-col gap-2 overflow-y-auto p-3.5">
+              {!activeJid ? (
+                <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
+                  <MessageSquare className="h-7 w-7 text-content-faint" aria-hidden />
+                  <p className="text-xs text-content-muted">Selecione uma conversa para acompanhar.</p>
+                </div>
+              ) : loadingThread ? (
+                <div className="flex flex-1 flex-col justify-end gap-2">
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} className={cn("flex animate-pulse", i % 2 === 0 ? "justify-start" : "justify-end")}>
+                      <div className="h-9 w-40 rounded-2xl bg-surface-elevated/50" />
+                    </div>
+                  ))}
+                </div>
+              ) : messages.length === 0 ? (
+                <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
+                  <MessageSquare className="h-7 w-7 text-content-faint" aria-hidden />
+                  <p className="text-xs text-content-muted">Sem mensagens nesta conversa.</p>
+                </div>
+              ) : (
+                messages.map((m) => {
+                  const out = m.direction === "outbound";
+                  const statusIcon = out ? deliveryStatusIcon(m.delivery_status) : null;
+                  return (
+                    <div key={m.id} className={cn("flex w-full", out ? "justify-end" : "justify-start")}>
+                      <div
+                        className={cn(
+                          "max-w-[75%] rounded-2xl px-3.5 py-2 text-[13px] leading-relaxed shadow-sm",
+                          out
+                            ? "rounded-br-md bg-primary text-white"
+                            : "rounded-bl-md border border-line/70 bg-surface-card text-content",
+                        )}
+                      >
+                        {m.kind === "audio" && m.media_url ? (
+                          <AudioBubble src={m.media_url} msgId={m.id} />
+                        ) : m.kind === "image" && m.media_url ? (
+                          <ImageBubble src={m.media_url} caption={m.content} />
+                        ) : m.kind === "video" && m.media_url ? (
+                          <VideoBubble src={m.media_url} caption={m.content} />
+                        ) : (
+                          <p className="whitespace-pre-wrap break-words">{m.content || "—"}</p>
+                        )}
+                        <div
+                          className={cn(
+                            "mt-1 flex items-center justify-end gap-1 text-[10px]",
+                            out ? "text-white/70" : "text-content-faint",
+                          )}
+                        >
+                          {new Date(m.created_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                          {statusIcon && <statusIcon.Icon className={cn("h-3 w-3", statusIcon.className)} aria-hidden />}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </section>
