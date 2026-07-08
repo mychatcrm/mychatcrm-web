@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyMetaSignature256 } from "@/lib/integrations/whatsapp-cloud";
 import { resolveMetaAppSecret } from "@/lib/server/meta-app-secret";
 import { processMetaLeadgenEvent, type LeadgenValue } from "@/lib/server/meta-lead-ingest";
+import { handleWhatsAppCloudWebhookPayload } from "@/lib/server/whatsapp-cloud-webhook-handler";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -87,8 +88,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "invalid json" }, { status: 200 });
   }
 
+  if (payload.object === "whatsapp_business_account") {
+    // O app Meta único deste projeto entrega todos os objetos inscritos
+    // (page + whatsapp_business_account) na mesma callback URL configurada
+    // no dashboard — se for esta, processa como webhook da Cloud API em vez
+    // de descartar (ver app/api/webhooks/whatsapp, que trata o mesmo payload
+    // quando é essa a URL registada).
+    console.info("[meta-webhook] WhatsApp Business Account payload accepted", { requestId });
+    return handleWhatsAppCloudWebhookPayload(payload);
+  }
+
   if (payload.object !== "page") {
-    console.info("[meta-webhook] Ignored non-page object", {
+    console.info("[meta-webhook] Ignored unhandled object", {
       requestId,
       object: payload.object ?? null,
     });

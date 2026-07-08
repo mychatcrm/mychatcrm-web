@@ -23,7 +23,10 @@ describe("omnichannel runtime contracts", () => {
   });
 
   it("resolves Cloud API tenants from rules instead of a global default tenant", () => {
-    const content = source("app/api/webhooks/whatsapp/route.ts");
+    // The actual payload handling lives in the shared handler (reused by both
+    // /api/webhooks/whatsapp and /api/webhooks/meta — see
+    // lib/server/whatsapp-cloud-webhook-handler.ts), not in the route itself.
+    const content = source("lib/server/whatsapp-cloud-webhook-handler.ts");
 
     expect(content).toContain("resolveCloudApiTenantByConnection");
     expect(content).not.toContain("WHATSAPP_DEFAULT_TENANT_ID");
