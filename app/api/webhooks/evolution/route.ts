@@ -484,9 +484,13 @@ export async function POST(request: Request) {
               console.warn("[webhooks/evolution] disconnect notification failed", notifyError);
             }
           }
+          // Exige um waJid fresco DESTE evento (não o valor antigo em cache de
+          // previousRow.wa_jid) — uma conexão genuína sempre traz o JID junto;
+          // sem ele, não há prova de que "open" é uma sessão nova de verdade.
           if (
             previousRow &&
             previousRow.tenant_id !== SYSTEM_TENANT_ID &&
+            waJid &&
             shouldNotifyWhatsappConnect({
               previousState: previousRow.connection_state,
               nextState: state,
@@ -499,7 +503,7 @@ export async function POST(request: Request) {
                 source: "evolution_connection_update",
                 sourceKey: previousRow.instance_name,
                 instanceName: previousRow.instance_name,
-                waJid: waJid ?? previousRow.wa_jid ?? null,
+                waJid,
                 metadata: {
                   slot_index: previousRow.slot_index,
                 },

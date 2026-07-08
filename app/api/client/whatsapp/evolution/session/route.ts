@@ -216,6 +216,11 @@ export async function GET(request: Request) {
   // Zombie check: connectionStatus="open" não garante que Session table tem chaves Baileys.
   // Se fetchInstances retornar ownerJid ausente → sessão zumbi → forçar reconexão com QR.
   let resolvedWaJid = row.wa_jid;
+  // Só true quando este poll confirmou, agora, um ownerJid real via fetchInstances —
+  // usado para exigir prova fresca antes de avisar "conectado" (ver abaixo). Sem essa
+  // prova, "open" pode ser um estado zumbi que o fetchInstances não conseguiu corrigir
+  // (erro de rede, timeout) e o wa_jid seria só o valor antigo em cache (row.wa_jid).
+  let ownerJidConfirmedThisPoll = false;
   if (remoteState === "open") {
     const fetchResult = await evolutionFetchInstances(row.instance_name);
     if (fetchResult.ok) {
@@ -224,6 +229,7 @@ export async function GET(request: Request) {
         remoteState = "close";
       } else {
         resolvedWaJid = instanceInfo.ownerJid;
+        ownerJidConfirmedThisPoll = true;
       }
     }
   }
@@ -275,7 +281,13 @@ export async function GET(request: Request) {
     }
   }
 
-  if (shouldNotifyWhatsappConnect({ previousState: row.connection_state, nextState: remoteState })) {
+  // Exige prova fresca (ownerJid confirmado NESTE poll) além da transição de estado —
+  // sem isso, um "open" zumbi que o fetchInstances não conseguiu corrigir (falha de
+  // rede/timeout) poderia disparar um aviso de "conectado" para uma sessão já morta.
+  if (
+    ownerJidConfirmedThisPoll &&
+    shouldNotifyWhatsappConnect({ previousState: row.connection_state, nextState: remoteState })
+  ) {
     try {
       await notifyTenantIntegrationConnected({
         tenantId: session.tenantId,

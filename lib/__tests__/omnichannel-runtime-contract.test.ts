@@ -82,4 +82,33 @@ describe("omnichannel runtime contracts", () => {
     expect(guard).toBeGreaterThan(phase2Start);
     expect(generateCall).toBeGreaterThan(guard);
   });
+
+  it("only fires the WhatsApp 'connected' alert with a fresh, confirmed live session", () => {
+    // Regression: Evolution's connectionState endpoint can report "open" for a
+    // zombie/already-closed instance, and the existing zombie-check doesn't
+    // always correct it (e.g. if fetchInstances itself fails). Trusting
+    // remoteState === "open" alone sent a false "you just connected" alert for
+    // an instance that had actually been disconnected hours earlier.
+
+    // Webhook path: requires a fresh waJid from THIS event before notifying connect.
+    const webhookSource = source("app/api/webhooks/evolution/route.ts");
+    const webhookConnectBlock = webhookSource.indexOf("notifyTenantIntegrationConnected({");
+    const webhookGuardStart = webhookSource.lastIndexOf("if (", webhookConnectBlock);
+    const webhookGuard = webhookSource.slice(webhookGuardStart, webhookConnectBlock);
+    expect(webhookGuard).toContain("waJid &&");
+    expect(webhookSource.slice(webhookConnectBlock, webhookConnectBlock + 500)).toContain("waJid,");
+
+    // Client status-poll path: requires the zombie-check to have freshly
+    // confirmed an ownerJid THIS poll cycle, not a stale cached wa_jid.
+    const pollSource = source("app/api/client/whatsapp/evolution/session/route.ts");
+    const ownerJidConfirmedDeclared = pollSource.indexOf("let ownerJidConfirmedThisPoll = false;");
+    const ownerJidConfirmedSet = pollSource.indexOf("ownerJidConfirmedThisPoll = true;", ownerJidConfirmedDeclared);
+    const pollConnectBlock = pollSource.indexOf("notifyTenantIntegrationConnected({");
+    const pollGuardStart = pollSource.lastIndexOf("if (", pollConnectBlock);
+    const pollGuard = pollSource.slice(pollGuardStart, pollConnectBlock);
+
+    expect(ownerJidConfirmedDeclared).toBeGreaterThan(0);
+    expect(ownerJidConfirmedSet).toBeGreaterThan(ownerJidConfirmedDeclared);
+    expect(pollGuard).toContain("ownerJidConfirmedThisPoll &&");
+  });
 });
