@@ -31,6 +31,9 @@ export const META_LEAD_EVENT_STEPS = [
   "blocked_missing_meta_connection_for_resolved_tenant",
   "blocked_historical_lead",
   "automation_blocked_by_journey",
+  "manual_assigned_to_agent",
+  "manual_assignment_failed",
+  "manual_assigned_to_human",
 ] as const;
 
 export type MetaLeadEventStep = (typeof META_LEAD_EVENT_STEPS)[number];
@@ -89,6 +92,19 @@ export class MetaLeadEventRecorder {
       raw_webhook?: Record<string, unknown>;
     },
   ) {}
+
+  /**
+   * Anexa a um evento já existente (id conhecido) sem passar por init() — init()
+   * faz upsert destrutivo (reseta steps_log/current_step/status), o que apagaria
+   * o histórico de erro de um evento que já está em curso. Usado pela atribuição
+   * manual (direcionar um lead em erro pra um agente/atendente) pra continuar
+   * gravando no mesmo steps_log em vez de recomeçar do zero.
+   */
+  static attachExisting(sb: SupabaseServiceClient, eventId: string): MetaLeadEventRecorder {
+    const recorder = new MetaLeadEventRecorder(sb, { tenant_id: "", leadgen_id: "", page_id: "" });
+    recorder.eventId = eventId;
+    return recorder;
+  }
 
   async init(): Promise<void> {
     const now = new Date().toISOString();

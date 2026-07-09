@@ -1,15 +1,37 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertCircle, CheckCircle2, Clock, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, Loader2, RefreshCw, Trash2, UserCog } from "lucide-react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { Badge } from "@/components/ui/Badge";
+import { Modal } from "@/components/ui/Modal";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 import { metaLeadEventsRealtimeChannel } from "@/lib/meta-leads/realtime";
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type { MetaLeadEventRow } from "@/lib/server/meta-lead-events-db";
+import { bucketMetaLeadEventStep, type MetaLeadEventBucket } from "@/lib/meta-lead-event-status";
+import { refreshTeamEmployeesFromApi } from "@/lib/team-employees-client-cache";
+import type { TeamEmployee, TeamHierarchyRole } from "@/lib/team-employees-types";
 import { cn } from "@/lib/utils";
+
+type FilterId = "all" | MetaLeadEventBucket;
+
+const FILTER_OPTIONS: { id: FilterId; label: string }[] = [
+  { id: "all", label: "Todos" },
+  { id: "novo", label: "Novo" },
+  { id: "ok", label: "OK" },
+  { id: "erro", label: "Erro" },
+];
+
+const ROLE_LABEL: Record<TeamHierarchyRole, string> = {
+  director: "Diretor",
+  manager: "Gerente",
+  seller: "Vendedor",
+};
+
+type AgentOption = { id: string; nome: string };
+type AssignTarget = { type: "agent" | "employee"; id: string };
 
 function formatWhen(iso: string): string {
   try {
@@ -161,6 +183,85 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
   const [tableReady, setTableReady] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<FilterId>("all");
+
+  const counts = useMemo(() => {
+    const result: Record<FilterId, number> = { all: events.length, novo: 0, ok: 0, erro: 0 };
+    for (const ev of events) result[bucketMetaLeadEventStep(ev.current_step)] += 1;
+    return result;
+  }, [events]);
+
+  const filteredEvents = useMemo(
+    () => (filter === "all" ? events : events.filter((ev) => bucketMetaLeadEventStep(ev.current_step) === filter)),
+    [events, filter],
+  );
+
+  // ── Direcionamento manual (só disponível pra leads no balde "erro") ──────
+  const [assignEventId, setAssignEventId] = useState<string | null>(null);
+  const [assignAgents, setAssignAgents] = useState<AgentOption[]>([]);
+  const [assignEmployees, setAssignEmployees] = useState<TeamEmployee[]>([]);
+  const [assignLoadingOptions, setAssignLoadingOptions] = useState(false);
+  const [assignTarget, setAssignTarget] = useState<AssignTarget | null>(null);
+  const [assignSubmitting, setAssignSubmitting] = useState(false);
+  const [assignError, setAssignError] = useState<string | null>(null);
+
+  const assignEvent = useMemo(() => events.find((e) => e.id === assignEventId) ?? null, [events, assignEventId]);
+
+  const openAssignModal = useCallback(
+    async (eventId: string) => {
+      setAssignEventId(eventId);
+      setAssignTarget(null);
+      setAssignError(null);
+      setAssignLoadingOptions(true);
+      try {
+        const [agentsRes, employees] = await Promise.all([
+          fetch("/api/client/lead-rules/agents", { credentials: "same-origin" }),
+          refreshTeamEmployeesFromApi(tenantId),
+        ]);
+        const agentsJson = (await agentsRes.json().catch(() => ({}))) as { agents?: AgentOption[] };
+        setAssignAgents(agentsJson.agents ?? []);
+        setAssignEmployees(employees.filter((e) => e.ativo && !e.accountSuspended));
+      } catch {
+        setAssignError("Erro ao carregar agentes e atendentes.");
+      } finally {
+        setAssignLoadingOptions(false);
+      }
+    },
+    [tenantId],
+  );
+
+  const closeAssignModal = useCallback(() => {
+    setAssignEventId(null);
+    setAssignTarget(null);
+    setAssignError(null);
+  }, []);
+
+  const submitAssign = useCallback(async () => {
+    if (!assignEventId || !assignTarget) return;
+    setAssignSubmitting(true);
+    setAssignError(null);
+    try {
+      const body =
+        assignTarget.type === "agent"
+          ? { target: "agent", agentId: assignTarget.id }
+          : { target: "employee", employeeId: assignTarget.id };
+      const res = await fetch(`/api/client/meta/lead-events/${encodeURIComponent(assignEventId)}/assign`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = (await res.json()) as { event?: MetaLeadEventRow; error?: string };
+      if (!res.ok || !json.event) throw new Error(json.error ?? "Falha ao direcionar lead");
+      const updated = json.event;
+      setEvents((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+      closeAssignModal();
+    } catch (e) {
+      setAssignError(e instanceof Error ? e.message : "Erro ao direcionar lead");
+    } finally {
+      setAssignSubmitting(false);
+    }
+  }, [assignEventId, assignTarget, closeAssignModal]);
 
   const removeFromInbox = useCallback(
     async (eventId: string, leadName: string) => {
@@ -253,6 +354,31 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
         </Button>
       </div>
 
+      <div
+        className={cn(
+          "mb-4 inline-flex flex-wrap gap-1 rounded-lg border p-1",
+          isLight ? "border-slate-200 bg-surface-deep" : "border-line/80 bg-surface-card/60",
+        )}
+        role="tablist"
+        aria-label="Filtrar leads recebidos"
+      >
+        {FILTER_OPTIONS.map((opt) => (
+          <button
+            key={opt.id}
+            type="button"
+            role="tab"
+            aria-selected={filter === opt.id}
+            className={cn(
+              "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+              filter === opt.id ? "bg-primary text-primary-foreground" : "text-content-muted hover:text-content",
+            )}
+            onClick={() => setFilter(opt.id)}
+          >
+            {opt.label} ({counts[opt.id]})
+          </button>
+        ))}
+      </div>
+
       {removeError ? (
         <p className="mb-3 flex items-center gap-2 text-sm text-red-600 dark:text-red-400">
           <AlertCircle className="h-4 w-4 shrink-0" aria-hidden />
@@ -287,8 +413,12 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
         </p>
       ) : null}
 
+      {!loading && events.length > 0 && filteredEvents.length === 0 ? (
+        <p className="py-10 text-center text-sm text-content-muted">Nenhum lead nesse filtro.</p>
+      ) : null}
+
       <ul className="space-y-3">
-        {events.map((ev) => {
+        {filteredEvents.map((ev) => {
           const crm = crmBadge(ev.crm_sync_status, ev.error_message);
           const wa = waBadge(ev.whatsapp_status, ev.error_message);
           const hint = errorMessageHint(ev.error_message);
@@ -313,6 +443,19 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
                     {crm.label}
                   </Badge>
                   <Badge className={cn("text-[10px]", wa.className)}>{wa.label}</Badge>
+                  {bucketMetaLeadEventStep(ev.current_step) === "erro" ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="h-7 w-full px-2 text-[11px] sm:w-auto"
+                      onClick={() => void openAssignModal(ev.id)}
+                      title="Direcionar manualmente para um agente de IA ou atendente humano"
+                    >
+                      <UserCog className="h-3.5 w-3.5" aria-hidden />
+                      Direcionar manualmente
+                    </Button>
+                  ) : null}
                   <Button
                     type="button"
                     variant="secondary"
@@ -434,6 +577,115 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
           );
         })}
       </ul>
+
+      {assignEventId ? (
+        <Modal
+          open={true}
+          onClose={closeAssignModal}
+          title="Direcionar manualmente"
+          footer={
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button type="button" variant="ghost" onClick={closeAssignModal} disabled={assignSubmitting}>
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void submitAssign()}
+                isLoading={assignSubmitting}
+                disabled={!assignTarget}
+              >
+                Confirmar
+              </Button>
+            </div>
+          }
+        >
+          <p className="mb-4 text-sm text-content-secondary">
+            Escolha um agente de IA ou um atendente humano pra assumir{" "}
+            <strong className="text-content">{assignEvent?.name || assignEvent?.phone || "este lead"}</strong>.
+          </p>
+
+          {assignLoadingOptions ? (
+            <div className="flex items-center justify-center gap-2 py-8 text-sm text-content-muted">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              Carregando agentes e atendentes…
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-content-muted">
+                  Agente de IA
+                </p>
+                {assignAgents.length === 0 ? (
+                  <p className="text-xs text-content-muted">Nenhum agente de IA ativo neste tenant.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {assignAgents.map((agent) => (
+                      <label
+                        key={agent.id}
+                        className={cn(
+                          "flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors",
+                          assignTarget?.type === "agent" && assignTarget.id === agent.id
+                            ? "border-primary bg-primary/5"
+                            : "border-line/60 hover:border-line",
+                        )}
+                      >
+                        <input
+                          type="radio"
+                          name="assign-target"
+                          checked={assignTarget?.type === "agent" && assignTarget.id === agent.id}
+                          onChange={() => setAssignTarget({ type: "agent", id: agent.id })}
+                        />
+                        <span className="text-content">{agent.nome}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-content-muted">
+                  Atendente humano
+                </p>
+                {assignEmployees.length === 0 ? (
+                  <p className="text-xs text-content-muted">Nenhum funcionário ativo cadastrado neste tenant.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {assignEmployees.map((employee) => (
+                      <label
+                        key={employee.id}
+                        className={cn(
+                          "flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors",
+                          assignTarget?.type === "employee" && assignTarget.id === employee.id
+                            ? "border-primary bg-primary/5"
+                            : "border-line/60 hover:border-line",
+                        )}
+                      >
+                        <input
+                          type="radio"
+                          name="assign-target"
+                          checked={assignTarget?.type === "employee" && assignTarget.id === employee.id}
+                          onChange={() => setAssignTarget({ type: "employee", id: employee.id })}
+                        />
+                        <span className="text-content">
+                          {employee.nome} <span className="text-content-muted">({ROLE_LABEL[employee.hierarchyRole]})</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {assignError ? (
+            <p className="mt-4 flex items-center gap-2 text-sm text-red-600 dark:text-red-400">
+              <AlertCircle className="h-4 w-4 shrink-0" aria-hidden />
+              {assignError}
+            </p>
+          ) : null}
+        </Modal>
+      ) : null}
     </section>
   );
 }
