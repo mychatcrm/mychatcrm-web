@@ -130,7 +130,7 @@ import {
   subscribeToCrmLeadsRealtime,
   updateCrmLeadInApi,
 } from "@/lib/crm-leads-storage";
-import { fetchActiveOfferDetailFromApi, fetchActiveOffersFromApi, type ActiveOfferDetail, type ActiveOfferSummary } from "@/lib/crm-active-offers-client";
+import { ActiveOffersHub } from "@/components/dashboard/ofertas-ativas/ActiveOffersHub";
 import { LeadThermometerInline } from "./crm/LeadThermometer";
 import { CrmAddLeadModal } from "./crm/CrmAddLeadModal";
 import { CrmReorderStagesModal } from "./crm/CrmReorderStagesModal";
@@ -3534,156 +3534,6 @@ function PlanLeadsBilling({ session }: { session: ClientSession }) {
   );
 }
 
-function formatActiveOfferDate(value: string | null) {
-  if (!value) return "Data não informada";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Data não informada";
-  return new Intl.DateTimeFormat("pt-BR", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(date);
-}
-
-function ActiveOffersPage() {
-  const searchParams = useSearchParams();
-  const initialOfferId = searchParams.get("offer");
-  const [offers, setOffers] = useState<ActiveOfferSummary[]>([]);
-  const [selectedOfferId, setSelectedOfferId] = useState<string | null>(initialOfferId);
-  const [selectedOffer, setSelectedOffer] = useState<ActiveOfferDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    void fetchActiveOffersFromApi()
-      .then((rows) => {
-        if (cancelled) return;
-        setOffers(rows);
-        setSelectedOfferId((prev) => prev || rows[0]?.id || null);
-      })
-      .catch(() => {
-        if (!cancelled) setError("Não foi possível carregar as ofertas ativas.");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!selectedOfferId) {
-      setSelectedOffer(null);
-      return;
-    }
-    let cancelled = false;
-    setDetailLoading(true);
-    void fetchActiveOfferDetailFromApi(selectedOfferId)
-      .then((offer) => {
-        if (!cancelled) setSelectedOffer(offer);
-      })
-      .catch(() => {
-        if (!cancelled) setSelectedOffer(null);
-      })
-      .finally(() => {
-        if (!cancelled) setDetailLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedOfferId]);
-
-  return (
-    <Panel
-      title="Ofertas ativas"
-      description="Agrupe leads selecionados do CRM em uma ação comercial ativa, sem alterar conversas ou mensagens do WhatsApp."
-    >
-      {error ? (
-        <div className="mb-4 rounded-xl border border-rose-500/25 bg-rose-500/[0.08] px-4 py-3 text-sm text-rose-500">
-          {error}
-        </div>
-      ) : null}
-      <div className="grid gap-4 lg:grid-cols-[minmax(16rem,22rem)_1fr]">
-        <div className="space-y-3">
-          {loading ? (
-            Array.from({ length: 3 }).map((_, index) => (
-              <div key={index} className="h-24 animate-pulse rounded-xl border border-line bg-surface-elevated/40" />
-            ))
-          ) : offers.length ? (
-            offers.map((offer) => (
-              <button
-                key={offer.id}
-                type="button"
-                className={cn(
-                  "w-full rounded-xl border p-4 text-left transition",
-                  selectedOfferId === offer.id
-                    ? "border-primary/45 bg-primary/[0.08]"
-                    : "border-line bg-surface-card hover:border-primary/30",
-                )}
-                onClick={() => setSelectedOfferId(offer.id)}
-              >
-                <p className="font-semibold text-content">{offer.title}</p>
-                <p className="mt-1 text-xs text-content-muted">{formatActiveOfferDate(offer.createdAt)}</p>
-                <p className="mt-3 text-sm text-content-muted">
-                  {offer.leadCount} {offer.leadCount === 1 ? "lead vinculado" : "leads vinculados"}
-                </p>
-              </button>
-            ))
-          ) : (
-            <div className="rounded-xl border border-dashed border-line bg-surface-card p-5 text-sm text-content-muted">
-              Nenhuma oferta ativa criada ainda. Selecione leads no CRM e use “Ações em lote”.
-            </div>
-          )}
-        </div>
-        <div className="rounded-xl border border-line bg-surface-card p-4">
-          {detailLoading ? (
-            <div className="space-y-3">
-              <div className="h-6 w-64 animate-pulse rounded bg-surface-elevated" />
-              <div className="h-20 animate-pulse rounded-xl bg-surface-elevated/60" />
-              <div className="h-20 animate-pulse rounded-xl bg-surface-elevated/60" />
-            </div>
-          ) : selectedOffer ? (
-            <div>
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-lg font-semibold text-content">{selectedOffer.title}</h3>
-                  <p className="mt-1 text-sm text-content-muted">
-                    Criada em {formatActiveOfferDate(selectedOffer.createdAt)} · status {selectedOffer.status}
-                  </p>
-                </div>
-                <span className="rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-sm font-semibold text-primary">
-                  {selectedOffer.leadCount} leads
-                </span>
-              </div>
-              <div className="mt-5 space-y-3">
-                {selectedOffer.leads.map((lead) => (
-                  <div key={lead.id} className="rounded-xl border border-line bg-surface-elevated/35 p-3">
-                    <p className="font-medium text-content">{lead.nome}</p>
-                    <p className="mt-1 text-sm text-content-muted">
-                      {lead.telefone} · {lead.origem} · {lead.status}
-                    </p>
-                  </div>
-                ))}
-                {!selectedOffer.leads.length ? (
-                  <p className="rounded-xl border border-dashed border-line p-4 text-sm text-content-muted">
-                    Esta oferta ainda não tem leads vinculados.
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          ) : (
-            <p className="text-sm text-content-muted">Selecione uma oferta ativa para ver os leads vinculados.</p>
-          )}
-        </div>
-      </div>
-    </Panel>
-  );
-}
-
 type AccountContactSettings = {
   personalPhone: string | null;
   systemNotificationPhone: string | null;
@@ -4887,7 +4737,7 @@ export function DashboardWorkspace({
       case "crm":
         return <CrmPage dataset={dataset} session={session} />;
       case "ofertas-ativas":
-        return <ActiveOffersPage />;
+        return <ActiveOffersHub session={session} />;
       case "agenda":
         return <AgendaHub />;
       case "disparos":

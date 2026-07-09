@@ -60,10 +60,11 @@ export const dashboardNavPinnedItems: DashboardNavItem[] = [
     routeKey: "ofertas-ativas",
     help: {
       title: "Ofertas ativas",
-      summary: "Reúne as ofertas comerciais disponíveis na conta e permite acompanhar sua situação.",
+      summary: "Listas de ligação inteligentes para reativar leads e distribuir contatos entre vendedores.",
       items: [
-        "Consulte quais ofertas estão ativas ou indisponíveis.",
-        "Use esta área para conferir o que pode ser apresentado aos seus leads.",
+        "Diretor e dono montam listas com filtros (etapa, dias sem contato, responsável).",
+        "Vendedores trabalham a fila com botões de resultado que atualizam o CRM.",
+        "Acompanhe pendências, transferências e leads que pediram para não ligar.",
       ],
     },
   },

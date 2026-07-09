@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
-import { getActiveOfferDetail } from "@/lib/server/active-offers-service";
+import { getOfferProgressBySeller } from "@/lib/server/active-offers-service";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  request: Request,
+  _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await getClientSessionFromCookies();
@@ -15,16 +15,13 @@ export async function GET(
   const { id } = await params;
   if (!id) return NextResponse.json({ error: "id em falta" }, { status: 400 });
 
-  const url = new URL(request.url);
-  const sellerQueueOnly = url.searchParams.get("queue") === "1";
-
   try {
     const sb = createSupabaseServiceClient();
-    const result = await getActiveOfferDetail(sb, session, id, { sellerQueueOnly });
-    return NextResponse.json(result);
+    const rows = await getOfferProgressBySeller(sb, session, id);
+    return NextResponse.json({ rows });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Erro ao carregar lista.";
-    const status = message.includes("não encontrada") ? 404 : message.includes("Sem permissão") ? 403 : 503;
+    const message = error instanceof Error ? error.message : "Erro ao carregar progresso.";
+    const status = message.includes("Sem permissão") ? 403 : 503;
     return NextResponse.json({ error: message }, { status });
   }
 }

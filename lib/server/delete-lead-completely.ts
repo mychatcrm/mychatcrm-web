@@ -255,6 +255,12 @@ export async function deleteLeadCompletely(params: {
     .eq("tenant_id", params.tenantId)
     .in("lead_id", resolvedIds);
 
+  const { count: offerProgressDeleted = 0 } = await sb
+    .from("active_offer_lead_progress")
+    .delete({ count: "exact" })
+    .eq("tenant_id", params.tenantId)
+    .in("lead_id", resolvedIds);
+
   const { count: leadDeleted = 0 } = await sb
     .from("leads")
     .delete({ count: "exact" })
@@ -263,6 +269,7 @@ export async function deleteLeadCompletely(params: {
 
   const relatedRecordsDeleted =
     (offerLinksDeleted ?? 0) +
+    (offerProgressDeleted ?? 0) +
     metaEventsDeleted +
     followUpJobsDeleted +
     followUpEventsDeleted +

@@ -1,11 +1,12 @@
 /** Papel na conta: dono (pleno), direção, gestão ou vendedor (acesso restrito). */
 export type OrganizationRole = "owner" | "director" | "manager" | "seller";
 
-const SELLER_ROUTE_KEYS = new Set(["crm", "agenda", "lembretes", "suporte"]);
+const SELLER_ROUTE_KEYS = new Set(["crm", "ofertas-ativas", "agenda", "lembretes", "suporte"]);
 
 const MANAGER_OR_DIRECTOR_ROUTE_KEYS = new Set([
   "overview",
   "crm",
+  "ofertas-ativas",
   "agentes",
   "conversas",
   "integracoes-leads",
