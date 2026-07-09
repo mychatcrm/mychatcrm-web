@@ -233,20 +233,33 @@ export async function assignMetaLeadEventToAgent(params: {
     };
   }
 
-  const messageExternalId = `meta:${event.leadgen_id}:initial`;
-  const { data: existingMessage } = await sb
+  const initialMessageExternalId = `meta:${event.leadgen_id}:initial`;
+  const { data: existingInitialMessage } = await sb
     .from("whatsapp_messages")
-    .select("id, delivery_status")
+    .select("id, delivery_status, agent_id")
     .eq("tenant_id", tenantId)
-    .eq("message_id", messageExternalId)
+    .eq("message_id", initialMessageExternalId)
     .maybeSingle();
 
-  if (existingMessage?.delivery_status === "sent") {
-    return recordManualSuccessOnAgent(sb, tenantId, eventId, agentId);
-  }
-  if (existingMessage?.delivery_status === "pending") {
+  if (existingInitialMessage?.delivery_status === "pending") {
     return { ok: false, error: "Envio já em andamento para este lead — aguarde e tente novamente.", status: 409 };
   }
+
+  // Lead já foi contactado antes (balde "OK") e o cliente está redirecionando pra
+  // um agente diferente do que enviou a primeira mensagem — trata como um
+  // handoff real e manda uma mensagem nova (chave própria, não reaproveita
+  // "initial") em vez de só trocar a atribuição sem o cliente perceber nada.
+  const isHandoffToDifferentAgent =
+    existingInitialMessage?.delivery_status === "sent" && existingInitialMessage.agent_id !== agentId;
+
+  if (existingInitialMessage?.delivery_status === "sent" && !isHandoffToDifferentAgent) {
+    return recordManualSuccessOnAgent(sb, tenantId, eventId, agentId);
+  }
+
+  const messageExternalId = isHandoffToDifferentAgent
+    ? `meta:${event.leadgen_id}:manual:${Date.now()}`
+    : initialMessageExternalId;
+  const existingMessage = isHandoffToDifferentAgent ? null : existingInitialMessage;
 
   const aiPrompt = buildMetaInitialAgentPrompt({
     leadName: fullName,

@@ -238,11 +238,13 @@ describe("assignMetaLeadEventToAgent", () => {
     expect(lead?.agent_assignment_source).toBe("manual");
   });
 
-  it("does not resend when the initial message already went out (race)", async () => {
+  it("does not resend when the initial message already went out from the same agent (race)", async () => {
     const sb = makeFakeSupabase({
       meta_lead_events: [EVENT],
       tenant_agents: [ACTIVE_AGENT],
-      whatsapp_messages: [{ id: "msg-1", tenant_id: TENANT, message_id: "meta:leadgen-1:initial", delivery_status: "sent" }],
+      whatsapp_messages: [
+        { id: "msg-1", tenant_id: TENANT, message_id: "meta:leadgen-1:initial", delivery_status: "sent", agent_id: "agent-1" },
+      ],
     });
 
     const result = await assignMetaLeadEventToAgent({ sb: sb as never, tenantId: TENANT, eventId: "event-1", agentId: "agent-1" });
@@ -251,6 +253,28 @@ describe("assignMetaLeadEventToAgent", () => {
     expect(evolutionSendTextMock).not.toHaveBeenCalled();
     expect(generateAgentResponseMock).not.toHaveBeenCalled();
     if (result.ok) expect(result.event.current_step).toBe("manual_assigned_to_agent");
+  });
+
+  it("sends a fresh handoff message when redirecting an already-OK lead to a different agent", async () => {
+    const sb = makeFakeSupabase({
+      meta_lead_events: [{ ...EVENT, current_step: "whatsapp_sent", crm_sync_status: "synced", whatsapp_status: "sent" }],
+      tenant_agents: [ACTIVE_AGENT, { tenant_id: TENANT, agent_id: "agent-2", active: true }],
+      whatsapp_messages: [
+        { id: "msg-1", tenant_id: TENANT, message_id: "meta:leadgen-1:initial", delivery_status: "sent", agent_id: "agent-2" },
+      ],
+    });
+
+    const result = await assignMetaLeadEventToAgent({ sb: sb as never, tenantId: TENANT, eventId: "event-1", agentId: "agent-1" });
+
+    expect(result.ok).toBe(true);
+    expect(evolutionSendTextMock).toHaveBeenCalledTimes(1);
+    // A mensagem original (do agente antigo) fica intacta; uma nova linha é criada pro handoff.
+    expect(sb.tables.whatsapp_messages).toHaveLength(2);
+    const original = sb.tables.whatsapp_messages.find((m) => m.id === "msg-1");
+    expect(original?.agent_id).toBe("agent-2");
+    const handoff = sb.tables.whatsapp_messages.find((m) => m.id !== "msg-1");
+    expect(handoff?.agent_id).toBe("agent-1");
+    expect(handoff?.delivery_status).toBe("sent");
   });
 
   it("reuses the existing failed message row instead of inserting a duplicate", async () => {

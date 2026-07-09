@@ -423,6 +423,12 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
           const wa = waBadge(ev.whatsapp_status, ev.error_message);
           const hint = errorMessageHint(ev.error_message);
           const lastSteps = Array.isArray(ev.steps_log) ? ev.steps_log.slice(-4) : [];
+          const eventBucket = bucketMetaLeadEventStep(ev.current_step);
+          // Direcionamento manual fica disponível em Erro (nunca foi atendido) e em
+          // OK (o sistema marcou como atendido, mas o cliente quer trocar o
+          // atendente/agente porque pode não ter sido de verdade) — não aparece em
+          // "novo" pra não interferir com o pipeline automático ainda em curso.
+          const canManuallyAssign = eventBucket === "erro" || eventBucket === "ok";
           return (
             <li
               key={ev.id}
@@ -443,7 +449,7 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
                     {crm.label}
                   </Badge>
                   <Badge className={cn("text-[10px]", wa.className)}>{wa.label}</Badge>
-                  {bucketMetaLeadEventStep(ev.current_step) === "erro" ? (
+                  {canManuallyAssign ? (
                     <Button
                       type="button"
                       variant="secondary"
