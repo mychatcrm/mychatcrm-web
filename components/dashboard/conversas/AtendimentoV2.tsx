@@ -67,6 +67,12 @@ type InboxTab = "all" | "ia" | "unread";
 type AttendantFilter = "all" | "automation" | "human" | "waiting_human";
 type PeriodFilter = "all" | "today" | "7d" | "30d" | "custom";
 
+type ConnectionOption = {
+  connectionId: string;
+  transport: "evolution" | "cloud_api";
+  label: string;
+};
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -171,8 +177,9 @@ function useClickOutside(ref: React.RefObject<HTMLElement | null>, active: boole
 // API helpers (local — same endpoints as OperacaoConversasHub)
 // ---------------------------------------------------------------------------
 
-async function apiLoadConversations(): Promise<WaConversation[]> {
-  const res = await fetch("/api/client/conversas", { cache: "no-store" });
+async function apiLoadConversations(connectionId?: string | null): Promise<WaConversation[]> {
+  const qs = connectionId ? `?connectionId=${encodeURIComponent(connectionId)}` : "";
+  const res = await fetch(`/api/client/conversas${qs}`, { cache: "no-store" });
   if (!res.ok) return [];
   const data = (await res.json()) as {
     conversations: Omit<WaConversation, "messages" | "messagesLoaded">[];
@@ -182,6 +189,13 @@ async function apiLoadConversations(): Promise<WaConversation[]> {
     messages: [],
     messagesLoaded: false,
   }));
+}
+
+async function apiLoadConnections(): Promise<ConnectionOption[]> {
+  const res = await fetch("/api/client/whatsapp/connections", { cache: "no-store" });
+  if (!res.ok) return [];
+  const data = (await res.json()) as { connections: ConnectionOption[] };
+  return data.connections ?? [];
 }
 
 async function apiLoadMessages(
@@ -423,12 +437,14 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
 
-  // Filtros avançados (período + atendente)
+  // Filtros avançados (período + atendente + número)
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [attendantFilter, setAttendantFilter] = useState<AttendantFilter>("all");
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter>("all");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
+  const [connections, setConnections] = useState<ConnectionOption[]>([]);
+  const [connectionFilter, setConnectionFilter] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -438,20 +454,25 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
   useClickOutside(headerMenuRef, headerMenuOpen, () => setHeaderMenuOpen(false));
   useClickOutside(filtersRef, filtersOpen, () => setFiltersOpen(false));
 
-  // Load conversations
+  // Load available WhatsApp lines (QR Code + API Meta) para o filtro "Número"
+  useEffect(() => {
+    apiLoadConnections()
+      .then(setConnections)
+      .catch(() => {});
+  }, []);
+
+  // Load conversations (recarrega quando o filtro de número muda)
   useEffect(() => {
     setLoading(true);
-    apiLoadConversations()
+    apiLoadConversations(connectionFilter)
       .then((list) => {
         setConversations(list);
-        if (list.length > 0 && !selectedJid) {
-          setSelectedJid(list[0]!.remoteJid);
-        }
+        setSelectedJid((prev) => (prev && list.some((c) => c.remoteJid === prev) ? prev : list[0]?.remoteJid ?? null));
       })
       .catch(() => {})
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [connectionFilter]);
 
   // Load messages when selection changes
   useEffect(() => {
@@ -476,7 +497,7 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
 
   const iaCount = conversations.filter((c) => c.conversation_mode === "automation").length;
   const unreadCount = conversations.filter((c) => c.unreadCount > 0).length;
-  const filtersActive = attendantFilter !== "all" || periodFilter !== "all";
+  const filtersActive = attendantFilter !== "all" || periodFilter !== "all" || connectionFilter !== null;
 
   const filtered = conversations.filter((c) => {
     const name = convDisplayName(c).toLowerCase();
@@ -507,6 +528,7 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
     setPeriodFilter("all");
     setCustomFrom("");
     setCustomTo("");
+    setConnectionFilter(null);
   };
 
   const enterSelectionMode = () => {
@@ -695,6 +717,42 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
               </button>
               {filtersOpen && (
                 <div className="absolute right-0 top-11 z-20 w-72 rounded-mc-base border border-mc-border bg-mc-surface p-4">
+                  {connections.length > 1 && (
+                    <>
+                      <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.08em] text-mc-muted">
+                        Número
+                      </p>
+                      <div className="mb-4 flex flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setConnectionFilter(null)}
+                          className={cn(
+                            "rounded-full px-3 py-1.5 text-[12px] font-semibold transition-colors",
+                            connectionFilter === null
+                              ? "bg-mc-rail text-white"
+                              : "bg-mc-surface-2 text-mc-muted hover:text-mc-text",
+                          )}
+                        >
+                          Todos os números
+                        </button>
+                        {connections.map((c) => (
+                          <button
+                            key={c.connectionId}
+                            type="button"
+                            onClick={() => setConnectionFilter(c.connectionId)}
+                            className={cn(
+                              "rounded-full px-3 py-1.5 text-[12px] font-semibold transition-colors",
+                              connectionFilter === c.connectionId
+                                ? "bg-mc-rail text-white"
+                                : "bg-mc-surface-2 text-mc-muted hover:text-mc-text",
+                            )}
+                          >
+                            {c.label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
                   <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.08em] text-mc-muted">
                     Atendente
                   </p>

@@ -20,18 +20,26 @@ function phoneFromRemoteJid(remoteJid: string): string | null {
   return digits.length >= 10 ? digits : null;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const session = await getClientSessionFromCookies();
   if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
+  // Filtro opcional por linha específica (?connectionId=) — UUID de
+  // tenant_evolution_instances (QR) ou phone_number_id (API Meta). Sem o
+  // parâmetro, comportamento atual preservado (todas as linhas juntas).
+  const connectionId = new URL(request.url).searchParams.get("connectionId");
+
   const sb = createSupabaseServiceClient();
 
+  let messagesQuery = sb
+    .from("whatsapp_messages")
+    .select("remote_jid, content, kind, direction, created_at")
+    .eq("tenant_id", session.tenantId)
+    .order("created_at", { ascending: false });
+  if (connectionId) messagesQuery = messagesQuery.eq("connection_id", connectionId);
+
   const [{ data, error }, { data: states }, { data: leads }] = await Promise.all([
-    sb
-      .from("whatsapp_messages")
-      .select("remote_jid, content, kind, direction, created_at")
-      .eq("tenant_id", session.tenantId)
-      .order("created_at", { ascending: false }),
+    messagesQuery,
     sb
       .from("conversation_states")
       .select(

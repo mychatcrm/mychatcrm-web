@@ -57,6 +57,7 @@ import {
   isMetaProviderActive,
   processSystemMessagesUpdate,
 } from "@/lib/server/system-agent";
+import { getSlotActiveProvider } from "@/lib/server/whatsapp-slot-provider";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import {
   AGENDA_AUTOMATION_DISABLED_REPLY,
@@ -358,6 +359,8 @@ async function saveMessage(opts: {
   mediaDurationSeconds?: number | null;
   transcriptionStatus?: string | null;
   analysisStatus?: string | null;
+  /** UUID de tenant_evolution_instances — identifica qual das linhas QR do tenant processou isto. */
+  connectionId?: string | null;
 }): Promise<SaveMessageResult> {
   try {
     const sb = createSupabaseServiceClient();
@@ -384,6 +387,9 @@ async function saveMessage(opts: {
         // Toda linha gravada por esta função veio do webhook Evolution — usado
         // pelo painel "Conversas ao vivo" para filtrar por canal.
         channel: "evolution",
+        // Identifica QUAL linha QR do tenant (pode ter várias) — usado pelo
+        // filtro por número em /dashboard/conversas.
+        connection_id: opts.connectionId ?? null,
       })
       // Deduplicação: a constraint UNIQUE (tenant_id, message_id) WHERE message_id IS NOT NULL
       // garante que um retry da Evolution API não crie um segundo job de resposta.
@@ -687,6 +693,7 @@ export async function POST(request: Request) {
             messageId: msg.messageId,
             leadId,
             journeyId: journey?.id ?? null,
+            connectionId: row.id,
             mediaUrl: inboundMedia?.mediaUrl ?? null,
             mimeType: inboundMedia?.mimeType ?? ("mimetype" in msg ? msg.mimetype : null),
             storageKey: inboundMedia?.storageKey ?? null,
@@ -814,6 +821,17 @@ export async function POST(request: Request) {
         // ativo. A mensagem já foi salva na Phase 1 (aparece em "Conversas ao
         // vivo" para monitoramento); só o Phase 2 (IA/auto-reply) é pulado.
         if (row.tenant_id === SYSTEM_TENANT_ID) return;
+        // Linha do cliente pode ter QR e Meta conectados ao mesmo tempo
+        // (alternador em /dashboard/integracoes) — só o lado marcado como
+        // ativo responde, evitando os dois lados responderem ao mesmo
+        // contato. Mensagem já foi salva na Phase 1 independente disso.
+        if ((await getSlotActiveProvider(row.tenant_id, row.slot_index)) !== "evolution") {
+          console.info("[webhooks/evolution] auto_reply_skipped_inactive_provider", {
+            tenant_id: row.tenant_id,
+            slot_index: row.slot_index,
+          });
+          return;
+        }
         const {
           msg,
           agentId,
@@ -1223,6 +1241,7 @@ export async function POST(request: Request) {
               leadId,
               journeyId: journey?.id ?? null,
               mediaUrl: delivery.mediaUrl,
+              connectionId: row.id,
             });
             if (leadId) {
               await sbState

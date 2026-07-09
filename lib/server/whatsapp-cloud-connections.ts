@@ -4,6 +4,7 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 export type WhatsAppCloudConnection = {
   id: string;
   tenant_id: string;
+  slot_index: number;
   phone_number_id: string;
   waba_id: string | null;
   access_token: string;
@@ -14,21 +15,24 @@ export type WhatsAppCloudConnection = {
   updated_at: string;
 };
 
-export async function getWhatsAppCloudConnection(tenantId: string): Promise<WhatsAppCloudConnection | null> {
+export async function getWhatsAppCloudConnection(
+  tenantId: string,
+  slotIndex: number,
+): Promise<WhatsAppCloudConnection | null> {
   const sb = createSupabaseServiceClient();
   const { data } = await sb
     .from("whatsapp_cloud_connections")
     .select("*")
     .eq("tenant_id", tenantId)
+    .eq("slot_index", slotIndex)
     .eq("active", true)
-    .order("connected_at", { ascending: false })
-    .limit(1)
     .maybeSingle();
   return (data as WhatsAppCloudConnection | null) ?? null;
 }
 
 export async function upsertWhatsAppCloudConnection(params: {
   tenantId: string;
+  slotIndex: number;
   phoneNumberId: string;
   wabaId: string | null;
   accessToken: string;
@@ -39,6 +43,7 @@ export async function upsertWhatsAppCloudConnection(params: {
   const { error } = await sb.from("whatsapp_cloud_connections").upsert(
     {
       tenant_id: params.tenantId,
+      slot_index: params.slotIndex,
       phone_number_id: params.phoneNumberId,
       waba_id: params.wabaId,
       access_token: params.accessToken,
@@ -47,14 +52,14 @@ export async function upsertWhatsAppCloudConnection(params: {
       active: true,
       updated_at: new Date().toISOString(),
     },
-    { onConflict: "phone_number_id" },
+    { onConflict: "tenant_id,slot_index" },
   );
   return { error: error?.message ?? null };
 }
 
-export async function deleteWhatsAppCloudConnection(tenantId: string): Promise<void> {
+export async function deleteWhatsAppCloudConnection(tenantId: string, slotIndex: number): Promise<void> {
   const sb = createSupabaseServiceClient();
-  await sb.from("whatsapp_cloud_connections").delete().eq("tenant_id", tenantId);
+  await sb.from("whatsapp_cloud_connections").delete().eq("tenant_id", tenantId).eq("slot_index", slotIndex);
 }
 
 export async function lookupWhatsAppCloudConnectionByPhoneNumberId(

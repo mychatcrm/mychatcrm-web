@@ -3,6 +3,7 @@ import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { getStripe } from "@/lib/stripe";
 import { SITE_URL } from "@/lib/constants";
+import { serverWhatsAppSlotCapacity } from "@/lib/server/whatsapp-slot-server";
 
 export const dynamic = "force-dynamic";
 
@@ -23,10 +24,12 @@ export async function GET() {
       .select("extra_whatsapp_slots")
       .eq("tenant_id", session.tenantId)
       .maybeSingle();
-    return NextResponse.json({ extraSlots: (data?.extra_whatsapp_slots as number) ?? 0 });
+    const extraSlots = (data?.extra_whatsapp_slots as number) ?? 0;
+    const totalSlots = serverWhatsAppSlotCapacity(session, extraSlots);
+    return NextResponse.json({ extraSlots, totalSlots, includedLines: totalSlots - extraSlots });
   } catch (err) {
     console.error("[extra-whatsapp/GET] query failed:", err);
-    return NextResponse.json({ extraSlots: 0 });
+    return NextResponse.json({ extraSlots: 0, totalSlots: 1, includedLines: 1 });
   }
 }
 

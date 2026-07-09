@@ -2,23 +2,30 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangle, BadgeCheck, Check, ChevronDown, ExternalLink, Loader2, Plug, QrCode, Share2, Unlink } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeftRight,
+  BadgeCheck,
+  Check,
+  ChevronDown,
+  ExternalLink,
+  Loader2,
+  Plug,
+  QrCode,
+  Share2,
+  Unlink,
+} from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { Modal } from "@/components/ui/Modal";
 import { cn, formatBRL } from "@/lib/utils";
 import { WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL } from "@/lib/plans";
-import { readExtraSlotsSummary, whatsappExtraSlotsStorageKey, WHATSAPP_EXTRAS_UPDATED_EVENT } from "@/lib/whatsapp-extra-numbers-storage";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
-import {
-  readWhatsAppSlotMethods,
-  setWhatsAppSlotMethod,
-  WHATSAPP_CONNECTION_UPDATED_EVENT,
-  whatsappConnectionWatchableStorageKeys,
-} from "@/lib/whatsapp-connection-storage";
 import { typography } from "@/lib/typography";
 import { EvolutionQrSlotPanel } from "@/components/dashboard/integrations/EvolutionQrSlotPanel";
 import type { MetaStatusPage, MetaStatusResponse } from "@/app/api/client/meta/status/route";
+import type { TenantWhatsappConnection } from "@/lib/server/tenant-whatsapp-connections";
+import type { SlotProvider } from "@/lib/server/whatsapp-slot-provider";
 import type { Agent } from "@/lib/types";
 import { loadFbSdk } from "@/lib/client/facebook-sdk";
 
@@ -32,7 +39,6 @@ function safeRun<T>(fn: () => T, fallback: T): T {
 
 export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const { isLight } = usePanelAppearance();
-  const [revision, setRevision] = useState(0);
   const [banner, setBanner] = useState<string | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -47,61 +53,92 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const [metaBanner, setMetaBanner] = useState<string | null>(null);
   const [disconnectModalOpen, setDisconnectModalOpen] = useState(false);
 
-  // ── WhatsApp Cloud API (Embedded Signup) state ───────────────────────────
+  // ── WhatsApp Cloud API (Embedded Signup) state — por linha (slotIndex) ────
   type WaCloudState =
     | { connected: false }
     | { connected: true; phone_number_id: string; display_phone: string | null; verified_name: string | null };
-  const [waCloudStatus, setWaCloudStatus] = useState<WaCloudState | null>(null);
-  const [waCloudLoading, setWaCloudLoading] = useState(true);
-  const [waCloudConnecting, setWaCloudConnecting] = useState(false);
-  const [waCloudDisconnecting, setWaCloudDisconnecting] = useState(false);
-  const [waCloudBanner, setWaCloudBanner] = useState<string | null>(null);
+  const [waCloudStatusBySlot, setWaCloudStatusBySlot] = useState<Record<number, WaCloudState>>({});
+  const [waCloudLoadingBySlot, setWaCloudLoadingBySlot] = useState<Record<number, boolean>>({});
+  const [waCloudConnectingSlot, setWaCloudConnectingSlot] = useState<number | null>(null);
+  const [waCloudDisconnectingSlot, setWaCloudDisconnectingSlot] = useState<number | null>(null);
+  const [waCloudBannerBySlot, setWaCloudBannerBySlot] = useState<Record<number, string | null>>({});
   // Pre-loaded SDK config so FB.login() can be called synchronously on click
   const waCloudConfigRef = useRef<{ app_id: string; config_id: string } | null>(null);
   // Why the SDK pre-load failed (ad blocker, CDN down) — shown on click for a precise message
   const waCloudSdkErrorRef = useRef<string | null>(null);
 
-  const bump = useCallback(() => setRevision((r) => r + 1), []);
+  // ── Linhas WhatsApp reais (Evolution + Meta) — substitui o localStorage ───
+  const [slotCapacity, setSlotCapacity] = useState({ totalSlots: 1, extraSlots: 0, includedLines: 1 });
+  const [connections, setConnections] = useState<TenantWhatsappConnection[]>([]);
+  const [switchingSlot, setSwitchingSlot] = useState<number | null>(null);
+  const [switchErrorBySlot, setSwitchErrorBySlot] = useState<Record<number, string | null>>({});
+
+  const loadSlotCapacity = useCallback(async () => {
+    try {
+      const res = await fetch("/api/checkout/extra-whatsapp", { credentials: "same-origin" });
+      if (!res.ok) return;
+      const data = (await res.json()) as { extraSlots?: number; totalSlots?: number; includedLines?: number };
+      setSlotCapacity({
+        totalSlots: data.totalSlots ?? 1,
+        extraSlots: data.extraSlots ?? 0,
+        includedLines: data.includedLines ?? 1,
+      });
+    } catch {
+      /* mantém capacidade anterior */
+    }
+  }, []);
+
+  const loadConnections = useCallback(async () => {
+    try {
+      const res = await fetch("/api/client/whatsapp/connections", { credentials: "same-origin" });
+      if (!res.ok) return;
+      const data = (await res.json()) as { connections?: TenantWhatsappConnection[] };
+      setConnections(data.connections ?? []);
+    } catch {
+      /* mantém lista anterior */
+    }
+  }, []);
 
   useEffect(() => {
-    bump();
-  }, [bump, tenantId]);
+    void loadSlotCapacity();
+    void loadConnections();
+  }, [loadSlotCapacity, loadConnections, tenantId]);
 
+  // Mantém o badge "ativo"/"conectado" e o botão de troca atualizados mesmo
+  // enquanto o EvolutionQrSlotPanel (que faz seu próprio polling) muda de
+  // estado sem avisar o componente pai.
   useEffect(() => {
-    const onWa = () => bump();
-    window.addEventListener(WHATSAPP_CONNECTION_UPDATED_EVENT, onWa);
-    const onStorage = (e: StorageEvent) => {
-      if (!e.key) return;
-      if (whatsappConnectionWatchableStorageKeys(tenantId).includes(e.key)) onWa();
-    };
-    window.addEventListener("storage", onStorage);
-    return () => {
-      window.removeEventListener(WHATSAPP_CONNECTION_UPDATED_EVENT, onWa);
-      window.removeEventListener("storage", onStorage);
-    };
-  }, [bump, tenantId]);
+    const id = setInterval(() => void loadConnections(), 5_000);
+    return () => clearInterval(id);
+  }, [loadConnections]);
 
-  useEffect(() => {
-    const onWaExtras = () => bump();
-    window.addEventListener(WHATSAPP_EXTRAS_UPDATED_EVENT, onWaExtras);
-    return () => window.removeEventListener(WHATSAPP_EXTRAS_UPDATED_EVENT, onWaExtras);
-  }, [bump]);
-
-  useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (!e.key) return;
-      if (
-        e.key === whatsappExtraSlotsStorageKey(tenantId) ||
-        whatsappConnectionWatchableStorageKeys(tenantId).includes(e.key)
-      ) {
-        bump();
+  const switchSlotProvider = useCallback(
+    async (slotIndex: number, provider: SlotProvider) => {
+      setSwitchingSlot(slotIndex);
+      setSwitchErrorBySlot((prev) => ({ ...prev, [slotIndex]: null }));
+      try {
+        const res = await fetch("/api/client/whatsapp/slot-provider", {
+          method: "PATCH",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slotIndex, provider }),
+        });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(data.error ?? "Não foi possível trocar o método desta linha.");
+        }
+        await loadConnections();
+      } catch (err) {
+        setSwitchErrorBySlot((prev) => ({
+          ...prev,
+          [slotIndex]: err instanceof Error ? err.message : "Erro ao trocar o método desta linha.",
+        }));
+      } finally {
+        setSwitchingSlot(null);
       }
-    };
-    window.addEventListener("storage", onStorage);
-    return () => {
-      window.removeEventListener("storage", onStorage);
-    };
-  }, [bump, tenantId]);
+    },
+    [loadConnections],
+  );
 
   // ── Load Meta status on mount / after OAuth redirect ─────────────────────
   const loadMetaStatus = useCallback(async (): Promise<MetaStatusResponse | null> => {
@@ -138,32 +175,34 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     void loadMetaStatus();
   }, [loadMetaStatus]);
 
-  // ── WhatsApp Cloud status ─────────────────────────────────────────────────
-  const loadWaCloudStatus = useCallback(async (): Promise<WaCloudState | null> => {
-    setWaCloudLoading(true);
+  // ── WhatsApp Cloud status — carregado por linha ───────────────────────────
+  const loadWaCloudStatus = useCallback(async (slotIndex: number): Promise<WaCloudState | null> => {
+    setWaCloudLoadingBySlot((prev) => ({ ...prev, [slotIndex]: true }));
     try {
-      const res = await fetch("/api/client/whatsapp-cloud/status", { credentials: "same-origin" });
+      const res = await fetch(`/api/client/whatsapp-cloud/status?slotIndex=${slotIndex}`, { credentials: "same-origin" });
       if (!res.ok) throw new Error("Unable to load WhatsApp Cloud status");
       const data = (await res.json()) as WaCloudState;
-      setWaCloudStatus(data);
+      setWaCloudStatusBySlot((prev) => ({ ...prev, [slotIndex]: data }));
       return data;
     } catch {
-      setWaCloudStatus({ connected: false });
+      setWaCloudStatusBySlot((prev) => ({ ...prev, [slotIndex]: { connected: false } }));
       return null;
     } finally {
-      setWaCloudLoading(false);
+      setWaCloudLoadingBySlot((prev) => ({ ...prev, [slotIndex]: false }));
     }
   }, []);
 
   useEffect(() => {
-    void loadWaCloudStatus();
-  }, [loadWaCloudStatus]);
+    for (let slotIndex = 0; slotIndex < slotCapacity.totalSlots; slotIndex += 1) {
+      void loadWaCloudStatus(slotIndex);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slotCapacity.totalSlots]);
 
-  // Pre-load the FB SDK as soon as we know the tenant hasn't connected yet.
-  // This ensures window.FB is ready before the user clicks, so FB.login() can
-  // be called synchronously within the user-gesture context (no popup blocker).
+  // Pre-load the FB SDK once on mount so window.FB is ready before the user
+  // clicks Conectar em qualquer linha — FB.login() precisa ser síncrono no
+  // gesto do usuário (senão o popup é bloqueado).
   useEffect(() => {
-    if (waCloudStatus?.connected !== false) return;
     if (waCloudConfigRef.current) return; // already loaded
     void (async () => {
       try {
@@ -180,7 +219,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
         waCloudSdkErrorRef.current = err instanceof Error ? err.message : String(err);
       }
     })();
-  }, [waCloudStatus]);
+  }, []);
 
   // Show banner if redirected back from OAuth
   useEffect(() => {
@@ -199,17 +238,22 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   }, [searchParams, loadMetaStatus]);
 
   useEffect(() => {
+    // Fallback de redirect OAuth (fora do fluxo principal via popup) sempre
+    // aponta para a linha 0 — é o mesmo default usado no lado do servidor.
     const wa = searchParams.get("whatsapp");
     if (wa === "connected") {
-      void loadWaCloudStatus().then((status) => {
-        setWaCloudBanner(status?.connected ? "✅ WhatsApp API Oficial conectado com sucesso!" : "Nenhum número WhatsApp Business encontrado.");
+      void loadWaCloudStatus(0).then((status) => {
+        setWaCloudBannerBySlot((prev) => ({
+          ...prev,
+          0: status?.connected ? "✅ WhatsApp API Oficial conectado com sucesso!" : "Nenhum número WhatsApp Business encontrado.",
+        }));
       });
     } else if (wa === "denied") {
-      setWaCloudBanner("Conexão cancelada. Tente novamente.");
+      setWaCloudBannerBySlot((prev) => ({ ...prev, 0: "Conexão cancelada. Tente novamente." }));
     } else if (wa === "no_numbers") {
-      setWaCloudBanner("Nenhum número WhatsApp Business encontrado na conta Meta.");
+      setWaCloudBannerBySlot((prev) => ({ ...prev, 0: "Nenhum número WhatsApp Business encontrado na conta Meta." }));
     } else if (wa === "error") {
-      setWaCloudBanner("Erro ao conectar com a Meta. Tente novamente.");
+      setWaCloudBannerBySlot((prev) => ({ ...prev, 0: "Erro ao conectar com a Meta. Tente novamente." }));
     }
   }, [searchParams, loadWaCloudStatus]);
 
@@ -261,37 +305,45 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     }
   }, [loadMetaStatus, router]);
 
-  const disconnectWaCloud = useCallback(async () => {
-    setWaCloudDisconnecting(true);
-    try {
-      const res = await fetch("/api/client/whatsapp-cloud/disconnect", { method: "DELETE", credentials: "same-origin" });
-      if (!res.ok) throw new Error("Unable to disconnect");
-      setWaCloudStatus({ connected: false });
-      setWaCloudBanner(null);
-    } catch {
-      setWaCloudBanner("Erro ao desconectar. Tente novamente.");
-    } finally {
-      setWaCloudDisconnecting(false);
-    }
-  }, []);
+  const disconnectWaCloud = useCallback(
+    async (slotIndex: number) => {
+      setWaCloudDisconnectingSlot(slotIndex);
+      try {
+        const res = await fetch(`/api/client/whatsapp-cloud/disconnect?slotIndex=${slotIndex}`, {
+          method: "DELETE",
+          credentials: "same-origin",
+        });
+        if (!res.ok) throw new Error("Unable to disconnect");
+        setWaCloudStatusBySlot((prev) => ({ ...prev, [slotIndex]: { connected: false } }));
+        setWaCloudBannerBySlot((prev) => ({ ...prev, [slotIndex]: null }));
+        void loadConnections();
+      } catch {
+        setWaCloudBannerBySlot((prev) => ({ ...prev, [slotIndex]: "Erro ao desconectar. Tente novamente." }));
+      } finally {
+        setWaCloudDisconnectingSlot(null);
+      }
+    },
+    [loadConnections],
+  );
 
   // FB.login() must be called synchronously within the user-gesture context.
   // The SDK and config_id are pre-loaded on mount (see useEffect above) so no
   // awaits are needed before calling FB.login(), preventing popup blockers.
-  const connectWaCloud = useCallback(() => {
+  const connectWaCloud = useCallback((slotIndex: number) => {
     const cfg = waCloudConfigRef.current;
     if (!window.FB || !cfg) {
       const reason = waCloudSdkErrorRef.current;
-      setWaCloudBanner(
-        reason
+      setWaCloudBannerBySlot((prev) => ({
+        ...prev,
+        [slotIndex]: reason
           ? `Não foi possível carregar o SDK da Meta (${reason}). Desative bloqueadores de anúncio para este site e recarregue a página.`
           : "SDK Meta ainda carregando. Aguarde um instante e tente novamente.",
-      );
+      }));
       return;
     }
 
-    setWaCloudConnecting(true);
-    setWaCloudBanner(null);
+    setWaCloudConnectingSlot(slotIndex);
+    setWaCloudBannerBySlot((prev) => ({ ...prev, [slotIndex]: null }));
 
     let wabaId: string | null = null;
     let phoneNumberId: string | null = null;
@@ -330,8 +382,8 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     const safetyTimer = setTimeout(() => {
       if (!callbackFired) {
         cleanup();
-        setWaCloudBanner("O popup do Facebook não respondeu. Permita popups para este site e tente novamente.");
-        setWaCloudConnecting(false);
+        setWaCloudBannerBySlot((prev) => ({ ...prev, [slotIndex]: "O popup do Facebook não respondeu. Permita popups para este site e tente novamente." }));
+        setWaCloudConnectingSlot(null);
       }
     }, 120_000);
 
@@ -347,8 +399,8 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
           void (async () => {
             if (!response.authResponse?.code) {
               cleanup();
-              setWaCloudBanner("Conexão cancelada ou não autorizada.");
-              setWaCloudConnecting(false);
+              setWaCloudBannerBySlot((prev) => ({ ...prev, [slotIndex]: "Conexão cancelada ou não autorizada." }));
+              setWaCloudConnectingSlot(null);
               return;
             }
 
@@ -360,8 +412,8 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
             cleanup();
 
             if (!wabaId || !phoneNumberId) {
-              setWaCloudBanner("Nenhum número WhatsApp Business encontrado. Tente novamente.");
-              setWaCloudConnecting(false);
+              setWaCloudBannerBySlot((prev) => ({ ...prev, [slotIndex]: "Nenhum número WhatsApp Business encontrado. Tente novamente." }));
+              setWaCloudConnectingSlot(null);
               return;
             }
 
@@ -370,7 +422,12 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                 method: "POST",
                 credentials: "same-origin",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ code: response.authResponse.code, waba_id: wabaId, phone_number_id: phoneNumberId }),
+                body: JSON.stringify({
+                  code: response.authResponse.code,
+                  waba_id: wabaId,
+                  phone_number_id: phoneNumberId,
+                  slotIndex,
+                }),
               });
               const exchData = (await exchRes.json()) as {
                 connected?: boolean;
@@ -380,20 +437,24 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                 error?: string;
               };
               if (exchData.connected && exchData.phone_number_id) {
-                setWaCloudStatus({
-                  connected: true,
-                  phone_number_id: exchData.phone_number_id,
-                  display_phone: exchData.display_phone ?? null,
-                  verified_name: exchData.verified_name ?? null,
-                });
-                setWaCloudBanner("✅ WhatsApp API Oficial conectado com sucesso!");
+                setWaCloudStatusBySlot((prev) => ({
+                  ...prev,
+                  [slotIndex]: {
+                    connected: true,
+                    phone_number_id: exchData.phone_number_id!,
+                    display_phone: exchData.display_phone ?? null,
+                    verified_name: exchData.verified_name ?? null,
+                  },
+                }));
+                setWaCloudBannerBySlot((prev) => ({ ...prev, [slotIndex]: "✅ WhatsApp API Oficial conectado com sucesso!" }));
+                void loadConnections();
               } else {
-                setWaCloudBanner("Erro ao salvar conexão. Tente novamente.");
+                setWaCloudBannerBySlot((prev) => ({ ...prev, [slotIndex]: "Erro ao salvar conexão. Tente novamente." }));
               }
             } catch {
-              setWaCloudBanner("Erro de rede ao salvar conexão. Tente novamente.");
+              setWaCloudBannerBySlot((prev) => ({ ...prev, [slotIndex]: "Erro de rede ao salvar conexão. Tente novamente." }));
             } finally {
-              setWaCloudConnecting(false);
+              setWaCloudConnectingSlot(null);
             }
           })();
         },
@@ -410,33 +471,39 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
       clearTimeout(safetyTimer);
       cleanup();
       const msg = err instanceof Error ? err.message : String(err);
-      setWaCloudBanner(`Erro ao iniciar conexão Meta: ${msg}. Tente novamente.`);
+      setWaCloudBannerBySlot((prev) => ({ ...prev, [slotIndex]: `Erro ao iniciar conexão Meta: ${msg}. Tente novamente.` }));
       console.error("[connectWaCloud]", msg);
-      setWaCloudConnecting(false);
+      setWaCloudConnectingSlot(null);
     }
-  }, []);
+  }, [loadConnections]);
 
-  const waExtraSlots = useMemo(() => {
-    void revision;
-    return readExtraSlotsSummary(tenantId);
-  }, [revision, tenantId]);
+  const slotIndices = useMemo(
+    () => Array.from({ length: slotCapacity.totalSlots }, (_, i) => i),
+    [slotCapacity.totalSlots],
+  );
 
-  const waSlots = useMemo(() => {
-    void revision;
-    return readWhatsAppSlotMethods(tenantId);
-  }, [revision, tenantId]);
+  const connectionsBySlot = useMemo(() => {
+    const map = new Map<number, { evo: TenantWhatsappConnection | null; meta: TenantWhatsappConnection | null }>();
+    for (const slotIndex of slotIndices) {
+      map.set(slotIndex, {
+        evo: connections.find((c) => c.slotIndex === slotIndex && c.transport === "evolution") ?? null,
+        meta: connections.find((c) => c.slotIndex === slotIndex && c.transport === "cloud_api") ?? null,
+      });
+    }
+    return map;
+  }, [connections, slotIndices]);
 
   const metaPages = metaStatus?.pages ?? [];
   const metaConnected = metaPages.length > 0;
   const visibleMetaBanner = metaBanner?.startsWith("✅") && !metaConnected ? null : metaBanner;
 
   const waLineStatus = useMemo(() => {
-    void revision;
-    return {
-      waLinesReady: waSlots.filter(Boolean).length,
-      waLineCount: waSlots.length,
-    };
-  }, [revision, waSlots]);
+    const ready = slotIndices.filter((slotIndex) => {
+      const pair = connectionsBySlot.get(slotIndex);
+      return Boolean(pair?.evo?.connected) || Boolean(pair?.meta?.connected);
+    }).length;
+    return { waLinesReady: ready, waLineCount: slotIndices.length };
+  }, [connectionsBySlot, slotIndices]);
 
   return (
     <div className="space-y-8">
@@ -478,9 +545,10 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
               <p className={cn(typography.ui.overline, "text-emerald-700 dark:text-emerald-300/90")}>Canal principal</p>
               <h3 className="font-display text-lg font-bold text-content">WhatsApp Business</h3>
               <p className="text-xs text-content-secondary">
-                Tem <strong className="text-content">{waSlots.length}</strong>{" "}
-                {waSlots.length === 1 ? "linha" : "linhas"} (plano + extras). Em cada linha escolha <strong className="text-content">QR</strong> ou{" "}
-                <strong className="text-content">API Meta</strong> — só uma opção por número.
+                Tem <strong className="text-content">{slotIndices.length}</strong>{" "}
+                {slotIndices.length === 1 ? "linha" : "linhas"} (plano + extras). Cada linha aceita{" "}
+                <strong className="text-content">QR e API Meta ao mesmo tempo</strong> — troque entre eles sem
+                desconectar nenhum dos dois.
               </p>
             </div>
           </div>
@@ -492,11 +560,11 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                 : "border-line bg-surface-elevated/50 text-content-secondary",
             )}
           >
-            {waLineStatus.waLinesReady}/{waLineStatus.waLineCount} com metodo
+            {waLineStatus.waLinesReady}/{waLineStatus.waLineCount} conectadas
           </Badge>
         </div>
         <div className="space-y-4 p-5 sm:p-6">
-          {waExtraSlots.purchased > 0 ? (
+          {slotCapacity.extraSlots > 0 ? (
             <div
               className={cn(
                 "rounded-xl border p-4 text-sm ",
@@ -509,23 +577,18 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
             >
               <p className="font-semibold text-content">Linhas WhatsApp extra</p>
               <p className="mt-2 text-xs leading-relaxed">
-                Tem <strong className="text-content">{waExtraSlots.purchased}</strong>{" "}
-                {waExtraSlots.purchased === 1 ? "linha extra contratada" : "linhas extra contratadas"} ({formatBRL(WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL)}/mes por linha). Cada
-                numero <strong className="text-content">liga-se aqui</strong> (QR ou API da Meta); a compra so define quantas linhas — nao pede telefone no checkout.
+                Tem <strong className="text-content">{slotCapacity.extraSlots}</strong>{" "}
+                {slotCapacity.extraSlots === 1 ? "linha extra contratada" : "linhas extra contratadas"} (
+                {formatBRL(WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL)}/mes por linha), além das{" "}
+                {slotCapacity.includedLines} do plano. Cada número <strong className="text-content">liga-se aqui</strong>{" "}
+                (QR ou API da Meta); a compra só define quantas linhas — não pede telefone no checkout.
               </p>
-              {waExtraSlots.configured < waExtraSlots.purchased ? (
-                <p className="mt-2 rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-content">
-                  Faltam <strong>{waExtraSlots.purchased - waExtraSlots.configured}</strong>{" "}
-                  {waExtraSlots.purchased - waExtraSlots.configured === 1 ? "linha extra por ligar" : "linhas extra por ligar"} (escolha QR ou Meta em cada linha abaixo).
-                </p>
-              ) : (
-                <p className={cn("mt-2 text-xs", isLight ? "text-emerald-700" : "text-emerald-300")}>Todas as linhas extra tem metodo definido.</p>
-              )}
             </div>
           ) : null}
           <p className="text-sm text-content-secondary">
             Com <strong className="text-content">QR</strong>, o código é gerado no seu servidor WhatsApp (Evolution) e aparece aqui. Com <strong className="text-content">API Meta</strong>, o
-            caminho oficial para número verificado e envios em massa. Só vê as linhas incluídas no plano.
+            caminho oficial para número verificado e envios em massa. Ligue os dois numa mesma linha e use o botão de
+            troca para decidir qual responde, sem perder a configuração do outro lado.
           </p>
           <details
             className={cn(
@@ -541,9 +604,21 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
             </p>
           </details>
           <div className="space-y-5">
-            {waSlots.map((method, slotIndex) => {
+            {slotIndices.map((slotIndex) => {
               const isBase = slotIndex === 0;
-              const lineTitle = isBase ? `Linha ${slotIndex + 1} — numero incluido no plano` : `Linha ${slotIndex + 1} — numero extra`;
+              const lineTitle = isBase ? `Linha ${slotIndex + 1} — número incluído no plano` : `Linha ${slotIndex + 1} — número extra`;
+              const pair = connectionsBySlot.get(slotIndex);
+              const evoConnected = Boolean(pair?.evo?.connected);
+              const metaConnected2 = Boolean(pair?.meta?.connected);
+              const activeProvider: SlotProvider = pair?.evo?.activeProvider ?? pair?.meta?.activeProvider ?? "evolution";
+              const bothConnected = evoConnected && metaConnected2;
+              const waCloudStatus = waCloudStatusBySlot[slotIndex] ?? null;
+              const waCloudLoading = waCloudLoadingBySlot[slotIndex] ?? true;
+              const waCloudBanner = waCloudBannerBySlot[slotIndex] ?? null;
+              const waCloudConnecting = waCloudConnectingSlot === slotIndex;
+              const waCloudDisconnecting = waCloudDisconnectingSlot === slotIndex;
+              const switchError = switchErrorBySlot[slotIndex] ?? null;
+
               return (
                 <div
                   key={slotIndex}
@@ -555,95 +630,57 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                   <div className="flex flex-wrap items-start justify-between gap-2 border-b border-line/60 pb-3">
                     <div>
                       <p className="text-sm font-semibold text-content">{lineTitle}</p>
-                      <p className="mt-0.5 text-[11px] text-content-muted">Um metodo por linha. Trocar desliga esta linha para escolher de novo.</p>
+                      <p className="mt-0.5 text-[11px] text-content-muted">
+                        Ligue QR e API Meta nesta linha ao mesmo tempo — nenhum dos dois é desconectado ao trocar.
+                      </p>
                     </div>
                     <Badge
                       className={cn(
                         "shrink-0 text-[10px]",
-                        method === "qr"
-                          ? "border-info/35 bg-info/10 text-info"
-                          : method === "meta"
-                            ? cn("border-emerald-500/40 bg-emerald-500/15", isLight ? "text-emerald-700" : "text-emerald-300")
-                            : "border-line bg-surface-elevated/50 text-content-secondary",
+                        "border-emerald-500/40 bg-emerald-500/15",
+                        isLight ? "text-emerald-700" : "text-emerald-300",
                       )}
                     >
-                      {method === "qr" ? "QR Code" : method === "meta" ? "API Meta" : "Nao ligada"}
+                      Respondendo: {activeProvider === "cloud_api" ? "API Meta" : "QR Code"}
                     </Badge>
                   </div>
-                  <div className="mt-4 space-y-4">
-                    {!method ? (
-                      <div className="space-y-3">
-                        <p className="text-xs font-semibold text-content">Passo 1 — Como quer ligar este número?</p>
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <button
-                            type="button"
-                            onClick={() => setWhatsAppSlotMethod(tenantId, slotIndex, "qr")}
-                            className={cn(
-                              "flex min-h-[44px] flex-col items-start gap-2 rounded-xl border p-4 text-left transition",
-                              "border-line bg-surface-elevated/40 hover:border-line/80 hover:bg-surface-elevated/60",
-                            )}
-                          >
-                            <span className="flex items-center gap-2 font-semibold text-content">
-                              <QrCode className="h-5 w-5 shrink-0 text-primary" strokeWidth={1.75} aria-hidden />
-                              QR Code (telemóvel)
-                            </span>
-                            <span className="text-xs leading-relaxed text-content-muted">Ideal para testar rápido. Um número por sessão nesta linha.</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setWhatsAppSlotMethod(tenantId, slotIndex, "meta")}
-                            className={cn(
-                              "flex min-h-[44px] flex-col items-start gap-2 rounded-xl border p-4 text-left transition",
-                              "border-line bg-surface-elevated/40 hover:border-line/80 hover:bg-surface-elevated/60",
-                            )}
-                          >
-                            <span className="flex items-center gap-2 font-semibold text-content">
-                              <BadgeCheck className="h-5 w-5 shrink-0 text-primary" strokeWidth={1.75} aria-hidden />
-                              API Meta (empresa)
-                            </span>
-                            <span className="text-xs leading-relaxed text-content-muted">Número verificado e envios oficiais (configuração avançada).</span>
-                          </button>
-                        </div>
+
+                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                    {/* ── Coluna QR / Evolution ── */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="flex items-center gap-1.5 text-xs font-semibold text-content">
+                          <QrCode className="size-3.5 shrink-0 text-primary" aria-hidden />
+                          QR Code
+                        </p>
+                        {activeProvider === "evolution" ? (
+                          <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[9px] font-semibold text-emerald-700 dark:text-emerald-300">
+                            Ativo
+                          </span>
+                        ) : null}
                       </div>
-                    ) : null}
-                    {method === "qr" ? (
-                      <div className="space-y-4">
-                        <EvolutionQrSlotPanel
-                          key={`evo-qr-${tenantId}-${slotIndex}`}
-                          slotIndex={slotIndex}
-                          autoProvision={false}
-                        />
-                        <div className="flex flex-wrap items-center gap-3 border-t border-line/40 pt-3">
-                          <p className="flex-1 text-[11px] text-content-muted">
-                            Para trocar de método ou desligar permanentemente esta linha:
-                          </p>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="shrink-0 border-rose-500/30 text-rose-600 hover:border-rose-500/50 hover:bg-rose-500/5 dark:text-rose-400"
-                            onClick={async () => {
-                              try {
-                                await fetch(`/api/client/whatsapp/evolution/session?slotIndex=${slotIndex}`, {
-                                  method: "DELETE",
-                                  credentials: "same-origin",
-                                });
-                              } catch {
-                                /* ignore */
-                              }
-                              setWhatsAppSlotMethod(tenantId, slotIndex, null);
-                            }}
-                          >
-                            Desligar esta linha
-                          </Button>
-                        </div>
+                      <EvolutionQrSlotPanel key={`evo-qr-${tenantId}-${slotIndex}`} slotIndex={slotIndex} autoProvision={false} />
+                    </div>
+
+                    {/* ── Coluna API Meta ── */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="flex items-center gap-1.5 text-xs font-semibold text-content">
+                          <BadgeCheck className="size-3.5 shrink-0 text-primary" aria-hidden />
+                          API Meta
+                        </p>
+                        {activeProvider === "cloud_api" ? (
+                          <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[9px] font-semibold text-emerald-700 dark:text-emerald-300">
+                            Ativo
+                          </span>
+                        ) : null}
                       </div>
-                    ) : null}
-                    {method === "meta" ? (
-                      <div className="space-y-4">
+
+                      <div className="space-y-3 rounded-xl border border-line bg-surface-deep/30 p-4 text-sm text-content-secondary">
                         {waCloudBanner ? (
                           <div
                             className={cn(
-                              "flex items-start gap-2 rounded-lg border px-4 py-3 text-sm",
+                              "flex items-start gap-2 rounded-lg border px-3 py-2 text-xs",
                               waCloudBanner.startsWith("✅")
                                 ? isLight
                                   ? "border-emerald-200 bg-emerald-50 text-emerald-800"
@@ -654,22 +691,22 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                             )}
                           >
                             <span className="mt-0.5 shrink-0">
-                              {waCloudBanner.startsWith("✅") ? <BadgeCheck className="size-4" aria-hidden /> : <AlertTriangle className="size-4" aria-hidden />}
+                              {waCloudBanner.startsWith("✅") ? <BadgeCheck className="size-3.5" aria-hidden /> : <AlertTriangle className="size-3.5" aria-hidden />}
                             </span>
                             <p>{waCloudBanner}</p>
                           </div>
                         ) : null}
 
                         {waCloudLoading ? (
-                          <div className="flex items-center gap-2 text-sm text-content-muted">
-                            <Loader2 className="size-4 animate-spin" aria-hidden />
+                          <div className="flex items-center gap-2 text-xs text-content-muted">
+                            <Loader2 className="size-3.5 animate-spin" aria-hidden />
                             A verificar conexão…
                           </div>
                         ) : waCloudStatus?.connected ? (
                           <div className="space-y-3">
                             <div
                               className={cn(
-                                "flex items-center gap-3 rounded-xl border p-4",
+                                "flex items-center gap-3 rounded-xl border p-3",
                                 isLight ? "border-emerald-200 bg-emerald-50/60" : "border-emerald-500/25 bg-emerald-500/[0.07]",
                               )}
                             >
@@ -681,61 +718,56 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                                 ) : null}
                               </div>
                             </div>
-                            <div className="flex flex-wrap gap-2">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                className="shrink-0 border-rose-500/30 text-rose-600 hover:border-rose-500/50 hover:bg-rose-500/5 dark:text-rose-400"
-                                isLoading={waCloudDisconnecting}
-                                onClick={disconnectWaCloud}
-                              >
-                                <Unlink className="size-4" aria-hidden />
-                                Desconectar API Oficial
-                              </Button>
-                              <Button type="button" variant="outline" onClick={() => setWhatsAppSlotMethod(tenantId, slotIndex, null)}>
-                                Desligar esta linha
-                              </Button>
-                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="shrink-0 border-rose-500/30 text-rose-600 hover:border-rose-500/50 hover:bg-rose-500/5 dark:text-rose-400"
+                              isLoading={waCloudDisconnecting}
+                              onClick={() => void disconnectWaCloud(slotIndex)}
+                            >
+                              <Unlink className="size-4" aria-hidden />
+                              Desconectar API Meta
+                            </Button>
                           </div>
                         ) : (
                           <div className="space-y-3">
-                            <p className="text-sm text-content-secondary">
-                              Conecte sua conta <strong className="text-content">WhatsApp Business</strong> via Meta API Oficial. O processo é guiado pela própria Meta — sem copiar
-                              chaves ou configurações manuais.
+                            <p className="text-xs leading-relaxed text-content-secondary">
+                              Conecte via Meta API Oficial. O processo é guiado pela própria Meta — sem copiar chaves
+                              ou configurações manuais.
                             </p>
-                            <ul className="space-y-1 text-xs text-content-muted">
-                              <li className="flex items-center gap-1.5">
-                                <BadgeCheck className="size-3 shrink-0 text-primary" aria-hidden />
-                                Número verificado e suportado pela Meta
-                              </li>
-                              <li className="flex items-center gap-1.5">
-                                <BadgeCheck className="size-3 shrink-0 text-primary" aria-hidden />
-                                Envios em escala com templates aprovados
-                              </li>
-                              <li className="flex items-center gap-1.5">
-                                <BadgeCheck className="size-3 shrink-0 text-primary" aria-hidden />
-                                Sem necessidade de aparelho ligado
-                              </li>
-                            </ul>
-                            <div className="flex flex-wrap gap-2">
-                              <Button
-                                type="button"
-                                isLoading={waCloudConnecting}
-                                onClick={connectWaCloud}
-                                className="min-h-[44px] gap-2 bg-primary px-5 text-white hover:bg-primary-hover"
-                              >
-                                {!waCloudConnecting && <ExternalLink className="size-4" aria-hidden />}
-                                Conectar WhatsApp API Oficial
-                              </Button>
-                              <Button type="button" variant="outline" onClick={() => setWhatsAppSlotMethod(tenantId, slotIndex, null)}>
-                                Cancelar
-                              </Button>
-                            </div>
+                            <Button
+                              type="button"
+                              isLoading={waCloudConnecting}
+                              onClick={() => connectWaCloud(slotIndex)}
+                              className="min-h-[44px] gap-2 bg-primary px-5 text-white hover:bg-primary-hover"
+                            >
+                              {!waCloudConnecting && <ExternalLink className="size-4" aria-hidden />}
+                              Conectar API Meta
+                            </Button>
                           </div>
                         )}
                       </div>
-                    ) : null}
+                    </div>
                   </div>
+
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-line/40 pt-3">
+                    <p className="flex-1 text-[11px] text-content-muted">
+                      {bothConnected
+                        ? "Os dois métodos estão ligados — escolha qual responde sem desconectar o outro."
+                        : "Ligue QR e API Meta nesta linha para poder trocar entre eles sem desconectar."}
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={!bothConnected || switchingSlot === slotIndex}
+                      isLoading={switchingSlot === slotIndex}
+                      onClick={() => void switchSlotProvider(slotIndex, activeProvider === "evolution" ? "cloud_api" : "evolution")}
+                    >
+                      <ArrowLeftRight className="size-3.5" aria-hidden />
+                      Trocar para {activeProvider === "evolution" ? "API Meta" : "QR Code"}
+                    </Button>
+                  </div>
+                  {switchError ? <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{switchError}</p> : null}
                 </div>
               );
             })}

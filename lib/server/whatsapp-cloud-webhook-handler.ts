@@ -20,6 +20,7 @@ import { handleSystemMetaInbound } from "@/lib/server/system-meta-inbound";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { resolveCloudApiTenantByConnection } from "@/lib/server/agent-channel-authorization";
 import { lookupWhatsAppCloudConnectionByPhoneNumberId } from "@/lib/server/whatsapp-cloud-connections";
+import { getSlotActiveProvider } from "@/lib/server/whatsapp-slot-provider";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
   authorizeActiveJourney,
@@ -133,6 +134,12 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
     agent_id: null,
     lead_id: leadId,
     journey_id: journey?.id ?? null,
+    // Toda linha gravada aqui veio da API Oficial Meta — usado pelo painel de
+    // Conversas ao vivo (admin) e pelo filtro por canal.
+    channel: "meta_cloud",
+    // Identifica QUAL número Meta do tenant (pode ter vários) — usado pelo
+    // filtro por número em /dashboard/conversas.
+    connection_id: inbound.phoneNumberId,
   });
   if (inboundInsertError?.code === "23505") {
     return NextResponse.json({ ok: true });
@@ -177,6 +184,21 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
       wa_id_last4: inbound.fromWaId.replace(/\D/g, "").slice(-4),
     });
     return NextResponse.json({ ok: true });
+  }
+
+  // Linha pode ter QR e Meta conectados ao mesmo tempo (alternador) — só o
+  // lado marcado como ativo responde, evitando os dois lados responderem ao
+  // mesmo contato. connection_id nulo (número fora do fluxo multi-linha, ex.
+  // agente do sistema) preserva o comportamento antigo (sempre responde).
+  if (cloudConnection) {
+    const activeProvider = await getSlotActiveProvider(tenantId, cloudConnection.slot_index);
+    if (activeProvider !== "cloud_api") {
+      console.info("[webhooks/whatsapp] auto_reply_skipped_inactive_provider", {
+        tenant_id: tenantId,
+        slot_index: cloudConnection.slot_index,
+      });
+      return NextResponse.json({ ok: true });
+    }
   }
 
   const guard = await canAgentAutoContactLead({
@@ -251,6 +273,8 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
         agent_id: agentId,
         lead_id: leadId,
         journey_id: journey?.id ?? null,
+        channel: "meta_cloud",
+        connection_id: inbound.phoneNumberId,
       });
       if (leadId) {
         await sb

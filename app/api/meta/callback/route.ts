@@ -318,6 +318,7 @@ async function handleWhatsAppCloudCallback(
   // 5. Save to DB
   const { error: dbErr } = await upsertWhatsAppCloudConnection({
     tenantId,
+    slotIndex: 0,
     phoneNumberId,
     wabaId,
     accessToken,

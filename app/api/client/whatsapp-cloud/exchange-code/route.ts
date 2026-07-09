@@ -6,6 +6,8 @@ import {
   upsertWhatsAppCloudConnection,
 } from "@/lib/server/whatsapp-cloud-connections";
 import { registerWhatsAppCloudNumber, subscribeAppToWaba } from "@/lib/server/whatsapp-cloud-onboarding";
+import { assertSlotIndexAllowed } from "@/lib/server/whatsapp-slot-server";
+import { getExtraWhatsappSlots } from "@/lib/server/whatsapp-extra-slots-db";
 
 export const dynamic = "force-dynamic";
 
@@ -32,11 +34,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (!guard.ok) return guard.response;
   const { session } = guard;
 
-  const body = (await req.json()) as { code?: string; waba_id?: string; phone_number_id?: string };
+  const body = (await req.json()) as { code?: string; waba_id?: string; phone_number_id?: string; slotIndex?: number };
   const { code, waba_id, phone_number_id } = body;
 
   if (!code || !waba_id || !phone_number_id) {
     return NextResponse.json({ error: "Missing code, waba_id or phone_number_id" }, { status: 400 });
+  }
+
+  const slotIndex = typeof body.slotIndex === "number" ? body.slotIndex : Number(body.slotIndex ?? 0);
+  const extraWhatsappSlots = await getExtraWhatsappSlots(session.tenantId);
+  if (!Number.isInteger(slotIndex) || !assertSlotIndexAllowed(session, slotIndex, extraWhatsappSlots)) {
+    return NextResponse.json({ error: "slotIndex inválido" }, { status: 400 });
   }
 
   const appId = process.env.META_APP_ID?.trim();
@@ -105,6 +113,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const { error: dbErr } = await upsertWhatsAppCloudConnection({
     tenantId: session.tenantId,
+    slotIndex,
     phoneNumberId: phone_number_id,
     wabaId: waba_id,
     accessToken,

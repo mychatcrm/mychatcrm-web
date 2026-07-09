@@ -32,19 +32,9 @@ import {
   shouldNotifyWhatsappDisconnect,
 } from "@/lib/server/integration-disconnect-notifications";
 import { assertSlotIndexAllowed } from "@/lib/server/whatsapp-slot-server";
-import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { getExtraWhatsappSlots } from "@/lib/server/whatsapp-extra-slots-db";
 
 export const dynamic = "force-dynamic";
-
-async function getExtraWhatsappSlots(tenantId: string): Promise<number> {
-  const sb = createSupabaseServiceClient();
-  const { data } = await sb
-    .from("stripe_subscriptions")
-    .select("extra_whatsapp_slots")
-    .eq("tenant_id", tenantId)
-    .maybeSingle();
-  return (data?.extra_whatsapp_slots as number) ?? 0;
-}
 
 /**
  * POST — cria/reaproveita instância Evolution, configura webhook e devolve QR + estado.
