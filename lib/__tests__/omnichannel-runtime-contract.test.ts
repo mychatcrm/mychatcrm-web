@@ -112,6 +112,42 @@ describe("omnichannel runtime contracts", () => {
     expect(pollGuard).toContain("ownerJidConfirmedThisPoll &&");
   });
 
+  it("keeps the system agent's Evolution purge unable to touch client instances", () => {
+    // The system prefix must be the FULL deterministic instance name (mc + 28
+    // hex chars of the tenant+slot hash) — a client instance is mc + its own
+    // 28-hex hash, so startsWith(full prefix) can only match system instances.
+    // If a refactor ever shortened this prefix (e.g. to just "mc"), the system
+    // agent's purge/reset would start deleting CLIENT WhatsApp sessions.
+    const systemAgentSource = source("lib/server/system-agent.ts");
+    const prefixFn = systemAgentSource.indexOf("export function getSystemEvolutionInstancePrefix()");
+    const prefixBody = systemAgentSource.slice(prefixFn, prefixFn + 200);
+    expect(prefixFn).toBeGreaterThan(0);
+    expect(prefixBody).toContain("buildEvolutionInstanceName(SYSTEM_TENANT_ID, SYSTEM_SLOT_INDEX)");
+
+    const evolutionApiSource = source("lib/integrations/evolution-api.ts");
+    const buildFn = evolutionApiSource.indexOf("export function buildEvolutionInstanceName");
+    const buildBody = evolutionApiSource.slice(buildFn, buildFn + 300);
+    expect(buildBody).toContain('.slice(0, 28)');
+    expect(buildBody).toContain("`mc${h}`");
+  });
+
+  it("resolves tenant for Evolution inbound and the SYSTEM_TENANT_ID guards from the same instance row", () => {
+    // Both the "should the system agent skip auto-reply" guards and the AI
+    // routing must derive from the SAME getEvolutionInstanceByName lookup —
+    // two independent resolution paths could disagree and leak behavior
+    // across the system/client boundary.
+    const content = source("app/api/webhooks/evolution/route.ts");
+    const rowLookup = content.indexOf("row = await getEvolutionInstanceByName(instanceName)");
+    const metaActiveGuard = content.indexOf("row.tenant_id === SYSTEM_TENANT_ID && (await isMetaProviderActive())", rowLookup);
+    const journeyRouting = content.indexOf("tenantId: row.tenant_id", rowLookup);
+    const phase2Guard = content.indexOf("if (row.tenant_id === SYSTEM_TENANT_ID) return;", rowLookup);
+
+    expect(rowLookup).toBeGreaterThan(0);
+    expect(metaActiveGuard).toBeGreaterThan(rowLookup);
+    expect(journeyRouting).toBeGreaterThan(rowLookup);
+    expect(phase2Guard).toBeGreaterThan(rowLookup);
+  });
+
   it("re-verifies with fetchInstances before trusting a WhatsApp 'disconnected' alert", () => {
     // Regression: a tenant got a false "your WhatsApp disconnected" alert while it was
     // still connected. Evolution/Baileys can report a transient non-"open" state during

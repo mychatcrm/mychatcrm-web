@@ -12,6 +12,7 @@ import {
   checkEvolutionSessionAlive,
   evolutionConnectionState,
   evolutionCreateInstance,
+  evolutionEnsureWebhook,
   evolutionFetchInstances,
   evolutionGetInstancePresence,
   evolutionInstanceConnect,
@@ -493,6 +494,23 @@ export async function GET(request: Request) {
   });
 
   if (identity.connectionState === "open" && identity.authenticated) {
+    // Auto-cura do webhook — mesmo padrão do poll do cliente: a Evolution pode
+    // perder a config silenciosamente e a sessão fica "conectada" mas muda.
+    const webhookSecretGet = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
+    if (webhookSecretGet) {
+      try {
+        const expectedUrl = buildEvolutionWebhookUrl(getPublicBaseUrlFromRequest(request), webhookSecretGet);
+        const ensure = await evolutionEnsureWebhook({ instanceName: row.instance_name, url: expectedUrl });
+        if (ensure.reapplied) {
+          console.warn("[system-agent-evolution] webhook_reapplied", {
+            instance_name: row.instance_name,
+            reapply_ok: ensure.reapplyOk,
+          });
+        }
+      } catch (e) {
+        console.warn("[system-agent-evolution] webhook ensure failed", e instanceof Error ? e.message : e);
+      }
+    }
     return NextResponse.json({
       instanceName: row.instance_name,
       connectionState: displayState,

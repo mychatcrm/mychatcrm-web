@@ -413,6 +413,69 @@ export async function evolutionSetWebhook(params: {
   });
 }
 
+export type EvolutionWebhookConfig = {
+  enabled: boolean;
+  url: string | null;
+  events: string[];
+};
+
+/**
+ * Lê de volta a config de webhook de uma instância (GET /webhook/find).
+ * Retorna null quando a Evolution não tem webhook registrado (404) ou a
+ * resposta não é interpretável — o chamador decide se re-aplica.
+ */
+export async function evolutionFindWebhook(instanceName: string): Promise<EvolutionWebhookConfig | null> {
+  const enc = encodeURIComponent(instanceName);
+  const res = await evolutionFetchJson<Record<string, unknown>>(`/webhook/find/${enc}`, { method: "GET" });
+  if (!res.ok || !res.data || typeof res.data !== "object") return null;
+
+  // v2 nested ({ webhook: {...} }) ou flat ({ enabled, url, events }).
+  const raw = res.data as Record<string, unknown>;
+  const source =
+    raw.webhook && typeof raw.webhook === "object" ? (raw.webhook as Record<string, unknown>) : raw;
+
+  const url = typeof source.url === "string" && source.url.trim() ? source.url.trim() : null;
+  const enabled = source.enabled === true;
+  const events = Array.isArray(source.events)
+    ? source.events.filter((e): e is string => typeof e === "string")
+    : [];
+
+  if (!url && !enabled && events.length === 0) return null;
+  return { enabled, url, events };
+}
+
+/**
+ * Confirma se a config lida de volta cobre o mínimo necessário para o fluxo
+ * de mensagens funcionar: habilitada, apontando para a URL esperada e
+ * inscrita em MESSAGES_UPSERT (sem ela, inbound nunca chega).
+ */
+export function isEvolutionWebhookHealthy(
+  config: EvolutionWebhookConfig | null,
+  expectedUrl: string,
+): boolean {
+  if (!config || !config.enabled || !config.url) return false;
+  if (config.url !== expectedUrl) return false;
+  return config.events.includes("MESSAGES_UPSERT");
+}
+
+/**
+ * Auto-cura: lê a config atual e re-aplica o webhook quando ausente,
+ * desabilitado ou apontando para outra URL. A Evolution pode perder/derrubar
+ * a config silenciosamente (reinício, recriação de sessão) — sem isto, o
+ * inbound de mensagens para de chegar e ninguém percebe até alguém reclamar.
+ */
+export async function evolutionEnsureWebhook(params: {
+  instanceName: string;
+  url: string;
+}): Promise<{ healthy: boolean; reapplied: boolean; reapplyOk: boolean }> {
+  const current = await evolutionFindWebhook(params.instanceName);
+  if (isEvolutionWebhookHealthy(current, params.url)) {
+    return { healthy: true, reapplied: false, reapplyOk: true };
+  }
+  const set = await evolutionSetWebhook({ instanceName: params.instanceName, url: params.url });
+  return { healthy: false, reapplied: true, reapplyOk: set.ok };
+}
+
 export async function evolutionDeleteInstance(instanceName: string): Promise<EvolutionFetchResult<unknown>> {
   const enc = encodeURIComponent(instanceName.trim());
   // Alguns builds/proxies da Evolution 2.3.x rejeitam DELETE com 400/403/405.

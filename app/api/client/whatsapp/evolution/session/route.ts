@@ -10,6 +10,7 @@ import {
   buildFreshEvolutionInstanceName,
   evolutionConnectionState,
   evolutionCreateInstance,
+  evolutionEnsureWebhook,
   evolutionFetchInstances,
   evolutionInstanceConnect,
   evolutionRemoveInstanceCompletely,
@@ -107,6 +108,23 @@ export async function POST(request: Request) {
     if (!wh.ok) {
       console.warn("[evolution/session] setWebhook", wh.status, wh.error);
     }
+  }
+
+  // Verify-after-write: confirma que a Evolution realmente gravou o webhook
+  // (enabled + URL certa + MESSAGES_UPSERT). evolutionEnsureWebhook re-aplica
+  // uma vez se a leitura não bater; se ainda assim falhar, deixa um marcador
+  // explícito nos logs — sem isto, uma config perdida só aparece quando um
+  // cliente reclama que o agente parou de responder.
+  try {
+    const verify = await evolutionEnsureWebhook({ instanceName, url: webhookUrl });
+    if (verify.reapplied && !verify.reapplyOk) {
+      console.error("[evolution/session] webhook_verify_failed", {
+        tenant_id: session.tenantId,
+        instance_name: instanceName,
+      });
+    }
+  } catch (e) {
+    console.warn("[evolution/session] webhook verify error", e instanceof Error ? e.message : e);
   }
 
   const stateRes = await evolutionConnectionState(instanceName);
@@ -322,6 +340,26 @@ export async function GET(request: Request) {
   }
 
   if (remoteState === "open") {
+    // Auto-cura do webhook: a Evolution pode perder a config silenciosamente
+    // (reinício, recriação de sessão) — a sessão fica "conectada" mas nenhuma
+    // mensagem chega em /api/webhooks/evolution. Sempre que o painel confirma
+    // uma sessão viva, confere a config e re-aplica se necessário.
+    const webhookSecretGet = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
+    if (ownerJidConfirmedThisPoll && webhookSecretGet) {
+      try {
+        const expectedUrl = buildEvolutionWebhookUrl(getPublicBaseUrlFromRequest(request), webhookSecretGet);
+        const ensure = await evolutionEnsureWebhook({ instanceName: row.instance_name, url: expectedUrl });
+        if (ensure.reapplied) {
+          console.warn("[evolution/session] webhook_reapplied", {
+            tenant_id: session.tenantId,
+            instance_name: row.instance_name,
+            reapply_ok: ensure.reapplyOk,
+          });
+        }
+      } catch (e) {
+        console.warn("[evolution/session] webhook ensure failed", e instanceof Error ? e.message : e);
+      }
+    }
     return NextResponse.json({
       instanceName: row.instance_name,
       connectionState: remoteState,
