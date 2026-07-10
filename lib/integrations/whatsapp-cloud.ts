@@ -276,6 +276,58 @@ export async function fetchWhatsAppMessageTemplateStatus(params: {
   return { found: true, status, category: match.category ?? null };
 }
 
+export type WhatsAppCloudTemplate = {
+  name: string;
+  status: string;
+  category: string | null;
+  language: string | null;
+  bodyText: string | null;
+  /** Quantos placeholders {{1}}, {{2}}... o corpo do template usa. */
+  bodyParamCount: number;
+};
+
+/**
+ * Lista os templates da WABA do tenant (nome, status, corpo e quantos
+ * parâmetros posicionais {{n}} o corpo usa) — usado pelo seletor de template
+ * de Disparos via API Meta (mensagem business-initiated fora da janela de
+ * 24h precisa de template aprovado, ver sendWhatsAppTemplateMessage acima).
+ */
+export async function listWhatsAppMessageTemplates(params: {
+  wabaId: string;
+  accessToken: string;
+}): Promise<WhatsAppCloudTemplate[]> {
+  const url = `${GRAPH_API}/${encodeURIComponent(params.wabaId)}/message_templates?fields=name,status,category,language,components&limit=100`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${params.accessToken}` },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) return [];
+  const data = (await res.json().catch(() => ({}))) as {
+    data?: Array<{
+      name?: string;
+      status?: string;
+      category?: string;
+      language?: string;
+      components?: Array<{ type?: string; text?: string }>;
+    }>;
+  };
+  return (data.data ?? [])
+    .filter((t): t is typeof t & { name: string } => Boolean(t.name))
+    .map((t) => {
+      const body = t.components?.find((c) => c.type === "BODY");
+      const bodyText = body?.text ?? null;
+      const paramMatches = bodyText ? new Set(bodyText.match(/\{\{\d+\}\}/g) ?? []) : new Set<string>();
+      return {
+        name: t.name,
+        status: t.status ?? "",
+        category: t.category ?? null,
+        language: t.language ?? null,
+        bodyText,
+        bodyParamCount: paramMatches.size,
+      };
+    });
+}
+
 export type WhatsAppCloudStatus = {
   id: string;
   status: string;

@@ -1,6 +1,11 @@
 import type { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { evolutionSendText } from "@/lib/integrations/evolution-api";
 import {
+  listWhatsAppMessageTemplates,
+  sendWhatsAppTemplateMessage,
+  type WhatsAppCloudTemplate,
+} from "@/lib/integrations/whatsapp-cloud";
+import {
   buildWhatsAppLeadInsertPayload,
   resolveAgentCrmFieldsForLeadInsert,
 } from "@/lib/server/auto-lead-upsert";
@@ -12,16 +17,30 @@ import {
   reserveTenantLeadQuota,
 } from "@/lib/server/lead-quota";
 import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
+import { listTenantWhatsappConnections } from "@/lib/server/tenant-whatsapp-connections";
+import { lookupWhatsAppCloudConnectionByPhoneNumberId } from "@/lib/server/whatsapp-cloud-connections";
 
 type ServiceClient = ReturnType<typeof createSupabaseServiceClient>;
+
+export type CampaignThroughput = "suave" | "normal" | "acelerado";
+
+/** Mensagens por minuto reais — o antigo seletor (12/28/45 por SEGUNDO) era só decorativo e, se real, baniria o número na hora. */
+export const CAMPAIGN_THROUGHPUT_PER_MINUTE: Record<CampaignThroughput, number> = {
+  suave: 10,
+  normal: 20,
+  acelerado: 40,
+};
 
 type CampaignInput = {
   name: string;
   connectionId: string;
-  agentId?: string | null;
+  agentId: string;
   audienceType: "all" | "tag" | "funnel_stage";
   audienceValue?: string | null;
   messageTemplate: string;
+  metaTemplateName?: string | null;
+  metaTemplateLang?: string | null;
+  throughput?: CampaignThroughput;
   scheduledAt?: string | null;
 };
 
@@ -190,6 +209,10 @@ async function resolveCampaignRecipientLead(params: {
   return { ok: true, lead: createdLead as Record<string, unknown> };
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function renderWhatsAppCampaignTemplate(
   template: string,
   lead: Record<string, unknown>,
@@ -199,6 +222,16 @@ export function renderWhatsAppCampaignTemplate(
     .replaceAll("{{nome}}", text(lead.name) ?? "cliente")
     .replaceAll("{{empresa}}", text(metadata.company) ?? text(metadata.empresa) ?? "")
     .replaceAll("{{telefone}}", digits(lead.phone));
+}
+
+/** Mesmos 3 valores de renderWhatsAppCampaignTemplate, como lista posicional — usado pelo envio via template Meta ({{1}}, {{2}}, {{3}}). */
+export function buildWhatsAppCampaignTemplateParams(lead: Record<string, unknown>): string[] {
+  const metadata = object(lead.profile_metadata);
+  return [
+    text(lead.name) ?? "cliente",
+    text(metadata.company) ?? text(metadata.empresa) ?? "",
+    digits(lead.phone),
+  ];
 }
 
 export function leadMatchesWhatsAppCampaignAudience(
@@ -218,6 +251,20 @@ export function leadMatchesWhatsAppCampaignAudience(
   return tags.includes(audienceValue.toLowerCase());
 }
 
+async function resolveMetaTemplate(params: {
+  tenantId: string;
+  phoneNumberId: string;
+  templateName: string;
+}): Promise<WhatsAppCloudTemplate | null> {
+  const cloudConnection = await lookupWhatsAppCloudConnectionByPhoneNumberId(params.phoneNumberId);
+  if (!cloudConnection || cloudConnection.tenant_id !== params.tenantId || !cloudConnection.waba_id) return null;
+  const templates = await listWhatsAppMessageTemplates({
+    wabaId: cloudConnection.waba_id,
+    accessToken: cloudConnection.access_token,
+  });
+  return templates.find((t) => t.name === params.templateName) ?? null;
+}
+
 export async function createWhatsAppCampaign(params: {
   sb: ServiceClient;
   tenantId: string;
@@ -229,31 +276,41 @@ export async function createWhatsAppCampaign(params: {
   }
   const input = params.input;
   const name = input.name.trim();
-  const messageTemplate = input.messageTemplate.trim();
-  if (!name || !messageTemplate || !input.connectionId) {
+  if (!name || !input.connectionId || !input.agentId?.trim()) {
     throw new Error("campaign_required_fields");
   }
-  if (messageTemplate.length > 4000) throw new Error("campaign_message_too_long");
 
-  const { data: connection } = await params.sb
-    .from("tenant_evolution_instances")
-    .select("id, instance_name, connection_state")
+  const connections = await listTenantWhatsappConnections(params.tenantId);
+  const connection = connections.find((c) => c.connectionId === input.connectionId && c.connected);
+  if (!connection) throw new Error("campaign_connection_not_available");
+
+  const { data: agent } = await params.sb
+    .from("tenant_agents")
+    .select("agent_id, active")
     .eq("tenant_id", params.tenantId)
-    .eq("id", input.connectionId)
+    .eq("agent_id", input.agentId)
+    .eq("active", true)
     .maybeSingle();
-  if (!connection || String(connection.connection_state) !== "open") {
-    throw new Error("campaign_connection_not_available");
-  }
+  if (!agent) throw new Error("campaign_agent_not_available");
 
-  if (input.agentId) {
-    const { data: agent } = await params.sb
-      .from("tenant_agents")
-      .select("agent_id, active")
-      .eq("tenant_id", params.tenantId)
-      .eq("agent_id", input.agentId)
-      .eq("active", true)
-      .maybeSingle();
-    if (!agent) throw new Error("campaign_agent_not_available");
+  let messageTemplate = input.messageTemplate.trim();
+  let metaTemplateName: string | null = null;
+  let metaTemplateLang: string | null = null;
+
+  if (connection.transport === "cloud_api") {
+    metaTemplateName = text(input.metaTemplateName);
+    if (!metaTemplateName) throw new Error("campaign_meta_template_required");
+    const template = await resolveMetaTemplate({
+      tenantId: params.tenantId,
+      phoneNumberId: connection.connectionId,
+      templateName: metaTemplateName,
+    });
+    if (!template || template.status !== "APPROVED") throw new Error("campaign_meta_template_not_approved");
+    metaTemplateLang = text(input.metaTemplateLang) ?? template.language ?? "pt_BR";
+    messageTemplate = `[Template Meta aprovado: ${metaTemplateName}]`;
+  } else {
+    if (!messageTemplate) throw new Error("campaign_required_fields");
+    if (messageTemplate.length > 4000) throw new Error("campaign_message_too_long");
   }
 
   const { data: candidateRows, error: leadError } = await params.sb
@@ -279,17 +336,22 @@ export async function createWhatsAppCampaign(params: {
     input.scheduledAt && !Number.isNaN(new Date(input.scheduledAt).getTime())
       ? new Date(input.scheduledAt).toISOString()
       : now;
+  const throughput: CampaignThroughput =
+    input.throughput && input.throughput in CAMPAIGN_THROUGHPUT_PER_MINUTE ? input.throughput : "normal";
   const { data: campaign, error } = await params.sb
     .from("whatsapp_campaigns")
     .insert({
       tenant_id: params.tenantId,
       name,
-      connection_id: input.connectionId,
-      transport: "evolution",
-      agent_id: input.agentId ?? null,
+      connection_id: connection.connectionId,
+      transport: connection.transport,
+      agent_id: input.agentId,
       audience_type: input.audienceType,
       audience_config: audienceValue ? { value: audienceValue } : {},
       message_template: messageTemplate,
+      meta_template_name: metaTemplateName,
+      meta_template_lang: metaTemplateLang,
+      throughput,
       status: "scheduled",
       scheduled_at: scheduledAt,
       total_recipients: leads.length,
@@ -322,11 +384,15 @@ export async function createWhatsAppCampaign(params: {
   return campaign as Record<string, unknown>;
 }
 
+type RecipientSender =
+  | { transport: "evolution"; instanceName: string }
+  | { transport: "cloud_api"; phoneNumberId: string; accessToken: string; templateName: string; templateLang: string; bodyParamCount: number };
+
 async function processRecipient(params: {
   sb: ServiceClient;
   campaign: Record<string, unknown>;
   recipient: Record<string, unknown>;
-  instanceName: string;
+  sender: RecipientSender;
 }) {
   const tenantId = String(params.campaign.tenant_id);
   const recipientId = String(params.recipient.id);
@@ -381,10 +447,10 @@ async function processRecipient(params: {
     return "journey_blocked";
   }
 
-  const content = renderWhatsAppCampaignTemplate(
-    String(params.campaign.message_template),
-    lead as Record<string, unknown>,
-  );
+  const content =
+    params.sender.transport === "evolution"
+      ? renderWhatsAppCampaignTemplate(String(params.campaign.message_template), lead as Record<string, unknown>)
+      : buildWhatsAppCampaignTemplateParams(lead as Record<string, unknown>).slice(0, params.sender.bodyParamCount).join(" · ");
   const pendingAt = new Date().toISOString();
   const { data: message, error: messageInsertError } = await params.sb
     .from("whatsapp_messages")
@@ -397,6 +463,8 @@ async function processRecipient(params: {
       agent_id: text(params.campaign.agent_id),
       lead_id: lead.id,
       journey_id: journey.id,
+      channel: params.sender.transport === "cloud_api" ? "meta_cloud" : "evolution",
+      connection_id: String(params.campaign.connection_id),
       client_temp_id: `campaign:${recipientId}:${attempts}`,
       delivery_status: "pending",
     })
@@ -416,11 +484,20 @@ async function processRecipient(params: {
     return terminal ? "failed" : "persistence_retry";
   }
 
-  const delivery = await evolutionSendText({
-    instanceName: params.instanceName,
-    number: phone,
-    text: content,
-  });
+  const delivery =
+    params.sender.transport === "evolution"
+      ? await evolutionSendText({ instanceName: params.sender.instanceName, number: phone, text: content })
+      : await sendWhatsAppTemplateMessage({
+          toWaId: phone,
+          templateName: params.sender.templateName,
+          languageCode: params.sender.templateLang,
+          bodyParams:
+            params.sender.bodyParamCount > 0
+              ? buildWhatsAppCampaignTemplateParams(lead as Record<string, unknown>).slice(0, params.sender.bodyParamCount)
+              : undefined,
+          phoneNumberId: params.sender.phoneNumberId,
+          accessToken: params.sender.accessToken,
+        });
   if (!delivery.ok) {
     const terminal = attempts >= maxAttempts;
     await Promise.all([
@@ -428,7 +505,7 @@ async function processRecipient(params: {
         .from("whatsapp_messages")
         .update({
           delivery_status: "failed",
-          failed_reason: delivery.error ?? `evolution_${delivery.status}`,
+          failed_reason: delivery.error ?? `send_failed_${delivery.status}`,
         })
         .eq("tenant_id", tenantId)
         .eq("id", message.id),
@@ -437,7 +514,7 @@ async function processRecipient(params: {
         .update({
           status: terminal ? "failed" : "pending",
           next_attempt_at: new Date(Date.now() + Math.min(30, attempts * 5) * 60_000).toISOString(),
-          last_error: delivery.error ?? `evolution_${delivery.status}`,
+          last_error: delivery.error ?? `send_failed_${delivery.status}`,
           updated_at: new Date().toISOString(),
         })
         .eq("id", recipientId),
@@ -525,31 +602,64 @@ async function processRecipient(params: {
   return "sent";
 }
 
+/** Margem antes do maxDuration (120s) da function — o resto fica pra próxima passada, nunca arrisca timeout no meio de um envio. */
+const PROCESS_TIME_BUDGET_MS = 100_000;
+
 export async function processDueWhatsAppCampaigns(
   sb: ServiceClient,
-  limit = 50,
+  options: { limit?: number; campaignId?: string } = {},
 ): Promise<{ processed: number; outcomes: Record<string, number> }> {
   if (!isJourneyIsolationEnabled()) return { processed: 0, outcomes: {} };
+  const limit = options.limit ?? 80;
   const now = new Date().toISOString();
-  const { data: campaigns, error } = await sb
+  let query = sb
     .from("whatsapp_campaigns")
     .select("*")
     .in("status", ["scheduled", "processing"])
     .lte("scheduled_at", now)
     .order("scheduled_at", { ascending: true })
     .limit(5);
+  if (options.campaignId) query = query.eq("id", options.campaignId);
+  const { data: campaigns, error } = await query;
   if (error) throw new Error(`[whatsapp-campaigns] due_query:${error.message}`);
 
   const outcomes: Record<string, number> = {};
   let processed = 0;
   for (const campaign of (campaigns ?? []) as Array<Record<string, unknown>>) {
-    const { data: connection } = await sb
-      .from("tenant_evolution_instances")
-      .select("instance_name, connection_state")
-      .eq("tenant_id", campaign.tenant_id)
-      .eq("id", campaign.connection_id)
-      .maybeSingle();
-    if (!connection || String(connection.connection_state) !== "open") {
+    let sender: RecipientSender | null = null;
+    if (String(campaign.transport) === "cloud_api") {
+      const cloudConn = await lookupWhatsAppCloudConnectionByPhoneNumberId(String(campaign.connection_id));
+      const templateName = text(campaign.meta_template_name);
+      if (cloudConn?.active && cloudConn.tenant_id === campaign.tenant_id && templateName && cloudConn.waba_id) {
+        const template = await resolveMetaTemplate({
+          tenantId: String(campaign.tenant_id),
+          phoneNumberId: String(campaign.connection_id),
+          templateName,
+        });
+        if (template?.status === "APPROVED") {
+          sender = {
+            transport: "cloud_api",
+            phoneNumberId: cloudConn.phone_number_id,
+            accessToken: cloudConn.access_token,
+            templateName,
+            templateLang: text(campaign.meta_template_lang) ?? template.language ?? "pt_BR",
+            bodyParamCount: template.bodyParamCount,
+          };
+        }
+      }
+    } else {
+      const { data: connection } = await sb
+        .from("tenant_evolution_instances")
+        .select("instance_name, connection_state")
+        .eq("tenant_id", campaign.tenant_id)
+        .eq("id", campaign.connection_id)
+        .maybeSingle();
+      if (connection && String(connection.connection_state) === "open") {
+        sender = { transport: "evolution", instanceName: String(connection.instance_name) };
+      }
+    }
+
+    if (!sender) {
       await sb
         .from("whatsapp_campaigns")
         .update({ status: "failed", updated_at: now })
@@ -557,6 +667,7 @@ export async function processDueWhatsAppCampaigns(
       outcomes.connection_unavailable = (outcomes.connection_unavailable ?? 0) + 1;
       continue;
     }
+
     await sb
       .from("whatsapp_campaigns")
       .update({ status: "processing", started_at: campaign.started_at ?? now, updated_at: now })
@@ -569,17 +680,21 @@ export async function processDueWhatsAppCampaigns(
       .eq("status", "pending")
       .lte("next_attempt_at", now)
       .order("next_attempt_at", { ascending: true })
-      .limit(Math.max(1, Math.min(100, limit)));
-    for (const recipient of (recipients ?? []) as Array<Record<string, unknown>>) {
-      const outcome = await processRecipient({
-        sb,
-        campaign,
-        recipient,
-        instanceName: String(connection.instance_name),
-      });
+      .limit(Math.max(1, Math.min(200, limit)));
+
+    const throughput = String(campaign.throughput ?? "normal") as CampaignThroughput;
+    const perMinute = CAMPAIGN_THROUGHPUT_PER_MINUTE[throughput] ?? CAMPAIGN_THROUGHPUT_PER_MINUTE.normal;
+    const delayMs = Math.round(60_000 / perMinute);
+    const batchStartedAt = Date.now();
+
+    const recipientRows = (recipients ?? []) as Array<Record<string, unknown>>;
+    for (let i = 0; i < recipientRows.length; i += 1) {
+      if (Date.now() - batchStartedAt > PROCESS_TIME_BUDGET_MS) break;
+      const outcome = await processRecipient({ sb, campaign, recipient: recipientRows[i]!, sender });
       if (outcome === "claim_lost") continue;
       processed += 1;
       outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
+      if (i < recipientRows.length - 1) await sleep(delayMs);
     }
 
     const { data: states } = await sb

@@ -1,32 +1,31 @@
 import { NextResponse } from "next/server";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { createWhatsAppCampaign } from "@/lib/server/whatsapp-campaigns";
+import { createWhatsAppCampaign, processDueWhatsAppCampaigns } from "@/lib/server/whatsapp-campaigns";
+import { listTenantWhatsappConnections } from "@/lib/server/tenant-whatsapp-connections";
+import { DISPAROS_DEFAULT_AGENT_ID, ensureDisparosDefaultAgent } from "@/lib/server/disparos-default-agent";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 export async function GET() {
   const guard = await requireActiveClientSession();
   if (!guard.ok) return guard.response;
   const sb = createSupabaseServiceClient();
-  const [campaigns, connections, agents, eligible] = await Promise.all([
+  const [campaigns, connections, agents, eligible, disparosAgent] = await Promise.all([
     sb
       .from("whatsapp_campaigns")
       .select("*")
       .eq("tenant_id", guard.session.tenantId)
       .order("created_at", { ascending: false })
       .limit(100),
-    sb
-      .from("tenant_evolution_instances")
-      .select("id, slot_index, instance_name, connection_state, wa_jid")
-      .eq("tenant_id", guard.session.tenantId)
-      .eq("connection_state", "open")
-      .order("slot_index", { ascending: true }),
+    listTenantWhatsappConnections(guard.session.tenantId),
     sb
       .from("tenant_agents")
       .select("agent_id, display_name, active, metadata")
       .eq("tenant_id", guard.session.tenantId)
       .eq("active", true)
+      .neq("agent_id", DISPAROS_DEFAULT_AGENT_ID)
       .order("display_name", { ascending: true }),
     sb
       .from("leads")
@@ -34,18 +33,27 @@ export async function GET() {
       .eq("tenant_id", guard.session.tenantId)
       .eq("whatsapp_opt_in", true)
       .is("whatsapp_opt_out_at", null),
+    sb
+      .from("tenant_agents")
+      .select("agent_id, display_name")
+      .eq("tenant_id", guard.session.tenantId)
+      .eq("agent_id", DISPAROS_DEFAULT_AGENT_ID)
+      .maybeSingle(),
   ]);
 
-  const firstError = campaigns.error ?? connections.error ?? agents.error ?? eligible.error;
+  const firstError = campaigns.error ?? agents.error ?? eligible.error;
   if (firstError) {
     return NextResponse.json({ error: firstError.message }, { status: 503 });
   }
   return NextResponse.json(
     {
       campaigns: campaigns.data ?? [],
-      connections: connections.data ?? [],
+      connections,
       agents: agents.data ?? [],
       eligibleRecipients: eligible.count ?? 0,
+      disparosAgent: disparosAgent.data
+        ? { agentId: disparosAgent.data.agent_id, displayName: disparosAgent.data.display_name }
+        : null,
     },
     { headers: { "Cache-Control": "no-store" } },
   );
@@ -62,34 +70,64 @@ export async function POST(request: Request) {
   }
 
   try {
+    const sb = createSupabaseServiceClient();
+    const agentMode = body.agentMode === "disparos" ? "disparos" : "existing";
+    const agentId =
+      agentMode === "disparos"
+        ? (await ensureDisparosDefaultAgent(guard.session.tenantId)).agentId
+        : typeof body.agentId === "string"
+          ? body.agentId
+          : "";
+
+    const throughput =
+      body.throughput === "suave" || body.throughput === "acelerado" ? body.throughput : "normal";
+
     const campaign = await createWhatsAppCampaign({
-      sb: createSupabaseServiceClient(),
+      sb,
       tenantId: guard.session.tenantId,
       createdBy: guard.session.email,
       input: {
         name: typeof body.name === "string" ? body.name : "",
         connectionId: typeof body.connectionId === "string" ? body.connectionId : "",
-        agentId: typeof body.agentId === "string" && body.agentId ? body.agentId : null,
+        agentId,
         audienceType:
           body.audienceType === "tag" || body.audienceType === "funnel_stage"
             ? body.audienceType
             : "all",
         audienceValue: typeof body.audienceValue === "string" ? body.audienceValue : null,
         messageTemplate: typeof body.messageTemplate === "string" ? body.messageTemplate : "",
+        metaTemplateName: typeof body.metaTemplateName === "string" ? body.metaTemplateName : null,
+        metaTemplateLang: typeof body.metaTemplateLang === "string" ? body.metaTemplateLang : null,
+        throughput,
         scheduledAt: typeof body.scheduledAt === "string" ? body.scheduledAt : null,
       },
     });
-    return NextResponse.json({ ok: true, campaign }, { status: 201 });
+
+    // Dispara a primeira leva de envio já na criação — não espera o cron diário.
+    let firstBatch: Awaited<ReturnType<typeof processDueWhatsAppCampaigns>> | null = null;
+    try {
+      firstBatch = await processDueWhatsAppCampaigns(sb, { campaignId: String(campaign.id) });
+    } catch (processError) {
+      console.warn("[whatsapp-campaigns] initial_process_failed", {
+        campaign_id: campaign.id,
+        error: processError instanceof Error ? processError.message : String(processError),
+      });
+    }
+
+    return NextResponse.json({ ok: true, campaign, firstBatch }, { status: 201 });
   } catch (error) {
     const code = error instanceof Error ? error.message : "campaign_create_failed";
     const messages: Record<string, string> = {
       omnichannel_journeys_disabled: "Campanhas omnichannel ainda não foram ativadas.",
-      campaign_required_fields: "Preencha nome, conexão e mensagem.",
+      campaign_required_fields: "Preencha nome, conexão, agente e mensagem.",
       campaign_message_too_long: "A mensagem ultrapassa 4.000 caracteres.",
       campaign_connection_not_available: "Selecione um WhatsApp conectado.",
       campaign_agent_not_available: "O agente selecionado não está ativo.",
+      campaign_meta_template_required: "Escolha um modelo (template) aprovado pela Meta pra essa linha.",
+      campaign_meta_template_not_approved: "Esse modelo ainda não está aprovado pela Meta — escolha outro ou aguarde a aprovação.",
       campaign_has_no_opted_in_recipients:
         "Nenhum lead deste público possui opt-in WhatsApp ativo.",
+      disparos_default_agent_create_failed: "Não foi possível preparar o Agente do Disparos. Tente novamente.",
     };
     return NextResponse.json({ error: messages[code] ?? "Não foi possível criar a campanha.", code }, { status: 422 });
   }
