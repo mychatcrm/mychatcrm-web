@@ -7,10 +7,9 @@ import {
   Bot,
   CalendarClock,
   Check,
+  ChevronDown,
   Gauge,
   Layers,
-  MessageSquareMore,
-  Radio,
   RefreshCw,
   Send,
   ShieldCheck,
@@ -121,6 +120,15 @@ function newDraftId() {
   return `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+/** Numerozinho de passo — só orientação visual pro leigo saber onde está, sem afetar nada funcional. */
+function StepBadge({ n }: { n: number }) {
+  return (
+    <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[11px] font-bold text-primary">
+      {n}
+    </span>
+  );
+}
+
 export function DisparosMassaHub() {
   const { isLight } = usePanelAppearance();
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -149,6 +157,9 @@ export function DisparosMassaHub() {
   const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([]);
   const [metaTemplateName, setMetaTemplateName] = useState("");
   const [processingCampaignId, setProcessingCampaignId] = useState<string | null>(null);
+  const [showTemplateGallery, setShowTemplateGallery] = useState(false);
+  const [showDrafts, setShowDrafts] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     setDrafts(loadDisparosDrafts());
@@ -259,7 +270,10 @@ export function DisparosMassaHub() {
     }
   }, [audienceApiType, audienceValue, loadCampaignData, refreshAudiencePreview]);
 
-  const audience = useMemo(() => AUDIENCE.find((a) => a.id === audienceId)!, [audienceId]);
+  const scheduleSummary = schedule
+    ? new Date(schedule).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })
+    : "Enviar agora";
+  const throughputLabel = THROUGHPUT.find((t) => t.id === throughput)?.label ?? "Normal";
   const charCount = body.length;
   const preview = previewBody(body);
   const selectedMetaTemplate = useMemo(
@@ -445,47 +459,22 @@ export function DisparosMassaHub() {
         )}
       >
         <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0 space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge
-                className={cn(
-                  isLight ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700" : "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
-                  "font-semibold tracking-wide",
-                )}
-              >
-                <span className="inline-flex items-center gap-1.5">
-                  <Radio className="size-3.5 animate-pulse" aria-hidden />
-                  Canal WhatsApp Business
-                </span>
-              </Badge>
-              <Badge className="border-primary/35 bg-primary/10 text-primary">
-                QR Code · API Meta — as duas linhas
-              </Badge>
-            </div>
+          <div className="min-w-0 space-y-2">
             <h3 className="text-balance text-2xl font-semibold tracking-tight text-content sm:text-3xl">
-              Centro de disparo em massa
+              Disparo em massa
             </h3>
             <p className="max-w-xl text-pretty text-sm leading-relaxed text-content-secondary sm:text-base">
-              Escolha a linha, quem responde e o público — o envio já começa assim que você confirma,
-              num ritmo seguro pra não arriscar o número.
+              Siga os passos abaixo — o envio começa assim que você confirmar.
             </p>
-            <div className="flex flex-wrap gap-3 pt-1">
-              <div className="flex items-center gap-2 rounded-xl border border-line bg-surface-card px-4 py-2 text-xs text-content-secondary">
-                <ShieldCheck className="size-4 shrink-0 text-emerald-500" aria-hidden />
-                Somente leads com opt-in WhatsApp ativo entram no público.
-              </div>
+            <div className="flex items-center gap-2 pt-1 text-xs text-content-secondary">
+              <ShieldCheck className="size-4 shrink-0 text-emerald-500" aria-hidden />
+              Só entram leads que autorizaram receber WhatsApp.
             </div>
           </div>
-          <div className="grid min-w-0 shrink-0 grid-cols-1 gap-2 min-[390px]:grid-cols-3 sm:gap-3 lg:w-[min(100%,380px)]">
+          <div className="grid min-w-0 shrink-0 grid-cols-1 gap-2 min-[390px]:grid-cols-2 sm:gap-3 lg:w-[min(100%,260px)]">
             {[
-              { icon: Users, label: "Opt-ins ativos", value: eligibleRecipients.toLocaleString("pt-BR"), tone: "text-primary/85" },
-              { icon: Activity, label: "Ritmo", value: `${THROUGHPUT.find((t) => t.id === throughput)?.perMinute}/min`, tone: "text-primary" },
-              {
-                icon: MessageSquareMore,
-                label: "Biblioteca",
-                value: `${SITUATION_TEMPLATES.length} modelos`,
-                tone: "text-emerald-400",
-              },
+              { icon: Users, label: "Autorizados", value: eligibleRecipients.toLocaleString("pt-BR"), tone: "text-primary/85" },
+              { icon: Activity, label: "Ritmo atual", value: `${throughputLabel}`, tone: "text-primary" },
             ].map(({ icon: Icon, label, value, tone }) => (
               <div
                 key={label}
@@ -511,9 +500,20 @@ export function DisparosMassaHub() {
               isLight ? "border-slate-200/80 bg-surface-deep/90" : "border-line bg-surface-deep/35",
             )}
           >
-            <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-content">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-content-secondary">Nome da campanha</label>
+              <Input
+                value={campaignName}
+                onChange={(e) => setCampaignName(e.target.value)}
+                placeholder="Ex.: Reativacao Q2 · base fria"
+                className="rounded-xl"
+              />
+            </div>
+
+            <div className="mt-5 mb-2 flex items-center gap-2.5 text-sm font-semibold text-content">
+              <StepBadge n={1} />
               <Layers className="size-4 text-primary" aria-hidden />
-              1. Linha de envio
+              Linha de envio
             </div>
             <select
               value={connectionId}
@@ -533,9 +533,10 @@ export function DisparosMassaHub() {
               </p>
             ) : null}
 
-            <div className="mt-5 mb-2 flex items-center gap-2 text-sm font-semibold text-content">
+            <div className="mt-5 mb-2 flex items-center gap-2.5 text-sm font-semibold text-content">
+              <StepBadge n={2} />
               <UserCog className="size-4 text-primary" aria-hidden />
-              2. Quem responde
+              Quem responde
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
               <button
@@ -584,8 +585,19 @@ export function DisparosMassaHub() {
                 Esse agente aparece em Agentes como qualquer outro — você pode ajustar o texto dele lá se quiser.
               </p>
             )}
+          </div>
 
-            <div className="mt-5 mb-2 text-sm font-semibold text-content">3. Público</div>
+          <div
+            className={cn(
+              "rounded-xl border p-5 sm:p-6",
+              isLight ? "border-slate-200/80 bg-surface-deep/90" : "border-line bg-surface-deep/35",
+            )}
+          >
+            <div className="mb-3 flex items-center gap-2.5 text-sm font-semibold text-content">
+              <StepBadge n={3} />
+              <Users className="size-4 text-primary" aria-hidden />
+              Público
+            </div>
             <div className="grid gap-2 sm:grid-cols-3">
               {AUDIENCE.map((opt) => {
                 const active = opt.id === audienceId;
@@ -645,73 +657,42 @@ export function DisparosMassaHub() {
                 </Button>
               ) : null}
             </div>
-
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-content-secondary mt-5">Nome interno</label>
-              <Input
-                value={campaignName}
-                onChange={(e) => setCampaignName(e.target.value)}
-                placeholder="Ex.: Reativacao Q2 · base fria"
-                className="rounded-xl"
-              />
-            </div>
-            <div className="mt-4">
-              <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-content-secondary">
-                <CalendarClock className="size-3.5" aria-hidden />
-                Janela de disparo
-              </label>
-              <Input type="datetime-local" value={schedule} onChange={(e) => setSchedule(e.target.value)} className="rounded-xl" />
-              <p className="mt-1.5 text-[11px] text-content-secondary">Deixe em branco pra enviar agora mesmo.</p>
-            </div>
-            <div className="mt-4">
-              <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-content-secondary">
-                <Gauge className="size-3.5" aria-hidden />
-                Ritmo de envio
-              </label>
-              <div className="flex flex-wrap gap-2">
-                {THROUGHPUT.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => setThroughput(t.id)}
-                    className={cn(
-                      "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-                      throughput === t.id
-                        ? "border-primary bg-primary text-white"
-                        : "border-line text-content-secondary hover:border-primary/40 hover:text-content",
-                    )}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-              <p className="mt-1.5 text-[11px] text-content-secondary">
-                {THROUGHPUT.find((t) => t.id === throughput)?.sub}
-              </p>
-            </div>
           </div>
 
-          {!isMetaTransport ? (
-            <div
-              className={cn(
-                "rounded-xl border p-5 sm:p-6",
-                isLight ? "border-slate-200/80 bg-surface-deep/90" : "border-line bg-surface-deep/35",
-              )}
-            >
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-sm font-semibold text-content">
-                  <BookOpen className="size-4 text-emerald-400" aria-hidden />
-                  Modelos por situacao
-                </div>
-                <Badge className="text-[10px]">1 clique no editor</Badge>
+          <div
+            className={cn(
+              "rounded-xl border p-5 sm:p-6",
+              isLight ? "border-slate-200/80 bg-surface-deep/90" : "border-line bg-surface-deep/35",
+            )}
+          >
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5 text-sm font-semibold text-content">
+                <StepBadge n={4} />
+                <Sparkles className="size-4 text-amber-400" aria-hidden />
+                {isMetaTransport ? "Modelo aprovado (API Meta)" : "Mensagem"}
               </div>
-              <p className="mb-4 text-xs leading-relaxed text-content-secondary">
-                Textos prontos para cenarios comuns — personalizam com{" "}
-                <span className="font-mono text-[11px] text-primary">{"{{nome}}"}</span>,{" "}
-                <span className="font-mono text-[11px] text-primary">{"{{empresa}}"}</span> e{" "}
-                <span className="font-mono text-[11px] text-primary">{"{{telefone}}"}</span>.
-              </p>
-              <div className="flex gap-3 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {!isMetaTransport ? (
+                <span className="font-mono text-[11px] text-content-secondary">
+                  {charCount} / 4096 <span className="text-content-secondary/70">caracteres</span>
+                </span>
+              ) : null}
+            </div>
+
+            {!isMetaTransport ? (
+              <button
+                type="button"
+                onClick={() => setShowTemplateGallery((v) => !v)}
+                className="mb-3 flex w-full items-center justify-between gap-2 rounded-xl border border-line bg-surface-card/40 px-3 py-2.5 text-left text-xs font-medium text-content-secondary transition-colors hover:border-primary/35 hover:text-content"
+              >
+                <span className="flex items-center gap-1.5">
+                  <BookOpen className="size-3.5 text-emerald-400" aria-hidden />
+                  Usar um modelo pronto ({SITUATION_TEMPLATES.length})
+                </span>
+                <ChevronDown className={cn("size-4 shrink-0 transition-transform", showTemplateGallery && "rotate-180")} aria-hidden />
+              </button>
+            ) : null}
+            {!isMetaTransport && showTemplateGallery ? (
+              <div className="mb-4 flex gap-3 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {SITUATION_TEMPLATES.map((tpl) => {
                   const Icon = tpl.Icon;
                   return (
@@ -739,26 +720,7 @@ export function DisparosMassaHub() {
                   );
                 })}
               </div>
-            </div>
-          ) : null}
-
-          <div
-            className={cn(
-              "rounded-xl border p-5 sm:p-6",
-              isLight ? "border-slate-200/80 bg-surface-deep/90" : "border-line bg-surface-deep/35",
-            )}
-          >
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-sm font-semibold text-content">
-                <Sparkles className="size-4 text-amber-400" aria-hidden />
-                {isMetaTransport ? "Modelo aprovado (API Meta)" : "Mensagem dinamica"}
-              </div>
-              {!isMetaTransport ? (
-                <span className="font-mono text-[11px] text-content-secondary">
-                  {charCount} / 4096 <span className="text-content-secondary/70">caracteres</span>
-                </span>
-              ) : null}
-            </div>
+            ) : null}
 
             {isMetaTransport ? (
               <div className="space-y-3">
@@ -826,6 +788,56 @@ export function DisparosMassaHub() {
               </>
             )}
 
+            <button
+              type="button"
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="mt-4 flex w-full items-center justify-between gap-2 rounded-xl border border-line bg-surface-card/40 px-3 py-2.5 text-left text-xs font-medium text-content-secondary transition-colors hover:border-primary/35 hover:text-content"
+            >
+              <span className="flex items-center gap-1.5">
+                <Gauge className="size-3.5 text-primary" aria-hidden />
+                Ritmo e agendamento — {scheduleSummary} · {throughputLabel}
+              </span>
+              <ChevronDown className={cn("size-4 shrink-0 transition-transform", showAdvanced && "rotate-180")} aria-hidden />
+            </button>
+            {showAdvanced ? (
+              <div className="mt-3 space-y-4 rounded-xl border border-line bg-surface-card/30 p-4">
+                <div>
+                  <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-content-secondary">
+                    <CalendarClock className="size-3.5" aria-hidden />
+                    Janela de disparo
+                  </label>
+                  <Input type="datetime-local" value={schedule} onChange={(e) => setSchedule(e.target.value)} className="rounded-xl" />
+                  <p className="mt-1.5 text-[11px] text-content-secondary">Deixe em branco pra enviar agora mesmo.</p>
+                </div>
+                <div>
+                  <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-content-secondary">
+                    <Gauge className="size-3.5" aria-hidden />
+                    Ritmo de envio
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {THROUGHPUT.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setThroughput(t.id)}
+                        className={cn(
+                          "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                          throughput === t.id
+                            ? "border-primary bg-primary text-white"
+                            : "border-line text-content-secondary hover:border-primary/40 hover:text-content",
+                        )}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-content-secondary">
+                    {THROUGHPUT.find((t) => t.id === throughput)?.sub}
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
             {draftNotice ? (
               <div
                 className={cn(
@@ -868,23 +880,20 @@ export function DisparosMassaHub() {
                 </Button>
               ) : null}
             </div>
-            {!isMetaTransport ? (
+            {!isMetaTransport && drafts.length > 0 ? (
               <div className="mt-6 border-t border-line pt-5">
-                <div className="mb-3 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowDrafts((v) => !v)}
+                  className="flex w-full items-center justify-between gap-2 text-left"
+                >
                   <span className="text-xs font-semibold uppercase tracking-wide text-content-secondary">
                     Meus rascunhos ({drafts.length})
                   </span>
-                  {drafts.length > 0 ? (
-                    <span className="text-[10px] text-content-secondary">Armazenado localmente no navegador</span>
-                  ) : null}
-                </div>
-                {drafts.length === 0 ? (
-                  <p className="text-xs text-content-secondary">
-                    Nenhum rascunho ainda. Preencha a campanha e clique em &quot;Salvar rascunho&quot; — os dados ficam
-                    salvos neste dispositivo.
-                  </p>
-                ) : (
-                  <ul className="max-h-[220px] space-y-2 overflow-y-auto pr-1">
+                  <ChevronDown className={cn("size-4 shrink-0 text-content-secondary transition-transform", showDrafts && "rotate-180")} aria-hidden />
+                </button>
+                {showDrafts ? (
+                  <ul className="mt-3 max-h-[220px] space-y-2 overflow-y-auto pr-1">
                     {drafts.map((d) => {
                       const when = new Date(d.updatedAt).toLocaleString("pt-BR", {
                         dateStyle: "short",
@@ -920,7 +929,7 @@ export function DisparosMassaHub() {
                       );
                     })}
                   </ul>
-                )}
+                ) : null}
               </div>
             ) : null}
           </div>
