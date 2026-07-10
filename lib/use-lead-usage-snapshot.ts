@@ -13,12 +13,25 @@ async function fetchLeadUsageFromApi(): Promise<LeadUsageSnapshot | null> {
   try {
     const res = await fetch("/api/client/lead-usage", { credentials: "include", cache: "no-store" });
     if (!res.ok) return null;
-    const data = (await res.json()) as { used?: unknown; bonus?: unknown };
+    const data = (await res.json()) as Record<string, unknown>;
     const used =
       typeof data.used === "number" && Number.isFinite(data.used) ? Math.max(0, Math.floor(data.used)) : 0;
     const bonus =
       typeof data.bonus === "number" && Number.isFinite(data.bonus) ? Math.max(0, Math.floor(data.bonus)) : 0;
-    return { used, bonus };
+    const num = (value: unknown) =>
+      typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : undefined;
+    const periodicity = data.periodicity === "annual" || data.periodicity === "monthly" ? data.periodicity : undefined;
+    return {
+      used,
+      bonus,
+      cap: num(data.cap),
+      baseLimit: num(data.baseLimit),
+      recurringBonus: num(data.recurringBonus),
+      topupBonus: num(data.topupBonus),
+      periodicity,
+      cycleStart: typeof data.cycleStart === "string" ? data.cycleStart : undefined,
+      cycleEnd: typeof data.cycleEnd === "string" ? data.cycleEnd : undefined,
+    };
   } catch {
     return null;
   }

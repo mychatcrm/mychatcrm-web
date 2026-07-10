@@ -64,6 +64,21 @@ export function Sidebar({
   const [waBuying, setWaBuying] = useState(false);
   const [extraSlotsDb, setExtraSlotsDb] = useState(0);
   const [leadsModalOpen, setLeadsModalOpen] = useState(false);
+  const [leadCapacityAddons, setLeadCapacityAddons] = useState<
+    Array<{
+      code: string;
+      title: string;
+      description: string | null;
+      billing_mode: "recurring" | "one_time";
+      included_quantity: number;
+      amount_cents: number | null;
+      currency: string;
+      interval_unit: "month" | "year" | null;
+    }>
+  >([]);
+  const [leadAddonCode, setLeadAddonCode] = useState("");
+  const [leadAddonQty, setLeadAddonQty] = useState(1);
+  const [leadAddonBuying, setLeadAddonBuying] = useState(false);
   const profileTriggerRef = useRef<HTMLButtonElement>(null);
   const [profilePopoverOpen, setProfilePopoverOpen] = useState(false);
   const [profilePopoverPos, setProfilePopoverPos] = useState<{ left: number; top: number; width: number } | null>(null);
@@ -88,14 +103,26 @@ export function Sidebar({
   /** Hidratação: 1.º paint = zeros; depois GET `/api/client/lead-usage` (Supabase). */
   const leadSnap = useLeadUsageSnapshot(session.tenantId, session.plan, session.operationalLimits);
 
-  const planLeadsBase = planMonthlyLeadAllowance(session.plan, session.operationalLimits);
-  const totalLeadCap = planLeadsBase + leadSnap.bonus;
+  const planLeadsBase = leadSnap.baseLimit ?? planMonthlyLeadAllowance(session.plan, session.operationalLimits);
+  const totalLeadCap = leadSnap.cap ?? planLeadsBase + leadSnap.bonus;
   const usedLeads = Math.min(leadSnap.used, totalLeadCap);
   const remainingLeads = Math.max(0, totalLeadCap - usedLeads);
   const pctUsed = totalLeadCap > 0 ? Math.min(100, (usedLeads / totalLeadCap) * 100) : 0;
   const pctRemaining = totalLeadCap > 0 ? Math.min(100, (remainingLeads / totalLeadCap) * 100) : 100;
 
   const remainingLeadsShort = formatLeadCount(remainingLeads);
+  const activeLeadAddon = leadCapacityAddons.find((addon) => addon.code === leadAddonCode) ?? null;
+
+  useEffect(() => {
+    fetch("/api/client/billing/addons?kind=lead_capacity", { credentials: "same-origin" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { addons?: typeof leadCapacityAddons } | null) => {
+        const addons = data?.addons ?? [];
+        setLeadCapacityAddons(addons);
+        setLeadAddonCode((current) => current || addons[0]?.code || "");
+      })
+      .catch(() => {});
+  }, [session.tenantId]);
 
   const refreshProfilePopoverPos = useCallback(() => {
     const el = profileTriggerRef.current;
@@ -659,13 +686,13 @@ export function Sidebar({
       >
         <div className="space-y-3 text-sm text-content-secondary">
           <p className="text-[13px] leading-relaxed text-content-muted">
-            Resumo do ciclo mensal do plano <span className="font-medium text-content">{session.planLabel}</span>.
-            Renova em <span className="font-medium text-content">{cycleEndLabel}</span>.
+            Resumo do ciclo {leadSnap.periodicity === "annual" ? "anual" : "mensal"} do plano <span className="font-medium text-content">{session.planLabel}</span>.
+            Renova em <span className="font-medium text-content">{leadSnap.cycleEnd ? new Date(`${leadSnap.cycleEnd}T12:00:00`).toLocaleDateString("pt-BR", { day: "numeric", month: "long", year: "numeric" }) : cycleEndLabel}</span>.
           </p>
           <dl className="space-y-2 rounded-xl border border-line bg-surface-deep/40 px-3 py-3 text-[13px]">
             <div className="flex justify-between gap-3">
               <dt className="text-content-muted">Incluídos no plano</dt>
-              <dd className="font-medium tabular-nums text-content">{formatLeadCount(planLeadsBase)} / mês</dd>
+              <dd className="font-medium tabular-nums text-content">{formatLeadCount(planLeadsBase)} / {leadSnap.periodicity === "annual" ? "ano" : "mês"}</dd>
             </div>
             <div className="flex justify-between gap-3">
               <dt className="text-content-muted">Extra contratado</dt>
@@ -698,8 +725,66 @@ export function Sidebar({
             </div>
           </div>
           <p className="text-xs leading-relaxed text-content-faint">
-            Apenas consulta — o limite mensal conta leads distintos atendidos no ciclo.
+            Cada contato novo conta uma vez no ciclo. Conversas e leads já existentes continuam atendidos mesmo quando a franquia chega ao fim.
           </p>
+          {canManageAccountPlan && leadCapacityAddons.length > 0 ? (
+            <div className="rounded-xl border border-primary/20 bg-primary/[0.05] p-3">
+              <p className="text-sm font-semibold text-content">Aumentar capacidade de leads</p>
+              <p className="mt-1 text-xs text-content-muted">A liberação ocorre automaticamente após a confirmação do pagamento no Stripe.</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+                <select
+                  value={leadAddonCode}
+                  onChange={(event) => setLeadAddonCode(event.target.value)}
+                  className="min-h-10 rounded-lg border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20"
+                  aria-label="Escolher capacidade adicional de leads"
+                >
+                  {leadCapacityAddons.map((addon) => (
+                    <option key={addon.code} value={addon.code}>
+                      {addon.title} · {formatLeadCount(addon.included_quantity)} leads{addon.billing_mode === "recurring" ? "/ciclo" : " até o fim do ciclo"}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={leadAddonQty}
+                  onChange={(event) => setLeadAddonQty(Math.max(1, Math.min(100, Number(event.target.value) || 1)))}
+                  className="min-h-10 w-full rounded-lg border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20 sm:w-20"
+                  aria-label="Quantidade de pacotes de leads"
+                />
+                <Button
+                  type="button"
+                  disabled={!activeLeadAddon || leadAddonBuying}
+                  isLoading={leadAddonBuying}
+                  onClick={async () => {
+                    if (!activeLeadAddon) return;
+                    setLeadAddonBuying(true);
+                    try {
+                      const response = await fetch("/api/client/billing/addons/checkout", {
+                        method: "POST",
+                        credentials: "same-origin",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ addonCode: activeLeadAddon.code, quantity: leadAddonQty }),
+                      });
+                      const data = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
+                      if (!response.ok || !data.url) throw new Error(data.error ?? "Não foi possível iniciar a compra.");
+                      window.location.assign(data.url);
+                    } catch {
+                      setLeadAddonBuying(false);
+                    }
+                  }}
+                >
+                  Comprar
+                </Button>
+              </div>
+              {activeLeadAddon?.amount_cents != null ? (
+                <p className="mt-2 text-[11px] text-content-muted">
+                  {formatBRL((activeLeadAddon.amount_cents / 100) * leadAddonQty)} · {activeLeadAddon.billing_mode === "recurring" ? "cobrança recorrente" : "recarga avulsa"}.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </Modal>
       <Modal

@@ -72,17 +72,36 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const [connections, setConnections] = useState<TenantWhatsappConnection[]>([]);
   const [switchingSlot, setSwitchingSlot] = useState<number | null>(null);
   const [switchErrorBySlot, setSwitchErrorBySlot] = useState<Record<number, string | null>>({});
+  const [extraLineQty, setExtraLineQty] = useState(1);
+  const [extraLineBuying, setExtraLineBuying] = useState(false);
+  const [extraLineOffer, setExtraLineOffer] = useState<{
+    amount_cents: number | null;
+    currency: string;
+    interval_unit: "month" | "year" | null;
+  } | null>(null);
+  const extraLinePrice = (extraLineOffer?.amount_cents ?? WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL * 100) / 100;
+  const extraLineInterval = extraLineOffer?.interval_unit === "year" ? "ano" : "mês";
 
   const loadSlotCapacity = useCallback(async () => {
     try {
       const res = await fetch("/api/checkout/extra-whatsapp", { credentials: "same-origin" });
       if (!res.ok) return;
-      const data = (await res.json()) as { extraSlots?: number; totalSlots?: number; includedLines?: number };
+      const data = (await res.json()) as {
+        extraSlots?: number;
+        totalSlots?: number;
+        includedLines?: number;
+        offer?: {
+          amount_cents: number | null;
+          currency: string;
+          interval_unit: "month" | "year" | null;
+        } | null;
+      };
       setSlotCapacity({
         totalSlots: data.totalSlots ?? 1,
         extraSlots: data.extraSlots ?? 0,
         includedLines: data.includedLines ?? 1,
       });
+      setExtraLineOffer(data.offer ?? null);
     } catch {
       /* mantém capacidade anterior */
     }
@@ -103,6 +122,13 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     void loadSlotCapacity();
     void loadConnections();
   }, [loadSlotCapacity, loadConnections, tenantId]);
+
+  useEffect(() => {
+    if (searchParams.get("addon") === "success") {
+      void loadSlotCapacity();
+      setBanner("Pagamento confirmado. A capacidade será atualizada assim que o Stripe concluir o webhook.");
+    }
+  }, [loadSlotCapacity, searchParams]);
 
   // Mantém o badge "ativo"/"conectado" e o botão de troca atualizados mesmo
   // enquanto o EvolutionQrSlotPanel (que faz seu próprio polling) muda de
@@ -139,6 +165,25 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     },
     [loadConnections],
   );
+
+  const buyExtraLine = useCallback(async () => {
+    setExtraLineBuying(true);
+    setBanner(null);
+    try {
+      const response = await fetch("/api/checkout/extra-whatsapp", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quantity: extraLineQty }),
+      });
+      const data = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
+      if (!response.ok || !data.url) throw new Error(data.error ?? "Não foi possível abrir o checkout.");
+      window.location.assign(data.url);
+    } catch (error) {
+      setBanner(error instanceof Error ? error.message : "Não foi possível iniciar a compra de uma linha extra.");
+      setExtraLineBuying(false);
+    }
+  }, [extraLineQty]);
 
   // ── Load Meta status on mount / after OAuth redirect ─────────────────────
   const loadMetaStatus = useCallback(async (): Promise<MetaStatusResponse | null> => {
@@ -579,12 +624,49 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
               <p className="mt-2 text-xs leading-relaxed">
                 Tem <strong className="text-content">{slotCapacity.extraSlots}</strong>{" "}
                 {slotCapacity.extraSlots === 1 ? "linha extra contratada" : "linhas extra contratadas"} (
-                {formatBRL(WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL)}/mes por linha), além das{" "}
+                {formatBRL(extraLinePrice)}/{extraLineInterval} por linha), além das{" "}
                 {slotCapacity.includedLines} do plano. Cada número <strong className="text-content">liga-se aqui</strong>{" "}
                 (QR ou API da Meta); a compra só define quantas linhas — não pede telefone no checkout.
               </p>
             </div>
           ) : null}
+          <div
+            className={cn(
+              "flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4",
+              isLight ? "border-primary/20 bg-primary/[0.04]" : "border-primary/25 bg-primary/[0.06]",
+            )}
+          >
+            <div className="min-w-0">
+              <p className="font-semibold text-content">Adicionar linha WhatsApp</p>
+              <p className="mt-1 text-xs leading-relaxed text-content-secondary">
+                Compra uma capacidade extra para conectar outro número nesta página. A nova linha só é liberada após confirmação do Stripe.
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                aria-label="Diminuir quantidade de linhas"
+                disabled={extraLineQty <= 1 || extraLineBuying}
+                onClick={() => setExtraLineQty((value) => Math.max(1, value - 1))}
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface-card font-semibold text-content transition hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                −
+              </button>
+              <span className="min-w-6 text-center text-sm font-semibold tabular-nums text-content">{extraLineQty}</span>
+              <button
+                type="button"
+                aria-label="Aumentar quantidade de linhas"
+                disabled={extraLineQty >= 10 || extraLineBuying}
+                onClick={() => setExtraLineQty((value) => Math.min(10, value + 1))}
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface-card font-semibold text-content transition hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                +
+              </button>
+              <Button type="button" onClick={() => void buyExtraLine()} isLoading={extraLineBuying}>
+                Comprar linha
+              </Button>
+            </div>
+          </div>
           <p className="text-sm text-content-secondary">
             Com <strong className="text-content">QR</strong>, o código é gerado no seu servidor WhatsApp (Evolution) e aparece aqui. Com <strong className="text-content">API Meta</strong>, o
             caminho oficial para número verificado e envios em massa. Ligue os dois numa mesma linha e use o botão de

@@ -1,7 +1,17 @@
 import type { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { evolutionSendText } from "@/lib/integrations/evolution-api";
+import {
+  buildWhatsAppLeadInsertPayload,
+  resolveAgentCrmFieldsForLeadInsert,
+} from "@/lib/server/auto-lead-upsert";
 import { activateLeadJourney, isJourneyIsolationEnabled, touchLeadJourney } from "@/lib/server/lead-journeys";
 import { scheduleLeadRedistribution } from "@/lib/server/lead-redistribution";
+import {
+  commitTenantLeadQuotaReservation,
+  releaseTenantLeadQuotaReservation,
+  reserveTenantLeadQuota,
+} from "@/lib/server/lead-quota";
+import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
 
 type ServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -31,6 +41,153 @@ function digits(value: unknown): string {
 
 function remoteJid(phone: string): string {
   return `${phone}@s.whatsapp.net`;
+}
+
+type CampaignLeadResolution =
+  | { ok: true; lead: Record<string, unknown> }
+  | { ok: false; outcome: string };
+
+async function resolveCampaignRecipientLead(params: {
+  sb: ServiceClient;
+  campaign: Record<string, unknown>;
+  recipient: Record<string, unknown>;
+  attempts: number;
+  maxAttempts: number;
+}): Promise<CampaignLeadResolution> {
+  const tenantId = String(params.campaign.tenant_id);
+  const recipientId = String(params.recipient.id);
+  const phone = digits(params.recipient.phone);
+  const requestedLeadId = text(params.recipient.lead_id);
+  let lead: Record<string, unknown> | null = null;
+
+  if (requestedLeadId) {
+    const { data } = await params.sb
+      .from("leads")
+      .select("id, name, phone, status, profile_metadata, whatsapp_opt_in, whatsapp_opt_out_at")
+      .eq("tenant_id", tenantId)
+      .eq("id", requestedLeadId)
+      .maybeSingle();
+    lead = (data as Record<string, unknown> | null) ?? null;
+  }
+
+  if (!lead && phone) {
+    const { data } = await params.sb
+      .from("leads")
+      .select("id, name, phone, status, profile_metadata, whatsapp_opt_in, whatsapp_opt_out_at")
+      .eq("tenant_id", tenantId)
+      .eq("phone", phone)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    lead = (data as Record<string, unknown> | null) ?? null;
+  }
+
+  if (lead?.id) {
+    if (String(params.recipient.lead_id ?? "") !== String(lead.id)) {
+      await params.sb
+        .from("whatsapp_campaign_recipients")
+        .update({ lead_id: lead.id, updated_at: new Date().toISOString() })
+        .eq("tenant_id", tenantId)
+        .eq("id", recipientId);
+    }
+    return { ok: true, lead };
+  }
+
+  const optInAt = text(params.recipient.opt_in_at);
+  const optInSource = text(params.recipient.opt_in_source);
+  if (!phone || !optInAt || !optInSource) {
+    await params.sb
+      .from("whatsapp_campaign_recipients")
+      .update({
+        status: "skipped",
+        last_error: "opt_in_not_active",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("tenant_id", tenantId)
+      .eq("id", recipientId);
+    return { ok: false, outcome: "skipped" };
+  }
+
+  const tenantPlan = await getTenantPlanSnapshot(tenantId);
+  const quota = await reserveTenantLeadQuota({
+    tenantId,
+    plan: tenantPlan.plan,
+    operationalLimits: tenantPlan.operationalLimits,
+    contactKey: phone,
+    source: "whatsapp_campaign",
+    idempotencyKey: `campaign:${params.campaign.id}:recipient:${recipientId}`,
+    metadata: {
+      campaign_id: params.campaign.id,
+      recipient_id: recipientId,
+      agent_id: text(params.campaign.agent_id),
+    },
+  });
+  if (!quota.admitted) {
+    const quotaExhausted = quota.reason === "lead_quota_exhausted";
+    await params.sb
+      .from("whatsapp_campaign_recipients")
+      .update({
+        status: quotaExhausted || params.attempts >= params.maxAttempts ? "skipped" : "pending",
+        next_attempt_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+        last_error: quotaExhausted ? "blocked_lead_quota_exhausted" : quota.reason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("tenant_id", tenantId)
+      .eq("id", recipientId);
+    return { ok: false, outcome: quotaExhausted ? "quota_blocked" : "quota_retry" };
+  }
+
+  const agentId = text(params.campaign.agent_id);
+  const crmFunnel = await resolveAgentCrmFieldsForLeadInsert(params.sb, { tenantId, agentId });
+  const now = new Date().toISOString();
+  const payload = {
+    ...buildWhatsAppLeadInsertPayload({
+      tenantId,
+      phone,
+      contactName: text(params.recipient.name),
+      source: "whatsapp_campaign",
+      status: "novo",
+      crmFunnelId: crmFunnel.crm_funnel_id ?? null,
+      agentId,
+      occurredAt: now,
+    }),
+    whatsapp_opt_in: true,
+    whatsapp_opt_in_at: optInAt,
+    whatsapp_opt_in_source: optInSource,
+    profile_metadata: {
+      whatsapp_campaign_id: params.campaign.id,
+      whatsapp_campaign_name: params.campaign.name,
+      whatsapp_campaign_recipient_id: recipientId,
+    },
+  };
+  const { data: createdLead, error: leadError } = await params.sb
+    .from("leads")
+    .insert(payload)
+    .select("id, name, phone, status, profile_metadata, whatsapp_opt_in, whatsapp_opt_out_at")
+    .single();
+  if (leadError || !createdLead?.id) {
+    await releaseTenantLeadQuotaReservation(quota.eventId, "campaign_lead_insert_failed");
+    const terminal = params.attempts >= params.maxAttempts;
+    await params.sb
+      .from("whatsapp_campaign_recipients")
+      .update({
+        status: terminal ? "failed" : "pending",
+        next_attempt_at: new Date(Date.now() + Math.min(30, params.attempts * 5) * 60_000).toISOString(),
+        last_error: `lead_persistence_failed:${leadError?.message ?? "missing_id"}`,
+        updated_at: now,
+      })
+      .eq("tenant_id", tenantId)
+      .eq("id", recipientId);
+    return { ok: false, outcome: terminal ? "failed" : "persistence_retry" };
+  }
+
+  await params.sb
+    .from("whatsapp_campaign_recipients")
+    .update({ lead_id: createdLead.id, updated_at: now })
+    .eq("tenant_id", tenantId)
+    .eq("id", recipientId);
+  await commitTenantLeadQuotaReservation({ eventId: quota.eventId, leadId: createdLead.id });
+  return { ok: true, lead: createdLead as Record<string, unknown> };
 }
 
 export function renderWhatsAppCampaignTemplate(
@@ -184,12 +341,15 @@ async function processRecipient(params: {
     .maybeSingle();
   if (!claimed) return "claim_lost";
 
-  const { data: lead } = await params.sb
-    .from("leads")
-    .select("id, name, phone, status, profile_metadata, whatsapp_opt_in, whatsapp_opt_out_at")
-    .eq("tenant_id", tenantId)
-    .eq("id", params.recipient.lead_id)
-    .maybeSingle();
+  const resolvedLead = await resolveCampaignRecipientLead({
+    sb: params.sb,
+    campaign: params.campaign,
+    recipient: params.recipient,
+    attempts,
+    maxAttempts,
+  });
+  if (!resolvedLead.ok) return resolvedLead.outcome;
+  const lead = resolvedLead.lead;
   if (!lead || lead.whatsapp_opt_in !== true || lead.whatsapp_opt_out_at) {
     await params.sb
       .from("whatsapp_campaign_recipients")

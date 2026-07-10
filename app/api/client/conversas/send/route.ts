@@ -9,7 +9,6 @@ import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
-import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 import { upsertConversationState } from "@/lib/server/conversation-memory";
 import { logMessageLatency } from "@/lib/conversas/message-latency-log";
 import { cancelPendingFollowUpJobs, scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
@@ -103,7 +102,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
   }
 
-  const { remoteJid, text, contactName, clientTempId } = body;
+  const { remoteJid, text, clientTempId } = body;
   if (!remoteJid?.trim() || !text?.trim()) {
     return NextResponse.json({ error: "remoteJid e text são obrigatórios" }, { status: 400 });
   }
@@ -140,17 +139,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "remoteJid inválido" }, { status: 400 });
   }
 
-  const linkedAgentId = instance.default_agent_id ?? null;
-  const leadResult = await upsertLeadFromWhatsAppContact({
-    tenantId: session.tenantId,
-    remoteJid,
-    recipientJid: remoteJid,
-    instanceJid: instance.wa_jid,
-    contactName,
-    direction: "outbound",
-    agentId: linkedAgentId ?? "human",
-    conversationId: remoteJid,
-  });
+  // A direct conversation belongs in Conversas until an operator explicitly
+  // chooses "Salvar no CRM". Sending a human reply must never create a lead
+  // nor inherit a slot's default agent as an implicit CRM assignment.
+  const { data: existingLead } = await sb
+    .from("leads")
+    .select("id")
+    .eq("tenant_id", session.tenantId)
+    .eq("phone", number)
+    .maybeSingle();
+  const leadId = typeof existingLead?.id === "string" ? existingLead.id : null;
+  const stateAgentId =
+    typeof stateRow?.agent_id === "string" && stateRow.agent_id.trim()
+      ? stateRow.agent_id
+      : null;
 
   const { data: saved, error: dbErr } = await sb
     .from("whatsapp_messages")
@@ -161,7 +163,7 @@ export async function POST(request: Request) {
       kind: "text",
       content: trimmedText,
       agent_id: "human",
-      lead_id: leadResult.lead?.id ?? null,
+      lead_id: leadId,
       client_temp_id: tempId,
       delivery_status: "pending",
     })
@@ -187,18 +189,16 @@ export async function POST(request: Request) {
     sb,
     tenantId: session.tenantId,
     remoteJid,
-    leadId: leadResult.lead?.id ?? null,
-    agentId: linkedAgentId,
+    leadId,
+    agentId: stateAgentId,
     lastMessageAt: occurredAt,
   });
   await scheduleRetomadaAfterHumanOutbound({
     sb,
     tenantId: session.tenantId,
     remoteJid,
-    leadId: leadResult.lead?.id ?? null,
-    agentId:
-      (typeof stateRow?.agent_id === "string" && stateRow.agent_id.trim() ? stateRow.agent_id : null) ??
-      linkedAgentId,
+    leadId,
+    agentId: stateAgentId,
     stateRow,
   });
 

@@ -1,10 +1,13 @@
-import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
+import {
+  generateAgentResponse,
+  isAgentMissingInstructionsResult,
+} from "@/lib/ai/generate-agent-response";
 import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import { upsertConversationState } from "@/lib/server/conversation-memory";
 import { resolveAgentCrmFieldsForLeadInsert } from "@/lib/server/auto-lead-upsert";
 import { buildNewLeadCrmFields, promoteLeadToContatoOnAgentEngagement } from "@/lib/server/crm-lead-lifecycle";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
-import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
+import { getEvolutionInstanceByIdForTenant } from "@/lib/server/tenant-evolution-instance-db";
 import { MetaLeadEventRecorder } from "@/lib/server/meta-lead-events-db";
 import {
   crmBlockedUserMessage,
@@ -45,6 +48,12 @@ import {
   touchLeadJourney,
 } from "@/lib/server/lead-journeys";
 import { scheduleLeadRedistribution } from "@/lib/server/lead-redistribution";
+import {
+  commitTenantLeadQuotaReservation,
+  releaseTenantLeadQuotaReservation,
+  reserveTenantLeadQuota,
+} from "@/lib/server/lead-quota";
+import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
 
 type MetaConnectionRow = {
   tenant_id: string;
@@ -603,6 +612,47 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     .maybeSingle();
 
   const isNewLead = !existingLead;
+  const tenantPlan = await getTenantPlanSnapshot(tenant_id);
+  const quotaAdmission = await reserveTenantLeadQuota({
+    tenantId: tenant_id,
+    plan: tenantPlan.plan,
+    operationalLimits: tenantPlan.operationalLimits,
+    contactKey: phone,
+    source: "meta_form",
+    idempotencyKey: `meta:${leadgen_id}:lead-admission`,
+    isExistingContact: !isNewLead,
+    metadata: {
+      leadgen_id,
+      page_id,
+      form_id: resolvedFormId || null,
+      rule_id: ruleId,
+    },
+  });
+  if (!quotaAdmission.admitted) {
+    const reason = quotaAdmission.reason === "lead_quota_exhausted"
+      ? "blocked_lead_quota_exhausted"
+      : "blocked_lead_quota_unavailable";
+    await eventRecorder.step(reason, {
+      quota_reason: quotaAdmission.reason,
+      used: quotaAdmission.used,
+      cap: quotaAdmission.cap,
+      cycle_start: quotaAdmission.cycleStart,
+    });
+    await eventRecorder.patch({
+      crm_sync_status: "blocked",
+      whatsapp_status: "blocked",
+      error_message: quotaAdmission.reason,
+      current_step: reason,
+    });
+    console.warn("[meta-webhook] new lead blocked by quota", {
+      tenant_id,
+      leadgen_id,
+      reason: quotaAdmission.reason,
+      used: quotaAdmission.used,
+      cap: quotaAdmission.cap,
+    });
+    return;
+  }
   const journeyIsolationEnabled = isJourneyIsolationEnabled();
   const deferJourneyAttribution =
     journeyIsolationEnabled && Boolean(agentId && agentResolution.authorized);
@@ -651,6 +701,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     .maybeSingle();
 
   if (upsertErr) {
+    await releaseTenantLeadQuotaReservation(quotaAdmission.eventId, "crm_lead_upsert_failed");
     await eventRecorder.step("crm_lead_failed", { error: upsertErr.message });
     await eventRecorder.patch({ crm_sync_status: "failed", error_message: upsertErr.message });
     console.error("[meta-webhook] Failed to upsert lead", {
@@ -674,6 +725,25 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     is_new: isNewLead,
   });
 
+  const leadId = upsertedLead?.id;
+  if (!leadId) {
+    await releaseTenantLeadQuotaReservation(quotaAdmission.eventId, "lead_id_missing_after_upsert");
+    await eventRecorder.patch({ whatsapp_status: "skipped", error_message: "lead_id_missing_after_upsert" });
+    return;
+  }
+  try {
+    await commitTenantLeadQuotaReservation({ eventId: quotaAdmission.eventId, leadId });
+  } catch (quotaCommitError) {
+    // The lead is already durable; do not lie about its CRM state or retry an
+    // outbound message. A reserved entry will expire safely and is logged for
+    // operational repair.
+    console.error("[meta-webhook] lead quota commit failed", {
+      tenant_id,
+      lead_id: leadId,
+      error: quotaCommitError instanceof Error ? quotaCommitError.message : String(quotaCommitError),
+    });
+  }
+
   if (!agentId || !agentResolution.authorized) {
     await eventRecorder.step("skipped_no_agent");
     if (!agentResolution.authorized) {
@@ -690,16 +760,6 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       phone_last4: maskPhoneLast4(phone),
       source: agentResolution.source,
       reason: agentResolution.reason,
-    });
-    return;
-  }
-
-  const leadId = upsertedLead?.id;
-  if (!leadId) {
-    await eventRecorder.patch({ whatsapp_status: "skipped", error_message: "lead_id_missing_after_upsert" });
-    console.warn("[meta-webhook] Lead upsert returned no id — skipping initial outreach", {
-      tenant_id,
-      phone_last4: maskPhoneLast4(phone),
     });
     return;
   }
@@ -728,6 +788,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     formId: resolvedFormId,
     pageId: page_id,
     leadgenId: leadgen_id,
+    connectionId: agentResolution.connectionId,
     triggerSource: "meta_lead_ingest",
   });
   if (!autoContactGuard.ok) {
@@ -751,6 +812,29 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     return;
   }
 
+  const selectedConnectionId = agentResolution.connectionId;
+  const instance = selectedConnectionId
+    ? await getEvolutionInstanceByIdForTenant(tenant_id, selectedConnectionId)
+    : null;
+  if (!instance?.instance_name || instance.connection_state !== "open") {
+    await eventRecorder.step("skipped_selected_connection_unavailable", {
+      connection_id: selectedConnectionId,
+      connection_state: instance?.connection_state ?? null,
+    });
+    await eventRecorder.patch({
+      whatsapp_status: "skipped",
+      error_message: "selected_rule_connection_unavailable",
+      current_step: "skipped_selected_connection_unavailable",
+    });
+    console.warn("[meta-webhook] selected rule connection unavailable", {
+      tenant_id,
+      lead_id: leadId,
+      agent_id: agentId,
+      connection_id: selectedConnectionId,
+    });
+    return;
+  }
+
   const journey = await activateLeadJourney({
     sb,
     tenantId: tenant_id,
@@ -759,7 +843,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     leadId,
     agentId,
     ruleId,
-    connectionId: null,
+    connectionId: selectedConnectionId,
     source: "meta_form",
     sourceRef: leadgen_id,
     pageId: page_id,
@@ -833,21 +917,6 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       agent_id: agentId,
       rule_id: ruleId,
     });
-  }
-
-  const instance = await getEvolutionInstanceByTenantId(tenant_id);
-  if (!instance?.instance_name) {
-    await eventRecorder.step("skipped_no_evolution");
-    await eventRecorder.patch({ whatsapp_status: "skipped", error_message: "no_evolution_instance" });
-    console.warn("[meta-webhook] No Evolution instance for tenant — skipping initial message", { tenant_id });
-    return;
-  }
-  if (journeyId) {
-    await sb
-      .from("lead_journeys")
-      .update({ connection_id: instance.id, updated_at: new Date().toISOString() })
-      .eq("tenant_id", tenant_id)
-      .eq("id", journeyId);
   }
 
   const initialMessageExternalId = `meta:${leadgen_id}:initial`;
@@ -956,12 +1025,10 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     messages: [{ role: "user", content: aiPrompt }],
   });
 
-  const replyText = sanitizeInitialReply(aiResult.ok ? aiResult.text : "") || buildFallbackInitialMessage(fullName);
-
   await eventRecorder.step("ai_response_generated", {
     ok: aiResult.ok,
     model: aiResult.ok ? aiResult.model : aiResult.model ?? null,
-    fallback_reason: aiResult.ok ? null : aiResult.code,
+    fallback_reason: aiResult.ok ? null : aiResult.detail ?? aiResult.code,
   });
 
   console.info("[meta-webhook] AI initial response generated", {
@@ -970,8 +1037,30 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     agent_id: agentId,
     ok: aiResult.ok,
     model: aiResult.ok ? aiResult.model : aiResult.model ?? null,
-    fallback_reason: aiResult.ok ? null : aiResult.code,
+    fallback_reason: aiResult.ok ? null : aiResult.detail ?? aiResult.code,
   });
+
+  if (isAgentMissingInstructionsResult(aiResult)) {
+    await eventRecorder.step("automation_blocked_agent_missing_instructions", {
+      agent_id: agentId,
+      journey_id: journeyId,
+    });
+    await eventRecorder.patch({
+      whatsapp_status: "blocked",
+      error_message: "agent_missing_instructions",
+      current_step: "automation_blocked_agent_missing_instructions",
+    });
+    console.warn("[meta-webhook] automation blocked because agent has no instructions", {
+      tenant_id,
+      lead_id: leadId,
+      agent_id: agentId,
+      journey_id: journeyId,
+    });
+    return;
+  }
+
+  const replyText =
+    sanitizeInitialReply(aiResult.ok ? aiResult.text : "") || buildFallbackInitialMessage(fullName);
 
   const { data: savedMessage, error: msgErr } = await sb
     .from("whatsapp_messages")

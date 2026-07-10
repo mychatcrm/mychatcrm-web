@@ -40,6 +40,22 @@ export async function getEvolutionInstanceByName(
   return (data as TenantEvolutionInstanceRow) ?? null;
 }
 
+/** Exact transport lookup for flows whose rule selected a specific QR connection. */
+export async function getEvolutionInstanceByIdForTenant(
+  tenantId: string,
+  connectionId: string,
+): Promise<TenantEvolutionInstanceRow | null> {
+  const sb = createSupabaseServiceClient();
+  const { data, error } = await sb
+    .from("tenant_evolution_instances")
+    .select("*")
+    .eq("tenant_id", tenantId)
+    .eq("id", connectionId)
+    .maybeSingle();
+  if (error) throw new Error(`[tenant-evolution-instance-db] select connection: ${error.message}`);
+  return (data as TenantEvolutionInstanceRow) ?? null;
+}
+
 export async function upsertTenantEvolutionInstance(params: {
   tenantId: string;
   slotIndex: number;

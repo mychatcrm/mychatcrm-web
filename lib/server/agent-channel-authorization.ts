@@ -135,7 +135,9 @@ function ruleCanAuthorizeAgent(
   connectionId?: string | null,
 ): boolean {
   if (!AGENT_DISTRIBUTION_TYPES.has(rule.distribution_type ?? "")) return false;
-  if (rule.connection_id && rule.connection_id !== connectionId) return false;
+  // A direct WhatsApp rule must name the exact transport. Legacy rules without
+  // a connection stay editable, but never authorize every tenant number.
+  if (!rule.connection_id || !connectionId || rule.connection_id !== connectionId) return false;
   return stringArray(rule.agent_ids).includes(agentId);
 }
 
@@ -168,7 +170,8 @@ export async function resolveDirectWhatsAppAgentFromRules(params: {
   const matchingRules = rules.filter(
     (rule) =>
       AGENT_DISTRIBUTION_TYPES.has(rule.distribution_type ?? "") &&
-      (!rule.connection_id || rule.connection_id === params.connectionId) &&
+      Boolean(params.connectionId) &&
+      rule.connection_id === params.connectionId &&
       stringArray(rule.agent_ids).length === 1,
   );
 

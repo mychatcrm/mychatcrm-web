@@ -18,6 +18,7 @@ type Row = {
   ownerName: string;
   createdAt: string;
   notes?: string;
+  leadQuotaPeriodicity: "monthly" | "annual";
   limits: EnterpriseProvisionLimits;
 };
 
@@ -29,7 +30,7 @@ const LIMIT_LABELS: Record<LimitKey, string> = {
   maxSellers: "Vendedores (máx.)",
   includedAgents: "Agentes IA incluídos",
   maxSalesFunnels: "Funis de vendas (máx.)",
-  monthlyAttendedLeadsCap: "Leads atendidos / mês",
+  monthlyAttendedLeadsCap: "Leads atendidos / ciclo",
   includedWhatsAppLines: "Linhas WhatsApp incluídas",
 };
 
@@ -49,6 +50,8 @@ export function AdminEnterpriseWorkspace() {
   const [ownerEmail, setOwnerEmail] = useState("");
   const [password, setPassword] = useState("");
   const [notes, setNotes] = useState("");
+  const [leadQuotaPeriodicity, setLeadQuotaPeriodicity] = useState<"monthly" | "annual">("monthly");
+  const [periodicitySavingTenant, setPeriodicitySavingTenant] = useState<string | null>(null);
   const [unl, setUnl] = useState<Record<LimitKey, boolean>>({
     maxDirectors: false,
     maxManagers: false,
@@ -121,6 +124,7 @@ export function AdminEnterpriseWorkspace() {
           ownerEmail,
           initialPassword: password,
           notes,
+          leadQuotaPeriodicity,
           limits: limitsPayload,
         }),
       });
@@ -133,11 +137,36 @@ export function AdminEnterpriseWorkspace() {
       setOwnerEmail("");
       setPassword("");
       setNotes("");
+      setLeadQuotaPeriodicity("monthly");
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao criar.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const updatePeriodicity = async (tenantId: string, periodicity: "monthly" | "annual") => {
+    setPeriodicitySavingTenant(tenantId);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/enterprise-provisions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId, leadQuotaPeriodicity: periodicity }),
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) throw new Error(data?.error ?? "Não foi possível atualizar o ciclo.");
+      setRows((current) =>
+        current.map((row) =>
+          row.tenantId === tenantId ? { ...row, leadQuotaPeriodicity: periodicity } : row,
+        ),
+      );
+      setToast("Periodicidade da franquia Enterprise atualizada.");
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : "Erro ao atualizar ciclo.");
+    } finally {
+      setPeriodicitySavingTenant(null);
     }
   };
 
@@ -220,6 +249,7 @@ export function AdminEnterpriseWorkspace() {
                   <th className="py-3 pr-3">Tenant</th>
                   <th className="py-3 pr-3">Titular</th>
                   <th className="py-3 pr-3">Criada</th>
+                  <th className="py-3 pr-3">Ciclo de leads</th>
                   <th className="py-3">Limites (resumo)</th>
                 </tr>
               </thead>
@@ -235,10 +265,27 @@ export function AdminEnterpriseWorkspace() {
                     <td className="py-3 pr-3 text-xs text-content-muted">
                       {new Date(r.createdAt).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
                     </td>
+                    <td className="py-3 pr-3">
+                      <select
+                        value={r.leadQuotaPeriodicity}
+                        disabled={periodicitySavingTenant === r.tenantId}
+                        onChange={(event) =>
+                          void updatePeriodicity(
+                            r.tenantId,
+                            event.target.value === "annual" ? "annual" : "monthly",
+                          )
+                        }
+                        className="h-9 rounded-lg border border-line bg-surface-elevated px-2 text-xs text-content outline-none focus:border-primary"
+                        aria-label={`Ciclo de leads de ${r.organizationName}`}
+                      >
+                        <option value="monthly">Mensal</option>
+                        <option value="annual">Anual</option>
+                      </select>
+                    </td>
                     <td className="py-3 text-xs text-content-muted">
                       Dir {formatLimit(r.limits.maxDirectors)} · Ger {formatLimit(r.limits.maxManagers)} · Vend{" "}
                       {formatLimit(r.limits.maxSellers)} · Agentes {formatLimit(r.limits.includedAgents)} · Funis{" "}
-                      {formatLimit(r.limits.maxSalesFunnels)} · Leads/mês {formatLimit(r.limits.monthlyAttendedLeadsCap)}
+                      {formatLimit(r.limits.maxSalesFunnels)} · Leads/ciclo {formatLimit(r.limits.monthlyAttendedLeadsCap)}
                     </td>
                   </tr>
                 ))}
@@ -286,6 +333,19 @@ export function AdminEnterpriseWorkspace() {
             <div className="sm:col-span-2">
               <label className={cn(typography.label.subtle)}>Notas internas (opcional)</label>
               <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Referência do contrato, CS responsável…" className="mt-1" />
+            </div>
+            <div className="sm:col-span-2">
+              <label className={cn(typography.label.subtle)}>Ciclo da franquia de leads</label>
+              <select
+                value={leadQuotaPeriodicity}
+                onChange={(event) =>
+                  setLeadQuotaPeriodicity(event.target.value === "annual" ? "annual" : "monthly")
+                }
+                className="mt-1 h-11 w-full rounded-lg border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary"
+              >
+                <option value="monthly">Mensal</option>
+                <option value="annual">Anual</option>
+              </select>
             </div>
           </div>
 

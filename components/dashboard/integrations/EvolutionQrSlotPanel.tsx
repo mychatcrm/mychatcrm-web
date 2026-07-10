@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Smartphone, WifiOff } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, RotateCcw, Smartphone, WifiOff } from "lucide-react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 import { cn } from "@/lib/utils";
@@ -97,6 +97,7 @@ function formatWaNumber(jid: string | null | undefined): string | null {
 export function EvolutionQrSlotPanel({
   slotIndex,
   sessionApiPath = "/api/client/whatsapp/evolution/session",
+  resetApiPath = "/api/client/whatsapp/evolution/reset",
   statusApiPath = "/api/client/whatsapp/evolution/status",
   autoProvision = true,
   strictVerifiedRemoval = false,
@@ -104,6 +105,7 @@ export function EvolutionQrSlotPanel({
 }: {
   slotIndex: number;
   sessionApiPath?: string;
+  resetApiPath?: string;
   statusApiPath?: string;
   /**
    * Quando false, o painel NÃO cria/recria a instância automaticamente: ao apagar/desconectar,
@@ -129,6 +131,7 @@ export function EvolutionQrSlotPanel({
   const [instanceName, setInstanceName] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [infraHint, setInfraHint] = useState<string | null>(null);
   const [qrSecondsLeft, setQrSecondsLeft] = useState(QR_TTL_SECONDS);
@@ -267,23 +270,19 @@ export function EvolutionQrSlotPanel({
       };
       if (!res.ok) {
         deleteWarning = json.error ?? "Falha ao apagar a instância.";
-        if (strictVerifiedRemoval) {
-          setError(
-            deleteWarning === "Falha ao apagar a instância."
-              ? "Não foi possível confirmar a exclusão. Tente novamente."
-              : deleteWarning,
-          );
-          return;
-        }
+        setError(
+          deleteWarning === "Falha ao apagar a instância."
+            ? "Não foi possível confirmar a exclusão. Tente novamente."
+            : deleteWarning,
+        );
+        return;
       } else {
         const verifiedAbsent = json.evolutionVerifiedAbsent ?? json.evolutionRemoved ?? true;
         if (verifiedAbsent === false) {
           deleteWarning =
             "A instância foi removida do MyChatCRM, mas ainda aparece na Evolution. Apague manualmente no Evolution Manager (botão Delete) e reconecte.";
-          if (strictVerifiedRemoval) {
-            setError("Não foi possível confirmar a exclusão. Tente novamente.");
-            return;
-          }
+          setError("Não foi possível confirmar a exclusão. Tente novamente.");
+          return;
         }
       }
 
@@ -305,6 +304,49 @@ export function EvolutionQrSlotPanel({
       setDisconnecting(false);
     }
   }, [slotIndex, sessionApiPath, strictVerifiedRemoval]);
+
+  const handleReset = useCallback(async () => {
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Resetar esta conexão? A sessão atual será removida da Evolution e as regras desta linha serão preservadas. Depois, conecte novamente com um QR novo.",
+      )
+    ) {
+      return;
+    }
+    setResetting(true);
+    setError(null);
+    try {
+      const res = await fetch(resetApiPath, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slotIndex }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        instanceName?: string | null;
+        evolutionVerifiedAbsent?: boolean;
+        error?: string;
+      };
+      if (!res.ok || json.evolutionVerifiedAbsent !== true) {
+        setError(json.error ?? "Não foi possível confirmar o reset da conexão. Tente novamente.");
+        return;
+      }
+      setConnectionState("none");
+      setQrDataUrl(null);
+      setPairingCode(null);
+      setWaJid(null);
+      setInstanceName(typeof json.instanceName === "string" ? json.instanceName : null);
+      prevQrFingerprintRef.current = null;
+      qrReceivedAtRef.current = null;
+      setQrSecondsLeft(QR_TTL_SECONDS);
+      setManuallyDisconnected(true);
+    } catch {
+      setError("Não foi possível confirmar o reset da conexão. Tente novamente.");
+    } finally {
+      setResetting(false);
+    }
+  }, [resetApiPath, slotIndex]);
 
   // Infra check on mount
   useEffect(() => {
@@ -422,11 +464,20 @@ export function EvolutionQrSlotPanel({
         <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-400">
           As mensagens recebidas são processadas automaticamente.
         </p>
-        <div className="mt-4 flex justify-center">
+        <div className="mt-4 flex flex-wrap justify-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => void handleReset()}
+            disabled={resetting || disconnecting}
+            className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-content-secondary transition-colors hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {resetting ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <RotateCcw className="size-3.5" aria-hidden />}
+            {resetting ? "A resetar…" : "Resetar conexão"}
+          </button>
           <button
             type="button"
             onClick={() => void handleDisconnect()}
-            disabled={disconnecting}
+            disabled={disconnecting || resetting}
             className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-rose-600 transition-colors hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
           >
             {disconnecting ? (

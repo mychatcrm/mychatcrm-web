@@ -4,6 +4,11 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { deleteCrmLeadsForTenant, normalizeCrmLeadIds, validateCrmLeadIds } from "@/lib/server/crm-leads-delete";
 import { readTeamMembersFromDb } from "@/lib/server/team-employees-db";
 import type { ClientLead } from "@/lib/dashboard-data";
+import {
+  commitTenantLeadQuotaReservation,
+  releaseTenantLeadQuotaReservation,
+  reserveTenantLeadQuota,
+} from "@/lib/server/lead-quota";
 
 export const dynamic = "force-dynamic";
 
@@ -200,6 +205,37 @@ export async function POST(request: Request) {
   }
 
   const sb = createSupabaseServiceClient();
+  const contactKey = String(payload.phone ?? payload.email ?? payload.id ?? "").trim();
+  let existingContact = false;
+  if (contactKey) {
+    const existingQuery = String(payload.phone ?? "").trim()
+      ? sb.from("leads").select("id", { count: "exact", head: true }).eq("tenant_id", session.tenantId).eq("phone", payload.phone)
+      : sb.from("leads").select("id", { count: "exact", head: true }).eq("tenant_id", session.tenantId).eq("email", payload.email);
+    const { count } = await existingQuery;
+    existingContact = (count ?? 0) > 0;
+  }
+  const admission = await reserveTenantLeadQuota({
+    tenantId: session.tenantId,
+    plan: session.plan,
+    operationalLimits: session.operationalLimits,
+    contactKey,
+    source: "crm_manual",
+    idempotencyKey: `crm-api:${session.tenantId}:${String(payload.id ?? contactKey)}`,
+    isExistingContact: existingContact,
+    metadata: { source: payload.source ?? "manual", created_by: session.email },
+  });
+  if (!admission.admitted) {
+    return NextResponse.json(
+      {
+        error:
+          admission.reason === "lead_quota_exhausted"
+            ? "O limite de novos leads do ciclo foi atingido. Contrate mais capacidade para criar um novo lead."
+            : "Não foi possível confirmar a franquia de leads. Tente novamente em instantes.",
+        code: admission.reason,
+      },
+      { status: admission.reason === "lead_quota_exhausted" ? 429 : 503 },
+    );
+  }
   const initial = await sb
     .from("leads")
     .insert(payload)
@@ -220,9 +256,15 @@ export async function POST(request: Request) {
   }
 
   if (error) {
+    await releaseTenantLeadQuotaReservation(admission.eventId, "crm_manual_insert_failed");
     console.error("[api/client/crm/leads] POST", error.code, error.message);
     return NextResponse.json({ error: "Erro ao criar lead." }, { status: 503 });
   }
+
+  await commitTenantLeadQuotaReservation({
+    eventId: admission.eventId,
+    leadId: (data as LeadRow).id,
+  });
 
   const ownerNamesById = new Map((await readTeamMembersFromDb(session.tenantId, session.email)).map((employee) => [employee.id, employee.nome]));
   return NextResponse.json({ lead: rowToClientLead(data as LeadRow, ownerNamesById) }, { status: 201 });

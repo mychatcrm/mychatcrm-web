@@ -944,6 +944,13 @@ export function NewLeadRuleWizard({
     if (step === 2) {
       if (isOrganicWhatsApp) return draft.agentIds.length === 1;
       if (!draft.distributionType) return false;
+      if (
+        draft.source === "meta_form" &&
+        ["automation_agent", "specific_agents", "round_robin"].includes(draft.distributionType) &&
+        !draft.connectionId.trim()
+      ) {
+        return false;
+      }
       const roster = teamEmployees.length;
       if (
         (draft.distributionType === "specific_employees" ||
@@ -1015,6 +1022,14 @@ export function NewLeadRuleWizard({
       return;
     }
     if (draft.source === "meta_form" && !draft.useAllForms && draft.includedFormIds.length === 0) {
+      setStep(0);
+      return;
+    }
+    if (
+      draft.source === "meta_form" &&
+      ["automation_agent", "specific_agents", "round_robin"].includes(dist) &&
+      !draft.connectionId.trim()
+    ) {
       setStep(0);
       return;
     }
@@ -1691,6 +1706,38 @@ export function NewLeadRuleWizard({
                       )}
                     </div>
                   </div>
+                </div>
+              </div>
+            ) : null}
+
+            {draft.source === "meta_form" ? (
+              <div className="rounded-xl border border-blue-500/20 bg-blue-500/[0.05] p-4 text-sm text-content-secondary">
+                <p className="font-medium text-content">Conexão para o primeiro atendimento</p>
+                <p className="mt-1 text-xs leading-relaxed">
+                  Esta linha será usada somente por este formulário para a primeira mensagem automática. Ela não autoriza atendimento direto fora da campanha.
+                </p>
+                <div className="mt-3">
+                  <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-content-muted">
+                    Número / conexão WhatsApp
+                  </label>
+                  <select
+                    value={draft.connectionId}
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, transport: "evolution", connectionId: event.target.value }))
+                    }
+                    className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                  >
+                    <option value="">Selecione uma conexão</option>
+                    {whatsAppConnections.map((connection) => (
+                      <option key={connection.id} value={connection.id}>
+                        Linha {connection.slot_index + 1} · {connection.wa_jid?.split("@")[0] || connection.instance_name}
+                        {connection.connection_state === "open" ? " · conectada" : " · desconectada"}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-content-muted">
+                    Obrigatória quando a regra atende com IA. Regras antigas sem conexão continuam visíveis, mas não iniciam atendimento até serem corrigidas.
+                  </p>
                 </div>
               </div>
             ) : null}

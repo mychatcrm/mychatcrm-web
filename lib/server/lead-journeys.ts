@@ -5,6 +5,7 @@ import {
 } from "@/lib/server/meta-form-authorization";
 import {
   isAgentAuthorizedForDirectWhatsApp,
+  resolveDirectWhatsAppAgentFromRules,
 } from "@/lib/server/agent-channel-authorization";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
@@ -318,6 +319,8 @@ export async function authorizeActiveJourney(params: {
   tenantId: string;
   remoteJid: string;
   preferredAgentId?: string | null;
+  /** Identity of the inbound transport; prevents cross-number journey reuse. */
+  connectionId?: string | null;
 }): Promise<JourneyAuthorizationResult> {
   const journey = await getActiveLeadJourney(params);
   if (!journey) {
@@ -326,6 +329,9 @@ export async function authorizeActiveJourney(params: {
   const agentId = params.preferredAgentId?.trim() || journey.agentId?.trim() || "";
   if (!agentId || journey.agentId !== agentId) {
     return { ok: false, reason: "journey_agent_mismatch", journey };
+  }
+  if (params.connectionId && journey.connectionId && journey.connectionId !== params.connectionId) {
+    return { ok: false, reason: "journey_connection_mismatch", journey };
   }
   const { data: agent } = await params.sb
     .from("tenant_agents")
@@ -351,6 +357,7 @@ export async function authorizeActiveJourney(params: {
       pageId: journey.pageId,
       formId: journey.formId,
       agentId,
+      connectionId: journey.connectionId,
     });
     return auth.authorized
       ? { ok: true, journey, agentId }
@@ -395,19 +402,13 @@ export async function resolveDirectJourneyAgent(params: {
   connectionId?: string | null;
 }): Promise<JourneyAuthorizationResult> {
   if (!isJourneyIsolationEnabled()) {
-    const { data } = await params.sb
-      .from("lead_distribution_rules")
-      .select("agent_ids")
-      .eq("tenant_id", params.tenantId)
-      .eq("active", true)
-      .eq("source", "whatsapp_organico")
-      .order("order_index", { ascending: true })
-      .limit(1);
-    const agentId = stringArray(
-      ((data ?? [])[0] as { agent_ids?: unknown } | undefined)?.agent_ids,
-    )[0];
-    return agentId
-      ? { ok: true, journey: null, agentId }
+    const resolved = await resolveDirectWhatsAppAgentFromRules({
+      sb: params.sb,
+      tenantId: params.tenantId,
+      connectionId: params.connectionId,
+    });
+    return resolved
+      ? { ok: true, journey: null, agentId: resolved.agentId }
       : { ok: false, reason: "blocked_no_direct_whatsapp_rule", journey: null };
   }
 
@@ -415,6 +416,7 @@ export async function resolveDirectJourneyAgent(params: {
     sb: params.sb,
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,
+    connectionId: params.connectionId,
   });
   if (existing.ok) return existing;
   if (existing.journey) return existing;
@@ -430,9 +432,9 @@ export async function resolveDirectJourneyAgent(params: {
     return { ok: false, reason: "direct_rule_query_failed", journey: null };
   }
   const matchingRules = ((data ?? []) as Array<Record<string, unknown>>).filter((candidate) => {
-      const ruleConnection = text(candidate.connection_id);
-      return !ruleConnection || ruleConnection === params.connectionId;
-    });
+    const ruleConnection = text(candidate.connection_id);
+    return Boolean(params.connectionId) && ruleConnection === params.connectionId;
+  });
   if (matchingRules.length > 1) {
     console.error("[lead-journeys] direct_rule_ambiguous", {
       tenant_id: params.tenantId,

@@ -31,11 +31,15 @@ describe("bucketMetaLeadEventStep", () => {
       blocked_form_not_registered_in_lead_rules: "erro",
       blocked_ambiguous_meta_page_form_tenant: "erro",
       blocked_missing_meta_connection_for_resolved_tenant: "erro",
+      blocked_lead_quota_exhausted: "erro",
+      blocked_lead_quota_unavailable: "erro",
       blocked_historical_lead: "erro",
       automation_blocked_by_journey: "erro",
+      automation_blocked_agent_missing_instructions: "erro",
       manual_assigned_to_agent: "ok",
       manual_assignment_failed: "erro",
       manual_assigned_to_human: "ok",
+      skipped_selected_connection_unavailable: "erro",
     };
 
     for (const step of META_LEAD_EVENT_STEPS) {

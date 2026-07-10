@@ -9,13 +9,17 @@
  */
 import "server-only";
 import type { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
+import {
+  generateAgentResponse,
+  isAgentMissingInstructionsResult,
+} from "@/lib/ai/generate-agent-response";
 import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import { upsertConversationState } from "@/lib/server/conversation-memory";
 import { resolveAgentCrmFieldsForLeadInsert } from "@/lib/server/auto-lead-upsert";
 import { buildNewLeadCrmFields, promoteLeadToContatoOnAgentEngagement } from "@/lib/server/crm-lead-lifecycle";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
-import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
+import { resolveAuthorizedMetaLeadAgent } from "@/lib/server/meta-form-authorization";
+import { getEvolutionInstanceByIdForTenant } from "@/lib/server/tenant-evolution-instance-db";
 import { MetaLeadEventRecorder, type MetaLeadEventRow } from "@/lib/server/meta-lead-events-db";
 import {
   buildFallbackInitialMessage,
@@ -185,6 +189,26 @@ export async function assignMetaLeadEventToAgent(params: {
   const evoNumber = remoteJidToEvoNumber(remoteJid);
   if (!evoNumber) return { ok: false, error: "Telefone inválido para WhatsApp.", status: 400 };
 
+  const authorization = await resolveAuthorizedMetaLeadAgent({
+    sb,
+    tenantId,
+    pageId: event.page_id ?? "",
+    formId: event.form_id ?? "",
+    preferredAgentId: agentId,
+  });
+  if (
+    !authorization.authorized ||
+    authorization.agentId !== agentId ||
+    !authorization.ruleId ||
+    !authorization.connectionId
+  ) {
+    return {
+      ok: false,
+      error: `Este formulário não autoriza o agente e a conexão selecionados (${authorization.reason}).`,
+      status: 409,
+    };
+  }
+
   const guard = await canAgentAutoContactLead({
     sb,
     tenantId,
@@ -196,6 +220,7 @@ export async function assignMetaLeadEventToAgent(params: {
     source: "lead_ads",
     formId: event.form_id,
     pageId: event.page_id,
+    connectionId: authorization.connectionId,
     leadgenId: event.leadgen_id,
     triggerSource: "manual_lead_event_assignment",
   });
@@ -211,8 +236,8 @@ export async function assignMetaLeadEventToAgent(params: {
     phone,
     leadId,
     agentId,
-    ruleId: null,
-    connectionId: null,
+    ruleId: authorization.ruleId,
+    connectionId: authorization.connectionId,
     source: "manual",
     sourceRef: event.leadgen_id,
     pageId: event.page_id,
@@ -224,11 +249,14 @@ export async function assignMetaLeadEventToAgent(params: {
   }
   const journeyId = journey?.id ?? null;
 
-  const instance = await getEvolutionInstanceByTenantId(tenantId);
-  if (!instance?.instance_name) {
+  const instance = await getEvolutionInstanceByIdForTenant(
+    tenantId,
+    authorization.connectionId,
+  );
+  if (!instance?.instance_name || instance.connection_state !== "open") {
     return {
       ok: false,
-      error: "Nenhuma instância WhatsApp (QR/Evolution) configurada para este tenant — a atribuição manual por agente de IA ainda só envia por Evolution.",
+      error: "A conexão WhatsApp autorizada para este formulário não está conectada.",
       status: 409,
     };
   }
@@ -283,6 +311,14 @@ export async function assignMetaLeadEventToAgent(params: {
     feature: "agent_chat",
     messages: [{ role: "user", content: aiPrompt }],
   });
+  if (isAgentMissingInstructionsResult(aiResult)) {
+    await recordManualFailureOnAgent(sb, eventId, agentId, "agent_missing_instructions");
+    return {
+      ok: false,
+      error: "Este agente ainda não possui instruções válidas e não pode enviar mensagens.",
+      status: 422,
+    };
+  }
   const replyText = sanitizeInitialReply(aiResult.ok ? aiResult.text : "") || buildFallbackInitialMessage(fullName);
 
   let messageId: string;

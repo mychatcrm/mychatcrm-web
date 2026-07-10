@@ -1,4 +1,7 @@
-import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
+import {
+  generateAgentResponse,
+  isAgentMissingInstructionsResult,
+} from "@/lib/ai/generate-agent-response";
 import { detectSupportedLanguageCode, type SupportedLanguageCode } from "@/lib/ai/language-detect";
 import {
   canUseTts,
@@ -64,6 +67,10 @@ type PendingInboundRow = {
   mime_type: string | null;
 };
 
+type GeneratedReplyForUnit =
+  | { ok: true; text: string }
+  | { ok: false; error: "agent_missing_instructions" };
+
 function localizedGenericFailureReply(languageCode: SupportedLanguageCode): string {
   const replies: Record<SupportedLanguageCode, string> = {
     pt: "Não consegui gerar uma resposta agora. Por favor tente de novo em instantes.",
@@ -128,7 +135,7 @@ async function generateReplyForUnit(params: {
    *  burst.userPrompt quando todas as mensagens estão numa única unidade. */
   promptOverride?: string;
   schedulingContextBlock?: string;
-}): Promise<string> {
+}): Promise<GeneratedReplyForUnit> {
   const unitPrompt = params.promptOverride ?? buildReplyUnitPrompt(params.unit);
   const languageCode = detectSupportedLanguageCode(unitPrompt);
   const unitIds = new Set(params.unit.map((m) => m.id));
@@ -151,6 +158,10 @@ async function generateReplyForUnit(params: {
     },
     schedulingContextBlock: params.schedulingContextBlock,
   });
+
+  if (isAgentMissingInstructionsResult(result)) {
+    return { ok: false, error: "agent_missing_instructions" };
+  }
 
   let replyText = result.ok
     ? result.text
@@ -198,7 +209,7 @@ async function generateReplyForUnit(params: {
     }
   }
 
-  return replyText;
+  return { ok: true, text: replyText };
 }
 
 export async function processAgentResponseJob(
@@ -535,7 +546,7 @@ export async function processAgentResponseJob(
     const handoffCheck = handoffEnabled
       ? await shouldTriggerHandoffAI(unitPrompt, handoffKeywords)
       : { trigger: false, reason: null };
-    const replyText = await generateReplyForUnit({
+    const generatedReply = await generateReplyForUnit({
       job,
       unit,
       burst,
@@ -545,6 +556,21 @@ export async function processAgentResponseJob(
       // que já lida com urgência, intent dominante e filtragem de saudações.
       promptOverride: burst.userPrompt,
     });
+
+    if (!generatedReply.ok) {
+      console.warn("[agent-response-jobs] automatic reply blocked because agent has no instructions", {
+        job_id: job.id,
+        tenant_id: job.tenant_id,
+        agent_id: job.agent_id,
+        journey_id: job.journey_id,
+      });
+      return {
+        ok: false,
+        error: generatedReply.error,
+        dedupedCount: burst.dedupedCount,
+      };
+    }
+    const replyText = generatedReply.text;
 
     console.info("[agent-response-jobs]", {
       event: "generated_response",

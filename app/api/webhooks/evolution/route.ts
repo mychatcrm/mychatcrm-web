@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
+import {
+  generateAgentResponse,
+  isAgentMissingInstructionsResult,
+} from "@/lib/ai/generate-agent-response";
 import { detectSupportedLanguageCode, type SupportedLanguageCode } from "@/lib/ai/language-detect";
 import {
   canUseTts,
@@ -76,6 +79,12 @@ import {
   cancelLeadRedistributionTrigger,
   scheduleLeadRedistribution,
 } from "@/lib/server/lead-redistribution";
+import {
+  commitTenantLeadQuotaReservation,
+  releaseTenantLeadQuotaReservation,
+  reserveTenantLeadQuota,
+} from "@/lib/server/lead-quota";
+import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
 
 
 export const dynamic = "force-dynamic";
@@ -940,6 +949,7 @@ export async function POST(request: Request) {
             phone: msg.remoteJid,
             remoteJid: msg.remoteJid,
             journeyId: journey?.id ?? null,
+            connectionId: row.id,
             triggerSource: "evolution_inbound_auto_reply",
           });
           if (!autoContactGuard.ok) {
@@ -952,6 +962,35 @@ export async function POST(request: Request) {
               remote_jid_last4: msg.remoteJid.replace(/\D/g, "").slice(-4),
             });
             return;
+          }
+
+          // Direct WhatsApp stays out of CRM by default, but the first AI
+          // attendance is still a commercial lead. Reserve before generating
+          // the reply and commit only after delivery succeeds.
+          let directQuotaReservationId: string | null = null;
+          if (journey?.source === "whatsapp_direct") {
+            const tenantPlan = await getTenantPlanSnapshot(row.tenant_id);
+            const admission = await reserveTenantLeadQuota({
+              tenantId: row.tenant_id,
+              plan: tenantPlan.plan,
+              operationalLimits: tenantPlan.operationalLimits,
+              contactKey: msg.remoteJid,
+              source: "whatsapp_direct",
+              idempotencyKey: `direct:${row.id}:${msg.remoteJid.split("@")[0]}`,
+              isExistingContact: Boolean(leadId),
+              metadata: { connection_id: row.id, journey_id: journey.id, agent_id: agentId },
+            });
+            if (!admission.admitted) {
+              console.info("[webhooks/evolution] auto reply blocked by lead quota", {
+                tenant_id: row.tenant_id,
+                agent_id: agentId,
+                reason: admission.reason,
+                used: admission.used,
+                cap: admission.cap,
+              });
+              return;
+            }
+            directQuotaReservationId = admission.eventId;
           }
 
           const schedulingTimezone = resolveAgentTimezone({
@@ -970,6 +1009,20 @@ export async function POST(request: Request) {
               msg.type === "audio" || msg.type === "image" || msg.type === "video" ? msg : undefined,
             instanceName: msg.type !== "text" ? instanceName : undefined,
           });
+
+          if (isAgentMissingInstructionsResult(result)) {
+            await releaseTenantLeadQuotaReservation(
+              directQuotaReservationId,
+              "agent_missing_instructions",
+            );
+            console.warn("[webhooks/evolution] automatic reply blocked because agent has no instructions", {
+              tenant_id: row.tenant_id,
+              agent_id: agentId,
+              journey_id: journey?.id ?? null,
+              connection_id: row.id,
+            });
+            return;
+          }
 
           let replyText: string;
           if (result.ok) {
@@ -1199,12 +1252,14 @@ export async function POST(request: Request) {
               tenantId: row.tenant_id,
               remoteJid: msg.remoteJid,
               preferredAgentId: agentId,
+              connectionId: row.id,
             });
             if (!currentJourney.ok || currentJourney.journey?.id !== journey?.id) {
               console.info("[webhooks/evolution] response cancelled before send", {
                 tenant_id: row.tenant_id,
                 reason: currentJourney.ok ? "journey_superseded_before_send" : currentJourney.reason,
               });
+              await releaseTenantLeadQuotaReservation(directQuotaReservationId, "journey_superseded_before_send");
               return;
             }
           }
@@ -1269,9 +1324,15 @@ export async function POST(request: Request) {
                 trigger: "customer_silence",
               });
             }
+            await commitTenantLeadQuotaReservation({
+              eventId: directQuotaReservationId,
+              leadId,
+              journeyId: journey?.id ?? null,
+            });
             await sendOutboundMediaSafe();
           } else {
             console.error("[webhooks/evolution] outbound send failed after TTS gate");
+            await releaseTenantLeadQuotaReservation(directQuotaReservationId, "initial_direct_delivery_failed");
           }
         } catch (e) {
           console.warn("[webhooks/evolution] Phase 2 flow error", e instanceof Error ? e.message : e);

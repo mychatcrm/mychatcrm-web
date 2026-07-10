@@ -9,6 +9,7 @@ const PAGE = "107104725336342";
 const AUTHORIZED_FORM = "1297080185846833";
 const OTHER_FORM = "1319582566784094";
 const AGENT = "ag-max-vendas";
+const CONNECTION = "connection-1";
 
 function rule(overrides: Partial<MetaFormAuthRule> = {}): MetaFormAuthRule {
   return {
@@ -137,6 +138,7 @@ describe("agent auto contact guard", () => {
           distribution_type: "automation_agent",
           agent_ids: [AGENT],
           order_index: 0,
+          connection_id: CONNECTION,
         },
       ],
     });
@@ -147,6 +149,7 @@ describe("agent auto contact guard", () => {
       agentId: AGENT,
       leadId: "lead-1",
       phone: "5562999999999@s.whatsapp.net",
+      connectionId: CONNECTION,
       triggerSource: "evolution_inbound_auto_reply",
     });
 
@@ -160,6 +163,7 @@ function fakeGuardSupabase(params: {
     distribution_type: string;
     agent_ids: string[];
     order_index: number;
+    connection_id?: string | null;
   }>;
 }) {
   return {

@@ -1,4 +1,7 @@
-import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
+import {
+  generateAgentResponse,
+  isAgentMissingInstructionsResult,
+} from "@/lib/ai/generate-agent-response";
 import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import type { AgentFollowUpInteligente } from "@/lib/types";
 import { phoneFromRemoteJid } from "@/lib/server/auto-lead-upsert";
@@ -8,7 +11,10 @@ import {
   getRecentConversationMessages,
 } from "@/lib/server/conversation-memory";
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
-import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
+import {
+  getEvolutionInstanceByIdForTenant,
+  getEvolutionInstanceByTenantId,
+} from "@/lib/server/tenant-evolution-instance-db";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
@@ -22,6 +28,7 @@ import { findNextActiveAgendaEvent } from "@/lib/server/agent-cta-scheduler";
 import {
   authorizeActiveJourney,
   isJourneyIsolationEnabled,
+  type LeadJourney,
 } from "@/lib/server/lead-journeys";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
@@ -503,6 +510,7 @@ export async function processFollowUpJob(
     remoteJid: job.remote_jid,
     jobId: job.id,
   };
+  let authorizedJourney: LeadJourney | null = null;
 
   if (!isHumanAbandonedJob && isJourneyIsolationEnabled()) {
     const journeyAuth = job.journey_id
@@ -534,6 +542,7 @@ export async function processFollowUpJob(
       });
       return "cancelled";
     }
+    authorizedJourney = journeyAuth.journey;
   }
 
   // Hoisted so the catch block can record events with the real activation state.
@@ -588,6 +597,9 @@ export async function processFollowUpJob(
       agentId: job.agent_id,
       leadId: lead?.id ?? job.lead_id,
       phone: phoneFromRemoteJid(job.remote_jid),
+      remoteJid: job.remote_jid,
+      journeyId: isHumanAbandonedJob ? undefined : job.journey_id,
+      connectionId: isHumanAbandonedJob ? undefined : authorizedJourney?.connectionId,
       triggerSource: "follow_up_job",
     });
     if (!guard.ok) {
@@ -967,12 +979,63 @@ export async function processFollowUpJob(
       ],
     });
 
+    if (isAgentMissingInstructionsResult(aiResult)) {
+      await client
+        .from("follow_up_jobs")
+        .update({
+          status: "cancelled",
+          last_error: "agent_missing_instructions",
+          updated_at: now.toISOString(),
+        })
+        .eq("id", job.id);
+      await recordEvent(client, "follow_up_failed", {
+        ...commonEventParams,
+        followUpActive: settings.ativo,
+        leadId: lead?.id,
+        payload: { reason: "agent_missing_instructions" },
+      });
+      logFollowUp("cancelled_agent_missing_instructions", {
+        job_id: job.id,
+        tenant_id: job.tenant_id,
+        agent_id: job.agent_id,
+      });
+      return "cancelled";
+    }
+
     const replyText = aiResult.ok
       ? aiResult.text
       : "Oi! Passando para saber se ainda posso te ajudar com algo. Fico à disposição.";
 
     // ── send via Evolution ────────────────────────────────────────────────────
-    const instance = await getEvolutionInstanceByTenantId(job.tenant_id);
+    const requiresAuthorizedConnection =
+      !isHumanAbandonedJob && isJourneyIsolationEnabled();
+    const authorizedConnectionId = requiresAuthorizedConnection
+      ? authorizedJourney?.connectionId ?? null
+      : null;
+    if (requiresAuthorizedConnection && !authorizedConnectionId) {
+      await client
+        .from("follow_up_jobs")
+        .update({
+          status: "cancelled",
+          last_error: "missing_authorized_connection",
+          updated_at: now.toISOString(),
+        })
+        .eq("id", job.id);
+      await recordEvent(client, "follow_up_failed", {
+        ...commonEventParams,
+        followUpActive: settings.ativo,
+        leadId: lead?.id,
+        payload: { reason: "missing_authorized_connection" },
+      });
+      return "failed";
+    }
+
+    const instance = authorizedConnectionId
+      ? await getEvolutionInstanceByIdForTenant(
+          job.tenant_id,
+          authorizedConnectionId,
+        )
+      : await getEvolutionInstanceByTenantId(job.tenant_id);
     if (!instance?.instance_name) {
       await client
         .from("follow_up_jobs")
@@ -987,6 +1050,23 @@ export async function processFollowUpJob(
         followUpActive: settings.ativo,
         leadId: lead?.id,
         payload: { reason: "missing_evolution_instance" },
+      });
+      return "failed";
+    }
+    if (requiresAuthorizedConnection && instance.connection_state !== "open") {
+      await client
+        .from("follow_up_jobs")
+        .update({
+          status: "cancelled",
+          last_error: "authorized_connection_not_open",
+          updated_at: now.toISOString(),
+        })
+        .eq("id", job.id);
+      await recordEvent(client, "follow_up_failed", {
+        ...commonEventParams,
+        followUpActive: settings.ativo,
+        leadId: lead?.id,
+        payload: { reason: "authorized_connection_not_open" },
       });
       return "failed";
     }

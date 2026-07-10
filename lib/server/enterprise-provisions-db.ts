@@ -19,6 +19,7 @@ type DbProvision = {
   max_sales_funnels: number | null;
   monthly_leads_cap: number | null;
   included_whatsapp: number | null;
+  lead_quota_periodicity: string | null;
   created_at: string;
 };
 
@@ -32,6 +33,7 @@ function toProvisionRecord(row: DbProvision): EnterpriseProvisionRecord {
     ownerName: row.owner_name,
     createdAt: row.created_at,
     notes: row.notes ?? undefined,
+    leadQuotaPeriodicity: row.lead_quota_periodicity === "annual" ? "annual" : "monthly",
     limits: {
       maxDirectors: row.max_directors ?? null,
       maxManagers: row.max_managers ?? null,
@@ -84,10 +86,25 @@ export async function writeEnterpriseProvision(
       max_sales_funnels: provision.limits.maxSalesFunnels ?? null,
       monthly_leads_cap: provision.limits.monthlyAttendedLeadsCap ?? null,
       included_whatsapp: provision.limits.includedWhatsAppLines ?? null,
+      lead_quota_periodicity: provision.leadQuotaPeriodicity,
     },
     { onConflict: "id" },
   );
   if (error) throw new Error(`[enterprise-provisions-db] write: ${error.message}`);
+}
+
+export async function updateEnterpriseLeadQuotaPeriodicity(
+  tenantId: string,
+  periodicity: "monthly" | "annual",
+): Promise<void> {
+  const sb = createSupabaseServiceClient();
+  const { error } = await sb
+    .from("enterprise_provisions")
+    .update({ lead_quota_periodicity: periodicity })
+    .eq("tenant_id", tenantId);
+  if (error) {
+    throw new Error(`[enterprise-provisions-db] update_periodicity: ${error.message}`);
+  }
 }
 
 export async function upsertTenantForProvision(

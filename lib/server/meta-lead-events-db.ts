@@ -29,11 +29,15 @@ export const META_LEAD_EVENT_STEPS = [
   "blocked_form_not_registered_in_lead_rules",
   "blocked_ambiguous_meta_page_form_tenant",
   "blocked_missing_meta_connection_for_resolved_tenant",
+  "blocked_lead_quota_exhausted",
+  "blocked_lead_quota_unavailable",
   "blocked_historical_lead",
   "automation_blocked_by_journey",
+  "automation_blocked_agent_missing_instructions",
   "manual_assigned_to_agent",
   "manual_assignment_failed",
   "manual_assigned_to_human",
+  "skipped_selected_connection_unavailable",
 ] as const;
 
 export type MetaLeadEventStep = (typeof META_LEAD_EVENT_STEPS)[number];

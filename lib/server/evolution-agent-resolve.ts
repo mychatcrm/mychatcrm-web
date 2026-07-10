@@ -74,12 +74,13 @@ export async function resolveEvolutionAgentId(
   if (instanceName) {
     const { data: instanceRaw } = await sb
       .from("tenant_evolution_instances")
-      .select("organic_agent_id")
+      .select("id, organic_agent_id")
       .eq("tenant_id", tenantId)
       .eq("instance_name", instanceName)
       .maybeSingle();
 
     const instance = instanceRaw as {
+      id: string;
       organic_agent_id: string | null;
     } | null;
 
@@ -87,11 +88,12 @@ export async function resolveEvolutionAgentId(
       sb,
       tenantId,
       preferredAgentId: instance?.organic_agent_id,
+      connectionId: instance?.id,
     });
     if (authorized) return authorized.agentId;
   }
 
-  // 3. Last allowed direct WhatsApp fallback: any active whatsapp_organico rule.
-  const authorized = await resolveDirectWhatsAppAgentFromRules({ sb, tenantId });
-  return authorized?.agentId ?? null;
+  // A resolver without a transport identity cannot prove which WhatsApp line
+  // received the event. Do not turn it into a tenant-wide fallback.
+  return null;
 }

@@ -20,6 +20,14 @@ export type LeadUsageSnapshot = {
   used: number;
   /** Limite extra comprado ou concedido além do pacote do plano. */
   bonus: number;
+  /** Server-authoritative capacity during the current commercial cycle. */
+  cap?: number;
+  baseLimit?: number;
+  recurringBonus?: number;
+  topupBonus?: number;
+  periodicity?: "monthly" | "annual";
+  cycleStart?: string;
+  cycleEnd?: string;
 };
 
 /** Limite mensal de leads atendidos incluídos no plano (base de cobrança). */
@@ -44,7 +52,23 @@ function normalizeSnapshot(
     typeof o.used === "number" && Number.isFinite(o.used) && o.used >= 0 ? Math.floor(o.used) : 0;
   const bonus =
     typeof o.bonus === "number" && Number.isFinite(o.bonus) && o.bonus >= 0 ? Math.floor(o.bonus) : 0;
-  return { used, bonus };
+  const cap = typeof o.cap === "number" && Number.isFinite(o.cap) && o.cap >= 0 ? Math.floor(o.cap) : undefined;
+  const baseLimit =
+    typeof o.baseLimit === "number" && Number.isFinite(o.baseLimit) && o.baseLimit >= 0
+      ? Math.floor(o.baseLimit)
+      : undefined;
+  const recurringBonus =
+    typeof o.recurringBonus === "number" && Number.isFinite(o.recurringBonus) && o.recurringBonus >= 0
+      ? Math.floor(o.recurringBonus)
+      : undefined;
+  const topupBonus =
+    typeof o.topupBonus === "number" && Number.isFinite(o.topupBonus) && o.topupBonus >= 0
+      ? Math.floor(o.topupBonus)
+      : undefined;
+  const periodicity = o.periodicity === "annual" || o.periodicity === "monthly" ? o.periodicity : undefined;
+  const cycleStart = typeof o.cycleStart === "string" ? o.cycleStart : undefined;
+  const cycleEnd = typeof o.cycleEnd === "string" ? o.cycleEnd : undefined;
+  return { used, bonus, cap, baseLimit, recurringBonus, topupBonus, periodicity, cycleStart, cycleEnd };
 }
 
 /** Primeiro paint / SSR: zeros até a API hidratar no cliente. */
@@ -97,6 +121,13 @@ export function persistLeadUsageSnapshot(tenantId: string, snap: LeadUsageSnapsh
     const clean: LeadUsageSnapshot = {
       used: Math.max(0, Math.floor(snap.used)),
       bonus: Math.max(0, Math.min(Math.floor(snap.bonus), 9_000_000)),
+      ...(typeof snap.cap === "number" ? { cap: Math.max(0, Math.floor(snap.cap)) } : {}),
+      ...(typeof snap.baseLimit === "number" ? { baseLimit: Math.max(0, Math.floor(snap.baseLimit)) } : {}),
+      ...(typeof snap.recurringBonus === "number" ? { recurringBonus: Math.max(0, Math.floor(snap.recurringBonus)) } : {}),
+      ...(typeof snap.topupBonus === "number" ? { topupBonus: Math.max(0, Math.floor(snap.topupBonus)) } : {}),
+      ...(snap.periodicity ? { periodicity: snap.periodicity } : {}),
+      ...(snap.cycleStart ? { cycleStart: snap.cycleStart } : {}),
+      ...(snap.cycleEnd ? { cycleEnd: snap.cycleEnd } : {}),
     };
     window.localStorage.setItem(storageKey(tenantId), JSON.stringify(clean));
     window.dispatchEvent(new Event(LEADS_USAGE_UPDATED_EVENT));

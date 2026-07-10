@@ -32,6 +32,8 @@ export type MetaFormAuthRule = {
   excluded_form_ids: unknown;
   distribution_type: string;
   agent_ids: unknown;
+  transport?: string | null;
+  connection_id?: string | null;
   order_index?: number;
 };
 
@@ -283,7 +285,7 @@ export async function loadActiveMetaFormRules(
   const { data, error } = await sb
     .from("lead_distribution_rules")
     .select(
-      "id, page_id, use_all_forms, included_form_ids, excluded_form_ids, distribution_type, agent_ids, order_index",
+      "id, page_id, use_all_forms, included_form_ids, excluded_form_ids, distribution_type, agent_ids, transport, connection_id, order_index",
     )
     .eq("tenant_id", tenantId)
     .eq("active", true)
@@ -307,7 +309,7 @@ export async function resolveMetaTenantFromExplicitFormRules(params: {
   const { data, error } = await params.sb
     .from("lead_distribution_rules")
     .select(
-      "id, tenant_id, page_id, use_all_forms, included_form_ids, excluded_form_ids, distribution_type, agent_ids, order_index",
+      "id, tenant_id, page_id, use_all_forms, included_form_ids, excluded_form_ids, distribution_type, agent_ids, transport, connection_id, order_index",
     )
     .eq("active", true)
     .eq("source", "meta_form")
@@ -444,6 +446,7 @@ export async function isAgentExplicitlyAuthorizedForMetaForm(params: {
   pageId: string;
   formId: string;
   agentId: string;
+  connectionId?: string | null;
 }): Promise<MetaFormAuthorizationResult> {
   const formId = params.formId.trim();
   const pageId = params.pageId.trim();
@@ -457,14 +460,29 @@ export async function isAgentExplicitlyAuthorizedForMetaForm(params: {
   }
 
   const rules = await loadActiveMetaFormRules(params.sb, params.tenantId);
-  const match = rules.find((rule) => metaRuleExplicitlyAuthorizesAgent({ rule, formId, pageId, agentId }));
+  const expectedConnection = params.connectionId?.trim() || null;
+  const formAndAgentMatch = rules.find((rule) =>
+    metaRuleExplicitlyAuthorizesAgent({ rule, formId, pageId, agentId }),
+  );
+  const match = rules.find(
+    (rule) =>
+      metaRuleExplicitlyAuthorizesAgent({ rule, formId, pageId, agentId }) &&
+      Boolean(rule.connection_id?.trim()) &&
+      (!expectedConnection || rule.connection_id === expectedConnection),
+  );
   if (!match) {
+    const reason =
+      formAndAgentMatch && !formAndAgentMatch.connection_id?.trim()
+        ? "missing_meta_rule_connection"
+        : formAndAgentMatch && expectedConnection
+          ? "meta_rule_connection_mismatch"
+          : "form_not_explicitly_authorized_for_agent";
     return {
       authorized: false,
       agentId: null,
       ruleId: null,
       source: "unauthorized_form",
-      reason: "form_not_explicitly_authorized_for_agent",
+      reason,
     };
   }
 
@@ -525,6 +543,7 @@ async function isUsableTenantAgent(params: {
 export type MetaFormAgentResolution = {
   agentId: string | null;
   ruleId: string | null;
+  connectionId: string | null;
   source: MetaFormAuthorizationSource;
   reason: string;
   authorized: boolean;
@@ -539,22 +558,42 @@ export async function resolveAuthorizedMetaLeadAgent(params: {
   tenantId: string;
   pageId: string;
   formId: string;
+  preferredAgentId?: string | null;
 }): Promise<MetaFormAgentResolution> {
   const auth = await resolveMetaFormAuthorization({
     sb: params.sb,
     tenantId: params.tenantId,
     pageId: params.pageId,
     formId: params.formId,
+    agentId: params.preferredAgentId,
   });
 
   if (!auth.authorized || !auth.agentId) {
     return {
       agentId: null,
       ruleId: auth.ruleId,
+      connectionId: null,
       source: auth.source,
       reason: auth.reason,
       authorized: false,
       invalidAgentId: null,
+    };
+  }
+
+  // The form selects the agent and the transport together. Do not fall back to
+  // a tenant's first Evolution instance when a rule is incomplete.
+  const rules = await loadActiveMetaFormRules(params.sb, params.tenantId);
+  const rule = rules.find((candidate) => candidate.id === auth.ruleId) ?? null;
+  const connectionId = typeof rule?.connection_id === "string" ? rule.connection_id.trim() : "";
+  if (!connectionId) {
+    return {
+      agentId: null,
+      ruleId: auth.ruleId,
+      connectionId: null,
+      source: "unauthorized_form",
+      reason: "missing_meta_rule_connection",
+      authorized: false,
+      invalidAgentId: auth.agentId,
     };
   }
 
@@ -567,6 +606,7 @@ export async function resolveAuthorizedMetaLeadAgent(params: {
     return {
       agentId: null,
       ruleId: auth.ruleId,
+      connectionId,
       source: "invalid_agent",
       reason: usable.reason,
       authorized: false,
@@ -577,6 +617,7 @@ export async function resolveAuthorizedMetaLeadAgent(params: {
   return {
     agentId: auth.agentId,
     ruleId: auth.ruleId,
+    connectionId,
     source: auth.source,
     reason: auth.reason,
     authorized: true,

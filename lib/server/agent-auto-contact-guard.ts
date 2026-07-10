@@ -158,6 +158,7 @@ export async function canAgentAutoContactLead(params: {
   leadgenId?: string | null;
   remoteJid?: string | null;
   journeyId?: string | null;
+  connectionId?: string | null;
   triggerSource: string;
 }): Promise<AutoContactGuardResult> {
   const agentId = params.agentId?.trim() ?? "";
@@ -178,6 +179,7 @@ export async function canAgentAutoContactLead(params: {
       tenantId: params.tenantId,
       remoteJid: params.remoteJid ?? params.phone ?? lead?.phone ?? "",
       preferredAgentId: agentId,
+      connectionId: params.connectionId,
     });
     if (!journey.ok || journey.journey?.id !== params.journeyId) {
       return {
@@ -212,6 +214,7 @@ export async function canAgentAutoContactLead(params: {
       sb: params.sb,
       tenantId: params.tenantId,
       agentId,
+      connectionId: params.connectionId,
     });
     if (!organicAllowed) {
       console.warn("[auto-contact-guard] blocked", {
@@ -241,6 +244,7 @@ export async function canAgentAutoContactLead(params: {
     pageId,
     formId,
     agentId,
+    connectionId: params.connectionId,
   });
 
   if (!auth.authorized) {

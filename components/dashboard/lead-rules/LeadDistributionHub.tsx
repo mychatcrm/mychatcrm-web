@@ -352,6 +352,18 @@ export function LeadDistributionHub({ session }: { session: ClientSession }) {
                       Redistribui
                     </Badge>
                   ) : null}
+                  {rule.source === "meta_form" &&
+                  ["automation_agent", "specific_agents", "round_robin"].includes(rule.distributionType) &&
+                  !rule.connectionId ? (
+                    <Badge
+                      className={cn(
+                        "border-rose-500/45 bg-rose-500/10",
+                        isLight ? "text-rose-800" : "text-rose-200",
+                      )}
+                    >
+                      Selecione a conexão antes de ativar
+                    </Badge>
+                  ) : null}
                 </div>
               </div>
               <div className="relative flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:items-end">

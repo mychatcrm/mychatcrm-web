@@ -22,6 +22,10 @@ import {
   updateRedemptionStatus,
 } from "@/lib/server/commercial-store-db";
 import { findCouponByStripePromoCodeId } from "@/lib/server/checkout-coupon";
+import { fulfillBillingAddonFromCheckout, syncBillingAddonSubscription } from "@/lib/server/billing-addons";
+import { getTenantLeadQuotaSnapshot } from "@/lib/server/lead-quota";
+import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
+import { syncLegacyWhatsAppSlotEntitlement } from "@/lib/server/whatsapp-extra-slots-db";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { sendTransactionalEmail } from "@/lib/server/resend-mail";
 
@@ -72,7 +76,13 @@ async function incrementExtraWhatsAppSlots(session: Stripe.Checkout.Session): Pr
     .from("stripe_subscriptions")
     .update({ extra_whatsapp_slots: current + qty })
     .eq("tenant_id", tenantId);
-  if (error) console.error("[extra-whatsapp] Falha ao incrementar:", error);
+  if (error) {
+    console.error("[extra-whatsapp] Falha ao incrementar:", error);
+    return;
+  }
+  await syncLegacyWhatsAppSlotEntitlement({ tenantId, quantity: current + qty }).catch((mirrorError) => {
+    console.error("[extra-whatsapp] Falha ao sincronizar entitlement legado:", mirrorError);
+  });
 }
 
 /** Resolve tenant_id a partir do subscription_id do Stripe. */
@@ -97,6 +107,36 @@ async function getOwnerEmail(tenantId: string): Promise<string | null> {
   return (data?.owner_email as string | null) ?? null;
 }
 
+function sessionSubscriptionId(session: Stripe.Checkout.Session): string | null {
+  return typeof session.subscription === "string" ? session.subscription : session.subscription?.id ?? null;
+}
+
+async function oneTimeAddonValidityEnd(tenantId: string): Promise<string | null> {
+  const plan = await getTenantPlanSnapshot(tenantId);
+  const quota = await getTenantLeadQuotaSnapshot({
+    tenantId,
+    plan: plan.plan,
+    operationalLimits: plan.operationalLimits,
+  });
+  return `${quota.cycleEnd}T23:59:59.999Z`;
+}
+
+async function fulfillBillingAddonCheckout(session: Stripe.Checkout.Session): Promise<void> {
+  const tenantId = session.metadata?.tenant_id?.trim();
+  const subscriptionId = sessionSubscriptionId(session);
+  const subscription = subscriptionId ? await getStripe().subscriptions.retrieve(subscriptionId) : null;
+  await fulfillBillingAddonFromCheckout({
+    session,
+    subscription,
+    oneTimeValidUntil: tenantId ? await oneTimeAddonValidityEnd(tenantId) : null,
+  });
+}
+
+function invoiceSubscriptionId(invoice: Stripe.Invoice): string | null {
+  const subscription = invoice.parent?.subscription_details?.subscription;
+  return typeof subscription === "string" ? subscription : subscription?.id ?? null;
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.text();
   const sig = req.headers.get("stripe-signature") ?? "";
@@ -115,7 +155,12 @@ export async function POST(req: NextRequest) {
         const session = event.data.object as Stripe.Checkout.Session;
         // Provisiona apenas se o pagamento foi confirmado (assinatura → always paid)
         if (session.payment_status === "paid" || session.mode === "subscription") {
-          if (session.metadata?.type === "extra_agent") {
+          if (session.metadata?.type === "billing_addon") {
+            // Entitlements are the source of truth for new capacity purchases.
+            // This path never provisions a tenant or changes the main plan.
+            await fulfillBillingAddonCheckout(session);
+            break;
+          } else if (session.metadata?.type === "extra_agent") {
             await incrementExtraAgentPurchased(session);
           } else if (session.metadata?.type === "extra_whatsapp") {
             await incrementExtraWhatsAppSlots(session);
@@ -171,9 +216,12 @@ export async function POST(req: NextRequest) {
 
       case "customer.subscription.deleted": {
         const sub = event.data.object as Stripe.Subscription;
+        const isBillingAddon = sub.metadata?.type === "billing_addon";
         const isExtraAgent = sub.metadata?.type === "extra_agent";
 
-        if (isExtraAgent) {
+        if (isBillingAddon) {
+          await syncBillingAddonSubscription({ subscription: sub, terminal: true });
+        } else if (isExtraAgent) {
           // Caso A — decrementar agentes extras comprados
           const tenantId = sub.metadata?.tenant_id;
           const qty = sub.items.data[0]?.quantity ?? 1;
@@ -207,7 +255,16 @@ export async function POST(req: NextRequest) {
               .from("stripe_subscriptions")
               .update({ extra_whatsapp_slots: Math.max(0, current - qty) })
               .eq("tenant_id", tenantId);
-            if (error) console.error("[extra-whatsapp-cancel] Falha ao decrementar:", error);
+            if (error) {
+              console.error("[extra-whatsapp-cancel] Falha ao decrementar:", error);
+            } else {
+              await syncLegacyWhatsAppSlotEntitlement({
+                tenantId,
+                quantity: Math.max(0, current - qty),
+              }).catch((mirrorError) => {
+                console.error("[extra-whatsapp-cancel] Falha ao sincronizar entitlement legado:", mirrorError);
+              });
+            }
           }
         } else {
           // Caso B — suspender tenant (plano principal cancelado)
@@ -249,6 +306,10 @@ export async function POST(req: NextRequest) {
 
       case "customer.subscription.updated": {
         const sub = event.data.object as Stripe.Subscription;
+        if (sub.metadata?.type === "billing_addon") {
+          await syncBillingAddonSubscription({ subscription: sub });
+          break;
+        }
         const isExtra =
           sub.metadata?.type === "extra_agent" || sub.metadata?.type === "extra_whatsapp";
         if (sub.status === "active" && !isExtra) {
@@ -261,6 +322,20 @@ export async function POST(req: NextRequest) {
         break;
       }
 
+      case "invoice.paid": {
+        // Renewal is the authoritative new period for a recurring add-on.
+        // Refresh its entitlement even if Stripe delivers webhooks out of order.
+        const invoice = event.data.object as Stripe.Invoice;
+        const subscriptionId = invoiceSubscriptionId(invoice);
+        if (subscriptionId) {
+          const subscription = await getStripe().subscriptions.retrieve(subscriptionId);
+          if (subscription.metadata?.type === "billing_addon") {
+            await syncBillingAddonSubscription({ subscription });
+          }
+        }
+        break;
+      }
+
       default:
         break;
     }
@@ -268,7 +343,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ received: true });
   } catch (err) {
     console.error("[stripe-webhook] Erro ao processar evento:", event.type, err);
-    // Retornar 200 para evitar reenvios desnecessários do Stripe
-    return NextResponse.json({ received: true, warning: "Processing error logged." });
+    // Non-2xx is intentional: Stripe retries transient failures and the
+    // entitlement/provisioning handlers are idempotent.
+    return NextResponse.json(
+      { received: false, error: "Webhook processing failed." },
+      { status: 500 },
+    );
   }
 }

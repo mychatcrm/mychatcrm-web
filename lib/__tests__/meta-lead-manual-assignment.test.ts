@@ -8,7 +8,8 @@ const {
   buildNewLeadCrmFieldsMock,
   promoteLeadToContatoOnAgentEngagementMock,
   canAgentAutoContactLeadMock,
-  getEvolutionInstanceByTenantIdMock,
+  resolveAuthorizedMetaLeadAgentMock,
+  getEvolutionInstanceByIdForTenantMock,
   activateLeadJourneyMock,
   authorizeActiveJourneyMock,
   isJourneyIsolationEnabledMock,
@@ -22,7 +23,8 @@ const {
   buildNewLeadCrmFieldsMock: vi.fn(),
   promoteLeadToContatoOnAgentEngagementMock: vi.fn(),
   canAgentAutoContactLeadMock: vi.fn(),
-  getEvolutionInstanceByTenantIdMock: vi.fn(),
+  resolveAuthorizedMetaLeadAgentMock: vi.fn(),
+  getEvolutionInstanceByIdForTenantMock: vi.fn(),
   activateLeadJourneyMock: vi.fn(),
   authorizeActiveJourneyMock: vi.fn(),
   isJourneyIsolationEnabledMock: vi.fn(),
@@ -30,7 +32,10 @@ const {
   readTeamMembersFromDbMock: vi.fn(),
 }));
 
-vi.mock("@/lib/ai/generate-agent-response", () => ({ generateAgentResponse: generateAgentResponseMock }));
+vi.mock("@/lib/ai/generate-agent-response", () => ({
+  generateAgentResponse: generateAgentResponseMock,
+  isAgentMissingInstructionsResult: () => false,
+}));
 vi.mock("@/lib/integrations/evolution-api", () => ({
   evolutionSendText: evolutionSendTextMock,
   remoteJidToEvoNumber: (jid: string) => jid.split("@")[0],
@@ -44,8 +49,11 @@ vi.mock("@/lib/server/crm-lead-lifecycle", () => ({
   promoteLeadToContatoOnAgentEngagement: promoteLeadToContatoOnAgentEngagementMock,
 }));
 vi.mock("@/lib/server/agent-auto-contact-guard", () => ({ canAgentAutoContactLead: canAgentAutoContactLeadMock }));
+vi.mock("@/lib/server/meta-form-authorization", () => ({
+  resolveAuthorizedMetaLeadAgent: resolveAuthorizedMetaLeadAgentMock,
+}));
 vi.mock("@/lib/server/tenant-evolution-instance-db", () => ({
-  getEvolutionInstanceByTenantId: getEvolutionInstanceByTenantIdMock,
+  getEvolutionInstanceByIdForTenant: getEvolutionInstanceByIdForTenantMock,
 }));
 vi.mock("@/lib/server/meta-lead-graph", () => ({
   buildMetaInitialAgentPrompt: () => "prompt",
@@ -184,11 +192,23 @@ describe("assignMetaLeadEventToAgent", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     canAgentAutoContactLeadMock.mockResolvedValue({ ok: true, reason: "allowed", leadId: null, formId: null });
+    resolveAuthorizedMetaLeadAgentMock.mockResolvedValue({
+      authorized: true,
+      agentId: "agent-1",
+      ruleId: "rule-1",
+      connectionId: "connection-1",
+      source: "rule",
+      reason: "active_rule_explicit_form",
+      invalidAgentId: null,
+    });
     isJourneyIsolationEnabledMock.mockReturnValue(false);
     activateLeadJourneyMock.mockResolvedValue({ id: "journey-1", status: "active" });
     authorizeActiveJourneyMock.mockResolvedValue({ ok: true, journey: { id: "journey-1" }, agentId: "agent-1" });
     touchLeadJourneyMock.mockResolvedValue(undefined);
-    getEvolutionInstanceByTenantIdMock.mockResolvedValue({ instance_name: "evo-instance-1" });
+    getEvolutionInstanceByIdForTenantMock.mockResolvedValue({
+      instance_name: "evo-instance-1",
+      connection_state: "open",
+    });
     evolutionSendTextMock.mockResolvedValue({ ok: true, status: 200, data: {} });
     generateAgentResponseMock.mockResolvedValue({ ok: true, text: "Olá! Já vou te ajudar.", model: "gpt" });
     upsertConversationStateMock.mockResolvedValue(null);

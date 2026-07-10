@@ -3,6 +3,7 @@ import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
 import type { EnterpriseProvisionLimits, EnterpriseProvisionRecord } from "@/lib/enterprise-provision-types";
 import {
   readAllEnterpriseProvisions,
+  updateEnterpriseLeadQuotaPeriodicity,
   upsertTenantForProvision,
   writeEnterpriseProvision,
 } from "@/lib/server/enterprise-provisions-db";
@@ -52,6 +53,7 @@ export async function GET() {
     ownerName: p.ownerName,
     createdAt: p.createdAt,
     notes: p.notes,
+    leadQuotaPeriodicity: p.leadQuotaPeriodicity,
     limits: p.limits,
   }));
 
@@ -73,6 +75,7 @@ export async function POST(request: Request) {
   const ownerEmail = String(body.ownerEmail ?? "").trim().toLowerCase();
   const initialPassword = String(body.initialPassword ?? "").trim();
   const notes = typeof body.notes === "string" ? body.notes.trim() : "";
+  const leadQuotaPeriodicity = body.leadQuotaPeriodicity === "annual" ? "annual" : "monthly";
 
   if (!organizationName || organizationName.length < 2) {
     return NextResponse.json({ error: "Indique o nome da organização (mín. 2 caracteres)." }, { status: 400 });
@@ -121,6 +124,7 @@ export async function POST(request: Request) {
     ownerName,
     createdAt: new Date().toISOString(),
     notes: notes || undefined,
+    leadQuotaPeriodicity,
     limits,
   };
 
@@ -143,4 +147,29 @@ export async function POST(request: Request) {
     },
     { status: 201 },
   );
+}
+
+export async function PATCH(request: Request) {
+  const session = await getAdminSessionFromCookies();
+  if (!session) return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
+  if (!hasAdminAccess(session, "enterprise")) {
+    return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
+  }
+
+  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  const tenantId = typeof body?.tenantId === "string" ? body.tenantId.trim() : "";
+  const periodicity = body?.leadQuotaPeriodicity;
+  if (!tenantId || (periodicity !== "monthly" && periodicity !== "annual")) {
+    return NextResponse.json({ error: "Tenant ou periodicidade inválidos." }, { status: 400 });
+  }
+
+  try {
+    await updateEnterpriseLeadQuotaPeriodicity(tenantId, periodicity);
+    return NextResponse.json({ ok: true, tenantId, leadQuotaPeriodicity: periodicity });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Falha ao atualizar periodicidade." },
+      { status: 500 },
+    );
+  }
 }

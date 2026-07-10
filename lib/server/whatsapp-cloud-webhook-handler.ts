@@ -8,7 +8,10 @@
  * das duas rotas evita depender de qual delas está de fato registada na Meta.
  */
 import { NextResponse } from "next/server";
-import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
+import {
+  generateAgentResponse,
+  isAgentMissingInstructionsResult,
+} from "@/lib/ai/generate-agent-response";
 import {
   parseWhatsAppCloudInbound,
   parseWhatsAppCloudPayload,
@@ -33,6 +36,12 @@ import {
   scheduleLeadRedistribution,
 } from "@/lib/server/lead-redistribution";
 import { revealConversationOnInbound } from "@/lib/server/conversation-visibility";
+import {
+  commitTenantLeadQuotaReservation,
+  releaseTenantLeadQuotaReservation,
+  reserveTenantLeadQuota,
+} from "@/lib/server/lead-quota";
+import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
 
 export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<NextResponse> {
   // Delivery status updates from Meta (outgoing messages: sent/delivered/read/failed).
@@ -208,6 +217,7 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
     phone,
     remoteJid: inbound.fromWaId,
     journeyId: journey?.id ?? null,
+    connectionId: inbound.phoneNumberId,
     triggerSource: "whatsapp_cloud_inbound_auto_reply",
   });
   if (!guard.ok) {
@@ -220,6 +230,39 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
     return NextResponse.json({ ok: true });
   }
 
+  // Atendimento direto autorizado não cria automaticamente um lead no CRM,
+  // mas ainda precisa consumir a franquia uma única vez no primeiro contato.
+  // A reserva só é confirmada quando a resposta é entregue pela Cloud API.
+  let directQuotaReservationId: string | null = null;
+  if (journey?.source === "whatsapp_direct") {
+    const tenantPlan = await getTenantPlanSnapshot(tenantId);
+    const admission = await reserveTenantLeadQuota({
+      tenantId,
+      plan: tenantPlan.plan,
+      operationalLimits: tenantPlan.operationalLimits,
+      contactKey: inbound.fromWaId,
+      source: "whatsapp_direct",
+      idempotencyKey: `direct-cloud:${inbound.phoneNumberId}:${phone}`,
+      isExistingContact: Boolean(leadId),
+      metadata: {
+        connection_id: inbound.phoneNumberId,
+        journey_id: journey.id,
+        agent_id: agentId,
+      },
+    });
+    if (!admission.admitted) {
+      console.info("[webhooks/whatsapp] auto reply blocked by lead quota", {
+        tenant_id: tenantId,
+        agent_id: agentId,
+        reason: admission.reason,
+        used: admission.used,
+        cap: admission.cap,
+      });
+      return NextResponse.json({ ok: true, blocked: admission.reason });
+    }
+    directQuotaReservationId = admission.eventId;
+  }
+
   const result = await generateAgentResponse({
     tenantId,
     agentId,
@@ -229,6 +272,20 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
     feature: "agent_chat",
     messages: [{ role: "user", content: inbound.text }],
   });
+
+  if (isAgentMissingInstructionsResult(result)) {
+    await releaseTenantLeadQuotaReservation(
+      directQuotaReservationId,
+      "agent_missing_instructions",
+    );
+    console.warn("[webhooks/whatsapp] automatic reply blocked because agent has no instructions", {
+      tenant_id: tenantId,
+      agent_id: agentId,
+      journey_id: journey?.id ?? null,
+      connection_id: inbound.phoneNumberId,
+    });
+    return NextResponse.json({ ok: true, blocked: "agent_missing_instructions" });
+  }
 
   // Send with the connection's own token (client numbers); the global env token
   // remains the fallback for numbers without a stored connection.
@@ -244,12 +301,17 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
         tenantId,
         remoteJid: inbound.fromWaId,
         preferredAgentId: agentId,
+        connectionId: inbound.phoneNumberId,
       });
       if (!currentJourney.ok || currentJourney.journey?.id !== journey?.id) {
         console.info("[webhooks/whatsapp] response cancelled before send", {
           tenant_id: tenantId,
           reason: currentJourney.ok ? "journey_superseded_before_send" : currentJourney.reason,
         });
+        await releaseTenantLeadQuotaReservation(
+          directQuotaReservationId,
+          "journey_superseded_before_send",
+        );
         return NextResponse.json({ ok: true });
       }
     }
@@ -261,6 +323,10 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
     });
     if (!send.ok) {
       console.error("[webhooks/whatsapp] send failed", send.status, send.error);
+      await releaseTenantLeadQuotaReservation(
+        directQuotaReservationId,
+        "initial_direct_cloud_delivery_failed",
+      );
     } else {
       const sentAt = new Date().toISOString();
       await sb.from("whatsapp_messages").insert({
@@ -300,9 +366,18 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
           trigger: "customer_silence",
         });
       }
+      await commitTenantLeadQuotaReservation({
+        eventId: directQuotaReservationId,
+        leadId,
+        journeyId: journey?.id ?? null,
+      });
     }
   } else {
     console.warn("[webhooks/whatsapp] WHATSAPP_ACCESS_TOKEN ausente — inferência registada mas sem envio de resposta.");
+    await releaseTenantLeadQuotaReservation(
+      directQuotaReservationId,
+      "whatsapp_cloud_access_token_missing",
+    );
   }
 
   return NextResponse.json({ ok: true });

@@ -39,7 +39,8 @@ export const dynamic = "force-dynamic";
 /**
  * POST — cria/reaproveita instância Evolution, configura webhook e devolve QR + estado.
  * GET ?slotIndex= — estado remoto + QR se aplicável.
- * DELETE ?slotIndex= — remove instância na Evolution e linha na BD.
+ * DELETE ?slotIndex= — remove instância na Evolution e a linha somente após
+ * prova de ausência remota. Para reset preservando regras, use /reset.
  */
 export async function POST(request: Request) {
   const session = await getClientSessionFromCookies();
@@ -399,13 +400,25 @@ export async function DELETE(request: Request) {
   }
   if (row) {
     const removal = await evolutionRemoveInstanceCompletely(row.instance_name);
-    if (!removal.ok) {
-      console.warn("[evolution/session] delete instance", removal.status, removal.error);
+    if (!removal.verifiedAbsent) {
+      console.warn("[evolution/session] delete instance unverified", removal.status, removal.error);
+      return NextResponse.json(
+        {
+          error: "Não foi possível confirmar a exclusão da instância na Evolution. A conexão foi mantida para evitar inconsistências.",
+          evolutionVerifiedAbsent: false,
+          evolutionError: removal.error,
+        },
+        { status: 502 },
+      );
     }
     try {
       await deleteTenantEvolutionInstanceRow(session.tenantId, slotIndex);
     } catch (e) {
-      console.warn("[evolution/session] delete row", e);
+      console.error("[evolution/session] delete row", e);
+      return NextResponse.json(
+        { error: "A sessão foi removida da Evolution, mas o registro local não pôde ser removido. Contacte o suporte.", evolutionVerifiedAbsent: true },
+        { status: 503 },
+      );
     }
     try {
       await notifyTenantIntegrationDisconnected({
@@ -420,8 +433,8 @@ export async function DELETE(request: Request) {
         metadata: {
           slot_index: slotIndex,
           wa_jid: row.wa_jid ?? null,
-          evolution_removed: removal.verifiedAbsent,
-          evolution_error: removal.error,
+          evolution_removed: true,
+          evolution_error: null,
         },
       });
     } catch (notifyError) {

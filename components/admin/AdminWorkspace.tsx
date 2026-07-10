@@ -462,8 +462,211 @@ type PlanConfigData = {
   agentLimit: number;
   followupLimit: number;
   keywordLimit: number;
+  leadLimit: number;
+  leadPeriodicity: "monthly" | "annual";
   features: { lead_ads: boolean; click_to_whatsapp: boolean; qr_codes: boolean; followup_auto: boolean };
 };
+
+type BillingAddonConfig = {
+  id: string;
+  code: string;
+  title: string;
+  description: string | null;
+  kind: "lead_capacity" | "whatsapp_line";
+  billing_mode: "recurring" | "one_time";
+  included_quantity: number;
+  stripe_product_id: string | null;
+  stripe_price_id: string | null;
+  active: boolean;
+  amount_cents: number | null;
+  currency: string;
+  interval_unit: "month" | "year" | null;
+  create_stripe_price?: boolean;
+};
+
+function BillingAddonCatalogPanel() {
+  const [addons, setAddons] = useState<BillingAddonConfig[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [savingCode, setSavingCode] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    fetch("/api/admin/billing/addons")
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error("load"))))
+      .then((data: { addons?: BillingAddonConfig[] }) => setAddons(data.addons ?? []))
+      .catch(() => setMessage("Não foi possível carregar o catálogo de capacidades."))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const update = (code: string, patch: Partial<BillingAddonConfig>) =>
+    setAddons((current) => current.map((addon) => (addon.code === code ? { ...addon, ...patch } : addon)));
+
+  const save = async (addon: BillingAddonConfig) => {
+    setSavingCode(addon.code);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/admin/billing/addons", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: addon.code,
+          title: addon.title,
+          description: addon.description,
+          kind: addon.kind,
+          billingMode: addon.billing_mode,
+          includedQuantity: addon.included_quantity,
+          stripePriceId: addon.stripe_price_id,
+          stripeProductId: addon.stripe_product_id,
+          amountCents: addon.amount_cents,
+          currency: addon.currency,
+          intervalUnit: addon.interval_unit,
+          createStripePrice: addon.create_stripe_price === true,
+          active: addon.active,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Não foi possível salvar.");
+      setMessage(`Capacidade “${addon.title}” salva.`);
+      load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível salvar a capacidade.");
+    } finally {
+      setSavingCode(null);
+    }
+  };
+
+  const addDraft = () => {
+    const suffix = Math.random().toString(36).slice(2, 7);
+    setAddons((current) => [
+      ...current,
+      {
+        id: `draft-${suffix}`,
+        code: `nova_capacidade_${suffix}`,
+        title: "Nova capacidade",
+        description: null,
+        kind: "lead_capacity",
+        billing_mode: "one_time",
+        included_quantity: 100,
+        stripe_product_id: null,
+        stripe_price_id: null,
+        active: false,
+        amount_cents: null,
+        currency: "brl",
+        interval_unit: null,
+        create_stripe_price: false,
+      },
+    ]);
+  };
+
+  return (
+    <Panel
+      title="Capacidades adicionais"
+      description="Use um Price existente ou crie um novo produto/preço no Stripe. Alterar o valor cria um Price novo e nunca modifica assinaturas já ativas."
+      actions={<Button type="button" variant="secondary" onClick={addDraft}>Nova capacidade</Button>}
+    >
+      {message ? <p className="mb-3 text-sm text-content-secondary" role="status">{message}</p> : null}
+      {loading ? (
+        <div className="h-32 animate-pulse rounded-xl bg-surface-elevated/50" />
+      ) : addons.length === 0 ? (
+        <p className="text-sm text-content-muted">Nenhuma capacidade configurada. Crie a primeira capacidade e vincule um Price existente ou gere um novo diretamente aqui.</p>
+      ) : (
+        <div className="space-y-4">
+          {addons.map((addon) => (
+            <div key={addon.id} className="rounded-xl border border-line bg-surface-deep/35 p-4">
+              <div className="grid gap-3 lg:grid-cols-2">
+                <Input value={addon.code} onChange={(event) => update(addon.code, { code: event.target.value.toLowerCase() })} placeholder="Código interno" />
+                <Input value={addon.title} onChange={(event) => update(addon.code, { title: event.target.value })} placeholder="Nome visível" />
+                <Select value={addon.kind} onChange={(event) => update(addon.code, { kind: event.target.value === "whatsapp_line" ? "whatsapp_line" : "lead_capacity" })}>
+                  <option value="lead_capacity">Capacidade de leads</option>
+                  <option value="whatsapp_line">Linha WhatsApp adicional</option>
+                </Select>
+                <Select
+                  value={addon.billing_mode}
+                  onChange={(event) =>
+                    update(addon.code, {
+                      billing_mode: event.target.value === "recurring" ? "recurring" : "one_time",
+                      interval_unit: event.target.value === "recurring" ? addon.interval_unit ?? "month" : null,
+                    })
+                  }
+                >
+                  <option value="one_time">Recarga avulsa</option>
+                  <option value="recurring">Recorrente</option>
+                </Select>
+                <Input type="number" min={1} value={addon.included_quantity} onChange={(event) => update(addon.code, { included_quantity: Math.max(1, Number(event.target.value) || 1) })} placeholder="Capacidade por unidade" />
+                <Input
+                  value={addon.stripe_product_id ?? ""}
+                  onChange={(event) => update(addon.code, { stripe_product_id: event.target.value || null })}
+                  placeholder="Produto Stripe existente (prod_..., opcional)"
+                  disabled={addon.create_stripe_price !== true}
+                />
+                <Input
+                  value={addon.stripe_price_id ?? ""}
+                  onChange={(event) => update(addon.code, { stripe_price_id: event.target.value || null })}
+                  placeholder="Price Stripe existente (price_...)"
+                  disabled={addon.create_stripe_price === true}
+                />
+                {addon.create_stripe_price ? (
+                  <>
+                    <Input
+                      type="number"
+                      min={0.01}
+                      step={0.01}
+                      value={addon.amount_cents ? addon.amount_cents / 100 : ""}
+                      onChange={(event) =>
+                        update(addon.code, {
+                          amount_cents: Math.max(0, Math.round((Number(event.target.value) || 0) * 100)) || null,
+                        })
+                      }
+                      placeholder="Preço em R$"
+                    />
+                    <Select value={addon.currency || "brl"} onChange={(event) => update(addon.code, { currency: event.target.value.toLowerCase() })}>
+                      <option value="brl">BRL (R$)</option>
+                      <option value="usd">USD (US$)</option>
+                      <option value="eur">EUR (€)</option>
+                    </Select>
+                    {addon.billing_mode === "recurring" ? (
+                      <Select value={addon.interval_unit ?? "month"} onChange={(event) => update(addon.code, { interval_unit: event.target.value === "year" ? "year" : "month" })}>
+                        <option value="month">Cobrar por mês</option>
+                        <option value="year">Cobrar por ano</option>
+                      </Select>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-4">
+                  <Toggle
+                    id={`addon-price-${addon.id}`}
+                    checked={addon.create_stripe_price === true}
+                    onChange={(create_stripe_price) =>
+                      update(addon.code, {
+                        create_stripe_price,
+                        interval_unit:
+                          create_stripe_price && addon.billing_mode === "recurring"
+                            ? addon.interval_unit ?? "month"
+                            : addon.interval_unit,
+                      })
+                    }
+                    label="Criar novo produto/preço no Stripe"
+                  />
+                  <Toggle id={`addon-${addon.id}`} checked={addon.active} onChange={(active) => update(addon.code, { active })} label="Disponível para compra" />
+                </div>
+                <Button type="button" disabled={savingCode === addon.code} onClick={() => void save(addon)}>
+                  {savingCode === addon.code ? "Salvando…" : "Salvar capacidade"}
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
 
 function PlanEditor({ config, onChange }: { config: PlanConfigData; onChange: (c: PlanConfigData) => void }) {
   const label: Record<string, string> = {
@@ -475,7 +678,7 @@ function PlanEditor({ config, onChange }: { config: PlanConfigData; onChange: (c
   return (
     <div className="rounded-xl border border-line bg-surface-card p-4">
       <p className="text-sm font-semibold text-content">{label[config.planSlug] ?? config.planSlug}</p>
-      <div className="mt-3 grid gap-3 md:grid-cols-3">
+      <div className="mt-3 grid gap-3 md:grid-cols-3 xl:grid-cols-5">
         <Input
           type="number"
           value={config.agentLimit}
@@ -494,6 +697,20 @@ function PlanEditor({ config, onChange }: { config: PlanConfigData; onChange: (c
           placeholder="Limite de keywords"
           onChange={(e) => onChange({ ...config, keywordLimit: Math.max(1, Number(e.target.value) || 1) })}
         />
+        <Input
+          type="number"
+          value={config.leadLimit}
+          placeholder="Leads incluídos"
+          onChange={(e) => onChange({ ...config, leadLimit: Math.max(0, Number(e.target.value) || 0) })}
+        />
+        <Select
+          value={config.leadPeriodicity}
+          onChange={(e) => onChange({ ...config, leadPeriodicity: e.target.value === "annual" ? "annual" : "monthly" })}
+          aria-label="Periodicidade da franquia de leads"
+        >
+          <option value="monthly">Leads por mês</option>
+          <option value="annual">Leads por ano</option>
+        </Select>
       </div>
       <div className="mt-3 grid gap-2 md:grid-cols-2">
         <Toggle id={`${config.planSlug}-lead-ads`} checked={config.features.lead_ads} onChange={(v) => setFeat("lead_ads", v)} label="Pode usar Lead Ads?" />
@@ -582,6 +799,7 @@ function PlansPage() {
           </div>
         )}
       </Panel>
+      <BillingAddonCatalogPanel />
     </div>
   );
 }

@@ -19,7 +19,6 @@ import {
   remoteJidToEvoNumber,
 } from "@/lib/integrations/evolution-api";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
-import { upsertLeadFromWhatsAppContact } from "@/lib/server/auto-lead-upsert";
 import { upsertConversationState } from "@/lib/server/conversation-memory";
 import { cancelPendingFollowUpJobs, scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
@@ -134,7 +133,6 @@ export async function POST(request: Request) {
   const fileBlob = formData.get("file");
   const remoteJid = (formData.get("remoteJid") as string | null)?.trim();
   const caption = ((formData.get("caption") as string | null) ?? "").trim();
-  const contactName = ((formData.get("contactName") as string | null) ?? "").trim();
   const clientTempId = ((formData.get("clientTempId") as string | null) ?? "").trim() || null;
 
   const MESSAGE_SELECT =
@@ -213,17 +211,19 @@ export async function POST(request: Request) {
     kind === "video" ? (caption ? `[Vídeo] ${caption}` : "[Vídeo]") :
     `[Documento] ${originalName}`;
 
-  const linkedAgentId = instance.default_agent_id ?? null;
-  const leadResult = await upsertLeadFromWhatsAppContact({
-    tenantId: session.tenantId,
-    remoteJid,
-    recipientJid: remoteJid,
-    instanceJid: instance.wa_jid,
-    contactName,
-    direction: "outbound",
-    agentId: linkedAgentId ?? "human",
-    conversationId: remoteJid,
-  });
+  // Human messages do not implicitly turn a private contact into a CRM lead.
+  // The explicit "Salvar no CRM" action owns that conversion.
+  const { data: existingLead } = await sb
+    .from("leads")
+    .select("id")
+    .eq("tenant_id", session.tenantId)
+    .eq("phone", number)
+    .maybeSingle();
+  const leadId = typeof existingLead?.id === "string" ? existingLead.id : null;
+  const stateAgentId =
+    typeof stateRow?.agent_id === "string" && stateRow.agent_id.trim()
+      ? stateRow.agent_id
+      : null;
 
   const { data: saved, error: dbErr } = await sb
     .from("whatsapp_messages")
@@ -235,7 +235,7 @@ export async function POST(request: Request) {
       content: contentLabel,
       media_url: mediaUrl,
       agent_id: "human",
-      lead_id: leadResult.lead?.id ?? null,
+      lead_id: leadId,
       client_temp_id: clientTempId,
       delivery_status: "pending",
     })
@@ -253,18 +253,16 @@ export async function POST(request: Request) {
     sb,
     tenantId: session.tenantId,
     remoteJid,
-    leadId: leadResult.lead?.id ?? null,
-    agentId: linkedAgentId,
+    leadId,
+    agentId: stateAgentId,
     lastMessageAt: occurredAt,
   });
   await scheduleRetomadaAfterHumanOutbound({
     sb,
     tenantId: session.tenantId,
     remoteJid,
-    leadId: leadResult.lead?.id ?? null,
-    agentId:
-      (typeof stateRow?.agent_id === "string" && stateRow.agent_id.trim() ? stateRow.agent_id : null) ??
-      linkedAgentId,
+    leadId,
+    agentId: stateAgentId,
     stateRow,
   });
 

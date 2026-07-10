@@ -48,27 +48,10 @@ async function syncOrganicAgentId(
     return;
   }
 
-  const { data: agentRow } = await sb
-    .from("tenant_agents")
-    .select("metadata")
-    .eq("tenant_id", tenantId)
-    .eq("agent_id", firstAgentId)
-    .maybeSingle();
-
-  const meta = agentRow?.metadata as Record<string, unknown> | null;
-  const rawSlot = meta?.whatsappSlotIndex;
-  const slotIndex =
-    typeof rawSlot === "number" && Number.isFinite(rawSlot) ? Math.max(0, Math.floor(rawSlot)) : 0;
-
-  const { error } = await sb
-    .from("tenant_evolution_instances")
-    .update({ organic_agent_id: firstAgentId, updated_at: new Date().toISOString() })
-    .eq("tenant_id", tenantId)
-    .eq("slot_index", slotIndex);
-
-  if (error) {
-    console.warn("[lead-rules/[id]] Failed to sync organic_agent_id", error.message);
-  }
+  console.warn("[lead-rules/[id]] organic agent sync skipped without explicit connection", {
+    tenant_id: tenantId,
+    agent_id: firstAgentId,
+  });
 }
 
 async function clearOrganicAgentId(
@@ -122,6 +105,37 @@ function validateOrganicRulePayload(payload: Record<string, unknown>): NextRespo
   return null;
 }
 
+async function validateMetaAutomationConnection(
+  sb: ReturnType<typeof createSupabaseServiceClient>,
+  tenantId: string,
+  payload: Record<string, unknown>,
+): Promise<NextResponse | null> {
+  if (
+    payload.source !== "meta_form" ||
+    !META_AUTOMATION_DISTRIBUTION_TYPES.has(String(payload.distribution_type)) ||
+    stringArray(payload.agent_ids).length === 0
+  ) {
+    return null;
+  }
+  const connectionId = typeof payload.connection_id === "string" ? payload.connection_id.trim() : "";
+  if (!connectionId) {
+    return NextResponse.json(
+      { error: "Selecione a conexão WhatsApp que este formulário pode usar para o primeiro atendimento." },
+      { status: 400 },
+    );
+  }
+  const { data, error } = await sb
+    .from("tenant_evolution_instances")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("id", connectionId)
+    .maybeSingle();
+  if (error || !data) {
+    return NextResponse.json({ error: "A conexão WhatsApp escolhida não pertence a esta conta." }, { status: 400 });
+  }
+  return null;
+}
+
 type RouteContext = {
   params: { id: string };
 };
@@ -167,6 +181,8 @@ export async function PUT(req: NextRequest, { params }: RouteContext): Promise<N
 
   const organicValidationError = validateOrganicRulePayload(payload);
   if (organicValidationError) return organicValidationError;
+  const metaConnectionValidationError = await validateMetaAutomationConnection(sb, session.tenantId, payload);
+  if (metaConnectionValidationError) return metaConnectionValidationError;
 
   // Impede conflito apenas na mesma conexão; números diferentes podem ter
   // agentes diretos independentes dentro do mesmo tenant.

@@ -23,6 +23,7 @@ export type EnterpriseProvisionRecord = {
   ownerName: string;
   createdAt: string;
   notes?: string;
+  leadQuotaPeriodicity: "monthly" | "annual";
   limits: EnterpriseProvisionLimits;
 };
 

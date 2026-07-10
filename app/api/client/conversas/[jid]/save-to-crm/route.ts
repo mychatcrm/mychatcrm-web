@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { buildNewLeadCrmFields } from "@/lib/server/crm-lead-lifecycle";
+import {
+  commitTenantLeadQuotaReservation,
+  releaseTenantLeadQuotaReservation,
+  reserveTenantLeadQuota,
+} from "@/lib/server/lead-quota";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +59,27 @@ export async function POST(
 
   let lead = existing;
   if (!lead) {
+    const admission = await reserveTenantLeadQuota({
+      tenantId: session.tenantId,
+      plan: session.plan,
+      operationalLimits: session.operationalLimits,
+      contactKey: phone,
+      source: "crm_manual",
+      idempotencyKey: `crm-manual:${session.tenantId}:${phone}`,
+      metadata: { remote_jid: remoteJid, saved_by: session.email },
+    });
+    if (!admission.admitted) {
+      return NextResponse.json(
+        {
+          error:
+            admission.reason === "lead_quota_exhausted"
+              ? "O limite de novos leads do ciclo foi atingido. Contrate mais capacidade para salvar este contato no CRM."
+              : "Não foi possível confirmar a franquia de leads. Tente novamente em instantes.",
+          code: admission.reason,
+        },
+        { status: admission.reason === "lead_quota_exhausted" ? 429 : 503 },
+      );
+    }
     const { data, error } = await sb
       .from("leads")
       .insert({
@@ -71,12 +97,14 @@ export async function POST(
       .select("id, name, phone, status, crm_funnel_id")
       .single();
     if (error || !data) {
+      await releaseTenantLeadQuotaReservation(admission.eventId, "manual_crm_insert_failed");
       return NextResponse.json(
         { error: error?.message ?? "Não foi possível salvar o contato no CRM." },
         { status: 503 },
       );
     }
     lead = data;
+    await commitTenantLeadQuotaReservation({ eventId: admission.eventId, leadId: lead.id });
   } else if (
     (!lead.name || lead.name === lead.phone) &&
     typeof body.name === "string" &&
