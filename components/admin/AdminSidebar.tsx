@@ -73,14 +73,7 @@ export function AdminSidebar({
                     )}
                     aria-current={active ? "page" : undefined}
                   >
-                    <PanelNavIcon
-                      panel="admin"
-                      routeKey={it.routeKey}
-                      className={cn(
-                        "h-4 w-4 shrink-0",
-                        active ? "text-primary" : "text-content-muted group-hover:text-content-secondary",
-                      )}
-                    />
+                    <PanelNavIcon panel="admin" routeKey={it.routeKey} className="h-4 w-4" />
                     <span className="truncate">{it.label}</span>
                     {active && <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-primary/90" aria-hidden />}
                   </Link>

@@ -21,6 +21,7 @@ import {
   MessagesSquare,
   Megaphone,
   Package,
+  PhoneCall,
   ScrollText,
   Send,
   Settings,
@@ -37,6 +38,7 @@ import { cn } from "@/lib/utils";
 const dashboardNavIcons: Record<string, LucideIcon> = {
   overview: LayoutDashboard,
   crm: Users,
+  "ofertas-ativas": PhoneCall,
   agentes: Bot,
   conversas: MessagesSquare,
   "integracoes-leads": Waypoints,
@@ -86,5 +88,11 @@ export function PanelNavIcon({
 }) {
   const map = panel === "dashboard" ? dashboardNavIcons : adminNavIcons;
   const Icon = map[routeKey] ?? LayoutDashboard;
-  return <Icon className={cn("h-[18px] w-[18px] shrink-0", className)} strokeWidth={1.75} aria-hidden />;
+  return (
+    <Icon
+      className={cn("panel-nav-icon h-[18px] w-[18px] shrink-0", className)}
+      strokeWidth={1.75}
+      aria-hidden
+    />
+  );
 }

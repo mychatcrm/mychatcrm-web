@@ -355,6 +355,21 @@
   box-shadow: none !important;
 }
 
+/* Ícones da sidebar — contraste correto em claro, cinza escuro e escuro */
+.panel-nav-item .panel-nav-icon {
+  color: rgb(var(--color-content-muted) / 1);
+  transition: color 0.2s ease;
+}
+
+.panel-nav-item:hover .panel-nav-icon,
+.panel-nav-item:focus-within .panel-nav-icon {
+  color: #f24400;
+}
+
+.panel-nav-item--active .panel-nav-icon {
+  color: #f24400;
+}
+
 .panel-data-table {
   position: relative;
   overflow: hidden;

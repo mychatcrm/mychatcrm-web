@@ -221,14 +221,7 @@ export function Sidebar({
       const locked = Boolean(it.masterOnly && !isMasterClient(session) && !sellerUnlockLembretes);
       const content = (
         <>
-          <PanelNavIcon
-            panel="dashboard"
-            routeKey={it.routeKey}
-            className={cn(
-              "text-content-muted transition-colors duration-200 group-hover:text-primary",
-              active && "text-primary",
-            )}
-          />
+          <PanelNavIcon panel="dashboard" routeKey={it.routeKey} />
           {!collapsed ? (
             <>
               <span className="min-w-0 flex-1 truncate">{it.label}</span>
