@@ -392,6 +392,29 @@ export async function authorizeActiveJourney(params: {
       : { ok: false, reason: "journey_direct_rule_revoked", journey };
   }
 
+  if (journey.source === "manual") {
+    if (
+      journey.metadata.manual_assignment !== true ||
+      !journey.formId ||
+      !journey.pageId ||
+      !journey.ruleId ||
+      !journey.connectionId
+    ) {
+      return { ok: false, reason: "manual_journey_has_no_automation", journey };
+    }
+    const auth = await isAgentExplicitlyAuthorizedForMetaForm({
+      sb: params.sb,
+      tenantId: params.tenantId,
+      pageId: journey.pageId,
+      formId: journey.formId,
+      agentId,
+      connectionId: journey.connectionId,
+    });
+    return auth.authorized && auth.ruleId === journey.ruleId
+      ? { ok: true, journey, agentId }
+      : { ok: false, reason: "manual_journey_meta_rule_revoked", journey };
+  }
+
   return { ok: false, reason: "manual_journey_has_no_automation", journey };
 }
 

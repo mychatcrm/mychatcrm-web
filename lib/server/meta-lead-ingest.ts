@@ -2,7 +2,7 @@ import {
   generateAgentResponse,
   isAgentMissingInstructionsResult,
 } from "@/lib/ai/generate-agent-response";
-import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
+import { remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import { upsertConversationState } from "@/lib/server/conversation-memory";
 import { resolveAgentCrmFieldsForLeadInsert } from "@/lib/server/auto-lead-upsert";
 import { buildNewLeadCrmFields, promoteLeadToContatoOnAgentEngagement } from "@/lib/server/crm-lead-lifecycle";
@@ -54,6 +54,7 @@ import {
   reserveTenantLeadQuota,
 } from "@/lib/server/lead-quota";
 import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
+import { sendEvolutionTextWithConnectionRecovery } from "@/lib/server/evolution-send-recovery";
 
 type MetaConnectionRow = {
   tenant_id: string;
@@ -1114,11 +1115,20 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         return;
       }
     }
-    const send = await evolutionSendText({
+    const send = await sendEvolutionTextWithConnectionRecovery({
       instanceName: instance.instance_name,
       number: evoNumber,
       text: replyText,
     });
+
+    if (send.restarted) {
+      console.info("[meta-webhook] WhatsApp connection recovered before initial send", {
+        tenant_id,
+        lead_id: leadId,
+        connection_id: selectedConnectionId,
+        attempts: send.attempts,
+      });
+    }
 
     if (!send.ok) {
       await eventRecorder.step("whatsapp_failed", { status: send.status, error: send.error });

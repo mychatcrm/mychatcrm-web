@@ -37,8 +37,10 @@ vi.mock("@/lib/ai/generate-agent-response", () => ({
   isAgentMissingInstructionsResult: () => false,
 }));
 vi.mock("@/lib/integrations/evolution-api", () => ({
-  evolutionSendText: evolutionSendTextMock,
   remoteJidToEvoNumber: (jid: string) => jid.split("@")[0],
+}));
+vi.mock("@/lib/server/evolution-send-recovery", () => ({
+  sendEvolutionTextWithConnectionRecovery: evolutionSendTextMock,
 }));
 vi.mock("@/lib/server/conversation-memory", () => ({ upsertConversationState: upsertConversationStateMock }));
 vi.mock("@/lib/server/auto-lead-upsert", () => ({

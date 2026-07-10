@@ -13,7 +13,7 @@ import {
   generateAgentResponse,
   isAgentMissingInstructionsResult,
 } from "@/lib/ai/generate-agent-response";
-import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
+import { remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import { upsertConversationState } from "@/lib/server/conversation-memory";
 import { resolveAgentCrmFieldsForLeadInsert } from "@/lib/server/auto-lead-upsert";
 import { buildNewLeadCrmFields, promoteLeadToContatoOnAgentEngagement } from "@/lib/server/crm-lead-lifecycle";
@@ -34,6 +34,7 @@ import {
   touchLeadJourney,
 } from "@/lib/server/lead-journeys";
 import { readTeamMembersFromDb } from "@/lib/server/team-employees-db";
+import { sendEvolutionTextWithConnectionRecovery } from "@/lib/server/evolution-send-recovery";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -361,16 +362,23 @@ export async function assignMetaLeadEventToAgent(params: {
   if (journeyIsolationEnabled) {
     const current = await authorizeActiveJourney({ sb, tenantId, remoteJid, preferredAgentId: agentId });
     if (!current.ok || current.journey?.id !== journeyId) {
+      const failureReason = current.ok
+        ? "journey_superseded_before_send"
+        : current.reason;
       await sb
         .from("whatsapp_messages")
-        .update({ delivery_status: "failed", failed_reason: "journey_superseded_before_send" })
+        .update({ delivery_status: "failed", failed_reason: failureReason })
         .eq("id", messageId);
-      await recordManualFailureOnAgent(sb, eventId, agentId, "journey_superseded_before_send");
+      await recordManualFailureOnAgent(sb, eventId, agentId, failureReason);
       return { ok: false, error: "Outro atendimento assumiu este contato antes do envio.", status: 409 };
     }
   }
 
-  const send = await evolutionSendText({ instanceName: instance.instance_name, number: evoNumber, text: replyText });
+  const send = await sendEvolutionTextWithConnectionRecovery({
+    instanceName: instance.instance_name,
+    number: evoNumber,
+    text: replyText,
+  });
   if (!send.ok) {
     await sb
       .from("whatsapp_messages")
