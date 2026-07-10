@@ -59,12 +59,12 @@ export const dashboardNavPinnedItems: DashboardNavItem[] = [
     short: "OA",
     routeKey: "ofertas-ativas",
     help: {
-      title: "Ofertas ativas",
-      summary: "Listas de ligação inteligentes para reativar leads e distribuir contatos entre vendedores.",
+      title: "Listas de ligação",
+      summary: "Organize contatos para a equipe ligar e registre o resultado de cada ligação no CRM.",
       items: [
-        "Diretor e dono montam listas com filtros (etapa, dias sem contato, responsável).",
-        "Vendedores trabalham a fila com botões de resultado que atualizam o CRM.",
-        "Acompanhe pendências, transferências e leads que pediram para não ligar.",
+        "Dono e diretor montam listas em 3 passos: quem entra, quantidade e quem liga.",
+        "Vendedores veem a fila e usam botões simples (não atendeu, transferir, não quer, não ligar).",
+        "Acompanhe quantos contatos faltam e o desempenho de cada vendedor.",
       ],
     },
   },

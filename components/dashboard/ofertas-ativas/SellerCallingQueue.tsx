@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronRight, Phone } from "lucide-react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
+import { PanelHelp } from "@/components/panel/ui/PanelHelp";
 import {
   applyLeadDispositionFromApi,
   fetchActiveOfferDetailFromApi,
@@ -13,36 +14,44 @@ import {
 } from "@/lib/crm-active-offers-client";
 import type { ActiveOfferDisposition } from "@/lib/active-offers-types";
 import { cn } from "@/lib/utils";
+import { ACTIVE_OFFERS_HELP } from "./active-offers-help";
+import { FieldLabelWithHelp } from "./FieldLabelWithHelp";
+import { SectionTitleWithHelp } from "./SectionTitleWithHelp";
 import { formatDaysSinceContact, formatActiveOfferDate, phoneTelHref } from "./format-offer-date";
 
 const DISPOSITION_BUTTONS: Array<{
   disposition: ActiveOfferDisposition;
   label: string;
   description: string;
+  helpKey: keyof typeof ACTIVE_OFFERS_HELP;
   tone: string;
 }> = [
   {
     disposition: "no_answer",
     label: "Não atendeu",
-    description: "Tenta novamente depois",
+    description: "Fica na fila para tentar de novo",
+    helpKey: "naoAtendeu",
     tone: "border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/15",
   },
   {
     disposition: "answered_transfer",
     label: "Atendeu — transferir p/ minha base",
     description: "Lead passa a ser seu no CRM",
+    helpKey: "transferir",
     tone: "border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/15",
   },
   {
     disposition: "answered_not_interested",
     label: "Atendeu — não quer nada",
     description: "Marca como perdido no CRM",
+    helpKey: "naoQuer",
     tone: "border-slate-500/30 bg-slate-500/10 hover:bg-slate-500/15",
   },
   {
     disposition: "do_not_call",
     label: "Pediu para não ligar",
-    description: "Registra opt-out de contato",
+    description: "Registra que não deve ser contatado",
+    helpKey: "naoLigar",
     tone: "border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/15",
   },
 ];
@@ -141,6 +150,7 @@ export function SellerCallingQueue({
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(16rem,22rem)_1fr]">
       <div className="space-y-3">
+        <SectionTitleWithHelp title="Suas listas" help={ACTIVE_OFFERS_HELP.filaVendedor} />
         {offers.length ? (
           offers.map((offer) => (
             <button
@@ -157,18 +167,20 @@ export function SellerCallingQueue({
               <p className="font-semibold text-content">{offer.title}</p>
               <p className="mt-1 text-xs text-content-muted">{formatActiveOfferDate(offer.createdAt)}</p>
               <p className="mt-3 text-sm text-content-muted">
-                {offer.progress?.pending ?? offer.leadCount} pendentes · {offer.leadCount} total
+                {offer.progress?.pending ?? offer.leadCount} aguardando · {offer.leadCount} total
               </p>
             </button>
           ))
         ) : (
           <div className="rounded-xl border border-dashed border-line bg-surface-card p-5 text-sm text-content-muted">
-            Nenhuma lista atribuída a você ainda.
+            Quando o diretor liberar uma lista para você, ela aparece aqui.
           </div>
         )}
       </div>
 
       <div className="rounded-xl border border-line bg-surface-card p-4">
+        <SectionTitleWithHelp title="Sua fila de ligações" help={ACTIVE_OFFERS_HELP.filaVendedor} className="mb-4" />
+
         {error ? (
           <div className="mb-4 rounded-xl border border-rose-500/25 bg-rose-500/[0.08] px-4 py-3 text-sm text-rose-500">
             {error}
@@ -181,7 +193,7 @@ export function SellerCallingQueue({
             <div className="h-32 animate-pulse rounded-xl bg-surface-elevated/60" />
           </div>
         ) : !selectedOfferId ? (
-          <p className="text-sm text-content-muted">Selecione uma lista para começar a ligar.</p>
+          <p className="text-sm text-content-muted">Selecione uma lista na lateral para começar a ligar.</p>
         ) : !currentLead ? (
           <div className="rounded-xl border border-dashed border-line p-6 text-center">
             <p className="text-lg font-semibold text-content">Fila concluída!</p>
@@ -196,9 +208,9 @@ export function SellerCallingQueue({
             {stats ? (
               <div>
                 <div className="mb-2 flex items-center justify-between text-sm text-content-muted">
-                  <span>Progresso da sua fila</span>
+                  <span>Seu progresso</span>
                   <span>
-                    {stats.completed}/{stats.total} concluídos
+                    {stats.completed} de {stats.total} contatos finalizados
                   </span>
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-surface-elevated">
@@ -211,7 +223,10 @@ export function SellerCallingQueue({
             ) : null}
 
             <div className="rounded-xl border border-primary/25 bg-primary/[0.06] p-4">
-              <p className="text-xs uppercase tracking-wide text-content-faint">Próximo contato</p>
+              <div className="flex items-center gap-1.5">
+                <p className="text-xs uppercase tracking-wide text-content-faint">Próximo contato</p>
+                <PanelHelp content={ACTIVE_OFFERS_HELP.proximoContato} />
+              </div>
               <h3 className="mt-1 text-xl font-semibold text-content">{currentLead.nome}</h3>
               <p className="mt-2 text-sm text-content-muted">
                 {currentLead.telefone} · {currentLead.origem} · etapa {currentLead.status}
@@ -232,22 +247,22 @@ export function SellerCallingQueue({
                 >
                   <Phone className="h-4 w-4" />
                   Ligar agora
+                  <PanelHelp content={ACTIVE_OFFERS_HELP.ligarAgora} />
                 </a>
               ) : null}
             </div>
 
-            <div>
-              <label className="text-sm font-medium text-content" htmlFor="call-notes">
-                Observação (opcional)
-              </label>
-              <Input
-                id="call-notes"
-                className="mt-1"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Ex.: deixou recado na secretária"
-              />
-            </div>
+            <FieldLabelWithHelp
+              label="Observação (opcional)"
+              htmlFor="call-notes"
+              help={ACTIVE_OFFERS_HELP.observacao}
+            />
+            <Input
+              id="call-notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Ex.: deixou recado na secretária"
+            />
 
             <div className="grid gap-2 sm:grid-cols-2">
               {DISPOSITION_BUTTONS.map((btn) => (
@@ -255,10 +270,13 @@ export function SellerCallingQueue({
                   key={btn.disposition}
                   type="button"
                   disabled={busy}
-                  className={cn("rounded-xl border p-4 text-left transition disabled:opacity-60", btn.tone)}
+                  className={cn("relative rounded-xl border p-4 text-left transition disabled:opacity-60", btn.tone)}
                   onClick={() => void applyDisposition(btn.disposition)}
                 >
-                  <p className="font-semibold text-content">{btn.label}</p>
+                  <div className="absolute right-3 top-3">
+                    <PanelHelp content={ACTIVE_OFFERS_HELP[btn.helpKey]} />
+                  </div>
+                  <p className="pr-8 font-semibold text-content">{btn.label}</p>
                   <p className="mt-1 text-xs text-content-muted">{btn.description}</p>
                 </button>
               ))}
@@ -276,6 +294,7 @@ export function SellerCallingQueue({
                 onClick={() => setCurrentIndex((i) => Math.min(i + 1, pendingLeads.length - 1))}
               >
                 Pular por agora
+                <PanelHelp content={ACTIVE_OFFERS_HELP.pularContato} />
                 <ChevronRight className="ml-1 h-4 w-4" />
               </Button>
             </div>

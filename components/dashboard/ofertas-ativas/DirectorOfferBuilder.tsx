@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
 import { PanelSelect as Select } from "@/components/panel/ui/PanelSelect";
+import { PanelHelp } from "@/components/panel/ui/PanelHelp";
 import { useCrmFunnels } from "@/components/dashboard/CrmFunnelsContext";
 import {
   createActiveOfferFromApi,
@@ -14,16 +15,24 @@ import {
 import type { ActiveOfferDistributionMode, ActiveOfferFilterInput } from "@/lib/active-offers-types";
 import type { TeamEmployee } from "@/lib/team-employees-types";
 import { cn } from "@/lib/utils";
+import { ACTIVE_OFFERS_HELP } from "./active-offers-help";
+import { FieldLabelWithHelp } from "./FieldLabelWithHelp";
 
 const INACTIVITY_PRESETS = [
   { label: "Qualquer prazo", value: "" },
   { label: "30+ dias sem contato", value: "30" },
   { label: "90+ dias sem contato", value: "90" },
   { label: "180+ dias sem contato", value: "180" },
-  { label: "365+ dias sem contato", value: "365" },
+  { label: "365+ dias sem contato (≈ 1 ano)", value: "365" },
 ];
 
-type Step = "filter" | "preview" | "distribute";
+const STEPS = [
+  { key: "filter" as const, label: "Quem entra na lista", help: ACTIVE_OFFERS_HELP.passoFiltrar },
+  { key: "preview" as const, label: "Conferir quantidade", help: ACTIVE_OFFERS_HELP.passoPreview },
+  { key: "distribute" as const, label: "Quem vai ligar", help: ACTIVE_OFFERS_HELP.passoDistribuir },
+];
+
+type Step = (typeof STEPS)[number]["key"];
 
 export function DirectorOfferBuilder({
   employees,
@@ -99,7 +108,7 @@ export function DirectorOfferBuilder({
       setPreview(result);
       setStep("preview");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao pré-visualizar.");
+      setError(err instanceof Error ? err.message : "Erro ao conferir quantidade.");
     } finally {
       setBusy(false);
     }
@@ -132,15 +141,16 @@ export function DirectorOfferBuilder({
   return (
     <div className="rounded-xl border border-line bg-surface-elevated/20 p-4">
       <div className="mb-4 flex flex-wrap gap-2">
-        {(["filter", "preview", "distribute"] as Step[]).map((s, index) => (
+        {STEPS.map((s, index) => (
           <span
-            key={s}
+            key={s.key}
             className={cn(
-              "rounded-full px-3 py-1 text-xs font-medium",
-              step === s ? "bg-primary/15 text-primary" : "bg-surface-card text-content-muted",
+              "inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium",
+              step === s.key ? "bg-primary/15 text-primary" : "bg-surface-card text-content-muted",
             )}
           >
-            {index + 1}. {s === "filter" ? "Filtrar" : s === "preview" ? "Preview" : "Distribuir"}
+            {index + 1}. {s.label}
+            <PanelHelp content={s.help} />
           </span>
         ))}
       </div>
@@ -153,88 +163,92 @@ export function DirectorOfferBuilder({
 
       {step === "filter" ? (
         <div className="space-y-4">
-          <div>
-            <p className="text-sm font-medium text-content">Etapas do CRM</p>
-            <p className="text-xs text-content-muted">Deixe vazio para incluir todas as etapas.</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {allStages.map((stage) => (
-                <button
-                  key={stage.id}
-                  type="button"
-                  className={cn(
-                    "rounded-lg border px-3 py-1.5 text-sm transition",
-                    selectedStages.includes(stage.id)
-                      ? "border-primary/40 bg-primary/10 text-primary"
-                      : "border-line bg-surface-card text-content-muted hover:border-primary/25",
-                  )}
-                  onClick={() => toggleStage(stage.id)}
-                >
-                  {stage.label}
-                </button>
-              ))}
-            </div>
+          <FieldLabelWithHelp
+            label="Etapas do CRM"
+            help={ACTIVE_OFFERS_HELP.etapasCrm}
+            hint="Dica: combine “Perdido” + 365 dias para reativar base antiga."
+          />
+          <div className="flex flex-wrap gap-2">
+            {allStages.map((stage) => (
+              <button
+                key={stage.id}
+                type="button"
+                className={cn(
+                  "rounded-lg border px-3 py-1.5 text-sm transition",
+                  selectedStages.includes(stage.id)
+                    ? "border-primary/40 bg-primary/10 text-primary"
+                    : "border-line bg-surface-card text-content-muted hover:border-primary/25",
+                )}
+                onClick={() => toggleStage(stage.id)}
+              >
+                {stage.label}
+              </button>
+            ))}
           </div>
 
-          <div>
-            <label className="text-sm font-medium text-content" htmlFor="offer-inactivity">
-              Tempo sem contato
-            </label>
-            <Select
-              id="offer-inactivity"
-              className="mt-1"
-              value={inactivityDays}
-              onChange={(e) => setInactivityDays(e.target.value)}
-            >
-              {INACTIVITY_PRESETS.map((preset) => (
-                <option key={preset.label} value={preset.value}>
-                  {preset.label}
-                </option>
-              ))}
-            </Select>
-          </div>
+          <FieldLabelWithHelp
+            label="Tempo sem contato"
+            htmlFor="offer-inactivity"
+            help={ACTIVE_OFFERS_HELP.diasSemContato}
+          />
+          <Select
+            id="offer-inactivity"
+            value={inactivityDays}
+            onChange={(e) => setInactivityDays(e.target.value)}
+          >
+            {INACTIVITY_PRESETS.map((preset) => (
+              <option key={preset.label} value={preset.value}>
+                {preset.label}
+              </option>
+            ))}
+          </Select>
 
-          <div>
-            <p className="text-sm font-medium text-content">Responsável atual</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {sellers.map((seller) => (
-                <button
-                  key={seller.id}
-                  type="button"
-                  className={cn(
-                    "rounded-lg border px-3 py-1.5 text-sm transition",
-                    selectedOwners.includes(seller.id)
-                      ? "border-primary/40 bg-primary/10 text-primary"
-                      : "border-line bg-surface-card text-content-muted hover:border-primary/25",
-                  )}
-                  onClick={() => toggleOwner(seller.id)}
-                >
-                  {seller.nome}
-                </button>
-              ))}
-            </div>
-            <label className="mt-2 flex items-center gap-2 text-sm text-content-muted">
-              <input
-                type="checkbox"
-                checked={includeUnassigned}
-                onChange={(e) => setIncludeUnassigned(e.target.checked)}
-              />
-              Incluir leads sem responsável
-            </label>
+          <FieldLabelWithHelp
+            label="Responsável atual"
+            help={ACTIVE_OFFERS_HELP.responsavel}
+            hint="Deixe vazio para incluir leads de todos os vendedores."
+          />
+          <div className="flex flex-wrap gap-2">
+            {sellers.map((seller) => (
+              <button
+                key={seller.id}
+                type="button"
+                className={cn(
+                  "rounded-lg border px-3 py-1.5 text-sm transition",
+                  selectedOwners.includes(seller.id)
+                    ? "border-primary/40 bg-primary/10 text-primary"
+                    : "border-line bg-surface-card text-content-muted hover:border-primary/25",
+                )}
+                onClick={() => toggleOwner(seller.id)}
+              >
+                {seller.nome}
+              </button>
+            ))}
           </div>
+          <label className="flex items-center gap-2 text-sm text-content-muted">
+            <input
+              type="checkbox"
+              checked={includeUnassigned}
+              onChange={(e) => setIncludeUnassigned(e.target.checked)}
+            />
+            Incluir leads sem responsável
+            <PanelHelp content={ACTIVE_OFFERS_HELP.semResponsavel} />
+          </label>
 
           <Button type="button" disabled={busy} onClick={() => void runPreview()}>
-            {busy ? "Calculando..." : "Ver preview da lista"}
+            {busy ? "Calculando..." : "Ver quantos leads encontrou"}
           </Button>
         </div>
       ) : null}
 
       {step === "preview" && preview ? (
         <div className="space-y-4">
+          <FieldLabelWithHelp label="Quantidade encontrada" help={ACTIVE_OFFERS_HELP.preview} />
           <p className="text-sm text-content">
-            <span className="font-semibold text-primary">{preview.matchCount.toLocaleString("pt-BR")}</span> leads
+            <span className="font-semibold text-primary">{preview.matchCount.toLocaleString("pt-BR")}</span> contatos
             encontrados
             {preview.cappedCount < preview.matchCount
-              ? ` (serão incluídos até ${preview.cappedCount.toLocaleString("pt-BR")} na lista)`
+              ? ` (até ${preview.cappedCount.toLocaleString("pt-BR")} entrarão na lista)`
               : null}
           </p>
           <div className="space-y-2">
@@ -253,7 +267,7 @@ export function DirectorOfferBuilder({
               Voltar
             </Button>
             <Button type="button" onClick={() => setStep("distribute")}>
-              Continuar para distribuição
+              Continuar — quem vai ligar
             </Button>
           </div>
         </div>
@@ -261,57 +275,70 @@ export function DirectorOfferBuilder({
 
       {step === "distribute" ? (
         <div className="space-y-4">
-          <div>
-            <label className="text-sm font-medium text-content" htmlFor="offer-title">
-              Título da lista
-            </label>
-            <Input id="offer-title" className="mt-1" value={title} onChange={(e) => setTitle(e.target.value)} />
-          </div>
+          <FieldLabelWithHelp
+            label="Nome da lista"
+            htmlFor="offer-title"
+            help={ACTIVE_OFFERS_HELP.tituloLista}
+          />
+          <Input id="offer-title" value={title} onChange={(e) => setTitle(e.target.value)} />
 
-          <div>
-            <p className="text-sm font-medium text-content">Vendedores</p>
-            <label className="mt-2 flex items-center gap-2 text-sm text-content-muted">
-              <input type="radio" checked={assignAllSellers} onChange={() => setAssignAllSellers(true)} />
-              Todos os vendedores da equipe
-            </label>
-            <label className="mt-2 flex items-center gap-2 text-sm text-content-muted">
-              <input type="radio" checked={!assignAllSellers} onChange={() => setAssignAllSellers(false)} />
-              Apenas vendedores selecionados
-            </label>
-            {!assignAllSellers ? (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {sellers.map((seller) => (
-                  <button
-                    key={seller.id}
-                    type="button"
-                    className={cn(
-                      "rounded-lg border px-3 py-1.5 text-sm transition",
-                      selectedAssignees.includes(seller.id)
-                        ? "border-primary/40 bg-primary/10 text-primary"
-                        : "border-line bg-surface-card text-content-muted",
-                    )}
-                    onClick={() => toggleAssignee(seller.id)}
-                  >
-                    {seller.nome}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
+          <FieldLabelWithHelp label="Quem pode ligar" help={ACTIVE_OFFERS_HELP.vendedores} />
+          <label className="flex items-center gap-2 text-sm text-content-muted">
+            <input type="radio" checked={assignAllSellers} onChange={() => setAssignAllSellers(true)} />
+            Todos os vendedores da equipe
+            <PanelHelp content={ACTIVE_OFFERS_HELP.vendedoresTodos} />
+          </label>
+          <label className="flex items-center gap-2 text-sm text-content-muted">
+            <input type="radio" checked={!assignAllSellers} onChange={() => setAssignAllSellers(false)} />
+            Apenas vendedores selecionados
+            <PanelHelp content={ACTIVE_OFFERS_HELP.vendedoresEscolhidos} />
+          </label>
+          {!assignAllSellers ? (
+            <div className="flex flex-wrap gap-2">
+              {sellers.map((seller) => (
+                <button
+                  key={seller.id}
+                  type="button"
+                  className={cn(
+                    "rounded-lg border px-3 py-1.5 text-sm transition",
+                    selectedAssignees.includes(seller.id)
+                      ? "border-primary/40 bg-primary/10 text-primary"
+                      : "border-line bg-surface-card text-content-muted",
+                  )}
+                  onClick={() => toggleAssignee(seller.id)}
+                >
+                  {seller.nome}
+                </button>
+              ))}
+            </div>
+          ) : null}
 
-          <div>
-            <label className="text-sm font-medium text-content" htmlFor="offer-distribution">
-              Modo de distribuição
-            </label>
-            <Select
-              id="offer-distribution"
-              className="mt-1"
-              value={distributionMode}
-              onChange={(e) => setDistributionMode(e.target.value as ActiveOfferDistributionMode)}
-            >
-              <option value="shared_pool">Fila compartilhada (qualquer vendedor pega o próximo)</option>
-              <option value="split_evenly">Dividir leads igualmente entre vendedores</option>
-            </Select>
+          <FieldLabelWithHelp
+            label="Como organizar a fila"
+            htmlFor="offer-distribution"
+            help={ACTIVE_OFFERS_HELP.modoDistribuicao}
+          />
+          <Select
+            id="offer-distribution"
+            value={distributionMode}
+            onChange={(e) => setDistributionMode(e.target.value as ActiveOfferDistributionMode)}
+          >
+            <option value="shared_pool">Fila compartilhada — todos pegam o próximo</option>
+            <option value="split_evenly">Dividir contatos entre vendedores</option>
+          </Select>
+          <div className="flex items-center gap-1.5 text-xs text-content-muted">
+            <span>
+              {distributionMode === "shared_pool"
+                ? "Todos veem a mesma fila."
+                : "Cada vendedor recebe uma parte fixa."}
+            </span>
+            <PanelHelp
+              content={
+                distributionMode === "shared_pool"
+                  ? ACTIVE_OFFERS_HELP.modoFilaCompartilhada
+                  : ACTIVE_OFFERS_HELP.modoDividirIgual
+              }
+            />
           </div>
 
           <div className="flex gap-2">

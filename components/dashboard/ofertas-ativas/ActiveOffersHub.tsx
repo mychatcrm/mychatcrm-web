@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Archive, Plus } from "lucide-react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
+import { PanelHelp } from "@/components/panel/ui/PanelHelp";
 import type { ClientSession } from "@/lib/client-auth";
 import {
   archiveActiveOfferFromApi,
@@ -17,9 +18,11 @@ import { resolveOrganizationRole } from "@/lib/organization-role";
 import type { TeamEmployee } from "@/lib/team-employees-types";
 import { cn } from "@/lib/utils";
 import { ActiveOffersPanel } from "./ActiveOffersPanel";
+import { ACTIVE_OFFERS_HELP, createdViaLabel, dispositionLabel } from "./active-offers-help";
 import { DirectorOfferBuilder } from "./DirectorOfferBuilder";
 import { formatActiveOfferDate } from "./format-offer-date";
 import { OfferProgressPanel } from "./OfferProgressPanel";
+import { SectionTitleWithHelp } from "./SectionTitleWithHelp";
 import { SellerCallingQueue } from "./SellerCallingQueue";
 
 export function ActiveOffersHub({ session }: { session: ClientSession }) {
@@ -139,13 +142,21 @@ export function ActiveOffersHub({ session }: { session: ClientSession }) {
 
   return (
     <ActiveOffersPanel
-      title="Ofertas ativas"
-      description="Listas de ligação para reativar leads em massa. Diretor e dono montam e distribuem; vendedores trabalham a fila com resultados que atualizam o CRM."
+      title="Listas de ligação"
+      help={ACTIVE_OFFERS_HELP.pageIntro}
+      description={
+        canCreate
+          ? "Monte listas de contatos para a equipe ligar. Você define quem entra e quem liga; os vendedores registram o resultado de cada ligação."
+          : isSeller
+            ? "Suas listas de ligação aparecem aqui. Abra uma lista, ligue para o próximo contato e registre o que aconteceu."
+            : "Acompanhe o progresso das listas de ligação da equipe."
+      }
       actions={
         canCreate ? (
           <Button type="button" size="sm" className="gap-1.5" onClick={() => setShowBuilder((v) => !v)}>
             <Plus className="h-4 w-4" />
-            {showBuilder ? "Fechar criador" : "Nova lista"}
+            {showBuilder ? "Fechar assistente" : "Nova lista"}
+            {!showBuilder ? <PanelHelp content={ACTIVE_OFFERS_HELP.novaLista} /> : null}
           </Button>
         ) : null
       }
@@ -153,6 +164,20 @@ export function ActiveOffersHub({ session }: { session: ClientSession }) {
       {error ? (
         <div className="mb-4 rounded-xl border border-rose-500/25 bg-rose-500/[0.08] px-4 py-3 text-sm text-rose-500">
           {error}
+        </div>
+      ) : null}
+
+      {canCreate && !showBuilder ? (
+        <div className="mb-6 rounded-xl border border-line bg-surface-elevated/25 p-4">
+          <SectionTitleWithHelp title="Como funciona" help={ACTIVE_OFFERS_HELP.comoFunciona} />
+          <ul className="mt-3 space-y-1.5 text-sm text-content-muted">
+            {ACTIVE_OFFERS_HELP.comoFunciona.items?.map((item) => (
+              <li key={item} className="flex gap-2">
+                <span className="text-primary">•</span>
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
 
@@ -195,12 +220,12 @@ export function ActiveOffersHub({ session }: { session: ClientSession }) {
                   <p className="font-semibold text-content">{offer.title}</p>
                   <p className="mt-1 text-xs text-content-muted">{formatActiveOfferDate(offer.createdAt)}</p>
                   <p className="mt-3 text-sm text-content-muted">
-                    {offer.leadCount} {offer.leadCount === 1 ? "lead" : "leads"}
+                    {offer.leadCount} {offer.leadCount === 1 ? "contato" : "contatos"}
                     {offer.archivedAt ? " · arquivada" : ""}
                   </p>
                   {offer.progress ? (
                     <p className="mt-1 text-xs text-content-faint">
-                      {offer.progress.completed}/{offer.progress.total} concluídos
+                      {offer.progress.completed} de {offer.progress.total} finalizados
                     </p>
                   ) : null}
                 </button>
@@ -208,7 +233,7 @@ export function ActiveOffersHub({ session }: { session: ClientSession }) {
             ) : (
               <div className="rounded-xl border border-dashed border-line bg-surface-card p-5 text-sm text-content-muted">
                 {canCreate
-                  ? "Nenhuma lista criada ainda. Use “Nova lista” para montar a primeira campanha de ligação."
+                  ? "Nenhuma lista ainda. Toque em “Nova lista” para montar sua primeira campanha em 3 passos."
                   : "Nenhuma lista disponível no momento."}
               </div>
             )}
@@ -227,8 +252,8 @@ export function ActiveOffersHub({ session }: { session: ClientSession }) {
                     <div>
                       <h3 className="text-lg font-semibold text-content">{selectedOffer.title}</h3>
                       <p className="mt-1 text-sm text-content-muted">
-                        Criada em {formatActiveOfferDate(selectedOffer.createdAt)}
-                        {selectedOffer.createdVia === "smart_filter" ? " · filtro inteligente" : " · CRM manual"}
+                        Criada em {formatActiveOfferDate(selectedOffer.createdAt)} ·{" "}
+                        {createdViaLabel(selectedOffer.createdVia)}
                       </p>
                     </div>
                     {canCreate && !selectedOffer.archivedAt ? (
@@ -242,6 +267,7 @@ export function ActiveOffersHub({ session }: { session: ClientSession }) {
                       >
                         <Archive className="h-4 w-4" />
                         {archiving ? "Arquivando..." : "Arquivar"}
+                        <PanelHelp content={ACTIVE_OFFERS_HELP.arquivar} />
                       </Button>
                     ) : null}
                   </div>
@@ -256,27 +282,30 @@ export function ActiveOffersHub({ session }: { session: ClientSession }) {
                 ) : null}
 
                 <div className="rounded-xl border border-line bg-surface-card p-4">
-                  <p className="mb-3 text-sm font-medium text-content">Leads vinculados (amostra)</p>
-                  <div className="max-h-80 space-y-2 overflow-y-auto">
+                  <SectionTitleWithHelp title="Contatos da lista" help={ACTIVE_OFFERS_HELP.leadsAmostra} />
+                  <div className="mt-3 max-h-80 space-y-2 overflow-y-auto">
                     {selectedOffer.leads.slice(0, 50).map((lead) => (
                       <div key={lead.id} className="rounded-lg border border-line bg-surface-elevated/35 p-3 text-sm">
                         <p className="font-medium text-content">{lead.nome}</p>
                         <p className="mt-1 text-content-muted">
-                          {lead.telefone} · {lead.origem} · {lead.progress.disposition}
+                          {lead.telefone} · {lead.origem} ·{" "}
+                          {dispositionLabel(lead.progress.disposition)}
                         </p>
                       </div>
                     ))}
                     {!selectedOffer.leads.length ? (
-                      <p className="text-sm text-content-muted">Esta lista ainda não tem leads vinculados.</p>
+                      <p className="text-sm text-content-muted">Esta lista ainda não tem contatos vinculados.</p>
                     ) : null}
                     {selectedOffer.leads.length > 50 ? (
-                      <p className="text-xs text-content-faint">Mostrando 50 de {selectedOffer.leads.length} leads.</p>
+                      <p className="text-xs text-content-faint">
+                        Mostrando 50 de {selectedOffer.leads.length} contatos.
+                      </p>
                     ) : null}
                   </div>
                 </div>
               </>
             ) : (
-              <p className="text-sm text-content-muted">Selecione uma lista para ver o progresso e os leads.</p>
+              <p className="text-sm text-content-muted">Selecione uma lista para ver o progresso e os contatos.</p>
             )}
           </div>
         </div>
