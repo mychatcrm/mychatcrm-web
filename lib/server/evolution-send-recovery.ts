@@ -19,6 +19,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const RECOVERY_POLL_ATTEMPTS = 6;
+const RECOVERY_POLL_INTERVAL_MS = 2_000;
+
 /**
  * Retries only the explicit Evolution "Connection Closed" failure. The retry
  * happens after a successful restart and a positive inventory check, avoiding
@@ -52,25 +55,48 @@ export async function sendEvolutionTextWithConnectionRecovery(
     };
   }
 
-  await sleep(2500);
-  const inventory = await evolutionFetchInstances(params.instanceName);
-  const info = inventory.ok
-    ? pickEvolutionInstanceInfo(inventory.data, params.instanceName)
-    : null;
-  if (!inventory.ok || info?.connectionStatus !== "open" || !info.ownerJid) {
-    const error = inventory.ok
-      ? "evolution_connection_recovery_not_open"
-      : `evolution_connection_recovery_inventory_failed: ${inventory.error}`;
+  let verifiedOpen = false;
+  let inventoryStatus = 0;
+  let inventoryError: string | null = null;
+  let connectionStatus: string | null = null;
+  let hasOwnerJid = false;
+  let pollAttempts = 0;
+
+  for (let attempt = 1; attempt <= RECOVERY_POLL_ATTEMPTS; attempt += 1) {
+    pollAttempts = attempt;
+    await sleep(RECOVERY_POLL_INTERVAL_MS);
+    const inventory = await evolutionFetchInstances(params.instanceName);
+    inventoryStatus = inventory.status;
+    if (!inventory.ok) {
+      inventoryError = inventory.error;
+      continue;
+    }
+
+    inventoryError = null;
+    const info = pickEvolutionInstanceInfo(inventory.data, params.instanceName);
+    connectionStatus = info?.connectionStatus ?? null;
+    hasOwnerJid = Boolean(info?.ownerJid);
+    if (connectionStatus === "open" && hasOwnerJid) {
+      verifiedOpen = true;
+      break;
+    }
+  }
+
+  if (!verifiedOpen) {
+    const error = inventoryError
+      ? `evolution_connection_recovery_inventory_failed: ${inventoryError}`
+      : "evolution_connection_recovery_not_open";
     console.error("[evolution-send-recovery] restart_unverified", {
       instance_name: params.instanceName,
-      inventory_status: inventory.status,
-      connection_status: info?.connectionStatus ?? null,
-      has_owner_jid: Boolean(info?.ownerJid),
+      inventory_status: inventoryStatus,
+      connection_status: connectionStatus,
+      has_owner_jid: hasOwnerJid,
+      poll_attempts: pollAttempts,
       error,
     });
     return {
       ok: false,
-      status: inventory.ok ? 409 : inventory.status,
+      status: inventoryError ? inventoryStatus : 409,
       error,
       attempts: 1,
       recoveryAttempted: true,
@@ -83,6 +109,7 @@ export async function sendEvolutionTextWithConnectionRecovery(
     instance_name: params.instanceName,
     ok: retry.ok,
     status: retry.status,
+    poll_attempts: pollAttempts,
   });
   return {
     ...retry,

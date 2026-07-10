@@ -40,6 +40,7 @@ describe("bucketMetaLeadEventStep", () => {
       manual_assignment_failed: "erro",
       manual_assigned_to_human: "ok",
       skipped_selected_connection_unavailable: "erro",
+      selected_connection_reconciled: "novo",
     };
 
     for (const step of META_LEAD_EVENT_STEPS) {

@@ -24,6 +24,7 @@ import {
   getEvolutionInstanceByTenantSlot,
   upsertTenantEvolutionInstance,
 } from "@/lib/server/tenant-evolution-instance-db";
+import { reconcileLiveEvolutionInstance } from "@/lib/server/evolution-instance-reconciliation";
 import {
   notifyTenantIntegrationConnected,
   notifyTenantIntegrationDisconnected,
@@ -66,7 +67,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "slotIndex inválido" }, { status: 400 });
   }
 
-  const existingRow = await getEvolutionInstanceByTenantSlot(session.tenantId, slotIndex);
+  let existingRow = await getEvolutionInstanceByTenantSlot(session.tenantId, slotIndex);
+  if (existingRow) {
+    const liveConnection = await reconcileLiveEvolutionInstance(existingRow);
+    if (liveConnection.ok) existingRow = liveConnection.instance;
+  }
   // Reusa o nome se já existe registro; após apagar, gera nome NOVO (sufixo aleatório).
   const instanceName =
     existingRow?.instance_name?.trim() || buildFreshEvolutionInstanceName(session.tenantId, slotIndex);
@@ -214,6 +219,9 @@ export async function GET(request: Request) {
       waJid: null as string | null,
     });
   }
+
+  const liveConnection = await reconcileLiveEvolutionInstance(row);
+  if (liveConnection.ok) row = liveConnection.instance;
 
   const stateRes = await evolutionConnectionState(row.instance_name);
   let remoteState = normalizeEvolutionConnectionState(

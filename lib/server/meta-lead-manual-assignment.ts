@@ -19,7 +19,7 @@ import { resolveAgentCrmFieldsForLeadInsert } from "@/lib/server/auto-lead-upser
 import { buildNewLeadCrmFields, promoteLeadToContatoOnAgentEngagement } from "@/lib/server/crm-lead-lifecycle";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { resolveAuthorizedMetaLeadAgent } from "@/lib/server/meta-form-authorization";
-import { getEvolutionInstanceByIdForTenant } from "@/lib/server/tenant-evolution-instance-db";
+import { resolveLiveEvolutionInstanceByIdForTenant } from "@/lib/server/evolution-instance-reconciliation";
 import { MetaLeadEventRecorder, type MetaLeadEventRow } from "@/lib/server/meta-lead-events-db";
 import {
   buildFallbackInitialMessage,
@@ -229,6 +229,32 @@ export async function assignMetaLeadEventToAgent(params: {
     return { ok: false, error: `Este agente não pode atender este lead agora (${guard.reason}).`, status: 409 };
   }
 
+  const liveConnection = await resolveLiveEvolutionInstanceByIdForTenant(
+    tenantId,
+    authorization.connectionId,
+  );
+  if (!liveConnection.ok) {
+    const failureReason = `evolution_connection_${liveConnection.reason}`;
+    await recordManualFailureOnAgent(sb, eventId, agentId, failureReason);
+    return {
+      ok: false,
+      error:
+        liveConnection.reason === "connection_not_open"
+          ? "A conexão WhatsApp autorizada está desconectada. Reconecte-a em Integrações."
+          : `Não foi possível confirmar a conexão WhatsApp autorizada (${liveConnection.reason}).`,
+      status: liveConnection.reason === "connection_not_open" ? 409 : 502,
+    };
+  }
+  const instance = liveConnection.instance;
+  if (liveConnection.adoptedSibling) {
+    console.warn("[meta-lead-events] live_evolution_instance_reconciled", {
+      tenant_id: tenantId,
+      event_id: eventId,
+      connection_id: authorization.connectionId,
+      instance_name: instance.instance_name,
+    });
+  }
+
   const journeyIsolationEnabled = isJourneyIsolationEnabled();
   const journey = await activateLeadJourney({
     sb,
@@ -249,18 +275,6 @@ export async function assignMetaLeadEventToAgent(params: {
     return { ok: false, error: "Outro atendimento já está ativo para este contato.", status: 409 };
   }
   const journeyId = journey?.id ?? null;
-
-  const instance = await getEvolutionInstanceByIdForTenant(
-    tenantId,
-    authorization.connectionId,
-  );
-  if (!instance?.instance_name || instance.connection_state !== "open") {
-    return {
-      ok: false,
-      error: "A conexão WhatsApp autorizada para este formulário não está conectada.",
-      status: 409,
-    };
-  }
 
   const initialMessageExternalId = `meta:${event.leadgen_id}:initial`;
   const { data: existingInitialMessage } = await sb

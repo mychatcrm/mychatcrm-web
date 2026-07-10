@@ -9,7 +9,7 @@ const {
   promoteLeadToContatoOnAgentEngagementMock,
   canAgentAutoContactLeadMock,
   resolveAuthorizedMetaLeadAgentMock,
-  getEvolutionInstanceByIdForTenantMock,
+  resolveLiveEvolutionInstanceByIdForTenantMock,
   activateLeadJourneyMock,
   authorizeActiveJourneyMock,
   isJourneyIsolationEnabledMock,
@@ -24,7 +24,7 @@ const {
   promoteLeadToContatoOnAgentEngagementMock: vi.fn(),
   canAgentAutoContactLeadMock: vi.fn(),
   resolveAuthorizedMetaLeadAgentMock: vi.fn(),
-  getEvolutionInstanceByIdForTenantMock: vi.fn(),
+  resolveLiveEvolutionInstanceByIdForTenantMock: vi.fn(),
   activateLeadJourneyMock: vi.fn(),
   authorizeActiveJourneyMock: vi.fn(),
   isJourneyIsolationEnabledMock: vi.fn(),
@@ -54,8 +54,8 @@ vi.mock("@/lib/server/agent-auto-contact-guard", () => ({ canAgentAutoContactLea
 vi.mock("@/lib/server/meta-form-authorization", () => ({
   resolveAuthorizedMetaLeadAgent: resolveAuthorizedMetaLeadAgentMock,
 }));
-vi.mock("@/lib/server/tenant-evolution-instance-db", () => ({
-  getEvolutionInstanceByIdForTenant: getEvolutionInstanceByIdForTenantMock,
+vi.mock("@/lib/server/evolution-instance-reconciliation", () => ({
+  resolveLiveEvolutionInstanceByIdForTenant: resolveLiveEvolutionInstanceByIdForTenantMock,
 }));
 vi.mock("@/lib/server/meta-lead-graph", () => ({
   buildMetaInitialAgentPrompt: () => "prompt",
@@ -207,9 +207,13 @@ describe("assignMetaLeadEventToAgent", () => {
     activateLeadJourneyMock.mockResolvedValue({ id: "journey-1", status: "active" });
     authorizeActiveJourneyMock.mockResolvedValue({ ok: true, journey: { id: "journey-1" }, agentId: "agent-1" });
     touchLeadJourneyMock.mockResolvedValue(undefined);
-    getEvolutionInstanceByIdForTenantMock.mockResolvedValue({
-      instance_name: "evo-instance-1",
-      connection_state: "open",
+    resolveLiveEvolutionInstanceByIdForTenantMock.mockResolvedValue({
+      ok: true,
+      adoptedSibling: false,
+      instance: {
+        instance_name: "evo-instance-1",
+        connection_state: "open",
+      },
     });
     evolutionSendTextMock.mockResolvedValue({ ok: true, status: 200, data: {} });
     generateAgentResponseMock.mockResolvedValue({ ok: true, text: "Olá! Já vou te ajudar.", model: "gpt" });
@@ -239,6 +243,28 @@ describe("assignMetaLeadEventToAgent", () => {
     expect(evolutionSendTextMock).not.toHaveBeenCalled();
     const stored = sb.tables.meta_lead_events.find((r) => r.id === "event-1");
     expect(stored?.current_step).toBe("skipped_no_agent");
+  });
+
+  it("fails before creating a journey when no live authorized connection can be confirmed", async () => {
+    resolveLiveEvolutionInstanceByIdForTenantMock.mockResolvedValue({
+      ok: false,
+      instance: null,
+      reason: "connection_not_open",
+    });
+    const sb = makeFakeSupabase({ meta_lead_events: [EVENT], tenant_agents: [ACTIVE_AGENT] });
+
+    const result = await assignMetaLeadEventToAgent({
+      sb: sb as never,
+      tenantId: TENANT,
+      eventId: "event-1",
+      agentId: "agent-1",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(activateLeadJourneyMock).not.toHaveBeenCalled();
+    expect(evolutionSendTextMock).not.toHaveBeenCalled();
+    const stored = sb.tables.meta_lead_events.find((r) => r.id === "event-1");
+    expect(stored?.current_step).toBe("manual_assignment_failed");
   });
 
   it("on successful send, records manual_assigned_to_agent and fires the post-send side effects", async () => {

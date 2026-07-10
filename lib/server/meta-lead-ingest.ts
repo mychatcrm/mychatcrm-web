@@ -7,7 +7,7 @@ import { upsertConversationState } from "@/lib/server/conversation-memory";
 import { resolveAgentCrmFieldsForLeadInsert } from "@/lib/server/auto-lead-upsert";
 import { buildNewLeadCrmFields, promoteLeadToContatoOnAgentEngagement } from "@/lib/server/crm-lead-lifecycle";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
-import { getEvolutionInstanceByIdForTenant } from "@/lib/server/tenant-evolution-instance-db";
+import { resolveLiveEvolutionInstanceByIdForTenant } from "@/lib/server/evolution-instance-reconciliation";
 import { MetaLeadEventRecorder } from "@/lib/server/meta-lead-events-db";
 import {
   crmBlockedUserMessage,
@@ -814,17 +814,39 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
   }
 
   const selectedConnectionId = agentResolution.connectionId;
-  const instance = selectedConnectionId
-    ? await getEvolutionInstanceByIdForTenant(tenant_id, selectedConnectionId)
-    : null;
-  if (!instance?.instance_name || instance.connection_state !== "open") {
+  if (!selectedConnectionId) {
     await eventRecorder.step("skipped_selected_connection_unavailable", {
-      connection_id: selectedConnectionId,
-      connection_state: instance?.connection_state ?? null,
+      connection_id: null,
+      reason: "connection_not_selected",
     });
     await eventRecorder.patch({
       whatsapp_status: "skipped",
-      error_message: "selected_rule_connection_unavailable",
+      error_message: "selected_rule_connection_not_selected",
+      current_step: "skipped_selected_connection_unavailable",
+    });
+    console.warn("[meta-webhook] selected rule connection unavailable", {
+      tenant_id,
+      lead_id: leadId,
+      agent_id: agentId,
+      connection_id: null,
+      reason: "connection_not_selected",
+    });
+    return;
+  }
+
+  const liveConnection = await resolveLiveEvolutionInstanceByIdForTenant(
+    tenant_id,
+    selectedConnectionId,
+  );
+  if (!liveConnection.ok) {
+    await eventRecorder.step("skipped_selected_connection_unavailable", {
+      connection_id: selectedConnectionId,
+      connection_state: liveConnection.instance?.connection_state ?? null,
+      reason: liveConnection.reason,
+    });
+    await eventRecorder.patch({
+      whatsapp_status: "skipped",
+      error_message: `selected_rule_connection_${liveConnection.reason}`,
       current_step: "skipped_selected_connection_unavailable",
     });
     console.warn("[meta-webhook] selected rule connection unavailable", {
@@ -832,8 +854,23 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       lead_id: leadId,
       agent_id: agentId,
       connection_id: selectedConnectionId,
+      reason: liveConnection.reason,
     });
     return;
+  }
+  const instance = liveConnection.instance;
+  if (liveConnection.adoptedSibling) {
+    await eventRecorder.step("selected_connection_reconciled", {
+      connection_id: selectedConnectionId,
+      instance_name: instance.instance_name,
+    });
+    console.warn("[meta-webhook] selected connection reconciled", {
+      tenant_id,
+      lead_id: leadId,
+      agent_id: agentId,
+      connection_id: selectedConnectionId,
+      instance_name: instance.instance_name,
+    });
   }
 
   const journey = await activateLeadJourney({

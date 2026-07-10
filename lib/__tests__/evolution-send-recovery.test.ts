@@ -63,12 +63,38 @@ describe("sendEvolutionTextWithConnectionRecovery", () => {
     });
 
     const pending = sendEvolutionTextWithConnectionRecovery(params);
-    await vi.advanceTimersByTimeAsync(2500);
+    await vi.advanceTimersByTimeAsync(2000);
     const result = await pending;
 
     expect(result.ok).toBe(true);
     expect(result.attempts).toBe(2);
     expect(result.restarted).toBe(true);
+    expect(evolutionSendTextMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for a slow restart to become authenticated before retrying", async () => {
+    evolutionSendTextMock
+      .mockResolvedValueOnce({ ok: false, status: 500, error: "Connection Closed" })
+      .mockResolvedValueOnce({ ok: true, status: 200, data: { key: { id: "msg-1" } } });
+    evolutionRestartInstanceMock.mockResolvedValue({ ok: true, status: 200, data: {} });
+    evolutionFetchInstancesMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: [{ name: "instance-1", connectionStatus: "close", ownerJid: null }],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: [{ name: "instance-1", connectionStatus: "open", ownerJid: "556200000000@s.whatsapp.net" }],
+      });
+
+    const pending = sendEvolutionTextWithConnectionRecovery(params);
+    await vi.advanceTimersByTimeAsync(4000);
+    const result = await pending;
+
+    expect(result.ok).toBe(true);
+    expect(evolutionFetchInstancesMock).toHaveBeenCalledTimes(2);
     expect(evolutionSendTextMock).toHaveBeenCalledTimes(2);
   });
 
@@ -82,11 +108,12 @@ describe("sendEvolutionTextWithConnectionRecovery", () => {
     });
 
     const pending = sendEvolutionTextWithConnectionRecovery(params);
-    await vi.advanceTimersByTimeAsync(2500);
+    await vi.advanceTimersByTimeAsync(12_000);
     const result = await pending;
 
     expect(result.ok).toBe(false);
     expect(result.error).toBe("evolution_connection_recovery_not_open");
+    expect(evolutionFetchInstancesMock).toHaveBeenCalledTimes(6);
     expect(evolutionSendTextMock).toHaveBeenCalledTimes(1);
   });
 });
