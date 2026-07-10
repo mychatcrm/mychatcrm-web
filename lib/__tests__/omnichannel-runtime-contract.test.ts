@@ -43,13 +43,17 @@ describe("omnichannel runtime contracts", () => {
     }
   });
 
-  it("persists campaign messages as pending before calling Evolution", () => {
+  it("persists campaign messages as pending before calling Evolution or the Meta template API", () => {
     const content = source("lib/server/whatsapp-campaigns.ts");
     const pendingInsert = content.indexOf('delivery_status: "pending"');
-    const send = content.indexOf("const delivery = await evolutionSendText", pendingInsert);
+    const send = content.indexOf("const delivery =", pendingInsert);
+    const evolutionSend = content.indexOf("await evolutionSendText(", pendingInsert);
+    const metaSend = content.indexOf("await sendWhatsAppTemplateMessage(", pendingInsert);
 
     expect(pendingInsert).toBeGreaterThan(0);
     expect(send).toBeGreaterThan(pendingInsert);
+    expect(evolutionSend).toBeGreaterThan(send);
+    expect(metaSend).toBeGreaterThan(send);
     expect(content).toContain("messageInsertError");
     expect(content).toContain('delivery_status: "failed"');
     expect(content).toContain('delivery_status: "sent"');
