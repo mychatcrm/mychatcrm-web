@@ -131,7 +131,13 @@ async function validateMetaAutomationConnection(
     .eq("id", connectionId)
     .maybeSingle();
   if (error || !data) {
-    return NextResponse.json({ error: "A conexão WhatsApp escolhida não pertence a esta conta." }, { status: 400 });
+    return NextResponse.json(
+      {
+        error:
+          "A conexão salva nesta regra não está mais disponível. Atualize a lista e selecione a conexão WhatsApp atual.",
+      },
+      { status: 400 },
+    );
   }
   return null;
 }

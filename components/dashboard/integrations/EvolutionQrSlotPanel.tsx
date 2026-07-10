@@ -286,8 +286,8 @@ export function EvolutionQrSlotPanel({
         }
       }
 
-      // Desconectar = apagar de vez. Nunca recriamos automaticamente aqui;
-      // o usuário religa pelo CTA "Conectar".
+      // A sessão remota é apagada, mas o backend preserva o UUID lógico do
+      // slot para que regras de distribuição continuem vinculadas.
       setConnectionState("none");
       setQrDataUrl(null);
       setPairingCode(null);

@@ -81,4 +81,13 @@ describe("omnichannel production hardening", () => {
     expect(followUps).toContain("authorized_connection_not_open");
     expect(followUps).toContain(": await getEvolutionInstanceByTenantId(job.tenant_id)");
   });
+
+  it("preserves the logical WhatsApp connection when a client disconnects", () => {
+    const sessionRoute = source("app/api/client/whatsapp/evolution/session/route.ts");
+    const deleteHandler = sessionRoute.slice(sessionRoute.indexOf("export async function DELETE"));
+
+    expect(deleteHandler).toContain("upsertTenantEvolutionInstance");
+    expect(deleteHandler).toContain("logical_connection_id: preserved.id");
+    expect(deleteHandler).not.toContain("deleteTenantEvolutionInstanceRow");
+  });
 });

@@ -21,7 +21,6 @@ import {
   pickEvolutionInstanceInfo,
 } from "@/lib/integrations/evolution-api";
 import {
-  deleteTenantEvolutionInstanceRow,
   getEvolutionInstanceByTenantSlot,
   upsertTenantEvolutionInstance,
 } from "@/lib/server/tenant-evolution-instance-db";
@@ -39,8 +38,8 @@ export const dynamic = "force-dynamic";
 /**
  * POST — cria/reaproveita instância Evolution, configura webhook e devolve QR + estado.
  * GET ?slotIndex= — estado remoto + QR se aplicável.
- * DELETE ?slotIndex= — remove instância na Evolution e a linha somente após
- * prova de ausência remota. Para reset preservando regras, use /reset.
+ * DELETE ?slotIndex= — remove a instância na Evolution após prova de ausência
+ * remota, mas preserva o UUID lógico do slot para não quebrar regras vinculadas.
  */
 export async function POST(request: Request) {
   const session = await getClientSessionFromCookies();
@@ -411,12 +410,25 @@ export async function DELETE(request: Request) {
         { status: 502 },
       );
     }
+    const freshInstanceName = buildFreshEvolutionInstanceName(session.tenantId, slotIndex);
+    let preserved: Awaited<ReturnType<typeof upsertTenantEvolutionInstance>>;
     try {
-      await deleteTenantEvolutionInstanceRow(session.tenantId, slotIndex);
+      preserved = await upsertTenantEvolutionInstance({
+        tenantId: session.tenantId,
+        slotIndex,
+        instanceName: freshInstanceName,
+        connectionState: "close",
+        waJid: null,
+        defaultAgentId: row.default_agent_id,
+      });
     } catch (e) {
-      console.error("[evolution/session] delete row", e);
+      console.error("[evolution/session] preserve logical slot", e);
       return NextResponse.json(
-        { error: "A sessão foi removida da Evolution, mas o registro local não pôde ser removido. Contacte o suporte.", evolutionVerifiedAbsent: true },
+        {
+          error:
+            "A sessão foi removida da Evolution, mas o vínculo lógico não pôde ser preservado. Contacte o suporte antes de reconectar.",
+          evolutionVerifiedAbsent: true,
+        },
         { status: 503 },
       );
     }
@@ -435,6 +447,8 @@ export async function DELETE(request: Request) {
           wa_jid: row.wa_jid ?? null,
           evolution_removed: true,
           evolution_error: null,
+          logical_connection_id: preserved.id,
+          next_instance_name: freshInstanceName,
         },
       });
     } catch (notifyError) {
@@ -447,6 +461,8 @@ export async function DELETE(request: Request) {
       evolutionRemoved: removal.deleted,
       evolutionVerifiedAbsent: removal.verifiedAbsent,
       evolutionError: removal.error,
+      connectionId: preserved.id,
+      instanceName: freshInstanceName,
     });
   }
 
