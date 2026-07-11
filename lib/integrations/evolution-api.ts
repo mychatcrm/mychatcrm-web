@@ -478,14 +478,9 @@ export async function evolutionEnsureWebhook(params: {
 
 export async function evolutionDeleteInstance(instanceName: string): Promise<EvolutionFetchResult<unknown>> {
   const enc = encodeURIComponent(instanceName.trim());
-  // Alguns builds/proxies da Evolution 2.3.x rejeitam DELETE com 400/403/405.
-  // POST é usado apenas como fallback; a ausência ainda é verificada depois.
-  const del = await evolutionFetchJson(`/instance/delete/${enc}`, { method: "DELETE" });
-  if (del.ok || del.status === 404) return del;
-  if (del.status === 400 || del.status === 405 || del.status === 403 || del.status === 0) {
-    return evolutionFetchJson(`/instance/delete/${enc}`, { method: "POST" });
-  }
-  return del;
+  // Evolution 2.3.7 exposes only DELETE for this route. A POST fallback masks
+  // the useful DELETE error with a guaranteed 404 and must not be attempted.
+  return evolutionFetchJson(`/instance/delete/${enc}`, { method: "DELETE" });
 }
 
 export type EvolutionInstancePresence = {
@@ -501,6 +496,7 @@ export type EvolutionRemoveInstanceResult = {
   presence: EvolutionInstancePresence["state"];
   error: string | null;
   status: number | null;
+  deleteAttempts: Array<{ status: number; error: string | null }>;
 };
 
 export async function evolutionGetInstancePresence(
@@ -525,8 +521,8 @@ export async function evolutionGetInstancePresence(
 
 async function verifyEvolutionInstanceAbsent(
   instanceName: string,
+  delays: number[],
 ): Promise<EvolutionInstancePresence> {
-  const delays = [0, 350, 900];
   let last: EvolutionInstancePresence = { state: "unknown", status: null, error: "not_checked" };
   for (const delay of delays) {
     if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
@@ -537,11 +533,19 @@ async function verifyEvolutionInstanceAbsent(
 }
 
 /**
- * Remove instância da Evolution de forma completa: logout (best-effort), delete e verificação.
- * Tenta DELETE e POST como fallback (alguns proxies bloqueiam DELETE).
+ * Removes an Evolution instance and positively verifies its absence.
+ *
+ * Evolution 2.3.7 performs logout and database cleanup inside DELETE. Calling
+ * logout first creates a race, while the cleanup itself can outlive the HTTP
+ * response. The bounded verification window lets the caller return a pending
+ * lifecycle state and safely resume the same operation on the next poll.
  */
 export async function evolutionRemoveInstanceCompletely(
   instanceName: string,
+  options: {
+    verificationDelaysMs?: number[];
+    retryDeleteDelayMs?: number;
+  } = {},
 ): Promise<EvolutionRemoveInstanceResult> {
   const trimmed = instanceName.trim();
   if (!trimmed) {
@@ -552,17 +556,31 @@ export async function evolutionRemoveInstanceCompletely(
       presence: "unknown",
       error: "empty_instance_name",
       status: null,
+      deleteAttempts: [],
     };
   }
 
-  await evolutionLogoutInstance(trimmed).catch(() => null);
+  const verificationDelaysMs = options.verificationDelaysMs ?? [0, 350, 900];
+  const retryDeleteDelayMs = options.retryDeleteDelayMs ?? 500;
+  const deleteAttempts: Array<{ status: number; error: string | null }> = [];
 
   let del = await evolutionDeleteInstance(trimmed);
-  if (!del.ok && del.status !== 404) {
-    del = await evolutionDeleteInstance(trimmed);
+  deleteAttempts.push({ status: del.status, error: del.ok ? null : del.error });
+
+  // A transient 400/404 is not proof of absence in v2.3.7. Retry DELETE once
+  // when the first response failed and the inventory does not prove absence.
+  if (!del.ok) {
+    const immediatePresence = await evolutionGetInstancePresence(trimmed);
+    if (immediatePresence.state !== "absent") {
+      if (retryDeleteDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, retryDeleteDelayMs));
+      }
+      del = await evolutionDeleteInstance(trimmed);
+      deleteAttempts.push({ status: del.status, error: del.ok ? null : del.error });
+    }
   }
 
-  const presence = await verifyEvolutionInstanceAbsent(trimmed);
+  const presence = await verifyEvolutionInstanceAbsent(trimmed, verificationDelaysMs);
   if (presence.state === "absent") {
     return {
       ok: true,
@@ -571,6 +589,7 @@ export async function evolutionRemoveInstanceCompletely(
       presence: "absent",
       error: null,
       status: del.status,
+      deleteAttempts,
     };
   }
 
@@ -590,8 +609,9 @@ export async function evolutionRemoveInstanceCompletely(
       error:
         presence.state === "unknown"
           ? `instance_removal_unverified: ${presence.error ?? del.error}`
-          : del.error,
+          : `${del.error}; instance_still_present_after_delete`,
       status: del.status,
+      deleteAttempts,
     };
   }
 
@@ -605,6 +625,7 @@ export async function evolutionRemoveInstanceCompletely(
         ? `instance_removal_unverified: ${presence.error ?? "inventory_unavailable"}`
         : "instance_still_present_after_delete",
     status: del.status,
+    deleteAttempts,
   };
 }
 

@@ -84,10 +84,12 @@ describe("omnichannel production hardening", () => {
 
   it("preserves the logical WhatsApp connection when a client disconnects", () => {
     const sessionRoute = source("app/api/client/whatsapp/evolution/session/route.ts");
+    const lifecycle = source("lib/server/evolution-slot-lifecycle.ts");
     const deleteHandler = sessionRoute.slice(sessionRoute.indexOf("export async function DELETE"));
 
-    expect(deleteHandler).toContain("upsertTenantEvolutionInstance");
-    expect(deleteHandler).toContain("logical_connection_id: preserved.id");
+    expect(deleteHandler).toContain("removeEvolutionSlotSafely");
+    expect(deleteHandler).toContain("connectionId: lifecycle.row.id");
+    expect(lifecycle).toContain("finalizeTenantEvolutionInstanceRemoval");
     expect(deleteHandler).not.toContain("deleteTenantEvolutionInstanceRow");
   });
 });

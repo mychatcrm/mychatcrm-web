@@ -16,6 +16,10 @@ type SessionJson = {
   error?: string;
   detail?: string;
   phase?: string;
+  operation?: "provisioning" | "deleting" | "resetting";
+  operationPending?: boolean;
+  operationComplete?: boolean;
+  evolutionVerifiedAbsent?: boolean;
 };
 
 type EvolutionStatusJson = {
@@ -100,7 +104,6 @@ export function EvolutionQrSlotPanel({
   resetApiPath = "/api/client/whatsapp/evolution/reset",
   statusApiPath = "/api/client/whatsapp/evolution/status",
   autoProvision = true,
-  strictVerifiedRemoval = false,
   seedQrDataUrl = null,
 }: {
   slotIndex: number;
@@ -120,6 +123,7 @@ export function EvolutionQrSlotPanel({
 }) {
   const { isLight } = usePanelAppearance();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollBusyRef = useRef(false);
   const qrReceivedAtRef = useRef<number | null>(null);
   const prevQrFingerprintRef = useRef<string | null>(null);
   const imgAltId = useId();
@@ -218,12 +222,26 @@ export function EvolutionQrSlotPanel({
   }, []);
 
   const refresh = useCallback(async () => {
-    const res = await fetch(`${sessionApiPath}?slotIndex=${slotIndex}`, {
-      credentials: "same-origin",
-    });
-    const j = await readSessionJson(res);
-    applySessionPayload(res, j);
-    if ((j.connectionState ?? "") === "open") clearPoll();
+    if (pollBusyRef.current) return;
+    pollBusyRef.current = true;
+    try {
+      const res = await fetch(`${sessionApiPath}?slotIndex=${slotIndex}`, {
+        credentials: "same-origin",
+      });
+      const j = await readSessionJson(res);
+      applySessionPayload(res, j);
+      if ((j.connectionState ?? "") === "open") clearPoll();
+      if (j.operationComplete || (j.connectionState === "none" && j.evolutionVerifiedAbsent)) {
+        setConnectionState("none");
+        setQrDataUrl(null);
+        setPairingCode(null);
+        setWaJid(null);
+        setManuallyDisconnected(true);
+        clearPoll();
+      }
+    } finally {
+      pollBusyRef.current = false;
+    }
   }, [applySessionPayload, clearPoll, sessionApiPath, slotIndex]);
 
   const startOrRefreshSession = useCallback(async () => {
@@ -263,6 +281,11 @@ export function EvolutionQrSlotPanel({
         credentials: "same-origin",
       });
       const json = (await res.json().catch(() => ({}))) as {
+        operationPending?: boolean;
+        operation?: "deleting" | "resetting";
+        connectionState?: string;
+        instanceName?: string | null;
+        waJid?: string | null;
         evolutionVerifiedAbsent?: boolean;
         evolutionRemoved?: boolean;
         evolutionError?: string | null;
@@ -275,6 +298,12 @@ export function EvolutionQrSlotPanel({
             ? "Não foi possível confirmar a exclusão. Tente novamente."
             : deleteWarning,
         );
+        return;
+      } else if (json.operationPending) {
+        setConnectionState(json.connectionState ?? json.operation ?? "deleting");
+        if (typeof json.instanceName === "string") setInstanceName(json.instanceName);
+        if (json.waJid) setWaJid(json.waJid);
+        setManuallyDisconnected(false);
         return;
       } else {
         const verifiedAbsent = json.evolutionVerifiedAbsent ?? json.evolutionRemoved ?? true;
@@ -303,7 +332,7 @@ export function EvolutionQrSlotPanel({
     } finally {
       setDisconnecting(false);
     }
-  }, [slotIndex, sessionApiPath, strictVerifiedRemoval]);
+  }, [slotIndex, sessionApiPath]);
 
   const handleReset = useCallback(async () => {
     if (
@@ -325,10 +354,25 @@ export function EvolutionQrSlotPanel({
       });
       const json = (await res.json().catch(() => ({}))) as {
         instanceName?: string | null;
+        operationPending?: boolean;
+        operation?: "deleting" | "resetting";
+        connectionState?: string;
+        waJid?: string | null;
         evolutionVerifiedAbsent?: boolean;
         error?: string;
       };
-      if (!res.ok || json.evolutionVerifiedAbsent !== true) {
+      if (!res.ok) {
+        setError(json.error ?? "Não foi possível confirmar o reset da conexão. Tente novamente.");
+        return;
+      }
+      if (json.operationPending) {
+        setConnectionState(json.connectionState ?? json.operation ?? "resetting");
+        if (typeof json.instanceName === "string") setInstanceName(json.instanceName);
+        if (json.waJid) setWaJid(json.waJid);
+        setManuallyDisconnected(false);
+        return;
+      }
+      if (json.evolutionVerifiedAbsent !== true) {
         setError(json.error ?? "Não foi possível confirmar o reset da conexão. Tente novamente.");
         return;
       }
@@ -385,7 +429,8 @@ export function EvolutionQrSlotPanel({
       if (cancelled) return;
       const st = j.connectionState ?? "";
       const hasQr = Boolean(j.qrDataUrl);
-      if (autoProvision && res.ok && (st === "none" || (!hasQr && st !== "open"))) {
+      const lifecycleActive = st === "provisioning" || st === "deleting" || st === "resetting";
+      if (autoProvision && res.ok && !lifecycleActive && (st === "none" || (!hasQr && st !== "open"))) {
         await startOrRefreshSession();
       }
     })();
@@ -416,6 +461,7 @@ export function EvolutionQrSlotPanel({
     connectionState !== "open" &&
     connectionState !== "provisioning" &&
     connectionState !== "deleting" &&
+    connectionState !== "resetting" &&
     !qrDataUrl &&
     !busy &&
     !error;
@@ -426,6 +472,11 @@ export function EvolutionQrSlotPanel({
       : qrSecondsLeft > 15
         ? "text-amber-500 dark:text-amber-400"
         : "text-rose-600 dark:text-rose-400";
+
+  const lifecyclePending =
+    connectionState === "deleting" ||
+    connectionState === "resetting" ||
+    connectionState === "provisioning";
 
   // ── CONNECTED STATE ───────────────────────────────────────────────────────
   if (connectionState === "open") {
@@ -545,6 +596,18 @@ export function EvolutionQrSlotPanel({
               Conectar (gerar QR)
             </Button>
           </div>
+        </div>
+      ) : null}
+
+      {lifecyclePending ? (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/[0.08] px-4 py-5 text-center">
+          <Loader2 className="mx-auto size-6 animate-spin text-amber-500" aria-hidden />
+          <p className="mt-2 text-sm font-semibold text-content">
+            {connectionState === "provisioning" ? "Preparando conexão" : "Removendo conexão antiga"}
+          </p>
+          <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-content-muted">
+            A Evolution está concluindo a operação com segurança. Não feche nem tente criar outra conexão neste slot.
+          </p>
         </div>
       ) : null}
 
@@ -745,7 +808,7 @@ export function EvolutionQrSlotPanel({
       ) : null}
 
       {/* ── Action buttons (hidden while loading or when Connect CTA is shown) ── */}
-      {!busy && !showConnectCta ? (
+      {!busy && !showConnectCta && !lifecyclePending ? (
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"

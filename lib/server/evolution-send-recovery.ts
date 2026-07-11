@@ -5,6 +5,10 @@ import {
   isEvolutionConnectionClosedError,
   pickEvolutionInstanceInfo,
 } from "@/lib/integrations/evolution-api";
+import {
+  getEvolutionInstanceByName,
+  isEvolutionLifecycleState,
+} from "@/lib/server/tenant-evolution-instance-db";
 
 type SendTextParams = Parameters<typeof evolutionSendText>[0];
 type SendTextResult = Awaited<ReturnType<typeof evolutionSendText>>;
@@ -22,6 +26,19 @@ function sleep(ms: number): Promise<void> {
 const RECOVERY_POLL_ATTEMPTS = 6;
 const RECOVERY_POLL_INTERVAL_MS = 2_000;
 
+async function readLifecycleLock(instanceName: string): Promise<"locked" | "unlocked" | "unknown"> {
+  try {
+    const row = await getEvolutionInstanceByName(instanceName);
+    return isEvolutionLifecycleState(row?.connection_state) ? "locked" : "unlocked";
+  } catch (error) {
+    console.warn("[evolution-send-recovery] lifecycle_lookup_failed", {
+      instance_name: instanceName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return "unknown";
+  }
+}
+
 /**
  * Retries only the explicit Evolution "Connection Closed" failure. The retry
  * happens after a successful restart and a positive inventory check, avoiding
@@ -30,12 +47,41 @@ const RECOVERY_POLL_INTERVAL_MS = 2_000;
 export async function sendEvolutionTextWithConnectionRecovery(
   params: SendTextParams,
 ): Promise<EvolutionRecoveredSendResult> {
+  const lifecycleBeforeSend = await readLifecycleLock(params.instanceName);
+  if (lifecycleBeforeSend === "locked") {
+    return {
+      ok: false,
+      status: 409,
+      error: "evolution_lifecycle_operation_in_progress",
+      attempts: 0,
+      recoveryAttempted: false,
+      restarted: false,
+    };
+  }
+
   const first = await evolutionSendText(params);
   if (first.ok || !isEvolutionConnectionClosedError(first.error)) {
     return {
       ...first,
       attempts: 1,
       recoveryAttempted: false,
+      restarted: false,
+    };
+  }
+
+  // Never revive an instance after a disconnect/reset acquired the slot lock.
+  // If the database cannot confirm the lock state, fail closed for restart.
+  const lifecycleBeforeRestart = await readLifecycleLock(params.instanceName);
+  if (lifecycleBeforeRestart !== "unlocked") {
+    return {
+      ok: false,
+      status: 409,
+      error:
+        lifecycleBeforeRestart === "locked"
+          ? "evolution_lifecycle_operation_in_progress"
+          : "evolution_lifecycle_state_unavailable",
+      attempts: 1,
+      recoveryAttempted: true,
       restarted: false,
     };
   }

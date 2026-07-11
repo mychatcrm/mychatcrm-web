@@ -497,6 +497,7 @@ export async function POST(request: Request) {
             instanceName,
             connectionState: confirmedState,
             waJid: confirmedWaJid ?? undefined,
+            preserveLifecycle: true,
           });
           if (
             previousRow &&

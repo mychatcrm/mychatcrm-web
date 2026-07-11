@@ -12,6 +12,13 @@ export type TenantEvolutionInstanceRow = {
   updated_at: string;
 };
 
+export const EVOLUTION_LIFECYCLE_STATES = ["provisioning", "deleting", "resetting"] as const;
+export type EvolutionLifecycleState = (typeof EVOLUTION_LIFECYCLE_STATES)[number];
+
+export function isEvolutionLifecycleState(value: string | null | undefined): value is EvolutionLifecycleState {
+  return EVOLUTION_LIFECYCLE_STATES.includes(value as EvolutionLifecycleState);
+}
+
 export async function getEvolutionInstanceByTenantSlot(
   tenantId: string,
   slotIndex: number,
@@ -144,10 +151,68 @@ export async function finalizeTenantEvolutionInstanceReservation(params: {
   return data as TenantEvolutionInstanceRow;
 }
 
+/** Atomically claims an existing tenant/slot row for one lifecycle operation. */
+export async function claimTenantEvolutionInstanceLifecycle(params: {
+  tenantId: string;
+  slotIndex: number;
+  instanceName: string;
+  expectedConnectionState: string;
+  expectedUpdatedAt?: string;
+  lifecycleState: EvolutionLifecycleState;
+}): Promise<TenantEvolutionInstanceRow | null> {
+  const sb = createSupabaseServiceClient();
+  let query = sb
+    .from("tenant_evolution_instances")
+    .update({
+      connection_state: params.lifecycleState,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("tenant_id", params.tenantId)
+    .eq("slot_index", params.slotIndex)
+    .eq("instance_name", params.instanceName)
+    .eq("connection_state", params.expectedConnectionState);
+  if (params.expectedUpdatedAt) query = query.eq("updated_at", params.expectedUpdatedAt);
+  const { data, error } = await query.select("*").maybeSingle();
+  if (error) throw new Error(`[tenant-evolution-instance-db] claim lifecycle: ${error.message}`);
+  return (data as TenantEvolutionInstanceRow) ?? null;
+}
+
+/**
+ * Completes a verified remote removal while preserving the logical row UUID.
+ * The lifecycle state and old instance name form the compare-and-set guard.
+ */
+export async function finalizeTenantEvolutionInstanceRemoval(params: {
+  tenantId: string;
+  slotIndex: number;
+  previousInstanceName: string;
+  lifecycleState: Extract<EvolutionLifecycleState, "deleting" | "resetting">;
+  nextInstanceName: string;
+}): Promise<TenantEvolutionInstanceRow | null> {
+  const sb = createSupabaseServiceClient();
+  const { data, error } = await sb
+    .from("tenant_evolution_instances")
+    .update({
+      instance_name: params.nextInstanceName,
+      connection_state: "close",
+      wa_jid: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("tenant_id", params.tenantId)
+    .eq("slot_index", params.slotIndex)
+    .eq("instance_name", params.previousInstanceName)
+    .eq("connection_state", params.lifecycleState)
+    .select("*")
+    .maybeSingle();
+  if (error) throw new Error(`[tenant-evolution-instance-db] finalize removal: ${error.message}`);
+  return (data as TenantEvolutionInstanceRow) ?? null;
+}
+
 export async function updateEvolutionInstanceStateByName(params: {
   instanceName: string;
   connectionState: string;
   waJid?: string | null;
+  /** Ignore remote status events while a local delete/reset/provision operation owns the slot. */
+  preserveLifecycle?: boolean;
 }): Promise<void> {
   const sb = createSupabaseServiceClient();
   const patch: Record<string, unknown> = {
@@ -155,7 +220,11 @@ export async function updateEvolutionInstanceStateByName(params: {
     updated_at: new Date().toISOString(),
   };
   if (params.waJid !== undefined) patch.wa_jid = params.waJid;
-  const { error } = await sb.from("tenant_evolution_instances").update(patch).eq("instance_name", params.instanceName);
+  let query = sb.from("tenant_evolution_instances").update(patch).eq("instance_name", params.instanceName);
+  if (params.preserveLifecycle && !isEvolutionLifecycleState(params.connectionState)) {
+    query = query.not("connection_state", "in", `(${EVOLUTION_LIFECYCLE_STATES.join(",")})`);
+  }
+  const { error } = await query;
   if (error) throw new Error(`[tenant-evolution-instance-db] update state: ${error.message}`);
 }
 

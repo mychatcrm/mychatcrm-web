@@ -2,12 +2,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   evolutionFetchInstancesMock,
+  getEvolutionInstanceByNameMock,
   evolutionRestartInstanceMock,
   evolutionSendTextMock,
 } = vi.hoisted(() => ({
   evolutionFetchInstancesMock: vi.fn(),
+  getEvolutionInstanceByNameMock: vi.fn(),
   evolutionRestartInstanceMock: vi.fn(),
   evolutionSendTextMock: vi.fn(),
+}));
+
+vi.mock("@/lib/server/tenant-evolution-instance-db", () => ({
+  getEvolutionInstanceByName: getEvolutionInstanceByNameMock,
+  isEvolutionLifecycleState: (state: string | null | undefined) =>
+    state === "provisioning" || state === "deleting" || state === "resetting",
 }));
 
 vi.mock("@/lib/integrations/evolution-api", () => ({
@@ -34,6 +42,7 @@ describe("sendEvolutionTextWithConnectionRecovery", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
+    getEvolutionInstanceByNameMock.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -48,6 +57,32 @@ describe("sendEvolutionTextWithConnectionRecovery", () => {
     expect(result.ok).toBe(true);
     expect(result.attempts).toBe(1);
     expect(result.recoveryAttempted).toBe(false);
+    expect(evolutionRestartInstanceMock).not.toHaveBeenCalled();
+  });
+
+  it("does not send or restart while the slot is being deleted", async () => {
+    getEvolutionInstanceByNameMock.mockResolvedValue({ connection_state: "deleting" });
+
+    const result = await sendEvolutionTextWithConnectionRecovery(params);
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("evolution_lifecycle_operation_in_progress");
+    expect(result.attempts).toBe(0);
+    expect(evolutionSendTextMock).not.toHaveBeenCalled();
+    expect(evolutionRestartInstanceMock).not.toHaveBeenCalled();
+  });
+
+  it("does not restart when a delete lock is acquired after the first send fails", async () => {
+    getEvolutionInstanceByNameMock
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ connection_state: "resetting" });
+    evolutionSendTextMock.mockResolvedValue({ ok: false, status: 500, error: "Connection Closed" });
+
+    const result = await sendEvolutionTextWithConnectionRecovery(params);
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("evolution_lifecycle_operation_in_progress");
+    expect(result.attempts).toBe(1);
     expect(evolutionRestartInstanceMock).not.toHaveBeenCalled();
   });
 

@@ -8,6 +8,7 @@ import {
 import {
   getEvolutionInstanceByIdForTenant,
   getEvolutionInstanceByName,
+  isEvolutionLifecycleState,
   type TenantEvolutionInstanceRow,
   upsertTenantEvolutionInstance,
 } from "@/lib/server/tenant-evolution-instance-db";
@@ -27,6 +28,7 @@ export type LiveEvolutionConnectionResolution =
         | "connection_not_open"
         | "ambiguous_connected_siblings"
         | "connected_sibling_already_bound"
+        | "lifecycle_operation_in_progress"
         | "reconciliation_failed";
     };
 
@@ -48,6 +50,10 @@ function isConnected(info: EvolutionInstanceInfo): info is EvolutionInstanceInfo
 export async function reconcileLiveEvolutionInstance(
   row: TenantEvolutionInstanceRow,
 ): Promise<LiveEvolutionConnectionResolution> {
+  if (isEvolutionLifecycleState(row.connection_state)) {
+    return { ok: false, instance: row, reason: "lifecycle_operation_in_progress" };
+  }
+
   const inventory = await evolutionFetchInstances();
   if (!inventory.ok) {
     return { ok: false, instance: row, reason: "inventory_unavailable" };

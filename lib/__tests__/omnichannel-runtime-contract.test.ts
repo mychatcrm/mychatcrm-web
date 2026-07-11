@@ -171,7 +171,10 @@ describe("omnichannel runtime contracts", () => {
     // that re-verifies via fetchInstances before accepting a transition away from open.
     const pollSource = source("app/api/client/whatsapp/evolution/session/route.ts");
     const reverseCheckComment = pollSource.indexOf("Reverse zombie check");
-    const pollDisconnectBlock = pollSource.indexOf("notifyTenantIntegrationDisconnected({");
+    const pollDisconnectBlock = pollSource.indexOf(
+      "notifyTenantIntegrationDisconnected({",
+      reverseCheckComment,
+    );
     expect(reverseCheckComment).toBeGreaterThan(0);
     expect(reverseCheckComment).toBeLessThan(pollDisconnectBlock);
   });

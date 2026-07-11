@@ -6,14 +6,12 @@ import {
 } from "@/lib/integrations/evolution-connect-qr";
 import { buildEvolutionWebhookUrl, getPublicBaseUrlFromRequest } from "@/lib/integrations/evolution-webhook-url";
 import {
-  buildEvolutionInstanceName,
   buildFreshEvolutionInstanceName,
   evolutionConnectionState,
   evolutionCreateInstance,
   evolutionEnsureWebhook,
   evolutionFetchInstances,
   evolutionInstanceConnect,
-  evolutionRemoveInstanceCompletely,
   evolutionSetWebhook,
   isEvolutionApiConfigured,
   normalizeEvolutionConnectionState,
@@ -22,9 +20,14 @@ import {
 } from "@/lib/integrations/evolution-api";
 import {
   getEvolutionInstanceByTenantSlot,
+  isEvolutionLifecycleState,
   upsertTenantEvolutionInstance,
 } from "@/lib/server/tenant-evolution-instance-db";
 import { reconcileLiveEvolutionInstance } from "@/lib/server/evolution-instance-reconciliation";
+import {
+  removeEvolutionSlotSafely,
+  type EvolutionSlotRemovalResult,
+} from "@/lib/server/evolution-slot-lifecycle";
 import {
   notifyTenantIntegrationConnected,
   notifyTenantIntegrationDisconnected,
@@ -35,6 +38,7 @@ import { assertSlotIndexAllowed } from "@/lib/server/whatsapp-slot-server";
 import { getExtraWhatsappSlots } from "@/lib/server/whatsapp-extra-slots-db";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 /**
  * POST — cria/reaproveita instância Evolution, configura webhook e devolve QR + estado.
@@ -42,6 +46,57 @@ export const dynamic = "force-dynamic";
  * DELETE ?slotIndex= — remove a instância na Evolution após prova de ausência
  * remota, mas preserva o UUID lógico do slot para não quebrar regras vinculadas.
  */
+async function notifyCompletedSlotRemoval(
+  tenantId: string,
+  slotIndex: number,
+  result: Extract<EvolutionSlotRemovalResult, { state: "complete" }>,
+): Promise<void> {
+  if (!result.finalized) return;
+  try {
+    await notifyTenantIntegrationDisconnected({
+      tenantId,
+      integration: "whatsapp",
+      source:
+        result.operation === "resetting"
+          ? "evolution_session_reset"
+          : "evolution_session_manual_delete",
+      sourceKey: result.previousInstanceName,
+      instanceName: result.previousInstanceName,
+      state: result.operation === "resetting" ? "reset" : "deleted",
+      previousState: "open",
+      manual: true,
+      metadata: {
+        slot_index: slotIndex,
+        wa_jid: result.previousWaJid,
+        evolution_removed: true,
+        logical_connection_id: result.row.id,
+        next_instance_name: result.row.instance_name,
+      },
+    });
+  } catch (error) {
+    console.warn("[evolution/session] lifecycle notification failed", error);
+  }
+}
+
+function pendingRemovalResponse(result: Extract<EvolutionSlotRemovalResult, { state: "pending" }>) {
+  return NextResponse.json(
+    {
+      ok: true,
+      operationPending: true,
+      operation: result.operation,
+      connectionState: result.operation,
+      instanceName: result.row.instance_name,
+      waJid: result.row.wa_jid,
+      qrDataUrl: null,
+      pairingCode: null,
+      evolutionVerifiedAbsent: false,
+      evolutionPresence: result.presence,
+      evolutionError: result.error,
+    },
+    { status: 202 },
+  );
+}
+
 export async function POST(request: Request) {
   const session = await getClientSessionFromCookies();
   if (!session) {
@@ -68,6 +123,18 @@ export async function POST(request: Request) {
   }
 
   let existingRow = await getEvolutionInstanceByTenantSlot(session.tenantId, slotIndex);
+  if (existingRow && isEvolutionLifecycleState(existingRow.connection_state)) {
+    return NextResponse.json(
+      {
+        error: "A conexão já possui uma operação em andamento. Aguarde a conclusão antes de conectar novamente.",
+        operationPending: true,
+        operation: existingRow.connection_state,
+        connectionState: existingRow.connection_state,
+        instanceName: existingRow.instance_name,
+      },
+      { status: 409 },
+    );
+  }
   if (existingRow) {
     const liveConnection = await reconcileLiveEvolutionInstance(existingRow);
     if (liveConnection.ok) existingRow = liveConnection.instance;
@@ -218,6 +285,65 @@ export async function GET(request: Request) {
       pairingCode: null as string | null,
       waJid: null as string | null,
     });
+  }
+
+  if (row.connection_state === "deleting" || row.connection_state === "resetting") {
+    const lifecycle = await removeEvolutionSlotSafely({
+      tenantId: session.tenantId,
+      slotIndex,
+      mode: row.connection_state,
+    });
+    if (lifecycle.state === "pending") return pendingRemovalResponse(lifecycle);
+    if (lifecycle.state === "complete") {
+      await notifyCompletedSlotRemoval(session.tenantId, slotIndex, lifecycle);
+      return NextResponse.json({
+        ok: true,
+        operationComplete: true,
+        operation: lifecycle.operation,
+        connectionState: "none",
+        instanceName: lifecycle.row.instance_name,
+        waJid: null,
+        qrDataUrl: null,
+        pairingCode: null,
+        evolutionVerifiedAbsent: true,
+      });
+    }
+    if (lifecycle.state === "missing") {
+      return NextResponse.json({
+        ok: true,
+        operationComplete: true,
+        connectionState: "none",
+        instanceName: null,
+        waJid: null,
+        qrDataUrl: null,
+        pairingCode: null,
+        evolutionVerifiedAbsent: true,
+      });
+    }
+    return NextResponse.json(
+      {
+        error: "Outra operação desta conexão ainda está em andamento.",
+        operationPending: true,
+        connectionState: lifecycle.row.connection_state,
+        instanceName: lifecycle.row.instance_name,
+      },
+      { status: 409 },
+    );
+  }
+  if (row.connection_state === "provisioning") {
+    return NextResponse.json(
+      {
+        ok: true,
+        operationPending: true,
+        operation: "provisioning",
+        connectionState: "provisioning",
+        instanceName: row.instance_name,
+        waJid: row.wa_jid,
+        qrDataUrl: null,
+        pairingCode: null,
+      },
+      { status: 202 },
+    );
   }
 
   const liveConnection = await reconcileLiveEvolutionInstance(row);
@@ -405,74 +531,43 @@ export async function DELETE(request: Request) {
     console.error("[evolution/session] DELETE select slot", msg);
     return NextResponse.json({ error: "Erro interno ao consultar instância." }, { status: 503 });
   }
-  if (row) {
-    const removal = await evolutionRemoveInstanceCompletely(row.instance_name);
-    if (!removal.verifiedAbsent) {
-      console.warn("[evolution/session] delete instance unverified", removal.status, removal.error);
-      return NextResponse.json(
-        {
-          error: "Não foi possível confirmar a exclusão da instância na Evolution. A conexão foi mantida para evitar inconsistências.",
-          evolutionVerifiedAbsent: false,
-          evolutionError: removal.error,
-        },
-        { status: 502 },
-      );
-    }
-    const freshInstanceName = buildFreshEvolutionInstanceName(session.tenantId, slotIndex);
-    let preserved: Awaited<ReturnType<typeof upsertTenantEvolutionInstance>>;
-    try {
-      preserved = await upsertTenantEvolutionInstance({
-        tenantId: session.tenantId,
-        slotIndex,
-        instanceName: freshInstanceName,
-        connectionState: "close",
-        waJid: null,
-        defaultAgentId: row.default_agent_id,
-      });
-    } catch (e) {
-      console.error("[evolution/session] preserve logical slot", e);
-      return NextResponse.json(
-        {
-          error:
-            "A sessão foi removida da Evolution, mas o vínculo lógico não pôde ser preservado. Contacte o suporte antes de reconectar.",
-          evolutionVerifiedAbsent: true,
-        },
-        { status: 503 },
-      );
-    }
-    try {
-      await notifyTenantIntegrationDisconnected({
-        tenantId: session.tenantId,
-        integration: "whatsapp",
-        source: "evolution_session_manual_delete",
-        sourceKey: row.instance_name,
-        instanceName: row.instance_name,
-        state: "deleted",
-        previousState: row.connection_state,
-        manual: true,
-        metadata: {
-          slot_index: slotIndex,
-          wa_jid: row.wa_jid ?? null,
-          evolution_removed: true,
-          evolution_error: null,
-          logical_connection_id: preserved.id,
-          next_instance_name: freshInstanceName,
-        },
-      });
-    } catch (notifyError) {
-      console.warn("[evolution/session] manual disconnect notification failed", notifyError);
-    }
-
-    return NextResponse.json({
-      ok: true,
-      deletedInstance: row.instance_name,
-      evolutionRemoved: removal.deleted,
-      evolutionVerifiedAbsent: removal.verifiedAbsent,
-      evolutionError: removal.error,
-      connectionId: preserved.id,
-      instanceName: freshInstanceName,
-    });
+  if (!row) {
+    return NextResponse.json({ ok: true, deletedInstance: null, evolutionVerifiedAbsent: true });
   }
 
-  return NextResponse.json({ ok: true, deletedInstance: null, evolutionVerifiedAbsent: true });
+  const lifecycle = await removeEvolutionSlotSafely({
+    tenantId: session.tenantId,
+    slotIndex,
+    mode: "deleting",
+  });
+  if (lifecycle.state === "pending") return pendingRemovalResponse(lifecycle);
+  if (lifecycle.state === "busy") {
+    return NextResponse.json(
+      {
+        error: "Outra operação desta conexão ainda está em andamento.",
+        operationPending: true,
+        operation: lifecycle.operation,
+        connectionState: lifecycle.row.connection_state,
+        instanceName: lifecycle.row.instance_name,
+      },
+      { status: 409 },
+    );
+  }
+  if (lifecycle.state === "missing") {
+    return NextResponse.json({ ok: true, deletedInstance: null, evolutionVerifiedAbsent: true });
+  }
+
+  await notifyCompletedSlotRemoval(session.tenantId, slotIndex, lifecycle);
+  return NextResponse.json({
+    ok: true,
+    operationComplete: true,
+    operation: lifecycle.operation,
+    deletedInstance: lifecycle.previousInstanceName,
+    evolutionRemoved: true,
+    evolutionVerifiedAbsent: true,
+    evolutionError: null,
+    connectionId: lifecycle.row.id,
+    instanceName: lifecycle.row.instance_name,
+    connectionState: "none",
+  });
 }

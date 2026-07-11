@@ -20,6 +20,8 @@ vi.mock("@/lib/integrations/evolution-api", () => ({
 vi.mock("@/lib/server/tenant-evolution-instance-db", () => ({
   getEvolutionInstanceByIdForTenant: getEvolutionInstanceByIdForTenantMock,
   getEvolutionInstanceByName: getEvolutionInstanceByNameMock,
+  isEvolutionLifecycleState: (state: string | null | undefined) =>
+    state === "provisioning" || state === "deleting" || state === "resetting",
   upsertTenantEvolutionInstance: upsertTenantEvolutionInstanceMock,
 }));
 
@@ -66,6 +68,18 @@ describe("reconcileLiveEvolutionInstance", () => {
     const result = await reconcileLiveEvolutionInstance(row);
 
     expect(result).toEqual({ ok: true, instance: row, adoptedSibling: false });
+    expect(upsertTenantEvolutionInstanceMock).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh or adopt instances while the slot lifecycle is locked", async () => {
+    const result = await reconcileLiveEvolutionInstance({ ...row, connection_state: "deleting" });
+
+    expect(result).toEqual({
+      ok: false,
+      instance: { ...row, connection_state: "deleting" },
+      reason: "lifecycle_operation_in_progress",
+    });
+    expect(evolutionFetchInstancesMock).not.toHaveBeenCalled();
     expect(upsertTenantEvolutionInstanceMock).not.toHaveBeenCalled();
   });
 
