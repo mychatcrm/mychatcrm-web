@@ -548,11 +548,15 @@ export async function tryProcessAgentResponseJob(
   const claimedGeneration = job.burst_generation;
 
   try {
+    // journeyId do próprio job é obrigatório aqui: sem ele, com isolamento de
+    // jornadas ligado (produção), a revalidação devolve "missing_active_journey"
+    // e cancela TODO job — o agente ficava mudo depois da resposta do lead.
     const eligible = await shouldScheduleAgentResponse({
       sb: client,
       tenantId: job.tenant_id,
       remoteJid: job.remote_jid,
       agentId: job.agent_id,
+      journeyId: job.journey_id,
     });
     if (!eligible.ok) {
       await client
