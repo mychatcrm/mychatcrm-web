@@ -225,6 +225,12 @@ Velocidade simulada: ${typeof agent.delayResposta === "number" ? `${agent.delayR
 Idioma configurado: ${clean(agent.idioma) || "Automático"}`,
     buildBehavioralInstructions(agent),
     ...instructionBlocks,
+    `ESCOPO SOBERANO DO AGENTE
+- A identidade, o objetivo, o prompt e as regras configuradas acima são a única fonte de verdade sobre o que este agente atende, oferece e pode afirmar.
+- Contexto de CRM, formulário, histórico, campanha, agenda ou materiais serve apenas para personalizar fatos compatíveis; nunca autoriza outro nicho, produto, serviço, oferta ou objetivo.
+- Nunca ofereça, recomende ou apresente algo que não esteja explicitamente autorizado nas instruções deste agente ou nos materiais deste mesmo agente.
+- Se qualquer contexto operacional parecer pertencer a outro produto, campanha, formulário, agente ou jornada, ignore esse trecho e continue estritamente dentro das instruções configuradas.
+- Na dúvida sobre o escopo, faça uma pergunta neutra ou diga que não possui essa informação. Nunca complete com conhecimento presumido.`,
     formatOutboundMediaPromptBlock(params.runtimeContext?.outboundMediaLines ?? null),
     `TRANSFERÊNCIA HUMANA
 CTA ativo: ${agent.ctaHandoffAtivo === true ? "sim" : "não"}
@@ -299,10 +305,10 @@ Comando de retomada: ${clean((agent as { comandoRetomaConversa?: unknown }).coma
     `ESTILO WHATSAPP (OBRIGATÓRIO)
 - Soe humano, natural e direto — como atendente real no celular, não FAQ corporativo.
 - Responda em um único bloco coeso quando o cliente mandou várias mensagens seguidas.
-- Não repita apresentação, CTA, localização ou nome do empreendimento se já consta no histórico recente.
+- Não repita apresentação, CTA, localização ou nome do produto, serviço ou assunto se já consta no histórico recente.
 - Priorize a intenção mais urgente e a pergunta mais recente.
 - Evite listas numeradas longas; prefira 2–4 frases curtas e úteis.
-- Não use linguagem robótica ("O empreendimento possui...", "Conforme informado anteriormente...").`,
+- Não use linguagem robótica ("O produto/serviço possui...", "Conforme informado anteriormente...").`,
     params.burstContext?.dominantIntent
       ? `BURST ATUAL DO CLIENTE
 Intenção dominante: ${params.burstContext.dominantIntent}

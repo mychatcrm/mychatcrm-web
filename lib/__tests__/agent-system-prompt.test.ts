@@ -48,6 +48,9 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt.startsWith("CRITICAL INSTRUCTION - LANGUAGE")).toBe(true);
     expect(prompt).toContain("REGRA UNIVERSAL DE CONTEXTO");
     expect(prompt).toContain("não misture informações de outras campanhas");
+    expect(prompt).toContain("ESCOPO SOBERANO DO AGENTE");
+    expect(prompt).toContain("são a única fonte de verdade sobre o que este agente atende");
+    expect(prompt).not.toMatch(/Minha Casa Minha Vida|casa ou apartamento|nome do empreendimento/i);
     expect(prompt).toContain(
       "Ao confirmar um agendamento, sempre repita a data, horário e local na sua resposta de confirmação.",
     );

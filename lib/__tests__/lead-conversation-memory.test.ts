@@ -3,6 +3,7 @@ import {
   buildCondensedMemoryContext,
   buildRecognitionHint,
   daysSince,
+  isolateLeadContextForJourney,
 } from "@/lib/server/lead-conversation-memory";
 import { isConversationVisibleInInbox } from "@/lib/server/conversation-visibility";
 
@@ -93,6 +94,40 @@ describe("lead conversation memory", () => {
     const days = daysSince(new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString());
     expect(days).toBeGreaterThanOrEqual(9);
     expect(days).toBeLessThanOrEqual(11);
+  });
+
+  it("isolates global CRM narrative when a new journey is explicit", () => {
+    const isolated = isolateLeadContextForJourney(
+      {
+        id: "lead-1",
+        name: "Sofia",
+        phone: "5562999999999",
+        source: "lead_ads",
+        status: "novo",
+        crmFunnelId: "funil-1",
+        notes: "Oferta antiga de outro produto",
+        agentId: "agent-new",
+        aiSummary: "Cliente queria comprar outro produto",
+        leadTemperature: "quente",
+        suggestedNextAction: "Enviar oferta antiga",
+        profileMetadata: { form_fields: [{ label: "Interesse antigo", value: "Outro produto" }] },
+      },
+      "journey-new",
+      {
+        source: "lead_ads",
+        form_fields: [{ key: "nome", label: "Nome", value: "Sofia" }],
+      },
+    );
+
+    expect(isolated?.name).toBe("Sofia");
+    expect(isolated?.crmFunnelId).toBe("funil-1");
+    expect(isolated?.notes).toBeNull();
+    expect(isolated?.aiSummary).toBeNull();
+    expect(isolated?.suggestedNextAction).toBeNull();
+    expect(isolated?.profileMetadata).toEqual({
+      source: "lead_ads",
+      form_fields: [{ key: "nome", label: "Nome", value: "Sofia" }],
+    });
   });
 });
 

@@ -110,6 +110,11 @@ export function collectKnownFormFieldRows(meta: ParsedMetaLeadProfile | null): L
   return [...byLabel.values()];
 }
 
+type MetaFormPromptOptions = {
+  /** No primeiro contacto, use somente a submissao que originou a jornada atual. */
+  includeSubmissionHistory?: boolean;
+};
+
 /** Exibição CRM: nome da Meta → ID → travessão. */
 export function formatMetaAttributionLabel(
   name?: string | null,
@@ -165,11 +170,15 @@ export function buildMetaFormAttributionLines(meta: ParsedMetaLeadProfile | null
 
 export function buildMetaFormKnownFactsPromptBlock(
   profileMetadata: Record<string, unknown> | ParsedMetaLeadProfile | null | undefined,
+  options?: MetaFormPromptOptions,
 ): string | null {
   const meta = parseMetaLeadProfileMetadata(profileMetadata ?? null);
   if (!meta) return null;
 
-  const fields = collectKnownFormFieldRows(meta);
+  const fields =
+    options?.includeSubmissionHistory === false
+      ? meta.form_fields
+      : collectKnownFormFieldRows(meta);
   if (fields.length === 0 && !meta.meta_form_name) return null;
 
   const answeredLabels = fields.map((f) => f.label);
@@ -178,8 +187,10 @@ export function buildMetaFormKnownFactsPromptBlock(
   const blocks = [
     "DADOS JÁ INFORMADOS PELO LEAD NO FORMULÁRIO META (MEMÓRIA OBRIGATÓRIA)",
     "Regra crítica: tudo listado abaixo já foi preenchido pelo lead no formulário. NUNCA pergunte de novo nenhum desses itens.",
-    "Exemplos do que NÃO pode repetir como pergunta: nome, telefone, e-mail, renda, interesse, tipo de imóvel, bairro, faixa de preço, Minha Casa Minha Vida, casa ou apartamento, motivo da compra, ou qualquer campo listado.",
-    "Use os dados para continuar a conversa de forma personalizada, como quem já leu o formulário.",
+    "Use SOMENTE os campos realmente listados abaixo como fatos desta submissão.",
+    "Esses dados servem para personalizar o atendimento, mas nunca ampliam ou substituem o nicho, produto, serviço, objetivo ou regras configuradas no agente.",
+    "Nunca deduza uma oferta, intenção de compra, segmento ou produto a partir do nome da página, do formulário, de exemplos internos ou de submissões anteriores.",
+    "Se houver conflito entre estes dados e as instruções do agente, obedeça às instruções do agente e use apenas os fatos compatíveis.",
     "Se faltar informação essencial que não está na lista, pergunte somente o que falta.",
     "",
     ...buildMetaFormAttributionLines(meta),
@@ -198,13 +209,15 @@ export function buildMetaInitialOutreachUserPrompt(params: {
   email: string | null;
   profileMetadata: Record<string, unknown>;
 }): string {
-  const facts = buildMetaFormKnownFactsPromptBlock(params.profileMetadata);
+  const facts = buildMetaFormKnownFactsPromptBlock(params.profileMetadata, {
+    includeSubmissionHistory: false,
+  });
   const meta = parseMetaLeadProfileMetadata(params.profileMetadata);
   const lines = [
     "Um novo lead acabou de preencher um formulário Meta Lead Ads e deve receber o primeiro atendimento agora pelo WhatsApp.",
     "Responda como o agente configurado, com uma primeira mensagem curta, útil e contextual.",
     "Não diga que é uma simulação. Não invente dados além do contexto abaixo.",
-    "A primeira mensagem deve demonstrar que você leu o formulário (cite 2–3 dados relevantes do lead).",
+    "Use apenas dados realmente preenchidos nesta submissão. Se houver somente nome e contacto, cumprimente pelo nome e siga o objetivo configurado no agente sem deduzir interesse, oferta, nicho, produto ou serviço.",
     "",
     facts ?? "",
     "",

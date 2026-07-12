@@ -61,4 +61,34 @@ describe("meta-lead-form-metadata", () => {
     expect(prompt).toContain("Apartamento");
     expect(prompt).toContain("NUNCA pergunte");
   });
+
+  it("keeps initial outreach universal and ignores submissions from older journeys", () => {
+    const prompt = buildMetaInitialOutreachUserPrompt({
+      leadName: "Sofia",
+      phone: "5562999999999",
+      email: null,
+      profileMetadata: {
+        source: "lead_ads",
+        meta_form_name: "Formulário de recrutamento",
+        form_fields: [
+          { key: "full_name", label: "Nome", value: "Sofia" },
+          { key: "phone_number", label: "Telefone", value: "+5562999999999" },
+        ],
+        meta_form_submissions: [
+          {
+            leadgen_id: "old-leadgen",
+            form_name: "Formulário antigo",
+            form_fields: [
+              { key: "old_interest", label: "Interesse antigo", value: "Oferta de outro produto" },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(prompt).toContain("Nome: Sofia");
+    expect(prompt).not.toContain("Oferta de outro produto");
+    expect(prompt).not.toMatch(/imóvel|Minha Casa Minha Vida|casa ou apartamento|motivo da compra/i);
+    expect(prompt).toContain("sem deduzir interesse, oferta, nicho, produto ou serviço");
+  });
 });

@@ -78,6 +78,53 @@ export type LeadMemorySourceOptions = {
   includeMetaForm?: boolean;
 };
 
+/**
+ * Uma jornada explicita nao pode herdar texto livre nem formulario de outra jornada.
+ * Identificacao e estado do CRM continuam disponiveis; o contexto narrativo vem do
+ * resumo e das mensagens filtradas pelo journey_id.
+ */
+export function isolateLeadContextForJourney(
+  lead: LeadRuntimeContext | null,
+  journeyId: string | null,
+  journeyProfileMetadata: Record<string, unknown> | null,
+): LeadRuntimeContext | null {
+  if (!lead || !journeyId) return lead;
+  return {
+    ...lead,
+    notes: null,
+    aiSummary: null,
+    leadTemperature: null,
+    suggestedNextAction: null,
+    profileMetadata: journeyProfileMetadata ?? {},
+  };
+}
+
+async function getJourneyProfileMetadata(params: {
+  sb: ReturnType<typeof createSupabaseServiceClient>;
+  tenantId: string;
+  journeyId: string | null;
+  agentId: string;
+}): Promise<Record<string, unknown> | null> {
+  if (!params.journeyId) return null;
+  const { data, error } = await params.sb
+    .from("lead_journeys")
+    .select("agent_id,metadata")
+    .eq("tenant_id", params.tenantId)
+    .eq("id", params.journeyId)
+    .maybeSingle();
+  if (error) {
+    console.warn("[lead-memory] journey context", error.code, error.message);
+    return null;
+  }
+  if (!data || String(data.agent_id ?? "") !== params.agentId) return null;
+  const metadata = data.metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+  const profile = (metadata as Record<string, unknown>).lead_profile;
+  return profile && typeof profile === "object" && !Array.isArray(profile)
+    ? (profile as Record<string, unknown>)
+    : null;
+}
+
 export function buildCondensedMemoryContext(
   memory: {
     lead: LeadRuntimeContext | null;
@@ -296,6 +343,14 @@ export async function buildLeadConversationMemory(params: {
     params.remoteJid ??
     (lead?.phone ? `${lead.phone.replace(/\D/g, "")}@s.whatsapp.net` : null);
   const journeyId = params.journeyId ?? state?.activeJourneyId ?? null;
+
+  const journeyProfileMetadata = await getJourneyProfileMetadata({
+    sb,
+    tenantId: params.tenantId,
+    journeyId,
+    agentId: params.agentId,
+  });
+  lead = isolateLeadContextForJourney(lead, journeyId, journeyProfileMetadata);
 
   const recentMessages: ConversationMessageContext[] = remoteJid
     ? await getRecentConversationMessages({
