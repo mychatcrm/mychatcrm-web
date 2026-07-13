@@ -107,6 +107,28 @@ describe("sendEvolutionTextWithConnectionRecovery", () => {
     expect(evolutionSendTextMock).toHaveBeenCalledTimes(2);
   });
 
+  it("restarts and retries once when Evolution confirms MessageUpdate ERROR", async () => {
+    evolutionSendTextMock
+      .mockResolvedValueOnce({ ok: false, status: 502, error: "evolution_delivery_error" })
+      .mockResolvedValueOnce({ ok: true, status: 200, data: { key: { id: "msg-retry" } } });
+    evolutionRestartInstanceMock.mockResolvedValue({ ok: true, status: 200, data: {} });
+    evolutionFetchInstancesMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: [{ name: "instance-1", connectionStatus: "open", ownerJid: "556200000000@s.whatsapp.net" }],
+    });
+
+    const pending = sendEvolutionTextWithConnectionRecovery(params);
+    await vi.advanceTimersByTimeAsync(2000);
+    const result = await pending;
+
+    expect(result.ok).toBe(true);
+    expect(result.attempts).toBe(2);
+    expect(result.recoveryAttempted).toBe(true);
+    expect(evolutionRestartInstanceMock).toHaveBeenCalledTimes(1);
+    expect(evolutionSendTextMock).toHaveBeenCalledTimes(2);
+  });
+
   it("waits for a slow restart to become authenticated before retrying", async () => {
     evolutionSendTextMock
       .mockResolvedValueOnce({ ok: false, status: 500, error: "Connection Closed" })

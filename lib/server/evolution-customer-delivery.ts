@@ -6,6 +6,7 @@ import {
   type CustomerDeliveryStatus,
   type EvolutionSendReceipt,
 } from "@/lib/integrations/evolution-message-receipt";
+import { evolutionFindMessageStatus } from "@/lib/integrations/evolution-api";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
@@ -119,4 +120,75 @@ export async function processCustomerMessageDeliveryUpdate(params: {
     .eq("tenant_id", params.tenantId)
     .eq("id", data.id);
   return updateError ? "not_found" : "updated";
+}
+
+/**
+ * Repairs missed MESSAGES_UPDATE webhooks using Evolution's persisted
+ * MessageUpdate table. Bounded to the current conversation so opening a chat
+ * cannot fan out into an unbounded number of provider calls.
+ */
+export async function reconcilePendingEvolutionDeliveries(params: {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  limit?: number;
+}): Promise<{ checked: number; updated: number }> {
+  const sb = params.sb ?? createSupabaseServiceClient();
+  const limit = Math.max(1, Math.min(params.limit ?? 8, 20));
+  const { data: messages, error } = await sb
+    .from("whatsapp_messages")
+    .select("id, provider_message_id, connection_id")
+    .eq("tenant_id", params.tenantId)
+    .eq("remote_jid", params.remoteJid)
+    .eq("direction", "outbound")
+    .eq("channel", "evolution")
+    .in("delivery_status", ["pending", "sent"])
+    .not("provider_message_id", "is", null)
+    .not("connection_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error || !messages?.length) return { checked: 0, updated: 0 };
+
+  const connectionIds = Array.from(new Set(messages
+    .map((row) => typeof row.connection_id === "string" ? row.connection_id : "")
+    .filter(Boolean)));
+  const { data: connections, error: connectionError } = await sb
+    .from("tenant_evolution_instances")
+    .select("id, instance_name")
+    .eq("tenant_id", params.tenantId)
+    .in("id", connectionIds);
+  if (connectionError || !connections?.length) return { checked: 0, updated: 0 };
+
+  const instanceByConnection = new Map(connections.map((row) => [row.id, row.instance_name]));
+  let checked = 0;
+  let updated = 0;
+  await Promise.all(messages.map(async (message) => {
+    const providerMessageId = typeof message.provider_message_id === "string"
+      ? message.provider_message_id.trim()
+      : "";
+    const instanceName = typeof message.connection_id === "string"
+      ? instanceByConnection.get(message.connection_id)
+      : null;
+    if (!providerMessageId || !instanceName) return;
+    checked += 1;
+    const provider = await evolutionFindMessageStatus({ instanceName, messageId: providerMessageId });
+    if (!provider.ok || !provider.data?.status || !provider.data.fromMe) return;
+    const result = await processCustomerMessageDeliveryUpdate({
+      sb,
+      tenantId: params.tenantId,
+      connectionId: message.connection_id,
+      providerMessageId,
+      status: provider.data.status,
+    });
+    if (result === "updated") updated += 1;
+  }));
+
+  if (updated > 0) {
+    console.info("[evolution-customer-delivery] pending_reconciled", {
+      tenant_id: params.tenantId,
+      checked,
+      updated,
+    });
+  }
+  return { checked, updated };
 }

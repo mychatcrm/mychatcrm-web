@@ -6,8 +6,11 @@
 
 import { createHash } from "node:crypto";
 import { randomBytes } from "node:crypto";
+import { extractEvolutionSendReceipt } from "@/lib/integrations/evolution-message-receipt";
 
 const DEFAULT_TIMEOUT_MS = 25_000;
+const MESSAGE_STATUS_POLL_ATTEMPTS = 4;
+const MESSAGE_STATUS_POLL_INTERVAL_MS = 500;
 
 function stringifyEvolutionErrorPart(value: unknown): string | null {
   if (typeof value === "string") return value.trim() || null;
@@ -697,11 +700,93 @@ export async function evolutionSendText(params: {
       },
     };
   }
-  return evolutionFetchJson(`/message/sendText/${enc}`, {
+  const send = await evolutionFetchJson<unknown>(`/message/sendText/${enc}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  if (!send.ok) return send;
+
+  const receipt = extractEvolutionSendReceipt(send.data);
+  if (!receipt.messageId || receipt.deliveryStatus !== "pending") return send;
+
+  // Evolution 2.3.7 can return HTTP 200/PENDING and immediately persist a
+  // MessageUpdate=ERROR when the Baileys session was removed. Only an
+  // explicit ERROR changes the HTTP success into failure; missing/late ACKs
+  // remain pending and are reconciled asynchronously.
+  const status = await evolutionWaitForMessageStatus({
+    instanceName: params.instanceName,
+    messageId: receipt.messageId,
+  });
+  if (status.status === "ERROR") {
+    return { ok: false, status: 502, error: "evolution_delivery_error" };
+  }
+  return send;
+}
+
+export type EvolutionMessageStatusUpdate = {
+  keyId: string;
+  status: string;
+  remoteJid: string | null;
+  fromMe: boolean;
+};
+
+function parseEvolutionMessageStatusUpdates(data: unknown): EvolutionMessageStatusUpdate[] {
+  const rows = Array.isArray(data)
+    ? data
+    : data && typeof data === "object" && Array.isArray((data as { data?: unknown }).data)
+      ? ((data as { data: unknown[] }).data)
+      : [];
+  return rows.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as Record<string, unknown>;
+    const keyId = typeof row.keyId === "string" ? row.keyId.trim() : "";
+    const status = typeof row.status === "string" ? row.status.trim().toUpperCase() : "";
+    if (!keyId || !status) return [];
+    return [{
+      keyId,
+      status,
+      remoteJid: typeof row.remoteJid === "string" ? row.remoteJid.trim() || null : null,
+      fromMe: row.fromMe === true,
+    }];
+  });
+}
+
+/** Reads the authoritative MessageUpdate row stored by Evolution 2.3.x. */
+export async function evolutionFindMessageStatus(params: {
+  instanceName: string;
+  messageId: string;
+}): Promise<EvolutionFetchResult<EvolutionMessageStatusUpdate | null>> {
+  const enc = encodeURIComponent(params.instanceName);
+  const res = await evolutionFetchJson<unknown>(`/chat/findStatusMessage/${enc}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ where: { id: params.messageId }, page: 1, offset: 10 }),
+    timeoutMs: 8_000,
+  });
+  if (!res.ok) return res;
+  const update = parseEvolutionMessageStatusUpdates(res.data)
+    .find((item) => item.keyId === params.messageId) ?? null;
+  return { ok: true, status: res.status, data: update };
+}
+
+export async function evolutionWaitForMessageStatus(params: {
+  instanceName: string;
+  messageId: string;
+  attempts?: number;
+  intervalMs?: number;
+}): Promise<{ status: string | null; update: EvolutionMessageStatusUpdate | null }> {
+  const attempts = Math.max(1, params.attempts ?? MESSAGE_STATUS_POLL_ATTEMPTS);
+  const intervalMs = Math.max(0, params.intervalMs ?? MESSAGE_STATUS_POLL_INTERVAL_MS);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (intervalMs > 0) await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    const result = await evolutionFindMessageStatus(params);
+    if (!result.ok || !result.data) continue;
+    if (result.data.status !== "PENDING") {
+      return { status: result.data.status, update: result.data };
+    }
+  }
+  return { status: null, update: null };
 }
 
 export type EvolutionWhatsappNumberCheck = {

@@ -11,6 +11,7 @@ import {
   loadStateOperationRow,
   operationFromStateRow,
 } from "@/lib/server/conversation-operation";
+import { reconcilePendingEvolutionDeliveries } from "@/lib/server/evolution-customer-delivery";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,16 @@ export async function GET(
   if (!remoteJid) return NextResponse.json({ error: "jid em falta" }, { status: 400 });
 
   const sb = createSupabaseServiceClient();
+
+  try {
+    await reconcilePendingEvolutionDeliveries({
+      sb,
+      tenantId: session.tenantId,
+      remoteJid,
+    });
+  } catch (reconcileError) {
+    console.warn("[api/client/conversas/jid/messages] delivery reconciliation", reconcileError);
+  }
 
   const { data, error } = await sb
     .from("whatsapp_messages")

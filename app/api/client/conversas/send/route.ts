@@ -7,8 +7,9 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
+import { remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import { persistEvolutionSendReceipt } from "@/lib/server/evolution-customer-delivery";
+import { sendEvolutionTextWithConnectionRecovery } from "@/lib/server/evolution-send-recovery";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
 import { upsertConversationState } from "@/lib/server/conversation-memory";
 import { logMessageLatency } from "@/lib/conversas/message-latency-log";
@@ -205,7 +206,7 @@ export async function POST(request: Request) {
     stateRow,
   });
 
-  const send = await evolutionSendText({
+  const send = await sendEvolutionTextWithConnectionRecovery({
     instanceName: instance.instance_name,
     number,
     text: trimmedText,

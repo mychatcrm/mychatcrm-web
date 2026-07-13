@@ -23,6 +23,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isRecoverableDefinitiveSendError(error: string | null | undefined): boolean {
+  return isEvolutionConnectionClosedError(error) || error === "evolution_delivery_error";
+}
+
 const RECOVERY_POLL_ATTEMPTS = 6;
 const RECOVERY_POLL_INTERVAL_MS = 2_000;
 
@@ -40,7 +44,7 @@ async function readLifecycleLock(instanceName: string): Promise<"locked" | "unlo
 }
 
 /**
- * Retries only the explicit Evolution "Connection Closed" failure. The retry
+ * Retries only definitive Evolution transport failures. The retry
  * happens after a successful restart and a positive inventory check, avoiding
  * duplicate sends for ambiguous HTTP/network failures.
  */
@@ -60,7 +64,7 @@ export async function sendEvolutionTextWithConnectionRecovery(
   }
 
   const first = await evolutionSendText(params);
-  if (first.ok || !isEvolutionConnectionClosedError(first.error)) {
+  if (first.ok || !isRecoverableDefinitiveSendError(first.error)) {
     return {
       ...first,
       attempts: 1,

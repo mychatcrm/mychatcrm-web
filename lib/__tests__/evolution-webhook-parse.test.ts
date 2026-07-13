@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { buildEvolutionInstanceName, buildFreshEvolutionInstanceName } from "@/lib/integrations/evolution-api";
 import {
   extractInboundTextsFromEvolutionPayload,
+  extractConnectionStatusReason,
   extractInstanceJid,
   extractMessageDeliveryUpdates,
+  isTerminalEvolutionDisconnectReason,
 } from "@/lib/integrations/evolution-webhook-parse";
 
 describe("buildEvolutionInstanceName", () => {
@@ -48,6 +50,22 @@ describe("extractInstanceJid", () => {
         message: { conversation: "Olá" },
       },
     })).toBeNull();
+  });
+});
+
+describe("Evolution terminal disconnect", () => {
+  it("recognizes a removed/logged-out Baileys session", () => {
+    const payload = { data: { state: "close", statusReason: 401 } };
+    const reason = extractConnectionStatusReason(payload);
+    expect(reason).toBe(401);
+    expect(isTerminalEvolutionDisconnectReason(reason)).toBe(true);
+  });
+
+  it("does not treat a reconnectable restart as a terminal logout", () => {
+    const payload = { data: { state: "close", statusReason: "515" } };
+    const reason = extractConnectionStatusReason(payload);
+    expect(reason).toBe(515);
+    expect(isTerminalEvolutionDisconnectReason(reason)).toBe(false);
   });
 });
 

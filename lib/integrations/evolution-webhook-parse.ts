@@ -277,6 +277,20 @@ export function extractConnectionState(payload: Record<string, unknown>): string
   return null;
 }
 
+export function extractConnectionStatusReason(payload: Record<string, unknown>): number | null {
+  const data = payload.data;
+  if (!data || typeof data !== "object") return null;
+  const raw = (data as Record<string, unknown>).statusReason;
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string" && /^\d+$/.test(raw.trim())) return Number(raw.trim());
+  return null;
+}
+
+/** Baileys/Evolution reasons that require a fresh QR instead of auto-reconnect. */
+export function isTerminalEvolutionDisconnectReason(reason: number | null): boolean {
+  return reason === 401 || reason === 402 || reason === 403 || reason === 406;
+}
+
 export function extractInstanceName(payload: Record<string, unknown>): string | null {
   const inst = payload.instance;
   if (typeof inst === "string" && inst.trim()) return inst.trim();

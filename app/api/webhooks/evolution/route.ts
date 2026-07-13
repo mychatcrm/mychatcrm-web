@@ -11,11 +11,13 @@ import {
 } from "@/lib/agents";
 import {
   extractConnectionState,
+  extractConnectionStatusReason,
   extractInboundMessagesFromEvolutionPayload,
   extractInstanceJid,
   extractInstanceName,
   extractMessageDeliveryUpdates,
   normalizeEvolutionEventName,
+  isTerminalEvolutionDisconnectReason,
   type EvolutionInboundMessage,
 } from "@/lib/integrations/evolution-webhook-parse";
 import {
@@ -476,6 +478,10 @@ export async function POST(request: Request) {
 
     if (event === "CONNECTION_UPDATE") {
       const state = extractConnectionState(payload);
+      const statusReason = extractConnectionStatusReason(payload);
+      const terminalDisconnect =
+        normalizeEvolutionConnectionState(state, "close") !== "open" &&
+        isTerminalEvolutionDisconnectReason(statusReason);
       const waJid = extractInstanceJid(payload);
       if (state) {
         try {
@@ -489,6 +495,7 @@ export async function POST(request: Request) {
           let confirmedState = state;
           let confirmedWaJid = waJid;
           if (
+            !terminalDisconnect &&
             previousRow &&
             normalizeEvolutionConnectionState(previousRow.connection_state, "close") === "open" &&
             normalizeEvolutionConnectionState(state, "close") !== "open"
@@ -506,9 +513,15 @@ export async function POST(request: Request) {
           await updateEvolutionInstanceStateByName({
             instanceName,
             connectionState: confirmedState,
-            waJid: confirmedWaJid ?? undefined,
+            waJid: terminalDisconnect ? null : confirmedWaJid ?? undefined,
             preserveLifecycle: true,
           });
+          if (terminalDisconnect) {
+            console.warn("[webhooks/evolution] terminal_disconnect", {
+              instance_name: instanceName,
+              status_reason: statusReason,
+            });
+          }
           if (
             previousRow &&
             previousRow.tenant_id !== SYSTEM_TENANT_ID &&
