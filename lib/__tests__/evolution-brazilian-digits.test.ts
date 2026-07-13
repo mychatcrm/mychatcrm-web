@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   brazilianMobileAlternateVariant,
   buildEvolutionSendCandidates,
   ensureBrazilianMobileWhatsappDigits,
   formatEvolutionSendAddress,
+  evolutionSendText,
   isEvolutionDeliveredStatus,
   isEvolutionDeliveryErrorStatus,
   isEvolutionPendingStatus,
@@ -35,7 +36,105 @@ describe("Brazilian WhatsApp digit normalization", () => {
     expect(candidates).toContain("5562993580574");
     expect(formatEvolutionSendAddress("123456789@lid", "5562993580574")).toBe("123456789@lid");
     expect(formatEvolutionSendAddress("5562993580574", "5562993580574")).toBe("5562993580574");
-    expect(formatEvolutionSendAddress("556293580574@s.whatsapp.net", "5562993580574")).toBe("556293580574");
+    expect(formatEvolutionSendAddress("556293580574@s.whatsapp.net", "5562993580574")).toBe("5562993580574");
+    expect(formatEvolutionSendAddress("556293580574", "556293580574")).toBe("5562993580574");
+  });
+});
+
+describe("Evolution Brazilian recipient routing", () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    process.env.EVOLUTION_API_BASE_URL = "https://evolution.test";
+    process.env.EVOLUTION_API_KEY = "test-key";
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("sends with the ninth digit before trying the legacy WhatsApp alias", async () => {
+    const sentNumbers: string[] = [];
+    global.fetch = vi.fn(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/chat/whatsappNumbers/")) {
+        return new Response(JSON.stringify([
+          {
+            exists: true,
+            number: "556293580574",
+            jid: "556293580574@s.whatsapp.net",
+          },
+        ]), { status: 200 });
+      }
+      if (url.includes("/message/sendText/")) {
+        const body = JSON.parse(String(init?.body)) as { number: string };
+        sentNumbers.push(body.number);
+        return new Response(JSON.stringify({
+          key: { id: `message-${sentNumbers.length}`, remoteJid: `${body.number}@s.whatsapp.net` },
+          status: sentNumbers.length === 1 ? "PENDING" : "SERVER_ACK",
+        }), { status: 200 });
+      }
+      if (url.includes("/chat/findStatusMessage/")) {
+        return new Response(JSON.stringify([
+          {
+            keyId: "message-1",
+            status: "ERROR",
+            remoteJid: "5562993580574@s.whatsapp.net",
+            fromMe: true,
+          },
+        ]), { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const result = await evolutionSendText({
+      instanceName: "mc-test",
+      number: "5562993580574",
+      text: "Teste",
+      resolveRecipient: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sentNumbers).toEqual(["5562993580574", "556293580574"]);
+  });
+
+  it("does not try another alias while delivery is still pending", async () => {
+    const sentNumbers: string[] = [];
+    global.fetch = vi.fn(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/chat/whatsappNumbers/")) {
+        return new Response(JSON.stringify([
+          {
+            exists: true,
+            number: "556293580574",
+            jid: "556293580574@s.whatsapp.net",
+          },
+        ]), { status: 200 });
+      }
+      if (url.includes("/message/sendText/")) {
+        const body = JSON.parse(String(init?.body)) as { number: string };
+        sentNumbers.push(body.number);
+        return new Response(JSON.stringify({
+          key: { id: "message-pending", remoteJid: `${body.number}@s.whatsapp.net` },
+          status: "PENDING",
+        }), { status: 200 });
+      }
+      if (url.includes("/chat/findStatusMessage/")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const result = await evolutionSendText({
+      instanceName: "mc-test",
+      number: "5562993580574",
+      text: "Teste",
+      resolveRecipient: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sentNumbers).toEqual(["5562993580574"]);
   });
 });
 

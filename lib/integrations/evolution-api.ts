@@ -667,7 +667,7 @@ export async function evolutionSendText(params: {
   } | null;
 }): Promise<EvolutionFetchResult<unknown>> {
   const enc = encodeURIComponent(params.instanceName);
-  let sendNumber = params.number;
+  let sendNumbers = [params.number];
   if (params.resolveRecipient && !params.number.endsWith("@lid")) {
     const resolved = await resolveEvolutionSendNumber({
       instanceName: params.instanceName,
@@ -676,52 +676,78 @@ export async function evolutionSendText(params: {
     if (resolved.status === "not_found") {
       return { ok: false, status: 422, error: "evolution_recipient_not_found" };
     }
-    if (resolved.status === "exists") sendNumber = resolved.sendNumber;
+    if (resolved.status === "exists") {
+      sendNumbers = resolved.candidateNumbers.length
+        ? resolved.candidateNumbers
+        : [resolved.sendNumber];
+    }
     if (resolved.status === "check_failed") {
+      sendNumbers = [resolved.platformNumber];
       console.warn("[evolution-api] recipient_resolution_failed_using_normalized_number", {
         instance_name: params.instanceName,
         error: resolved.error,
       });
     }
   }
-  const body: Record<string, unknown> = {
-    number: sendNumber,
-    text: params.text.slice(0, 4000),
+
+  const uniqueSendNumbers = Array.from(
+    new Set(sendNumbers.map((number) => number.trim()).filter(Boolean)),
+  );
+  let lastResult: EvolutionFetchResult<unknown> = {
+    ok: false,
+    status: 422,
+    error: "evolution_recipient_not_found",
   };
-  if (params.quoted?.messageId) {
-    body.quoted = {
-      key: {
-        id: params.quoted.messageId,
-        remoteJid: params.quoted.remoteJid,
-        fromMe: params.quoted.fromMe ?? false,
-      },
-      message: {
-        conversation: params.quoted.conversation ?? "",
-      },
+
+  for (let index = 0; index < uniqueSendNumbers.length; index += 1) {
+    const sendNumber = uniqueSendNumbers[index];
+    const body: Record<string, unknown> = {
+      number: sendNumber,
+      text: params.text.slice(0, 4000),
     };
-  }
-  const send = await evolutionFetchJson<unknown>(`/message/sendText/${enc}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!send.ok) return send;
+    if (params.quoted?.messageId) {
+      body.quoted = {
+        key: {
+          id: params.quoted.messageId,
+          remoteJid: params.quoted.remoteJid,
+          fromMe: params.quoted.fromMe ?? false,
+        },
+        message: {
+          conversation: params.quoted.conversation ?? "",
+        },
+      };
+    }
+    const send = await evolutionFetchJson<unknown>(`/message/sendText/${enc}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    lastResult = send;
+    if (!send.ok) return send;
 
-  const receipt = extractEvolutionSendReceipt(send.data);
-  if (!receipt.messageId || receipt.deliveryStatus !== "pending") return send;
+    const receipt = extractEvolutionSendReceipt(send.data);
+    if (!receipt.messageId || receipt.deliveryStatus !== "pending") return send;
 
-  // Evolution 2.3.7 can return HTTP 200/PENDING and immediately persist a
-  // MessageUpdate=ERROR when the Baileys session was removed. Only an
-  // explicit ERROR changes the HTTP success into failure; missing/late ACKs
-  // remain pending and are reconciled asynchronously.
-  const status = await evolutionWaitForMessageStatus({
-    instanceName: params.instanceName,
-    messageId: receipt.messageId,
-  });
-  if (status.status === "ERROR") {
-    return { ok: false, status: 502, error: "evolution_delivery_error" };
+    // Evolution 2.3.7 can accept a Brazilian alias and immediately mark it
+    // ERROR. Only that definitive status allows trying the next alias; a
+    // pending/unknown status is returned as-is to avoid duplicate messages.
+    const status = await evolutionWaitForMessageStatus({
+      instanceName: params.instanceName,
+      messageId: receipt.messageId,
+    });
+    if (status.status !== "ERROR") return send;
+
+    lastResult = { ok: false, status: 502, error: "evolution_delivery_error" };
+    if (index + 1 < uniqueSendNumbers.length) {
+      console.warn("[evolution-api] recipient_alias_failed_trying_next", {
+        instance_name: params.instanceName,
+        candidate_index: index,
+        candidate_count: uniqueSendNumbers.length,
+      });
+    }
   }
-  return send;
+
+  return lastResult;
 }
 
 export type EvolutionMessageStatusUpdate = {
@@ -811,10 +837,10 @@ export function formatEvolutionSendAddress(jid: string | null | undefined, fallb
   const trimmed = typeof jid === "string" ? jid.trim() : "";
   if (trimmed.endsWith("@lid")) return trimmed;
   if (trimmed.includes("@s.whatsapp.net")) {
-    return jidToDigits(trimmed) || wanted;
+    return wanted || ensureBrazilianMobileWhatsappDigits(jidToDigits(trimmed));
   }
   const digits = trimmed.replace(/\D/g, "");
-  if (digits.length >= 12) return digits;
+  if (digits.length >= 12) return ensureBrazilianMobileWhatsappDigits(digits);
   return wanted;
 }
 
@@ -937,9 +963,9 @@ export async function checkEvolutionSessionAlive(
 }
 
 /**
- * Valida existência no WhatsApp e devolve o número de envio que a Evolution reconhece.
- * Quando a API retorna um JID, usamos os dígitos desse JID no sendText — é o endereço
- * que o Baileys/Evolution usa para rotear a mensagem.
+ * Valida existência no WhatsApp e devolve candidatos de envio seguros.
+ * O número normalizado da plataforma vem primeiro; JIDs @lid e a variante brasileira
+ * sem o nono dígito são fallbacks usados apenas após erro de entrega explícito.
  */
 export async function resolveEvolutionSendNumber(params: {
   instanceName: string;
