@@ -1,4 +1,4 @@
-export type MessageSendStatus = "sending" | "sent" | "failed";
+export type MessageSendStatus = "sending" | "sent" | "delivered" | "read" | "failed";
 
 export type SyncChatMessage = {
   id: string;
@@ -69,7 +69,7 @@ export function reconcileOptimisticMessage(
   const reconciled: SyncChatMessage = {
     ...saved,
     client_temp_id: saved.client_temp_id ?? clientTempId,
-    send_status: saved.delivery_status === "failed" ? "failed" : "sent",
+    send_status: mapDeliveryToSendStatus(saved.delivery_status) ?? "sent",
   };
   const index = messages.findIndex(
     (message) =>
@@ -113,12 +113,7 @@ function reconcileExistingRealtime(
   const next = [...messages];
   next[index] = {
     ...incoming,
-    send_status:
-      incoming.delivery_status === "failed"
-        ? "failed"
-        : incoming.delivery_status === "pending"
-          ? "sending"
-          : "sent",
+    send_status: mapDeliveryToSendStatus(incoming.delivery_status) ?? "sent",
   };
   return next;
 }
@@ -157,5 +152,7 @@ export function mapDeliveryToSendStatus(
   if (deliveryStatus === "pending") return "sending";
   if (deliveryStatus === "failed") return "failed";
   if (deliveryStatus === "sent") return "sent";
+  if (deliveryStatus === "delivered") return "delivered";
+  if (deliveryStatus === "read") return "read";
   return null;
 }

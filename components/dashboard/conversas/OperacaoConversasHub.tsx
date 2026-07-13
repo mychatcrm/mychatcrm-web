@@ -805,12 +805,21 @@ function MessageBubble({
             <circle cx="12" cy="12" r="9" stroke={messageMutedColor} strokeWidth="2" strokeOpacity="0.35" />
             <path d="M12 3a9 9 0 0 1 9 9" stroke={messageMutedColor} strokeWidth="2" strokeLinecap="round" />
           </svg>
+        ) : msg.send_status === "sent" ? (
+          <svg width="12" height="11" viewBox="0 0 12 11" fill="none" aria-label="Enviado ao servidor do WhatsApp">
+            <path d="M1 5.5 4.5 9 11 1" stroke={messageMutedColor} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         ) : (
-        // Double tick ✓✓
-        <svg width="16" height="11" viewBox="0 0 16 11" fill="none">
-          <path d="M1 5.5 4.5 9 10 1" stroke={W.green} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-          <path d="M5 5.5 8.5 9 15 1" stroke={W.green} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+          <svg
+            width="16"
+            height="11"
+            viewBox="0 0 16 11"
+            fill="none"
+            aria-label={msg.send_status === "read" ? "Mensagem lida" : "Mensagem entregue"}
+          >
+            <path d="M1 5.5 4.5 9 10 1" stroke={msg.send_status === "read" ? "#22c55e" : W.green} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M5 5.5 8.5 9 15 1" stroke={msg.send_status === "read" ? "#22c55e" : W.green} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         )
       )}
     </div>

@@ -1,6 +1,10 @@
 import "server-only";
 
-import { evolutionSendAudio, evolutionSendMedia } from "@/lib/integrations/evolution-api";
+import {
+  evolutionSendAudio,
+  evolutionSendMedia,
+  resolveEvolutionSendNumber,
+} from "@/lib/integrations/evolution-api";
 import { createR2PresignedGetUrl, isR2Configured } from "@/lib/integrations/r2-storage";
 import {
   findReadyAgentMediaByFilenameFlexible,
@@ -42,6 +46,15 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
   }
 
   const sb = createSupabaseServiceClient();
+  const resolvedRecipient = await resolveEvolutionSendNumber({
+    instanceName: opts.instanceName,
+    number: opts.number,
+  });
+  if (resolvedRecipient.status === "not_found") {
+    console.warn("[outbound-media] recipient_not_found", { tenant_id: opts.tenantId });
+    return;
+  }
+  const sendNumber = resolvedRecipient.status === "exists" ? resolvedRecipient.sendNumber : opts.number;
 
   for (let index = 0; index < opts.originalFilenames.length; index++) {
     const filename = opts.originalFilenames[index]!;
@@ -78,7 +91,7 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
       if (mimeLower.startsWith("image/")) {
         const res = await evolutionSendMedia({
           instanceName: opts.instanceName,
-          number: opts.number,
+          number: sendNumber,
           mediatype: "image",
           mimetype: primaryMime(file.mimeType),
           media: mediaUrl,
@@ -89,7 +102,7 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
       } else if (mimeLower.startsWith("video/")) {
         const res = await evolutionSendMedia({
           instanceName: opts.instanceName,
-          number: opts.number,
+          number: sendNumber,
           mediatype: "video",
           mimetype: primaryMime(file.mimeType),
           media: mediaUrl,
@@ -100,7 +113,7 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
       } else if (mimeLower.startsWith("audio/")) {
         const res = await evolutionSendAudio({
           instanceName: opts.instanceName,
-          number: opts.number,
+          number: sendNumber,
           audio: mediaUrl,
         });
         sendOk = res.ok;
@@ -108,7 +121,7 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
       } else {
         const res = await evolutionSendMedia({
           instanceName: opts.instanceName,
-          number: opts.number,
+          number: sendNumber,
           mediatype: "document",
           mimetype: primaryMime(file.mimeType),
           media: mediaUrl,

@@ -85,6 +85,8 @@ import {
   reserveTenantLeadQuota,
 } from "@/lib/server/lead-quota";
 import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
+import { processCustomerMessageDeliveryUpdate } from "@/lib/server/evolution-customer-delivery";
+import { extractEvolutionSendReceipt } from "@/lib/integrations/evolution-message-receipt";
 
 
 export const dynamic = "force-dynamic";
@@ -370,6 +372,10 @@ async function saveMessage(opts: {
   analysisStatus?: string | null;
   /** UUID de tenant_evolution_instances — identifica qual das linhas QR do tenant processou isto. */
   connectionId?: string | null;
+  providerMessageId?: string | null;
+  providerRemoteJid?: string | null;
+  providerStatus?: string | null;
+  deliveryStatus?: string | null;
 }): Promise<SaveMessageResult> {
   try {
     const sb = createSupabaseServiceClient();
@@ -399,6 +405,10 @@ async function saveMessage(opts: {
         // Identifica QUAL linha QR do tenant (pode ter várias) — usado pelo
         // filtro por número em /dashboard/conversas.
         connection_id: opts.connectionId ?? null,
+        provider_message_id: opts.providerMessageId ?? null,
+        provider_remote_jid: opts.providerRemoteJid ?? null,
+        provider_status: opts.providerStatus ?? null,
+        ...(opts.deliveryStatus ? { delivery_status: opts.deliveryStatus } : {}),
       })
       // Deduplicação: a constraint UNIQUE (tenant_id, message_id) WHERE message_id IS NOT NULL
       // garante que um retry da Evolution API não crie um segundo job de resposta.
@@ -586,29 +596,37 @@ export async function POST(request: Request) {
           statuses: updates.map((u) => u.status),
         });
 
-        if (!isSystemInstance) continue;
-
         for (const update of updates) {
           if (!update.fromMe) continue;
 
-          console.info("[webhooks/evolution] system_messages_update", {
-            instanceName,
-            messageId: update.messageId,
-            status: update.status,
-          });
-
-          const result = await processSystemMessagesUpdate({
-            instanceName,
-            messageId: update.messageId,
-            status: update.status,
-            fromMe: update.fromMe,
-          });
-
-          if (result === "buffered") {
-            console.info("[webhooks/evolution] system_delivery_buffered_orphan", {
+          if (isSystemInstance) {
+            const result = await processSystemMessagesUpdate({
+              instanceName,
               messageId: update.messageId,
+              status: update.status,
+              fromMe: update.fromMe,
             });
+            if (result === "buffered") {
+              console.info("[webhooks/evolution] system_delivery_buffered_orphan", {
+                messageId: update.messageId,
+              });
+            }
+            continue;
           }
+
+          if (!row?.tenant_id) continue;
+          const result = await processCustomerMessageDeliveryUpdate({
+            tenantId: row.tenant_id,
+            connectionId: row.id,
+            providerMessageId: update.messageId,
+            status: update.status,
+          });
+          console.info("[webhooks/evolution] customer_delivery_update", {
+            tenant_id: row.tenant_id,
+            connection_id: row.id,
+            status: update.status,
+            result,
+          });
         }
       } catch (e) {
         console.warn("[webhooks/evolution] messages update system delivery", e);
@@ -617,16 +635,6 @@ export async function POST(request: Request) {
     }
 
     if (event !== "MESSAGES_UPSERT") continue;
-
-    // [DEBUG TEMPORÁRIO] Loga payload completo quando contém áudio/imagem para
-    // confirmarmos onde a Evolution (webhookBase64: true) coloca o campo base64.
-    // REMOVER após investigação concluída.
-    {
-      const rawJson = JSON.stringify(payload);
-      if (rawJson.includes('"audioMessage"') || rawJson.includes('"imageMessage"') || rawJson.includes('"videoMessage"')) {
-        console.log("RAW PAYLOAD MEDIA:", JSON.stringify(payload, null, 2));
-      }
-    }
 
     let row: Awaited<ReturnType<typeof getEvolutionInstanceByName>> = null;
     try {
@@ -1283,10 +1291,12 @@ export async function POST(request: Request) {
                 instanceName,
                 number,
                 text: replyText.slice(0, 4000),
+                resolveRecipient: true,
               }),
           });
 
           if (delivery.sent) {
+            const receipt = extractEvolutionSendReceipt(delivery.providerPayload);
             await saveMessage({
               tenantId: row.tenant_id,
               remoteJid: msg.remoteJid,
@@ -1298,6 +1308,10 @@ export async function POST(request: Request) {
               journeyId: journey?.id ?? null,
               mediaUrl: delivery.mediaUrl,
               connectionId: row.id,
+              providerMessageId: receipt.messageId,
+              providerRemoteJid: receipt.remoteJid,
+              providerStatus: receipt.providerStatus,
+              deliveryStatus: receipt.deliveryStatus,
             });
             if (leadId) {
               await sbState

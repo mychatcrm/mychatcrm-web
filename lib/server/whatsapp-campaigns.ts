@@ -19,6 +19,7 @@ import {
 import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
 import { listTenantWhatsappConnections } from "@/lib/server/tenant-whatsapp-connections";
 import { lookupWhatsAppCloudConnectionByPhoneNumberId } from "@/lib/server/whatsapp-cloud-connections";
+import { persistEvolutionSendReceipt } from "@/lib/server/evolution-customer-delivery";
 
 type ServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -486,7 +487,12 @@ async function processRecipient(params: {
 
   const delivery =
     params.sender.transport === "evolution"
-      ? await evolutionSendText({ instanceName: params.sender.instanceName, number: phone, text: content })
+      ? await evolutionSendText({
+          instanceName: params.sender.instanceName,
+          number: phone,
+          text: content,
+          resolveRecipient: true,
+        })
       : await sendWhatsAppTemplateMessage({
           toWaId: phone,
           templateName: params.sender.templateName,
@@ -531,15 +537,23 @@ async function processRecipient(params: {
   }
 
   const now = new Date().toISOString();
-  const { error: messageUpdateError } = await params.sb
-    .from("whatsapp_messages")
-    .update({
-      delivery_status: "sent",
-      sent_at: now,
-      failed_reason: null,
-    })
-    .eq("tenant_id", tenantId)
-    .eq("id", message.id);
+  let messageUpdateError: { message: string } | null = null;
+  if (params.sender.transport === "evolution") {
+    await persistEvolutionSendReceipt({
+      sb: params.sb,
+      tenantId,
+      messageRowId: message.id,
+      connectionId: String(params.campaign.connection_id),
+      payload: "data" in delivery ? delivery.data : null,
+    });
+  } else {
+    const update = await params.sb
+      .from("whatsapp_messages")
+      .update({ delivery_status: "sent", sent_at: now, failed_reason: null })
+      .eq("tenant_id", tenantId)
+      .eq("id", message.id);
+    messageUpdateError = update.error;
+  }
   if (messageUpdateError) {
     console.error("[whatsapp-campaigns] sent_message_status_update_failed", {
       tenant_id: tenantId,

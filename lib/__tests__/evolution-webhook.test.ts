@@ -39,7 +39,7 @@ describe("evolutionSetWebhook", () => {
         enabled: true,
         url: "https://www.mychatcrm.com.br/api/webhooks/evolution",
         byEvents: false,
-        base64: true,
+        base64: false,
         events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
       },
     });
@@ -71,7 +71,7 @@ describe("evolutionSetWebhook", () => {
     expect(JSON.parse(String(legacyInit.body))).toMatchObject({
       enabled: true,
       webhookByEvents: false,
-      webhookBase64: true,
+      webhookBase64: false,
     });
   });
 });

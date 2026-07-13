@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
+import { persistEvolutionSendReceipt } from "@/lib/server/evolution-customer-delivery";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
 import { upsertConversationState } from "@/lib/server/conversation-memory";
 import { logMessageLatency } from "@/lib/conversas/message-latency-log";
@@ -166,6 +167,8 @@ export async function POST(request: Request) {
       lead_id: leadId,
       client_temp_id: tempId,
       delivery_status: "pending",
+      channel: "evolution",
+      connection_id: instance.id,
     })
     .select(MESSAGE_SELECT)
     .single();
@@ -206,6 +209,7 @@ export async function POST(request: Request) {
     instanceName: instance.instance_name,
     number,
     text: trimmedText,
+    resolveRecipient: true,
   });
 
   if (!send.ok) {
@@ -225,17 +229,19 @@ export async function POST(request: Request) {
     );
   }
 
-  const sentAt = new Date().toISOString();
+  const receipt = await persistEvolutionSendReceipt({
+    sb,
+    tenantId: session.tenantId,
+    messageRowId: saved.id,
+    connectionId: instance.id,
+    payload: send.data,
+  });
   const { data: updated } = await sb
     .from("whatsapp_messages")
-    .update({
-      delivery_status: "sent",
-      sent_at: sentAt,
-    })
+    .select(MESSAGE_SELECT)
     .eq("tenant_id", session.tenantId)
     .eq("id", saved.id)
-    .select(MESSAGE_SELECT)
     .maybeSingle();
 
-  return NextResponse.json({ ok: true, message: updated ?? { ...saved, delivery_status: "sent" } });
+  return NextResponse.json({ ok: true, message: updated ?? { ...saved, delivery_status: receipt.deliveryStatus } });
 }

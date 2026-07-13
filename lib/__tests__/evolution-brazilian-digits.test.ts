@@ -35,6 +35,7 @@ describe("Brazilian WhatsApp digit normalization", () => {
     expect(candidates).toContain("5562993580574");
     expect(formatEvolutionSendAddress("123456789@lid", "5562993580574")).toBe("123456789@lid");
     expect(formatEvolutionSendAddress("5562993580574", "5562993580574")).toBe("5562993580574");
+    expect(formatEvolutionSendAddress("556293580574@s.whatsapp.net", "5562993580574")).toBe("556293580574");
   });
 });
 

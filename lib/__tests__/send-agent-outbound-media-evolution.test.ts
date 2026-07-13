@@ -2,6 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const evolutionSendMedia = vi.fn(async () => ({ ok: true, status: 200, error: null }));
 const evolutionSendAudio = vi.fn(async () => ({ ok: true, status: 200, error: null }));
+const resolveEvolutionSendNumber = vi.fn(async ({ number }: { number: string }) => ({
+  status: "exists" as const,
+  sendNumber: number,
+  jid: `${number}@s.whatsapp.net`,
+  platformNumber: number,
+  candidateNumbers: [number],
+}));
 const createR2PresignedGetUrl = vi.fn(async () => "https://r2.example/presigned");
 const lookupReadyAgentMediaForOutbound = vi.fn(
   async ({ filename }: { filename: string }) => ({
@@ -23,6 +30,7 @@ const findReadyAgentMediaByFilenameFlexible = vi.fn(async () => null);
 vi.mock("@/lib/integrations/evolution-api", () => ({
   evolutionSendMedia,
   evolutionSendAudio,
+  resolveEvolutionSendNumber,
 }));
 
 vi.mock("@/lib/integrations/r2-storage", () => ({
@@ -48,6 +56,7 @@ describe("sendAgentOutboundMediaViaEvolution", () => {
     vi.useFakeTimers();
     evolutionSendMedia.mockClear();
     evolutionSendAudio.mockClear();
+    resolveEvolutionSendNumber.mockClear();
     createR2PresignedGetUrl.mockClear();
     lookupReadyAgentMediaForOutbound.mockClear();
     findReadyAgentMediaByFilenameFlexible.mockClear();

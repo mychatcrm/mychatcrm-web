@@ -3,7 +3,7 @@ import {
   isElevenLabsQuotaOrAuthError,
   textToSpeechElevenLabs,
 } from "@/lib/integrations/elevenlabs";
-import { evolutionSendAudio } from "@/lib/integrations/evolution-api";
+import { evolutionSendAudio, resolveEvolutionSendNumber } from "@/lib/integrations/evolution-api";
 import { uploadMediaToR2 } from "@/lib/integrations/r2-storage";
 
 export type AgentTtsDeliveryResult = {
@@ -12,6 +12,7 @@ export type AgentTtsDeliveryResult = {
   ttsFallbackToText: boolean;
   sent: boolean;
   mediaUrl: string | null;
+  providerPayload: unknown;
 };
 
 export async function deliverAgentReplyWithOptionalTts(params: {
@@ -24,7 +25,7 @@ export async function deliverAgentReplyWithOptionalTts(params: {
   useTts: boolean;
   logScope: string;
   logContext?: Record<string, unknown>;
-  sendText: () => Promise<{ ok: boolean; status?: number; error?: string | null }>;
+  sendText: () => Promise<{ ok: boolean; status?: number; error?: string | null; data?: unknown }>;
 }): Promise<AgentTtsDeliveryResult> {
   const text = params.text.slice(0, 4000);
   if (!params.useTts) {
@@ -38,10 +39,17 @@ export async function deliverAgentReplyWithOptionalTts(params: {
       ttsFallbackToText: false,
       sent: send.ok,
       mediaUrl: null,
+      providerPayload: send.data ?? null,
     };
   }
 
   try {
+    const resolvedRecipient = await resolveEvolutionSendNumber({
+      instanceName: params.instanceName,
+      number: params.number,
+    });
+    if (resolvedRecipient.status === "not_found") throw new Error("evolution_recipient_not_found");
+    const sendNumber = resolvedRecipient.status === "exists" ? resolvedRecipient.sendNumber : params.number;
     const audioBuffer = await textToSpeechElevenLabs(text, params.voiceId, {
       languageCode: params.languageCode,
     });
@@ -51,7 +59,7 @@ export async function deliverAgentReplyWithOptionalTts(params: {
 
     const send = await evolutionSendAudio({
       instanceName: params.instanceName,
-      number: params.number,
+      number: sendNumber,
       audio: audioBuffer.toString("base64"),
     });
 
@@ -62,6 +70,7 @@ export async function deliverAgentReplyWithOptionalTts(params: {
         ttsFallbackToText: false,
         sent: true,
         mediaUrl,
+        providerPayload: send.data ?? null,
       };
     }
 
@@ -91,5 +100,6 @@ export async function deliverAgentReplyWithOptionalTts(params: {
     ttsFallbackToText: true,
     sent: fallback.ok,
     mediaUrl: null,
+    providerPayload: fallback.data ?? null,
   };
 }

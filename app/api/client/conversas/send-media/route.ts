@@ -17,7 +17,9 @@ import {
   evolutionSendMedia,
   evolutionSendAudio,
   remoteJidToEvoNumber,
+  resolveEvolutionSendNumber,
 } from "@/lib/integrations/evolution-api";
+import { persistEvolutionSendReceipt } from "@/lib/server/evolution-customer-delivery";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
 import { upsertConversationState } from "@/lib/server/conversation-memory";
 import { cancelPendingFollowUpJobs, scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
@@ -238,6 +240,8 @@ export async function POST(request: Request) {
       lead_id: leadId,
       client_temp_id: clientTempId,
       delivery_status: "pending",
+      channel: "evolution",
+      connection_id: instance.id,
     })
     .select(MESSAGE_SELECT)
     .single();
@@ -268,13 +272,29 @@ export async function POST(request: Request) {
 
   // ── Send via Evolution API ────────────────────────────────────────────────
   const b64 = buffer.toString("base64");
+  const resolvedRecipient = await resolveEvolutionSendNumber({
+    instanceName: instance.instance_name,
+    number,
+  });
+  if (resolvedRecipient.status === "not_found") {
+    await sb
+      .from("whatsapp_messages")
+      .update({ delivery_status: "failed", failed_reason: "evolution_recipient_not_found" })
+      .eq("tenant_id", session.tenantId)
+      .eq("id", saved.id);
+    return NextResponse.json(
+      { error: "Este número não foi encontrado no WhatsApp.", message: { ...saved, delivery_status: "failed" } },
+      { status: 422 },
+    );
+  }
+  const sendNumber = resolvedRecipient.status === "exists" ? resolvedRecipient.sendNumber : number;
 
   let sendResult: Awaited<ReturnType<typeof evolutionSendMedia>>;
 
   if (kind === "audio") {
     sendResult = await evolutionSendAudio({
       instanceName: instance.instance_name,
-      number,
+      number: sendNumber,
       audio: b64,
     });
   } else {
@@ -285,7 +305,7 @@ export async function POST(request: Request) {
 
     sendResult = await evolutionSendMedia({
       instanceName: instance.instance_name,
-      number,
+      number: sendNumber,
       mediatype,
       mimetype: mime,
       media: b64,
@@ -310,16 +330,19 @@ export async function POST(request: Request) {
     );
   }
 
+  const receipt = await persistEvolutionSendReceipt({
+    sb,
+    tenantId: session.tenantId,
+    messageRowId: saved.id,
+    connectionId: instance.id,
+    payload: sendResult.data,
+  });
   const { data: updated } = await sb
     .from("whatsapp_messages")
-    .update({
-      delivery_status: "sent",
-      sent_at: new Date().toISOString(),
-    })
+    .select(MESSAGE_SELECT)
     .eq("tenant_id", session.tenantId)
     .eq("id", saved.id)
-    .select(MESSAGE_SELECT)
     .maybeSingle();
 
-  return NextResponse.json({ ok: true, message: updated ?? { ...saved, delivery_status: "sent" } });
+  return NextResponse.json({ ok: true, message: updated ?? { ...saved, delivery_status: receipt.deliveryStatus } });
 }

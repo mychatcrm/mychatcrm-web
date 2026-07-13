@@ -171,7 +171,9 @@ export async function evolutionCreateInstance(params: {
     body.webhook = {
       url: params.webhookUrl,
       byEvents: false,
-      base64: true,
+      // Media is fetched explicitly when needed. Excluding bytes prevents
+      // oversized Evolution webhooks from being rejected by Vercel.
+      base64: false,
       events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
     };
   }
@@ -389,7 +391,7 @@ export async function evolutionSetWebhook(params: {
     enabled: true,
     url: params.url,
     byEvents: false,
-    base64: true,
+    base64: false,
     events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
   };
   const current = await evolutionFetchJson(`/webhook/set/${enc}`, {
@@ -652,6 +654,8 @@ export async function evolutionSendText(params: {
   /** Dígitos E.164 ou JID completo (ex: 5511999999999 ou 123@lid). */
   number: string;
   text: string;
+  /** Confirma o endereço real no WhatsApp antes do envio (clientes/CRM). */
+  resolveRecipient?: boolean;
   quoted?: {
     messageId: string;
     remoteJid: string;
@@ -660,8 +664,25 @@ export async function evolutionSendText(params: {
   } | null;
 }): Promise<EvolutionFetchResult<unknown>> {
   const enc = encodeURIComponent(params.instanceName);
+  let sendNumber = params.number;
+  if (params.resolveRecipient && !params.number.endsWith("@lid")) {
+    const resolved = await resolveEvolutionSendNumber({
+      instanceName: params.instanceName,
+      number: params.number,
+    });
+    if (resolved.status === "not_found") {
+      return { ok: false, status: 422, error: "evolution_recipient_not_found" };
+    }
+    if (resolved.status === "exists") sendNumber = resolved.sendNumber;
+    if (resolved.status === "check_failed") {
+      console.warn("[evolution-api] recipient_resolution_failed_using_normalized_number", {
+        instance_name: params.instanceName,
+        error: resolved.error,
+      });
+    }
+  }
   const body: Record<string, unknown> = {
-    number: params.number,
+    number: sendNumber,
     text: params.text.slice(0, 4000),
   };
   if (params.quoted?.messageId) {
@@ -705,10 +726,10 @@ export function formatEvolutionSendAddress(jid: string | null | undefined, fallb
   const trimmed = typeof jid === "string" ? jid.trim() : "";
   if (trimmed.endsWith("@lid")) return trimmed;
   if (trimmed.includes("@s.whatsapp.net")) {
-    return ensureBrazilianMobileWhatsappDigits(jidToDigits(trimmed)) || wanted;
+    return jidToDigits(trimmed) || wanted;
   }
   const digits = trimmed.replace(/\D/g, "");
-  if (digits.length >= 12) return ensureBrazilianMobileWhatsappDigits(digits);
+  if (digits.length >= 12) return digits;
   return wanted;
 }
 

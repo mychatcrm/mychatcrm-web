@@ -19,6 +19,7 @@ function lastInboundTextFromUnit(unit: { content: string }[]): string {
 import { detectOutboundRepetition } from "@/lib/conversas/outbound-repetition-guard";
 import { isElevenlabsConfigured } from "@/lib/integrations/elevenlabs";
 import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
+import { extractEvolutionSendReceipt } from "@/lib/integrations/evolution-message-receipt";
 import { deliverAgentReplyWithOptionalTts } from "@/lib/server/agent-tts-outbound";
 import { promoteLeadToContatoOnAgentEngagement } from "@/lib/server/crm-lead-lifecycle";
 import { resolveOutboundMediaForAgentResponse } from "@/lib/server/agent-media-files";
@@ -53,6 +54,7 @@ import {
   touchLeadJourney,
 } from "@/lib/server/lead-journeys";
 import { scheduleLeadRedistribution } from "@/lib/server/lead-redistribution";
+import { getEvolutionInstanceByName } from "@/lib/server/tenant-evolution-instance-db";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -85,6 +87,7 @@ function localizedGenericFailureReply(languageCode: SupportedLanguageCode): stri
 
 async function saveOutboundMessage(opts: {
   tenantId: string;
+  instanceName: string;
   remoteJid: string;
   kind: "text" | "audio";
   content: string;
@@ -92,8 +95,11 @@ async function saveOutboundMessage(opts: {
   leadId?: string | null;
   journeyId?: string | null;
   mediaUrl?: string | null;
+  providerPayload?: unknown;
 }): Promise<void> {
   const sb = createSupabaseServiceClient();
+  const receipt = extractEvolutionSendReceipt(opts.providerPayload);
+  const instance = await getEvolutionInstanceByName(opts.instanceName);
   await sb.from("whatsapp_messages").insert({
     tenant_id: opts.tenantId,
     remote_jid: opts.remoteJid,
@@ -104,6 +110,12 @@ async function saveOutboundMessage(opts: {
     lead_id: opts.leadId ?? null,
     journey_id: opts.journeyId ?? null,
     media_url: opts.mediaUrl ?? null,
+    channel: "evolution",
+    connection_id: instance?.id ?? null,
+    provider_message_id: receipt.messageId,
+    provider_remote_jid: receipt.remoteJid,
+    provider_status: receipt.providerStatus,
+    delivery_status: receipt.deliveryStatus,
   });
 }
 
@@ -489,16 +501,19 @@ export async function processAgentResponseJob(
       instanceName: job.instance_name,
       number,
       text: apology,
+      resolveRecipient: true,
     });
     if (apologyResult.ok) {
       await saveOutboundMessage({
         tenantId: job.tenant_id,
+        instanceName: job.instance_name,
         remoteJid: job.remote_jid,
         kind: "text",
         content: apology,
         agentId: job.agent_id,
         leadId: job.lead_id,
         journeyId: job.journey_id,
+        providerPayload: apologyResult.data,
       });
     }
     console.info("[agent-response-jobs]", {
@@ -761,6 +776,7 @@ export async function processAgentResponseJob(
           number,
           text: textToSend.slice(0, 4000),
           quoted,
+          resolveRecipient: true,
         }),
     });
 
@@ -786,6 +802,7 @@ export async function processAgentResponseJob(
 
     await saveOutboundMessage({
       tenantId: job.tenant_id,
+      instanceName: job.instance_name,
       remoteJid: job.remote_jid,
       kind: delivery.channel === "audio" ? "audio" : "text",
       content: textToSend.slice(0, 4000),
@@ -793,6 +810,7 @@ export async function processAgentResponseJob(
       leadId: job.lead_id,
       journeyId: job.journey_id,
       mediaUrl: delivery.mediaUrl,
+      providerPayload: delivery.providerPayload,
     });
     await scheduleLeadRedistribution({
       sb,

@@ -15,6 +15,13 @@ vi.mock("@/lib/integrations/elevenlabs", async (importOriginal) => {
 
 vi.mock("@/lib/integrations/evolution-api", () => ({
   evolutionSendAudio: (...args: unknown[]) => evolutionSendAudio(...args),
+  resolveEvolutionSendNumber: async ({ number }: { number: string }) => ({
+    status: "exists",
+    sendNumber: number,
+    jid: `${number}@s.whatsapp.net`,
+    platformNumber: number,
+    candidateNumbers: [number],
+  }),
 }));
 
 vi.mock("@/lib/integrations/r2-storage", () => ({

@@ -55,6 +55,7 @@ import {
 } from "@/lib/server/lead-quota";
 import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
 import { sendEvolutionTextWithConnectionRecovery } from "@/lib/server/evolution-send-recovery";
+import { persistEvolutionSendReceipt } from "@/lib/server/evolution-customer-delivery";
 
 type MetaConnectionRow = {
   tenant_id: string;
@@ -971,7 +972,9 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       .eq("tenant_id", tenant_id)
       .eq("id", existingInitialMessage.id)
       .is("journey_id", null);
-    const alreadySent = existingInitialMessage.delivery_status === "sent";
+    const alreadySent = ["pending", "sent", "delivered", "read"].includes(
+      existingInitialMessage.delivery_status ?? "",
+    );
     if (alreadySent) {
       await revealMetaConversation({
         sb,
@@ -1113,6 +1116,8 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       lead_id: leadId,
       journey_id: journeyId,
       delivery_status: "pending",
+      channel: "evolution",
+      connection_id: selectedConnectionId,
     })
     .select("id")
     .maybeSingle();
@@ -1156,6 +1161,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       instanceName: instance.instance_name,
       number: evoNumber,
       text: replyText,
+      resolveRecipient: true,
     });
 
     if (send.restarted) {
@@ -1199,13 +1205,15 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       return;
     }
 
+    const receipt = await persistEvolutionSendReceipt({
+      sb,
+      tenantId: tenant_id,
+      messageRowId: savedMessage.id,
+      connectionId: selectedConnectionId,
+      payload: send.data,
+    });
     const sentAt = new Date().toISOString();
     await Promise.all([
-      sb
-        .from("whatsapp_messages")
-        .update({ delivery_status: "sent", sent_at: sentAt })
-        .eq("tenant_id", tenant_id)
-        .eq("id", savedMessage.id),
       sb
         .from("leads")
         .update({
@@ -1255,8 +1263,13 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       trigger: "customer_silence",
     });
 
-    await eventRecorder.step("whatsapp_sent", { message_id: savedMessage.id });
-    await eventRecorder.patch({ whatsapp_status: "sent" });
+    const acceptedStatus = receipt.deliveryStatus === "pending" ? "pending" : "sent";
+    await eventRecorder.step("whatsapp_sent", {
+      message_id: savedMessage.id,
+      provider_message_id: receipt.messageId,
+      provider_status: receipt.providerStatus,
+    });
+    await eventRecorder.patch({ whatsapp_status: acceptedStatus });
 
     console.info("[meta-webhook] Initial WhatsApp message sent", {
       tenant_id,

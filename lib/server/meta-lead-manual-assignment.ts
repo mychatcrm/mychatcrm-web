@@ -35,6 +35,7 @@ import {
 } from "@/lib/server/lead-journeys";
 import { readTeamMembersFromDb } from "@/lib/server/team-employees-db";
 import { sendEvolutionTextWithConnectionRecovery } from "@/lib/server/evolution-send-recovery";
+import { persistEvolutionSendReceipt } from "@/lib/server/evolution-customer-delivery";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -346,6 +347,8 @@ export async function assignMetaLeadEventToAgent(params: {
         lead_id: leadId,
         journey_id: journeyId,
         delivery_status: "pending",
+        channel: "evolution",
+        connection_id: instance.id,
       })
       .eq("id", existingMessage.id);
     if (updateMsgErr) return { ok: false, error: updateMsgErr.message, status: 500 };
@@ -364,6 +367,8 @@ export async function assignMetaLeadEventToAgent(params: {
         lead_id: leadId,
         journey_id: journeyId,
         delivery_status: "pending",
+        channel: "evolution",
+        connection_id: instance.id,
       })
       .select("id")
       .maybeSingle();
@@ -392,6 +397,7 @@ export async function assignMetaLeadEventToAgent(params: {
     instanceName: instance.instance_name,
     number: evoNumber,
     text: replyText,
+    resolveRecipient: true,
   });
   if (!send.ok) {
     await sb
@@ -402,9 +408,15 @@ export async function assignMetaLeadEventToAgent(params: {
     return { ok: false, error: `Falha ao enviar WhatsApp: ${send.error ?? "erro desconhecido"}.`, status: 502 };
   }
 
+  await persistEvolutionSendReceipt({
+    sb,
+    tenantId,
+    messageRowId: messageId,
+    connectionId: instance.id,
+    payload: send.data,
+  });
   const sentAt = new Date().toISOString();
   await Promise.all([
-    sb.from("whatsapp_messages").update({ delivery_status: "sent", sent_at: sentAt }).eq("id", messageId),
     sb.from("leads").update({ last_message_at: sentAt, updated_at: sentAt }).eq("tenant_id", tenantId).eq("id", leadId),
     upsertConversationState({
       sb,

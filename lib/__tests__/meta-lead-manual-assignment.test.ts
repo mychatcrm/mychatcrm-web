@@ -322,7 +322,7 @@ describe("assignMetaLeadEventToAgent", () => {
     expect(original?.agent_id).toBe("agent-2");
     const handoff = sb.tables.whatsapp_messages.find((m) => m.id !== "msg-1");
     expect(handoff?.agent_id).toBe("agent-1");
-    expect(handoff?.delivery_status).toBe("sent");
+    expect(handoff?.delivery_status).toBe("pending");
   });
 
   it("reuses the existing failed message row instead of inserting a duplicate", async () => {
@@ -336,7 +336,7 @@ describe("assignMetaLeadEventToAgent", () => {
 
     expect(result.ok).toBe(true);
     expect(sb.tables.whatsapp_messages).toHaveLength(1);
-    expect(sb.tables.whatsapp_messages[0]?.delivery_status).toBe("sent");
+    expect(sb.tables.whatsapp_messages[0]?.delivery_status).toBe("pending");
   });
 });
 
