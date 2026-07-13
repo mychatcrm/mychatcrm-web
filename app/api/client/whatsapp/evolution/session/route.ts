@@ -137,7 +137,22 @@ export async function POST(request: Request) {
   }
   if (existingRow) {
     const liveConnection = await reconcileLiveEvolutionInstance(existingRow);
-    if (liveConnection.ok) existingRow = liveConnection.instance;
+    if (liveConnection.ok) {
+      existingRow = liveConnection.instance;
+    } else if (existingRow.wa_jid) {
+      return NextResponse.json(
+        {
+          error:
+            "A sessão já está vinculada e ainda não está aberta na Evolution. Aguarde a reconexão ou use Resetar conexão antes de gerar outro QR.",
+          connectionState: existingRow.connection_state,
+          instanceName: existingRow.instance_name,
+          waJid: existingRow.wa_jid,
+          recoveryRequired: true,
+          reason: liveConnection.reason,
+        },
+        { status: 409 },
+      );
+    }
   }
   // Reusa o nome se já existe registro; após apagar, gera nome NOVO (sufixo aleatório).
   const instanceName =
@@ -374,22 +389,6 @@ export async function GET(request: Request) {
         ownerJidConfirmedThisPoll = true;
       }
     }
-  } else if (normalizeEvolutionConnectionState(row.connection_state, "close") === "open") {
-    // Reverse zombie check: sair de "open" também não garante desconexão real — o
-    // Baileys reconecta sozinho após blips momentâneos de rede, e connectionState pode
-    // reportar "close" por um instante sem o WhatsApp ter sido deslogado de verdade.
-    // Confirma via fetchInstances (mesma fonte de verdade do check acima); se ainda
-    // achar um dono de sessão vivo, trata como se a transição não tivesse acontecido —
-    // evita um alerta falso de "desconectado" e um "piscar" do status no painel.
-    const fetchResult = await evolutionFetchInstances(row.instance_name);
-    if (fetchResult.ok) {
-      const instanceInfo = pickEvolutionInstanceInfo(fetchResult.data, row.instance_name);
-      if (instanceInfo?.ownerJid) {
-        remoteState = "open";
-        resolvedWaJid = instanceInfo.ownerJid;
-        ownerJidConfirmedThisPoll = true;
-      }
-    }
   }
 
   try {
@@ -493,16 +492,13 @@ export async function GET(request: Request) {
     });
   }
 
-  const connectRes = await evolutionInstanceConnect(row.instance_name);
-  const qrDataUrl =
-    connectRes.ok ? normalizeInstanceConnectToQrDataUrl(connectRes.data as unknown) : null;
-  const pairingCode = connectRes.ok ? extractPairingCodeFromConnectPayload(connectRes.data as unknown) : null;
-
+  // GET e polling são estritamente passivos. Gerar QR/conectar é uma mutação e
+  // acontece somente no POST iniciado explicitamente pela interface.
   return NextResponse.json({
     instanceName: row.instance_name,
     connectionState: remoteState,
-    qrDataUrl,
-    pairingCode,
+    qrDataUrl: null,
+    pairingCode: null,
     waJid: resolvedWaJid ?? null,
   });
 }

@@ -152,7 +152,7 @@ describe("omnichannel runtime contracts", () => {
     expect(phase2Guard).toBeGreaterThan(rowLookup);
   });
 
-  it("re-verifies with fetchInstances before trusting a WhatsApp 'disconnected' alert", () => {
+  it("keeps session polling read-only and never masks a live non-open state", () => {
     // Regression: a tenant got a false "your WhatsApp disconnected" alert while it was
     // still connected. Evolution/Baileys can report a transient non-"open" state during
     // an automatic reconnect blip, and neither the webhook nor the poll route had any
@@ -167,15 +167,15 @@ describe("omnichannel runtime contracts", () => {
     expect(webhookFetchInstancesIdx).toBeLessThan(webhookDisconnectBlock);
     expect(webhookSource.slice(0, webhookDisconnectBlock)).toContain("confirmedState");
 
-    // Client status-poll path: mirrors the "open" zombie-check with a reverse branch
-    // that re-verifies via fetchInstances before accepting a transition away from open.
+    // Client status-poll path must not turn a live `connecting` state back into
+    // `open` from stale inventory, nor call /instance/connect on every poll.
     const pollSource = source("app/api/client/whatsapp/evolution/session/route.ts");
-    const reverseCheckComment = pollSource.indexOf("Reverse zombie check");
-    const pollDisconnectBlock = pollSource.indexOf(
-      "notifyTenantIntegrationDisconnected({",
-      reverseCheckComment,
+    const getHandler = pollSource.slice(
+      pollSource.indexOf("export async function GET"),
+      pollSource.indexOf("export async function DELETE"),
     );
-    expect(reverseCheckComment).toBeGreaterThan(0);
-    expect(reverseCheckComment).toBeLessThan(pollDisconnectBlock);
+    expect(getHandler).not.toContain("evolutionInstanceConnect(");
+    expect(getHandler).not.toContain("Reverse zombie check");
+    expect(getHandler).toContain("GET e polling são estritamente passivos");
   });
 });

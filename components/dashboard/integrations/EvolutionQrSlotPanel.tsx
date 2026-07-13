@@ -193,12 +193,14 @@ export function EvolutionQrSlotPanel({
     const rawSt = j.connectionState;
     const st = typeof rawSt === "string" && rawSt.trim() ? rawSt.trim() : "close";
     setConnectionState(st);
-    setQrDataUrl(typeof j.qrDataUrl === "string" ? j.qrDataUrl : null);
-    setPairingCode(
+    const nextQrDataUrl = typeof j.qrDataUrl === "string" ? j.qrDataUrl : null;
+    const nextPairingCode =
       typeof j.pairingCode === "string" && j.pairingCode.trim()
         ? j.pairingCode.trim().toUpperCase()
-        : null,
-    );
+        : null;
+    const sessionFinished = st === "open" || st === "none";
+    setQrDataUrl((current) => nextQrDataUrl ?? (sessionFinished ? null : current));
+    setPairingCode((current) => nextPairingCode ?? (sessionFinished ? null : current));
     if (j.waJid) setWaJid(j.waJid);
     if (typeof j.instanceName === "string" && j.instanceName.trim()) {
       setInstanceName(j.instanceName.trim());
@@ -211,7 +213,7 @@ export function EvolutionQrSlotPanel({
         qrReceivedAtRef.current = Date.now();
         setQrSecondsLeft(QR_TTL_SECONDS);
       }
-    } else {
+    } else if (sessionFinished) {
       prevQrFingerprintRef.current = null;
       qrReceivedAtRef.current = null;
       setQrSecondsLeft(QR_TTL_SECONDS);
@@ -430,7 +432,7 @@ export function EvolutionQrSlotPanel({
       const st = j.connectionState ?? "";
       const hasQr = Boolean(j.qrDataUrl);
       const lifecycleActive = st === "provisioning" || st === "deleting" || st === "resetting";
-      if (autoProvision && res.ok && !lifecycleActive && (st === "none" || (!hasQr && st !== "open"))) {
+      if (autoProvision && res.ok && !lifecycleActive && st === "none" && !hasQr) {
         await startOrRefreshSession();
       }
     })();
@@ -457,7 +459,7 @@ export function EvolutionQrSlotPanel({
   // Mostra o CTA explícito de "Conectar" (em vez de criar a instância sozinho) quando
   // o auto-provisionamento está desligado OU logo após uma desconexão manual.
   const showConnectCta =
-    (!autoProvision || manuallyDisconnected) &&
+    (!autoProvision || manuallyDisconnected || connectionState === "none" || !waJid) &&
     connectionState !== "open" &&
     connectionState !== "provisioning" &&
     connectionState !== "deleting" &&
@@ -778,19 +780,25 @@ export function EvolutionQrSlotPanel({
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-xs text-content-faint">
             <Loader2 className="size-3.5 animate-spin" aria-hidden />
-            <span>A aguardar o código QR do servidor…</span>
+            <span>
+              {waJid
+                ? "A sessão vinculada está a reconectar com o WhatsApp…"
+                : "A aguardar o código QR do servidor…"}
+            </span>
           </div>
-          <details className="text-xs text-content-faint [&_summary::-webkit-details-marker]:hidden">
-            <summary className="cursor-pointer font-medium text-content-muted">
-              Ainda vazio?
-            </summary>
-            <p className="mt-1 text-[11px] leading-relaxed">
-              Veja os logs do container Evolution e confirme que a resposta inclui imagem em{" "}
-              <code className="font-mono text-[10px]">base64</code>,{" "}
-              <code className="font-mono text-[10px]">qrcode</code> ou{" "}
-              <code className="font-mono text-[10px]">code</code>.
-            </p>
-          </details>
+          {!waJid ? (
+            <details className="text-xs text-content-faint [&_summary::-webkit-details-marker]:hidden">
+              <summary className="cursor-pointer font-medium text-content-muted">
+                Ainda vazio?
+              </summary>
+              <p className="mt-1 text-[11px] leading-relaxed">
+                Veja os logs do container Evolution e confirme que a resposta inclui imagem em{" "}
+                <code className="font-mono text-[10px]">base64</code>,{" "}
+                <code className="font-mono text-[10px]">qrcode</code> ou{" "}
+                <code className="font-mono text-[10px]">code</code>.
+              </p>
+            </details>
+          ) : null}
         </div>
       ) : null}
 
@@ -810,14 +818,26 @@ export function EvolutionQrSlotPanel({
       {/* ── Action buttons (hidden while loading or when Connect CTA is shown) ── */}
       {!busy && !showConnectCta && !lifecyclePending ? (
         <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={busy}
-            onClick={() => void startOrRefreshSession()}
-          >
-            Gerar ou atualizar código QR
-          </Button>
+          {!waJid ? (
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={busy}
+              onClick={() => void startOrRefreshSession()}
+            >
+              Gerar ou atualizar código QR
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={resetting || disconnecting}
+              onClick={() => void handleReset()}
+            >
+              <RefreshCw className={cn("size-3.5", resetting && "animate-spin")} aria-hidden />
+              Resetar conexão
+            </Button>
+          )}
           <Button
             type="button"
             variant="outline"

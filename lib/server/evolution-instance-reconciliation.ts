@@ -2,7 +2,10 @@ import "server-only";
 
 import {
   buildEvolutionInstanceName,
+  evolutionConnectionState,
   evolutionFetchInstances,
+  normalizeEvolutionConnectionState,
+  parseEvolutionConnectionStatePayload,
   type EvolutionInstanceInfo,
 } from "@/lib/integrations/evolution-api";
 import {
@@ -25,6 +28,7 @@ export type LiveEvolutionConnectionResolution =
       reason:
         | "connection_not_found"
         | "inventory_unavailable"
+        | "connection_state_unavailable"
         | "connection_not_open"
         | "ambiguous_connected_siblings"
         | "connected_sibling_already_bound"
@@ -37,6 +41,21 @@ function isConnected(info: EvolutionInstanceInfo): info is EvolutionInstanceInfo
   ownerJid: string;
 } {
   return info.connectionStatus === "open" && Boolean(info.name && info.ownerJid);
+}
+
+async function confirmLiveOpen(
+  instanceName: string,
+): Promise<{ ok: true; open: boolean } | { ok: false }> {
+  const state = await evolutionConnectionState(instanceName);
+  if (!state.ok) return { ok: false };
+  return {
+    ok: true,
+    open:
+      normalizeEvolutionConnectionState(
+        parseEvolutionConnectionStatePayload(state.data),
+        "unknown",
+      ).toLowerCase() === "open",
+  };
 }
 
 /**
@@ -61,34 +80,57 @@ export async function reconcileLiveEvolutionInstance(
 
   const exact = inventory.data.find((item) => item.name === row.instance_name) ?? null;
   if (exact && isConnected(exact)) {
-    if (row.connection_state === "open" && row.wa_jid === exact.ownerJid) {
-      return { ok: true, instance: row, adoptedSibling: false };
+    const liveState = await confirmLiveOpen(row.instance_name);
+    if (!liveState.ok) {
+      return { ok: false, instance: row, reason: "connection_state_unavailable" };
     }
-    try {
-      const refreshed = await upsertTenantEvolutionInstance({
-        tenantId: row.tenant_id,
-        slotIndex: row.slot_index,
-        instanceName: row.instance_name,
-        connectionState: "open",
-        waJid: exact.ownerJid,
-        defaultAgentId: row.default_agent_id,
-      });
-      return { ok: true, instance: refreshed, adoptedSibling: false };
-    } catch (error) {
-      console.error("[evolution-instance-reconciliation] refresh_failed", {
+    if (!liveState.open) {
+      console.warn("[evolution-instance-reconciliation] stale_open_inventory", {
         tenant_id: row.tenant_id,
         connection_id: row.id,
-        slot_index: row.slot_index,
-        error: error instanceof Error ? error.message : String(error),
+        instance_name: row.instance_name,
       });
-      return { ok: false, instance: row, reason: "reconciliation_failed" };
+    } else {
+      if (row.connection_state === "open" && row.wa_jid === exact.ownerJid) {
+        return { ok: true, instance: row, adoptedSibling: false };
+      }
+      try {
+        const refreshed = await upsertTenantEvolutionInstance({
+          tenantId: row.tenant_id,
+          slotIndex: row.slot_index,
+          instanceName: row.instance_name,
+          connectionState: "open",
+          waJid: exact.ownerJid,
+          defaultAgentId: row.default_agent_id,
+        });
+        return { ok: true, instance: refreshed, adoptedSibling: false };
+      } catch (error) {
+        console.error("[evolution-instance-reconciliation] refresh_failed", {
+          tenant_id: row.tenant_id,
+          connection_id: row.id,
+          slot_index: row.slot_index,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return { ok: false, instance: row, reason: "reconciliation_failed" };
+      }
     }
   }
 
   const slotPrefix = buildEvolutionInstanceName(row.tenant_id, row.slot_index);
-  const connectedSiblings = inventory.data
+  const inventoryCandidates = inventory.data
     .filter(isConnected)
+    .filter((item) => item.name !== row.instance_name)
     .filter((item) => item.name.startsWith(slotPrefix));
+
+  const candidateStates = await Promise.all(
+    inventoryCandidates.map(async (item) => ({ item, state: await confirmLiveOpen(item.name) })),
+  );
+  if (candidateStates.some(({ state }) => !state.ok)) {
+    return { ok: false, instance: row, reason: "connection_state_unavailable" };
+  }
+  const connectedSiblings = candidateStates
+    .filter(({ state }) => state.ok && state.open)
+    .map(({ item }) => item);
 
   if (connectedSiblings.length === 0) {
     return { ok: false, instance: row, reason: "connection_not_open" };

@@ -2,11 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   evolutionFetchInstancesMock,
+  evolutionConnectionStateMock,
   getEvolutionInstanceByIdForTenantMock,
   getEvolutionInstanceByNameMock,
   upsertTenantEvolutionInstanceMock,
 } = vi.hoisted(() => ({
   evolutionFetchInstancesMock: vi.fn(),
+  evolutionConnectionStateMock: vi.fn(),
   getEvolutionInstanceByIdForTenantMock: vi.fn(),
   getEvolutionInstanceByNameMock: vi.fn(),
   upsertTenantEvolutionInstanceMock: vi.fn(),
@@ -14,7 +16,12 @@ const {
 
 vi.mock("@/lib/integrations/evolution-api", () => ({
   buildEvolutionInstanceName: () => "mc-slot-prefix",
+  evolutionConnectionState: evolutionConnectionStateMock,
   evolutionFetchInstances: evolutionFetchInstancesMock,
+  normalizeEvolutionConnectionState: (value: unknown, fallback: string) =>
+    typeof value === "string" && value.trim() ? value.trim() : fallback,
+  parseEvolutionConnectionStatePayload: (data: unknown) =>
+    (data as { instance?: { state?: string } } | null)?.instance?.state,
 }));
 
 vi.mock("@/lib/server/tenant-evolution-instance-db", () => ({
@@ -42,6 +49,11 @@ const row = {
 describe("reconcileLiveEvolutionInstance", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    evolutionConnectionStateMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { instance: { state: "open" } },
+    });
     getEvolutionInstanceByNameMock.mockResolvedValue(null);
     upsertTenantEvolutionInstanceMock.mockImplementation(async (payload) => ({
       ...row,
@@ -81,6 +93,55 @@ describe("reconcileLiveEvolutionInstance", () => {
     });
     expect(evolutionFetchInstancesMock).not.toHaveBeenCalled();
     expect(upsertTenantEvolutionInstanceMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale inventory open when the live endpoint is still connecting", async () => {
+    evolutionFetchInstancesMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: [
+        {
+          name: row.instance_name,
+          connectionStatus: "open",
+          ownerJid: row.wa_jid,
+          profileName: null,
+        },
+      ],
+    });
+    evolutionConnectionStateMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { instance: { state: "connecting" } },
+    });
+
+    const result = await reconcileLiveEvolutionInstance(row);
+
+    expect(result).toEqual({ ok: false, instance: row, reason: "connection_not_open" });
+    expect(upsertTenantEvolutionInstanceMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the live state endpoint is unavailable", async () => {
+    evolutionFetchInstancesMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: [
+        {
+          name: row.instance_name,
+          connectionStatus: "open",
+          ownerJid: row.wa_jid,
+          profileName: null,
+        },
+      ],
+    });
+    evolutionConnectionStateMock.mockResolvedValue({ ok: false, status: 503, error: "timeout" });
+
+    const result = await reconcileLiveEvolutionInstance(row);
+
+    expect(result).toEqual({
+      ok: false,
+      instance: row,
+      reason: "connection_state_unavailable",
+    });
   });
 
   it("adopts the only authenticated sibling while preserving the logical slot", async () => {

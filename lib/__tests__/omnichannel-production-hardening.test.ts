@@ -92,4 +92,12 @@ describe("omnichannel production hardening", () => {
     expect(lifecycle).toContain("finalizeTenantEvolutionInstanceRemoval");
     expect(deleteHandler).not.toContain("deleteTenantEvolutionInstanceRow");
   });
+
+  it("does not auto-connect an existing non-open Evolution session from the UI", () => {
+    const panel = source("components/dashboard/integrations/EvolutionQrSlotPanel.tsx");
+
+    expect(panel).toContain('st === "none" && !hasQr');
+    expect(panel).not.toContain('st === "none" || (!hasQr && st !== "open")');
+    expect(panel).toContain("nextQrDataUrl ?? (sessionFinished ? null : current)");
+  });
 });
