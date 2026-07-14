@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { logAdminIaDataPlaneIssue, surfacePostgrestForAdminUi } from "@/lib/server/admin-ia-data-plane-errors";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
+// Health check tem de executar a cada pedido; sem isto o Next pré-renderiza
+// a rota no build e congela a resposta (a sonda ao Supabase correria só no build).
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   let aiUsageLogs:
     | { skipped: true }
