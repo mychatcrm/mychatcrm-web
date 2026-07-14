@@ -14,12 +14,12 @@ jobs:
   test-and-build:
     runs-on: ubuntu-latest
     env:
-      # Valores fake apenas para o build (não são credenciais reais): a validação
-      # de lib/server/supabase-backend-secret.ts exige JWTs com roles anon/service_role
-      # e valores distintos entre as duas chaves.
+      # Dummies intencionais: reprovam na validação de chaves e impedem os testes
+      # de tentarem rede. O build não pode depender delas (rotas Supabase são
+      # force-dynamic e não são pré-renderizadas).
       NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6ImNpLXBsYWNlaG9sZGVyIn0.ci-placeholder-signature
-      SUPABASE_SERVICE_ROLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoiY2ktcGxhY2Vob2xkZXIifQ.ci-placeholder-signature
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder
+      SUPABASE_SERVICE_ROLE_KEY: placeholder
     steps:
       - uses: actions/checkout@v4
 
