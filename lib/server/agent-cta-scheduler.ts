@@ -25,6 +25,7 @@ import {
   cancelAgendaRemindersForEvent,
   scheduleAgendaRemindersForEvent,
 } from "@/lib/server/agenda-reminder-jobs";
+import { notifyTenantAppointmentChange } from "@/lib/server/agenda-owner-notifications";
 import type { AgentAgendaDisponibilidade, AgentAgendaLembretes } from "@/lib/types";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
@@ -798,6 +799,18 @@ export async function executeAgendaDirective(params: {
       if (!event) throw new Error("agenda_event_not_found");
     }
     await cancelStructuredAgendaEvent({ tenantId: params.tenantId, remoteJid: params.remoteJid, event });
+    void notifyTenantAppointmentChange({
+      sb,
+      tenantId: params.tenantId,
+      action: "cancelled",
+      agendaEventId: event.id,
+      attendeeName: event.attendee_name,
+      attendeePhone: event.attendee_phone,
+      startAtIso: event.start_at,
+      location: event.location ?? null,
+      timezone: params.timezone,
+      agentId: params.agentId ?? null,
+    }).catch(() => undefined);
     return { action: "cancelled", eventId: event.id };
   }
 
@@ -813,13 +826,39 @@ export async function executeAgendaDirective(params: {
     return { action: "scheduled", eventId: existing!.id };
   }
   const inserted = await insertStructuredAgendaEvent({ ...params, sb, directive });
-  if (!existing) return { action: "scheduled", eventId: inserted.id };
+  if (!existing) {
+    void notifyTenantAppointmentChange({
+      sb,
+      tenantId: params.tenantId,
+      action: "scheduled",
+      agendaEventId: inserted.id,
+      attendeeName: inserted.attendee_name,
+      attendeePhone: inserted.attendee_phone,
+      startAtIso: inserted.start_at,
+      location: inserted.location ?? null,
+      timezone: params.timezone,
+      agentId: params.agentId ?? null,
+    }).catch(() => undefined);
+    return { action: "scheduled", eventId: inserted.id };
+  }
   try {
     await cancelStructuredAgendaEvent({ tenantId: params.tenantId, remoteJid: params.remoteJid, event: existing });
   } catch (error) {
     await cancelStructuredAgendaEvent({ tenantId: params.tenantId, remoteJid: params.remoteJid, event: inserted }).catch(() => undefined);
     throw error;
   }
+  void notifyTenantAppointmentChange({
+    sb,
+    tenantId: params.tenantId,
+    action: "rescheduled",
+    agendaEventId: inserted.id,
+    attendeeName: inserted.attendee_name,
+    attendeePhone: inserted.attendee_phone,
+    startAtIso: inserted.start_at,
+    location: inserted.location ?? null,
+    timezone: params.timezone,
+    agentId: params.agentId ?? null,
+  }).catch(() => undefined);
   return { action: "rescheduled", eventId: inserted.id };
 }
 

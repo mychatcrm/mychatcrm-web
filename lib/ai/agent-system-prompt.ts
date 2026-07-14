@@ -202,6 +202,7 @@ export function buildAgentSystemPrompt(params: {
     ? agent.handoffKeywords.filter((item): item is string => typeof item === "string")
     : [];
   const useSimple = agentUsesSimpleInstructions(agent);
+  const agendaAutomationOn = agent.agendaAutomationEnabled === true;
   const instructionBlocks = useSimple
     ? [section("PROMPT DO AGENTE", agent.simplePrompt)]
     : [
@@ -216,7 +217,12 @@ export function buildAgentSystemPrompt(params: {
     `REGRA UNIVERSAL DE CONTEXTO
 - Este agente pode operar em qualquer nicho, produto ou serviço.
 - Nunca presuma segmento, produto, preço, público ou objetivo que não esteja explicitamente configurado nas instruções deste agente, nos materiais autorizados ou no contexto da jornada atual.
-- Quando um nicho ou produto estiver configurado, respeite-o integralmente e não misture informações de outras campanhas, formulários, agentes ou conversas.`,
+- Quando um nicho ou produto estiver configurado, respeite-o integralmente e não misture informações de outras campanhas, formulários, agentes ou conversas.${
+      agendaAutomationOn
+        ? `
+- As capacidades operacionais desta plataforma descritas neste prompt (como o bloco AGENDA) fazem parte do escopo autorizado deste agente em qualquer nicho e não dependem de estarem citadas nas instruções configuradas.`
+        : ""
+    }`,
     "Ao confirmar um agendamento, sempre repita a data, horário e local na sua resposta de confirmação.",
     `IDENTIDADE DO AGENTE
 Nome: ${clean(agent.nome) || "Agente de atendimento"}
@@ -230,7 +236,12 @@ Idioma configurado: ${clean(agent.idioma) || "Automático"}`,
 - Contexto de CRM, formulário, histórico, campanha, agenda ou materiais serve apenas para personalizar fatos compatíveis; nunca autoriza outro nicho, produto, serviço, oferta ou objetivo.
 - Nunca ofereça, recomende ou apresente algo que não esteja explicitamente autorizado nas instruções deste agente ou nos materiais deste mesmo agente.
 - Se qualquer contexto operacional parecer pertencer a outro produto, campanha, formulário, agente ou jornada, ignore esse trecho e continue estritamente dentro das instruções configuradas.
-- Na dúvida sobre o escopo, faça uma pergunta neutra ou diga que não possui essa informação. Nunca complete com conhecimento presumido.`,
+- Na dúvida sobre o escopo, faça uma pergunta neutra ou diga que não possui essa informação. Nunca complete com conhecimento presumido.${
+      agendaAutomationOn
+        ? `
+- EXCEÇÃO — CAPACIDADES OPERACIONAIS DO SISTEMA: executar as operações técnicas desta plataforma autorizadas neste prompt (criar, remarcar e cancelar agendamentos conforme o bloco AGENDA) NUNCA é sair do escopo. Essas operações são capacidades técnicas do sistema, não uma oferta, produto ou serviço; use-as sempre que o cliente pedir, mesmo que as instruções configuradas deste agente não mencionem agendamento. Esta exceção vale apenas para a mecânica dessas operações — ela não autoriza oferecer, recomendar ou afirmar nada fora das instruções configuradas.`
+        : ""
+    }`,
     formatOutboundMediaPromptBlock(params.runtimeContext?.outboundMediaLines ?? null),
     `TRANSFERÊNCIA HUMANA
 CTA ativo: ${agent.ctaHandoffAtivo === true ? "sim" : "não"}
@@ -248,7 +259,8 @@ ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o c
           ? `- Disponibilidade para agendamentos: ${disp.diasSemana.map((d) => DIAS_PT[d] ?? d).join(", ")} das ${disp.horaInicio ?? "08:00"} às ${disp.horaFim ?? "18:00"} (${agentTz}). Proponha apenas horários dentro desta janela. Se o cliente pedir horário fora, informe a disponibilidade e sugira alternativas.`
           : null;
       const automationBlock = agent.agendaAutomationEnabled === true
-        ? `- A automação de agenda está ativa para este agente.
+        ? `- CAPACIDADE OPERACIONAL DO SISTEMA: agendar, remarcar e cancelar compromissos é uma função técnica desta plataforma autorizada para este agente. As regras de escopo deste prompt não restringem esta capacidade; quando o cliente pedir para marcar, remarcar ou cancelar um horário, siga os passos abaixo normalmente.
+- A automação de agenda está ativa para este agente.
 - FUSO HORÁRIO: Use sempre o fuso horário ${agentTz}. Datas e horas em diretivas devem estar no horário local (não UTC).
 
 CRIAR AGENDAMENTO

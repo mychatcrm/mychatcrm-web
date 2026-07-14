@@ -3537,6 +3537,7 @@ function PlanLeadsBilling({ session }: { session: ClientSession }) {
 type AccountContactSettings = {
   personalPhone: string | null;
   systemNotificationPhone: string | null;
+  appointmentNotificationPhone: string | null;
   canManageSystemNotificationPhone: boolean;
 };
 
@@ -3586,10 +3587,16 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
   const [systemNotificationCode, setSystemNotificationCode] = useState("");
   const [systemNotificationCodeError, setSystemNotificationCodeError] = useState<string | null>(null);
   const [systemNotificationPending, setSystemNotificationPending] = useState<{ phone: string; expiresAt: string } | null>(null);
+  const [appointmentNotificationPhone, setAppointmentNotificationPhone] = useState("");
+  const [appointmentNotificationPhoneDraft, setAppointmentNotificationPhoneDraft] = useState("");
+  const [appointmentNotificationCode, setAppointmentNotificationCode] = useState("");
+  const [appointmentNotificationCodeError, setAppointmentNotificationCodeError] = useState<string | null>(null);
+  const [appointmentNotificationPending, setAppointmentNotificationPending] = useState<{ phone: string; expiresAt: string } | null>(null);
   const [canManageSystemNotificationPhone, setCanManageSystemNotificationPhone] = useState(false);
   const [contactSettingsLoading, setContactSettingsLoading] = useState(true);
   const [phoneSaving, setPhoneSaving] = useState(false);
   const [notificationPhoneSaving, setNotificationPhoneSaving] = useState(false);
+  const [appointmentPhoneSaving, setAppointmentPhoneSaving] = useState(false);
   const [displayName, setDisplayName] = useState(session.displayName);
   const [namePopoverOpen, setNamePopoverOpen] = useState(false);
   const [nameNew, setNameNew] = useState("");
@@ -3615,6 +3622,10 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
         setDisplayPhone(settings.personalPhone);
         setSystemNotificationPhone(settings.systemNotificationPhone ?? "");
         setSystemNotificationPhoneDraft(settings.systemNotificationPhone ? formatAccountPhone(settings.systemNotificationPhone) : "");
+        setAppointmentNotificationPhone(settings.appointmentNotificationPhone ?? "");
+        setAppointmentNotificationPhoneDraft(
+          settings.appointmentNotificationPhone ? formatAccountPhone(settings.appointmentNotificationPhone) : "",
+        );
         setCanManageSystemNotificationPhone(Boolean(settings.canManageSystemNotificationPhone));
       })
       .catch(() => {
@@ -3900,6 +3911,94 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
       setAccountMsg({ type: "err", text: "Não foi possível limpar o telefone de notificações." });
     } finally {
       setNotificationPhoneSaving(false);
+    }
+  };
+
+  const submitAppointmentNotificationPhone = async (e: FormEvent) => {
+    e.preventDefault();
+    if (appointmentPhoneSaving || !canManageSystemNotificationPhone) return;
+
+    setAppointmentPhoneSaving(true);
+    try {
+      if (appointmentNotificationPending) {
+        const res = await fetch("/api/client/account/contact", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            action: "confirm_phone_verification",
+            phoneType: "appointment_notification",
+            code: appointmentNotificationCode,
+          }),
+        });
+        const data = (await res.json().catch(() => null)) as { appointmentNotificationPhone?: string | null; error?: string } | null;
+        if (!res.ok) {
+          const message = data?.error || "Não foi possível confirmar o telefone de notificações de agendamentos.";
+          setAppointmentNotificationCodeError(message);
+          setAccountMsg({ type: "err", text: message });
+          return;
+        }
+        const next = data?.appointmentNotificationPhone ?? appointmentNotificationPending.phone;
+        setAppointmentNotificationPhone(next);
+        setAppointmentNotificationPhoneDraft(next ? formatAccountPhone(next) : "");
+        setAppointmentNotificationCode("");
+        setAppointmentNotificationCodeError(null);
+        setAppointmentNotificationPending(null);
+        setAccountMsg({ type: "ok", text: "Telefone de notificações de agendamentos confirmado e atualizado." });
+        return;
+      }
+
+      const res = await fetch("/api/client/account/contact", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          action: "request_phone_verification",
+          phoneType: "appointment_notification",
+          phone: appointmentNotificationPhoneDraft,
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as { phone?: string | null; expiresAt?: string; error?: string } | null;
+      if (!res.ok) {
+        setAccountMsg({ type: "err", text: data?.error || "Não foi possível enviar o código de verificação." });
+        return;
+      }
+      setAppointmentNotificationPending({ phone: data?.phone ?? appointmentNotificationPhoneDraft, expiresAt: data?.expiresAt ?? "" });
+      setAppointmentNotificationCode("");
+      setAppointmentNotificationCodeError(null);
+      setAccountMsg({ type: "ok", text: "Código enviado pelo agente do sistema para o telefone de notificações de agendamentos." });
+    } catch {
+      setAccountMsg({ type: "err", text: "Não foi possível processar o telefone de notificações de agendamentos." });
+    } finally {
+      setAppointmentPhoneSaving(false);
+    }
+  };
+
+  const clearAppointmentNotificationPhone = async () => {
+    if (appointmentPhoneSaving || !canManageSystemNotificationPhone) return;
+    setAppointmentPhoneSaving(true);
+    try {
+      const res = await fetch("/api/client/account/contact", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ appointmentNotificationPhone: "" }),
+      });
+      const data = (await res.json().catch(() => null)) as { appointmentNotificationPhone?: string | null; error?: string } | null;
+      if (!res.ok) {
+        setAccountMsg({ type: "err", text: data?.error || "Não foi possível limpar o telefone de notificações de agendamentos." });
+        return;
+      }
+      setAppointmentNotificationPhone("");
+      setAppointmentNotificationPhoneDraft("");
+      setAppointmentNotificationCode("");
+      setAppointmentNotificationCodeError(null);
+      setAppointmentNotificationPending(null);
+      setAccountMsg({ type: "ok", text: "Telefone de notificações de agendamentos removido." });
+    } catch {
+      setAccountMsg({ type: "err", text: "Não foi possível limpar o telefone de notificações de agendamentos." });
+    } finally {
+      setAppointmentPhoneSaving(false);
     }
   };
 
@@ -4497,6 +4596,112 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                       disabled={!canManageSystemNotificationPhone || contactSettingsLoading || notificationPhoneSaving}
                     >
                       {notificationPhoneSaving ? "Aguarde..." : systemNotificationPending ? "Confirmar código" : "Enviar código"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </form>
+
+            <form onSubmit={submitAppointmentNotificationPhone} className="rounded-xl border border-line bg-surface-card p-4 md:p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="h-4 w-4 shrink-0 text-primary" strokeWidth={1.75} aria-hidden />
+                    <h3 className="text-sm font-semibold text-content">Telefone para notificações de novos agendamentos</h3>
+                  </div>
+                  <p className="mt-2 max-w-3xl text-xs leading-relaxed text-content-muted">
+                    Este número recebe um aviso no WhatsApp sempre que o agente de IA confirmar, remarcar ou cancelar
+                    um agendamento, com nome, telefone, data e horário do cliente. Ele não é usado como linha de
+                    atendimento dos agentes.
+                  </p>
+                  <p className="mt-2 text-[11px] text-content-faint">
+                    Atual:{" "}
+                    <span className="font-medium text-content-secondary">
+                      {contactSettingsLoading ? "Carregando..." : formatAccountPhone(appointmentNotificationPhone)}
+                    </span>
+                  </p>
+                </div>
+
+                <div className="w-full max-w-md space-y-3">
+                  <label className="text-xs font-medium text-content-muted" htmlFor="appointment-notification-phone">
+                    Número do responsável pelos agendamentos
+                  </label>
+                  <Input
+                    id="appointment-notification-phone"
+                    type="tel"
+                    value={appointmentNotificationPhoneDraft}
+                    onChange={(ev) => {
+                      setAppointmentNotificationPhoneDraft(ev.target.value);
+                      setAppointmentNotificationPending(null);
+                      setAppointmentNotificationCode("");
+                      setAppointmentNotificationCodeError(null);
+                    }}
+                    placeholder="(00) 00000-0000"
+                    autoComplete="tel"
+                    disabled={
+                      !canManageSystemNotificationPhone ||
+                      contactSettingsLoading ||
+                      appointmentPhoneSaving ||
+                      Boolean(appointmentNotificationPending)
+                    }
+                  />
+                  {appointmentNotificationPending ? (
+                    <div className="rounded-lg border border-primary/20 bg-primary/10 p-3">
+                      <p className="text-[11px] leading-relaxed text-content-muted">
+                        O agente do sistema enviou um código para{" "}
+                        <span className="font-medium text-content">{formatAccountPhone(appointmentNotificationPending.phone)}</span>.
+                        Confirme para este número receber os avisos de agendamentos.
+                      </p>
+                      <label className="mt-3 block text-xs font-medium text-content-muted" htmlFor="appointment-notification-phone-code">
+                        Código recebido
+                      </label>
+                      <Input
+                        id="appointment-notification-phone-code"
+                        className={`mt-1 ${appointmentNotificationCodeError ? "border-red-500 bg-red-500/10 text-red-700 focus-visible:ring-red-500 dark:text-red-100" : ""}`}
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        value={appointmentNotificationCode}
+                        onChange={(ev) => {
+                          setAppointmentNotificationCode(ev.target.value.replace(/\D/g, "").slice(0, 6));
+                          setAppointmentNotificationCodeError(null);
+                        }}
+                        placeholder="000000"
+                        disabled={appointmentPhoneSaving}
+                        aria-invalid={Boolean(appointmentNotificationCodeError)}
+                        aria-describedby={appointmentNotificationCodeError ? "appointment-notification-phone-code-error" : undefined}
+                      />
+                      {appointmentNotificationCodeError ? (
+                        <p id="appointment-notification-phone-code-error" className="mt-2 text-[11px] font-medium text-red-500">
+                          {appointmentNotificationCodeError}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {!canManageSystemNotificationPhone ? (
+                    <p className="text-[11px] leading-relaxed text-content-faint">
+                      Apenas o dono da conta pode alterar o telefone de notificações de agendamentos.
+                    </p>
+                  ) : null}
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={!appointmentNotificationPhoneDraft || appointmentPhoneSaving || contactSettingsLoading}
+                      onClick={appointmentNotificationPending ? () => {
+                        setAppointmentNotificationPending(null);
+                        setAppointmentNotificationCode("");
+                        setAppointmentNotificationCodeError(null);
+                      } : clearAppointmentNotificationPhone}
+                    >
+                      {appointmentNotificationPending ? "Trocar número" : "Limpar"}
+                    </Button>
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={!canManageSystemNotificationPhone || contactSettingsLoading || appointmentPhoneSaving}
+                    >
+                      {appointmentPhoneSaving ? "Aguarde..." : appointmentNotificationPending ? "Confirmar código" : "Enviar código"}
                     </Button>
                   </div>
                 </div>

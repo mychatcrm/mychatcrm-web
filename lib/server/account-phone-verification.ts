@@ -3,7 +3,7 @@ import { validateCheckoutPhone } from "@/lib/checkout-phone";
 import { sendSystemNotification } from "@/lib/server/system-agent";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
-export type AccountPhoneVerificationType = "personal" | "system_notification";
+export type AccountPhoneVerificationType = "personal" | "system_notification" | "appointment_notification";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 

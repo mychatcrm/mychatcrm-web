@@ -185,6 +185,34 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("nunca inclua [[AGENDAR: ...]]");
   });
 
+  it("authorizes agenda as a system capability inside scope blocks when automation is on", () => {
+    const prompt = buildAgentSystemPrompt({
+      languageInstruction: "Responda em português.",
+      agent: { nome: "Max Vendas", systemPrompt: "Ajude o cliente.", agendaAutomationEnabled: true },
+    });
+
+    expect(prompt).toContain("EXCEÇÃO — CAPACIDADES OPERACIONAIS DO SISTEMA");
+    expect(prompt).toContain("NUNCA é sair do escopo");
+    expect(prompt).toContain("não autoriza oferecer, recomendar ou afirmar nada fora das instruções configuradas");
+    expect(prompt).toContain("fazem parte do escopo autorizado deste agente em qualquer nicho");
+    expect(prompt).toContain("CAPACIDADE OPERACIONAL DO SISTEMA: agendar, remarcar e cancelar compromissos");
+    expect(prompt).toContain("ESCOPO SOBERANO DO AGENTE");
+    expect(prompt).toContain("REGRA UNIVERSAL DE CONTEXTO");
+  });
+
+  it("omits the agenda scope carve-out when automation is off", () => {
+    for (const agendaAutomationEnabled of [false, undefined]) {
+      const prompt = buildAgentSystemPrompt({
+        languageInstruction: "Responda em português.",
+        agent: { nome: "Max Vendas", systemPrompt: "Ajude o cliente.", agendaAutomationEnabled },
+      });
+
+      expect(prompt).not.toContain("EXCEÇÃO — CAPACIDADES OPERACIONAIS DO SISTEMA");
+      expect(prompt).not.toContain("CAPACIDADE OPERACIONAL DO SISTEMA: agendar");
+      expect(prompt).toContain("ESCOPO SOBERANO DO AGENTE");
+    }
+  });
+
   it("injects Meta Lead Ads form memory so the agent does not re-ask", () => {
     const prompt = buildAgentSystemPrompt({
       languageInstruction: "Responda em português.",
