@@ -18,8 +18,8 @@ jobs:
       # de tentarem rede. O build não pode depender delas (rotas Supabase são
       # force-dynamic e não são pré-renderizadas).
       NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_ci_placeholder
-      SUPABASE_SERVICE_ROLE_KEY: sb_secret_ci_placeholder
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder
+      SUPABASE_SERVICE_ROLE_KEY: placeholder
     steps:
       - uses: actions/checkout@v4
 
