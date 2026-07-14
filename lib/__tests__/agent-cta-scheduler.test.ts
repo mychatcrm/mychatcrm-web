@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AGENDA_SLOT_TAKEN_REPLY,
   assistantTextForSchedulingConfirmation,
+  buildOutsideAvailabilityReply,
   createAgendaEventForSchedulingCta,
   detectRescheduleIntent,
   detectSchedulingConfirmation,
+  executePreparedAgendaDirective,
   extractLocationFromText,
   formatExistingAppointmentSchedulingBlock,
   isSchedulingCta,
@@ -114,6 +117,46 @@ function makeStructuredSb(existing: Record<string, unknown> | null = null) {
       },
     }),
   } as never;
+}
+
+/**
+ * Mock que diferencia a query de conflito (usa .lt/.gt) da busca do próximo evento
+ * ativo do contato (usa .gte). Registra os args de .neq para asserts do excludeEventId.
+ */
+function makeConflictSb(options: {
+  existing?: Record<string, unknown> | null;
+  conflictRow?: Record<string, unknown> | null;
+} = {}) {
+  const neqCalls: Array<[string, unknown]> = [];
+  const sb = {
+    from: (table: string) => ({
+      select: () => {
+        let usedOverlap = false;
+        const chain = {
+          eq: () => chain,
+          neq: (col: string, val: unknown) => {
+            neqCalls.push([col, val]);
+            return chain;
+          },
+          gte: () => chain,
+          lt: () => {
+            usedOverlap = true;
+            return chain;
+          },
+          gt: () => chain,
+          order: () => chain,
+          limit: () => chain,
+          maybeSingle: async () => {
+            if (table === "leads") return { data: { name: "Maria" }, error: null };
+            if (usedOverlap) return { data: options.conflictRow ?? null, error: null };
+            return { data: options.existing ?? null, error: null };
+          },
+        };
+        return chain;
+      },
+    }),
+  } as never;
+  return { sb, neqCalls };
 }
 
 describe("agent-cta-scheduler", () => {
@@ -438,6 +481,182 @@ describe("agent-cta-scheduler", () => {
     });
 
     expect(result).toEqual({ action: "rescheduled", eventId: "evt-new" });
+    expect(cancelAgendaEventMock).toHaveBeenCalledWith("t1", "evt-old");
+  });
+
+  it("builds the outside-availability reply from the configured window", () => {
+    const disp = { ativo: true, diasSemana: [1, 2, 3], horaInicio: "09:00", horaFim: "18:00" };
+    const reply = buildOutsideAvailabilityReply(disp);
+    expect(reply).toContain("segunda, terça e quarta");
+    expect(reply).toContain("das 09:00 às 18:00");
+    expect(reply).not.toMatch(/equipe|humano|atendente/i);
+  });
+
+  it("uses the custom outside-availability message when configured (trimmed)", () => {
+    const disp = {
+      ativo: true,
+      diasSemana: [1],
+      horaInicio: "09:00",
+      horaFim: "18:00",
+      mensagemForaJanela: "  Só atendemos com hora marcada dentro do expediente. Me passa outro horário?  ",
+    };
+    expect(buildOutsideAvailabilityReply(disp)).toBe(
+      "Só atendemos com hora marcada dentro do expediente. Me passa outro horário?",
+    );
+  });
+
+  it("falls back to a generic reply when the window has no days", () => {
+    const reply = buildOutsideAvailabilityReply({ ativo: true, diasSemana: [], horaInicio: "09:00", horaFim: "18:00" });
+    expect(reply).toContain("fora da nossa janela de agendamento");
+    expect(buildOutsideAvailabilityReply(null)).toContain("fora da nossa janela de agendamento");
+  });
+
+  it("replies with the dynamic window message when the slot is outside availability", async () => {
+    const disp = { ativo: true, diasSemana: [0, 1, 2, 3, 4, 5, 6], horaInicio: "09:00", horaFim: "12:00" };
+    const result = await executePreparedAgendaDirective({
+      sb: makeStructuredSb(),
+      tenantId: "t1",
+      remoteJid: "5562999999999@s.whatsapp.net",
+      timezone: "America/Sao_Paulo",
+      prepared: {
+        text: "Confirmado!",
+        directive: { type: "schedule", date: "02/06/2099", time: "14:30", location: null },
+        action: "pending",
+      },
+      agendaDisponibilidade: disp,
+    });
+
+    expect(result.action).toBe("failed");
+    expect(result.text).toBe(buildOutsideAvailabilityReply(disp));
+    expect(insertAgendaEventMock).not.toHaveBeenCalled();
+  });
+
+  it("replies with the custom message when outside availability and one is configured", async () => {
+    const disp = {
+      ativo: true,
+      diasSemana: [0, 1, 2, 3, 4, 5, 6],
+      horaInicio: "09:00",
+      horaFim: "12:00",
+      mensagemForaJanela: "Nossa janela é pela manhã. Me diga um horário entre 09:00 e 12:00.",
+    };
+    const result = await executePreparedAgendaDirective({
+      sb: makeStructuredSb(),
+      tenantId: "t1",
+      remoteJid: "5562999999999@s.whatsapp.net",
+      timezone: "America/Sao_Paulo",
+      prepared: {
+        text: "Confirmado!",
+        directive: { type: "schedule", date: "02/06/2099", time: "14:30", location: null },
+        action: "pending",
+      },
+      agendaDisponibilidade: disp,
+    });
+
+    expect(result.action).toBe("failed");
+    expect(result.text).toBe("Nossa janela é pela manhã. Me diga um horário entre 09:00 e 12:00.");
+  });
+
+  it("blocks double-booking when simultaneous appointments are disabled", async () => {
+    const { sb } = makeConflictSb({ conflictRow: { id: "evt-busy" } });
+    await expect(
+      executeAgendaDirective({
+        sb,
+        tenantId: "t1",
+        remoteJid: "5562999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        directive: { type: "schedule", date: "02/06/2099", time: "14:30", location: null },
+        agendaDisponibilidade: {
+          ativo: false,
+          diasSemana: [1, 2, 3, 4, 5],
+          horaInicio: "08:00",
+          horaFim: "18:00",
+          permitirAgendamentosSimultaneos: false,
+        },
+      }),
+    ).rejects.toThrow("agenda_slot_taken");
+    expect(insertAgendaEventMock).not.toHaveBeenCalled();
+    expect(createGoogleCalendarEventMock).not.toHaveBeenCalled();
+  });
+
+  it("replies with the slot-taken message via executePreparedAgendaDirective", async () => {
+    const { sb } = makeConflictSb({ conflictRow: { id: "evt-busy" } });
+    const result = await executePreparedAgendaDirective({
+      sb,
+      tenantId: "t1",
+      remoteJid: "5562999999999@s.whatsapp.net",
+      timezone: "America/Sao_Paulo",
+      prepared: {
+        text: "Confirmado!",
+        directive: { type: "schedule", date: "02/06/2099", time: "14:30", location: null },
+        action: "pending",
+      },
+      agendaDisponibilidade: {
+        ativo: false,
+        diasSemana: [1, 2, 3, 4, 5],
+        horaInicio: "08:00",
+        horaFim: "18:00",
+        permitirAgendamentosSimultaneos: false,
+      },
+    });
+
+    expect(result.action).toBe("failed");
+    expect(result.text).toBe(AGENDA_SLOT_TAKEN_REPLY);
+  });
+
+  it("schedules normally when simultaneous appointments are allowed or unset", async () => {
+    for (const permitir of [true, undefined]) {
+      insertAgendaEventMock.mockReset();
+      insertAgendaEventMock.mockResolvedValueOnce({ id: "evt-new" });
+      const { sb } = makeConflictSb({ conflictRow: { id: "evt-busy" } });
+      const result = await executeAgendaDirective({
+        sb,
+        tenantId: "t1",
+        remoteJid: "5562999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        directive: { type: "schedule", date: "02/06/2099", time: "14:30", location: null },
+        agendaDisponibilidade: {
+          ativo: false,
+          diasSemana: [1, 2, 3, 4, 5],
+          horaInicio: "08:00",
+          horaFim: "18:00",
+          permitirAgendamentosSimultaneos: permitir,
+        },
+      });
+      expect(result).toEqual({ action: "scheduled", eventId: "evt-new" });
+    }
+  });
+
+  it("excludes the contact's own event from the conflict check on reschedule", async () => {
+    const existing = {
+      id: "evt-old",
+      attendee_phone: "5562999999999",
+      google_event_id: null,
+      start_at: "2099-06-01T13:00:00.000Z",
+    };
+    const { sb, neqCalls } = makeConflictSb({ existing, conflictRow: null });
+    insertAgendaEventMock.mockResolvedValueOnce({
+      id: "evt-new",
+      attendee_phone: "5562999999999",
+      google_event_id: null,
+    });
+
+    const result = await executeAgendaDirective({
+      sb,
+      tenantId: "t1",
+      remoteJid: "5562999999999@s.whatsapp.net",
+      timezone: "America/Sao_Paulo",
+      directive: { type: "schedule", date: "02/06/2099", time: "14:30", location: null },
+      agendaDisponibilidade: {
+        ativo: false,
+        diasSemana: [1, 2, 3, 4, 5],
+        horaInicio: "08:00",
+        horaFim: "18:00",
+        permitirAgendamentosSimultaneos: false,
+      },
+    });
+
+    expect(result).toEqual({ action: "rescheduled", eventId: "evt-new" });
+    expect(neqCalls).toContainEqual(["id", "evt-old"]);
     expect(cancelAgendaEventMock).toHaveBeenCalledWith("t1", "evt-old");
   });
 });

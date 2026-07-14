@@ -54,6 +54,31 @@ export const AGENDA_SUCCESS_REPLY_RESCHEDULED = "Remarcação confirmada.";
 export const AGENDA_SUCCESS_REPLY_CANCELLED = "Cancelamento confirmado.";
 export const AGENDA_AUTOMATION_DISABLED_REPLY =
   "Posso consultar seus compromissos existentes, mas não consigo criar, remarcar ou cancelar agendamentos por aqui no momento.";
+export const AGENDA_SLOT_TAKEN_REPLY =
+  "Esse horário acabou de ficar indisponível na nossa agenda. Pode me indicar outra data ou horário? Eu verifico a disponibilidade e confirmo na hora.";
+
+const AGENDA_DIAS_PT = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
+
+export function buildOutsideAvailabilityReply(disp?: AgentAgendaDisponibilidade | null): string {
+  const custom = disp?.mensagemForaJanela?.trim();
+  if (custom) return custom;
+  if (!disp || !Array.isArray(disp.diasSemana) || disp.diasSemana.length === 0) {
+    return "Esse horário fica fora da nossa janela de agendamento. Me diga outra data ou horário que eu confirmo para você.";
+  }
+  const nomes = [...disp.diasSemana].sort((a, b) => a - b).map((d) => AGENDA_DIAS_PT[d] ?? String(d));
+  const dias = nomes.length === 1 ? nomes[0] : `${nomes.slice(0, -1).join(", ")} e ${nomes[nomes.length - 1]}`;
+  return `Esse horário fica fora da nossa janela de agendamento. Atendemos ${dias}, das ${disp.horaInicio} às ${disp.horaFim}. Me diga outra data ou horário dentro desse período que eu confirmo para você.`;
+}
+
+function agendaFailureReplyForError(
+  error: unknown,
+  disp?: AgentAgendaDisponibilidade | null,
+): string | null {
+  const reason = error instanceof Error ? error.message : "";
+  if (reason === "outside_agenda_availability") return buildOutsideAvailabilityReply(disp);
+  if (reason === "agenda_slot_taken") return AGENDA_SLOT_TAKEN_REPLY;
+  return null;
+}
 
 const HUMAN_DELEGATION_IN_REPLY_RE =
   /\b(atendente\s+humano|humano\s+vai|entrar\s+em\s+contato|nossa\s+equipe|equipe\s+vai|respons[aá]vel\s+vai|transferir|transfer[eê]ncia)\b/i;
@@ -327,7 +352,12 @@ function finalizeResolveAgendaTurnResult(
     return { ...result, text: AGENDA_SUCCESS_REPLY_CANCELLED };
   }
   if (result.action === "failed") {
-    return { ...result, text: AGENDA_FAILURE_REPLY_NO_HANDOFF };
+    // Só o texto genérico (que cita "nossa equipe") é trocado; mensagens específicas
+    // por motivo (fora da janela, horário ocupado) já são neutras e ficam intactas.
+    if (result.text === AGENDA_FAILURE_REPLY) {
+      return { ...result, text: AGENDA_FAILURE_REPLY_NO_HANDOFF };
+    }
+    return result;
   }
   return { ...result, text: sanitizeAgendaReplyForNoHandoff(result.text) };
 }
@@ -681,6 +711,8 @@ async function insertStructuredAgendaEvent(params: {
   agendaLembretes?: AgentAgendaLembretes | null;
   agendaDisponibilidade?: AgentAgendaDisponibilidade | null;
   slotIndex?: number;
+  /** Evento a ignorar na checagem de conflito (o evento antigo do próprio contato numa remarcação). */
+  excludeEventId?: string | null;
 }): Promise<AgendaEventRow> {
   const attendeePhone = extractPhone(params.remoteJid);
   if (!attendeePhone) throw new Error("invalid_remote_jid");
@@ -695,6 +727,23 @@ async function insertStructuredAgendaEvent(params: {
     }
   }
   const endAt = new Date(startAt.getTime() + 60 * 60_000);
+  // Bloqueio de agendamento duplo: qualquer evento ativo do tenant sobrepondo [startAt, endAt)
+  // conta como conflito (inclui eventos manuais da UI e sincronizados do Google).
+  if (params.agendaDisponibilidade?.permitirAgendamentosSimultaneos === false) {
+    let conflictQuery = params.sb
+      .from("agenda_events")
+      .select("id")
+      .eq("tenant_id", params.tenantId)
+      .neq("status", "cancelled")
+      .lt("start_at", endAt.toISOString())
+      .gt("end_at", startAt.toISOString());
+    if (params.excludeEventId) {
+      conflictQuery = conflictQuery.neq("id", params.excludeEventId);
+    }
+    const { data: conflict, error: conflictError } = await conflictQuery.limit(1).maybeSingle();
+    if (conflictError) throw conflictError;
+    if (conflict) throw new Error("agenda_slot_taken");
+  }
   const attendeeName = await resolveAttendeeName({
     sb: params.sb,
     contactName: params.contactName ?? null,
@@ -825,7 +874,7 @@ export async function executeAgendaDirective(params: {
   if (!Number.isNaN(existingStartMs) && existingStartMs === requestedStartAt.getTime()) {
     return { action: "scheduled", eventId: existing!.id };
   }
-  const inserted = await insertStructuredAgendaEvent({ ...params, sb, directive });
+  const inserted = await insertStructuredAgendaEvent({ ...params, sb, directive, excludeEventId: existing?.id ?? null });
   if (!existing) {
     void notifyTenantAppointmentChange({
       sb,
@@ -926,7 +975,8 @@ export async function executePreparedAgendaDirective(params: {
       action: "failed",
       reason: error instanceof Error ? error.message : String(error),
     });
-    return { text: AGENDA_FAILURE_REPLY, action: "failed" };
+    const specific = agendaFailureReplyForError(error, params.agendaDisponibilidade);
+    return { text: specific ?? AGENDA_FAILURE_REPLY, action: "failed" };
   }
 }
 
@@ -1125,6 +1175,7 @@ export async function resolveAgendaTurn(params: {
       action: "failed",
       reason: error instanceof Error ? error.message : String(error),
     });
-    return finalize({ text: AGENDA_FAILURE_REPLY, action: "failed", deferHandoff: true });
+    const specific = agendaFailureReplyForError(error, params.agendaDisponibilidade);
+    return finalize({ text: specific ?? AGENDA_FAILURE_REPLY, action: "failed", deferHandoff: true });
   }
 }

@@ -265,6 +265,10 @@ export type AgentAgendaDisponibilidade = {
   horaInicio: string;
   /** Horário de fim da janela, formato "HH:MM". */
   horaFim: string;
+  /** Mensagem enviada quando o lead pede horário fora da janela. Vazio = mensagem padrão dinâmica. */
+  mensagemForaJanela?: string;
+  /** Permite mais de um agendamento no mesmo horário. undefined = permite (agentes antigos). */
+  permitirAgendamentosSimultaneos?: boolean;
 };
 
 export interface Agent {

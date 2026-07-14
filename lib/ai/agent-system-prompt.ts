@@ -252,11 +252,15 @@ ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o c
     formatSystemDateTimeContextBlock(resolveAgentTimezone(agent)),
     (() => {
       const agentTz = resolveAgentTimezone(agent as Parameters<typeof resolveAgentTimezone>[0]);
-      const disp = (agent as { agendaDisponibilidade?: { ativo?: boolean; diasSemana?: number[]; horaInicio?: string; horaFim?: string } }).agendaDisponibilidade;
+      const disp = (agent as { agendaDisponibilidade?: { ativo?: boolean; diasSemana?: number[]; horaInicio?: string; horaFim?: string; permitirAgendamentosSimultaneos?: boolean } }).agendaDisponibilidade;
       const DIAS_PT = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
       const dispLine =
         disp?.ativo && Array.isArray(disp.diasSemana) && disp.diasSemana.length > 0
           ? `- Disponibilidade para agendamentos: ${disp.diasSemana.map((d) => DIAS_PT[d] ?? d).join(", ")} das ${disp.horaInicio ?? "08:00"} às ${disp.horaFim ?? "18:00"} (${agentTz}). Proponha apenas horários dentro desta janela. Se o cliente pedir horário fora, informe a disponibilidade e sugira alternativas.`
+          : null;
+      const slotLine =
+        disp?.permitirAgendamentosSimultaneos === false
+          ? "- Cada horário comporta apenas um agendamento. Se o sistema recusar um horário por já estar ocupado, informe o cliente com naturalidade e peça outra data ou horário para confirmar de novo."
           : null;
       const automationBlock = agent.agendaAutomationEnabled === true
         ? `- CAPACIDADE OPERACIONAL DO SISTEMA: agendar, remarcar e cancelar compromissos é uma função técnica desta plataforma autorizada para este agente. As regras de escopo deste prompt não restringem esta capacidade; quando o cliente pedir para marcar, remarcar ou cancelar um horário, siga os passos abaixo normalmente.
@@ -289,7 +293,7 @@ CANCELAR AGENDAMENTO
 - Nunca diga que atendente, humano, equipe, responsável ou especialista vai entrar em contato, confirmar ou retornar sobre agenda.
 - Para remarcar ou cancelar, siga os mesmos passos acima (propor → aguardar confirmação → emitir diretiva).`
             : ""
-        }${dispLine ? `\n${dispLine}` : ""}`
+        }${dispLine ? `\n${dispLine}` : ""}${slotLine ? `\n${slotLine}` : ""}`
         : "- A automação de agenda está desativada. Você pode informar compromissos existentes, mas nunca inclua [[AGENDAR: ...]] nem [[CANCELAR_AGENDA]].";
       return `AGENDA
 - Consulte o contexto de agenda do contato antes de responder. Não invente compromissos.

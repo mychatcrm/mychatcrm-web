@@ -100,6 +100,8 @@ export const DEFAULT_AGENDA_DISPONIBILIDADE: AgentAgendaDisponibilidade = {
   diasSemana: [1, 2, 3, 4, 5],
   horaInicio: "08:00",
   horaFim: "18:00",
+  mensagemForaJanela: "",
+  permitirAgendamentosSimultaneos: false,
 };
 
 function defaultWizardOriginRow(tipo: OriginType): AgentOrigin {
@@ -202,7 +204,11 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     ctaHandoffAtivo: agent.ctaHandoffAtivo ?? false,
     agendaAutomationEnabled: agent.agendaAutomationEnabled ?? false,
     agendaLembretes: agent.agendaLembretes ?? { ...DEFAULT_AGENDA_LEMBRETES, regras: [...DEFAULT_AGENDA_LEMBRETES.regras] },
-    agendaDisponibilidade: agent.agendaDisponibilidade ?? { ...DEFAULT_AGENDA_DISPONIBILIDADE, diasSemana: [...DEFAULT_AGENDA_DISPONIBILIDADE.diasSemana] },
+    agendaDisponibilidade: {
+      ...DEFAULT_AGENDA_DISPONIBILIDADE,
+      ...(agent.agendaDisponibilidade ?? {}),
+      diasSemana: [...(agent.agendaDisponibilidade?.diasSemana ?? DEFAULT_AGENDA_DISPONIBILIDADE.diasSemana)],
+    },
     ctaFinal: agent.ctaFinal ?? "Transferir para humano",
     handoffKeywords: agent.handoffKeywords ?? ["humano", "especialista"],
     handoffMensagem: agent.handoffMensagem ?? "",

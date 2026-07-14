@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AGENDA_FAILURE_REPLY_NO_HANDOFF,
+  AGENDA_SLOT_TAKEN_REPLY,
   AGENDA_SUCCESS_REPLY_CANCELLED,
   AGENDA_SUCCESS_REPLY_RESCHEDULED,
   AGENDA_SUCCESS_REPLY_SCHEDULED,
+  buildOutsideAvailabilityReply,
   clientConfirmedAgendaMutation,
   isStandaloneAgendaConfirmation,
   priorAgendaAssistantTextFromMessages,
@@ -89,6 +92,38 @@ function makeSb(existing: typeof EXISTING_EVENT | null = EXISTING_EVENT) {
         }),
       };
     },
+  } as unknown;
+}
+
+/** Chain flexível (aceita lt/gt da query de conflito) para os testes de janela/ocupação. */
+function makeFlexSb(options: {
+  existing?: typeof EXISTING_EVENT | null;
+  conflictRow?: Record<string, unknown> | null;
+} = {}) {
+  return {
+    from: (table: string) => ({
+      select: () => {
+        let usedOverlap = false;
+        const chain = {
+          eq: () => chain,
+          neq: () => chain,
+          gte: () => chain,
+          lt: () => {
+            usedOverlap = true;
+            return chain;
+          },
+          gt: () => chain,
+          order: () => chain,
+          limit: () => chain,
+          maybeSingle: async () => {
+            if (table === "leads") return { data: { name: "Lead" }, error: null };
+            if (usedOverlap) return { data: options.conflictRow ?? null, error: null };
+            return { data: options.existing ?? null, error: null };
+          },
+        };
+        return chain;
+      },
+    }),
   } as unknown;
 }
 
@@ -455,6 +490,95 @@ describe("resolveAgendaTurn", () => {
         { role: "user", content: "sim" },
       ]);
       expect(prior).toBeNull();
+    });
+  });
+
+  describe("janela de disponibilidade e horários ocupados", () => {
+    it("fora da janela com handoff OFF mantém a mensagem específica (não sobrescreve)", async () => {
+      const disp = {
+        ativo: true,
+        diasSemana: [0, 1, 2, 3, 4, 5, 6],
+        horaInicio: "08:00",
+        horaFim: "12:00",
+      };
+      const result = await resolveAgendaTurn({
+        sb: makeFlexSb({ existing: null }),
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Agendado! [[AGENDAR: data=10/06/2026, hora=14:00]]",
+        clientText: "sim",
+        agendaAutomationEnabled: true,
+        ctaHandoffAtivo: false,
+        agendaDisponibilidade: disp,
+      });
+      expect(result.action).toBe("failed");
+      expect(result.text).toBe(buildOutsideAvailabilityReply(disp));
+      expect(result.text).toContain("das 08:00 às 12:00");
+      expect(result.text).not.toBe(AGENDA_FAILURE_REPLY_NO_HANDOFF);
+      expect(result.deferHandoff).toBe(true);
+      expect(insertAgendaEventMock).not.toHaveBeenCalled();
+    });
+
+    it("fora da janela usa a mensagem personalizada quando configurada", async () => {
+      const result = await resolveAgendaTurn({
+        sb: makeFlexSb({ existing: null }),
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Agendado! [[AGENDAR: data=10/06/2026, hora=14:00]]",
+        clientText: "sim",
+        agendaAutomationEnabled: true,
+        agendaDisponibilidade: {
+          ativo: true,
+          diasSemana: [0, 1, 2, 3, 4, 5, 6],
+          horaInicio: "08:00",
+          horaFim: "12:00",
+          mensagemForaJanela: "Atendemos somente pela manhã. Qual horário entre 08:00 e 12:00 fica bom?",
+        },
+      });
+      expect(result.action).toBe("failed");
+      expect(result.text).toBe("Atendemos somente pela manhã. Qual horário entre 08:00 e 12:00 fica bom?");
+    });
+
+    it("falha genérica com handoff OFF continua usando a resposta neutra padrão", async () => {
+      insertAgendaEventMock.mockRejectedValueOnce(new Error("db_error"));
+      const result = await resolveAgendaTurn({
+        sb: makeFlexSb({ existing: null }),
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Agendado! [[AGENDAR: data=10/06/2026, hora=14:00]]",
+        clientText: "sim",
+        agendaAutomationEnabled: true,
+        ctaHandoffAtivo: false,
+      });
+      expect(result.action).toBe("failed");
+      expect(result.text).toBe(AGENDA_FAILURE_REPLY_NO_HANDOFF);
+    });
+
+    it("horário ocupado com bloqueio de simultâneos responde a mensagem específica", async () => {
+      const result = await resolveAgendaTurn({
+        sb: makeFlexSb({ existing: null, conflictRow: { id: "evt-busy" } }),
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Agendado! [[AGENDAR: data=10/06/2026, hora=14:00]]",
+        clientText: "sim",
+        agendaAutomationEnabled: true,
+        ctaHandoffAtivo: false,
+        agendaDisponibilidade: {
+          ativo: false,
+          diasSemana: [1, 2, 3, 4, 5],
+          horaInicio: "08:00",
+          horaFim: "18:00",
+          permitirAgendamentosSimultaneos: false,
+        },
+      });
+      expect(result.action).toBe("failed");
+      expect(result.text).toBe(AGENDA_SLOT_TAKEN_REPLY);
+      expect(result.deferHandoff).toBe(true);
+      expect(insertAgendaEventMock).not.toHaveBeenCalled();
     });
   });
 
