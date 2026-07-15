@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { processAgendaNotificationOutbox } from "@/lib/server/agenda-notification-outbox";
+import {
+  processAgendaNotificationOutbox,
+  reconcileAgendaOutboxDelivery,
+  reconcileMissingAgendaNotifications,
+} from "@/lib/server/agenda-notification-outbox";
 import { verifyInternalApiRequest } from "@/lib/server/internal-api-auth";
 
 export const dynamic = "force-dynamic";
@@ -21,9 +25,14 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await processAgendaNotificationOutbox({ limit: 50 });
-    console.info("[agenda-notification-outbox]", { event: "process_complete", ...result });
-    return NextResponse.json({ ok: true, ...result });
+    // 1) Recupera obrigações que a janela pós-commit possa ter perdido.
+    const reconciled = await reconcileMissingAgendaNotifications({ maxAgeMinutes: 1440 });
+    // 2) Reivindica e envia pendentes (claim transacional).
+    const processed = await processAgendaNotificationOutbox({ limit: 50 });
+    // 3) Promove entregues / devolve a retry conforme os webhooks de entrega.
+    const delivery = await reconcileAgendaOutboxDelivery({ limit: 50 });
+    console.info("[agenda-notification-outbox]", { event: "process_complete", reconciled, processed, delivery });
+    return NextResponse.json({ ok: true, reconciled, processed, delivery });
   } catch (err) {
     console.error("[agenda-notification-outbox]", {
       event: "process_error",

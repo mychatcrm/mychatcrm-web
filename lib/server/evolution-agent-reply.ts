@@ -23,6 +23,31 @@ function consolidatedInboundTextFromUnit(unit: { content: string }[]): string {
     .filter(Boolean)
     .join("\n");
 }
+
+/** Janela segura de contexto inbound entre jobs (evita reusar contexto antigo). */
+const RECENT_CLIENT_CONTEXT_WINDOW_MS = 30 * 60 * 1000;
+const RECENT_CLIENT_CONTEXT_MAX = 8;
+
+/**
+ * Mensagens inbound recentes do lead (role "user"), em ordem temporal, dentro
+ * de uma janela segura. Já vêm filtradas por tenant+journey pelo chamador —
+ * nunca cruzam conversa/jornada. Usadas só como fonte de âncora de data para
+ * complementos que chegaram em turnos anteriores.
+ */
+function extractRecentClientMessages(
+  messages: Array<{ role: string; content: string; createdAt?: string }>,
+): string[] {
+  const cutoff = Date.now() - RECENT_CLIENT_CONTEXT_WINDOW_MS;
+  const recent = messages
+    .filter((m) => m.role === "user" && m.content.trim())
+    .filter((m) => {
+      if (!m.createdAt) return true;
+      const t = Date.parse(m.createdAt);
+      return Number.isNaN(t) || t >= cutoff;
+    })
+    .map((m) => m.content.trim());
+  return recent.slice(-RECENT_CLIENT_CONTEXT_MAX);
+}
 import { detectOutboundRepetition } from "@/lib/conversas/outbound-repetition-guard";
 import { isElevenlabsConfigured } from "@/lib/integrations/elevenlabs";
 import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
@@ -616,15 +641,18 @@ export async function processAgentResponseJob(
     // Strip [[HANDOFF]] marker from AI reply (always safe to remove)
     const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
     const modelTextWithoutHandoff = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
-    const priorAssistantText = priorAgendaAssistantTextFromMessages(
-      await getRecentConversationMessages({
-        sb,
-        tenantId: job.tenant_id,
-        remoteJid: job.remote_jid,
-        limit: 12,
-        journeyId: job.journey_id,
-      }),
-    );
+    const recentConversation = await getRecentConversationMessages({
+      sb,
+      tenantId: job.tenant_id,
+      remoteJid: job.remote_jid,
+      limit: 12,
+      journeyId: job.journey_id,
+    });
+    const priorAssistantText = priorAgendaAssistantTextFromMessages(recentConversation);
+    // Contexto inbound recente do lead (mesma conversa/jornada, janela segura):
+    // permite resolver complementos que chegaram em jobs anteriores (data num
+    // turno, hora no seguinte) sem inventar horário nem cruzar tenant/jornada.
+    const recentClientMessages = extractRecentClientMessages(recentConversation);
     // Barreira final de staleness ANTES da mutação de agenda: se chegou mensagem
     // mais nova durante a inferência, esta geração não pode alterar a agenda nem
     // notificar — o job re-agendado (generation nova) processa o contexto completo.
@@ -641,6 +669,7 @@ export async function processAgentResponseJob(
       modelText: modelTextWithoutHandoff,
       clientText: consolidatedInboundTextFromUnit(unit),
       priorAssistantText,
+      recentClientMessages,
       agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,
       ctaHandoffAtivo: metadata.ctaHandoffAtivo === true,
       agendaLembretes:
@@ -653,7 +682,15 @@ export async function processAgentResponseJob(
           : null,
       slotIndex: typeof metadata.whatsappSlotIndex === "number" ? metadata.whatsappSlotIndex : 0,
       operationKey: `agent-response-job:${job.id}:${generation}:${unitIndex}`,
+      jobId: skipGenerationCheck ? null : job.id,
+      claimedGeneration: skipGenerationCheck ? null : generation,
     });
+    // Recusa atômica de staleness pela RPC: a geração foi superada entre o check
+    // e a mutação. Zero efeito colateral aconteceu — abortar sem enviar nada; o
+    // job re-agendado (geração nova) responde ao contexto atual.
+    if (agendaTurn.action === "stale") {
+      return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
+    }
     if (agendaTurn.action === "blocked" || agendaTurn.action === "failed") {
       console.info("[agent-agenda-turn]", {
         tenant_id: job.tenant_id,
