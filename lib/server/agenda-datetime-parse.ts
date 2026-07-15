@@ -128,7 +128,7 @@ function isWallDateBefore(a: WallClock, b: WallClock): boolean {
 function bumpToFutureDayMonth(day: number, month: number, year: number, today: WallClock): WallClock {
   let y = year;
   let m = month;
-  let wall: WallClock = { year: y, month: m, day, hour: 9, minute: 0 };
+  let wall: WallClock = { year: y, month: m, day, hour: 0, minute: 0 };
   for (let attempt = 0; attempt < 24; attempt++) {
     if (!isWallDateBefore(wall, today)) return wall;
     m += 1;
@@ -136,7 +136,7 @@ function bumpToFutureDayMonth(day: number, month: number, year: number, today: W
       m = 1;
       y += 1;
     }
-    wall = { year: y, month: m, day, hour: 9, minute: 0 };
+    wall = { year: y, month: m, day, hour: 0, minute: 0 };
   }
   return wall;
 }
@@ -187,16 +187,20 @@ function parseTimeFromText(text: string): { hour: number; minute: number } | nul
 
 function parseDateAnchor(text: string, today: WallClock): WallClock | null {
   const normalized = foldAccents(text.toLowerCase());
+  // Âncoras carregam apenas a DATA: a hora nunca é herdada do relógio atual.
+  // Um fragmento sem horário explícito ("pode ser hoje as") não pode virar
+  // "agora" — quem consome decide pedir a hora que falta.
+  const base: WallClock = { ...today, hour: 0, minute: 0 };
 
-  if (/\bdepois de amanha\b/.test(normalized)) return addDays(today, 2);
-  if (/\bamanha\b/.test(normalized)) return addDays(today, 1);
-  if (/\bhoje\b/.test(normalized)) return { ...today };
+  if (/\bdepois de amanha\b/.test(normalized)) return addDays(base, 2);
+  if (/\bamanha\b/.test(normalized)) return addDays(base, 1);
+  if (/\bhoje\b/.test(normalized)) return { ...base };
 
   const inDays = normalized.match(/\b(?:daqui\s*(?:a)?|em|depois de)\s+(\d+)\s+dias?\b/);
-  if (inDays) return addDays(today, Number(inDays[1]));
+  if (inDays) return addDays(base, Number(inDays[1]));
 
-  if (/\bem alguns dias\b/.test(normalized)) return addDays(today, 3);
-  if (/\bsemana\s+que\s+vem\b/.test(normalized)) return startOfNextCalendarWeek(today);
+  if (/\bem alguns dias\b/.test(normalized)) return addDays(base, 3);
+  if (/\bsemana\s+que\s+vem\b/.test(normalized)) return startOfNextCalendarWeek(base);
 
   const fullDate = normalized.match(/\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b/);
   if (fullDate) {
@@ -249,9 +253,10 @@ function parseDateTimeInText(text: string, today: WallClock, timeZone: string): 
   }
 
   if (anchor && !time) {
-    const wall: WallClock = { ...anchor, hour: anchor.hour ?? 9, minute: anchor.minute ?? 0 };
-    const dt = localWallClockToUtc(wall, timeZone);
-    if (!Number.isNaN(dt.getTime())) return dt;
+    // Data sem horário explícito NÃO produz datetime de mutação. Inventar uma
+    // hora (o minuto atual ou um default) foi a causa do incidente
+    // invalid_or_past_agenda_datetime — o fluxo deve pedir a hora que falta.
+    return null;
   }
 
   if (!anchor && time) {

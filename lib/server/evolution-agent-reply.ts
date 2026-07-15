@@ -12,9 +12,16 @@ import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { buildTextualReplyFallbackTopics } from "@/lib/conversas/inbound-message-dedupe";
 import { buildReplyUnitPrompt, normalizeConversationBurst } from "@/lib/conversas/normalize-conversation-burst";
 
-function lastInboundTextFromUnit(unit: { content: string }[]): string {
-  const lines = unit.map((m) => m.content.trim()).filter(Boolean);
-  return lines.length ? lines[lines.length - 1]! : "";
+/**
+ * Texto do lead consolidado na ordem original da unidade. O orquestrador de
+ * agenda precisa ler o burst inteiro ("Pode ser hoje as" + "duas da tarde"),
+ * não apenas a última mensagem — fragmentos isolados perdem o contexto.
+ */
+function consolidatedInboundTextFromUnit(unit: { content: string }[]): string {
+  return unit
+    .map((m) => m.content.trim())
+    .filter(Boolean)
+    .join("\n");
 }
 import { detectOutboundRepetition } from "@/lib/conversas/outbound-repetition-guard";
 import { isElevenlabsConfigured } from "@/lib/integrations/elevenlabs";
@@ -34,7 +41,7 @@ import {
 } from "@/lib/server/conversation-memory";
 import { markWaitingForHuman } from "@/lib/server/conversation-operation";
 import { scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
-import { sleep } from "@/lib/server/agent-response-schedule";
+import { isStaleBurstGenerationRow, sleep } from "@/lib/server/agent-response-schedule";
 import { sendAgentOutboundMediaViaEvolution } from "@/lib/server/send-agent-outbound-media-evolution";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { transcribeAudioFromBuffer } from "@/lib/ai/media-processor";
@@ -124,9 +131,15 @@ async function isGenerationStale(
   jobId: string,
   claimedGeneration: number,
 ): Promise<boolean> {
-  const { data } = await sb.from("agent_response_jobs").select("burst_generation").eq("id", jobId).maybeSingle();
-  if (!data) return true;
-  return Number((data as { burst_generation?: number }).burst_generation ?? 1) !== claimedGeneration;
+  const { data } = await sb
+    .from("agent_response_jobs")
+    .select("burst_generation, status")
+    .eq("id", jobId)
+    .maybeSingle();
+  return isStaleBurstGenerationRow(
+    data as { burst_generation?: number; status?: string } | null,
+    claimedGeneration,
+  );
 }
 
 function humanTypingDelayMs(): number {
@@ -556,7 +569,6 @@ export async function processAgentResponseJob(
 
     const unit = burst.replyUnits[unitIndex]!;
     const unitPrompt = buildReplyUnitPrompt(unit);
-    const lastInboundText = lastInboundTextFromUnit(unit);
     // AI-based detection: universal, nicho-agnóstica, com fallback automático para keywords
     const handoffCheck = handoffEnabled
       ? await shouldTriggerHandoffAI(unitPrompt, handoffKeywords)
@@ -613,6 +625,12 @@ export async function processAgentResponseJob(
         journeyId: job.journey_id,
       }),
     );
+    // Barreira final de staleness ANTES da mutação de agenda: se chegou mensagem
+    // mais nova durante a inferência, esta geração não pode alterar a agenda nem
+    // notificar — o job re-agendado (generation nova) processa o contexto completo.
+    if (!skipGenerationCheck && (await isGenerationStale(sb, job.id, generation))) {
+      return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
+    }
     const agendaTurn = await resolveAgendaTurn({
       sb,
       tenantId: job.tenant_id,
@@ -621,7 +639,7 @@ export async function processAgentResponseJob(
       agentId: job.agent_id,
       timezone: schedulingTimezone,
       modelText: modelTextWithoutHandoff,
-      clientText: lastInboundText,
+      clientText: consolidatedInboundTextFromUnit(unit),
       priorAssistantText,
       agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,
       ctaHandoffAtivo: metadata.ctaHandoffAtivo === true,
@@ -754,6 +772,12 @@ export async function processAgentResponseJob(
           dedupedCount: burst.dedupedCount,
         };
       }
+    }
+
+    // Barreira final de staleness ANTES do envio: uma resposta obsoleta nunca
+    // chega ao lead — o job com generation nova responde pelo contexto atual.
+    if (!skipGenerationCheck && (await isGenerationStale(sb, job.id, generation))) {
+      return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
     }
 
     const delivery = await deliverAgentReplyWithOptionalTts({

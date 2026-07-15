@@ -11,6 +11,10 @@
     {
       "path": "/api/internal/system-notifications/reconcile",
       "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/internal/process-agenda-notifications",
+      "schedule": "15 5 * * *"
     }
   ]
 }

@@ -25,7 +25,10 @@ import {
   cancelAgendaRemindersForEvent,
   scheduleAgendaRemindersForEvent,
 } from "@/lib/server/agenda-reminder-jobs";
-import { notifyTenantAppointmentChange } from "@/lib/server/agenda-owner-notifications";
+import {
+  enqueueAgendaOwnerNotification,
+  processAgendaNotificationOutbox,
+} from "@/lib/server/agenda-notification-outbox";
 import type { AgentAgendaDisponibilidade, AgentAgendaLembretes } from "@/lib/types";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
@@ -76,6 +79,9 @@ export function buildOutsideAvailabilityReply(disp?: AgentAgendaDisponibilidade 
   return `Esse horário fica fora da nossa janela de agendamento. Atendemos ${dias}, das ${disp.horaInicio} às ${disp.horaFim}. Me diga outra data ou horário dentro desse período que eu confirmo para você.`;
 }
 
+export const AGENDA_DATETIME_NEEDED_REPLY =
+  "Não consegui identificar a data e o horário exatos. Me diga o dia e a hora que você prefere (por exemplo: 20/07 às 14:00) que eu verifico e confirmo.";
+
 function agendaFailureReplyForError(
   error: unknown,
   disp?: AgentAgendaDisponibilidade | null,
@@ -83,7 +89,24 @@ function agendaFailureReplyForError(
   const reason = error instanceof Error ? error.message : "";
   if (reason === "outside_agenda_availability") return buildOutsideAvailabilityReply(disp);
   if (reason === "agenda_slot_taken") return AGENDA_SLOT_TAKEN_REPLY;
+  if (reason === "invalid_or_past_agenda_datetime") return AGENDA_DATETIME_NEEDED_REPLY;
   return null;
+}
+
+/**
+ * Pergunta de confirmação neutra usada quando a resposta do modelo precisa ser
+ * substituída por segurança (claim de sucesso sem mutação). Sem nomenclatura de
+ * nicho: a data/hora vem da própria diretiva; o tipo de compromisso fica com o
+ * prompt do tenant nas mensagens normais.
+ */
+function buildAgendaConfirmationQuestion(directive: AgendaDirective | null): string {
+  if (directive?.type === "schedule") {
+    return `Posso confirmar para ${directive.date} às ${directive.time}? Responda sim para confirmar.`;
+  }
+  if (directive?.type === "cancel") {
+    return "Posso confirmar o cancelamento do seu horário? Responda sim para confirmar.";
+  }
+  return "Posso confirmar essa alteração na agenda. Responda sim para confirmar.";
 }
 
 const HUMAN_DELEGATION_IN_REPLY_RE =
@@ -953,6 +976,38 @@ async function syncAtomicAgendaMutation(params: {
   }
 }
 
+/**
+ * Notificação ao dono APÓS mutação confirmada: enfileira de forma durável
+ * (idempotente por tenant+operation_key+action) e envia inline, tudo awaited —
+ * sem fire-and-forget. Falha de envio NÃO falha a mutação (retry via cron).
+ */
+async function enqueueAndSendOwnerNotification(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  action: "scheduled" | "rescheduled" | "cancelled";
+  event: Pick<AgendaEventRow, "id" | "attendee_name" | "attendee_phone" | "start_at" | "location">;
+  operationKey: string;
+  timezone: string;
+  agentId?: string | null;
+}): Promise<void> {
+  const entry = await enqueueAgendaOwnerNotification({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    agendaEventId: params.event.id,
+    action: params.action,
+    operationKey: params.operationKey,
+    attendeeName: params.event.attendee_name,
+    attendeePhone: params.event.attendee_phone,
+    startAtIso: params.event.start_at,
+    location: params.event.location ?? null,
+    timezone: params.timezone,
+    agentId: params.agentId ?? null,
+  });
+  if (entry.enqueued && entry.outboxId) {
+    await processAgendaNotificationOutbox({ sb: params.sb, outboxId: entry.outboxId });
+  }
+}
+
 async function executeAgendaDirectiveAtomically(params: {
   sb: SupabaseServiceClient;
   tenantId: string;
@@ -1076,18 +1131,15 @@ async function executeAgendaDirectiveAtomically(params: {
         );
       }
     }
-    void notifyTenantAppointmentChange({
+    await enqueueAndSendOwnerNotification({
       sb: params.sb,
       tenantId: params.tenantId,
       action: syncedResult.action,
-      agendaEventId: syncedResult.event.id,
-      attendeeName: syncedResult.event.attendee_name,
-      attendeePhone: syncedResult.event.attendee_phone,
-      startAtIso: syncedResult.event.start_at,
-      location: syncedResult.event.location,
+      event: syncedResult.event,
+      operationKey: params.operationKey,
       timezone: params.timezone,
       agentId: params.agentId ?? null,
-    }).catch(() => undefined);
+    });
   }
 
   return { action: syncedResult.action, eventId: syncedResult.event.id };
@@ -1128,18 +1180,15 @@ export async function executeAgendaDirective(params: {
       if (!event) throw new Error("agenda_event_not_found");
     }
     await cancelStructuredAgendaEvent({ tenantId: params.tenantId, remoteJid: params.remoteJid, event });
-    void notifyTenantAppointmentChange({
+    await enqueueAndSendOwnerNotification({
       sb,
       tenantId: params.tenantId,
       action: "cancelled",
-      agendaEventId: event.id,
-      attendeeName: event.attendee_name,
-      attendeePhone: event.attendee_phone,
-      startAtIso: event.start_at,
-      location: event.location ?? null,
+      event,
+      operationKey: `legacy:cancelled:${event.id}`,
       timezone: params.timezone,
       agentId: params.agentId ?? null,
-    }).catch(() => undefined);
+    });
     return { action: "cancelled", eventId: event.id };
   }
 
@@ -1156,18 +1205,15 @@ export async function executeAgendaDirective(params: {
   }
   const inserted = await insertStructuredAgendaEvent({ ...params, sb, directive, excludeEventId: existing?.id ?? null });
   if (!existing) {
-    void notifyTenantAppointmentChange({
+    await enqueueAndSendOwnerNotification({
       sb,
       tenantId: params.tenantId,
       action: "scheduled",
-      agendaEventId: inserted.id,
-      attendeeName: inserted.attendee_name,
-      attendeePhone: inserted.attendee_phone,
-      startAtIso: inserted.start_at,
-      location: inserted.location ?? null,
+      event: inserted,
+      operationKey: `legacy:scheduled:${inserted.id}`,
       timezone: params.timezone,
       agentId: params.agentId ?? null,
-    }).catch(() => undefined);
+    });
     return { action: "scheduled", eventId: inserted.id };
   }
   try {
@@ -1176,18 +1222,15 @@ export async function executeAgendaDirective(params: {
     await cancelStructuredAgendaEvent({ tenantId: params.tenantId, remoteJid: params.remoteJid, event: inserted }).catch(() => undefined);
     throw error;
   }
-  void notifyTenantAppointmentChange({
+  await enqueueAndSendOwnerNotification({
     sb,
     tenantId: params.tenantId,
     action: "rescheduled",
-    agendaEventId: inserted.id,
-    attendeeName: inserted.attendee_name,
-    attendeePhone: inserted.attendee_phone,
-    startAtIso: inserted.start_at,
-    location: inserted.location ?? null,
+    event: inserted,
+    operationKey: `legacy:rescheduled:${inserted.id}`,
     timezone: params.timezone,
     agentId: params.agentId ?? null,
-  }).catch(() => undefined);
+  });
   return { action: "rescheduled", eventId: inserted.id };
 }
 
@@ -1409,7 +1452,15 @@ export async function resolveAgendaTurn(params: {
           return finalize({ text: AGENDA_UNVERIFIED_CLAIM_REPLY, action: "none", deferHandoff: true });
         }
       } catch {
-        // Em erro de consulta, mantém o texto original (não bloquear por falha nossa).
+        // Fail-closed: se não conseguimos verificar o banco, NUNCA preservamos
+        // uma afirmação de sucesso não verificada.
+        console.warn("[agent-agenda-turn]", {
+          tenant_id: params.tenantId,
+          agent_id: params.agentId,
+          action: "unverified_claim_blocked",
+          reason: "verification_unavailable",
+        });
+        return finalize({ text: AGENDA_UNVERIFIED_CLAIM_REPLY, action: "none", deferHandoff: true });
       }
     }
     return finalize({ text: cleanText, action: "none" });
@@ -1417,8 +1468,21 @@ export async function resolveAgendaTurn(params: {
 
   if (!confirmed) {
     if (scheduleFromDirective || cancelFromDirective) {
+      // Truth-gate: sem confirmação não há mutação; a resposta enviada precisa
+      // ser uma PERGUNTA. Se o modelo já afirmou sucesso ("está agendado"),
+      // substituímos pela pergunta de confirmação com os dados reais da diretiva.
+      const safeText = AGENDA_SUCCESS_CLAIM_RE.test(cleanText)
+        ? buildAgendaConfirmationQuestion(directive)
+        : cleanText;
+      if (safeText !== cleanText) {
+        console.warn("[agent-agenda-turn]", {
+          tenant_id: params.tenantId,
+          agent_id: params.agentId,
+          action: "claim_replaced_needs_confirmation",
+        });
+      }
       return finalize({
-        text: cleanText,
+        text: safeText,
         action: "needs_confirmation",
         deferHandoff: true,
       });
@@ -1427,10 +1491,20 @@ export async function resolveAgendaTurn(params: {
       isInitialAgendaMutationRequest(params.clientText) ||
       RESCHEDULE_RE.test(params.clientText) ||
       detectAgendaCancelIntent(params.clientText);
+    const safeText = AGENDA_SUCCESS_CLAIM_RE.test(cleanText)
+      ? buildAgendaConfirmationQuestion(null)
+      : cleanText;
+    if (safeText !== cleanText) {
+      console.warn("[agent-agenda-turn]", {
+        tenant_id: params.tenantId,
+        agent_id: params.agentId,
+        action: "claim_replaced_unconfirmed_context",
+      });
+    }
     return finalize({
-      text: cleanText,
-      action: "none",
-      deferHandoff: clientEngagedAgendaThisTurn || undefined,
+      text: safeText,
+      action: safeText === cleanText ? "none" : "needs_confirmation",
+      deferHandoff: clientEngagedAgendaThisTurn || safeText !== cleanText || undefined,
     });
   }
 
@@ -1454,8 +1528,10 @@ export async function resolveAgendaTurn(params: {
       timezone: params.timezone,
     });
     if (!resolved) {
+      // Data/hora incompletas (ex.: "pode ser hoje as") — pedir o que falta em
+      // vez de falhar genericamente ou inventar um horário.
       return finalize({
-        text: AGENDA_FAILURE_REPLY,
+        text: AGENDA_DATETIME_NEEDED_REPLY,
         action: "failed",
         deferHandoff: true,
       });

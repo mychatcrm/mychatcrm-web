@@ -48,6 +48,24 @@ export function buildAppointmentNotificationMessage(params: {
   return lines.join("\n");
 }
 
+/** Texto final do aviso ao dono (data/hora já formatadas no fuso do agente). */
+export function buildAppointmentOwnerNotificationText(params: {
+  action: AppointmentNotificationAction;
+  attendeeName: string | null;
+  attendeePhone: string | null;
+  startAtIso: string;
+  timezone: string;
+  location: string | null;
+}): string {
+  return buildAppointmentNotificationMessage({
+    action: params.action,
+    attendeeName: params.attendeeName,
+    attendeePhone: params.attendeePhone,
+    whenPtBr: formatEventDateTimePtBr(params.startAtIso, params.timezone),
+    location: params.location,
+  });
+}
+
 export async function notifyTenantAppointmentChange(params: {
   sb?: SupabaseServiceClient;
   tenantId: string;

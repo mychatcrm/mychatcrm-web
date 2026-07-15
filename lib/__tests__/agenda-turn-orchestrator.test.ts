@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AGENDA_AUTOMATION_DISABLED_REPLY,
+  AGENDA_DATETIME_NEEDED_REPLY,
   AGENDA_FAILURE_REPLY_NO_HANDOFF,
   AGENDA_SLOT_TAKEN_REPLY,
   AGENDA_SUCCESS_REPLY_CANCELLED,
@@ -710,6 +711,202 @@ describe("resolveAgendaTurn", () => {
       expect(result.deferHandoff).toBe(true);
       expect(insertAgendaEventMock).not.toHaveBeenCalled();
     });
+  });
+
+  describe("incidente de produção: fragmento + verdade da resposta", () => {
+    const PROPOSTA_SEM_DATA = "Posso confirmar seu horário? Me diga o dia e a hora que ficam melhores.";
+
+    it("fragmento 'Pode ser hoje as' não muta e pede data/hora exatas", async () => {
+      const result = await resolveAgendaTurn({
+        sb: makeSb(null),
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Perfeito!",
+        clientText: "Pode ser hoje as",
+        priorAssistantText: PROPOSTA_SEM_DATA,
+        agendaAutomationEnabled: true,
+      });
+      expect(result.action).toBe("failed");
+      expect(result.text).toBe(AGENDA_DATETIME_NEEDED_REPLY);
+      expect(insertAgendaEventMock).not.toHaveBeenCalled();
+      expect(cancelAgendaEventMock).not.toHaveBeenCalled();
+    });
+
+    it("burst consolidado 'Pode ser hoje as' + 'duas da tarde' agenda hoje às 14:00", async () => {
+      const result = await resolveAgendaTurn({
+        sb: makeSb(null),
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Perfeito!",
+        clientText: "Pode ser hoje as\nduas da tarde",
+        priorAssistantText: PROPOSTA_SEM_DATA,
+        agendaAutomationEnabled: true,
+      });
+      expect(result.action).toBe("scheduled");
+      expect(insertAgendaEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({ start_at: "2026-06-01T17:00:00.000Z" }),
+      );
+    });
+
+    it("claim de sucesso com diretiva SEM confirmação vira pergunta de confirmação", async () => {
+      const result = await resolveAgendaTurn({
+        sb: makeSb(null),
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Perfeito, sua sessão está agendada! [[AGENDAR: data=10/06/2026, hora=14:00]]",
+        clientText: "quero marcar um horário",
+        agendaAutomationEnabled: true,
+      });
+      expect(result.action).toBe("needs_confirmation");
+      expect(result.text).toBe("Posso confirmar para 10/06/2026 às 14:00? Responda sim para confirmar.");
+      expect(result.text).not.toMatch(/est[aá]\s+agendad|agendei/i);
+      expect(insertAgendaEventMock).not.toHaveBeenCalled();
+    });
+
+    it("claim de sucesso com intenção de agenda sem diretiva vira pergunta de confirmação", async () => {
+      const result = await resolveAgendaTurn({
+        sb: makeSb(EXISTING_EVENT),
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Pronto, está remarcado com sucesso!",
+        clientText: "quero remarcar para outro dia",
+        agendaAutomationEnabled: true,
+      });
+      expect(result.action).toBe("needs_confirmation");
+      expect(result.text).toBe("Posso confirmar essa alteração na agenda. Responda sim para confirmar.");
+      expect(insertAgendaEventMock).not.toHaveBeenCalled();
+      expect(cancelAgendaEventMock).not.toHaveBeenCalled();
+    });
+
+    it("fail-closed: banco indisponível nunca preserva afirmação de sucesso", async () => {
+      const throwingSb = {
+        from: () => {
+          throw new Error("db_down");
+        },
+      } as unknown;
+      const result = await resolveAgendaTurn({
+        sb: throwingSb as never,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Prontinho! Sua reserva foi agendada.",
+        clientText: "obrigado",
+        agendaAutomationEnabled: true,
+      });
+      expect(result.action).toBe("none");
+      expect(result.text).toBe(AGENDA_UNVERIFIED_CLAIM_REPLY);
+    });
+
+    it("claim + confirmação + falha de persistência não responde sucesso", async () => {
+      insertAgendaEventMock.mockRejectedValueOnce(new Error("db_error"));
+      const result = await resolveAgendaTurn({
+        sb: makeSb(null),
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Agendado com sucesso! [[AGENDAR: data=10/06/2026, hora=14:00]]",
+        clientText: "sim",
+        agendaAutomationEnabled: true,
+      });
+      expect(result.action).toBe("failed");
+      expect(result.text).not.toMatch(/agendado com sucesso|est[aá]\s+agendad|agendei/i);
+    });
+
+    it("automação OFF continua permitindo leitura sem claim", async () => {
+      const result = await resolveAgendaTurn({
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Seu próximo horário é 10/06 às 14:00, te aguardamos!",
+        clientText: "que dia é meu horário?",
+        agendaAutomationEnabled: false,
+      });
+      expect(result.action).toBe("none");
+      expect(result.text).toBe("Seu próximo horário é 10/06 às 14:00, te aguardamos!");
+    });
+
+    it("automação OFF bloqueia pedido de remarcação sem nenhuma mutação", async () => {
+      const result = await resolveAgendaTurn({
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Claro, vou remarcar para você!",
+        clientText: "quero remarcar meu horário",
+        agendaAutomationEnabled: false,
+      });
+      expect(result.action).toBe("blocked");
+      expect(result.text).toBe(AGENDA_AUTOMATION_DISABLED_REPLY);
+      expect(insertAgendaEventMock).not.toHaveBeenCalled();
+      expect(cancelAgendaEventMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("multi-nicho: mesma mecânica técnica, nomenclatura do tenant preservada", () => {
+    const casos = [
+      {
+        tenant: "tenant-clinica",
+        proposta: "Posso confirmar sua consulta para 10/06/2026 às 10:00?",
+        modelo: "Consulta confirmada para 10/06! [[AGENDAR: data=10/06/2026, hora=10:00]]",
+        palavra: "Consulta",
+      },
+      {
+        tenant: "tenant-imob",
+        proposta: "Posso confirmar a visita ao imóvel para 12/06/2026 às 14:00?",
+        modelo: "Visita ao imóvel agendada! [[AGENDAR: data=12/06/2026, hora=14:00]]",
+        palavra: "Visita",
+      },
+      {
+        tenant: "tenant-barber",
+        proposta: "Posso confirmar seu corte para 11/06/2026 às 16:00?",
+        modelo: "Corte marcado, te espero! [[AGENDAR: data=11/06/2026, hora=16:00]]",
+        palavra: "Corte",
+      },
+      {
+        tenant: "tenant-rh",
+        proposta: "Posso confirmar sua entrevista para 15/06/2026 às 14:00?",
+        modelo: "Entrevista agendada! [[AGENDAR: data=15/06/2026, hora=14:00]]",
+        palavra: "Entrevista",
+      },
+      {
+        tenant: "tenant-custom",
+        proposta: "Posso confirmar sua Sessão de Alinhamento para 16/06/2026 às 09:00?",
+        modelo: "Sessão de Alinhamento confirmada! [[AGENDAR: data=16/06/2026, hora=09:00]]",
+        palavra: "Sessão de Alinhamento",
+      },
+    ];
+
+    for (const caso of casos) {
+      it(`agenda com nomenclatura própria do tenant (${caso.tenant})`, async () => {
+        insertAgendaEventMock.mockClear();
+        const result = await resolveAgendaTurn({
+          sb: makeSb(null),
+          tenantId: caso.tenant,
+          remoteJid: "5511999999999@s.whatsapp.net",
+          timezone: "America/Sao_Paulo",
+          modelText: caso.modelo,
+          clientText: "sim",
+          priorAssistantText: caso.proposta,
+          agendaAutomationEnabled: true,
+          ctaHandoffAtivo: true,
+        });
+        expect(result.action).toBe("scheduled");
+        // Estrutura técnica idêntica e isolada por tenant…
+        expect(insertAgendaEventMock).toHaveBeenCalledTimes(1);
+        expect(insertAgendaEventMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tenant_id: caso.tenant,
+            attendee_phone: "5511999999999",
+            created_by: "agent",
+          }),
+        );
+        // …e a linguagem enviada ao lead vem do modelo/prompt do tenant.
+        expect(result.text).toContain(caso.palavra);
+      });
+    }
   });
 
   describe("Agenda ON + Handoff ON (comportamento preservado)", () => {

@@ -29,6 +29,20 @@ export function isJobReadyToProcess(scheduledForIso: string, now = new Date()): 
   return now.getTime() >= new Date(scheduledForIso).getTime();
 }
 
+/**
+ * Decisão pura de staleness de geração: o job sumiu, foi cancelado ou a
+ * burst_generation avançou (chegou mensagem mais nova). Uma geração obsoleta
+ * não pode mutar agenda, notificar nem enviar resposta.
+ */
+export function isStaleBurstGenerationRow(
+  row: { burst_generation?: number; status?: string } | null | undefined,
+  claimedGeneration: number,
+): boolean {
+  if (!row) return true;
+  if (row.status === "cancelled") return true;
+  return Number(row.burst_generation ?? 1) !== claimedGeneration;
+}
+
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

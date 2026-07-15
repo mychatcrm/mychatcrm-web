@@ -8,6 +8,7 @@ import {
 import {
   computeAgentResponseSchedule,
   isJobReadyToProcess,
+  isStaleBurstGenerationRow,
 } from "@/lib/server/agent-response-schedule";
 import { resolveInboundAgentFlowDecision } from "@/lib/server/evolution-webhook-agent-flow";
 
@@ -117,5 +118,29 @@ describe("inbound message dedupe", () => {
 describe("smart wait settings", () => {
   it("keeps defaults when fields are missing", () => {
     expect(sanitizeAgentSmartWaitSettings(null)).toEqual(DEFAULT_AGENT_SMART_WAIT);
+  });
+});
+
+describe("staleness de geração (barreira final antes de mutação/envio)", () => {
+  it("geração divergente é stale (mensagem mais nova chegou)", () => {
+    expect(isStaleBurstGenerationRow({ burst_generation: 2, status: "processing" }, 1)).toBe(true);
+  });
+
+  it("mesma geração e job ativo não é stale", () => {
+    expect(isStaleBurstGenerationRow({ burst_generation: 3, status: "processing" }, 3)).toBe(false);
+  });
+
+  it("job cancelado é stale mesmo com a mesma geração", () => {
+    expect(isStaleBurstGenerationRow({ burst_generation: 3, status: "cancelled" }, 3)).toBe(true);
+  });
+
+  it("job inexistente é stale", () => {
+    expect(isStaleBurstGenerationRow(null, 1)).toBe(true);
+    expect(isStaleBurstGenerationRow(undefined, 1)).toBe(true);
+  });
+
+  it("generation ausente conta como 1", () => {
+    expect(isStaleBurstGenerationRow({ status: "processing" }, 1)).toBe(false);
+    expect(isStaleBurstGenerationRow({ status: "processing" }, 2)).toBe(true);
   });
 });

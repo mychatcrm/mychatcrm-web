@@ -6,6 +6,7 @@ import {
 import {
   computeAgentResponseSchedule,
   isJobReadyToProcess,
+  isStaleBurstGenerationRow,
   maskRemoteJidForLog,
   sleep,
 } from "@/lib/server/agent-response-schedule";
@@ -533,9 +534,10 @@ async function isJobGenerationStale(
   claimedGeneration: number,
 ): Promise<boolean> {
   const { data } = await sb.from("agent_response_jobs").select("burst_generation, status").eq("id", jobId).maybeSingle();
-  if (!data) return true;
-  const row = data as { burst_generation?: number; status?: string };
-  return Number(row.burst_generation ?? 1) !== claimedGeneration || row.status === "cancelled";
+  return isStaleBurstGenerationRow(
+    data as { burst_generation?: number; status?: string } | null,
+    claimedGeneration,
+  );
 }
 
 export async function tryProcessAgentResponseJob(

@@ -88,3 +88,46 @@ describe("agenda-datetime-parse extended", () => {
     expect(result?.time).toBe("08:00");
   });
 });
+
+describe("fragmentos incompletos nunca inventam horário (incidente de produção)", () => {
+  it("'Pode ser hoje as' não resolve datetime (não vira o minuto atual)", () => {
+    expect(
+      parseAppointmentDateTime({ userMessage: "Pode ser hoje as", timezone: TZ, now: NOW }),
+    ).toBeNull();
+    expect(
+      resolveScheduleDateTimeFromText({ clientText: "Pode ser hoje as", timezone: TZ, now: NOW }),
+    ).toBeNull();
+  });
+
+  it("'quero marcar para amanhã' sem hora não resolve datetime", () => {
+    expect(
+      parseAppointmentDateTime({ userMessage: "quero marcar para amanhã", timezone: TZ, now: NOW }),
+    ).toBeNull();
+  });
+
+  it("'sexta' sem hora não resolve datetime", () => {
+    expect(
+      parseAppointmentDateTime({ userMessage: "pode ser na sexta", timezone: TZ, now: NOW }),
+    ).toBeNull();
+  });
+
+  it("burst consolidado 'Pode ser hoje as' + 'duas da tarde' resolve hoje às 14:00", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "Pode ser hoje as\nduas da tarde",
+      timezone: TZ,
+      now: NOW,
+    });
+    expect(result?.date).toBe(addDaysInTimezone(TZ, 0, NOW));
+    expect(result?.time).toBe("14:00");
+  });
+
+  it("hora explícita continua funcionando com âncora de data", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "pode ser hoje às 16:30",
+      timezone: TZ,
+      now: NOW,
+    });
+    expect(result?.date).toBe(addDaysInTimezone(TZ, 0, NOW));
+    expect(result?.time).toBe("16:30");
+  });
+});
