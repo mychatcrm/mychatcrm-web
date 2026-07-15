@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildAgentSystemPrompt } from "@/lib/ai/agent-system-prompt";
 
 describe("buildAgentSystemPrompt", () => {
@@ -198,6 +198,60 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("CAPACIDADE OPERACIONAL DO SISTEMA: agendar, remarcar e cancelar compromissos");
     expect(prompt).toContain("ESCOPO SOBERANO DO AGENTE");
     expect(prompt).toContain("REGRA UNIVERSAL DE CONTEXTO");
+  });
+
+  describe("real calendar injection", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("injects the concrete calendar and the valid dates for the availability window", () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-07-14T12:00:00-03:00"));
+      const prompt = buildAgentSystemPrompt({
+        languageInstruction: "Responda em português.",
+        agent: {
+          nome: "Max Vendas",
+          systemPrompt: "Ajude o cliente.",
+          agendaAutomationEnabled: true,
+          timezone: "America/Sao_Paulo",
+          agendaDisponibilidade: {
+            ativo: true,
+            diasSemana: [1, 2, 3, 4, 5],
+            horaInicio: "09:00",
+            horaFim: "15:05",
+          },
+        },
+      });
+
+      expect(prompt).toContain("CALENDÁRIO REAL");
+      expect(prompt).toContain("terça-feira 14/07/2026 (hoje)");
+      expect(prompt).toContain("quarta-feira 15/07/2026 (amanhã)");
+      expect(prompt).toContain("DATAS VÁLIDAS MAIS PRÓXIMAS");
+      expect(prompt).toContain("sexta-feira 17/07/2026");
+      expect(prompt).toContain("segunda-feira 20/07/2026");
+      expect(prompt).toContain("das 09:00 às 15:05");
+      const validLine = prompt.split("\n").find((l) => l.includes("DATAS VÁLIDAS")) ?? "";
+      expect(validLine).not.toContain("sábado");
+      expect(validLine).not.toContain("domingo");
+    });
+
+    it("injects the calendar without the valid-dates list when the window is off", () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-07-14T12:00:00-03:00"));
+      const prompt = buildAgentSystemPrompt({
+        languageInstruction: "Responda em português.",
+        agent: {
+          nome: "Max Vendas",
+          systemPrompt: "Ajude o cliente.",
+          agendaAutomationEnabled: true,
+          timezone: "America/Sao_Paulo",
+        },
+      });
+
+      expect(prompt).toContain("CALENDÁRIO REAL");
+      expect(prompt).not.toContain("DATAS VÁLIDAS MAIS PRÓXIMAS");
+    });
   });
 
   it("omits the agenda scope carve-out when automation is off", () => {

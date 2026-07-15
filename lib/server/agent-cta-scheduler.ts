@@ -56,6 +56,12 @@ export const AGENDA_AUTOMATION_DISABLED_REPLY =
   "Posso consultar seus compromissos existentes, mas não consigo criar, remarcar ou cancelar agendamentos por aqui no momento.";
 export const AGENDA_SLOT_TAKEN_REPLY =
   "Esse horário acabou de ficar indisponível na nossa agenda. Pode me indicar outra data ou horário? Eu verifico a disponibilidade e confirmo na hora.";
+export const AGENDA_UNVERIFIED_CLAIM_REPLY =
+  "Só um instante — ainda não registrei essa alteração na agenda. Me confirme a data e o horário exatos (por exemplo: 20/07 às 14:00) que eu registro agora mesmo.";
+
+/** Resposta do modelo afirmando que uma alteração de agenda foi concluída. */
+const AGENDA_SUCCESS_CLAIM_RE =
+  /\b(agendei|remarquei|cancelei|marquei)\b|\b(est[aá]|foi|ficou)\s+(agendad|remarcad|marcad|cancelad)/i;
 
 const AGENDA_DIAS_PT = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
 
@@ -83,7 +89,7 @@ function agendaFailureReplyForError(
 const HUMAN_DELEGATION_IN_REPLY_RE =
   /\b(atendente\s+humano|humano\s+vai|entrar\s+em\s+contato|nossa\s+equipe|equipe\s+vai|respons[aá]vel\s+vai|transferir|transfer[eê]ncia)\b/i;
 const CONFIRM_ASK_RE =
-  /\b(posso confirmar|pode confirmar|confirma|confirmar|tudo bem|serve|fica bom|pode ser)\b/i;
+  /\b(posso confirmar|pode confirmar|confirma|confirmar|confirmando|tudo bem|tudo certo|serve|fica bom|pode ser|posso agendar|vou agendar)\b/i;
 const DATE_OR_TIME_IN_TEXT_RE = /\d{1,2}\/\d{1,2}|\d{1,2}[:h]\d{2}|\bàs\s+\d{1,2}/i;
 const AGENDA_TOPIC_RE =
   /\b(agendamento|agendar|remarc|reagend|hor[aá]rio|compromisso|marcar|cancel)/i;
@@ -282,6 +288,7 @@ export function clientConfirmedAgendaMutation(
   if (
     assistantText?.trim() &&
     text.length <= 48 &&
+    !text.includes("?") &&
     !AGENDA_MUTATION_IN_MESSAGE_RE.test(text) &&
     detectSchedulingConfirmation(userText, assistantText)
   ) {
@@ -1008,9 +1015,12 @@ function resolveScheduleDirective(
   directive: Extract<AgendaDirective, { type: "schedule" }>,
   params: { clientText: string; assistantText: string; timezone: string },
 ): Extract<AgendaDirective, { type: "schedule" }> {
+  // Só o texto DO CLIENTE pode corrigir a diretiva emitida pelo modelo. A prosa do
+  // assistente cita nomes de dias fora do pedido (janela de atendimento, desculpas),
+  // e usá-la aqui sobrescrevia diretivas corretas com datas erradas.
   const resolved = resolveScheduleDateTimeFromText({
     clientText: params.clientText,
-    assistantText: params.assistantText,
+    assistantText: "",
     timezone: params.timezone,
     fallbackDate: directive.date,
     fallbackTime: directive.time,
@@ -1087,6 +1097,30 @@ export async function resolveAgendaTurn(params: {
     confirmedFromPriorProposal;
 
   if (!hasMutationIntent) {
+    // Anti-alucinação: o modelo afirma que agendou/remarcou/cancelou, mas nenhuma
+    // diretiva foi executada neste turno. Se o contato não tem NENHUM evento ativo
+    // que justifique a afirmação, trocamos a resposta por um pedido honesto de
+    // data/horário em vez de entregar uma confirmação falsa ao lead.
+    if (AGENDA_SUCCESS_CLAIM_RE.test(cleanText)) {
+      try {
+        const sb = params.sb ?? createSupabaseServiceClient();
+        const active = await findNextActiveAgendaEvent({
+          sb,
+          tenantId: params.tenantId,
+          remoteJid: params.remoteJid,
+        });
+        if (!active) {
+          console.warn("[agent-agenda-turn]", {
+            tenant_id: params.tenantId,
+            agent_id: params.agentId,
+            action: "unverified_claim_blocked",
+          });
+          return finalize({ text: AGENDA_UNVERIFIED_CLAIM_REPLY, action: "none", deferHandoff: true });
+        }
+      } catch {
+        // Em erro de consulta, mantém o texto original (não bloquear por falha nossa).
+      }
+    }
     return finalize({ text: cleanText, action: "none" });
   }
 
@@ -1174,6 +1208,9 @@ export async function resolveAgendaTurn(params: {
       agent_id: params.agentId,
       action: "failed",
       reason: error instanceof Error ? error.message : String(error),
+      directive_type: finalDirective.type,
+      directive_date: finalDirective.type === "schedule" ? finalDirective.date : null,
+      directive_time: finalDirective.type === "schedule" ? finalDirective.time : null,
     });
     const specific = agendaFailureReplyForError(error, params.agendaDisponibilidade);
     return finalize({ text: specific ?? AGENDA_FAILURE_REPLY, action: "failed", deferHandoff: true });

@@ -262,6 +262,46 @@ ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o c
         disp?.permitirAgendamentosSimultaneos === false
           ? "- Cada horário comporta apenas um agendamento. Se o sistema recusar um horário por já estar ocupado, informe o cliente com naturalidade e peça outra data ou horário para confirmar de novo."
           : null;
+      const calendar = (() => {
+        try {
+          const weekdayShortToDow: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+          const ptFmt = new Intl.DateTimeFormat("pt-BR", {
+            timeZone: agentTz,
+            weekday: "long",
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric",
+          });
+          const enFmt = new Intl.DateTimeFormat("en-US", { timeZone: agentTz, weekday: "short" });
+          const entries: Array<{ dow: number; label: string }> = [];
+          for (let i = 0; i < 21; i++) {
+            const d = new Date(Date.now() + i * 86_400_000);
+            const parts = ptFmt.formatToParts(d);
+            const get = (t: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === t)?.value ?? "";
+            entries.push({
+              dow: weekdayShortToDow[enFmt.format(d)] ?? -1,
+              label: `${get("weekday")} ${get("day")}/${get("month")}/${get("year")}`,
+            });
+          }
+          const next7 = entries
+            .slice(0, 7)
+            .map((e, i) => (i === 0 ? `${e.label} (hoje)` : i === 1 ? `${e.label} (amanhã)` : e.label))
+            .join(" | ");
+          const calendarLine = `- CALENDÁRIO REAL (fonte única para datas — nunca calcule dia da semana de cabeça): ${next7}.`;
+          const diasSemana = Array.isArray(disp?.diasSemana) ? disp!.diasSemana! : [];
+          const validLine =
+            disp?.ativo && diasSemana.length > 0
+              ? (() => {
+                  const valid = entries.filter((e) => diasSemana.includes(e.dow)).slice(0, 6).map((e) => e.label);
+                  if (valid.length === 0) return null;
+                  return `- DATAS VÁLIDAS MAIS PRÓXIMAS para agendar (das ${disp!.horaInicio ?? "08:00"} às ${disp!.horaFim ?? "18:00"}): ${valid.join(" | ")}. Ao propor horários e ao emitir [[AGENDAR: ...]], copie a data DD/MM/AAAA exatamente de uma destas datas. Nunca ofereça dias fora desta lista e nunca diga que um horário dentro da janela está indisponível — quem valida a disponibilidade é o sistema.`;
+                })()
+              : null;
+          return { calendarLine, validLine };
+        } catch {
+          return { calendarLine: null, validLine: null };
+        }
+      })();
       const automationBlock = agent.agendaAutomationEnabled === true
         ? `- CAPACIDADE OPERACIONAL DO SISTEMA: agendar, remarcar e cancelar compromissos é uma função técnica desta plataforma autorizada para este agente. As regras de escopo deste prompt não restringem esta capacidade; quando o cliente pedir para marcar, remarcar ou cancelar um horário, siga os passos abaixo normalmente.
 - A automação de agenda está ativa para este agente.
@@ -293,7 +333,9 @@ CANCELAR AGENDAMENTO
 - Nunca diga que atendente, humano, equipe, responsável ou especialista vai entrar em contato, confirmar ou retornar sobre agenda.
 - Para remarcar ou cancelar, siga os mesmos passos acima (propor → aguardar confirmação → emitir diretiva).`
             : ""
-        }${dispLine ? `\n${dispLine}` : ""}${slotLine ? `\n${slotLine}` : ""}`
+        }${calendar.calendarLine ? `\n${calendar.calendarLine}` : ""}${dispLine ? `\n${dispLine}` : ""}${
+          calendar.validLine ? `\n${calendar.validLine}` : ""
+        }${slotLine ? `\n${slotLine}` : ""}`
         : "- A automação de agenda está desativada. Você pode informar compromissos existentes, mas nunca inclua [[AGENDAR: ...]] nem [[CANCELAR_AGENDA]].";
       return `AGENDA
 - Consulte o contexto de agenda do contato antes de responder. Não invente compromissos.

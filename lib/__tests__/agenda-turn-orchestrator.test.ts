@@ -5,6 +5,7 @@ import {
   AGENDA_SUCCESS_REPLY_CANCELLED,
   AGENDA_SUCCESS_REPLY_RESCHEDULED,
   AGENDA_SUCCESS_REPLY_SCHEDULED,
+  AGENDA_UNVERIFIED_CLAIM_REPLY,
   buildOutsideAvailabilityReply,
   clientConfirmedAgendaMutation,
   isStandaloneAgendaConfirmation,
@@ -140,6 +141,11 @@ describe("agenda confirmation helpers", () => {
   it("clientConfirmedAgendaMutation exige confirmação real", () => {
     expect(clientConfirmedAgendaMutation("sim", "Posso confirmar para amanhã às 14:00?")).toBe(true);
     expect(clientConfirmedAgendaMutation("quero remarcar", "Posso confirmar?")).toBe(false);
+  });
+
+  it("pergunta irritada com palavra solta de confirmação NÃO confirma", () => {
+    expect(clientConfirmedAgendaMutation("ta ficando doido?", "Posso confirmar para sexta às 14:00?")).toBe(false);
+    expect(clientConfirmedAgendaMutation("pode ser as 14 de sexta", "Temos sexta às 14h, pode ser?")).toBe(true);
   });
 });
 
@@ -490,6 +496,74 @@ describe("resolveAgendaTurn", () => {
         { role: "user", content: "sim" },
       ]);
       expect(prior).toBeNull();
+    });
+  });
+
+  describe("anti-alucinação e precedência da diretiva", () => {
+    it("prosa do assistente citando outros dias NÃO sobrescreve a diretiva correta", async () => {
+      const sb = makeSb(null);
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText:
+          "Atendemos aos domingos e sábados também, mas agendei conforme combinado. [[AGENDAR: data=15/06/2026, hora=10:00]]",
+        clientText: "sim",
+        agendaAutomationEnabled: true,
+      });
+      expect(result.action).toBe("scheduled");
+      expect(insertAgendaEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({ start_at: "2026-06-15T13:00:00.000Z" }),
+      );
+    });
+
+    it("proposta 'Confirmando... Está tudo certo?' + sim executa de verdade (sem diretiva do modelo)", async () => {
+      const sb = makeSb(null);
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Ótimo! Sua visita está agendada para 15/06/2026 às 10:00.",
+        clientText: "sim",
+        priorAssistantText:
+          "Perfeito! Vou agendar sua visita. Confirmando: 15/06/2026 às 10:00. Está tudo certo?",
+        agendaAutomationEnabled: true,
+      });
+      expect(result.action).toBe("scheduled");
+      expect(insertAgendaEventMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("modelo afirmando sucesso sem evento ativo e sem execução tem a resposta substituída", async () => {
+      const sb = makeSb(null);
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Ótimo! Sua entrevista está agendada para sexta-feira, às 14h. Até lá!",
+        clientText: "obrigado",
+        agendaAutomationEnabled: true,
+      });
+      expect(result.action).toBe("none");
+      expect(result.text).toBe(AGENDA_UNVERIFIED_CLAIM_REPLY);
+      expect(insertAgendaEventMock).not.toHaveBeenCalled();
+    });
+
+    it("modelo citando agendamento existente real mantém a resposta", async () => {
+      const sb = makeSb(EXISTING_EVENT);
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Seu horário está agendado para 10/06/2026 às 14:00, te espero!",
+        clientText: "obrigado",
+        agendaAutomationEnabled: true,
+      });
+      expect(result.action).toBe("none");
+      expect(result.text).toContain("está agendado");
     });
   });
 
