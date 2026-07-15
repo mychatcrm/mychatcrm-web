@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AGENDA_AUTOMATION_DISABLED_REPLY,
   AGENDA_FAILURE_REPLY_NO_HANDOFF,
   AGENDA_SLOT_TAKEN_REPLY,
   AGENDA_SUCCESS_REPLY_CANCELLED,
@@ -188,6 +189,61 @@ describe("resolveAgendaTurn", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("toggle desligado substitui promessa verbal por resposta segura", async () => {
+    const result = await resolveAgendaTurn({
+      sb: makeSb(null),
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      timezone: "America/Sao_Paulo",
+      modelText: "Pronto, remarquei seu atendimento para sexta às 14h.",
+      clientText: "sim",
+      agendaAutomationEnabled: false,
+    });
+
+    expect(result).toMatchObject({
+      action: "blocked",
+      text: AGENDA_AUTOMATION_DISABLED_REPLY,
+    });
+    expect(insertAgendaEventMock).not.toHaveBeenCalled();
+    expect(cancelAgendaEventMock).not.toHaveBeenCalled();
+  });
+
+  it("toggle desligado bloqueia pedido de mutação mesmo sem marcador do modelo", async () => {
+    const result = await resolveAgendaTurn({
+      sb: makeSb(null),
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      timezone: "America/Sao_Paulo",
+      modelText: "Qual data seria melhor para você?",
+      clientText: "quero cancelar meu agendamento",
+      agendaAutomationEnabled: false,
+    });
+
+    expect(result.action).toBe("blocked");
+    expect(result.text).toBe(AGENDA_AUTOMATION_DISABLED_REPLY);
+    expect(insertAgendaEventMock).not.toHaveBeenCalled();
+    expect(cancelAgendaEventMock).not.toHaveBeenCalled();
+  });
+
+  it("toggle desligado mantém consulta de agenda sem mutação", async () => {
+    const result = await resolveAgendaTurn({
+      sb: makeSb(null),
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      timezone: "America/Sao_Paulo",
+      modelText: "Seu próximo compromisso é sexta às 14h.",
+      clientText: "quando é meu próximo compromisso?",
+      agendaAutomationEnabled: false,
+    });
+
+    expect(result).toEqual({
+      action: "none",
+      text: "Seu próximo compromisso é sexta às 14h.",
+    });
+    expect(insertAgendaEventMock).not.toHaveBeenCalled();
+    expect(cancelAgendaEventMock).not.toHaveBeenCalled();
   });
 
   it("criar sem confirmação não executa", async () => {

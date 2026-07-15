@@ -19,5 +19,19 @@ describe("agenda automation runtime gate", () => {
     expect(source).toContain("priorAssistantText");
     expect(source).toContain('agendaTurn.action === "blocked"');
     expect(source).toContain("shouldDeferHandoffForAgendaResult");
+    expect(source).toContain("operationKey:");
+  });
+
+  it("uses the inbound Evolution message id as the immediate idempotency key", () => {
+    const source = readRuntimeSource("app/api/webhooks/evolution/route.ts");
+
+    expect(source).toContain("msg.messageId");
+    expect(source).toContain("`evolution:${row.tenant_id}:${msg.messageId}`");
+  });
+
+  it("uses job, generation and unit as the Smart Wait idempotency key", () => {
+    const source = readRuntimeSource("lib/server/evolution-agent-reply.ts");
+
+    expect(source).toContain("`agent-response-job:${job.id}:${generation}:${unitIndex}`");
   });
 });

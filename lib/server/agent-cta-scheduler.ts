@@ -829,6 +829,270 @@ async function insertStructuredAgendaEvent(params: {
   }
 }
 
+type AtomicAgendaMutationResult = {
+  action: "scheduled" | "rescheduled" | "cancelled";
+  event: AgendaEventRow;
+  previous_event: AgendaEventRow | null;
+  changed: boolean;
+  deduplicated: boolean;
+  operation_status: "local_committed" | "sync_pending" | "completed";
+};
+
+const AGENDA_RPC_REASONS = [
+  "agenda_event_not_found",
+  "agenda_event_contact_mismatch",
+  "agenda_slot_taken",
+  "invalid_or_past_agenda_datetime",
+  "invalid_remote_jid",
+] as const;
+
+function normalizeAgendaRpcError(error: unknown): Error {
+  const message = error instanceof Error ? error.message : String((error as { message?: unknown } | null)?.message ?? error);
+  const known = AGENDA_RPC_REASONS.find((reason) => message.includes(reason));
+  return new Error(known ?? message);
+}
+
+async function updateAgendaMutationOperation(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  operationKey: string;
+  status: "sync_pending" | "completed";
+  result: AtomicAgendaMutationResult;
+  error?: unknown;
+}): Promise<void> {
+  const { error } = await params.sb
+    .from("agenda_mutation_operations")
+    .update({
+      status: params.status,
+      result: { ...params.result, operation_status: params.status },
+      last_error:
+        params.error == null
+          ? null
+          : params.error instanceof Error
+            ? params.error.message
+            : String(params.error),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("tenant_id", params.tenantId)
+    .eq("operation_key", params.operationKey);
+  if (error) throw error;
+}
+
+async function syncAtomicAgendaMutation(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  operationKey: string;
+  result: AtomicAgendaMutationResult;
+}): Promise<AtomicAgendaMutationResult> {
+  let currentEvent =
+    (await getAgendaEventById(params.tenantId, params.result.event.id)) ?? params.result.event;
+  const previousEvent = params.result.previous_event?.id
+    ? ((await getAgendaEventById(params.tenantId, params.result.previous_event.id)) ??
+      params.result.previous_event)
+    : null;
+  let nextResult: AtomicAgendaMutationResult = {
+    ...params.result,
+    event: currentEvent,
+    previous_event: previousEvent,
+  };
+
+  try {
+    if (params.result.action === "scheduled" || params.result.action === "rescheduled") {
+      if (!currentEvent.google_event_id) {
+        const googleToken = await getGoogleCalendarToken(params.tenantId);
+        if (googleToken) {
+          const googleEvent = await createGoogleCalendarEvent(params.tenantId, {
+            title: currentEvent.title,
+            description: currentEvent.description,
+            location: currentEvent.location,
+            startAt: currentEvent.start_at,
+            endAt: currentEvent.end_at,
+            attendeeEmail: currentEvent.attendee_email,
+          });
+          await updateAgendaEvent(params.tenantId, currentEvent.id, {
+            google_event_id: googleEvent.id,
+          });
+          currentEvent = { ...currentEvent, google_event_id: googleEvent.id };
+          nextResult = { ...nextResult, event: currentEvent };
+        }
+      }
+      if (params.result.action === "rescheduled" && previousEvent?.google_event_id) {
+        await cancelGoogleCalendarEvent(params.tenantId, previousEvent.google_event_id);
+      }
+    } else if (currentEvent.google_event_id) {
+      await cancelGoogleCalendarEvent(params.tenantId, currentEvent.google_event_id);
+    }
+
+    nextResult = { ...nextResult, operation_status: "completed" };
+    await updateAgendaMutationOperation({
+      sb: params.sb,
+      tenantId: params.tenantId,
+      operationKey: params.operationKey,
+      status: "completed",
+      result: nextResult,
+    });
+    return nextResult;
+  } catch (error) {
+    nextResult = { ...nextResult, operation_status: "sync_pending" };
+    await updateAgendaMutationOperation({
+      sb: params.sb,
+      tenantId: params.tenantId,
+      operationKey: params.operationKey,
+      status: "sync_pending",
+      result: nextResult,
+      error,
+    }).catch(() => undefined);
+    console.warn("[agent-agenda-google-sync]", {
+      tenant_id: params.tenantId,
+      operation_key: params.operationKey,
+      action: params.result.action,
+      event_id: params.result.event.id,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    return nextResult;
+  }
+}
+
+async function executeAgendaDirectiveAtomically(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  leadId?: string | null;
+  agentId?: string | null;
+  contactName?: string | null;
+  timezone: string;
+  directive: AgendaDirective;
+  operationKey: string;
+  agendaLembretes?: AgentAgendaLembretes | null;
+  agendaDisponibilidade?: AgentAgendaDisponibilidade | null;
+  slotIndex?: number;
+}): Promise<{ action: "scheduled" | "rescheduled" | "cancelled"; eventId: string }> {
+  const attendeePhone = extractPhone(params.remoteJid);
+  if (!attendeePhone) throw new Error("invalid_remote_jid");
+
+  let startAt: Date | null = null;
+  let endAt: Date | null = null;
+  let title: string | null = null;
+  let description: string | null = null;
+  let attendeeName: string | null = null;
+
+  if (params.directive.type === "schedule") {
+    startAt = directiveStartAt(params.directive, params.timezone);
+    if (Number.isNaN(startAt.getTime()) || startAt.getTime() <= Date.now()) {
+      throw new Error("invalid_or_past_agenda_datetime");
+    }
+    if (
+      params.agendaDisponibilidade?.ativo &&
+      !isWithinAgendaAvailability(startAt, params.agendaDisponibilidade, params.timezone)
+    ) {
+      throw new Error("outside_agenda_availability");
+    }
+    endAt = new Date(startAt.getTime() + 60 * 60_000);
+    attendeeName = await resolveAttendeeName({
+      sb: params.sb,
+      contactName: params.contactName ?? null,
+      leadId: params.leadId,
+    });
+    const displayName = attendeeName?.trim() || attendeePhone;
+    title = `Agendamento via WhatsApp - ${displayName}`;
+    description = formatAgendaDescription({
+      displayName,
+      phone: attendeePhone,
+      startAt,
+      timezone: params.timezone,
+      location: params.directive.location,
+      userMessage: "Agendamento confirmado via diretiva estruturada.",
+      assistantMessage: `Data ${params.directive.date} às ${params.directive.time}.`,
+    });
+  }
+
+  const { data, error } = await params.sb.rpc("apply_agent_agenda_mutation", {
+    p_tenant_id: params.tenantId,
+    p_operation_key: params.operationKey,
+    p_action: params.directive.type,
+    p_attendee_phone: attendeePhone,
+    p_event_id: params.directive.type === "cancel" ? params.directive.eventId : null,
+    p_title: title,
+    p_description: description,
+    p_location: params.directive.type === "schedule" ? params.directive.location : null,
+    p_start_at: startAt?.toISOString() ?? null,
+    p_end_at: endAt?.toISOString() ?? null,
+    p_attendee_name: attendeeName,
+    p_lead_id: params.leadId ?? null,
+    p_agent_id: params.agentId ?? null,
+    p_allow_simultaneous:
+      params.agendaDisponibilidade?.permitirAgendamentosSimultaneos !== false,
+  });
+  if (error) throw normalizeAgendaRpcError(error);
+
+  const atomicResult = data as AtomicAgendaMutationResult | null;
+  if (!atomicResult?.event?.id || !atomicResult.action) {
+    throw new Error("invalid_agenda_mutation_result");
+  }
+  const syncedResult = await syncAtomicAgendaMutation({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    operationKey: params.operationKey,
+    result: atomicResult,
+  });
+
+  if (atomicResult.changed && !atomicResult.deduplicated) {
+    await broadcastAgendaChange(
+      params.tenantId,
+      syncedResult.action === "cancelled" ? "delete" : "insert",
+    );
+    if (syncedResult.action === "cancelled") {
+      cancelAgendaRemindersForEvent({
+        sb: params.sb,
+        agendaEventId: syncedResult.event.id,
+      }).catch(() => undefined);
+    } else {
+      if (syncedResult.previous_event?.id) {
+        cancelAgendaRemindersForEvent({
+          sb: params.sb,
+          agendaEventId: syncedResult.previous_event.id,
+        }).catch(() => undefined);
+      }
+      if (params.agendaLembretes?.ativo && params.agendaLembretes.regras.length > 0) {
+        scheduleAgendaRemindersForEvent({
+          sb: params.sb,
+          tenantId: params.tenantId,
+          agentId: params.agentId ?? null,
+          slotIndex: params.slotIndex ?? 0,
+          remoteJid: params.remoteJid,
+          agendaEventId: syncedResult.event.id,
+          eventStartAt: new Date(syncedResult.event.start_at),
+          attendeeName: syncedResult.event.attendee_name,
+          location: syncedResult.event.location,
+          eventTitle: syncedResult.event.title,
+          agendaLembretes: params.agendaLembretes,
+          timezone: params.timezone,
+        }).catch((reminderError) =>
+          console.warn("[agent-cta-scheduler] reminder_schedule_failed", {
+            event_id: syncedResult.event.id,
+            error:
+              reminderError instanceof Error ? reminderError.message : String(reminderError),
+          }),
+        );
+      }
+    }
+    void notifyTenantAppointmentChange({
+      sb: params.sb,
+      tenantId: params.tenantId,
+      action: syncedResult.action,
+      agendaEventId: syncedResult.event.id,
+      attendeeName: syncedResult.event.attendee_name,
+      attendeePhone: syncedResult.event.attendee_phone,
+      startAtIso: syncedResult.event.start_at,
+      location: syncedResult.event.location,
+      timezone: params.timezone,
+      agentId: params.agentId ?? null,
+    }).catch(() => undefined);
+  }
+
+  return { action: syncedResult.action, eventId: syncedResult.event.id };
+}
+
 export async function executeAgendaDirective(params: {
   sb?: SupabaseServiceClient;
   tenantId: string;
@@ -841,8 +1105,17 @@ export async function executeAgendaDirective(params: {
   agendaLembretes?: AgentAgendaLembretes | null;
   agendaDisponibilidade?: AgentAgendaDisponibilidade | null;
   slotIndex?: number;
+  /** Stable per inbound turn/job; enables durable idempotency and tenant locking. */
+  operationKey?: string | null;
 }): Promise<{ action: "scheduled" | "rescheduled" | "cancelled"; eventId: string }> {
   const sb = params.sb ?? createSupabaseServiceClient();
+  if (params.operationKey?.trim()) {
+    return executeAgendaDirectiveAtomically({
+      ...params,
+      sb,
+      operationKey: params.operationKey.trim(),
+    });
+  }
   if (params.directive.type === "cancel") {
     let event: AgendaEventRow | null = null;
     if (params.directive.eventId) {
@@ -1047,6 +1320,8 @@ export async function resolveAgendaTurn(params: {
   agendaLembretes?: AgentAgendaLembretes | null;
   agendaDisponibilidade?: AgentAgendaDisponibilidade | null;
   slotIndex?: number;
+  /** Stable per inbound message/job; makes the agenda mutation retry-safe. */
+  operationKey?: string | null;
 }): Promise<ResolveAgendaTurnResult> {
   const cleanText = stripAgendaDirectives(params.modelText);
   const finalize = (result: ResolveAgendaTurnResult) =>
@@ -1054,7 +1329,23 @@ export async function resolveAgendaTurn(params: {
 
   if (!params.agendaAutomationEnabled) {
     const parsed = parseAgendaDirectives(params.modelText);
-    if (parsed.directives.length > 0 || parsed.invalid) {
+    const clientRequestedMutation =
+      isInitialAgendaMutationRequest(params.clientText) ||
+      RESCHEDULE_RE.test(params.clientText) ||
+      detectAgendaCancelIntent(params.clientText);
+    const modelClaimedMutation = AGENDA_SUCCESS_CLAIM_RE.test(cleanText);
+    if (
+      parsed.directives.length > 0 ||
+      parsed.invalid ||
+      clientRequestedMutation ||
+      modelClaimedMutation
+    ) {
+      console.info("[agent-agenda-turn]", {
+        tenant_id: params.tenantId,
+        agent_id: params.agentId,
+        action: "blocked",
+        reason: "automation_disabled",
+      });
       return finalize({ text: AGENDA_AUTOMATION_DISABLED_REPLY, action: "blocked", deferHandoff: true });
     }
     return finalize({ text: cleanText, action: "none" });
@@ -1193,6 +1484,7 @@ export async function resolveAgendaTurn(params: {
       agendaLembretes: params.agendaLembretes,
       agendaDisponibilidade: params.agendaDisponibilidade,
       slotIndex: params.slotIndex,
+      operationKey: params.operationKey,
     });
     console.info("[agent-agenda-turn]", {
       tenant_id: params.tenantId,

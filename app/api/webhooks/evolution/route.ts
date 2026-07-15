@@ -1099,6 +1099,9 @@ export async function POST(request: Request) {
                 : null,
             slotIndex:
               typeof metadata.whatsappSlotIndex === "number" ? metadata.whatsappSlotIndex : 0,
+            operationKey: msg.messageId
+              ? `evolution:${row.tenant_id}:${msg.messageId}`
+              : null,
           });
           if (agendaTurn.action === "blocked" || agendaTurn.action === "failed") {
             console.info("[agent-agenda-turn]", {

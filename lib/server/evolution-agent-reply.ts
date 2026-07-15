@@ -634,6 +634,7 @@ export async function processAgentResponseJob(
           ? (metadata.agendaDisponibilidade as import("@/lib/types").AgentAgendaDisponibilidade)
           : null,
       slotIndex: typeof metadata.whatsappSlotIndex === "number" ? metadata.whatsappSlotIndex : 0,
+      operationKey: `agent-response-job:${job.id}:${generation}:${unitIndex}`,
     });
     if (agendaTurn.action === "blocked" || agendaTurn.action === "failed") {
       console.info("[agent-agenda-turn]", {

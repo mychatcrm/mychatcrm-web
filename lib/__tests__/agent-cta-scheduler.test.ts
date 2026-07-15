@@ -484,6 +484,81 @@ describe("agent-cta-scheduler", () => {
     expect(cancelAgendaEventMock).toHaveBeenCalledWith("t1", "evt-old");
   });
 
+  it("uses the durable RPC for an idempotent agenda operation key", async () => {
+    const event = {
+      id: "123e4567-e89b-42d3-a456-426614174000",
+      tenant_id: "t1",
+      google_event_id: null,
+      title: "Agendamento via WhatsApp - Maria",
+      description: null,
+      location: null,
+      color: "#f24400",
+      start_at: "2099-06-02T17:30:00.000Z",
+      end_at: "2099-06-02T18:30:00.000Z",
+      all_day: false,
+      attendee_name: "Maria",
+      attendee_phone: "5562999999999",
+      attendee_email: null,
+      status: "pending",
+      created_by: "agent",
+      lead_id: null,
+      agent_id: "agent-1",
+      created_at: "2099-01-01T00:00:00.000Z",
+      updated_at: "2099-01-01T00:00:00.000Z",
+    };
+    const rpc = vi.fn().mockResolvedValue({
+      data: {
+        action: "scheduled",
+        event,
+        previous_event: null,
+        changed: false,
+        deduplicated: true,
+        operation_status: "local_committed",
+      },
+      error: null,
+    });
+    const operationUpdates: unknown[] = [];
+    const sb = {
+      rpc,
+      from: (table: string) => {
+        if (table !== "agenda_mutation_operations") {
+          throw new Error(`unexpected table ${table}`);
+        }
+        return {
+          update: (patch: unknown) => {
+            operationUpdates.push(patch);
+            const chain = {
+              eq: vi.fn(),
+            };
+            chain.eq.mockReturnValueOnce(chain).mockResolvedValueOnce({ error: null });
+            return chain;
+          },
+        };
+      },
+    } as never;
+
+    const result = await executeAgendaDirective({
+      sb,
+      tenantId: "t1",
+      remoteJid: "5562999999999@s.whatsapp.net",
+      agentId: "agent-1",
+      contactName: "Maria",
+      timezone: "America/Sao_Paulo",
+      directive: { type: "schedule", date: "02/06/2099", time: "14:30", location: null },
+      operationKey: "evolution:t1:message-1",
+    });
+
+    expect(result).toEqual({ action: "scheduled", eventId: event.id });
+    expect(rpc).toHaveBeenCalledWith("apply_agent_agenda_mutation", expect.objectContaining({
+      p_tenant_id: "t1",
+      p_operation_key: "evolution:t1:message-1",
+      p_action: "schedule",
+    }));
+    expect(operationUpdates).toHaveLength(1);
+    expect(insertAgendaEventMock).not.toHaveBeenCalled();
+    expect(cancelAgendaEventMock).not.toHaveBeenCalled();
+  });
+
   it("builds the outside-availability reply from the configured window", () => {
     const disp = { ativo: true, diasSemana: [1, 2, 3], horaInicio: "09:00", horaFim: "18:00" };
     const reply = buildOutsideAvailabilityReply(disp);
