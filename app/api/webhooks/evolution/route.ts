@@ -945,6 +945,7 @@ export async function POST(request: Request) {
                     ? inboundSaved.created_at
                     : msg.occurredAt ?? new Date().toISOString(),
                 smartWait,
+                processorBaseUrl: new URL(request.url).origin,
               });
               return;
             } else {

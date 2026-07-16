@@ -52,9 +52,11 @@ describe("omnichannel runtime contracts", () => {
     const dispatch = source("app/api/internal/agent-response-jobs/dispatch/route.ts");
 
     expect(webhook).not.toContain("waitUntil(");
-    expect(flow).toContain("await queueAgentResponseJobProcessor(job.id)");
+    expect(flow).toContain("await queueAgentResponseJobProcessor(job.id, params.processorBaseUrl)");
     expect(flow).not.toContain("waitAndProcessAgentResponseJob");
+    expect(webhook).toContain("processorBaseUrl: new URL(request.url).origin");
     expect(jobs).toContain('new URL("/api/internal/agent-response-jobs/dispatch", base)');
+    expect(jobs).toContain("signal: AbortSignal.timeout(8_000)");
     expect(dispatch).toContain('import { waitUntil } from "@vercel/functions"');
     expect(dispatch).toContain("processDispatchedJob(jobId)");
     expect(dispatch).toContain("{ status: 202 }");

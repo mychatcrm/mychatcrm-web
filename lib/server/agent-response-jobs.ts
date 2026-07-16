@@ -190,6 +190,19 @@ export async function getAgentResponseJobById(
   return rowFromDb(data as Record<string, unknown>);
 }
 
+export function resolveAgentJobSchedulingTimestamp(
+  occurredAt: string | undefined,
+  receivedAt = new Date(),
+): string | null {
+  const providerTime = occurredAt ? new Date(occurredAt) : receivedAt;
+  if (Number.isNaN(providerTime.getTime()) || Number.isNaN(receivedAt.getTime())) return null;
+  // O timestamp do provedor continua gravado em whatsapp_messages. O relógio
+  // do Smart Wait começa no recebimento real do webhook; usar o horário
+  // original fazia uma mensagem atrasada já nascer vencida e ser respondida
+  // antes de o próximo fragmento sair da fila da Evolution.
+  return receivedAt.toISOString();
+}
+
 export async function scheduleAgentResponseJob(params: {
   sb?: SupabaseServiceClient;
   tenantId: string;
@@ -254,8 +267,8 @@ export async function scheduleAgentResponseJob(params: {
     return null;
   }
 
-  const occurredAt = params.occurredAt ? new Date(params.occurredAt) : new Date();
-  if (Number.isNaN(occurredAt.getTime())) {
+  const schedulingTimestamp = resolveAgentJobSchedulingTimestamp(params.occurredAt);
+  if (!schedulingTimestamp) {
     logJobEvent("failed_reason", {
       tenant_id: params.tenantId,
       remote_jid: maskRemoteJidForLog(params.remoteJid),
@@ -277,7 +290,7 @@ export async function scheduleAgentResponseJob(params: {
     p_channel: channel,
     p_connection_id: params.connectionId ?? null,
     p_message_id: params.whatsappMessageId,
-    p_occurred_at: occurredAt.toISOString(),
+    p_occurred_at: schedulingTimestamp,
     p_initial_seconds: settings.initialSeconds,
     p_followup_seconds: settings.followupSeconds,
     p_max_seconds: settings.maxSeconds,
@@ -635,15 +648,19 @@ export function hasAgentResponseProcessorSecret(): boolean {
   return Boolean(getInternalApiToken());
 }
 
-export async function triggerAgentResponseJobProcessor(jobId?: string): Promise<boolean> {
+export async function triggerAgentResponseJobProcessor(
+  jobId?: string,
+  processorBaseUrl?: string,
+): Promise<boolean> {
   const secret = getInternalApiToken();
   if (!secret) {
     logJobEvent("processor_not_called", { scope: "processor_trigger", reason: "missing_internal_secret" });
     return false;
   }
   const base =
-    process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "") ||
+    processorBaseUrl?.trim().replace(/\/+$/, "") ||
     (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "") ||
+    process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "") ||
     "https://mychatcrm.vercel.app";
   const url = new URL("/api/internal/agent-response-jobs/dispatch", base);
   if (jobId) url.searchParams.set("jobId", jobId);
@@ -655,6 +672,7 @@ export async function triggerAgentResponseJobProcessor(jobId?: string): Promise<
         ...internalApiAuthHeaders(),
       },
       body: JSON.stringify(jobId ? { jobId } : {}),
+      signal: AbortSignal.timeout(8_000),
     });
     if (response.ok) return true;
     logJobEvent("processor_not_called", {

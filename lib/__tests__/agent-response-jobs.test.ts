@@ -10,9 +10,28 @@ import {
   isJobReadyToProcess,
   isStaleBurstGenerationRow,
 } from "@/lib/server/agent-response-schedule";
+import { resolveAgentJobSchedulingTimestamp } from "@/lib/server/agent-response-jobs";
 import { resolveInboundAgentFlowDecision } from "@/lib/server/evolution-webhook-agent-flow";
 
 describe("agent smart wait schedule", () => {
+  it("starts the burst clock when a delayed provider event reaches the webhook", () => {
+    expect(
+      resolveAgentJobSchedulingTimestamp(
+        "2026-05-14T10:00:00.000Z",
+        new Date("2026-05-14T10:01:30.000Z"),
+      ),
+    ).toBe("2026-05-14T10:01:30.000Z");
+  });
+
+  it("does not let provider clock skew postpone the burst", () => {
+    expect(
+      resolveAgentJobSchedulingTimestamp(
+        "2026-05-14T12:00:00.000Z",
+        new Date("2026-05-14T10:00:00.000Z"),
+      ),
+    ).toBe("2026-05-14T10:00:00.000Z");
+  });
+
   it("schedules first inbound message after initial window", () => {
     const first = new Date("2026-05-14T10:00:00.000Z");
     const { scheduledFor, maxWaitUntil } = computeAgentResponseSchedule({
