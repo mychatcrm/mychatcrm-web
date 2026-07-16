@@ -44,7 +44,11 @@ export async function GET() {
   }
 
   return NextResponse.json(
-    { ok: true, aiUsageLogs },
+    {
+      ok: true,
+      aiUsageLogs,
+      deploymentSha: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || null,
+    },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
