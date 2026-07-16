@@ -67,7 +67,7 @@ function buildToneInstruction(tom: string): string | null {
     return "Use linguagem formal. Sem gírias, sem abreviações, sem emojis. Sempre trate o cliente por 'você' ou 'senhor/senhora'. Frases completas e estruturadas.";
   }
   if (normalized === "profissional") {
-    return "Use linguagem profissional e objetiva. Sem gírias. Tom neutro e respeitoso. Foco em clareza e eficiência.";
+    return "Use linguagem profissional, mas conversacional e humana. Escreva como uma pessoa real no WhatsApp: frases naturais, diretas e sem burocratês. Evite respostas prontas, elogios automáticos e formalidade mecânica.";
   }
   if (normalized === "casual") {
     return "Use linguagem casual e amigável. Pode usar algumas abreviações comuns (vc, tbm). Tom de conversa natural entre amigos. Sem formalidade excessiva.";
@@ -203,6 +203,8 @@ export function buildAgentSystemPrompt(params: {
     : [];
   const useSimple = agentUsesSimpleInstructions(agent);
   const agendaAutomationOn = agent.agendaAutomationEnabled === true;
+  const conversationAlreadyStarted =
+    (params.runtimeContext?.recentMessages ?? []).some((message) => message.role === "assistant");
   const instructionBlocks = useSimple
     ? [section("PROMPT DO AGENTE", agent.simplePrompt)]
     : [
@@ -349,13 +351,26 @@ Comando de retomada: ${clean((agent as { comandoRetomaConversa?: unknown }).coma
 - Se a conversa estiver pausada por humano, o sistema não deve chamar você; se esse contexto aparecer, responda apenas que o atendimento humano está em andamento.
 - Se o cliente enviar um vídeo e não houver transcrição ou análise disponível no contexto, confirme que recebeu o vídeo e peça contexto de forma natural. Nunca invente o que aparece no vídeo.
 - ENVIO AUTOMÁTICO (WhatsApp): quando existir o bloco «⚠️ CAPACIDADE DO SISTEMA — ENVIO DE ARQUIVOS VIA WHATSAPP» neste prompt, obedeça-o integralmente; use só ficheiros da lista desse bloco. Um único texto introdutório e todos os [[ENVIAR_MEDIA:...]] agrupados abaixo, sem texto entre tags; os marcadores são removidos antes do cliente ver; não inclua quando não enviar.`,
+    conversationAlreadyStarted
+      ? `CONTINUIDADE DA CONVERSA — ATENDIMENTO JÁ INICIADO
+- Esta é a mesma conversa, não um novo atendimento.
+- Nunca cumprimente novamente, nunca se reapresente e nunca repita a mensagem inicial.
+- Não diga “vamos continuar/retomar nossa conversa”. Apenas continue do último ponto de forma natural.
+- “Oi”, “ok”, “sim”, “pode ser” e outras respostas curtas devem ser interpretadas junto com a última pergunta e o histórico, não como reinício.
+- Não repita uma pergunta que o cliente já respondeu; aproveite a informação e avance um passo por vez.`
+      : null,
     `ESTILO WHATSAPP (OBRIGATÓRIO)
 - Soe humano, natural e direto — como atendente real no celular, não FAQ corporativo.
 - Responda em um único bloco coeso quando o cliente mandou várias mensagens seguidas.
 - Não repita apresentação, CTA, localização ou nome do produto, serviço ou assunto se já consta no histórico recente.
 - Priorize a intenção mais urgente e a pergunta mais recente.
 - Evite listas numeradas longas; prefira 2–4 frases curtas e úteis.
-- Não use linguagem robótica ("O produto/serviço possui...", "Conforme informado anteriormente...").`,
+- Não use linguagem robótica ("O produto/serviço possui...", "Conforme informado anteriormente...").
+- Não comece todas as respostas com “Ótimo”, “Perfeito” ou “Que bom”; varie naturalmente e só reaja quando fizer sentido.
+- Não use emoji em todas as mensagens. No máximo um, ocasionalmente, quando combinar com o tom configurado.
+- Faça no máximo uma pergunta por vez, salvo se o cliente pedir uma lista.
+- Datas visíveis ao cliente devem ser humanas: 17/07/2026 ou 17 de julho. Nunca mostre AAAA-MM-DD.
+- Horários visíveis devem ser naturais: 14h ou 14h30, não 14:00 de forma mecânica.`,
     params.burstContext?.dominantIntent
       ? `BURST ATUAL DO CLIENTE
 Intenção dominante: ${params.burstContext.dominantIntent}

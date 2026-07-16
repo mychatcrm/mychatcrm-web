@@ -10,6 +10,20 @@ const TZ = "America/Sao_Paulo";
 const NOW = new Date("2026-06-05T15:00:00.000Z");
 
 describe("agenda-datetime-parse extended", () => {
+  it("interpreta 'amanhã às duas horas' como 14h quando só 14h cabe na janela", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "Pode agendar para amanhã às duas horas",
+      timezone: TZ,
+      now: NOW,
+      agendaDisponibilidade: {
+        ativo: true,
+        horaInicio: "09:00",
+        horaFim: "15:05",
+      },
+    });
+    expect(result).toEqual({ date: "06/06/2026", time: "14:00" });
+  });
+
   it("daqui 3 dias = hoje + 3", () => {
     const result = resolveScheduleDateTimeFromText({
       clientText: "sim, daqui 3 dias às 14:00",

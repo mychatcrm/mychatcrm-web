@@ -8,6 +8,18 @@ import {
 import { isConversationVisibleInInbox } from "@/lib/server/conversation-visibility";
 
 describe("lead conversation memory", () => {
+  it("trata interação de minutos atrás como continuação, não nova retomada", () => {
+    const hint = buildRecognitionHint({
+      lastInteractionAt: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+      summary: null,
+      lead: null,
+      hasPriorMessages: true,
+    });
+    expect(hint).toContain("Conversa em andamento");
+    expect(hint).toContain("Não cumprimente de novo");
+    expect(hint).not.toContain("Retomada de conversa");
+  });
+
   it("builds recognition hint for recent conversations with summary", () => {
     const hint = buildRecognitionHint({
       lastInteractionAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),

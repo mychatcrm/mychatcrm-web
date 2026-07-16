@@ -32,7 +32,12 @@ import {
   processAgendaNotificationOutbox,
 } from "@/lib/server/agenda-notification-outbox";
 import type { AgentAgendaDisponibilidade, AgentAgendaLembretes } from "@/lib/types";
-import type { AgentAgendaPlan, AgentAgendaPlanAction } from "@/lib/ai/agent-turn-plan";
+import {
+  normalizeAgentAgendaDate,
+  normalizeAgentAgendaTime,
+  type AgentAgendaPlan,
+  type AgentAgendaPlanAction,
+} from "@/lib/ai/agent-turn-plan";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -83,7 +88,7 @@ export function buildOutsideAvailabilityReply(disp?: AgentAgendaDisponibilidade 
 }
 
 export const AGENDA_DATETIME_NEEDED_REPLY =
-  "Não consegui identificar a data e o horário exatos. Me diga o dia e a hora que você prefere (por exemplo: 20/07 às 14:00) que eu verifico e confirmo.";
+  "Não consegui identificar a data e o horário certinhos. Me diga o dia e a hora que você prefere (por exemplo: 20/07 às 14h) que eu verifico para você.";
 
 function agendaFailureReplyForError(
   error: unknown,
@@ -102,14 +107,27 @@ function agendaFailureReplyForError(
  * nicho: a data/hora vem da própria diretiva; o tipo de compromisso fica com o
  * prompt do tenant nas mensagens normais.
  */
+function formatAgendaDateForCustomer(date: string): string {
+  const normalized = normalizeAgentAgendaDate(date);
+  return normalized ?? date;
+}
+
+function formatAgendaTimeForCustomer(time: string): string {
+  const normalized = normalizeAgentAgendaTime(time) ?? time;
+  const match = normalized.match(/^(\d{2}):(\d{2})$/);
+  if (!match) return normalized;
+  const hour = String(Number(match[1]));
+  return match[2] === "00" ? `${hour}h` : `${hour}h${match[2]}`;
+}
+
 function buildAgendaConfirmationQuestion(directive: AgendaDirective | null): string {
   if (directive?.type === "schedule") {
-    return `Posso confirmar para ${directive.date} às ${directive.time}? Responda sim para confirmar.`;
+    return `Posso confirmar para ${formatAgendaDateForCustomer(directive.date)}, às ${formatAgendaTimeForCustomer(directive.time)}?`;
   }
   if (directive?.type === "cancel") {
-    return "Posso confirmar o cancelamento do seu horário? Responda sim para confirmar.";
+    return "Posso cancelar esse horário para você?";
   }
-  return "Posso confirmar essa alteração na agenda. Responda sim para confirmar.";
+  return "Posso confirmar essa alteração na agenda?";
 }
 
 const HUMAN_DELEGATION_IN_REPLY_RE =
@@ -251,7 +269,7 @@ export function isInitialAgendaMutationRequest(userText: string): boolean {
   ) {
     return false;
   }
-  if (/^\s*(sim|ok|pode|confirmo)\b/i.test(text) && CONFIRMATION_RE.test(text)) {
+  if (/^\s*(sim|ok|confirmo)\b/i.test(text) && CONFIRMATION_RE.test(text)) {
     return false;
   }
   return (
@@ -259,6 +277,7 @@ export function isInitialAgendaMutationRequest(userText: string): boolean {
       text,
     ) ||
     /\b(cancelar|remarcar|reagendar|desmarcar)\s+(meu|minha|o|a)?\s*agendamento/i.test(text) ||
+    /\b(?:pode|podem)\s+(?:me\s+)?(?:cancelar|remarcar|reagendar|agendar|marcar|desmarcar)\b/i.test(text) ||
     /^(cancelar|remarcar|reagendar|desmarcar|agendar|agenda|agende|marcar|marca|marque)\b/i.test(text)
   );
 }
@@ -1497,7 +1516,13 @@ export function shouldDeferHandoffForAgendaResult(result: ResolveAgendaTurnResul
 
 function resolveScheduleDirective(
   directive: Extract<AgendaDirective, { type: "schedule" }>,
-  params: { clientText: string; assistantText: string; timezone: string; recentClientMessages?: string[] },
+  params: {
+    clientText: string;
+    assistantText: string;
+    timezone: string;
+    recentClientMessages?: string[];
+    agendaDisponibilidade?: AgentAgendaDisponibilidade | null;
+  },
 ): Extract<AgendaDirective, { type: "schedule" }> {
   // Só o texto DO CLIENTE pode corrigir a diretiva emitida pelo modelo. A prosa do
   // assistente cita nomes de dias fora do pedido (janela de atendimento, desculpas),
@@ -1509,6 +1534,7 @@ function resolveScheduleDirective(
     fallbackDate: directive.date,
     fallbackTime: directive.time,
     recentClientMessages: params.recentClientMessages,
+    agendaDisponibilidade: params.agendaDisponibilidade,
   });
   if (!resolved) return directive;
   return { ...directive, date: resolved.date, time: resolved.time };
@@ -1616,9 +1642,10 @@ function structuredAgendaSuccessText(
     return action === "rescheduled" ? AGENDA_SUCCESS_REPLY_RESCHEDULED : AGENDA_SUCCESS_REPLY_SCHEDULED;
   }
   const location = directive.location?.trim() ? `, em ${directive.location.trim()}` : "";
+  const when = `${formatAgendaDateForCustomer(directive.date)}, às ${formatAgendaTimeForCustomer(directive.time)}`;
   return action === "rescheduled"
-    ? `Remarcação confirmada para ${directive.date} às ${directive.time}${location}.`
-    : `Agendamento confirmado para ${directive.date} às ${directive.time}${location}.`;
+    ? `Pronto, remarquei para ${when}${location}.`
+    : `Pronto, ficou agendado para ${when}${location}.`;
 }
 
 async function resolveStructuredAgendaPlan(params: {
@@ -1639,6 +1666,7 @@ async function resolveStructuredAgendaPlan(params: {
   jobId?: string | null;
   claimedGeneration?: number | null;
   journeyId?: string | null;
+  recentClientMessages?: string[] | null;
 }): Promise<ResolveAgendaTurnResult | null> {
   const pending = await loadPendingAgendaAction({
     sb: params.sb,
@@ -1651,7 +1679,7 @@ async function resolveStructuredAgendaPlan(params: {
   const action = standaloneConfirmation ? pending!.action : plannedAction;
   if (!action) return null;
 
-  const effectivePlan: AgentAgendaPlan = standaloneConfirmation
+  const rawEffectivePlan: AgentAgendaPlan = standaloneConfirmation
     ? {
         action: pending!.action,
         date: pending!.proposed_date,
@@ -1660,8 +1688,60 @@ async function resolveStructuredAgendaPlan(params: {
         eventId: pending!.event_id,
       }
     : params.plan;
-  const proposal = isProposalAction(params.plan.action) && !standaloneConfirmation;
+  const normalizedEffectivePlan: AgentAgendaPlan = {
+    ...rawEffectivePlan,
+    date: normalizeAgentAgendaDate(rawEffectivePlan.date),
+    time: normalizeAgentAgendaTime(rawEffectivePlan.time),
+  };
+  const resolvedFromClient = action === "cancel"
+    ? null
+    : resolveScheduleDateTimeFromText({
+        clientText: params.clientText,
+        assistantText: "",
+        timezone: params.timezone,
+        fallbackDate: normalizedEffectivePlan.date ?? undefined,
+        fallbackTime: normalizedEffectivePlan.time ?? undefined,
+        recentClientMessages: params.recentClientMessages,
+        agendaDisponibilidade: params.agendaDisponibilidade,
+      });
+  // Texto real do lead e histórico da mesma jornada são soberanos sobre o
+  // plano do modelo. Foi aqui que uma alucinação `2023-10-17` venceu o áudio
+  // "amanhã às duas" no incidente de produção.
+  const effectivePlan: AgentAgendaPlan = resolvedFromClient
+    ? { ...normalizedEffectivePlan, date: resolvedFromClient.date, time: resolvedFromClient.time }
+    : normalizedEffectivePlan;
   const scheduleComplete = action === "cancel" || Boolean(effectivePlan.date && effectivePlan.time);
+
+  if (action !== "cancel" && scheduleComplete) {
+    const candidate: AgendaDirective = {
+      type: "schedule",
+      date: effectivePlan.date!,
+      time: effectivePlan.time!,
+      location: effectivePlan.location,
+    };
+    const startAt = directiveStartAt(candidate, params.timezone);
+    const invalidOrPast = Number.isNaN(startAt.getTime()) || startAt.getTime() <= Date.now();
+    const outsideAvailability =
+      !invalidOrPast &&
+      params.agendaDisponibilidade?.ativo === true &&
+      !isWithinAgendaAvailability(startAt, params.agendaDisponibilidade, params.timezone);
+    if (invalidOrPast || outsideAvailability) {
+      if (pending) {
+        await params.sb
+          .from("agent_agenda_pending_actions")
+          .update({ state: "expired", updated_at: new Date().toISOString() })
+          .eq("id", pending.id)
+          .eq("state", "pending");
+      }
+      return {
+        text: outsideAvailability
+          ? buildOutsideAvailabilityReply(params.agendaDisponibilidade)
+          : AGENDA_DATETIME_NEEDED_REPLY,
+        action: "failed",
+        deferHandoff: true,
+      };
+    }
+  }
 
   const directAuthorized =
     action === "cancel"
@@ -1669,6 +1749,10 @@ async function resolveStructuredAgendaPlan(params: {
       : action === "reschedule"
         ? RESCHEDULE_RE.test(params.clientText) && scheduleComplete
         : isInitialAgendaMutationRequest(params.clientText) && scheduleComplete;
+  // A intenção explícita do lead vence o rótulo conservador do modelo. Se a
+  // pessoa disse "pode agendar amanhã às duas", não pedimos outro "sim".
+  const proposal =
+    isProposalAction(params.plan.action) && !standaloneConfirmation && !directAuthorized;
   const pendingAuthorized = Boolean(
     pending &&
     pending.action === action &&
@@ -1837,6 +1921,7 @@ export async function resolveAgendaTurn(params: {
       jobId: params.jobId,
       claimedGeneration: params.claimedGeneration,
       journeyId: params.journeyId,
+      recentClientMessages: params.recentClientMessages,
     });
     if (structured) return finalize(structured);
   }
@@ -1993,6 +2078,7 @@ export async function resolveAgendaTurn(params: {
           assistantText: proposalText || assistantForConfirm,
           timezone: params.timezone,
           recentClientMessages,
+          agendaDisponibilidade: params.agendaDisponibilidade,
         });
         if (resolved) {
           const contextualDirective: AgendaDirective = {
@@ -2047,6 +2133,7 @@ export async function resolveAgendaTurn(params: {
       assistantText: assistantForConfirm,
       timezone: params.timezone,
       recentClientMessages,
+      agendaDisponibilidade: params.agendaDisponibilidade,
     });
   } else {
     const resolved = resolveScheduleDateTimeFromText({
@@ -2054,6 +2141,7 @@ export async function resolveAgendaTurn(params: {
       assistantText: proposalText || assistantForConfirm,
       timezone: params.timezone,
       recentClientMessages,
+      agendaDisponibilidade: params.agendaDisponibilidade,
     });
     if (!resolved) {
       // Data/hora incompletas (ex.: "pode ser hoje as") — pedir o que falta em

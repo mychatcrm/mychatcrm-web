@@ -22,6 +22,7 @@ import {
   AGENT_TURN_RESPONSE_FORMAT,
   normalizeAgentTurnResult,
 } from "@/lib/ai/agent-turn-plan";
+import { preserveActiveConversationContinuity } from "@/lib/conversas/conversation-continuity-guard";
 
 type AiGenerateFailureResult = Extract<AiGenerateResult, { ok: false }>;
 
@@ -422,5 +423,26 @@ export async function generateAgentResponse(params: {
         ? AGENT_TURN_RESPONSE_FORMAT
         : undefined,
   });
-  return normalizeAgentTurnResult(result);
+  const normalized = normalizeAgentTurnResult(result);
+  if (!normalized.ok) return normalized;
+
+  const priorInteractionMs = memory.lastInteractionAt ? Date.parse(memory.lastInteractionAt) : NaN;
+  const activeConversation =
+    memory.aiMessages.some((message) => message.role === "assistant") &&
+    !Number.isNaN(priorInteractionMs) &&
+    Date.now() - priorInteractionMs < 12 * 60 * 60 * 1000;
+  const guardedText = preserveActiveConversationContinuity({
+    reply: normalized.text,
+    clientText: latestUserMessage?.content ?? "",
+    activeConversation,
+  });
+  if (guardedText === normalized.text) return normalized;
+
+  const structuredData =
+    normalized.structuredData &&
+    typeof normalized.structuredData === "object" &&
+    !Array.isArray(normalized.structuredData)
+      ? { ...(normalized.structuredData as Record<string, unknown>), reply: guardedText }
+      : normalized.structuredData;
+  return { ...normalized, text: guardedText, structuredData };
 }

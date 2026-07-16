@@ -42,6 +42,34 @@ describe("structured agent turn plan", () => {
     });
   });
 
+  it("normaliza ISO do modelo para o contrato brasileiro antes da agenda", () => {
+    const plan = parseAgentTurnPlan({
+      reply: "Posso confirmar?",
+      agenda: {
+        action: "propose_create",
+        date: "2026-07-17",
+        time: "2:00",
+        location: null,
+        eventId: null,
+      },
+    });
+    expect(plan?.agenda).toMatchObject({ date: "17/07/2026", time: "02:00" });
+  });
+
+  it("remove data e hora malformadas do plano não confiável", () => {
+    const plan = parseAgentTurnPlan({
+      reply: "Posso confirmar?",
+      agenda: {
+        action: "propose_create",
+        date: "amanhã talvez",
+        time: "25:99",
+        location: null,
+        eventId: null,
+      },
+    });
+    expect(plan?.agenda).toMatchObject({ date: null, time: null });
+  });
+
   it("fails closed when the provider returns a malformed structured reply", () => {
     const normalized = normalizeAgentTurnResult({
       ok: true,

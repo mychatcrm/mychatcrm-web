@@ -10,6 +10,7 @@ import {
   AGENDA_UNVERIFIED_CLAIM_REPLY,
   buildOutsideAvailabilityReply,
   clientConfirmedAgendaMutation,
+  isInitialAgendaMutationRequest,
   isStandaloneAgendaConfirmation,
   priorAgendaAssistantTextFromMessages,
   resolveAgendaTurn,
@@ -213,6 +214,11 @@ describe("agenda confirmation helpers", () => {
     expect(isStandaloneAgendaConfirmation("sim, quero remarcar para sexta")).toBe(false);
   });
 
+  it("reconhece 'pode agendar' como ordem, não confirmação solta", () => {
+    expect(isInitialAgendaMutationRequest("Pode agendar amanhã às duas horas")).toBe(true);
+    expect(isStandaloneAgendaConfirmation("Pode agendar amanhã às duas horas")).toBe(false);
+  });
+
   it("clientConfirmedAgendaMutation exige confirmação real", () => {
     expect(clientConfirmedAgendaMutation("sim", "Posso confirmar para amanhã às 14:00?")).toBe(true);
     expect(clientConfirmedAgendaMutation("quero remarcar", "Posso confirmar?")).toBe(false);
@@ -358,7 +364,7 @@ describe("resolveAgendaTurn", () => {
 
       expect(result).toMatchObject({
         action: "scheduled",
-        text: "Agendamento confirmado para 10/06/2026 às 14:00.",
+        text: "Pronto, ficou agendado para 10/06/2026, às 14h.",
       });
       expect(rpc).toHaveBeenCalledTimes(1);
     });
@@ -385,7 +391,7 @@ describe("resolveAgendaTurn", () => {
       });
 
       expect(result.action).toBe("needs_confirmation");
-      expect(result.text).toContain("10/06/2026 às 14:00");
+      expect(result.text).toContain("10/06/2026, às 14h");
       expect(pendingRows[0]).toMatchObject({ action: "create", state: "pending" });
       expect(rpc).not.toHaveBeenCalled();
     });
@@ -873,7 +879,7 @@ describe("resolveAgendaTurn", () => {
       });
 
       expect(missingTime.action).toBe("failed");
-      expect(missingTime.text).toContain("data e o horário exatos");
+      expect(missingTime.text).toContain("data e o horário certinhos");
       expect(insertAgendaEventMock).not.toHaveBeenCalled();
 
       const proposal = await resolveAgendaTurn({
@@ -890,7 +896,7 @@ describe("resolveAgendaTurn", () => {
 
       expect(proposal.action).toBe("needs_confirmation");
       expect(proposal.text).toContain("02/06/2026");
-      expect(proposal.text).toContain("15:00");
+      expect(proposal.text).toContain("15h");
       expect(insertAgendaEventMock).not.toHaveBeenCalled();
 
       const confirmed = await resolveAgendaTurn({
@@ -1024,6 +1030,98 @@ describe("resolveAgendaTurn", () => {
       expect(result.deferHandoff).toBe(true);
       expect(insertAgendaEventMock).not.toHaveBeenCalled();
     });
+
+    it("regressão real: ordem em áudio vence plano ISO antigo e agenda amanhã às 14h", async () => {
+      const { sb, rpc, pendingRows } = makeStructuredSb();
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Posso confirmar esse horário?",
+        clientText: "Pode agendar um horário pra amanhã às duas horas.",
+        recentClientMessages: ["Pode agendar um horário pra amanhã às duas horas."],
+        agendaAutomationEnabled: true,
+        agendaDisponibilidade: {
+          ativo: true,
+          diasSemana: [1, 2, 3, 4, 5],
+          horaInicio: "09:00",
+          horaFim: "15:05",
+        },
+        agendaPlan: {
+          action: "propose_create",
+          date: "2023-10-17",
+          time: "14:00",
+          location: null,
+          eventId: null,
+        },
+        operationKey: "agent-response-job:incident:1:0",
+      });
+
+      expect(result).toMatchObject({
+        action: "scheduled",
+        text: "Pronto, ficou agendado para 02/06/2026, às 14h.",
+      });
+      expect(pendingRows).toHaveLength(0);
+      expect(result.text).not.toContain("2023");
+      expect(rpc).toHaveBeenCalledWith(
+        "apply_agent_agenda_mutation",
+        expect.objectContaining({ p_start_at: "2026-06-02T17:00:00.000Z" }),
+      );
+    });
+
+    it("confirmação corrige proposta pendente antiga com o áudio real antes do commit", async () => {
+      const { sb, rpc } = makeStructuredSb({
+        pending: {
+          id: "pending-incident",
+          action: "create",
+          event_id: null,
+          proposed_date: "2023-10-17",
+          proposed_time: "14:00",
+          proposed_location: null,
+          state: "pending",
+          expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+        },
+      });
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Vou confirmar.",
+        clientText: "Sim",
+        recentClientMessages: [
+          "Pode agendar um horário pra amanhã às duas horas.",
+          "Sim",
+        ],
+        agendaAutomationEnabled: true,
+        agendaDisponibilidade: {
+          ativo: true,
+          diasSemana: [1, 2, 3, 4, 5],
+          horaInicio: "09:00",
+          horaFim: "15:05",
+        },
+        agendaPlan: {
+          action: "create",
+          date: "2023-10-17",
+          time: "14:00",
+          location: null,
+          eventId: null,
+        },
+        operationKey: "agent-response-job:incident-confirm:1:0",
+      });
+
+      expect(result).toMatchObject({
+        action: "scheduled",
+        text: "Pronto, ficou agendado para 02/06/2026, às 14h.",
+      });
+      expect(rpc).toHaveBeenCalledWith(
+        "apply_agent_agenda_mutation",
+        expect.objectContaining({ p_start_at: "2026-06-02T17:00:00.000Z" }),
+      );
+    });
   });
 
   describe("incidente de produção: fragmento + verdade da resposta", () => {
@@ -1074,7 +1172,7 @@ describe("resolveAgendaTurn", () => {
         agendaAutomationEnabled: true,
       });
       expect(result.action).toBe("needs_confirmation");
-      expect(result.text).toBe("Posso confirmar para 10/06/2026 às 14:00? Responda sim para confirmar.");
+      expect(result.text).toBe("Posso confirmar para 10/06/2026, às 14h?");
       expect(result.text).not.toMatch(/est[aá]\s+agendad|agendei/i);
       expect(insertAgendaEventMock).not.toHaveBeenCalled();
     });
@@ -1090,7 +1188,7 @@ describe("resolveAgendaTurn", () => {
         agendaAutomationEnabled: true,
       });
       expect(result.action).toBe("needs_confirmation");
-      expect(result.text).toBe("Posso confirmar essa alteração na agenda. Responda sim para confirmar.");
+      expect(result.text).toBe("Posso confirmar essa alteração na agenda?");
       expect(insertAgendaEventMock).not.toHaveBeenCalled();
       expect(cancelAgendaEventMock).not.toHaveBeenCalled();
     });

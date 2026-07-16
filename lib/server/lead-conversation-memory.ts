@@ -45,6 +45,16 @@ export function buildRecognitionHint(params: {
     return null;
   }
 
+  const lastInteractionMs = params.lastInteractionAt ? Date.parse(params.lastInteractionAt) : NaN;
+  const elapsedMs = Number.isNaN(lastInteractionMs) ? null : Math.max(0, Date.now() - lastInteractionMs);
+  if (params.hasPriorMessages && elapsedMs !== null && elapsedMs < 12 * 60 * 60 * 1000) {
+    return (
+      "Conversa em andamento: o cliente já está falando com você neste atendimento. " +
+      "Não cumprimente de novo, não se reapresente e não diga que vai retomar ou continuar a conversa. " +
+      "Mensagens curtas como ‘oi’, ‘ok’, ‘sim’ ou ‘pode ser’ são continuação do contexto; responda diretamente ao ponto pendente, com naturalidade."
+    );
+  }
+
   const days = daysSince(params.lastInteractionAt);
   let timePhrase = "algum tempo";
   if (days !== null) {
@@ -369,16 +379,18 @@ export async function buildLeadConversationMemory(params: {
     journeyId,
   });
 
-  const lastInteractionAt =
-    state?.lastSummaryAt ??
-    recentMessages.at(-1)?.createdAt ??
-    summary?.createdAt ??
-    null;
-
   const exclude = new Set(params.excludeMessageIds ?? []);
   const filteredMessages = exclude.size
     ? recentMessages.filter((m) => !m.id || !exclude.has(m.id))
     : recentMessages;
+  // A mensagem do burst atual é excluída antes de calcular a última interação.
+  // Caso contrário, toda conversa ativa parecia uma "retomada" ocorrida agora e
+  // o modelo era induzido a cumprimentar/apresentar-se novamente.
+  const lastInteractionAt =
+    filteredMessages.at(-1)?.createdAt ??
+    state?.lastSummaryAt ??
+    summary?.createdAt ??
+    null;
 
   const aiMessages = conversationMessagesToAi(filteredMessages);
   const condensedContext = buildCondensedMemoryContext(
@@ -409,7 +421,7 @@ export async function buildLeadConversationMemory(params: {
     state,
     lead,
     summary,
-    recentMessages,
+    recentMessages: filteredMessages,
     knowledgeSnippets,
     outboundMediaLines,
     aiMessages,

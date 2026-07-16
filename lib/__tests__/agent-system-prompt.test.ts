@@ -87,6 +87,28 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).not.toContain("instruções pro legadas");
   });
 
+  it("impede nova apresentação quando a conversa já está em andamento", () => {
+    const prompt = buildAgentSystemPrompt({
+      languageInstruction: "Responda em português.",
+      agent: { nome: "Assistente", tom: "Profissional", systemPrompt: "Ajude o cliente." },
+      runtimeContext: {
+        state: null,
+        lead: null,
+        summary: null,
+        recentMessages: [
+          { role: "assistant", content: "Você tem disponibilidade hoje?" },
+          { role: "user", content: "Oi" },
+        ],
+        knowledgeSnippets: [],
+        outboundMediaLines: [],
+      },
+    });
+    expect(prompt).toContain("ATENDIMENTO JÁ INICIADO");
+    expect(prompt).toContain("Nunca cumprimente novamente");
+    expect(prompt).toContain("não um novo atendimento");
+    expect(prompt).toContain("Nunca mostre AAAA-MM-DD");
+  });
+
   it("includes an imperative outbound media block when ready files exist", () => {
     const prompt = buildAgentSystemPrompt({
       languageInstruction: "Responda em português.",

@@ -3,6 +3,12 @@ import "server-only";
 import { parseTimezone } from "@/lib/agents/agent-datetime";
 
 type WallClock = { year: number; month: number; day: number; hour: number; minute: number };
+type ParsedTime = { hour: number; minute: number; ambiguousMeridiem?: boolean };
+type AgendaAvailabilityWindow = {
+  ativo?: boolean;
+  horaInicio?: string;
+  horaFim?: string;
+};
 
 /** Índices alinhados a Date.getUTCDay() (0=domingo … 6=sábado). */
 const WEEKDAY_INDEX: Record<string, number> = {
@@ -147,7 +153,7 @@ function bumpToFutureDayMonth(day: number, month: number, year: number, today: W
   return wall;
 }
 
-function parseWordHour(text: string): { hour: number; minute: number } | null {
+function parseWordHour(text: string): ParsedTime | null {
   const m = text.match(
     /\b(uma|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|meia|meio)\b(?:\s*(?:e\s+)?meia)?(?:\s+da\s+(manh[ãa]|tarde|noite))?/i,
   );
@@ -176,7 +182,7 @@ function parseWordHour(text: string): { hour: number; minute: number } | null {
   }
   if (word === "meio" && !period) hour = 12;
   if (word === "meia" && !period) hour = 0;
-  return { hour, minute };
+  return { hour, minute, ambiguousMeridiem: !period && hour > 0 && hour < 12 };
 }
 
 function applyDayPeriod(hour: number, period?: string | null): number {
@@ -191,7 +197,7 @@ function applyDayPeriod(hour: number, period?: string | null): number {
   return hour;
 }
 
-function parseTimeFromText(text: string): { hour: number; minute: number } | null {
+function parseTimeFromText(text: string): ParsedTime | null {
   const normalized = text.toLowerCase();
 
   if (/\bmeio[- ]?dia\b/.test(normalized)) return { hour: 12, minute: 0 };
@@ -223,9 +229,46 @@ function parseTimeFromText(text: string): { hour: number; minute: number } | nul
   const atHour = normalized.match(
     /\b(?:às|as|a)\s+(\d{1,2})\b(?:\s+da\s+(manh[ãa]|tarde|noite))?/,
   );
-  if (atHour) return { hour: applyDayPeriod(Number(atHour[1]), atHour[2]), minute: 0 };
+  if (atHour) {
+    const hour = applyDayPeriod(Number(atHour[1]), atHour[2]);
+    return {
+      hour,
+      minute: 0,
+      ambiguousMeridiem: !atHour[2] && hour > 0 && hour < 12,
+    };
+  }
 
   return null;
+}
+
+function parseClockMinutes(value?: string): number | null {
+  const match = value?.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+/**
+ * "Às duas horas" é ambíguo em linguagem natural. Quando a agenda tem uma
+ * janela explícita e só uma das leituras (02h/14h) cabe nela, escolhemos essa
+ * leitura. Horas inequívocas como 02:00 continuam exatas e não são alteradas.
+ */
+function resolveAmbiguousTimeForAvailability(
+  time: ParsedTime,
+  availability?: AgendaAvailabilityWindow | null,
+): ParsedTime {
+  if (!time.ambiguousMeridiem || !availability?.ativo || time.hour >= 12) return time;
+  const start = parseClockMinutes(availability.horaInicio);
+  const end = parseClockMinutes(availability.horaFim);
+  if (start == null || end == null || end <= start) return time;
+  const morning = time.hour * 60 + time.minute;
+  const afternoon = (time.hour + 12) * 60 + time.minute;
+  const morningFits = morning >= start && morning < end;
+  const afternoonFits = afternoon >= start && afternoon < end;
+  if (!morningFits && afternoonFits) return { ...time, hour: time.hour + 12, ambiguousMeridiem: false };
+  return time;
 }
 
 function parseDateAnchor(text: string, today: WallClock): WallClock | null {
@@ -368,6 +411,9 @@ export function resolveScheduleDateTimeFromText(params: {
    *  da ÂNCORA DE DATA quando o texto atual traz apenas a hora (complemento que
    *  chegou num turno anterior). A âncora mais recente prevalece. */
   recentClientMessages?: string[] | null;
+  /** Janela configurada do agente, usada somente para resolver 02h x 14h
+   *  quando o lead falou uma hora sem manhã/tarde. */
+  agendaDisponibilidade?: AgendaAvailabilityWindow | null;
 }): { date: string; time: string } | null {
   const client = params.clientText?.trim() ?? "";
   const assistant = params.assistantText?.trim() ?? "";
@@ -380,10 +426,14 @@ export function resolveScheduleDateTimeFromText(params: {
   const recent = (params.recentClientMessages ?? []).map((m) => m.trim()).filter(Boolean);
   const clientFolded = foldAccents(client.toLowerCase());
   const assistantFolded = foldAccents(assistant.toLowerCase());
-  const clientHasTime = parseTimeFromText(clientFolded) !== null;
+  const parsedClientTime = parseTimeFromText(clientFolded);
+  const clientHasTime = parsedClientTime !== null;
   const clientHasAnchor = parseDateAnchor(clientFolded, today) !== null;
   if (clientHasTime && !clientHasAnchor) {
-    const currentTime = parseTimeFromText(clientFolded)!;
+    const currentTime = resolveAmbiguousTimeForAvailability(
+      parsedClientTime!,
+      params.agendaDisponibilidade,
+    );
     for (let i = recent.length - 1; i >= 0; i--) {
       const anchor = parseDateAnchor(foldAccents(recent[i]!.toLowerCase()), today);
       if (!anchor) continue;
@@ -412,7 +462,10 @@ export function resolveScheduleDateTimeFromText(params: {
     let latestTime: { hour: number; minute: number } | null = null;
     for (let i = recent.length - 1; i >= 0; i--) {
       const folded = foldAccents(recent[i]!.toLowerCase());
-      const time = parseTimeFromText(folded);
+      const parsedTime = parseTimeFromText(folded);
+      const time = parsedTime
+        ? resolveAmbiguousTimeForAvailability(parsedTime, params.agendaDisponibilidade)
+        : null;
       const anchor = parseDateAnchor(folded, today);
       if (anchor && time) {
         return {
@@ -441,7 +494,15 @@ export function resolveScheduleDateTimeFromText(params: {
     });
     if (parsed) {
       const fields = formatScheduleFieldsFromDate(parsed, params.timezone);
-      return { date, time: fields.time };
+      const time = parsedClientTime
+        ? resolveAmbiguousTimeForAvailability(parsedClientTime, params.agendaDisponibilidade)
+        : null;
+      return {
+        date,
+        time: time
+          ? `${String(time.hour).padStart(2, "0")}:${String(time.minute).padStart(2, "0")}`
+          : fields.time,
+      };
     }
     if (params.fallbackTime) return { date, time: params.fallbackTime };
     return null;
@@ -455,7 +516,15 @@ export function resolveScheduleDateTimeFromText(params: {
         now: params.now,
       })
     : null;
-  if (fromClient) return formatScheduleFieldsFromDate(fromClient, params.timezone);
+  if (fromClient) {
+    const fields = formatScheduleFieldsFromDate(fromClient, params.timezone);
+    if (!parsedClientTime) return fields;
+    const time = resolveAmbiguousTimeForAvailability(parsedClientTime, params.agendaDisponibilidade);
+    return {
+      date: fields.date,
+      time: `${String(time.hour).padStart(2, "0")}:${String(time.minute).padStart(2, "0")}`,
+    };
+  }
 
   const fromAssistant = assistant
     ? parseAppointmentDateTime({
@@ -464,7 +533,16 @@ export function resolveScheduleDateTimeFromText(params: {
         now: params.now,
       })
     : null;
-  if (fromAssistant) return formatScheduleFieldsFromDate(fromAssistant, params.timezone);
+  if (fromAssistant) {
+    const fields = formatScheduleFieldsFromDate(fromAssistant, params.timezone);
+    const assistantTime = parseTimeFromText(assistantFolded);
+    if (!assistantTime) return fields;
+    const time = resolveAmbiguousTimeForAvailability(assistantTime, params.agendaDisponibilidade);
+    return {
+      date: fields.date,
+      time: `${String(time.hour).padStart(2, "0")}:${String(time.minute).padStart(2, "0")}`,
+    };
+  }
 
   const directiveDate = assistant.match(/\b(\d{2}\/\d{2}\/\d{4})\b/);
   const directiveTime = assistant.match(/\b(\d{2}:\d{2})\b/);
