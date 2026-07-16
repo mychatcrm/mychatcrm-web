@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_AGENT_SMART_WAIT, sanitizeAgentSmartWaitSettings } from "@/lib/agents/smart-wait-settings";
+import {
+  DEFAULT_AGENT_SMART_WAIT,
+  evolutionBurstSafeSmartWait,
+  sanitizeAgentSmartWaitSettings,
+} from "@/lib/agents/smart-wait-settings";
 import {
   buildGroupedUserPrompt,
   deduplicateInboundTexts,
@@ -14,6 +18,25 @@ import { resolveAgentJobSchedulingTimestamp } from "@/lib/server/agent-response-
 import { resolveInboundAgentFlowDecision } from "@/lib/server/evolution-webhook-agent-flow";
 
 describe("agent smart wait schedule", () => {
+  it("keeps Evolution turns open across its one-minute serial delivery", () => {
+    expect(evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT)).toMatchObject({
+      initialSeconds: 65,
+      followupSeconds: 65,
+      maxSeconds: 180,
+    });
+  });
+
+  it("does not shorten stricter tenant settings", () => {
+    expect(
+      evolutionBurstSafeSmartWait({
+        ...DEFAULT_AGENT_SMART_WAIT,
+        initialSeconds: 90,
+        followupSeconds: 80,
+        maxSeconds: 240,
+      }),
+    ).toMatchObject({ initialSeconds: 90, followupSeconds: 80, maxSeconds: 240 });
+  });
+
   it("starts the burst clock when a delayed provider event reaches the webhook", () => {
     expect(
       resolveAgentJobSchedulingTimestamp(

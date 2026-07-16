@@ -14,6 +14,32 @@ export const DEFAULT_AGENT_SMART_WAIT: AgentSmartWaitSettings = {
   dedupeRepeated: true,
 };
 
+const EVOLUTION_SERIAL_DELIVERY_GRACE_SECONDS = 65;
+const EVOLUTION_BURST_MAX_SECONDS = 180;
+
+/**
+ * A fila QR da Evolution pode entregar fragmentos enviados no mesmo segundo
+ * com cerca de 60 s entre webhooks. Mantemos o turno aberto somente nesse
+ * transporte; Meta Cloud e os demais canais preservam o Smart Wait curto.
+ */
+export function evolutionBurstSafeSmartWait(
+  settings: AgentSmartWaitSettings,
+): AgentSmartWaitSettings {
+  return {
+    ...settings,
+    enabled: true,
+    initialSeconds: Math.max(
+      settings.initialSeconds,
+      EVOLUTION_SERIAL_DELIVERY_GRACE_SECONDS,
+    ),
+    followupSeconds: Math.max(
+      settings.followupSeconds,
+      EVOLUTION_SERIAL_DELIVERY_GRACE_SECONDS,
+    ),
+    maxSeconds: Math.max(settings.maxSeconds, EVOLUTION_BURST_MAX_SECONDS),
+  };
+}
+
 function clampSeconds(value: unknown, fallback: number, min = 1, max = 120): number {
   const n = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(n)) return fallback;

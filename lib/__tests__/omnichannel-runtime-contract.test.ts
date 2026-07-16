@@ -52,6 +52,7 @@ describe("omnichannel runtime contracts", () => {
     const dispatch = source("app/api/internal/agent-response-jobs/dispatch/route.ts");
 
     expect(webhook).not.toContain("waitUntil(");
+    expect(webhook).toContain("evolutionBurstSafeSmartWait(");
     expect(flow).toContain("await queueAgentResponseJobProcessor(job.id, params.processorBaseUrl)");
     expect(flow).not.toContain("waitAndProcessAgentResponseJob");
     expect(webhook).toContain("processorBaseUrl: new URL(request.url).origin");

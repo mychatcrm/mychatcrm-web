@@ -47,7 +47,10 @@ import { applyHumanConversationCommand } from "@/lib/server/conversation-human-c
 import { revealConversationOnInbound } from "@/lib/server/conversation-visibility";
 import { isAgentAutomationAllowed, markWaitingForHuman } from "@/lib/server/conversation-operation";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
-import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
+import {
+  evolutionBurstSafeSmartWait,
+  smartWaitFromMetadata,
+} from "@/lib/agents/smart-wait-settings";
 import { isSmartWaitGloballyDisabled, runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
 import { extractRecentClientMessages } from "@/lib/server/evolution-agent-reply";
 import { scheduleFollowUpAfterInbound, scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
@@ -920,7 +923,9 @@ export async function POST(request: Request) {
           // O agrupamento é uma garantia de consistência do turno, não uma
           // preferência opcional do agente. Configurações antigas com
           // `enabled=false` continuam recebendo os tempos personalizados.
-          const smartWait = { ...smartWaitFromMetadata(metadata), enabled: true };
+          const smartWait = evolutionBurstSafeSmartWait(
+            smartWaitFromMetadata(metadata),
+          );
           const useSmartWait = !isSmartWaitGloballyDisabled();
           let runImmediateReply = !useSmartWait;
 
