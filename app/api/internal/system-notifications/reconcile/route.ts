@@ -10,7 +10,7 @@ export async function GET(request: Request) {
 
 /** Marca pending >60s como delivery_failed (cron Vercel). */
 export async function POST(request: Request) {
-  if (!verifyInternalApiRequest(request)) {
+  if (!verifyInternalApiRequest(request, { allowedSecrets: ["INTERNAL_API_TOKEN", "CRON_SECRET"] })) {
     return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
   }
 

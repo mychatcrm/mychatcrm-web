@@ -232,6 +232,66 @@ describe("system notification delivery helpers", () => {
     );
   });
 
+  it("promotes delivery_failed to delivered when webhook confirms delivery", async () => {
+    selectChain.filter.mockReturnValue({
+      order: () => ({
+        limit: () =>
+          Promise.resolve({
+            data: [{ id: "row-fix", status: "delivery_failed", metadata: { evolution_message_id: "FIX1" } }],
+            error: null,
+          }),
+      }),
+    });
+
+    const ok = await markSystemNotificationDelivered({ evolutionMessageId: "FIX1", status: 3 });
+    expect(ok).toBe(true);
+    expect(updateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "delivered",
+        error: null,
+        metadata: expect.objectContaining({ delivery_corrected_from: "delivery_failed" }),
+      }),
+    );
+  });
+
+  it("ignores SERVER_ACK after delivered (monotonic)", async () => {
+    selectChain.filter.mockReturnValue({
+      order: () => ({
+        limit: () =>
+          Promise.resolve({
+            data: [{ id: "row-d", status: "delivered", metadata: { evolution_message_id: "D1" } }],
+            error: null,
+          }),
+      }),
+    });
+
+    const ok = await markSystemNotificationServerAck({ evolutionMessageId: "D1", status: 2 });
+    expect(ok).toBe(false);
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores Meta failed after delivered (monotonic)", async () => {
+    selectChain.filter.mockReturnValue({
+      order: () => ({
+        limit: () =>
+          Promise.resolve({
+            data: [{ id: "meta-d", status: "delivered", metadata: { provider: "meta_cloud", meta_message_id: "wamid.D" } }],
+            error: null,
+          }),
+      }),
+    });
+
+    const result = await applyMetaSystemNotificationStatus({
+      wamid: "wamid.D",
+      status: "failed",
+      errorCode: 131047,
+      errorTitle: "Re-engagement message",
+    });
+
+    expect(result).toBe("skipped");
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
   it("records the real Meta error code when a status webhook reports failed", async () => {
     selectChain.filter.mockReturnValue({
       order: () => ({

@@ -44,7 +44,7 @@ function makeSb(config: {
     b.lte = (k: string, v: unknown) => applyFilter(`lte_${k}`, v);
     b.lt = () => b;
     b.gte = () => b;
-    b.in = () => b;
+    b.in = (k: string, v: unknown) => applyFilter(`in_${k}`, v);
     b.order = () => b;
     b.limit = () => b;
     b.update = (patch: Row) => { state.op = "update"; state.patch = patch; return b; };
@@ -56,7 +56,10 @@ function makeSb(config: {
             r.id === state.filters.id &&
             (state.filters.status === undefined || r.status === state.filters.status) &&
             (state.filters.lte_next_attempt_at === undefined || true) &&
-            (state.filters.claim_token === undefined || r.claim_token === state.filters.claim_token),
+            (state.filters.claim_token === undefined || r.claim_token === state.filters.claim_token) &&
+            (state.filters.in_status === undefined ||
+              (Array.isArray(state.filters.in_status) &&
+                state.filters.in_status.includes(r.status))),
         );
         if (!row) return { data: null, error: null };
         Object.assign(row, state.patch);
@@ -90,15 +93,25 @@ function makeSb(config: {
           (r) =>
             r.id === state.filters.id &&
             (state.filters.status === undefined || r.status === state.filters.status) &&
-            (state.filters.claim_token === undefined || r.claim_token === state.filters.claim_token),
+            (state.filters.claim_token === undefined || r.claim_token === state.filters.claim_token) &&
+            (state.filters.in_status === undefined ||
+              (Array.isArray(state.filters.in_status) &&
+                state.filters.in_status.includes(r.status))),
         );
         if (row) {
           Object.assign(row, state.patch);
           updates.push({ id: row.id, patch: state.patch! });
+          return resolve({ data: [{ id: row.id as string }], error: null });
         }
-        return resolve({ data: null, error: null });
+        return resolve({ data: [], error: null });
       }
-      const rows = outbox.filter((r) => state.filters.status === undefined || r.status === state.filters.status);
+      const rows = outbox.filter((r) => {
+        if (state.filters.status !== undefined) return r.status === state.filters.status;
+        if (Array.isArray(state.filters.in_status)) {
+          return state.filters.in_status.includes(r.status);
+        }
+        return true;
+      });
       return resolve({ data: rows.map((r) => ({ ...r })), error: null });
     };
     return b;
@@ -153,6 +166,26 @@ function makeSb(config: {
       if (name === "claim_agenda_notifications") {
         const claimed = (config.claimBatch ?? []).map((r) => ({ ...r, claim_token: r.claim_token ?? "batch-token" }));
         return { data: claimed, error: null };
+      }
+      if (name === "list_missing_agenda_notification_ops") {
+        const missing = (config.mutationOps ?? []).filter((op) => {
+          const result = (op.result ?? {}) as Record<string, unknown>;
+          const action = result.action;
+          if (!action || !result.event) return false;
+          return !outbox.some(
+            (r) =>
+              r.tenant_id === op.tenant_id &&
+              r.operation_key === op.operation_key &&
+              r.action === action,
+          );
+        }).map((op, index) => ({
+          tenant_id: op.tenant_id,
+          operation_key: op.operation_key,
+          updated_at: (op.updated_at as string | undefined) ?? `2026-07-15T00:00:${String(index).padStart(2, "0")}.000Z`,
+          operation_id: (op.id as string | undefined) ?? `op-row-${index}`,
+          result: op.result,
+        }));
+        return { data: missing, error: null };
       }
       return { data: null, error: null };
     },
@@ -209,8 +242,20 @@ describe("agenda-notification-outbox — funções puras", () => {
     expect(resolveDeliveryTransition({ logStatus: "delivery_failed", attempts: 5, waitElapsed: false })).toEqual({ status: "failed", retry: false });
   });
 
-  it("resolveDeliveryTransition: janela de webhook estourou → reenvio", () => {
-    expect(resolveDeliveryTransition({ logStatus: null, attempts: 1, waitElapsed: true })).toEqual({ status: "pending", retry: true });
+  it("resolveDeliveryTransition: janela de webhook estourou SEM evidência de falha → NÃO reenvia", () => {
+    expect(resolveDeliveryTransition({ logStatus: null, attempts: 1, waitElapsed: true })).toBeNull();
+    expect(resolveDeliveryTransition({ logStatus: "sent", attempts: 1, waitElapsed: true })).toBeNull();
+  });
+
+  it("resolveDeliveryTransition: falha permanente → failed sem retry", () => {
+    expect(
+      resolveDeliveryTransition({
+        logStatus: "delivery_failed",
+        logError: "invalid_number",
+        attempts: 1,
+        waitElapsed: false,
+      }),
+    ).toEqual({ status: "failed", retry: false });
   });
 });
 
@@ -230,11 +275,14 @@ describe("agenda-notification-outbox — enqueue", () => {
     expect(payload.message).toContain("Maria");
   });
 
-  it("sem telefone não enfileira", async () => {
+  it("sem telefone materializa skipped (não deixa backlog eterno)", async () => {
     const { sb, outbox } = makeSb({ tenantPhone: null });
     const res = await enqueueAgendaOwnerNotification({ sb, ...ENQUEUE });
-    expect(res).toEqual({ enqueued: false, outboxId: null });
-    expect(outbox).toHaveLength(0);
+    expect(res.enqueued).toBe(false);
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0]!.status).toBe("skipped");
+    expect(outbox[0]!.last_error).toBe("missing_appointment_notification_phone");
+    expect(outbox[0]!.payload).toEqual({});
   });
 
   it("replay idempotente não duplica", async () => {
@@ -319,6 +367,29 @@ describe("agenda-notification-outbox — claim + envio inline", () => {
     expect(res.processed).toBe(0);
     expect(sendSystemNotificationMock).not.toHaveBeenCalled();
     expect(outbox[0]!.claim_token).toBe("other-worker");
+  });
+
+  it("reclaim ambíguo (dispatch_started sem log) não reenvia às cegas", async () => {
+    const { sb, outbox } = makeSb({
+      outbox: [outboxRow({ last_error: "dispatch_started" })],
+    });
+    const res = await processAgendaNotificationOutbox({ sb, outboxId: "outbox-1" });
+    expect(sendSystemNotificationMock).not.toHaveBeenCalled();
+    expect(res.pending).toBe(1);
+    expect(outbox[0]!.status).toBe("pending");
+    expect(outbox[0]!.last_error).toBe("dispatch_ambiguous");
+  });
+
+  it("reclaim com log pending correlacionado não reenvia (at-most-once)", async () => {
+    const { sb, outbox } = makeSb({
+      outbox: [outboxRow({ last_error: "dispatch_started" })],
+      logStatusByOutboxId: { "outbox-1": "pending" },
+    });
+    const res = await processAgendaNotificationOutbox({ sb, outboxId: "outbox-1" });
+    expect(sendSystemNotificationMock).not.toHaveBeenCalled();
+    expect(res.sent).toBe(1);
+    expect(outbox[0]!.status).toBe("sent");
+    expect(outbox[0]!.last_error).toBeNull();
   });
 });
 

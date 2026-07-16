@@ -89,12 +89,41 @@ export async function enqueueAgendaOwnerNotification(params: {
         ?.appointment_notification_phone ?? "",
     ).trim();
     if (!phone) {
+      // Materializa skipped para o anti-join do reconciliador avançar (sem payload sensível).
+      const { data: skipped, error: skipError } = await sb
+        .from(OUTBOX_TABLE)
+        .upsert(
+          {
+            tenant_id: params.tenantId,
+            agenda_event_id: params.agendaEventId,
+            action: params.action,
+            operation_key: params.operationKey,
+            phone_last4: null,
+            payload: {},
+            status: "skipped",
+            last_error: "missing_appointment_notification_phone",
+            next_attempt_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "tenant_id,operation_key,action", ignoreDuplicates: true },
+        )
+        .select("id")
+        .maybeSingle();
+      if (skipError) {
+        console.warn("[agenda-notification-outbox] skip_materialize_failed", {
+          tenant_id: params.tenantId,
+          agenda_event_id: params.agendaEventId,
+          error: skipError.message,
+        });
+        return { enqueued: false, outboxId: null };
+      }
       console.info("[agenda-notification-outbox] skipped", {
         tenant_id: params.tenantId,
         agenda_event_id: params.agendaEventId,
         reason: "missing_appointment_notification_phone",
+        outbox_id: skipped?.id ?? null,
       });
-      return { enqueued: false, outboxId: null };
+      return { enqueued: false, outboxId: (skipped?.id as string | undefined) ?? null };
     }
 
     const message = buildAppointmentOwnerNotificationText({
@@ -161,18 +190,47 @@ async function updateClaimedRow(
   sb: SupabaseServiceClient,
   row: OutboxRow,
   patch: Record<string, unknown>,
-): Promise<void> {
-  const { error } = await sb
+): Promise<boolean> {
+  const { data, error } = await sb
     .from(OUTBOX_TABLE)
     .update({ ...patch, updated_at: new Date().toISOString() })
     .eq("id", row.id)
-    .eq("claim_token", row.claim_token);
+    .eq("claim_token", row.claim_token)
+    .select("id");
   if (error) {
     console.warn("[agenda-notification-outbox] finalize_failed", {
       outbox_id: row.id,
       error: error.message,
     });
+    return false;
   }
+  const updated = Array.isArray(data) ? data.length : 0;
+  if (updated !== 1) {
+    console.warn("[agenda-notification-outbox] finalize_inconclusive", {
+      outbox_id: row.id,
+      updated,
+    });
+    return false;
+  }
+  return true;
+}
+
+async function findCorrelatedNotificationLog(
+  sb: SupabaseServiceClient,
+  outboxId: string,
+): Promise<{ status: string; error: string | null } | null> {
+  const { data } = await sb
+    .from("system_notifications_log")
+    .select("status, error")
+    .eq("metadata->>outbox_id", outboxId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!data) return null;
+  return {
+    status: String((data as { status?: string }).status ?? ""),
+    error: typeof (data as { error?: unknown }).error === "string" ? (data as { error: string }).error : null,
+  };
 }
 
 /** Reivindica UMA linha específica por id (envio inline pós-mutação). */
@@ -214,8 +272,52 @@ async function sendClaimedRow(sb: SupabaseServiceClient, row: OutboxRow): Promis
   const phone = row.payload?.phone?.trim();
   const message = row.payload?.message?.trim();
   if (!phone || !message) {
-    await updateClaimedRow(sb, row, { status: "failed", last_error: "invalid_outbox_payload", claim_token: null });
+    const ok = await updateClaimedRow(sb, row, {
+      status: "failed",
+      last_error: "invalid_outbox_payload",
+      claim_token: null,
+    });
+    if (!ok) throw new Error("finalize_inconclusive");
     return "failed";
+  }
+
+  // At-most-once no reclaim: se já existe evidência correlacionada, não reenvia.
+  const existingLog = await findCorrelatedNotificationLog(sb, row.id);
+  if (existingLog && ["pending", "sent", "delivered"].includes(existingLog.status)) {
+    if (existingLog.status === "delivered") {
+      const ok = await updateClaimedRow(sb, row, {
+        status: "delivered",
+        delivered_at: new Date().toISOString(),
+        last_error: null,
+        claim_token: null,
+      });
+      if (!ok) throw new Error("finalize_inconclusive");
+      return "sent";
+    }
+    const ok = await updateClaimedRow(sb, row, {
+      status: "sent",
+      last_error: null,
+      claim_token: null,
+      next_attempt_at: nextAttemptIso(DELIVERY_WAIT_MINUTES),
+    });
+    if (!ok) throw new Error("finalize_inconclusive");
+    return "sent";
+  }
+
+  // Dispatch iniciado sem resultado observável → ambíguo; não reenviar às cegas.
+  if (row.last_error === "dispatch_started" || row.last_error === "dispatch_ambiguous") {
+    const ok = await updateClaimedRow(sb, row, {
+      status: "pending",
+      last_error: "dispatch_ambiguous",
+      claim_token: null,
+      next_attempt_at: nextAttemptIso(DELIVERY_WAIT_MINUTES),
+    });
+    if (!ok) throw new Error("finalize_inconclusive");
+    console.warn("[agenda-notification-outbox] dispatch_ambiguous_no_resend", {
+      outbox_id: row.id,
+      tenant_id: row.tenant_id,
+    });
+    return "pending";
   }
 
   // Meta ativo sem template: mensagem proativa fora da janela de 24h exige
@@ -224,12 +326,13 @@ async function sendClaimedRow(sb: SupabaseServiceClient, row: OutboxRow): Promis
   // como tentativa de envio (attempts inalterado).
   const metaConfig = await getSystemAgentMetaConfig().catch(() => null);
   if (metaConfig?.active && !metaConfig.templateName) {
-    await updateClaimedRow(sb, row, {
+    const ok = await updateClaimedRow(sb, row, {
       status: "pending",
       last_error: META_TEMPLATE_REQUIRED_ERROR,
       claim_token: null,
       next_attempt_at: nextAttemptIso(META_TEMPLATE_BACKOFF_MINUTES),
     });
+    if (!ok) throw new Error("finalize_inconclusive");
     console.warn("[agenda-notification-outbox] blocked", {
       outbox_id: row.id,
       tenant_id: row.tenant_id,
@@ -241,14 +344,20 @@ async function sendClaimedRow(sb: SupabaseServiceClient, row: OutboxRow): Promis
   }
 
   const attempts = row.attempts + 1;
+  const attemptKey = `${row.id}:${attempts}`;
+  const marked = await updateClaimedRow(sb, row, { last_error: "dispatch_started" });
+  if (!marked) throw new Error("finalize_inconclusive");
+
   const sent = await sendSystemNotification(phone, message, "", {
     type: "appointment_notification",
+    prePersistPending: true,
     metadata: {
       tenant_id: row.tenant_id,
       agenda_event_id: row.agenda_event_id,
       action: row.action,
       operation_key: row.operation_key,
       outbox_id: row.id,
+      attempt_key: attemptKey,
       agent_id: row.payload?.agent_id ?? null,
       attendee_phone_last4: row.phone_last4,
     },
@@ -259,11 +368,9 @@ async function sendClaimedRow(sb: SupabaseServiceClient, row: OutboxRow): Promis
   }));
 
   if (sent.ok) {
-    // Aceite do provedor: 'sent' NÃO é terminal — aguarda webhook de entrega. O
-    // reconciliador de delivery promove a 'delivered' ou devolve a retry.
     const providerMessageId =
       (sent as { debug?: { evolutionMessageId?: string | null } }).debug?.evolutionMessageId ?? null;
-    await updateClaimedRow(sb, row, {
+    const ok = await updateClaimedRow(sb, row, {
       status: "sent",
       attempts,
       last_error: null,
@@ -271,17 +378,24 @@ async function sendClaimedRow(sb: SupabaseServiceClient, row: OutboxRow): Promis
       provider_message_id: providerMessageId,
       next_attempt_at: nextAttemptIso(DELIVERY_WAIT_MINUTES),
     });
+    if (!ok) {
+      console.warn("[agenda-notification-outbox] finalize_inconclusive_after_accept", {
+        outbox_id: row.id,
+      });
+      throw new Error("finalize_inconclusive");
+    }
     return "sent";
   }
 
   const exhausted = attempts >= MAX_SEND_ATTEMPTS;
-  await updateClaimedRow(sb, row, {
+  const ok = await updateClaimedRow(sb, row, {
     status: exhausted ? "failed" : "pending",
     attempts,
     last_error: sent.error ?? "send_failed",
     claim_token: null,
     next_attempt_at: exhausted ? new Date().toISOString() : nextAttemptIso(retryBackoffMinutes(attempts)),
   });
+  if (!ok) throw new Error("finalize_inconclusive");
   console.warn("[agenda-notification-outbox] send_failed", {
     outbox_id: row.id,
     tenant_id: row.tenant_id,
@@ -334,27 +448,40 @@ export async function processAgendaNotificationOutbox(params?: {
   }
 }
 
+const PERMANENT_DELIVERY_ERRORS = [
+  "invalid_number",
+  "missing_system_instance",
+  "system_session_not_found",
+  "system_session_not_authenticated",
+] as const;
+
+export function isPermanentDeliveryFailure(reason: string | null | undefined): boolean {
+  const r = String(reason ?? "").toLowerCase();
+  if (!r) return false;
+  return PERMANENT_DELIVERY_ERRORS.some((p) => r.includes(p));
+}
+
 /**
- * Decisão pura de entrega a partir do status do system_notifications_log
- * correlacionado por outbox_id. Retorna o próximo estado da linha `sent`.
+ * Decisão pura de entrega a partir do system_notifications_log correlacionado.
+ * Ausência de webhook (waitElapsed) NÃO autoriza reenvio automático.
  */
 export function resolveDeliveryTransition(params: {
   logStatus: string | null | undefined;
+  logError?: string | null;
   attempts: number;
   waitElapsed: boolean;
 }): { status: OutboxStatus; retry: boolean } | null {
   const s = params.logStatus;
   if (s === "delivered") return { status: "delivered", retry: false };
   if (s === "delivery_failed" || s === "failed") {
-    if (params.attempts >= MAX_SEND_ATTEMPTS) return { status: "failed", retry: false };
+    if (params.attempts >= MAX_SEND_ATTEMPTS || isPermanentDeliveryFailure(params.logError)) {
+      return { status: "failed", retry: false };
+    }
     return { status: "pending", retry: true };
   }
-  // Sem confirmação e a janela de espera de webhook estourou → reenvio.
-  if (params.waitElapsed) {
-    if (params.attempts >= MAX_SEND_ATTEMPTS) return { status: "failed", retry: false };
-    return { status: "pending", retry: true };
-  }
-  return null; // ainda aguardando webhook dentro da janela
+  // Sem evidência de falha: aguarda (mesmo após a janela). Não reenvia às cegas.
+  void params.waitElapsed;
+  return null;
 }
 
 /**
@@ -371,8 +498,8 @@ export async function reconcileAgendaOutboxDelivery(params?: {
     const sb = params?.sb ?? createSupabaseServiceClient();
     const { data, error } = await sb
       .from(OUTBOX_TABLE)
-      .select("id, attempts, updated_at")
-      .eq("status", "sent")
+      .select("id, attempts, updated_at, status")
+      .in("status", ["sent", "pending"])
       .order("updated_at", { ascending: true })
       .limit(Math.max(1, Math.min(params?.limit ?? 50, 200)));
     if (error) {
@@ -380,36 +507,73 @@ export async function reconcileAgendaOutboxDelivery(params?: {
       return counts;
     }
 
-    for (const row of (data ?? []) as Array<{ id: string; attempts: number; updated_at: string }>) {
+    for (const row of (data ?? []) as Array<{
+      id: string;
+      attempts: number;
+      updated_at: string;
+      status: string;
+    }>) {
       counts.checked += 1;
       const { data: logRow } = await sb
         .from("system_notifications_log")
-        .select("status")
+        .select("status, error, metadata")
         .eq("metadata->>outbox_id", row.id)
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
 
+      const logStatus = (logRow as { status?: string } | null)?.status;
+      const logError =
+        typeof (logRow as { error?: unknown } | null)?.error === "string"
+          ? (logRow as { error: string }).error
+          : typeof (logRow as { metadata?: { delivery_failure_reason?: unknown } } | null)?.metadata
+                ?.delivery_failure_reason === "string"
+            ? String(
+                (logRow as { metadata: { delivery_failure_reason: string } }).metadata
+                  .delivery_failure_reason,
+              )
+            : null;
+
+      // delivered no log sempre promove a outbox (mesmo se pending pós-falha).
+      if (logStatus === "delivered") {
+        const { error: updErr } = await sb
+          .from(OUTBOX_TABLE)
+          .update({
+            status: "delivered",
+            delivered_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            last_error: null,
+          })
+          .eq("id", row.id)
+          .in("status", ["sent", "pending"]);
+        if (!updErr) counts.delivered += 1;
+        continue;
+      }
+
+      if (row.status !== "sent") continue;
+
       const waitElapsed =
         Date.now() - Date.parse(row.updated_at) > DELIVERY_WAIT_MINUTES * 60_000;
       const transition = resolveDeliveryTransition({
-        logStatus: (logRow as { status?: string } | null)?.status,
+        logStatus,
+        logError,
         attempts: row.attempts,
         waitElapsed,
       });
       if (!transition) continue;
 
       const patch: Record<string, unknown> =
-        transition.status === "delivered"
-          ? { status: "delivered", delivered_at: new Date().toISOString(), updated_at: new Date().toISOString() }
-          : transition.status === "failed"
-            ? { status: "failed", updated_at: new Date().toISOString() }
-            : { status: "pending", next_attempt_at: nextAttemptIso(retryBackoffMinutes(row.attempts)), updated_at: new Date().toISOString() };
+        transition.status === "failed"
+          ? { status: "failed", updated_at: new Date().toISOString() }
+          : {
+              status: "pending",
+              next_attempt_at: nextAttemptIso(retryBackoffMinutes(row.attempts)),
+              updated_at: new Date().toISOString(),
+            };
 
       const { error: updErr } = await sb.from(OUTBOX_TABLE).update(patch).eq("id", row.id).eq("status", "sent");
       if (updErr) continue;
-      if (transition.status === "delivered") counts.delivered += 1;
-      else if (transition.status === "failed") counts.failed += 1;
+      if (transition.status === "failed") counts.failed += 1;
       else counts.retried += 1;
     }
     return counts;
@@ -422,66 +586,71 @@ export async function reconcileAgendaOutboxDelivery(params?: {
 }
 
 /**
- * Reconciliador de durabilidade (lacuna: enqueue fora da transação da RPC pode
- * falhar após o commit). Reconstrói obrigações ausentes a partir das mutações
- * já confirmadas em agenda_mutation_operations. Determinístico e idempotente
- * (UNIQUE tenant+operation_key+action). Nunca lança.
+ * Reconciliador de durabilidade via RPC anti-join paginada (cursor ASC).
+ * Materializa skipped quando não há telefone. Idempotente. Nunca lança.
  */
 export async function reconcileMissingAgendaNotifications(params?: {
   sb?: SupabaseServiceClient;
-  maxAgeMinutes?: number;
   limit?: number;
+  maxBatches?: number;
 }): Promise<{ scanned: number; recreated: number; skipped: number }> {
   const counts = { scanned: 0, recreated: 0, skipped: 0 };
   try {
     const sb = params?.sb ?? createSupabaseServiceClient();
-    const sinceIso = new Date(Date.now() - (params?.maxAgeMinutes ?? 1440) * 60_000).toISOString();
-    const { data, error } = await sb
-      .from("agenda_mutation_operations")
-      .select("tenant_id, operation_key, result")
-      .in("status", ["local_committed", "completed"])
-      .gte("updated_at", sinceIso)
-      .order("updated_at", { ascending: false })
-      .limit(Math.max(1, Math.min(params?.limit ?? 100, 500)));
-    if (error) {
-      console.warn("[agenda-notification-outbox] missing_scan_failed", { error: error.message });
-      return counts;
-    }
+    const pageSize = Math.max(1, Math.min(params?.limit ?? 100, 500));
+    const maxBatches = Math.max(1, Math.min(params?.maxBatches ?? 20, 100));
+    let cursorUpdatedAt: string | null = null;
+    let cursorId: string | null = null;
 
-    for (const op of (data ?? []) as Array<{ tenant_id: string; operation_key: string; result: Record<string, unknown> | null }>) {
-      const result = op.result ?? {};
-      const changed = result["changed"] === true;
-      const action = result["action"] as AppointmentNotificationAction | undefined;
-      const event = result["event"] as Record<string, unknown> | null;
-      if (!changed || !action || !event?.["id"]) continue;
-      counts.scanned += 1;
-
-      const { data: existing } = await sb
-        .from(OUTBOX_TABLE)
-        .select("id")
-        .eq("tenant_id", op.tenant_id)
-        .eq("operation_key", op.operation_key)
-        .eq("action", action)
-        .maybeSingle();
-      if (existing?.id) continue;
-
-      const agentId = (event["agent_id"] as string | null) ?? null;
-      const timezone = await resolveAgentTimezoneById(sb, op.tenant_id, agentId);
-      const enq = await enqueueAgendaOwnerNotification({
-        sb,
-        tenantId: op.tenant_id,
-        agendaEventId: String(event["id"]),
-        action,
-        operationKey: op.operation_key,
-        attendeeName: (event["attendee_name"] as string | null) ?? null,
-        attendeePhone: (event["attendee_phone"] as string | null) ?? null,
-        startAtIso: String(event["start_at"] ?? ""),
-        location: (event["location"] as string | null) ?? null,
-        timezone,
-        agentId,
+    for (let batch = 0; batch < maxBatches; batch += 1) {
+      const { data, error } = await sb.rpc("list_missing_agenda_notification_ops", {
+        p_cursor_updated_at: cursorUpdatedAt,
+        p_cursor_id: cursorId,
+        p_limit: pageSize,
       });
-      if (enq.enqueued) counts.recreated += 1;
-      else counts.skipped += 1;
+      if (error) {
+        console.warn("[agenda-notification-outbox] missing_scan_failed", { error: error.message });
+        return counts;
+      }
+
+      const rows = (data ?? []) as Array<{
+        tenant_id: string;
+        operation_key: string;
+        updated_at: string;
+        operation_id: string;
+        result: Record<string, unknown> | null;
+      }>;
+      if (!rows.length) break;
+
+      for (const op of rows) {
+        cursorUpdatedAt = op.updated_at;
+        cursorId = op.operation_id;
+        const result = op.result ?? {};
+        const action = result["action"] as AppointmentNotificationAction | undefined;
+        const event = result["event"] as Record<string, unknown> | null;
+        if (!action || !event?.["id"]) continue;
+        counts.scanned += 1;
+
+        const agentId = (event["agent_id"] as string | null) ?? null;
+        const timezone = await resolveAgentTimezoneById(sb, op.tenant_id, agentId);
+        const enq = await enqueueAgendaOwnerNotification({
+          sb,
+          tenantId: op.tenant_id,
+          agendaEventId: String(event["id"]),
+          action,
+          operationKey: op.operation_key,
+          attendeeName: (event["attendee_name"] as string | null) ?? null,
+          attendeePhone: (event["attendee_phone"] as string | null) ?? null,
+          startAtIso: String(event["start_at"] ?? ""),
+          location: (event["location"] as string | null) ?? null,
+          timezone,
+          agentId,
+        });
+        if (enq.enqueued) counts.recreated += 1;
+        else counts.skipped += 1;
+      }
+
+      if (rows.length < pageSize) break;
     }
     return counts;
   } catch (error) {

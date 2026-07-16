@@ -482,6 +482,38 @@ async function logSystemNotification(params: {
   }
 }
 
+async function updateSystemNotificationLog(
+  logId: string,
+  patch: {
+    status: "sent" | "failed" | "delivery_failed" | "delivered" | "pending" | "skipped";
+    error?: string | null;
+    metadata?: Record<string, unknown> | null;
+  },
+): Promise<boolean> {
+  try {
+    const sb = createSupabaseServiceClient();
+    const { error } = await sb
+      .from("system_notifications_log")
+      .update({
+        status: patch.status,
+        error: patch.error ?? null,
+        ...(patch.metadata != null ? { metadata: patch.metadata } : {}),
+      })
+      .eq("id", logId);
+    if (error) {
+      console.warn("[system-agent] log_update_failed", { error: error.message, log_id: logId });
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.warn("[system-agent] log_update_failed", {
+      error: error instanceof Error ? error.message : "log_update_failed",
+      log_id: logId,
+    });
+    return false;
+  }
+}
+
 /** Localiza a notificação mais recente ainda sem confirmação final (webhook ERROR com id interno da Evolution). */
 async function findLatestRecentSystemNotificationForInstance(
   sb: ReturnType<typeof createSupabaseServiceClient>,
@@ -885,7 +917,8 @@ async function applyDeliveryFailedToRow(
   reason: string,
   extraMetadata?: Record<string, unknown>,
 ): Promise<boolean> {
-  if (row.status === "delivery_failed") return false;
+  // delivered é terminal; delivery_failed duplicado é no-op.
+  if (row.status === "delivered" || row.status === "delivery_failed") return false;
 
   const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
   const { error: updateError } = await sb
@@ -900,7 +933,8 @@ async function applyDeliveryFailedToRow(
         delivery_failure_reason: reason.slice(0, 500),
       },
     })
-    .eq("id", row.id);
+    .eq("id", row.id)
+    .in("status", ["pending", "sent", "failed"]);
   return !updateError;
 }
 
@@ -909,9 +943,11 @@ async function applyDeliveredToRow(
   row: SystemNotificationRow,
   status: unknown,
 ): Promise<boolean> {
-  if (row.status === "delivered" || row.status === "delivery_failed") return false;
+  // delivered é terminal — never regress.
+  if (row.status === "delivered") return false;
 
   const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
+  const correctedFrom = row.status === "delivery_failed" || row.status === "failed" ? row.status : null;
   const { error: updateError } = await sb
     .from("system_notifications_log")
     .update({
@@ -921,9 +957,14 @@ async function applyDeliveredToRow(
         ...meta,
         delivered_at: new Date().toISOString(),
         delivery_status: status ?? null,
+        ...(correctedFrom
+          ? { delivery_corrected_from: correctedFrom }
+          : {}),
       },
     })
-    .eq("id", row.id);
+    .eq("id", row.id)
+    // Allow upgrade from pending/sent/delivery_failed/failed; never from delivered (already gated).
+    .in("status", ["pending", "sent", "delivery_failed", "failed"]);
   return !updateError;
 }
 
@@ -932,6 +973,7 @@ async function applyServerAckToRow(
   row: SystemNotificationRow,
   status: unknown,
 ): Promise<boolean> {
+  // sent não pode substituir delivered (nem delivery_failed — delivered corrige depois).
   if (row.status !== "pending") return false;
 
   const meta = row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
@@ -1443,6 +1485,7 @@ async function sendSystemNotificationViaMeta(
     type?: string;
     metadata?: Record<string, unknown> | null;
     waitForOutcomeMs?: number;
+    prePersistPending?: boolean;
   },
 ): Promise<{
   ok: boolean;
@@ -1469,6 +1512,25 @@ async function sendSystemNotificationViaMeta(
   const rawDigits = toNumber.replace(/\D/g, "");
   const toWaId = rawDigits.startsWith("55") ? rawDigits : `55${rawDigits}`;
 
+  let preLogId: string | null = null;
+  if (options?.prePersistPending) {
+    preLogId = await logSystemNotification({
+      type: options?.type ?? "generic",
+      toNumber: toWaId,
+      message,
+      status: "pending",
+      error: null,
+      metadata: {
+        ...(options?.metadata ?? {}),
+        provider: "meta_cloud",
+        meta_phone_number_id: config.phoneNumberId,
+        number_raw: rawDigits,
+        number_normalized: toWaId,
+        dispatch_phase: "pre_provider",
+      },
+    });
+  }
+
   // Mensagens iniciadas pela empresa fora da janela de 24h só são entregues
   // como template aprovado — texto livre é aceito e descartado (131047).
   // Com template configurado, enviamos a mensagem como {{1}} do template.
@@ -1492,23 +1554,45 @@ async function sendSystemNotificationViaMeta(
   const verifiedTest = (options?.waitForOutcomeMs ?? 0) > 0;
   const logStatus = send.ok ? (verifiedTest ? "pending" : "sent") : "failed";
 
-  const logId = await logSystemNotification({
-    type: options?.type ?? "generic",
-    toNumber: toWaId,
-    message,
-    status: logStatus,
-    error: send.ok ? null : (send.error ?? "meta_send_failed"),
-    metadata: {
-      ...(options?.metadata ?? {}),
-      provider: "meta_cloud",
-      meta_phone_number_id: config.phoneNumberId,
-      number_raw: rawDigits,
-      number_normalized: toWaId,
-      meta_message_id: send.messageId ?? null,
-      meta_send_kind: useTemplate ? "template" : "text",
-      ...(useTemplate ? { meta_template_name: config.templateName } : {}),
-    },
-  });
+  const logMetadata = {
+    ...(options?.metadata ?? {}),
+    provider: "meta_cloud",
+    meta_phone_number_id: config.phoneNumberId,
+    number_raw: rawDigits,
+    number_normalized: toWaId,
+    meta_message_id: send.messageId ?? null,
+    meta_send_kind: useTemplate ? "template" : "text",
+    ...(useTemplate ? { meta_template_name: config.templateName } : {}),
+    ...(preLogId ? { dispatch_phase: "post_provider" } : {}),
+  };
+
+  let logId: string | null = preLogId;
+  if (preLogId) {
+    const updated = await updateSystemNotificationLog(preLogId, {
+      status: logStatus,
+      error: send.ok ? null : (send.error ?? "meta_send_failed"),
+      metadata: logMetadata,
+    });
+    if (!updated) {
+      logId = await logSystemNotification({
+        type: options?.type ?? "generic",
+        toNumber: toWaId,
+        message,
+        status: logStatus,
+        error: send.ok ? null : (send.error ?? "meta_send_failed"),
+        metadata: logMetadata,
+      });
+    }
+  } else {
+    logId = await logSystemNotification({
+      type: options?.type ?? "generic",
+      toNumber: toWaId,
+      message,
+      status: logStatus,
+      error: send.ok ? null : (send.error ?? "meta_send_failed"),
+      metadata: logMetadata,
+    });
+  }
 
   const debug = {
     numberSent: toWaId,
@@ -1623,6 +1707,12 @@ export async function sendSystemNotification(
     metadata?: Record<string, unknown> | null;
     /** Poll curto pós-envio para capturar webhook de entrega/falha (ex.: admin_test). */
     waitForOutcomeMs?: number;
+    /**
+     * Quando true (path outbox), grava log `pending` ANTES da chamada ao provedor
+     * e atualiza o mesmo registro depois — reduz janela ambígua no reclaim.
+     * Não promete exactly-once (provedor sem chave idempotente).
+     */
+    prePersistPending?: boolean;
   },
 ): Promise<{
   ok: boolean;
@@ -1759,6 +1849,26 @@ export async function sendSystemNotification(
 
   const sendNumber = ensureBrazilianMobileWhatsappDigits(platformNumber);
 
+  // Pre-persist pending log before provider call (outbox path) to shrink the
+  // accept→log crash window. Reclaim uses this correlation for at-most-once.
+  let preLogId: string | null = null;
+  if (options?.prePersistPending) {
+    preLogId = await logSystemNotification({
+      type: options?.type ?? "generic",
+      toNumber: platformNumber,
+      message,
+      status: "pending",
+      error: null,
+      metadata: {
+        ...(options?.metadata ?? {}),
+        instance_name: resolvedInstance,
+        number_raw: rawDigits,
+        number_normalized: platformNumber,
+        dispatch_phase: "pre_provider",
+      },
+    });
+  }
+
   await sendPresence(resolvedInstance, sendNumber, "composing", typingDelayMs(message));
   const attempt = await sendEvolutionTextWithRestartRetry({
     instanceName: resolvedInstance,
@@ -1790,28 +1900,51 @@ export async function sendSystemNotification(
     : "failed";
   const evolutionMessageIds = evolutionMessageId ? [evolutionMessageId] : [];
 
-  const logId = await logSystemNotification({
-    type: options?.type ?? "generic",
-    toNumber: platformNumber,
-    message,
-    status: logStatus,
-    error: finalOk ? null : finalError,
-    metadata: {
-      ...(options?.metadata ?? {}),
-      instance_name: resolvedInstance,
-      number_raw: rawDigits,
-      number_normalized: platformNumber,
-      number_sent: sendNumber,
-      session_owner_jid: sessionOwnerJid,
-      session_connection_status: sessionConnectionStatus,
-      evolution_number_check: "conversas_style",
-      evolution_connection_state: liveState,
-      evolution_message_id: evolutionMessageId,
-      evolution_message_ids: evolutionMessageIds,
-      evolution_response_status: evolutionResponseStatus,
-      evolution_session_restarted: sessionRestarted,
-    },
-  });
+  const logMetadata = {
+    ...(options?.metadata ?? {}),
+    instance_name: resolvedInstance,
+    number_raw: rawDigits,
+    number_normalized: platformNumber,
+    number_sent: sendNumber,
+    session_owner_jid: sessionOwnerJid,
+    session_connection_status: sessionConnectionStatus,
+    evolution_number_check: "conversas_style",
+    evolution_connection_state: liveState,
+    evolution_message_id: evolutionMessageId,
+    evolution_message_ids: evolutionMessageIds,
+    evolution_response_status: evolutionResponseStatus,
+    evolution_session_restarted: sessionRestarted,
+    ...(preLogId ? { dispatch_phase: "post_provider" } : {}),
+  };
+
+  let logId: string | null = preLogId;
+  if (preLogId) {
+    const updated = await updateSystemNotificationLog(preLogId, {
+      status: logStatus,
+      error: finalOk ? null : finalError,
+      metadata: logMetadata,
+    });
+    if (!updated) {
+      // Fallback insert if update failed — still better than silent loss.
+      logId = await logSystemNotification({
+        type: options?.type ?? "generic",
+        toNumber: platformNumber,
+        message,
+        status: logStatus,
+        error: finalOk ? null : finalError,
+        metadata: logMetadata,
+      });
+    }
+  } else {
+    logId = await logSystemNotification({
+      type: options?.type ?? "generic",
+      toNumber: platformNumber,
+      message,
+      status: logStatus,
+      error: finalOk ? null : finalError,
+      metadata: logMetadata,
+    });
+  }
 
   if (finalOk && evolutionMessageIds.length) {
     void reconcileOrphanDeliveryEvents({ preferMessageIds: evolutionMessageIds }).catch((error) => {

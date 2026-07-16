@@ -19,7 +19,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 export async function POST(request: Request) {
-  if (!verifyInternalApiRequest(request)) {
+  if (!verifyInternalApiRequest(request, { allowedSecrets: ["INTERNAL_API_TOKEN", "CRON_SECRET"] })) {
     console.warn("[audio-transcription] auth failed");
     return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
   }

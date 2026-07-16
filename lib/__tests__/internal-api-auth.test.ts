@@ -67,4 +67,30 @@ describe("verifyInternalApiRequest", () => {
     const printed = [...spy.mock.calls, ...warn.mock.calls].flat().join(" ");
     expect(printed).not.toContain("cron-secreto-123");
   });
+
+  it("EVOLUTION_WEBHOOK_SECRET não autentica rotas internas por padrão", () => {
+    process.env.EVOLUTION_WEBHOOK_SECRET = "evo-secret";
+    process.env.INTERNAL_API_TOKEN = "internal-abc";
+    expect(verifyInternalApiRequest(req({ authorization: "Bearer evo-secret" }))).toBe(false);
+    expect(
+      verifyInternalApiRequest(req({ authorization: "Bearer evo-secret" }), {
+        allowedSecrets: ["INTERNAL_API_TOKEN", "CRON_SECRET"],
+      }),
+    ).toBe(false);
+  });
+
+  it("respeita allowlist explícita", () => {
+    process.env.AGENT_RESPONSE_JOBS_SECRET = "jobs-only";
+    process.env.CRON_SECRET = "cron-xyz";
+    expect(
+      verifyInternalApiRequest(req({ authorization: "Bearer jobs-only" }), {
+        allowedSecrets: ["INTERNAL_API_TOKEN", "CRON_SECRET"],
+      }),
+    ).toBe(false);
+    expect(
+      verifyInternalApiRequest(req({ authorization: "Bearer jobs-only" }), {
+        allowedSecrets: ["INTERNAL_API_TOKEN", "AGENT_RESPONSE_JOBS_SECRET", "CRON_SECRET"],
+      }),
+    ).toBe(true);
+  });
 });

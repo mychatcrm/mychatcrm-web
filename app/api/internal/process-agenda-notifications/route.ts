@@ -19,14 +19,14 @@ export async function POST(request: Request) {
     route: "/api/internal/process-agenda-notifications",
   });
 
-  if (!verifyInternalApiRequest(request)) {
+  if (!verifyInternalApiRequest(request, { allowedSecrets: ["INTERNAL_API_TOKEN", "CRON_SECRET"] })) {
     console.info("[agenda-notification-outbox]", { event: "auth_failed" });
     return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
   }
 
   try {
     // 1) Recupera obrigações que a janela pós-commit possa ter perdido.
-    const reconciled = await reconcileMissingAgendaNotifications({ maxAgeMinutes: 1440 });
+    const reconciled = await reconcileMissingAgendaNotifications({ limit: 100, maxBatches: 20 });
     // 2) Reivindica e envia pendentes (claim transacional).
     const processed = await processAgendaNotificationOutbox({ limit: 50 });
     // 3) Promove entregues / devolve a retry conforme os webhooks de entrega.

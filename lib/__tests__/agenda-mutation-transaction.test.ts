@@ -14,6 +14,10 @@ const hardeningPath = join(
   process.cwd(),
   "supabase/migrations/20260715213616_agenda_outbox_hardening.sql",
 );
+const fixPath = join(
+  process.cwd(),
+  "supabase/migrations/20260716005454_agenda_outbox_hardening_fix.sql",
+);
 
 function migration(): string {
   return readFileSync(migrationPath, "utf8");
@@ -21,6 +25,10 @@ function migration(): string {
 
 function hardening(): string {
   return readFileSync(hardeningPath, "utf8");
+}
+
+function fixMigration(): string {
+  return readFileSync(fixPath, "utf8");
 }
 
 describe("transactional agenda mutations", () => {
@@ -94,5 +102,26 @@ describe("agenda outbox hardening migration", () => {
     const sql = hardening();
     expect(sql).toContain("agenda_notification_outbox_agenda_event_id_idx");
     expect(sql).toContain("'pending', 'processing', 'sent', 'delivered', 'failed', 'skipped'");
+  });
+});
+
+describe("agenda outbox hardening fix migration", () => {
+  it("substitui p_job_id text por uuid + journey com all-or-none e FOR UPDATE", () => {
+    const sql = fixMigration();
+    expect(sql).toContain("p_job_id uuid DEFAULT NULL");
+    expect(sql).toContain("p_journey_id uuid DEFAULT NULL");
+    expect(sql).toContain("invalid_job_params");
+    expect(sql).toContain("FOR UPDATE");
+    expect(sql).toContain("v_job_tenant IS DISTINCT FROM p_tenant_id");
+    expect(sql).toContain("IF SQLERRM IN ('generation_stale', 'invalid_job_params') THEN");
+    expect(sql).not.toContain("p_job_id text DEFAULT NULL");
+  });
+
+  it("cria RPC de reconcile paginado com anti-join e grants service_role", () => {
+    const sql = fixMigration();
+    expect(sql).toContain("list_missing_agenda_notification_ops");
+    expect(sql).toContain("NOT EXISTS");
+    expect(sql).toContain("GRANT EXECUTE ON FUNCTION public.list_missing_agenda_notification_ops");
+    expect(sql).toContain("TO service_role");
   });
 });

@@ -684,6 +684,7 @@ export async function processAgentResponseJob(
       operationKey: `agent-response-job:${job.id}:${generation}:${unitIndex}`,
       jobId: skipGenerationCheck ? null : job.id,
       claimedGeneration: skipGenerationCheck ? null : generation,
+      journeyId: skipGenerationCheck ? null : (job.journey_id ?? null),
     });
     // Recusa atômica de staleness pela RPC: a geração foi superada entre o check
     // e a mutação. Zero efeito colateral aconteceu — abortar sem enviar nada; o

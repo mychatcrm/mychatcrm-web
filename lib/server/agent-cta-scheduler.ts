@@ -868,6 +868,7 @@ const AGENDA_RPC_REASONS = [
   "invalid_or_past_agenda_datetime",
   "invalid_remote_jid",
   "generation_stale",
+  "invalid_job_params",
 ] as const;
 
 /** Erro atômico de staleness da RPC: a geração deste job foi superada. */
@@ -1028,6 +1029,7 @@ async function executeAgendaDirectiveAtomically(params: {
   /** Job e geração para validação atômica de staleness na RPC (caminho de job). */
   jobId?: string | null;
   claimedGeneration?: number | null;
+  journeyId?: string | null;
 }): Promise<{ action: "scheduled" | "rescheduled" | "cancelled"; eventId: string }> {
   const attendeePhone = extractPhone(params.remoteJid);
   if (!attendeePhone) throw new Error("invalid_remote_jid");
@@ -1086,6 +1088,7 @@ async function executeAgendaDirectiveAtomically(params: {
       params.agendaDisponibilidade?.permitirAgendamentosSimultaneos !== false,
     p_job_id: params.jobId ?? null,
     p_claimed_generation: params.claimedGeneration ?? null,
+    p_journey_id: params.journeyId ?? null,
   });
   if (error) throw normalizeAgendaRpcError(error);
 
@@ -1171,6 +1174,7 @@ export async function executeAgendaDirective(params: {
   /** Job e geração para validação atômica de staleness na RPC (caminho de job). */
   jobId?: string | null;
   claimedGeneration?: number | null;
+  journeyId?: string | null;
 }): Promise<{ action: "scheduled" | "rescheduled" | "cancelled"; eventId: string }> {
   const sb = params.sb ?? createSupabaseServiceClient();
   if (params.operationKey?.trim()) {
@@ -1384,6 +1388,7 @@ export async function resolveAgendaTurn(params: {
   /** Job e geração para validação atômica de staleness na RPC (caminho de job). */
   jobId?: string | null;
   claimedGeneration?: number | null;
+  journeyId?: string | null;
   /** Mensagens inbound recentes do lead (ordem temporal), para resolver
    *  complementos que chegaram em jobs anteriores (ex.: data num turno, hora no
    *  seguinte). Já filtradas por tenant+journey e janela segura pelo chamador. */
@@ -1588,6 +1593,7 @@ export async function resolveAgendaTurn(params: {
       operationKey: params.operationKey,
       jobId: params.jobId ?? null,
       claimedGeneration: params.claimedGeneration ?? null,
+      journeyId: params.journeyId ?? null,
     });
     console.info("[agent-agenda-turn]", {
       tenant_id: params.tenantId,
@@ -1602,11 +1608,12 @@ export async function resolveAgendaTurn(params: {
     // Recusa atômica de staleness: a geração foi superada por mensagem mais nova.
     // Zero mutação aconteceu; o worker não deve enviar nada — o job re-agendado
     // (geração nova) processa o contexto atual. NÃO é uma falha de agenda.
-    if (reason === AGENDA_GENERATION_STALE) {
+    if (reason === AGENDA_GENERATION_STALE || reason === "invalid_job_params") {
       console.info("[agent-agenda-turn]", {
         tenant_id: params.tenantId,
         agent_id: params.agentId,
         action: "stale",
+        reason,
       });
       return { text: cleanText, action: "stale" };
     }
