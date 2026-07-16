@@ -310,9 +310,42 @@ describe("createWhatsAppMessageTemplate", () => {
       name: "mychatcrm_agenda_notification_v1",
       language: "pt_BR",
       category: "UTILITY",
-      allow_category_change: true,
     });
+    expect(body).not.toHaveProperty("allow_category_change");
     expect(body.components[0].text).toContain("{{1}}");
     expect(body.components[0].text).toContain("MyChatCRM");
+  });
+
+  it("returns the actionable Meta error fields without exposing credentials", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(
+      JSON.stringify({
+        error: {
+          message: "Invalid parameter",
+          code: 100,
+          error_subcode: 2388093,
+          error_user_title: "Parâmetro de exemplo inválido",
+          error_user_msg: "O exemplo do corpo deve corresponder às variáveis.",
+          error_data: { details: "body_text[0]" },
+        },
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    ));
+
+    const result = await createWhatsAppMessageTemplate({
+      wabaId: "WABA1",
+      accessToken: "token-secreto",
+      templateName: "mychatcrm_agenda_notification_v1",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 400,
+      error: "Parâmetro de exemplo inválido — O exemplo do corpo deve corresponder às variáveis. — body_text[0]",
+      metaError: {
+        code: 100,
+        subcode: 2388093,
+      },
+    });
+    expect(result.error).not.toContain("token-secreto");
   });
 });

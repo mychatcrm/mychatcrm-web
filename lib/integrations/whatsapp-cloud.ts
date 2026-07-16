@@ -289,6 +289,13 @@ export async function createWhatsAppMessageTemplate(params: {
   templateStatus: "APPROVED" | "PENDING" | "REJECTED" | null;
   id?: string;
   error?: string;
+  metaError?: {
+    code: number | null;
+    subcode: number | null;
+    title: string | null;
+    message: string | null;
+    details: string | null;
+  };
 }> {
   const url = `${GRAPH_API}/${encodeURIComponent(params.wabaId)}/message_templates`;
   const res = await fetch(url, {
@@ -301,11 +308,10 @@ export async function createWhatsAppMessageTemplate(params: {
       name: params.templateName,
       language: params.languageCode || "pt_BR",
       category: "UTILITY",
-      allow_category_change: true,
       components: [
         {
           type: "BODY",
-          text: "Notificação operacional do MyChatCRM: {{1}}",
+          text: "Olá! Há uma atualização operacional na sua conta MyChatCRM. Detalhes: {{1}}",
           example: {
             body_text: [["Novo agendamento confirmado para 20/07/2026 às 14:00."]],
           },
@@ -317,14 +323,33 @@ export async function createWhatsAppMessageTemplate(params: {
   const data = (await res.json().catch(() => ({}))) as {
     id?: string;
     status?: string;
-    error?: { message?: string; code?: number };
+    error?: {
+      message?: string;
+      code?: number;
+      error_subcode?: number;
+      error_user_title?: string;
+      error_user_msg?: string;
+      error_data?: { details?: string };
+    };
   };
   if (!res.ok) {
+    const metaError = {
+      code: typeof data.error?.code === "number" ? data.error.code : null,
+      subcode: typeof data.error?.error_subcode === "number" ? data.error.error_subcode : null,
+      title: data.error?.error_user_title?.trim() || null,
+      message: data.error?.error_user_msg?.trim() || data.error?.message?.trim() || null,
+      details: data.error?.error_data?.details?.trim() || null,
+    };
+    const error = [metaError.title, metaError.message, metaError.details]
+      .filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index)
+      .join(" — ")
+      .slice(0, 800);
     return {
       ok: false,
       status: res.status,
       templateStatus: null,
-      error: data.error?.message?.slice(0, 300) || `meta_template_create_${res.status}`,
+      error: error || `meta_template_create_${res.status}`,
+      metaError,
     };
   }
   const templateStatus =
