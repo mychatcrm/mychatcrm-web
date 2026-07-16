@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import {
   generateAgentResponse,
   isAgentMissingInstructionsResult,
@@ -380,6 +381,7 @@ async function saveMessage(opts: {
   providerRemoteJid?: string | null;
   providerStatus?: string | null;
   deliveryStatus?: string | null;
+  occurredAt?: string | null;
 }): Promise<SaveMessageResult> {
   try {
     const sb = createSupabaseServiceClient();
@@ -413,6 +415,7 @@ async function saveMessage(opts: {
         provider_remote_jid: opts.providerRemoteJid ?? null,
         provider_status: opts.providerStatus ?? null,
         ...(opts.deliveryStatus ? { delivery_status: opts.deliveryStatus } : {}),
+        ...(opts.occurredAt ? { created_at: opts.occurredAt } : {}),
       })
       // Deduplicação: a constraint UNIQUE (tenant_id, message_id) WHERE message_id IS NOT NULL
       // garante que um retry da Evolution API não crie um segundo job de resposta.
@@ -736,6 +739,7 @@ export async function POST(request: Request) {
             transcriptionStatus: msg.type === "audio" ? "pending" : null,
             analysisStatus:
               msg.type === "video" ? "unsupported" : msg.type === "image" ? "pending" : null,
+            occurredAt: msg.occurredAt,
           });
 
           // Webhook retry da Evolution API — mensagem já processada anteriormente.
@@ -750,7 +754,9 @@ export async function POST(request: Request) {
           }
 
           const savedAt =
-            inboundSaved && !inboundSaved.duplicate ? inboundSaved.created_at : new Date().toISOString();
+            inboundSaved && !inboundSaved.duplicate
+              ? inboundSaved.created_at
+              : msg.occurredAt ?? new Date().toISOString();
 
           const sbState = createSupabaseServiceClient();
           const state = await revealConversationOnInbound({
@@ -923,25 +929,36 @@ export async function POST(request: Request) {
             const inboundMessageKey =
               inboundSaved && !inboundSaved.duplicate ? inboundSaved.id : null;
             if (inboundMessageKey) {
-              const flowResult = await runInboundSmartWaitFlow({
-                sb: sbState,
-                tenantId: row.tenant_id,
-                remoteJid: msg.remoteJid,
-                leadId,
-                journeyId: journey?.id ?? null,
-                agentId,
-                instanceName,
-                inboundMessageKey,
-                occurredAt:
-                  inboundSaved && !inboundSaved.duplicate
-                    ? inboundSaved.created_at
-                    : new Date().toISOString(),
-                smartWait,
-              });
-              if (flowResult.mode === "smart_wait") {
-                return;
-              }
-              runImmediateReply = true;
+              // A Evolution entrega eventos em série por endpoint. Esperar a IA
+              // aqui segurava o ACK do webhook por 20–60 s e fazia as mensagens
+              // seguintes chegarem uma por minuto, cada uma em um job separado.
+              // `waitUntil` devolve 200 imediatamente e mantém o processamento
+              // durável dentro da própria invocação Vercel.
+              waitUntil(
+                runInboundSmartWaitFlow({
+                  sb: sbState,
+                  tenantId: row.tenant_id,
+                  remoteJid: msg.remoteJid,
+                  leadId,
+                  journeyId: journey?.id ?? null,
+                  agentId,
+                  instanceName,
+                  inboundMessageKey,
+                  occurredAt:
+                    inboundSaved && !inboundSaved.duplicate
+                      ? inboundSaved.created_at
+                      : msg.occurredAt ?? new Date().toISOString(),
+                  smartWait,
+                }).catch((error) => {
+                  console.warn("[agent-response-jobs] background_flow_failed", {
+                    tenant_id: row.tenant_id,
+                    agent_id: agentId,
+                    remote_jid_last4: msg.remoteJid.replace(/\D/g, "").slice(-4),
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                }),
+              );
+              return;
             } else {
               console.info("[agent-response-jobs]", {
                 event: "job_create_failed",

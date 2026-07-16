@@ -60,9 +60,9 @@ export const AGENDA_FAILURE_REPLY =
   "Não consegui confirmar essa alteração na agenda agora. Nossa equipe vai conferir e te retornar em breve.";
 export const AGENDA_FAILURE_REPLY_NO_HANDOFF =
   "Não consegui confirmar essa alteração na agenda agora. Tente novamente em instantes ou informe outra data e horário.";
-export const AGENDA_SUCCESS_REPLY_SCHEDULED = "Agendamento confirmado.";
-export const AGENDA_SUCCESS_REPLY_RESCHEDULED = "Remarcação confirmada.";
-export const AGENDA_SUCCESS_REPLY_CANCELLED = "Cancelamento confirmado.";
+export const AGENDA_SUCCESS_REPLY_SCHEDULED = "Pronto, seu agendamento foi confirmado.";
+export const AGENDA_SUCCESS_REPLY_RESCHEDULED = "Pronto, seu agendamento foi remarcado.";
+export const AGENDA_SUCCESS_REPLY_CANCELLED = "Pronto, cancelei seu agendamento.";
 export const AGENDA_AUTOMATION_DISABLED_REPLY =
   "Posso consultar seus compromissos existentes, mas não consigo criar, remarcar ou cancelar agendamentos por aqui no momento.";
 export const AGENDA_SLOT_TAKEN_REPLY =
@@ -410,14 +410,32 @@ function finalizeResolveAgendaTurnResult(
   ctaHandoffAtivo?: boolean,
 ): ResolveAgendaTurnResult {
   if (ctaHandoffAtivo !== false) return result;
-  if (result.action === "scheduled") {
-    return { ...result, text: AGENDA_SUCCESS_REPLY_SCHEDULED };
-  }
-  if (result.action === "rescheduled") {
-    return { ...result, text: AGENDA_SUCCESS_REPLY_RESCHEDULED };
-  }
-  if (result.action === "cancelled") {
-    return { ...result, text: AGENDA_SUCCESS_REPLY_CANCELLED };
+  // O texto de sucesso já foi produzido pelo backend somente depois do commit
+  // real e contém data/hora em formato humano. Substituí-lo por uma constante
+  // curta ("Agendamento confirmado.") apagava contexto e voltava a soar robótico.
+  if (
+    result.action === "scheduled" ||
+    result.action === "rescheduled" ||
+    result.action === "cancelled"
+  ) {
+    const sanitized = sanitizeAgendaReplyForNoHandoff(result.text)
+      .replace(/às\s+(\d{1,2}):00\b/gi, (_match, hour: string) => `às ${Number(hour)}h`)
+      .replace(/às\s+(\d{1,2}):(\d{2})\b/gi, (_match, hour: string, minute: string) =>
+        `às ${Number(hour)}h${minute}`,
+      );
+    if (result.action === "cancelled") {
+      return { ...result, text: AGENDA_SUCCESS_REPLY_CANCELLED };
+    }
+    if (/\b\d{2}\/\d{2}\/\d{4}\b/.test(sanitized)) {
+      return { ...result, text: sanitized };
+    }
+    return {
+      ...result,
+      text:
+        result.action === "rescheduled"
+          ? AGENDA_SUCCESS_REPLY_RESCHEDULED
+          : AGENDA_SUCCESS_REPLY_SCHEDULED,
+    };
   }
   if (result.action === "failed") {
     // Só o texto genérico (que cita "nossa equipe") é trocado; mensagens específicas

@@ -19,10 +19,8 @@ const MAX_SEND_ATTEMPTS = 5;
 const CLAIM_TTL_SECONDS = 300;
 /** Espera de webhook de entrega antes de reconsiderar reenvio de uma linha `sent`. */
 const DELIVERY_WAIT_MINUTES = 15;
-export const META_TEMPLATE_REQUIRED_ERROR = "meta_template_required";
 export const META_TEMPLATE_NOT_APPROVED_ERROR = "meta_template_not_approved";
-/** Recuo enquanto o template Meta não está configurado (reenviável depois). */
-const META_TEMPLATE_BACKOFF_MINUTES = 60;
+const META_TEMPLATE_RECHECK_MINUTES = 5;
 
 type OutboxStatus = "pending" | "processing" | "sent" | "delivered" | "failed" | "skipped";
 
@@ -359,28 +357,10 @@ async function sendClaimedRow(sb: SupabaseServiceClient, row: OutboxRow): Promis
     return "pending";
   }
 
-  // Meta ativo sem template: mensagem proativa fora da janela de 24h exige
-  // template aprovado. NÃO enviamos texto livre e NÃO marcamos entregue — volta
-  // a pending com recuo, reenviável após o template ser configurado. Não conta
-  // como tentativa de envio (attempts inalterado).
+  // Mensagem proativa pelo provedor oficial precisa de template aprovado fora
+  // da janela. Reconsulta o status a cada ciclo curto e mantém a obrigação viva
+  // sem consumir tentativas; assim que aprovado, a mesma linha é enviada.
   const metaConfig = await getSystemAgentMetaConfig().catch(() => null);
-  if (metaConfig?.active && !metaConfig.templateName) {
-    const ok = await updateClaimedRow(sb, row, {
-      status: "pending",
-      last_error: META_TEMPLATE_REQUIRED_ERROR,
-      claim_token: null,
-      next_attempt_at: nextAttemptIso(META_TEMPLATE_BACKOFF_MINUTES),
-    });
-    if (!ok) throw new Error("finalize_inconclusive");
-    console.warn("[agenda-notification-outbox] blocked", {
-      outbox_id: row.id,
-      tenant_id: row.tenant_id,
-      action: row.action,
-      reason: META_TEMPLATE_REQUIRED_ERROR,
-      phone_last4: row.phone_last4,
-    });
-    return "pending";
-  }
   if (metaConfig?.active && metaConfig.templateName && metaConfig.templateStatus !== "APPROVED") {
     const refreshed = await refreshSystemAgentMetaTemplateStatus().catch(
       () => metaConfig.templateStatus,
@@ -390,7 +370,7 @@ async function sendClaimedRow(sb: SupabaseServiceClient, row: OutboxRow): Promis
         status: "pending",
         last_error: META_TEMPLATE_NOT_APPROVED_ERROR,
         claim_token: null,
-        next_attempt_at: nextAttemptIso(META_TEMPLATE_BACKOFF_MINUTES),
+        next_attempt_at: nextAttemptIso(META_TEMPLATE_RECHECK_MINUTES),
       });
       if (!ok) throw new Error("finalize_inconclusive");
       return "pending";

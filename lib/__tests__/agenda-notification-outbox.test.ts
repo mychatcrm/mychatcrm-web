@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   enqueueAgendaOwnerNotification,
-  META_TEMPLATE_REQUIRED_ERROR,
   processAgendaNotificationOutbox,
   reconcileAgendaOutboxDelivery,
   reconcileMissingAgendaNotifications,
@@ -327,14 +326,14 @@ describe("agenda-notification-outbox — claim + envio inline", () => {
     expect(md).toMatchObject({ tenant_id: "tenant-1", agenda_event_id: "evt-1", action: "scheduled", operation_key: "op-1", outbox_id: "outbox-1" });
   });
 
-  it("Meta ativo sem template NÃO envia, NÃO marca sent, registra meta_template_required reenviável", async () => {
+  it("Meta ativo sem template usa o envio normal do agente do sistema", async () => {
     getSystemAgentMetaConfigMock.mockResolvedValue({ active: true, templateName: null });
     const { sb, outbox } = makeSb({ outbox: [outboxRow()] });
     const res = await processAgendaNotificationOutbox({ sb, outboxId: "outbox-1" });
-    expect(sendSystemNotificationMock).not.toHaveBeenCalled();
-    expect(res.pending).toBe(1);
-    expect(outbox[0]!.status).toBe("pending");
-    expect(outbox[0]!.last_error).toBe(META_TEMPLATE_REQUIRED_ERROR);
+    expect(sendSystemNotificationMock).toHaveBeenCalledTimes(1);
+    expect(res.sent).toBe(1);
+    expect(outbox[0]!.status).toBe("sent");
+    expect(outbox[0]!.last_error).toBeNull();
     expect(outbox[0]!.claim_token).toBeNull();
   });
 

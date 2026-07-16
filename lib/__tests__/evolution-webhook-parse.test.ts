@@ -83,6 +83,18 @@ describe("extractInboundTextsFromEvolutionPayload", () => {
     expect(texts[0]?.text).toBe("Olá");
   });
 
+  it("preserva o instante original informado pela Evolution", () => {
+    const texts = extractInboundTextsFromEvolutionPayload({
+      event: "messages.upsert",
+      data: {
+        key: { remoteJid: "5511999999999@s.whatsapp.net", fromMe: false, id: "1" },
+        messageTimestamp: 1784221980,
+        message: { conversation: "Amanhã às duas" },
+      },
+    });
+    expect(texts[0]?.occurredAt).toBe("2026-07-16T17:13:00.000Z");
+  });
+
   it("ignores fromMe and groups", () => {
     const texts = extractInboundTextsFromEvolutionPayload({
       event: "MESSAGES_UPSERT",

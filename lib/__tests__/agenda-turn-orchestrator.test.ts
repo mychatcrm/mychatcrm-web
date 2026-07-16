@@ -697,7 +697,7 @@ describe("resolveAgendaTurn", () => {
         ...handoffOff,
       });
       expect(result.action).toBe("rescheduled");
-      expect(result.text).toBe(AGENDA_SUCCESS_REPLY_RESCHEDULED);
+      expect(result.text).toBe("Pronto, remarcado para 15/06/2026 às 10h.");
       expectNoHumanDelegation(result.text);
       expect(insertAgendaEventMock).toHaveBeenCalledTimes(1);
       expect(cancelAgendaEventMock).toHaveBeenCalledWith("tenant-1", EXISTING_EVENT.id);

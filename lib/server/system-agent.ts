@@ -939,6 +939,20 @@ async function applyDeliveryFailedToRow(
     })
     .eq("id", row.id)
     .in("status", ["pending", "sent", "failed"]);
+  const outboxId = typeof meta.outbox_id === "string" ? meta.outbox_id.trim() : "";
+  if (!updateError && outboxId) {
+    await sb
+      .from("agenda_notification_outbox")
+      .update({
+        status: "pending",
+        last_error: reason.slice(0, 500),
+        next_attempt_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+        claim_token: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", outboxId)
+      .in("status", ["processing", "sent"]);
+  }
   return !updateError;
 }
 
@@ -969,6 +983,20 @@ async function applyDeliveredToRow(
     .eq("id", row.id)
     // Allow upgrade from pending/sent/delivery_failed/failed; never from delivered (already gated).
     .in("status", ["pending", "sent", "delivery_failed", "failed"]);
+  const outboxId = typeof meta.outbox_id === "string" ? meta.outbox_id.trim() : "";
+  if (!updateError && outboxId) {
+    await sb
+      .from("agenda_notification_outbox")
+      .update({
+        status: "delivered",
+        delivered_at: new Date().toISOString(),
+        last_error: null,
+        claim_token: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", outboxId)
+      .in("status", ["pending", "processing", "sent"]);
+  }
   return !updateError;
 }
 
@@ -1544,8 +1572,12 @@ async function sendSystemNotificationViaMeta(
   if (!config?.active) {
     return { ok: false, error: "meta_provider_not_configured" };
   }
-  if (config.templateName && config.templateStatus && config.templateStatus !== "APPROVED") {
-    return { ok: false, error: `meta_template_${config.templateStatus.toLowerCase()}` };
+  let templateStatus = config.templateStatus;
+  if (config.templateName && templateStatus !== "APPROVED") {
+    // O status salvo pode estar atrasado. Atualiza antes de decidir o canal de
+    // envio; enquanto a aprovação não chega, preserva o mesmo texto livre que
+    // já é usado com sucesso pela verificação de telefone dentro da janela.
+    templateStatus = await refreshSystemAgentMetaTemplateStatus().catch(() => templateStatus);
   }
 
   const rawDigits = toNumber.replace(/\D/g, "");
@@ -1573,7 +1605,7 @@ async function sendSystemNotificationViaMeta(
   // Mensagens iniciadas pela empresa fora da janela de 24h só são entregues
   // como template aprovado — texto livre é aceito e descartado (131047).
   // Com template configurado, enviamos a mensagem como {{1}} do template.
-  const useTemplate = Boolean(config.templateName);
+  const useTemplate = Boolean(config.templateName && templateStatus === "APPROVED");
   const send = useTemplate
     ? await sendWhatsAppTemplateMessage({
         toWaId,

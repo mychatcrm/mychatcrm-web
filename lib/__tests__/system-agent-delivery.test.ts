@@ -65,6 +65,18 @@ vi.mock("@/lib/supabase/server", () => ({
           },
         };
       }
+      if (table === "agenda_notification_outbox") {
+        return {
+          update: (payload: unknown) => {
+            updateMock({ agendaOutbox: true, ...(payload as Record<string, unknown>) });
+            return {
+              eq: () => ({
+                in: () => Promise.resolve({ error: null }),
+              }),
+            };
+          },
+        };
+      }
       return { select: () => selectChain };
     },
   }),
@@ -323,6 +335,68 @@ describe("system notification delivery helpers", () => {
         }),
       }),
     );
+  });
+
+  it("devolve a obrigação de agenda para retry assim que o webhook falha", async () => {
+    selectChain.filter.mockReturnValue({
+      order: () => ({
+        limit: () =>
+          Promise.resolve({
+            data: [{
+              id: "meta-outbox-fail",
+              status: "sent",
+              metadata: {
+                provider: "meta_cloud",
+                meta_message_id: "wamid.OUTBOX.FAIL",
+                outbox_id: "outbox-1",
+              },
+            }],
+            error: null,
+          }),
+      }),
+    });
+
+    expect(await applyMetaSystemNotificationStatus({
+      wamid: "wamid.OUTBOX.FAIL",
+      status: "failed",
+      errorCode: 131047,
+      errorTitle: "Re-engagement message",
+    })).toBe("delivery_failed");
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
+      agendaOutbox: true,
+      status: "pending",
+      last_error: "meta_status:failed:131047:Re-engagement message",
+    }));
+  });
+
+  it("marca a obrigação da agenda como entregue no próprio webhook", async () => {
+    selectChain.filter.mockReturnValue({
+      order: () => ({
+        limit: () =>
+          Promise.resolve({
+            data: [{
+              id: "meta-outbox-ok",
+              status: "sent",
+              metadata: {
+                provider: "meta_cloud",
+                meta_message_id: "wamid.OUTBOX.OK",
+                outbox_id: "outbox-2",
+              },
+            }],
+            error: null,
+          }),
+      }),
+    });
+
+    expect(await applyMetaSystemNotificationStatus({
+      wamid: "wamid.OUTBOX.OK",
+      status: "delivered",
+    })).toBe("delivered");
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
+      agendaOutbox: true,
+      status: "delivered",
+      last_error: null,
+    }));
   });
 
   it("dedupes orphan buffer by message id", async () => {

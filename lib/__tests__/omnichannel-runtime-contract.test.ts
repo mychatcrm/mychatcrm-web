@@ -45,6 +45,17 @@ describe("omnichannel runtime contracts", () => {
     expect(burst).toContain("return [messages]");
   });
 
+  it("acknowledges Evolution webhooks before waiting for the agent response", () => {
+    const webhook = source("app/api/webhooks/evolution/route.ts");
+    const waitUntilCall = webhook.indexOf("waitUntil(");
+    const smartWaitCall = webhook.indexOf("runInboundSmartWaitFlow({", waitUntilCall);
+
+    expect(webhook).toContain('import { waitUntil } from "@vercel/functions"');
+    expect(waitUntilCall).toBeGreaterThan(0);
+    expect(smartWaitCall).toBeGreaterThan(waitUntilCall);
+    expect(webhook.slice(waitUntilCall, smartWaitCall)).not.toContain("await runInboundSmartWaitFlow");
+  });
+
   it("scopes direct WhatsApp rule conflicts to the same transport and connection", () => {
     for (const path of [
       "app/api/client/lead-rules/route.ts",

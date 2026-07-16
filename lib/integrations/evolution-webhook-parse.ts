@@ -58,6 +58,9 @@ type EvolutionInboundBase = {
   remoteJid: string;
   fromMe: boolean;
   messageId: string;
+  /** Instante original informado pelo WhatsApp/Evolution, não o momento em que
+   *  o webhook terminou de processar. Preserva a ordem real do burst. */
+  occurredAt: string | null;
 };
 
 export type EvolutionInboundMessage = EvolutionInboundBase &
@@ -115,6 +118,23 @@ function normalizeBrazilianJid(jid: string): string {
   }
 
   return jid;
+}
+
+function parseEvolutionMessageTimestamp(value: unknown): string | null {
+  let numeric: number | null = null;
+  if (typeof value === "number" && Number.isFinite(value)) numeric = value;
+  else if (typeof value === "string" && /^\d+$/.test(value.trim())) numeric = Number(value);
+  else if (value && typeof value === "object") {
+    const low = (value as { low?: unknown }).low;
+    if (typeof low === "number" && Number.isFinite(low)) numeric = low >>> 0;
+  }
+  if (numeric == null || !Number.isFinite(numeric) || numeric <= 0) return null;
+  const milliseconds = numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+  const date = new Date(milliseconds);
+  if (Number.isNaN(date.getTime())) return null;
+  const year = date.getUTCFullYear();
+  if (year < 2000 || year > 2100) return null;
+  return date.toISOString();
 }
 
 function extractContentFromMessageNode(
@@ -209,11 +229,12 @@ function pushMessageFromNode(node: unknown, out: EvolutionInboundMessage[]) {
 
   const fromMe = Boolean(k.fromMe);
   const messageId = typeof k.id === "string" ? k.id : "";
+  const occurredAt = parseEvolutionMessageTimestamp(n.messageTimestamp);
 
   const content = extractContentFromMessageNode(n.message);
   if (!content) return;
 
-  out.push({ remoteJid, fromMe, messageId, ...content } as EvolutionInboundMessage);
+  out.push({ remoteJid, fromMe, messageId, occurredAt, ...content } as EvolutionInboundMessage);
 }
 
 // ---------------------------------------------------------------------------

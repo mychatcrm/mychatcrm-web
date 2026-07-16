@@ -104,6 +104,27 @@ describe("agenda-datetime-parse extended", () => {
   });
 });
 
+describe("datas relativas respeitam integralmente o fuso do agente", () => {
+  const SAME_INSTANT = new Date("2026-07-17T00:30:00.000Z");
+
+  it("em Los Angeles ainda é dia 16, então amanhã é 17/07", () => {
+    expect(resolveScheduleDateTimeFromText({
+      clientText: "amanhã às 14:00",
+      timezone: "America/Los_Angeles",
+      now: SAME_INSTANT,
+    })).toEqual({ date: "17/07/2026", time: "14:00" });
+  });
+
+  it("em Kiritimati já é dia 17, então amanhã é 18/07", () => {
+    expect(resolveScheduleDateTimeFromText({
+      clientText: "tomorrow at 14:00",
+      assistantText: "amanhã às 14:00",
+      timezone: "Pacific/Kiritimati",
+      now: SAME_INSTANT,
+    })).toEqual({ date: "18/07/2026", time: "14:00" });
+  });
+});
+
 describe("fragmentos incompletos nunca inventam horário (incidente de produção)", () => {
   it("'Pode ser hoje as' não resolve datetime (não vira o minuto atual)", () => {
     expect(
