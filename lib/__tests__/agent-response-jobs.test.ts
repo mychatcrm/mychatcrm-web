@@ -82,6 +82,16 @@ describe("agent smart wait schedule", () => {
     ).toMatchObject({ initialSeconds: 7, followupSeconds: 10, maxSeconds: 60 });
   });
 
+  it("does not make an incomplete new request fast just because an old proposal exists", () => {
+    expect(
+      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
+        kind: "text",
+        text: "Quero remarcar para amanhã",
+        hasPendingAgendaAction: true,
+      }),
+    ).toMatchObject({ initialSeconds: 65, followupSeconds: 10, maxSeconds: 180 });
+  });
+
   it("does not shorten stricter tenant settings", () => {
     expect(
       evolutionBurstSafeSmartWait({

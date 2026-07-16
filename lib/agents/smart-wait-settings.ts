@@ -39,6 +39,8 @@ const EVOLUTION_DATE_HINT_RE =
   /\b(?:hoje|amanha|depois\s+de\s+amanha|dia\s+\d{1,2}|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|segunda|terca|quarta|quinta|sexta|sabado|domingo)\b/i;
 const EVOLUTION_TIME_HINT_RE =
   /\b(?:as?\s+)?(?:\d{1,2}(?::\d{2}|h(?:\d{2})?)|uma|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze)(?:\s*(?:horas?|da\s+manha|da\s+tarde|da\s+noite))?\b/i;
+const EVOLUTION_PENDING_RESPONSE_RE =
+  /^(?:sim|s|pode|confirmo|confirmado|ok|okay|certo|isso|exato|nao|melhor\s+nao|pode\s+manter|quero\s+manter|deixa|desisti)[.!?\s]*$/i;
 
 /**
  * Decide se a PRIMEIRA mensagem precisa da janela longa da Evolution.
@@ -52,7 +54,9 @@ export function evolutionInboundNeedsExtendedInitialWait(
   const text = signal.text?.trim() ?? "";
   const foldedText = text.normalize("NFD").replace(/\p{Diacritic}/gu, "");
   if (!text) return true;
-  if (signal.hasPendingAgendaAction) return false;
+  if (signal.hasPendingAgendaAction && EVOLUTION_PENDING_RESPONSE_RE.test(foldedText)) {
+    return false;
+  }
   if (EVOLUTION_CANCEL_ACTION_RE.test(text)) return false;
   if (EVOLUTION_SCHEDULE_ACTION_RE.test(text)) {
     // Criação/remarcação só é completa quando o mesmo turno já contém data e
