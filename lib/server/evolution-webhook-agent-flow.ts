@@ -1,20 +1,12 @@
 import type { AgentSmartWaitSettings } from "@/lib/agents/smart-wait-settings";
-import {
-  executeAgentResponseFallback,
-  isJobStuckPastGrace,
-  isSmartWaitGloballyDisabled,
-  loadAgentResponseJob,
-  type AgentResponseFallbackReason,
-} from "@/lib/server/agent-response-fallback";
+import { isSmartWaitGloballyDisabled } from "@/lib/server/agent-response-fallback";
 
 export { isSmartWaitGloballyDisabled };
 import { maskRemoteJidForLog } from "@/lib/server/agent-response-schedule";
 import {
   hasAgentResponseProcessorSecret,
-  processDueJobsForConversation,
   scheduleAgentResponseJob,
   triggerAgentResponseJobProcessor,
-  waitAndProcessAgentResponseJob,
 } from "@/lib/server/agent-response-jobs";
 
 export type InboundAgentFlowDecision =
@@ -34,22 +26,8 @@ export function resolveInboundAgentFlowDecision(params: {
   return { mode: "smart_wait", jobId: null };
 }
 
-export function queueAgentResponseJobProcessor(jobId: string): boolean {
+export async function queueAgentResponseJobProcessor(jobId: string): Promise<boolean> {
   return triggerAgentResponseJobProcessor(jobId);
-}
-
-async function runFallbackForJob(params: {
-  sb: ReturnType<typeof import("@/lib/supabase/server").createSupabaseServiceClient>;
-  jobId: string;
-  reason: AgentResponseFallbackReason;
-}): Promise<void> {
-  const job = await loadAgentResponseJob(params.sb, params.jobId);
-  if (!job) return;
-  await executeAgentResponseFallback({
-    sb: params.sb,
-    job,
-    reason: params.reason,
-  });
 }
 
 export async function runInboundSmartWaitFlow(params: {
@@ -116,57 +94,10 @@ export async function runInboundSmartWaitFlow(params: {
       job_id: job.id,
     });
   } else {
-    queueAgentResponseJobProcessor(job.id);
+    await queueAgentResponseJobProcessor(job.id);
   }
-
-  const waitOutcome = await waitAndProcessAgentResponseJob(job.id, params.sb);
-  const current = await loadAgentResponseJob(params.sb, job.id);
-
-  if (current?.status === "completed" || current?.status === "completed_with_fallback") {
-    return { mode: "smart_wait", jobId: job.id };
-  }
-
-  const needsFallback =
-    waitOutcome === "timeout" ||
-    waitOutcome === "failed" ||
-    current?.status === "failed" ||
-    (current?.status === "pending" && current && isJobStuckPastGrace(current));
-
-  if (needsFallback && current) {
-    const reason: AgentResponseFallbackReason =
-      waitOutcome === "timeout"
-        ? "processor_timeout"
-        : current.status === "failed"
-          ? "max_wait_exceeded"
-          : !processorSecretOk
-            ? "processor_not_called"
-            : "job_stuck";
-    await runFallbackForJob({ sb: params.sb, jobId: current.id, reason });
-    return { mode: "smart_wait", jobId: job.id, fallback: true, reason };
-  }
-
-  if (waitOutcome === "timeout" || waitOutcome === "failed") {
-    await runFallbackForJob({
-      sb: params.sb,
-      jobId: job.id,
-      reason: waitOutcome === "timeout" ? "processor_timeout" : "job_failed",
-    });
-    return { mode: "smart_wait", jobId: job.id, fallback: true };
-  }
-
-  const processedDue = await processDueJobsForConversation({
-    sb: params.sb,
-    tenantId: params.tenantId,
-    remoteJid: params.remoteJid,
-  });
-  if (processedDue > 0) {
-    console.info("[agent-response-jobs]", {
-      event: "inline_due_processed",
-      tenant_id: params.tenantId,
-      remote_jid: maskRemoteJidForLog(params.remoteJid),
-      processed: processedDue,
-    });
-  }
-
+  // O webhook termina aqui. Esperar o Smart Wait/LLM no mesmo request segura
+  // o ACK da Evolution e serializa mensagens consecutivas em intervalos de
+  // um minuto. O endpoint de dispatch assumiu o processamento longo.
   return { mode: "smart_wait", jobId: job.id };
 }

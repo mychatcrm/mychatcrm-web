@@ -47,13 +47,17 @@ describe("omnichannel runtime contracts", () => {
 
   it("acknowledges Evolution webhooks before waiting for the agent response", () => {
     const webhook = source("app/api/webhooks/evolution/route.ts");
-    const waitUntilCall = webhook.indexOf("waitUntil(");
-    const smartWaitCall = webhook.indexOf("runInboundSmartWaitFlow({", waitUntilCall);
+    const flow = source("lib/server/evolution-webhook-agent-flow.ts");
+    const jobs = source("lib/server/agent-response-jobs.ts");
+    const dispatch = source("app/api/internal/agent-response-jobs/dispatch/route.ts");
 
-    expect(webhook).toContain('import { waitUntil } from "@vercel/functions"');
-    expect(waitUntilCall).toBeGreaterThan(0);
-    expect(smartWaitCall).toBeGreaterThan(waitUntilCall);
-    expect(webhook.slice(waitUntilCall, smartWaitCall)).not.toContain("await runInboundSmartWaitFlow");
+    expect(webhook).not.toContain("waitUntil(");
+    expect(flow).toContain("await queueAgentResponseJobProcessor(job.id)");
+    expect(flow).not.toContain("waitAndProcessAgentResponseJob");
+    expect(jobs).toContain('new URL("/api/internal/agent-response-jobs/dispatch", base)');
+    expect(dispatch).toContain('import { waitUntil } from "@vercel/functions"');
+    expect(dispatch).toContain("processDispatchedJob(jobId)");
+    expect(dispatch).toContain("{ status: 202 }");
   });
 
   it("scopes direct WhatsApp rule conflicts to the same transport and connection", () => {

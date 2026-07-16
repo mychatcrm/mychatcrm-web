@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { waitUntil } from "@vercel/functions";
 import {
   generateAgentResponse,
   isAgentMissingInstructionsResult,
@@ -929,35 +928,24 @@ export async function POST(request: Request) {
             const inboundMessageKey =
               inboundSaved && !inboundSaved.duplicate ? inboundSaved.id : null;
             if (inboundMessageKey) {
-              // A Evolution entrega eventos em série por endpoint. Esperar a IA
-              // aqui segurava o ACK do webhook por 20–60 s e fazia as mensagens
-              // seguintes chegarem uma por minuto, cada uma em um job separado.
-              // `waitUntil` devolve 200 imediatamente e mantém o processamento
-              // durável dentro da própria invocação Vercel.
-              waitUntil(
-                runInboundSmartWaitFlow({
-                  sb: sbState,
-                  tenantId: row.tenant_id,
-                  remoteJid: msg.remoteJid,
-                  leadId,
-                  journeyId: journey?.id ?? null,
-                  agentId,
-                  instanceName,
-                  inboundMessageKey,
-                  occurredAt:
-                    inboundSaved && !inboundSaved.duplicate
-                      ? inboundSaved.created_at
-                      : msg.occurredAt ?? new Date().toISOString(),
-                  smartWait,
-                }).catch((error) => {
-                  console.warn("[agent-response-jobs] background_flow_failed", {
-                    tenant_id: row.tenant_id,
-                    agent_id: agentId,
-                    remote_jid_last4: msg.remoteJid.replace(/\D/g, "").slice(-4),
-                    error: error instanceof Error ? error.message : String(error),
-                  });
-                }),
-              );
+              // Só persiste/anexa o job e dispara uma invocação interna que
+              // responde 202 antes de esperar/gerar. Nenhum processamento longo
+              // permanece preso ao ACK que a Evolution precisa receber.
+              await runInboundSmartWaitFlow({
+                sb: sbState,
+                tenantId: row.tenant_id,
+                remoteJid: msg.remoteJid,
+                leadId,
+                journeyId: journey?.id ?? null,
+                agentId,
+                instanceName,
+                inboundMessageKey,
+                occurredAt:
+                  inboundSaved && !inboundSaved.duplicate
+                    ? inboundSaved.created_at
+                    : msg.occurredAt ?? new Date().toISOString(),
+                smartWait,
+              });
               return;
             } else {
               console.info("[agent-response-jobs]", {

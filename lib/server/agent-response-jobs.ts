@@ -635,7 +635,7 @@ export function hasAgentResponseProcessorSecret(): boolean {
   return Boolean(getInternalApiToken());
 }
 
-export function triggerAgentResponseJobProcessor(jobId?: string): boolean {
+export async function triggerAgentResponseJobProcessor(jobId?: string): Promise<boolean> {
   const secret = getInternalApiToken();
   if (!secret) {
     logJobEvent("processor_not_called", { scope: "processor_trigger", reason: "missing_internal_secret" });
@@ -645,21 +645,29 @@ export function triggerAgentResponseJobProcessor(jobId?: string): boolean {
     process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "") ||
     (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "") ||
     "https://mychatcrm.vercel.app";
-  const url = new URL("/api/internal/process-agent-job", base);
+  const url = new URL("/api/internal/agent-response-jobs/dispatch", base);
   if (jobId) url.searchParams.set("jobId", jobId);
-  void fetch(url.toString(), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...internalApiAuthHeaders(),
-    },
-    body: JSON.stringify(jobId ? { jobId } : {}),
-  }).catch((error) => {
+  try {
+    const response = await fetch(url.toString(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...internalApiAuthHeaders(),
+      },
+      body: JSON.stringify(jobId ? { jobId } : {}),
+    });
+    if (response.ok) return true;
+    logJobEvent("processor_not_called", {
+      scope: "processor_trigger",
+      job_id: jobId ?? null,
+      reason: `dispatch_http_${response.status}`,
+    });
+  } catch (error) {
     logJobEvent("processor_not_called", {
       scope: "processor_trigger",
       job_id: jobId ?? null,
       reason: error instanceof Error ? error.message : "fetch_failed",
     });
-  });
-  return true;
+  }
+  return false;
 }
