@@ -976,6 +976,7 @@ export async function POST(request: Request) {
                 smartWait,
                 processorBaseUrl: new URL(request.url).origin,
                 deferProcessor: (task) => {
+                  // Mantém o ACK do webhook fora do tempo de execução do processador.
                   waitUntil(task.then(() => undefined));
                 },
               });
