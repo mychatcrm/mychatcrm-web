@@ -1976,14 +1976,11 @@ async function resolveStructuredAgendaPlan(params: {
     }
   }
 
-  const directAuthorized =
-    action === "cancel"
-      ? false
-      : action === "reschedule"
-        ? RESCHEDULE_RE.test(params.clientText) && scheduleComplete
-        : isInitialAgendaMutationRequest(params.clientText) && scheduleComplete;
-  // A intenção explícita do lead vence o rótulo conservador do modelo. Se a
-  // pessoa disse "pode agendar amanhã às duas", não pedimos outro "sim".
+  // Toda mutação começa como proposta. A única autorização de execução é a
+  // confirmação de uma ação pendente específica, inclusive para criar e
+  // remarcar. Isso impede diferenças de comportamento conforme o rótulo
+  // escolhido pelo modelo para o mesmo pedido do cliente.
+  const directAuthorized = false;
   const proposal =
     isProposalAction(params.plan.action) && !standaloneConfirmation && !directAuthorized;
   const pendingAuthorized = Boolean(

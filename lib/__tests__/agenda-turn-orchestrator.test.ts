@@ -368,8 +368,8 @@ describe("resolveAgendaTurn", () => {
   });
 
   describe("plano estruturado da agenda", () => {
-    it("executa uma ordem direta e completa sem pedir confirmação redundante", async () => {
-      const { sb, rpc } = makeStructuredSb();
+    it("transforma uma ordem direta e completa em proposta antes de criar", async () => {
+      const { sb, rpc, pendingRows } = makeStructuredSb();
       const result = await resolveAgendaTurn({
         sb,
         tenantId: "tenant-1",
@@ -390,10 +390,16 @@ describe("resolveAgendaTurn", () => {
       });
 
       expect(result).toMatchObject({
-        action: "scheduled",
-        text: "Pronto, ficou agendado para 10/06/2026, às 14h.",
+        action: "needs_confirmation",
+        text: "Posso confirmar para 10/06/2026, às 14h?",
       });
-      expect(rpc).toHaveBeenCalledTimes(1);
+      expect(pendingRows[0]).toMatchObject({
+        action: "create",
+        proposed_date: "10/06/2026",
+        proposed_time: "14:00",
+        state: "pending",
+      });
+      expect(rpc).not.toHaveBeenCalled();
     });
 
     it("persiste uma proposta e aguarda um sim antes de alterar a agenda", async () => {
@@ -1269,7 +1275,7 @@ describe("resolveAgendaTurn", () => {
       expect(insertAgendaEventMock).not.toHaveBeenCalled();
     });
 
-    it("regressão real: ordem em áudio vence plano ISO antigo e agenda amanhã às 14h", async () => {
+    it("regressão real: ordem em áudio corrige plano ISO antigo antes da confirmação", async () => {
       const { sb, rpc, pendingRows } = makeStructuredSb();
       const result = await resolveAgendaTurn({
         sb,
@@ -1298,15 +1304,17 @@ describe("resolveAgendaTurn", () => {
       });
 
       expect(result).toMatchObject({
-        action: "scheduled",
-        text: "Pronto, ficou agendado para 02/06/2026, às 14h.",
+        action: "needs_confirmation",
+        text: "Posso confirmar para 02/06/2026, às 14h?",
       });
-      expect(pendingRows).toHaveLength(0);
+      expect(pendingRows[0]).toMatchObject({
+        action: "create",
+        proposed_date: "02/06/2026",
+        proposed_time: "14:00",
+        state: "pending",
+      });
       expect(result.text).not.toContain("2023");
-      expect(rpc).toHaveBeenCalledWith(
-        "apply_agent_agenda_mutation",
-        expect.objectContaining({ p_start_at: "2026-06-02T17:00:00.000Z" }),
-      );
+      expect(rpc).not.toHaveBeenCalled();
     });
 
     it("confirmação corrige proposta pendente antiga com o áudio real antes do commit", async () => {
