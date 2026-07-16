@@ -4,6 +4,7 @@ import {
   reconcileAgendaOutboxDelivery,
   reconcileMissingAgendaNotifications,
 } from "@/lib/server/agenda-notification-outbox";
+import { processAgendaSyncOutbox } from "@/lib/server/agent-cta-scheduler";
 import { verifyInternalApiRequest } from "@/lib/server/internal-api-auth";
 
 export const dynamic = "force-dynamic";
@@ -25,14 +26,16 @@ export async function POST(request: Request) {
   }
 
   try {
-    // 1) Recupera obrigações que a janela pós-commit possa ter perdido.
+    // 1) Retoma sincronizações externas que falharam depois do commit local.
+    const sync = await processAgendaSyncOutbox({ limit: 50 });
+    // 2) Recupera obrigações que a janela pós-commit possa ter perdido.
     const reconciled = await reconcileMissingAgendaNotifications({ limit: 100, maxBatches: 20 });
-    // 2) Reivindica e envia pendentes (claim transacional).
+    // 3) Reivindica e envia pendentes (claim transacional).
     const processed = await processAgendaNotificationOutbox({ limit: 50 });
-    // 3) Promove entregues / devolve a retry conforme os webhooks de entrega.
+    // 4) Promove entregues / devolve a retry conforme os webhooks de entrega.
     const delivery = await reconcileAgendaOutboxDelivery({ limit: 50 });
-    console.info("[agenda-notification-outbox]", { event: "process_complete", reconciled, processed, delivery });
-    return NextResponse.json({ ok: true, reconciled, processed, delivery });
+    console.info("[agenda-notification-outbox]", { event: "process_complete", sync, reconciled, processed, delivery });
+    return NextResponse.json({ ok: true, sync, reconciled, processed, delivery });
   } catch (err) {
     console.error("[agenda-notification-outbox]", {
       event: "process_error",

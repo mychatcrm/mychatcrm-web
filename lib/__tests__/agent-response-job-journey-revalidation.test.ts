@@ -107,7 +107,27 @@ function makeSb(maybeSingleQueue: Array<Record<string, unknown> | null>, updates
       Promise.resolve({ data: null, error: null }).then(resolve);
     return builder;
   };
-  return { from: () => makeBuilder() } as never;
+  return {
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      if (name !== "claim_agent_response_job_v2") return { data: null, error: null };
+      // Preserva a fila histórica do teste: primeira linha era a leitura do
+      // pending e a segunda, o resultado do claim. Agora ambas acontecem no RPC.
+      maybeSingleQueue.shift();
+      const claimed = maybeSingleQueue.shift();
+      return {
+        data: claimed
+          ? {
+              ...claimed,
+              status: "processing",
+              claim_token: args.p_claim_token,
+              claim_expires_at: new Date(Date.now() + 180_000).toISOString(),
+            }
+          : null,
+        error: null,
+      };
+    },
+    from: () => makeBuilder(),
+  } as never;
 }
 
 describe("tryProcessAgentResponseJob — revalidação de jornada", () => {

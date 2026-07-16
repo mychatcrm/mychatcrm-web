@@ -4,6 +4,7 @@ import {
   isAgentMissingInstructionsResult,
 } from "@/lib/ai/generate-agent-response";
 import { detectSupportedLanguageCode, type SupportedLanguageCode } from "@/lib/ai/language-detect";
+import { agendaPlanFromResult } from "@/lib/ai/agent-turn-plan";
 import {
   canUseTts,
   inboundKindFromEvolutionType,
@@ -911,8 +912,11 @@ export async function POST(request: Request) {
           const metadata = agentConfig.data?.metadata && typeof agentConfig.data.metadata === "object"
             ? (agentConfig.data.metadata as Record<string, unknown>)
             : {};
-          const smartWait = smartWaitFromMetadata(metadata);
-          const useSmartWait = smartWait.enabled && !isSmartWaitGloballyDisabled();
+          // O agrupamento é uma garantia de consistência do turno, não uma
+          // preferência opcional do agente. Configurações antigas com
+          // `enabled=false` continuam recebendo os tempos personalizados.
+          const smartWait = { ...smartWaitFromMetadata(metadata), enabled: true };
+          const useSmartWait = !isSmartWaitGloballyDisabled();
           let runImmediateReply = !useSmartWait;
 
           if (useSmartWait) {
@@ -945,7 +949,9 @@ export async function POST(request: Request) {
                 tenant_id: row.tenant_id,
                 remote_jid: msg.remoteJid.replace(/\D/g, "").slice(-4),
               });
-              runImmediateReply = true;
+              // Sem o UUID persistido não há como garantir idempotência. Falha
+              // fechada evita responder separadamente ao mesmo burst.
+              return;
             }
           }
 
@@ -1087,6 +1093,7 @@ export async function POST(request: Request) {
             contactName,
             timezone: schedulingTimezone,
             modelText: modelTextWithoutHandoff,
+            agendaPlan: agendaPlanFromResult(result),
             clientText,
             priorAssistantText,
             recentClientMessages: extractRecentClientMessages(recentConversation),

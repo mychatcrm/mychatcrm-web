@@ -13,7 +13,7 @@ import {
   isAgentAutomationAllowed,
 } from "@/lib/server/conversation-operation";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
-import { processAgentResponseJob } from "@/lib/server/evolution-agent-reply";
+import { processAgentResponseJobByChannel } from "@/lib/server/agent-response-job-dispatcher";
 import { getInternalApiToken, internalApiAuthHeaders } from "@/lib/server/internal-api-auth";
 import {
   authorizeActiveJourney,
@@ -34,6 +34,8 @@ export type AgentResponseJobRow = {
   remote_jid: string;
   agent_id: string;
   instance_name: string;
+  channel: "evolution" | "meta_cloud";
+  connection_id: string | null;
   status: string;
   first_message_at: string;
   last_message_at: string;
@@ -44,6 +46,8 @@ export type AgentResponseJobRow = {
   attempt_count: number;
   burst_generation: number;
   locked_at: string | null;
+  claim_token: string | null;
+  claim_expires_at: string | null;
   completed_at: string | null;
   failed_reason: string | null;
   created_at: string;
@@ -64,6 +68,8 @@ function rowFromDb(data: Record<string, unknown>): AgentResponseJobRow {
     remote_jid: String(data.remote_jid),
     agent_id: String(data.agent_id),
     instance_name: String(data.instance_name),
+    channel: data.channel === "meta_cloud" ? "meta_cloud" : "evolution",
+    connection_id: typeof data.connection_id === "string" ? data.connection_id : null,
     status: String(data.status),
     first_message_at: String(data.first_message_at),
     last_message_at: String(data.last_message_at),
@@ -74,6 +80,8 @@ function rowFromDb(data: Record<string, unknown>): AgentResponseJobRow {
     attempt_count: Number(data.attempt_count ?? 0),
     burst_generation: Number(data.burst_generation ?? 1),
     locked_at: typeof data.locked_at === "string" ? data.locked_at : null,
+    claim_token: typeof data.claim_token === "string" ? data.claim_token : null,
+    claim_expires_at: typeof data.claim_expires_at === "string" ? data.claim_expires_at : null,
     completed_at: typeof data.completed_at === "string" ? data.completed_at : null,
     failed_reason: typeof data.failed_reason === "string" ? data.failed_reason : null,
     created_at: String(data.created_at),
@@ -89,6 +97,8 @@ function isTransientFailure(error: string): boolean {
   const e = error.toLowerCase();
   return (
     e.includes("evolution") ||
+    e.includes("meta") ||
+    e.includes("whatsapp") ||
     e.includes("timeout") ||
     e.includes("fetch") ||
     e.includes("network") ||
@@ -154,10 +164,12 @@ export async function reclaimStuckProcessingJobs(sb?: SupabaseServiceClient): Pr
     .update({
       status: "pending",
       locked_at: null,
+      claim_token: null,
+      claim_expires_at: null,
       updated_at: new Date().toISOString(),
     })
     .eq("status", "processing")
-    .lt("locked_at", cutoff)
+    .or(`claim_expires_at.lt.${new Date().toISOString()},and(claim_expires_at.is.null,locked_at.lt.${cutoff})`)
     .lt("attempt_count", MAX_JOB_ATTEMPTS)
     .select("id");
   if (error) {
@@ -186,13 +198,14 @@ export async function scheduleAgentResponseJob(params: {
   journeyId?: string | null;
   agentId: string;
   instanceName: string;
+  channel?: "evolution" | "meta_cloud";
+  connectionId?: string | null;
   whatsappMessageId: string;
   occurredAt?: string;
   settings?: AgentSmartWaitSettings;
 }): Promise<AgentResponseJobRow | null> {
   const sb = params.sb ?? createSupabaseServiceClient();
   const settings = params.settings ?? (await loadAgentSmartWaitSettings(sb, params.tenantId, params.agentId));
-  if (!settings.enabled) return null;
 
   if (!UUID_RE.test(params.whatsappMessageId)) {
     logJobEvent("failed_reason", {
@@ -255,11 +268,14 @@ export async function scheduleAgentResponseJob(params: {
   // Uma única transação no Postgres faz create-or-append sob lock. O antigo
   // SELECT + UPDATE no TypeScript perdia message_ids quando dois webhooks
   // chegavam juntos (lost update), exatamente o caso de 2–3 mensagens seguidas.
-  const { data, error } = await sb.rpc("upsert_agent_response_job_burst", {
+  const channel = params.channel === "meta_cloud" ? "meta_cloud" : "evolution";
+  const { data, error } = await sb.rpc("upsert_agent_response_job_burst_v2", {
     p_tenant_id: params.tenantId,
     p_remote_jid: params.remoteJid,
     p_agent_id: params.agentId,
     p_instance_name: params.instanceName,
+    p_channel: channel,
+    p_connection_id: params.connectionId ?? null,
     p_message_id: params.whatsappMessageId,
     p_occurred_at: occurredAt.toISOString(),
     p_initial_seconds: settings.initialSeconds,
@@ -321,48 +337,12 @@ export async function cancelPendingAgentResponseJobs(params: {
 }
 
 async function claimJob(sb: SupabaseServiceClient, jobId: string): Promise<AgentResponseJobRow | null> {
-  const now = new Date();
-  const nowIso = now.toISOString();
-  const { data: current } = await sb
-    .from("agent_response_jobs")
-    .select("*")
-    .eq("id", jobId)
-    .eq("status", "pending")
-    .maybeSingle();
-  if (!current) return null;
-  const pending = rowFromDb(current as Record<string, unknown>);
-
-  const maxWait = new Date(pending.max_wait_until).getTime();
-  if (now.getTime() > maxWait) {
-    logJobEvent("not_ready", { job_id: jobId, reason: "past_max_wait_until" });
-    await sb
-      .from("agent_response_jobs")
-      .update({ status: "failed", failed_reason: "max_wait_exceeded", updated_at: nowIso })
-      .eq("id", jobId);
-    return null;
-  }
-
-  if (!isJobReadyToProcess(pending.scheduled_for, now)) {
-    logJobEvent("not_ready", {
-      job_id: jobId,
-      scheduled_for: pending.scheduled_for,
-      now: nowIso,
-    });
-    return null;
-  }
-
-  const { data, error } = await sb
-    .from("agent_response_jobs")
-    .update({
-      status: "processing",
-      locked_at: nowIso,
-      attempt_count: pending.attempt_count + 1,
-      updated_at: nowIso,
-    })
-    .eq("id", jobId)
-    .eq("status", "pending")
-    .select("*")
-    .maybeSingle();
+  const claimToken = crypto.randomUUID();
+  const { data, error } = await sb.rpc("claim_agent_response_job_v2", {
+    p_job_id: jobId,
+    p_claim_token: claimToken,
+    p_claim_ttl_seconds: 180,
+  });
   if (error || !data) return null;
   const claimed = rowFromDb(data as Record<string, unknown>);
   logJobEvent("claimed", {
@@ -396,6 +376,7 @@ async function updateClaimedJobGeneration(
   sb: SupabaseServiceClient,
   jobId: string,
   claimedGeneration: number,
+  claimToken: string,
   patch: Record<string, unknown>,
 ): Promise<boolean> {
   const { data, error } = await sb
@@ -404,6 +385,7 @@ async function updateClaimedJobGeneration(
     .eq("id", jobId)
     .eq("status", "processing")
     .eq("burst_generation", claimedGeneration)
+    .eq("claim_token", claimToken)
     .select("id")
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -421,6 +403,8 @@ async function requeueSupersededJobGeneration(
     .update({
       status: "pending",
       locked_at: null,
+      claim_token: null,
+      claim_expires_at: null,
       updated_at: new Date().toISOString(),
     })
     .eq("id", jobId)
@@ -437,6 +421,8 @@ export async function tryProcessAgentResponseJob(
   const job = await claimJob(client, jobId);
   if (!job) return "skipped";
   const claimedGeneration = job.burst_generation;
+  const claimToken = job.claim_token;
+  if (!claimToken) return "skipped";
 
   try {
     // journeyId do próprio job é obrigatório aqui: sem ele, com isolamento de
@@ -454,9 +440,13 @@ export async function tryProcessAgentResponseJob(
         client,
         job.id,
         claimedGeneration,
+        claimToken,
         {
           status: "cancelled",
           failed_reason: eligible.reason,
+          locked_at: null,
+          claim_token: null,
+          claim_expires_at: null,
           updated_at: new Date().toISOString(),
         },
       );
@@ -465,7 +455,7 @@ export async function tryProcessAgentResponseJob(
       return "skipped";
     }
 
-    const result = await processAgentResponseJob(client, job, claimedGeneration);
+    const result = await processAgentResponseJobByChannel(client, job, claimedGeneration);
 
     if (await isJobGenerationStale(client, job.id, claimedGeneration)) {
       logJobEvent("generation_stale", { job_id: job.id, claimed_generation: claimedGeneration });
@@ -488,13 +478,15 @@ export async function tryProcessAgentResponseJob(
 
     const patch: Record<string, unknown> = {
       status: finalStatus,
+      locked_at: null,
+      claim_token: null,
+      claim_expires_at: null,
       updated_at: new Date().toISOString(),
     };
     if (finalStatus === "completed") {
       patch.completed_at = new Date().toISOString();
       patch.failed_reason = null;
     } else if (finalStatus === "pending") {
-      patch.locked_at = null;
       patch.scheduled_for = new Date(Date.now() + 5_000).toISOString();
       patch.failed_reason = failedError;
     } else {
@@ -506,6 +498,7 @@ export async function tryProcessAgentResponseJob(
       client,
       job.id,
       claimedGeneration,
+      claimToken,
       patch,
     );
     if (!finalized) {
@@ -534,10 +527,13 @@ export async function tryProcessAgentResponseJob(
       client,
       job.id,
       claimedGeneration,
+      claimToken,
       {
         status: job.attempt_count < MAX_JOB_ATTEMPTS ? "pending" : "failed",
         failed_reason: message,
         locked_at: null,
+        claim_token: null,
+        claim_expires_at: null,
         updated_at: new Date().toISOString(),
       },
     ).catch(() => false);

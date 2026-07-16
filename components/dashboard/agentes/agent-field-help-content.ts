@@ -5,14 +5,14 @@ export const AGENT_FIELD_HELP = {
 
   cor: 'Cor que representa este agente na lista e nos cards do painel. Use a cor da sua marca para manter consistência visual. Ex.: laranja para o time comercial, azul para suporte',
 
-  avatar: 'Ícone visual do agente. Facilita identificar rapidamente qual bot é qual quando há vários agentes criados. Ex.: ícone de casa para um agente imobiliário',
+  avatar: "Ícone visual do agente. Facilita identificar rapidamente qual bot é qual quando há vários agentes criados.",
 
   whatsappLinha:
     'Número do WhatsApp que este agente usa para responder. Cada agente pode usar uma linha diferente. Configure as linhas em Integrações → WhatsApp. Ex.: Linha 1 = vendas, Linha 2 = suporte técnico',
 
   // ── SmartWait ───────────────────────────────────────────────────────────────
   smartWaitAtivar:
-    'Faz o agente esperar o cliente terminar de digitar antes de responder — como uma pessoa faria. Evita respostas fragmentadas quando o cliente envia várias mensagens em sequência. Ex.: cliente manda 3 mensagens em 5 segundos; o agente espera tudo e responde de uma vez',
+    'Esta proteção fica sempre ativa: o agente espera o contato terminar uma sequência curta de mensagens, consolida o contexto e envia uma única resposta coerente. Os tempos abaixo continuam personalizáveis',
 
   smartWaitInicial:
     'Tempo de espera após a primeira mensagem do cliente. Dá espaço para o cliente continuar digitando antes do agente começar a processar. Ex.: 7 segundos — o agente aguarda 7s após a primeira mensagem',
@@ -27,7 +27,7 @@ export const AGENT_FIELD_HELP = {
     'Ignora mensagens idênticas enviadas em sequência antes do agente responder. Evita processar a mesma mensagem duas vezes por cliques acidentais. Ex.: cliente aperta "Enviar" duas vezes com a mesma frase — o agente trata como uma só',
 
   // ── Tom e comportamento ──────────────────────────────────────────────────────
-  tom: 'Estilo de linguagem que o agente usa ao se comunicar. Afeta o vocabulário, o nível de formalidade e o calor humano das respostas. Ex.: "Formal" para advocacia, "Casual" para e-commerce de moda, "Técnico" para suporte de TI',
+  tom: 'Estilo de linguagem que o agente usa ao se comunicar. Afeta o vocabulário, o nível de formalidade e o calor humano das respostas. Ex.: "Formal", "Casual" ou "Técnico", conforme as instruções do seu atendimento',
 
   velocidade:
     'Atraso simulado antes do agente enviar a resposta, para parecer mais humano e menos robótico. O cliente verá "digitando…" antes da mensagem aparecer. Ex.: 2 segundos de delay — mais natural em atendimentos comerciais',
@@ -36,20 +36,20 @@ export const AGENT_FIELD_HELP = {
     'Idioma preferencial das respostas do agente. "Automático" detecta e responde no idioma que o cliente estiver usando. Ex.: configure "Português" se quiser garantir respostas sempre em PT-BR, mesmo que o cliente escreva em outro idioma',
 
   temperatura:
-    'Controla o quanto a IA varia suas respostas. Baixo = mais direto, consistente e previsível. Alto = mais criativo e variado a cada resposta. Ex.: 0,2 para atendimento ao cliente (consistência); 0,7 para follow-ups e copywriting (variedade)',
+    'Controla o quanto a IA varia suas respostas. Baixo = mais direto, consistente e previsível. Alto = mais criativo e variado a cada resposta. Ex.: 0,2 para máxima consistência; 0,7 para mais variedade',
 
   // ── Instruções ──────────────────────────────────────────────────────────────
   modoInstrucoes:
     'Escolha como configurar as instruções do agente. Simples = um único bloco de texto; Pro = campos separados (identidade, objetivo, regras). Ex.: comece no Simples para ir rápido e migre para Pro quando precisar de mais controle',
 
   promptSimples:
-    'Escreva tudo sobre o agente em um único texto livre: quem ele é, como fala, o que pode e não pode fazer. É o campo mais importante do agente. Ex.: "Sou a assistente da Clínica Saúde Plena. Respondo sobre consultas, planos e valores com tom gentil e objetivo"',
+    "Escreva tudo sobre o agente em um único texto livre: quem ele é, como fala, o que pode e não pode fazer. É o campo mais importante do agente e a única fonte para definir o escopo do atendimento.",
 
   identidade:
-    'Como o agente se apresenta ao cliente. Inclua nome, empresa e estilo de comunicação. Ex.: "Sou a Sofia, assistente virtual da Construtora XYZ. Me comunico de forma objetiva e amigável em português"',
+    'Como o agente se apresenta ao cliente. Inclua nome, organização e estilo de comunicação. Ex.: "Sou a Sofia, assistente virtual da sua empresa. Me comunico de forma objetiva e amigável em português"',
 
   objetivo:
-    'Meta do agente em texto livre. Descreve o resultado que ele deve buscar em cada conversa. Ex.: "Qualificar leads que chegam pelo Instagram e agendar visitas ao imóvel com o corretor"',
+    'Meta do agente em texto livre. Descreve o resultado que ele deve buscar em cada conversa. Ex.: "Entender a necessidade do contato, responder dúvidas e oferecer o próximo passo configurado"',
 
   instrucoes:
     'Comportamento principal do agente: quais perguntas fazer, como conduzir a conversa, quando pedir para um humano assumir. É o campo mais importante para definir a qualidade das respostas. Pode apagar o modelo e colar o seu próprio texto.',
@@ -65,7 +65,7 @@ export const AGENT_FIELD_HELP = {
     'Documentos que o agente lê para responder com precisão e consistência. Ideal para tabelas de preços, manuais e FAQs. Ex.: tabela de preços em PDF, catálogo de produtos, perguntas frequentes. Suporta PDF, Word, Excel e outros. Até 5 arquivos',
 
   arquivosEnvio:
-    'Arquivos que o agente envia diretamente no WhatsApp quando o cliente pede ou quando faz sentido na conversa. Ex.: foto do produto, planta do imóvel, contrato em PDF, vídeo de apresentação. Até 50 arquivos por agente',
+    'Arquivos que o agente envia diretamente no WhatsApp quando o cliente pede ou quando faz sentido na conversa. Ex.: imagem, catálogo, documento em PDF ou vídeo de apresentação. Até 50 arquivos por agente',
 
   // ── Handoff ─────────────────────────────────────────────────────────────────
   handoffAtivar:
@@ -79,7 +79,7 @@ export const AGENT_FIELD_HELP = {
     'Define se leads atendidos por este agente são movidos automaticamente para uma etapa do funil do CRM. Mantém o pipeline atualizado sem trabalho manual.',
 
   crmFunil:
-    'Funil do CRM onde o lead será posicionado quando a regra automática estiver ativa. Ex.: funil "Vendas Residencial" ou "Imóveis Comerciais"',
+    'Funil do CRM onde o lead será posicionado quando a regra automática estiver ativa. Ex.: o funil principal configurado para este agente',
 
   crmColuna:
     'Etapa dentro do funil escolhido onde o lead será colocado. Ex.: "Qualificado" — o lead entra automaticamente nesta etapa ao interagir com o agente',
@@ -134,7 +134,7 @@ export const AGENT_FIELD_HELP = {
     'Horas sem resposta que caracterizam uma violação de SLA para este agente. Após esse tempo, a tentativa de retomada recebe prioridade máxima. Ex.: 4 horas — cliente sem resposta por mais de 4h é tratado como urgente',
 
   followUpRespeitarHumano:
-    'Bloqueia o follow-up automático quando um atendente humano está ativo na conversa — seja porque pausou o agente, está no modo humano ou respondeu recentemente. Evita interferência em atendimentos manuais em andamento. Ex.: corretor está respondendo o cliente no WhatsApp → agente pausa e aguarda',
+    'Bloqueia o follow-up automático quando um atendente humano está ativo na conversa — seja porque pausou o agente, está no modo humano ou respondeu recentemente. Evita interferência em atendimentos manuais em andamento. Ex.: a equipe está respondendo no WhatsApp → agente pausa e aguarda',
 
   followUpSoHumano:
     'O agente só retoma automaticamente se um atendente humano estava respondendo e ficou sem responder pelo tempo configurado abaixo. Ideal para recuperar leads abandonados após transferências. Ex.: atendente assumiu o chat e desapareceu — o agente volta após o tempo configurado',
@@ -153,20 +153,20 @@ export const AGENT_FIELD_HELP = {
 
   // ── Follow-up E) Inteligência ────────────────────────────────────────────────
   followUpHistoricoWhatsapp:
-    'Inclui as mensagens anteriores do WhatsApp no contexto usado pela IA para gerar o follow-up. Torna as mensagens muito mais personalizadas e relevantes. Ex.: IA lembra que o cliente perguntou sobre o imóvel de 3 quartos e usa isso ao retomar a conversa',
+    'Inclui as mensagens anteriores do WhatsApp no contexto usado pela IA para gerar o follow-up. Torna as mensagens muito mais personalizadas e relevantes. Ex.: a IA lembra a última dúvida do cliente e usa isso ao retomar a conversa',
 
   followUpHistoricoCrm:
-    'Inclui informações do CRM — resumo do lead, notas, estágio no funil — no contexto da IA. Permite que o agente retome com inteligência sobre o histórico completo do cliente. Ex.: CRM registra que o cliente tem orçamento de R$ 500k → agente usa essa informação ao retomar',
+    'Inclui informações do CRM — resumo do lead, notas e estágio no funil — no contexto da IA. Permite que o agente retome com inteligência sobre o histórico completo do cliente e use somente os dados registrados',
 
   followUpMetaForm:
-    'Inclui os dados preenchidos no formulário do Meta Lead Ads no contexto da IA. Permite personalizar o follow-up com o que o lead informou ao se cadastrar. Ex.: lead informou interesse em "apartamento 2 quartos" no formulário → agente menciona isso na retomada',
+    'Inclui os dados preenchidos no formulário do Meta Lead Ads no contexto da IA. Permite personalizar o follow-up usando somente o que o lead informou ao se cadastrar',
 
   // ── Modo de resposta e voz ───────────────────────────────────────────────────
   modoResposta:
     'Define como o agente responde no WhatsApp. Texto = mensagens escritas normais. Áudio = o agente grava um áudio usando a voz configurada via ElevenLabs. Ex.: use Áudio para atendimentos mais pessoais, como consultoria ou vendas de alto valor',
 
   vozAgente:
-    'Voz usada quando o modo Áudio está ativo. Ouça a prévia antes de salvar para garantir que soa natural para o seu negócio. Ex.: voz feminina formal para atendimento jurídico; voz masculina descontraída para suporte de TI',
+    'Voz usada quando o modo Áudio está ativo. Ouça a prévia antes de salvar para garantir que soa natural e coerente com o tom configurado para o agente',
 
   previewIdioma:
     'Idioma da prévia de voz exibida nesta tela. Não altera o idioma das respostas reais no WhatsApp — serve apenas para testar como a voz soa em diferentes idiomas.',

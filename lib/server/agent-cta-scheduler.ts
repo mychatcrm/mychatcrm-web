@@ -32,6 +32,7 @@ import {
   processAgendaNotificationOutbox,
 } from "@/lib/server/agenda-notification-outbox";
 import type { AgentAgendaDisponibilidade, AgentAgendaLembretes } from "@/lib/types";
+import type { AgentAgendaPlan, AgentAgendaPlanAction } from "@/lib/ai/agent-turn-plan";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -258,7 +259,7 @@ export function isInitialAgendaMutationRequest(userText: string): boolean {
       text,
     ) ||
     /\b(cancelar|remarcar|reagendar|desmarcar)\s+(meu|minha|o|a)?\s*agendamento/i.test(text) ||
-    /^(cancelar|remarcar|reagendar|desmarcar|agendar)\b/i.test(text)
+    /^(cancelar|remarcar|reagendar|desmarcar|agendar|agenda|agende|marcar|marca|marque)\b/i.test(text)
   );
 }
 
@@ -440,7 +441,7 @@ export function extractLocationFromText(text: string): string | null {
   if (quoted?.[1]) return quoted[1].trim();
 
   const afterPrep = trimmed.match(
-    /\b(?:no|na|em|local(?:ização)?|endereço|stand|escritório|sala)\s+([^.!?\n]{3,120})/i,
+    /\b(?:no|na|em|local(?:ização)?|endereço|unidade|sede|filial|sala)\s+([^.!?\n]{3,120})/i,
   );
   if (afterPrep?.[1]) {
     const loc = afterPrep[1].trim().replace(/\s+(?:para|às|as|no dia).*$/i, "").trim();
@@ -448,7 +449,7 @@ export function extractLocationFromText(text: string): string | null {
   }
 
   const keyword = trimmed.match(
-    /\b((?:stand|escritório|sala|showroom|loja)\s+[^.!?\n]{2,80})/i,
+    /\b((?:unidade|sede|filial|escritório|sala|local)\s+[^.!?\n]{2,80})/i,
   );
   if (keyword?.[1]) return keyword[1].trim().slice(0, 200);
 
@@ -871,7 +872,7 @@ async function insertStructuredAgendaEvent(params: {
   }
 }
 
-type AtomicAgendaMutationResult = {
+export type AtomicAgendaMutationResult = {
   action: "scheduled" | "rescheduled" | "cancelled";
   event: AgendaEventRow;
   previous_event: AgendaEventRow | null;
@@ -925,7 +926,7 @@ async function updateAgendaMutationOperation(params: {
   if (error) throw error;
 }
 
-async function syncAtomicAgendaMutation(params: {
+export async function syncAtomicAgendaMutation(params: {
   sb: SupabaseServiceClient;
   tenantId: string;
   operationKey: string;
@@ -978,6 +979,17 @@ async function syncAtomicAgendaMutation(params: {
       status: "completed",
       result: nextResult,
     });
+    await params.sb
+      .from("agenda_sync_outbox")
+      .update({
+        status: "completed",
+        claim_token: null,
+        claim_expires_at: null,
+        last_error: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("tenant_id", params.tenantId)
+      .eq("operation_key", params.operationKey);
     return nextResult;
   } catch (error) {
     nextResult = { ...nextResult, operation_status: "sync_pending" };
@@ -989,6 +1001,19 @@ async function syncAtomicAgendaMutation(params: {
       result: nextResult,
       error,
     }).catch(() => undefined);
+    await params.sb
+      .from("agenda_sync_outbox")
+      .update({
+        status: "pending",
+        claim_token: null,
+        claim_expires_at: null,
+        next_attempt_at: new Date(Date.now() + 60_000).toISOString(),
+        last_error: error instanceof Error ? error.message : String(error),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("tenant_id", params.tenantId)
+      .eq("operation_key", params.operationKey)
+      .neq("status", "completed");
     console.warn("[agent-agenda-google-sync]", {
       tenant_id: params.tenantId,
       operation_key: params.operationKey,
@@ -998,6 +1023,108 @@ async function syncAtomicAgendaMutation(params: {
     });
     return nextResult;
   }
+}
+
+export async function processAgendaSyncOutbox(params?: {
+  sb?: SupabaseServiceClient;
+  limit?: number;
+}): Promise<{ processed: number; completed: number; pending: number; failed: number }> {
+  const maxAttempts = 8;
+  const sb = params?.sb ?? createSupabaseServiceClient();
+  const counts = { processed: 0, completed: 0, pending: 0, failed: 0 };
+  const now = new Date().toISOString();
+  await sb
+    .from("agenda_sync_outbox")
+    .update({ status: "pending", claim_token: null, claim_expires_at: null, updated_at: now })
+    .eq("status", "processing")
+    .lt("claim_expires_at", now);
+  const { data } = await sb
+    .from("agenda_sync_outbox")
+    .select("id,tenant_id,operation_key,payload,attempts")
+    .eq("status", "pending")
+    .lte("next_attempt_at", now)
+    .order("created_at", { ascending: true })
+    .limit(Math.max(1, Math.min(params?.limit ?? 25, 100)));
+  for (const candidate of data ?? []) {
+    const claimToken = crypto.randomUUID();
+    const attempts = Number((candidate as { attempts?: number }).attempts ?? 0) + 1;
+    const { data: claimed } = await sb
+      .from("agenda_sync_outbox")
+      .update({
+        status: "processing",
+        attempts,
+        claim_token: claimToken,
+        claim_expires_at: new Date(Date.now() + 180_000).toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", candidate.id)
+      .eq("status", "pending")
+      .select("id")
+      .maybeSingle();
+    if (!claimed) continue;
+    counts.processed += 1;
+    const payload = candidate.payload as { result?: AtomicAgendaMutationResult } | null;
+    if (!payload?.result?.event?.id) {
+      await sb
+        .from("agenda_sync_outbox")
+        .update({
+          status: "failed",
+          claim_token: null,
+          claim_expires_at: null,
+          last_error: "invalid_sync_payload",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", candidate.id)
+        .eq("claim_token", claimToken);
+      counts.failed += 1;
+      continue;
+    }
+    const result = await syncAtomicAgendaMutation({
+      sb,
+      tenantId: String(candidate.tenant_id),
+      operationKey: String(candidate.operation_key),
+      result: payload.result,
+    });
+    if (result.operation_status === "completed") {
+      counts.completed += 1;
+    } else if (attempts >= maxAttempts) {
+      await sb
+        .from("agenda_sync_outbox")
+        .update({
+          status: "failed",
+          claim_token: null,
+          claim_expires_at: null,
+          last_error: "agenda_sync_attempts_exhausted",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", candidate.id)
+        .eq("status", "pending");
+      counts.failed += 1;
+      console.error("[agent-agenda-google-sync]", {
+        event: "retry_exhausted",
+        tenant_id: candidate.tenant_id,
+        operation_key: candidate.operation_key,
+        attempts,
+      });
+    } else {
+      await sb
+        .from("agenda_sync_outbox")
+        .update({
+          next_attempt_at: new Date(
+            Date.now() + agendaSyncRetryMinutes(attempts) * 60_000,
+          ).toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", candidate.id)
+        .eq("status", "pending");
+      counts.pending += 1;
+    }
+  }
+  return counts;
+}
+
+export function agendaSyncRetryMinutes(attempts: number): number {
+  return Math.min(2 ** Math.max(0, Math.floor(attempts) - 1), 60);
 }
 
 /**
@@ -1027,7 +1154,10 @@ async function enqueueAndSendOwnerNotification(params: {
     timezone: params.timezone,
     agentId: params.agentId ?? null,
   });
-  if (entry.enqueued && entry.outboxId) {
+  // A obrigação pode ter sido inserida atomicamente pelo trigger da mutação.
+  // Mesmo deduplicada, tente reivindicar seu id; linhas já processadas não são
+  // reivindicadas novamente.
+  if (entry.outboxId) {
     await processAgendaNotificationOutbox({ sb: params.sb, outboxId: entry.outboxId });
   }
 }
@@ -1384,6 +1514,250 @@ function resolveScheduleDirective(
   return { ...directive, date: resolved.date, time: resolved.time };
 }
 
+type PendingAgendaActionRow = {
+  id: string;
+  action: "create" | "reschedule" | "cancel";
+  event_id: string | null;
+  proposed_date: string | null;
+  proposed_time: string | null;
+  proposed_location: string | null;
+  expires_at: string;
+};
+
+function executableAction(action: AgentAgendaPlanAction): PendingAgendaActionRow["action"] | null {
+  if (action === "create" || action === "propose_create") return "create";
+  if (action === "reschedule" || action === "propose_reschedule") return "reschedule";
+  if (action === "cancel" || action === "propose_cancel") return "cancel";
+  return null;
+}
+
+function isProposalAction(action: AgentAgendaPlanAction): boolean {
+  return action === "propose_create" || action === "propose_reschedule" || action === "propose_cancel";
+}
+
+async function loadPendingAgendaAction(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  agentId: string;
+}): Promise<PendingAgendaActionRow | null> {
+  const { data } = await params.sb
+    .from("agent_agenda_pending_actions")
+    .select("id,action,event_id,proposed_date,proposed_time,proposed_location,expires_at")
+    .eq("tenant_id", params.tenantId)
+    .eq("remote_jid", params.remoteJid)
+    .eq("agent_id", params.agentId)
+    .eq("state", "pending")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!data) return null;
+  const row = data as PendingAgendaActionRow;
+  if (Date.parse(row.expires_at) > Date.now()) return row;
+  await params.sb
+    .from("agent_agenda_pending_actions")
+    .update({ state: "expired", updated_at: new Date().toISOString() })
+    .eq("id", row.id)
+    .eq("state", "pending");
+  return null;
+}
+
+async function savePendingAgendaAction(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  journeyId?: string | null;
+  agentId: string;
+  action: PendingAgendaActionRow["action"];
+  plan: AgentAgendaPlan;
+  jobId?: string | null;
+  generation?: number | null;
+  timezone: string;
+}): Promise<void> {
+  const existing = await loadPendingAgendaAction(params);
+  const patch = {
+    journey_id: params.journeyId ?? null,
+    action: params.action,
+    event_id: params.plan.eventId && UUID_RE.test(params.plan.eventId) ? params.plan.eventId : null,
+    proposed_date: params.plan.date,
+    proposed_time: params.plan.time,
+    proposed_location: params.plan.location,
+    timezone: params.timezone,
+    source_job_id: params.jobId ?? null,
+    source_generation: params.generation ?? null,
+    state: "pending",
+    expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  if (existing) {
+    await params.sb.from("agent_agenda_pending_actions").update(patch).eq("id", existing.id);
+    return;
+  }
+  const { error } = await params.sb.from("agent_agenda_pending_actions").insert({
+    tenant_id: params.tenantId,
+    remote_jid: params.remoteJid,
+    agent_id: params.agentId,
+    ...patch,
+  });
+  if (error?.code === "23505") {
+    const current = await loadPendingAgendaAction(params);
+    if (current) await params.sb.from("agent_agenda_pending_actions").update(patch).eq("id", current.id);
+  } else if (error) {
+    throw new Error(error.message);
+  }
+}
+
+function structuredAgendaSuccessText(
+  action: "scheduled" | "rescheduled" | "cancelled",
+  directive: AgendaDirective,
+): string {
+  if (action === "cancelled") return AGENDA_SUCCESS_REPLY_CANCELLED;
+  if (directive.type !== "schedule") {
+    return action === "rescheduled" ? AGENDA_SUCCESS_REPLY_RESCHEDULED : AGENDA_SUCCESS_REPLY_SCHEDULED;
+  }
+  const location = directive.location?.trim() ? `, em ${directive.location.trim()}` : "";
+  return action === "rescheduled"
+    ? `Remarcação confirmada para ${directive.date} às ${directive.time}${location}.`
+    : `Agendamento confirmado para ${directive.date} às ${directive.time}${location}.`;
+}
+
+async function resolveStructuredAgendaPlan(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  leadId?: string | null;
+  agentId: string;
+  contactName?: string | null;
+  timezone: string;
+  clientText: string;
+  modelText: string;
+  plan: AgentAgendaPlan;
+  agendaLembretes?: AgentAgendaLembretes | null;
+  agendaDisponibilidade?: AgentAgendaDisponibilidade | null;
+  slotIndex?: number;
+  operationKey?: string | null;
+  jobId?: string | null;
+  claimedGeneration?: number | null;
+  journeyId?: string | null;
+}): Promise<ResolveAgendaTurnResult | null> {
+  const pending = await loadPendingAgendaAction({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    agentId: params.agentId,
+  });
+  const standaloneConfirmation = Boolean(pending && isStandaloneAgendaConfirmation(params.clientText));
+  const plannedAction = executableAction(params.plan.action);
+  const action = standaloneConfirmation ? pending!.action : plannedAction;
+  if (!action) return null;
+
+  const effectivePlan: AgentAgendaPlan = standaloneConfirmation
+    ? {
+        action: pending!.action,
+        date: pending!.proposed_date,
+        time: pending!.proposed_time,
+        location: pending!.proposed_location,
+        eventId: pending!.event_id,
+      }
+    : params.plan;
+  const proposal = isProposalAction(params.plan.action) && !standaloneConfirmation;
+  const scheduleComplete = action === "cancel" || Boolean(effectivePlan.date && effectivePlan.time);
+
+  const directAuthorized =
+    action === "cancel"
+      ? detectAgendaCancelIntent(params.clientText)
+      : action === "reschedule"
+        ? RESCHEDULE_RE.test(params.clientText) && scheduleComplete
+        : isInitialAgendaMutationRequest(params.clientText) && scheduleComplete;
+  const pendingAuthorized = Boolean(
+    pending &&
+    pending.action === action &&
+    (standaloneConfirmation || clientConfirmedAgendaMutation(params.clientText, params.modelText)),
+  );
+
+  if (proposal || !scheduleComplete || (!directAuthorized && !pendingAuthorized)) {
+    if (scheduleComplete) {
+      await savePendingAgendaAction({
+        sb: params.sb,
+        tenantId: params.tenantId,
+        remoteJid: params.remoteJid,
+        journeyId: params.journeyId,
+        agentId: params.agentId,
+        action,
+        plan: effectivePlan,
+        jobId: params.jobId,
+        generation: params.claimedGeneration,
+        timezone: params.timezone,
+      });
+    }
+    const directive: AgendaDirective | null = action === "cancel"
+      ? { type: "cancel", eventId: effectivePlan.eventId && UUID_RE.test(effectivePlan.eventId) ? effectivePlan.eventId : null }
+      : effectivePlan.date && effectivePlan.time
+        ? { type: "schedule", date: effectivePlan.date, time: effectivePlan.time, location: effectivePlan.location }
+        : null;
+    return {
+      text: scheduleComplete ? buildAgendaConfirmationQuestion(directive) : params.modelText,
+      action: scheduleComplete ? "needs_confirmation" : "none",
+      deferHandoff: true,
+    };
+  }
+
+  const directive: AgendaDirective = action === "cancel"
+    ? {
+        type: "cancel",
+        eventId: effectivePlan.eventId && UUID_RE.test(effectivePlan.eventId)
+          ? effectivePlan.eventId
+          : pending?.event_id ?? null,
+      }
+    : {
+        type: "schedule",
+        date: effectivePlan.date!,
+        time: effectivePlan.time!,
+        location: effectivePlan.location,
+      };
+  try {
+    const result = await executeAgendaDirective({
+      sb: params.sb,
+      tenantId: params.tenantId,
+      remoteJid: params.remoteJid,
+      leadId: params.leadId,
+      agentId: params.agentId,
+      contactName: params.contactName,
+      timezone: params.timezone,
+      directive,
+      agendaLembretes: params.agendaLembretes,
+      agendaDisponibilidade: params.agendaDisponibilidade,
+      slotIndex: params.slotIndex,
+      operationKey: params.operationKey,
+      jobId: params.jobId,
+      claimedGeneration: params.claimedGeneration,
+      journeyId: params.journeyId,
+    });
+    if (pending) {
+      await params.sb
+        .from("agent_agenda_pending_actions")
+        .update({ state: "executed", updated_at: new Date().toISOString() })
+        .eq("id", pending.id)
+        .eq("state", "pending");
+    }
+    return {
+      text: structuredAgendaSuccessText(result.action, directive),
+      action: result.action,
+      eventId: result.eventId,
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (reason === AGENDA_GENERATION_STALE || reason === "invalid_job_params") {
+      return { text: params.modelText, action: "stale" };
+    }
+    return {
+      text: agendaFailureReplyForError(error, params.agendaDisponibilidade) ?? AGENDA_FAILURE_REPLY,
+      action: "failed",
+      deferHandoff: true,
+    };
+  }
+}
+
 /** Orquestra confirmação, fallback e execução de agenda antes do envio ao lead. */
 export async function resolveAgendaTurn(params: {
   sb?: SupabaseServiceClient;
@@ -1394,6 +1768,8 @@ export async function resolveAgendaTurn(params: {
   contactName?: string | null;
   timezone: string;
   modelText: string;
+  /** Plano validado por JSON Schema; tem precedência sobre marcadores legados. */
+  agendaPlan?: AgentAgendaPlan | null;
   clientText: string;
   agendaAutomationEnabled: boolean;
   /** Quando false, respostas de sucesso/falha da agenda não mencionam humano/equipe. */
@@ -1427,6 +1803,7 @@ export async function resolveAgendaTurn(params: {
     if (
       parsed.directives.length > 0 ||
       parsed.invalid ||
+      (params.agendaPlan?.action ?? "none") !== "none" ||
       clientRequestedMutation ||
       modelClaimedMutation
     ) {
@@ -1439,6 +1816,29 @@ export async function resolveAgendaTurn(params: {
       return finalize({ text: AGENDA_AUTOMATION_DISABLED_REPLY, action: "blocked", deferHandoff: true });
     }
     return finalize({ text: cleanText, action: "none" });
+  }
+
+  if (params.agendaPlan && params.agentId) {
+    const structured = await resolveStructuredAgendaPlan({
+      sb: params.sb ?? createSupabaseServiceClient(),
+      tenantId: params.tenantId,
+      remoteJid: params.remoteJid,
+      leadId: params.leadId,
+      agentId: params.agentId,
+      contactName: params.contactName,
+      timezone: params.timezone,
+      clientText: params.clientText,
+      modelText: cleanText,
+      plan: params.agendaPlan,
+      agendaLembretes: params.agendaLembretes,
+      agendaDisponibilidade: params.agendaDisponibilidade,
+      slotIndex: params.slotIndex,
+      operationKey: params.operationKey,
+      jobId: params.jobId,
+      claimedGeneration: params.claimedGeneration,
+      journeyId: params.journeyId,
+    });
+    if (structured) return finalize(structured);
   }
 
   const parsed = parseAgendaDirectives(params.modelText);

@@ -42,6 +42,12 @@ function extractProviderMessage(data: unknown): string {
   return d?.choices?.[0]?.message?.content?.trim() ?? "";
 }
 
+function extractProviderRefusal(data: unknown): string | null {
+  const d = data as { choices?: Array<{ message?: { refusal?: string | null } }> };
+  const refusal = d?.choices?.[0]?.message?.refusal;
+  return typeof refusal === "string" && refusal.trim() ? refusal.trim() : null;
+}
+
 function extractUsage(data: unknown): { input: number; output: number; total: number } {
   const d = data as {
     usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
@@ -180,12 +186,25 @@ export async function generateAIResponse(input: AiGenerateInput): Promise<AiGene
         model,
         temperature: normalizeTemperature(input.temperature),
         messages: safeMessages.map((m) => ({ role: m.role, content: m.content })),
+        ...(input.responseFormat
+          ? {
+              response_format: {
+                type: "json_schema",
+                json_schema: {
+                  name: input.responseFormat.name,
+                  strict: true,
+                  schema: input.responseFormat.schema,
+                },
+              },
+            }
+          : {}),
       }),
     });
     const providerRequestId = response.headers.get("x-request-id") ?? undefined;
     const json = await response.json().catch(() => ({}));
     const usage = extractUsage(json);
     const text = extractProviderMessage(json);
+    const refusal = extractProviderRefusal(json);
     const estimatedCostUsd = estimateCostUsd({
       provider: "openai",
       model,
@@ -217,6 +236,24 @@ export async function generateAIResponse(input: AiGenerateInput): Promise<AiGene
       return { ok: false, code, detail: `OPENAI_${response.status}`, provider: "openai", model, latencyMs };
     }
 
+    if (refusal) {
+      await persistTracking({
+        input,
+        status: "blocked",
+        model,
+        text: "",
+        inputTokens: usage.input,
+        outputTokens: usage.output,
+        totalTokens: usage.total,
+        estimatedCostUsd,
+        latencyMs,
+        providerRequestId,
+        errorCode: "REFUSED",
+        errorMessage: refusal,
+      });
+      return { ok: false, code: "REFUSED", detail: refusal.slice(0, 120), provider: "openai", model, latencyMs };
+    }
+
     if (!text) {
       await persistTracking({
         input,
@@ -233,6 +270,35 @@ export async function generateAIResponse(input: AiGenerateInput): Promise<AiGene
         errorMessage: "Resposta vazia",
       });
       return { ok: false, code: "EMPTY_REPLY", provider: "openai", model, latencyMs };
+    }
+
+    let structuredData: unknown;
+    if (input.responseFormat) {
+      try {
+        structuredData = JSON.parse(text);
+      } catch {
+        await persistTracking({
+          input,
+          status: "error",
+          model,
+          text,
+          inputTokens: usage.input,
+          outputTokens: usage.output,
+          totalTokens: usage.total,
+          estimatedCostUsd,
+          latencyMs,
+          providerRequestId,
+          errorCode: "INVALID_STRUCTURED_REPLY",
+          errorMessage: "Resposta estruturada inválida",
+        });
+        return {
+          ok: false,
+          code: "INVALID_STRUCTURED_REPLY",
+          provider: "openai",
+          model,
+          latencyMs,
+        };
+      }
     }
 
     await persistTracking({
@@ -261,6 +327,7 @@ export async function generateAIResponse(input: AiGenerateInput): Promise<AiGene
       latencyMs,
       providerRequestId,
       estimatedCostUsd,
+      structuredData,
     };
     return success;
   } catch (err) {

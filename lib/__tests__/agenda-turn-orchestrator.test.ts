@@ -130,6 +130,79 @@ function makeFlexSb(options: {
   } as unknown;
 }
 
+function makeStructuredSb(options: {
+  pending?: Record<string, unknown> | null;
+} = {}) {
+  const pendingRows: Record<string, unknown>[] = options.pending ? [{ ...options.pending }] : [];
+  const rpc = vi.fn().mockImplementation(async (name: string) => {
+    if (name !== "apply_agent_agenda_mutation") return { data: null, error: null };
+    return {
+      data: {
+        action: "scheduled",
+        event: {
+          ...EXISTING_EVENT,
+          id: "evt-structured",
+          start_at: "2026-06-10T17:00:00.000Z",
+          end_at: "2026-06-10T18:00:00.000Z",
+          agent_id: "agent-1",
+        },
+        previous_event: null,
+        changed: false,
+        deduplicated: true,
+        operation_status: "local_committed",
+      },
+      error: null,
+    };
+  });
+
+  const sb = {
+    rpc,
+    from: (table: string) => {
+      if (table === "agent_agenda_pending_actions") {
+        const state: { patch?: Record<string, unknown>; insert?: Record<string, unknown> } = {};
+        const chain: Record<string, unknown> = {};
+        chain.select = () => chain;
+        chain.eq = () => chain;
+        chain.order = () => chain;
+        chain.limit = () => chain;
+        chain.maybeSingle = async () => ({ data: pendingRows[0] ?? null, error: null });
+        chain.insert = (row: Record<string, unknown>) => {
+          state.insert = row;
+          pendingRows.push({ id: "pending-1", ...row });
+          return Promise.resolve({ error: null });
+        };
+        chain.update = (row: Record<string, unknown>) => {
+          state.patch = row;
+          if (pendingRows[0]) Object.assign(pendingRows[0], row);
+          return chain;
+        };
+        chain.then = (resolve: (value: { data: null; error: null }) => unknown) =>
+          resolve({ data: null, error: null });
+        return chain;
+      }
+      if (table === "agenda_mutation_operations" || table === "agenda_sync_outbox") {
+        const chain: Record<string, unknown> = {};
+        chain.update = () => chain;
+        chain.eq = () => chain;
+        chain.neq = () => chain;
+        chain.then = (resolve: (value: { data: null; error: null }) => unknown) =>
+          resolve({ data: null, error: null });
+        return chain;
+      }
+      if (table === "leads") {
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: { name: "Lead" }, error: null }) }),
+          }),
+        };
+      }
+      throw new Error(`unexpected structured table ${table}`);
+    },
+  } as never;
+
+  return { sb, rpc, pendingRows };
+}
+
 describe("agenda confirmation helpers", () => {
   it("isStandaloneAgendaConfirmation aceita sim simples", () => {
     expect(isStandaloneAgendaConfirmation("sim")).toBe(true);
@@ -259,6 +332,99 @@ describe("resolveAgendaTurn", () => {
     });
     expect(insertAgendaEventMock).not.toHaveBeenCalled();
     expect(cancelAgendaEventMock).not.toHaveBeenCalled();
+  });
+
+  describe("plano estruturado da agenda", () => {
+    it("executa uma ordem direta e completa sem pedir confirmação redundante", async () => {
+      const { sb, rpc } = makeStructuredSb();
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Vou registrar esse horário.",
+        clientText: "Agende 10/06/2026 às 14:00",
+        agendaAutomationEnabled: true,
+        agendaPlan: {
+          action: "create",
+          date: "10/06/2026",
+          time: "14:00",
+          location: null,
+          eventId: null,
+        },
+        operationKey: "agent-response-job:turn-1:1:0",
+      });
+
+      expect(result).toMatchObject({
+        action: "scheduled",
+        text: "Agendamento confirmado para 10/06/2026 às 14:00.",
+      });
+      expect(rpc).toHaveBeenCalledTimes(1);
+    });
+
+    it("persiste uma proposta e aguarda um sim antes de alterar a agenda", async () => {
+      const { sb, rpc, pendingRows } = makeStructuredSb();
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Posso confirmar esse horário?",
+        clientText: "Qual horário você tem disponível?",
+        agendaAutomationEnabled: true,
+        agendaPlan: {
+          action: "propose_create",
+          date: "10/06/2026",
+          time: "14:00",
+          location: null,
+          eventId: null,
+        },
+        operationKey: "agent-response-job:turn-2:1:0",
+      });
+
+      expect(result.action).toBe("needs_confirmation");
+      expect(result.text).toContain("10/06/2026 às 14:00");
+      expect(pendingRows[0]).toMatchObject({ action: "create", state: "pending" });
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
+    it("executa exatamente a proposta persistida quando o lead responde sim", async () => {
+      const { sb, rpc } = makeStructuredSb({
+        pending: {
+          id: "pending-1",
+          action: "create",
+          event_id: null,
+          proposed_date: "10/06/2026",
+          proposed_time: "14:00",
+          proposed_location: null,
+          expires_at: "2026-06-01T16:00:00.000Z",
+          state: "pending",
+        },
+      });
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Vou confirmar.",
+        clientText: "sim",
+        agendaAutomationEnabled: true,
+        agendaPlan: {
+          action: "none",
+          date: null,
+          time: null,
+          location: null,
+          eventId: null,
+        },
+        operationKey: "agent-response-job:turn-3:1:0",
+      });
+
+      expect(result.action).toBe("scheduled");
+      expect(rpc).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("criar sem confirmação não executa", async () => {

@@ -39,6 +39,7 @@ type MetaConfig = {
   phone_registered?: boolean | null;
   template_name?: string | null;
   template_lang?: string | null;
+  template_status?: "APPROVED" | "PENDING" | "REJECTED" | null;
 };
 
 export type SystemNotificationLogItem = {
@@ -226,6 +227,7 @@ export function SystemAgentHub(props: {
   const [templateNameInput, setTemplateNameInput] = useState("");
   const [templateLangInput, setTemplateLangInput] = useState("pt_BR");
   const [templateSaveBusy, setTemplateSaveBusy] = useState(false);
+  const [templateProvisionBusy, setTemplateProvisionBusy] = useState(false);
   const [notifModalOpen, setNotifModalOpen] = useState(false);
   // Pre-loaded FB SDK config so FB.login() can be called synchronously on click
   const metaSdkConfigRef = useRef<{ app_id: string; config_id: string } | null>(null);
@@ -665,6 +667,7 @@ export function SystemAgentHub(props: {
         error?: string;
         template_name?: string | null;
         template_lang?: string | null;
+        template_status?: "APPROVED" | "PENDING" | "REJECTED" | null;
         warning?: string | null;
       };
       if (!res.ok) {
@@ -672,7 +675,14 @@ export function SystemAgentHub(props: {
         return;
       }
       setMetaConfig((prev) =>
-        prev ? { ...prev, template_name: json.template_name ?? null, template_lang: json.template_lang ?? null } : prev,
+        prev
+          ? {
+              ...prev,
+              template_name: json.template_name ?? null,
+              template_lang: json.template_lang ?? null,
+              template_status: json.template_status ?? null,
+            }
+          : prev,
       );
       if (json.warning) {
         setTemplateNotice({ tone: "warning", text: json.warning });
@@ -683,6 +693,50 @@ export function SystemAgentHub(props: {
       setTemplateSaveBusy(false);
     }
   }, [templateNameInput, templateLangInput]);
+
+  const provisionMetaTemplate = useCallback(async () => {
+    setTemplateProvisionBusy(true);
+    setMetaError(null);
+    setTemplateNotice(null);
+    try {
+      const res = await fetch("/api/admin/system-agent/meta/config", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        template_name?: string;
+        template_lang?: string;
+        template_status?: "APPROVED" | "PENDING" | "REJECTED";
+      };
+      if (!res.ok || !json.template_name) {
+        setMetaError(json.error ?? "Falha ao criar o template na Meta.");
+        return;
+      }
+      setTemplateNameInput(json.template_name);
+      setTemplateLangInput(json.template_lang ?? "pt_BR");
+      setMetaConfig((prev) =>
+        prev
+          ? {
+              ...prev,
+              template_name: json.template_name ?? null,
+              template_lang: json.template_lang ?? "pt_BR",
+              template_status: json.template_status ?? "PENDING",
+            }
+          : prev,
+      );
+      setTemplateNotice({
+        tone: json.template_status === "APPROVED" ? "success" : "warning",
+        text:
+          json.template_status === "APPROVED"
+            ? "Template aprovado e ativado."
+            : "Template criado e enviado para análise. As notificações permanecem na fila até a aprovação.",
+      });
+    } finally {
+      setTemplateProvisionBusy(false);
+    }
+  }, []);
 
   const restartSession = useCallback(async () => {
     setRestartBusy(true);
@@ -719,7 +773,7 @@ export function SystemAgentHub(props: {
     } finally {
       setRestartBusy(false);
     }
-  }, [refreshIdentity, senderLine]);
+  }, [refreshIdentity]);
 
   const sendTest = useCallback(async () => {
     if (!testNumber.trim()) {
@@ -1048,12 +1102,19 @@ export function SystemAgentHub(props: {
 
                 {/* Template para mensagens iniciadas pela empresa (fora da janela de 24h) */}
                 <div className="rounded-lg border border-line/50 bg-surface-elevated/20 p-2.5">
-                  <p className="text-[11px] font-semibold text-content-secondary">Template de notificações (opcional)</p>
+                  <p className="text-[11px] font-semibold text-content-secondary">Template de notificações (obrigatório)</p>
                   <p className="mt-0.5 text-[10px] leading-relaxed text-content-faint">
-                    Necessário para a Meta entregar mensagens iniciadas pela empresa fora da janela de 24h. Crie um
-                    template utilitário com <span className="font-mono">{"{{1}}"}</span> no corpo, no gerenciador do
-                    WhatsApp, e informe o nome aqui.
+                    Necessário para a Meta entregar mensagens iniciadas pela empresa fora da janela de 24h. O sistema
+                    pode criar e acompanhar automaticamente um template utilitário seguro.
                   </p>
+                  <button
+                    type="button"
+                    disabled={templateProvisionBusy || templateSaveBusy}
+                    onClick={() => void provisionMetaTemplate()}
+                    className="mt-2 rounded-lg border border-primary/40 bg-primary/10 px-2.5 py-1.5 text-xs font-medium text-primary disabled:opacity-60"
+                  >
+                    {templateProvisionBusy ? "Enviando para a Meta…" : "Criar template automaticamente"}
+                  </button>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <input
                       type="text"
@@ -1092,8 +1153,8 @@ export function SystemAgentHub(props: {
                     </p>
                   ) : metaConfig?.template_name ? (
                     <p className="mt-1.5 text-[10px] text-emerald-400">
-                      ✓ Notificações serão enviadas via template «{metaConfig.template_name}» (
-                      {metaConfig.template_lang ?? "pt_BR"}).
+                      {metaConfig.template_status === "APPROVED" ? "✓" : "⏳"} Template «
+                      {metaConfig.template_name}» ({metaConfig.template_lang ?? "pt_BR"}) — status: {metaConfig.template_status ?? "desconhecido"}.
                     </p>
                   ) : (
                     <p className="mt-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[10px] leading-relaxed text-amber-100">

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AGENDA_SLOT_TAKEN_REPLY,
+  agendaSyncRetryMinutes,
   assistantTextForSchedulingConfirmation,
   buildOutsideAvailabilityReply,
   createAgendaEventForSchedulingCta,
@@ -160,6 +161,11 @@ function makeConflictSb(options: {
 }
 
 describe("agent-cta-scheduler", () => {
+  it("aplica backoff exponencial com teto na sincronização externa", () => {
+    expect(agendaSyncRetryMinutes(1)).toBe(1);
+    expect(agendaSyncRetryMinutes(4)).toBe(8);
+    expect(agendaSyncRetryMinutes(20)).toBe(60);
+  });
   beforeEach(() => {
     insertAgendaEventMock.mockReset();
     updateAgendaEventMock.mockReset();
@@ -244,7 +250,7 @@ describe("agent-cta-scheduler", () => {
   });
 
   it("webhook scenario: lead says sim after agent proposed a schedule", () => {
-    const priorProposal = "Posso agendar sua visita para amanhã às 14h no nosso stand?";
+    const priorProposal = "Posso agendar seu horário para amanhã às 14h na unidade central?";
     const modelReply = "Ótimo, confirmado!";
     expect(
       detectSchedulingConfirmation(
@@ -263,8 +269,8 @@ describe("agent-cta-scheduler", () => {
 
   it("extracts location from assistant text", () => {
     expect(
-      extractLocationFromText("Visita amanhã às 14h no stand Central Park"),
-    ).toContain("stand");
+      extractLocationFromText("Horário amanhã às 14h na unidade central"),
+    ).toContain("unidade central");
   });
 
   it("formats existing appointment block", () => {
@@ -521,6 +527,15 @@ describe("agent-cta-scheduler", () => {
     const sb = {
       rpc,
       from: (table: string) => {
+        if (table === "agenda_sync_outbox") {
+          return {
+            update: () => {
+              const chain = { eq: vi.fn() };
+              chain.eq.mockReturnValue(chain);
+              return chain;
+            },
+          };
+        }
         if (table !== "agenda_mutation_operations") {
           throw new Error(`unexpected table ${table}`);
         }

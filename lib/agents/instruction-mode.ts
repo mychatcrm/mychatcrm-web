@@ -36,13 +36,11 @@ export function assembleStoredSystemPrompt(agent: Agent): string {
     const simple = agent.simplePrompt?.trim() ?? "";
     if (simple) return simple;
   }
-  const parts = [
-    agent.systemPrompt,
-    agent.promptIdentidade,
-    agent.promptObjetivo,
-    agent.promptRegrasAdicionais ? `Regras adicionais:\n${agent.promptRegrasAdicionais}` : null,
-  ].filter((part): part is string => typeof part === "string" && part.trim().length > 0);
-  return parts.join("\n\n");
+  const primary = agent.systemPrompt?.trim() ?? "";
+  if (primary) return primary;
+  // Compatibilidade para rascunhos Pro antigos sem campo principal. A coluna
+  // nunca volta a duplicar as seções quando systemPrompt já existe.
+  return buildSimplePromptFromProFields(agent);
 }
 
 export function agentUsesSimpleInstructions(agent: Partial<Agent>): boolean {

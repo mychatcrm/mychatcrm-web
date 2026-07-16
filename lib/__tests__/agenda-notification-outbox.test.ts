@@ -11,10 +11,13 @@ import {
 
 const sendSystemNotificationMock = vi.fn();
 const getSystemAgentMetaConfigMock = vi.fn();
+const refreshSystemAgentMetaTemplateStatusMock = vi.fn();
 
 vi.mock("@/lib/server/system-agent", () => ({
   sendSystemNotification: (...args: unknown[]) => sendSystemNotificationMock(...args),
   getSystemAgentMetaConfig: (...args: unknown[]) => getSystemAgentMetaConfigMock(...args),
+  refreshSystemAgentMetaTemplateStatus: (...args: unknown[]) =>
+    refreshSystemAgentMetaTemplateStatusMock(...args),
 }));
 
 type Row = Record<string, unknown>;
@@ -288,7 +291,7 @@ describe("agenda-notification-outbox — enqueue", () => {
   it("replay idempotente não duplica", async () => {
     const { sb } = makeSb({ tenantPhone: "5562990000001", outbox: [outboxRow({ operation_key: "op-1", action: "scheduled" })] });
     const res = await enqueueAgendaOwnerNotification({ sb, ...ENQUEUE });
-    expect(res).toEqual({ enqueued: false, outboxId: null });
+    expect(res).toEqual({ enqueued: false, outboxId: "outbox-1" });
   });
 
   it("nunca lança com banco indisponível", async () => {
@@ -301,8 +304,10 @@ describe("agenda-notification-outbox — enqueue", () => {
 describe("agenda-notification-outbox — claim + envio inline", () => {
   beforeEach(() => {
     getSystemAgentMetaConfigMock.mockReset();
+    refreshSystemAgentMetaTemplateStatusMock.mockReset();
     sendSystemNotificationMock.mockReset();
     getSystemAgentMetaConfigMock.mockResolvedValue(null);
+    refreshSystemAgentMetaTemplateStatusMock.mockResolvedValue(null);
     sendSystemNotificationMock.mockResolvedValue({ ok: true, debug: { evolutionMessageId: "wamid-1" } });
   });
 
@@ -331,6 +336,21 @@ describe("agenda-notification-outbox — claim + envio inline", () => {
     expect(outbox[0]!.status).toBe("pending");
     expect(outbox[0]!.last_error).toBe(META_TEMPLATE_REQUIRED_ERROR);
     expect(outbox[0]!.claim_token).toBeNull();
+  });
+
+  it("template Meta pendente não consome tentativas nem envia antes da aprovação", async () => {
+    getSystemAgentMetaConfigMock.mockResolvedValue({
+      active: true,
+      templateName: "mychatcrm_agenda_notification_v1",
+      templateStatus: "PENDING",
+    });
+    refreshSystemAgentMetaTemplateStatusMock.mockResolvedValue("PENDING");
+    const { sb, outbox } = makeSb({ outbox: [outboxRow()] });
+    const res = await processAgendaNotificationOutbox({ sb, outboxId: "outbox-1" });
+    expect(sendSystemNotificationMock).not.toHaveBeenCalled();
+    expect(res.pending).toBe(1);
+    expect(outbox[0]!.attempts).toBe(0);
+    expect(outbox[0]!.last_error).toBe("meta_template_not_approved");
   });
 
   it("falha de envio mantém pending com attempts e backoff", async () => {

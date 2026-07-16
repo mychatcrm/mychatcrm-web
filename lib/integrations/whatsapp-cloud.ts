@@ -276,6 +276,64 @@ export async function fetchWhatsAppMessageTemplateStatus(params: {
   return { found: true, status, category: match.category ?? null };
 }
 
+/** Cria o template utilitário usado pelas notificações operacionais do agente
+ * do sistema. A aprovação final é assíncrona e deve ser consultada pelo nome. */
+export async function createWhatsAppMessageTemplate(params: {
+  wabaId: string;
+  accessToken: string;
+  templateName: string;
+  languageCode?: string;
+}): Promise<{
+  ok: boolean;
+  status: number;
+  templateStatus: "APPROVED" | "PENDING" | "REJECTED" | null;
+  id?: string;
+  error?: string;
+}> {
+  const url = `${GRAPH_API}/${encodeURIComponent(params.wabaId)}/message_templates`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${params.accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name: params.templateName,
+      language: params.languageCode || "pt_BR",
+      category: "UTILITY",
+      allow_category_change: true,
+      components: [
+        {
+          type: "BODY",
+          text: "Notificação operacional do MyChatCRM: {{1}}",
+          example: {
+            body_text: [["Novo agendamento confirmado para 20/07/2026 às 14:00."]],
+          },
+        },
+      ],
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    id?: string;
+    status?: string;
+    error?: { message?: string; code?: number };
+  };
+  if (!res.ok) {
+    return {
+      ok: false,
+      status: res.status,
+      templateStatus: null,
+      error: data.error?.message?.slice(0, 300) || `meta_template_create_${res.status}`,
+    };
+  }
+  const templateStatus =
+    data.status === "APPROVED" || data.status === "PENDING" || data.status === "REJECTED"
+      ? data.status
+      : "PENDING";
+  return { ok: true, status: res.status, templateStatus, id: data.id };
+}
+
 export type WhatsAppCloudTemplate = {
   name: string;
   status: string;

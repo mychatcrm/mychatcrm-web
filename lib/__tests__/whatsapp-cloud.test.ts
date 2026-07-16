@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createWhatsAppMessageTemplate,
   fetchWhatsAppMessageTemplateStatus,
   parseWhatsAppCloudInbound,
   parseWhatsAppCloudPayload,
@@ -275,5 +276,43 @@ describe("fetchWhatsAppMessageTemplateStatus", () => {
     });
 
     expect(result).toEqual({ found: false, status: null, category: null });
+  });
+});
+
+describe("createWhatsAppMessageTemplate", () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("submits a utility template with static context and one dynamic body parameter", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(
+      JSON.stringify({ id: "template-1", status: "PENDING" }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+
+    const result = await createWhatsAppMessageTemplate({
+      wabaId: "WABA1",
+      accessToken: "token-abc",
+      templateName: "mychatcrm_agenda_notification_v1",
+    });
+
+    expect(result).toMatchObject({ ok: true, templateStatus: "PENDING", id: "template-1" });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(init.body));
+    expect(body).toMatchObject({
+      name: "mychatcrm_agenda_notification_v1",
+      language: "pt_BR",
+      category: "UTILITY",
+      allow_category_change: true,
+    });
+    expect(body.components[0].text).toContain("{{1}}");
+    expect(body.components[0].text).toContain("MyChatCRM");
   });
 });
