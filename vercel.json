@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/internal/agent-response-jobs/process",
-      "schedule": "* * * * *"
+      "schedule": "30 3 * * *"
     },
     {
       "path": "/api/internal/process-follow-ups",
@@ -14,7 +14,7 @@
     },
     {
       "path": "/api/internal/process-agenda-notifications",
-      "schedule": "* * * * *"
+      "schedule": "15 5 * * *"
     }
   ]
 }
