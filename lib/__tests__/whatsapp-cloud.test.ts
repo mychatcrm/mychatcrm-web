@@ -314,6 +314,7 @@ describe("createWhatsAppMessageTemplate", () => {
     expect(body).not.toHaveProperty("allow_category_change");
     expect(body.components[0].text).toContain("{{1}}");
     expect(body.components[0].text).toContain("MyChatCRM");
+    expect(body.components[0].text.trim()).not.toMatch(/{{1}}$/);
   });
 
   it("returns the actionable Meta error fields without exposing credentials", async () => {

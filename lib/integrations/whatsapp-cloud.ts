@@ -311,7 +311,7 @@ export async function createWhatsAppMessageTemplate(params: {
       components: [
         {
           type: "BODY",
-          text: "Olá! Há uma atualização operacional na sua conta MyChatCRM. Detalhes: {{1}}",
+          text: "Olá! Há uma atualização operacional na sua conta MyChatCRM. Detalhes: {{1}} Esta é uma mensagem automática do MyChatCRM.",
           example: {
             body_text: [["Novo agendamento confirmado para 20/07/2026 às 14:00."]],
           },
