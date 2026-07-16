@@ -31,8 +31,14 @@ const EVOLUTION_TIME_ONLY_RE =
   /^(?:[aàá]s?\s+)?(?:\d{1,2}(?::\d{2}|h(?:\d{2})?)|uma|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze)(?:\s*(?:horas?|da\s+manh[ãa]|da\s+tarde|da\s+noite))?[.!?\s]*$/i;
 const EVOLUTION_INCOMPLETE_END_RE =
   /\b(?:e|ou|as|[aàá]s|para|pra|no|na|em|que|porque|com|sem|de|do|da)\s*[,.!?-]*$/i;
-const EVOLUTION_COMPLETE_ACTION_RE =
-  /\b(?:cancelar|cancelamento|desmarcar|remarcar|reagendar|agendar|marcar|alterar\s+(?:o\s+)?agendamento)\b/i;
+const EVOLUTION_CANCEL_ACTION_RE =
+  /\b(?:cancelar|cancelamento|desmarcar)\b/i;
+const EVOLUTION_SCHEDULE_ACTION_RE =
+  /\b(?:remarcar|reagendar|agendar|marcar|alterar\s+(?:o\s+)?agendamento)\b/i;
+const EVOLUTION_DATE_HINT_RE =
+  /\b(?:hoje|amanha|depois\s+de\s+amanha|dia\s+\d{1,2}|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|segunda|terca|quarta|quinta|sexta|sabado|domingo)\b/i;
+const EVOLUTION_TIME_HINT_RE =
+  /\b(?:as?\s+)?(?:\d{1,2}(?::\d{2}|h(?:\d{2})?)|uma|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze)(?:\s*(?:horas?|da\s+manha|da\s+tarde|da\s+noite))?\b/i;
 
 /**
  * Decide se a PRIMEIRA mensagem precisa da janela longa da Evolution.
@@ -44,9 +50,15 @@ export function evolutionInboundNeedsExtendedInitialWait(
 ): boolean {
   if (signal.kind !== "text") return true;
   const text = signal.text?.trim() ?? "";
+  const foldedText = text.normalize("NFD").replace(/\p{Diacritic}/gu, "");
   if (!text) return true;
   if (signal.hasPendingAgendaAction) return false;
-  if (EVOLUTION_COMPLETE_ACTION_RE.test(text)) return false;
+  if (EVOLUTION_CANCEL_ACTION_RE.test(text)) return false;
+  if (EVOLUTION_SCHEDULE_ACTION_RE.test(text)) {
+    // Criação/remarcação só é completa quando o mesmo turno já contém data e
+    // hora. "Quero agendar amanhã" ainda pode receber "às 14h" com atraso.
+    return !(EVOLUTION_DATE_HINT_RE.test(foldedText) && EVOLUTION_TIME_HINT_RE.test(foldedText));
+  }
   if (EVOLUTION_SHORT_AMBIGUOUS_RE.test(text)) return true;
   if (EVOLUTION_DATE_ONLY_RE.test(text) || EVOLUTION_TIME_ONLY_RE.test(text)) return true;
   if (EVOLUTION_INCOMPLETE_END_RE.test(text)) return true;

@@ -39,6 +39,24 @@ describe("agent smart wait schedule", () => {
     ).toMatchObject({ initialSeconds: 7, followupSeconds: 10, maxSeconds: 60 });
   });
 
+  it("keeps incomplete scheduling in the extended lane until the time arrives", () => {
+    expect(
+      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
+        kind: "text",
+        text: "Quero agendar um novo horário para amanhã",
+      }),
+    ).toMatchObject({ initialSeconds: 65, followupSeconds: 10, maxSeconds: 180 });
+  });
+
+  it("uses the fast lane when scheduling already has date and time", () => {
+    expect(
+      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
+        kind: "text",
+        text: "Quero agendar amanhã às 14h",
+      }),
+    ).toMatchObject({ initialSeconds: 7, followupSeconds: 10, maxSeconds: 60 });
+  });
+
   it("keeps only the first ambiguous fragment in the extended lane", () => {
     for (const text of ["Oi", "Ok", "amanhã", "duas da tarde", "Pode ser hoje as"]) {
       expect(
