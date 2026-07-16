@@ -24,7 +24,13 @@ const WEEKDAY_INDEX: Record<string, number> = {
 };
 
 function foldAccents(value: string): string {
-  return value.normalize("NFD").replace(/\p{M}/gu, "");
+  return value
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    // Alguns webhooks Evolution já chegaram com o último "a" de "amanhã"
+    // substituído por um til solto ("amanh˜"). Sem normalizar esse caso real,
+    // a âncora de data some entre os turnos.
+    .replace(/\bamanh[~˜](?=\s|$|[.,!?])/gi, "amanha");
 }
 
 const WORD_HOURS: Record<string, number> = {
@@ -146,6 +152,18 @@ function parseWordHour(text: string): { hour: number; minute: number } | null {
     /\b(uma|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|meia|meio)\b(?:\s*(?:e\s+)?meia)?(?:\s+da\s+(manh[ãa]|tarde|noite))?/i,
   );
   if (!m) return null;
+  // "uma" também é artigo ("uma reunião", "uma visita"). Só trate números
+  // por extenso como hora quando houver um sinal temporal ou quando a resposta
+  // inteira for apenas a hora. Isso evita transformar o nicho/objeto da frase
+  // em 01:00.
+  const matchStart = m.index ?? 0;
+  const before = text.slice(0, matchStart);
+  const after = text.slice(matchStart + m[0].length);
+  const hasTemporalPrefix = /(?:^|\s)(?:às|as|a)\s*$/i.test(before);
+  const hasHourSuffix = /^\s*horas?\b/i.test(after);
+  const hasDayPeriod = Boolean(m[2]);
+  const bareResponse = text.trim().replace(/[.!?]+$/g, "").trim() === m[0].trim();
+  if (!hasTemporalPrefix && !hasHourSuffix && !hasDayPeriod && !bareResponse) return null;
   const word = m[1]!.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "");
   let hour = WORD_HOURS[word] ?? WORD_HOURS[m[1]!.toLowerCase()] ?? null;
   if (hour == null) return null;
@@ -161,6 +179,18 @@ function parseWordHour(text: string): { hour: number; minute: number } | null {
   return { hour, minute };
 }
 
+function applyDayPeriod(hour: number, period?: string | null): number {
+  const normalizedPeriod = period
+    ?.toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "");
+  if (normalizedPeriod === "tarde" || normalizedPeriod === "noite") {
+    return hour < 12 ? hour + 12 : hour;
+  }
+  if (normalizedPeriod === "manha" && hour === 12) return 0;
+  return hour;
+}
+
 function parseTimeFromText(text: string): { hour: number; minute: number } | null {
   const normalized = text.toLowerCase();
 
@@ -170,17 +200,30 @@ function parseTimeFromText(text: string): { hour: number; minute: number } | nul
   const wordHour = parseWordHour(normalized);
   if (wordHour) return wordHour;
 
-  const hColon = normalized.match(/\b(?:às|as|a)?\s*(\d{1,2})[:h](\d{2})\b/);
-  if (hColon) return { hour: Number(hColon[1]), minute: Number(hColon[2]) };
+  const hColon = normalized.match(
+    /\b(?:às|as|a)?\s*(\d{1,2})[:h](\d{2})\b(?:\s+da\s+(manh[ãa]|tarde|noite))?/,
+  );
+  if (hColon) {
+    return { hour: applyDayPeriod(Number(hColon[1]), hColon[3]), minute: Number(hColon[2]) };
+  }
 
-  const hOnly = normalized.match(/\b(?:às|as|a)?\s*(\d{1,2})\s*h(?:\s*(\d{2}))?\b/);
-  if (hOnly) return { hour: Number(hOnly[1]), minute: hOnly[2] ? Number(hOnly[2]) : 0 };
+  const hOnly = normalized.match(
+    /\b(?:às|as|a)?\s*(\d{1,2})\s*h(?:\s*(\d{2}))?\b(?:\s+da\s+(manh[ãa]|tarde|noite))?/,
+  );
+  if (hOnly) {
+    return {
+      hour: applyDayPeriod(Number(hOnly[1]), hOnly[3]),
+      minute: hOnly[2] ? Number(hOnly[2]) : 0,
+    };
+  }
 
-  const horas = normalized.match(/\b(\d{1,2})\s*horas?\b/);
-  if (horas) return { hour: Number(horas[1]), minute: 0 };
+  const horas = normalized.match(/\b(\d{1,2})\s*horas?\b(?:\s+da\s+(manh[ãa]|tarde|noite))?/);
+  if (horas) return { hour: applyDayPeriod(Number(horas[1]), horas[2]), minute: 0 };
 
-  const atHour = normalized.match(/\b(?:às|as|a)\s+(\d{1,2})\b/);
-  if (atHour) return { hour: Number(atHour[1]), minute: 0 };
+  const atHour = normalized.match(
+    /\b(?:às|as|a)\s+(\d{1,2})\b(?:\s+da\s+(manh[ãa]|tarde|noite))?/,
+  );
+  if (atHour) return { hour: applyDayPeriod(Number(atHour[1]), atHour[2]), minute: 0 };
 
   return null;
 }
@@ -308,6 +351,11 @@ export function textHasExplicitDateAnchor(text: string, timezone: string, now?: 
   return parseDateAnchor(foldAccents(text.toLowerCase()), today) !== null;
 }
 
+/** true se o texto contém uma hora explícita, numérica ou por extenso. */
+export function textHasExplicitTime(text: string): boolean {
+  return parseTimeFromText(foldAccents(text.toLowerCase())) !== null;
+}
+
 /** Extrai DD/MM/AAAA e HH:MM de textos do cliente e/ou do assistente. */
 export function resolveScheduleDateTimeFromText(params: {
   clientText?: string | null;
@@ -331,17 +379,54 @@ export function resolveScheduleDateTimeFromText(params: {
   // "Pode ser amanhã as" (turno anterior) + "duas da tarde" → amanhã, não hoje.
   const recent = (params.recentClientMessages ?? []).map((m) => m.trim()).filter(Boolean);
   const clientFolded = foldAccents(client.toLowerCase());
+  const assistantFolded = foldAccents(assistant.toLowerCase());
   const clientHasTime = parseTimeFromText(clientFolded) !== null;
   const clientHasAnchor = parseDateAnchor(clientFolded, today) !== null;
-  if (recent.length > 0 && clientHasTime && !clientHasAnchor) {
+  if (clientHasTime && !clientHasAnchor) {
+    const currentTime = parseTimeFromText(clientFolded)!;
     for (let i = recent.length - 1; i >= 0; i--) {
-      if (parseDateAnchor(foldAccents(recent[i]!.toLowerCase()), today) === null) continue;
-      const parsed = parseAppointmentDateTime({
-        userMessage: `${recent[i]} ${client}`,
-        timezone: params.timezone,
-        now: params.now,
-      });
-      if (parsed) return formatScheduleFieldsFromDate(parsed, params.timezone);
+      const anchor = parseDateAnchor(foldAccents(recent[i]!.toLowerCase()), today);
+      if (!anchor) continue;
+      return {
+        date: formatWallDate(anchor),
+        time: `${String(currentTime.hour).padStart(2, "0")}:${String(currentTime.minute).padStart(2, "0")}`,
+      };
+    }
+
+    // Se o lead corrigiu só a hora, a data da última proposta do assistente é
+    // uma âncora válida; a hora antiga do assistente nunca pode sobrescrever a
+    // correção atual do lead.
+    const assistantAnchor = parseDateAnchor(assistantFolded, today);
+    if (assistantAnchor) {
+      return {
+        date: formatWallDate(assistantAnchor),
+        time: `${String(currentTime.hour).padStart(2, "0")}:${String(currentTime.minute).padStart(2, "0")}`,
+      };
+    }
+  }
+
+  // Confirmação em outro job ("sim"/"confirmado"): recupere a proposta mais
+  // recente diretamente dos inbounds. Suporta tanto uma mensagem completa
+  // quanto fragmentos adjacentes ("amanhã" + "três da tarde").
+  if (recent.length > 0 && !clientHasTime && !clientHasAnchor) {
+    let latestTime: { hour: number; minute: number } | null = null;
+    for (let i = recent.length - 1; i >= 0; i--) {
+      const folded = foldAccents(recent[i]!.toLowerCase());
+      const time = parseTimeFromText(folded);
+      const anchor = parseDateAnchor(folded, today);
+      if (anchor && time) {
+        return {
+          date: formatWallDate(anchor),
+          time: `${String(time.hour).padStart(2, "0")}:${String(time.minute).padStart(2, "0")}`,
+        };
+      }
+      if (time && !latestTime) latestTime = time;
+      if (anchor && latestTime) {
+        return {
+          date: formatWallDate(anchor),
+          time: `${String(latestTime.hour).padStart(2, "0")}:${String(latestTime.minute).padStart(2, "0")}`,
+        };
+      }
     }
   }
 

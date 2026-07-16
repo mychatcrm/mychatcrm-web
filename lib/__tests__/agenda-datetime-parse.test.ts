@@ -3,6 +3,7 @@ import {
   addDaysInTimezone,
   parseAppointmentDateTime,
   resolveScheduleDateTimeFromText,
+  textHasExplicitTime,
 } from "@/lib/server/agenda-datetime-parse";
 
 const TZ = "America/Sao_Paulo";
@@ -176,6 +177,48 @@ describe("contexto entre jobs: complemento herda a âncora de data do turno ante
     });
     // Nenhuma âncora no histórico → cai no comportamento default (hoje).
     expect(result?.date).toBe(addDaysInTimezone(TZ, 0, NOW));
+    expect(result?.time).toBe("15:00");
+  });
+
+  it("normaliza o formato real corrompido 'amanh˜' recebido da Evolution", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "três da tarde",
+      timezone: TZ,
+      now: NOW,
+      recentClientMessages: ["pra amanh˜", "três da tarde"],
+    });
+    expect(result?.date).toBe(addDaysInTimezone(TZ, 1, NOW));
+    expect(result?.time).toBe("15:00");
+  });
+
+  it("no turno 'Confirmado' recupera data+hora dos inbounds anteriores", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "Confirmado",
+      timezone: TZ,
+      now: NOW,
+      recentClientMessages: [
+        "Oi, gostaria de agendar",
+        "pra amanh˜",
+        "as 3 da tarde",
+        "Confirmado",
+      ],
+    });
+    expect(result?.date).toBe(addDaysInTimezone(TZ, 1, NOW));
+    expect(result?.time).toBe("15:00");
+  });
+
+  it("não interpreta o artigo 'uma' em 'uma reunião' como 01:00", () => {
+    expect(textHasExplicitTime("quero agendar uma reunião com o especialista")).toBe(false);
+  });
+
+  it("correção de hora do lead preserva só a data da proposta anterior", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "as 3 da tarde",
+      assistantText: "Você gostaria de confirmar amanhã às 14h?",
+      timezone: TZ,
+      now: NOW,
+    });
+    expect(result?.date).toBe(addDaysInTimezone(TZ, 1, NOW));
     expect(result?.time).toBe("15:00");
   });
 });

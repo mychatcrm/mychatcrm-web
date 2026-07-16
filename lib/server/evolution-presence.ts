@@ -6,10 +6,11 @@
  *
  * Endpoint Evolution API v2:
  *   POST /chat/sendPresence/{instanceName}
- *   Body: { "number": "5511999999999", "options": { "presence": "composing"|"recording", "delay": ms, "number": "5511999999999" } }
+ *   Body: { "number": "5511999999999", "presence": "composing"|"recording", "delay": ms }
  *
- * A função envia o indicador e aguarda o delay antes de retornar,
- * para que o utilizador veja "digitando..." antes de a mensagem chegar.
+ * O próprio endpoint controla por quanto tempo a presença fica ativa. Não
+ * adicionamos outro sleep local depois da chamada: além de duplicar o delay
+ * quando a API funciona, isso atrasava 2–8s até quando a API respondia 400.
  */
 
 import { evolutionFetchJson } from "@/lib/integrations/evolution-api";
@@ -25,13 +26,13 @@ export function typingDelayMs(text: string): number {
 }
 
 /**
- * Envia um indicador de presença e aguarda o delay antes de retornar.
+ * Envia um indicador de presença.
  * Nunca lança excepção — falhas são registadas e ignoradas.
  *
  * @param instanceName  Nome da instância Evolution
  * @param number        Número do destinatário (formato E.164 sem +)
  * @param presence      "composing" para texto, "recording" para áudio
- * @param delayMs       Duração do indicador em milissegundos (e tempo de espera)
+ * @param delayMs       Duração do indicador em milissegundos na Evolution
  */
 export async function sendPresence(
   instanceName: string,
@@ -46,7 +47,8 @@ export async function sendPresence(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         number,
-        options: { presence, delay: delayMs, number },
+        presence,
+        delay: delayMs,
       }),
       timeoutMs: PRESENCE_TIMEOUT_MS,
     });
@@ -64,11 +66,4 @@ export async function sendPresence(
     );
   }
 
-  // Aguarda o delay independentemente do resultado da chamada,
-  // para que o utilizador veja o indicador antes de a mensagem chegar.
-  await sleep(delayMs);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

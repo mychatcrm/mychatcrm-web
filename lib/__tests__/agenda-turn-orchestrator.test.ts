@@ -168,6 +168,20 @@ describe("priorAgendaAssistantTextFromMessages", () => {
     ]);
     expect(prior).toBe("Posso confirmar o cancelamento do seu agendamento?");
   });
+
+  it("reconhece proposta concreta agnóstica de nicho da conversa real", () => {
+    const text =
+      "Desculpe pela confusão anterior! Vou registrar sua visita para amanhã, dia 16/07, às 14h na My Broker Office. Confirme se está tudo certo!";
+    const prior = priorAgendaAssistantTextFromMessages(
+      [
+        { role: "user", content: "16/07 às 14:00" },
+        { role: "assistant", content: text },
+        { role: "user", content: "Confirmado" },
+      ],
+      "America/Sao_Paulo",
+    );
+    expect(prior).toBe(text);
+  });
 });
 
 describe("resolveAgendaTurn", () => {
@@ -672,6 +686,88 @@ describe("resolveAgendaTurn", () => {
       });
       expect(result.action).toBe("scheduled");
       expect(insertAgendaEventMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("regressão produção: amanhã + correção de hora + Confirmado agenda de verdade", async () => {
+      const base = {
+        sb: makeSb(null),
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        leadId: "lead-1",
+        timezone: "America/Sao_Paulo",
+        agendaAutomationEnabled: true,
+      } as const;
+
+      const missingTime = await resolveAgendaTurn({
+        ...base,
+        // O modelo não pode inventar 14h quando o lead informou apenas o dia.
+        modelText: "Perfeito! Você gostaria de agendar para amanhã às 14h?",
+        clientText: "pra amanh˜",
+        recentClientMessages: ["Oi gostaria de agendar uma visita", "pra amanh˜"],
+      });
+
+      expect(missingTime.action).toBe("failed");
+      expect(missingTime.text).toContain("data e o horário exatos");
+      expect(insertAgendaEventMock).not.toHaveBeenCalled();
+
+      const proposal = await resolveAgendaTurn({
+        ...base,
+        modelText: "Perfeito, sua visita ficou agendada para amanhã às 15h.",
+        clientText: "as 3 da tarde",
+        priorAssistantText: "Perfeito! Você gostaria de agendar para amanhã às 14h?",
+        recentClientMessages: [
+          "Oi gostaria de agendar uma visita",
+          "pra amanh˜",
+          "as 3 da tarde",
+        ],
+      });
+
+      expect(proposal.action).toBe("needs_confirmation");
+      expect(proposal.text).toContain("02/06/2026");
+      expect(proposal.text).toContain("15:00");
+      expect(insertAgendaEventMock).not.toHaveBeenCalled();
+
+      const confirmed = await resolveAgendaTurn({
+        ...base,
+        modelText: "Perfeito, sua visita ficou agendada.",
+        clientText: "Confirmado",
+        priorAssistantText: proposal.text,
+        recentClientMessages: [
+          "Oi gostaria de agendar uma visita",
+          "pra amanh˜",
+          "as 3 da tarde",
+          "Confirmado",
+        ],
+      });
+
+      expect(confirmed.action).toBe("scheduled");
+      expect(insertAgendaEventMock).toHaveBeenCalledTimes(1);
+      expect(insertAgendaEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({ start_at: "2026-06-02T18:00:00.000Z" }),
+      );
+    });
+
+    it("Confirmado recupera o último datetime inbound mesmo sem diretiva do modelo", async () => {
+      const result = await resolveAgendaTurn({
+        sb: makeSb(null),
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Perfeito, ficou confirmado.",
+        clientText: "Confirmado",
+        recentClientMessages: [
+          "Oi, gostaria de agendar um horário",
+          "16/07 às 14:00",
+          "Confirmado",
+        ],
+        agendaAutomationEnabled: true,
+      });
+
+      expect(result.action).toBe("scheduled");
+      expect(insertAgendaEventMock).toHaveBeenCalledTimes(1);
+      expect(insertAgendaEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({ start_at: "2026-07-16T17:00:00.000Z" }),
+      );
     });
   });
 

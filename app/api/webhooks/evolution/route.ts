@@ -48,6 +48,7 @@ import { isAgentAutomationAllowed, markWaitingForHuman } from "@/lib/server/conv
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { isSmartWaitGloballyDisabled, runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
+import { extractRecentClientMessages } from "@/lib/server/evolution-agent-reply";
 import { scheduleFollowUpAfterInbound, scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
 import {
@@ -1066,14 +1067,16 @@ export async function POST(request: Request) {
           const aiMarkerHandoff = handoffEnabled && replyText.includes("[[HANDOFF]]");
           const modelTextWithoutHandoff = replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim();
           const clientText = inboundLanguageSource(msg);
-          const priorAssistantText = priorAgendaAssistantTextFromMessages(
-            await getRecentConversationMessages({
+          const recentConversation = await getRecentConversationMessages({
               sb: sbState,
               tenantId: row.tenant_id,
               remoteJid: msg.remoteJid,
               limit: 12,
               journeyId: journey?.id ?? null,
-            }),
+            });
+          const priorAssistantText = priorAgendaAssistantTextFromMessages(
+            recentConversation,
+            schedulingTimezone,
           );
           const agendaTurn = await resolveAgendaTurn({
             sb: sbState,
@@ -1086,6 +1089,7 @@ export async function POST(request: Request) {
             modelText: modelTextWithoutHandoff,
             clientText,
             priorAssistantText,
+            recentClientMessages: extractRecentClientMessages(recentConversation),
             agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,
             ctaHandoffAtivo: metadata.ctaHandoffAtivo === true,
             agendaLembretes:
