@@ -9,14 +9,9 @@ import {
 } from "@/lib/server/agenda-notification-outbox";
 
 const sendSystemNotificationMock = vi.fn();
-const getSystemAgentMetaConfigMock = vi.fn();
-const refreshSystemAgentMetaTemplateStatusMock = vi.fn();
 
 vi.mock("@/lib/server/system-agent", () => ({
   sendSystemNotification: (...args: unknown[]) => sendSystemNotificationMock(...args),
-  getSystemAgentMetaConfig: (...args: unknown[]) => getSystemAgentMetaConfigMock(...args),
-  refreshSystemAgentMetaTemplateStatus: (...args: unknown[]) =>
-    refreshSystemAgentMetaTemplateStatusMock(...args),
 }));
 
 type Row = Record<string, unknown>;
@@ -263,7 +258,6 @@ describe("agenda-notification-outbox — funções puras", () => {
 
 describe("agenda-notification-outbox — enqueue", () => {
   beforeEach(() => {
-    getSystemAgentMetaConfigMock.mockResolvedValue(null);
     sendSystemNotificationMock.mockResolvedValue({ ok: true });
   });
 
@@ -302,11 +296,7 @@ describe("agenda-notification-outbox — enqueue", () => {
 
 describe("agenda-notification-outbox — claim + envio inline", () => {
   beforeEach(() => {
-    getSystemAgentMetaConfigMock.mockReset();
-    refreshSystemAgentMetaTemplateStatusMock.mockReset();
     sendSystemNotificationMock.mockReset();
-    getSystemAgentMetaConfigMock.mockResolvedValue(null);
-    refreshSystemAgentMetaTemplateStatusMock.mockResolvedValue(null);
     sendSystemNotificationMock.mockResolvedValue({ ok: true, debug: { evolutionMessageId: "wamid-1" } });
   });
 
@@ -326,8 +316,7 @@ describe("agenda-notification-outbox — claim + envio inline", () => {
     expect(md).toMatchObject({ tenant_id: "tenant-1", agenda_event_id: "evt-1", action: "scheduled", operation_key: "op-1", outbox_id: "outbox-1" });
   });
 
-  it("Meta ativo sem template usa o envio normal do agente do sistema", async () => {
-    getSystemAgentMetaConfigMock.mockResolvedValue({ active: true, templateName: null });
+  it("delega a seleção do provedor ao agente do sistema", async () => {
     const { sb, outbox } = makeSb({ outbox: [outboxRow()] });
     const res = await processAgendaNotificationOutbox({ sb, outboxId: "outbox-1" });
     expect(sendSystemNotificationMock).toHaveBeenCalledTimes(1);
@@ -337,19 +326,15 @@ describe("agenda-notification-outbox — claim + envio inline", () => {
     expect(outbox[0]!.claim_token).toBeNull();
   });
 
-  it("template Meta pendente não consome tentativas nem envia antes da aprovação", async () => {
-    getSystemAgentMetaConfigMock.mockResolvedValue({
-      active: true,
-      templateName: "mychatcrm_agenda_notification_v1",
-      templateStatus: "PENDING",
+  it("retoma linha antes bloqueada por template e tenta texto dentro da janela ativa", async () => {
+    const { sb, outbox } = makeSb({
+      outbox: [outboxRow({ last_error: "meta_template_not_approved" })],
     });
-    refreshSystemAgentMetaTemplateStatusMock.mockResolvedValue("PENDING");
-    const { sb, outbox } = makeSb({ outbox: [outboxRow()] });
     const res = await processAgendaNotificationOutbox({ sb, outboxId: "outbox-1" });
-    expect(sendSystemNotificationMock).not.toHaveBeenCalled();
-    expect(res.pending).toBe(1);
-    expect(outbox[0]!.attempts).toBe(0);
-    expect(outbox[0]!.last_error).toBe("meta_template_not_approved");
+    expect(sendSystemNotificationMock).toHaveBeenCalledTimes(1);
+    expect(res.sent).toBe(1);
+    expect(outbox[0]!.attempts).toBe(1);
+    expect(outbox[0]!.status).toBe("sent");
   });
 
   it("falha de envio mantém pending com attempts e backoff", async () => {
@@ -414,7 +399,6 @@ describe("agenda-notification-outbox — claim + envio inline", () => {
 
 describe("agenda-notification-outbox — reconciliadores", () => {
   beforeEach(() => {
-    getSystemAgentMetaConfigMock.mockResolvedValue(null);
     sendSystemNotificationMock.mockResolvedValue({ ok: true, debug: { evolutionMessageId: "wamid-1" } });
   });
 

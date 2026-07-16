@@ -5,11 +5,7 @@ import {
   buildAppointmentOwnerNotificationText,
   type AppointmentNotificationAction,
 } from "@/lib/server/agenda-owner-notifications";
-import {
-  getSystemAgentMetaConfig,
-  refreshSystemAgentMetaTemplateStatus,
-  sendSystemNotification,
-} from "@/lib/server/system-agent";
+import { sendSystemNotification } from "@/lib/server/system-agent";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
@@ -19,8 +15,6 @@ const MAX_SEND_ATTEMPTS = 5;
 const CLAIM_TTL_SECONDS = 300;
 /** Espera de webhook de entrega antes de reconsiderar reenvio de uma linha `sent`. */
 const DELIVERY_WAIT_MINUTES = 15;
-export const META_TEMPLATE_NOT_APPROVED_ERROR = "meta_template_not_approved";
-const META_TEMPLATE_RECHECK_MINUTES = 5;
 
 type OutboxStatus = "pending" | "processing" | "sent" | "delivered" | "failed" | "skipped";
 
@@ -355,26 +349,6 @@ async function sendClaimedRow(sb: SupabaseServiceClient, row: OutboxRow): Promis
       tenant_id: row.tenant_id,
     });
     return "pending";
-  }
-
-  // Mensagem proativa pelo provedor oficial precisa de template aprovado fora
-  // da janela. Reconsulta o status a cada ciclo curto e mantém a obrigação viva
-  // sem consumir tentativas; assim que aprovado, a mesma linha é enviada.
-  const metaConfig = await getSystemAgentMetaConfig().catch(() => null);
-  if (metaConfig?.active && metaConfig.templateName && metaConfig.templateStatus !== "APPROVED") {
-    const refreshed = await refreshSystemAgentMetaTemplateStatus().catch(
-      () => metaConfig.templateStatus,
-    );
-    if (refreshed !== "APPROVED") {
-      const ok = await updateClaimedRow(sb, row, {
-        status: "pending",
-        last_error: META_TEMPLATE_NOT_APPROVED_ERROR,
-        claim_token: null,
-        next_attempt_at: nextAttemptIso(META_TEMPLATE_RECHECK_MINUTES),
-      });
-      if (!ok) throw new Error("finalize_inconclusive");
-      return "pending";
-    }
   }
 
   const attempts = row.attempts + 1;
