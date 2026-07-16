@@ -867,7 +867,12 @@ const AGENDA_RPC_REASONS = [
   "agenda_slot_taken",
   "invalid_or_past_agenda_datetime",
   "invalid_remote_jid",
+  "generation_stale",
+  "invalid_job_params",
 ] as const;
+
+/** Erro atômico de staleness da RPC: a geração deste job foi superada. */
+export const AGENDA_GENERATION_STALE = "generation_stale";
 
 function normalizeAgendaRpcError(error: unknown): Error {
   const message = error instanceof Error ? error.message : String((error as { message?: unknown } | null)?.message ?? error);
@@ -1021,6 +1026,10 @@ async function executeAgendaDirectiveAtomically(params: {
   agendaLembretes?: AgentAgendaLembretes | null;
   agendaDisponibilidade?: AgentAgendaDisponibilidade | null;
   slotIndex?: number;
+  /** Job e geração para validação atômica de staleness na RPC (caminho de job). */
+  jobId?: string | null;
+  claimedGeneration?: number | null;
+  journeyId?: string | null;
 }): Promise<{ action: "scheduled" | "rescheduled" | "cancelled"; eventId: string }> {
   const attendeePhone = extractPhone(params.remoteJid);
   if (!attendeePhone) throw new Error("invalid_remote_jid");
@@ -1077,6 +1086,9 @@ async function executeAgendaDirectiveAtomically(params: {
     p_agent_id: params.agentId ?? null,
     p_allow_simultaneous:
       params.agendaDisponibilidade?.permitirAgendamentosSimultaneos !== false,
+    p_job_id: params.jobId ?? null,
+    p_claimed_generation: params.claimedGeneration ?? null,
+    p_journey_id: params.journeyId ?? null,
   });
   if (error) throw normalizeAgendaRpcError(error);
 
@@ -1159,6 +1171,10 @@ export async function executeAgendaDirective(params: {
   slotIndex?: number;
   /** Stable per inbound turn/job; enables durable idempotency and tenant locking. */
   operationKey?: string | null;
+  /** Job e geração para validação atômica de staleness na RPC (caminho de job). */
+  jobId?: string | null;
+  claimedGeneration?: number | null;
+  journeyId?: string | null;
 }): Promise<{ action: "scheduled" | "rescheduled" | "cancelled"; eventId: string }> {
   const sb = params.sb ?? createSupabaseServiceClient();
   if (params.operationKey?.trim()) {
@@ -1312,7 +1328,10 @@ export type ResolveAgendaTurnResult = {
     | "rescheduled"
     | "cancelled"
     | "failed"
-    | "blocked";
+    | "blocked"
+    /** Geração superada por mensagem mais nova (recusa atômica da RPC). O worker
+     *  não deve enviar nada — o job re-agendado processa o contexto atual. */
+    | "stale";
   eventId?: string;
   /** Quando true, handoff deve ser adiado (agenda falhou ou pendente). */
   deferHandoff?: boolean;
@@ -1329,7 +1348,7 @@ export function shouldDeferHandoffForAgendaResult(result: ResolveAgendaTurnResul
 
 function resolveScheduleDirective(
   directive: Extract<AgendaDirective, { type: "schedule" }>,
-  params: { clientText: string; assistantText: string; timezone: string },
+  params: { clientText: string; assistantText: string; timezone: string; recentClientMessages?: string[] },
 ): Extract<AgendaDirective, { type: "schedule" }> {
   // Só o texto DO CLIENTE pode corrigir a diretiva emitida pelo modelo. A prosa do
   // assistente cita nomes de dias fora do pedido (janela de atendimento, desculpas),
@@ -1340,6 +1359,7 @@ function resolveScheduleDirective(
     timezone: params.timezone,
     fallbackDate: directive.date,
     fallbackTime: directive.time,
+    recentClientMessages: params.recentClientMessages,
   });
   if (!resolved) return directive;
   return { ...directive, date: resolved.date, time: resolved.time };
@@ -1365,6 +1385,14 @@ export async function resolveAgendaTurn(params: {
   slotIndex?: number;
   /** Stable per inbound message/job; makes the agenda mutation retry-safe. */
   operationKey?: string | null;
+  /** Job e geração para validação atômica de staleness na RPC (caminho de job). */
+  jobId?: string | null;
+  claimedGeneration?: number | null;
+  journeyId?: string | null;
+  /** Mensagens inbound recentes do lead (ordem temporal), para resolver
+   *  complementos que chegaram em jobs anteriores (ex.: data num turno, hora no
+   *  seguinte). Já filtradas por tenant+journey e janela segura pelo chamador. */
+  recentClientMessages?: string[] | null;
 }): Promise<ResolveAgendaTurnResult> {
   const cleanText = stripAgendaDirectives(params.modelText);
   const finalize = (result: ResolveAgendaTurnResult) =>
@@ -1520,12 +1548,14 @@ export async function resolveAgendaTurn(params: {
       clientText: params.clientText,
       assistantText: assistantForConfirm,
       timezone: params.timezone,
+      recentClientMessages: params.recentClientMessages ?? undefined,
     });
   } else {
     const resolved = resolveScheduleDateTimeFromText({
       clientText: params.clientText,
       assistantText: proposalText || assistantForConfirm,
       timezone: params.timezone,
+      recentClientMessages: params.recentClientMessages ?? undefined,
     });
     if (!resolved) {
       // Data/hora incompletas (ex.: "pode ser hoje as") — pedir o que falta em
@@ -1561,6 +1591,9 @@ export async function resolveAgendaTurn(params: {
       agendaDisponibilidade: params.agendaDisponibilidade,
       slotIndex: params.slotIndex,
       operationKey: params.operationKey,
+      jobId: params.jobId ?? null,
+      claimedGeneration: params.claimedGeneration ?? null,
+      journeyId: params.journeyId ?? null,
     });
     console.info("[agent-agenda-turn]", {
       tenant_id: params.tenantId,
@@ -1571,11 +1604,24 @@ export async function resolveAgendaTurn(params: {
     });
     return finalize({ text: cleanText, action: result.action, eventId: result.eventId });
   } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    // Recusa atômica de staleness: a geração foi superada por mensagem mais nova.
+    // Zero mutação aconteceu; o worker não deve enviar nada — o job re-agendado
+    // (geração nova) processa o contexto atual. NÃO é uma falha de agenda.
+    if (reason === AGENDA_GENERATION_STALE || reason === "invalid_job_params") {
+      console.info("[agent-agenda-turn]", {
+        tenant_id: params.tenantId,
+        agent_id: params.agentId,
+        action: "stale",
+        reason,
+      });
+      return { text: cleanText, action: "stale" };
+    }
     console.warn("[agent-agenda-turn]", {
       tenant_id: params.tenantId,
       agent_id: params.agentId,
       action: "failed",
-      reason: error instanceof Error ? error.message : String(error),
+      reason,
       directive_type: finalDirective.type,
       directive_date: finalDirective.type === "schedule" ? finalDirective.date : null,
       directive_time: finalDirective.type === "schedule" ? finalDirective.time : null,

@@ -13,7 +13,7 @@ export async function GET(request: Request) {
 
 /** Reconcilia eventos órfãos de MESSAGES_UPDATE e aplica timeout de pending/sent. */
 export async function POST(request: Request) {
-  if (!verifyInternalApiRequest(request)) {
+  if (!verifyInternalApiRequest(request, { allowedSecrets: ["INTERNAL_API_TOKEN", "CRON_SECRET"] })) {
     return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
   }
 

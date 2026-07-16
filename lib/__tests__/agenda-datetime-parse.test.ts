@@ -131,3 +131,51 @@ describe("fragmentos incompletos nunca inventam horário (incidente de produçã
     expect(result?.time).toBe("16:30");
   });
 });
+
+describe("contexto entre jobs: complemento herda a âncora de data do turno anterior", () => {
+  it("'duas da tarde' + âncora 'amanhã' de mensagem anterior → amanhã 14h (não hoje)", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "duas da tarde",
+      timezone: TZ,
+      now: NOW,
+      recentClientMessages: ["Pode ser amanhã as", "duas da tarde"],
+    });
+    expect(result?.date).toBe(addDaysInTimezone(TZ, 1, NOW));
+    expect(result?.time).toBe("14:00");
+  });
+
+  it("usa a âncora MAIS RECENTE quando há várias datas no histórico", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "às 10h",
+      timezone: TZ,
+      now: NOW,
+      // 'sexta' é antiga; a mais recente com âncora é 'depois de amanhã'.
+      recentClientMessages: ["quero na sexta", "na verdade pode ser depois de amanhã", "às 10h"],
+    });
+    expect(result?.date).toBe(addDaysInTimezone(TZ, 2, NOW));
+    expect(result?.time).toBe("10:00");
+  });
+
+  it("quando o texto atual JÁ tem data própria, ignora o histórico", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "pode ser hoje às 09:00",
+      timezone: TZ,
+      now: NOW,
+      recentClientMessages: ["Pode ser amanhã as"],
+    });
+    expect(result?.date).toBe(addDaysInTimezone(TZ, 0, NOW));
+    expect(result?.time).toBe("09:00");
+  });
+
+  it("histórico sem âncora de data não inventa nada além do default", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "às 15h",
+      timezone: TZ,
+      now: NOW,
+      recentClientMessages: ["ok", "beleza", "às 15h"],
+    });
+    // Nenhuma âncora no histórico → cai no comportamento default (hoje).
+    expect(result?.date).toBe(addDaysInTimezone(TZ, 0, NOW));
+    expect(result?.time).toBe("15:00");
+  });
+});

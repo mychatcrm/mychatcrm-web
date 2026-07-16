@@ -302,6 +302,12 @@ export function formatScheduleFieldsFromDate(
   };
 }
 
+/** true se o texto contém uma âncora de DATA explícita (dia/data/dia-da-semana). */
+export function textHasExplicitDateAnchor(text: string, timezone: string, now?: Date): boolean {
+  const today = getZonedParts(now ?? new Date(), parseTimezone(timezone));
+  return parseDateAnchor(foldAccents(text.toLowerCase()), today) !== null;
+}
+
 /** Extrai DD/MM/AAAA e HH:MM de textos do cliente e/ou do assistente. */
 export function resolveScheduleDateTimeFromText(params: {
   clientText?: string | null;
@@ -310,9 +316,34 @@ export function resolveScheduleDateTimeFromText(params: {
   now?: Date;
   fallbackDate?: string;
   fallbackTime?: string;
+  /** Mensagens inbound recentes do lead (ordem temporal). Usadas só como fonte
+   *  da ÂNCORA DE DATA quando o texto atual traz apenas a hora (complemento que
+   *  chegou num turno anterior). A âncora mais recente prevalece. */
+  recentClientMessages?: string[] | null;
 }): { date: string; time: string } | null {
   const client = params.clientText?.trim() ?? "";
   const assistant = params.assistantText?.trim() ?? "";
+  const today = getZonedParts(params.now ?? new Date(), parseTimezone(params.timezone));
+
+  // Complemento cross-turn: o texto atual tem HORA mas nenhuma âncora de data
+  // explícita (ex.: "duas da tarde" isolado). Em vez de assumir "hoje", busca a
+  // âncora de data na mensagem inbound recente mais recente que a tenha. Assim
+  // "Pode ser amanhã as" (turno anterior) + "duas da tarde" → amanhã, não hoje.
+  const recent = (params.recentClientMessages ?? []).map((m) => m.trim()).filter(Boolean);
+  const clientFolded = foldAccents(client.toLowerCase());
+  const clientHasTime = parseTimeFromText(clientFolded) !== null;
+  const clientHasAnchor = parseDateAnchor(clientFolded, today) !== null;
+  if (recent.length > 0 && clientHasTime && !clientHasAnchor) {
+    for (let i = recent.length - 1; i >= 0; i--) {
+      if (parseDateAnchor(foldAccents(recent[i]!.toLowerCase()), today) === null) continue;
+      const parsed = parseAppointmentDateTime({
+        userMessage: `${recent[i]} ${client}`,
+        timezone: params.timezone,
+        now: params.now,
+      });
+      if (parsed) return formatScheduleFieldsFromDate(parsed, params.timezone);
+    }
+  }
 
   const relativeDays = parseRelativeDaysOffset(client);
   if (relativeDays != null) {

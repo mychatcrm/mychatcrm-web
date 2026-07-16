@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     route: "/api/internal/process-agenda-reminders",
   });
 
-  if (!verifyInternalApiRequest(request)) {
+  if (!verifyInternalApiRequest(request, { allowedSecrets: ["INTERNAL_API_TOKEN", "CRON_SECRET"] })) {
     console.info("[agenda-reminder-jobs]", { event: "auth_failed" });
     return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
   }

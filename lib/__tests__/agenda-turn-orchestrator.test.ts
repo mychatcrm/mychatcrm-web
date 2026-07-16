@@ -622,6 +622,57 @@ describe("resolveAgendaTurn", () => {
       expect(result.action).toBe("none");
       expect(result.text).toContain("está agendado");
     });
+
+    it("recusa atômica de generation_stale da RPC → action stale, zero mutação, nada enviado", async () => {
+      // sb com RPC que recusa por geração superada (mensagem mais nova chegou).
+      const staleSb = {
+        from: (table: string) => ({
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: table === "leads" ? { name: "Maria" } : null,
+                error: null,
+              }),
+            }),
+          }),
+        }),
+        rpc: async () => ({ data: null, error: { message: "generation_stale" } }),
+      } as never;
+      const result = await resolveAgendaTurn({
+        sb: staleSb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Agendado! [[AGENDAR: data=10/06/2026, hora=14:00]]",
+        clientText: "sim",
+        agendaAutomationEnabled: true,
+        operationKey: "agent-response-job:job-1:2:0",
+        jobId: "job-1",
+        claimedGeneration: 2,
+      });
+      // action "stale" faz o worker (evolution-agent-reply) abortar antes de
+      // enviar/notificar; o texto não é usado. O que importa é a recusa atômica.
+      expect(result.action).toBe("stale");
+    });
+
+    it("confirmação após complemento cross-job executa uma única mutação e confirma", async () => {
+      // Job final: o lead confirma; a proposta do assistente carrega data/hora
+      // que vieram de turnos anteriores. Executa exatamente uma vez.
+      const result = await resolveAgendaTurn({
+        sb: makeSb(null),
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        leadId: "lead-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Pronto, agendei para 02/06/2026 às 14:00.",
+        clientText: "sim",
+        priorAssistantText: "Posso confirmar o agendamento para 02/06/2026 às 14:00?",
+        recentClientMessages: ["Pode ser amanhã as", "duas da tarde", "sim"],
+        agendaAutomationEnabled: true,
+      });
+      expect(result.action).toBe("scheduled");
+      expect(insertAgendaEventMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("janela de disponibilidade e horários ocupados", () => {

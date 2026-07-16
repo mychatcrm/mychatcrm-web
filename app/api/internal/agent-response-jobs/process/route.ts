@@ -26,7 +26,11 @@ export async function POST(request: Request) {
     job_id: jobId ?? null,
   });
 
-  if (!verifyInternalApiRequest(request)) {
+  if (
+    !verifyInternalApiRequest(request, {
+      allowedSecrets: ["INTERNAL_API_TOKEN", "AGENT_RESPONSE_JOBS_SECRET", "CRON_SECRET"],
+    })
+  ) {
     console.info("[agent-response-jobs]", { event: "auth_failed" });
     return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
   }

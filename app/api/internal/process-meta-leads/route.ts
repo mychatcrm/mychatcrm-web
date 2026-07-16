@@ -13,7 +13,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   console.info("[meta-lead-poller]", { event: "process_called", route: "/api/internal/process-meta-leads" });
 
-  if (!verifyInternalApiRequest(request)) {
+  if (!verifyInternalApiRequest(request, { allowedSecrets: ["INTERNAL_API_TOKEN", "CRON_SECRET"] })) {
     console.info("[meta-lead-poller]", { event: "auth_failed" });
     return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
   }
