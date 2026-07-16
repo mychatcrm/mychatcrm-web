@@ -1,7 +1,9 @@
 import type { AgentResponseJobRow } from "@/lib/server/agent-response-jobs";
-import { getAgentResponseJobById } from "@/lib/server/agent-response-jobs";
+import {
+  getAgentResponseJobById,
+  tryProcessAgentResponseJob,
+} from "@/lib/server/agent-response-jobs";
 import { maskRemoteJidForLog } from "@/lib/server/agent-response-schedule";
-import { processAgentResponseJob } from "@/lib/server/evolution-agent-reply";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
@@ -55,28 +57,6 @@ async function hasOutboundForBurst(
   return Array.isArray(data) && data.length > 0;
 }
 
-async function claimJobForFallback(
-  sb: SupabaseServiceClient,
-  jobId: string,
-  reason: string,
-): Promise<AgentResponseJobRow | null> {
-  const now = new Date().toISOString();
-  const { data } = await sb
-    .from("agent_response_jobs")
-    .update({
-      status: "processing",
-      locked_at: now,
-      failed_reason: reason,
-      updated_at: now,
-    })
-    .eq("id", jobId)
-    .in("status", ["pending", "failed", "processing"])
-    .select("*")
-    .maybeSingle();
-  if (!data) return null;
-  return data as AgentResponseJobRow;
-}
-
 export async function executeAgentResponseFallback(params: {
   sb?: SupabaseServiceClient;
   job: AgentResponseJobRow;
@@ -105,7 +85,7 @@ export async function executeAgentResponseFallback(params: {
         updated_at: new Date().toISOString(),
       })
       .eq("id", job.id)
-      .in("status", ["pending", "failed", "processing"]);
+      .in("status", ["pending", "failed"]);
     logFallback("fallback_skipped_duplicate", {
       job_id: job.id,
       reason,
@@ -114,8 +94,24 @@ export async function executeAgentResponseFallback(params: {
     return "skipped_duplicate";
   }
 
-  const claimed = await claimJobForFallback(sb, job.id, reason);
-  if (!claimed) {
+  if (job.status === "failed") {
+    await sb
+      .from("agent_response_jobs")
+      .update({
+        status: "pending",
+        locked_at: null,
+        claim_token: null,
+        claim_expires_at: null,
+        scheduled_for: new Date().toISOString(),
+        failed_reason: reason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", job.id)
+      .eq("status", "failed");
+  }
+
+  const fresh = await loadAgentResponseJob(sb, job.id);
+  if (!fresh || fresh.status !== "pending") {
     logFallback("fallback_skipped_duplicate", {
       job_id: job.id,
       reason,
@@ -132,11 +128,8 @@ export async function executeAgentResponseFallback(params: {
   });
 
   try {
-    const result = await processAgentResponseJob(sb, claimed, claimed.burst_generation, {
-      skipGenerationCheck: true,
-    });
-
-    if (result.ok) {
+    const outcome = await tryProcessAgentResponseJob(job.id, sb);
+    if (outcome === "processed") {
       await sb
         .from("agent_response_jobs")
         .update({
@@ -146,23 +139,31 @@ export async function executeAgentResponseFallback(params: {
           locked_at: null,
           updated_at: new Date().toISOString(),
         })
-        .eq("id", job.id);
-      logFallback("fallback_completed", { job_id: job.id, reason, deduped_count: result.dedupedCount });
+        .eq("id", job.id)
+        .eq("status", "completed");
+      logFallback("fallback_completed", { job_id: job.id, reason });
       logFallback("final_outbound_sent", { job_id: job.id, mode: "fallback" });
       return "completed";
     }
 
-    await sb
-      .from("agent_response_jobs")
-      .update({
-        status: "failed_with_fallback",
-        completed_at: new Date().toISOString(),
-        failed_reason: `${reason}:${result.error}`,
-        locked_at: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", job.id);
-    logFallback("final_outbound_failed", { job_id: job.id, reason, error: result.error });
+    const after = await loadAgentResponseJob(sb, job.id);
+    const detail = after?.failed_reason ?? outcome;
+    if (outcome === "failed") {
+      await sb
+        .from("agent_response_jobs")
+        .update({
+          status: "failed_with_fallback",
+          completed_at: new Date().toISOString(),
+          failed_reason: `${reason}:${detail}`,
+          locked_at: null,
+          claim_token: null,
+          claim_expires_at: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", job.id)
+        .eq("status", "failed");
+    }
+    logFallback("final_outbound_failed", { job_id: job.id, reason, error: detail });
     return "failed";
   } catch (error) {
     const message = error instanceof Error ? error.message : "fallback_pipeline_error";
@@ -173,9 +174,12 @@ export async function executeAgentResponseFallback(params: {
         completed_at: new Date().toISOString(),
         failed_reason: `${reason}:${message}`,
         locked_at: null,
+        claim_token: null,
+        claim_expires_at: null,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", job.id);
+      .eq("id", job.id)
+      .in("status", ["pending", "failed"]);
     logFallback("final_outbound_failed", { job_id: job.id, reason, error: message });
     return "failed";
   }

@@ -24,6 +24,10 @@ export type AiGenerateInput = {
   temperature?: number;
   messages: AiMessage[];
   metadata?: Record<string, string | number | boolean | null | undefined>;
+  responseFormat?: {
+    name: string;
+    schema: Record<string, unknown>;
+  };
 };
 
 export type AiUsage = {
@@ -41,6 +45,7 @@ export type AiGenerateSuccess = {
   latencyMs: number;
   providerRequestId?: string;
   estimatedCostUsd: number;
+  structuredData?: unknown;
 };
 
 export type AiErrorCode =
@@ -53,6 +58,8 @@ export type AiErrorCode =
   | "TIMEOUT"
   | "NETWORK"
   | "EMPTY_REPLY"
+  | "INVALID_STRUCTURED_REPLY"
+  | "REFUSED"
   | "MEDIA_DOWNLOAD_FAILED";
 
 export type AiGenerateFailure = {

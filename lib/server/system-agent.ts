@@ -20,7 +20,11 @@ import {
   remoteJidToEvoNumber,
 } from "@/lib/integrations/evolution-api";
 import { extractInstanceJid } from "@/lib/integrations/evolution-webhook-parse";
-import { sendWhatsAppTemplateMessage, sendWhatsAppTextMessage } from "@/lib/integrations/whatsapp-cloud";
+import {
+  fetchWhatsAppMessageTemplateStatus,
+  sendWhatsAppTemplateMessage,
+  sendWhatsAppTextMessage,
+} from "@/lib/integrations/whatsapp-cloud";
 import { sendPresence, typingDelayMs } from "@/lib/server/evolution-presence";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
@@ -1368,6 +1372,7 @@ export type SystemAgentMetaConfig = {
   /** Template aprovado para mensagens iniciadas pela empresa fora da janela de 24h. */
   templateName: string | null;
   templateLang: string | null;
+  templateStatus: "APPROVED" | "PENDING" | "REJECTED" | null;
 };
 
 export async function getSystemAgentMetaConfig(): Promise<SystemAgentMetaConfig | null> {
@@ -1392,6 +1397,12 @@ export async function getSystemAgentMetaConfig(): Promise<SystemAgentMetaConfig 
       templateLang:
         typeof meta.meta_template_lang === "string" && meta.meta_template_lang.trim()
           ? meta.meta_template_lang.trim()
+          : null,
+      templateStatus:
+        meta.meta_template_status === "APPROVED" ||
+        meta.meta_template_status === "PENDING" ||
+        meta.meta_template_status === "REJECTED"
+          ? meta.meta_template_status
           : null,
     };
   } catch {
@@ -1440,11 +1451,36 @@ export async function saveSystemAgentMetaOnboardingFlags(params: {
 export async function saveSystemAgentMetaTemplate(params: {
   templateName: string | null;
   templateLang: string | null;
+  templateStatus?: "APPROVED" | "PENDING" | "REJECTED" | null;
 }): Promise<void> {
   await patchSystemAgentMetadata({
     meta_template_name: params.templateName ?? null,
     meta_template_lang: params.templateLang ?? null,
+    ...(params.templateStatus !== undefined
+      ? { meta_template_status: params.templateStatus }
+      : {}),
   });
+}
+
+export async function refreshSystemAgentMetaTemplateStatus(): Promise<
+  "APPROVED" | "PENDING" | "REJECTED" | null
+> {
+  const config = await getSystemAgentMetaConfig();
+  if (!config?.wabaId || !config.templateName) return null;
+  const check = await fetchWhatsAppMessageTemplateStatus({
+    wabaId: config.wabaId,
+    templateName: config.templateName,
+    accessToken: config.accessToken,
+  });
+  if (!check.found || !check.status) return config.templateStatus;
+  if (check.status !== config.templateStatus) {
+    await saveSystemAgentMetaTemplate({
+      templateName: config.templateName,
+      templateLang: config.templateLang,
+      templateStatus: check.status,
+    });
+  }
+  return check.status;
 }
 
 export async function clearSystemAgentMetaConfig(): Promise<void> {
@@ -1507,6 +1543,9 @@ async function sendSystemNotificationViaMeta(
   const config = await getSystemAgentMetaConfig();
   if (!config?.active) {
     return { ok: false, error: "meta_provider_not_configured" };
+  }
+  if (config.templateName && config.templateStatus && config.templateStatus !== "APPROVED") {
+    return { ok: false, error: `meta_template_${config.templateStatus.toLowerCase()}` };
   }
 
   const rawDigits = toNumber.replace(/\D/g, "");

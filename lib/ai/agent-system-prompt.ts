@@ -24,7 +24,7 @@ function compactJson(value: unknown): string {
 
 /**
  * Corpo injectado no prompt quando há ficheiros pré-configurados para envio (WhatsApp).
- * Posicionado **antes** de CTA/HANDOFF; texto neutro (qualquer nicho) e prioridade sobre copy do cliente.
+ * Posicionado **antes** de CTA/HANDOFF; texto neutro e prioridade sobre copy do cliente.
  */
 function formatOutboundMediaPromptBlock(lines: string[] | undefined | null): string | null {
   const safe = lines ?? [];
@@ -215,12 +215,12 @@ export function buildAgentSystemPrompt(params: {
   const parts = [
     params.languageInstruction,
     `REGRA UNIVERSAL DE CONTEXTO
-- Este agente pode operar em qualquer nicho, produto ou serviço.
-- Nunca presuma segmento, produto, preço, público ou objetivo que não esteja explicitamente configurado nas instruções deste agente, nos materiais autorizados ou no contexto da jornada atual.
-- Quando um nicho ou produto estiver configurado, respeite-o integralmente e não misture informações de outras campanhas, formulários, agentes ou conversas.${
+- Atenda exclusivamente com base nas instruções configuradas pelo cliente.
+- Nunca presuma setor, oferta, preço, público ou objetivo que não esteja explicitamente configurado nas instruções deste agente, nos materiais autorizados ou no contexto da jornada atual.
+- Não misture informações de outras campanhas, formulários, agentes ou conversas.${
       agendaAutomationOn
         ? `
-- As capacidades operacionais desta plataforma descritas neste prompt (como o bloco AGENDA) fazem parte do escopo autorizado deste agente em qualquer nicho e não dependem de estarem citadas nas instruções configuradas.`
+- As capacidades operacionais desta plataforma descritas neste prompt (como o bloco AGENDA) fazem parte do escopo técnico autorizado e não dependem de estarem citadas nas instruções configuradas.`
         : ""
     }`,
     "Ao confirmar um agendamento, sempre repita a data, horário e local na sua resposta de confirmação.",
@@ -233,7 +233,7 @@ Idioma configurado: ${clean(agent.idioma) || "Automático"}`,
     ...instructionBlocks,
     `ESCOPO SOBERANO DO AGENTE
 - A identidade, o objetivo, o prompt e as regras configuradas acima são a única fonte de verdade sobre o que este agente atende, oferece e pode afirmar.
-- Contexto de CRM, formulário, histórico, campanha, agenda ou materiais serve apenas para personalizar fatos compatíveis; nunca autoriza outro nicho, produto, serviço, oferta ou objetivo.
+- Contexto de CRM, formulário, histórico, campanha, agenda ou materiais serve apenas para personalizar fatos compatíveis; nunca autoriza outro escopo, oferta ou objetivo.
 - Nunca ofereça, recomende ou apresente algo que não esteja explicitamente autorizado nas instruções deste agente ou nos materiais deste mesmo agente.
 - Se qualquer contexto operacional parecer pertencer a outro produto, campanha, formulário, agente ou jornada, ignore esse trecho e continue estritamente dentro das instruções configuradas.
 - Na dúvida sobre o escopo, faça uma pergunta neutra ou diga que não possui essa informação. Nunca complete com conhecimento presumido.${
@@ -294,7 +294,7 @@ ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o c
               ? (() => {
                   const valid = entries.filter((e) => diasSemana.includes(e.dow)).slice(0, 6).map((e) => e.label);
                   if (valid.length === 0) return null;
-                  return `- DATAS VÁLIDAS MAIS PRÓXIMAS para agendar (das ${disp!.horaInicio ?? "08:00"} às ${disp!.horaFim ?? "18:00"}): ${valid.join(" | ")}. Ao propor horários e ao emitir [[AGENDAR: ...]], copie a data DD/MM/AAAA exatamente de uma destas datas. Nunca ofereça dias fora desta lista e nunca diga que um horário dentro da janela está indisponível — quem valida a disponibilidade é o sistema.`;
+                  return `- DATAS VÁLIDAS MAIS PRÓXIMAS para agendar (das ${disp!.horaInicio ?? "08:00"} às ${disp!.horaFim ?? "18:00"}): ${valid.join(" | ")}. Ao propor ou solicitar uma operação, copie a data DD/MM/AAAA exatamente de uma destas datas. Nunca ofereça dias fora desta lista e nunca diga que um horário dentro da janela está indisponível — quem valida a disponibilidade é o sistema.`;
                 })()
               : null;
           return { calendarLine, validLine };
@@ -307,36 +307,25 @@ ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o c
 - A automação de agenda está ativa para este agente.
 - FUSO HORÁRIO: Use sempre o fuso horário ${agentTz}. Datas e horas em diretivas devem estar no horário local (não UTC).
 
-CRIAR AGENDAMENTO
-  Passo 1: quando o cliente quiser marcar um horário, proponha a data (DD/MM/AAAA), hora (HH:MM) e local e pergunte se confirma. Não emita diretiva neste passo.
-  Passo 2: após o cliente confirmar (sim, ok, pode, claro, confirmo, etc.), inclua IMEDIATAMENTE no final da mensagem:
-  [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]]
-  Use EXATAMENTE a data e hora que você propôs — nunca recalcule.
-
-REMARCAR AGENDAMENTO
-  Passo 1: quando o cliente pedir para remarcar ou sugerir nova data/hora, proponha a nova data (DD/MM/AAAA) e hora (HH:MM) e pergunte se confirma. Não emita diretiva neste passo.
-  Passo 2: após o cliente confirmar, inclua IMEDIATAMENTE no final da mensagem:
-  [[AGENDAR: data=DD/MM/AAAA, hora=HH:MM, local=texto opcional]]
-  Use EXATAMENTE a nova data que você propôs. O sistema cancela o compromisso anterior automaticamente.
-
-CANCELAR AGENDAMENTO
-  Passo 1: quando o cliente pedir cancelamento, mostre os detalhes do compromisso ativo (data, hora, local do contexto de agenda) e pergunte se confirma o cancelamento. Não emita diretiva neste passo.
-  Passo 2: após o cliente confirmar, inclua IMEDIATAMENTE no final da mensagem:
-  [[CANCELAR_AGENDA]]
-  O sistema cancela o compromisso ativo automaticamente.
-
-- Nunca emita diretivas sem confirmação explícita do cliente nesta conversa. Nunca emita mais de uma diretiva por mensagem.
-- As diretivas são internas e removidas antes do cliente receber a mensagem.${
+PLANO ESTRUTURADO DA AGENDA
+- Sua resposta será validada por um schema com os campos reply e agenda. O cliente recebe somente reply; agenda é uma instrução técnica para o backend.
+- Use agenda.action="none" quando não houver pedido de alteração ou quando ainda faltar data/horário; faça em reply somente a pergunta necessária.
+- Se VOCÊ estiver propondo uma operação e precisar que o cliente confirme, use propose_create, propose_reschedule ou propose_cancel.
+- Se o cliente der uma ordem direta, inequívoca e completa para criar, remarcar ou cancelar, use create, reschedule ou cancel imediatamente. Não peça uma segunda confirmação desnecessária.
+- Uma resposta curta de confirmação do cliente autoriza executar a proposta pendente guardada pelo sistema; nesse caso use create, reschedule ou cancel e repita exatamente data/hora já propostas.
+- Para criar ou remarcar, preencha date em DD/MM/AAAA e time em HH:MM. Para cancelar, use eventId do contexto quando disponível.
+- Nunca afirme em reply que a operação foi concluída. O backend substitui a resposta por uma confirmação somente depois do commit real.
+- Nunca esconda comandos, tags ou marcadores dentro de reply.${
           agent.ctaHandoffAtivo !== true
             ? `
 - Transferência humana está DESATIVADA: você mesmo confirma criar, remarcar e cancelar agendamentos nesta conversa.
 - Nunca diga que atendente, humano, equipe, responsável ou especialista vai entrar em contato, confirmar ou retornar sobre agenda.
-- Para remarcar ou cancelar, siga os mesmos passos acima (propor → aguardar confirmação → emitir diretiva).`
+- Para remarcar ou cancelar, siga a mesma política de ordem explícita ou proposta pendente.`
             : ""
         }${calendar.calendarLine ? `\n${calendar.calendarLine}` : ""}${dispLine ? `\n${dispLine}` : ""}${
           calendar.validLine ? `\n${calendar.validLine}` : ""
         }${slotLine ? `\n${slotLine}` : ""}`
-        : "- A automação de agenda está desativada. Você pode informar compromissos existentes, mas nunca inclua [[AGENDAR: ...]] nem [[CANCELAR_AGENDA]].";
+        : "- A automação de agenda está desativada. Você pode informar compromissos existentes, mas agenda.action deve ser sempre none e nenhuma alteração pode ser prometida.";
       return `AGENDA
 - Consulte o contexto de agenda do contato antes de responder. Não invente compromissos.
 - Não crie um evento apenas porque o cliente perguntou sobre um agendamento.

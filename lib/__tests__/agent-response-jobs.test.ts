@@ -76,13 +76,13 @@ describe("webhook flow decision", () => {
     ).toBe("smart_wait");
   });
 
-  it("allows immediate flow only when smart wait is disabled", () => {
+  it("keeps the durable grouping pipeline even for legacy disabled settings", () => {
     expect(
       resolveInboundAgentFlowDecision({
         smartWait: { ...DEFAULT_AGENT_SMART_WAIT, enabled: false },
         inboundMessageKey: "msg-1",
       }),
-    ).toEqual({ mode: "immediate", reason: "smart_wait_disabled" });
+    ).toEqual({ mode: "smart_wait", jobId: null });
   });
 });
 

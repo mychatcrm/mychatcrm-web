@@ -25,7 +25,7 @@ export function resolveInboundAgentFlowDecision(params: {
   smartWait: AgentSmartWaitSettings;
   inboundMessageKey: string | null;
 }): InboundAgentFlowDecision {
-  if (isSmartWaitGloballyDisabled() || !params.smartWait.enabled) {
+  if (isSmartWaitGloballyDisabled()) {
     return { mode: "immediate", reason: "smart_wait_disabled" };
   }
   if (!params.inboundMessageKey) {
@@ -59,6 +59,8 @@ export async function runInboundSmartWaitFlow(params: {
   journeyId?: string | null;
   agentId: string;
   instanceName: string;
+  channel?: "evolution" | "meta_cloud";
+  connectionId?: string | null;
   inboundMessageKey: string;
   occurredAt: string;
   smartWait: AgentSmartWaitSettings;
@@ -79,6 +81,8 @@ export async function runInboundSmartWaitFlow(params: {
     journeyId: params.journeyId,
     agentId: params.agentId,
     instanceName: params.instanceName,
+    channel: params.channel,
+    connectionId: params.connectionId,
     whatsappMessageId: params.inboundMessageKey,
     occurredAt: params.occurredAt,
     settings: params.smartWait,
@@ -90,7 +94,9 @@ export async function runInboundSmartWaitFlow(params: {
       tenant_id: params.tenantId,
       remote_jid: maskRemoteJidForLog(params.remoteJid),
     });
-    return { mode: "immediate", reason: "job_create_failed" };
+    // Falhar fechado preserva a garantia de uma resposta por burst. Responder
+    // imediatamente aqui recriaria exatamente o defeito de respostas separadas.
+    return { mode: "smart_wait", jobId: null, reason: "job_create_failed" };
   }
 
   console.info("[agent-response-jobs]", {

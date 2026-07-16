@@ -2,6 +2,10 @@ import {
   generateAgentResponse,
   isAgentMissingInstructionsResult,
 } from "@/lib/ai/generate-agent-response";
+import {
+  agendaPlanFromResult,
+  type AgentAgendaPlan,
+} from "@/lib/ai/agent-turn-plan";
 import { detectSupportedLanguageCode, type SupportedLanguageCode } from "@/lib/ai/language-detect";
 import {
   canUseTts,
@@ -68,6 +72,11 @@ import { markWaitingForHuman } from "@/lib/server/conversation-operation";
 import { scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
 import { isStaleBurstGenerationRow, sleep } from "@/lib/server/agent-response-schedule";
 import { sendAgentOutboundMediaViaEvolution } from "@/lib/server/send-agent-outbound-media-evolution";
+import {
+  markAgentOutboundFailed,
+  markAgentOutboundSent,
+  prepareAgentOutbound,
+} from "@/lib/server/agent-outbound-outbox";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { transcribeAudioFromBuffer } from "@/lib/ai/media-processor";
 import { getMediaBufferFromR2 } from "@/lib/integrations/r2-storage";
@@ -102,7 +111,7 @@ type PendingInboundRow = {
 };
 
 type GeneratedReplyForUnit =
-  | { ok: true; text: string }
+  | { ok: true; text: string; agendaPlan: AgentAgendaPlan | null }
   | { ok: false; error: "agent_missing_instructions" };
 
 function localizedGenericFailureReply(languageCode: SupportedLanguageCode): string {
@@ -217,6 +226,7 @@ async function generateReplyForUnit(params: {
     ? result.text
     : buildTextualReplyFallbackTopics(params.unit) ?? localizedGenericFailureReply(languageCode);
 
+  let agendaPlan = agendaPlanFromResult(result);
   if (result.ok) {
     const recentOutbound = (
       await getRecentConversationMessages({
@@ -255,11 +265,14 @@ async function generateReplyForUnit(params: {
         },
         schedulingContextBlock: params.schedulingContextBlock,
       });
-      if (retry.ok) replyText = retry.text;
+      if (retry.ok) {
+        replyText = retry.text;
+        agendaPlan = agendaPlanFromResult(retry);
+      }
     }
   }
 
-  return { ok: true, text: replyText };
+  return { ok: true, text: replyText, agendaPlan };
 }
 
 export async function processAgentResponseJob(
@@ -534,6 +547,19 @@ export async function processAgentResponseJob(
   if (allAudioUntranscribed) {
     const apology =
       "Desculpe, não consegui processar seu áudio. Pode digitar sua mensagem?";
+    const outbound = await prepareAgentOutbound({
+      sb,
+      job,
+      generation,
+      kind: "text",
+      content: apology,
+    });
+    if (outbound.action === "already_sent") {
+      return { ok: true, dedupedCount: burst.dedupedCount };
+    }
+    if (outbound.action === "ambiguous") {
+      return { ok: false, error: "outbound_dispatch_ambiguous", dedupedCount: burst.dedupedCount };
+    }
     await sendPresence(job.instance_name, number, "composing", typingDelayMs(apology));
     const apologyResult = await evolutionSendText({
       instanceName: job.instance_name,
@@ -542,6 +568,13 @@ export async function processAgentResponseJob(
       resolveRecipient: true,
     });
     if (apologyResult.ok) {
+      const receipt = extractEvolutionSendReceipt(apologyResult.data);
+      await markAgentOutboundSent({
+        sb,
+        id: outbound.id,
+        claimToken: outbound.claimToken,
+        providerMessageId: receipt.messageId,
+      });
       await saveOutboundMessage({
         tenantId: job.tenant_id,
         instanceName: job.instance_name,
@@ -553,6 +586,14 @@ export async function processAgentResponseJob(
         journeyId: job.journey_id,
         providerPayload: apologyResult.data,
       });
+    } else {
+      await markAgentOutboundFailed({
+        sb,
+        id: outbound.id,
+        claimToken: outbound.claimToken,
+        error: apologyResult.error ?? "audio_transcription_apology_send_failed",
+      });
+      return { ok: false, error: "outbound_send_failed", dedupedCount: burst.dedupedCount };
     }
     console.info("[agent-response-jobs]", {
       event: "audio_transcription_apology_sent",
@@ -670,6 +711,7 @@ export async function processAgentResponseJob(
       agentId: job.agent_id,
       timezone: schedulingTimezone,
       modelText: modelTextWithoutHandoff,
+      agendaPlan: generatedReply.agendaPlan,
       clientText: consolidatedInboundTextFromUnit(unit),
       priorAssistantText,
       recentClientMessages,
@@ -821,6 +863,25 @@ export async function processAgentResponseJob(
       return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
     }
 
+    const outbound = await prepareAgentOutbound({
+      sb,
+      job,
+      generation,
+      kind: useTts ? "audio" : "text",
+      content: textToSend.slice(0, 4000),
+    });
+    if (outbound.action === "already_sent") {
+      repliesSent += 1;
+      continue;
+    }
+    if (outbound.action === "ambiguous") {
+      return {
+        ok: false,
+        error: "outbound_dispatch_ambiguous",
+        dedupedCount: burst.dedupedCount,
+      };
+    }
+
     const delivery = await deliverAgentReplyWithOptionalTts({
       instanceName: job.instance_name,
       number,
@@ -847,6 +908,12 @@ export async function processAgentResponseJob(
     });
 
     if (!delivery.sent) {
+      await markAgentOutboundFailed({
+        sb,
+        id: outbound.id,
+        claimToken: outbound.claimToken,
+        error: "outbound_send_failed",
+      });
       const journey = job.journey_id
         ? await authorizeActiveJourney({
             sb,
@@ -865,6 +932,14 @@ export async function processAgentResponseJob(
       });
       return { ok: false, error: "outbound_send_failed", dedupedCount: burst.dedupedCount };
     }
+
+    const providerReceipt = extractEvolutionSendReceipt(delivery.providerPayload);
+    await markAgentOutboundSent({
+      sb,
+      id: outbound.id,
+      claimToken: outbound.claimToken,
+      providerMessageId: providerReceipt.messageId,
+    });
 
     await saveOutboundMessage({
       tenantId: job.tenant_id,

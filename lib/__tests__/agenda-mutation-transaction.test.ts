@@ -18,6 +18,14 @@ const fixPath = join(
   process.cwd(),
   "supabase/migrations/20260716005454_agenda_outbox_hardening_fix.sql",
 );
+const pipelineV2Path = join(
+  process.cwd(),
+  "supabase/migrations/20260716140346_agent_pipeline_v2_durable_turns.sql",
+);
+const pipelineV2IndexesPath = join(
+  process.cwd(),
+  "supabase/migrations/20260716140529_agent_pipeline_v2_fk_indexes.sql",
+);
 
 function migration(): string {
   return readFileSync(migrationPath, "utf8");
@@ -29,6 +37,14 @@ function hardening(): string {
 
 function fixMigration(): string {
   return readFileSync(fixPath, "utf8");
+}
+
+function pipelineV2Migration(): string {
+  return readFileSync(pipelineV2Path, "utf8");
+}
+
+function pipelineV2IndexesMigration(): string {
+  return readFileSync(pipelineV2IndexesPath, "utf8");
 }
 
 describe("transactional agenda mutations", () => {
@@ -123,5 +139,43 @@ describe("agenda outbox hardening fix migration", () => {
     expect(sql).toContain("NOT EXISTS");
     expect(sql).toContain("GRANT EXECUTE ON FUNCTION public.list_missing_agenda_notification_ops");
     expect(sql).toContain("TO service_role");
+  });
+});
+
+describe("agent pipeline v2 migration", () => {
+  it("claims one response generation atomically and isolates provider connections", () => {
+    const sql = pipelineV2Migration();
+    expect(sql).toContain("upsert_agent_response_job_burst_v2");
+    expect(sql).toContain("claim_agent_response_job_v2");
+    expect(sql).toContain("pg_advisory_xact_lock");
+    expect(sql).toContain("channel IN ('evolution', 'meta_cloud')");
+    expect(sql).toContain("COALESCE(connection_id, '')");
+    expect(sql).toContain("claim_token = p_claim_token");
+  });
+
+  it("materializes calendar sync and owner notification in the local commit transaction", () => {
+    const sql = pipelineV2Migration();
+    expect(sql).toContain("CREATE TABLE IF NOT EXISTS public.agenda_sync_outbox");
+    expect(sql).toContain("CREATE OR REPLACE FUNCTION public.enqueue_agent_agenda_side_effects_v2");
+    expect(sql).toContain("AFTER INSERT OR UPDATE OF status, result");
+    expect(sql).toContain("INSERT INTO public.agenda_notification_outbox");
+    expect(sql).toContain("INSERT INTO public.agenda_sync_outbox");
+    expect(sql).toContain("'sync_pending'");
+  });
+
+  it("creates durable pending agenda actions and outbound reply intents", () => {
+    const sql = pipelineV2Migration();
+    expect(sql).toContain("CREATE TABLE IF NOT EXISTS public.agent_agenda_pending_actions");
+    expect(sql).toContain("CREATE TABLE IF NOT EXISTS public.agent_outbound_outbox");
+    expect(sql).toContain("UNIQUE (job_id, burst_generation, kind)");
+    expect(sql).toContain("WHERE state = 'pending'");
+  });
+
+  it("covers every foreign key introduced by the v2 outboxes", () => {
+    const sql = pipelineV2IndexesMigration();
+    expect(sql).toContain("agenda_sync_outbox (agenda_event_id)");
+    expect(sql).toContain("agent_agenda_pending_actions (event_id)");
+    expect(sql).toContain("agent_agenda_pending_actions (source_job_id)");
+    expect(sql).toContain("agent_outbound_outbox (lead_id)");
   });
 });

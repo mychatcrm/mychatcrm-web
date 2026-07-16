@@ -5,7 +5,11 @@ import {
   buildAppointmentOwnerNotificationText,
   type AppointmentNotificationAction,
 } from "@/lib/server/agenda-owner-notifications";
-import { getSystemAgentMetaConfig, sendSystemNotification } from "@/lib/server/system-agent";
+import {
+  getSystemAgentMetaConfig,
+  refreshSystemAgentMetaTemplateStatus,
+  sendSystemNotification,
+} from "@/lib/server/system-agent";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
@@ -16,6 +20,7 @@ const CLAIM_TTL_SECONDS = 300;
 /** Espera de webhook de entrega antes de reconsiderar reenvio de uma linha `sent`. */
 const DELIVERY_WAIT_MINUTES = 15;
 export const META_TEMPLATE_REQUIRED_ERROR = "meta_template_required";
+export const META_TEMPLATE_NOT_APPROVED_ERROR = "meta_template_not_approved";
 /** Recuo enquanto o template Meta não está configurado (reenviável depois). */
 const META_TEMPLATE_BACKOFF_MINUTES = 60;
 
@@ -28,7 +33,16 @@ type OutboxRow = {
   action: AppointmentNotificationAction;
   operation_key: string;
   phone_last4: string | null;
-  payload: { phone?: string; message?: string; agent_id?: string | null } | null;
+  payload: {
+    phone?: string;
+    message?: string;
+    agent_id?: string | null;
+    attendeeName?: string | null;
+    attendeePhone?: string | null;
+    startAtIso?: string | null;
+    location?: string | null;
+    timezone?: string | null;
+  } | null;
   status: OutboxStatus;
   attempts: number;
   last_error: string | null;
@@ -165,12 +179,22 @@ export async function enqueueAgendaOwnerNotification(params: {
     }
 
     if (!data?.id) {
+      const { data: existing } = await sb
+        .from(OUTBOX_TABLE)
+        .select("id")
+        .eq("tenant_id", params.tenantId)
+        .eq("operation_key", params.operationKey)
+        .eq("action", params.action)
+        .maybeSingle();
       console.info("[agenda-notification-outbox] deduplicated", {
         tenant_id: params.tenantId,
         agenda_event_id: params.agendaEventId,
         action: params.action,
       });
-      return { enqueued: false, outboxId: null };
+      return {
+        enqueued: false,
+        outboxId: (existing?.id as string | undefined) ?? null,
+      };
     }
 
     return { enqueued: true, outboxId: data.id as string };
@@ -270,7 +294,22 @@ async function claimOutboxBatch(sb: SupabaseServiceClient, limit: number): Promi
 /** Envia uma linha JÁ reivindicada. Só o dono do claim_token finaliza. */
 async function sendClaimedRow(sb: SupabaseServiceClient, row: OutboxRow): Promise<"sent" | "failed" | "pending"> {
   const phone = row.payload?.phone?.trim();
-  const message = row.payload?.message?.trim();
+  let message = row.payload?.message?.trim();
+  if (!message && phone && row.payload?.startAtIso) {
+    const timezone = row.payload.timezone?.trim() ||
+      await resolveAgentTimezoneById(sb, row.tenant_id, row.payload.agent_id ?? null);
+    message = buildAppointmentOwnerNotificationText({
+      action: row.action,
+      attendeeName: row.payload.attendeeName ?? null,
+      attendeePhone: row.payload.attendeePhone ?? null,
+      startAtIso: row.payload.startAtIso,
+      timezone,
+      location: row.payload.location ?? null,
+    });
+    row.payload = { ...row.payload, message, timezone };
+    const hydrated = await updateClaimedRow(sb, row, { payload: row.payload });
+    if (!hydrated) throw new Error("payload_hydration_inconclusive");
+  }
   if (!phone || !message) {
     const ok = await updateClaimedRow(sb, row, {
       status: "failed",
@@ -341,6 +380,21 @@ async function sendClaimedRow(sb: SupabaseServiceClient, row: OutboxRow): Promis
       phone_last4: row.phone_last4,
     });
     return "pending";
+  }
+  if (metaConfig?.active && metaConfig.templateName && metaConfig.templateStatus !== "APPROVED") {
+    const refreshed = await refreshSystemAgentMetaTemplateStatus().catch(
+      () => metaConfig.templateStatus,
+    );
+    if (refreshed !== "APPROVED") {
+      const ok = await updateClaimedRow(sb, row, {
+        status: "pending",
+        last_error: META_TEMPLATE_NOT_APPROVED_ERROR,
+        claim_token: null,
+        next_attempt_at: nextAttemptIso(META_TEMPLATE_BACKOFF_MINUTES),
+      });
+      if (!ok) throw new Error("finalize_inconclusive");
+      return "pending";
+    }
   }
 
   const attempts = row.attempts + 1;

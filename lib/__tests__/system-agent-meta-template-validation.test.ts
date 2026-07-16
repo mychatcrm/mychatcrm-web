@@ -8,8 +8,10 @@ vi.mock("@/lib/admin-auth", () => ({
 }));
 
 const fetchWhatsAppMessageTemplateStatus = vi.hoisted(() => vi.fn());
+const createWhatsAppMessageTemplate = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/integrations/whatsapp-cloud", () => ({
   fetchWhatsAppMessageTemplateStatus,
+  createWhatsAppMessageTemplate,
 }));
 
 const getSystemAgentMetaConfig = vi.hoisted(() => vi.fn());
@@ -23,7 +25,12 @@ vi.mock("@/lib/server/system-agent", () => ({
   clearSystemAgentMetaConfig,
 }));
 
-import { PATCH } from "@/app/api/admin/system-agent/meta/config/route";
+import {
+  PATCH,
+  POST,
+} from "@/app/api/admin/system-agent/meta/config/route";
+
+const SYSTEM_NOTIFICATION_TEMPLATE_NAME = "mychatcrm_agenda_notification_v1";
 
 function patchRequest(body: Record<string, unknown>) {
   return new Request("https://www.mychatcrm.com.br/api/admin/system-agent/meta/config", {
@@ -72,15 +79,17 @@ describe("PATCH /api/admin/system-agent/meta/config — validates the template a
       ok: true,
       template_name: "system_notification",
       template_lang: "pt_BR",
+      template_status: "APPROVED",
       warning: null,
     });
     expect(saveSystemAgentMetaTemplate).toHaveBeenCalledWith({
       templateName: "system_notification",
       templateLang: "pt_BR",
+      templateStatus: "APPROVED",
     });
   });
 
-  it("saves a pending template but warns that dispatches will fail until it's approved", async () => {
+  it("saves a pending template and keeps notifications queued until approval", async () => {
     getSystemAgentMetaConfig.mockResolvedValue({ wabaId: "WABA1", accessToken: "token-abc" });
     fetchWhatsAppMessageTemplateStatus.mockResolvedValue({ found: true, status: "PENDING", category: "UTILITY" });
 
@@ -101,7 +110,11 @@ describe("PATCH /api/admin/system-agent/meta/config — validates the template a
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true, template_name: null, template_lang: null });
     expect(fetchWhatsAppMessageTemplateStatus).not.toHaveBeenCalled();
-    expect(saveSystemAgentMetaTemplate).toHaveBeenCalledWith({ templateName: null, templateLang: null });
+    expect(saveSystemAgentMetaTemplate).toHaveBeenCalledWith({
+      templateName: null,
+      templateLang: null,
+      templateStatus: null,
+    });
   });
 
   it("blocks template validation with a clear message when the WABA id isn't saved yet", async () => {
@@ -113,5 +126,61 @@ describe("PATCH /api/admin/system-agent/meta/config — validates the template a
     await expect(response.json()).resolves.toMatchObject({ error: expect.stringContaining("WABA") });
     expect(fetchWhatsAppMessageTemplateStatus).not.toHaveBeenCalled();
     expect(saveSystemAgentMetaTemplate).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/admin/system-agent/meta/config — provisions the utility template", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getAdminSessionFromCookies.mockResolvedValue({ id: "admin" });
+    hasAdminAccess.mockReturnValue(true);
+    getSystemAgentMetaConfig.mockResolvedValue({ wabaId: "WABA1", accessToken: "token-abc" });
+  });
+
+  it("reuses an existing approved template without creating a duplicate", async () => {
+    fetchWhatsAppMessageTemplateStatus.mockResolvedValue({
+      found: true,
+      status: "APPROVED",
+      category: "UTILITY",
+    });
+
+    const response = await POST();
+
+    expect(response.status).toBe(200);
+    expect(createWhatsAppMessageTemplate).not.toHaveBeenCalled();
+    expect(saveSystemAgentMetaTemplate).toHaveBeenCalledWith({
+      templateName: SYSTEM_NOTIFICATION_TEMPLATE_NAME,
+      templateLang: "pt_BR",
+      templateStatus: "APPROVED",
+    });
+  });
+
+  it("creates and saves a pending template for automatic approval tracking", async () => {
+    fetchWhatsAppMessageTemplateStatus.mockResolvedValue({
+      found: false,
+      status: null,
+      category: null,
+    });
+    createWhatsAppMessageTemplate.mockResolvedValue({
+      ok: true,
+      status: 200,
+      templateStatus: "PENDING",
+      id: "template-1",
+    });
+
+    const response = await POST();
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      template_name: SYSTEM_NOTIFICATION_TEMPLATE_NAME,
+      template_status: "PENDING",
+      created: true,
+    });
+    expect(saveSystemAgentMetaTemplate).toHaveBeenCalledWith({
+      templateName: SYSTEM_NOTIFICATION_TEMPLATE_NAME,
+      templateLang: "pt_BR",
+      templateStatus: "PENDING",
+    });
   });
 });

@@ -18,6 +18,10 @@ import { buildAgentAgendaContextBlock } from "@/lib/server/agent-agenda-context"
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import type { BurstResponseStrategy } from "@/lib/conversas/normalize-conversation-burst";
 import type { Agent } from "@/lib/types";
+import {
+  AGENT_TURN_RESPONSE_FORMAT,
+  normalizeAgentTurnResult,
+} from "@/lib/ai/agent-turn-plan";
 
 type AiGenerateFailureResult = Extract<AiGenerateResult, { ok: false }>;
 
@@ -83,11 +87,23 @@ async function resolveAgentPromptBase(params: {
 > {
   const profile = await getInferenceProfileByTenantAgent(params.tenantId, params.agentId);
   const templatePrompt = buildSystemPromptFromTemplateAgent(params.tenantId, params.agentId);
-  let baseAgent: Partial<Agent> & { nome?: string; systemPrompt?: string } | null =
+  const profileMetadata =
     profile?.metadata && typeof profile.metadata === "object"
-      ? ({ ...profile.metadata, nome: profile.displayName, systemPrompt: profile.systemPrompt } as Partial<Agent> & { nome?: string; systemPrompt?: string })
+      ? (profile.metadata as Record<string, unknown>)
       : null;
-  let systemPrompt = profile?.systemPrompt?.trim() || templatePrompt;
+  const configuredPrompt =
+    profileMetadata?.instructionMode === "simple"
+      ? (typeof profileMetadata.simplePrompt === "string" ? profileMetadata.simplePrompt.trim() : "")
+      : (typeof profileMetadata?.systemPrompt === "string" ? profileMetadata.systemPrompt.trim() : "");
+  let baseAgent: Partial<Agent> & { nome?: string; systemPrompt?: string } | null =
+    profileMetadata
+      ? ({
+          ...profileMetadata,
+          nome: profile?.displayName,
+          systemPrompt: configuredPrompt || profile?.systemPrompt,
+        } as Partial<Agent> & { nome?: string; systemPrompt?: string })
+      : null;
+  let systemPrompt = configuredPrompt || profile?.systemPrompt?.trim() || templatePrompt;
 
   if (!systemPrompt) {
     return {
@@ -387,7 +403,7 @@ export async function generateAgentResponse(params: {
 
   const messages: AiMessage[] = [systemMessage, ...historyMessages, ...tailMessages];
 
-  return generateAIResponse({
+  const result = await generateAIResponse({
     tenantId: params.tenantId.trim(),
     agentId: params.agentId.trim(),
     customerId: params.customerId ?? params.conversationId ?? null,
@@ -401,5 +417,10 @@ export async function generateAgentResponse(params: {
       userId: params.userId ?? null,
       simulation: params.simulation === true,
     },
+    responseFormat:
+      baseAgent.agendaAutomationEnabled === true
+        ? AGENT_TURN_RESPONSE_FORMAT
+        : undefined,
   });
+  return normalizeAgentTurnResult(result);
 }

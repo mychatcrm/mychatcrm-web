@@ -12,7 +12,7 @@ describe("omnichannel production hardening", () => {
       "lib/server/meta-lead-ingest.ts",
       "lib/server/meta-lead-manual-assignment.ts",
       "app/api/webhooks/evolution/route.ts",
-      "lib/server/whatsapp-cloud-webhook-handler.ts",
+      "lib/server/meta-agent-reply.ts",
       "lib/server/evolution-agent-reply.ts",
       "lib/server/follow-up-jobs.ts",
     ]) {

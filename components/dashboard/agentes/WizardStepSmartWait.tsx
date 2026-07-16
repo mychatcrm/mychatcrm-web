@@ -14,15 +14,13 @@ export function WizardStepSmartWait({
 }) {
   return (
     <div className="min-w-0 space-y-3">
-      <label className="flex min-w-0 items-start gap-3 rounded-xl bg-surface-elevated/30 px-3 py-3">
-        <input
-          type="checkbox"
-          className="mt-0.5 h-4 w-4 shrink-0"
-          checked={draft.smartWaitEnabled}
-          onChange={(event) => onChange({ ...draft, smartWaitEnabled: event.target.checked })}
+      <div className="flex min-w-0 items-start gap-3 rounded-xl bg-surface-elevated/30 px-3 py-3">
+        <span
+          aria-hidden="true"
+          className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500"
         />
-        <InlineFieldTitle title="Ativar espera inteligente" help={AGENT_FIELD_HELP.smartWaitAtivar} />
-      </label>
+        <InlineFieldTitle title="Agrupamento de mensagens sempre ativo" help={AGENT_FIELD_HELP.smartWaitAtivar} />
+      </div>
 
       <div className="grid min-w-0 gap-3 min-[560px]:grid-cols-3">
         <div className="min-w-0">
@@ -31,7 +29,6 @@ export function WizardStepSmartWait({
             type="number"
             min={1}
             max={60}
-            disabled={!draft.smartWaitEnabled}
             value={draft.smartWaitInitialSeconds}
             onChange={(event) =>
               onChange({ ...draft, smartWaitInitialSeconds: Number(event.target.value) || 7 })
@@ -44,7 +41,6 @@ export function WizardStepSmartWait({
             type="number"
             min={1}
             max={120}
-            disabled={!draft.smartWaitEnabled}
             value={draft.smartWaitFollowupSeconds}
             onChange={(event) =>
               onChange({ ...draft, smartWaitFollowupSeconds: Number(event.target.value) || 10 })
@@ -57,7 +53,6 @@ export function WizardStepSmartWait({
             type="number"
             min={5}
             max={180}
-            disabled={!draft.smartWaitEnabled}
             value={draft.smartWaitMaxSeconds}
             onChange={(event) =>
               onChange({ ...draft, smartWaitMaxSeconds: Number(event.target.value) || 30 })
@@ -70,7 +65,6 @@ export function WizardStepSmartWait({
         <input
           type="checkbox"
           className="h-4 w-4 shrink-0"
-          disabled={!draft.smartWaitEnabled}
           checked={draft.smartWaitDedupeRepeated}
           onChange={(event) => onChange({ ...draft, smartWaitDedupeRepeated: event.target.checked })}
         />

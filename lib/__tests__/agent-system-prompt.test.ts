@@ -47,7 +47,7 @@ describe("buildAgentSystemPrompt", () => {
 
     expect(prompt.startsWith("CRITICAL INSTRUCTION - LANGUAGE")).toBe(true);
     expect(prompt).toContain("REGRA UNIVERSAL DE CONTEXTO");
-    expect(prompt).toContain("não misture informações de outras campanhas");
+    expect(prompt).toMatch(/não misture informações de outras campanhas/i);
     expect(prompt).toContain("ESCOPO SOBERANO DO AGENTE");
     expect(prompt).toContain("são a única fonte de verdade sobre o que este agente atende");
     expect(prompt).not.toMatch(/Minha Casa Minha Vida|casa ou apartamento|nome do empreendimento/i);
@@ -149,14 +149,17 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("não há atendimento humano disponível no momento");
   });
 
-  it("instructs the model to use structured agenda directives", () => {
+  it("instructs the model to return a structured agenda plan", () => {
     const prompt = buildAgentSystemPrompt({
       languageInstruction: "Responda em português.",
       agent: { nome: "Max Vendas", systemPrompt: "Ajude o cliente.", agendaAutomationEnabled: true },
     });
 
-    expect(prompt).toContain("[[AGENDAR: data=DD/MM/AAAA, hora=HH:MM");
-    expect(prompt).toContain("[[CANCELAR_AGENDA]]");
+    expect(prompt).toContain("PLANO ESTRUTURADO DA AGENDA");
+    expect(prompt).toContain('agenda.action="none"');
+    expect(prompt).toContain("propose_create, propose_reschedule ou propose_cancel");
+    expect(prompt).toContain("create, reschedule ou cancel imediatamente");
+    expect(prompt).not.toContain("[[AGENDAR:");
   });
 
   it("forbids human delegation in agenda flow when handoff is disabled", () => {
@@ -172,7 +175,7 @@ describe("buildAgentSystemPrompt", () => {
 
     expect(prompt).toContain("Transferência humana está DESATIVADA");
     expect(prompt).toContain("Nunca diga que atendente, humano, equipe");
-    expect(prompt).toContain("[[AGENDAR: data=DD/MM/AAAA, hora=HH:MM");
+    expect(prompt).toContain("PLANO ESTRUTURADO DA AGENDA");
   });
 
   it("keeps agenda read-only when agenda automation is disabled", () => {
@@ -182,7 +185,7 @@ describe("buildAgentSystemPrompt", () => {
     });
 
     expect(prompt).toContain("automação de agenda está desativada");
-    expect(prompt).toContain("nunca inclua [[AGENDAR: ...]]");
+    expect(prompt).toContain("agenda.action deve ser sempre none");
   });
 
   it("authorizes agenda as a system capability inside scope blocks when automation is on", () => {
@@ -194,7 +197,7 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("EXCEÇÃO — CAPACIDADES OPERACIONAIS DO SISTEMA");
     expect(prompt).toContain("NUNCA é sair do escopo");
     expect(prompt).toContain("não autoriza oferecer, recomendar ou afirmar nada fora das instruções configuradas");
-    expect(prompt).toContain("fazem parte do escopo autorizado deste agente em qualquer nicho");
+    expect(prompt).toContain("fazem parte do escopo técnico autorizado");
     expect(prompt).toContain("CAPACIDADE OPERACIONAL DO SISTEMA: agendar, remarcar e cancelar compromissos");
     expect(prompt).toContain("ESCOPO SOBERANO DO AGENTE");
     expect(prompt).toContain("REGRA UNIVERSAL DE CONTEXTO");

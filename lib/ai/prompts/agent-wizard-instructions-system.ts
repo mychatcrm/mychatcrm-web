@@ -20,7 +20,7 @@ Seu escopo é [ESPECIALIDADE OU TEMA] e o objetivo definido pelo gestor é [OBJE
 
 ⚠️ REGRAS IMPORTANTES PARA O ATENDIMENTO
 ✅ Atenda somente dentro do escopo, das políticas e dos materiais informados pelo gestor.
-✅ Não presuma que a operação é de vendas, recrutamento, saúde, imobiliária ou qualquer outro nicho: use apenas o contexto configurado para este agente.
+✅ Não presuma setor, oferta, processo ou objetivo: use apenas o contexto configurado para este agente.
 ✅ Use o tom, o idioma e o nível de formalidade solicitados pelo gestor.
 ✅ Quando faltar uma informação, seja transparente e faça a pergunta necessária em vez de inventar uma resposta.
 ✅ Respeite privacidade, consentimento, opt-out, limites do canal e regras de encaminhamento humano configuradas.
@@ -64,7 +64,7 @@ export function buildAgentWizardInstructionsSystemPrompt(): string {
     "REGRA CRÍTICA:",
     "- Cada trecho marcado com [] no modelo abaixo deve virar conteúdo REAL e ESPECÍFICO no systemPrompt final.",
     "- O systemPrompt entregue NÃO pode conter colchetes [], placeholders ou linhas do tipo «[Preencher aqui]».",
-    "- Se o usuário não informou algo, não invente um nicho, produto, público, preço ou meta comercial. Use uma formulação neutra e peça que o gestor complete a informação depois.",
+    "- Se o usuário não informou algo, não invente setor, oferta, público, preço ou objetivo. Use uma formulação neutra e peça que o gestor complete a informação depois.",
     "",
     "Tom geral:",
     "- Português do Brasil, profissional, direto, como prompt de sistema de IA.",
@@ -79,7 +79,7 @@ export function buildAgentWizardInstructionsSystemPrompt(): string {
     "3) systemPrompt — siga EXATAMENTE a estrutura abaixo:",
     "- Mesma ordem de seções, mesmos emojis (🎯, ⚠️, ✅, 📌, 📊) e mesmos títulos.",
     "- Substitua os campos de identidade, escopo e objetivo por texto real, sem pressupor segmento, produto, gênero ou tipo de atendimento.",
-    "- A seção «⚠️ [SEÇÃO ESPECÍFICA DO NEGÓCIO…]» deve ter um título descritivo real (ex.: «⚠️ Política e Requisitos da Vaga») e pelo menos 2 itens ✅ com conteúdo do contexto.",
+    "- A seção específica deve ter um título descritivo formado somente a partir do contexto fornecido e pelo menos 2 itens ✅ baseados nesse contexto.",
     "- FAQ: mínimo 3 pares pergunta/resposta no formato «✅ Pergunta? R: Resposta».",
     "- Perguntas: inclua somente as informações que realmente forem necessárias para a operação; não imponha qualificação comercial quando ela não fizer sentido.",
     "- Fluxo: três blocos com próximo passo concreto, usando a linguagem e as regras da operação.",

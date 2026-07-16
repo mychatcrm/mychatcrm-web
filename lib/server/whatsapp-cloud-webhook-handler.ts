@@ -9,14 +9,9 @@
  */
 import { NextResponse } from "next/server";
 import {
-  generateAgentResponse,
-  isAgentMissingInstructionsResult,
-} from "@/lib/ai/generate-agent-response";
-import {
   parseWhatsAppCloudInbound,
   parseWhatsAppCloudPayload,
   parseWhatsAppCloudStatuses,
-  sendWhatsAppTextMessage,
 } from "@/lib/integrations/whatsapp-cloud";
 import { applyMetaSystemNotificationStatus } from "@/lib/server/system-agent";
 import { handleSystemMetaInbound } from "@/lib/server/system-meta-inbound";
@@ -26,22 +21,15 @@ import { lookupWhatsAppCloudConnectionByPhoneNumberId } from "@/lib/server/whats
 import { getSlotActiveProvider } from "@/lib/server/whatsapp-slot-provider";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
-  authorizeActiveJourney,
-  isJourneyIsolationEnabled,
   resolveDirectJourneyAgent,
   touchLeadJourney,
 } from "@/lib/server/lead-journeys";
 import {
   cancelLeadRedistributionTrigger,
-  scheduleLeadRedistribution,
 } from "@/lib/server/lead-redistribution";
 import { revealConversationOnInbound } from "@/lib/server/conversation-visibility";
-import {
-  commitTenantLeadQuotaReservation,
-  releaseTenantLeadQuotaReservation,
-  reserveTenantLeadQuota,
-} from "@/lib/server/lead-quota";
-import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
+import { runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
+import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 
 export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<NextResponse> {
   // Delivery status updates from Meta (outgoing messages: sent/delivered/read/failed).
@@ -133,23 +121,27 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
     null;
   const receivedAt = new Date().toISOString();
 
-  const { error: inboundInsertError } = await sb.from("whatsapp_messages").insert({
-    tenant_id: tenantId,
-    remote_jid: inbound.fromWaId,
-    direction: "inbound",
-    kind: "text",
-    content: inbound.text,
-    message_id: inbound.messageId || null,
-    agent_id: null,
-    lead_id: leadId,
-    journey_id: journey?.id ?? null,
-    // Toda linha gravada aqui veio da API Oficial Meta — usado pelo painel de
-    // Conversas ao vivo (admin) e pelo filtro por canal.
-    channel: "meta_cloud",
-    // Identifica QUAL número Meta do tenant (pode ter vários) — usado pelo
-    // filtro por número em /dashboard/conversas.
-    connection_id: inbound.phoneNumberId,
-  });
+  const { data: inboundSaved, error: inboundInsertError } = await sb
+    .from("whatsapp_messages")
+    .insert({
+      tenant_id: tenantId,
+      remote_jid: inbound.fromWaId,
+      direction: "inbound",
+      kind: "text",
+      content: inbound.text,
+      message_id: inbound.messageId || null,
+      agent_id: null,
+      lead_id: leadId,
+      journey_id: journey?.id ?? null,
+      // Toda linha gravada aqui veio da API Oficial Meta — usado pelo painel de
+      // Conversas ao vivo (admin) e pelo filtro por canal.
+      channel: "meta_cloud",
+      // Identifica QUAL número Meta do tenant (pode ter vários) — usado pelo
+      // filtro por número em /dashboard/conversas.
+      connection_id: inbound.phoneNumberId,
+    })
+    .select("id,created_at")
+    .single();
   if (inboundInsertError?.code === "23505") {
     return NextResponse.json({ ok: true });
   }
@@ -158,6 +150,7 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
       tenant_id: tenantId,
       error: inboundInsertError.message,
     });
+    return NextResponse.json({ ok: true, blocked: "inbound_persist_failed" });
   }
 
   await revealConversationOnInbound({
@@ -230,154 +223,35 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
     return NextResponse.json({ ok: true });
   }
 
-  // Atendimento direto autorizado não cria automaticamente um lead no CRM,
-  // mas ainda precisa consumir a franquia uma única vez no primeiro contato.
-  // A reserva só é confirmada quando a resposta é entregue pela Cloud API.
-  let directQuotaReservationId: string | null = null;
-  if (journey?.source === "whatsapp_direct") {
-    const tenantPlan = await getTenantPlanSnapshot(tenantId);
-    const admission = await reserveTenantLeadQuota({
-      tenantId,
-      plan: tenantPlan.plan,
-      operationalLimits: tenantPlan.operationalLimits,
-      contactKey: inbound.fromWaId,
-      source: "whatsapp_direct",
-      idempotencyKey: `direct-cloud:${inbound.phoneNumberId}:${phone}`,
-      isExistingContact: Boolean(leadId),
-      metadata: {
-        connection_id: inbound.phoneNumberId,
-        journey_id: journey.id,
-        agent_id: agentId,
-      },
-    });
-    if (!admission.admitted) {
-      console.info("[webhooks/whatsapp] auto reply blocked by lead quota", {
-        tenant_id: tenantId,
-        agent_id: agentId,
-        reason: admission.reason,
-        used: admission.used,
-        cap: admission.cap,
-      });
-      return NextResponse.json({ ok: true, blocked: admission.reason });
-    }
-    directQuotaReservationId = admission.eventId;
-  }
-
-  const result = await generateAgentResponse({
+  const { data: agentConfig } = await sb
+    .from("tenant_agents")
+    .select("metadata")
+    .eq("tenant_id", tenantId)
+    .eq("agent_id", agentId)
+    .maybeSingle();
+  const metadata = agentConfig?.metadata && typeof agentConfig.metadata === "object"
+    ? (agentConfig.metadata as Record<string, unknown>)
+    : {};
+  const flow = await runInboundSmartWaitFlow({
+    sb,
     tenantId,
-    agentId,
-    conversationId: inbound.fromWaId,
+    remoteJid: inbound.fromWaId,
+    leadId,
     journeyId: journey?.id ?? null,
-    customerId: inbound.fromWaId,
-    feature: "agent_chat",
-    messages: [{ role: "user", content: inbound.text }],
+    agentId,
+    instanceName: inbound.phoneNumberId,
+    channel: "meta_cloud",
+    connectionId: inbound.phoneNumberId,
+    inboundMessageKey: String(inboundSaved.id),
+    occurredAt: String(inboundSaved.created_at ?? receivedAt),
+    smartWait: { ...smartWaitFromMetadata(metadata), enabled: true },
   });
-
-  if (isAgentMissingInstructionsResult(result)) {
-    await releaseTenantLeadQuotaReservation(
-      directQuotaReservationId,
-      "agent_missing_instructions",
-    );
-    console.warn("[webhooks/whatsapp] automatic reply blocked because agent has no instructions", {
+  if (flow.reason === "job_create_failed") {
+    console.error("[webhooks/whatsapp] durable agent turn was not created", {
       tenant_id: tenantId,
       agent_id: agentId,
-      journey_id: journey?.id ?? null,
       connection_id: inbound.phoneNumberId,
     });
-    return NextResponse.json({ ok: true, blocked: "agent_missing_instructions" });
-  }
-
-  // Send with the connection's own token (client numbers); the global env token
-  // remains the fallback for numbers without a stored connection.
-  const token = cloudConnection?.access_token?.trim() || process.env.WHATSAPP_ACCESS_TOKEN?.trim();
-  const replyText = result.ok
-    ? result.text
-    : "Não consegui gerar uma resposta agora. Por favor tente de novo em instantes.";
-
-  if (token) {
-    if (isJourneyIsolationEnabled()) {
-      const currentJourney = await authorizeActiveJourney({
-        sb,
-        tenantId,
-        remoteJid: inbound.fromWaId,
-        preferredAgentId: agentId,
-        connectionId: inbound.phoneNumberId,
-      });
-      if (!currentJourney.ok || currentJourney.journey?.id !== journey?.id) {
-        console.info("[webhooks/whatsapp] response cancelled before send", {
-          tenant_id: tenantId,
-          reason: currentJourney.ok ? "journey_superseded_before_send" : currentJourney.reason,
-        });
-        await releaseTenantLeadQuotaReservation(
-          directQuotaReservationId,
-          "journey_superseded_before_send",
-        );
-        return NextResponse.json({ ok: true });
-      }
-    }
-    const send = await sendWhatsAppTextMessage({
-      toWaId: inbound.fromWaId,
-      text: replyText.slice(0, 4000),
-      phoneNumberId: inbound.phoneNumberId,
-      accessToken: token,
-    });
-    if (!send.ok) {
-      console.error("[webhooks/whatsapp] send failed", send.status, send.error);
-      await releaseTenantLeadQuotaReservation(
-        directQuotaReservationId,
-        "initial_direct_cloud_delivery_failed",
-      );
-    } else {
-      const sentAt = new Date().toISOString();
-      await sb.from("whatsapp_messages").insert({
-        tenant_id: tenantId,
-        remote_jid: inbound.fromWaId,
-        direction: "outbound",
-        kind: "text",
-        content: replyText.slice(0, 4000),
-        message_id: send.messageId ?? null,
-        agent_id: agentId,
-        lead_id: leadId,
-        journey_id: journey?.id ?? null,
-        channel: "meta_cloud",
-        connection_id: inbound.phoneNumberId,
-      });
-      if (leadId) {
-        await sb
-          .from("leads")
-          .update({ last_message_at: sentAt, updated_at: sentAt })
-          .eq("tenant_id", tenantId)
-          .eq("id", leadId);
-      }
-      if (journey) {
-        await touchLeadJourney({
-          sb,
-          tenantId,
-          journeyId: journey.id,
-          leadId,
-          occurredAt: sentAt,
-        });
-        await scheduleLeadRedistribution({
-          sb,
-          tenantId,
-          journeyId: journey.id,
-          ruleId: journey.ruleId,
-          currentAgentId: agentId,
-          trigger: "customer_silence",
-        });
-      }
-      await commitTenantLeadQuotaReservation({
-        eventId: directQuotaReservationId,
-        leadId,
-        journeyId: journey?.id ?? null,
-      });
-    }
-  } else {
-    console.warn("[webhooks/whatsapp] WHATSAPP_ACCESS_TOKEN ausente — inferência registada mas sem envio de resposta.");
-    await releaseTenantLeadQuotaReservation(
-      directQuotaReservationId,
-      "whatsapp_cloud_access_token_missing",
-    );
   }
 
   return NextResponse.json({ ok: true });

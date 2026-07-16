@@ -25,7 +25,10 @@ export function sanitizeAgentSmartWaitSettings(
 ): AgentSmartWaitSettings {
   const src = input ?? {};
   return {
-    enabled: src.enabled !== false,
+    // Agrupar mensagens do mesmo burst é uma garantia do pipeline. O campo
+    // legado permanece no tipo/metadata para compatibilidade, mas não pode
+    // desativar a consistência do turno.
+    enabled: true,
     initialSeconds: clampSeconds(src.initialSeconds, DEFAULT_AGENT_SMART_WAIT.initialSeconds, 1, 60),
     followupSeconds: clampSeconds(src.followupSeconds, DEFAULT_AGENT_SMART_WAIT.followupSeconds, 1, 120),
     maxSeconds: clampSeconds(src.maxSeconds, DEFAULT_AGENT_SMART_WAIT.maxSeconds, 5, 180),

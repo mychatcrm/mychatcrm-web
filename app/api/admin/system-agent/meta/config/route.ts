@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
-import { fetchWhatsAppMessageTemplateStatus } from "@/lib/integrations/whatsapp-cloud";
+import {
+  createWhatsAppMessageTemplate,
+  fetchWhatsAppMessageTemplateStatus,
+} from "@/lib/integrations/whatsapp-cloud";
 import {
   clearSystemAgentMetaConfig,
   getSystemAgentMetaConfig,
@@ -9,6 +12,7 @@ import {
 } from "@/lib/server/system-agent";
 
 export const dynamic = "force-dynamic";
+const SYSTEM_NOTIFICATION_TEMPLATE_NAME = "mychatcrm_agenda_notification_v1";
 
 export async function GET() {
   const session = await getAdminSessionFromCookies();
@@ -31,6 +35,7 @@ export async function GET() {
     phone_registered: config.phoneRegistered,
     template_name: config.templateName,
     template_lang: config.templateLang,
+    template_status: config.templateStatus,
   });
 }
 
@@ -59,7 +64,11 @@ export async function PATCH(request: Request) {
 
     // Limpar o template (nome vazio) não precisa de validação contra a Meta.
     if (!templateName) {
-      await saveSystemAgentMetaTemplate({ templateName: null, templateLang: null });
+      await saveSystemAgentMetaTemplate({
+        templateName: null,
+        templateLang: null,
+        templateStatus: null,
+      });
       return NextResponse.json({ ok: true, template_name: null, template_lang: null });
     }
 
@@ -96,15 +105,17 @@ export async function PATCH(request: Request) {
     await saveSystemAgentMetaTemplate({
       templateName,
       templateLang: templateLang || null,
+      templateStatus: check.status,
     });
 
     return NextResponse.json({
       ok: true,
       template_name: templateName,
       template_lang: templateLang || null,
+      template_status: check.status,
       warning:
         check.status === "PENDING"
-          ? `Template salvo, mas ainda está em análise pela Meta — os disparos vão falhar até ser aprovado.`
+          ? `Template salvo e em análise pela Meta — as notificações ficarão na fila até a aprovação.`
           : null,
     });
   }
@@ -126,6 +137,68 @@ export async function PATCH(request: Request) {
 
   await setSystemActiveProvider(provider);
   return NextResponse.json({ ok: true, active_provider: provider });
+}
+
+export async function POST() {
+  const session = await getAdminSessionFromCookies();
+  if (!session || !hasAdminAccess(session, "system-agent")) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const config = await getSystemAgentMetaConfig();
+  if (!config?.wabaId) {
+    return NextResponse.json({ error: "Conexão Meta sem WABA configurada." }, { status: 422 });
+  }
+
+  const existing = await fetchWhatsAppMessageTemplateStatus({
+    wabaId: config.wabaId,
+    templateName: SYSTEM_NOTIFICATION_TEMPLATE_NAME,
+    accessToken: config.accessToken,
+  });
+  if (existing.found && existing.status === "REJECTED") {
+    return NextResponse.json(
+      { error: `O template «${SYSTEM_NOTIFICATION_TEMPLATE_NAME}» foi rejeitado pela Meta.` },
+      { status: 409 },
+    );
+  }
+  if (existing.found && existing.status) {
+    await saveSystemAgentMetaTemplate({
+      templateName: SYSTEM_NOTIFICATION_TEMPLATE_NAME,
+      templateLang: "pt_BR",
+      templateStatus: existing.status,
+    });
+    return NextResponse.json({
+      ok: true,
+      template_name: SYSTEM_NOTIFICATION_TEMPLATE_NAME,
+      template_lang: "pt_BR",
+      template_status: existing.status,
+      created: false,
+    });
+  }
+
+  const created = await createWhatsAppMessageTemplate({
+    wabaId: config.wabaId,
+    accessToken: config.accessToken,
+    templateName: SYSTEM_NOTIFICATION_TEMPLATE_NAME,
+    languageCode: "pt_BR",
+  });
+  if (!created.ok) {
+    return NextResponse.json(
+      { error: created.error ?? "Falha ao criar template na Meta." },
+      { status: created.status >= 400 && created.status < 600 ? created.status : 502 },
+    );
+  }
+  await saveSystemAgentMetaTemplate({
+    templateName: SYSTEM_NOTIFICATION_TEMPLATE_NAME,
+    templateLang: "pt_BR",
+    templateStatus: created.templateStatus ?? "PENDING",
+  });
+  return NextResponse.json({
+    ok: true,
+    template_name: SYSTEM_NOTIFICATION_TEMPLATE_NAME,
+    template_lang: "pt_BR",
+    template_status: created.templateStatus ?? "PENDING",
+    created: true,
+  });
 }
 
 export async function DELETE() {

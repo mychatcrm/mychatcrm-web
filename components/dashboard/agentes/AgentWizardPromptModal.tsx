@@ -156,7 +156,7 @@ export function AgentWizardPromptModal({
         onChange={(event) => setDescription(event.target.value)}
         disabled={loading}
         className="mt-3 min-h-[140px] w-full rounded-xl border border-line bg-surface-elevated/35 px-3 py-3 text-sm text-content outline-none disabled:opacity-60"
-        placeholder="Ex: Somos uma imobiliária focada em apartamentos de médio padrão na Zona Sul de Goiânia. O agente deve qualificar leads, agendar visitas e nunca prometer desconto sem aprovação..."
+        placeholder="Descreva a operação, o que o agente deve atender, quais informações pode usar, o tom de voz e o que nunca deve prometer sem aprovação..."
       />
 
       <div className="mt-4">

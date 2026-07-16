@@ -35,4 +35,16 @@ describe("instruction mode helpers", () => {
     } as Agent;
     expect(assembleStoredSystemPrompt(agent)).toBe("Atenda com empatia e sem prometer prazos.");
   });
+
+  it("stores the pro system prompt once instead of concatenating the same fields twice", () => {
+    const agent = {
+      instructionMode: "pro",
+      systemPrompt: "Atenda somente com os fatos configurados.",
+      promptIdentidade: "Identidade preservada no metadata.",
+      promptObjetivo: "Objetivo preservado no metadata.",
+      promptRegrasAdicionais: "Regras preservadas no metadata.",
+    } as Agent;
+
+    expect(assembleStoredSystemPrompt(agent)).toBe("Atenda somente com os fatos configurados.");
+  });
 });

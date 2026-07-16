@@ -32,6 +32,19 @@ describe("omnichannel runtime contracts", () => {
     expect(content).not.toContain("WHATSAPP_DEFAULT_TENANT_ID");
   });
 
+  it("routes Meta and Evolution through the same durable burst processor", () => {
+    const metaWebhook = source("lib/server/whatsapp-cloud-webhook-handler.ts");
+    const dispatcher = source("lib/server/agent-response-job-dispatcher.ts");
+    const burst = source("lib/conversas/normalize-conversation-burst.ts");
+
+    expect(metaWebhook).toContain("runInboundSmartWaitFlow");
+    expect(metaWebhook).toContain('channel: "meta_cloud"');
+    expect(metaWebhook).not.toContain("generateAgentResponse");
+    expect(dispatcher).toContain("processMetaAgentResponseJob");
+    expect(dispatcher).toContain("processEvolutionAgentResponseJob");
+    expect(burst).toContain("return [messages]");
+  });
+
   it("scopes direct WhatsApp rule conflicts to the same transport and connection", () => {
     for (const path of [
       "app/api/client/lead-rules/route.ts",
