@@ -89,6 +89,7 @@ function makeSb(maybeSingleQueue: Array<Record<string, unknown> | null>, updates
     builder.eq = () => builder;
     builder.lte = () => builder;
     builder.lt = () => builder;
+    builder.gt = () => builder;
     builder.order = () => builder;
     builder.limit = () => builder;
     builder.update = (payload: Record<string, unknown>) => {
@@ -133,6 +134,7 @@ describe("tryProcessAgentResponseJob — revalidação de jornada", () => {
         jobRow(), // claim: leitura do pending
         jobRow({ status: "processing" }), // claim: update devolve processing
         { burst_generation: 1, status: "processing" }, // isJobGenerationStale
+        { id: JOB_ID }, // finalize condicional da geração reivindicada
       ],
       updates,
     );
@@ -156,6 +158,7 @@ describe("tryProcessAgentResponseJob — revalidação de jornada", () => {
       [
         jobRow({ journey_id: null }),
         jobRow({ journey_id: null, status: "processing" }),
+        { id: JOB_ID }, // cancelamento condicional da geração reivindicada
       ],
       updates,
     );
@@ -180,6 +183,7 @@ describe("tryProcessAgentResponseJob — revalidação de jornada", () => {
       [
         jobRow(),
         jobRow({ status: "processing" }),
+        { id: JOB_ID }, // cancelamento condicional da geração reivindicada
       ],
       updates,
     );
@@ -190,5 +194,32 @@ describe("tryProcessAgentResponseJob — revalidação de jornada", () => {
     expect(processAgentResponseJobMock).not.toHaveBeenCalled();
     const cancelled = updates.find((u) => u.payload.status === "cancelled");
     expect(cancelled?.payload.failed_reason).toBe("journey_id_mismatch");
+  });
+
+  it("não marca completed quando uma mensagem avança a geração durante a finalização", async () => {
+    authorizeActiveJourneyMock.mockResolvedValue({
+      ok: true,
+      agentId: "agent-1",
+      journey: { id: JOURNEY_ID },
+    });
+    processAgentResponseJobMock.mockResolvedValue({ ok: true, dedupedCount: 0 });
+
+    const updates: Update[] = [];
+    const sb = makeSb(
+      [
+        jobRow(),
+        jobRow({ status: "processing" }),
+        { burst_generation: 1, status: "processing" },
+        null, // UPDATE ... WHERE generation=1 atualizou zero linhas: geração avançou
+      ],
+      updates,
+    );
+
+    const outcome = await tryProcessAgentResponseJob(JOB_ID, sb);
+
+    expect(outcome).toBe("skipped");
+    expect(updates.some((u) => u.payload.status === "completed")).toBe(true);
+    expect(updates.at(-1)?.payload.status).toBe("pending");
+    expect(updates.at(-1)?.payload.locked_at).toBeNull();
   });
 });

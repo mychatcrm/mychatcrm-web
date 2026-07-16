@@ -34,7 +34,7 @@ const RECENT_CLIENT_CONTEXT_MAX = 8;
  * nunca cruzam conversa/jornada. Usadas só como fonte de âncora de data para
  * complementos que chegaram em turnos anteriores.
  */
-function extractRecentClientMessages(
+export function extractRecentClientMessages(
   messages: Array<{ role: string; content: string; createdAt?: string }>,
 ): string[] {
   const cutoff = Date.now() - RECENT_CLIENT_CONTEXT_WINDOW_MS;
@@ -648,7 +648,10 @@ export async function processAgentResponseJob(
       limit: 12,
       journeyId: job.journey_id,
     });
-    const priorAssistantText = priorAgendaAssistantTextFromMessages(recentConversation);
+    const priorAssistantText = priorAgendaAssistantTextFromMessages(
+      recentConversation,
+      schedulingTimezone,
+    );
     // Contexto inbound recente do lead (mesma conversa/jornada, janela segura):
     // permite resolver complementos que chegaram em jobs anteriores (data num
     // turno, hora no seguinte) sem inventar horário nem cruzar tenant/jornada.

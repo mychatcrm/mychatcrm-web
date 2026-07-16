@@ -4,7 +4,6 @@ import {
   type AgentSmartWaitSettings,
 } from "@/lib/agents/smart-wait-settings";
 import {
-  computeAgentResponseSchedule,
   isJobReadyToProcess,
   isStaleBurstGenerationRow,
   maskRemoteJidForLog,
@@ -170,99 +169,6 @@ export async function reclaimStuckProcessingJobs(sb?: SupabaseServiceClient): Pr
   return count;
 }
 
-async function rescheduleExistingJob(params: {
-  sb: SupabaseServiceClient;
-  current: AgentResponseJobRow;
-  tenantId: string;
-  remoteJid: string;
-  leadId?: string | null;
-  journeyId?: string | null;
-  agentId: string;
-  instanceName: string;
-  whatsappMessageId: string;
-  occurredAt: Date;
-  settings: AgentSmartWaitSettings;
-  now: Date;
-}): Promise<AgentResponseJobRow | null> {
-  const { current, sb, settings, now, occurredAt } = params;
-  if (!UUID_RE.test(params.whatsappMessageId)) {
-    logJobEvent("failed_reason", {
-      scope: "reschedule",
-      reason: "invalid_message_uuid",
-      tenant_id: params.tenantId,
-    });
-    return null;
-  }
-
-  const messageIds = Array.from(new Set([...current.message_ids, params.whatsappMessageId]));
-  const inboundMessageCount = current.inbound_message_count + 1;
-  const firstMessageAt = new Date(current.first_message_at);
-  const { scheduledFor, maxWaitUntil } = computeAgentResponseSchedule({
-    now,
-    firstMessageAt,
-    lastMessageAt: occurredAt,
-    inboundMessageCount,
-    settings,
-  });
-  const nextGeneration = current.burst_generation + 1;
-  const isProcessing = current.status === "processing";
-
-  const patch: Record<string, unknown> = {
-    lead_id: params.leadId ?? current.lead_id,
-    journey_id: params.journeyId ?? current.journey_id,
-    agent_id: params.agentId,
-    instance_name: params.instanceName,
-    last_message_at: occurredAt.toISOString(),
-    scheduled_for: scheduledFor.toISOString(),
-    max_wait_until: maxWaitUntil.toISOString(),
-    message_ids: messageIds,
-    inbound_message_count: inboundMessageCount,
-    burst_generation: nextGeneration,
-    updated_at: now.toISOString(),
-  };
-
-  if (!isProcessing) {
-    patch.status = "pending";
-    patch.locked_at = null;
-  }
-
-  const { data, error } = await sb
-    .from("agent_response_jobs")
-    .update(patch)
-    .eq("id", current.id)
-    .in("status", ["pending", "processing"])
-    .select("*")
-    .maybeSingle();
-
-  if (error || !data) {
-    logJobEvent("failed_reason", {
-      tenant_id: params.tenantId,
-      remote_jid: maskRemoteJidForLog(params.remoteJid),
-      scope: "reschedule",
-      reason: error?.message ?? "reschedule_conflict",
-    });
-    return null;
-  }
-
-  if (isProcessing) {
-    logJobEvent("generation_bumped", {
-      job_id: current.id,
-      from: current.burst_generation,
-      to: nextGeneration,
-    });
-  }
-
-  logJobEvent("job_rescheduled", {
-    tenant_id: params.tenantId,
-    remote_jid: maskRemoteJidForLog(params.remoteJid),
-    job_id: current.id,
-    messages_count: messageIds.length,
-    scheduled_for: scheduledFor.toISOString(),
-    processing: isProcessing,
-  });
-  return rowFromDb(data as Record<string, unknown>);
-}
-
 export async function getAgentResponseJobById(
   sb: SupabaseServiceClient,
   jobId: string,
@@ -335,114 +241,55 @@ export async function scheduleAgentResponseJob(params: {
     return null;
   }
 
-  const now = new Date();
-  const occurredAt = params.occurredAt ? new Date(params.occurredAt) : now;
-
-  let existingQuery = sb
-    .from("agent_response_jobs")
-    .select("*")
-    .eq("tenant_id", params.tenantId)
-    .eq("remote_jid", params.remoteJid)
-    .in("status", ["pending", "processing"]);
-  existingQuery = params.journeyId
-    ? existingQuery.eq("journey_id", params.journeyId)
-    : existingQuery.is("journey_id", null);
-  const { data: existing } = await existingQuery.maybeSingle();
-
-  if (existing) {
-    return rescheduleExistingJob({
-      sb,
-      current: rowFromDb(existing as Record<string, unknown>),
-      tenantId: params.tenantId,
-      remoteJid: params.remoteJid,
-      leadId: params.leadId,
-      journeyId: params.journeyId,
-      agentId: params.agentId,
-      instanceName: params.instanceName,
-      whatsappMessageId: params.whatsappMessageId,
-      occurredAt,
-      settings,
-      now,
-    });
-  }
-
-  const { scheduledFor, maxWaitUntil } = computeAgentResponseSchedule({
-    now,
-    firstMessageAt: occurredAt,
-    lastMessageAt: occurredAt,
-    inboundMessageCount: 1,
-    settings,
-  });
-
-  const { data, error } = await sb
-    .from("agent_response_jobs")
-    .insert({
-      tenant_id: params.tenantId,
-      lead_id: params.leadId ?? null,
-      journey_id: params.journeyId ?? null,
-      remote_jid: params.remoteJid,
-      agent_id: params.agentId,
-      instance_name: params.instanceName,
-      status: "pending",
-      first_message_at: occurredAt.toISOString(),
-      last_message_at: occurredAt.toISOString(),
-      scheduled_for: scheduledFor.toISOString(),
-      max_wait_until: maxWaitUntil.toISOString(),
-      message_ids: [params.whatsappMessageId],
-      inbound_message_count: 1,
-      burst_generation: 1,
-    })
-    .select("*")
-    .single();
-
-  if (error) {
-    const isConflict = error.code === "23505" || error.message.includes("duplicate");
-    if (isConflict) {
-      logJobEvent("schedule_conflict", { tenant_id: params.tenantId });
-      let retryQuery = sb
-        .from("agent_response_jobs")
-        .select("*")
-        .eq("tenant_id", params.tenantId)
-        .eq("remote_jid", params.remoteJid)
-        .in("status", ["pending", "processing"]);
-      retryQuery = params.journeyId
-        ? retryQuery.eq("journey_id", params.journeyId)
-        : retryQuery.is("journey_id", null);
-      const { data: retryExisting } = await retryQuery.maybeSingle();
-      if (retryExisting) {
-        return rescheduleExistingJob({
-          sb,
-          current: rowFromDb(retryExisting as Record<string, unknown>),
-          tenantId: params.tenantId,
-          remoteJid: params.remoteJid,
-          leadId: params.leadId,
-          journeyId: params.journeyId,
-          agentId: params.agentId,
-          instanceName: params.instanceName,
-          whatsappMessageId: params.whatsappMessageId,
-          occurredAt,
-          settings,
-          now,
-        });
-      }
-    }
+  const occurredAt = params.occurredAt ? new Date(params.occurredAt) : new Date();
+  if (Number.isNaN(occurredAt.getTime())) {
     logJobEvent("failed_reason", {
       tenant_id: params.tenantId,
       remote_jid: maskRemoteJidForLog(params.remoteJid),
-      scope: "insert",
-      reason: error.message ?? "insert_failed",
+      scope: "schedule",
+      reason: "invalid_occurred_at",
     });
     return null;
   }
 
-  logJobEvent("job_created", {
+  // Uma única transação no Postgres faz create-or-append sob lock. O antigo
+  // SELECT + UPDATE no TypeScript perdia message_ids quando dois webhooks
+  // chegavam juntos (lost update), exatamente o caso de 2–3 mensagens seguidas.
+  const { data, error } = await sb.rpc("upsert_agent_response_job_burst", {
+    p_tenant_id: params.tenantId,
+    p_remote_jid: params.remoteJid,
+    p_agent_id: params.agentId,
+    p_instance_name: params.instanceName,
+    p_message_id: params.whatsappMessageId,
+    p_occurred_at: occurredAt.toISOString(),
+    p_initial_seconds: settings.initialSeconds,
+    p_followup_seconds: settings.followupSeconds,
+    p_max_seconds: settings.maxSeconds,
+    p_lead_id: params.leadId ?? null,
+    p_journey_id: params.journeyId ?? null,
+  });
+
+  if (error || !data || typeof data !== "object" || Array.isArray(data)) {
+    logJobEvent("failed_reason", {
+      tenant_id: params.tenantId,
+      remote_jid: maskRemoteJidForLog(params.remoteJid),
+      scope: "atomic_schedule",
+      reason: error?.message ?? "empty_atomic_schedule_result",
+    });
+    return null;
+  }
+
+  const job = rowFromDb(data as Record<string, unknown>);
+  logJobEvent(job.inbound_message_count > 1 ? "job_rescheduled" : "job_created", {
     tenant_id: params.tenantId,
     remote_jid: maskRemoteJidForLog(params.remoteJid),
-    job_id: (data as Record<string, unknown>).id,
-    messages_count: 1,
-    scheduled_for: scheduledFor.toISOString(),
+    job_id: job.id,
+    messages_count: job.message_ids.length,
+    burst_generation: job.burst_generation,
+    scheduled_for: job.scheduled_for,
+    atomic: true,
   });
-  return rowFromDb(data as Record<string, unknown>);
+  return job;
 }
 
 export async function cancelPendingAgentResponseJobs(params: {
@@ -540,6 +387,48 @@ async function isJobGenerationStale(
   );
 }
 
+/**
+ * Finaliza/cancela somente a geração que este worker realmente reivindicou.
+ * Se uma mensagem nova avançar burst_generation entre o último check e este
+ * UPDATE, a condição falha e a geração nova não é sobrescrita.
+ */
+async function updateClaimedJobGeneration(
+  sb: SupabaseServiceClient,
+  jobId: string,
+  claimedGeneration: number,
+  patch: Record<string, unknown>,
+): Promise<boolean> {
+  const { data, error } = await sb
+    .from("agent_response_jobs")
+    .update(patch)
+    .eq("id", jobId)
+    .eq("status", "processing")
+    .eq("burst_generation", claimedGeneration)
+    .select("id")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return Boolean(data);
+}
+
+/** Coloca em pending apenas o mesmo job cuja geração foi avançada no banco. */
+async function requeueSupersededJobGeneration(
+  sb: SupabaseServiceClient,
+  jobId: string,
+  claimedGeneration: number,
+): Promise<void> {
+  const { error } = await sb
+    .from("agent_response_jobs")
+    .update({
+      status: "pending",
+      locked_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", jobId)
+    .eq("status", "processing")
+    .gt("burst_generation", claimedGeneration);
+  if (error) throw new Error(error.message);
+}
+
 export async function tryProcessAgentResponseJob(
   jobId: string,
   sb?: SupabaseServiceClient,
@@ -561,14 +450,17 @@ export async function tryProcessAgentResponseJob(
       journeyId: job.journey_id,
     });
     if (!eligible.ok) {
-      await client
-        .from("agent_response_jobs")
-        .update({
+      const cancelled = await updateClaimedJobGeneration(
+        client,
+        job.id,
+        claimedGeneration,
+        {
           status: "cancelled",
           failed_reason: eligible.reason,
           updated_at: new Date().toISOString(),
-        })
-        .eq("id", job.id);
+        },
+      );
+      if (!cancelled) await requeueSupersededJobGeneration(client, job.id, claimedGeneration);
       logJobEvent("job_cancelled", { job_id: job.id, reason: eligible.reason });
       return "skipped";
     }
@@ -577,22 +469,12 @@ export async function tryProcessAgentResponseJob(
 
     if (await isJobGenerationStale(client, job.id, claimedGeneration)) {
       logJobEvent("generation_stale", { job_id: job.id, claimed_generation: claimedGeneration });
-      await client
-        .from("agent_response_jobs")
-        .update({
-          status: "pending",
-          locked_at: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", job.id);
+      await requeueSupersededJobGeneration(client, job.id, claimedGeneration);
       return "skipped";
     }
 
     if (result.ok === false && result.error === "generation_stale") {
-      await client
-        .from("agent_response_jobs")
-        .update({ status: "pending", locked_at: null, updated_at: new Date().toISOString() })
-        .eq("id", job.id);
+      await requeueSupersededJobGeneration(client, job.id, claimedGeneration);
       return "skipped";
     }
 
@@ -620,7 +502,23 @@ export async function tryProcessAgentResponseJob(
       patch.failed_reason = failedError;
     }
 
-    await client.from("agent_response_jobs").update(patch).eq("id", job.id);
+    const finalized = await updateClaimedJobGeneration(
+      client,
+      job.id,
+      claimedGeneration,
+      patch,
+    );
+    if (!finalized) {
+      // Uma mensagem chegou exatamente entre o último check e a finalização.
+      // Preserve a geração nova e deixe-a voltar ao processador.
+      await requeueSupersededJobGeneration(client, job.id, claimedGeneration);
+      logJobEvent("generation_stale", {
+        job_id: job.id,
+        claimed_generation: claimedGeneration,
+        phase: "finalize",
+      });
+      return "skipped";
+    }
 
     logJobEvent("completed", {
       job_id: job.id,
@@ -632,15 +530,20 @@ export async function tryProcessAgentResponseJob(
     return result.ok ? "processed" : finalStatus === "pending" ? "skipped" : "failed";
   } catch (error) {
     const message = error instanceof Error ? error.message : "process_failed";
-    await client
-      .from("agent_response_jobs")
-      .update({
+    const updated = await updateClaimedJobGeneration(
+      client,
+      job.id,
+      claimedGeneration,
+      {
         status: job.attempt_count < MAX_JOB_ATTEMPTS ? "pending" : "failed",
         failed_reason: message,
         locked_at: null,
         updated_at: new Date().toISOString(),
-      })
-      .eq("id", job.id);
+      },
+    ).catch(() => false);
+    if (!updated) {
+      await requeueSupersededJobGeneration(client, job.id, claimedGeneration).catch(() => undefined);
+    }
     logJobEvent("failed_reason", { job_id: job.id, reason: message });
     return "failed";
   }

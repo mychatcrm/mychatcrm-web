@@ -5,6 +5,8 @@ import {
   localWallClockToUtc,
   parseAppointmentDateTime,
   resolveScheduleDateTimeFromText,
+  textHasExplicitDateAnchor,
+  textHasExplicitTime,
 } from "@/lib/server/agenda-datetime-parse";
 import { parseTimezone } from "@/lib/agents/agent-datetime";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
@@ -39,7 +41,7 @@ const CONFIRMATION_RE =
   /\b(sim|t[aá]\s*bom|t[aá]|pode|claro|com\s*certeza|[oó]timo|certo|isso|exato|confirm|confirmo|confirmada|confirmado|fechou|fechado|combinado|perfeito|ok|pode\s*ser)\b/i;
 /** Novo pedido de mutação na mesma mensagem — não conta como confirmação isolada. */
 const AGENDA_MUTATION_IN_MESSAGE_RE =
-  /\b(?:quero|preciso|gostaria|desejo|vou)\s+(?:cancelar|remarcar|reagendar|agendar|marcar|desmarcar)\b|\b(?:remarcar|reagendar|agendar|marcar)\s+(?:para|em|no|na)\b|\b\d{1,2}\s*[/-]\s*\d{1,2}\b|\bdaqui\s+(?:a\s+)?\d+\s+dias?\b|\bsemana\s+que\s+vem\b|\bproxim[ao]\s+\w{3,}/i;
+  /\b(?:quero|preciso|gostaria|desejo|vou)(?:\s+de)?\s+(?:cancelar|remarcar|reagendar|agendar|marcar|desmarcar)\b|\b(?:remarcar|reagendar|agendar|marcar)\s+(?:para|em|no|na)\b|\b\d{1,2}\s*[/-]\s*\d{1,2}\b|\bdaqui\s+(?:a\s+)?\d+\s+dias?\b|\bsemana\s+que\s+vem\b|\bproxim[ao]\s+\w{3,}/i;
 const CANCEL_INTENT_RE =
   /\b(cancelar|cancelamento|desmarcar|desmarcação|desmarcacao)\b/i;
 const RESCHEDULE_RE =
@@ -252,7 +254,7 @@ export function isInitialAgendaMutationRequest(userText: string): boolean {
     return false;
   }
   return (
-    /\b(quero|preciso|gostaria|desejo|vou)\s+(cancelar|remarcar|reagendar|agendar|marcar|desmarcar)\b/i.test(
+    /\b(quero|preciso|gostaria|desejo|vou)(?:\s+de)?\s+(cancelar|remarcar|reagendar|agendar|marcar|desmarcar)\b/i.test(
       text,
     ) ||
     /\b(cancelar|remarcar|reagendar|desmarcar)\s+(meu|minha|o|a)?\s*agendamento/i.test(text) ||
@@ -333,8 +335,21 @@ function assistantProposedCancelConfirmation(assistantText: string): boolean {
   );
 }
 
-function assistantProposedScheduleConfirmation(assistantText: string): boolean {
+function assistantProposedScheduleConfirmation(
+  assistantText: string,
+  timezone = "UTC",
+): boolean {
   if (HUMAN_DELEGATION_IN_REPLY_RE.test(assistantText)) return false;
+  // Agnóstico de nicho: uma proposta concreta com data + hora + pedido de
+  // confirmação é agenda, mesmo que o tenant diga "visita", "sessão",
+  // "avaliação" ou qualquer nomenclatura que não exista nos regexes antigos.
+  if (
+    CONFIRM_ASK_RE.test(assistantText) &&
+    textHasExplicitDateAnchor(assistantText, timezone) &&
+    textHasExplicitTime(assistantText)
+  ) {
+    return true;
+  }
   if (
     CONFIRM_ASK_RE.test(assistantText) &&
     (RESCHEDULE_RE.test(assistantText) ||
@@ -349,9 +364,12 @@ function assistantProposedScheduleConfirmation(assistantText: string): boolean {
   );
 }
 
-function assistantProposedAgendaMutationConfirmation(assistantText: string): boolean {
+function assistantProposedAgendaMutationConfirmation(
+  assistantText: string,
+  timezone = "UTC",
+): boolean {
   return (
-    assistantProposedScheduleConfirmation(assistantText) ||
+    assistantProposedScheduleConfirmation(assistantText, timezone) ||
     assistantProposedCancelConfirmation(assistantText)
   );
 }
@@ -395,13 +413,14 @@ function finalizeResolveAgendaTurnResult(
 /** Última proposta de agenda do assistente no histórico (não o burst atual). */
 export function priorAgendaAssistantTextFromMessages(
   messages: Array<{ role: string; content: string }>,
+  timezone = "UTC",
 ): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]!;
     if (message.role !== "assistant") continue;
     const text = stripAgendaDirectives(message.content.trim());
     if (!text) continue;
-    if (assistantProposedAgendaMutationConfirmation(text)) {
+    if (assistantProposedAgendaMutationConfirmation(text, timezone)) {
       return text;
     }
   }
@@ -1429,34 +1448,68 @@ export async function resolveAgendaTurn(params: {
 
   const directive = parsed.directives.length === 1 ? parsed.directives[0]! : null;
   const proposalText = params.priorAssistantText?.trim() ?? "";
+  const recentClientMessages = (params.recentClientMessages ?? [])
+    .map((text) => text.trim())
+    .filter(Boolean);
   const assistantForConfirm = assistantTextForSchedulingConfirmation(
     cleanText,
     params.priorAssistantText,
   );
   const confirmed = clientConfirmedAgendaMutation(params.clientText, assistantForConfirm);
 
+  // Continuação cross-job: o pedido inicial pode ter vindo vários segundos
+  // antes da data, da hora ou do "confirmado". Só reativa esse contexto quando
+  // o turno atual traz um sinal concreto de continuação, evitando contaminar
+  // conversa comum com um assunto antigo de agenda.
+  const currentContinuesAgenda =
+    confirmed ||
+    textHasExplicitDateAnchor(params.clientText, params.timezone) ||
+    textHasExplicitTime(params.clientText) ||
+    RESCHEDULE_RE.test(params.clientText) ||
+    detectAgendaCancelIntent(params.clientText);
+  let recentScheduleRequest = false;
+  let recentCancelRequest = false;
+  if (currentContinuesAgenda) {
+    for (let i = recentClientMessages.length - 1; i >= 0; i--) {
+      const text = recentClientMessages[i]!;
+      if (detectAgendaCancelIntent(text)) {
+        recentCancelRequest = true;
+        break;
+      }
+      if (RESCHEDULE_RE.test(text) || isInitialAgendaMutationRequest(text)) {
+        recentScheduleRequest = true;
+        break;
+      }
+    }
+  }
+
   const cancelFromDirective = directive?.type === "cancel";
   const scheduleFromDirective = directive?.type === "schedule";
   const cancelFromContext =
     detectAgendaCancelIntent(params.clientText) ||
     assistantProposedCancelConfirmation(assistantForConfirm) ||
-    assistantProposedCancelConfirmation(proposalText);
+    assistantProposedCancelConfirmation(proposalText) ||
+    recentCancelRequest;
   const scheduleFromContext =
     isInitialAgendaMutationRequest(params.clientText) ||
     RESCHEDULE_RE.test(params.clientText) ||
-    assistantProposedScheduleConfirmation(assistantForConfirm) ||
-    assistantProposedScheduleConfirmation(proposalText);
+    assistantProposedScheduleConfirmation(assistantForConfirm, params.timezone) ||
+    assistantProposedScheduleConfirmation(proposalText, params.timezone) ||
+    recentScheduleRequest;
   const confirmedFromPriorProposal =
     confirmed &&
     !directive &&
-    assistantProposedAgendaMutationConfirmation(proposalText);
+    assistantProposedAgendaMutationConfirmation(proposalText, params.timezone);
+  const confirmedFromRecentContext =
+    confirmed && !directive && (recentScheduleRequest || recentCancelRequest);
 
   const hasMutationIntent =
     cancelFromDirective ||
     scheduleFromDirective ||
     cancelFromContext ||
     scheduleFromContext ||
-    confirmedFromPriorProposal;
+    confirmedFromPriorProposal ||
+    confirmedFromRecentContext;
 
   if (!hasMutationIntent) {
     // Anti-alucinação: o modelo afirma que agendou/remarcou/cancelou, mas nenhuma
@@ -1518,7 +1571,52 @@ export async function resolveAgendaTurn(params: {
     const clientEngagedAgendaThisTurn =
       isInitialAgendaMutationRequest(params.clientText) ||
       RESCHEDULE_RE.test(params.clientText) ||
-      detectAgendaCancelIntent(params.clientText);
+      detectAgendaCancelIntent(params.clientText) ||
+      currentContinuesAgenda;
+
+    // O lead forneceu/alterou data ou hora dentro de uma conversa de agenda.
+    // Materialize uma proposta concreta e estável no outbound; o próximo
+    // "sim" não dependerá de o modelo repetir um marcador interno.
+    if (scheduleFromContext && !cancelFromContext) {
+      const hasDate = textHasExplicitDateAnchor(params.clientText, params.timezone);
+      const hasTime = textHasExplicitTime(params.clientText);
+      if (hasDate && !hasTime) {
+        return finalize({
+          text: AGENDA_DATETIME_NEEDED_REPLY,
+          action: "failed",
+          deferHandoff: true,
+        });
+      }
+      if (hasTime) {
+        const resolved = resolveScheduleDateTimeFromText({
+          clientText: params.clientText,
+          assistantText: proposalText || assistantForConfirm,
+          timezone: params.timezone,
+          recentClientMessages,
+        });
+        if (resolved) {
+          const contextualDirective: AgendaDirective = {
+            type: "schedule",
+            date: resolved.date,
+            time: resolved.time,
+            location:
+              extractLocationFromText(cleanText) ??
+              extractLocationFromText(proposalText) ??
+              extractLocationFromText(params.clientText),
+          };
+          const modelAlreadyAskedConcreteConfirmation =
+            !AGENDA_SUCCESS_CLAIM_RE.test(cleanText) &&
+            assistantProposedScheduleConfirmation(cleanText, params.timezone);
+          return finalize({
+            text: modelAlreadyAskedConcreteConfirmation
+              ? cleanText
+              : buildAgendaConfirmationQuestion(contextualDirective),
+            action: "needs_confirmation",
+            deferHandoff: true,
+          });
+        }
+      }
+    }
     const safeText = AGENDA_SUCCESS_CLAIM_RE.test(cleanText)
       ? buildAgendaConfirmationQuestion(null)
       : cleanText;
@@ -1548,14 +1646,14 @@ export async function resolveAgendaTurn(params: {
       clientText: params.clientText,
       assistantText: assistantForConfirm,
       timezone: params.timezone,
-      recentClientMessages: params.recentClientMessages ?? undefined,
+      recentClientMessages,
     });
   } else {
     const resolved = resolveScheduleDateTimeFromText({
       clientText: params.clientText,
       assistantText: proposalText || assistantForConfirm,
       timezone: params.timezone,
-      recentClientMessages: params.recentClientMessages ?? undefined,
+      recentClientMessages,
     });
     if (!resolved) {
       // Data/hora incompletas (ex.: "pode ser hoje as") — pedir o que falta em
