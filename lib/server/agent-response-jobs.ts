@@ -609,6 +609,19 @@ export type WaitAndProcessOutcome =
   | "timeout"
   | "not_found";
 
+export function computeAgentResponseProcessorDeadline(params: {
+  invocationStartedAt: Date;
+  scheduledFor: string;
+  maxWaitUntil: string;
+}): number {
+  const scheduled = new Date(params.scheduledFor).getTime();
+  const maxWait = new Date(params.maxWaitUntil).getTime();
+  return Math.min(
+    maxWait + 20_000,
+    Math.max(params.invocationStartedAt.getTime() + 60_000, scheduled + 30_000),
+  );
+}
+
 export async function waitAndProcessAgentResponseJob(
   jobId: string,
   sb?: SupabaseServiceClient,
@@ -617,15 +630,25 @@ export async function waitAndProcessAgentResponseJob(
   const { data: initial } = await client.from("agent_response_jobs").select("*").eq("id", jobId).maybeSingle();
   if (!initial) return "not_found";
   const job = rowFromDb(initial as Record<string, unknown>);
-  const deadline = Math.min(
-    new Date(job.max_wait_until).getTime() + 20_000,
-    Date.now() + Math.max(60_000, job.inbound_message_count * 5_000),
-  );
+  const invocationStartedAt = new Date();
+  let deadline = computeAgentResponseProcessorDeadline({
+    invocationStartedAt,
+    scheduledFor: job.scheduled_for,
+    maxWaitUntil: job.max_wait_until,
+  });
 
   while (Date.now() < deadline) {
     const { data } = await client.from("agent_response_jobs").select("*").eq("id", jobId).maybeSingle();
     if (!data) return "not_found";
     const current = rowFromDb(data as Record<string, unknown>);
+    // Uma nova mensagem pode estender scheduled_for enquanto este dispatcher
+    // está dormindo. Acompanhe a geração mais recente sem reiniciar o limite
+    // absoluto do burst.
+    deadline = computeAgentResponseProcessorDeadline({
+      invocationStartedAt,
+      scheduledFor: current.scheduled_for,
+      maxWaitUntil: current.max_wait_until,
+    });
     if (current.status === "completed" || current.status === "completed_with_fallback") return "completed";
     if (current.status === "cancelled") return "cancelled";
     if (current.status === "failed" || current.status === "failed_with_fallback") return "failed";

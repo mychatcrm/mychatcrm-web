@@ -14,7 +14,10 @@ import {
   isJobReadyToProcess,
   isStaleBurstGenerationRow,
 } from "@/lib/server/agent-response-schedule";
-import { resolveAgentJobSchedulingTimestamp } from "@/lib/server/agent-response-jobs";
+import {
+  computeAgentResponseProcessorDeadline,
+  resolveAgentJobSchedulingTimestamp,
+} from "@/lib/server/agent-response-jobs";
 import { resolveInboundAgentFlowDecision } from "@/lib/server/evolution-webhook-agent-flow";
 
 describe("agent smart wait schedule", () => {
@@ -97,6 +100,30 @@ describe("agent smart wait schedule", () => {
 });
 
 describe("processor readiness", () => {
+  it("extends the dispatcher deadline beyond a rescheduled Evolution burst", () => {
+    expect(
+      new Date(
+        computeAgentResponseProcessorDeadline({
+          invocationStartedAt: new Date("2026-05-14T10:00:00.000Z"),
+          scheduledFor: "2026-05-14T10:02:05.000Z",
+          maxWaitUntil: "2026-05-14T10:03:00.000Z",
+        }),
+      ).toISOString(),
+    ).toBe("2026-05-14T10:02:35.000Z");
+  });
+
+  it("never exceeds the absolute burst deadline plus processing grace", () => {
+    expect(
+      new Date(
+        computeAgentResponseProcessorDeadline({
+          invocationStartedAt: new Date("2026-05-14T10:00:00.000Z"),
+          scheduledFor: "2026-05-14T10:03:00.000Z",
+          maxWaitUntil: "2026-05-14T10:02:50.000Z",
+        }),
+      ).toISOString(),
+    ).toBe("2026-05-14T10:03:10.000Z");
+  });
+
   it("does not process before scheduled_for", () => {
     const now = new Date("2026-05-14T10:00:05.000Z");
     expect(isJobReadyToProcess("2026-05-14T10:00:07.000Z", now)).toBe(false);

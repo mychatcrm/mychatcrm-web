@@ -9,7 +9,7 @@ import { verifyInternalApiRequest } from "@/lib/server/internal-api-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+export const maxDuration = 180;
 
 async function processDispatchedJob(jobId: string): Promise<void> {
   const outcome = await waitAndProcessAgentResponseJob(jobId);

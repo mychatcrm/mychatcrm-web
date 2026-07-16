@@ -60,6 +60,7 @@ describe("omnichannel runtime contracts", () => {
     expect(jobs).toContain("signal: AbortSignal.timeout(8_000)");
     expect(dispatch).toContain('import { waitUntil } from "@vercel/functions"');
     expect(dispatch).toContain("processDispatchedJob(jobId)");
+    expect(dispatch).toContain("export const maxDuration = 180");
     expect(dispatch).toContain("{ status: 202 }");
   });
 
