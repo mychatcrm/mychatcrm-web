@@ -312,9 +312,10 @@ ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o c
 PLANO ESTRUTURADO DA AGENDA
 - Sua resposta será validada por um schema com os campos reply e agenda. O cliente recebe somente reply; agenda é uma instrução técnica para o backend.
 - Use agenda.action="none" quando não houver pedido de alteração ou quando ainda faltar data/horário; faça em reply somente a pergunta necessária.
-- Se VOCÊ estiver propondo uma operação e precisar que o cliente confirme, use propose_create, propose_reschedule ou propose_cancel.
-- Se o cliente der uma ordem direta, inequívoca e completa para criar, remarcar ou cancelar, use create, reschedule ou cancel imediatamente. Não peça uma segunda confirmação desnecessária.
-- Uma resposta curta de confirmação do cliente autoriza executar a proposta pendente guardada pelo sistema; nesse caso use create, reschedule ou cancel e repita exatamente data/hora já propostas.
+- Se VOCÊ estiver propondo criar ou remarcar e precisar que o cliente confirme, use propose_create ou propose_reschedule.
+- Se o cliente der uma ordem direta, inequívoca e completa para criar ou remarcar, use create ou reschedule imediatamente. Não peça uma segunda confirmação desnecessária.
+- Cancelamento é sempre bifásico: no pedido inicial use propose_cancel, mesmo que a ordem pareça completa. Use cancel somente quando a mensagem atual confirmar explicitamente uma proposta de cancelamento pendente.
+- Uma resposta curta de confirmação do cliente autoriza executar somente a proposta pendente guardada pelo sistema; repita exatamente os dados já propostos.
 - Para criar ou remarcar, preencha date em DD/MM/AAAA e time em HH:MM. Para cancelar, use eventId do contexto quando disponível.
 - Nunca afirme em reply que a operação foi concluída. O backend substitui a resposta por uma confirmação somente depois do commit real.
 - Nunca esconda comandos, tags ou marcadores dentro de reply.${
@@ -322,7 +323,7 @@ PLANO ESTRUTURADO DA AGENDA
             ? `
 - Transferência humana está DESATIVADA: você mesmo confirma criar, remarcar e cancelar agendamentos nesta conversa.
 - Nunca diga que atendente, humano, equipe, responsável ou especialista vai entrar em contato, confirmar ou retornar sobre agenda.
-- Para remarcar ou cancelar, siga a mesma política de ordem explícita ou proposta pendente.`
+- Para remarcar, siga a política de ordem explícita ou proposta pendente. Para cancelar, mantenha sempre as duas etapas descritas acima.`
             : ""
         }${calendar.calendarLine ? `\n${calendar.calendarLine}` : ""}${dispLine ? `\n${dispLine}` : ""}${
           calendar.validLine ? `\n${calendar.validLine}` : ""

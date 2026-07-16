@@ -78,7 +78,10 @@ import {
   prepareAgentOutbound,
 } from "@/lib/server/agent-outbound-outbox";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { transcribeAudioFromBuffer } from "@/lib/ai/media-processor";
+import {
+  describeImageFromBuffer,
+  transcribeAudioFromBuffer,
+} from "@/lib/ai/media-processor";
 import { getMediaBufferFromR2 } from "@/lib/integrations/r2-storage";
 import { sendPresence, typingDelayMs } from "@/lib/server/evolution-presence";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
@@ -108,6 +111,8 @@ type PendingInboundRow = {
   created_at: string;
   storage_key: string | null;
   mime_type: string | null;
+  analysis_status: string | null;
+  ai_description: string | null;
 };
 
 type GeneratedReplyForUnit =
@@ -367,7 +372,7 @@ export async function processAgentResponseJob(
   const windowEnd = new Date(new Date(job.last_message_at).getTime() + 1).toISOString();
   let windowQuery = sb
     .from("whatsapp_messages")
-    .select("id, content, kind, message_id, remote_jid, created_at, storage_key, mime_type")
+    .select("id, content, kind, message_id, remote_jid, created_at, storage_key, mime_type, analysis_status, ai_description")
     .eq("tenant_id", job.tenant_id)
     .eq("remote_jid", job.remote_jid)
     .eq("direction", "inbound")
@@ -388,7 +393,7 @@ export async function processAgentResponseJob(
     if (missingIds.length > 0) {
       const { data: rowsById, error } = await sb
         .from("whatsapp_messages")
-        .select("id, content, kind, message_id, remote_jid, created_at, storage_key, mime_type")
+        .select("id, content, kind, message_id, remote_jid, created_at, storage_key, mime_type, analysis_status, ai_description")
         .eq("tenant_id", job.tenant_id)
         .eq("remote_jid", job.remote_jid)
         .eq("direction", "inbound")
@@ -464,6 +469,56 @@ export async function processAgentResponseJob(
     }
   }
   // ── Fim da transcrição de áudio ───────────────────────────────────────────
+
+  // ── Análise visual via R2 ──────────────────────────────────────────────────
+  // O Smart Wait não possui mais o rawNode do webhook. A imagem já foi
+  // arquivada na Phase 1; analisá-la aqui garante que o turno agrupado receba
+  // os pixels reais, inclusive quando há legenda/complemento em outra mensagem.
+  const inboundImages = inboundRows.filter((row) => row.kind === "image");
+  for (const imageRow of inboundImages) {
+    let description =
+      imageRow.analysis_status === "completed" ? imageRow.ai_description?.trim() || null : null;
+    if (!description && imageRow.storage_key) {
+      try {
+        const imageBuffer = await getMediaBufferFromR2(imageRow.storage_key);
+        description = await describeImageFromBuffer(
+          imageBuffer,
+          imageRow.mime_type || "image/jpeg",
+        );
+        if (description) {
+          await sb
+            .from("whatsapp_messages")
+            .update({ analysis_status: "completed", ai_description: description })
+            .eq("id", imageRow.id);
+          imageRow.analysis_status = "completed";
+          imageRow.ai_description = description;
+          console.info("[agent-response-jobs]", {
+            event: "image_analysis_ok",
+            job_id: job.id,
+            message_id: imageRow.id,
+          });
+        }
+      } catch (err) {
+        console.warn(
+          "[agent-response-jobs] image analysis error",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+    if (!description) {
+      await sb
+        .from("whatsapp_messages")
+        .update({ analysis_status: "failed" })
+        .eq("id", imageRow.id);
+      imageRow.content = `${imageRow.content}\n[Não foi possível analisar os detalhes visuais; peça ao cliente que confirme por texto.]`;
+      continue;
+    }
+    const caption = imageRow.content
+      .replace(/^\s*\[(?:imagem|image)\]\s*$/i, "")
+      .trim();
+    imageRow.content = [caption, "[Análise visual]", description].filter(Boolean).join("\n");
+  }
+  // ── Fim da análise visual ──────────────────────────────────────────────────
 
   const { data: agentRow } = await sb
     .from("tenant_agents")

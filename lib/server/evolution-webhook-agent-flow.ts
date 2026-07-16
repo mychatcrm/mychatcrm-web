@@ -46,6 +46,8 @@ export async function runInboundSmartWaitFlow(params: {
   occurredAt: string;
   smartWait: AgentSmartWaitSettings;
   processorBaseUrl?: string;
+  /** Registra o disparo fora do caminho crítico do ACK do webhook. */
+  deferProcessor?: (task: Promise<boolean>) => void;
   sb: ReturnType<typeof import("@/lib/supabase/server").createSupabaseServiceClient>;
 }): Promise<InboundAgentFlowDecision> {
   console.info("[agent-response-jobs]", {
@@ -98,7 +100,12 @@ export async function runInboundSmartWaitFlow(params: {
       job_id: job.id,
     });
   } else {
-    await queueAgentResponseJobProcessor(job.id, params.processorBaseUrl);
+    const processorTask = queueAgentResponseJobProcessor(job.id, params.processorBaseUrl);
+    if (params.deferProcessor) {
+      params.deferProcessor(processorTask);
+    } else {
+      await processorTask;
+    }
   }
   // O webhook termina aqui. Esperar o Smart Wait/LLM no mesmo request segura
   // o ACK da Evolution e serializa mensagens consecutivas em intervalos de

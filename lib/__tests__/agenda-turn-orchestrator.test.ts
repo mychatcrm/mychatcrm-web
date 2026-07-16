@@ -3,6 +3,7 @@ import {
   AGENDA_AUTOMATION_DISABLED_REPLY,
   AGENDA_DATETIME_NEEDED_REPLY,
   AGENDA_FAILURE_REPLY_NO_HANDOFF,
+  AGENDA_INVALID_TIME_REPLY,
   AGENDA_SLOT_TAKEN_REPLY,
   AGENDA_SUCCESS_REPLY_CANCELLED,
   AGENDA_SUCCESS_REPLY_RESCHEDULED,
@@ -133,16 +134,18 @@ function makeFlexSb(options: {
 
 function makeStructuredSb(options: {
   pending?: Record<string, unknown> | null;
+  events?: Array<Record<string, unknown>>;
+  rpcAction?: "scheduled" | "rescheduled" | "cancelled";
 } = {}) {
   const pendingRows: Record<string, unknown>[] = options.pending ? [{ ...options.pending }] : [];
   const rpc = vi.fn().mockImplementation(async (name: string) => {
     if (name !== "apply_agent_agenda_mutation") return { data: null, error: null };
     return {
       data: {
-        action: "scheduled",
+        action: options.rpcAction ?? "scheduled",
         event: {
           ...EXISTING_EVENT,
-          id: "evt-structured",
+          id: options.events?.[0]?.id ?? "evt-structured",
           start_at: "2026-06-10T17:00:00.000Z",
           end_at: "2026-06-10T18:00:00.000Z",
           agent_id: "agent-1",
@@ -179,6 +182,18 @@ function makeStructuredSb(options: {
         };
         chain.then = (resolve: (value: { data: null; error: null }) => unknown) =>
           resolve({ data: null, error: null });
+        return chain;
+      }
+      if (table === "agenda_events") {
+        const chain: Record<string, unknown> = {};
+        chain.select = () => chain;
+        chain.eq = () => chain;
+        chain.neq = () => chain;
+        chain.gte = () => chain;
+        chain.order = () => chain;
+        chain.limit = () => chain;
+        chain.then = (resolve: (value: { data: Record<string, unknown>[]; error: null }) => unknown) =>
+          resolve({ data: options.events ?? [], error: null });
         return chain;
       }
       if (table === "agenda_mutation_operations" || table === "agenda_sync_outbox") {
@@ -260,6 +275,18 @@ describe("priorAgendaAssistantTextFromMessages", () => {
       "America/Sao_Paulo",
     );
     expect(prior).toBe(text);
+  });
+
+  it("não reutiliza proposta antiga depois de uma resposta posterior", () => {
+    const prior = priorAgendaAssistantTextFromMessages([
+      { role: "assistant", content: "Posso confirmar para 10/06/2026 às 14:00?" },
+      { role: "user", content: "sim" },
+      { role: "assistant", content: "Pronto, ficou agendado." },
+      { role: "user", content: "obrigado" },
+      { role: "assistant", content: "De nada! Até mais." },
+      { role: "user", content: "Ok" },
+    ]);
+    expect(prior).toBeNull();
   });
 });
 
@@ -431,6 +458,220 @@ describe("resolveAgendaTurn", () => {
       expect(result.action).toBe("scheduled");
       expect(rpc).toHaveBeenCalledTimes(1);
     });
+
+    it("pedido direto de cancelamento cria proposta ligada ao evento sem mutar", async () => {
+      const event = {
+        ...EXISTING_EVENT,
+        id: "11111111-1111-4111-8111-111111111111",
+      };
+      const { sb, rpc, pendingRows } = makeStructuredSb({ events: [event] });
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        journeyId: "22222222-2222-4222-8222-222222222222",
+        timezone: "America/Sao_Paulo",
+        modelText: "Vou cancelar.",
+        clientText: "Gostaria de cancelar o agendamento",
+        agendaAutomationEnabled: true,
+        agendaPlan: {
+          action: "none",
+          date: null,
+          time: null,
+          location: null,
+          eventId: null,
+        },
+        operationKey: "agent-response-job:cancel-proposal:1:0",
+      });
+
+      expect(result.action).toBe("needs_confirmation");
+      expect(result.text).toContain("Você quer cancelar seu agendamento de");
+      expect(result.text).toContain("10 de junho de 2026");
+      expect(pendingRows[0]).toMatchObject({
+        action: "cancel",
+        event_id: event.id,
+        proposed_date: "10/06/2026",
+        proposed_time: "14:00",
+        state: "pending",
+      });
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
+    it("confirmação executa exatamente um cancelamento pendente", async () => {
+      const event = {
+        ...EXISTING_EVENT,
+        id: "11111111-1111-4111-8111-111111111111",
+      };
+      getAgendaEventByIdMock.mockResolvedValue(event);
+      const { sb, rpc, pendingRows } = makeStructuredSb({
+        rpcAction: "cancelled",
+        events: [event],
+        pending: {
+          id: "pending-cancel",
+          journey_id: "22222222-2222-4222-8222-222222222222",
+          action: "cancel",
+          event_id: event.id,
+          proposed_date: "10/06/2026",
+          proposed_time: "14:00",
+          proposed_location: null,
+          timezone: "America/Sao_Paulo",
+          expires_at: "2026-06-01T16:00:00.000Z",
+          state: "pending",
+        },
+      });
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        journeyId: "22222222-2222-4222-8222-222222222222",
+        timezone: "America/Sao_Paulo",
+        modelText: "Vou confirmar.",
+        clientText: "sim",
+        agendaAutomationEnabled: true,
+        agendaPlan: { action: "none", date: null, time: null, location: null, eventId: null },
+        operationKey: "agent-response-job:cancel-confirm:1:0",
+      });
+
+      expect(result.action).toBe("cancelled");
+      expect(rpc).toHaveBeenCalledTimes(1);
+      expect(rpc).toHaveBeenCalledWith(
+        "apply_agent_agenda_mutation",
+        expect.objectContaining({ p_action: "cancel", p_event_id: event.id }),
+      );
+      expect(pendingRows[0]).toMatchObject({ state: "executed" });
+    });
+
+    it("recusa cancela a proposta sem cancelar o evento", async () => {
+      const { sb, rpc, pendingRows } = makeStructuredSb({
+        pending: {
+          id: "pending-cancel",
+          journey_id: null,
+          action: "cancel",
+          event_id: "11111111-1111-4111-8111-111111111111",
+          proposed_date: "10/06/2026",
+          proposed_time: "14:00",
+          proposed_location: null,
+          timezone: "America/Sao_Paulo",
+          expires_at: "2026-06-01T16:00:00.000Z",
+          state: "pending",
+        },
+      });
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Tudo bem.",
+        clientText: "não, pode manter",
+        agendaAutomationEnabled: true,
+        agendaPlan: { action: "none", date: null, time: null, location: null, eventId: null },
+      });
+      expect(result.action).toBe("none");
+      expect(result.text).toContain("mantive seu agendamento");
+      expect(pendingRows[0]).toMatchObject({ state: "cancelled" });
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
+    it("múltiplos eventos exigem escolha antes de criar proposta", async () => {
+      const events = [
+        { ...EXISTING_EVENT, id: "11111111-1111-4111-8111-111111111111" },
+        {
+          ...EXISTING_EVENT,
+          id: "33333333-3333-4333-8333-333333333333",
+          start_at: "2026-06-11T18:00:00.000Z",
+          end_at: "2026-06-11T19:00:00.000Z",
+        },
+      ];
+      const { sb, rpc, pendingRows } = makeStructuredSb({ events });
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Qual deles?",
+        clientText: "Quero cancelar um agendamento",
+        agendaAutomationEnabled: true,
+        agendaPlan: { action: "cancel", date: null, time: null, location: null, eventId: null },
+      });
+      expect(result.action).toBe("needs_confirmation");
+      expect(result.text).toContain("1)");
+      expect(result.text).toContain("2)");
+      expect(pendingRows).toHaveLength(0);
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
+    it("escolha numerada de múltiplos eventos cria a proposta exata sem cancelar", async () => {
+      const events = [
+        { ...EXISTING_EVENT, id: "11111111-1111-4111-8111-111111111111" },
+        {
+          ...EXISTING_EVENT,
+          id: "33333333-3333-4333-8333-333333333333",
+          start_at: "2026-06-11T18:00:00.000Z",
+          end_at: "2026-06-11T19:00:00.000Z",
+        },
+      ];
+      const { sb, rpc, pendingRows } = makeStructuredSb({ events });
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        priorAssistantText:
+          "Encontrei mais de um agendamento ativo: 1) 10 de junho; 2) 11 de junho. Qual deles você quer cancelar?",
+        modelText: "Certo.",
+        clientText: "2",
+        agendaAutomationEnabled: true,
+        agendaPlan: { action: "none", date: null, time: null, location: null, eventId: null },
+      });
+
+      expect(result.action).toBe("needs_confirmation");
+      expect(result.text).toContain("11 de junho de 2026");
+      expect(pendingRows[0]).toMatchObject({
+        action: "cancel",
+        event_id: events[1]!.id,
+        proposed_date: "11/06/2026",
+        proposed_time: "15:00",
+        state: "pending",
+      });
+      expect(rpc).not.toHaveBeenCalled();
+    });
+  });
+
+  it("horário impossível é rejeitado sem normalização silenciosa", async () => {
+    const result = await resolveAgendaTurn({
+      sb: makeSb(null),
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      timezone: "America/Sao_Paulo",
+      modelText: "Posso confirmar para 13:76?",
+      clientText: "13:76",
+      agendaAutomationEnabled: true,
+      agendaPlan: { action: "create", date: "10/06/2026", time: null, location: null, eventId: null },
+    });
+    expect(result).toMatchObject({ action: "failed", text: AGENDA_INVALID_TIME_REPLY });
+    expect(insertAgendaEventMock).not.toHaveBeenCalled();
+  });
+
+  it("Ok e Até mais sem proposta pendente não reativam a agenda", async () => {
+    const result = await resolveAgendaTurn({
+      sb: makeSb(EXISTING_EVENT),
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      timezone: "America/Sao_Paulo",
+      modelText: "Até mais!",
+      clientText: "Ok\nAté mais",
+      recentClientMessages: ["Agende 10/06/2026 às 14:00", "sim", "obrigado", "Ok", "Até mais"],
+      agendaAutomationEnabled: true,
+      agendaPlan: { action: "none", date: null, time: null, location: null, eventId: null },
+    });
+    expect(result.action).toBe("none");
+    expect(insertAgendaEventMock).not.toHaveBeenCalled();
+    expect(cancelAgendaEventMock).not.toHaveBeenCalled();
   });
 
   it("criar sem confirmação não executa", async () => {
@@ -919,7 +1160,7 @@ describe("resolveAgendaTurn", () => {
       );
     });
 
-    it("Confirmado recupera o último datetime inbound mesmo sem diretiva do modelo", async () => {
+    it("Confirmado sem proposta pendente não reutiliza datetime antigo", async () => {
       const result = await resolveAgendaTurn({
         sb: makeSb(null),
         tenantId: "tenant-1",
@@ -935,11 +1176,8 @@ describe("resolveAgendaTurn", () => {
         agendaAutomationEnabled: true,
       });
 
-      expect(result.action).toBe("scheduled");
-      expect(insertAgendaEventMock).toHaveBeenCalledTimes(1);
-      expect(insertAgendaEventMock).toHaveBeenCalledWith(
-        expect.objectContaining({ start_at: "2026-07-16T17:00:00.000Z" }),
-      );
+      expect(result.action).toBe("none");
+      expect(insertAgendaEventMock).not.toHaveBeenCalled();
     });
   });
 

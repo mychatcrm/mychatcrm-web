@@ -4,6 +4,7 @@ import {
   parseAppointmentDateTime,
   resolveScheduleDateTimeFromText,
   textHasExplicitTime,
+  textHasInvalidExplicitTime,
 } from "@/lib/server/agenda-datetime-parse";
 
 const TZ = "America/Sao_Paulo";
@@ -126,6 +127,18 @@ describe("datas relativas respeitam integralmente o fuso do agente", () => {
 });
 
 describe("fragmentos incompletos nunca inventam horário (incidente de produção)", () => {
+  it("13:76 é inválido e nunca normaliza para 14:16", () => {
+    expect(textHasInvalidExplicitTime("pode ser 13:76")).toBe(true);
+    expect(textHasExplicitTime("13:76")).toBe(false);
+    expect(
+      resolveScheduleDateTimeFromText({
+        clientText: "dia 20 às 13:76",
+        timezone: TZ,
+        now: NOW,
+      }),
+    ).toBeNull();
+  });
+
   it("'Pode ser hoje as' não resolve datetime (não vira o minuto atual)", () => {
     expect(
       parseAppointmentDateTime({ userMessage: "Pode ser hoje as", timezone: TZ, now: NOW }),

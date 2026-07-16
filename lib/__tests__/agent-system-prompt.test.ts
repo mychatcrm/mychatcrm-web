@@ -179,8 +179,9 @@ describe("buildAgentSystemPrompt", () => {
 
     expect(prompt).toContain("PLANO ESTRUTURADO DA AGENDA");
     expect(prompt).toContain('agenda.action="none"');
-    expect(prompt).toContain("propose_create, propose_reschedule ou propose_cancel");
-    expect(prompt).toContain("create, reschedule ou cancel imediatamente");
+    expect(prompt).toContain("Cancelamento é sempre bifásico");
+    expect(prompt).toContain("use propose_cancel");
+    expect(prompt).toContain("Use cancel somente quando");
     expect(prompt).not.toContain("[[AGENDAR:");
   });
 

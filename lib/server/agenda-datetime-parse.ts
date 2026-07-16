@@ -197,6 +197,12 @@ function applyDayPeriod(hour: number, period?: string | null): number {
   return hour;
 }
 
+function validTime(hour: number, minute: number, ambiguousMeridiem = false): ParsedTime | null {
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return { hour, minute, ...(ambiguousMeridiem ? { ambiguousMeridiem: true } : {}) };
+}
+
 function parseTimeFromText(text: string): ParsedTime | null {
   const normalized = text.toLowerCase();
 
@@ -210,32 +216,28 @@ function parseTimeFromText(text: string): ParsedTime | null {
     /\b(?:às|as|a)?\s*(\d{1,2})[:h](\d{2})\b(?:\s+da\s+(manh[ãa]|tarde|noite))?/,
   );
   if (hColon) {
-    return { hour: applyDayPeriod(Number(hColon[1]), hColon[3]), minute: Number(hColon[2]) };
+    return validTime(applyDayPeriod(Number(hColon[1]), hColon[3]), Number(hColon[2]));
   }
 
   const hOnly = normalized.match(
     /\b(?:às|as|a)?\s*(\d{1,2})\s*h(?:\s*(\d{2}))?\b(?:\s+da\s+(manh[ãa]|tarde|noite))?/,
   );
   if (hOnly) {
-    return {
-      hour: applyDayPeriod(Number(hOnly[1]), hOnly[3]),
-      minute: hOnly[2] ? Number(hOnly[2]) : 0,
-    };
+    return validTime(
+      applyDayPeriod(Number(hOnly[1]), hOnly[3]),
+      hOnly[2] ? Number(hOnly[2]) : 0,
+    );
   }
 
   const horas = normalized.match(/\b(\d{1,2})\s*horas?\b(?:\s+da\s+(manh[ãa]|tarde|noite))?/);
-  if (horas) return { hour: applyDayPeriod(Number(horas[1]), horas[2]), minute: 0 };
+  if (horas) return validTime(applyDayPeriod(Number(horas[1]), horas[2]), 0);
 
   const atHour = normalized.match(
     /\b(?:às|as|a)\s+(\d{1,2})\b(?:\s+da\s+(manh[ãa]|tarde|noite))?/,
   );
   if (atHour) {
     const hour = applyDayPeriod(Number(atHour[1]), atHour[2]);
-    return {
-      hour,
-      minute: 0,
-      ambiguousMeridiem: !atHour[2] && hour > 0 && hour < 12,
-    };
+    return validTime(hour, 0, !atHour[2] && hour > 0 && hour < 12);
   }
 
   return null;
@@ -397,6 +399,16 @@ export function textHasExplicitDateAnchor(text: string, timezone: string, now?: 
 /** true se o texto contém uma hora explícita, numérica ou por extenso. */
 export function textHasExplicitTime(text: string): boolean {
   return parseTimeFromText(foldAccents(text.toLowerCase())) !== null;
+}
+
+/** Detecta sintaxe de relógio explícita que foi rejeitada por faixa inválida. */
+export function textHasInvalidExplicitTime(text: string): boolean {
+  const normalized = foldAccents(text.toLowerCase());
+  const match = normalized.match(/\b(?:às|as|a)?\s*(\d{1,2})[:h](\d{2})\b/);
+  if (!match) return false;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  return hour > 23 || minute > 59;
 }
 
 /** Extrai DD/MM/AAAA e HH:MM de textos do cliente e/ou do assistente. */

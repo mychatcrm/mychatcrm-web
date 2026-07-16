@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_AGENT_SMART_WAIT,
   evolutionBurstSafeSmartWait,
+  evolutionInboundNeedsExtendedInitialWait,
   sanitizeAgentSmartWaitSettings,
 } from "@/lib/agents/smart-wait-settings";
 import {
@@ -24,9 +25,43 @@ describe("agent smart wait schedule", () => {
   it("keeps Evolution turns open across its one-minute serial delivery", () => {
     expect(evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT)).toMatchObject({
       initialSeconds: 65,
-      followupSeconds: 65,
+      followupSeconds: 10,
       maxSeconds: 180,
     });
+  });
+
+  it("uses the configured fast lane for complete Evolution requests", () => {
+    expect(
+      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
+        kind: "text",
+        text: "Gostaria de cancelar meu agendamento",
+      }),
+    ).toMatchObject({ initialSeconds: 7, followupSeconds: 10, maxSeconds: 60 });
+  });
+
+  it("keeps only the first ambiguous fragment in the extended lane", () => {
+    for (const text of ["Oi", "Ok", "amanhã", "duas da tarde", "Pode ser hoje as"]) {
+      expect(
+        evolutionInboundNeedsExtendedInitialWait({ kind: "text", text }),
+        text,
+      ).toBe(true);
+    }
+    expect(
+      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
+        kind: "image",
+        text: "[Imagem] Marca nessa data",
+      }),
+    ).toMatchObject({ initialSeconds: 65, followupSeconds: 10, maxSeconds: 180 });
+  });
+
+  it("sends a standalone confirmation through the fast lane only when a proposal exists", () => {
+    expect(
+      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
+        kind: "text",
+        text: "Sim",
+        hasPendingAgendaAction: true,
+      }),
+    ).toMatchObject({ initialSeconds: 7, followupSeconds: 10, maxSeconds: 60 });
   });
 
   it("does not shorten stricter tenant settings", () => {

@@ -17,6 +17,42 @@ export const DEFAULT_AGENT_SMART_WAIT: AgentSmartWaitSettings = {
 const EVOLUTION_SERIAL_DELIVERY_GRACE_SECONDS = 65;
 const EVOLUTION_BURST_MAX_SECONDS = 180;
 
+export type EvolutionInboundWaitSignal = {
+  kind: "text" | "audio" | "image" | "video" | "document";
+  text?: string | null;
+  hasPendingAgendaAction?: boolean;
+};
+
+const EVOLUTION_SHORT_AMBIGUOUS_RE =
+  /^(?:oi|ol[aá]|opa|eai|e a[ií]|sim|s|ok|okay|pode|certo|isso|exato|beleza|obrigad[oa]|valeu|at[eé]\s+mais|bom\s+dia|boa\s+tarde|boa\s+noite)[.!?\s]*$/i;
+const EVOLUTION_DATE_ONLY_RE =
+  /^(?:pode\s+ser\s+)?(?:hoje|amanh[ãa]|depois\s+de\s+amanh[ãa]|dia\s+\d{1,2}|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?)[.!?\s]*$/i;
+const EVOLUTION_TIME_ONLY_RE =
+  /^(?:[aàá]s?\s+)?(?:\d{1,2}(?::\d{2}|h(?:\d{2})?)|uma|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze)(?:\s*(?:horas?|da\s+manh[ãa]|da\s+tarde|da\s+noite))?[.!?\s]*$/i;
+const EVOLUTION_INCOMPLETE_END_RE =
+  /\b(?:e|ou|as|[aàá]s|para|pra|no|na|em|que|porque|com|sem|de|do|da)\s*[,.!?-]*$/i;
+const EVOLUTION_COMPLETE_ACTION_RE =
+  /\b(?:cancelar|cancelamento|desmarcar|remarcar|reagendar|agendar|marcar|alterar\s+(?:o\s+)?agendamento)\b/i;
+
+/**
+ * Decide se a PRIMEIRA mensagem precisa da janela longa da Evolution.
+ * Follow-ups sempre usam o tempo curto configurado: quando o complemento
+ * finalmente chega, não adicionamos mais um minuto antes de responder.
+ */
+export function evolutionInboundNeedsExtendedInitialWait(
+  signal: EvolutionInboundWaitSignal,
+): boolean {
+  if (signal.kind !== "text") return true;
+  const text = signal.text?.trim() ?? "";
+  if (!text) return true;
+  if (signal.hasPendingAgendaAction) return false;
+  if (EVOLUTION_COMPLETE_ACTION_RE.test(text)) return false;
+  if (EVOLUTION_SHORT_AMBIGUOUS_RE.test(text)) return true;
+  if (EVOLUTION_DATE_ONLY_RE.test(text) || EVOLUTION_TIME_ONLY_RE.test(text)) return true;
+  if (EVOLUTION_INCOMPLETE_END_RE.test(text)) return true;
+  return false;
+}
+
 /**
  * A fila QR da Evolution pode entregar fragmentos enviados no mesmo segundo
  * com cerca de 60 s entre webhooks. Mantemos o turno aberto somente nesse
@@ -24,19 +60,23 @@ const EVOLUTION_BURST_MAX_SECONDS = 180;
  */
 export function evolutionBurstSafeSmartWait(
   settings: AgentSmartWaitSettings,
+  signal?: EvolutionInboundWaitSignal,
 ): AgentSmartWaitSettings {
+  const extendedInitial = signal
+    ? evolutionInboundNeedsExtendedInitialWait(signal)
+    : true;
   return {
     ...settings,
     enabled: true,
-    initialSeconds: Math.max(
-      settings.initialSeconds,
-      EVOLUTION_SERIAL_DELIVERY_GRACE_SECONDS,
-    ),
-    followupSeconds: Math.max(
-      settings.followupSeconds,
-      EVOLUTION_SERIAL_DELIVERY_GRACE_SECONDS,
-    ),
-    maxSeconds: Math.max(settings.maxSeconds, EVOLUTION_BURST_MAX_SECONDS),
+    initialSeconds: extendedInitial
+      ? Math.max(settings.initialSeconds, EVOLUTION_SERIAL_DELIVERY_GRACE_SECONDS)
+      : settings.initialSeconds,
+    // O primeiro fragmento absorve a entrega serial. Depois que qualquer
+    // complemento chega, o silêncio curto configurado já encerra o burst.
+    followupSeconds: settings.followupSeconds,
+    maxSeconds: extendedInitial
+      ? Math.max(settings.maxSeconds, EVOLUTION_BURST_MAX_SECONDS)
+      : settings.maxSeconds,
   };
 }
 

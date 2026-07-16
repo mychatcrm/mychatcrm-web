@@ -2,11 +2,13 @@ import "server-only";
 
 import type { PostgrestSingleResponse } from "@supabase/supabase-js";
 import {
+  formatScheduleFieldsFromDate,
   localWallClockToUtc,
   parseAppointmentDateTime,
   resolveScheduleDateTimeFromText,
   textHasExplicitDateAnchor,
   textHasExplicitTime,
+  textHasInvalidExplicitTime,
 } from "@/lib/server/agenda-datetime-parse";
 import { parseTimezone } from "@/lib/agents/agent-datetime";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
@@ -50,6 +52,8 @@ const AGENDA_MUTATION_IN_MESSAGE_RE =
   /\b(?:quero|preciso|gostaria|desejo|vou)(?:\s+de)?\s+(?:cancelar|remarcar|reagendar|agendar|marcar|desmarcar)\b|\b(?:remarcar|reagendar|agendar|marcar)\s+(?:para|em|no|na)\b|\b\d{1,2}\s*[/-]\s*\d{1,2}\b|\bdaqui\s+(?:a\s+)?\d+\s+dias?\b|\bsemana\s+que\s+vem\b|\bproxim[ao]\s+\w{3,}/i;
 const CANCEL_INTENT_RE =
   /\b(cancelar|cancelamento|desmarcar|desmarcação|desmarcacao)\b/i;
+const AGENDA_REJECTION_RE =
+  /^\s*(?:n[aã]o|nao|melhor\s+n[aã]o|deixa|deixe|desist[io]|quero\s+manter|pode\s+manter|mant[eé]m)(?:\b|[.!?])/i;
 const RESCHEDULE_RE =
   /\b(remarcar|reagendar|trocar\s+(o\s+)?hor[aá]rio|mudar\s+(a\s+)?data|outro\s+hor[aá]rio|alterar\s+agendamento)\b/i;
 const SCHEDULING_RE =
@@ -89,6 +93,8 @@ export function buildOutsideAvailabilityReply(disp?: AgentAgendaDisponibilidade 
 
 export const AGENDA_DATETIME_NEEDED_REPLY =
   "Não consegui identificar a data e o horário certinhos. Me diga o dia e a hora que você prefere (por exemplo: 20/07 às 14h) que eu verifico para você.";
+export const AGENDA_INVALID_TIME_REPLY =
+  "Esse horário não existe. Me diga uma hora válida entre 00:00 e 23:59 para eu verificar para você.";
 
 function agendaFailureReplyForError(
   error: unknown,
@@ -128,6 +134,37 @@ function buildAgendaConfirmationQuestion(directive: AgendaDirective | null): str
     return "Posso cancelar esse horário para você?";
   }
   return "Posso confirmar essa alteração na agenda?";
+}
+
+function buildAgendaCancelConfirmationQuestion(
+  event: Pick<AgendaEventRow, "start_at" | "location">,
+  timezone: string,
+): string {
+  const when = formatEventDateTimePtBr(event.start_at, timezone);
+  const place = event.location?.trim() ? `, em ${event.location.trim()}` : "";
+  return `Você quer cancelar seu agendamento de ${when}${place}?`;
+}
+
+function buildAgendaCancelDisambiguationQuestion(
+  events: Array<Pick<AgendaEventRow, "start_at" | "location">>,
+  timezone: string,
+): string {
+  const options = events
+    .slice(0, 3)
+    .map((event, index) => {
+      const place = event.location?.trim() ? `, em ${event.location.trim()}` : "";
+      return `${index + 1}) ${formatEventDateTimePtBr(event.start_at, timezone)}${place}`;
+    })
+    .join("; ");
+  return `Encontrei mais de um agendamento ativo: ${options}. Qual deles você quer cancelar?`;
+}
+
+function assistantAskedCancelDisambiguation(text?: string | null): boolean {
+  const normalized = text?.trim() ?? "";
+  return (
+    /encontrei\s+mais\s+de\s+um\s+agendamento\s+ativo/i.test(normalized) &&
+    /qual\s+deles\s+voc[eê]\s+quer\s+cancelar/i.test(normalized)
+  );
 }
 
 const HUMAN_DELEGATION_IN_REPLY_RE =
@@ -461,6 +498,9 @@ export function priorAgendaAssistantTextFromMessages(
     if (assistantProposedAgendaMutationConfirmation(text, timezone)) {
       return text;
     }
+    // Uma resposta posterior encerra a proposta anterior. Continuar buscando
+    // para trás fazia "Ok"/"Até mais" reutilizar um agendamento já executado.
+    return null;
   }
   return null;
 }
@@ -741,8 +781,11 @@ export function stripAgendaDirectives(text: string): string {
 }
 
 function directiveStartAt(directive: Extract<AgendaDirective, { type: "schedule" }>, timezone: string): Date {
-  const [day, month, year] = directive.date.split("/").map(Number);
-  const [hour, minute] = directive.time.split(":").map(Number);
+  const normalizedDate = normalizeAgentAgendaDate(directive.date);
+  const normalizedTime = normalizeAgentAgendaTime(directive.time);
+  if (!normalizedDate || !normalizedTime) return new Date(Number.NaN);
+  const [day, month, year] = normalizedDate.split("/").map(Number);
+  const [hour, minute] = normalizedTime.split(":").map(Number);
   return localWallClockToUtc({ year: year!, month: month!, day: day!, hour: hour!, minute: minute! }, parseTimezone(timezone));
 }
 
@@ -766,6 +809,28 @@ export async function findNextActiveAgendaEvent(params: {
     .maybeSingle();
   if (error) throw error;
   return (data as AgendaEventRow | null) ?? null;
+}
+
+async function findUpcomingActiveAgendaEvents(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  now?: Date;
+  limit?: number;
+}): Promise<AgendaEventRow[]> {
+  const attendeePhone = extractPhone(params.remoteJid);
+  if (!attendeePhone) return [];
+  const { data, error } = await params.sb
+    .from("agenda_events")
+    .select("*")
+    .eq("tenant_id", params.tenantId)
+    .eq("attendee_phone", attendeePhone)
+    .neq("status", "cancelled")
+    .gte("start_at", (params.now ?? new Date()).toISOString())
+    .order("start_at", { ascending: true })
+    .limit(params.limit ?? 4);
+  if (error) throw error;
+  return (data as AgendaEventRow[] | null) ?? [];
 }
 
 async function cancelStructuredAgendaEvent(params: {
@@ -1560,11 +1625,13 @@ function resolveScheduleDirective(
 
 type PendingAgendaActionRow = {
   id: string;
+  journey_id: string | null;
   action: "create" | "reschedule" | "cancel";
   event_id: string | null;
   proposed_date: string | null;
   proposed_time: string | null;
   proposed_location: string | null;
+  timezone: string;
   expires_at: string;
 };
 
@@ -1584,10 +1651,11 @@ async function loadPendingAgendaAction(params: {
   tenantId: string;
   remoteJid: string;
   agentId: string;
+  journeyId?: string | null;
 }): Promise<PendingAgendaActionRow | null> {
   const { data } = await params.sb
     .from("agent_agenda_pending_actions")
-    .select("id,action,event_id,proposed_date,proposed_time,proposed_location,expires_at")
+    .select("id,journey_id,action,event_id,proposed_date,proposed_time,proposed_location,timezone,expires_at")
     .eq("tenant_id", params.tenantId)
     .eq("remote_jid", params.remoteJid)
     .eq("agent_id", params.agentId)
@@ -1597,6 +1665,14 @@ async function loadPendingAgendaAction(params: {
     .maybeSingle();
   if (!data) return null;
   const row = data as PendingAgendaActionRow;
+  if (params.journeyId && row.journey_id && row.journey_id !== params.journeyId) {
+    await params.sb
+      .from("agent_agenda_pending_actions")
+      .update({ state: "cancelled", updated_at: new Date().toISOString() })
+      .eq("id", row.id)
+      .eq("state", "pending");
+    return null;
+  }
   if (Date.parse(row.expires_at) > Date.now()) return row;
   await params.sb
     .from("agent_agenda_pending_actions")
@@ -1618,7 +1694,7 @@ async function savePendingAgendaAction(params: {
   generation?: number | null;
   timezone: string;
 }): Promise<void> {
-  const existing = await loadPendingAgendaAction(params);
+  const existing = await loadPendingAgendaAction({ ...params, journeyId: params.journeyId });
   const patch = {
     journey_id: params.journeyId ?? null,
     action: params.action,
@@ -1666,6 +1742,58 @@ function structuredAgendaSuccessText(
     : `Pronto, ficou agendado para ${when}${location}.`;
 }
 
+function cancelEventBelongsToConversation(
+  event: AgendaEventRow | null,
+  remoteJid: string,
+): event is AgendaEventRow {
+  if (!event || event.status === "cancelled") return false;
+  const phone = extractPhone(remoteJid);
+  if (!phone || event.attendee_phone !== phone) return false;
+  return new Date(event.start_at).getTime() > Date.now();
+}
+
+async function resolveCancelCandidate(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  timezone: string;
+  clientText: string;
+  requestedEventId?: string | null;
+}): Promise<{ event: AgendaEventRow | null; options: AgendaEventRow[] }> {
+  if (params.requestedEventId && UUID_RE.test(params.requestedEventId)) {
+    const requested = await getAgendaEventById(params.tenantId, params.requestedEventId);
+    return cancelEventBelongsToConversation(requested, params.remoteJid)
+      ? { event: requested, options: [requested] }
+      : { event: null, options: [] };
+  }
+
+  const options = await findUpcomingActiveAgendaEvents({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+  });
+  if (options.length <= 1) return { event: options[0] ?? null, options };
+
+  const numberedChoice = params.clientText.trim().match(/^(?:op[cç][aã]o\s*)?([1-3])[.!?\s]*$/i);
+  if (numberedChoice) {
+    const selected = options[Number(numberedChoice[1]) - 1] ?? null;
+    if (selected) return { event: selected, options };
+  }
+
+  const requestedDateTime = resolveScheduleDateTimeFromText({
+    clientText: params.clientText,
+    timezone: params.timezone,
+  });
+  if (requestedDateTime) {
+    const match = options.find((event) => {
+      const fields = formatScheduleFieldsFromDate(new Date(event.start_at), params.timezone);
+      return fields.date === requestedDateTime.date && fields.time === requestedDateTime.time;
+    });
+    if (match) return { event: match, options };
+  }
+  return { event: null, options };
+}
+
 async function resolveStructuredAgendaPlan(params: {
   sb: SupabaseServiceClient;
   tenantId: string;
@@ -1691,11 +1819,31 @@ async function resolveStructuredAgendaPlan(params: {
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,
     agentId: params.agentId,
+    journeyId: params.journeyId,
   });
+  if (pending?.action === "cancel" && AGENDA_REJECTION_RE.test(params.clientText)) {
+    await params.sb
+      .from("agent_agenda_pending_actions")
+      .update({ state: "cancelled", updated_at: new Date().toISOString() })
+      .eq("id", pending.id)
+      .eq("state", "pending");
+    return {
+      text: "Tudo bem, mantive seu agendamento como está.",
+      action: "none",
+      deferHandoff: true,
+    };
+  }
   const standaloneConfirmation = Boolean(pending && isStandaloneAgendaConfirmation(params.clientText));
   const plannedAction = executableAction(params.plan.action);
   const action = standaloneConfirmation ? pending!.action : plannedAction;
   if (!action) return null;
+  if (action !== "cancel" && textHasInvalidExplicitTime(params.clientText)) {
+    return {
+      text: AGENDA_INVALID_TIME_REPLY,
+      action: "failed",
+      deferHandoff: true,
+    };
+  }
 
   const rawEffectivePlan: AgentAgendaPlan = standaloneConfirmation
     ? {
@@ -1725,9 +1873,76 @@ async function resolveStructuredAgendaPlan(params: {
   // Texto real do lead e histórico da mesma jornada são soberanos sobre o
   // plano do modelo. Foi aqui que uma alucinação `2023-10-17` venceu o áudio
   // "amanhã às duas" no incidente de produção.
-  const effectivePlan: AgentAgendaPlan = resolvedFromClient
+  let effectivePlan: AgentAgendaPlan = resolvedFromClient
     ? { ...normalizedEffectivePlan, date: resolvedFromClient.date, time: resolvedFromClient.time }
     : normalizedEffectivePlan;
+  let cancelEvent: AgendaEventRow | null = null;
+  if (action === "cancel") {
+    const cancelCandidate = await resolveCancelCandidate({
+      sb: params.sb,
+      tenantId: params.tenantId,
+      remoteJid: params.remoteJid,
+      timezone: params.timezone,
+      clientText: params.clientText,
+      requestedEventId: standaloneConfirmation ? pending?.event_id : effectivePlan.eventId,
+    });
+    cancelEvent = cancelCandidate.event;
+    if (!cancelEvent) {
+      if (!standaloneConfirmation && cancelCandidate.options.length > 1) {
+        return {
+          text: buildAgendaCancelDisambiguationQuestion(cancelCandidate.options, params.timezone),
+          action: "needs_confirmation",
+          deferHandoff: true,
+        };
+      }
+      if (pending) {
+        await params.sb
+          .from("agent_agenda_pending_actions")
+          .update({ state: "expired", updated_at: new Date().toISOString() })
+          .eq("id", pending.id)
+          .eq("state", "pending");
+      }
+      return {
+        text: "Não encontrei um agendamento ativo para cancelar.",
+        action: "failed",
+        deferHandoff: true,
+      };
+    }
+    const currentFields = formatScheduleFieldsFromDate(
+      new Date(cancelEvent.start_at),
+      params.timezone,
+    );
+    effectivePlan = {
+      ...effectivePlan,
+      eventId: cancelEvent.id,
+      date: currentFields.date,
+      time: currentFields.time,
+      location: cancelEvent.location ?? null,
+    };
+    if (
+      standaloneConfirmation &&
+      pending &&
+      (pending.proposed_date !== currentFields.date || pending.proposed_time !== currentFields.time)
+    ) {
+      await savePendingAgendaAction({
+        sb: params.sb,
+        tenantId: params.tenantId,
+        remoteJid: params.remoteJid,
+        journeyId: params.journeyId,
+        agentId: params.agentId,
+        action: "cancel",
+        plan: effectivePlan,
+        jobId: params.jobId,
+        generation: params.claimedGeneration,
+        timezone: params.timezone,
+      });
+      return {
+        text: buildAgendaCancelConfirmationQuestion(cancelEvent, params.timezone),
+        action: "needs_confirmation",
+        deferHandoff: true,
+      };
+    }
+  }
   const scheduleComplete = action === "cancel" || Boolean(effectivePlan.date && effectivePlan.time);
 
   if (action !== "cancel" && scheduleComplete) {
@@ -1763,7 +1978,7 @@ async function resolveStructuredAgendaPlan(params: {
 
   const directAuthorized =
     action === "cancel"
-      ? detectAgendaCancelIntent(params.clientText)
+      ? false
       : action === "reschedule"
         ? RESCHEDULE_RE.test(params.clientText) && scheduleComplete
         : isInitialAgendaMutationRequest(params.clientText) && scheduleComplete;
@@ -1798,7 +2013,11 @@ async function resolveStructuredAgendaPlan(params: {
         ? { type: "schedule", date: effectivePlan.date, time: effectivePlan.time, location: effectivePlan.location }
         : null;
     return {
-      text: scheduleComplete ? buildAgendaConfirmationQuestion(directive) : params.modelText,
+      text: scheduleComplete
+        ? action === "cancel" && cancelEvent
+          ? buildAgendaCancelConfirmationQuestion(cancelEvent, params.timezone)
+          : buildAgendaConfirmationQuestion(directive)
+        : params.modelText,
       action: scheduleComplete ? "needs_confirmation" : "none",
       deferHandoff: true,
     };
@@ -1921,6 +2140,14 @@ export async function resolveAgendaTurn(params: {
   }
 
   if (params.agendaPlan && params.agentId) {
+    const continuesCancelDisambiguation =
+      assistantAskedCancelDisambiguation(params.priorAssistantText) &&
+      params.clientText.trim().length > 0;
+    const structuredPlan =
+      params.agendaPlan.action === "none" &&
+      (detectAgendaCancelIntent(params.clientText) || continuesCancelDisambiguation)
+        ? { ...params.agendaPlan, action: "propose_cancel" as const }
+        : params.agendaPlan;
     const structured = await resolveStructuredAgendaPlan({
       sb: params.sb ?? createSupabaseServiceClient(),
       tenantId: params.tenantId,
@@ -1931,7 +2158,7 @@ export async function resolveAgendaTurn(params: {
       timezone: params.timezone,
       clientText: params.clientText,
       modelText: cleanText,
-      plan: params.agendaPlan,
+      plan: structuredPlan,
       agendaLembretes: params.agendaLembretes,
       agendaDisponibilidade: params.agendaDisponibilidade,
       slotIndex: params.slotIndex,
@@ -1950,14 +2177,17 @@ export async function resolveAgendaTurn(params: {
   }
 
   const directive = parsed.directives.length === 1 ? parsed.directives[0]! : null;
+  if (directive?.type !== "cancel" && textHasInvalidExplicitTime(params.clientText)) {
+    return finalize({ text: AGENDA_INVALID_TIME_REPLY, action: "failed", deferHandoff: true });
+  }
   const proposalText = params.priorAssistantText?.trim() ?? "";
   const recentClientMessages = (params.recentClientMessages ?? [])
     .map((text) => text.trim())
     .filter(Boolean);
-  const assistantForConfirm = assistantTextForSchedulingConfirmation(
-    cleanText,
-    params.priorAssistantText,
-  );
+  const standaloneConfirmationText = isStandaloneAgendaConfirmation(params.clientText);
+  const assistantForConfirm = standaloneConfirmationText
+    ? proposalText
+    : assistantTextForSchedulingConfirmation(cleanText, params.priorAssistantText);
   const confirmed = clientConfirmedAgendaMutation(params.clientText, assistantForConfirm);
 
   // Continuação cross-job: o pedido inicial pode ter vindo vários segundos
@@ -1972,7 +2202,7 @@ export async function resolveAgendaTurn(params: {
     detectAgendaCancelIntent(params.clientText);
   let recentScheduleRequest = false;
   let recentCancelRequest = false;
-  if (currentContinuesAgenda) {
+  if (currentContinuesAgenda && !standaloneConfirmationText) {
     for (let i = recentClientMessages.length - 1; i >= 0; i--) {
       const text = recentClientMessages[i]!;
       if (detectAgendaCancelIntent(text)) {
@@ -2003,16 +2233,12 @@ export async function resolveAgendaTurn(params: {
     confirmed &&
     !directive &&
     assistantProposedAgendaMutationConfirmation(proposalText, params.timezone);
-  const confirmedFromRecentContext =
-    confirmed && !directive && (recentScheduleRequest || recentCancelRequest);
-
   const hasMutationIntent =
     cancelFromDirective ||
     scheduleFromDirective ||
     cancelFromContext ||
     scheduleFromContext ||
-    confirmedFromPriorProposal ||
-    confirmedFromRecentContext;
+    confirmedFromPriorProposal;
 
   if (!hasMutationIntent) {
     // Anti-alucinação: o modelo afirma que agendou/remarcou/cancelou, mas nenhuma

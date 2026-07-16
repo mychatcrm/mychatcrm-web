@@ -1,3 +1,4 @@
+import { waitUntil } from "@vercel/functions";
 import { NextResponse } from "next/server";
 import {
   generateAgentResponse,
@@ -923,8 +924,31 @@ export async function POST(request: Request) {
           // O agrupamento é uma garantia de consistência do turno, não uma
           // preferência opcional do agente. Configurações antigas com
           // `enabled=false` continuam recebendo os tempos personalizados.
+          const pendingAgendaLookup = kindFromMsg(msg) === "text"
+            ? await sbState
+                .from("agent_agenda_pending_actions")
+                .select("id,expires_at")
+                .eq("tenant_id", row.tenant_id)
+                .eq("remote_jid", msg.remoteJid)
+                .eq("agent_id", agentId)
+                .eq("state", "pending")
+                .order("created_at", { ascending: false })
+                .limit(1)
+                .maybeSingle()
+            : { data: null };
+          const pendingAgendaExpiresAt = (pendingAgendaLookup.data as {
+            expires_at?: string | null;
+          } | null)?.expires_at;
+          const hasPendingAgendaAction = Boolean(
+            pendingAgendaExpiresAt && Date.parse(pendingAgendaExpiresAt) > Date.now(),
+          );
           const smartWait = evolutionBurstSafeSmartWait(
             smartWaitFromMetadata(metadata),
+            {
+              kind: kindFromMsg(msg),
+              text: contentFromMsg(msg),
+              hasPendingAgendaAction,
+            },
           );
           const useSmartWait = !isSmartWaitGloballyDisabled();
           let runImmediateReply = !useSmartWait;
@@ -951,6 +975,9 @@ export async function POST(request: Request) {
                     : msg.occurredAt ?? new Date().toISOString(),
                 smartWait,
                 processorBaseUrl: new URL(request.url).origin,
+                deferProcessor: (task) => {
+                  waitUntil(task.then(() => undefined));
+                },
               });
               return;
             } else {

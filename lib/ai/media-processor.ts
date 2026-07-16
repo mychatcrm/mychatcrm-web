@@ -290,8 +290,78 @@ export async function transcribeAudioFromBuffer(
 // Image → text via GPT-4o vision
 // ---------------------------------------------------------------------------
 
-/** Descreve imagem a partir de buffer (upload wizard, etc.). */
-export async function describeImageFromBuffer(buffer: Buffer, mimeType: string): Promise<string | null> {
+export type VisualImageAnalysis = {
+  summary: string;
+  visibleText: string[];
+  markedElements: string[];
+  dates: string[];
+  times: string[];
+  confidence: number;
+};
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .map((item) => item.trim())
+    .slice(0, 20);
+}
+
+export function parseVisualImageAnalysis(value: unknown): VisualImageAnalysis | null {
+  let parsed = value;
+  if (typeof value === "string") {
+    const clean = value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+    try {
+      parsed = JSON.parse(clean);
+    } catch {
+      return clean
+        ? {
+            summary: clean,
+            visibleText: [],
+            markedElements: [],
+            dates: [],
+            times: [],
+            confidence: 0.5,
+          }
+        : null;
+    }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const row = parsed as Record<string, unknown>;
+  const summary = typeof row.summary === "string" ? row.summary.trim() : "";
+  if (!summary) return null;
+  const rawConfidence = typeof row.confidence === "number" ? row.confidence : Number(row.confidence);
+  const confidence = Number.isFinite(rawConfidence)
+    ? Math.min(1, Math.max(0, rawConfidence))
+    : 0.5;
+  return {
+    summary,
+    visibleText: stringList(row.visibleText),
+    markedElements: stringList(row.markedElements),
+    dates: stringList(row.dates),
+    times: stringList(row.times),
+    confidence,
+  };
+}
+
+export function formatVisualImageAnalysis(analysis: VisualImageAnalysis): string {
+  const parts = [`Resumo visual: ${analysis.summary}`];
+  if (analysis.visibleText.length) parts.push(`Textos visíveis: ${analysis.visibleText.join(" | ")}`);
+  if (analysis.markedElements.length) parts.push(`Elementos marcados: ${analysis.markedElements.join(" | ")}`);
+  if (analysis.dates.length) parts.push(`Datas observadas: ${analysis.dates.join(" | ")}`);
+  if (analysis.times.length) parts.push(`Horários observados: ${analysis.times.join(" | ")}`);
+  parts.push(`Confiança da leitura: ${analysis.confidence.toFixed(2)}`);
+  if (analysis.confidence < 0.75) {
+    parts.push("Leitura visual incerta: peça confirmação ao cliente e não presuma dados ausentes.");
+  }
+  return parts.join("\n");
+}
+
+/** Analisa imagem a partir de buffer sem assumir nicho ou tipo de documento. */
+export async function analyzeImageFromBuffer(
+  buffer: Buffer,
+  mimeType: string,
+): Promise<VisualImageAnalysis | null> {
   const apiKey = await resolveOpenAiApiKey();
   if (!apiKey) return null;
 
@@ -300,16 +370,22 @@ export async function describeImageFromBuffer(buffer: Buffer, mimeType: string):
 
   const body = {
     model: "gpt-4o",
-    max_tokens: 400,
+    max_tokens: 700,
+    response_format: { type: "json_object" },
     messages: [
       {
         role: "user",
         content: [
           {
             type: "text",
-            text: "Descreva o conteúdo desta imagem em português de forma concisa e objetiva, incluindo textos visíveis se houver.",
+            text: [
+              "Analise esta imagem em português sem assumir setor, profissão ou finalidade.",
+              "Diferencie o que está realmente visível do que seria inferência.",
+              "Leia textos, números, datas e horários e identifique elementos circulados, riscados, destacados, selecionados ou apontados.",
+              "Responda somente JSON com: summary (string), visibleText (string[]), markedElements (string[]), dates (string[]), times (string[]) e confidence (0 a 1).",
+            ].join(" "),
           },
-          { type: "image_url", image_url: { url: dataUrl, detail: "low" } },
+          { type: "image_url", image_url: { url: dataUrl, detail: "high" } },
         ],
       },
     ],
@@ -343,10 +419,16 @@ export async function describeImageFromBuffer(buffer: Buffer, mimeType: string):
 
   try {
     const j = json as { choices: { message: { content: string } }[] };
-    return j.choices[0]?.message?.content?.trim() || null;
+    return parseVisualImageAnalysis(j.choices[0]?.message?.content);
   } catch {
     return null;
   }
+}
+
+/** Descrição textual rica consumida pelo agente e persistida no histórico. */
+export async function describeImageFromBuffer(buffer: Buffer, mimeType: string): Promise<string | null> {
+  const analysis = await analyzeImageFromBuffer(buffer, mimeType);
+  return analysis ? formatVisualImageAnalysis(analysis) : null;
 }
 
 /**

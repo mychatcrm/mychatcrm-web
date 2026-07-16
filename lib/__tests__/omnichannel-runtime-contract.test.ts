@@ -51,9 +51,12 @@ describe("omnichannel runtime contracts", () => {
     const jobs = source("lib/server/agent-response-jobs.ts");
     const dispatch = source("app/api/internal/agent-response-jobs/dispatch/route.ts");
 
-    expect(webhook).not.toContain("waitUntil(");
+    expect(webhook).toContain('import { waitUntil } from "@vercel/functions"');
+    expect(webhook).toContain("deferProcessor:");
+    expect(webhook).toContain("waitUntil(task.then(() => undefined))");
     expect(webhook).toContain("evolutionBurstSafeSmartWait(");
-    expect(flow).toContain("await queueAgentResponseJobProcessor(job.id, params.processorBaseUrl)");
+    expect(flow).toContain("params.deferProcessor(processorTask)");
+    expect(flow).toContain("await processorTask");
     expect(flow).not.toContain("waitAndProcessAgentResponseJob");
     expect(webhook).toContain("processorBaseUrl: new URL(request.url).origin");
     expect(jobs).toContain('new URL("/api/internal/agent-response-jobs/dispatch", base)');
