@@ -16,11 +16,17 @@ export const DEFAULT_AGENT_SMART_WAIT: AgentSmartWaitSettings = {
 
 const EVOLUTION_SERIAL_DELIVERY_GRACE_SECONDS = 65;
 const EVOLUTION_BURST_MAX_SECONDS = 180;
+/** Entrega do webhook dentro deste atraso = fila da Evolution saudável agora. */
+const EVOLUTION_HEALTHY_DELIVERY_SECONDS = 15;
+/** Janela curta e humana para fragmento genuinamente incompleto em fila saudável. */
+const EVOLUTION_HEALTHY_FRAGMENT_SECONDS = 20;
 
 export type EvolutionInboundWaitSignal = {
   kind: "text" | "audio" | "image" | "video" | "document";
   text?: string | null;
   hasPendingAgendaAction?: boolean;
+  /** Atraso medido desta entrega (received − occurred), em segundos. null = desconhecido. */
+  deliveryDelaySeconds?: number | null;
 };
 
 const EVOLUTION_SHORT_AMBIGUOUS_RE =
@@ -81,6 +87,35 @@ export function evolutionBurstSafeSmartWait(
   const extendedInitial = signal
     ? evolutionInboundNeedsExtendedInitialWait(signal)
     : true;
+
+  // Janela ADAPTATIVA: a espera longa existe para absorver a fila serializada
+  // da Evolution (~60 s entre webhooks do mesmo burst). Quando ESTA entrega
+  // chegou rápida (received − occurred pequeno), a fila está saudável agora e
+  // o lead merece a resposta na janela configurada do agente. Fragmento que
+  // ainda assim atrasar é absorvido pelo mecanismo de late-fragment do turno.
+  // Atraso desconhecido ou alto mantém o fail-safe longo original.
+  const healthyDelivery =
+    typeof signal?.deliveryDelaySeconds === "number" &&
+    Number.isFinite(signal.deliveryDelaySeconds) &&
+    signal.deliveryDelaySeconds >= 0 &&
+    signal.deliveryDelaySeconds <= EVOLUTION_HEALTHY_DELIVERY_SECONDS;
+  if (extendedInitial && healthyDelivery) {
+    const incompleteFragment =
+      signal?.kind === "text" &&
+      EVOLUTION_INCOMPLETE_END_RE.test((signal.text ?? "").trim());
+    return {
+      ...settings,
+      enabled: true,
+      initialSeconds: incompleteFragment
+        ? Math.max(settings.initialSeconds, EVOLUTION_HEALTHY_FRAGMENT_SECONDS)
+        : settings.initialSeconds,
+      followupSeconds: settings.followupSeconds,
+      maxSeconds: incompleteFragment
+        ? Math.max(settings.maxSeconds, DEFAULT_AGENT_SMART_WAIT.maxSeconds)
+        : settings.maxSeconds,
+    };
+  }
+
   return {
     ...settings,
     enabled: true,

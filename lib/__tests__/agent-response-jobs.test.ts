@@ -57,6 +57,46 @@ describe("agent smart wait schedule", () => {
     ).toMatchObject({ initialSeconds: 7, followupSeconds: 10, maxSeconds: 60 });
   });
 
+  it("entrega saudável responde na janela curta do agente mesmo com texto ambíguo", () => {
+    expect(
+      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
+        kind: "text",
+        text: "Sim",
+        deliveryDelaySeconds: 2,
+      }),
+    ).toMatchObject({ initialSeconds: 7, followupSeconds: 10, maxSeconds: 60 });
+  });
+
+  it("entrega saudável com fragmento incompleto usa janela curta humana (20s)", () => {
+    expect(
+      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
+        kind: "text",
+        text: "Pode ser hoje as",
+        deliveryDelaySeconds: 3,
+      }),
+    ).toMatchObject({ initialSeconds: 20, followupSeconds: 10, maxSeconds: 60 });
+  });
+
+  it("entrega atrasada mantém a absorção longa (fail-safe do burst serializado)", () => {
+    expect(
+      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
+        kind: "text",
+        text: "Sim",
+        deliveryDelaySeconds: 58,
+      }),
+    ).toMatchObject({ initialSeconds: 65, followupSeconds: 10, maxSeconds: 180 });
+  });
+
+  it("atraso desconhecido mantém a absorção longa (fail-safe)", () => {
+    expect(
+      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
+        kind: "text",
+        text: "Sim",
+        deliveryDelaySeconds: null,
+      }),
+    ).toMatchObject({ initialSeconds: 65, followupSeconds: 10, maxSeconds: 180 });
+  });
+
   it("keeps only the first ambiguous fragment in the extended lane", () => {
     for (const text of ["Oi", "Ok", "amanhã", "duas da tarde", "Pode ser hoje as"]) {
       expect(

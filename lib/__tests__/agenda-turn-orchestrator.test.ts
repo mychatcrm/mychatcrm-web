@@ -755,6 +755,52 @@ describe("resolveAgendaTurn", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  it("Sim curto sem pending devolve a pergunta NATURAL do modelo (sem executar)", async () => {
+    const { sb, rpc, pendingRows } = makeStructuredSb();
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      agentId: "agent-1",
+      timezone: "America/Sao_Paulo",
+      // Resposta conversacional do modelo: conduz o fluxo pedindo dia/horário,
+      // sem afirmar sucesso e sem re-propor confirmação concreta órfã.
+      modelText: "Ótimo! Qual dia e horário ficam melhores para você?",
+      clientText: "Sim",
+      agendaAutomationEnabled: true,
+      agendaPlan: { action: "create", date: null, time: null, location: null, eventId: null },
+      jobId: "33333333-3333-4333-8333-333333333333",
+      claimedGeneration: 1,
+      conversationSequence: 9,
+    });
+    expect(result.action).toBe("none");
+    expect(result.text).toBe("Ótimo! Qual dia e horário ficam melhores para você?");
+    expect(pendingRows).toHaveLength(0);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("Sim curto sem pending com claim do modelo cai no texto seguro", async () => {
+    const { sb, rpc, pendingRows } = makeStructuredSb();
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      agentId: "agent-1",
+      timezone: "America/Sao_Paulo",
+      modelText: "Perfeito, sua conversa está agendada!",
+      clientText: "Sim",
+      agendaAutomationEnabled: true,
+      agendaPlan: { action: "create", date: null, time: null, location: null, eventId: null },
+      jobId: "33333333-3333-4333-8333-333333333333",
+      claimedGeneration: 1,
+      conversationSequence: 9,
+    });
+    expect(result.action).toBe("none");
+    expect(result.text).toBe("Certo. Como posso ajudar?");
+    expect(pendingRows).toHaveLength(0);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it("criar sem confirmação não executa", async () => {
     const sb = makeSb(null);
     const result = await resolveAgendaTurn({
@@ -1204,6 +1250,18 @@ describe("resolveAgendaTurn", () => {
 
       expect(missingTime.action).toBe("failed");
       expect(missingTime.text).toContain("data e o horário certinhos");
+      expect(insertAgendaEventMock).not.toHaveBeenCalled();
+
+      // Quando o modelo pergunta pelo horário SEM inventar um, a resposta
+      // conversacional dele segue no lugar do texto fixo — sem mutação.
+      const naturalAsk = await resolveAgendaTurn({
+        ...base,
+        modelText: "Perfeito! Que horário fica melhor para você amanhã?",
+        clientText: "pra amanh˜",
+        recentClientMessages: ["Oi gostaria de agendar uma visita", "pra amanh˜"],
+      });
+      expect(naturalAsk.action).toBe("none");
+      expect(naturalAsk.text).toBe("Perfeito! Que horário fica melhor para você amanhã?");
       expect(insertAgendaEventMock).not.toHaveBeenCalled();
 
       const proposal = await resolveAgendaTurn({

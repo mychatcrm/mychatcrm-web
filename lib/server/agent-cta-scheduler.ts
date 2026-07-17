@@ -1954,6 +1954,19 @@ async function resolveStructuredAgendaPlan(params: {
     params.plan.action !== "list" &&
     CONTEXT_FREE_SHORT_REPLY_RE.test(params.clientText)
   ) {
+    // Sem proposta pendente, um "sim" curto não autoriza execução — a mutação
+    // continua bloqueada. Mas a CONVERSA é do modelo: devolvemos a resposta
+    // dele quando ela conduz o fluxo (sem afirmar sucesso e sem re-propor uma
+    // confirmação concreta órfã, que travaria o próximo "sim" sem pending).
+    // O texto fixo fica só como último recurso.
+    const modelClean = stripAgendaDirectives(params.modelText).trim();
+    if (
+      modelClean &&
+      !AGENDA_SUCCESS_CLAIM_RE.test(modelClean) &&
+      !assistantProposedScheduleConfirmation(modelClean, params.timezone)
+    ) {
+      return { text: modelClean, action: "none", deferHandoff: true };
+    }
     const language = detectSupportedLanguageCode(params.clientText);
     return {
       text: {
@@ -2476,9 +2489,19 @@ export async function resolveAgendaTurn(params: {
       const hasDate = textHasExplicitDateAnchor(params.clientText, params.timezone);
       const hasTime = textHasExplicitTime(params.clientText);
       if (hasDate && !hasTime) {
+        // Falta a hora, mas a conversa é do modelo QUANDO a resposta dele já
+        // pergunta pelo horário (tem "?" e fala de agenda, sem afirmar sucesso
+        // e SEM inventar uma hora que o lead não deu). Um "Perfeito!" genérico
+        // ou uma hora inventada caem no texto fixo que pede o que falta.
+        // Execução continua bloqueada em ambos os casos.
+        const modelAsksNaturally =
+          !AGENDA_SUCCESS_CLAIM_RE.test(cleanText) &&
+          cleanText.includes("?") &&
+          AGENDA_TOPIC_RE.test(cleanText) &&
+          !textHasExplicitTime(cleanText);
         return finalize({
-          text: AGENDA_DATETIME_NEEDED_REPLY,
-          action: "failed",
+          text: modelAsksNaturally ? cleanText : AGENDA_DATETIME_NEEDED_REPLY,
+          action: modelAsksNaturally ? "none" : "failed",
           deferHandoff: true,
         });
       }
@@ -2554,11 +2577,19 @@ export async function resolveAgendaTurn(params: {
       agendaDisponibilidade: params.agendaDisponibilidade,
     });
     if (!resolved) {
-      // Data/hora incompletas (ex.: "pode ser hoje as") — pedir o que falta em
-      // vez de falhar genericamente ou inventar um horário.
+      // Data/hora incompletas (ex.: "pode ser hoje as") — nunca inventar um
+      // horário. A resposta do modelo segue QUANDO ela já pergunta pelo
+      // dia/horário (tem "?" e fala de agenda, sem afirmar sucesso e sem
+      // propor hora concreta que ninguém deu); senão o texto fixo pede o que
+      // falta. Execução continua bloqueada nos dois casos.
+      const modelAsksNaturally =
+        !AGENDA_SUCCESS_CLAIM_RE.test(cleanText) &&
+        cleanText.includes("?") &&
+        AGENDA_TOPIC_RE.test(cleanText) &&
+        !textHasExplicitTime(cleanText);
       return finalize({
-        text: AGENDA_DATETIME_NEEDED_REPLY,
-        action: "failed",
+        text: modelAsksNaturally ? cleanText : AGENDA_DATETIME_NEEDED_REPLY,
+        action: modelAsksNaturally ? "none" : "failed",
         deferHandoff: true,
       });
     }
