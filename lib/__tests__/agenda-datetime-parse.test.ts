@@ -255,6 +255,28 @@ describe("contexto entre jobs: complemento herda a âncora de data do turno ante
     expect(result?.time).toBe("15:00");
   });
 
+  it("interpreta '5 da tarde' (dígito) como 17:00", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "5 da tarde",
+      timezone: TZ,
+      now: NOW,
+      recentClientMessages: ["próxima segunda", "5 da tarde"],
+    });
+    expect(result?.time).toBe("17:00");
+    expect(result?.date).toBe("08/06/2026");
+  });
+
+  it("interpreta '5 da manhã' (dígito) como 05:00", () => {
+    expect(textHasExplicitTime("5 da manhã")).toBe(true);
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "amanhã 5 da manhã",
+      timezone: TZ,
+      now: NOW,
+    });
+    expect(result?.time).toBe("05:00");
+    expect(result?.date).toBe(addDaysInTimezone(TZ, 1, NOW));
+  });
+
   it("não interpreta o artigo 'uma' em 'uma reunião' como 01:00", () => {
     expect(textHasExplicitTime("quero agendar uma reunião com o especialista")).toBe(false);
   });

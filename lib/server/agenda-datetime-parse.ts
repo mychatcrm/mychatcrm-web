@@ -242,6 +242,14 @@ function parseTimeFromText(text: string): ParsedTime | null {
     return validTime(hour, 0, !atHour[2] && hour > 0 && hour < 12);
   }
 
+  // "5 da tarde" / "5 da manhã" sem "às"/"h" (comum no WhatsApp).
+  const digitDaPeriod = normalized.match(
+    /\b(\d{1,2})\s+da\s+(manh[ãa]|tarde|noite)\b/,
+  );
+  if (digitDaPeriod) {
+    return validTime(applyDayPeriod(Number(digitDaPeriod[1]), digitDaPeriod[2]), 0);
+  }
+
   return null;
 }
 
