@@ -949,12 +949,20 @@ export async function POST(request: Request) {
           const hasPendingAgendaAction = Boolean(
             pendingAgendaExpiresAt && Date.parse(pendingAgendaExpiresAt) > Date.now(),
           );
+          // Atraso real DESTA entrega (chegada do webhook − hora em que o lead
+          // enviou). Fila saudável → janela curta do agente; fila serializada
+          // ou atraso desconhecido → janela longa de absorção (fail-safe).
+          const occurredAtMs = msg.occurredAt ? Date.parse(msg.occurredAt) : NaN;
+          const deliveryDelaySeconds = Number.isFinite(occurredAtMs)
+            ? Math.round((Date.parse(webhookReceivedAt) - occurredAtMs) / 1000)
+            : null;
           const smartWait = evolutionBurstSafeSmartWait(
             smartWaitFromMetadata(metadata),
             {
               kind: kindFromMsg(msg),
               text: contentFromMsg(msg),
               hasPendingAgendaAction,
+              deliveryDelaySeconds,
             },
           );
           const useSmartWait = !isSmartWaitGloballyDisabled();
