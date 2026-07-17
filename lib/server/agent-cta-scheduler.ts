@@ -99,6 +99,8 @@ export function buildOutsideAvailabilityReply(disp?: AgentAgendaDisponibilidade 
 
 export const AGENDA_DATETIME_NEEDED_REPLY =
   "Não consegui identificar a data e o horário certinhos. Me diga o dia e a hora que você prefere (por exemplo: 20/07 às 14h) que eu verifico para você.";
+export const AGENDA_PAST_DATETIME_REPLY =
+  "Esse horário já passou. Me diga outro dia e horário que eu verifico para você.";
 export const AGENDA_INVALID_TIME_REPLY =
   "Esse horário não existe. Me diga uma hora válida entre 00:00 e 23:59 para eu verificar para você.";
 
@@ -109,8 +111,71 @@ function agendaFailureReplyForError(
   const reason = error instanceof Error ? error.message : "";
   if (reason === "outside_agenda_availability") return buildOutsideAvailabilityReply(disp);
   if (reason === "agenda_slot_taken") return AGENDA_SLOT_TAKEN_REPLY;
-  if (reason === "invalid_or_past_agenda_datetime") return AGENDA_DATETIME_NEEDED_REPLY;
+  if (reason === "invalid_or_past_agenda_datetime") return AGENDA_PAST_DATETIME_REPLY;
   return null;
+}
+
+/**
+ * Convite de agenda sem slot concreto (ex.: outreach Meta "Que tal agendarmos?").
+ * Continuidade conversacional — NÃO autoriza mutação.
+ */
+export function isSoftAgendaInvite(text: string | null | undefined, timezone: string): boolean {
+  const trimmed = text?.trim() ?? "";
+  if (!trimmed) return false;
+  if (!textHasSchedulingContext(trimmed) && !AGENDA_TOPIC_RE.test(trimmed)) return false;
+  if (textHasExplicitDateAnchor(trimmed, timezone) && textHasExplicitTime(trimmed)) return false;
+  return true;
+}
+
+/**
+ * Confirmação órfã com data+hora explícitas (sem pending). Só este caso deve
+ * descartar a resposta do modelo no short-ack — perguntas naturais de dia/hora
+ * ("Qual horário…?") precisam passar.
+ */
+function orphanConcreteScheduleConfirmation(
+  assistantText: string,
+  timezone = "UTC",
+): boolean {
+  if (HUMAN_DELEGATION_IN_REPLY_RE.test(assistantText)) return false;
+  return (
+    CONFIRM_ASK_RE.test(assistantText) &&
+    textHasExplicitDateAnchor(assistantText, timezone) &&
+    textHasExplicitTime(assistantText)
+  );
+}
+
+/** Modelo pede dia/hora de forma humana, sem afirmar sucesso nem inventar slot completo. */
+function modelAsksNaturallyForMissingSlot(
+  cleanText: string,
+  timezone = "UTC",
+): boolean {
+  const trimmed = cleanText.trim();
+  if (!trimmed || AGENDA_SUCCESS_CLAIM_RE.test(trimmed)) return false;
+  if (orphanConcreteScheduleConfirmation(trimmed, timezone)) return false;
+  // Inventar hora concreta enquanto falta a do lead não é "pedir o que falta".
+  if (textHasExplicitTime(trimmed)) return false;
+  const asks =
+    trimmed.includes("?") ||
+    /\b(me\s+(?:diga|passa|fala|informa)|qual|quais|que\s+dia|que\s+hor|when|what\s+time)\b/i.test(
+      trimmed,
+    );
+  const aboutSlot =
+    AGENDA_TOPIC_RE.test(trimmed) ||
+    /\b(dia|data|hora|hor[aá]rio|quando|amanh[ãa]|hoje)\b/i.test(trimmed);
+  return asks && aboutSlot;
+}
+
+/** Modelo já oferece outro horário dentro da janela, sem claim de sucesso. */
+function modelAsksNaturallyForOutsideWindow(cleanText: string): boolean {
+  const trimmed = cleanText.trim();
+  if (!trimmed || AGENDA_SUCCESS_CLAIM_RE.test(trimmed)) return false;
+  const asks =
+    trimmed.includes("?") ||
+    /\b(me\s+(?:diga|passa|fala|informa)|outro|outra|qual|quais)\b/i.test(trimmed);
+  const aboutSlot =
+    AGENDA_TOPIC_RE.test(trimmed) ||
+    /\b(dia|data|hora|hor[aá]rio|quando|janela|dispon)/i.test(trimmed);
+  return asks && aboutSlot;
 }
 
 /**
@@ -1940,6 +2005,8 @@ async function resolveStructuredAgendaPlan(params: {
   conversationSequence?: number | null;
   journeyId?: string | null;
   recentClientMessages?: string[] | null;
+  /** Último outbound do agente nesta jornada (soft-invite Meta, etc.). */
+  priorAssistantText?: string | null;
 }): Promise<ResolveAgendaTurnResult | null> {
   const pending = await loadPendingAgendaAction({
     sb: params.sb,
@@ -1954,18 +2021,33 @@ async function resolveStructuredAgendaPlan(params: {
     params.plan.action !== "list" &&
     CONTEXT_FREE_SHORT_REPLY_RE.test(params.clientText)
   ) {
-    // Sem proposta pendente, um "sim" curto não autoriza execução — a mutação
-    // continua bloqueada. Mas a CONVERSA é do modelo: devolvemos a resposta
-    // dele quando ela conduz o fluxo (sem afirmar sucesso e sem re-propor uma
-    // confirmação concreta órfã, que travaria o próximo "sim" sem pending).
-    // O texto fixo fica só como último recurso.
+    // Sem proposta pendente, um "sim"/"pode ser" curto NÃO autoriza execução.
+    // A conversa é do modelo: preservamos o texto dele salvo claim de sucesso
+    // ou confirmação órfã com data+hora concretas. Soft-invite prévio (outreach
+    // sem slot) também continua o fluxo de agendamento em vez de "Como posso ajudar?".
     const modelClean = stripAgendaDirectives(params.modelText).trim();
+    const softInvite = isSoftAgendaInvite(params.priorAssistantText, params.timezone);
     if (
       modelClean &&
       !AGENDA_SUCCESS_CLAIM_RE.test(modelClean) &&
-      !assistantProposedScheduleConfirmation(modelClean, params.timezone)
+      !orphanConcreteScheduleConfirmation(modelClean, params.timezone)
     ) {
       return { text: modelClean, action: "none", deferHandoff: true };
+    }
+    if (softInvite && !AGENDA_SUCCESS_CLAIM_RE.test(modelClean)) {
+      const language = detectSupportedLanguageCode(params.clientText);
+      return {
+        text: modelClean || {
+          pt: "Perfeito! Qual dia e horário ficam melhores para você?",
+          en: "Perfect! What day and time work best for you?",
+          es: "¡Perfecto! ¿Qué día y hora te vienen mejor?",
+          fr: "Parfait ! Quel jour et quelle heure vous conviennent le mieux ?",
+          de: "Perfekt! Welcher Tag und welche Uhrzeit passen Ihnen am besten?",
+          it: "Perfetto! Quale giorno e orario ti vanno meglio?",
+        }[language],
+        action: "none",
+        deferHandoff: true,
+      };
     }
     const language = detectSupportedLanguageCode(params.clientText);
     return {
@@ -2126,10 +2208,23 @@ async function resolveStructuredAgendaPlan(params: {
           .eq("id", pending.id)
           .eq("state", "pending");
       }
+      const modelClean = stripAgendaDirectives(params.modelText).trim();
+      if (outsideAvailability) {
+        return {
+          text: modelAsksNaturallyForOutsideWindow(modelClean)
+            ? modelClean
+            : buildOutsideAvailabilityReply(params.agendaDisponibilidade),
+          action: "failed",
+          deferHandoff: true,
+        };
+      }
+      const startValid = !Number.isNaN(startAt.getTime());
       return {
-        text: outsideAvailability
-          ? buildOutsideAvailabilityReply(params.agendaDisponibilidade)
-          : AGENDA_DATETIME_NEEDED_REPLY,
+        text: startValid && startAt.getTime() <= Date.now()
+          ? AGENDA_PAST_DATETIME_REPLY
+          : modelAsksNaturallyForMissingSlot(modelClean, params.timezone)
+            ? modelClean
+            : AGENDA_DATETIME_NEEDED_REPLY,
         action: "failed",
         deferHandoff: true,
       };
@@ -2340,6 +2435,7 @@ export async function resolveAgendaTurn(params: {
       conversationSequence: params.conversationSequence,
       journeyId: params.journeyId,
       recentClientMessages: params.recentClientMessages,
+      priorAssistantText: params.priorAssistantText,
     });
     if (structured) return finalize(structured);
   }
@@ -2494,11 +2590,10 @@ export async function resolveAgendaTurn(params: {
         // e SEM inventar uma hora que o lead não deu). Um "Perfeito!" genérico
         // ou uma hora inventada caem no texto fixo que pede o que falta.
         // Execução continua bloqueada em ambos os casos.
-        const modelAsksNaturally =
-          !AGENDA_SUCCESS_CLAIM_RE.test(cleanText) &&
-          cleanText.includes("?") &&
-          AGENDA_TOPIC_RE.test(cleanText) &&
-          !textHasExplicitTime(cleanText);
+        const modelAsksNaturally = modelAsksNaturallyForMissingSlot(
+          cleanText,
+          params.timezone,
+        );
         return finalize({
           text: modelAsksNaturally ? cleanText : AGENDA_DATETIME_NEEDED_REPLY,
           action: modelAsksNaturally ? "none" : "failed",
@@ -2582,11 +2677,10 @@ export async function resolveAgendaTurn(params: {
       // dia/horário (tem "?" e fala de agenda, sem afirmar sucesso e sem
       // propor hora concreta que ninguém deu); senão o texto fixo pede o que
       // falta. Execução continua bloqueada nos dois casos.
-      const modelAsksNaturally =
-        !AGENDA_SUCCESS_CLAIM_RE.test(cleanText) &&
-        cleanText.includes("?") &&
-        AGENDA_TOPIC_RE.test(cleanText) &&
-        !textHasExplicitTime(cleanText);
+      const modelAsksNaturally = modelAsksNaturallyForMissingSlot(
+        cleanText,
+        params.timezone,
+      );
       return finalize({
         text: modelAsksNaturally ? cleanText : AGENDA_DATETIME_NEEDED_REPLY,
         action: modelAsksNaturally ? "none" : "failed",

@@ -77,6 +77,26 @@ describe("agent smart wait schedule", () => {
     ).toMatchObject({ initialSeconds: 20, followupSeconds: 10, maxSeconds: 60 });
   });
 
+  it("entrega saudável com pedido de agenda incompleto absorve complemento (20s)", () => {
+    expect(
+      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
+        kind: "text",
+        text: "Quero agendar a entrevista",
+        deliveryDelaySeconds: 2,
+      }),
+    ).toMatchObject({ initialSeconds: 20, followupSeconds: 10, maxSeconds: 60 });
+  });
+
+  it("entrega saudável com date-only absorve time fragment (20s)", () => {
+    expect(
+      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
+        kind: "text",
+        text: "Amanhã",
+        deliveryDelaySeconds: 1,
+      }),
+    ).toMatchObject({ initialSeconds: 20, followupSeconds: 10, maxSeconds: 60 });
+  });
+
   it("entrega atrasada mantém a absorção longa (fail-safe do burst serializado)", () => {
     expect(
       evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {

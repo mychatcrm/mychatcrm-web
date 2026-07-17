@@ -229,11 +229,13 @@ function parseTimeFromText(text: string): ParsedTime | null {
     );
   }
 
-  const horas = normalized.match(/\b(\d{1,2})\s*horas?\b(?:\s+da\s+(manh[ãa]|tarde|noite))?/);
+  const horas = normalized.match(
+    /\b(\d{1,2})\s*(?:horas?|hrs?|hs)\b(?:\s+da\s+(manh[ãa]|tarde|noite))?/,
+  );
   if (horas) return validTime(applyDayPeriod(Number(horas[1]), horas[2]), 0);
 
   const atHour = normalized.match(
-    /\b(?:às|as|a)\s+(\d{1,2})\b(?:\s+da\s+(manh[ãa]|tarde|noite))?/,
+    /\b(?:às|as|a)\s+(\d{1,2})\b(?:\s*(?:horas?|hrs?|hs))?(?:\s+da\s+(manh[ãa]|tarde|noite))?/,
   );
   if (atHour) {
     const hour = applyDayPeriod(Number(atHour[1]), atHour[2]);
@@ -562,7 +564,15 @@ export function resolveScheduleDateTimeFromText(params: {
     return { date: directiveDate[1]!, time: directiveTime[1]! };
   }
 
+  // Nunca inventar slot completo via fallback do modelo quando o lead já trouxe
+  // âncora parcial (só data, só hora) ou pedido de agenda sem data/hora.
   if (params.fallbackDate && params.fallbackTime) {
+    const partialXor = clientHasAnchor !== clientHasTime;
+    const incompleteScheduleAsk =
+      !clientHasAnchor &&
+      !clientHasTime &&
+      /\b(?:agendar|marcar|remarcar|reagendar|agendamento)\b/i.test(clientFolded);
+    if (partialXor || incompleteScheduleAsk) return null;
     return { date: params.fallbackDate, time: params.fallbackTime };
   }
 

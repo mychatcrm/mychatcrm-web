@@ -801,6 +801,58 @@ describe("resolveAgendaTurn", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  it("Pode ser após soft-invite Meta preserva pergunta natural do modelo (sem amnésia)", async () => {
+    const { sb, rpc, pendingRows } = makeStructuredSb();
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      agentId: "agent-1",
+      timezone: "America/Sao_Paulo",
+      modelText: "Ótimo! Qual dia e horário ficam melhores para a conversa com o gestor?",
+      clientText: "Pode ser",
+      priorAssistantText:
+        "Oi, Renato! Tudo bem? Acabei de receber seu cadastro e gostaria de agendar uma conversa rápida com um dos nossos gestores. Que tal?",
+      agendaAutomationEnabled: true,
+      agendaPlan: { action: "create", date: null, time: null, location: null, eventId: null },
+      jobId: "33333333-3333-4333-8333-333333333333",
+      claimedGeneration: 1,
+      conversationSequence: 2,
+    });
+    expect(result.action).toBe("none");
+    expect(result.text).toBe(
+      "Ótimo! Qual dia e horário ficam melhores para a conversa com o gestor?",
+    );
+    expect(result.text).not.toMatch(/Como posso ajudar/i);
+    expect(pendingRows).toHaveLength(0);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("Pode ser após soft-invite sem texto útil do modelo continua pedindo dia/hora (não amnésia)", async () => {
+    const { sb, rpc, pendingRows } = makeStructuredSb();
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      agentId: "agent-1",
+      timezone: "America/Sao_Paulo",
+      modelText: "",
+      clientText: "Pode ser",
+      priorAssistantText:
+        "Acabei de receber seu cadastro e gostaria de agendar uma conversa rápida. Que tal?",
+      agendaAutomationEnabled: true,
+      agendaPlan: { action: "create", date: null, time: null, location: null, eventId: null },
+      jobId: "33333333-3333-4333-8333-333333333333",
+      claimedGeneration: 1,
+      conversationSequence: 2,
+    });
+    expect(result.action).toBe("none");
+    expect(result.text).toMatch(/dia e horário/i);
+    expect(result.text).not.toMatch(/Como posso ajudar/i);
+    expect(pendingRows).toHaveLength(0);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it("criar sem confirmação não executa", async () => {
     const sb = makeSb(null);
     const result = await resolveAgendaTurn({

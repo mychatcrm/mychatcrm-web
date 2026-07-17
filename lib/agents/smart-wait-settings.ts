@@ -30,11 +30,11 @@ export type EvolutionInboundWaitSignal = {
 };
 
 const EVOLUTION_SHORT_AMBIGUOUS_RE =
-  /^(?:oi|ol[aá]|opa|eai|e a[ií]|sim|s|ok|okay|pode|certo|isso|exato|beleza|obrigad[oa]|valeu|at[eé]\s+mais|bom\s+dia|boa\s+tarde|boa\s+noite)[.!?\s]*$/i;
+  /^(?:oi|ol[aá]|opa|eai|e a[ií]|sim|s|ok|okay|pode(?:\s+ser)?|certo|isso|exato|beleza|obrigad[oa]|valeu|at[eé]\s+mais|bom\s+dia|boa\s+tarde|boa\s+noite)[.!?\s]*$/i;
 const EVOLUTION_DATE_ONLY_RE =
   /^(?:pode\s+ser\s+)?(?:hoje|amanh[ãa]|depois\s+de\s+amanh[ãa]|dia\s+\d{1,2}|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?)[.!?\s]*$/i;
 const EVOLUTION_TIME_ONLY_RE =
-  /^(?:[aàá]s?\s+)?(?:\d{1,2}(?::\d{2}|h(?:\d{2})?)|uma|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze)(?:\s*(?:horas?|da\s+manh[ãa]|da\s+tarde|da\s+noite))?[.!?\s]*$/i;
+  /^(?:[aàá]s?\s+)?(?:\d{1,2}(?::\d{2}|h(?:\d{2})?)|\d{1,2}\s*(?:hrs?|hs)|uma|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze)(?:\s*(?:horas?|hrs?|hs|da\s+manh[ãa]|da\s+tarde|da\s+noite))?[.!?\s]*$/i;
 const EVOLUTION_INCOMPLETE_END_RE =
   /\b(?:e|ou|as|[aàá]s|para|pra|no|na|em|que|porque|com|sem|de|do|da)\s*[,.!?-]*$/i;
 const EVOLUTION_CANCEL_ACTION_RE =
@@ -44,9 +44,27 @@ const EVOLUTION_SCHEDULE_ACTION_RE =
 const EVOLUTION_DATE_HINT_RE =
   /\b(?:hoje|amanha|depois\s+de\s+amanha|dia\s+\d{1,2}|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|segunda|terca|quarta|quinta|sexta|sabado|domingo)\b/i;
 const EVOLUTION_TIME_HINT_RE =
-  /\b(?:as?\s+)?(?:\d{1,2}(?::\d{2}|h(?:\d{2})?)|uma|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze)(?:\s*(?:horas?|da\s+manha|da\s+tarde|da\s+noite))?\b/i;
+  /\b(?:as?\s+)?(?:\d{1,2}(?::\d{2}|h(?:\d{2})?)|\d{1,2}\s*(?:hrs?|hs)|uma|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze)(?:\s*(?:horas?|hrs?|hs|da\s+manha|da\s+tarde|da\s+noite))?\b/i;
 const EVOLUTION_PENDING_RESPONSE_RE =
-  /^(?:sim|s|pode|confirmo|confirmado|ok|okay|certo|isso|exato|nao|melhor\s+nao|pode\s+manter|quero\s+manter|deixa|desisti)[.!?\s]*$/i;
+  /^(?:sim|s|pode(?:\s+ser)?|confirmo|confirmado|ok|okay|certo|isso|exato|nao|melhor\s+nao|pode\s+manter|quero\s+manter|deixa|desisti)[.!?\s]*$/i;
+
+function evolutionTextNeedsHealthyFragmentAbsorb(
+  signal: EvolutionInboundWaitSignal,
+): boolean {
+  if (signal.kind !== "text") return false;
+  const text = (signal.text ?? "").trim();
+  if (!text) return false;
+  const foldedText = text.normalize("NFD").replace(/\p{Diacritic}/gu, "");
+  if (EVOLUTION_INCOMPLETE_END_RE.test(text)) return true;
+  if (EVOLUTION_DATE_ONLY_RE.test(text) || EVOLUTION_TIME_ONLY_RE.test(text)) return true;
+  if (
+    EVOLUTION_SCHEDULE_ACTION_RE.test(text) &&
+    !(EVOLUTION_DATE_HINT_RE.test(foldedText) && EVOLUTION_TIME_HINT_RE.test(foldedText))
+  ) {
+    return true;
+  }
+  return false;
+}
 
 /**
  * Decide se a PRIMEIRA mensagem precisa da janela longa da Evolution.
@@ -100,9 +118,7 @@ export function evolutionBurstSafeSmartWait(
     signal.deliveryDelaySeconds >= 0 &&
     signal.deliveryDelaySeconds <= EVOLUTION_HEALTHY_DELIVERY_SECONDS;
   if (extendedInitial && healthyDelivery) {
-    const incompleteFragment =
-      signal?.kind === "text" &&
-      EVOLUTION_INCOMPLETE_END_RE.test((signal.text ?? "").trim());
+    const incompleteFragment = evolutionTextNeedsHealthyFragmentAbsorb(signal!);
     return {
       ...settings,
       enabled: true,
