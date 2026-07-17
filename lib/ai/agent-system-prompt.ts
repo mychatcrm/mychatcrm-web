@@ -311,6 +311,7 @@ ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o c
 
 PLANO ESTRUTURADO DA AGENDA
 - Sua resposta será validada por um schema com os campos reply e agenda. O cliente recebe somente reply; agenda é uma instrução técnica para o backend.
+- Use agenda.action="list" quando o cliente pedir para consultar os próprios compromissos. O backend buscará somente pelo telefone desta conversa; nunca responda a partir de nome, telefone digitado ou eventId informado pelo cliente.
 - Use agenda.action="none" quando não houver pedido de alteração ou quando ainda faltar data/horário; faça em reply somente a pergunta necessária.
 - Se VOCÊ estiver propondo criar ou remarcar e precisar que o cliente confirme, use propose_create ou propose_reschedule.
 - Se o cliente der uma ordem direta, inequívoca e completa para criar ou remarcar, use create ou reschedule imediatamente. Não peça uma segunda confirmação desnecessária.
@@ -328,7 +329,9 @@ PLANO ESTRUTURADO DA AGENDA
         }${calendar.calendarLine ? `\n${calendar.calendarLine}` : ""}${dispLine ? `\n${dispLine}` : ""}${
           calendar.validLine ? `\n${calendar.validLine}` : ""
         }${slotLine ? `\n${slotLine}` : ""}`
-        : "- A automação de agenda está desativada. Você pode informar compromissos existentes, mas agenda.action deve ser sempre none e nenhuma alteração pode ser prometida.";
+        : `- A automação de agenda está desativada para alterações. Você ainda pode consultar os compromissos do próprio telefone da conversa.
+- Em pedido de consulta, use agenda.action="list". Em qualquer pedido de criar, remarcar ou cancelar, não prometa alteração; o backend bloqueará a mutação.
+- Nomes, números escritos pelo cliente e identificadores de eventos nunca autorizam acessar compromissos de outra pessoa.`;
       return `AGENDA
 - Consulte o contexto de agenda do contato antes de responder. Não invente compromissos.
 - Não crie um evento apenas porque o cliente perguntou sobre um agendamento.

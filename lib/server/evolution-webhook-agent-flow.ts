@@ -44,6 +44,7 @@ export async function runInboundSmartWaitFlow(params: {
   connectionId?: string | null;
   inboundMessageKey: string;
   occurredAt: string;
+  receivedAt?: string;
   smartWait: AgentSmartWaitSettings;
   processorBaseUrl?: string;
   /** Registra o disparo fora do caminho crítico do ACK do webhook. */
@@ -69,6 +70,7 @@ export async function runInboundSmartWaitFlow(params: {
     connectionId: params.connectionId,
     whatsappMessageId: params.inboundMessageKey,
     occurredAt: params.occurredAt,
+    receivedAt: params.receivedAt,
     settings: params.smartWait,
   });
 

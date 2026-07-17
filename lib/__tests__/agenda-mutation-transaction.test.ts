@@ -26,6 +26,10 @@ const pipelineV2IndexesPath = join(
   process.cwd(),
   "supabase/migrations/20260716140529_agent_pipeline_v2_fk_indexes.sql",
 );
+const turnSecurityPath = join(
+  process.cwd(),
+  "supabase/migrations/20260717124531_agent_turn_security.sql",
+);
 
 function migration(): string {
   return readFileSync(migrationPath, "utf8");
@@ -45,6 +49,10 @@ function pipelineV2Migration(): string {
 
 function pipelineV2IndexesMigration(): string {
   return readFileSync(pipelineV2IndexesPath, "utf8");
+}
+
+function turnSecurityMigration(): string {
+  return readFileSync(turnSecurityPath, "utf8");
 }
 
 describe("transactional agenda mutations", () => {
@@ -177,5 +185,36 @@ describe("agent pipeline v2 migration", () => {
     expect(sql).toContain("agent_agenda_pending_actions (event_id)");
     expect(sql).toContain("agent_agenda_pending_actions (source_job_id)");
     expect(sql).toContain("agent_outbound_outbox (lead_id)");
+  });
+});
+
+describe("agent turn security migration", () => {
+  it("separates provider occurrence from receipt and sequences the whole conversation", () => {
+    const sql = turnSecurityMigration();
+    expect(sql).toContain("ADD COLUMN IF NOT EXISTS received_at");
+    expect(sql).toContain("ADD COLUMN IF NOT EXISTS agent_turn_sequence");
+    expect(sql).toContain("upsert_agent_response_job_burst_v3");
+    expect(sql).toContain("conversation_states.agent_turn_sequence + 1");
+    expect(sql).toContain("conversation_sequence_superseded");
+  });
+
+  it("keeps agenda reads private and bound to tenant plus exact phone", () => {
+    const sql = turnSecurityMigration();
+    expect(sql).toContain("CREATE OR REPLACE FUNCTION public.list_contact_agenda");
+    expect(sql).toContain("event.tenant_id = p_tenant_id");
+    expect(sql).toContain("event.attendee_phone = v_phone");
+    expect(sql).toContain("SECURITY DEFINER");
+    expect(sql).toContain("REVOKE ALL ON FUNCTION public.list_contact_agenda");
+    expect(sql).toContain("TO service_role");
+  });
+
+  it("guards the original mutation engine with job, generation and conversation sequence", () => {
+    const sql = turnSecurityMigration();
+    const guardIndex = sql.indexOf("CREATE OR REPLACE FUNCTION public.apply_agent_agenda_mutation_guarded");
+    const originalCallIndex = sql.indexOf("SELECT public.apply_agent_agenda_mutation(", guardIndex);
+    expect(guardIndex).toBeGreaterThan(-1);
+    expect(sql.slice(guardIndex)).toContain("v_current_sequence IS DISTINCT FROM p_conversation_sequence");
+    expect(sql.slice(guardIndex)).toContain("v_job.conversation_sequence IS DISTINCT FROM p_conversation_sequence");
+    expect(originalCallIndex).toBeGreaterThan(guardIndex);
   });
 });

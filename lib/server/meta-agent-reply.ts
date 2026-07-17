@@ -10,6 +10,7 @@ import {
   buildReplyUnitPrompt,
   normalizeConversationBurst,
 } from "@/lib/conversas/normalize-conversation-burst";
+import { shouldSuppressLateInboundFragment } from "@/lib/conversas/late-inbound-fragment";
 import { sendWhatsAppTextMessage } from "@/lib/integrations/whatsapp-cloud";
 import {
   AGENDA_AUTOMATION_DISABLED_REPLY,
@@ -21,7 +22,10 @@ import {
   markAgentOutboundSent,
   prepareAgentOutbound,
 } from "@/lib/server/agent-outbound-outbox";
-import type { AgentResponseJobRow } from "@/lib/server/agent-response-jobs";
+import {
+  isAgentConversationSequenceCurrent,
+  type AgentResponseJobRow,
+} from "@/lib/server/agent-response-jobs";
 import { getRecentConversationMessages } from "@/lib/server/conversation-memory";
 import {
   commitTenantLeadQuotaReservation,
@@ -51,6 +55,8 @@ type PendingInboundRow = {
   kind: string;
   message_id: string | null;
   created_at: string;
+  received_at: string;
+  is_late_fragment: boolean;
 };
 
 type JobResult =
@@ -86,24 +92,40 @@ export async function processMetaAgentResponseJob(
   generation: number,
 ): Promise<JobResult> {
   if (!job.connection_id) return { ok: false, error: "meta_connection_missing" };
-  if (await isGenerationStale(sb, job.id, generation)) {
+  if (
+    await isGenerationStale(sb, job.id, generation) ||
+    !(await isAgentConversationSequenceCurrent(sb, job))
+  ) {
     return { ok: false, error: "generation_stale" };
   }
 
   const { data: inboundData, error: inboundError } = await sb
     .from("whatsapp_messages")
-    .select("id,content,kind,message_id,created_at")
+    .select("id,content,kind,message_id,created_at,received_at,is_late_fragment")
     .eq("tenant_id", job.tenant_id)
     .eq("remote_jid", job.remote_jid)
     .eq("direction", "inbound")
     .eq("channel", "meta_cloud")
     .eq("connection_id", job.connection_id)
     .in("id", job.message_ids)
-    .order("created_at", { ascending: true });
+    .order("received_at", { ascending: true });
   if (inboundError) return { ok: false, error: inboundError.message };
-  const inboundRows = (inboundData ?? []) as PendingInboundRow[];
+  let inboundRows = (inboundData ?? []) as PendingInboundRow[];
   if (!inboundRows.length || inboundRows.length < job.message_ids.length) {
     return { ok: false, error: "incomplete_inbound_burst" };
+  }
+  const suppressedLateIds = new Set(
+    inboundRows
+      .filter((row) => shouldSuppressLateInboundFragment({
+        isLateFragment: row.is_late_fragment,
+        kind: row.kind,
+        content: row.content,
+      }))
+      .map((row) => row.id),
+  );
+  if (suppressedLateIds.size > 0) {
+    inboundRows = inboundRows.filter((row) => !suppressedLateIds.has(row.id));
+    if (!inboundRows.length) return { ok: true, dedupedCount: suppressedLateIds.size };
   }
 
   const { data: agentRow } = await sb
@@ -169,7 +191,10 @@ export async function processMetaAgentResponseJob(
     journeyId: job.journey_id,
     limit: 12,
   });
-  if (await isGenerationStale(sb, job.id, generation)) {
+  if (
+    await isGenerationStale(sb, job.id, generation) ||
+    !(await isAgentConversationSequenceCurrent(sb, job))
+  ) {
     return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
   }
   const agendaTurn = await resolveAgendaTurn({
@@ -200,6 +225,7 @@ export async function processMetaAgentResponseJob(
     operationKey: `agent-response-job:${job.id}:${generation}:0`,
     jobId: job.id,
     claimedGeneration: generation,
+    conversationSequence: job.conversation_sequence,
     journeyId: job.journey_id,
   });
   if (agendaTurn.action === "stale") {
@@ -220,6 +246,9 @@ export async function processMetaAgentResponseJob(
   });
   if (outbound.action === "already_sent") {
     return { ok: true, dedupedCount: burst.dedupedCount };
+  }
+  if (outbound.action === "stale") {
+    return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
   }
   if (outbound.action === "ambiguous") {
     return { ok: false, error: "outbound_dispatch_ambiguous", dedupedCount: burst.dedupedCount };
@@ -285,6 +314,9 @@ export async function processMetaAgentResponseJob(
     quotaReservationId = admission.eventId;
   }
 
+  if (!(await isAgentConversationSequenceCurrent(sb, job))) {
+    return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
+  }
   const sent = await sendWhatsAppTextMessage({
     toWaId: job.remote_jid,
     text: replyText.slice(0, 4000),
@@ -307,6 +339,7 @@ export async function processMetaAgentResponseJob(
     id: outbound.id,
     claimToken: outbound.claimToken,
     providerMessageId: sent.messageId ?? null,
+    job,
   });
   const sentAt = new Date().toISOString();
   await sb.from("whatsapp_messages").insert({

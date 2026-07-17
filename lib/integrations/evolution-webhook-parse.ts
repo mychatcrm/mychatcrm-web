@@ -1,3 +1,5 @@
+import { resolveCanonicalInboundContact } from "@/lib/integrations/whatsapp-contact-identity";
+
 /** Normaliza `messages.upsert` / `MESSAGES_UPSERT` → `MESSAGES_UPSERT`. */
 export function normalizeEvolutionEventName(event: unknown): string {
   if (typeof event !== "string") return "";
@@ -56,6 +58,11 @@ export type EvolutionDocumentContent = {
 
 type EvolutionInboundBase = {
   remoteJid: string;
+  /** Telefone canônico confiável derivado apenas do JID enviado pelo provedor. */
+  contactPhone: string | null;
+  /** Identificadores originais, preservados para auditoria e troubleshooting. */
+  providerRemoteJid: string;
+  providerRemoteJidAlt: string | null;
   fromMe: boolean;
   messageId: string;
   /** Instante original informado pelo WhatsApp/Evolution, não o momento em que
@@ -82,43 +89,6 @@ export type EvolutionInboundText = EvolutionInboundBase & EvolutionTextContent;
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Normaliza o JID de números brasileiros inserindo o nono dígito móvel quando ausente.
- *
- * O WhatsApp (via Evolution API) pode entregar números brasileiros em dois formatos:
- *   - 12 dígitos: 55 + DDD(2) + local(8) — formato antigo sem nono dígito
- *   - 13 dígitos: 55 + DDD(2) + 9 + local(8) — formato correto atual
- *
- * Sem normalização, o mesmo contato gera dois remote_jid distintos em
- * whatsapp_messages, resultando em conversas duplicadas em /conversas.
- *
- * Regra aplicada: se o número tem 12 dígitos totais, começa com "55" (Brasil),
- * e o número local (8 dígitos após o DDD) começa com 6, 7, 8 ou 9 → insere "9".
- *
- * Exemplos:
- *   "556293580574@s.whatsapp.net"  → "5562993580574@s.whatsapp.net"  (corrigido)
- *   "5562993580574@s.whatsapp.net" → "5562993580574@s.whatsapp.net"  (inalterado)
- *   "5511987654321@s.whatsapp.net" → "5511987654321@s.whatsapp.net"  (já 13 dígitos)
- */
-function normalizeBrazilianJid(jid: string): string {
-  const atIdx = jid.indexOf("@");
-  if (atIdx === -1) return jid;
-  const suffix = jid.slice(atIdx + 1);
-  const digits = jid.slice(0, atIdx).replace(/\D/g, "");
-
-  // Número brasileiro com 12 dígitos: 55 + DDD(2) + local(8)
-  if (digits.startsWith("55") && digits.length === 12) {
-    const ddd = digits.slice(2, 4);
-    const local = digits.slice(4); // 8 dígitos
-    // Linha móvel: começa com 6, 7, 8 ou 9
-    if (/^[6-9]/.test(local)) {
-      return `55${ddd}9${local}@${suffix}`;
-    }
-  }
-
-  return jid;
-}
 
 function parseEvolutionMessageTimestamp(value: unknown): string | null {
   let numeric: number | null = null;
@@ -218,14 +188,11 @@ function pushMessageFromNode(node: unknown, out: EvolutionInboundMessage[]) {
   if (!key || typeof key !== "object") return;
   const k = key as Record<string, unknown>;
 
-  const rawJid =
-    typeof k.remoteJid === "string"
-      ? k.remoteJid
-      : typeof k.remoteJidAlt === "string"
-        ? k.remoteJidAlt
-        : null;
-  if (!rawJid || rawJid.endsWith("@g.us")) return;
-  const remoteJid = normalizeBrazilianJid(rawJid);
+  const rawJid = typeof k.remoteJid === "string" ? k.remoteJid : null;
+  const rawJidAlt = typeof k.remoteJidAlt === "string" ? k.remoteJidAlt : null;
+  if (!rawJid) return;
+  const contact = resolveCanonicalInboundContact({ remoteJid: rawJid, remoteJidAlt: rawJidAlt });
+  if (!contact) return;
 
   const fromMe = Boolean(k.fromMe);
   const messageId = typeof k.id === "string" ? k.id : "";
@@ -234,7 +201,16 @@ function pushMessageFromNode(node: unknown, out: EvolutionInboundMessage[]) {
   const content = extractContentFromMessageNode(n.message);
   if (!content) return;
 
-  out.push({ remoteJid, fromMe, messageId, occurredAt, ...content } as EvolutionInboundMessage);
+  out.push({
+    remoteJid: contact.canonicalRemoteJid,
+    contactPhone: contact.canonicalPhone,
+    providerRemoteJid: contact.providerRemoteJid,
+    providerRemoteJidAlt: contact.providerRemoteJidAlt,
+    fromMe,
+    messageId,
+    occurredAt,
+    ...content,
+  } as EvolutionInboundMessage);
 }
 
 // ---------------------------------------------------------------------------

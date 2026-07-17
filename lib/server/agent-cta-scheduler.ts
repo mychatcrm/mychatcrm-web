@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { PostgrestSingleResponse } from "@supabase/supabase-js";
+import { detectSupportedLanguageCode } from "@/lib/ai/language-detect";
 import {
   formatScheduleFieldsFromDate,
   localWallClockToUtc,
@@ -11,6 +12,7 @@ import {
   textHasInvalidExplicitTime,
 } from "@/lib/server/agenda-datetime-parse";
 import { parseTimezone } from "@/lib/agents/agent-datetime";
+import { normalizeCanonicalWhatsAppPhone } from "@/lib/integrations/whatsapp-contact-identity";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { broadcastAgendaChange } from "@/lib/server/agenda-realtime";
 import {
@@ -58,7 +60,11 @@ const RESCHEDULE_RE =
   /\b(remarcar|reagendar|trocar\s+(o\s+)?hor[aá]rio|mudar\s+(a\s+)?data|outro\s+hor[aá]rio|alterar\s+agendamento)\b/i;
 const SCHEDULING_RE =
   /\b(agendamento|agend|cancelamento|cancelar|remarcar|reagendar|reuni[aã]o|visita|hor[aá]rio|amanh[ãa]|hoje|segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo|\d{1,2}[:h]\d{2}|\d{1,2}\/\d{1,2})\b/i;
+const AGENDA_READ_INTENT_RE =
+  /\b(?:meus?|minhas?|meu|minha)\s+(?:pr[oó]ximos?\s+)?(?:agendamentos?|compromissos?|hor[aá]rios?|reuni[oõ]es?|visitas?|citas?|appointments?|meetings?)\b|\b(?:agendamentos?|compromissos?|hor[aá]rios?|reuni[oõ]es?|visitas?|citas?|appointments?|meetings?)\b[^.!?\n]{0,24}\b(?:meus?|minhas?|meu|minha)\b|\b(?:consultar|consult|ver|veja|olhar|olha|mostrar|mostre|listar|liste|check|show|list|revisar)\b[^.!?\n]{0,50}\b(?:agenda|agendamentos?|compromissos?|citas?|appointments?|meetings?)\b|\b(?:quando|what\s+time|when|cu[aá]ndo)\b[^.!?\n]{0,50}\b(?:agendamento|appointment|cita|reuni[aã]o|meeting|hor[aá]rio)\b/i;
 const AGENDA_DIRECTIVE_RE = /\[\[\s*(AGENDAR|CANCELAR_AGENDA)\s*(?::\s*([^\]]*))?\]\]/gi;
+const CONTEXT_FREE_SHORT_REPLY_RE =
+  /^\s*(?:oi+|ol[aá]|oie|oide|hello|hi|hola|ok(?:ay)?|sim|s[ií]|yes|pode(?:\s+ser)?|claro|certo|isso|perfeito|obrigad[oa]?|thanks?|gracias|at[eé]\s+mais|tchau|bye)[\s.!?]*$/i;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const AGENDA_FAILURE_REPLY =
   "Não consegui confirmar essa alteração na agenda agora. Nossa equipe vai conferir e te retornar em breve.";
@@ -506,8 +512,7 @@ export function priorAgendaAssistantTextFromMessages(
 }
 
 function extractPhone(remoteJid: string): string | null {
-  const digits = remoteJid.split("@")[0]?.replace(/\D/g, "") ?? "";
-  return digits.length >= 8 ? digits : null;
+  return normalizeCanonicalWhatsAppPhone(remoteJid);
 }
 
 export function extractLocationFromText(text: string): string | null {
@@ -1280,6 +1285,7 @@ async function executeAgendaDirectiveAtomically(params: {
   /** Job e geração para validação atômica de staleness na RPC (caminho de job). */
   jobId?: string | null;
   claimedGeneration?: number | null;
+  conversationSequence?: number | null;
   journeyId?: string | null;
 }): Promise<{ action: "scheduled" | "rescheduled" | "cancelled"; eventId: string }> {
   const attendeePhone = extractPhone(params.remoteJid);
@@ -1321,7 +1327,15 @@ async function executeAgendaDirectiveAtomically(params: {
     });
   }
 
-  const { data, error } = await params.sb.rpc("apply_agent_agenda_mutation", {
+  const guarded = Boolean(
+    params.jobId &&
+    params.claimedGeneration != null &&
+    params.conversationSequence != null &&
+    params.conversationSequence > 0,
+  );
+  const { data, error } = await params.sb.rpc(
+    guarded ? "apply_agent_agenda_mutation_guarded" : "apply_agent_agenda_mutation",
+    {
     p_tenant_id: params.tenantId,
     p_operation_key: params.operationKey,
     p_action: params.directive.type,
@@ -1340,6 +1354,7 @@ async function executeAgendaDirectiveAtomically(params: {
     p_job_id: params.jobId ?? null,
     p_claimed_generation: params.claimedGeneration ?? null,
     p_journey_id: params.journeyId ?? null,
+    ...(guarded ? { p_conversation_sequence: params.conversationSequence } : {}),
   });
   if (error) throw normalizeAgendaRpcError(error);
 
@@ -1425,6 +1440,7 @@ export async function executeAgendaDirective(params: {
   /** Job e geração para validação atômica de staleness na RPC (caminho de job). */
   jobId?: string | null;
   claimedGeneration?: number | null;
+  conversationSequence?: number | null;
   journeyId?: string | null;
 }): Promise<{ action: "scheduled" | "rescheduled" | "cancelled"; eventId: string }> {
   const sb = params.sb ?? createSupabaseServiceClient();
@@ -1570,10 +1586,117 @@ export async function executePreparedAgendaDirective(params: {
   }
 }
 
+type ContactAgendaListRow = {
+  id: string;
+  title: string;
+  start_at: string;
+  end_at: string;
+  status: string;
+  location: string | null;
+};
+
+export function clientRequestedAgendaList(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (
+    detectAgendaCancelIntent(trimmed) ||
+    RESCHEDULE_RE.test(trimmed) ||
+    isInitialAgendaMutationRequest(trimmed)
+  ) return false;
+  return AGENDA_READ_INTENT_RE.test(trimmed);
+}
+
+function agendaListLocale(text: string): string {
+  const language = detectSupportedLanguageCode(text);
+  return ({ pt: "pt-BR", en: "en-US", es: "es-ES", fr: "fr-FR", de: "de-DE", it: "it-IT" })[language];
+}
+
+function formatContactAgendaListReply(params: {
+  events: ContactAgendaListRow[];
+  timezone: string;
+  clientText: string;
+}): string {
+  const language = detectSupportedLanguageCode(params.clientText);
+  if (params.events.length === 0) {
+    return {
+      pt: "Não encontrei nenhum agendamento ativo para este número.",
+      en: "I couldn't find any active appointments for this number.",
+      es: "No encontré ninguna cita activa para este número.",
+      fr: "Je n’ai trouvé aucun rendez-vous actif pour ce numéro.",
+      de: "Ich habe für diese Nummer keine aktiven Termine gefunden.",
+      it: "Non ho trovato appuntamenti attivi per questo numero.",
+    }[language];
+  }
+
+  const locale = agendaListLocale(params.clientText);
+  const formatter = new Intl.DateTimeFormat(locale, {
+    timeZone: parseTimezone(params.timezone),
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const items = params.events.map((event) => {
+    const when = formatter.format(new Date(event.start_at));
+    const location = event.location?.trim() ? ` — ${event.location.trim()}` : "";
+    return `${when}${location}`;
+  });
+  const prefix = {
+    pt: params.events.length === 1 ? "Encontrei este agendamento para o seu número:" : "Encontrei estes agendamentos para o seu número:",
+    en: params.events.length === 1 ? "I found this appointment for your number:" : "I found these appointments for your number:",
+    es: params.events.length === 1 ? "Encontré esta cita para tu número:" : "Encontré estas citas para tu número:",
+    fr: params.events.length === 1 ? "J’ai trouvé ce rendez-vous pour votre numéro :" : "J’ai trouvé ces rendez-vous pour votre numéro :",
+    de: params.events.length === 1 ? "Ich habe diesen Termin für Ihre Nummer gefunden:" : "Ich habe diese Termine für Ihre Nummer gefunden:",
+    it: params.events.length === 1 ? "Ho trovato questo appuntamento per il tuo numero:" : "Ho trovato questi appuntamenti per il tuo numero:",
+  }[language];
+  return `${prefix}\n${items.map((item) => `• ${item}`).join("\n")}`;
+}
+
+async function resolveContactAgendaList(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  timezone: string;
+  clientText: string;
+}): Promise<ResolveAgendaTurnResult> {
+  const attendeePhone = extractPhone(params.remoteJid);
+  if (!attendeePhone) {
+    return {
+      action: "failed",
+      text: "Não consigo consultar a agenda por este identificador. Faça a solicitação pelo mesmo número usado no agendamento.",
+    };
+  }
+  const { data, error } = await params.sb.rpc("list_contact_agenda", {
+    p_tenant_id: params.tenantId,
+    p_attendee_phone: attendeePhone,
+    p_include_history: false,
+    p_limit: 5,
+  });
+  if (error) {
+    console.warn("[agent-agenda-list]", {
+      tenant_id: params.tenantId,
+      error: error.message,
+    });
+    return {
+      action: "failed",
+      text: "Não consegui consultar sua agenda agora. Tente novamente em instantes.",
+    };
+  }
+  const events = Array.isArray(data) ? (data as ContactAgendaListRow[]) : [];
+  return {
+    action: "listed",
+    text: formatContactAgendaListReply({ ...params, events }),
+  };
+}
+
 export type ResolveAgendaTurnResult = {
   text: string;
   action:
     | "none"
+    | "listed"
     | "needs_confirmation"
     | "scheduled"
     | "rescheduled"
@@ -1633,6 +1756,7 @@ type PendingAgendaActionRow = {
   proposed_location: string | null;
   timezone: string;
   expires_at: string;
+  conversation_sequence: number | null;
 };
 
 function executableAction(action: AgentAgendaPlanAction): PendingAgendaActionRow["action"] | null {
@@ -1655,7 +1779,7 @@ async function loadPendingAgendaAction(params: {
 }): Promise<PendingAgendaActionRow | null> {
   const { data } = await params.sb
     .from("agent_agenda_pending_actions")
-    .select("id,journey_id,action,event_id,proposed_date,proposed_time,proposed_location,timezone,expires_at")
+    .select("id,journey_id,action,event_id,proposed_date,proposed_time,proposed_location,timezone,expires_at,conversation_sequence")
     .eq("tenant_id", params.tenantId)
     .eq("remote_jid", params.remoteJid)
     .eq("agent_id", params.agentId)
@@ -1668,7 +1792,7 @@ async function loadPendingAgendaAction(params: {
   if (params.journeyId && row.journey_id && row.journey_id !== params.journeyId) {
     await params.sb
       .from("agent_agenda_pending_actions")
-      .update({ state: "cancelled", updated_at: new Date().toISOString() })
+      .update({ state: "superseded", updated_at: new Date().toISOString() })
       .eq("id", row.id)
       .eq("state", "pending");
     return null;
@@ -1692,6 +1816,7 @@ async function savePendingAgendaAction(params: {
   plan: AgentAgendaPlan;
   jobId?: string | null;
   generation?: number | null;
+  conversationSequence?: number | null;
   timezone: string;
 }): Promise<void> {
   const existing = await loadPendingAgendaAction({ ...params, journeyId: params.journeyId });
@@ -1705,6 +1830,7 @@ async function savePendingAgendaAction(params: {
     timezone: params.timezone,
     source_job_id: params.jobId ?? null,
     source_generation: params.generation ?? null,
+    conversation_sequence: params.conversationSequence ?? null,
     state: "pending",
     expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
     updated_at: new Date().toISOString(),
@@ -1811,6 +1937,7 @@ async function resolveStructuredAgendaPlan(params: {
   operationKey?: string | null;
   jobId?: string | null;
   claimedGeneration?: number | null;
+  conversationSequence?: number | null;
   journeyId?: string | null;
   recentClientMessages?: string[] | null;
 }): Promise<ResolveAgendaTurnResult | null> {
@@ -1821,10 +1948,29 @@ async function resolveStructuredAgendaPlan(params: {
     agentId: params.agentId,
     journeyId: params.journeyId,
   });
+  if (
+    !pending &&
+    params.plan.action !== "none" &&
+    params.plan.action !== "list" &&
+    CONTEXT_FREE_SHORT_REPLY_RE.test(params.clientText)
+  ) {
+    const language = detectSupportedLanguageCode(params.clientText);
+    return {
+      text: {
+        pt: "Certo. Como posso ajudar?",
+        en: "All right. How can I help?",
+        es: "De acuerdo. ¿Cómo puedo ayudarte?",
+        fr: "D’accord. Comment puis-je vous aider ?",
+        de: "Alles klar. Wie kann ich helfen?",
+        it: "Va bene. Come posso aiutarti?",
+      }[language],
+      action: "none",
+    };
+  }
   if (pending?.action === "cancel" && AGENDA_REJECTION_RE.test(params.clientText)) {
     await params.sb
       .from("agent_agenda_pending_actions")
-      .update({ state: "cancelled", updated_at: new Date().toISOString() })
+      .update({ state: "rejected", updated_at: new Date().toISOString() })
       .eq("id", pending.id)
       .eq("state", "pending");
     return {
@@ -1934,6 +2080,7 @@ async function resolveStructuredAgendaPlan(params: {
         plan: effectivePlan,
         jobId: params.jobId,
         generation: params.claimedGeneration,
+        conversationSequence: params.conversationSequence,
         timezone: params.timezone,
       });
       return {
@@ -2001,6 +2148,7 @@ async function resolveStructuredAgendaPlan(params: {
         plan: effectivePlan,
         jobId: params.jobId,
         generation: params.claimedGeneration,
+        conversationSequence: params.conversationSequence,
         timezone: params.timezone,
       });
     }
@@ -2049,6 +2197,7 @@ async function resolveStructuredAgendaPlan(params: {
       operationKey: params.operationKey,
       jobId: params.jobId,
       claimedGeneration: params.claimedGeneration,
+      conversationSequence: params.conversationSequence,
       journeyId: params.journeyId,
     });
     if (pending) {
@@ -2101,6 +2250,7 @@ export async function resolveAgendaTurn(params: {
   /** Job e geração para validação atômica de staleness na RPC (caminho de job). */
   jobId?: string | null;
   claimedGeneration?: number | null;
+  conversationSequence?: number | null;
   journeyId?: string | null;
   /** Mensagens inbound recentes do lead (ordem temporal), para resolver
    *  complementos que chegaram em jobs anteriores (ex.: data num turno, hora no
@@ -2110,13 +2260,25 @@ export async function resolveAgendaTurn(params: {
   const cleanText = stripAgendaDirectives(params.modelText);
   const finalize = (result: ResolveAgendaTurnResult) =>
     finalizeResolveAgendaTurnResult(result, params.ctaHandoffAtivo);
+  const clientRequestedMutation =
+    isInitialAgendaMutationRequest(params.clientText) ||
+    RESCHEDULE_RE.test(params.clientText) ||
+    detectAgendaCancelIntent(params.clientText);
+  const requestedList =
+    clientRequestedAgendaList(params.clientText) ||
+    (params.agendaPlan?.action === "list" && !clientRequestedMutation);
+  if (requestedList) {
+    return finalize(await resolveContactAgendaList({
+      sb: params.sb ?? createSupabaseServiceClient(),
+      tenantId: params.tenantId,
+      remoteJid: params.remoteJid,
+      timezone: params.timezone,
+      clientText: params.clientText,
+    }));
+  }
 
   if (!params.agendaAutomationEnabled) {
     const parsed = parseAgendaDirectives(params.modelText);
-    const clientRequestedMutation =
-      isInitialAgendaMutationRequest(params.clientText) ||
-      RESCHEDULE_RE.test(params.clientText) ||
-      detectAgendaCancelIntent(params.clientText);
     const modelClaimedMutation = AGENDA_SUCCESS_CLAIM_RE.test(cleanText);
     if (
       parsed.directives.length > 0 ||
@@ -2162,10 +2324,17 @@ export async function resolveAgendaTurn(params: {
       operationKey: params.operationKey,
       jobId: params.jobId,
       claimedGeneration: params.claimedGeneration,
+      conversationSequence: params.conversationSequence,
       journeyId: params.journeyId,
       recentClientMessages: params.recentClientMessages,
     });
     if (structured) return finalize(structured);
+  }
+
+  // Jobs duráveis só aceitam o plano estruturado atual ou uma proposta
+  // persistida. O histórico em linguagem natural nunca autoriza uma mutação.
+  if (params.jobId) {
+    return finalize({ text: cleanText, action: "none" });
   }
 
   const parsed = parseAgendaDirectives(params.modelText);
@@ -2420,6 +2589,7 @@ export async function resolveAgendaTurn(params: {
       operationKey: params.operationKey,
       jobId: params.jobId ?? null,
       claimedGeneration: params.claimedGeneration ?? null,
+      conversationSequence: params.conversationSequence ?? null,
       journeyId: params.journeyId ?? null,
     });
     console.info("[agent-agenda-turn]", {

@@ -15,7 +15,22 @@ type OutboxRow = {
 export type PreparedAgentOutbound =
   | { action: "send"; id: string; claimToken: string }
   | { action: "already_sent"; id: string }
-  | { action: "ambiguous"; id: string };
+  | { action: "ambiguous"; id: string }
+  | { action: "stale"; id: string };
+
+async function conversationSequenceIsCurrent(
+  sb: SupabaseServiceClient,
+  job: AgentResponseJobRow,
+): Promise<boolean> {
+  const sequence = Number(job.conversation_sequence ?? 0);
+  if (!Number.isSafeInteger(sequence) || sequence <= 0) return true;
+  const { data, error } = await sb.rpc("is_agent_conversation_sequence_current", {
+    p_tenant_id: job.tenant_id,
+    p_remote_jid: job.remote_jid,
+    p_sequence: sequence,
+  });
+  return !error && data === true;
+}
 
 /**
  * Persiste a intenção antes da chamada ao provedor. Um reclaim de envio que já
@@ -30,11 +45,15 @@ export async function prepareAgentOutbound(params: {
   content: string;
 }): Promise<PreparedAgentOutbound> {
   const kind = params.kind ?? "text";
+  if (!(await conversationSequenceIsCurrent(params.sb, params.job))) {
+    return { action: "stale", id: params.job.id };
+  }
   const { error: upsertError } = await params.sb.from("agent_outbound_outbox").upsert(
     {
       tenant_id: params.job.tenant_id,
       job_id: params.job.id,
       burst_generation: params.generation,
+      conversation_sequence: Number(params.job.conversation_sequence ?? 0),
       channel: params.job.channel,
       connection_id: params.job.connection_id,
       remote_jid: params.job.remote_jid,
@@ -98,6 +117,20 @@ export async function prepareAgentOutbound(params: {
     .select("id")
     .maybeSingle();
   if (!claimed) return { action: "ambiguous", id: row.id };
+  if (!(await conversationSequenceIsCurrent(params.sb, params.job))) {
+    await params.sb
+      .from("agent_outbound_outbox")
+      .update({
+        status: "cancelled",
+        claim_token: null,
+        claim_expires_at: null,
+        last_error: "conversation_sequence_superseded",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", row.id)
+      .eq("claim_token", claimToken);
+    return { action: "stale", id: row.id };
+  }
   return { action: "send", id: row.id, claimToken };
 }
 
@@ -106,6 +139,7 @@ export async function markAgentOutboundSent(params: {
   id: string;
   claimToken: string;
   providerMessageId?: string | null;
+  job?: AgentResponseJobRow;
 }): Promise<void> {
   const { error } = await params.sb
     .from("agent_outbound_outbox")
@@ -122,6 +156,20 @@ export async function markAgentOutboundSent(params: {
     .eq("status", "processing")
     .eq("claim_token", params.claimToken);
   if (error) throw new Error(error.message);
+  if (params.job && Number(params.job.conversation_sequence ?? 0) > 0) {
+    const { error: stateError } = await params.sb.rpc("mark_agent_conversation_response", {
+      p_tenant_id: params.job.tenant_id,
+      p_remote_jid: params.job.remote_jid,
+      p_sequence: Number(params.job.conversation_sequence),
+      p_responded_at: new Date().toISOString(),
+    });
+    if (stateError) {
+      console.warn("[agent-outbound-outbox] response_sequence_mark_failed", {
+        job_id: params.job.id,
+        error: stateError.message,
+      });
+    }
+  }
 }
 
 export async function markAgentOutboundFailed(params: {
