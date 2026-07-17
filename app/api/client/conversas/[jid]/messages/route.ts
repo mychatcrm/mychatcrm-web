@@ -27,15 +27,15 @@ export async function GET(
 
   const sb = createSupabaseServiceClient();
 
-  try {
-    await reconcilePendingEvolutionDeliveries({
-      sb,
-      tenantId: session.tenantId,
-      remoteJid,
-    });
-  } catch (reconcileError) {
+  // Reconciliação de delivery não pode atrasar o histórico — status chega
+  // depois via Realtime UPDATE ou poll do painel.
+  void reconcilePendingEvolutionDeliveries({
+    sb,
+    tenantId: session.tenantId,
+    remoteJid,
+  }).catch((reconcileError) => {
     console.warn("[api/client/conversas/jid/messages] delivery reconciliation", reconcileError);
-  }
+  });
 
   const { data, error } = await sb
     .from("whatsapp_messages")

@@ -66,4 +66,29 @@ describe("message sync", () => {
     expect(merged).toHaveLength(1);
     expect(merged[0]?.id).toBe("temp-2");
   });
+
+  it("append inbound then poll merge does not duplicate", () => {
+    const inbound = {
+      id: "in-1",
+      direction: "inbound" as const,
+      kind: "text",
+      content: "pode ser",
+      created_at: "2026-07-17T20:00:00.000Z",
+    };
+    const withInsert = appendMessageDeduped([], inbound);
+    const polled = [
+      inbound,
+      {
+        id: "out-1",
+        direction: "outbound" as const,
+        kind: "text",
+        content: "Perfeito!",
+        created_at: "2026-07-17T20:00:05.000Z",
+        delivery_status: "sent",
+      },
+    ];
+    const merged = mergePolledMessages(withInsert, polled);
+    expect(merged).toHaveLength(2);
+    expect(merged.map((m) => m.id)).toEqual(["in-1", "out-1"]);
+  });
 });
