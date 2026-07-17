@@ -15,6 +15,7 @@ import {
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { buildTextualReplyFallbackTopics } from "@/lib/conversas/inbound-message-dedupe";
 import { buildReplyUnitPrompt, normalizeConversationBurst } from "@/lib/conversas/normalize-conversation-burst";
+import { shouldSuppressLateInboundFragment } from "@/lib/conversas/late-inbound-fragment";
 
 /**
  * Texto do lead consolidado na ordem original da unidade. O orquestrador de
@@ -60,7 +61,10 @@ import { deliverAgentReplyWithOptionalTts } from "@/lib/server/agent-tts-outboun
 import { promoteLeadToContatoOnAgentEngagement } from "@/lib/server/crm-lead-lifecycle";
 import { resolveOutboundMediaForAgentResponse } from "@/lib/server/agent-media-files";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
-import type { AgentResponseJobRow } from "@/lib/server/agent-response-jobs";
+import {
+  isAgentConversationSequenceCurrent,
+  type AgentResponseJobRow,
+} from "@/lib/server/agent-response-jobs";
 import {
   buildDeterministicHandoffSummary,
   getRecentConversationMessages,
@@ -109,6 +113,9 @@ type PendingInboundRow = {
   message_id: string | null;
   remote_jid: string;
   created_at: string;
+  received_at: string;
+  conversation_sequence: number | null;
+  is_late_fragment: boolean;
   storage_key: string | null;
   mime_type: string | null;
   analysis_status: string | null;
@@ -288,6 +295,9 @@ export async function processAgentResponseJob(
 ): Promise<{ ok: true; dedupedCount: number } | { ok: false; error: string; dedupedCount?: number }> {
   const generation = claimedGeneration ?? job.burst_generation;
   const skipGenerationCheck = options?.skipGenerationCheck === true;
+  if (!skipGenerationCheck && !(await isAgentConversationSequenceCurrent(sb, job))) {
+    return { ok: false, error: "generation_stale", dedupedCount: 0 };
+  }
 
   if (isJourneyIsolationEnabled()) {
     const journeyAuth = job.journey_id
@@ -372,14 +382,14 @@ export async function processAgentResponseJob(
   const windowEnd = new Date(new Date(job.last_message_at).getTime() + 1).toISOString();
   let windowQuery = sb
     .from("whatsapp_messages")
-    .select("id, content, kind, message_id, remote_jid, created_at, storage_key, mime_type, analysis_status, ai_description")
+    .select("id, content, kind, message_id, remote_jid, created_at, received_at, conversation_sequence, is_late_fragment, storage_key, mime_type, analysis_status, ai_description")
     .eq("tenant_id", job.tenant_id)
     .eq("remote_jid", job.remote_jid)
     .eq("direction", "inbound")
-    .gte("created_at", job.first_message_at)
-    .lte("created_at", windowEnd);
+    .gte("received_at", job.first_message_at)
+    .lte("received_at", windowEnd);
   if (job.journey_id) windowQuery = windowQuery.eq("journey_id", job.journey_id);
-  const { data: rowsByWindow, error: windowError } = await windowQuery.order("created_at", {
+  const { data: rowsByWindow, error: windowError } = await windowQuery.order("received_at", {
     ascending: true,
   });
   if (windowError) return { ok: false, error: windowError.message };
@@ -393,20 +403,40 @@ export async function processAgentResponseJob(
     if (missingIds.length > 0) {
       const { data: rowsById, error } = await sb
         .from("whatsapp_messages")
-        .select("id, content, kind, message_id, remote_jid, created_at, storage_key, mime_type, analysis_status, ai_description")
+        .select("id, content, kind, message_id, remote_jid, created_at, received_at, conversation_sequence, is_late_fragment, storage_key, mime_type, analysis_status, ai_description")
         .eq("tenant_id", job.tenant_id)
         .eq("remote_jid", job.remote_jid)
         .eq("direction", "inbound")
         .in("id", missingIds)
-        .order("created_at", { ascending: true });
+        .order("received_at", { ascending: true });
       if (error) return { ok: false, error: error.message };
       const missing = (rowsById ?? []) as PendingInboundRow[];
       inboundRows = [...inboundRows, ...missing].sort(
-        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+        (a, b) => new Date(a.received_at).getTime() - new Date(b.received_at).getTime(),
       );
     }
   }
   if (!inboundRows.length) return { ok: false, error: "no_inbound_messages" };
+
+  const lateSuppressed = inboundRows.filter((row) =>
+    shouldSuppressLateInboundFragment({
+      isLateFragment: row.is_late_fragment,
+      kind: row.kind,
+      content: row.content,
+    }),
+  );
+  if (lateSuppressed.length > 0) {
+    const suppressedIds = new Set(lateSuppressed.map((row) => row.id));
+    inboundRows = inboundRows.filter((row) => !suppressedIds.has(row.id));
+    console.info("[agent-response-jobs]", {
+      event: "late_fragment_suppressed",
+      job_id: job.id,
+      count: lateSuppressed.length,
+    });
+    if (!inboundRows.length) {
+      return { ok: true, dedupedCount: lateSuppressed.length };
+    }
+  }
 
   // ── Transcrição de áudio via R2 ──────────────────────────────────────────
   // O webhook (Phase 1) já salva o áudio no R2 (storage_key em whatsapp_messages).
@@ -612,8 +642,14 @@ export async function processAgentResponseJob(
     if (outbound.action === "already_sent") {
       return { ok: true, dedupedCount: burst.dedupedCount };
     }
+    if (outbound.action === "stale") {
+      return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
+    }
     if (outbound.action === "ambiguous") {
       return { ok: false, error: "outbound_dispatch_ambiguous", dedupedCount: burst.dedupedCount };
+    }
+    if (!(await isAgentConversationSequenceCurrent(sb, job))) {
+      return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
     }
     await sendPresence(job.instance_name, number, "composing", typingDelayMs(apology));
     const apologyResult = await evolutionSendText({
@@ -629,6 +665,7 @@ export async function processAgentResponseJob(
         id: outbound.id,
         claimToken: outbound.claimToken,
         providerMessageId: receipt.messageId,
+        job,
       });
       await saveOutboundMessage({
         tenantId: job.tenant_id,
@@ -680,7 +717,11 @@ export async function processAgentResponseJob(
   let repliesSent = 0;
 
   for (let unitIndex = 0; unitIndex < burst.replyUnits.length; unitIndex++) {
-    if (!skipGenerationCheck && (await isGenerationStale(sb, job.id, generation))) {
+    if (
+      !skipGenerationCheck &&
+      ((await isGenerationStale(sb, job.id, generation)) ||
+        !(await isAgentConversationSequenceCurrent(sb, job)))
+    ) {
       return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
     }
 
@@ -784,6 +825,7 @@ export async function processAgentResponseJob(
       operationKey: `agent-response-job:${job.id}:${generation}:${unitIndex}`,
       jobId: skipGenerationCheck ? null : job.id,
       claimedGeneration: skipGenerationCheck ? null : generation,
+      conversationSequence: skipGenerationCheck ? null : job.conversation_sequence,
       journeyId: skipGenerationCheck ? null : (job.journey_id ?? null),
     });
     // Recusa atômica de staleness pela RPC: a geração foi superada entre o check
@@ -929,6 +971,13 @@ export async function processAgentResponseJob(
       repliesSent += 1;
       continue;
     }
+    if (outbound.action === "stale") {
+      return {
+        ok: false,
+        error: "generation_stale",
+        dedupedCount: burst.dedupedCount,
+      };
+    }
     if (outbound.action === "ambiguous") {
       return {
         ok: false,
@@ -937,6 +986,9 @@ export async function processAgentResponseJob(
       };
     }
 
+    if (!(await isAgentConversationSequenceCurrent(sb, job))) {
+      return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
+    }
     const delivery = await deliverAgentReplyWithOptionalTts({
       instanceName: job.instance_name,
       number,
@@ -994,6 +1046,7 @@ export async function processAgentResponseJob(
       id: outbound.id,
       claimToken: outbound.claimToken,
       providerMessageId: providerReceipt.messageId,
+      job,
     });
 
     await saveOutboundMessage({

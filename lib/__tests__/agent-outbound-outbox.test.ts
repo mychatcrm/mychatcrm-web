@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   markAgentOutboundFailed,
   markAgentOutboundSent,
@@ -74,6 +74,27 @@ function makeSb(initial?: Record<string, unknown>) {
 }
 
 describe("agent outbound outbox", () => {
+  it("drops a reply when a newer conversation sequence already exists", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: false, error: null });
+    const sb = {
+      rpc,
+      from: () => {
+        throw new Error("outbox must not be written for a stale sequence");
+      },
+    } as never;
+    await expect(prepareAgentOutbound({
+      sb,
+      job: { ...job, conversation_sequence: 5 },
+      generation: 1,
+      content: "Resposta antiga",
+    })).resolves.toEqual({ action: "stale", id: job.id });
+    expect(rpc).toHaveBeenCalledWith("is_agent_conversation_sequence_current", {
+      p_tenant_id: job.tenant_id,
+      p_remote_jid: job.remote_jid,
+      p_sequence: 5,
+    });
+  });
+
   it("persists and claims the reply intent before provider dispatch", async () => {
     const state = makeSb();
     const result = await prepareAgentOutbound({

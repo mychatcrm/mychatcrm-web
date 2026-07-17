@@ -418,10 +418,9 @@ export async function generateAgentResponse(params: {
       userId: params.userId ?? null,
       simulation: params.simulation === true,
     },
-    responseFormat:
-      baseAgent.agendaAutomationEnabled === true
-        ? AGENT_TURN_RESPONSE_FORMAT
-        : undefined,
+    // Consulta é permitida mesmo com mutações desligadas. Manter o contrato
+    // estruturado em ambos os modos impede que prosa do modelo ganhe autoridade.
+    responseFormat: AGENT_TURN_RESPONSE_FORMAT,
   });
   const normalized = normalizeAgentTurnResult(result);
   if (!normalized.ok) return normalized;

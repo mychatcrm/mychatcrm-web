@@ -7,6 +7,7 @@
 import { createHash } from "node:crypto";
 import { randomBytes } from "node:crypto";
 import { extractEvolutionSendReceipt } from "@/lib/integrations/evolution-message-receipt";
+import { normalizeCanonicalWhatsAppPhone } from "@/lib/integrations/whatsapp-contact-identity";
 
 const DEFAULT_TIMEOUT_MS = 25_000;
 const MESSAGE_STATUS_POLL_ATTEMPTS = 4;
@@ -1138,8 +1139,7 @@ export async function evolutionSendAudio(params: {
 /** Converte JID WhatsApp em número para envio pela API Evolution. */
 export function remoteJidToEvoNumber(remoteJid: string): string | null {
   if (!remoteJid || remoteJid.includes("@g.us")) return null;
-  const base = remoteJid.split("@")[0]?.replace(/\D/g, "") ?? "";
-  return base.length >= 8 ? base : null;
+  return normalizeCanonicalWhatsAppPhone(remoteJid);
 }
 
 /**

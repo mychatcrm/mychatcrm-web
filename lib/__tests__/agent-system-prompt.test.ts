@@ -208,7 +208,8 @@ describe("buildAgentSystemPrompt", () => {
     });
 
     expect(prompt).toContain("automação de agenda está desativada");
-    expect(prompt).toContain("agenda.action deve ser sempre none");
+    expect(prompt).toContain('use agenda.action="list"');
+    expect(prompt).toMatch(/nunca autorizam acessar compromissos de outra pessoa/i);
   });
 
   it("authorizes agenda as a system capability inside scope blocks when automation is on", () => {

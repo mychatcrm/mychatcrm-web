@@ -11,6 +11,7 @@ describe("structured agent turn plan", () => {
     expect(AGENT_TURN_RESPONSE_FORMAT.schema.properties.agenda.additionalProperties).toBe(false);
     expect(AGENT_TURN_RESPONSE_FORMAT.schema.properties.agenda.properties.action.enum).toEqual([
       "none",
+      "list",
       "propose_create",
       "propose_reschedule",
       "propose_cancel",

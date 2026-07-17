@@ -1,6 +1,7 @@
 import "server-only";
 
 import { parseTimezone } from "@/lib/agents/agent-datetime";
+import { normalizeCanonicalWhatsAppPhone } from "@/lib/integrations/whatsapp-contact-identity";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
@@ -18,8 +19,7 @@ export type AgentAgendaContextEvent = {
 };
 
 export function normalizeAgendaAttendeePhone(value: string | null | undefined): string | null {
-  const digits = String(value ?? "").split("@")[0]?.replace(/\D/g, "") ?? "";
-  return digits.length >= 8 ? digits : null;
+  return normalizeCanonicalWhatsAppPhone(value);
 }
 
 function formatEvent(event: AgentAgendaContextEvent, timezone: string): string {

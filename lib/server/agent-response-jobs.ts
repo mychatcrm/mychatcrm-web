@@ -45,6 +45,11 @@ export type AgentResponseJobRow = {
   inbound_message_count: number;
   attempt_count: number;
   burst_generation: number;
+  /** Monotonic sequence shared by every job/outbox operation in this conversation. */
+  conversation_sequence?: number;
+  provider_first_message_at?: string | null;
+  provider_last_message_at?: string | null;
+  is_late_fragment?: boolean;
   locked_at: string | null;
   claim_token: string | null;
   claim_expires_at: string | null;
@@ -79,6 +84,10 @@ function rowFromDb(data: Record<string, unknown>): AgentResponseJobRow {
     inbound_message_count: Number(data.inbound_message_count ?? 1),
     attempt_count: Number(data.attempt_count ?? 0),
     burst_generation: Number(data.burst_generation ?? 1),
+    conversation_sequence: Number(data.conversation_sequence ?? 0),
+    provider_first_message_at: typeof data.provider_first_message_at === "string" ? data.provider_first_message_at : null,
+    provider_last_message_at: typeof data.provider_last_message_at === "string" ? data.provider_last_message_at : null,
+    is_late_fragment: data.is_late_fragment === true,
     locked_at: typeof data.locked_at === "string" ? data.locked_at : null,
     claim_token: typeof data.claim_token === "string" ? data.claim_token : null,
     claim_expires_at: typeof data.claim_expires_at === "string" ? data.claim_expires_at : null,
@@ -215,6 +224,7 @@ export async function scheduleAgentResponseJob(params: {
   connectionId?: string | null;
   whatsappMessageId: string;
   occurredAt?: string;
+  receivedAt?: string;
   settings?: AgentSmartWaitSettings;
 }): Promise<AgentResponseJobRow | null> {
   const sb = params.sb ?? createSupabaseServiceClient();
@@ -267,7 +277,8 @@ export async function scheduleAgentResponseJob(params: {
     return null;
   }
 
-  const schedulingTimestamp = resolveAgentJobSchedulingTimestamp(params.occurredAt);
+  const receivedAt = params.receivedAt ? new Date(params.receivedAt) : new Date();
+  const schedulingTimestamp = resolveAgentJobSchedulingTimestamp(params.occurredAt, receivedAt);
   if (!schedulingTimestamp) {
     logJobEvent("failed_reason", {
       tenant_id: params.tenantId,
@@ -282,7 +293,7 @@ export async function scheduleAgentResponseJob(params: {
   // SELECT + UPDATE no TypeScript perdia message_ids quando dois webhooks
   // chegavam juntos (lost update), exatamente o caso de 2–3 mensagens seguidas.
   const channel = params.channel === "meta_cloud" ? "meta_cloud" : "evolution";
-  const { data, error } = await sb.rpc("upsert_agent_response_job_burst_v2", {
+  const { data, error } = await sb.rpc("upsert_agent_response_job_burst_v3", {
     p_tenant_id: params.tenantId,
     p_remote_jid: params.remoteJid,
     p_agent_id: params.agentId,
@@ -290,7 +301,8 @@ export async function scheduleAgentResponseJob(params: {
     p_channel: channel,
     p_connection_id: params.connectionId ?? null,
     p_message_id: params.whatsappMessageId,
-    p_occurred_at: schedulingTimestamp,
+    p_provider_occurred_at: params.occurredAt ?? schedulingTimestamp,
+    p_received_at: schedulingTimestamp,
     p_initial_seconds: settings.initialSeconds,
     p_followup_seconds: settings.followupSeconds,
     p_max_seconds: settings.maxSeconds,
@@ -319,6 +331,21 @@ export async function scheduleAgentResponseJob(params: {
     atomic: true,
   });
   return job;
+}
+
+/** Conversation-wide staleness guard. Sequence 0 keeps pre-migration jobs compatible. */
+export async function isAgentConversationSequenceCurrent(
+  sb: SupabaseServiceClient,
+  job: Pick<AgentResponseJobRow, "tenant_id" | "remote_jid" | "conversation_sequence">,
+): Promise<boolean> {
+  const sequence = Number(job.conversation_sequence ?? 0);
+  if (!Number.isSafeInteger(sequence) || sequence <= 0) return true;
+  const { data, error } = await sb.rpc("is_agent_conversation_sequence_current", {
+    p_tenant_id: job.tenant_id,
+    p_remote_jid: job.remote_jid,
+    p_sequence: sequence,
+  });
+  return !error && data === true;
 }
 
 export async function cancelPendingAgentResponseJobs(params: {
@@ -438,6 +465,22 @@ export async function tryProcessAgentResponseJob(
   if (!claimToken) return "skipped";
 
   try {
+    if (!(await isAgentConversationSequenceCurrent(client, job))) {
+      await updateClaimedJobGeneration(client, job.id, claimedGeneration, claimToken, {
+        status: "cancelled",
+        failed_reason: "conversation_sequence_stale",
+        completed_at: new Date().toISOString(),
+        locked_at: null,
+        claim_token: null,
+        claim_expires_at: null,
+        updated_at: new Date().toISOString(),
+      });
+      logJobEvent("conversation_sequence_stale", {
+        job_id: job.id,
+        conversation_sequence: job.conversation_sequence,
+      });
+      return "skipped";
+    }
     // journeyId do próprio job é obrigatório aqui: sem ele, com isolamento de
     // jornadas ligado (produção), a revalidação devolve "missing_active_journey"
     // e cancela TODO job — o agente ficava mudo depois da resposta do lead.
@@ -470,7 +513,10 @@ export async function tryProcessAgentResponseJob(
 
     const result = await processAgentResponseJobByChannel(client, job, claimedGeneration);
 
-    if (await isJobGenerationStale(client, job.id, claimedGeneration)) {
+    if (
+      await isJobGenerationStale(client, job.id, claimedGeneration) ||
+      !(await isAgentConversationSequenceCurrent(client, job))
+    ) {
       logJobEvent("generation_stale", { job_id: job.id, claimed_generation: claimedGeneration });
       await requeueSupersededJobGeneration(client, job.id, claimedGeneration);
       return "skipped";

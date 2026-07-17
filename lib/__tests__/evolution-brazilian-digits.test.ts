@@ -12,7 +12,14 @@ import {
   pickEvolutionInstanceInfo,
   type EvolutionInstanceInfo,
 } from "@/lib/integrations/evolution-api";
-import { extractMessageDeliveryUpdates } from "@/lib/integrations/evolution-webhook-parse";
+import {
+  extractInboundMessagesFromEvolutionPayload,
+  extractMessageDeliveryUpdates,
+} from "@/lib/integrations/evolution-webhook-parse";
+import {
+  normalizeCanonicalWhatsAppPhone,
+  resolveCanonicalInboundContact,
+} from "@/lib/integrations/whatsapp-contact-identity";
 
 describe("Brazilian WhatsApp digit normalization", () => {
   it("adds the 9th digit for mobile numbers in the 12-digit format", () => {
@@ -38,6 +45,59 @@ describe("Brazilian WhatsApp digit normalization", () => {
     expect(formatEvolutionSendAddress("5562993580574", "5562993580574")).toBe("5562993580574");
     expect(formatEvolutionSendAddress("556293580574@s.whatsapp.net", "5562993580574")).toBe("5562993580574");
     expect(formatEvolutionSendAddress("556293580574", "556293580574")).toBe("5562993580574");
+  });
+});
+
+describe("trusted WhatsApp contact identity", () => {
+  it("uses remoteJidAlt when the primary identifier is an opaque @lid", () => {
+    const result = resolveCanonicalInboundContact({
+      remoteJid: "123456789012345@lid",
+      remoteJidAlt: "556293580574@s.whatsapp.net",
+    });
+    expect(result).toMatchObject({
+      canonicalPhone: "5562993580574",
+      canonicalRemoteJid: "5562993580574@s.whatsapp.net",
+      providerRemoteJid: "123456789012345@lid",
+      providerRemoteJidAlt: "556293580574@s.whatsapp.net",
+      hasTrustedPhone: true,
+    });
+  });
+
+  it("fails closed for a LID without a provider phone alias", () => {
+    const result = resolveCanonicalInboundContact({ remoteJid: "123456789012345@lid" });
+    expect(result).toMatchObject({
+      canonicalPhone: null,
+      canonicalRemoteJid: "123456789012345@lid",
+      hasTrustedPhone: false,
+    });
+    expect(normalizeCanonicalWhatsAppPhone("123456789012345@lid")).toBeNull();
+  });
+
+  it("supports international provider phone JIDs without country-specific rewriting", () => {
+    expect(normalizeCanonicalWhatsAppPhone("14155552671@s.whatsapp.net")).toBe("14155552671");
+    expect(normalizeCanonicalWhatsAppPhone("442071838750@c.us")).toBe("442071838750");
+  });
+
+  it("publishes canonical and original identities from an Evolution payload", () => {
+    const messages = extractInboundMessagesFromEvolutionPayload({
+      data: {
+        key: {
+          id: "message-lid",
+          fromMe: false,
+          remoteJid: "123456789012345@lid",
+          remoteJidAlt: "556293580574@s.whatsapp.net",
+        },
+        messageTimestamp: 1_784_250_000,
+        message: { conversation: "Oi" },
+      },
+    });
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      remoteJid: "5562993580574@s.whatsapp.net",
+      contactPhone: "5562993580574",
+      providerRemoteJid: "123456789012345@lid",
+      providerRemoteJidAlt: "556293580574@s.whatsapp.net",
+    });
   });
 });
 

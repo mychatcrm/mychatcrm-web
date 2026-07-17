@@ -356,7 +356,7 @@ async function downloadAndStoreMedia(
  * Quando duplicate=true o chamador deve pular todo o fluxo de automação para essa mensagem.
  */
 type SaveMessageResult =
-  | { duplicate: false; id: string; created_at: string }
+  | { duplicate: false; id: string; created_at: string; received_at: string }
   | { duplicate: true }
   | null;
 
@@ -385,6 +385,7 @@ async function saveMessage(opts: {
   providerStatus?: string | null;
   deliveryStatus?: string | null;
   occurredAt?: string | null;
+  receivedAt?: string | null;
 }): Promise<SaveMessageResult> {
   try {
     const sb = createSupabaseServiceClient();
@@ -417,13 +418,14 @@ async function saveMessage(opts: {
         provider_message_id: opts.providerMessageId ?? null,
         provider_remote_jid: opts.providerRemoteJid ?? null,
         provider_status: opts.providerStatus ?? null,
+        received_at: opts.receivedAt ?? new Date().toISOString(),
         ...(opts.deliveryStatus ? { delivery_status: opts.deliveryStatus } : {}),
         ...(opts.occurredAt ? { created_at: opts.occurredAt } : {}),
       })
       // Deduplicação: a constraint UNIQUE (tenant_id, message_id) WHERE message_id IS NOT NULL
       // garante que um retry da Evolution API não crie um segundo job de resposta.
       // Se o message_id já existir, o INSERT é silenciosamente ignorado (RETURNING vazio → null).
-      .select("id, created_at")
+      .select("id, created_at, received_at")
       .maybeSingle();
 
     if (error) {
@@ -442,8 +444,8 @@ async function saveMessage(opts: {
       return { duplicate: true };
     }
 
-    const row = data as { id: string; created_at: string };
-    return { duplicate: false, id: row.id, created_at: row.created_at };
+    const row = data as { id: string; created_at: string; received_at: string };
+    return { duplicate: false, id: row.id, created_at: row.created_at, received_at: row.received_at };
   } catch (e) {
     console.warn("[webhooks/evolution] saveMessage exception", e);
     return null;
@@ -691,6 +693,7 @@ export async function POST(request: Request) {
     const savedContexts = await Promise.all(
       inbound.map(async (msg) => {
         try {
+          const webhookReceivedAt = new Date().toISOString();
           const leadPhone = remoteJidToEvoNumber(msg.remoteJid);
           const sbJourney = createSupabaseServiceClient();
           const journeyAuth = await resolveDirectJourneyAgent({
@@ -742,7 +745,9 @@ export async function POST(request: Request) {
             transcriptionStatus: msg.type === "audio" ? "pending" : null,
             analysisStatus:
               msg.type === "video" ? "unsupported" : msg.type === "image" ? "pending" : null,
+            providerRemoteJid: msg.providerRemoteJid,
             occurredAt: msg.occurredAt,
+            receivedAt: webhookReceivedAt,
           });
 
           // Webhook retry da Evolution API — mensagem já processada anteriormente.
@@ -838,6 +843,7 @@ export async function POST(request: Request) {
 
           return {
             msg,
+            webhookReceivedAt,
             agentId,
             inboundMedia,
             contactName,
@@ -876,6 +882,7 @@ export async function POST(request: Request) {
         }
         const {
           msg,
+          webhookReceivedAt,
           agentId,
           contactName,
           leadId,
@@ -973,6 +980,10 @@ export async function POST(request: Request) {
                   inboundSaved && !inboundSaved.duplicate
                     ? inboundSaved.created_at
                     : msg.occurredAt ?? new Date().toISOString(),
+                receivedAt:
+                  inboundSaved && !inboundSaved.duplicate
+                    ? inboundSaved.received_at
+                    : webhookReceivedAt,
                 smartWait,
                 processorBaseUrl: new URL(request.url).origin,
                 deferProcessor: (task) => {

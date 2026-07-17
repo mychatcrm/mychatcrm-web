@@ -2,6 +2,7 @@ import type { AiGenerateResult } from "@/lib/ai/types";
 
 export type AgentAgendaPlanAction =
   | "none"
+  | "list"
   | "propose_create"
   | "propose_reschedule"
   | "propose_cancel"
@@ -24,6 +25,7 @@ export type AgentTurnPlan = {
 
 const ACTIONS = new Set<AgentAgendaPlanAction>([
   "none",
+  "list",
   "propose_create",
   "propose_reschedule",
   "propose_cancel",
@@ -50,6 +52,7 @@ export const AGENT_TURN_RESPONSE_FORMAT = {
             type: "string",
             enum: [
               "none",
+              "list",
               "propose_create",
               "propose_reschedule",
               "propose_cancel",

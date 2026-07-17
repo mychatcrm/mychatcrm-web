@@ -139,8 +139,9 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
       // Identifica QUAL número Meta do tenant (pode ter vários) — usado pelo
       // filtro por número em /dashboard/conversas.
       connection_id: inbound.phoneNumberId,
+      received_at: receivedAt,
     })
-    .select("id,created_at")
+    .select("id,created_at,received_at")
     .single();
   if (inboundInsertError?.code === "23505") {
     return NextResponse.json({ ok: true });
@@ -244,6 +245,7 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
     connectionId: inbound.phoneNumberId,
     inboundMessageKey: String(inboundSaved.id),
     occurredAt: String(inboundSaved.created_at ?? receivedAt),
+    receivedAt: String(inboundSaved.received_at ?? receivedAt),
     smartWait: { ...smartWaitFromMetadata(metadata), enabled: true },
   });
   if (flow.reason === "job_create_failed") {
