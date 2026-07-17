@@ -4,6 +4,7 @@ import {
   AGENDA_DATETIME_NEEDED_REPLY,
   AGENDA_FAILURE_REPLY_NO_HANDOFF,
   AGENDA_INVALID_TIME_REPLY,
+  AGENDA_PAST_DATETIME_REPLY,
   AGENDA_SLOT_TAKEN_REPLY,
   AGENDA_SUCCESS_REPLY_CANCELLED,
   AGENDA_SUCCESS_REPLY_RESCHEDULED,
@@ -230,6 +231,8 @@ describe("agenda confirmation helpers", () => {
   it("isStandaloneAgendaConfirmation aceita sim simples", () => {
     expect(isStandaloneAgendaConfirmation("sim")).toBe(true);
     expect(isStandaloneAgendaConfirmation("ok, pode")).toBe(true);
+    expect(isStandaloneAgendaConfirmation("Fica sim")).toBe(true);
+    expect(isStandaloneAgendaConfirmation("fica bom")).toBe(true);
   });
 
   it("isStandaloneAgendaConfirmation rejeita pedido embutido", () => {
@@ -750,8 +753,11 @@ describe("resolveAgendaTurn", () => {
       claimedGeneration: 1,
       conversationSequence: 8,
     });
-    expect(result).toEqual({ action: "none", text: "Certo. Como posso ajudar?" });
-    expect(pendingRows).toHaveLength(0);
+    // "oide" é cumprimento curto sem soft-invite; se o modelo trouxer slot concreto
+    // gravamos pending (em vez de amnésia "Como posso ajudar?").
+    expect(result.action).toBe("needs_confirmation");
+    expect(result.text).toMatch(/10\/06\/2026|14h/i);
+    expect(pendingRows.length).toBeGreaterThan(0);
     expect(rpc).not.toHaveBeenCalled();
   });
 
@@ -849,6 +855,158 @@ describe("resolveAgendaTurn", () => {
     expect(result.action).toBe("none");
     expect(result.text).toMatch(/dia e horário/i);
     expect(result.text).not.toMatch(/Como posso ajudar/i);
+    expect(pendingRows).toHaveLength(0);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("soft-invite + Pode ser + modelo com slot concreto grava pending (não early-return)", async () => {
+    const { sb, rpc, pendingRows } = makeStructuredSb();
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      agentId: "agent-1",
+      timezone: "America/Sao_Paulo",
+      modelText: "Ótimo! Podemos te receber amanhã às 14h. Fica bom?",
+      clientText: "Pode ser",
+      priorAssistantText:
+        "Oi! Acabei de receber seu cadastro e gostaria de agendar uma conversa rápida. Que tal?",
+      agendaAutomationEnabled: true,
+      agendaPlan: { action: "create", date: "01/06/2026", time: "14:00", location: null, eventId: null },
+      jobId: "33333333-3333-4333-8333-333333333333",
+      claimedGeneration: 1,
+      conversationSequence: 2,
+    });
+    expect(result.action).toBe("needs_confirmation");
+    expect(result.text).toMatch(/amanhã às 14h/i);
+    expect(result.text).not.toBe(AGENDA_PAST_DATETIME_REPLY);
+    expect(pendingRows.some((row) => row.state === "pending" || row.proposed_date)).toBe(true);
+    const pending = pendingRows.find((row) => row.proposed_date || row.state === "pending") ?? pendingRows.at(-1);
+    expect(pending?.proposed_date).toBe("02/06/2026");
+    expect(pending?.proposed_time).toBe("14:00");
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("Fica sim com pending futuro confirma amanhã — nunca PAST por plano alucinado de hoje", async () => {
+    vi.setSystemTime(new Date("2026-06-01T16:51:00-03:00"));
+    const { sb, rpc, pendingRows } = makeStructuredSb({
+      pending: {
+        id: "pending-1",
+        action: "create",
+        event_id: null,
+        proposed_date: "02/06/2026",
+        proposed_time: "14:00",
+        proposed_location: null,
+        state: "pending",
+        expires_at: "2099-01-01T00:00:00.000Z",
+      },
+    });
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      agentId: "agent-1",
+      timezone: "America/Sao_Paulo",
+      modelText: "Confirmado para hoje às 14h.",
+      clientText: "Fica sim",
+      priorAssistantText: "Ótimo! Podemos te receber amanhã às 14h. Fica bom?",
+      agendaAutomationEnabled: true,
+      agendaPlan: { action: "none", date: null, time: null, location: null, eventId: null },
+      operationKey: "agent-response-job:turn-fica-sim:1:0",
+      jobId: "33333333-3333-4333-8333-333333333333",
+      claimedGeneration: 1,
+      conversationSequence: 3,
+    });
+    expect(result.text).not.toBe(AGENDA_PAST_DATETIME_REPLY);
+    expect(result.action).toBe("scheduled");
+    expect(rpc).toHaveBeenCalled();
+    expect(pendingRows[0]?.state).not.toBe("pending");
+  });
+
+  it("âncora parcial 'próxima segunda' sem hora não herda plano passado (não PAST)", async () => {
+    vi.setSystemTime(new Date("2026-06-01T16:51:00-03:00"));
+    const { sb, rpc, pendingRows } = makeStructuredSb();
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      agentId: "agent-1",
+      timezone: "America/Sao_Paulo",
+      modelText: "Perfeito, posso confirmar?",
+      clientText: "Pode ser na próxima segunda",
+      priorAssistantText: "Ótimo! Podemos te receber amanhã às 14h. Fica bom?",
+      agendaAutomationEnabled: true,
+      agendaPlan: { action: "create", date: "01/06/2026", time: "14:00", location: null, eventId: null },
+      jobId: "33333333-3333-4333-8333-333333333333",
+      claimedGeneration: 1,
+      conversationSequence: 4,
+    });
+    expect(result.text).not.toBe(AGENDA_PAST_DATETIME_REPLY);
+    expect(result.action).not.toBe("scheduled");
+    expect(pendingRows.filter((row) => row.state === "pending" || row.proposed_date === "01/06/2026")).toHaveLength(0);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("próxima segunda + 5 da tarde coalescidos resolve slot futuro (não PAST)", async () => {
+    vi.setSystemTime(new Date("2026-06-01T16:51:00-03:00"));
+    const { sb, rpc, pendingRows } = makeStructuredSb();
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      agentId: "agent-1",
+      timezone: "America/Sao_Paulo",
+      modelText: "Posso confirmar segunda às 17h?",
+      clientText: "Pode ser na próxima segunda\n5 da tarde",
+      recentClientMessages: ["Pode ser na próxima segunda", "5 da tarde"],
+      agendaAutomationEnabled: true,
+      agendaPlan: { action: "create", date: "01/06/2026", time: "14:00", location: null, eventId: null },
+      jobId: "33333333-3333-4333-8333-333333333333",
+      claimedGeneration: 1,
+      conversationSequence: 5,
+      agendaDisponibilidade: {
+        ativo: true,
+        diasSemana: [1, 2, 3, 4, 5],
+        horaInicio: "09:00",
+        horaFim: "18:00",
+      },
+    });
+    expect(result.text).not.toBe(AGENDA_PAST_DATETIME_REPLY);
+    expect(result.action).toBe("needs_confirmation");
+    const pending = pendingRows.at(-1);
+    expect(pending?.proposed_date).toBe("08/06/2026");
+    expect(pending?.proposed_time).toBe("17:00");
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("proposta em dia fora da janela responde fora da agenda — não 'já passou'", async () => {
+    // 01/06/2026 é segunda; amanhã = terça. Forçamos sábado via plano/prosa.
+    vi.setSystemTime(new Date("2026-06-05T16:51:00-03:00")); // sexta
+    const { sb, rpc, pendingRows } = makeStructuredSb();
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      agentId: "agent-1",
+      timezone: "America/Sao_Paulo",
+      modelText: "Ótimo! Podemos te receber amanhã às 14h. Fica bom?",
+      clientText: "Pode ser",
+      priorAssistantText: "Gostaria de agendar uma conversa rápida. Que tal?",
+      agendaAutomationEnabled: true,
+      agendaPlan: { action: "create", date: "06/06/2026", time: "14:00", location: null, eventId: null },
+      jobId: "33333333-3333-4333-8333-333333333333",
+      claimedGeneration: 1,
+      conversationSequence: 2,
+      agendaDisponibilidade: {
+        ativo: true,
+        diasSemana: [1, 2, 3, 4, 5],
+        horaInicio: "09:00",
+        horaFim: "18:00",
+      },
+    });
+    expect(result.text).not.toBe(AGENDA_PAST_DATETIME_REPLY);
+    expect(result.action).toBe("failed");
+    expect(result.text).toMatch(/disponib|janela|segunda|sexta|horário/i);
     expect(pendingRows).toHaveLength(0);
     expect(rpc).not.toHaveBeenCalled();
   });

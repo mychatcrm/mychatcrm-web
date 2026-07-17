@@ -48,7 +48,7 @@ type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 const SCHEDULE_CTA_VALUE = "Agendar no Google Agenda";
 const SCHEDULING_DEDUPE_WINDOW_MS = 30 * 24 * 60 * 60_000;
 const CONFIRMATION_RE =
-  /\b(sim|t[aá]\s*bom|t[aá]|pode|claro|com\s*certeza|[oó]timo|certo|isso|exato|confirm|confirmo|confirmada|confirmado|fechou|fechado|combinado|perfeito|ok|pode\s*ser)\b/i;
+  /\b(sim|t[aá]\s*bom|t[aá]|pode|claro|com\s*certeza|[oó]timo|certo|isso|exato|confirm|confirmo|confirmada|confirmado|fechou|fechado|combinado|perfeito|ok|pode\s*ser|fica(?:\s+(?:sim|bom))?)\b/i;
 /** Novo pedido de mutação na mesma mensagem — não conta como confirmação isolada. */
 const AGENDA_MUTATION_IN_MESSAGE_RE =
   /\b(?:quero|preciso|gostaria|desejo|vou)(?:\s+de)?\s+(?:cancelar|remarcar|reagendar|agendar|marcar|desmarcar)\b|\b(?:remarcar|reagendar|agendar|marcar)\s+(?:para|em|no|na)\b|\b\d{1,2}\s*[/-]\s*\d{1,2}\b|\bdaqui\s+(?:a\s+)?\d+\s+dias?\b|\bsemana\s+que\s+vem\b|\bproxim[ao]\s+\w{3,}/i;
@@ -408,6 +408,7 @@ const CONFIRMATION_ONLY_WORDS = new Set([
   "ta",
   "bom",
   "ser",
+  "fica",
   "cancelar",
   "desmarcar",
 ]);
@@ -2022,45 +2023,58 @@ async function resolveStructuredAgendaPlan(params: {
     CONTEXT_FREE_SHORT_REPLY_RE.test(params.clientText)
   ) {
     // Sem proposta pendente, um "sim"/"pode ser" curto NÃO autoriza execução.
-    // A conversa é do modelo: preservamos o texto dele salvo claim de sucesso
-    // ou confirmação órfã com data+hora concretas. Soft-invite prévio (outreach
-    // sem slot) também continua o fluxo de agendamento em vez de "Como posso ajudar?".
+    // Se o modelo já propôs data+hora concretas, NÃO early-return: cai no fluxo
+    // normal para gravar pending (senão o próximo "Fica sim" herda plano alucinado).
     const modelClean = stripAgendaDirectives(params.modelText).trim();
     const softInvite = isSoftAgendaInvite(params.priorAssistantText, params.timezone);
-    if (
-      modelClean &&
+    const concreteFromModel =
+      Boolean(modelClean) &&
       !AGENDA_SUCCESS_CLAIM_RE.test(modelClean) &&
-      !orphanConcreteScheduleConfirmation(modelClean, params.timezone)
-    ) {
-      return { text: modelClean, action: "none", deferHandoff: true };
-    }
-    if (softInvite && !AGENDA_SUCCESS_CLAIM_RE.test(modelClean)) {
+      (orphanConcreteScheduleConfirmation(modelClean, params.timezone) ||
+        Boolean(
+          resolveScheduleDateTimeFromText({
+            clientText: "",
+            assistantText: modelClean,
+            timezone: params.timezone,
+            agendaDisponibilidade: params.agendaDisponibilidade,
+          }),
+        ));
+    if (!concreteFromModel) {
+      if (
+        modelClean &&
+        !AGENDA_SUCCESS_CLAIM_RE.test(modelClean) &&
+        !orphanConcreteScheduleConfirmation(modelClean, params.timezone)
+      ) {
+        return { text: modelClean, action: "none", deferHandoff: true };
+      }
+      if (softInvite && !AGENDA_SUCCESS_CLAIM_RE.test(modelClean)) {
+        const language = detectSupportedLanguageCode(params.clientText);
+        return {
+          text: modelClean || {
+            pt: "Perfeito! Qual dia e horário ficam melhores para você?",
+            en: "Perfect! What day and time work best for you?",
+            es: "¡Perfecto! ¿Qué día y hora te vienen mejor?",
+            fr: "Parfait ! Quel jour et quelle heure vous conviennent le mieux ?",
+            de: "Perfekt! Welcher Tag und welche Uhrzeit passen Ihnen am besten?",
+            it: "Perfetto! Quale giorno e orario ti vanno meglio?",
+          }[language],
+          action: "none",
+          deferHandoff: true,
+        };
+      }
       const language = detectSupportedLanguageCode(params.clientText);
       return {
-        text: modelClean || {
-          pt: "Perfeito! Qual dia e horário ficam melhores para você?",
-          en: "Perfect! What day and time work best for you?",
-          es: "¡Perfecto! ¿Qué día y hora te vienen mejor?",
-          fr: "Parfait ! Quel jour et quelle heure vous conviennent le mieux ?",
-          de: "Perfekt! Welcher Tag und welche Uhrzeit passen Ihnen am besten?",
-          it: "Perfetto! Quale giorno e orario ti vanno meglio?",
+        text: {
+          pt: "Certo. Como posso ajudar?",
+          en: "All right. How can I help?",
+          es: "De acuerdo. ¿Cómo puedo ayudarte?",
+          fr: "D’accord. Comment puis-je vous aider ?",
+          de: "Alles klar. Wie kann ich helfen?",
+          it: "Va bene. Come posso aiutarti?",
         }[language],
         action: "none",
-        deferHandoff: true,
       };
     }
-    const language = detectSupportedLanguageCode(params.clientText);
-    return {
-      text: {
-        pt: "Certo. Como posso ajudar?",
-        en: "All right. How can I help?",
-        es: "De acuerdo. ¿Cómo puedo ayudarte?",
-        fr: "D’accord. Comment puis-je vous aider ?",
-        de: "Alles klar. Wie kann ich helfen?",
-        it: "Va bene. Come posso aiutarti?",
-      }[language],
-      action: "none",
-    };
   }
   if (pending?.action === "cancel" && AGENDA_REJECTION_RE.test(params.clientText)) {
     await params.sb
@@ -2075,6 +2089,14 @@ async function resolveStructuredAgendaPlan(params: {
     };
   }
   const standaloneConfirmation = Boolean(pending && isStandaloneAgendaConfirmation(params.clientText));
+  const confirmationOnlyTurn =
+    isStandaloneAgendaConfirmation(params.clientText) &&
+    !textHasExplicitDateAnchor(params.clientText, params.timezone) &&
+    !textHasExplicitTime(params.clientText);
+  const shortAckWithoutClientSlot =
+    CONTEXT_FREE_SHORT_REPLY_RE.test(params.clientText) &&
+    !textHasExplicitDateAnchor(params.clientText, params.timezone) &&
+    !textHasExplicitTime(params.clientText);
   const plannedAction = executableAction(params.plan.action);
   const action = standaloneConfirmation ? pending!.action : plannedAction;
   if (!action) return null;
@@ -2100,14 +2122,36 @@ async function resolveStructuredAgendaPlan(params: {
     date: normalizeAgentAgendaDate(rawEffectivePlan.date),
     time: normalizeAgentAgendaTime(rawEffectivePlan.time),
   };
+  // Confirmação / short-ack sem slot no texto do lead: recuperar da proposta
+  // (pending já está em rawEffectivePlan) ou da prosa do assistente/modelo —
+  // nunca assistantText vazio com fallback de plano alucinado "hoje 14h".
+  // Short-ack ("Pode ser") também é confirmation-only: priorizar a prosa do
+  // modelo neste turno (slot concreto) sobre o prior (soft-invite sem data).
+  const proposalSourceText = shortAckWithoutClientSlot
+    ? (params.modelText?.trim() || params.priorAssistantText?.trim() || "")
+    : confirmationOnlyTurn
+      ? (params.priorAssistantText?.trim() || params.modelText)
+      : "";
+  const allowPlanFallback =
+    !confirmationOnlyTurn &&
+    !shortAckWithoutClientSlot &&
+    Boolean(normalizedEffectivePlan.date && normalizedEffectivePlan.time);
   const resolvedFromClient = action === "cancel"
     ? null
     : resolveScheduleDateTimeFromText({
         clientText: params.clientText,
-        assistantText: "",
+        assistantText: proposalSourceText,
         timezone: params.timezone,
-        fallbackDate: normalizedEffectivePlan.date ?? undefined,
-        fallbackTime: normalizedEffectivePlan.time ?? undefined,
+        fallbackDate: allowPlanFallback
+          ? normalizedEffectivePlan.date ?? undefined
+          : standaloneConfirmation
+            ? normalizedEffectivePlan.date ?? undefined
+            : undefined,
+        fallbackTime: allowPlanFallback
+          ? normalizedEffectivePlan.time ?? undefined
+          : standaloneConfirmation
+            ? normalizedEffectivePlan.time ?? undefined
+            : undefined,
         recentClientMessages: params.recentClientMessages,
         agendaDisponibilidade: params.agendaDisponibilidade,
       });
@@ -2117,6 +2161,24 @@ async function resolveStructuredAgendaPlan(params: {
   let effectivePlan: AgentAgendaPlan = resolvedFromClient
     ? { ...normalizedEffectivePlan, date: resolvedFromClient.date, time: resolvedFromClient.time }
     : normalizedEffectivePlan;
+
+  // Âncora parcial do lead sem resolução completa: não herdar date/time inventados
+  // pelo modelo (causava "Esse horário já passou" com hoje 14h).
+  if (
+    action !== "cancel" &&
+    !resolvedFromClient &&
+    !standaloneConfirmation
+  ) {
+    const clientDate = textHasExplicitDateAnchor(params.clientText, params.timezone);
+    const clientTime = textHasExplicitTime(params.clientText);
+    const incompleteScheduleAsk =
+      !clientDate &&
+      !clientTime &&
+      /\b(?:agendar|marcar|remarcar|reagendar|agendamento)\b/i.test(params.clientText);
+    if ((clientDate && !clientTime) || (clientTime && !clientDate) || incompleteScheduleAsk) {
+      effectivePlan = { ...effectivePlan, date: null, time: null };
+    }
+  }
   let cancelEvent: AgendaEventRow | null = null;
   if (action === "cancel") {
     const cancelCandidate = await resolveCancelCandidate({
@@ -2265,11 +2327,20 @@ async function resolveStructuredAgendaPlan(params: {
       : effectivePlan.date && effectivePlan.time
         ? { type: "schedule", date: effectivePlan.date, time: effectivePlan.time, location: effectivePlan.location }
         : null;
+    const modelCleanForConfirm = stripAgendaDirectives(params.modelText).trim();
+    const keepNaturalProposal =
+      scheduleComplete &&
+      action !== "cancel" &&
+      Boolean(modelCleanForConfirm) &&
+      !AGENDA_SUCCESS_CLAIM_RE.test(modelCleanForConfirm) &&
+      orphanConcreteScheduleConfirmation(modelCleanForConfirm, params.timezone);
     return {
       text: scheduleComplete
         ? action === "cancel" && cancelEvent
           ? buildAgendaCancelConfirmationQuestion(cancelEvent, params.timezone)
-          : buildAgendaConfirmationQuestion(directive)
+          : keepNaturalProposal
+            ? modelCleanForConfirm
+            : buildAgendaConfirmationQuestion(directive)
         : params.modelText,
       action: scheduleComplete ? "needs_confirmation" : "none",
       deferHandoff: true,
