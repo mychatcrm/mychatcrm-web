@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bot,
   Check,
@@ -24,6 +24,20 @@ import {
 import type { ClientSession } from "@/lib/client-auth";
 import { cn } from "@/lib/utils";
 import { DsButton } from "@/components/ds";
+import {
+  appendMessageDeduped,
+  createClientTempId,
+  createOptimisticOutboundMessage,
+  mapDeliveryToSendStatus,
+  markOptimisticMessageFailed,
+  mergePolledMessages,
+  reconcileOptimisticMessage,
+  type SyncChatMessage,
+} from "@/lib/conversas/message-sync";
+import {
+  subscribeToWhatsappMessages,
+  type WhatsappMessageRealtimeRow,
+} from "@/lib/conversas/whatsapp-messages-realtime";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,8 +73,26 @@ type WaMessage = {
   media_url?: string | null;
   agent_id?: string | null;
   created_at: string;
-  send_status?: "sending" | "sent" | "failed" | null;
+  client_temp_id?: string | null;
+  delivery_status?: string | null;
+  send_status?: "sending" | "sent" | "delivered" | "read" | "failed" | null;
 };
+
+function rowToWaMessage(row: WhatsappMessageRealtimeRow | SyncChatMessage): WaMessage {
+  const kind = (row.kind ?? "text") as WaMessage["kind"];
+  return {
+    id: row.id,
+    direction: row.direction,
+    kind: ["text", "audio", "image", "video", "document"].includes(kind) ? kind : "text",
+    content: row.content ?? "",
+    media_url: row.media_url ?? null,
+    agent_id: row.agent_id ?? null,
+    created_at: row.created_at,
+    client_temp_id: row.client_temp_id ?? null,
+    delivery_status: row.delivery_status ?? null,
+    send_status: mapDeliveryToSendStatus(row.delivery_status) ?? (row as SyncChatMessage).send_status ?? null,
+  };
+}
 
 type InboxTab = "all" | "ia" | "unread";
 
@@ -200,28 +232,82 @@ async function apiLoadConnections(): Promise<ConnectionOption[]> {
 
 async function apiLoadMessages(
   remoteJid: string,
-): Promise<{ messages: WaMessage[]; aiEnabled: boolean }> {
+): Promise<{
+  messages: WaMessage[];
+  aiEnabled: boolean;
+  canHumanSend: boolean;
+  conversationMode: ConvMode;
+}> {
   const enc = encodeURIComponent(remoteJid);
   const res = await fetch(`/api/client/conversas/${enc}/messages`, { cache: "no-store" });
-  if (!res.ok) return { messages: [], aiEnabled: true };
+  if (!res.ok) {
+    return { messages: [], aiEnabled: true, canHumanSend: false, conversationMode: "automation" };
+  }
   const data = (await res.json()) as {
     messages: WaMessage[];
-    automation?: { enabled?: boolean };
+    automation?: {
+      enabled?: boolean;
+      can_human_send?: boolean;
+      conversation_mode?: ConvMode;
+    };
   };
+  const mode = data.automation?.conversation_mode
+    ?? (data.automation?.enabled === false ? "human" : "automation");
   return {
-    messages: data.messages ?? [],
+    messages: (data.messages ?? []).map((m) => ({
+      ...m,
+      send_status: m.send_status ?? mapDeliveryToSendStatus(m.delivery_status),
+    })),
     aiEnabled: data.automation?.enabled !== false,
+    canHumanSend: data.automation?.can_human_send ?? mode !== "automation",
+    conversationMode: mode,
   };
 }
 
-async function apiSendMessage(remoteJid: string, text: string): Promise<boolean> {
-  const enc = encodeURIComponent(remoteJid);
-  const res = await fetch(`/api/client/conversas/${enc}/send`, {
+async function apiSendMessage(
+  remoteJid: string,
+  text: string,
+  clientTempId: string,
+): Promise<WaMessage | null> {
+  const res = await fetch("/api/client/conversas/send", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ remoteJid, text, clientTempId }),
   });
-  return res.ok;
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string; message?: WaMessage };
+    const error = new Error(err.error ?? `Erro ${res.status} ao enviar`) as Error & {
+      persistedMessage?: WaMessage | null;
+      status?: number;
+    };
+    error.persistedMessage = err.message ?? null;
+    error.status = res.status;
+    throw error;
+  }
+  const data = (await res.json()) as { message?: WaMessage };
+  return data.message ?? null;
+}
+
+async function apiTakeoverConversation(remoteJid: string): Promise<{
+  canHumanSend: boolean;
+  conversationMode: ConvMode;
+}> {
+  const res = await fetch("/api/client/conversas/takeover", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ remoteJid }),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? `Erro ${res.status} ao assumir atendimento`);
+  }
+  const data = (await res.json()) as {
+    operation?: { conversation_mode?: ConvMode; can_human_send?: boolean };
+  };
+  return {
+    canHumanSend: data.operation?.can_human_send ?? true,
+    conversationMode: data.operation?.conversation_mode ?? "human",
+  };
 }
 
 async function apiSaveConversationToCrm(
@@ -415,16 +501,20 @@ function MessageBubble({ msg }: { msg: WaMessage }) {
 // ---------------------------------------------------------------------------
 
 export function AtendimentoV2({ session }: { session: ClientSession }) {
+  const tenantId = session.tenantId;
   const [conversations, setConversations] = useState<WaConversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedJid, setSelectedJid] = useState<string | null>(null);
   const [messages, setMessages] = useState<WaMessage[]>([]);
   const [aiEnabled, setAiEnabled] = useState(true);
+  const [canHumanSend, setCanHumanSend] = useState(false);
   const [msgLoading, setMsgLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<InboxTab>("all");
   const [compose, setCompose] = useState("");
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [takeoverBusy, setTakeoverBusy] = useState(false);
   const [showCrm, setShowCrm] = useState(true);
   const [savingToCrm, setSavingToCrm] = useState(false);
   const [saveToCrmError, setSaveToCrmError] = useState<string | null>(null);
@@ -450,9 +540,19 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const headerMenuRef = useRef<HTMLDivElement>(null);
   const filtersRef = useRef<HTMLDivElement>(null);
+  const selectedJidRef = useRef<string | null>(null);
+  const connectionFilterRef = useRef<string | null>(null);
 
   useClickOutside(headerMenuRef, headerMenuOpen, () => setHeaderMenuOpen(false));
   useClickOutside(filtersRef, filtersOpen, () => setFiltersOpen(false));
+
+  useEffect(() => {
+    selectedJidRef.current = selectedJid;
+  }, [selectedJid]);
+
+  useEffect(() => {
+    connectionFilterRef.current = connectionFilter;
+  }, [connectionFilter]);
 
   // Load available WhatsApp lines (QR Code + API Meta) para o filtro "Número"
   useEffect(() => {
@@ -476,15 +576,152 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
 
   // Load messages when selection changes
   useEffect(() => {
-    if (!selectedJid) return;
+    if (!selectedJid) {
+      setMessages([]);
+      setCanHumanSend(false);
+      return;
+    }
     setMsgLoading(true);
+    setSendError(null);
     apiLoadMessages(selectedJid)
-      .then(({ messages: msgs, aiEnabled: ai }) => {
+      .then(({ messages: msgs, aiEnabled: ai, canHumanSend: canSend, conversationMode }) => {
         setMessages(msgs);
         setAiEnabled(ai);
+        setCanHumanSend(canSend);
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.remoteJid !== selectedJid
+              ? c
+              : {
+                  ...c,
+                  unreadCount: 0,
+                  conversation_mode: conversationMode,
+                  messagesLoaded: true,
+                },
+          ),
+        );
       })
       .catch(() => {})
       .finally(() => setMsgLoading(false));
+  }, [selectedJid]);
+
+  // Realtime tenant-wide + poll fallback (lista 8s embutido no helper via onPoll separado abaixo)
+  useEffect(() => {
+    if (!tenantId) return;
+
+    const applyIncoming = (row: WhatsappMessageRealtimeRow) => {
+      const msg = rowToWaMessage(row);
+      const jid = row.remote_jid;
+      if (!jid) return;
+      const openJid = selectedJidRef.current;
+
+      setConversations((prev) => {
+        const existing = prev.find((c) => c.remoteJid === jid);
+        if (existing) {
+          return prev
+            .map((c) =>
+              c.remoteJid !== jid
+                ? c
+                : {
+                    ...c,
+                    lastContent: msg.content,
+                    lastKind: msg.kind,
+                    lastDirection: msg.direction,
+                    lastAt: msg.created_at,
+                    unreadCount:
+                      msg.direction === "inbound" && jid !== openJid
+                        ? c.unreadCount + 1
+                        : c.unreadCount,
+                  },
+            )
+            .sort((a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime());
+        }
+        return [
+          {
+            remoteJid: jid,
+            lastContent: msg.content,
+            lastKind: msg.kind,
+            lastDirection: msg.direction,
+            lastAt: msg.created_at,
+            unreadCount: msg.direction === "inbound" && jid !== openJid ? 1 : 0,
+            messages: [],
+            messagesLoaded: false,
+          },
+          ...prev,
+        ];
+      });
+
+      if (jid === openJid) {
+        setMessages((prev) => appendMessageDeduped(prev, msg) as WaMessage[]);
+      }
+    };
+
+    const applyUpdate = (row: WhatsappMessageRealtimeRow) => {
+      const msg = rowToWaMessage(row);
+      if (row.remote_jid !== selectedJidRef.current) return;
+      setMessages((prev) => appendMessageDeduped(prev, msg) as WaMessage[]);
+    };
+
+    return subscribeToWhatsappMessages({
+      tenantId,
+      onInsert: applyIncoming,
+      onUpdate: applyUpdate,
+    });
+  }, [tenantId]);
+
+  // Poll lista a cada 8s
+  useEffect(() => {
+    const refreshConvs = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      try {
+        const list = await apiLoadConversations(connectionFilterRef.current);
+        setConversations((prev) => {
+          const prevByJid = new Map(prev.map((c) => [c.remoteJid, c]));
+          return list.map((c) => {
+            const old = prevByJid.get(c.remoteJid);
+            return old
+              ? {
+                  ...c,
+                  unreadCount:
+                    c.remoteJid === selectedJidRef.current ? 0 : Math.max(c.unreadCount, old.unreadCount),
+                  messages: old.messages,
+                  messagesLoaded: old.messagesLoaded,
+                }
+              : c;
+          });
+        });
+      } catch {
+        /* ignore poll errors */
+      }
+    };
+    const id = setInterval(() => void refreshConvs(), 8_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Poll chat aberto a cada 2.5s
+  useEffect(() => {
+    if (!selectedJid) return;
+    const jid = selectedJid;
+    const refreshMsgs = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      try {
+        const { messages: polled, aiEnabled: ai, canHumanSend: canSend, conversationMode } =
+          await apiLoadMessages(jid);
+        if (selectedJidRef.current !== jid) return;
+        setMessages((prev) => mergePolledMessages(prev, polled) as WaMessage[]);
+        setAiEnabled(ai);
+        setCanHumanSend(canSend);
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.remoteJid !== jid ? c : { ...c, conversation_mode: conversationMode, unreadCount: 0 },
+          ),
+        );
+      } catch {
+        /* ignore */
+      }
+    };
+    const id = setInterval(() => void refreshMsgs(), 2_500);
+    return () => clearInterval(id);
   }, [selectedJid]);
 
   // Scroll to bottom when messages change
@@ -577,18 +814,84 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
     }
   };
 
-  const handleSend = async () => {
+  const handleTakeover = useCallback(async () => {
+    if (!selectedJid || takeoverBusy) return;
+    setTakeoverBusy(true);
+    setSendError(null);
+    try {
+      const result = await apiTakeoverConversation(selectedJid);
+      setCanHumanSend(result.canHumanSend);
+      setAiEnabled(false);
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.remoteJid !== selectedJid
+            ? c
+            : { ...c, conversation_mode: result.conversationMode },
+        ),
+      );
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "Não foi possível assumir o atendimento.");
+    } finally {
+      setTakeoverBusy(false);
+    }
+  }, [selectedJid, takeoverBusy]);
+
+  const handleSend = useCallback(async () => {
     if (!selectedJid || !compose.trim() || sending) return;
+    if (!canHumanSend) {
+      setSendError("Assuma o atendimento para enviar mensagens humanas.");
+      return;
+    }
     const text = compose.trim();
+    const jid = selectedJid;
+    const clientTempId = createClientTempId();
+    const tempMsg = createOptimisticOutboundMessage({ text, clientTempId }) as WaMessage;
     setCompose("");
     setSending(true);
-    const ok = await apiSendMessage(selectedJid, text);
-    if (ok) {
-      const { messages: msgs } = await apiLoadMessages(selectedJid);
-      setMessages(msgs);
+    setSendError(null);
+    setMessages((prev) => [...prev, tempMsg]);
+    setConversations((prev) =>
+      prev
+        .map((c) =>
+          c.remoteJid !== jid
+            ? c
+            : {
+                ...c,
+                lastContent: text,
+                lastKind: "text",
+                lastDirection: "outbound",
+                lastAt: tempMsg.created_at,
+              },
+        )
+        .sort((a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime()),
+    );
+
+    try {
+      const saved = await apiSendMessage(jid, text, clientTempId);
+      if (saved) {
+        setMessages((prev) =>
+          reconcileOptimisticMessage(prev, clientTempId, rowToWaMessage(saved)) as WaMessage[],
+        );
+      }
+    } catch (e) {
+      const persisted =
+        e && typeof e === "object" && "persistedMessage" in e
+          ? (e as { persistedMessage?: WaMessage | null }).persistedMessage
+          : null;
+      setSendError(e instanceof Error ? e.message : "Erro ao enviar mensagem.");
+      setMessages((prev) =>
+        persisted
+          ? (reconcileOptimisticMessage(prev, clientTempId, {
+              ...rowToWaMessage(persisted),
+              send_status: "failed",
+              delivery_status: "failed",
+            }) as WaMessage[])
+          : (markOptimisticMessageFailed(prev, clientTempId) as WaMessage[]),
+      );
+    } finally {
+      setSending(false);
     }
-    setSending(false);
-  };
+  }, [selectedJid, compose, sending, canHumanSend]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -983,29 +1286,29 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
 
           {/* Composer + AI suggestion */}
           <div className="border-t border-mc-border bg-mc-surface px-6 pb-5 pt-3.5">
-            {/* AI suggestion bar */}
-            {aiEnabled && selectedConv.handoff_suggested && (
+            {/* Takeover when automation still owns the thread */}
+            {!canHumanSend && (
               <div className="mb-3 flex items-start gap-3 rounded-[12px] border border-[#f7ddcf] bg-[#fff7f3] px-4 py-3">
                 <span className="mt-0.5 shrink-0 text-base">✨</span>
                 <div className="min-w-0 flex-1 text-[13px] leading-relaxed text-[#7c3a1e]">
-                  <span className="font-bold text-[#B22A00]">Sugestão da IA: </span>
-                  Deseja transferir este lead para um atendente humano?
+                  <span className="font-bold text-[#B22A00]">Atendimento automático ativo. </span>
+                  Assuma a conversa para enviar mensagens como humano.
                 </div>
                 <button
                   type="button"
-                  className="shrink-0 rounded-mc-base px-3 py-1.5 text-[12px] font-semibold text-mc-muted transition hover:bg-mc-surface-2"
-                >
-                  Ignorar
-                </button>
-                <button
-                  type="button"
-                  className="shrink-0 rounded-mc-base px-3 py-1.5 text-[12px] font-semibold text-white transition"
+                  onClick={() => void handleTakeover()}
+                  disabled={takeoverBusy}
+                  className="shrink-0 rounded-mc-base px-3 py-1.5 text-[12px] font-semibold text-white transition disabled:opacity-50"
                   style={{ backgroundColor: "var(--color-brand)" }}
                 >
-                  Assumir
+                  {takeoverBusy ? "Assumindo…" : "Assumir"}
                 </button>
               </div>
             )}
+
+            {sendError ? (
+              <p className="mb-2 text-[12.5px] font-semibold text-error">{sendError}</p>
+            ) : null}
 
             {/* Compose input */}
             <div className="flex items-center gap-3 rounded-[13px] bg-mc-surface-2 px-4 py-2">
@@ -1021,8 +1324,13 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
                 value={compose}
                 onChange={(e) => setCompose(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Escreva uma mensagem ou deixe a IA responder…"
-                className="flex-1 resize-none bg-transparent py-2 text-[13.5px] text-mc-text placeholder:text-mc-muted focus:outline-none"
+                placeholder={
+                  canHumanSend
+                    ? "Escreva uma mensagem…"
+                    : "Assuma o atendimento para escrever…"
+                }
+                disabled={!canHumanSend}
+                className="flex-1 resize-none bg-transparent py-2 text-[13.5px] text-mc-text placeholder:text-mc-muted focus:outline-none disabled:opacity-60"
               />
               <button
                 type="button"
@@ -1034,7 +1342,7 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
               <button
                 type="button"
                 onClick={() => void handleSend()}
-                disabled={!compose.trim() || sending}
+                disabled={!canHumanSend || !compose.trim() || sending}
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-mc-base text-white transition active:scale-[0.98] disabled:opacity-40"
                 style={{ backgroundColor: "var(--color-brand)" }}
                 aria-label="Enviar"
