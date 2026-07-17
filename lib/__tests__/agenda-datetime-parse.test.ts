@@ -269,4 +269,39 @@ describe("contexto entre jobs: complemento herda a âncora de data do turno ante
     expect(result?.date).toBe(addDaysInTimezone(TZ, 1, NOW));
     expect(result?.time).toBe("15:00");
   });
+
+  it("Amanhã as 12 hrs resolve data+hora no fuso do agente", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "Amanhã as 12 hrs",
+      timezone: TZ,
+      now: NOW,
+    });
+    expect(result).toEqual({ date: addDaysInTimezone(TZ, 1, NOW), time: "12:00" });
+    expect(textHasExplicitTime("Amanhã as 12 hrs")).toBe(true);
+    expect(textHasExplicitTime("12 hs")).toBe(true);
+  });
+
+  it("âncora só de data não engole fallback date+time do modelo", () => {
+    expect(
+      resolveScheduleDateTimeFromText({
+        clientText: "amanhã",
+        timezone: TZ,
+        now: NOW,
+        fallbackDate: "10/06/2026",
+        fallbackTime: "14:00",
+      }),
+    ).toBeNull();
+  });
+
+  it("pedido de agendar sem data/hora não engole fallback do modelo", () => {
+    expect(
+      resolveScheduleDateTimeFromText({
+        clientText: "Quero agendar a entrevista",
+        timezone: TZ,
+        now: NOW,
+        fallbackDate: "10/06/2026",
+        fallbackTime: "14:00",
+      }),
+    ).toBeNull();
+  });
 });
