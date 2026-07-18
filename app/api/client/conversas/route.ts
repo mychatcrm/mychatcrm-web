@@ -31,11 +31,17 @@ export async function GET(request: Request) {
 
   const sb = createSupabaseServiceClient();
 
+  // Sem limite, esta consulta buscava TODO o histórico do tenant a cada carga
+  // e a cada poll de 8s (ver AtendimentoV2.tsx) — piora com o tempo conforme o
+  // volume cresce. O cap abaixo é uma rede de segurança generosa (>10x o
+  // volume atual de produção): não muda nada hoje, só evita que a consulta
+  // fique ilimitada conforme o histórico do tenant cresce.
   let messagesQuery = sb
     .from("whatsapp_messages")
     .select("remote_jid, content, kind, direction, created_at")
     .eq("tenant_id", session.tenantId)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(5000);
   if (connectionId) messagesQuery = messagesQuery.eq("connection_id", connectionId);
 
   const [{ data, error }, { data: states }, { data: leads }] = await Promise.all([

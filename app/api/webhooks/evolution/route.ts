@@ -705,10 +705,26 @@ export async function POST(request: Request) {
           const journey = journeyAuth.journey;
           const agentId = journeyAuth.ok ? journeyAuth.agentId : null;
 
-          let inboundMedia: Awaited<ReturnType<typeof downloadAndStoreMedia>> = null;
-          if (msg.type === "audio" || msg.type === "image" || msg.type === "video" || msg.type === "document") {
-            inboundMedia = await downloadAndStoreMedia(msg, row.tenant_id, instanceName);
-          }
+          // Mídia (áudio/imagem/vídeo/documento) NÃO é baixada aqui de forma síncrona.
+          // O download+upload R2 pode levar até ~15s (Evolution decripta com a mediaKey do
+          // Baileys) — isso atrasava tanto a resposta do agente quanto a própria gravação da
+          // linha em whatsapp_messages (e, por consequência, o Realtime do /dashboard/conversas,
+          // que só dispara depois de a linha existir). A linha é gravada AGORA sem mediaUrl/
+          // storageKey; o download roda em segundo plano (waitUntil) e atualiza a linha via
+          // UPDATE quando terminar — o frontend já reconcilia updates parciais pelo mesmo `id`
+          // (ver appendMessageDeduped/messagesMatchForDedup em lib/conversas/message-sync.ts).
+          const isMediaMsg =
+            msg.type === "audio" || msg.type === "image" || msg.type === "video" || msg.type === "document";
+          const mediaFileNameSync =
+            msg.type === "document" && "fileName" in msg && msg.fileName?.trim()
+              ? msg.fileName.trim()
+              : null;
+          const mediaCaptionSync =
+            "caption" in msg && typeof msg.caption === "string" ? msg.caption : null;
+          const mediaDurationSync =
+            msg.type === "video" && "seconds" in msg && typeof msg.seconds === "number"
+              ? msg.seconds
+              : null;
 
           const contactName = extractContactNameFromPayload(payload, msg);
           const { data: existingLead } = leadPhone
@@ -736,12 +752,12 @@ export async function POST(request: Request) {
             leadId,
             journeyId: journey?.id ?? null,
             connectionId: row.id,
-            mediaUrl: inboundMedia?.mediaUrl ?? null,
-            mimeType: inboundMedia?.mimeType ?? ("mimetype" in msg ? msg.mimetype : null),
-            storageKey: inboundMedia?.storageKey ?? null,
-            fileName: inboundMedia?.fileName ?? null,
-            caption: inboundMedia?.caption ?? null,
-            mediaDurationSeconds: inboundMedia?.durationSeconds ?? null,
+            mediaUrl: null,
+            mimeType: "mimetype" in msg ? msg.mimetype : null,
+            storageKey: null,
+            fileName: mediaFileNameSync,
+            caption: mediaCaptionSync,
+            mediaDurationSeconds: mediaDurationSync,
             transcriptionStatus: msg.type === "audio" ? "pending" : null,
             analysisStatus:
               msg.type === "video" ? "unsupported" : msg.type === "image" ? "pending" : null,
@@ -759,6 +775,30 @@ export async function POST(request: Request) {
               remote_jid_last4: msg.remoteJid.replace(/\D/g, "").slice(-4),
             });
             return null;
+          }
+
+          if (isMediaMsg && inboundSaved && !inboundSaved.duplicate) {
+            const rowId = inboundSaved.id;
+            waitUntil(
+              downloadAndStoreMedia(msg, row.tenant_id, instanceName)
+                .then(async (media) => {
+                  if (!media) return;
+                  const sbMedia = createSupabaseServiceClient();
+                  const { error: mediaUpdateError } = await sbMedia
+                    .from("whatsapp_messages")
+                    .update({ media_url: media.mediaUrl, storage_key: media.storageKey })
+                    .eq("id", rowId);
+                  if (mediaUpdateError) {
+                    console.warn("[webhooks/evolution] deferred media update error", mediaUpdateError.message);
+                  }
+                })
+                .catch((e) => {
+                  console.warn(
+                    "[webhooks/evolution] deferred media download failed",
+                    e instanceof Error ? e.message : e,
+                  );
+                }),
+            );
           }
 
           const savedAt =
@@ -845,7 +885,6 @@ export async function POST(request: Request) {
             msg,
             webhookReceivedAt,
             agentId,
-            inboundMedia,
             contactName,
             leadId,
             journey,
