@@ -6,7 +6,9 @@ import {
 } from "@/lib/integrations/evolution-connect-qr";
 import { buildEvolutionWebhookUrl, getPublicBaseUrlFromRequest } from "@/lib/integrations/evolution-webhook-url";
 import {
+  applyClientEvolutionInstanceSettings,
   buildFreshEvolutionInstanceName,
+  CLIENT_EVOLUTION_INSTANCE_SETTINGS,
   evolutionConnectionState,
   evolutionCreateInstance,
   evolutionEnsureWebhook,
@@ -161,7 +163,15 @@ export async function POST(request: Request) {
   const webhookUrl = buildEvolutionWebhookUrl(publicBase, webhookSecret);
   const defaultAgentId = process.env.EVOLUTION_DEFAULT_AGENT_ID?.trim() || null;
 
-  let createResult = await evolutionCreateInstance({ instanceName, webhookUrl });
+  // `alwaysOnline: true` inline na criação — evita que a mensagem seguinte de um
+  // burst chegue ~60 s atrasada (WhatsApp entregando por retry quando o device
+  // aparece offline). Reforçado por applyClientEvolutionInstanceSettings abaixo,
+  // pois o /instance/create nem sempre persiste settings inline.
+  let createResult = await evolutionCreateInstance({
+    instanceName,
+    webhookUrl,
+    settings: { ...CLIENT_EVOLUTION_INSTANCE_SETTINGS },
+  });
   if (!createResult.ok && createResult.status === 403) {
     const probe = await evolutionConnectionState(instanceName);
     if (!probe.ok && probe.status === 404) {
@@ -186,6 +196,9 @@ export async function POST(request: Request) {
       console.warn("[evolution/session] setWebhook", wh.status, wh.error);
     }
   }
+
+  // Garante os settings mesmo quando o create não os persistiu inline (idempotente).
+  await applyClientEvolutionInstanceSettings(instanceName);
 
   // Verify-after-write: confirma que a Evolution realmente gravou o webhook
   // (enabled + URL certa + MESSAGES_UPSERT). evolutionEnsureWebhook re-aplica

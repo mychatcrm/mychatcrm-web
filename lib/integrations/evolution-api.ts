@@ -144,6 +144,40 @@ export async function evolutionFetchJson<T>(
   }
 }
 
+/**
+ * Settings Baileys aplicados às instâncias QR de CLIENTE.
+ *
+ * `alwaysOnline: true` (→ Baileys `markOnlineOnConnect`) faz o dispositivo se
+ * apresentar como online ao WhatsApp. Sem isso, o WhatsApp multi-device entrega
+ * as mensagens seguintes de um mesmo burst por um caminho atrasado/em lote
+ * (retry/re-decriptação), gerando ~60 s de atraso por mensagem na continuidade
+ * do atendimento — só a primeira mensagem chega em tempo real. A instância do
+ * agente do sistema já usava este ajuste; as de cliente ficavam sem ele.
+ *
+ * NÃO incluir `groupsIgnore`/`readMessages` aqui: mudariam comportamento visível
+ * do cliente (parar de receber grupos / marcar "visto"/tique azul aos leads).
+ */
+export const CLIENT_EVOLUTION_INSTANCE_SETTINGS = {
+  alwaysOnline: true,
+} as const;
+
+/** Aplica os settings de cliente numa instância já criada (idempotente; falha não é crítica). */
+export async function applyClientEvolutionInstanceSettings(instanceName: string): Promise<void> {
+  const trimmed = instanceName.trim();
+  if (!trimmed) return;
+  const res = await evolutionSetInstanceSettings({
+    instanceName: trimmed,
+    settings: { ...CLIENT_EVOLUTION_INSTANCE_SETTINGS },
+  });
+  if (!res.ok) {
+    console.warn("[evolution-api] apply_client_instance_settings_failed", {
+      instanceName: trimmed,
+      status: res.status,
+      error: res.error,
+    });
+  }
+}
+
 export type EvolutionCreateInstanceResponse = {
   instance?: { instanceName?: string; status?: string };
   qrcode?: {
