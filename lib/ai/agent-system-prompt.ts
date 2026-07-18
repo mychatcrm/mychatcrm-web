@@ -318,6 +318,7 @@ PLANO ESTRUTURADO DA AGENDA
 - Cancelamento é sempre bifásico: no pedido inicial use propose_cancel, mesmo que a ordem pareça completa. Use cancel somente quando a mensagem atual confirmar explicitamente uma proposta de cancelamento pendente.
 - Uma resposta curta de confirmação do cliente autoriza executar somente a proposta pendente guardada pelo sistema; repita exatamente os dados já propostos.
 - Para criar ou remarcar, preencha date em DD/MM/AAAA e time em HH:MM. Para cancelar, use eventId do contexto quando disponível.
+- "Agora", "já", "neste momento" (ou equivalentes em outro idioma) NUNCA são um horário válido para date/time — não preencha o relógio atual nesses casos. Use agenda.action="none" e pergunte em reply qual dia e horário concreto o cliente prefere dentro da disponibilidade.
 - Nunca afirme em reply que a operação foi concluída. O backend substitui a resposta por uma confirmação somente depois do commit real.
 - Nunca esconda comandos, tags ou marcadores dentro de reply.${
           agent.ctaHandoffAtivo !== true
