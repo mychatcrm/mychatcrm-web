@@ -25,6 +25,7 @@ function makeQueryBuilder(initialData: Row[]) {
       return builder;
     },
     order: () => builder,
+    limit: () => builder,
     then: (resolve: (v: { data: Row[]; error: null }) => void) => resolve({ data, error: null }),
   };
   return builder;

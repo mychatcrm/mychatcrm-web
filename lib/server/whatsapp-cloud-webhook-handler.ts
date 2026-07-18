@@ -8,6 +8,7 @@
  * das duas rotas evita depender de qual delas está de fato registada na Meta.
  */
 import { NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import {
   parseWhatsAppCloudInbound,
   parseWhatsAppCloudPayload,
@@ -247,6 +248,12 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
     occurredAt: String(inboundSaved.created_at ?? receivedAt),
     receivedAt: String(inboundSaved.received_at ?? receivedAt),
     smartWait: { ...smartWaitFromMetadata(metadata), enabled: true },
+    // Igual à Evolution: mantém o ACK do webhook Meta fora do tempo de espera
+    // do disparo do processador (a chamada HTTP interna pode levar até 8s).
+    // Sem isso, o handler bloqueava a própria resposta ao Meta nesse tempo.
+    deferProcessor: (task) => {
+      waitUntil(task.then(() => undefined));
+    },
   });
   if (flow.reason === "job_create_failed") {
     console.error("[webhooks/whatsapp] durable agent turn was not created", {

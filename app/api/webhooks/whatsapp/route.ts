@@ -3,6 +3,7 @@ import { verifyMetaSignature256 } from "@/lib/integrations/whatsapp-cloud";
 import { handleWhatsAppCloudWebhookPayload } from "@/lib/server/whatsapp-cloud-webhook-handler";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 /** Verificação do webhook (Meta envia GET na subscrição). */
 export async function GET(request: Request) {
