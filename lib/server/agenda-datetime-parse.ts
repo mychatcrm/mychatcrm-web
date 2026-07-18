@@ -115,6 +115,19 @@ function startOfNextCalendarWeek(from: WallClock): WallClock {
   return addDays(from, daysUntilMonday);
 }
 
+/**
+ * Expressões de "agora/imediatamente" em pt/en/es/fr/de/it — nunca carregam uma
+ * data/hora real, mas o modelo pode preencher agenda.date/time com o relógio
+ * atual ao ouvi-las (ver textHasImmediateNowExpression).
+ */
+const IMMEDIATE_NOW_RE =
+  /\b(?:agora(?:\s+mesmo)?|ja|nes(?:se|te|sa|ta)\s+(?:momento|instante|hora)|right\s+now|now|asap|ahora(?:\s+mismo)?|ahorita|ya|maintenant|jetzt|adesso|subito)\b/i;
+
+/** true se o texto for (só) um pedido de horário imediato — "agora", "já", "now", "ahora"... */
+export function textHasImmediateNowExpression(text: string): boolean {
+  return IMMEDIATE_NOW_RE.test(foldAccents(text.toLowerCase()));
+}
+
 const MONTH_INDEX: Record<string, number> = {
   janeiro: 1,
   fevereiro: 2,
@@ -573,14 +586,18 @@ export function resolveScheduleDateTimeFromText(params: {
   }
 
   // Nunca inventar slot completo via fallback do modelo quando o lead já trouxe
-  // âncora parcial (só data, só hora) ou pedido de agenda sem data/hora.
+  // âncora parcial (só data, só hora), pedido de agenda sem data/hora, ou só
+  // uma expressão de "agora/imediatamente" (o modelo pode ter preenchido o
+  // relógio atual, que já nasce passado no instante da validação).
   if (params.fallbackDate && params.fallbackTime) {
     const partialXor = clientHasAnchor !== clientHasTime;
     const incompleteScheduleAsk =
       !clientHasAnchor &&
       !clientHasTime &&
       /\b(?:agendar|marcar|remarcar|reagendar|agendamento)\b/i.test(clientFolded);
-    if (partialXor || incompleteScheduleAsk) return null;
+    const immediateNowOnly =
+      !clientHasAnchor && !clientHasTime && IMMEDIATE_NOW_RE.test(clientFolded);
+    if (partialXor || incompleteScheduleAsk || immediateNowOnly) return null;
     return { date: params.fallbackDate, time: params.fallbackTime };
   }
 

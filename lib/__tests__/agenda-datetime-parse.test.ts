@@ -4,6 +4,7 @@ import {
   parseAppointmentDateTime,
   resolveScheduleDateTimeFromText,
   textHasExplicitTime,
+  textHasImmediateNowExpression,
   textHasInvalidExplicitTime,
 } from "@/lib/server/agenda-datetime-parse";
 
@@ -325,5 +326,57 @@ describe("contexto entre jobs: complemento herda a âncora de data do turno ante
         fallbackTime: "14:00",
       }),
     ).toBeNull();
+  });
+});
+
+describe("'agora'/'já' nunca vira horário — incidente 'Esse horário já passou' (captura de tela)", () => {
+  it("detecta expressões de 'agora/imediato' em vários idiomas", () => {
+    expect(textHasImmediateNowExpression("Nessa agora")).toBe(true);
+    expect(textHasImmediateNowExpression("agora mesmo")).toBe(true);
+    expect(textHasImmediateNowExpression("já")).toBe(true);
+    expect(textHasImmediateNowExpression("neste momento")).toBe(true);
+    expect(textHasImmediateNowExpression("right now")).toBe(true);
+    expect(textHasImmediateNowExpression("ahora mismo")).toBe(true);
+    expect(textHasImmediateNowExpression("maintenant")).toBe(true);
+    expect(textHasImmediateNowExpression("jetzt")).toBe(true);
+    expect(textHasImmediateNowExpression("adesso")).toBe(true);
+    expect(textHasImmediateNowExpression("segunda-feira às 14h")).toBe(false);
+  });
+
+  it("'Nessa agora' (cenário exato da captura de tela) não engole o fallback do modelo — pede esclarecimento", () => {
+    expect(
+      resolveScheduleDateTimeFromText({
+        clientText: "Nessa agora",
+        timezone: TZ,
+        now: NOW,
+        // Simula o plano estruturado que o modelo teria preenchido (hoje + hora atual).
+        fallbackDate: "05/06/2026",
+        fallbackTime: "12:00",
+      }),
+    ).toBeNull();
+  });
+
+  it("'agora mesmo' sozinho também não engole o fallback do modelo", () => {
+    expect(
+      resolveScheduleDateTimeFromText({
+        clientText: "pode ser agora mesmo",
+        timezone: TZ,
+        now: NOW,
+        fallbackDate: "05/06/2026",
+        fallbackTime: "12:00",
+      }),
+    ).toBeNull();
+  });
+
+  it("data/hora real continua resolvendo normalmente mesmo com a palavra 'agora' no contexto (não regressão)", () => {
+    // O cliente dá uma data/hora reais no mesmo turno — clientHasAnchor/clientHasTime
+    // já são true, então a veto de "agora" nunca é avaliada.
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "pode ser segunda-feira às 14h",
+      timezone: TZ,
+      now: NOW,
+    });
+    expect(result?.time).toBe("14:00");
+    expect(result?.date).not.toBeNull();
   });
 });
