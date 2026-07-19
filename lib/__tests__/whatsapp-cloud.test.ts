@@ -164,6 +164,39 @@ describe("sendWhatsAppTemplateMessage", () => {
     });
   });
 
+  it("regressão real: mensagem multi-linha (2026-07-19, erro 132018) vira parâmetro de uma linha só", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ messages: [{ id: "wamid.T3" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const multilineMessage = [
+      "Código MyChatCRM: 123456.",
+      "Use este código em Configurações para confirmar seu telefone.",
+      "Ele    expira em 10 minutos.",
+    ].join("\n");
+
+    await sendWhatsAppTemplateMessage({
+      toWaId: "5562993580574",
+      templateName: "mychatcrm_agenda_notification_v1",
+      languageCode: "pt_BR",
+      bodyParams: [multilineMessage],
+      phoneNumberId: "PN123",
+      accessToken: "token-abc",
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(init.body));
+    const sentText = body.template.components[0].parameters[0].text as string;
+    expect(sentText).not.toMatch(/[\n\t]/);
+    expect(sentText).not.toMatch(/ {5,}/);
+    expect(sentText).toBe(
+      "Código MyChatCRM: 123456. Use este código em Configurações para confirmar seu telefone. Ele expira em 10 minutos.",
+    );
+  });
+
   it("omits components when there are no body params", async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ messages: [{ id: "wamid.T2" }] }), {

@@ -205,6 +205,15 @@ export async function sendWhatsAppTextMessage(params: {
 }
 
 /**
+ * A Meta rejeita parâmetro de template com quebra de linha/tab ou mais de 4
+ * espaços seguidos (erro 132018) — corpos de mensagem no app são compostos em
+ * múltiplas linhas, então precisam virar uma única linha antes de virar {{n}}.
+ */
+function sanitizeTemplateParamText(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/**
  * Envia um template aprovado — obrigatório para mensagens iniciadas pela
  * empresa fora da janela de atendimento de 24h (texto livre é aceito mas
  * descartado pela Meta com erro 131047 nesse cenário).
@@ -223,7 +232,10 @@ export async function sendWhatsAppTemplateMessage(params: {
       ? [
           {
             type: "body",
-            parameters: params.bodyParams.map((text) => ({ type: "text", text: text.slice(0, 1024) })),
+            parameters: params.bodyParams.map((text) => ({
+              type: "text",
+              text: sanitizeTemplateParamText(text.slice(0, 1024)),
+            })),
           },
         ]
       : undefined;
