@@ -41,6 +41,7 @@ describe("bucketMetaLeadEventStep", () => {
       manual_assigned_to_human: "ok",
       skipped_selected_connection_unavailable: "erro",
       selected_connection_reconciled: "novo",
+      cloud_to_evolution_fallback: "novo",
     };
 
     for (const step of META_LEAD_EVENT_STEPS) {

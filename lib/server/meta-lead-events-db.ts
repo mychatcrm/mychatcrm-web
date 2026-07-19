@@ -39,6 +39,7 @@ export const META_LEAD_EVENT_STEPS = [
   "manual_assigned_to_human",
   "skipped_selected_connection_unavailable",
   "selected_connection_reconciled",
+  "cloud_to_evolution_fallback",
 ] as const;
 
 export type MetaLeadEventStep = (typeof META_LEAD_EVENT_STEPS)[number];
