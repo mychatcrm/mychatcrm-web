@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
+import { validateCheckoutPhone } from "@/lib/checkout-phone";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
-import {
-  normalizeWhatsAppCloudToWaId,
-  sendWhatsAppTextMessage,
-} from "@/lib/integrations/whatsapp-cloud";
+import { sendWhatsAppTextMessage } from "@/lib/integrations/whatsapp-cloud";
 import { getWhatsAppCloudConnection } from "@/lib/server/whatsapp-cloud-connections";
 import { assertSlotIndexAllowed } from "@/lib/server/whatsapp-slot-server";
 import { getExtraWhatsappSlots } from "@/lib/server/whatsapp-extra-slots-db";
@@ -48,13 +46,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "slotIndex inválido" }, { status: 400 });
   }
 
-  const toNumber = normalizeWhatsAppCloudToWaId(body.toNumber ?? "");
-  if (toNumber.length < 10) {
-    return NextResponse.json(
-      { error: "Informe um número válido com DDI (só dígitos, ex.: 5562999999999)." },
-      { status: 400 },
-    );
+  const phoneValidation = validateCheckoutPhone(body.toNumber ?? "");
+  if (!phoneValidation.ok) {
+    return NextResponse.json({ error: phoneValidation.message }, { status: 400 });
   }
+  const toNumber = phoneValidation.phone;
 
   const conn = await getWhatsAppCloudConnection(session.tenantId, slotIndex);
   if (!conn?.active) {
