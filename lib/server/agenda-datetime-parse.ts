@@ -245,7 +245,14 @@ function parseTimeFromText(text: string): ParsedTime | null {
   const horas = normalized.match(
     /\b(\d{1,2})\s*(?:horas?|hrs?|hs)\b(?:\s+da\s+(manh[ãa]|tarde|noite))?/,
   );
-  if (horas) return validTime(applyDayPeriod(Number(horas[1]), horas[2]), 0);
+  if (horas) {
+    // Sem "da manhã/tarde/noite", "3 hrs" é tão ambíguo quanto "às 3" (ramo
+    // atHour, logo abaixo) — precisa da mesma marcação para poder ser
+    // corrigido por resolveAmbiguousTimeForAvailability quando cabe só uma
+    // leitura na janela de disponibilidade do agente.
+    const hour = applyDayPeriod(Number(horas[1]), horas[2]);
+    return validTime(hour, 0, !horas[2] && hour > 0 && hour < 12);
+  }
 
   const atHour = normalized.match(
     /\b(?:às|as|a)\s+(\d{1,2})\b(?:\s*(?:horas?|hrs?|hs))?(?:\s+da\s+(manh[ãa]|tarde|noite))?/,

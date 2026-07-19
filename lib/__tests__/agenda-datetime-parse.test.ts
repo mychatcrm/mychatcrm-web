@@ -282,6 +282,30 @@ describe("contexto entre jobs: complemento herda a âncora de data do turno ante
     expect(textHasExplicitTime("quero agendar uma reunião com o especialista")).toBe(false);
   });
 
+  it("interpreta '3 hrs' como ambíguo e resolve para 15:00 dentro do expediente (incidente de produção)", () => {
+    expect(textHasExplicitTime("3 hrs")).toBe(true);
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "Sim",
+      timezone: TZ,
+      now: NOW,
+      recentClientMessages: ["Pode ser segunda agora", "3 hrs"],
+      agendaDisponibilidade: { ativo: true, horaInicio: "09:00", horaFim: "18:00" },
+    });
+    expect(result?.time).toBe("15:00");
+    expect(result?.date).toBe("08/06/2026");
+  });
+
+  it("'3 hrs' isolado sem janela de disponibilidade continua 03:00 (sem mudança de comportamento)", () => {
+    const result = resolveScheduleDateTimeFromText({
+      clientText: "Sim",
+      timezone: TZ,
+      now: NOW,
+      recentClientMessages: ["Pode ser segunda agora", "3 hrs"],
+    });
+    expect(result?.time).toBe("03:00");
+    expect(result?.date).toBe("08/06/2026");
+  });
+
   it("correção de hora do lead preserva só a data da proposta anterior", () => {
     const result = resolveScheduleDateTimeFromText({
       clientText: "as 3 da tarde",
