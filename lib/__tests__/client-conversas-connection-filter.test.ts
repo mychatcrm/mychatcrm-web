@@ -64,6 +64,10 @@ describe("GET /api/client/conversas — filtro por connectionId", () => {
         if (table === "leads") return makeQueryBuilder([]);
         throw new Error(`unexpected table ${table}`);
       },
+      // RPC não implementado neste mock — a rota já tem fallback pro scan
+      // direto em whatsapp_messages quando o RPC falha (mesmo caminho usado
+      // em produção antes da função list_tenant_inbox_conversations existir).
+      rpc: () => Promise.resolve({ data: null, error: { message: "rpc not mocked" } }),
     });
   });
 
