@@ -68,6 +68,12 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const [waCloudTestResultBySlot, setWaCloudTestResultBySlot] = useState<
     Record<number, { ok: boolean; text: string } | null>
   >({});
+  // ── QR / Evolution — teste de envio (texto livre), mesmo padrão da API Meta ──
+  const [evoTestPhoneBySlot, setEvoTestPhoneBySlot] = useState<Record<number, string>>({});
+  const [evoTestBusySlot, setEvoTestBusySlot] = useState<number | null>(null);
+  const [evoTestResultBySlot, setEvoTestResultBySlot] = useState<
+    Record<number, { ok: boolean; text: string } | null>
+  >({});
   // Pre-loaded SDK config so FB.login() can be called synchronously on click
   const waCloudConfigRef = useRef<{ app_id: string; config_id: string } | null>(null);
   // Why the SDK pre-load failed (ad blocker, CDN down) — shown on click for a precise message
@@ -384,6 +390,33 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     },
     [loadConnections],
   );
+
+  const sendEvoTest = useCallback(async (slotIndex: number) => {
+    const toNumber = (evoTestPhoneBySlot[slotIndex] ?? "").replace(/\D/g, "");
+    setEvoTestBusySlot(slotIndex);
+    setEvoTestResultBySlot((prev) => ({ ...prev, [slotIndex]: null }));
+    try {
+      const res = await fetch("/api/client/whatsapp/evolution/test-send", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slotIndex, toNumber }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) {
+        setEvoTestResultBySlot((prev) => ({
+          ...prev,
+          [slotIndex]: { ok: false, text: data.error ?? "Falha ao enviar teste." },
+        }));
+        return;
+      }
+      setEvoTestResultBySlot((prev) => ({ ...prev, [slotIndex]: { ok: true, text: "Enviado com sucesso." } }));
+    } catch {
+      setEvoTestResultBySlot((prev) => ({ ...prev, [slotIndex]: { ok: false, text: "Erro de rede ao enviar teste." } }));
+    } finally {
+      setEvoTestBusySlot(null);
+    }
+  }, [evoTestPhoneBySlot]);
 
   const sendWaCloudTest = useCallback(async (slotIndex: number) => {
     const toNumber = (waCloudTestPhoneBySlot[slotIndex] ?? "").replace(/\D/g, "");
@@ -799,6 +832,52 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                         ) : null}
                       </div>
                       <EvolutionQrSlotPanel key={`evo-qr-${tenantId}-${slotIndex}`} slotIndex={slotIndex} autoProvision={false} />
+                      {evoConnected ? (
+                        <div className="space-y-2 rounded-xl border border-line/70 bg-surface-card/40 p-3">
+                          <p className="text-xs font-semibold text-content">Teste de envio (texto livre)</p>
+                          <p className="text-[11px] leading-relaxed text-content-muted">
+                            Envia «Teste MyChatCRM — QR Code OK» para validar esta conexão.
+                          </p>
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <input
+                              type="tel"
+                              inputMode="tel"
+                              autoComplete="tel"
+                              placeholder="5562999999999"
+                              value={evoTestPhoneBySlot[slotIndex] ?? ""}
+                              onChange={(event) =>
+                                setEvoTestPhoneBySlot((prev) => ({
+                                  ...prev,
+                                  [slotIndex]: event.target.value.replace(/[^\d+\s()-]/g, ""),
+                                }))
+                              }
+                              className="h-10 min-w-0 flex-1 rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                            />
+                            <Button
+                              type="button"
+                              className="shrink-0 gap-1.5"
+                              isLoading={evoTestBusySlot === slotIndex}
+                              disabled={!(evoTestPhoneBySlot[slotIndex] ?? "").replace(/\D/g, "")}
+                              onClick={() => void sendEvoTest(slotIndex)}
+                            >
+                              <Send className="size-3.5" aria-hidden />
+                              Enviar teste
+                            </Button>
+                          </div>
+                          {evoTestResultBySlot[slotIndex] ? (
+                            <p
+                              className={cn(
+                                "text-[11px] leading-relaxed",
+                                evoTestResultBySlot[slotIndex]?.ok
+                                  ? "text-emerald-700 dark:text-emerald-300"
+                                  : "text-amber-800 dark:text-amber-300",
+                              )}
+                            >
+                              {evoTestResultBySlot[slotIndex]?.text}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
 
                     {/* ── Coluna API Meta ── */}
