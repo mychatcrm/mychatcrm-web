@@ -894,6 +894,11 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     });
   }
 
+  const journeyConnectionId =
+    resolvedConnection.transport === "cloud_api"
+      ? resolvedConnection.phoneNumberId
+      : resolvedConnection.instance.id;
+
   const journey = await activateLeadJourney({
     sb,
     tenantId: tenant_id,
@@ -902,7 +907,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     leadId,
     agentId,
     ruleId,
-    connectionId: selectedConnectionId,
+    connectionId: journeyConnectionId,
     source: "meta_form",
     sourceRef: leadgen_id,
     pageId: page_id,
@@ -915,6 +920,13 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       adset_id: attribution.adsetId ?? null,
       ad_id: attribution.adId ?? null,
       whatsapp_transport: resolvedConnection.transport,
+      rule_connection_id: selectedConnectionId,
+      ...(resolvedConnection.transport === "evolution" && resolvedConnection.fallbackFromCloud
+        ? {
+            cloud_to_evolution_fallback: true,
+            fallback_reason: resolvedConnection.fallbackFromCloud.reason,
+          }
+        : {}),
     },
   });
   if (journeyIsolationEnabled && (!journey || journey.status !== "active")) {

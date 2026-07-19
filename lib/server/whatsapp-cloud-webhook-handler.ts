@@ -31,6 +31,7 @@ import {
 import { revealConversationOnInbound } from "@/lib/server/conversation-visibility";
 import { runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
+import { buildWhatsappRemoteJid } from "@/lib/server/meta-lead-processing";
 
 export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<NextResponse> {
   // Delivery status updates from Meta (outgoing messages: sent/delivered/read/failed).
@@ -99,15 +100,21 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
     });
     return NextResponse.json({ ok: true, blocked: tenantResolution.reason });
   }
+
+  // Lead Ads / Conversas gravam remote_jid como digits@s.whatsapp.net.
+  // A Meta entrega só o wa_id (dígitos) — sem normalizar, o journey ativo
+  // nunca é encontrado e o agente deixa de responder após o 1º contacto.
+  const phone = inbound.fromWaId.replace(/\D/g, "");
+  const remoteJid = buildWhatsappRemoteJid(phone);
+
   const journeyAuth = await resolveDirectJourneyAgent({
     sb,
     tenantId,
-    remoteJid: inbound.fromWaId,
+    remoteJid,
     connectionId: inbound.phoneNumberId,
   });
   const journey = journeyAuth.journey;
   const agentId = journeyAuth.ok ? journeyAuth.agentId : null;
-  const phone = inbound.fromWaId.replace(/\D/g, "");
   const { data: existingLead } = await sb
     .from("leads")
     .select("id")
@@ -126,7 +133,7 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
     .from("whatsapp_messages")
     .insert({
       tenant_id: tenantId,
-      remote_jid: inbound.fromWaId,
+      remote_jid: remoteJid,
       direction: "inbound",
       kind: "text",
       content: inbound.text,
@@ -158,7 +165,7 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
   await revealConversationOnInbound({
     sb,
     tenantId,
-    remoteJid: inbound.fromWaId,
+    remoteJid,
     leadId,
     agentId,
     activeJourneyId: journey?.id ?? null,
@@ -183,23 +190,25 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
 
   if (!agentId) {
     console.info("[webhooks/whatsapp] agent skipped", {
-      reason: "blocked_no_direct_whatsapp_rule",
+      reason: journeyAuth.ok ? "missing_agent" : journeyAuth.reason,
       tenant_id: tenantId,
-      wa_id_last4: inbound.fromWaId.replace(/\D/g, "").slice(-4),
+      wa_id_last4: phone.slice(-4),
     });
     return NextResponse.json({ ok: true });
   }
 
-  // Linha pode ter QR e Meta conectados ao mesmo tempo (alternador) — só o
-  // lado marcado como ativo responde, evitando os dois lados responderem ao
-  // mesmo contato. connection_id nulo (número fora do fluxo multi-linha, ex.
-  // agente do sistema) preserva o comportamento antigo (sempre responde).
+  // Linha pode ter QR e Meta conectados ao mesmo tempo (alternador). Respostas
+  // espontâneas respeitam o provedor ativo; se já existe journey Lead Ads /
+  // Cloud nesta linha Meta, a Cloud deve responder mesmo com o slot em QR
+  // (senão o 1º contacto Cloud fica órfão — a Evolution não recebe o webhook Meta).
   if (cloudConnection) {
     const activeProvider = await getSlotActiveProvider(tenantId, cloudConnection.slot_index);
-    if (activeProvider !== "cloud_api") {
+    const journeyBoundToThisCloud = journey?.connectionId === inbound.phoneNumberId;
+    if (activeProvider !== "cloud_api" && !journeyBoundToThisCloud) {
       console.info("[webhooks/whatsapp] auto_reply_skipped_inactive_provider", {
         tenant_id: tenantId,
         slot_index: cloudConnection.slot_index,
+        active_provider: activeProvider,
       });
       return NextResponse.json({ ok: true });
     }
@@ -210,7 +219,7 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
     tenantId,
     agentId,
     phone,
-    remoteJid: inbound.fromWaId,
+    remoteJid,
     journeyId: journey?.id ?? null,
     connectionId: inbound.phoneNumberId,
     triggerSource: "whatsapp_cloud_inbound_auto_reply",
@@ -237,7 +246,7 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
   const flow = await runInboundSmartWaitFlow({
     sb,
     tenantId,
-    remoteJid: inbound.fromWaId,
+    remoteJid,
     leadId,
     journeyId: journey?.id ?? null,
     agentId,

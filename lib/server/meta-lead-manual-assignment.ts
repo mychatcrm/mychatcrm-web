@@ -279,6 +279,10 @@ export async function assignMetaLeadEventToAgent(params: {
   }
 
   const journeyIsolationEnabled = isJourneyIsolationEnabled();
+  const journeyConnectionId =
+    liveConnection.transport === "cloud_api"
+      ? liveConnection.phoneNumberId
+      : liveConnection.instance.id;
   const journey = await activateLeadJourney({
     sb,
     tenantId,
@@ -287,7 +291,7 @@ export async function assignMetaLeadEventToAgent(params: {
     leadId,
     agentId,
     ruleId: authorization.ruleId,
-    connectionId: authorization.connectionId,
+    connectionId: journeyConnectionId,
     source: "manual",
     sourceRef: event.leadgen_id,
     pageId: event.page_id,
@@ -295,6 +299,13 @@ export async function assignMetaLeadEventToAgent(params: {
     metadata: {
       manual_assignment: true,
       whatsapp_transport: liveConnection.transport,
+      rule_connection_id: authorization.connectionId,
+      ...(liveConnection.transport === "evolution" && liveConnection.fallbackFromCloud
+        ? {
+            cloud_to_evolution_fallback: true,
+            fallback_reason: liveConnection.fallbackFromCloud.reason,
+          }
+        : {}),
     },
   });
   if (journeyIsolationEnabled && (!journey || journey.status !== "active")) {

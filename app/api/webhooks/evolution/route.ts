@@ -911,13 +911,18 @@ export async function POST(request: Request) {
         // Linha do cliente pode ter QR e Meta conectados ao mesmo tempo
         // (alternador em /dashboard/integracoes) — só o lado marcado como
         // ativo responde, evitando os dois lados responderem ao mesmo
-        // contato. Mensagem já foi salva na Phase 1 independente disso.
+        // contato. Exceção: journey já amarrado a esta instância Evolution
+        // (ex.: Lead Ads com fallback Cloud→QR) — a Meta não recebe esse
+        // inbound, então o QR precisa responder mesmo com slot em API Meta.
         if ((await getSlotActiveProvider(row.tenant_id, row.slot_index)) !== "evolution") {
-          console.info("[webhooks/evolution] auto_reply_skipped_inactive_provider", {
-            tenant_id: row.tenant_id,
-            slot_index: row.slot_index,
-          });
-          return;
+          const journeyBoundToThisEvolution = ctx.journey?.connectionId === row.id;
+          if (!journeyBoundToThisEvolution) {
+            console.info("[webhooks/evolution] auto_reply_skipped_inactive_provider", {
+              tenant_id: row.tenant_id,
+              slot_index: row.slot_index,
+            });
+            return;
+          }
         }
         const {
           msg,
