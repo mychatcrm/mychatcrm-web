@@ -195,7 +195,8 @@ export async function evolutionCreateInstance(params: {
   /**
    * Settings opcionais do Baileys (top-level no /instance/create da Evolution v2):
    * alwaysOnline, groupsIgnore, readMessages, readStatus, syncFullHistory, rejectCall...
-   * Só passar para casos específicos (ex.: instância do sistema). Default: nada (clientes inalterados).
+   * Ver CLIENT_EVOLUTION_INSTANCE_SETTINGS (cliente) e SYSTEM_EVOLUTION_INSTANCE_SETTINGS
+   * (lib/server/system-agent.ts) para os valores usados por padrão em cada caso.
    */
   settings?: Record<string, unknown>;
 }): Promise<EvolutionFetchResult<EvolutionCreateInstanceResponse>> {
@@ -219,6 +220,11 @@ export async function evolutionCreateInstance(params: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    // Criar uma sessão Baileys do zero (handshake com o WhatsApp, geração do QR) é mais
+    // lenta que outras chamadas da Evolution — o timeout default de 25s expirava antes da
+    // Evolution terminar, o cliente via "Falha ao criar instância", mas a instância acabava
+    // criada de qualquer forma alguns segundos depois, órfã (o app nunca soube que deu certo).
+    timeoutMs: 45_000,
   });
 }
 
