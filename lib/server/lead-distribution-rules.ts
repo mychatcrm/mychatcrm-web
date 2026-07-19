@@ -26,6 +26,8 @@ export type LeadDistributionRuleRow = {
   active: boolean;
   transport: "evolution" | "cloud_api" | null;
   connection_id: string | null;
+  meta_template_name: string | null;
+  meta_template_lang: string | null;
   conflict_policy: LeadDistributionRule["conflictPolicy"] | null;
   conflict_inactivity_minutes: number | null;
   redistribution: boolean;
@@ -78,6 +80,8 @@ export function leadRuleRowToClient(row: LeadDistributionRuleRow): LeadDistribut
     active: row.active,
     transport: row.transport ?? undefined,
     connectionId: row.connection_id,
+    metaTemplateName: row.meta_template_name ?? null,
+    metaTemplateLang: row.meta_template_lang ?? null,
     conflictPolicy: row.conflict_policy ?? "latest_wins",
     conflictInactivityMinutes: row.conflict_inactivity_minutes ?? 1440,
     redistribution: row.redistribution,
@@ -143,6 +147,34 @@ export function leadRuleClientToDbPayload(
       typeof (body.connectionId ?? body.connection_id) === "string"
         ? String(body.connectionId ?? body.connection_id).trim() || null
         : null,
+    meta_template_name: (() => {
+      const transport =
+        body.transport === "cloud_api" || body.transport === "evolution"
+          ? body.transport
+          : source === "whatsapp_api"
+            ? "cloud_api"
+            : source === "whatsapp_qr"
+              ? "evolution"
+              : null;
+      if (transport !== "cloud_api") return null;
+      const raw = body.metaTemplateName ?? body.meta_template_name;
+      if (typeof raw !== "string") return null;
+      return raw.trim() || null;
+    })(),
+    meta_template_lang: (() => {
+      const transport =
+        body.transport === "cloud_api" || body.transport === "evolution"
+          ? body.transport
+          : source === "whatsapp_api"
+            ? "cloud_api"
+            : source === "whatsapp_qr"
+              ? "evolution"
+              : null;
+      if (transport !== "cloud_api") return null;
+      const raw = body.metaTemplateLang ?? body.meta_template_lang;
+      if (typeof raw !== "string") return null;
+      return raw.trim() || null;
+    })(),
     conflict_policy:
       typeof conflictPolicy === "string" && allowedConflictPolicies.has(conflictPolicy)
         ? conflictPolicy

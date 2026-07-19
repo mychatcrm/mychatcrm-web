@@ -176,12 +176,21 @@ export function verifyMetaSignature256(rawBody: string, signatureHeader: string 
 
 const GRAPH_API = "https://graph.facebook.com/v21.0";
 
+/** Meta Cloud `to` exige só dígitos (wa_id) — nunca JID `@s.whatsapp.net`. */
+export function normalizeWhatsAppCloudToWaId(raw: string): string {
+  return String(raw ?? "").replace(/\D/g, "");
+}
+
 export async function sendWhatsAppTextMessage(params: {
   toWaId: string;
   text: string;
   phoneNumberId: string;
   accessToken: string;
 }): Promise<{ ok: boolean; status: number; messageId?: string; error?: string }> {
+  const to = normalizeWhatsAppCloudToWaId(params.toWaId);
+  if (!to) {
+    return { ok: false, status: 400, error: "invalid_to_wa_id" };
+  }
   const url = `${GRAPH_API}/${encodeURIComponent(params.phoneNumberId)}/messages`;
   const res = await fetch(url, {
     method: "POST",
@@ -191,7 +200,7 @@ export async function sendWhatsAppTextMessage(params: {
     },
     body: JSON.stringify({
       messaging_product: "whatsapp",
-      to: params.toWaId,
+      to,
       type: "text",
       text: { preview_url: false, body: params.text.slice(0, 4096) },
     }),
@@ -226,6 +235,10 @@ export async function sendWhatsAppTemplateMessage(params: {
   phoneNumberId: string;
   accessToken: string;
 }): Promise<{ ok: boolean; status: number; messageId?: string; error?: string }> {
+  const to = normalizeWhatsAppCloudToWaId(params.toWaId);
+  if (!to) {
+    return { ok: false, status: 400, error: "invalid_to_wa_id" };
+  }
   const url = `${GRAPH_API}/${encodeURIComponent(params.phoneNumberId)}/messages`;
   const components =
     params.bodyParams && params.bodyParams.length > 0
@@ -247,7 +260,7 @@ export async function sendWhatsAppTemplateMessage(params: {
     },
     body: JSON.stringify({
       messaging_product: "whatsapp",
-      to: params.toWaId,
+      to,
       type: "template",
       template: {
         name: params.templateName,

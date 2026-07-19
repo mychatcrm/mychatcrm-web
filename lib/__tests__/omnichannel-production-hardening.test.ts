@@ -68,7 +68,8 @@ describe("omnichannel production hardening", () => {
 
     expect(manualAssignment).toContain("resolveAuthorizedMetaLeadAgent");
     expect(manualAssignment).toContain("preferredAgentId: agentId");
-    expect(manualAssignment).toContain("resolveLiveEvolutionInstanceByIdForTenant");
+    expect(manualAssignment).toContain("resolveMetaLeadWhatsappConnection");
+    expect(manualAssignment).toContain("sendMetaLeadInitialWhatsapp");
     expect(manualAssignment).not.toContain("getEvolutionInstanceByTenantId");
   });
 

@@ -7,7 +7,6 @@ import { upsertConversationState } from "@/lib/server/conversation-memory";
 import { resolveAgentCrmFieldsForLeadInsert } from "@/lib/server/auto-lead-upsert";
 import { buildNewLeadCrmFields, promoteLeadToContatoOnAgentEngagement } from "@/lib/server/crm-lead-lifecycle";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
-import { resolveLiveEvolutionInstanceByIdForTenant } from "@/lib/server/evolution-instance-reconciliation";
 import { MetaLeadEventRecorder } from "@/lib/server/meta-lead-events-db";
 import {
   crmBlockedUserMessage,
@@ -54,8 +53,11 @@ import {
   reserveTenantLeadQuota,
 } from "@/lib/server/lead-quota";
 import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
-import { sendEvolutionTextWithConnectionRecovery } from "@/lib/server/evolution-send-recovery";
 import { persistEvolutionSendReceipt } from "@/lib/server/evolution-customer-delivery";
+import {
+  resolveMetaLeadWhatsappConnection,
+  sendMetaLeadInitialWhatsapp,
+} from "@/lib/server/meta-lead-whatsapp-outreach";
 
 type MetaConnectionRow = {
   tenant_id: string;
@@ -835,19 +837,22 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     return;
   }
 
-  const liveConnection = await resolveLiveEvolutionInstanceByIdForTenant(
-    tenant_id,
-    selectedConnectionId,
-  );
-  if (!liveConnection.ok) {
+  const resolvedConnection = await resolveMetaLeadWhatsappConnection({
+    tenantId: tenant_id,
+    connectionId: selectedConnectionId,
+    transport: agentResolution.transport,
+    metaTemplateName: agentResolution.metaTemplateName,
+    metaTemplateLang: agentResolution.metaTemplateLang,
+  });
+  if (!resolvedConnection.ok) {
     await eventRecorder.step("skipped_selected_connection_unavailable", {
       connection_id: selectedConnectionId,
-      connection_state: liveConnection.instance?.connection_state ?? null,
-      reason: liveConnection.reason,
+      transport: agentResolution.transport,
+      reason: resolvedConnection.reason,
     });
     await eventRecorder.patch({
       whatsapp_status: "skipped",
-      error_message: `selected_rule_connection_${liveConnection.reason}`,
+      error_message: `selected_rule_connection_${resolvedConnection.reason}`,
       current_step: "skipped_selected_connection_unavailable",
     });
     console.warn("[meta-webhook] selected rule connection unavailable", {
@@ -855,22 +860,22 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       lead_id: leadId,
       agent_id: agentId,
       connection_id: selectedConnectionId,
-      reason: liveConnection.reason,
+      transport: agentResolution.transport,
+      reason: resolvedConnection.reason,
     });
     return;
   }
-  const instance = liveConnection.instance;
-  if (liveConnection.adoptedSibling) {
+  if (resolvedConnection.transport === "evolution" && resolvedConnection.adoptedSibling) {
     await eventRecorder.step("selected_connection_reconciled", {
       connection_id: selectedConnectionId,
-      instance_name: instance.instance_name,
+      instance_name: resolvedConnection.instance.instance_name,
     });
     console.warn("[meta-webhook] selected connection reconciled", {
       tenant_id,
       lead_id: leadId,
       agent_id: agentId,
       connection_id: selectedConnectionId,
-      instance_name: instance.instance_name,
+      instance_name: resolvedConnection.instance.instance_name,
     });
   }
 
@@ -894,6 +899,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       campaign_name: attribution.campaignName ?? null,
       adset_id: attribution.adsetId ?? null,
       ad_id: attribution.adId ?? null,
+      whatsapp_transport: resolvedConnection.transport,
     },
   });
   if (journeyIsolationEnabled && (!journey || journey.status !== "active")) {
@@ -1103,6 +1109,12 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
   const replyText =
     sanitizeInitialReply(aiResult.ok ? aiResult.text : "") || buildFallbackInitialMessage(fullName);
 
+  const messageChannel = resolvedConnection.transport === "cloud_api" ? "meta_cloud" : "evolution";
+  const messageConnectionId =
+    resolvedConnection.transport === "cloud_api"
+      ? resolvedConnection.phoneNumberId
+      : resolvedConnection.instance.id;
+
   const { data: savedMessage, error: msgErr } = await sb
     .from("whatsapp_messages")
     .insert({
@@ -1116,8 +1128,8 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       lead_id: leadId,
       journey_id: journeyId,
       delivery_status: "pending",
-      channel: "evolution",
-      connection_id: selectedConnectionId,
+      channel: messageChannel,
+      connection_id: messageConnectionId,
     })
     .select("id")
     .maybeSingle();
@@ -1157,14 +1169,15 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         return;
       }
     }
-    const send = await sendEvolutionTextWithConnectionRecovery({
-      instanceName: instance.instance_name,
-      number: evoNumber,
-      text: replyText,
-      resolveRecipient: true,
+    const send = await sendMetaLeadInitialWhatsapp({
+      connection: resolvedConnection,
+      evoNumber,
+      phone,
+      leadName: fullName,
+      replyText,
     });
 
-    if (send.restarted) {
+    if (send.ok && send.restarted) {
       console.info("[meta-webhook] WhatsApp connection recovered before initial send", {
         tenant_id,
         lead_id: leadId,
@@ -1177,7 +1190,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       await eventRecorder.step("whatsapp_failed", { status: send.status, error: send.error });
       await eventRecorder.patch({
         whatsapp_status: "failed",
-        error_message: send.error ?? "evolution_send_failed",
+        error_message: send.error ?? "whatsapp_send_failed",
       });
       console.error("[meta-webhook] Failed to send initial WhatsApp message", {
         tenant_id,
@@ -1185,12 +1198,13 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         message_id: savedMessage.id,
         status: send.status,
         error: send.error,
+        transport: resolvedConnection.transport,
       });
       await sb
         .from("whatsapp_messages")
         .update({
           delivery_status: "failed",
-          failed_reason: send.error ?? "evolution_send_failed",
+          failed_reason: send.error ?? "whatsapp_send_failed",
         })
         .eq("tenant_id", tenant_id)
         .eq("id", savedMessage.id);
@@ -1205,13 +1219,30 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       return;
     }
 
-    const receipt = await persistEvolutionSendReceipt({
-      sb,
-      tenantId: tenant_id,
-      messageRowId: savedMessage.id,
-      connectionId: selectedConnectionId,
-      payload: send.data,
-    });
+    let acceptedStatus: "pending" | "sent" = "sent";
+    let providerMessageId: string | null = send.providerMessageId;
+    if (send.channel === "evolution" && send.evolutionPayload) {
+      const receipt = await persistEvolutionSendReceipt({
+        sb,
+        tenantId: tenant_id,
+        messageRowId: savedMessage.id,
+        connectionId: send.persistenceConnectionId,
+        payload: send.evolutionPayload,
+      });
+      acceptedStatus = receipt.deliveryStatus === "pending" ? "pending" : "sent";
+      providerMessageId = receipt.messageId ?? providerMessageId;
+    } else {
+      await sb
+        .from("whatsapp_messages")
+        .update({
+          delivery_status: "sent",
+          provider_message_id: providerMessageId,
+          message_id: providerMessageId ?? initialMessageExternalId,
+        })
+        .eq("tenant_id", tenant_id)
+        .eq("id", savedMessage.id);
+    }
+
     const sentAt = new Date().toISOString();
     await Promise.all([
       sb
@@ -1263,11 +1294,10 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       trigger: "customer_silence",
     });
 
-    const acceptedStatus = receipt.deliveryStatus === "pending" ? "pending" : "sent";
     await eventRecorder.step("whatsapp_sent", {
       message_id: savedMessage.id,
-      provider_message_id: receipt.messageId,
-      provider_status: receipt.providerStatus,
+      provider_message_id: providerMessageId,
+      channel: send.channel,
     });
     await eventRecorder.patch({ whatsapp_status: acceptedStatus });
 
@@ -1277,7 +1307,8 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       agent_id: agentId,
       message_id: savedMessage.id,
       phone_last4: maskPhoneLast4(phone),
-      instanceName: instance.instance_name,
+      transport: resolvedConnection.transport,
+      channel: send.channel,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

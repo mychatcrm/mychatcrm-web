@@ -12,6 +12,7 @@ import {
   Loader2,
   Plug,
   QrCode,
+  Send,
   Share2,
   Unlink,
 } from "lucide-react";
@@ -62,6 +63,11 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const [waCloudConnectingSlot, setWaCloudConnectingSlot] = useState<number | null>(null);
   const [waCloudDisconnectingSlot, setWaCloudDisconnectingSlot] = useState<number | null>(null);
   const [waCloudBannerBySlot, setWaCloudBannerBySlot] = useState<Record<number, string | null>>({});
+  const [waCloudTestPhoneBySlot, setWaCloudTestPhoneBySlot] = useState<Record<number, string>>({});
+  const [waCloudTestBusySlot, setWaCloudTestBusySlot] = useState<number | null>(null);
+  const [waCloudTestResultBySlot, setWaCloudTestResultBySlot] = useState<
+    Record<number, { ok: boolean; text: string } | null>
+  >({});
   // Pre-loaded SDK config so FB.login() can be called synchronously on click
   const waCloudConfigRef = useRef<{ app_id: string; config_id: string } | null>(null);
   // Why the SDK pre-load failed (ad blocker, CDN down) — shown on click for a precise message
@@ -370,6 +376,48 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     },
     [loadConnections],
   );
+
+  const sendWaCloudTest = useCallback(async (slotIndex: number) => {
+    const toNumber = (waCloudTestPhoneBySlot[slotIndex] ?? "").replace(/\D/g, "");
+    setWaCloudTestBusySlot(slotIndex);
+    setWaCloudTestResultBySlot((prev) => ({ ...prev, [slotIndex]: null }));
+    try {
+      const res = await fetch("/api/client/whatsapp-cloud/test-send", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slotIndex, toNumber }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        messageId?: string | null;
+      };
+      if (!res.ok || !data.ok) {
+        setWaCloudTestResultBySlot((prev) => ({
+          ...prev,
+          [slotIndex]: { ok: false, text: data.error ?? "Falha ao enviar teste." },
+        }));
+        return;
+      }
+      setWaCloudTestResultBySlot((prev) => ({
+        ...prev,
+        [slotIndex]: {
+          ok: true,
+          text: data.messageId
+            ? `Enviado com sucesso (id ${data.messageId}).`
+            : "Enviado com sucesso.",
+        },
+      }));
+    } catch {
+      setWaCloudTestResultBySlot((prev) => ({
+        ...prev,
+        [slotIndex]: { ok: false, text: "Erro de rede ao enviar teste." },
+      }));
+    } finally {
+      setWaCloudTestBusySlot(null);
+    }
+  }, [waCloudTestPhoneBySlot]);
 
   // FB.login() must be called synchronously within the user-gesture context.
   // The SDK and config_id are pre-loaded on mount (see useEffect above) so no
@@ -810,6 +858,52 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                               <Unlink className="size-4" aria-hidden />
                               Desconectar API Meta
                             </Button>
+
+                            <div className="space-y-2 rounded-xl border border-line/70 bg-surface-card/40 p-3">
+                              <p className="text-xs font-semibold text-content">Teste de envio (texto livre)</p>
+                              <p className="text-[11px] leading-relaxed text-content-muted">
+                                Envia «Teste MyChatCRM — API Meta OK» para validar o token/número. Fora da janela de
+                                24h a Meta pode recusar (131047) — Lead Ads usa template aprovado.
+                              </p>
+                              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                                <input
+                                  type="tel"
+                                  inputMode="tel"
+                                  autoComplete="tel"
+                                  placeholder="5562999999999"
+                                  value={waCloudTestPhoneBySlot[slotIndex] ?? ""}
+                                  onChange={(event) =>
+                                    setWaCloudTestPhoneBySlot((prev) => ({
+                                      ...prev,
+                                      [slotIndex]: event.target.value.replace(/[^\d+\s()-]/g, ""),
+                                    }))
+                                  }
+                                  className="h-10 min-w-0 flex-1 rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                                />
+                                <Button
+                                  type="button"
+                                  className="shrink-0 gap-1.5"
+                                  isLoading={waCloudTestBusySlot === slotIndex}
+                                  disabled={!(waCloudTestPhoneBySlot[slotIndex] ?? "").replace(/\D/g, "")}
+                                  onClick={() => void sendWaCloudTest(slotIndex)}
+                                >
+                                  <Send className="size-3.5" aria-hidden />
+                                  Enviar teste
+                                </Button>
+                              </div>
+                              {waCloudTestResultBySlot[slotIndex] ? (
+                                <p
+                                  className={cn(
+                                    "text-[11px] leading-relaxed",
+                                    waCloudTestResultBySlot[slotIndex]?.ok
+                                      ? "text-emerald-700 dark:text-emerald-300"
+                                      : "text-amber-800 dark:text-amber-300",
+                                  )}
+                                >
+                                  {waCloudTestResultBySlot[slotIndex]?.text}
+                                </p>
+                              ) : null}
+                            </div>
                           </div>
                         ) : (
                           <div className="space-y-3">

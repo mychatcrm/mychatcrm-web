@@ -2,34 +2,36 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   generateAgentResponseMock,
-  evolutionSendTextMock,
   upsertConversationStateMock,
   resolveAgentCrmFieldsForLeadInsertMock,
   buildNewLeadCrmFieldsMock,
   promoteLeadToContatoOnAgentEngagementMock,
   canAgentAutoContactLeadMock,
   resolveAuthorizedMetaLeadAgentMock,
-  resolveLiveEvolutionInstanceByIdForTenantMock,
+  resolveMetaLeadWhatsappConnectionMock,
+  sendMetaLeadInitialWhatsappMock,
   activateLeadJourneyMock,
   authorizeActiveJourneyMock,
   isJourneyIsolationEnabledMock,
   touchLeadJourneyMock,
   readTeamMembersFromDbMock,
+  persistEvolutionSendReceiptMock,
 } = vi.hoisted(() => ({
   generateAgentResponseMock: vi.fn(),
-  evolutionSendTextMock: vi.fn(),
   upsertConversationStateMock: vi.fn(),
   resolveAgentCrmFieldsForLeadInsertMock: vi.fn(),
   buildNewLeadCrmFieldsMock: vi.fn(),
   promoteLeadToContatoOnAgentEngagementMock: vi.fn(),
   canAgentAutoContactLeadMock: vi.fn(),
   resolveAuthorizedMetaLeadAgentMock: vi.fn(),
-  resolveLiveEvolutionInstanceByIdForTenantMock: vi.fn(),
+  resolveMetaLeadWhatsappConnectionMock: vi.fn(),
+  sendMetaLeadInitialWhatsappMock: vi.fn(),
   activateLeadJourneyMock: vi.fn(),
   authorizeActiveJourneyMock: vi.fn(),
   isJourneyIsolationEnabledMock: vi.fn(),
   touchLeadJourneyMock: vi.fn(),
   readTeamMembersFromDbMock: vi.fn(),
+  persistEvolutionSendReceiptMock: vi.fn(),
 }));
 
 vi.mock("@/lib/ai/generate-agent-response", () => ({
@@ -38,9 +40,6 @@ vi.mock("@/lib/ai/generate-agent-response", () => ({
 }));
 vi.mock("@/lib/integrations/evolution-api", () => ({
   remoteJidToEvoNumber: (jid: string) => jid.split("@")[0],
-}));
-vi.mock("@/lib/server/evolution-send-recovery", () => ({
-  sendEvolutionTextWithConnectionRecovery: evolutionSendTextMock,
 }));
 vi.mock("@/lib/server/conversation-memory", () => ({ upsertConversationState: upsertConversationStateMock }));
 vi.mock("@/lib/server/auto-lead-upsert", () => ({
@@ -54,8 +53,12 @@ vi.mock("@/lib/server/agent-auto-contact-guard", () => ({ canAgentAutoContactLea
 vi.mock("@/lib/server/meta-form-authorization", () => ({
   resolveAuthorizedMetaLeadAgent: resolveAuthorizedMetaLeadAgentMock,
 }));
-vi.mock("@/lib/server/evolution-instance-reconciliation", () => ({
-  resolveLiveEvolutionInstanceByIdForTenant: resolveLiveEvolutionInstanceByIdForTenantMock,
+vi.mock("@/lib/server/meta-lead-whatsapp-outreach", () => ({
+  resolveMetaLeadWhatsappConnection: resolveMetaLeadWhatsappConnectionMock,
+  sendMetaLeadInitialWhatsapp: sendMetaLeadInitialWhatsappMock,
+}));
+vi.mock("@/lib/server/evolution-customer-delivery", () => ({
+  persistEvolutionSendReceipt: persistEvolutionSendReceiptMock,
 }));
 vi.mock("@/lib/server/meta-lead-graph", () => ({
   buildMetaInitialAgentPrompt: () => "prompt",
@@ -199,6 +202,9 @@ describe("assignMetaLeadEventToAgent", () => {
       agentId: "agent-1",
       ruleId: "rule-1",
       connectionId: "connection-1",
+      transport: "evolution",
+      metaTemplateName: null,
+      metaTemplateLang: null,
       source: "rule",
       reason: "active_rule_explicit_form",
       invalidAgentId: null,
@@ -207,15 +213,29 @@ describe("assignMetaLeadEventToAgent", () => {
     activateLeadJourneyMock.mockResolvedValue({ id: "journey-1", status: "active" });
     authorizeActiveJourneyMock.mockResolvedValue({ ok: true, journey: { id: "journey-1" }, agentId: "agent-1" });
     touchLeadJourneyMock.mockResolvedValue(undefined);
-    resolveLiveEvolutionInstanceByIdForTenantMock.mockResolvedValue({
+    resolveMetaLeadWhatsappConnectionMock.mockResolvedValue({
       ok: true,
+      transport: "evolution",
+      connectionId: "connection-1",
       adoptedSibling: false,
       instance: {
+        id: "connection-1",
         instance_name: "evo-instance-1",
         connection_state: "open",
       },
     });
-    evolutionSendTextMock.mockResolvedValue({ ok: true, status: 200, data: {} });
+    sendMetaLeadInitialWhatsappMock.mockResolvedValue({
+      ok: true,
+      channel: "evolution",
+      persistenceConnectionId: "connection-1",
+      providerMessageId: null,
+      evolutionPayload: { key: { id: "wamid.1" } },
+    });
+    persistEvolutionSendReceiptMock.mockResolvedValue({
+      deliveryStatus: "sent",
+      messageId: "wamid.1",
+      providerStatus: "SERVER_ACK",
+    });
     generateAgentResponseMock.mockResolvedValue({ ok: true, text: "Olá! Já vou te ajudar.", model: "gpt" });
     upsertConversationStateMock.mockResolvedValue(null);
     promoteLeadToContatoOnAgentEngagementMock.mockResolvedValue(true);
@@ -230,7 +250,7 @@ describe("assignMetaLeadEventToAgent", () => {
 
     expect(result.ok).toBe(false);
     expect(canAgentAutoContactLeadMock).not.toHaveBeenCalled();
-    expect(evolutionSendTextMock).not.toHaveBeenCalled();
+    expect(sendMetaLeadInitialWhatsappMock).not.toHaveBeenCalled();
   });
 
   it("surfaces the guard block and leaves the event in error", async () => {
@@ -240,15 +260,14 @@ describe("assignMetaLeadEventToAgent", () => {
     const result = await assignMetaLeadEventToAgent({ sb: sb as never, tenantId: TENANT, eventId: "event-1", agentId: "agent-1" });
 
     expect(result.ok).toBe(false);
-    expect(evolutionSendTextMock).not.toHaveBeenCalled();
+    expect(sendMetaLeadInitialWhatsappMock).not.toHaveBeenCalled();
     const stored = sb.tables.meta_lead_events.find((r) => r.id === "event-1");
     expect(stored?.current_step).toBe("skipped_no_agent");
   });
 
   it("fails before creating a journey when no live authorized connection can be confirmed", async () => {
-    resolveLiveEvolutionInstanceByIdForTenantMock.mockResolvedValue({
+    resolveMetaLeadWhatsappConnectionMock.mockResolvedValue({
       ok: false,
-      instance: null,
       reason: "connection_not_open",
     });
     const sb = makeFakeSupabase({ meta_lead_events: [EVENT], tenant_agents: [ACTIVE_AGENT] });
@@ -262,7 +281,7 @@ describe("assignMetaLeadEventToAgent", () => {
 
     expect(result.ok).toBe(false);
     expect(activateLeadJourneyMock).not.toHaveBeenCalled();
-    expect(evolutionSendTextMock).not.toHaveBeenCalled();
+    expect(sendMetaLeadInitialWhatsappMock).not.toHaveBeenCalled();
     const stored = sb.tables.meta_lead_events.find((r) => r.id === "event-1");
     expect(stored?.current_step).toBe("manual_assignment_failed");
   });
@@ -278,7 +297,7 @@ describe("assignMetaLeadEventToAgent", () => {
       expect(result.event.whatsapp_status).toBe("sent");
       expect(result.event.crm_sync_status).toBe("synced");
     }
-    expect(evolutionSendTextMock).toHaveBeenCalledTimes(1);
+    expect(sendMetaLeadInitialWhatsappMock).toHaveBeenCalledTimes(1);
     expect(promoteLeadToContatoOnAgentEngagementMock).toHaveBeenCalledTimes(1);
     expect(upsertConversationStateMock).toHaveBeenCalledTimes(1);
     const lead = sb.tables.leads.find((r) => r.phone === "5511999990000");
@@ -298,7 +317,7 @@ describe("assignMetaLeadEventToAgent", () => {
     const result = await assignMetaLeadEventToAgent({ sb: sb as never, tenantId: TENANT, eventId: "event-1", agentId: "agent-1" });
 
     expect(result.ok).toBe(true);
-    expect(evolutionSendTextMock).not.toHaveBeenCalled();
+    expect(sendMetaLeadInitialWhatsappMock).not.toHaveBeenCalled();
     expect(generateAgentResponseMock).not.toHaveBeenCalled();
     if (result.ok) expect(result.event.current_step).toBe("manual_assigned_to_agent");
   });
@@ -315,7 +334,7 @@ describe("assignMetaLeadEventToAgent", () => {
     const result = await assignMetaLeadEventToAgent({ sb: sb as never, tenantId: TENANT, eventId: "event-1", agentId: "agent-1" });
 
     expect(result.ok).toBe(true);
-    expect(evolutionSendTextMock).toHaveBeenCalledTimes(1);
+    expect(sendMetaLeadInitialWhatsappMock).toHaveBeenCalledTimes(1);
     // A mensagem original (do agente antigo) fica intacta; uma nova linha é criada pro handoff.
     expect(sb.tables.whatsapp_messages).toHaveLength(2);
     const original = sb.tables.whatsapp_messages.find((m) => m.id === "msg-1");

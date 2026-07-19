@@ -19,7 +19,6 @@ import { resolveAgentCrmFieldsForLeadInsert } from "@/lib/server/auto-lead-upser
 import { buildNewLeadCrmFields, promoteLeadToContatoOnAgentEngagement } from "@/lib/server/crm-lead-lifecycle";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { resolveAuthorizedMetaLeadAgent } from "@/lib/server/meta-form-authorization";
-import { resolveLiveEvolutionInstanceByIdForTenant } from "@/lib/server/evolution-instance-reconciliation";
 import { MetaLeadEventRecorder, type MetaLeadEventRow } from "@/lib/server/meta-lead-events-db";
 import {
   buildFallbackInitialMessage,
@@ -34,8 +33,11 @@ import {
   touchLeadJourney,
 } from "@/lib/server/lead-journeys";
 import { readTeamMembersFromDb } from "@/lib/server/team-employees-db";
-import { sendEvolutionTextWithConnectionRecovery } from "@/lib/server/evolution-send-recovery";
 import { persistEvolutionSendReceipt } from "@/lib/server/evolution-customer-delivery";
+import {
+  resolveMetaLeadWhatsappConnection,
+  sendMetaLeadInitialWhatsapp,
+} from "@/lib/server/meta-lead-whatsapp-outreach";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -230,29 +232,40 @@ export async function assignMetaLeadEventToAgent(params: {
     return { ok: false, error: `Este agente não pode atender este lead agora (${guard.reason}).`, status: 409 };
   }
 
-  const liveConnection = await resolveLiveEvolutionInstanceByIdForTenant(
+  const liveConnection = await resolveMetaLeadWhatsappConnection({
     tenantId,
-    authorization.connectionId,
-  );
+    connectionId: authorization.connectionId,
+    transport: authorization.transport,
+    metaTemplateName: authorization.metaTemplateName,
+    metaTemplateLang: authorization.metaTemplateLang,
+  });
   if (!liveConnection.ok) {
-    const failureReason = `evolution_connection_${liveConnection.reason}`;
+    const failureReason = `whatsapp_connection_${liveConnection.reason}`;
     await recordManualFailureOnAgent(sb, eventId, agentId, failureReason);
+    const friendly =
+      liveConnection.reason === "connection_not_open"
+        ? "A conexão WhatsApp autorizada está desconectada. Reconecte-a em Integrações."
+        : liveConnection.reason === "meta_template_missing" ||
+            liveConnection.reason === "meta_template_not_approved"
+          ? "A regra Cloud API precisa de um template Meta aprovado em Integrações de Leads."
+          : `Não foi possível confirmar a conexão WhatsApp autorizada (${liveConnection.reason}).`;
     return {
       ok: false,
-      error:
-        liveConnection.reason === "connection_not_open"
-          ? "A conexão WhatsApp autorizada está desconectada. Reconecte-a em Integrações."
-          : `Não foi possível confirmar a conexão WhatsApp autorizada (${liveConnection.reason}).`,
-      status: liveConnection.reason === "connection_not_open" ? 409 : 502,
+      error: friendly,
+      status:
+        liveConnection.reason === "connection_not_open" ||
+        liveConnection.reason === "meta_template_missing" ||
+        liveConnection.reason === "meta_template_not_approved"
+          ? 409
+          : 502,
     };
   }
-  const instance = liveConnection.instance;
-  if (liveConnection.adoptedSibling) {
+  if (liveConnection.transport === "evolution" && liveConnection.adoptedSibling) {
     console.warn("[meta-lead-events] live_evolution_instance_reconciled", {
       tenant_id: tenantId,
       event_id: eventId,
       connection_id: authorization.connectionId,
-      instance_name: instance.instance_name,
+      instance_name: liveConnection.instance.instance_name,
     });
   }
 
@@ -270,7 +283,10 @@ export async function assignMetaLeadEventToAgent(params: {
     sourceRef: event.leadgen_id,
     pageId: event.page_id,
     formId: event.form_id,
-    metadata: { manual_assignment: true },
+    metadata: {
+      manual_assignment: true,
+      whatsapp_transport: liveConnection.transport,
+    },
   });
   if (journeyIsolationEnabled && (!journey || journey.status !== "active")) {
     return { ok: false, error: "Outro atendimento já está ativo para este contato.", status: 409 };
@@ -337,6 +353,12 @@ export async function assignMetaLeadEventToAgent(params: {
   }
   const replyText = sanitizeInitialReply(aiResult.ok ? aiResult.text : "") || buildFallbackInitialMessage(fullName);
 
+  const messageChannel = liveConnection.transport === "cloud_api" ? "meta_cloud" : "evolution";
+  const messageConnectionId =
+    liveConnection.transport === "cloud_api"
+      ? liveConnection.phoneNumberId
+      : liveConnection.instance.id;
+
   let messageId: string;
   if (existingMessage?.id) {
     const { error: updateMsgErr } = await sb
@@ -347,8 +369,8 @@ export async function assignMetaLeadEventToAgent(params: {
         lead_id: leadId,
         journey_id: journeyId,
         delivery_status: "pending",
-        channel: "evolution",
-        connection_id: instance.id,
+        channel: messageChannel,
+        connection_id: messageConnectionId,
       })
       .eq("id", existingMessage.id);
     if (updateMsgErr) return { ok: false, error: updateMsgErr.message, status: 500 };
@@ -367,8 +389,8 @@ export async function assignMetaLeadEventToAgent(params: {
         lead_id: leadId,
         journey_id: journeyId,
         delivery_status: "pending",
-        channel: "evolution",
-        connection_id: instance.id,
+        channel: messageChannel,
+        connection_id: messageConnectionId,
       })
       .select("id")
       .maybeSingle();
@@ -393,28 +415,40 @@ export async function assignMetaLeadEventToAgent(params: {
     }
   }
 
-  const send = await sendEvolutionTextWithConnectionRecovery({
-    instanceName: instance.instance_name,
-    number: evoNumber,
-    text: replyText,
-    resolveRecipient: true,
+  const send = await sendMetaLeadInitialWhatsapp({
+    connection: liveConnection,
+    evoNumber,
+    phone,
+    leadName: fullName,
+    replyText,
   });
   if (!send.ok) {
     await sb
       .from("whatsapp_messages")
-      .update({ delivery_status: "failed", failed_reason: send.error ?? "evolution_send_failed" })
+      .update({ delivery_status: "failed", failed_reason: send.error ?? "whatsapp_send_failed" })
       .eq("id", messageId);
-    await recordManualFailureOnAgent(sb, eventId, agentId, send.error ?? "evolution_send_failed");
+    await recordManualFailureOnAgent(sb, eventId, agentId, send.error ?? "whatsapp_send_failed");
     return { ok: false, error: `Falha ao enviar WhatsApp: ${send.error ?? "erro desconhecido"}.`, status: 502 };
   }
 
-  await persistEvolutionSendReceipt({
-    sb,
-    tenantId,
-    messageRowId: messageId,
-    connectionId: instance.id,
-    payload: send.data,
-  });
+  if (send.channel === "evolution" && send.evolutionPayload) {
+    await persistEvolutionSendReceipt({
+      sb,
+      tenantId,
+      messageRowId: messageId,
+      connectionId: send.persistenceConnectionId,
+      payload: send.evolutionPayload,
+    });
+  } else {
+    await sb
+      .from("whatsapp_messages")
+      .update({
+        delivery_status: "sent",
+        provider_message_id: send.providerMessageId,
+        message_id: send.providerMessageId ?? messageExternalId,
+      })
+      .eq("id", messageId);
+  }
   const sentAt = new Date().toISOString();
   await Promise.all([
     sb.from("leads").update({ last_message_at: sentAt, updated_at: sentAt }).eq("tenant_id", tenantId).eq("id", leadId),

@@ -43,6 +43,9 @@ export type LeadDistributionRule = {
   active?: boolean;
   transport?: "evolution" | "cloud_api";
   connectionId?: string | null;
+  /** Template Meta aprovado para 1º contacto Cloud (Lead Ads). */
+  metaTemplateName?: string | null;
+  metaTemplateLang?: string | null;
   conflictPolicy?: "latest_wins" | "priority_wins" | "keep_until_inactive" | "manual_review";
   conflictInactivityMinutes?: number;
   redistribution: boolean;

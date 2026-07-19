@@ -34,6 +34,8 @@ export type MetaFormAuthRule = {
   agent_ids: unknown;
   transport?: string | null;
   connection_id?: string | null;
+  meta_template_name?: string | null;
+  meta_template_lang?: string | null;
   order_index?: number;
 };
 
@@ -285,7 +287,7 @@ export async function loadActiveMetaFormRules(
   const { data, error } = await sb
     .from("lead_distribution_rules")
     .select(
-      "id, page_id, use_all_forms, included_form_ids, excluded_form_ids, distribution_type, agent_ids, transport, connection_id, order_index",
+      "id, page_id, use_all_forms, included_form_ids, excluded_form_ids, distribution_type, agent_ids, transport, connection_id, meta_template_name, meta_template_lang, order_index",
     )
     .eq("tenant_id", tenantId)
     .eq("active", true)
@@ -309,7 +311,7 @@ export async function resolveMetaTenantFromExplicitFormRules(params: {
   const { data, error } = await params.sb
     .from("lead_distribution_rules")
     .select(
-      "id, tenant_id, page_id, use_all_forms, included_form_ids, excluded_form_ids, distribution_type, agent_ids, transport, connection_id, order_index",
+      "id, tenant_id, page_id, use_all_forms, included_form_ids, excluded_form_ids, distribution_type, agent_ids, transport, connection_id, meta_template_name, meta_template_lang, order_index",
     )
     .eq("active", true)
     .eq("source", "meta_form")
@@ -544,6 +546,9 @@ export type MetaFormAgentResolution = {
   agentId: string | null;
   ruleId: string | null;
   connectionId: string | null;
+  transport: "evolution" | "cloud_api" | null;
+  metaTemplateName: string | null;
+  metaTemplateLang: string | null;
   source: MetaFormAuthorizationSource;
   reason: string;
   authorized: boolean;
@@ -573,6 +578,9 @@ export async function resolveAuthorizedMetaLeadAgent(params: {
       agentId: null,
       ruleId: auth.ruleId,
       connectionId: null,
+      transport: null,
+      metaTemplateName: null,
+      metaTemplateLang: null,
       source: auth.source,
       reason: auth.reason,
       authorized: false,
@@ -585,11 +593,25 @@ export async function resolveAuthorizedMetaLeadAgent(params: {
   const rules = await loadActiveMetaFormRules(params.sb, params.tenantId);
   const rule = rules.find((candidate) => candidate.id === auth.ruleId) ?? null;
   const connectionId = typeof rule?.connection_id === "string" ? rule.connection_id.trim() : "";
+  const transportRaw = typeof rule?.transport === "string" ? rule.transport.trim() : null;
+  const transport =
+    transportRaw === "cloud_api" || transportRaw === "evolution" ? transportRaw : null;
+  const metaTemplateName =
+    typeof rule?.meta_template_name === "string" && rule.meta_template_name.trim()
+      ? rule.meta_template_name.trim()
+      : null;
+  const metaTemplateLang =
+    typeof rule?.meta_template_lang === "string" && rule.meta_template_lang.trim()
+      ? rule.meta_template_lang.trim()
+      : null;
   if (!connectionId) {
     return {
       agentId: null,
       ruleId: auth.ruleId,
       connectionId: null,
+      transport,
+      metaTemplateName,
+      metaTemplateLang,
       source: "unauthorized_form",
       reason: "missing_meta_rule_connection",
       authorized: false,
@@ -607,6 +629,9 @@ export async function resolveAuthorizedMetaLeadAgent(params: {
       agentId: null,
       ruleId: auth.ruleId,
       connectionId,
+      transport,
+      metaTemplateName,
+      metaTemplateLang,
       source: "invalid_agent",
       reason: usable.reason,
       authorized: false,
@@ -618,6 +643,9 @@ export async function resolveAuthorizedMetaLeadAgent(params: {
     agentId: auth.agentId,
     ruleId: auth.ruleId,
     connectionId,
+    transport,
+    metaTemplateName,
+    metaTemplateLang,
     source: auth.source,
     reason: auth.reason,
     authorized: true,

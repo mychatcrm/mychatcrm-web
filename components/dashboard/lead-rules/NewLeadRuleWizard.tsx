@@ -425,6 +425,8 @@ type Draft = {
   source: LeadRuleSource | null;
   transport: "evolution" | "cloud_api";
   connectionId: string;
+  metaTemplateName: string;
+  metaTemplateLang: string;
   conflictPolicy: NonNullable<LeadDistributionRule["conflictPolicy"]>;
   conflictInactivityMinutes: number;
   pageLabel: string;
@@ -456,6 +458,8 @@ const emptyDraft = (): Draft => ({
   source: null,
   transport: "evolution",
   connectionId: "",
+  metaTemplateName: "",
+  metaTemplateLang: "pt_BR",
   conflictPolicy: "latest_wins",
   conflictInactivityMinutes: 1440,
   pageLabel: "",
@@ -494,6 +498,8 @@ function ruleToDraft(r: LeadDistributionRule): Draft {
     source: r.source,
     transport: r.transport ?? (r.source === "whatsapp_api" ? "cloud_api" : "evolution"),
     connectionId: r.connectionId ?? "",
+    metaTemplateName: r.metaTemplateName ?? "",
+    metaTemplateLang: r.metaTemplateLang ?? "pt_BR",
     conflictPolicy: r.conflictPolicy ?? "latest_wins",
     conflictInactivityMinutes: r.conflictInactivityMinutes ?? 1440,
     pageLabel: r.pageLabel ?? "",
@@ -563,6 +569,10 @@ export function NewLeadRuleWizard({
       wa_jid: string | null;
     }>
   >([]);
+  const [metaTemplates, setMetaTemplates] = useState<
+    Array<{ name: string; status: string; language: string | null; bodyText: string | null }>
+  >([]);
+  const [metaTemplatesLoading, setMetaTemplatesLoading] = useState(false);
   const [availableForms, setAvailableForms] = useState<MetaFormsForm[]>([]);
   const [formsLoading, setFormsLoading] = useState(false);
   const [formsError, setFormsError] = useState<string | null>(null);
@@ -628,6 +638,45 @@ export function NewLeadRuleWizard({
       )
       .catch(() => setWhatsAppConnections([]));
   }, [open]);
+
+  useEffect(() => {
+    if (!open || draft.transport !== "cloud_api" || !draft.connectionId.trim()) {
+      setMetaTemplates([]);
+      return;
+    }
+    let cancelled = false;
+    setMetaTemplatesLoading(true);
+    fetch(
+      `/api/client/whatsapp-campaigns/meta-templates?connectionId=${encodeURIComponent(draft.connectionId.trim())}`,
+      { credentials: "same-origin" },
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then(
+        (
+          data: {
+            templates?: Array<{
+              name: string;
+              status: string;
+              language: string | null;
+              bodyText: string | null;
+            }>;
+          } | null,
+        ) => {
+          if (cancelled) return;
+          const approved = (data?.templates ?? []).filter((t) => t.status === "APPROVED");
+          setMetaTemplates(approved);
+        },
+      )
+      .catch(() => {
+        if (!cancelled) setMetaTemplates([]);
+      })
+      .finally(() => {
+        if (!cancelled) setMetaTemplatesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, draft.transport, draft.connectionId]);
 
   const syncDistPopoverRect = useCallback(() => {
     const btn = distButtonRef.current;
@@ -1033,6 +1082,15 @@ export function NewLeadRuleWizard({
       setStep(0);
       return;
     }
+    if (
+      draft.source === "meta_form" &&
+      draft.transport === "cloud_api" &&
+      ["automation_agent", "specific_agents", "round_robin"].includes(dist) &&
+      !draft.metaTemplateName.trim()
+    ) {
+      setStep(0);
+      return;
+    }
     if (initialRule && onUpdated) {
       const rule: LeadDistributionRule = {
         ...initialRule,
@@ -1040,6 +1098,8 @@ export function NewLeadRuleWizard({
         source: draft.source,
         transport: draft.transport,
         connectionId: draft.connectionId || null,
+        metaTemplateName: draft.transport === "cloud_api" ? draft.metaTemplateName || null : null,
+        metaTemplateLang: draft.transport === "cloud_api" ? draft.metaTemplateLang || "pt_BR" : null,
         conflictPolicy: draft.conflictPolicy,
         conflictInactivityMinutes: draft.conflictInactivityMinutes,
         redistribution: draft.redistribution,
@@ -1075,6 +1135,8 @@ export function NewLeadRuleWizard({
       source: draft.source,
       transport: draft.transport,
       connectionId: draft.connectionId || null,
+      metaTemplateName: draft.transport === "cloud_api" ? draft.metaTemplateName || null : null,
+      metaTemplateLang: draft.transport === "cloud_api" ? draft.metaTemplateLang || "pt_BR" : null,
       conflictPolicy: draft.conflictPolicy,
       conflictInactivityMinutes: draft.conflictInactivityMinutes,
       redistribution: draft.redistribution,
@@ -1762,6 +1824,10 @@ export function NewLeadRuleWizard({
                           transport: option.value,
                           connectionId:
                             current.transport === option.value ? current.connectionId : "",
+                          metaTemplateName:
+                            option.value === "cloud_api" && current.transport === "cloud_api"
+                              ? current.metaTemplateName
+                              : "",
                         }))
                       }
                       className={cn(
@@ -1801,30 +1867,76 @@ export function NewLeadRuleWizard({
                     </select>
                   </div>
                 ) : (
-                  <div className="mt-3">
-                    <label
-                      htmlFor={`${formId}-cloud-phone-number-id`}
-                      className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-content-muted"
-                    >
-                      Phone Number ID da Cloud API
-                    </label>
-                    <input
-                      id={`${formId}-cloud-phone-number-id`}
-                      value={draft.connectionId}
-                      onChange={(event) =>
-                        setDraft((current) => ({
-                          ...current,
-                          connectionId: event.target.value.replace(/\D/g, ""),
-                        }))
-                      }
-                      inputMode="numeric"
-                      autoComplete="off"
-                      placeholder="Ex.: 123456789012345"
-                      className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
-                    />
-                    <p className="mt-1.5 text-[11px] leading-relaxed text-content-muted">
-                      Identificador do número exibido no painel da Meta. Ele resolve o tenant correto no webhook.
-                    </p>
+                  <div className="mt-3 space-y-3">
+                    <div>
+                      <label
+                        htmlFor={`${formId}-cloud-phone-number-id`}
+                        className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-content-muted"
+                      >
+                        Phone Number ID da Cloud API
+                      </label>
+                      <input
+                        id={`${formId}-cloud-phone-number-id`}
+                        value={draft.connectionId}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            connectionId: event.target.value.replace(/\D/g, ""),
+                            metaTemplateName: "",
+                          }))
+                        }
+                        inputMode="numeric"
+                        autoComplete="off"
+                        placeholder="Ex.: 123456789012345"
+                        className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                      />
+                      <p className="mt-1.5 text-[11px] leading-relaxed text-content-muted">
+                        Identificador do número em Integrações → API Meta (ou no painel da Meta).
+                      </p>
+                    </div>
+                    <div>
+                      <label
+                        htmlFor={`${formId}-meta-template`}
+                        className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-content-muted"
+                      >
+                        Template Meta aprovado (1º contacto Lead Ads)
+                      </label>
+                      {metaTemplatesLoading ? (
+                        <p className="text-xs text-content-muted">A carregar templates…</p>
+                      ) : draft.connectionId && metaTemplates.length === 0 ? (
+                        <p className="rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                          Nenhum modelo aprovado encontrado para este número. Aprove um template no Gerenciador da
+                          Meta e volte aqui.
+                        </p>
+                      ) : (
+                        <select
+                          id={`${formId}-meta-template`}
+                          value={draft.metaTemplateName}
+                          onChange={(event) => {
+                            const name = event.target.value;
+                            const selected = metaTemplates.find((t) => t.name === name);
+                            setDraft((current) => ({
+                              ...current,
+                              metaTemplateName: name,
+                              metaTemplateLang: selected?.language ?? current.metaTemplateLang ?? "pt_BR",
+                            }));
+                          }}
+                          className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                        >
+                          <option value="">Selecione um modelo aprovado</option>
+                          {metaTemplates.map((t) => (
+                            <option key={t.name} value={t.name}>
+                              {t.name}
+                              {t.language ? ` · ${t.language}` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      <p className="mt-1.5 text-[11px] leading-relaxed text-content-muted">
+                        Obrigatório pela política da Meta para o primeiro WhatsApp iniciado pela empresa (fora da
+                        janela de 24h).
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>
