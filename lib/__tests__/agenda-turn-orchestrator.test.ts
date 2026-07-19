@@ -1718,6 +1718,111 @@ describe("resolveAgendaTurn", () => {
   describe("incidente de produção: fragmento + verdade da resposta", () => {
     const PROPOSTA_SEM_DATA = "Posso confirmar seu horário? Me diga o dia e a hora que ficam melhores.";
 
+    it("incidente real 19/07: 'Uai pode ser' + plano 2023 → propõe o slot do TEXTO visível do modelo e salva pending", async () => {
+      const { sb, rpc, pendingRows } = makeStructuredSb();
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Conseguimos te receber amanhã às 14h. Fica bom para você?",
+        clientText: "Uai pode ser",
+        agendaAutomationEnabled: true,
+        agendaDisponibilidade: {
+          ativo: true,
+          diasSemana: [1, 2, 3, 4, 5],
+          horaInicio: "09:00",
+          horaFim: "18:00",
+        },
+        agendaPlan: {
+          action: "propose_create",
+          date: "05/10/2023",
+          time: "14:00",
+          location: null,
+          eventId: null,
+        },
+      });
+      expect(result.action).toBe("needs_confirmation");
+      expect(result.text).not.toBe(AGENDA_PAST_DATETIME_REPLY);
+      expect(pendingRows[0]).toMatchObject({
+        action: "create",
+        proposed_date: "02/06/2026",
+        proposed_time: "14:00",
+        state: "pending",
+      });
+      expect(rpc).not.toHaveBeenCalled();
+      expect(insertAgendaEventMock).not.toHaveBeenCalled();
+    });
+
+    it("incidente real 19/07: 'ta ficando doido?' + plano 2023 → mesmo tratamento, nunca 'já passou'", async () => {
+      const { sb, rpc, pendingRows } = makeStructuredSb();
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Desculpe pela confusão! 😊 Podemos agendar para amanhã às 14h. Fica bom para você?",
+        clientText: "ta ficando doido?",
+        agendaAutomationEnabled: true,
+        agendaDisponibilidade: {
+          ativo: true,
+          diasSemana: [1, 2, 3, 4, 5],
+          horaInicio: "09:00",
+          horaFim: "18:00",
+        },
+        agendaPlan: {
+          action: "propose_create",
+          date: "18/10/2023",
+          time: "14:00",
+          location: null,
+          eventId: null,
+        },
+      });
+      expect(result.action).toBe("needs_confirmation");
+      expect(result.text).not.toBe(AGENDA_PAST_DATETIME_REPLY);
+      expect(pendingRows[0]).toMatchObject({
+        action: "create",
+        proposed_date: "02/06/2026",
+        proposed_time: "14:00",
+        state: "pending",
+      });
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
+    it("plano 2023 com texto do modelo SEM slot parseável → pergunta natural do modelo, zero pending", async () => {
+      const { sb, rpc, pendingRows } = makeStructuredSb();
+      const modelText = "Perfeito! Qual dia e horário ficam melhores para você?";
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText,
+        clientText: "Uai pode ser",
+        agendaAutomationEnabled: true,
+        agendaDisponibilidade: {
+          ativo: true,
+          diasSemana: [1, 2, 3, 4, 5],
+          horaInicio: "09:00",
+          horaFim: "18:00",
+        },
+        agendaPlan: {
+          action: "propose_create",
+          date: "18/10/2023",
+          time: "14:00",
+          location: null,
+          eventId: null,
+        },
+      });
+      expect(result.action).toBe("none");
+      expect(result.text).toBe(modelText);
+      expect(pendingRows).toHaveLength(0);
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
     it("incidente real: 'Pode ser segunda agora' + plano alucinado (ano 2023) não grava proposta nem vaza hora inventada", async () => {
       const { sb, pendingRows } = makeStructuredSb();
       const result = await resolveAgendaTurn({
