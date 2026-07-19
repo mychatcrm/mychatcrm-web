@@ -2122,6 +2122,27 @@ async function resolveStructuredAgendaPlan(params: {
     date: normalizeAgentAgendaDate(rawEffectivePlan.date),
     time: normalizeAgentAgendaTime(rawEffectivePlan.time),
   };
+  // Plano vindo do MODELO com data/hora já no passado é lixo determinístico
+  // (alucinações reais de produção: "16/10/2023", "05/10/2023"). Uma PROPOSTA
+  // para o passado nunca é legítima — anula na entrada, antes de qualquer
+  // decisão. Plano vindo de proposta PENDENTE (standaloneConfirmation) fica
+  // intacto: confirmar tarde demais um slot que passou deve continuar
+  // recebendo o honesto "Esse horário já passou".
+  if (!standaloneConfirmation && normalizedEffectivePlan.date && normalizedEffectivePlan.time) {
+    const planStartAt = directiveStartAt(
+      {
+        type: "schedule",
+        date: normalizedEffectivePlan.date,
+        time: normalizedEffectivePlan.time,
+        location: null,
+      },
+      params.timezone,
+    );
+    if (Number.isNaN(planStartAt.getTime()) || planStartAt.getTime() <= Date.now()) {
+      normalizedEffectivePlan.date = null;
+      normalizedEffectivePlan.time = null;
+    }
+  }
   // Confirmação / short-ack sem slot no texto do lead: recuperar da proposta
   // (pending já está em rawEffectivePlan) ou da prosa do assistente/modelo —
   // nunca assistantText vazio com fallback de plano alucinado "hoje 14h".
@@ -2177,6 +2198,36 @@ async function resolveStructuredAgendaPlan(params: {
       /\b(?:agendar|marcar|remarcar|reagendar|agendamento)\b/i.test(params.clientText);
     if ((clientDate && !clientTime) || (clientTime && !clientDate) || incompleteScheduleAsk) {
       effectivePlan = { ...effectivePlan, date: null, time: null };
+    }
+  }
+
+  // Cliente sem NENHUM sinal de agenda ("Uai pode ser", "ta ficando doido?"):
+  // o único slot legítimo é o que o próprio agente DISSE no texto visível ao
+  // lead — nunca o campo oculto do modelo (fonte das alucinações de 2023).
+  // Deriva do texto e segue o fluxo normal de proposta (validação de
+  // disponibilidade + pending + confirmação em duas fases). Sem slot parseável
+  // no texto, permanece !scheduleComplete e o ramo existente pede dia/horário
+  // com naturalidade. Nenhuma execução acontece aqui — só a origem do
+  // candidato muda para algo que o humano de fato leu.
+  if (
+    action === "create" &&
+    !resolvedFromClient &&
+    !standaloneConfirmation &&
+    !(effectivePlan.date && effectivePlan.time) &&
+    !textHasExplicitDateAnchor(params.clientText, params.timezone) &&
+    !textHasExplicitTime(params.clientText)
+  ) {
+    const modelCleanForSlot = stripAgendaDirectives(params.modelText).trim();
+    const slotFromReply = modelCleanForSlot
+      ? resolveScheduleDateTimeFromText({
+          clientText: "",
+          assistantText: modelCleanForSlot,
+          timezone: params.timezone,
+          agendaDisponibilidade: params.agendaDisponibilidade,
+        })
+      : null;
+    if (slotFromReply) {
+      effectivePlan = { ...effectivePlan, date: slotFromReply.date, time: slotFromReply.time };
     }
   }
   let cancelEvent: AgendaEventRow | null = null;
