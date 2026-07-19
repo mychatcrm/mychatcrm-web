@@ -17,6 +17,8 @@ export type WhatsappMessageRealtimeRow = {
   tenant_id: string;
   remote_jid: string;
   lead_id?: string | null;
+  connection_id?: string | null;
+  channel?: string | null;
   direction: "inbound" | "outbound";
   kind: string;
   content: string;
@@ -33,6 +35,7 @@ export function subscribeToWhatsappMessages(params: {
   remoteJid?: string | null;
   onInsert: (row: WhatsappMessageRealtimeRow) => void;
   onUpdate?: (row: WhatsappMessageRealtimeRow) => void;
+  onStatus?: (status: string) => void;
   pollMs?: number;
   onPoll?: () => void;
 }): () => void {
@@ -74,7 +77,9 @@ export function subscribeToWhatsappMessages(params: {
         params.onUpdate(row);
       },
     )
-    .subscribe();
+    .subscribe((status) => {
+      params.onStatus?.(status);
+    });
 
   const pollMs = params.pollMs ?? 0;
   const intervalId =
@@ -87,6 +92,7 @@ export function subscribeToWhatsappMessages(params: {
 
   return () => {
     if (intervalId) clearInterval(intervalId);
+    params.onStatus?.("CLOSED");
     void supabase.removeChannel(channel);
   };
 }

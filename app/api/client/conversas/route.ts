@@ -1,7 +1,7 @@
 /**
  * GET /api/client/conversas
- * Lista todos os remote_jid únicos do tenant com última mensagem e timestamp.
- * Retorna conversas ordenadas por data da última mensagem (desc).
+ * Lista remote_jid únicos do tenant com última mensagem (RPC DISTINCT ON) e
+ * estado/CRM. Ordenadas por última mensagem (desc).
  */
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
@@ -20,32 +20,91 @@ function phoneFromRemoteJid(remoteJid: string): string | null {
   return digits.length >= 10 ? digits : null;
 }
 
+type InboxLastMessage = {
+  remote_jid: string;
+  last_content: string;
+  last_kind: string;
+  last_direction: string;
+  last_at: string;
+  connection_id: string | null;
+  channel: string | null;
+};
+
+async function loadLastMessages(
+  sb: ReturnType<typeof createSupabaseServiceClient>,
+  tenantId: string,
+  connectionId: string | null,
+): Promise<{ rows: InboxLastMessage[]; via: "rpc" | "scan" }> {
+  const { data: rpcData, error: rpcError } = await sb.rpc("list_tenant_inbox_conversations", {
+    p_tenant_id: tenantId,
+    p_connection_id: connectionId,
+  });
+
+  if (!rpcError && Array.isArray(rpcData)) {
+    return {
+      via: "rpc",
+      rows: (rpcData as Array<Record<string, unknown>>).map((row) => ({
+        remote_jid: String(row.remote_jid ?? ""),
+        last_content: String(row.last_content ?? ""),
+        last_kind: String(row.last_kind ?? "text"),
+        last_direction: String(row.last_direction ?? "inbound"),
+        last_at: String(row.last_at ?? ""),
+        connection_id: typeof row.connection_id === "string" ? row.connection_id : null,
+        channel: typeof row.channel === "string" ? row.channel : null,
+      })),
+    };
+  }
+
+  if (rpcError) {
+    console.warn("[api/client/conversas] inbox RPC unavailable, fallback scan", rpcError.message);
+  }
+
+  let messagesQuery = sb
+    .from("whatsapp_messages")
+    .select("remote_jid, content, kind, direction, created_at, connection_id, channel")
+    .eq("tenant_id", tenantId)
+    .order("created_at", { ascending: false })
+    .limit(2500);
+  if (connectionId) messagesQuery = messagesQuery.eq("connection_id", connectionId);
+
+  const { data, error } = await messagesQuery;
+  if (error) throw error;
+
+  const seen = new Map<string, InboxLastMessage>();
+  for (const row of data ?? []) {
+    const jid = String(row.remote_jid ?? "");
+    if (!jid || seen.has(jid)) continue;
+    seen.set(jid, {
+      remote_jid: jid,
+      last_content: String(row.content ?? ""),
+      last_kind: String(row.kind ?? "text"),
+      last_direction: String(row.direction ?? "inbound"),
+      last_at: String(row.created_at ?? ""),
+      connection_id: typeof row.connection_id === "string" ? row.connection_id : null,
+      channel: typeof row.channel === "string" ? row.channel : null,
+    });
+  }
+  return { via: "scan", rows: Array.from(seen.values()) };
+}
+
 export async function GET(request: Request) {
   const session = await getClientSessionFromCookies();
   if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
-  // Filtro opcional por linha específica (?connectionId=) — UUID de
-  // tenant_evolution_instances (QR) ou phone_number_id (API Meta). Sem o
-  // parâmetro, comportamento atual preservado (todas as linhas juntas).
   const connectionId = new URL(request.url).searchParams.get("connectionId");
 
   const sb = createSupabaseServiceClient();
 
-  // Sem limite, esta consulta buscava TODO o histórico do tenant a cada carga
-  // e a cada poll de 8s (ver AtendimentoV2.tsx) — piora com o tempo conforme o
-  // volume cresce. O cap abaixo é uma rede de segurança generosa (>10x o
-  // volume atual de produção): não muda nada hoje, só evita que a consulta
-  // fique ilimitada conforme o histórico do tenant cresce.
-  let messagesQuery = sb
-    .from("whatsapp_messages")
-    .select("remote_jid, content, kind, direction, created_at")
-    .eq("tenant_id", session.tenantId)
-    .order("created_at", { ascending: false })
-    .limit(5000);
-  if (connectionId) messagesQuery = messagesQuery.eq("connection_id", connectionId);
+  let lastMessages: InboxLastMessage[];
+  try {
+    const loaded = await loadLastMessages(sb, session.tenantId, connectionId);
+    lastMessages = loaded.rows;
+  } catch (error) {
+    console.error("[api/client/conversas] GET messages", error);
+    return NextResponse.json({ error: "Erro ao carregar conversas." }, { status: 503 });
+  }
 
-  const [{ data, error }, { data: states }, { data: leads }] = await Promise.all([
-    messagesQuery,
+  const [{ data: states }, { data: leads }] = await Promise.all([
     sb
       .from("conversation_states")
       .select(
@@ -58,11 +117,6 @@ export async function GET(request: Request) {
       .select("id, phone, name, status, crm_funnel_id, suggested_next_action")
       .eq("tenant_id", session.tenantId),
   ]);
-
-  if (error) {
-    console.error("[api/client/conversas] GET", error.code, error.message);
-    return NextResponse.json({ error: "Erro ao carregar conversas." }, { status: 503 });
-  }
 
   type LeadSummary = {
     id: string;
@@ -91,10 +145,12 @@ export async function GET(request: Request) {
 
   const hiddenJids = new Set(
     (states ?? [])
-      .filter((row) => !isConversationVisibleInInbox({
-        isHidden: row.is_hidden === true,
-        archivedAt: typeof row.archived_at === "string" ? row.archived_at : null,
-      }))
+      .filter((row) =>
+        !isConversationVisibleInInbox({
+          isHidden: row.is_hidden === true,
+          archivedAt: typeof row.archived_at === "string" ? row.archived_at : null,
+        }),
+      )
       .map((row) => String(row.remote_jid)),
   );
 
@@ -102,71 +158,48 @@ export async function GET(request: Request) {
     (states ?? []).map((row) => [String(row.remote_jid), row as Record<string, unknown>]),
   );
 
-  const seen = new Map<
-    string,
-    {
-      remoteJid: string;
-      lastContent: string;
-      lastKind: string;
-      lastDirection: string;
-      lastAt: string;
-      unreadCount: number;
-      conversation_mode: string;
-      assigned_human_name: string | null;
-      agent_id: string | null;
-      handoff_suggested: boolean;
-      lead_id: string | null;
-      lead_name: string | null;
-      lead_status: string | null;
-      lead_crm_funnel_id: string | null;
-      lead_suggested_next_action: string | null;
-    }
-  >();
+  const conversations = lastMessages
+    .filter((row) => row.remote_jid && !hiddenJids.has(row.remote_jid))
+    .map((row) => {
+      const stateRow = stateByJid.get(row.remote_jid);
+      const conversation_mode = deriveConversationMode({
+        conversationMode: typeof stateRow?.conversation_mode === "string" ? stateRow.conversation_mode : null,
+        humanPaused: stateRow?.human_paused === true,
+        handoffSuggested: stateRow?.handoff_suggested === true,
+        pausedReason: typeof stateRow?.paused_reason === "string" ? stateRow.paused_reason : null,
+      });
 
-  for (const row of data ?? []) {
-    if (hiddenJids.has(row.remote_jid)) continue;
-    const stateRow = stateByJid.get(row.remote_jid);
-    const conversation_mode = deriveConversationMode({
-      conversationMode: typeof stateRow?.conversation_mode === "string" ? stateRow.conversation_mode : null,
-      humanPaused: stateRow?.human_paused === true,
-      handoffSuggested: stateRow?.handoff_suggested === true,
-      pausedReason: typeof stateRow?.paused_reason === "string" ? stateRow.paused_reason : null,
-    });
+      let leadId = typeof stateRow?.lead_id === "string" ? stateRow.lead_id : null;
+      if (!leadId) {
+        const phone = phoneFromRemoteJid(row.remote_jid);
+        if (phone) leadId = phoneToLead.get(phone)?.id ?? null;
+      }
+      const leadRecord = leadId
+        ? leadById.get(leadId) ?? phoneToLead.get(phoneFromRemoteJid(row.remote_jid) ?? "")
+        : null;
 
-    let leadId = typeof stateRow?.lead_id === "string" ? stateRow.lead_id : null;
-    if (!leadId) {
-      const phone = phoneFromRemoteJid(row.remote_jid);
-      if (phone) leadId = phoneToLead.get(phone)?.id ?? null;
-    }
-    const leadRecord = leadId ? leadById.get(leadId) ?? phoneToLead.get(phoneFromRemoteJid(row.remote_jid) ?? "") : null;
-    const leadName = leadRecord?.name ?? null;
-
-    if (!seen.has(row.remote_jid)) {
-      seen.set(row.remote_jid, {
+      return {
         remoteJid: row.remote_jid,
-        lastContent: row.content,
-        lastKind: row.kind,
-        lastDirection: row.direction,
-        lastAt: row.created_at,
-        unreadCount: row.direction === "inbound" ? 1 : 0,
+        lastContent: row.last_content,
+        lastKind: row.last_kind,
+        lastDirection: row.last_direction,
+        lastAt: row.last_at,
+        connectionId: row.connection_id,
+        channel: row.channel === "meta_cloud" ? "meta_cloud" : row.channel === "evolution" ? "evolution" : null,
+        unreadCount: row.last_direction === "inbound" ? 1 : 0,
         conversation_mode,
         assigned_human_name:
           typeof stateRow?.assigned_human_name === "string" ? stateRow.assigned_human_name : null,
         agent_id: typeof stateRow?.agent_id === "string" ? stateRow.agent_id : null,
         handoff_suggested: stateRow?.handoff_suggested === true,
         lead_id: leadId,
-        lead_name: leadName,
+        lead_name: leadRecord?.name ?? null,
         lead_status: leadRecord?.status ?? null,
         lead_crm_funnel_id: leadRecord?.crmFunnelId ?? null,
         lead_suggested_next_action: leadRecord?.suggestedNextAction ?? null,
-      });
-    } else if (row.direction === "inbound") {
-      const existing = seen.get(row.remote_jid)!;
-      existing.unreadCount += 1;
-    }
-  }
-
-  const conversations = Array.from(seen.values());
+      };
+    })
+    .sort((a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime());
 
   return NextResponse.json({ conversations }, { headers: { "Cache-Control": "no-store" } });
 }

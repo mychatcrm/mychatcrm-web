@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
   Check,
@@ -14,6 +14,8 @@ import {
   Paperclip,
   Phone,
   Play,
+  QrCode,
+  Radio,
   Search,
   Send,
   Smile,
@@ -52,6 +54,8 @@ type WaConversation = {
   lastDirection: string;
   lastAt: string;
   unreadCount: number;
+  connectionId?: string | null;
+  channel?: "evolution" | "meta_cloud" | null;
   conversation_mode?: ConvMode;
   assigned_human_name?: string | null;
   agent_id?: string | null;
@@ -98,11 +102,17 @@ type InboxTab = "all" | "ia" | "unread";
 
 type AttendantFilter = "all" | "automation" | "human" | "waiting_human";
 type PeriodFilter = "all" | "today" | "7d" | "30d" | "custom";
+type TransportFilter = "all" | "evolution" | "cloud_api";
 
 type ConnectionOption = {
   connectionId: string;
   transport: "evolution" | "cloud_api";
   label: string;
+};
+
+type AgentOption = {
+  id: string;
+  nome: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -175,6 +185,12 @@ const ATTENDANT_OPTIONS: { key: AttendantFilter; label: string }[] = [
   { key: "waiting_human", label: "Aguardando humano" },
 ];
 
+const TRANSPORT_OPTIONS: { key: TransportFilter; label: string; icon: "all" | "qr" | "meta" }[] = [
+  { key: "all", label: "Todos os canais", icon: "all" },
+  { key: "evolution", label: "QR Code", icon: "qr" },
+  { key: "cloud_api", label: "API Meta", icon: "meta" },
+];
+
 const PERIOD_OPTIONS: { key: PeriodFilter; label: string }[] = [
   { key: "all", label: "Todo período" },
   { key: "today", label: "Hoje" },
@@ -182,6 +198,19 @@ const PERIOD_OPTIONS: { key: PeriodFilter; label: string }[] = [
   { key: "30d", label: "Últimos 30 dias" },
   { key: "custom", label: "Personalizado" },
 ];
+
+function conversationMatchesTransport(conv: WaConversation, transport: TransportFilter): boolean {
+  if (transport === "all") return true;
+  if (transport === "cloud_api") return conv.channel === "meta_cloud";
+  return conv.channel === "evolution" || !conv.channel;
+}
+
+function chipClass(active: boolean): string {
+  return cn(
+    "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors",
+    active ? "bg-mc-rail text-white" : "bg-mc-surface-2 text-mc-muted hover:text-mc-text",
+  );
+}
 
 function periodStart(period: PeriodFilter, customFrom: string): Date | null {
   const now = new Date();
@@ -208,6 +237,15 @@ function useClickOutside(ref: React.RefObject<HTMLElement | null>, active: boole
 // ---------------------------------------------------------------------------
 // API helpers (local — same endpoints as OperacaoConversasHub)
 // ---------------------------------------------------------------------------
+
+async function apiLoadAgents(): Promise<AgentOption[]> {
+  const res = await fetch("/api/client/agentes", { cache: "no-store" });
+  if (!res.ok) return [];
+  const data = (await res.json()) as { agents?: Array<{ id?: string; nome?: string; status?: string }> };
+  return (data.agents ?? [])
+    .filter((a) => a.id && a.status !== "pausado" && a.status !== "inativo")
+    .map((a) => ({ id: String(a.id), nome: String(a.nome ?? "Agente") }));
+}
 
 async function apiLoadConversations(connectionId?: string | null): Promise<WaConversation[]> {
   const qs = connectionId ? `?connectionId=${encodeURIComponent(connectionId)}` : "";
@@ -356,7 +394,7 @@ async function apiBulkDeleteConversations(remoteJids: string[]): Promise<void> {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function ConvItem({
+function ConvItemInner({
   conv,
   selected,
   onClick,
@@ -373,6 +411,8 @@ function ConvItem({
 }) {
   const name = convDisplayName(conv);
   const mode = conv.conversation_mode ?? "automation";
+  const channelLabel =
+    conv.channel === "meta_cloud" ? "API Meta" : conv.channel === "evolution" ? "QR" : null;
   return (
     <button
       type="button"
@@ -388,7 +428,6 @@ function ConvItem({
           : "border border-transparent hover:bg-mc-surface-2",
       )}
     >
-      {/* Checkbox (apenas em modo seleção) */}
       {selectionMode && (
         <span
           aria-hidden
@@ -400,7 +439,6 @@ function ConvItem({
           {checked && <Check size={12} strokeWidth={3} />}
         </span>
       )}
-      {/* Avatar with mode dot */}
       <div className="relative shrink-0">
         <div className="flex h-10 w-10 items-center justify-center rounded-full bg-mc-surface-2 text-[13px] font-bold text-mc-muted">
           {initials(name)}
@@ -413,7 +451,6 @@ function ConvItem({
         />
       </div>
 
-      {/* Content */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
           <span className="truncate text-[13.5px] font-semibold text-mc-text">{name}</span>
@@ -427,16 +464,25 @@ function ConvItem({
             </span>
           )}
         </div>
-        {conv.conversation_mode && (
-          <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-mc-muted">
-            <span className={cn("h-1.5 w-1.5 rounded-full", MODE_DOT[mode])} />
-            {mode === "human" && conv.assigned_human_name ? conv.assigned_human_name : MODE_LABEL[mode]}
-          </span>
-        )}
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          {conv.conversation_mode && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-mc-muted">
+              <span className={cn("h-1.5 w-1.5 rounded-full", MODE_DOT[mode])} />
+              {mode === "human" && conv.assigned_human_name ? conv.assigned_human_name : MODE_LABEL[mode]}
+            </span>
+          )}
+          {channelLabel && (
+            <span className="rounded-full bg-mc-surface-2 px-1.5 py-0.5 text-[10px] font-semibold text-mc-muted">
+              {channelLabel}
+            </span>
+          )}
+        </div>
       </div>
     </button>
   );
 }
+
+const ConvItem = memo(ConvItemInner);
 
 function MessageBubble({ msg }: { msg: WaMessage }) {
   const isOut = msg.direction === "outbound";
@@ -527,14 +573,19 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
 
-  // Filtros avançados (período + atendente + número)
+  // Filtros (chips visíveis + popover de período/modo/número)
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [attendantFilter, setAttendantFilter] = useState<AttendantFilter>("all");
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter>("all");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [connections, setConnections] = useState<ConnectionOption[]>([]);
+  const [agents, setAgents] = useState<AgentOption[]>([]);
   const [connectionFilter, setConnectionFilter] = useState<string | null>(null);
+  const [transportFilter, setTransportFilter] = useState<TransportFilter>("all");
+  const [agentFilter, setAgentFilter] = useState<string | null>(null);
+  const [realtimeLive, setRealtimeLive] = useState(false);
+  const initialListLoadedRef = useRef(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -542,6 +593,7 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
   const filtersRef = useRef<HTMLDivElement>(null);
   const selectedJidRef = useRef<string | null>(null);
   const connectionFilterRef = useRef<string | null>(null);
+  const realtimeLiveRef = useRef(false);
 
   useClickOutside(headerMenuRef, headerMenuOpen, () => setHeaderMenuOpen(false));
   useClickOutside(filtersRef, filtersOpen, () => setFiltersOpen(false));
@@ -554,24 +606,41 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
     connectionFilterRef.current = connectionFilter;
   }, [connectionFilter]);
 
-  // Load available WhatsApp lines (QR Code + API Meta) para o filtro "Número"
+  useEffect(() => {
+    realtimeLiveRef.current = realtimeLive;
+  }, [realtimeLive]);
+
+  // Linhas WhatsApp + agentes para filtros
   useEffect(() => {
     apiLoadConnections()
       .then(setConnections)
       .catch(() => {});
+    apiLoadAgents()
+      .then(setAgents)
+      .catch(() => {});
   }, []);
 
-  // Load conversations (recarrega quando o filtro de número muda)
+  // Load conversations — sem skeleton ao trocar número (só no 1º load)
   useEffect(() => {
-    setLoading(true);
+    let cancelled = false;
+    const showSkeleton = !initialListLoadedRef.current;
+    if (showSkeleton) setLoading(true);
     apiLoadConversations(connectionFilter)
       .then((list) => {
+        if (cancelled) return;
         setConversations(list);
-        setSelectedJid((prev) => (prev && list.some((c) => c.remoteJid === prev) ? prev : list[0]?.remoteJid ?? null));
+        setSelectedJid((prev) =>
+          prev && list.some((c) => c.remoteJid === prev) ? prev : list[0]?.remoteJid ?? null,
+        );
+        initialListLoadedRef.current = true;
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [connectionFilter]);
 
   // Load messages when selection changes
@@ -613,7 +682,25 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
     };
   }, [selectedJid]);
 
-  // Realtime tenant-wide + poll fallback (lista 8s embutido no helper via onPoll separado abaixo)
+  const mergeConversationList = useCallback((list: WaConversation[]) => {
+    setConversations((prev) => {
+      const prevByJid = new Map(prev.map((c) => [c.remoteJid, c]));
+      return list.map((c) => {
+        const old = prevByJid.get(c.remoteJid);
+        return old
+          ? {
+              ...c,
+              unreadCount:
+                c.remoteJid === selectedJidRef.current ? 0 : Math.max(c.unreadCount, old.unreadCount),
+              messages: old.messages,
+              messagesLoaded: old.messagesLoaded,
+            }
+          : c;
+      });
+    });
+  }, []);
+
+  // Realtime tenant-wide — updates instantâneos; poll só como rede de segurança
   useEffect(() => {
     if (!tenantId) return;
 
@@ -622,6 +709,8 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
       const jid = row.remote_jid;
       if (!jid) return;
       const openJid = selectedJidRef.current;
+      const channel =
+        row.channel === "meta_cloud" || row.channel === "evolution" ? row.channel : undefined;
 
       setConversations((prev) => {
         const existing = prev.find((c) => c.remoteJid === jid);
@@ -636,6 +725,9 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
                     lastKind: msg.kind,
                     lastDirection: msg.direction,
                     lastAt: msg.created_at,
+                    channel: channel ?? c.channel,
+                    connectionId: row.connection_id ?? c.connectionId,
+                    agent_id: msg.agent_id ?? c.agent_id,
                     unreadCount:
                       msg.direction === "inbound" && jid !== openJid
                         ? c.unreadCount + 1
@@ -651,6 +743,9 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
             lastKind: msg.kind,
             lastDirection: msg.direction,
             lastAt: msg.created_at,
+            channel: channel ?? null,
+            connectionId: row.connection_id ?? null,
+            agent_id: msg.agent_id ?? null,
             unreadCount: msg.direction === "inbound" && jid !== openJid ? 1 : 0,
             messages: [],
             messagesLoaded: false,
@@ -674,39 +769,27 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
       tenantId,
       onInsert: applyIncoming,
       onUpdate: applyUpdate,
+      onStatus: (status) => setRealtimeLive(status === "SUBSCRIBED"),
     });
   }, [tenantId]);
 
-  // Poll lista a cada 8s
+  // Poll lista: 45s com realtime vivo, 8s se cair
   useEffect(() => {
     const refreshConvs = async () => {
       if (typeof document !== "undefined" && document.hidden) return;
       try {
         const list = await apiLoadConversations(connectionFilterRef.current);
-        setConversations((prev) => {
-          const prevByJid = new Map(prev.map((c) => [c.remoteJid, c]));
-          return list.map((c) => {
-            const old = prevByJid.get(c.remoteJid);
-            return old
-              ? {
-                  ...c,
-                  unreadCount:
-                    c.remoteJid === selectedJidRef.current ? 0 : Math.max(c.unreadCount, old.unreadCount),
-                  messages: old.messages,
-                  messagesLoaded: old.messagesLoaded,
-                }
-              : c;
-          });
-        });
+        mergeConversationList(list);
       } catch {
         /* ignore poll errors */
       }
     };
-    const id = setInterval(() => void refreshConvs(), 8_000);
+    const tickMs = realtimeLive ? 45_000 : 8_000;
+    const id = setInterval(() => void refreshConvs(), tickMs);
     return () => clearInterval(id);
-  }, []);
+  }, [mergeConversationList, realtimeLive]);
 
-  // Poll chat aberto a cada 2.5s (+ imediato ao selecionar)
+  // Poll chat aberto: NÃO duplicar o load do select — só intervalo (12s live / 3s fallback)
   useEffect(() => {
     if (!selectedJid) return;
     const jid = selectedJid;
@@ -728,10 +811,10 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
         /* ignore */
       }
     };
-    void refreshMsgs();
-    const id = setInterval(() => void refreshMsgs(), 2_500);
+    const tickMs = realtimeLiveRef.current || realtimeLive ? 12_000 : 3_000;
+    const id = setInterval(() => void refreshMsgs(), tickMs);
     return () => clearInterval(id);
-  }, [selectedJid]);
+  }, [selectedJid, realtimeLive]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -741,33 +824,76 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
   const selectedConv = conversations.find((c) => c.remoteJid === selectedJid) ?? null;
   const selectedName = selectedConv ? convDisplayName(selectedConv) : "";
 
-  const iaCount = conversations.filter((c) => c.conversation_mode === "automation").length;
-  const unreadCount = conversations.filter((c) => c.unreadCount > 0).length;
-  const filtersActive = attendantFilter !== "all" || periodFilter !== "all" || connectionFilter !== null;
+  const iaCount = useMemo(
+    () => conversations.filter((c) => c.conversation_mode === "automation").length,
+    [conversations],
+  );
+  const unreadCount = useMemo(
+    () => conversations.filter((c) => c.unreadCount > 0).length,
+    [conversations],
+  );
+  const filtersActive =
+    attendantFilter !== "all" ||
+    periodFilter !== "all" ||
+    connectionFilter !== null ||
+    transportFilter !== "all" ||
+    agentFilter !== null;
 
-  const filtered = conversations.filter((c) => {
-    const name = convDisplayName(c).toLowerCase();
-    const matchSearch = !search || name.includes(search.toLowerCase()) || c.lastContent.toLowerCase().includes(search.toLowerCase());
-    const matchTab =
-      tab === "all" ||
-      (tab === "ia" && c.conversation_mode === "automation") ||
-      (tab === "unread" && c.unreadCount > 0);
-    const matchAttendant =
-      attendantFilter === "all" || (c.conversation_mode ?? "automation") === attendantFilter;
+  const filteredConnections = useMemo(() => {
+    if (transportFilter === "all") return connections;
+    return connections.filter((c) => c.transport === transportFilter);
+  }, [connections, transportFilter]);
 
-    let matchPeriod = true;
-    if (periodFilter !== "all") {
-      const convDate = new Date(c.lastAt);
-      const start = periodStart(periodFilter, customFrom);
-      if (start && convDate < start) matchPeriod = false;
-      if (periodFilter === "custom" && customTo) {
-        const end = new Date(`${customTo}T23:59:59`);
-        if (convDate > end) matchPeriod = false;
+  const filtered = useMemo(() => {
+    return conversations.filter((c) => {
+      const name = convDisplayName(c).toLowerCase();
+      const matchSearch =
+        !search ||
+        name.includes(search.toLowerCase()) ||
+        c.lastContent.toLowerCase().includes(search.toLowerCase());
+      const matchTab =
+        tab === "all" ||
+        (tab === "ia" && c.conversation_mode === "automation") ||
+        (tab === "unread" && c.unreadCount > 0);
+      const matchAttendant =
+        attendantFilter === "all" || (c.conversation_mode ?? "automation") === attendantFilter;
+      const matchTransport = conversationMatchesTransport(c, transportFilter);
+      const matchAgent = !agentFilter || c.agent_id === agentFilter;
+      const matchConnection = !connectionFilter || c.connectionId === connectionFilter;
+
+      let matchPeriod = true;
+      if (periodFilter !== "all") {
+        const convDate = new Date(c.lastAt);
+        const start = periodStart(periodFilter, customFrom);
+        if (start && convDate < start) matchPeriod = false;
+        if (periodFilter === "custom" && customTo) {
+          const end = new Date(`${customTo}T23:59:59`);
+          if (convDate > end) matchPeriod = false;
+        }
       }
-    }
 
-    return matchSearch && matchTab && matchAttendant && matchPeriod;
-  });
+      return (
+        matchSearch &&
+        matchTab &&
+        matchAttendant &&
+        matchTransport &&
+        matchAgent &&
+        matchConnection &&
+        matchPeriod
+      );
+    });
+  }, [
+    conversations,
+    search,
+    tab,
+    attendantFilter,
+    transportFilter,
+    agentFilter,
+    connectionFilter,
+    periodFilter,
+    customFrom,
+    customTo,
+  ]);
 
   const clearFilters = () => {
     setAttendantFilter("all");
@@ -775,6 +901,8 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
     setCustomFrom("");
     setCustomTo("");
     setConnectionFilter(null);
+    setTransportFilter("all");
+    setAgentFilter(null);
   };
 
   const enterSelectionMode = () => {
@@ -1029,7 +1157,7 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
               </button>
               {filtersOpen && (
                 <div className="absolute right-0 top-11 z-20 w-72 rounded-mc-base border border-mc-border bg-mc-surface p-4">
-                  {connections.length > 1 && (
+                  {filteredConnections.length > 0 && (
                     <>
                       <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.08em] text-mc-muted">
                         Número
@@ -1047,7 +1175,7 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
                         >
                           Todos os números
                         </button>
-                        {connections.map((c) => (
+                        {filteredConnections.map((c) => (
                           <button
                             key={c.connectionId}
                             type="button"
@@ -1162,26 +1290,144 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
             </div>
           </div>
         ) : (
-          <div className="flex gap-2 border-b border-mc-border px-5 py-3">
-            {([
-              { key: "all", label: "Todas" },
-              { key: "ia", label: `IA · ${iaCount}` },
-              { key: "unread", label: `Não lidas · ${unreadCount}` },
-            ] as { key: InboxTab; label: string }[]).map(({ key, label }) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setTab(key)}
+          <div className="space-y-2.5 border-b border-mc-border px-5 py-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex min-w-0 flex-wrap gap-2">
+                {([
+                  { key: "all", label: "Todas" },
+                  { key: "ia", label: `IA · ${iaCount}` },
+                  { key: "unread", label: `Não lidas · ${unreadCount}` },
+                ] as { key: InboxTab; label: string }[]).map(({ key, label }) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setTab(key)}
+                    className={chipClass(tab === key)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <span
                 className={cn(
-                  "rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors",
-                  tab === key
-                    ? "bg-mc-rail text-white"
-                    : "bg-mc-surface-2 text-mc-muted hover:text-mc-text",
+                  "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10.5px] font-semibold",
+                  realtimeLive
+                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                    : "bg-amber-500/15 text-amber-800 dark:text-amber-200",
                 )}
+                title={realtimeLive ? "Atualização em tempo real ativa" : "Modo sincronização periódica"}
               >
-                {label}
-              </button>
-            ))}
+                <Radio size={11} strokeWidth={2.2} className={realtimeLive ? "animate-pulse" : undefined} />
+                {realtimeLive ? "Ao vivo" : "Sync"}
+              </span>
+            </div>
+
+            <div className="flex gap-2 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {TRANSPORT_OPTIONS.map(({ key, label, icon }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => {
+                    setTransportFilter(key);
+                    setConnectionFilter(null);
+                  }}
+                  className={chipClass(transportFilter === key)}
+                >
+                  {icon === "qr" ? <QrCode size={13} strokeWidth={2} /> : null}
+                  {icon === "meta" ? <Radio size={13} strokeWidth={2} /> : null}
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {agents.length > 0 && (
+              <div className="flex gap-2 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <button
+                  type="button"
+                  onClick={() => setAgentFilter(null)}
+                  className={chipClass(agentFilter === null)}
+                >
+                  <Bot size={13} strokeWidth={2} />
+                  Todos os agentes
+                </button>
+                {agents.map((agent) => (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    onClick={() => setAgentFilter(agent.id)}
+                    className={chipClass(agentFilter === agent.id)}
+                  >
+                    {agent.nome}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {filtersActive && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {transportFilter !== "all" && (
+                  <button
+                    type="button"
+                    onClick={() => setTransportFilter("all")}
+                    className="inline-flex items-center gap-1 rounded-full border border-mc-border bg-mc-surface px-2.5 py-1 text-[11px] font-semibold text-mc-text"
+                  >
+                    {transportFilter === "evolution" ? "QR Code" : "API Meta"}
+                    <X size={12} strokeWidth={2} />
+                  </button>
+                )}
+                {agentFilter && (
+                  <button
+                    type="button"
+                    onClick={() => setAgentFilter(null)}
+                    className="inline-flex items-center gap-1 rounded-full border border-mc-border bg-mc-surface px-2.5 py-1 text-[11px] font-semibold text-mc-text"
+                  >
+                    {agents.find((a) => a.id === agentFilter)?.nome ?? "Agente"}
+                    <X size={12} strokeWidth={2} />
+                  </button>
+                )}
+                {connectionFilter && (
+                  <button
+                    type="button"
+                    onClick={() => setConnectionFilter(null)}
+                    className="inline-flex items-center gap-1 rounded-full border border-mc-border bg-mc-surface px-2.5 py-1 text-[11px] font-semibold text-mc-text"
+                  >
+                    {connections.find((c) => c.connectionId === connectionFilter)?.label ?? "Número"}
+                    <X size={12} strokeWidth={2} />
+                  </button>
+                )}
+                {attendantFilter !== "all" && (
+                  <button
+                    type="button"
+                    onClick={() => setAttendantFilter("all")}
+                    className="inline-flex items-center gap-1 rounded-full border border-mc-border bg-mc-surface px-2.5 py-1 text-[11px] font-semibold text-mc-text"
+                  >
+                    {ATTENDANT_OPTIONS.find((o) => o.key === attendantFilter)?.label}
+                    <X size={12} strokeWidth={2} />
+                  </button>
+                )}
+                {periodFilter !== "all" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPeriodFilter("all");
+                      setCustomFrom("");
+                      setCustomTo("");
+                    }}
+                    className="inline-flex items-center gap-1 rounded-full border border-mc-border bg-mc-surface px-2.5 py-1 text-[11px] font-semibold text-mc-text"
+                  >
+                    {PERIOD_OPTIONS.find((o) => o.key === periodFilter)?.label}
+                    <X size={12} strokeWidth={2} />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="text-[11px] font-semibold text-mc-muted underline-offset-2 hover:text-mc-text hover:underline"
+                >
+                  Limpar tudo
+                </button>
+              </div>
+            )}
           </div>
         )}
 
