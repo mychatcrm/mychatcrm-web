@@ -96,6 +96,23 @@ describe("POST /api/client/whatsapp/evolution/test-send", () => {
     });
   });
 
+  it("regressão real: número digitado sem o DDI 55 é completado antes de checar/enviar", async () => {
+    getEvolutionInstanceByTenantSlotMock.mockResolvedValue({ connection_state: "open", instance_name: "inst-1" });
+    sendEvolutionTextWithConnectionRecoveryMock.mockResolvedValue({ ok: true, status: 200 });
+
+    // Renato digitou só DDD + número (sem "55") — antes do fix isso ia direto
+    // pro check da Evolution como está, que rejeitava como "não encontrado"
+    // mesmo sendo um número real com WhatsApp.
+    const res = await POST(makeRequest({ slotIndex: 0, toNumber: "62993580574" }));
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({ ok: true, message: "Teste MyChatCRM — QR Code OK" });
+    expect(sendEvolutionTextWithConnectionRecoveryMock).toHaveBeenCalledWith(
+      expect.objectContaining({ number: "5562993580574" }),
+    );
+  });
+
   it("surfaces a friendly error when the recipient has no WhatsApp", async () => {
     getEvolutionInstanceByTenantSlotMock.mockResolvedValue({ connection_state: "open", instance_name: "inst-1" });
     sendEvolutionTextWithConnectionRecoveryMock.mockResolvedValue({

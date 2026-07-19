@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { validateCheckoutPhone } from "@/lib/checkout-phone";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
 import { sendEvolutionTextWithConnectionRecovery } from "@/lib/server/evolution-send-recovery";
 import { getEvolutionInstanceByTenantSlot } from "@/lib/server/tenant-evolution-instance-db";
@@ -48,13 +49,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "slotIndex inválido" }, { status: 400 });
   }
 
-  const toNumber = String(body.toNumber ?? "").replace(/\D/g, "");
-  if (toNumber.length < 10) {
-    return NextResponse.json(
-      { error: "Informe um número válido com DDI (só dígitos, ex.: 5562999999999)." },
-      { status: 400 },
-    );
+  const phoneValidation = validateCheckoutPhone(body.toNumber ?? "");
+  if (!phoneValidation.ok) {
+    return NextResponse.json({ error: phoneValidation.message }, { status: 400 });
   }
+  const toNumber = phoneValidation.phone;
 
   const instance = await getEvolutionInstanceByTenantSlot(session.tenantId, slotIndex);
   if (!instance || instance.connection_state !== "open") {
