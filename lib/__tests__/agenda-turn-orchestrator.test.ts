@@ -1718,6 +1718,69 @@ describe("resolveAgendaTurn", () => {
   describe("incidente de produção: fragmento + verdade da resposta", () => {
     const PROPOSTA_SEM_DATA = "Posso confirmar seu horário? Me diga o dia e a hora que ficam melhores.";
 
+    it("incidente real: 'Pode ser segunda agora' + plano alucinado (ano 2023) não grava proposta nem vaza hora inventada", async () => {
+      const { sb, pendingRows } = makeStructuredSb();
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Conseguimos te receber na segunda-feira às 14h. Fica bom para você?",
+        clientText: "Pode ser segunda agora",
+        agendaAutomationEnabled: true,
+        agendaDisponibilidade: {
+          ativo: true,
+          diasSemana: [1, 2, 3, 4, 5],
+          horaInicio: "09:00",
+          horaFim: "18:00",
+        },
+        agendaPlan: {
+          action: "propose_create",
+          date: "2023-10-17",
+          time: "14:00",
+          location: null,
+          eventId: null,
+        },
+      });
+      expect(result.action).toBe("none");
+      expect(result.text).toBe(AGENDA_DATETIME_NEEDED_REPLY);
+      expect(pendingRows).toHaveLength(0);
+      expect(insertAgendaEventMock).not.toHaveBeenCalled();
+    });
+
+    it("mesmo cenário, mas o modelo pergunta genericamente (sem inventar hora): texto do modelo passa direto", async () => {
+      const { sb, pendingRows } = makeStructuredSb();
+      const modelText = "Perfeito! Qual dia e horário ficam melhores para você?";
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText,
+        clientText: "Pode ser segunda agora",
+        agendaAutomationEnabled: true,
+        agendaDisponibilidade: {
+          ativo: true,
+          diasSemana: [1, 2, 3, 4, 5],
+          horaInicio: "09:00",
+          horaFim: "18:00",
+        },
+        agendaPlan: {
+          action: "propose_create",
+          date: "2023-10-17",
+          time: "14:00",
+          location: null,
+          eventId: null,
+        },
+      });
+      expect(result.action).toBe("none");
+      expect(result.text).toBe(modelText);
+      expect(pendingRows).toHaveLength(0);
+      expect(insertAgendaEventMock).not.toHaveBeenCalled();
+    });
+
     it("fragmento 'Pode ser hoje as' não muta e pede data/hora exatas", async () => {
       const result = await resolveAgendaTurn({
         sb: makeSb(null),

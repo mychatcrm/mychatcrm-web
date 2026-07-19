@@ -2334,6 +2334,15 @@ async function resolveStructuredAgendaPlan(params: {
       Boolean(modelCleanForConfirm) &&
       !AGENDA_SUCCESS_CLAIM_RE.test(modelCleanForConfirm) &&
       orphanConcreteScheduleConfirmation(modelCleanForConfirm, params.timezone);
+    // Sem data/hora resolvida e validada, o texto do modelo não pode ser
+    // devolvido cru: ele pode ter inventado um horário concreto (ex.: plano
+    // alucinado com data no passado) sem que nada tenha sido gravado como
+    // pendente. Mesmo filtro já usado nos outros ramos deste arquivo — deixa
+    // passar perguntas humanas genéricas, troca por AGENDA_DATETIME_NEEDED_REPLY
+    // quando o texto do modelo afirma uma hora que ninguém confirmou.
+    const naturalMissingSlotText = modelAsksNaturallyForMissingSlot(modelCleanForConfirm, params.timezone)
+      ? modelCleanForConfirm
+      : AGENDA_DATETIME_NEEDED_REPLY;
     return {
       text: scheduleComplete
         ? action === "cancel" && cancelEvent
@@ -2341,7 +2350,7 @@ async function resolveStructuredAgendaPlan(params: {
           : keepNaturalProposal
             ? modelCleanForConfirm
             : buildAgendaConfirmationQuestion(directive)
-        : params.modelText,
+        : naturalMissingSlotText,
       action: scheduleComplete ? "needs_confirmation" : "none",
       deferHandoff: true,
     };
