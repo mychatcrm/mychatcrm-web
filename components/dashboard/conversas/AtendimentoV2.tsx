@@ -2,7 +2,6 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Bot,
   Check,
   CheckCheck,
   CheckSquare,
@@ -14,8 +13,6 @@ import {
   Paperclip,
   Phone,
   Play,
-  QrCode,
-  Radio,
   Search,
   Send,
   Smile,
@@ -180,23 +177,23 @@ const MODE_DOT: Record<ConvMode, string> = {
 
 const ATTENDANT_OPTIONS: { key: AttendantFilter; label: string }[] = [
   { key: "all", label: "Todos" },
-  { key: "automation", label: "IA" },
-  { key: "human", label: "Humano" },
-  { key: "waiting_human", label: "Aguardando humano" },
+  { key: "automation", label: "Só a inteligência artificial" },
+  { key: "human", label: "Só atendimento humano" },
+  { key: "waiting_human", label: "Aguardando uma pessoa" },
 ];
 
-const TRANSPORT_OPTIONS: { key: TransportFilter; label: string; icon: "all" | "qr" | "meta" }[] = [
-  { key: "all", label: "Todos os canais", icon: "all" },
-  { key: "evolution", label: "QR Code", icon: "qr" },
-  { key: "cloud_api", label: "API Meta", icon: "meta" },
+const TRANSPORT_OPTIONS: { key: TransportFilter; label: string }[] = [
+  { key: "all", label: "Todos" },
+  { key: "evolution", label: "WhatsApp QR" },
+  { key: "cloud_api", label: "WhatsApp Meta" },
 ];
 
 const PERIOD_OPTIONS: { key: PeriodFilter; label: string }[] = [
-  { key: "all", label: "Todo período" },
+  { key: "all", label: "Todo o período" },
   { key: "today", label: "Hoje" },
   { key: "7d", label: "Últimos 7 dias" },
   { key: "30d", label: "Últimos 30 dias" },
-  { key: "custom", label: "Personalizado" },
+  { key: "custom", label: "Escolher datas" },
 ];
 
 function conversationMatchesTransport(conv: WaConversation, transport: TransportFilter): boolean {
@@ -207,10 +204,14 @@ function conversationMatchesTransport(conv: WaConversation, transport: Transport
 
 function chipClass(active: boolean): string {
   return cn(
-    "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors",
+    "inline-flex shrink-0 items-center rounded-full px-3 py-1.5 text-[12.5px] font-semibold transition-colors",
     active ? "bg-mc-rail text-white" : "bg-mc-surface-2 text-mc-muted hover:text-mc-text",
   );
 }
+
+const selectClassName =
+  "mt-1.5 h-10 w-full rounded-mc-base border border-mc-border bg-mc-surface-2 px-3 text-[13px] text-mc-text outline-none focus:border-[rgba(242,68,0,0.45)]";
+
 
 function periodStart(period: PeriodFilter, customFrom: string): Date | null {
   const now = new Date();
@@ -412,7 +413,7 @@ function ConvItemInner({
   const name = convDisplayName(conv);
   const mode = conv.conversation_mode ?? "automation";
   const channelLabel =
-    conv.channel === "meta_cloud" ? "API Meta" : conv.channel === "evolution" ? "QR" : null;
+    conv.channel === "meta_cloud" ? "Meta" : conv.channel === "evolution" ? "QR" : null;
   return (
     <button
       type="button"
@@ -824,10 +825,6 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
   const selectedConv = conversations.find((c) => c.remoteJid === selectedJid) ?? null;
   const selectedName = selectedConv ? convDisplayName(selectedConv) : "";
 
-  const iaCount = useMemo(
-    () => conversations.filter((c) => c.conversation_mode === "automation").length,
-    [conversations],
-  );
   const unreadCount = useMemo(
     () => conversations.filter((c) => c.unreadCount > 0).length,
     [conversations],
@@ -1125,150 +1122,20 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
               </div>
             </div>
           </div>
-          {/* Search + filtros */}
-          <div className="flex items-center gap-2">
-            <div className="flex flex-1 items-center gap-2.5 rounded-mc-base bg-mc-surface-2 px-4 py-2.5">
-              <Search size={14} strokeWidth={1.9} className="shrink-0 text-mc-muted" />
-              <input
-                type="search"
-                placeholder="Buscar contato ou mensagem…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full bg-transparent text-[13.5px] text-mc-text placeholder:text-mc-muted focus:outline-none"
-              />
-            </div>
-            <div className="relative shrink-0" ref={filtersRef}>
-              <button
-                type="button"
-                onClick={() => setFiltersOpen((v) => !v)}
-                className={cn(
-                  "relative flex h-[38px] w-[38px] items-center justify-center rounded-mc-base transition-colors",
-                  filtersActive || filtersOpen
-                    ? "bg-mc-rail text-white"
-                    : "bg-mc-surface-2 text-mc-muted hover:text-mc-text",
-                )}
-                aria-label="Filtros"
-                aria-expanded={filtersOpen}
-              >
-                <Filter size={15} strokeWidth={1.9} />
-                {filtersActive && (
-                  <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-[#F24400] ring-2 ring-mc-surface" />
-                )}
-              </button>
-              {filtersOpen && (
-                <div className="absolute right-0 top-11 z-20 w-72 rounded-mc-base border border-mc-border bg-mc-surface p-4">
-                  {filteredConnections.length > 0 && (
-                    <>
-                      <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.08em] text-mc-muted">
-                        Número
-                      </p>
-                      <div className="mb-4 flex flex-wrap gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setConnectionFilter(null)}
-                          className={cn(
-                            "rounded-full px-3 py-1.5 text-[12px] font-semibold transition-colors",
-                            connectionFilter === null
-                              ? "bg-mc-rail text-white"
-                              : "bg-mc-surface-2 text-mc-muted hover:text-mc-text",
-                          )}
-                        >
-                          Todos os números
-                        </button>
-                        {filteredConnections.map((c) => (
-                          <button
-                            key={c.connectionId}
-                            type="button"
-                            onClick={() => setConnectionFilter(c.connectionId)}
-                            className={cn(
-                              "rounded-full px-3 py-1.5 text-[12px] font-semibold transition-colors",
-                              connectionFilter === c.connectionId
-                                ? "bg-mc-rail text-white"
-                                : "bg-mc-surface-2 text-mc-muted hover:text-mc-text",
-                            )}
-                          >
-                            {c.label}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                  <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.08em] text-mc-muted">
-                    Atendente
-                  </p>
-                  <div className="mb-4 flex flex-wrap gap-1.5">
-                    {ATTENDANT_OPTIONS.map(({ key, label }) => (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => setAttendantFilter(key)}
-                        className={cn(
-                          "rounded-full px-3 py-1.5 text-[12px] font-semibold transition-colors",
-                          attendantFilter === key
-                            ? "bg-mc-rail text-white"
-                            : "bg-mc-surface-2 text-mc-muted hover:text-mc-text",
-                        )}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.08em] text-mc-muted">
-                    Período
-                  </p>
-                  <div className="mb-2 flex flex-wrap gap-1.5">
-                    {PERIOD_OPTIONS.map(({ key, label }) => (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => setPeriodFilter(key)}
-                        className={cn(
-                          "rounded-full px-3 py-1.5 text-[12px] font-semibold transition-colors",
-                          periodFilter === key
-                            ? "bg-mc-rail text-white"
-                            : "bg-mc-surface-2 text-mc-muted hover:text-mc-text",
-                        )}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  {periodFilter === "custom" && (
-                    <div className="mb-1 mt-3 flex items-center gap-2">
-                      <input
-                        type="date"
-                        value={customFrom}
-                        onChange={(e) => setCustomFrom(e.target.value)}
-                        className="w-full rounded-mc-base border border-mc-border bg-mc-surface px-2.5 py-1.5 text-[12px] text-mc-text focus:outline-none"
-                      />
-                      <span className="shrink-0 text-[11px] text-mc-muted">até</span>
-                      <input
-                        type="date"
-                        value={customTo}
-                        onChange={(e) => setCustomTo(e.target.value)}
-                        className="w-full rounded-mc-base border border-mc-border bg-mc-surface px-2.5 py-1.5 text-[12px] text-mc-text focus:outline-none"
-                      />
-                    </div>
-                  )}
-                  <div className="mt-4 flex items-center justify-between border-t border-mc-border pt-3">
-                    <button
-                      type="button"
-                      onClick={clearFilters}
-                      className="text-[12px] font-semibold text-mc-muted transition-colors hover:text-mc-text"
-                    >
-                      Limpar filtros
-                    </button>
-                    <DsButton size="sm" onClick={() => setFiltersOpen(false)}>
-                      Aplicar
-                    </DsButton>
-                  </div>
-                </div>
-              )}
-            </div>
+          {/* Busca */}
+          <div className="flex items-center gap-2.5 rounded-mc-base bg-mc-surface-2 px-4 py-2.5">
+            <Search size={14} strokeWidth={1.9} className="shrink-0 text-mc-muted" />
+            <input
+              type="search"
+              placeholder="Buscar por nome ou mensagem…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full bg-transparent text-[13.5px] text-mc-text placeholder:text-mc-muted focus:outline-none"
+            />
           </div>
         </div>
 
-        {/* Filter tabs / barra de seleção */}
+        {/* Filtros / barra de seleção */}
         {selectionMode ? (
           <div className="flex items-center justify-between gap-2 border-b border-mc-border px-5 py-3">
             <span className="text-[12.5px] font-semibold text-mc-text">
@@ -1290,40 +1157,22 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
             </div>
           </div>
         ) : (
-          <div className="space-y-2.5 border-b border-mc-border px-5 py-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex min-w-0 flex-wrap gap-2">
-                {([
-                  { key: "all", label: "Todas" },
-                  { key: "ia", label: `IA · ${iaCount}` },
-                  { key: "unread", label: `Não lidas · ${unreadCount}` },
-                ] as { key: InboxTab; label: string }[]).map(({ key, label }) => (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => setTab(key)}
-                    className={chipClass(tab === key)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <span
-                className={cn(
-                  "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10.5px] font-semibold",
-                  realtimeLive
-                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                    : "bg-amber-500/15 text-amber-800 dark:text-amber-200",
-                )}
-                title={realtimeLive ? "Atualização em tempo real ativa" : "Modo sincronização periódica"}
+          <div className="border-b border-mc-border px-5 py-3">
+            <div className="flex items-center gap-2 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <button type="button" onClick={() => setTab("all")} className={chipClass(tab === "all")}>
+                Todas
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab("unread")}
+                className={chipClass(tab === "unread")}
               >
-                <Radio size={11} strokeWidth={2.2} className={realtimeLive ? "animate-pulse" : undefined} />
-                {realtimeLive ? "Ao vivo" : "Sync"}
-              </span>
-            </div>
+                {unreadCount > 0 ? `Não lidas (${unreadCount})` : "Não lidas"}
+              </button>
 
-            <div className="flex gap-2 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              {TRANSPORT_OPTIONS.map(({ key, label, icon }) => (
+              <span className="mx-0.5 h-4 w-px shrink-0 bg-mc-border" aria-hidden />
+
+              {TRANSPORT_OPTIONS.map(({ key, label }) => (
                 <button
                   key={key}
                   type="button"
@@ -1333,101 +1182,149 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
                   }}
                   className={chipClass(transportFilter === key)}
                 >
-                  {icon === "qr" ? <QrCode size={13} strokeWidth={2} /> : null}
-                  {icon === "meta" ? <Radio size={13} strokeWidth={2} /> : null}
                   {label}
                 </button>
               ))}
-            </div>
 
-            {agents.length > 0 && (
-              <div className="flex gap-2 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <span className="mx-0.5 h-4 w-px shrink-0 bg-mc-border" aria-hidden />
+
+              <div className="relative shrink-0" ref={filtersRef}>
                 <button
                   type="button"
-                  onClick={() => setAgentFilter(null)}
-                  className={chipClass(agentFilter === null)}
+                  onClick={() => setFiltersOpen((v) => !v)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-semibold transition-colors",
+                    filtersOpen || filtersActive
+                      ? "bg-mc-rail text-white"
+                      : "bg-mc-surface-2 text-mc-muted hover:text-mc-text",
+                  )}
+                  aria-expanded={filtersOpen}
                 >
-                  <Bot size={13} strokeWidth={2} />
-                  Todos os agentes
+                  <Filter size={13} strokeWidth={2} />
+                  Mais filtros
+                  {filtersActive ? (
+                    <span className="ml-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-white/20 px-1 text-[10px]">
+                      !
+                    </span>
+                  ) : null}
                 </button>
-                {agents.map((agent) => (
-                  <button
-                    key={agent.id}
-                    type="button"
-                    onClick={() => setAgentFilter(agent.id)}
-                    className={chipClass(agentFilter === agent.id)}
-                  >
-                    {agent.nome}
-                  </button>
-                ))}
-              </div>
-            )}
 
-            {filtersActive && (
-              <div className="flex flex-wrap items-center gap-1.5">
-                {transportFilter !== "all" && (
-                  <button
-                    type="button"
-                    onClick={() => setTransportFilter("all")}
-                    className="inline-flex items-center gap-1 rounded-full border border-mc-border bg-mc-surface px-2.5 py-1 text-[11px] font-semibold text-mc-text"
-                  >
-                    {transportFilter === "evolution" ? "QR Code" : "API Meta"}
-                    <X size={12} strokeWidth={2} />
-                  </button>
+                {filtersOpen && (
+                  <div className="absolute left-0 top-11 z-30 w-[min(20rem,calc(100vw-2.5rem))] rounded-mc-base border border-mc-border bg-mc-surface p-4 shadow-lg sm:left-auto sm:right-0">
+                    <p className="mb-3 text-[13px] font-semibold text-mc-text">Filtrar conversas</p>
+
+                    {agents.length > 0 && (
+                      <label className="mb-3 block">
+                        <span className="text-[12px] font-medium text-mc-muted">Agente de IA</span>
+                        <select
+                          value={agentFilter ?? ""}
+                          onChange={(e) => setAgentFilter(e.target.value || null)}
+                          className={selectClassName}
+                        >
+                          <option value="">Todos os agentes</option>
+                          {agents.map((agent) => (
+                            <option key={agent.id} value={agent.id}>
+                              {agent.nome}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+
+                    {filteredConnections.length > 1 && (
+                      <label className="mb-3 block">
+                        <span className="text-[12px] font-medium text-mc-muted">Número do WhatsApp</span>
+                        <select
+                          value={connectionFilter ?? ""}
+                          onChange={(e) => setConnectionFilter(e.target.value || null)}
+                          className={selectClassName}
+                        >
+                          <option value="">Todos os números</option>
+                          {filteredConnections.map((c) => (
+                            <option key={c.connectionId} value={c.connectionId}>
+                              {c.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+
+                    <label className="mb-3 block">
+                      <span className="text-[12px] font-medium text-mc-muted">Quem está atendendo</span>
+                      <select
+                        value={attendantFilter}
+                        onChange={(e) => setAttendantFilter(e.target.value as AttendantFilter)}
+                        className={selectClassName}
+                      >
+                        {ATTENDANT_OPTIONS.map(({ key, label }) => (
+                          <option key={key} value={key}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="mb-3 block">
+                      <span className="text-[12px] font-medium text-mc-muted">Período</span>
+                      <select
+                        value={periodFilter}
+                        onChange={(e) => setPeriodFilter(e.target.value as PeriodFilter)}
+                        className={selectClassName}
+                      >
+                        {PERIOD_OPTIONS.map(({ key, label }) => (
+                          <option key={key} value={key}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    {periodFilter === "custom" && (
+                      <div className="mb-3 flex items-center gap-2">
+                        <input
+                          type="date"
+                          value={customFrom}
+                          onChange={(e) => setCustomFrom(e.target.value)}
+                          className={selectClassName}
+                          aria-label="Data inicial"
+                        />
+                        <span className="shrink-0 text-[11px] text-mc-muted">até</span>
+                        <input
+                          type="date"
+                          value={customTo}
+                          onChange={(e) => setCustomTo(e.target.value)}
+                          className={selectClassName}
+                          aria-label="Data final"
+                        />
+                      </div>
+                    )}
+
+                    <div className="mt-4 flex items-center justify-between border-t border-mc-border pt-3">
+                      <button
+                        type="button"
+                        onClick={clearFilters}
+                        className="text-[12px] font-semibold text-mc-muted transition-colors hover:text-mc-text"
+                      >
+                        Limpar
+                      </button>
+                      <DsButton size="sm" onClick={() => setFiltersOpen(false)}>
+                        Pronto
+                      </DsButton>
+                    </div>
+                  </div>
                 )}
-                {agentFilter && (
-                  <button
-                    type="button"
-                    onClick={() => setAgentFilter(null)}
-                    className="inline-flex items-center gap-1 rounded-full border border-mc-border bg-mc-surface px-2.5 py-1 text-[11px] font-semibold text-mc-text"
-                  >
-                    {agents.find((a) => a.id === agentFilter)?.nome ?? "Agente"}
-                    <X size={12} strokeWidth={2} />
-                  </button>
-                )}
-                {connectionFilter && (
-                  <button
-                    type="button"
-                    onClick={() => setConnectionFilter(null)}
-                    className="inline-flex items-center gap-1 rounded-full border border-mc-border bg-mc-surface px-2.5 py-1 text-[11px] font-semibold text-mc-text"
-                  >
-                    {connections.find((c) => c.connectionId === connectionFilter)?.label ?? "Número"}
-                    <X size={12} strokeWidth={2} />
-                  </button>
-                )}
-                {attendantFilter !== "all" && (
-                  <button
-                    type="button"
-                    onClick={() => setAttendantFilter("all")}
-                    className="inline-flex items-center gap-1 rounded-full border border-mc-border bg-mc-surface px-2.5 py-1 text-[11px] font-semibold text-mc-text"
-                  >
-                    {ATTENDANT_OPTIONS.find((o) => o.key === attendantFilter)?.label}
-                    <X size={12} strokeWidth={2} />
-                  </button>
-                )}
-                {periodFilter !== "all" && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPeriodFilter("all");
-                      setCustomFrom("");
-                      setCustomTo("");
-                    }}
-                    className="inline-flex items-center gap-1 rounded-full border border-mc-border bg-mc-surface px-2.5 py-1 text-[11px] font-semibold text-mc-text"
-                  >
-                    {PERIOD_OPTIONS.find((o) => o.key === periodFilter)?.label}
-                    <X size={12} strokeWidth={2} />
-                  </button>
-                )}
+              </div>
+
+              {filtersActive && (
                 <button
                   type="button"
                   onClick={clearFilters}
-                  className="text-[11px] font-semibold text-mc-muted underline-offset-2 hover:text-mc-text hover:underline"
+                  className="shrink-0 text-[12px] font-semibold text-mc-muted underline-offset-2 hover:text-mc-text hover:underline"
                 >
-                  Limpar tudo
+                  Limpar
                 </button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
 
@@ -1444,6 +1341,19 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
             <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
               <MessageCircle size={28} strokeWidth={1.5} className="text-mc-muted/50" />
               <p className="text-[13px] text-mc-muted">Nenhuma conversa encontrada.</p>
+              {filtersActive || tab !== "all" || search ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearFilters();
+                    setTab("all");
+                    setSearch("");
+                  }}
+                  className="mt-1 text-[12.5px] font-semibold text-[#F24400] hover:underline"
+                >
+                  Limpar busca e filtros
+                </button>
+              ) : null}
             </div>
           )}
           <div className="space-y-1">
