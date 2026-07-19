@@ -186,10 +186,27 @@ export async function POST(request: Request) {
     }
     createResult = { ok: true, status: 200, data: {} };
   } else if (!createResult.ok) {
-    return NextResponse.json(
-      { error: "Falha ao criar instância na Evolution.", detail: createResult.error },
-      { status: 502 },
-    );
+    // status 0 = timeout/erro de rede do nosso lado (evolutionFetchJson), não uma resposta
+    // real da Evolution recusando o create. Criar uma sessão Baileys do zero pode legitimamente
+    // levar mais que o timeout configurado — a Evolution pode ter terminado o create mesmo
+    // assim, alguns segundos depois de termos desistido de esperar, deixando uma instância
+    // órfã que o app nunca soube que existia. Confirma antes de reportar falha ao cliente.
+    if (createResult.status === 0) {
+      const probe = await evolutionConnectionState(instanceName);
+      if (probe.ok) {
+        createResult = { ok: true, status: 200, data: {} };
+      }
+    }
+    if (!createResult.ok) {
+      return NextResponse.json(
+        { error: "Falha ao criar instância na Evolution.", detail: createResult.error },
+        { status: 502 },
+      );
+    }
+    const wh = await evolutionSetWebhook({ instanceName, url: webhookUrl });
+    if (!wh.ok) {
+      console.warn("[evolution/session] setWebhook after create timeout recovery", wh.status, wh.error);
+    }
   } else {
     const wh = await evolutionSetWebhook({ instanceName, url: webhookUrl });
     if (!wh.ok) {
