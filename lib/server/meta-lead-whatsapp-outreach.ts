@@ -1,6 +1,7 @@
 /**
  * Resolve e envia o 1º contacto WhatsApp de Meta Lead Ads.
  * Evolution (texto livre) ou Cloud API (template aprovado) conforme a regra.
+ * Cloud sem template aprovado → fallback Evolution na mesma linha (slot).
  */
 import "server-only";
 import {
@@ -11,6 +12,7 @@ import {
 } from "@/lib/integrations/whatsapp-cloud";
 import { resolveLiveEvolutionInstanceByIdForTenant } from "@/lib/server/evolution-instance-reconciliation";
 import { sendEvolutionTextWithConnectionRecovery } from "@/lib/server/evolution-send-recovery";
+import { getEvolutionInstanceByTenantSlot } from "@/lib/server/tenant-evolution-instance-db";
 import { lookupWhatsAppCloudConnectionByPhoneNumberId } from "@/lib/server/whatsapp-cloud-connections";
 
 function digitsOnly(value: unknown): string {
@@ -29,6 +31,8 @@ export type ResolvedMetaLeadEvolutionConnection = {
     connection_state: string | null;
   };
   adoptedSibling: boolean;
+  /** Presente quando a regra era Cloud sem template/aprovação e usamos o QR do mesmo slot. */
+  fallbackFromCloud?: { reason: string };
 };
 
 export type ResolvedMetaLeadCloudConnection = {
@@ -73,6 +77,41 @@ async function resolveApprovedMetaTemplate(params: {
   return templates.find((t) => t.name === params.templateName) ?? null;
 }
 
+async function resolveEvolutionFallbackSameSlot(params: {
+  tenantId: string;
+  slotIndex: number;
+  cloudConnectionId: string;
+  reason: string;
+}): Promise<ResolvedMetaLeadEvolutionConnection | { ok: false; reason: string }> {
+  const evo = await getEvolutionInstanceByTenantSlot(params.tenantId, params.slotIndex);
+  if (!evo) {
+    return { ok: false, reason: params.reason };
+  }
+  const live = await resolveLiveEvolutionInstanceByIdForTenant(params.tenantId, evo.id);
+  if (!live.ok) {
+    return { ok: false, reason: params.reason };
+  }
+  console.warn("[meta-lead-whatsapp] cloud_to_evolution_fallback", {
+    tenant_id: params.tenantId,
+    cloud_connection_id: params.cloudConnectionId,
+    evolution_instance_id: live.instance.id,
+    slot_index: params.slotIndex,
+    reason: params.reason,
+  });
+  return {
+    ok: true,
+    transport: "evolution",
+    connectionId: live.instance.id,
+    instance: {
+      id: live.instance.id,
+      instance_name: live.instance.instance_name,
+      connection_state: live.instance.connection_state ?? null,
+    },
+    adoptedSibling: Boolean(live.adoptedSibling),
+    fallbackFromCloud: { reason: params.reason },
+  };
+}
+
 export async function resolveMetaLeadWhatsappConnection(params: {
   tenantId: string;
   connectionId: string;
@@ -112,7 +151,14 @@ export async function resolveMetaLeadWhatsappConnection(params: {
   if (!cloud.waba_id?.trim()) return { ok: false, reason: "meta_waba_missing" };
 
   const templateName = params.metaTemplateName?.trim() ?? "";
-  if (!templateName) return { ok: false, reason: "meta_template_missing" };
+  if (!templateName) {
+    return resolveEvolutionFallbackSameSlot({
+      tenantId: params.tenantId,
+      slotIndex: cloud.slot_index,
+      cloudConnectionId: cloud.phone_number_id,
+      reason: "meta_template_missing",
+    });
+  }
 
   const template = await resolveApprovedMetaTemplate({
     tenantId: params.tenantId,
@@ -120,7 +166,12 @@ export async function resolveMetaLeadWhatsappConnection(params: {
     templateName,
   });
   if (!template || template.status !== "APPROVED") {
-    return { ok: false, reason: "meta_template_not_approved" };
+    return resolveEvolutionFallbackSameSlot({
+      tenantId: params.tenantId,
+      slotIndex: cloud.slot_index,
+      cloudConnectionId: cloud.phone_number_id,
+      reason: "meta_template_not_approved",
+    });
   }
 
   return {

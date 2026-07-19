@@ -12,6 +12,7 @@ import {
   syncMetaFormAgentMappingForRule,
 } from "@/lib/server/lead-rules-meta-sync";
 import { stringArray } from "@/lib/server/meta-form-authorization";
+import { validateMetaAutomationConnection } from "@/lib/server/lead-rules-connection-validation";
 
 export const dynamic = "force-dynamic";
 
@@ -73,43 +74,6 @@ function validateOrganicRulePayload(payload: Record<string, unknown>): NextRespo
           payload.transport === "cloud_api"
             ? "Informe o Phone Number ID da conexão Cloud API."
             : "Selecione o número/conexão Evolution que esta regra autoriza.",
-      },
-      { status: 400 },
-    );
-  }
-  return null;
-}
-
-async function validateMetaAutomationConnection(
-  sb: ReturnType<typeof createSupabaseServiceClient>,
-  tenantId: string,
-  payload: Record<string, unknown>,
-): Promise<NextResponse | null> {
-  if (
-    payload.source !== "meta_form" ||
-    !META_AUTOMATION_DISTRIBUTION_TYPES.has(String(payload.distribution_type)) ||
-    stringArray(payload.agent_ids).length === 0
-  ) {
-    return null;
-  }
-  const connectionId = typeof payload.connection_id === "string" ? payload.connection_id.trim() : "";
-  if (!connectionId) {
-    return NextResponse.json(
-      { error: "Selecione a conexão WhatsApp que este formulário pode usar para o primeiro atendimento." },
-      { status: 400 },
-    );
-  }
-  const { data, error } = await sb
-    .from("tenant_evolution_instances")
-    .select("id")
-    .eq("tenant_id", tenantId)
-    .eq("id", connectionId)
-    .maybeSingle();
-  if (error || !data) {
-    return NextResponse.json(
-      {
-        error:
-          "A conexão salva nesta regra não está mais disponível. Atualize a lista e selecione a conexão WhatsApp atual.",
       },
       { status: 400 },
     );

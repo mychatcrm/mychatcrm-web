@@ -6,12 +6,14 @@ const {
   lookupWhatsAppCloudConnectionByPhoneNumberIdMock,
   listWhatsAppMessageTemplatesMock,
   sendWhatsAppTemplateMessageMock,
+  getEvolutionInstanceByTenantSlotMock,
 } = vi.hoisted(() => ({
   resolveLiveEvolutionInstanceByIdForTenantMock: vi.fn(),
   sendEvolutionTextWithConnectionRecoveryMock: vi.fn(),
   lookupWhatsAppCloudConnectionByPhoneNumberIdMock: vi.fn(),
   listWhatsAppMessageTemplatesMock: vi.fn(),
   sendWhatsAppTemplateMessageMock: vi.fn(),
+  getEvolutionInstanceByTenantSlotMock: vi.fn(),
 }));
 
 vi.mock("@/lib/server/evolution-instance-reconciliation", () => ({
@@ -22,6 +24,9 @@ vi.mock("@/lib/server/evolution-send-recovery", () => ({
 }));
 vi.mock("@/lib/server/whatsapp-cloud-connections", () => ({
   lookupWhatsAppCloudConnectionByPhoneNumberId: lookupWhatsAppCloudConnectionByPhoneNumberIdMock,
+}));
+vi.mock("@/lib/server/tenant-evolution-instance-db", () => ({
+  getEvolutionInstanceByTenantSlot: getEvolutionInstanceByTenantSlotMock,
 }));
 vi.mock("@/lib/integrations/whatsapp-cloud", async () => {
   const actual = await vi.importActual<typeof import("@/lib/integrations/whatsapp-cloud")>(
@@ -120,14 +125,49 @@ describe("resolveMetaLeadWhatsappConnection", () => {
     if (result.ok) expect(result.transport).toBe("evolution");
   });
 
-  it("fails Cloud without approved template", async () => {
+  it("falls back to Evolution on the same slot when Cloud has no template", async () => {
     lookupWhatsAppCloudConnectionByPhoneNumberIdMock.mockResolvedValue({
       tenant_id: "t1",
       active: true,
       phone_number_id: "1224395060758616",
       access_token: "tok",
       waba_id: "waba",
+      slot_index: 0,
     });
+    getEvolutionInstanceByTenantSlotMock.mockResolvedValue({
+      id: "evo-1",
+      instance_name: "mc123",
+      connection_state: "open",
+      slot_index: 0,
+    });
+    resolveLiveEvolutionInstanceByIdForTenantMock.mockResolvedValue({
+      ok: true,
+      adoptedSibling: false,
+      instance: { id: "evo-1", instance_name: "mc123", connection_state: "open" },
+    });
+    const result = await resolveMetaLeadWhatsappConnection({
+      tenantId: "t1",
+      connectionId: "1224395060758616",
+      transport: "cloud_api",
+      metaTemplateName: null,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok && result.transport === "evolution") {
+      expect(result.fallbackFromCloud?.reason).toBe("meta_template_missing");
+      expect(result.instance.id).toBe("evo-1");
+    }
+  });
+
+  it("fails when Cloud has no template and Evolution slot is unavailable", async () => {
+    lookupWhatsAppCloudConnectionByPhoneNumberIdMock.mockResolvedValue({
+      tenant_id: "t1",
+      active: true,
+      phone_number_id: "1224395060758616",
+      access_token: "tok",
+      waba_id: "waba",
+      slot_index: 0,
+    });
+    getEvolutionInstanceByTenantSlotMock.mockResolvedValue(null);
     const result = await resolveMetaLeadWhatsappConnection({
       tenantId: "t1",
       connectionId: "1224395060758616",

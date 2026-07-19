@@ -569,6 +569,9 @@ export function NewLeadRuleWizard({
       wa_jid: string | null;
     }>
   >([]);
+  const [cloudApiConnections, setCloudApiConnections] = useState<
+    Array<{ connectionId: string; label: string; slotIndex: number; connected: boolean }>
+  >([]);
   const [metaTemplates, setMetaTemplates] = useState<
     Array<{ name: string; status: string; language: string | null; bodyText: string | null }>
   >([]);
@@ -637,6 +640,32 @@ export function NewLeadRuleWizard({
         ) => setWhatsAppConnections(payload?.connections ?? []),
       )
       .catch(() => setWhatsAppConnections([]));
+    fetch("/api/client/whatsapp/connections", { credentials: "same-origin" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then(
+        (
+          payload: {
+            connections?: Array<{
+              connectionId: string;
+              transport: string;
+              label: string;
+              slotIndex: number;
+              connected: boolean;
+            }>;
+          } | null,
+        ) =>
+          setCloudApiConnections(
+            (payload?.connections ?? [])
+              .filter((c) => c.transport === "cloud_api")
+              .map((c) => ({
+                connectionId: c.connectionId,
+                label: c.label,
+                slotIndex: c.slotIndex,
+                connected: c.connected,
+              })),
+          ),
+      )
+      .catch(() => setCloudApiConnections([]));
   }, [open]);
 
   useEffect(() => {
@@ -991,12 +1020,25 @@ export function NewLeadRuleWizard({
       return active.some((m) => m.crmField === "celular") || active.some((m) => m.crmField === "email");
     }
     if (step === 2) {
-      if (isOrganicWhatsApp) return draft.agentIds.length === 1;
+      if (isOrganicWhatsApp) {
+        if (draft.agentIds.length !== 1) return false;
+        if (!draft.connectionId.trim()) return false;
+        if (draft.transport === "cloud_api" && !draft.metaTemplateName.trim()) return false;
+        return true;
+      }
       if (!draft.distributionType) return false;
       if (
         draft.source === "meta_form" &&
         ["automation_agent", "specific_agents", "round_robin"].includes(draft.distributionType) &&
         !draft.connectionId.trim()
+      ) {
+        return false;
+      }
+      if (
+        draft.source === "meta_form" &&
+        draft.transport === "cloud_api" &&
+        ["automation_agent", "specific_agents", "round_robin"].includes(draft.distributionType) &&
+        !draft.metaTemplateName.trim()
       ) {
         return false;
       }
@@ -1023,9 +1065,11 @@ export function NewLeadRuleWizard({
     draft.employeeIds.length,
     draft.includedFormIds.length,
     draft.mappings,
+    draft.metaTemplateName,
     draft.name,
     draft.pageId,
     draft.source,
+    draft.transport,
     draft.useAllForms,
     isOrganicWhatsApp,
     mappingStepHealthByForm,
@@ -1778,29 +1822,150 @@ export function NewLeadRuleWizard({
                 <p className="mt-1 text-xs leading-relaxed">
                   Esta linha será usada somente por este formulário para a primeira mensagem automática. Ela não autoriza atendimento direto fora da campanha.
                 </p>
-                <div className="mt-3">
-                  <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-content-muted">
-                    Número / conexão WhatsApp
-                  </label>
-                  <select
-                    value={draft.connectionId}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, transport: "evolution", connectionId: event.target.value }))
-                    }
-                    className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
-                  >
-                    <option value="">Selecione uma conexão</option>
-                    {whatsAppConnections.map((connection) => (
-                      <option key={connection.id} value={connection.id}>
-                        Linha {connection.slot_index + 1} · {connection.wa_jid?.split("@")[0] || connection.instance_name}
-                        {connection.connection_state === "open" ? " · conectada" : " · desconectada"}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-1.5 text-[11px] leading-relaxed text-content-muted">
-                    Obrigatória quando a regra atende com IA. Regras antigas sem conexão continuam visíveis, mas não iniciam atendimento até serem corrigidas.
-                  </p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {[
+                    { value: "evolution" as const, label: "QR Code / Evolution" },
+                    { value: "cloud_api" as const, label: "Cloud API oficial" },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() =>
+                        setDraft((current) => ({
+                          ...current,
+                          transport: option.value,
+                          connectionId:
+                            current.transport === option.value ? current.connectionId : "",
+                          metaTemplateName:
+                            option.value === "cloud_api" && current.transport === "cloud_api"
+                              ? current.metaTemplateName
+                              : "",
+                        }))
+                      }
+                      className={cn(
+                        "rounded-lg px-3 py-2 text-left text-xs font-semibold transition",
+                        draft.transport === option.value
+                          ? "bg-primary text-white"
+                          : "bg-surface-card text-content hover:bg-surface-deep",
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
                 </div>
+                {draft.transport === "evolution" ? (
+                  <div className="mt-3">
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-content-muted">
+                      Número / conexão WhatsApp
+                    </label>
+                    <select
+                      value={draft.connectionId}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          transport: "evolution",
+                          connectionId: event.target.value,
+                          metaTemplateName: "",
+                        }))
+                      }
+                      className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                    >
+                      <option value="">Selecione uma conexão</option>
+                      {whatsAppConnections.map((connection) => (
+                        <option key={connection.id} value={connection.id}>
+                          Linha {connection.slot_index + 1} ·{" "}
+                          {connection.wa_jid?.split("@")[0] || connection.instance_name}
+                          {connection.connection_state === "open" ? " · conectada" : " · desconectada"}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-1.5 text-[11px] leading-relaxed text-content-muted">
+                      Obrigatória quando a regra atende com IA. Regras antigas sem conexão continuam visíveis, mas não
+                      iniciam atendimento até serem corrigidas.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-3 space-y-3">
+                    <div>
+                      <label
+                        htmlFor={`${formId}-meta-cloud-connection`}
+                        className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-content-muted"
+                      >
+                        Número Cloud API
+                      </label>
+                      {cloudApiConnections.length === 0 ? (
+                        <p className="rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                          Nenhum número Cloud API conectado. Vá em Integrações → API Meta e conecte uma linha.
+                        </p>
+                      ) : (
+                        <select
+                          id={`${formId}-meta-cloud-connection`}
+                          value={draft.connectionId}
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              transport: "cloud_api",
+                              connectionId: event.target.value,
+                              metaTemplateName: "",
+                            }))
+                          }
+                          className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                        >
+                          <option value="">Selecione o número Cloud</option>
+                          {cloudApiConnections.map((connection) => (
+                            <option key={connection.connectionId} value={connection.connectionId}>
+                              Linha {connection.slotIndex + 1} · {connection.label}
+                              {connection.connected ? " · conectada" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                    <div>
+                      <label
+                        htmlFor={`${formId}-meta-form-template`}
+                        className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-content-muted"
+                      >
+                        Template Meta aprovado (1º contacto Lead Ads)
+                      </label>
+                      {metaTemplatesLoading ? (
+                        <p className="text-xs text-content-muted">A carregar templates…</p>
+                      ) : draft.connectionId && metaTemplates.length === 0 ? (
+                        <p className="rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                          Nenhum modelo aprovado encontrado para este número. Aprove um template no Gerenciador da Meta
+                          e volte aqui.
+                        </p>
+                      ) : (
+                        <select
+                          id={`${formId}-meta-form-template`}
+                          value={draft.metaTemplateName}
+                          onChange={(event) => {
+                            const name = event.target.value;
+                            const selected = metaTemplates.find((t) => t.name === name);
+                            setDraft((current) => ({
+                              ...current,
+                              metaTemplateName: name,
+                              metaTemplateLang: selected?.language ?? current.metaTemplateLang ?? "pt_BR",
+                            }));
+                          }}
+                          className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                        >
+                          <option value="">Selecione um modelo aprovado</option>
+                          {metaTemplates.map((t) => (
+                            <option key={t.name} value={t.name}>
+                              {t.name}
+                              {t.language ? ` · ${t.language}` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      <p className="mt-1.5 text-[11px] leading-relaxed text-content-muted">
+                        Obrigatório pela Meta para o primeiro WhatsApp iniciado pela empresa. Sem template, o sistema
+                        pode usar temporariamente o QR Code da mesma linha, se estiver conectado.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : null}
 

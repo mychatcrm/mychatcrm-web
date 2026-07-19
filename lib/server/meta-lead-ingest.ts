@@ -865,6 +865,21 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     });
     return;
   }
+  if (resolvedConnection.transport === "evolution" && resolvedConnection.fallbackFromCloud) {
+    await eventRecorder.step("cloud_to_evolution_fallback", {
+      connection_id: selectedConnectionId,
+      evolution_instance_id: resolvedConnection.instance.id,
+      reason: resolvedConnection.fallbackFromCloud.reason,
+    });
+    console.warn("[meta-webhook] cloud_to_evolution_fallback", {
+      tenant_id,
+      lead_id: leadId,
+      agent_id: agentId,
+      connection_id: selectedConnectionId,
+      reason: resolvedConnection.fallbackFromCloud.reason,
+      instance_name: resolvedConnection.instance.instance_name,
+    });
+  }
   if (resolvedConnection.transport === "evolution" && resolvedConnection.adoptedSibling) {
     await eventRecorder.step("selected_connection_reconciled", {
       connection_id: selectedConnectionId,

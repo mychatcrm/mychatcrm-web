@@ -247,7 +247,7 @@ export async function assignMetaLeadEventToAgent(params: {
         ? "A conexão WhatsApp autorizada está desconectada. Reconecte-a em Integrações."
         : liveConnection.reason === "meta_template_missing" ||
             liveConnection.reason === "meta_template_not_approved"
-          ? "A regra Cloud API precisa de um template Meta aprovado em Integrações de Leads."
+          ? "A regra Cloud API precisa de um template Meta aprovado em Integrações de Leads — ou o QR Code da mesma linha conectado para envio temporário."
           : `Não foi possível confirmar a conexão WhatsApp autorizada (${liveConnection.reason}).`;
     return {
       ok: false,
@@ -259,6 +259,15 @@ export async function assignMetaLeadEventToAgent(params: {
           ? 409
           : 502,
     };
+  }
+  if (liveConnection.transport === "evolution" && liveConnection.fallbackFromCloud) {
+    console.warn("[meta-lead-events] cloud_to_evolution_fallback", {
+      tenant_id: tenantId,
+      event_id: eventId,
+      connection_id: authorization.connectionId,
+      reason: liveConnection.fallbackFromCloud.reason,
+      instance_name: liveConnection.instance.instance_name,
+    });
   }
   if (liveConnection.transport === "evolution" && liveConnection.adoptedSibling) {
     console.warn("[meta-lead-events] live_evolution_instance_reconciled", {

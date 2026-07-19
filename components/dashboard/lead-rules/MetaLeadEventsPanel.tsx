@@ -146,6 +146,15 @@ function waBadge(status: string, errorMessage: string | null) {
     if (errorMessage === "human_attending_today") {
       return { label: "WA: humano ativo", className: "border-line bg-surface-elevated/80 text-content-muted" };
     }
+    if (
+      errorMessage === "selected_rule_connection_meta_template_missing" ||
+      errorMessage === "selected_rule_connection_meta_template_not_approved"
+    ) {
+      return {
+        label: "WA: template Meta",
+        className: "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200",
+      };
+    }
     return { label: "WA: não enviado", className: "border-line bg-surface-elevated/80 text-content-muted" };
   }
   return { label: "WhatsApp pendente", className: "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200" };
@@ -171,6 +180,18 @@ function errorMessageHint(message: string | null): string | null {
       "A regra autoriza o formulário, mas a conexão Meta deste tenant não foi encontrada para esta página.",
     rules_query_failed:
       "Não foi possível consultar as regras ativas. O sistema bloqueou por segurança antes de acionar o agente.",
+    selected_rule_connection_meta_template_missing:
+      "Regra Cloud API sem template Meta. Edite em Integrações → Leads (ou conecte o QR da mesma linha para envio temporário).",
+    selected_rule_connection_meta_template_not_approved:
+      "Template Meta não aprovado ou removido. Escolha outro APPROVED na regra em Integrações → Leads.",
+    selected_rule_connection_connection_not_found:
+      "Phone Number ID da Cloud API inválido ou desconectado. Reconecte em Integrações → API Meta.",
+    selected_rule_connection_meta_access_token_missing:
+      "Token da Cloud API ausente. Reconecte o número em Integrações → API Meta.",
+    selected_rule_connection_meta_waba_missing:
+      "WABA ausente na conexão Cloud. Reconecte o número em Integrações → API Meta.",
+    selected_rule_connection_connection_not_selected:
+      "Regra sem linha WhatsApp configurada. Edite a regra em Integrações → Leads.",
   };
   return map[message] ?? message;
 }
