@@ -122,6 +122,14 @@ export function mergePolledMessages(
   current: readonly SyncChatMessage[],
   polled: readonly SyncChatMessage[],
 ): SyncChatMessage[] {
+  // Soft-fail da API (ou resposta vazia inesperada) não pode apagar o thread
+  // que o realtime/poll já montou.
+  if (polled.length === 0) {
+    return [...current].sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    );
+  }
+
   const byId = new Map<string, SyncChatMessage>();
   for (const message of polled) byId.set(message.id, message);
 

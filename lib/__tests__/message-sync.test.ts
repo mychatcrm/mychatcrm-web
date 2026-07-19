@@ -67,6 +67,27 @@ describe("message sync", () => {
     expect(merged[0]?.id).toBe("temp-2");
   });
 
+  it("mergePolledMessages does not wipe the thread on empty soft-fail poll", () => {
+    const existing = [
+      {
+        id: "msg-1",
+        direction: "inbound" as const,
+        kind: "text",
+        content: "Bom dia",
+        created_at: "2026-07-19T11:45:28.000Z",
+      },
+      {
+        id: "msg-2",
+        direction: "outbound" as const,
+        kind: "text",
+        content: "Bom dia! Como posso ajudar?",
+        created_at: "2026-07-19T11:45:56.000Z",
+      },
+    ];
+    const merged = mergePolledMessages(existing, []);
+    expect(merged.map((m) => m.id)).toEqual(["msg-1", "msg-2"]);
+  });
+
   it("append inbound then poll merge does not duplicate", () => {
     const inbound = {
       id: "in-1",
