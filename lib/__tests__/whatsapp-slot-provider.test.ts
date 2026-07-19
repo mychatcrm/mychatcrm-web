@@ -14,12 +14,9 @@ import { getSlotActiveProvider, setSlotActiveProvider } from "@/lib/server/whats
 
 type Row = Record<string, unknown>;
 
-function makeFakeSb() {
+function makeFakeSb(rules: Row[]) {
   const slotState: Row[] = [];
-  const ruleUpdates: { filters: Record<string, unknown>; patch: Row }[] = [];
-  const rules: Row[] = [
-    { id: "rule-1", tenant_id: "t1", connection_id: "evo-uuid-1", transport: "evolution" },
-  ];
+  const ruleUpdates: { filters: Record<string, unknown>; ids: string[]; patch: Row }[] = [];
 
   const sb = {
     from: (table: string) => {
@@ -45,16 +42,32 @@ function makeFakeSb() {
       }
       if (table === "lead_distribution_rules") {
         return {
+          select: (_cols: string) => ({
+            eq: (col: string, val: unknown) => ({
+              eq: (col2: string, val2: unknown) =>
+                Promise.resolve({
+                  data: rules.filter((r) => r[col] === val && r[col2] === val2),
+                  error: null,
+                }),
+            }),
+          }),
           update: (patch: Row) => ({
             eq: (col: string, val: unknown) => ({
-              eq: (col2: string, val2: unknown) => {
-                const filters = { [col]: val, [col2]: val2 };
-                ruleUpdates.push({ filters, patch });
-                for (const rule of rules) {
-                  if (Object.entries(filters).every(([k, v]) => rule[k] === v)) Object.assign(rule, patch);
-                }
-                return Promise.resolve({ error: null });
-              },
+              eq: (col2: string, val2: unknown) => ({
+                in: (col3: string, ids: string[]) => {
+                  ruleUpdates.push({ filters: { [col]: val, [col2]: val2 }, ids, patch });
+                  for (const rule of rules) {
+                    if (
+                      rule[col] === val &&
+                      rule[col2] === val2 &&
+                      ids.includes(rule[col3] as string)
+                    ) {
+                      Object.assign(rule, patch);
+                    }
+                  }
+                  return Promise.resolve({ error: null });
+                },
+              }),
             }),
           }),
         };
@@ -68,7 +81,7 @@ function makeFakeSb() {
 
 describe("getSlotActiveProvider", () => {
   it("defaults to evolution when no state row exists", async () => {
-    const { sb } = makeFakeSb();
+    const { sb } = makeFakeSb([]);
     createSupabaseServiceClient.mockReturnValue(sb);
 
     expect(await getSlotActiveProvider("t1", 0)).toBe("evolution");
@@ -77,27 +90,105 @@ describe("getSlotActiveProvider", () => {
 
 describe("setSlotActiveProvider", () => {
   it("switches the record and repoints lead_distribution_rules from the old connection to the new one", async () => {
-    const { sb, slotState, rules } = makeFakeSb();
+    const rules: Row[] = [{ id: "rule-1", tenant_id: "t1", connection_id: "evo-uuid-1", transport: "evolution", source: "whatsapp_direct", meta_template_name: null }];
+    const { sb, slotState } = makeFakeSb(rules);
     createSupabaseServiceClient.mockReturnValue(sb);
     getEvolutionInstanceByTenantSlot.mockResolvedValue({ id: "evo-uuid-1" });
     getWhatsAppCloudConnection.mockResolvedValue({ phone_number_id: "meta-123" });
 
-    await setSlotActiveProvider("t1", 0, "cloud_api");
+    const result = await setSlotActiveProvider("t1", 0, "cloud_api");
 
     expect(slotState).toEqual([
       expect.objectContaining({ tenant_id: "t1", slot_index: 0, active_provider: "cloud_api" }),
     ]);
     expect(rules[0]).toMatchObject({ connection_id: "meta-123", transport: "cloud_api" });
+    expect(result).toEqual({ switchedRuleIds: ["rule-1"], blockedRules: [] });
   });
 
   it("does nothing to lead_distribution_rules when the other side has no connection yet", async () => {
-    const { sb, rules } = makeFakeSb();
+    const rules: Row[] = [{ id: "rule-1", tenant_id: "t1", connection_id: "evo-uuid-1", transport: "evolution", source: "whatsapp_direct", meta_template_name: null }];
+    const { sb } = makeFakeSb(rules);
     createSupabaseServiceClient.mockReturnValue(sb);
     getEvolutionInstanceByTenantSlot.mockResolvedValue(null);
     getWhatsAppCloudConnection.mockResolvedValue({ phone_number_id: "meta-999" });
 
-    await setSlotActiveProvider("t1", 0, "cloud_api");
+    const result = await setSlotActiveProvider("t1", 0, "cloud_api");
 
     expect(rules[0]).toMatchObject({ connection_id: "evo-uuid-1", transport: "evolution" });
+    expect(result).toEqual({ switchedRuleIds: [], blockedRules: [] });
+  });
+
+  it("regressão real (2026-07-19): regra de Lead Ads sem template aprovado NÃO migra pra API Meta e continua respondendo no QR", async () => {
+    const rules: Row[] = [
+      {
+        id: "2aecc659-8fbe-40d4-836b-2e73c152d36d",
+        name: "[Recrutamento]",
+        tenant_id: "t1",
+        connection_id: "evo-uuid-1",
+        transport: "evolution",
+        source: "meta_form",
+        meta_template_name: null,
+      },
+    ];
+    const { sb } = makeFakeSb(rules);
+    createSupabaseServiceClient.mockReturnValue(sb);
+    getEvolutionInstanceByTenantSlot.mockResolvedValue({ id: "evo-uuid-1" });
+    getWhatsAppCloudConnection.mockResolvedValue({ phone_number_id: "meta-123" });
+
+    const result = await setSlotActiveProvider("t1", 0, "cloud_api");
+
+    // A regra fica exatamente como estava — continua indo pro QR de verdade,
+    // em vez de ficar marcada cloud_api e cair num fallback silencioso.
+    expect(rules[0]).toMatchObject({ connection_id: "evo-uuid-1", transport: "evolution" });
+    expect(result).toEqual({
+      switchedRuleIds: [],
+      blockedRules: [{ id: "2aecc659-8fbe-40d4-836b-2e73c152d36d", name: "[Recrutamento]" }],
+    });
+  });
+
+  it("migra regra de Lead Ads pra API Meta quando ela já tem template aprovado configurado", async () => {
+    const rules: Row[] = [
+      {
+        id: "rule-ready",
+        name: "[Recrutamento com template]",
+        tenant_id: "t1",
+        connection_id: "evo-uuid-1",
+        transport: "evolution",
+        source: "meta_form",
+        meta_template_name: "mychatcrm_lead_outreach_v1",
+      },
+    ];
+    const { sb } = makeFakeSb(rules);
+    createSupabaseServiceClient.mockReturnValue(sb);
+    getEvolutionInstanceByTenantSlot.mockResolvedValue({ id: "evo-uuid-1" });
+    getWhatsAppCloudConnection.mockResolvedValue({ phone_number_id: "meta-123" });
+
+    const result = await setSlotActiveProvider("t1", 0, "cloud_api");
+
+    expect(rules[0]).toMatchObject({ connection_id: "meta-123", transport: "cloud_api" });
+    expect(result).toEqual({ switchedRuleIds: ["rule-ready"], blockedRules: [] });
+  });
+
+  it("migra regra de Lead Ads sem template de volta pro QR sem restrição (evolution nunca precisa de template)", async () => {
+    const rules: Row[] = [
+      {
+        id: "rule-back-to-qr",
+        name: "[Recrutamento]",
+        tenant_id: "t1",
+        connection_id: "meta-123",
+        transport: "cloud_api",
+        source: "meta_form",
+        meta_template_name: null,
+      },
+    ];
+    const { sb } = makeFakeSb(rules);
+    createSupabaseServiceClient.mockReturnValue(sb);
+    getEvolutionInstanceByTenantSlot.mockResolvedValue({ id: "evo-uuid-1" });
+    getWhatsAppCloudConnection.mockResolvedValue({ phone_number_id: "meta-123" });
+
+    const result = await setSlotActiveProvider("t1", 0, "evolution");
+
+    expect(rules[0]).toMatchObject({ connection_id: "evo-uuid-1", transport: "evolution" });
+    expect(result).toEqual({ switchedRuleIds: ["rule-back-to-qr"], blockedRules: [] });
   });
 });

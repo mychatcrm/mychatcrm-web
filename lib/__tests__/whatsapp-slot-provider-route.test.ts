@@ -64,13 +64,32 @@ describe("PATCH /api/client/whatsapp/slot-provider", () => {
 
   it("switches when the target side is genuinely connected", async () => {
     getWhatsAppCloudConnectionMock.mockResolvedValue({ active: true });
+    setSlotActiveProviderMock.mockResolvedValue({ switchedRuleIds: ["rule-1"], blockedRules: [] });
 
     const res = await PATCH(makeRequest({ slotIndex: 0, provider: "cloud_api" }));
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body).toEqual({ ok: true, activeProvider: "cloud_api" });
+    expect(body).toEqual({ ok: true, activeProvider: "cloud_api", blockedRules: [] });
     expect(setSlotActiveProviderMock).toHaveBeenCalledWith("t1", 0, "cloud_api");
+  });
+
+  it("surfaces blockedRules so the UI can warn about Lead Ads rules still needing a Meta template", async () => {
+    getWhatsAppCloudConnectionMock.mockResolvedValue({ active: true });
+    setSlotActiveProviderMock.mockResolvedValue({
+      switchedRuleIds: [],
+      blockedRules: [{ id: "rule-1", name: "[Recrutamento]" }],
+    });
+
+    const res = await PATCH(makeRequest({ slotIndex: 0, provider: "cloud_api" }));
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      activeProvider: "cloud_api",
+      blockedRules: [{ id: "rule-1", name: "[Recrutamento]" }],
+    });
   });
 
   it("rejects an out-of-range slotIndex", async () => {

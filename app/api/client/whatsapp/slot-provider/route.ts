@@ -47,6 +47,6 @@ export async function PATCH(request: Request): Promise<NextResponse> {
     }
   }
 
-  await setSlotActiveProvider(session.tenantId, slotIndex, provider as SlotProvider);
-  return NextResponse.json({ ok: true, activeProvider: provider });
+  const result = await setSlotActiveProvider(session.tenantId, slotIndex, provider as SlotProvider);
+  return NextResponse.json({ ok: true, activeProvider: provider, blockedRules: result.blockedRules });
 }

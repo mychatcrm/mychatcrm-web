@@ -78,6 +78,9 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const [connections, setConnections] = useState<TenantWhatsappConnection[]>([]);
   const [switchingSlot, setSwitchingSlot] = useState<number | null>(null);
   const [switchErrorBySlot, setSwitchErrorBySlot] = useState<Record<number, string | null>>({});
+  const [switchBlockedRulesBySlot, setSwitchBlockedRulesBySlot] = useState<
+    Record<number, { id: string; name: string | null }[]>
+  >({});
   const [extraLineQty, setExtraLineQty] = useState(1);
   const [extraLineBuying, setExtraLineBuying] = useState(false);
   const [extraLineOffer, setExtraLineOffer] = useState<{
@@ -148,6 +151,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     async (slotIndex: number, provider: SlotProvider) => {
       setSwitchingSlot(slotIndex);
       setSwitchErrorBySlot((prev) => ({ ...prev, [slotIndex]: null }));
+      setSwitchBlockedRulesBySlot((prev) => ({ ...prev, [slotIndex]: [] }));
       try {
         const res = await fetch("/api/client/whatsapp/slot-provider", {
           method: "PATCH",
@@ -159,6 +163,10 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
           const data = (await res.json().catch(() => ({}))) as { error?: string };
           throw new Error(data.error ?? "Não foi possível trocar o método desta linha.");
         }
+        const data = (await res.json().catch(() => ({}))) as {
+          blockedRules?: { id: string; name: string | null }[];
+        };
+        setSwitchBlockedRulesBySlot((prev) => ({ ...prev, [slotIndex]: data.blockedRules ?? [] }));
         await loadConnections();
       } catch (err) {
         setSwitchErrorBySlot((prev) => ({
@@ -748,6 +756,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
               const waCloudConnecting = waCloudConnectingSlot === slotIndex;
               const waCloudDisconnecting = waCloudDisconnectingSlot === slotIndex;
               const switchError = switchErrorBySlot[slotIndex] ?? null;
+              const switchBlockedRules = switchBlockedRulesBySlot[slotIndex] ?? [];
 
               return (
                 <div
@@ -944,6 +953,23 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                     </Button>
                   </div>
                   {switchError ? <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{switchError}</p> : null}
+                  {switchBlockedRules.length > 0 ? (
+                    <div
+                      className={cn(
+                        "mt-2 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs",
+                        isLight ? "border-amber-200 bg-amber-50 text-amber-800" : "border-amber-500/30 bg-amber-500/10 text-amber-300",
+                      )}
+                    >
+                      <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                      <p>
+                        {switchBlockedRules.length === 1 ? "A regra" : "As regras"}{" "}
+                        <strong>{switchBlockedRules.map((rule) => rule.name ?? "sem nome").join(", ")}</strong>{" "}
+                        {switchBlockedRules.length === 1 ? "continua" : "continuam"} respondendo pelo QR Code — precisa
+                        de um template do WhatsApp aprovado pela Meta para o 1º contacto de Lead Ads. Configure o
+                        template em Distribuição de Leads para migrar {switchBlockedRules.length === 1 ? "essa regra" : "essas regras"} para a API Meta.
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
               );
             })}
