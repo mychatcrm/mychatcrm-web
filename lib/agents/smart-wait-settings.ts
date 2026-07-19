@@ -31,8 +31,10 @@ export type EvolutionInboundWaitSignal = {
 
 const EVOLUTION_SHORT_AMBIGUOUS_RE =
   /^(?:oi|ol[aá]|opa|eai|e a[ií]|sim|s|ok|okay|pode(?:\s+ser)?|certo|isso|exato|beleza|obrigad[oa]|valeu|at[eé]\s+mais|bom\s+dia|boa\s+tarde|boa\s+noite)[.!?\s]*$/i;
+const EVOLUTION_WEEKDAY_RE =
+  /\b(?:segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo)(?:\s*-?\s*feira)?\b/i;
 const EVOLUTION_DATE_ONLY_RE =
-  /^(?:pode\s+ser\s+)?(?:hoje|amanh[ãa]|depois\s+de\s+amanh[ãa]|dia\s+\d{1,2}|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?)[.!?\s]*$/i;
+  /^(?:uai\s+)?(?:pode\s+ser\s+)?(?:hoje|amanh[ãa]|depois\s+de\s+amanh[ãa]|dia\s+\d{1,2}|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|(?:segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo)(?:\s*-?\s*feira)?)(?:\s+agora)?[.!?\s]*$/i;
 const EVOLUTION_TIME_ONLY_RE =
   /^(?:[aàá]s?\s+)?(?:\d{1,2}(?::\d{2}|h(?:\d{2})?)|\d{1,2}\s*(?:hrs?|hs)|uma|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze)(?:\s*(?:horas?|hrs?|hs|da\s+manh[ãa]|da\s+tarde|da\s+noite))?[.!?\s]*$/i;
 const EVOLUTION_INCOMPLETE_END_RE =
@@ -67,6 +69,23 @@ function evolutionTextNeedsHealthyFragmentAbsorb(
 }
 
 /**
+ * Saudações / ambíguos curtos e date-only com weekday nunca usam a lane
+ * "entrega saudável = 7s". O metrônomo da Evolution (~60s) costuma seguir
+ * exatamente esses primeiros fragmentos.
+ */
+function evolutionTextForcesSerialGrace(signal: EvolutionInboundWaitSignal): boolean {
+  if (signal.kind !== "text") return false;
+  const text = (signal.text ?? "").trim();
+  if (!text) return false;
+  if (EVOLUTION_SHORT_AMBIGUOUS_RE.test(text)) return true;
+  const foldedText = text.normalize("NFD").replace(/\p{Diacritic}/gu, "");
+  if (EVOLUTION_WEEKDAY_RE.test(text) || EVOLUTION_WEEKDAY_RE.test(foldedText)) {
+    return !EVOLUTION_TIME_HINT_RE.test(foldedText);
+  }
+  return false;
+}
+
+/**
  * Decide se a PRIMEIRA mensagem precisa da janela longa da Evolution.
  * Follow-ups sempre usam o tempo curto configurado: quando o complemento
  * finalmente chega, não adicionamos mais um minuto antes de responder.
@@ -88,7 +107,8 @@ export function evolutionInboundNeedsExtendedInitialWait(
     return !(EVOLUTION_DATE_HINT_RE.test(foldedText) && EVOLUTION_TIME_HINT_RE.test(foldedText));
   }
   if (EVOLUTION_SHORT_AMBIGUOUS_RE.test(text)) return true;
-  if (EVOLUTION_DATE_ONLY_RE.test(text) || EVOLUTION_TIME_ONLY_RE.test(text)) return true;
+  if (EVOLUTION_DATE_ONLY_RE.test(text) || EVOLUTION_DATE_ONLY_RE.test(foldedText)) return true;
+  if (EVOLUTION_TIME_ONLY_RE.test(text) || EVOLUTION_TIME_ONLY_RE.test(foldedText)) return true;
   if (EVOLUTION_INCOMPLETE_END_RE.test(text)) return true;
   return false;
 }
@@ -109,15 +129,17 @@ export function evolutionBurstSafeSmartWait(
   // Janela ADAPTATIVA: a espera longa existe para absorver a fila serializada
   // da Evolution (~60 s entre webhooks do mesmo burst). Quando ESTA entrega
   // chegou rápida (received − occurred pequeno), a fila está saudável agora e
-  // o lead merece a resposta na janela configurada do agente. Fragmento que
-  // ainda assim atrasar é absorvido pelo mecanismo de late-fragment do turno.
-  // Atraso desconhecido ou alto mantém o fail-safe longo original.
+  // o lead merece a resposta na janela configurada do agente — EXCETO saudações
+  // / ambíguos curtos e date-only com weekday, que quase sempre recebem mais
+  // uma bolha no metrônomo Evolution. Atraso desconhecido ou alto mantém o
+  // fail-safe longo original.
   const healthyDelivery =
     typeof signal?.deliveryDelaySeconds === "number" &&
     Number.isFinite(signal.deliveryDelaySeconds) &&
     signal.deliveryDelaySeconds >= 0 &&
     signal.deliveryDelaySeconds <= EVOLUTION_HEALTHY_DELIVERY_SECONDS;
-  if (extendedInitial && healthyDelivery) {
+  const forceSerialGrace = signal ? evolutionTextForcesSerialGrace(signal) : false;
+  if (extendedInitial && healthyDelivery && !forceSerialGrace) {
     const incompleteFragment = evolutionTextNeedsHealthyFragmentAbsorb(signal!);
     return {
       ...settings,

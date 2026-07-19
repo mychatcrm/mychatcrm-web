@@ -581,16 +581,19 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
       setCanHumanSend(false);
       return;
     }
+    const jid = selectedJid;
+    let cancelled = false;
     setMsgLoading(true);
     setSendError(null);
-    apiLoadMessages(selectedJid)
+    apiLoadMessages(jid)
       .then(({ messages: msgs, aiEnabled: ai, canHumanSend: canSend, conversationMode }) => {
+        if (cancelled || selectedJidRef.current !== jid) return;
         setMessages(msgs);
         setAiEnabled(ai);
         setCanHumanSend(canSend);
         setConversations((prev) =>
           prev.map((c) =>
-            c.remoteJid !== selectedJid
+            c.remoteJid !== jid
               ? c
               : {
                   ...c,
@@ -602,7 +605,12 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
         );
       })
       .catch(() => {})
-      .finally(() => setMsgLoading(false));
+      .finally(() => {
+        if (!cancelled && selectedJidRef.current === jid) setMsgLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedJid]);
 
   // Realtime tenant-wide + poll fallback (lista 8s embutido no helper via onPoll separado abaixo)
@@ -698,7 +706,7 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
     return () => clearInterval(id);
   }, []);
 
-  // Poll chat aberto a cada 2.5s
+  // Poll chat aberto a cada 2.5s (+ imediato ao selecionar)
   useEffect(() => {
     if (!selectedJid) return;
     const jid = selectedJid;
@@ -720,6 +728,7 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
         /* ignore */
       }
     };
+    void refreshMsgs();
     const id = setInterval(() => void refreshMsgs(), 2_500);
     return () => clearInterval(id);
   }, [selectedJid]);

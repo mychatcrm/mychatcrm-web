@@ -16,6 +16,14 @@ import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { buildTextualReplyFallbackTopics } from "@/lib/conversas/inbound-message-dedupe";
 import { buildReplyUnitPrompt, normalizeConversationBurst } from "@/lib/conversas/normalize-conversation-burst";
 import { shouldSuppressLateInboundFragment } from "@/lib/conversas/late-inbound-fragment";
+import {
+  isWithinProviderBurstWindow,
+  mergeProviderBurstRows,
+  PROVIDER_BURST_FORWARD_MS,
+  PROVIDER_BURST_LAST_LOOK_MS,
+  PROVIDER_BURST_LOOKBACK_MS,
+  resolveProviderBurstAnchorMs,
+} from "@/lib/conversas/provider-burst-absorb";
 
 /**
  * Texto do lead consolidado na ordem original da unidade. O orquestrador de
@@ -417,6 +425,48 @@ export async function processAgentResponseJob(
     }
   }
   if (!inboundRows.length) return { ok: false, error: "no_inbound_messages" };
+
+  // Last-look: dá tempo para o webhook da Evolution inserir o complemento do
+  // mesmo burst (metrônomo ~60s) antes de fechar o contexto do turno.
+  await sleep(PROVIDER_BURST_LAST_LOOK_MS);
+
+  const providerAnchorMs = resolveProviderBurstAnchorMs({
+    providerFirstMessageAt: job.provider_first_message_at,
+    inboundRows,
+  });
+  if (providerAnchorMs != null) {
+    const providerFrom = new Date(providerAnchorMs - PROVIDER_BURST_LOOKBACK_MS).toISOString();
+    const providerTo = new Date(providerAnchorMs + PROVIDER_BURST_FORWARD_MS).toISOString();
+    let providerQuery = sb
+      .from("whatsapp_messages")
+      .select(
+        "id, content, kind, message_id, remote_jid, created_at, received_at, conversation_sequence, is_late_fragment, storage_key, mime_type, analysis_status, ai_description",
+      )
+      .eq("tenant_id", job.tenant_id)
+      .eq("remote_jid", job.remote_jid)
+      .eq("direction", "inbound")
+      .gte("created_at", providerFrom)
+      .lte("created_at", providerTo);
+    if (job.journey_id) providerQuery = providerQuery.eq("journey_id", job.journey_id);
+    const { data: providerRows, error: providerError } = await providerQuery.order("created_at", {
+      ascending: true,
+    });
+    if (!providerError && providerRows?.length) {
+      const beforeCount = inboundRows.length;
+      const absorbed = (providerRows as PendingInboundRow[]).filter((row) =>
+        isWithinProviderBurstWindow(providerAnchorMs, row.created_at),
+      );
+      inboundRows = mergeProviderBurstRows(inboundRows, absorbed);
+      if (inboundRows.length > beforeCount) {
+        console.info("[agent-response-jobs]", {
+          event: "provider_burst_absorbed",
+          job_id: job.id,
+          added: inboundRows.length - beforeCount,
+          total: inboundRows.length,
+        });
+      }
+    }
+  }
 
   const lateSuppressed = inboundRows.filter((row) =>
     shouldSuppressLateInboundFragment({

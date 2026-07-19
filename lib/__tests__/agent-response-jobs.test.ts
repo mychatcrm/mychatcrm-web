@@ -57,14 +57,31 @@ describe("agent smart wait schedule", () => {
     ).toMatchObject({ initialSeconds: 7, followupSeconds: 10, maxSeconds: 60 });
   });
 
-  it("entrega saudável responde na janela curta do agente mesmo com texto ambíguo", () => {
+  it("entrega saudável de ambíguo curto (Bom dia/Sim) NÃO encurta — metrônomo Evolution", () => {
+    expect(
+      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
+        kind: "text",
+        text: "Bom dia",
+        deliveryDelaySeconds: 3,
+      }),
+    ).toMatchObject({ initialSeconds: 65, followupSeconds: 10, maxSeconds: 180 });
     expect(
       evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
         kind: "text",
         text: "Sim",
         deliveryDelaySeconds: 2,
       }),
-    ).toMatchObject({ initialSeconds: 7, followupSeconds: 10, maxSeconds: 60 });
+    ).toMatchObject({ initialSeconds: 65, followupSeconds: 10, maxSeconds: 180 });
+  });
+
+  it("weekday date-only força grace serial mesmo com entrega saudável", () => {
+    expect(
+      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
+        kind: "text",
+        text: "Uai pode ser segunda agora",
+        deliveryDelaySeconds: 2,
+      }),
+    ).toMatchObject({ initialSeconds: 65, followupSeconds: 10, maxSeconds: 180 });
   });
 
   it("entrega saudável com fragmento incompleto usa janela curta humana (20s)", () => {
@@ -118,7 +135,7 @@ describe("agent smart wait schedule", () => {
   });
 
   it("keeps only the first ambiguous fragment in the extended lane", () => {
-    for (const text of ["Oi", "Ok", "amanhã", "duas da tarde", "Pode ser hoje as"]) {
+    for (const text of ["Oi", "Ok", "amanhã", "duas da tarde", "Pode ser hoje as", "Uai pode ser segunda agora"]) {
       expect(
         evolutionInboundNeedsExtendedInitialWait({ kind: "text", text }),
         text,
