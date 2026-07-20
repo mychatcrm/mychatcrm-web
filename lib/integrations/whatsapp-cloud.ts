@@ -181,6 +181,84 @@ export function normalizeWhatsAppCloudToWaId(raw: string): string {
   return String(raw ?? "").replace(/\D/g, "");
 }
 
+/**
+ * Classifica o erro cru da Graph API num código de máquina, pra quem chama
+ * decidir o que fazer sem precisar re-implementar a detecção de texto.
+ * Espelha as mesmas condições usadas nas mensagens amigáveis das rotas de
+ * teste de envio: 131047 = fora da janela de 24h (texto livre recusado);
+ * 190/"session has expired"/"invalid oauth" = token inválido ou expirado.
+ */
+export function classifyWhatsAppCloudSendError(
+  raw: string | undefined,
+): "outside_24h_window" | "invalid_token" | "other" {
+  const text = raw ?? "";
+  if (text.includes("131047") || /outside.*allowed.*window/i.test(text)) {
+    return "outside_24h_window";
+  }
+  if (text.includes("190") || /session has expired|invalid oauth/i.test(text)) {
+    return "invalid_token";
+  }
+  return "other";
+}
+
+export type WhatsAppCloudHealthCheck =
+  | {
+      ok: true;
+      displayPhoneNumber: string | null;
+      verifiedName: string | null;
+      qualityRating: string | null;
+      messagingLimitTier: string | null;
+    }
+  | { ok: false; code: "invalid_token" | "unreachable" | "other"; error: string };
+
+/**
+ * Diagnóstico somente-leitura do token/número — NUNCA envia mensagem.
+ * Usado para decidir, antes de tentar um envio de teste, se a causa provável
+ * de falha é um token morto (sobra do fallback silencioso de
+ * exchange-code) em vez de gastar uma tentativa de envio real.
+ */
+export async function checkWhatsAppCloudConnectionHealth(params: {
+  phoneNumberId: string;
+  accessToken: string;
+}): Promise<WhatsAppCloudHealthCheck> {
+  const url = `${GRAPH_API}/${encodeURIComponent(params.phoneNumberId)}?fields=id,display_phone_number,verified_name,quality_rating,messaging_limit_tier`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { Authorization: `Bearer ${params.accessToken}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      code: "unreachable",
+      error: err instanceof Error ? err.message : "fetch_failed",
+    };
+  }
+  const data = (await res.json().catch(() => ({}))) as {
+    display_phone_number?: string;
+    verified_name?: string;
+    quality_rating?: string;
+    messaging_limit_tier?: string;
+    error?: { message?: string; code?: number };
+  };
+  if (!res.ok) {
+    const message = data.error?.message ?? `http_${res.status}`;
+    const code =
+      res.status === 401 || res.status === 403 || classifyWhatsAppCloudSendError(message) === "invalid_token"
+        ? "invalid_token"
+        : "other";
+    return { ok: false, code, error: message };
+  }
+  return {
+    ok: true,
+    displayPhoneNumber: data.display_phone_number ?? null,
+    verifiedName: data.verified_name ?? null,
+    qualityRating: data.quality_rating ?? null,
+    messagingLimitTier: data.messaging_limit_tier ?? null,
+  };
+}
+
 export async function sendWhatsAppTextMessage(params: {
   toWaId: string;
   text: string;

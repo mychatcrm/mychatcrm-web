@@ -65,9 +65,17 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const [waCloudBannerBySlot, setWaCloudBannerBySlot] = useState<Record<number, string | null>>({});
   const [waCloudTestPhoneBySlot, setWaCloudTestPhoneBySlot] = useState<Record<number, string>>({});
   const [waCloudTestBusySlot, setWaCloudTestBusySlot] = useState<number | null>(null);
+  type WaCloudTemplateOption = { name: string; language: string | null; bodyParamCount: number };
+  type WaCloudTestResult = {
+    ok: boolean;
+    text: string;
+    code?: "invalid_token" | "outside_24h_window" | "other";
+    availableTemplates?: WaCloudTemplateOption[];
+  };
   const [waCloudTestResultBySlot, setWaCloudTestResultBySlot] = useState<
-    Record<number, { ok: boolean; text: string } | null>
+    Record<number, WaCloudTestResult | null>
   >({});
+  const [waCloudTestTemplateBySlot, setWaCloudTestTemplateBySlot] = useState<Record<number, string>>({});
   // ── QR / Evolution — teste de envio (texto livre), mesmo padrão da API Meta ──
   const [evoTestPhoneBySlot, setEvoTestPhoneBySlot] = useState<Record<number, string>>({});
   const [evoTestBusySlot, setEvoTestBusySlot] = useState<number | null>(null);
@@ -418,7 +426,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     }
   }, [evoTestPhoneBySlot]);
 
-  const sendWaCloudTest = useCallback(async (slotIndex: number) => {
+  const sendWaCloudTest = useCallback(async (slotIndex: number, templateName?: string) => {
     const toNumber = (waCloudTestPhoneBySlot[slotIndex] ?? "").replace(/\D/g, "");
     setWaCloudTestBusySlot(slotIndex);
     setWaCloudTestResultBySlot((prev) => ({ ...prev, [slotIndex]: null }));
@@ -427,17 +435,24 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slotIndex, toNumber }),
+        body: JSON.stringify({ slotIndex, toNumber, ...(templateName ? { templateName } : {}) }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         ok?: boolean;
         error?: string;
         messageId?: string | null;
+        code?: "invalid_token" | "outside_24h_window" | "other";
+        availableTemplates?: WaCloudTemplateOption[];
       };
       if (!res.ok || !data.ok) {
         setWaCloudTestResultBySlot((prev) => ({
           ...prev,
-          [slotIndex]: { ok: false, text: data.error ?? "Falha ao enviar teste." },
+          [slotIndex]: {
+            ok: false,
+            text: data.error ?? "Falha ao enviar teste.",
+            code: data.code,
+            availableTemplates: data.availableTemplates,
+          },
         }));
         return;
       }
@@ -990,6 +1005,58 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                                 >
                                   {waCloudTestResultBySlot[slotIndex]?.text}
                                 </p>
+                              ) : null}
+                              {waCloudTestResultBySlot[slotIndex]?.code === "invalid_token" ? (
+                                <p className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
+                                  Use o botão <strong>“Desconectar API Meta”</strong> acima e reconecte para gerar
+                                  um token novo.
+                                </p>
+                              ) : null}
+                              {waCloudTestResultBySlot[slotIndex]?.code === "outside_24h_window" ? (
+                                (waCloudTestResultBySlot[slotIndex]?.availableTemplates?.length ?? 0) > 0 ? (
+                                  <div className="space-y-2 rounded-lg border border-line/60 bg-surface-card/60 p-2.5">
+                                    <p className="text-[11px] font-semibold text-content">
+                                      Validar mesmo assim com um template aprovado
+                                    </p>
+                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                                      <select
+                                        value={waCloudTestTemplateBySlot[slotIndex] ?? ""}
+                                        onChange={(event) =>
+                                          setWaCloudTestTemplateBySlot((prev) => ({
+                                            ...prev,
+                                            [slotIndex]: event.target.value,
+                                          }))
+                                        }
+                                        className="h-10 min-w-0 flex-1 rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                                      >
+                                        <option value="">Selecione um template aprovado</option>
+                                        {waCloudTestResultBySlot[slotIndex]?.availableTemplates?.map((t) => (
+                                          <option key={t.name} value={t.name}>
+                                            {t.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="shrink-0 gap-1.5"
+                                        isLoading={waCloudTestBusySlot === slotIndex}
+                                        disabled={!waCloudTestTemplateBySlot[slotIndex]}
+                                        onClick={() =>
+                                          void sendWaCloudTest(slotIndex, waCloudTestTemplateBySlot[slotIndex])
+                                        }
+                                      >
+                                        <Send className="size-3.5" aria-hidden />
+                                        Enviar via template aprovado
+                                      </Button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <p className="text-[11px] leading-relaxed text-content-muted">
+                                    Nenhum template aprovado encontrado nesta WABA para usar como alternativa —
+                                    aprove um no Gerenciador da Meta pra poder validar fora da janela de 24h.
+                                  </p>
+                                )
                               ) : null}
                             </div>
                           </div>
