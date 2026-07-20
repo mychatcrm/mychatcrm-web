@@ -82,12 +82,27 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   llUrl.searchParams.set("fb_exchange_token", shortLivedToken);
 
   let accessToken = shortLivedToken;
+  let tokenDurability: "long_lived" | "short_lived_fallback" = "short_lived_fallback";
   try {
     const llRes = await fetch(llUrl.toString(), { signal: AbortSignal.timeout(10_000) });
     const llData = (await llRes.json()) as LongLivedTokenResponse;
-    accessToken = llData.access_token ?? shortLivedToken;
-  } catch {
-    // Fall back to short-lived token
+    if (llData.access_token) {
+      accessToken = llData.access_token;
+      tokenDurability = "long_lived";
+    } else {
+      // Sem isto o token curto (validade de ~1-2h) ficava salvo em silêncio,
+      // e o próximo envio dias depois falhava com "token inválido" sem pista
+      // nenhuma de que a causa era esta troca aqui, não uma revogação.
+      console.error("[exchange-code] long-lived token exchange failed", {
+        phone_number_id,
+        error: llData.error?.message ?? "no_access_token_in_response",
+      });
+    }
+  } catch (err) {
+    console.error(
+      "[exchange-code] long-lived token exchange request failed",
+      err instanceof Error ? err.message : String(err),
+    );
   }
 
   // 3. Fetch phone number display details (optional — don't fail if this errors)
@@ -163,6 +178,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     waba_id,
     webhookSubscribed,
     phoneRegistered,
+    tokenDurability,
   });
   return NextResponse.json({
     connected: true,
@@ -171,5 +187,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     verified_name: verifiedName,
     webhook_subscribed: webhookSubscribed,
     phone_registered: phoneRegistered,
+    token_durability: tokenDurability,
   });
 }

@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  checkWhatsAppCloudConnectionHealth,
+  classifyWhatsAppCloudSendError,
   createWhatsAppMessageTemplate,
   fetchWhatsAppMessageTemplateStatus,
   parseWhatsAppCloudInbound,
@@ -381,5 +383,83 @@ describe("createWhatsAppMessageTemplate", () => {
       },
     });
     expect(result.error).not.toContain("token-secreto");
+  });
+});
+
+describe("classifyWhatsAppCloudSendError", () => {
+  it("classifies 131047 as outside the 24h window", () => {
+    expect(classifyWhatsAppCloudSendError('{"error":{"code":131047,"message":"outside allowed window"}}')).toBe(
+      "outside_24h_window",
+    );
+  });
+
+  it("classifies 190 / expired session as an invalid token", () => {
+    expect(classifyWhatsAppCloudSendError('{"error":{"code":190,"message":"Error validating access token"}}')).toBe(
+      "invalid_token",
+    );
+    expect(classifyWhatsAppCloudSendError("Session has expired on Monday")).toBe("invalid_token");
+  });
+
+  it("falls back to other for unrecognized errors", () => {
+    expect(classifyWhatsAppCloudSendError("some unrelated network error")).toBe("other");
+    expect(classifyWhatsAppCloudSendError(undefined)).toBe("other");
+  });
+});
+
+describe("checkWhatsAppCloudConnectionHealth", () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reports a healthy connection", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          display_phone_number: "+55 62 99999-9999",
+          verified_name: "Loja",
+          quality_rating: "GREEN",
+          messaging_limit_tier: "TIER_1K",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const result = await checkWhatsAppCloudConnectionHealth({ phoneNumberId: "PN123", accessToken: "token-abc" });
+
+    expect(result).toEqual({
+      ok: true,
+      displayPhoneNumber: "+55 62 99999-9999",
+      verifiedName: "Loja",
+      qualityRating: "GREEN",
+      messagingLimitTier: "TIER_1K",
+    });
+  });
+
+  it("classifies a 401 response as an invalid token", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { message: "Error validating access token", code: 190 } }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const result = await checkWhatsAppCloudConnectionHealth({ phoneNumberId: "PN123", accessToken: "token-morto" });
+
+    expect(result).toEqual({ ok: false, code: "invalid_token", error: "Error validating access token" });
+  });
+
+  it("classifies a network failure as unreachable", async () => {
+    fetchMock.mockRejectedValueOnce(new Error("network down"));
+
+    const result = await checkWhatsAppCloudConnectionHealth({ phoneNumberId: "PN123", accessToken: "token-abc" });
+
+    expect(result).toEqual({ ok: false, code: "unreachable", error: "network down" });
   });
 });
