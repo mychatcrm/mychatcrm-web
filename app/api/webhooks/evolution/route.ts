@@ -1032,6 +1032,8 @@ export async function POST(request: Request) {
                 journeyId: journey?.id ?? null,
                 agentId,
                 instanceName,
+                channel: "evolution",
+                connectionId: row.id,
                 inboundMessageKey,
                 occurredAt:
                   inboundSaved && !inboundSaved.duplicate

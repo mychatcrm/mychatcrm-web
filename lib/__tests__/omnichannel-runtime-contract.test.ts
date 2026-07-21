@@ -34,15 +34,30 @@ describe("omnichannel runtime contracts", () => {
 
   it("routes Meta and Evolution through the same durable burst processor", () => {
     const metaWebhook = source("lib/server/whatsapp-cloud-webhook-handler.ts");
+    const evolutionWebhook = source("app/api/webhooks/evolution/route.ts");
     const dispatcher = source("lib/server/agent-response-job-dispatcher.ts");
     const burst = source("lib/conversas/normalize-conversation-burst.ts");
 
     expect(metaWebhook).toContain("runInboundSmartWaitFlow");
     expect(metaWebhook).toContain('channel: "meta_cloud"');
+    expect(evolutionWebhook).toContain('channel: "evolution"');
+    expect(evolutionWebhook).toContain("connectionId: row.id");
     expect(metaWebhook).not.toContain("generateAgentResponse");
     expect(dispatcher).toContain("processMetaAgentResponseJob");
     expect(dispatcher).toContain("processEvolutionAgentResponseJob");
     expect(burst).toContain("return [messages]");
+  });
+
+  it("rejects live response jobs without an exact connection and cancels only audited legacy jobs", () => {
+    const migration = source(
+      "supabase/migrations/20260721200614_evolution_agent_connection_hotfix.sql",
+    );
+
+    expect(migration).toContain("agent_job_connection_required");
+    expect(migration).toContain("BEFORE INSERT OR UPDATE OF connection_id, status");
+    expect(migration).toContain("connection_missing_legacy_cancelled");
+    expect(migration).toContain("outbox.authorization_reason = 'connection_missing'");
+    expect(migration).not.toContain("DELETE FROM public.agent_response_jobs");
   });
 
   it("acknowledges Evolution webhooks before waiting for the agent response", () => {

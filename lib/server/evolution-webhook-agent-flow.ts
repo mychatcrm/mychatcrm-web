@@ -40,8 +40,8 @@ export async function runInboundSmartWaitFlow(params: {
   journeyId?: string | null;
   agentId: string;
   instanceName: string;
-  channel?: "evolution" | "meta_cloud";
-  connectionId?: string | null;
+  channel: "evolution" | "meta_cloud";
+  connectionId: string;
   inboundMessageKey: string;
   occurredAt: string;
   receivedAt?: string;

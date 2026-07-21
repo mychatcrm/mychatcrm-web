@@ -124,6 +124,24 @@ describe("agent outbound outbox", () => {
     });
   });
 
+  it.each([
+    "Atenda conforme as instruções livres do cliente.",
+    "Follow the customer's arbitrary instructions.",
+    "Sigue las instrucciones personalizadas del cliente.",
+    "Répondez selon les instructions configurées.",
+  ])("preserva conteúdo e idioma sem especialização: %s", async (content) => {
+    const state = makeSb();
+    const result = await prepareAgentOutbound({
+      sb: state.sb,
+      job,
+      generation: 1,
+      content,
+    });
+
+    expect(result.action).toBe("send");
+    expect(state.row?.content).toBe(content);
+  });
+
   it("never sends again when the same generation is already accepted", async () => {
     const state = makeSb({
       id: "outbound-1",

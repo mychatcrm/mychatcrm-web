@@ -22,6 +22,7 @@ export type PreparedAgentOutbound =
   | { action: "send"; id: string; claimToken: string }
   | { action: "already_sent"; id: string }
   | { action: "ambiguous"; id: string }
+  | { action: "blocked"; id: string; reason: string }
   | { action: "stale"; id: string };
 
 async function conversationSequenceIsCurrent(
@@ -212,7 +213,7 @@ export async function prepareAgentOutbound(params: {
       })
       .eq("id", row.id)
       .eq("claim_token", claimToken);
-    return { action: "stale", id: row.id };
+    return { action: "blocked", id: row.id, reason: authorization.reason };
   }
   return { action: "send", id: row.id, claimToken };
 }
@@ -302,7 +303,7 @@ export async function prepareAutomatedOutbound(params: {
   });
   return authorization.ok
     ? { action: "send", id: row.id, claimToken }
-    : { action: "stale", id: row.id };
+    : { action: "blocked", id: row.id, reason: authorization.reason };
 }
 
 export async function markAgentOutboundSent(params: {

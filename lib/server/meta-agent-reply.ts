@@ -250,6 +250,9 @@ export async function processMetaAgentResponseJob(
   if (outbound.action === "stale") {
     return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
   }
+  if (outbound.action === "blocked") {
+    return { ok: false, error: `authorization_blocked:${outbound.reason}`, dedupedCount: burst.dedupedCount };
+  }
   if (outbound.action === "ambiguous") {
     return { ok: false, error: "outbound_dispatch_ambiguous", dedupedCount: burst.dedupedCount };
   }

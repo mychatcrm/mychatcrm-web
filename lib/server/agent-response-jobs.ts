@@ -220,8 +220,8 @@ export async function scheduleAgentResponseJob(params: {
   journeyId?: string | null;
   agentId: string;
   instanceName: string;
-  channel?: "evolution" | "meta_cloud";
-  connectionId?: string | null;
+  channel: "evolution" | "meta_cloud";
+  connectionId: string;
   whatsappMessageId: string;
   occurredAt?: string;
   receivedAt?: string;
@@ -229,6 +229,17 @@ export async function scheduleAgentResponseJob(params: {
 }): Promise<AgentResponseJobRow | null> {
   const sb = params.sb ?? createSupabaseServiceClient();
   const settings = params.settings ?? (await loadAgentSmartWaitSettings(sb, params.tenantId, params.agentId));
+
+  const connectionId = params.connectionId.trim();
+  if (!connectionId) {
+    logJobEvent("failed_reason", {
+      scope: "schedule",
+      reason: "connection_missing",
+      tenant_id: params.tenantId,
+      channel: params.channel,
+    });
+    return null;
+  }
 
   if (!UUID_RE.test(params.whatsappMessageId)) {
     logJobEvent("failed_reason", {
@@ -292,14 +303,14 @@ export async function scheduleAgentResponseJob(params: {
   // Uma única transação no Postgres faz create-or-append sob lock. O antigo
   // SELECT + UPDATE no TypeScript perdia message_ids quando dois webhooks
   // chegavam juntos (lost update), exatamente o caso de 2–3 mensagens seguidas.
-  const channel = params.channel === "meta_cloud" ? "meta_cloud" : "evolution";
+  const channel = params.channel;
   const { data, error } = await sb.rpc("upsert_agent_response_job_burst_v3", {
     p_tenant_id: params.tenantId,
     p_remote_jid: params.remoteJid,
     p_agent_id: params.agentId,
     p_instance_name: params.instanceName,
     p_channel: channel,
-    p_connection_id: params.connectionId ?? null,
+    p_connection_id: connectionId,
     p_message_id: params.whatsappMessageId,
     p_provider_occurred_at: params.occurredAt ?? schedulingTimestamp,
     p_received_at: schedulingTimestamp,
@@ -527,8 +538,11 @@ export async function tryProcessAgentResponseJob(
       return "skipped";
     }
 
+    const authorizationBlocked = !result.ok && result.error.startsWith("authorization_blocked:");
     const finalStatus = result.ok
       ? "completed"
+      : authorizationBlocked
+        ? "cancelled"
       : !result.ok && isTransientFailure(result.error) && job.attempt_count < MAX_JOB_ATTEMPTS
         ? "pending"
         : "failed";
@@ -579,7 +593,7 @@ export async function tryProcessAgentResponseJob(
       final_status: finalStatus,
     });
     if (!result.ok) logJobEvent("failed_reason", { job_id: job.id, reason: result.error });
-    return result.ok ? "processed" : finalStatus === "pending" ? "skipped" : "failed";
+    return result.ok ? "processed" : finalStatus === "pending" || finalStatus === "cancelled" ? "skipped" : "failed";
   } catch (error) {
     const message = error instanceof Error ? error.message : "process_failed";
     const updated = await updateClaimedJobGeneration(

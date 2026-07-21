@@ -57,6 +57,8 @@ function jobRow(overrides: Record<string, unknown> = {}): Record<string, unknown
     remote_jid: "5562982194839@s.whatsapp.net",
     agent_id: "agent-1",
     instance_name: "mc-instance",
+    channel: "evolution",
+    connection_id: "connection-1",
     status: "pending",
     first_message_at: past,
     last_message_at: past,
@@ -241,5 +243,41 @@ describe("tryProcessAgentResponseJob — revalidação de jornada", () => {
     expect(updates.some((u) => u.payload.status === "completed")).toBe(true);
     expect(updates.at(-1)?.payload.status).toBe("pending");
     expect(updates.at(-1)?.payload.locked_at).toBeNull();
+  });
+
+  it("finaliza bloqueio definitivo de autorização como cancelled e nunca o deixa em processing", async () => {
+    authorizeActiveJourneyMock.mockResolvedValue({
+      ok: true,
+      agentId: "agent-1",
+      journey: { id: JOURNEY_ID },
+    });
+    processAgentResponseJobMock.mockResolvedValue({
+      ok: false,
+      error: "authorization_blocked:connection_missing",
+      dedupedCount: 0,
+    });
+
+    const updates: Update[] = [];
+    const sb = makeSb(
+      [
+        jobRow(),
+        jobRow({ status: "processing" }),
+        { burst_generation: 1, status: "processing" },
+        { id: JOB_ID },
+      ],
+      updates,
+    );
+
+    const outcome = await tryProcessAgentResponseJob(JOB_ID, sb);
+
+    expect(outcome).toBe("skipped");
+    const cancelled = updates.find((u) => u.payload.status === "cancelled");
+    expect(cancelled?.payload).toMatchObject({
+      failed_reason: "authorization_blocked:connection_missing",
+      locked_at: null,
+      claim_token: null,
+      claim_expires_at: null,
+    });
+    expect(updates.some((u) => u.payload.status === "pending")).toBe(false);
   });
 });
