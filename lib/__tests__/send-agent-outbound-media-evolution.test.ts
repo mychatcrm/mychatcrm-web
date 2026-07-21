@@ -26,6 +26,11 @@ const lookupReadyAgentMediaForOutbound = vi.fn(
   }),
 );
 const findReadyAgentMediaByFilenameFlexible = vi.fn(async () => null);
+const prepareAutomatedOutbound = vi.fn(async ({ operationKey }: { operationKey: string }) => ({
+  action: "send" as const,
+  id: operationKey,
+  claimToken: `claim:${operationKey}`,
+}));
 
 vi.mock("@/lib/integrations/evolution-api", () => ({
   evolutionSendMedia,
@@ -40,6 +45,12 @@ vi.mock("@/lib/integrations/r2-storage", () => ({
 
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServiceClient: () => ({}),
+}));
+
+vi.mock("@/lib/server/agent-outbound-outbox", () => ({
+  prepareAutomatedOutbound,
+  markAgentOutboundSent: vi.fn(async () => undefined),
+  markAgentOutboundFailed: vi.fn(async () => undefined),
 }));
 
 vi.mock("@/lib/server/agent-media-files", async (importOriginal) => {
@@ -77,6 +88,10 @@ describe("sendAgentOutboundMediaViaEvolution", () => {
       instanceName: "inst",
       number: "5511999990000",
       originalFilenames: ["a.jpg", "b.jpg", "c.jpg"],
+      remoteJid: "5511999990000@s.whatsapp.net",
+      journeyId: "journey-1",
+      connectionId: "connection-1",
+      operationKeyPrefix: "test-response",
     });
 
     await vi.runAllTimersAsync();
@@ -85,5 +100,6 @@ describe("sendAgentOutboundMediaViaEvolution", () => {
     expect(evolutionSendMedia).toHaveBeenCalledTimes(3);
     expect(lookupReadyAgentMediaForOutbound).toHaveBeenCalledTimes(3);
     expect(createR2PresignedGetUrl).toHaveBeenCalledTimes(3);
+    expect(prepareAutomatedOutbound).toHaveBeenCalledTimes(3);
   });
 });

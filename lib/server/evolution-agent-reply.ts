@@ -943,6 +943,11 @@ export async function processAgentResponseJob(
           instanceName: job.instance_name,
           number,
           originalFilenames: outboundFilenames,
+          remoteJid: job.remote_jid,
+          journeyId: job.journey_id!,
+          connectionId: job.connection_id!,
+          operationKeyPrefix: `agent-response:${job.id}:${generation}`,
+          leadId: job.lead_id,
         });
       } catch (err) {
         console.warn(

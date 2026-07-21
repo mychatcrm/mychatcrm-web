@@ -3,7 +3,6 @@ import { cancelPendingAgentResponseJobs } from "@/lib/server/agent-response-jobs
 import { cancelPendingFollowUpJobs } from "@/lib/server/follow-up-jobs";
 import {
   getConversationState,
-  upsertConversationState,
   type ConversationState,
 } from "@/lib/server/conversation-memory";
 import { getSystemAgentInstanceName, sendSystemNotification } from "@/lib/server/system-agent";
@@ -196,56 +195,48 @@ async function patchConversationOperation(params: {
   transferReason?: string | null;
 }): Promise<ConversationState | null> {
   const sb = params.sb ?? createSupabaseServiceClient();
-  const now = new Date().toISOString();
-  const patch: Record<string, unknown> = {
-    tenant_id: params.tenantId,
-    remote_jid: params.remoteJid,
-    channel: "whatsapp",
-    updated_at: now,
-    conversation_mode: params.mode,
-    human_paused: params.humanPaused,
-    paused_reason: params.pausedReason ?? null,
-    paused_by: params.pausedBy ?? null,
-    handoff_suggested: params.handoffSuggested ?? false,
-    handoff_reason: params.handoffReason ?? null,
-    assigned_human_id: params.assignedHumanId ?? null,
-    assigned_human_name: params.assignedHumanName ?? null,
-    transferred_from: params.transferredFrom ?? null,
-    transferred_to: params.transferredTo ?? null,
-    transfer_reason: params.transferReason ?? null,
-    status: params.humanPaused ? "human_paused" : "active",
-  };
-  if (params.leadId !== undefined) patch.lead_id = params.leadId;
-  if (params.agentId !== undefined) patch.agent_id = params.agentId;
-  if (params.humanPaused) patch.paused_at = now;
-  else patch.resumed_at = now;
-
-  const { data, error } = await sb
-    .from("conversation_states")
-    .upsert(patch, { onConflict: "tenant_id,remote_jid,channel" })
-    .select("*")
-    .single();
+  const { data, error } = await sb.rpc("set_conversation_operation_v2", {
+    p_tenant_id: params.tenantId,
+    p_remote_jid: params.remoteJid,
+    p_lead_id: params.leadId ?? null,
+    p_agent_id: params.agentId ?? null,
+    p_mode: params.mode,
+    p_human_paused: params.humanPaused,
+    p_paused_reason: params.pausedReason ?? null,
+    p_paused_by: params.pausedBy ?? null,
+    p_handoff_suggested: params.handoffSuggested ?? false,
+    p_handoff_reason: params.handoffReason ?? null,
+    p_assigned_human_id: params.assignedHumanId ?? null,
+    p_assigned_human_name: params.assignedHumanName ?? null,
+    p_transferred_from: params.transferredFrom ?? null,
+    p_transferred_to: params.transferredTo ?? null,
+    p_transfer_reason: params.transferReason ?? null,
+  });
   if (error) {
     console.warn("[conversation-operation] patch state", error.code, error.message);
     return null;
   }
-  return data
+  const row = data && typeof data === "object" ? (data as Record<string, unknown>) : null;
+  return row
     ? {
-        id: String(data.id),
-        tenantId: String(data.tenant_id),
-        remoteJid: String(data.remote_jid),
-        leadId: textOrNull(data.lead_id),
-        agentId: textOrNull(data.agent_id),
-        channel: String(data.channel ?? "whatsapp"),
-        status: String(data.status ?? "active"),
-        humanPaused: data.human_paused === true,
-        pausedReason: textOrNull(data.paused_reason),
-        pausedBy: textOrNull(data.paused_by),
-        handoffSuggested: data.handoff_suggested === true,
-        handoffReason: textOrNull(data.handoff_reason),
-        lastSummaryAt: textOrNull(data.last_summary_at),
-        isHidden: data.is_hidden === true,
-        archivedAt: textOrNull(data.archived_at),
+        id: String(row.id),
+        tenantId: String(row.tenant_id),
+        remoteJid: String(row.remote_jid),
+        leadId: textOrNull(row.lead_id),
+        agentId: textOrNull(row.agent_id),
+        channel: String(row.channel ?? "whatsapp"),
+        status: String(row.status ?? "active"),
+        humanPaused: row.human_paused === true,
+        pausedReason: textOrNull(row.paused_reason),
+        pausedBy: textOrNull(row.paused_by),
+        handoffSuggested: row.handoff_suggested === true,
+        handoffReason: textOrNull(row.handoff_reason),
+        lastSummaryAt: textOrNull(row.last_summary_at),
+        isHidden: row.is_hidden === true,
+        archivedAt: textOrNull(row.archived_at),
+        conversationMode: textOrNull(row.conversation_mode),
+        activeJourneyId: textOrNull(row.active_journey_id),
+        automationEpoch: Number(row.automation_epoch ?? 0),
       }
     : null;
 }

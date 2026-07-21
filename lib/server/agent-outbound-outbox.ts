@@ -12,6 +12,12 @@ type OutboxRow = {
   provider_message_id: string | null;
 };
 
+type ConversationAuthorizationRow = {
+  automation_epoch: number;
+  conversation_mode: string | null;
+  human_paused: boolean;
+};
+
 export type PreparedAgentOutbound =
   | { action: "send"; id: string; claimToken: string }
   | { action: "already_sent"; id: string }
@@ -33,6 +39,46 @@ async function conversationSequenceIsCurrent(
 }
 
 /**
+ * Barreira central obrigatória para qualquer despacho automático.
+ * A decisão final acontece dentro do Postgres, sob o mesmo advisory lock usado
+ * pelo takeover humano. Falhas de leitura/RPC são sempre tratadas como bloqueio.
+ */
+export async function authorizeAutomatedOutbound(params: {
+  sb: SupabaseServiceClient;
+  outboxId: string;
+  claimToken: string;
+  tenantId: string;
+  remoteJid: string;
+}): Promise<{ ok: true; automationEpoch: number } | { ok: false; reason: string }> {
+  const { data: state, error: stateError } = await params.sb
+    .from("conversation_states")
+    .select("automation_epoch,conversation_mode,human_paused")
+    .eq("tenant_id", params.tenantId)
+    .eq("remote_jid", params.remoteJid)
+    .eq("channel", "whatsapp")
+    .maybeSingle();
+  if (stateError) {
+    return { ok: false, reason: stateError?.message ?? "conversation_state_missing" };
+  }
+  const current = (state ?? {}) as Partial<ConversationAuthorizationRow>;
+  const epoch = Number.isSafeInteger(Number(current.automation_epoch))
+    ? Number(current.automation_epoch)
+    : 0;
+  const { data, error } = await params.sb.rpc("authorize_agent_outbound_dispatch_v2", {
+    p_outbox_id: params.outboxId,
+    p_claim_token: params.claimToken,
+    p_expected_epoch: epoch,
+  });
+  if (error || !data || typeof data !== "object") {
+    return { ok: false, reason: error?.message ?? "authorization_rpc_failed" };
+  }
+  const decision = data as { ok?: unknown; reason?: unknown };
+  return decision.ok === true
+    ? { ok: true, automationEpoch: epoch }
+    : { ok: false, reason: typeof decision.reason === "string" ? decision.reason : "authorization_blocked" };
+}
+
+/**
  * Persiste a intenção antes da chamada ao provedor. Um reclaim de envio que já
  * começou nunca reenvia às cegas: fica ambíguo para reconciliação, evitando
  * duas respostas ao mesmo burst.
@@ -48,6 +94,17 @@ export async function prepareAgentOutbound(params: {
   if (!(await conversationSequenceIsCurrent(params.sb, params.job))) {
     return { action: "stale", id: params.job.id };
   }
+  const { data: state, error: stateError } = await params.sb
+    .from("conversation_states")
+    .select("automation_epoch")
+    .eq("tenant_id", params.job.tenant_id)
+    .eq("remote_jid", params.job.remote_jid)
+    .eq("channel", "whatsapp")
+    .maybeSingle();
+  if (stateError || !state || !Number.isSafeInteger(Number(state.automation_epoch))) {
+    return { action: "stale", id: params.job.id };
+  }
+  const automationEpoch = Number(state.automation_epoch);
   const { error: upsertError } = await params.sb.from("agent_outbound_outbox").upsert(
     {
       tenant_id: params.job.tenant_id,
@@ -60,6 +117,9 @@ export async function prepareAgentOutbound(params: {
       agent_id: params.job.agent_id,
       lead_id: params.job.lead_id,
       journey_id: params.job.journey_id,
+      operation_key: `agent-response:${params.job.id}:${params.generation}:${kind}`,
+      automation_epoch: automationEpoch,
+      authorization_status: "pending",
       kind,
       content: params.content,
       status: "pending",
@@ -131,7 +191,118 @@ export async function prepareAgentOutbound(params: {
       .eq("claim_token", claimToken);
     return { action: "stale", id: row.id };
   }
+  const authorization = await authorizeAutomatedOutbound({
+    sb: params.sb,
+    outboxId: row.id,
+    claimToken,
+    tenantId: params.job.tenant_id,
+    remoteJid: params.job.remote_jid,
+  });
+  if (!authorization.ok) {
+    await params.sb
+      .from("agent_outbound_outbox")
+      .update({
+        status: "cancelled",
+        authorization_status: "blocked",
+        authorization_reason: authorization.reason,
+        claim_token: null,
+        claim_expires_at: null,
+        last_error: authorization.reason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", row.id)
+      .eq("claim_token", claimToken);
+    return { action: "stale", id: row.id };
+  }
   return { action: "send", id: row.id, claimToken };
+}
+
+export async function prepareAutomatedOutbound(params: {
+  sb: SupabaseServiceClient;
+  operationKey: string;
+  tenantId: string;
+  remoteJid: string;
+  agentId: string;
+  journeyId: string;
+  connectionId: string;
+  channel: "evolution" | "meta_cloud";
+  kind: "text" | "audio" | "image" | "video" | "document" | "template";
+  content: string;
+  leadId?: string | null;
+}): Promise<PreparedAgentOutbound> {
+  const { data: state, error: stateError } = await params.sb
+    .from("conversation_states")
+    .select("automation_epoch")
+    .eq("tenant_id", params.tenantId)
+    .eq("remote_jid", params.remoteJid)
+    .eq("channel", "whatsapp")
+    .maybeSingle();
+  if (stateError || !state || !Number.isSafeInteger(Number(state.automation_epoch))) {
+    return { action: "stale", id: params.operationKey };
+  }
+  const now = new Date().toISOString();
+  const { error: insertError } = await params.sb.from("agent_outbound_outbox").upsert(
+    {
+      tenant_id: params.tenantId,
+      operation_key: params.operationKey,
+      burst_generation: 0,
+      conversation_sequence: 0,
+      channel: params.channel,
+      connection_id: params.connectionId,
+      remote_jid: params.remoteJid,
+      agent_id: params.agentId,
+      lead_id: params.leadId ?? null,
+      journey_id: params.journeyId,
+      kind: params.kind,
+      content: params.content,
+      automation_epoch: Number(state.automation_epoch),
+      authorization_status: "pending",
+      status: "pending",
+      next_attempt_at: now,
+      updated_at: now,
+    },
+    { onConflict: "tenant_id,operation_key", ignoreDuplicates: true },
+  );
+  if (insertError) throw new Error(insertError.message);
+  const { data, error } = await params.sb
+    .from("agent_outbound_outbox")
+    .select("id,status,attempts,claim_token,claim_expires_at,provider_message_id")
+    .eq("tenant_id", params.tenantId)
+    .eq("operation_key", params.operationKey)
+    .single();
+  if (error || !data) throw new Error(error?.message ?? "outbound_intent_missing");
+  const row = data as OutboxRow;
+  if (row.status === "sent" || row.status === "delivered") {
+    return { action: "already_sent", id: row.id };
+  }
+  if (row.status === "processing" || row.status === "ambiguous") {
+    return { action: "ambiguous", id: row.id };
+  }
+  const claimToken = crypto.randomUUID();
+  const { data: claimed } = await params.sb
+    .from("agent_outbound_outbox")
+    .update({
+      status: "processing",
+      attempts: row.attempts + 1,
+      claim_token: claimToken,
+      claim_expires_at: new Date(Date.now() + 180_000).toISOString(),
+      updated_at: now,
+    })
+    .eq("id", row.id)
+    .in("status", ["pending", "failed"])
+    .select("id")
+    .maybeSingle();
+  if (!claimed) return { action: "ambiguous", id: row.id };
+  const authorization = await authorizeAutomatedOutbound({
+    sb: params.sb,
+    outboxId: row.id,
+    claimToken,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+  });
+  return authorization.ok
+    ? { action: "send", id: row.id, claimToken }
+    : { action: "stale", id: row.id };
 }
 
 export async function markAgentOutboundSent(params: {

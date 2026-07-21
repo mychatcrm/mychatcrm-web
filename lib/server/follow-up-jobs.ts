@@ -5,7 +5,7 @@ import {
 import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import type { AgentFollowUpInteligente } from "@/lib/types";
 import { phoneFromRemoteJid } from "@/lib/server/auto-lead-upsert";
-import { isAgentAutomationAllowed, returnConversationToAutomation } from "@/lib/server/conversation-operation";
+import { isAgentAutomationAllowed } from "@/lib/server/conversation-operation";
 import {
   conversationMessagesToAi,
   getRecentConversationMessages,
@@ -30,6 +30,11 @@ import {
   isJourneyIsolationEnabled,
   type LeadJourney,
 } from "@/lib/server/lead-journeys";
+import {
+  markAgentOutboundFailed,
+  markAgentOutboundSent,
+  prepareAutomatedOutbound,
+} from "@/lib/server/agent-outbound-outbox";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -336,18 +341,12 @@ export async function scheduleRetomadaJob(params: {
   scheduledAt: Date;
   maxAttempts?: number;
 }): Promise<void> {
-  const sb = params.sb ?? createSupabaseServiceClient();
-  await sb.from("follow_up_jobs").insert({
+  // Compatibilidade de API: a retomada por timeout foi desativada. O humano
+  // precisa clicar em "Devolver para automação", que revalida a jornada.
+  logFollowUp("retomada_not_scheduled_manual_return_required", {
     tenant_id: params.tenantId,
     agent_id: params.agentId,
-    remote_jid: params.remoteJid,
-    lead_id: params.leadId ?? null,
     scheduled_at: params.scheduledAt.toISOString(),
-    status: "pending",
-    attempts: 0,
-    max_attempts: params.maxAttempts ?? 3,
-    follow_up_type: "human_abandoned",
-    priority: 2,
   });
 }
 
@@ -512,7 +511,7 @@ export async function processFollowUpJob(
   };
   let authorizedJourney: LeadJourney | null = null;
 
-  if (!isHumanAbandonedJob && isJourneyIsolationEnabled()) {
+  if (isJourneyIsolationEnabled()) {
     const journeyAuth = job.journey_id
       ? await authorizeActiveJourney({
           sb: client,
@@ -598,8 +597,8 @@ export async function processFollowUpJob(
       leadId: lead?.id ?? job.lead_id,
       phone: phoneFromRemoteJid(job.remote_jid),
       remoteJid: job.remote_jid,
-      journeyId: isHumanAbandonedJob ? undefined : job.journey_id,
-      connectionId: isHumanAbandonedJob ? undefined : authorizedJourney?.connectionId,
+      journeyId: job.journey_id,
+      connectionId: authorizedJourney?.connectionId,
       triggerSource: "follow_up_job",
     });
     if (!guard.ok) {
@@ -670,27 +669,10 @@ export async function processFollowUpJob(
       retomadaTimeoutMs != null &&
       now.getTime() - evalCtx.lastHumanOutboundAt.getTime() >= retomadaTimeoutMs;
 
+    // O timeout nunca devolve uma conversa humana à IA. A retomada exige ação
+    // explícita no painel e revalidação da jornada original.
     if (retomadaTimeoutEsgotado) {
-      await returnConversationToAutomation({
-        sb: client,
-        tenantId: job.tenant_id,
-        remoteJid: job.remote_jid,
-        actorId: "system",
-        actorName: "Retomada automática",
-        agentId: job.agent_id,
-        leadId: lead?.id ?? job.lead_id,
-      });
-      evalCtx.conversationState = await loadConversationStateForJob(
-        client,
-        job.tenant_id,
-        job.remote_jid,
-      );
-      logFollowUp("retomada_returned_to_automation", {
-        job_id: job.id,
-        tenant_id: job.tenant_id,
-        agent_id: job.agent_id,
-        phase: "pre_evaluate",
-      });
+      logFollowUp("retomada_requires_manual_return", { job_id: job.id });
     }
 
     const decision: FollowUpDecision = evaluateFollowUpNeed(evalCtx);
@@ -881,8 +863,8 @@ export async function processFollowUpJob(
       });
     }
 
-    // ── automation gate (só quando respeitar humano ativo) ───────────────────
-    if (settings.respeitarHumanoAtivo) {
+    // ── automation gate obrigatório; configuração nunca ignora takeover ─────
+    {
       const automationAllowed = await isAgentAutomationAllowed({
         sb: client,
         tenantId: job.tenant_id,
@@ -1007,8 +989,7 @@ export async function processFollowUpJob(
       : "Oi! Passando para saber se ainda posso te ajudar com algo. Fico à disposição.";
 
     // ── send via Evolution ────────────────────────────────────────────────────
-    const requiresAuthorizedConnection =
-      !isHumanAbandonedJob && isJourneyIsolationEnabled();
+    const requiresAuthorizedConnection = isJourneyIsolationEnabled();
     const authorizedConnectionId = requiresAuthorizedConnection
       ? authorizedJourney?.connectionId ?? null
       : null;
@@ -1084,6 +1065,30 @@ export async function processFollowUpJob(
       return "failed";
     }
 
+    if (!authorizedJourney?.id || !authorizedConnectionId) {
+      return "cancelled";
+    }
+    const outbound = await prepareAutomatedOutbound({
+      sb: client,
+      operationKey: `follow-up:${job.id}:${job.attempts + 1}`,
+      tenantId: job.tenant_id,
+      remoteJid: job.remote_jid,
+      agentId: job.agent_id,
+      journeyId: authorizedJourney.id,
+      connectionId: authorizedConnectionId,
+      channel: "evolution",
+      kind: "text",
+      content: replyText.slice(0, 4000),
+      leadId: lead?.id ?? null,
+    });
+    if (outbound.action !== "send") {
+      await client.from("follow_up_jobs").update({
+        status: "cancelled",
+        last_error: `outbound_${outbound.action}`,
+        updated_at: now.toISOString(),
+      }).eq("id", job.id);
+      return "cancelled";
+    }
     const send = await evolutionSendText({
       instanceName: instance.instance_name,
       number,
@@ -1091,6 +1096,12 @@ export async function processFollowUpJob(
     });
 
     if (!send.ok) {
+      await markAgentOutboundFailed({
+        sb: client,
+        id: outbound.id,
+        claimToken: outbound.claimToken,
+        error: send.error,
+      });
       const failedAttempts = job.attempts + 1;
       const isExhausted = failedAttempts >= job.max_attempts;
       await client
@@ -1111,6 +1122,11 @@ export async function processFollowUpJob(
       logFollowUp("send_failed", { job_id: job.id, error: send.error, attempts: failedAttempts, exhausted: isExhausted });
       return "failed";
     }
+    await markAgentOutboundSent({
+      sb: client,
+      id: outbound.id,
+      claimToken: outbound.claimToken,
+    });
 
     // ── persist outbound + update lead ────────────────────────────────────────
     await saveOutboundFollowUp({
@@ -1211,6 +1227,7 @@ export async function processFollowUpJob(
       agent_id: job.agent_id,
       remote_jid: job.remote_jid,
       lead_id: lead?.id ?? null,
+      journey_id: job.journey_id,
       scheduled_at: nextScheduled.toISOString(),
       attempts: nextAttempts,
       max_attempts: job.max_attempts,

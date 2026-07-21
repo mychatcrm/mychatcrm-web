@@ -77,7 +77,9 @@ describe("omnichannel production hardening", () => {
     const followUps = source("lib/server/follow-up-jobs.ts");
 
     expect(followUps).toContain("getEvolutionInstanceByIdForTenant");
-    expect(followUps).toContain("connectionId: isHumanAbandonedJob ? undefined");
+    expect(followUps).toContain("connectionId: authorizedJourney?.connectionId");
+    expect(followUps).not.toContain("returnConversationToAutomation({");
+    expect(followUps).toContain("prepareAutomatedOutbound({");
     expect(followUps).toContain("missing_authorized_connection");
     expect(followUps).toContain("authorized_connection_not_open");
     expect(followUps).toContain(": await getEvolutionInstanceByTenantId(job.tenant_id)");

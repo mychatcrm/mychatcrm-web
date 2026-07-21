@@ -83,7 +83,7 @@ describe("configurable safety rules", () => {
     expect(d.shouldSend).toBe(true);
   });
 
-  it("respeitarHumanoAtivo off allows human_paused", () => {
+  it("respeitarHumanoAtivo off never bypasses human_paused", () => {
     const d = evaluateFollowUpNeed(
       makeCtx(
         { ...base, respeitarHumanoAtivo: false },
@@ -98,8 +98,8 @@ describe("configurable safety rules", () => {
         },
       ),
     );
-    expect(d.shouldSend).toBe(true);
-    expect(d.humanBlocked).toBe(false);
+    expect(d.shouldSend).toBe(false);
+    expect(d.humanBlocked).toBe(true);
   });
 
   it("respeitarHumanoAtivo on blocks human_paused", () => {

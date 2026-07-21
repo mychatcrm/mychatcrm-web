@@ -11,6 +11,11 @@ import {
   lookupReadyAgentMediaForOutbound,
 } from "@/lib/server/agent-media-files";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import {
+  markAgentOutboundFailed,
+  markAgentOutboundSent,
+  prepareAutomatedOutbound,
+} from "@/lib/server/agent-outbound-outbox";
 
 type SendOpts = {
   tenantId: string;
@@ -19,6 +24,11 @@ type SendOpts = {
   /** Número Evolution (só dígitos, com DDI). */
   number: string;
   originalFilenames: string[];
+  remoteJid: string;
+  journeyId: string;
+  connectionId: string;
+  operationKeyPrefix: string;
+  leadId?: string | null;
 };
 
 function primaryMime(mime: string): string {
@@ -87,6 +97,27 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
       const mimeLower = primaryMime(file.mimeType).toLowerCase();
       const caption = "";
       let sendOk = false;
+      const kind = mimeLower.startsWith("image/")
+        ? "image"
+        : mimeLower.startsWith("video/")
+          ? "video"
+          : mimeLower.startsWith("audio/")
+            ? "audio"
+            : "document";
+      const outbound = await prepareAutomatedOutbound({
+        sb,
+        operationKey: `${opts.operationKeyPrefix}:media:${index}`,
+        tenantId: opts.tenantId,
+        remoteJid: opts.remoteJid,
+        agentId: opts.agentId,
+        journeyId: opts.journeyId,
+        connectionId: opts.connectionId,
+        channel: "evolution",
+        kind,
+        content: file.originalFilename,
+        leadId: opts.leadId ?? null,
+      });
+      if (outbound.action !== "send") continue;
 
       if (mimeLower.startsWith("image/")) {
         const res = await evolutionSendMedia({
@@ -130,6 +161,17 @@ export async function sendAgentOutboundMediaViaEvolution(opts: SendOpts): Promis
         });
         sendOk = res.ok;
         if (!res.ok) console.warn("[outbound-media] sendMedia document", res.status, res.error);
+      }
+
+      if (sendOk) {
+        await markAgentOutboundSent({ sb, id: outbound.id, claimToken: outbound.claimToken });
+      } else {
+        await markAgentOutboundFailed({
+          sb,
+          id: outbound.id,
+          claimToken: outbound.claimToken,
+          error: "media_provider_send_failed",
+        });
       }
 
       console.log("[MEDIA_DEBUG] sent:", { filename, status: sendOk ? "ok" : "error" });

@@ -23,6 +23,7 @@ export type ConversationState = {
   archivedAt: string | null;
   conversationMode?: string | null;
   activeJourneyId?: string | null;
+  automationEpoch?: number;
 };
 
 export type ConversationSummary = {
@@ -96,6 +97,7 @@ function rowToState(row: Record<string, unknown>): ConversationState {
     archivedAt: textOrNull(row.archived_at),
     conversationMode: textOrNull(row.conversation_mode),
     activeJourneyId: textOrNull(row.active_journey_id),
+    automationEpoch: Number(row.automation_epoch ?? 0),
   };
 }
 

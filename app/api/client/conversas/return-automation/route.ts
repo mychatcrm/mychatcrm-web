@@ -38,7 +38,18 @@ export async function POST(request: Request) {
       tenantId: session.tenantId,
       remoteJid,
     });
-    if (journey.ok) agentId = journey.agentId;
+    if (!journey.ok) {
+      return NextResponse.json(
+        { error: "A jornada original não está mais autorizada para automação.", reason: journey.reason },
+        { status: 409 },
+      );
+    }
+    agentId = journey.agentId;
+  } else {
+    return NextResponse.json(
+      { error: "O isolamento omnichannel precisa estar ativo para retomar a automação." },
+      { status: 409 },
+    );
   }
 
   const actorId = session.employeeId ?? session.email;

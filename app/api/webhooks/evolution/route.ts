@@ -95,6 +95,11 @@ import {
 import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
 import { processCustomerMessageDeliveryUpdate } from "@/lib/server/evolution-customer-delivery";
 import { extractEvolutionSendReceipt } from "@/lib/integrations/evolution-message-receipt";
+import {
+  markAgentOutboundFailed,
+  markAgentOutboundSent,
+  prepareAutomatedOutbound,
+} from "@/lib/server/agent-outbound-outbox";
 
 
 export const dynamic = "force-dynamic";
@@ -1349,6 +1354,11 @@ export async function POST(request: Request) {
                 instanceName,
                 number,
                 originalFilenames: outboundFilenames,
+                remoteJid: msg.remoteJid,
+                journeyId: journey!.id,
+                connectionId: journey!.connectionId!,
+                operationKeyPrefix: `evolution-immediate:${row.tenant_id}:${msg.messageId ?? msg.remoteJid}:${journey!.id}`,
+                leadId,
               });
             } catch (err) {
               console.warn(
@@ -1401,6 +1411,27 @@ export async function POST(request: Request) {
               return;
             }
           }
+          if (!journey?.id || !journey.connectionId) {
+            await releaseTenantLeadQuotaReservation(directQuotaReservationId, "journey_missing_before_send");
+            return;
+          }
+          const immediateOutbound = await prepareAutomatedOutbound({
+            sb: sbState,
+            operationKey: `evolution-immediate:${row.tenant_id}:${msg.messageId ?? msg.remoteJid}:${journey.id}`,
+            tenantId: row.tenant_id,
+            remoteJid: msg.remoteJid,
+            agentId,
+            journeyId: journey.id,
+            connectionId: journey.connectionId,
+            channel: "evolution",
+            kind: useTts ? "audio" : "text",
+            content: replyText.slice(0, 4000),
+            leadId,
+          });
+          if (immediateOutbound.action !== "send") {
+            await releaseTenantLeadQuotaReservation(directQuotaReservationId, `outbound_${immediateOutbound.action}`);
+            return;
+          }
           const delivery = await deliverAgentReplyWithOptionalTts({
             instanceName,
             number,
@@ -1426,6 +1457,12 @@ export async function POST(request: Request) {
 
           if (delivery.sent) {
             const receipt = extractEvolutionSendReceipt(delivery.providerPayload);
+            await markAgentOutboundSent({
+              sb: sbState,
+              id: immediateOutbound.id,
+              claimToken: immediateOutbound.claimToken,
+              providerMessageId: receipt.messageId,
+            });
             await saveMessage({
               tenantId: row.tenant_id,
               remoteJid: msg.remoteJid,
@@ -1477,6 +1514,12 @@ export async function POST(request: Request) {
           } else {
             console.error("[webhooks/evolution] outbound send failed after TTS gate");
             await releaseTenantLeadQuotaReservation(directQuotaReservationId, "initial_direct_delivery_failed");
+            await markAgentOutboundFailed({
+              sb: sbState,
+              id: immediateOutbound.id,
+              claimToken: immediateOutbound.claimToken,
+              error: "provider_send_failed",
+            });
           }
         } catch (e) {
           console.warn("[webhooks/evolution] Phase 2 flow error", e instanceof Error ? e.message : e);

@@ -20,6 +20,11 @@ import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
 import { listTenantWhatsappConnections } from "@/lib/server/tenant-whatsapp-connections";
 import { lookupWhatsAppCloudConnectionByPhoneNumberId } from "@/lib/server/whatsapp-cloud-connections";
 import { persistEvolutionSendReceipt } from "@/lib/server/evolution-customer-delivery";
+import {
+  markAgentOutboundFailed,
+  markAgentOutboundSent,
+  prepareAutomatedOutbound,
+} from "@/lib/server/agent-outbound-outbox";
 
 type ServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -452,6 +457,27 @@ async function processRecipient(params: {
     params.sender.transport === "evolution"
       ? renderWhatsAppCampaignTemplate(String(params.campaign.message_template), lead as Record<string, unknown>)
       : buildWhatsAppCampaignTemplateParams(lead as Record<string, unknown>).slice(0, params.sender.bodyParamCount).join(" · ");
+  const outbound = await prepareAutomatedOutbound({
+    sb: params.sb,
+    operationKey: `campaign:${recipientId}:${attempts}`,
+    tenantId,
+    remoteJid: jid,
+    agentId: journey.agentId!,
+    journeyId: journey.id,
+    connectionId: String(params.campaign.connection_id),
+    channel: params.sender.transport === "cloud_api" ? "meta_cloud" : "evolution",
+    kind: params.sender.transport === "cloud_api" ? "template" : "text",
+    content,
+    leadId: String(lead.id),
+  });
+  if (outbound.action !== "send") {
+    await params.sb.from("whatsapp_campaign_recipients").update({
+      status: outbound.action === "already_sent" ? "sent" : "skipped",
+      last_error: `outbound_${outbound.action}`,
+      updated_at: new Date().toISOString(),
+    }).eq("id", recipientId);
+    return `outbound_${outbound.action}`;
+  }
   const pendingAt = new Date().toISOString();
   const { data: message, error: messageInsertError } = await params.sb
     .from("whatsapp_messages")
@@ -472,6 +498,12 @@ async function processRecipient(params: {
     .select("id")
     .single();
   if (messageInsertError || !message?.id) {
+    await markAgentOutboundFailed({
+      sb: params.sb,
+      id: outbound.id,
+      claimToken: outbound.claimToken,
+      error: messageInsertError?.message ?? "message_persistence_failed",
+    });
     const terminal = attempts >= maxAttempts;
     await params.sb
       .from("whatsapp_campaign_recipients")
@@ -505,6 +537,12 @@ async function processRecipient(params: {
           accessToken: params.sender.accessToken,
         });
   if (!delivery.ok) {
+    await markAgentOutboundFailed({
+      sb: params.sb,
+      id: outbound.id,
+      claimToken: outbound.claimToken,
+      error: delivery.error ?? `send_failed_${delivery.status}`,
+    });
     const terminal = attempts >= maxAttempts;
     await Promise.all([
       params.sb
@@ -535,6 +573,12 @@ async function processRecipient(params: {
     });
     return terminal ? "failed" : "retry";
   }
+
+  await markAgentOutboundSent({
+    sb: params.sb,
+    id: outbound.id,
+    claimToken: outbound.claimToken,
+  });
 
   const now = new Date().toISOString();
   let messageUpdateError: { message: string } | null = null;

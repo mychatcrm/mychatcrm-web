@@ -42,6 +42,7 @@ export type LeadJourney = {
   conflictPolicy: JourneyConflictPolicy;
   startedAt: string;
   lastActivityAt: string;
+  expiresAt: string | null;
   endedAt: string | null;
   metadata: Record<string, unknown>;
 };
@@ -83,6 +84,7 @@ function rowToJourney(row: Record<string, unknown>): LeadJourney {
     conflictPolicy: String(row.conflict_policy) as JourneyConflictPolicy,
     startedAt: String(row.started_at),
     lastActivityAt: String(row.last_activity_at),
+    expiresAt: text(row.expires_at),
     endedAt: text(row.ended_at),
     metadata: object(row.metadata),
   };
@@ -200,21 +202,30 @@ export async function activateLeadJourney(params: {
 
   if (journey.status === "active") {
     const now = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + policy.inactivityMinutes * 60_000).toISOString();
+    const { error: bindError } = await params.sb.rpc("bind_active_journey_v2", {
+      p_tenant_id: params.tenantId,
+      p_remote_jid: params.remoteJid,
+      p_journey_id: journey.id,
+      p_lead_id: params.leadId ?? journey.leadId,
+      p_agent_id: params.agentId ?? journey.agentId,
+      p_expires_at: expiresAt,
+    });
+    if (bindError) {
+      await params.sb.from("lead_journeys").update({
+        status: "manual_review",
+        ended_at: now,
+        updated_at: now,
+        metadata: { ...journey.metadata, bind_error: bindError.message },
+      }).eq("tenant_id", params.tenantId).eq("id", journey.id).eq("status", "active");
+      console.error("[lead-journeys] bind_failed", {
+        tenant_id: params.tenantId,
+        journey_id: journey.id,
+        error: bindError.message,
+      });
+      return { ...journey, status: "manual_review", endedAt: now };
+    }
     await Promise.all([
-      params.sb
-        .from("conversation_states")
-        .upsert(
-          {
-            tenant_id: params.tenantId,
-            remote_jid: params.remoteJid,
-            channel: "whatsapp",
-            lead_id: params.leadId ?? journey.leadId,
-            agent_id: params.agentId ?? journey.agentId,
-            active_journey_id: journey.id,
-            updated_at: now,
-          },
-          { onConflict: "tenant_id,remote_jid,channel" },
-        ),
       params.sb
         .from("agent_response_jobs")
         .update({
@@ -240,6 +251,7 @@ export async function activateLeadJourney(params: {
         .or("follow_up_type.is.null,follow_up_type.neq.human_abandoned")
         .or(`journey_id.is.null,journey_id.neq.${journey.id}`),
     ]);
+    journey.expiresAt = expiresAt;
   }
 
   console.info("[lead-journeys] journey_resolved", {
@@ -326,11 +338,24 @@ export async function authorizeActiveJourney(params: {
   if (!journey) {
     return { ok: false, reason: "no_active_journey", journey: null };
   }
+  if (!journey.connectionId) {
+    return { ok: false, reason: "journey_connection_missing", journey };
+  }
+  if (!journey.expiresAt || Date.parse(journey.expiresAt) <= Date.now()) {
+    const now = new Date().toISOString();
+    await params.sb
+      .from("lead_journeys")
+      .update({ status: "closed", ended_at: now, updated_at: now })
+      .eq("tenant_id", params.tenantId)
+      .eq("id", journey.id)
+      .eq("status", "active");
+    return { ok: false, reason: "journey_expired", journey };
+  }
   const agentId = params.preferredAgentId?.trim() || journey.agentId?.trim() || "";
   if (!agentId || journey.agentId !== agentId) {
     return { ok: false, reason: "journey_agent_mismatch", journey };
   }
-  if (params.connectionId && journey.connectionId && journey.connectionId !== params.connectionId) {
+  if (params.connectionId && journey.connectionId !== params.connectionId) {
     return { ok: false, reason: "journey_connection_mismatch", journey };
   }
   const { data: agent } = await params.sb
@@ -506,8 +531,23 @@ export async function touchLeadJourney(params: {
   leadId?: string | null;
   occurredAt?: string;
 }): Promise<void> {
+  const journey = await getLeadJourneyById({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    journeyId: params.journeyId,
+  });
+  if (!journey || journey.status !== "active") return;
+  const policy = await getRuleJourneyPolicy({
+    sb: params.sb,
+    tenantId: params.tenantId,
+    ruleId: journey.ruleId,
+  });
+  const occurredAt = params.occurredAt ?? new Date().toISOString();
   const patch: Record<string, unknown> = {
-    last_activity_at: params.occurredAt ?? new Date().toISOString(),
+    last_activity_at: occurredAt,
+    expires_at: new Date(
+      Date.parse(occurredAt) + policy.inactivityMinutes * 60_000,
+    ).toISOString(),
     updated_at: new Date().toISOString(),
   };
   if (params.leadId !== undefined) patch.lead_id = params.leadId;

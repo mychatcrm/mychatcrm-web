@@ -187,26 +187,17 @@ export function evaluateFollowUpNeed(ctx: FollowUpEvalContext): FollowUpDecision
     }
   }
 
+  if (conversationState?.humanPaused) {
+    return { ...base, humanBlocked: true, skipReason: "human_paused" };
+  }
+  if (
+    conversationState?.conversationMode === "human" ||
+    conversationState?.conversationMode === "waiting_human"
+  ) {
+    return { ...base, humanBlocked: true, skipReason: "conversation_mode_human" };
+  }
+
   if (settings.respeitarHumanoAtivo) {
-    if (conversationState?.humanPaused) {
-      // Escape: retomadaApenasSeHumanoAbandonou ativo + timeout esgotado → cai para Gate 10
-      const retomadaTimeoutEsgotado =
-        settings.retomadaApenasSeHumanoAbandonou &&
-        ctx.lastHumanOutboundAt != null &&
-        settings.retomadaHumanoTempoValor != null &&
-        now.getTime() - ctx.lastHumanOutboundAt.getTime() >=
-          retomadaHumanoMs(
-            settings.retomadaHumanoTempoValor,
-            settings.retomadaHumanoTempoUnidade ?? "horas",
-          );
-      if (!retomadaTimeoutEsgotado) {
-        return { ...base, humanBlocked: true, skipReason: "human_paused" };
-      }
-      // timeout esgotado → não bloqueia aqui, Gate 10 decide
-    }
-    if (conversationState?.conversationMode === "human") {
-      return { ...base, humanBlocked: true, skipReason: "conversation_mode_human" };
-    }
     if (ctx.lastHumanOutboundAt) {
       const twoIntervalsMs = settings.intervaloVerificacaoMinutos * 2 * 60_000;
       const timeSinceHuman = now.getTime() - ctx.lastHumanOutboundAt.getTime();

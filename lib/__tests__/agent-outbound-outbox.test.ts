@@ -37,7 +37,7 @@ const job: AgentResponseJobRow = {
 function makeSb(initial?: Record<string, unknown>) {
   let row: Record<string, unknown> | null = initial ? { ...initial } : null;
   const sb = {
-    from: () => {
+    from: (table: string) => {
       const filters: Record<string, unknown> = {};
       let patch: Record<string, unknown> | null = null;
       const chain: Record<string, unknown> = {};
@@ -51,6 +51,12 @@ function makeSb(initial?: Record<string, unknown>) {
       chain.single = async () => ({ data: row ? { ...row } : null, error: row ? null : { message: "missing" } });
       chain.update = (value: Record<string, unknown>) => { patch = value; return chain; };
       chain.maybeSingle = async () => {
+        if (table === "conversation_states") {
+          return {
+            data: { automation_epoch: 1, conversation_mode: "automation", human_paused: false },
+            error: null,
+          };
+        }
         if (!row || !patch) return { data: null, error: null };
         const matches = Object.entries(filters).every(([key, value]) => {
           if (key.startsWith("in_")) return Array.isArray(value) && value.includes(row?.[key.slice(3)]);
@@ -69,6 +75,10 @@ function makeSb(initial?: Record<string, unknown>) {
       };
       return chain;
     },
+    rpc: async (name: string) =>
+      name === "authorize_agent_outbound_dispatch_v2"
+        ? { data: { ok: true, reason: "allowed" }, error: null }
+        : { data: true, error: null },
   } as never;
   return { sb, get row() { return row; } };
 }
