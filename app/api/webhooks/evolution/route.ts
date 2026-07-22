@@ -1,6 +1,10 @@
 import { waitUntil } from "@vercel/functions";
 import { NextResponse } from "next/server";
 import {
+  internalApiAuthHeaders,
+  verifyInternalApiRequest,
+} from "@/lib/server/internal-api-auth";
+import {
   generateAgentResponse,
   isAgentMissingInstructionsResult,
 } from "@/lib/ai/generate-agent-response";
@@ -88,6 +92,7 @@ import {
   cancelLeadRedistributionTrigger,
   scheduleLeadRedistribution,
 } from "@/lib/server/lead-redistribution";
+
 import {
   commitTenantLeadQuotaReservation,
   releaseTenantLeadQuotaReservation,
@@ -104,7 +109,9 @@ import {
 
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 180;
+
+const DEFERRED_EVOLUTION_HEADER = "x-mychatcrm-evolution-deferred";
 
 function verifyWebhookToken(request: Request): boolean {
   const expected = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
@@ -464,7 +471,13 @@ async function saveMessage(opts: {
  * URL: `/api/webhooks/evolution?token=EVOLUTION_WEBHOOK_SECRET`
  */
 export async function POST(request: Request) {
-  if (!verifyWebhookToken(request)) {
+  const trustedDeferredRequest =
+    request.headers.get(DEFERRED_EVOLUTION_HEADER) === "1" &&
+    verifyInternalApiRequest(request, {
+      allowedSecrets: ["INTERNAL_API_TOKEN", "AGENT_RESPONSE_JOBS_SECRET", "CRON_SECRET"],
+    });
+
+  if (!trustedDeferredRequest && !verifyWebhookToken(request)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -472,6 +485,38 @@ export async function POST(request: Request) {
   try {
     parsed = await request.json();
   } catch {
+    return NextResponse.json({ ok: true });
+  }
+
+  // A Evolution envia eventos da mesma instância em série e espera o ACK
+  // anterior antes de liberar o próximo. O endpoint público faz somente
+  // autenticação + parsing e devolve 200; o mesmo payload segue para uma
+  // invocação interna autenticada, sem carregar o token do webhook na URL.
+  if (!trustedDeferredRequest) {
+    const deferredUrl = new URL("/api/webhooks/evolution", new URL(request.url).origin);
+    const deferredTask = fetch(deferredUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        [DEFERRED_EVOLUTION_HEADER]: "1",
+        ...internalApiAuthHeaders(),
+      },
+      body: JSON.stringify(parsed),
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          console.error("[webhooks/evolution] deferred ingress rejected", {
+            status: response.status,
+          });
+        }
+      })
+      .catch((error) => {
+        console.error(
+          "[webhooks/evolution] deferred ingress failed",
+          error instanceof Error ? error.message : error,
+        );
+      });
+    waitUntil(deferredTask);
     return NextResponse.json({ ok: true });
   }
 

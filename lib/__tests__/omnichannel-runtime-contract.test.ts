@@ -97,6 +97,11 @@ describe("omnichannel runtime contracts", () => {
     const dispatch = source("app/api/internal/agent-response-jobs/dispatch/route.ts");
 
     expect(webhook).toContain('import { waitUntil } from "@vercel/functions"');
+    expect(webhook).toContain('const DEFERRED_EVOLUTION_HEADER = "x-mychatcrm-evolution-deferred"');
+    expect(webhook).toContain("if (!trustedDeferredRequest)");
+    expect(webhook).toContain("...internalApiAuthHeaders()");
+    expect(webhook).toContain("waitUntil(deferredTask)");
+    expect(webhook).not.toContain("token=EVOLUTION_WEBHOOK_SECRET&deferred");
     expect(webhook).toContain("const automationTask = Promise.all(");
     expect(webhook).toContain("waitUntil(\n      automationTask.then(() => undefined)");
     expect(webhook).toContain("deferProcessor:");
