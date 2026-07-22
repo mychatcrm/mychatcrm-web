@@ -22,6 +22,7 @@ import {
   isTerminalEvolutionDisconnectReason,
   type EvolutionInboundMessage,
 } from "@/lib/integrations/evolution-webhook-parse";
+import { measureEvolutionInboundLatency } from "@/lib/integrations/evolution-inbound-latency";
 import {
   evolutionFetchInstances,
   evolutionSendText,
@@ -699,6 +700,17 @@ export async function POST(request: Request) {
       inbound.map(async (msg) => {
         try {
           const webhookReceivedAt = new Date().toISOString();
+          const inboundLatency = measureEvolutionInboundLatency(msg.occurredAt, webhookReceivedAt);
+          if (inboundLatency?.delayed) {
+            console.warn("[webhooks/evolution] inbound_provider_delay", {
+              instance_name: instanceName,
+              tenant_id: row.tenant_id,
+              message_id: msg.messageId,
+              delay_seconds: inboundLatency.seconds,
+              occurred_at: msg.occurredAt,
+              received_at: webhookReceivedAt,
+            });
+          }
           const leadPhone = remoteJidToEvoNumber(msg.remoteJid);
           const sbJourney = createSupabaseServiceClient();
 

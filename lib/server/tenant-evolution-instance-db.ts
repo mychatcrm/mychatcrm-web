@@ -244,6 +244,25 @@ export async function getEvolutionInstanceByTenantId(
   return (data as TenantEvolutionInstanceRow) ?? null;
 }
 
+/** Página estável de sessões abertas para reconciliação interna de saúde. */
+export async function listOpenEvolutionInstances(params?: {
+  afterId?: string | null;
+  limit?: number;
+}): Promise<TenantEvolutionInstanceRow[]> {
+  const sb = createSupabaseServiceClient();
+  const limit = Math.max(1, Math.min(100, Math.trunc(params?.limit ?? 50)));
+  let query = sb
+    .from("tenant_evolution_instances")
+    .select("*")
+    .eq("connection_state", "open")
+    .order("id", { ascending: true })
+    .limit(limit);
+  if (params?.afterId) query = query.gt("id", params.afterId);
+  const { data, error } = await query;
+  if (error) throw new Error(`[tenant-evolution-instance-db] list open: ${error.message}`);
+  return (data ?? []) as TenantEvolutionInstanceRow[];
+}
+
 export async function deleteTenantEvolutionInstanceRow(tenantId: string, slotIndex: number): Promise<void> {
   const sb = createSupabaseServiceClient();
   const { error } = await sb.from("tenant_evolution_instances").delete().eq("tenant_id", tenantId).eq("slot_index", slotIndex);

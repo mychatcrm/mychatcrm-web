@@ -161,19 +161,127 @@ export const CLIENT_EVOLUTION_INSTANCE_SETTINGS = {
   alwaysOnline: true,
 } as const;
 
+export type EvolutionInstanceSettings = {
+  rejectCall: boolean | null;
+  msgCall: string | null;
+  groupsIgnore: boolean | null;
+  alwaysOnline: boolean | null;
+  readMessages: boolean | null;
+  readStatus: boolean | null;
+  syncFullHistory: boolean | null;
+  wavoipToken: string | null;
+};
+
+/**
+ * Lê os settings efetivamente persistidos pela Evolution. O formato varia
+ * entre versões (flat ou embrulhado em `settings`), então normalizamos apenas
+ * o campo necessário para a saúde das sessões de cliente.
+ */
+export async function evolutionFindInstanceSettings(
+  instanceName: string,
+): Promise<EvolutionInstanceSettings | null> {
+  const trimmed = instanceName.trim();
+  if (!trimmed) return null;
+  const enc = encodeURIComponent(trimmed);
+  const res = await evolutionFetchJson<Record<string, unknown>>(`/settings/find/${enc}`, {
+    method: "GET",
+  });
+  if (!res.ok || !res.data || typeof res.data !== "object") return null;
+
+  const raw = res.data as Record<string, unknown>;
+  const source =
+    raw.settings && typeof raw.settings === "object"
+      ? (raw.settings as Record<string, unknown>)
+      : raw;
+  return {
+    rejectCall: typeof source.rejectCall === "boolean" ? source.rejectCall : null,
+    msgCall: typeof source.msgCall === "string" ? source.msgCall : null,
+    groupsIgnore: typeof source.groupsIgnore === "boolean" ? source.groupsIgnore : null,
+    alwaysOnline: typeof source.alwaysOnline === "boolean" ? source.alwaysOnline : null,
+    readMessages: typeof source.readMessages === "boolean" ? source.readMessages : null,
+    readStatus: typeof source.readStatus === "boolean" ? source.readStatus : null,
+    syncFullHistory: typeof source.syncFullHistory === "boolean" ? source.syncFullHistory : null,
+    wavoipToken: typeof source.wavoipToken === "string" ? source.wavoipToken : null,
+  };
+}
+
+function canSafelyRewriteEvolutionSettings(
+  settings: EvolutionInstanceSettings | null,
+): settings is EvolutionInstanceSettings & {
+  rejectCall: boolean;
+  groupsIgnore: boolean;
+  readMessages: boolean;
+  readStatus: boolean;
+  syncFullHistory: boolean;
+} {
+  return Boolean(
+    settings &&
+      typeof settings.rejectCall === "boolean" &&
+      typeof settings.groupsIgnore === "boolean" &&
+      typeof settings.readMessages === "boolean" &&
+      typeof settings.readStatus === "boolean" &&
+      typeof settings.syncFullHistory === "boolean",
+  );
+}
+
+export type EvolutionInstanceSettingsHealth = {
+  healthy: boolean;
+  reapplied: boolean;
+  reapplyOk: boolean;
+  verified: boolean;
+};
+
+/** Verify-after-write idempotente para sessões antigas e novas. */
+export async function evolutionEnsureClientInstanceSettings(
+  instanceName: string,
+): Promise<EvolutionInstanceSettingsHealth> {
+  const current = await evolutionFindInstanceSettings(instanceName);
+  if (current?.alwaysOnline === true) {
+    return { healthy: true, reapplied: false, reapplyOk: true, verified: true };
+  }
+
+  // Evolution v2 exige todos os booleanos no POST /settings/set. Sem uma
+  // leitura completa, falhamos fechado em vez de adivinhar valores que mudam
+  // comportamento visível (grupos, vistos, status ou chamadas).
+  if (!canSafelyRewriteEvolutionSettings(current)) {
+    return { healthy: false, reapplied: false, reapplyOk: false, verified: false };
+  }
+
+  const set = await evolutionSetInstanceSettings({
+    instanceName,
+    settings: {
+      rejectCall: current.rejectCall,
+      msgCall: current.msgCall ?? "",
+      groupsIgnore: current.groupsIgnore,
+      alwaysOnline: true,
+      readMessages: current.readMessages,
+      readStatus: current.readStatus,
+      syncFullHistory: current.syncFullHistory,
+      ...(current.wavoipToken != null ? { wavoipToken: current.wavoipToken } : {}),
+    },
+  });
+  if (!set.ok) {
+    return { healthy: false, reapplied: true, reapplyOk: false, verified: false };
+  }
+  const verified = await evolutionFindInstanceSettings(instanceName);
+  return {
+    healthy: false,
+    reapplied: true,
+    reapplyOk: true,
+    verified: verified?.alwaysOnline === true,
+  };
+}
+
 /** Aplica os settings de cliente numa instância já criada (idempotente; falha não é crítica). */
 export async function applyClientEvolutionInstanceSettings(instanceName: string): Promise<void> {
   const trimmed = instanceName.trim();
   if (!trimmed) return;
-  const res = await evolutionSetInstanceSettings({
-    instanceName: trimmed,
-    settings: { ...CLIENT_EVOLUTION_INSTANCE_SETTINGS },
-  });
-  if (!res.ok) {
+  const result = await evolutionEnsureClientInstanceSettings(trimmed);
+  if (!result.verified) {
     console.warn("[evolution-api] apply_client_instance_settings_failed", {
       instanceName: trimmed,
-      status: res.status,
-      error: res.error,
+      reapplied: result.reapplied,
+      reapplyOk: result.reapplyOk,
     });
   }
 }
@@ -519,7 +627,13 @@ export async function evolutionEnsureWebhook(params: {
     return { healthy: true, reapplied: false, reapplyOk: true };
   }
   const set = await evolutionSetWebhook({ instanceName: params.instanceName, url: params.url });
-  return { healthy: false, reapplied: true, reapplyOk: set.ok };
+  if (!set.ok) return { healthy: false, reapplied: true, reapplyOk: false };
+  const verified = await evolutionFindWebhook(params.instanceName);
+  return {
+    healthy: false,
+    reapplied: true,
+    reapplyOk: isEvolutionWebhookHealthy(verified, params.url),
+  };
 }
 
 export async function evolutionDeleteInstance(instanceName: string): Promise<EvolutionFetchResult<unknown>> {

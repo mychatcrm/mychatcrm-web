@@ -1,0 +1,68 @@
+import { NextResponse } from "next/server";
+import { buildEvolutionWebhookUrl, getPublicBaseUrlFromRequest } from "@/lib/integrations/evolution-webhook-url";
+import { reconcileOpenEvolutionClientHealth } from "@/lib/server/evolution-client-health";
+import { verifyInternalApiRequest } from "@/lib/server/internal-api-auth";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
+type ReconcileBody = {
+  afterId?: string | null;
+  limit?: number;
+  connectionId?: string | null;
+  restartIfSettingsChanged?: boolean;
+};
+
+export async function GET(request: Request) {
+  return reconcile(request, {});
+}
+
+export async function POST(request: Request) {
+  let body: ReconcileBody = {};
+  try {
+    body = (await request.json()) as ReconcileBody;
+  } catch {
+    // Corpo vazio é válido para acionamentos internos e cron.
+  }
+  return reconcile(request, body);
+}
+
+async function reconcile(request: Request, body: ReconcileBody) {
+  if (!verifyInternalApiRequest(request, { allowedSecrets: ["INTERNAL_API_TOKEN", "CRON_SECRET"] })) {
+    return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  }
+  const webhookSecret = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
+  if (!webhookSecret) {
+    return NextResponse.json({ error: "Configuração indisponível" }, { status: 503 });
+  }
+
+  const connectionId = typeof body.connectionId === "string" && body.connectionId.trim()
+    ? body.connectionId.trim()
+    : null;
+  // Um restart nunca pode ser disparado em massa acidentalmente.
+  const restartIfSettingsChanged = body.restartIfSettingsChanged === true && Boolean(connectionId);
+  const limit = Number.isInteger(body.limit) ? Math.max(1, Math.min(100, Number(body.limit))) : 50;
+  const webhookUrl = buildEvolutionWebhookUrl(getPublicBaseUrlFromRequest(request), webhookSecret);
+
+  try {
+    const result = await reconcileOpenEvolutionClientHealth({
+      webhookUrl,
+      afterId: typeof body.afterId === "string" ? body.afterId : null,
+      limit,
+      onlyConnectionId: connectionId,
+      restartIfSettingsChanged,
+    });
+    console.info("[evolution-client-health] reconcile_complete", {
+      ...result,
+      targeted: Boolean(connectionId),
+      restartAuthorized: restartIfSettingsChanged,
+    });
+    return NextResponse.json({ ok: result.failed === 0, ...result });
+  } catch (error) {
+    console.error("[evolution-client-health] reconcile_failed", {
+      targeted: Boolean(connectionId),
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return NextResponse.json({ error: "Falha na reconciliação" }, { status: 500 });
+  }
+}

@@ -11,6 +11,7 @@ import {
   CLIENT_EVOLUTION_INSTANCE_SETTINGS,
   evolutionConnectionState,
   evolutionCreateInstance,
+  evolutionEnsureClientInstanceSettings,
   evolutionEnsureWebhook,
   evolutionFetchInstances,
   evolutionInstanceConnect,
@@ -501,12 +502,18 @@ export async function GET(request: Request) {
     if (ownerJidConfirmedThisPoll && webhookSecretGet) {
       try {
         const expectedUrl = buildEvolutionWebhookUrl(getPublicBaseUrlFromRequest(request), webhookSecretGet);
-        const ensure = await evolutionEnsureWebhook({ instanceName: row.instance_name, url: expectedUrl });
-        if (ensure.reapplied) {
-          console.warn("[evolution/session] webhook_reapplied", {
+        const [settings, webhook] = await Promise.all([
+          evolutionEnsureClientInstanceSettings(row.instance_name),
+          evolutionEnsureWebhook({ instanceName: row.instance_name, url: expectedUrl }),
+        ]);
+        if (settings.reapplied || webhook.reapplied) {
+          console.warn("[evolution/session] client_health_reapplied", {
             tenant_id: session.tenantId,
             instance_name: row.instance_name,
-            reapply_ok: ensure.reapplyOk,
+            settings_reapplied: settings.reapplied,
+            settings_verified: settings.verified,
+            webhook_reapplied: webhook.reapplied,
+            webhook_reapply_ok: webhook.reapplyOk,
           });
         }
       } catch (e) {

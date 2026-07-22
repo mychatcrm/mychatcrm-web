@@ -85,12 +85,15 @@ describe("evolutionFindWebhook / isEvolutionWebhookHealthy / evolutionEnsureWebh
   it("re-applies the webhook when the config is missing or wrong", async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ error: "not found" }, 404))
-      .mockResolvedValueOnce(jsonResponse({ enabled: true }, 201));
+      .mockResolvedValueOnce(jsonResponse({ enabled: true }, 201))
+      .mockResolvedValueOnce(
+        jsonResponse({ webhook: { enabled: true, url: EXPECTED_URL, events: EVENTS } }),
+      );
 
     const result = await evolutionEnsureWebhook({ instanceName: "mc-instance", url: EXPECTED_URL });
 
     expect(result).toEqual({ healthy: false, reapplied: true, reapplyOk: true });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     const [setUrl, setInit] = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(setUrl).toContain("/webhook/set/mc-instance");
     expect(JSON.parse(String(setInit.body))).toMatchObject({
