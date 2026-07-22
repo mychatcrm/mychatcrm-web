@@ -56,7 +56,8 @@ export async function POST(request: Request) {
 
   const instanceName = String(data.instance_name);
   const inventory = await evolutionFetchInstances(instanceName);
-  if (!inventory.ok) {
+  const instanceMissing = !inventory.ok && inventory.status === 404;
+  if (!inventory.ok && !instanceMissing) {
     let evolutionHost: string | null = null;
     try {
       evolutionHost = new URL(process.env.EVOLUTION_API_BASE_URL ?? "").host || null;
@@ -82,9 +83,10 @@ export async function POST(request: Request) {
       { status: 502 },
     );
   }
+  const inventoryItems = inventory.ok ? inventory.data : [];
 
   let recreated = false;
-  if (!inventory.data.some((item) => item.name === instanceName)) {
+  if (instanceMissing || !inventoryItems.some((item) => item.name === instanceName)) {
     const webhookUrl = buildEvolutionWebhookUrl(getPublicBaseUrlFromRequest(request), webhookSecret);
     const created = await evolutionCreateInstance({
       instanceName,
