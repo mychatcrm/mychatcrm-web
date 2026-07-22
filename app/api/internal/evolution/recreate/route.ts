@@ -56,7 +56,32 @@ export async function POST(request: Request) {
 
   const instanceName = String(data.instance_name);
   const inventory = await evolutionFetchInstances(instanceName);
-  if (!inventory.ok) return NextResponse.json({ error: "Evolution indisponível" }, { status: 502 });
+  if (!inventory.ok) {
+    let evolutionHost: string | null = null;
+    try {
+      evolutionHost = new URL(process.env.EVOLUTION_API_BASE_URL ?? "").host || null;
+    } catch {
+      evolutionHost = null;
+    }
+    console.error("[evolution-recreate] inventory_failed", {
+      connectionId,
+      status: inventory.status,
+      configured: Boolean(process.env.EVOLUTION_API_BASE_URL && process.env.EVOLUTION_API_KEY),
+      evolutionHost,
+      error: inventory.error,
+    });
+    return NextResponse.json(
+      {
+        error: "Evolution indisponível",
+        diagnostic: {
+          status: inventory.status,
+          configured: Boolean(process.env.EVOLUTION_API_BASE_URL && process.env.EVOLUTION_API_KEY),
+          evolutionHost,
+        },
+      },
+      { status: 502 },
+    );
+  }
 
   let recreated = false;
   if (!inventory.data.some((item) => item.name === instanceName)) {
