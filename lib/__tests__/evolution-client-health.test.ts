@@ -96,6 +96,31 @@ describe("reconcileEvolutionClientHealth", () => {
     expect(mocks.ensureWebhook).toHaveBeenCalledTimes(2);
   });
 
+  it("allows one explicitly targeted maintenance restart after all guards pass", async () => {
+    const result = await reconcileEvolutionClientHealth({
+      row,
+      webhookUrl: "https://crm.test/hook",
+      forceTargetedRestart: true,
+    });
+
+    expect(result).toMatchObject({ healthy: true, settingsReapplied: false, restarted: true });
+    expect(mocks.restart).toHaveBeenCalledTimes(1);
+    expect(mocks.ensureWebhook).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocks an explicitly targeted restart when the authenticated identity is not verified", async () => {
+    mocks.fetchInstances.mockResolvedValue({ ok: true, data: [] });
+
+    const result = await reconcileEvolutionClientHealth({
+      row,
+      webhookUrl: "https://crm.test/hook",
+      forceTargetedRestart: true,
+    });
+
+    expect(result).toMatchObject({ healthy: false, restarted: false, identityVerified: false });
+    expect(mocks.restart).not.toHaveBeenCalled();
+  });
+
   it("never restarts when verification failed", async () => {
     mocks.ensureSettings.mockResolvedValue({
       healthy: false,

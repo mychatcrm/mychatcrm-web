@@ -69,6 +69,7 @@ export async function reconcileEvolutionClientHealth(params: {
   row: TenantEvolutionInstanceRow;
   webhookUrl: string;
   restartIfSettingsChanged?: boolean;
+  forceTargetedRestart?: boolean;
 }): Promise<EvolutionClientHealthResult> {
   const base: EvolutionClientHealthResult = {
     checked: false,
@@ -97,10 +98,12 @@ export async function reconcileEvolutionClientHealth(params: {
 
     let restarted = false;
     let identityVerified = await verifyAuthenticatedIdentity(row.instance_name, row.wa_jid);
+    const initialWebhookVerified = webhook.healthy || webhook.reapplyOk;
     if (
-      params.restartIfSettingsChanged === true &&
-      settings.reapplied &&
+      (params.forceTargetedRestart === true ||
+        (params.restartIfSettingsChanged === true && settings.reapplied)) &&
       settings.verified &&
+      initialWebhookVerified &&
       identityVerified
     ) {
       const restart = await evolutionRestartInstance(row.instance_name);
@@ -156,6 +159,7 @@ export async function reconcileOpenEvolutionClientHealth(params: {
   limit?: number;
   maxBatches?: number;
   restartIfSettingsChanged?: boolean;
+  forceTargetedRestart?: boolean;
   onlyConnectionId?: string | null;
 }): Promise<{
   checked: number;
@@ -181,6 +185,8 @@ export async function reconcileOpenEvolutionClientHealth(params: {
           row,
           webhookUrl: params.webhookUrl,
           restartIfSettingsChanged: params.restartIfSettingsChanged,
+          forceTargetedRestart:
+            params.forceTargetedRestart === true && Boolean(params.onlyConnectionId),
         }),
       );
     }

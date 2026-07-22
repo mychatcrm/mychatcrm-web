@@ -11,6 +11,7 @@ type ReconcileBody = {
   limit?: number;
   connectionId?: string | null;
   restartIfSettingsChanged?: boolean;
+  restartSession?: boolean;
 };
 
 export async function GET(request: Request) {
@@ -45,6 +46,9 @@ async function reconcile(request: Request, body: ReconcileBody) {
   // gravado e lido de volta; sessões saudáveis nunca são reiniciadas.
   const restartIfSettingsChanged =
     body.restartIfSettingsChanged === true && (Boolean(connectionId) || isVercelCron);
+  // Reinicio forçado é uma operação de manutenção estritamente direcionada.
+  // Antes de reiniciar, o reconciliador ainda exige setting, webhook e JID válidos.
+  const forceTargetedRestart = body.restartSession === true && Boolean(connectionId);
   const limit = Number.isInteger(body.limit) ? Math.max(1, Math.min(100, Number(body.limit))) : 50;
   const webhookUrl = buildEvolutionWebhookUrl(getPublicBaseUrlFromRequest(request), webhookSecret);
 
@@ -55,11 +59,13 @@ async function reconcile(request: Request, body: ReconcileBody) {
       limit,
       onlyConnectionId: connectionId,
       restartIfSettingsChanged,
+      forceTargetedRestart,
     });
     console.info("[evolution-client-health] reconcile_complete", {
       ...result,
       targeted: Boolean(connectionId),
       restartAuthorized: restartIfSettingsChanged,
+      targetedRestartAuthorized: forceTargetedRestart,
     });
     return NextResponse.json({ ok: result.failed === 0, ...result });
   } catch (error) {
