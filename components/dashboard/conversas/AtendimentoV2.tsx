@@ -34,7 +34,8 @@ import {
   type SyncChatMessage,
 } from "@/lib/conversas/message-sync";
 import {
-  subscribeToWhatsappMessages,
+  subscribeToInboxBroadcast,
+  type InboxBroadcastOperation,
   type WhatsappMessageRealtimeRow,
 } from "@/lib/conversas/whatsapp-messages-realtime";
 
@@ -301,6 +302,29 @@ async function apiLoadMessages(
     canHumanSend: data.automation?.can_human_send ?? mode !== "automation",
     conversationMode: mode,
   };
+}
+
+async function apiLoadInboxRealtimeTopic(): Promise<string> {
+  const res = await fetch("/api/client/conversas/realtime", { cache: "no-store" });
+  if (!res.ok) throw new Error(`realtime_topic_${res.status}`);
+  const data = (await res.json()) as { topic?: unknown };
+  if (typeof data.topic !== "string" || !data.topic.startsWith("inbox:")) {
+    throw new Error("realtime_topic_invalid");
+  }
+  return data.topic;
+}
+
+async function apiHydrateRealtimeMessages(ids: string[]): Promise<WhatsappMessageRealtimeRow[]> {
+  if (!ids.length) return [];
+  const res = await fetch("/api/client/conversas/realtime", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    cache: "no-store",
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) throw new Error(`realtime_hydrate_${res.status}`);
+  const data = (await res.json()) as { messages?: WhatsappMessageRealtimeRow[] };
+  return Array.isArray(data.messages) ? data.messages : [];
 }
 
 async function apiSendMessage(
@@ -701,11 +725,25 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
     });
   }, []);
 
-  // Realtime tenant-wide — updates instantâneos; poll só como rede de segurança
+  // Broadcast tenant-wide. O evento contém apenas o UUID; os dados são
+  // hidratados por uma API autenticada e agrupados no mesmo frame.
   useEffect(() => {
     if (!tenantId) return;
 
+    let active = true;
+    let unsubscribe: (() => void) | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    let retryAttempt = 0;
+    let connecting = false;
+    let replacingChannel = false;
+    let hydrating = false;
+    const pending = new Map<string, InboxBroadcastOperation>();
+    const seenMessageIds = new Set<string>();
+
     const applyIncoming = (row: WhatsappMessageRealtimeRow) => {
+      const connectionId = connectionFilterRef.current;
+      if (connectionId && row.connection_id !== connectionId) return;
       const msg = rowToWaMessage(row);
       const jid = row.remote_jid;
       if (!jid) return;
@@ -761,18 +799,157 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
     };
 
     const applyUpdate = (row: WhatsappMessageRealtimeRow) => {
+      const connectionId = connectionFilterRef.current;
+      if (connectionId && row.connection_id !== connectionId) return;
       const msg = rowToWaMessage(row);
+      setConversations((prev) =>
+        prev.map((conversation) => {
+          if (conversation.remoteJid !== row.remote_jid) return conversation;
+          if (new Date(msg.created_at).getTime() < new Date(conversation.lastAt).getTime()) {
+            return conversation;
+          }
+          return {
+            ...conversation,
+            lastContent: msg.content,
+            lastKind: msg.kind,
+            lastDirection: msg.direction,
+            lastAt: msg.created_at,
+            agent_id: msg.agent_id ?? conversation.agent_id,
+          };
+        }),
+      );
       if (row.remote_jid !== selectedJidRef.current) return;
       setMessages((prev) => appendMessageDeduped(prev, msg) as WaMessage[]);
     };
 
-    return subscribeToWhatsappMessages({
-      tenantId,
-      onInsert: applyIncoming,
-      onUpdate: applyUpdate,
-      onStatus: (status) => setRealtimeLive(status === "SUBSCRIBED"),
-    });
-  }, [tenantId]);
+    const reconcile = async () => {
+      if (!active || (typeof document !== "undefined" && document.hidden)) return;
+      const jid = selectedJidRef.current;
+      const [listResult, messagesResult] = await Promise.allSettled([
+        apiLoadConversations(connectionFilterRef.current),
+        jid ? apiLoadMessages(jid) : Promise.resolve(null),
+      ]);
+      if (!active) return;
+      if (listResult.status === "fulfilled") mergeConversationList(listResult.value);
+      if (jid && messagesResult.status === "fulfilled" && messagesResult.value) {
+        if (selectedJidRef.current !== jid) return;
+        const result = messagesResult.value;
+        setMessages((prev) => mergePolledMessages(prev, result.messages) as WaMessage[]);
+        setAiEnabled(result.aiEnabled);
+        setCanHumanSend(result.canHumanSend);
+        setConversations((prev) =>
+          prev.map((conversation) =>
+            conversation.remoteJid === jid
+              ? { ...conversation, conversation_mode: result.conversationMode, unreadCount: 0 }
+              : conversation,
+          ),
+        );
+      }
+    };
+
+    const scheduleFlush = (delay = 16) => {
+      if (!active || flushTimer) return;
+      flushTimer = setTimeout(() => {
+        flushTimer = null;
+        void flush();
+      }, delay);
+    };
+
+    const flush = async () => {
+      if (!active || hydrating || pending.size === 0) return;
+      hydrating = true;
+      const batch = Array.from(pending.entries()).slice(0, 50);
+      for (const [id] of batch) pending.delete(id);
+      try {
+        const rows = await apiHydrateRealtimeMessages(batch.map(([id]) => id));
+        if (!active) return;
+        const operations = new Map(batch);
+        for (const row of rows) {
+          if (operations.get(row.id) === "update" || seenMessageIds.has(row.id)) {
+            applyUpdate(row);
+          } else {
+            seenMessageIds.add(row.id);
+            applyIncoming(row);
+          }
+        }
+      } catch {
+        for (const [id, operation] of batch) {
+          const previous = pending.get(id);
+          pending.set(id, previous === "insert" ? "insert" : operation);
+        }
+        scheduleFlush(1_000);
+      } finally {
+        hydrating = false;
+        if (pending.size > 0) scheduleFlush();
+      }
+    };
+
+    const queueMessage = (messageId: string, operation: InboxBroadcastOperation) => {
+      const previous = pending.get(messageId);
+      pending.set(messageId, previous === "insert" ? "insert" : operation);
+      scheduleFlush();
+    };
+
+    const scheduleReconnect = () => {
+      if (!active || retryTimer) return;
+      const delay = Math.min(5_000, 250 * 2 ** Math.min(retryAttempt, 5));
+      retryAttempt += 1;
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        void connect();
+      }, delay);
+    };
+
+    const connect = async () => {
+      if (!active || connecting) return;
+      connecting = true;
+      try {
+        const topic = await apiLoadInboxRealtimeTopic();
+        if (!active) return;
+        replacingChannel = true;
+        unsubscribe?.();
+        unsubscribe = subscribeToInboxBroadcast({
+          topic,
+          onMessage: queueMessage,
+          onStatus: (status) => {
+            if (!active || replacingChannel) return;
+            const subscribed = status === "SUBSCRIBED";
+            setRealtimeLive(subscribed);
+            if (subscribed) {
+              retryAttempt = 0;
+              void reconcile();
+            } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+              scheduleReconnect();
+            }
+          },
+        });
+        replacingChannel = false;
+      } catch {
+        setRealtimeLive(false);
+        scheduleReconnect();
+      } finally {
+        connecting = false;
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.hidden) return;
+      void reconcile();
+      if (!realtimeLiveRef.current) void connect();
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    void connect();
+
+    return () => {
+      active = false;
+      replacingChannel = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      if (retryTimer) clearTimeout(retryTimer);
+      if (flushTimer) clearTimeout(flushTimer);
+      unsubscribe?.();
+    };
+  }, [mergeConversationList, tenantId]);
 
   // Poll lista: 45s com realtime vivo, 8s se cair
   useEffect(() => {

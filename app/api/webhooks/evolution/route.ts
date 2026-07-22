@@ -701,14 +701,6 @@ export async function POST(request: Request) {
           const webhookReceivedAt = new Date().toISOString();
           const leadPhone = remoteJidToEvoNumber(msg.remoteJid);
           const sbJourney = createSupabaseServiceClient();
-          const journeyAuth = await resolveDirectJourneyAgent({
-            sb: sbJourney,
-            tenantId: row.tenant_id,
-            remoteJid: msg.remoteJid,
-            connectionId: row.id,
-          });
-          const journey = journeyAuth.journey;
-          const agentId = journeyAuth.ok ? journeyAuth.agentId : null;
 
           // Mídia (áudio/imagem/vídeo/documento) NÃO é baixada aqui de forma síncrona.
           // O download+upload R2 pode levar até ~15s (Evolution decripta com a mediaKey do
@@ -732,21 +724,9 @@ export async function POST(request: Request) {
               : null;
 
           const contactName = extractContactNameFromPayload(payload, msg);
-          const { data: existingLead } = leadPhone
-            ? await sbJourney
-                .from("leads")
-                .select("id")
-                .eq("tenant_id", row.tenant_id)
-                .eq("phone", leadPhone)
-                .order("updated_at", { ascending: false })
-                .limit(1)
-                .maybeSingle()
-            : { data: null };
-          const leadId =
-            (existingLead as { id?: string } | null)?.id ??
-            journey?.leadId ??
-            null;
-
+          // Persistir primeiro é deliberado: a conversa precisa aparecer no painel
+          // assim que o webhook chega. Jornada/lead são enriquecidos abaixo, antes
+          // de qualquer automação, sem atrasar o INSERT que dispara o Broadcast.
           const inboundSaved = await saveMessage({
             tenantId: row.tenant_id,
             remoteJid: msg.remoteJid,
@@ -754,8 +734,8 @@ export async function POST(request: Request) {
             kind: kindFromMsg(msg),
             content: contentFromMsg(msg),
             messageId: msg.messageId,
-            leadId,
-            journeyId: journey?.id ?? null,
+            leadId: null,
+            journeyId: null,
             connectionId: row.id,
             mediaUrl: null,
             mimeType: "mimetype" in msg ? msg.mimetype : null,
@@ -781,8 +761,56 @@ export async function POST(request: Request) {
             });
             return null;
           }
+          if (!inboundSaved) {
+            // Falha fechada: sem a mensagem persistida não existe contexto durável
+            // para autorizar agente, agenda, follow-up ou qualquer outro efeito.
+            return null;
+          }
 
-          if (isMediaMsg && inboundSaved && !inboundSaved.duplicate) {
+          const [journeyAuth, existingLead] = await Promise.all([
+            resolveDirectJourneyAgent({
+              sb: sbJourney,
+              tenantId: row.tenant_id,
+              remoteJid: msg.remoteJid,
+              connectionId: row.id,
+            }),
+            (async () => {
+              if (!leadPhone) return null;
+              const { data } = await sbJourney
+                .from("leads")
+                .select("id")
+                .eq("tenant_id", row.tenant_id)
+                .eq("phone", leadPhone)
+                .order("updated_at", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+              return data as { id?: string } | null;
+            })(),
+          ]);
+          const journey = journeyAuth.journey;
+          const agentId = journeyAuth.ok ? journeyAuth.agentId : null;
+          const leadId = existingLead?.id ?? journey?.leadId ?? null;
+
+          if (leadId || journey?.id) {
+            const { error: attributionUpdateError } = await sbJourney
+              .from("whatsapp_messages")
+              .update({
+                lead_id: leadId,
+                journey_id: journey?.id ?? null,
+              })
+              .eq("tenant_id", row.tenant_id)
+              .eq("id", inboundSaved.id);
+            if (attributionUpdateError) {
+              console.warn("[webhooks/evolution] inbound_attribution_failed", {
+                tenant_id: row.tenant_id,
+                message_id: inboundSaved.id,
+                error: attributionUpdateError.message,
+              });
+              return null;
+            }
+          }
+
+          if (isMediaMsg) {
             const rowId = inboundSaved.id;
             waitUntil(
               downloadAndStoreMedia(msg, row.tenant_id, instanceName)
@@ -807,9 +835,7 @@ export async function POST(request: Request) {
           }
 
           const savedAt =
-            inboundSaved && !inboundSaved.duplicate
-              ? inboundSaved.created_at
-              : msg.occurredAt ?? new Date().toISOString();
+            inboundSaved.created_at;
 
           const sbState = createSupabaseServiceClient();
           const state = await revealConversationOnInbound({

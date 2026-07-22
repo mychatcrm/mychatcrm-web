@@ -29,6 +29,34 @@ export type WhatsappMessageRealtimeRow = {
   delivery_status?: string | null;
 };
 
+export type InboxBroadcastOperation = "insert" | "update";
+
+export function subscribeToInboxBroadcast(params: {
+  topic: string;
+  onMessage: (messageId: string, operation: InboxBroadcastOperation) => void;
+  onStatus?: (status: string) => void;
+}): () => void {
+  if (typeof window === "undefined") return () => undefined;
+
+  const supabase = getSupabaseBrowser();
+  const channel = supabase
+    .channel(params.topic)
+    .on("broadcast", { event: "message_changed" }, (event) => {
+      const payload = event.payload as { messageId?: unknown; operation?: unknown } | undefined;
+      const messageId = typeof payload?.messageId === "string" ? payload.messageId : "";
+      const operation = payload?.operation === "update" ? "update" : "insert";
+      if (messageId) params.onMessage(messageId, operation);
+    })
+    .subscribe((status) => {
+      params.onStatus?.(status);
+    });
+
+  return () => {
+    params.onStatus?.("CLOSED");
+    void supabase.removeChannel(channel);
+  };
+}
+
 export function subscribeToWhatsappMessages(params: {
   tenantId: string;
   leadId?: string | null;

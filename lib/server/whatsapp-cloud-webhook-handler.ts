@@ -76,11 +76,13 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
   const sb = createSupabaseServiceClient();
   // Connection saved by the client's Embedded Signup (may be null for numbers
   // routed purely by lead_distribution_rules, e.g. the system agent number).
-  const cloudConnection = await lookupWhatsAppCloudConnectionByPhoneNumberId(inbound.phoneNumberId);
-  const tenantResolution = await resolveCloudApiTenantByConnection({
-    sb,
-    connectionId: inbound.phoneNumberId,
-  });
+  const [cloudConnection, tenantResolution] = await Promise.all([
+    lookupWhatsAppCloudConnectionByPhoneNumberId(inbound.phoneNumberId),
+    resolveCloudApiTenantByConnection({
+      sb,
+      connectionId: inbound.phoneNumberId,
+    }),
+  ]);
   let tenantId: string;
   if (tenantResolution.ok) {
     tenantId = tenantResolution.tenantId;
@@ -106,29 +108,11 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
   // nunca é encontrado e o agente deixa de responder após o 1º contacto.
   const phone = inbound.fromWaId.replace(/\D/g, "");
   const remoteJid = buildWhatsappRemoteJid(phone);
-
-  const journeyAuth = await resolveDirectJourneyAgent({
-    sb,
-    tenantId,
-    remoteJid,
-    connectionId: inbound.phoneNumberId,
-  });
-  const journey = journeyAuth.journey;
-  const agentId = journeyAuth.ok ? journeyAuth.agentId : null;
-  const { data: existingLead } = await sb
-    .from("leads")
-    .select("id")
-    .eq("tenant_id", tenantId)
-    .eq("phone", phone)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const leadId =
-    (existingLead as { id?: string } | null)?.id ??
-    journey?.leadId ??
-    null;
   const receivedAt = new Date().toISOString();
 
+  // A mensagem mínima é persistida antes das consultas de jornada/lead para
+  // alimentar o painel em tempo real. O enriquecimento continua obrigatório e
+  // termina antes de qualquer automação ou mutação de agenda.
   const { data: inboundSaved, error: inboundInsertError } = await sb
     .from("whatsapp_messages")
     .insert({
@@ -139,8 +123,8 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
       content: inbound.text,
       message_id: inbound.messageId || null,
       agent_id: null,
-      lead_id: leadId,
-      journey_id: journey?.id ?? null,
+      lead_id: null,
+      journey_id: null,
       // Toda linha gravada aqui veio da API Oficial Meta — usado pelo painel de
       // Conversas ao vivo (admin) e pelo filtro por canal.
       channel: "meta_cloud",
@@ -160,6 +144,48 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
       error: inboundInsertError.message,
     });
     return NextResponse.json({ ok: true, blocked: "inbound_persist_failed" });
+  }
+
+  const [journeyAuth, existingLead] = await Promise.all([
+    resolveDirectJourneyAgent({
+      sb,
+      tenantId,
+      remoteJid,
+      connectionId: inbound.phoneNumberId,
+    }),
+    (async () => {
+      const { data } = await sb
+        .from("leads")
+        .select("id")
+        .eq("tenant_id", tenantId)
+        .eq("phone", phone)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return data as { id?: string } | null;
+    })(),
+  ]);
+  const journey = journeyAuth.journey;
+  const agentId = journeyAuth.ok ? journeyAuth.agentId : null;
+  const leadId = existingLead?.id ?? journey?.leadId ?? null;
+
+  if (leadId || journey?.id) {
+    const { error: attributionUpdateError } = await sb
+      .from("whatsapp_messages")
+      .update({
+        lead_id: leadId,
+        journey_id: journey?.id ?? null,
+      })
+      .eq("tenant_id", tenantId)
+      .eq("id", inboundSaved.id);
+    if (attributionUpdateError) {
+      console.warn("[webhooks/whatsapp] inbound_attribution_failed", {
+        tenant_id: tenantId,
+        message_id: inboundSaved.id,
+        error: attributionUpdateError.message,
+      });
+      return NextResponse.json({ ok: true, blocked: "inbound_attribution_failed" });
+    }
   }
 
   await revealConversationOnInbound({
