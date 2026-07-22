@@ -14,7 +14,7 @@ type ReconcileBody = {
 };
 
 export async function GET(request: Request) {
-  return reconcile(request, {});
+  return reconcile(request, { restartIfSettingsChanged: true });
 }
 
 export async function POST(request: Request) {
@@ -39,8 +39,12 @@ async function reconcile(request: Request, body: ReconcileBody) {
   const connectionId = typeof body.connectionId === "string" && body.connectionId.trim()
     ? body.connectionId.trim()
     : null;
-  // Um restart nunca pode ser disparado em massa acidentalmente.
-  const restartIfSettingsChanged = body.restartIfSettingsChanged === true && Boolean(connectionId);
+  const isVercelCron = request.headers.get("user-agent") === "vercel-cron/1.0";
+  // Em chamadas manuais, um restart exige connectionId. O cron autenticado pode
+  // reparar o lote, mas a função só reinicia sessões cujo setting foi alterado,
+  // gravado e lido de volta; sessões saudáveis nunca são reiniciadas.
+  const restartIfSettingsChanged =
+    body.restartIfSettingsChanged === true && (Boolean(connectionId) || isVercelCron);
   const limit = Number.isInteger(body.limit) ? Math.max(1, Math.min(100, Number(body.limit))) : 50;
   const webhookUrl = buildEvolutionWebhookUrl(getPublicBaseUrlFromRequest(request), webhookSecret);
 
