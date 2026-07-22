@@ -97,6 +97,8 @@ describe("omnichannel runtime contracts", () => {
     const dispatch = source("app/api/internal/agent-response-jobs/dispatch/route.ts");
 
     expect(webhook).toContain('import { waitUntil } from "@vercel/functions"');
+    expect(webhook).toContain("const automationTask = Promise.all(");
+    expect(webhook).toContain("waitUntil(\n      automationTask.then(() => undefined)");
     expect(webhook).toContain("deferProcessor:");
     expect(webhook).toContain("waitUntil(task.then(() => undefined))");
     expect(webhook).toContain("evolutionBurstSafeSmartWait(");
@@ -158,7 +160,7 @@ describe("omnichannel runtime contracts", () => {
     // for "Conversas ao vivo") must still run, but Phase 2 (AI reply
     // generation) must bail out before ever calling generateAgentResponse.
     const content = source("app/api/webhooks/evolution/route.ts");
-    const phase2Start = content.indexOf("// ── Phase 2: run automation flows in parallel");
+    const phase2Start = content.indexOf("// ── Phase 2: run automation flows after the ACK path");
     const guard = content.indexOf("if (row.tenant_id === SYSTEM_TENANT_ID) return;", phase2Start);
     const generateCall = content.indexOf("await generateAgentResponse({", phase2Start);
 

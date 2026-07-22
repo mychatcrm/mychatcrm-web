@@ -942,8 +942,12 @@ export async function POST(request: Request) {
       }),
     );
 
-    // ── Phase 2: run automation flows in parallel (all messages already in DB) ──
-    await Promise.all(
+    // ── Phase 2: run automation flows after the ACK path (all messages already in DB) ──
+    // A Evolution serializa os webhooks da instância. Manter qualquer parte da
+    // automação aguardada aqui segura o próximo MESSAGES_UPSERT até o timeout
+    // do request (observado em produção como ~60 s por fragmento). A Vercel
+    // garante a continuação deste trabalho depois de o JSON 200 ser devolvido.
+    const automationTask = Promise.all(
       savedContexts.map(async (ctx) => {
         if (!ctx) return;
         // O agente do sistema é só de notificação — nunca gera resposta
@@ -1534,6 +1538,14 @@ export async function POST(request: Request) {
         } catch (e) {
           console.warn("[webhooks/evolution] Phase 2 flow error", e instanceof Error ? e.message : e);
         }
+      }),
+    );
+    waitUntil(
+      automationTask.then(() => undefined).catch((error) => {
+        console.warn(
+          "[webhooks/evolution] deferred Phase 2 failed",
+          error instanceof Error ? error.message : error,
+        );
       }),
     );
   }
