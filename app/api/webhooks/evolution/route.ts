@@ -980,40 +980,10 @@ export async function POST(request: Request) {
           // O agrupamento é uma garantia de consistência do turno, não uma
           // preferência opcional do agente. Configurações antigas com
           // `enabled=false` continuam recebendo os tempos personalizados.
-          const pendingAgendaLookup = kindFromMsg(msg) === "text"
-            ? await sbState
-                .from("agent_agenda_pending_actions")
-                .select("id,expires_at")
-                .eq("tenant_id", row.tenant_id)
-                .eq("remote_jid", msg.remoteJid)
-                .eq("agent_id", agentId)
-                .eq("state", "pending")
-                .order("created_at", { ascending: false })
-                .limit(1)
-                .maybeSingle()
-            : { data: null };
-          const pendingAgendaExpiresAt = (pendingAgendaLookup.data as {
-            expires_at?: string | null;
-          } | null)?.expires_at;
-          const hasPendingAgendaAction = Boolean(
-            pendingAgendaExpiresAt && Date.parse(pendingAgendaExpiresAt) > Date.now(),
-          );
-          // Atraso real DESTA entrega (chegada do webhook − hora em que o lead
-          // enviou). Fila saudável → janela curta do agente; fila serializada
-          // ou atraso desconhecido → janela longa de absorção (fail-safe).
-          const occurredAtMs = msg.occurredAt ? Date.parse(msg.occurredAt) : NaN;
-          const deliveryDelaySeconds = Number.isFinite(occurredAtMs)
-            ? Math.round((Date.parse(webhookReceivedAt) - occurredAtMs) / 1000)
-            : null;
-          const smartWait = evolutionBurstSafeSmartWait(
-            smartWaitFromMetadata(metadata),
-            {
-              kind: kindFromMsg(msg),
-              text: contentFromMsg(msg),
-              hasPendingAgendaAction,
-              deliveryDelaySeconds,
-            },
-          );
+          // Pure transport guard: Evolution always needs 65 seconds of silence
+          // after every delivered fragment. Content, language, niche and agenda
+          // never influence whether messages belong to the same turn.
+          const smartWait = evolutionBurstSafeSmartWait(smartWaitFromMetadata(metadata));
           const useSmartWait = !isSmartWaitGloballyDisabled();
           let runImmediateReply = !useSmartWait;
 

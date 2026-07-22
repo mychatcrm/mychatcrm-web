@@ -22,151 +22,18 @@ import {
 import { resolveInboundAgentFlowDecision } from "@/lib/server/evolution-webhook-agent-flow";
 
 describe("agent smart wait schedule", () => {
-  it("keeps Evolution turns open across its one-minute serial delivery", () => {
-    expect(evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT)).toMatchObject({
+  it.each([
+    { kind: "text" as const, text: "Olá", deliveryDelaySeconds: 1 },
+    { kind: "text" as const, text: "Book Tuesday at 2pm", deliveryDelaySeconds: 2 },
+    { kind: "text" as const, text: "Quiero cancelar", hasPendingAgendaAction: true },
+    { kind: "image" as const, text: "[image]" },
+  ])("applies the same 65-second Evolution transport guard without inspecting content: $text", (signal) => {
+    expect(evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, signal)).toMatchObject({
       initialSeconds: 65,
-      followupSeconds: 10,
-      maxSeconds: 180,
+      followupSeconds: 65,
+      maxSeconds: 65,
     });
-  });
-
-  it("uses the configured fast lane for complete Evolution requests", () => {
-    expect(
-      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
-        kind: "text",
-        text: "Gostaria de cancelar meu agendamento",
-      }),
-    ).toMatchObject({ initialSeconds: 7, followupSeconds: 10, maxSeconds: 60 });
-  });
-
-  it("keeps incomplete scheduling in the extended lane until the time arrives", () => {
-    expect(
-      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
-        kind: "text",
-        text: "Quero agendar um novo horário para amanhã",
-      }),
-    ).toMatchObject({ initialSeconds: 65, followupSeconds: 10, maxSeconds: 180 });
-  });
-
-  it("uses the fast lane when scheduling already has date and time", () => {
-    expect(
-      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
-        kind: "text",
-        text: "Quero agendar amanhã às 14h",
-      }),
-    ).toMatchObject({ initialSeconds: 7, followupSeconds: 10, maxSeconds: 60 });
-  });
-
-  it("entrega saudável de ambíguo curto (Bom dia/Sim) NÃO encurta — metrônomo Evolution", () => {
-    expect(
-      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
-        kind: "text",
-        text: "Bom dia",
-        deliveryDelaySeconds: 3,
-      }),
-    ).toMatchObject({ initialSeconds: 65, followupSeconds: 10, maxSeconds: 180 });
-    expect(
-      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
-        kind: "text",
-        text: "Sim",
-        deliveryDelaySeconds: 2,
-      }),
-    ).toMatchObject({ initialSeconds: 65, followupSeconds: 10, maxSeconds: 180 });
-  });
-
-  it("weekday date-only força grace serial mesmo com entrega saudável", () => {
-    expect(
-      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
-        kind: "text",
-        text: "Uai pode ser segunda agora",
-        deliveryDelaySeconds: 2,
-      }),
-    ).toMatchObject({ initialSeconds: 65, followupSeconds: 10, maxSeconds: 180 });
-  });
-
-  it("entrega saudável com fragmento incompleto usa janela curta humana (20s)", () => {
-    expect(
-      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
-        kind: "text",
-        text: "Pode ser hoje as",
-        deliveryDelaySeconds: 3,
-      }),
-    ).toMatchObject({ initialSeconds: 20, followupSeconds: 10, maxSeconds: 60 });
-  });
-
-  it("entrega saudável com pedido de agenda incompleto absorve complemento (20s)", () => {
-    expect(
-      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
-        kind: "text",
-        text: "Quero agendar a entrevista",
-        deliveryDelaySeconds: 2,
-      }),
-    ).toMatchObject({ initialSeconds: 20, followupSeconds: 10, maxSeconds: 60 });
-  });
-
-  it("entrega saudável com date-only absorve time fragment (20s)", () => {
-    expect(
-      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
-        kind: "text",
-        text: "Amanhã",
-        deliveryDelaySeconds: 1,
-      }),
-    ).toMatchObject({ initialSeconds: 20, followupSeconds: 10, maxSeconds: 60 });
-  });
-
-  it("entrega atrasada mantém a absorção longa (fail-safe do burst serializado)", () => {
-    expect(
-      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
-        kind: "text",
-        text: "Sim",
-        deliveryDelaySeconds: 58,
-      }),
-    ).toMatchObject({ initialSeconds: 65, followupSeconds: 10, maxSeconds: 180 });
-  });
-
-  it("atraso desconhecido mantém a absorção longa (fail-safe)", () => {
-    expect(
-      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
-        kind: "text",
-        text: "Sim",
-        deliveryDelaySeconds: null,
-      }),
-    ).toMatchObject({ initialSeconds: 65, followupSeconds: 10, maxSeconds: 180 });
-  });
-
-  it("keeps only the first ambiguous fragment in the extended lane", () => {
-    for (const text of ["Oi", "Ok", "amanhã", "duas da tarde", "Pode ser hoje as", "Uai pode ser segunda agora"]) {
-      expect(
-        evolutionInboundNeedsExtendedInitialWait({ kind: "text", text }),
-        text,
-      ).toBe(true);
-    }
-    expect(
-      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
-        kind: "image",
-        text: "[Imagem] Marca nessa data",
-      }),
-    ).toMatchObject({ initialSeconds: 65, followupSeconds: 10, maxSeconds: 180 });
-  });
-
-  it("sends a standalone confirmation through the fast lane only when a proposal exists", () => {
-    expect(
-      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
-        kind: "text",
-        text: "Sim",
-        hasPendingAgendaAction: true,
-      }),
-    ).toMatchObject({ initialSeconds: 7, followupSeconds: 10, maxSeconds: 60 });
-  });
-
-  it("does not make an incomplete new request fast just because an old proposal exists", () => {
-    expect(
-      evolutionBurstSafeSmartWait(DEFAULT_AGENT_SMART_WAIT, {
-        kind: "text",
-        text: "Quero remarcar para amanhã",
-        hasPendingAgendaAction: true,
-      }),
-    ).toMatchObject({ initialSeconds: 65, followupSeconds: 10, maxSeconds: 180 });
+    expect(evolutionInboundNeedsExtendedInitialWait(signal)).toBe(true);
   });
 
   it("does not shorten stricter tenant settings", () => {
@@ -240,7 +107,7 @@ describe("agent smart wait schedule", () => {
 });
 
 describe("processor readiness", () => {
-  it("extends the dispatcher deadline beyond a rescheduled Evolution burst", () => {
+  it("caps an older dispatcher below the Vercel function ceiling", () => {
     expect(
       new Date(
         computeAgentResponseProcessorDeadline({
@@ -249,10 +116,10 @@ describe("processor readiness", () => {
           maxWaitUntil: "2026-05-14T10:03:00.000Z",
         }),
       ).toISOString(),
-    ).toBe("2026-05-14T10:02:35.000Z");
+    ).toBe("2026-05-14T10:02:30.000Z");
   });
 
-  it("never exceeds the absolute burst deadline plus processing grace", () => {
+  it("returns before a long rescheduled burst can hit function timeout", () => {
     expect(
       new Date(
         computeAgentResponseProcessorDeadline({
@@ -261,7 +128,7 @@ describe("processor readiness", () => {
           maxWaitUntil: "2026-05-14T10:02:50.000Z",
         }),
       ).toISOString(),
-    ).toBe("2026-05-14T10:03:10.000Z");
+    ).toBe("2026-05-14T10:02:30.000Z");
   });
 
   it("does not process before scheduled_for", () => {

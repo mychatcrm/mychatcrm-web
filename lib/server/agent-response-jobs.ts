@@ -304,7 +304,7 @@ export async function scheduleAgentResponseJob(params: {
   // SELECT + UPDATE no TypeScript perdia message_ids quando dois webhooks
   // chegavam juntos (lost update), exatamente o caso de 2–3 mensagens seguidas.
   const channel = params.channel;
-  const { data, error } = await sb.rpc("upsert_agent_response_job_burst_v3", {
+  const { data, error } = await sb.rpc("upsert_agent_response_job_burst_v4", {
     p_tenant_id: params.tenantId,
     p_remote_jid: params.remoteJid,
     p_agent_id: params.agentId,
@@ -666,6 +666,7 @@ export type WaitAndProcessOutcome =
   | "completed"
   | "failed"
   | "cancelled"
+  | "rescheduled"
   | "timeout"
   | "not_found";
 
@@ -679,6 +680,10 @@ export function computeAgentResponseProcessorDeadline(params: {
   return Math.min(
     maxWait + 20_000,
     Math.max(params.invocationStartedAt.getTime() + 60_000, scheduled + 30_000),
+    // Return before the 180s Vercel function ceiling. Every appended inbound
+    // triggers another dispatcher, so an older invocation can exit cleanly as
+    // "rescheduled" instead of timing out or executing fallback.
+    params.invocationStartedAt.getTime() + 150_000,
   );
 }
 
@@ -702,8 +707,8 @@ export async function waitAndProcessAgentResponseJob(
     if (!data) return "not_found";
     const current = rowFromDb(data as Record<string, unknown>);
     // Uma nova mensagem pode estender scheduled_for enquanto este dispatcher
-    // está dormindo. Acompanhe a geração mais recente sem reiniciar o limite
-    // absoluto do burst.
+    // está dormindo. Acompanhe a geração mais recente; a RPC v4 mantém o
+    // silêncio deslizante da Evolution e cada append dispara outro worker.
     deadline = computeAgentResponseProcessorDeadline({
       invocationStartedAt,
       scheduledFor: current.scheduled_for,
@@ -722,6 +727,21 @@ export async function waitAndProcessAgentResponseJob(
     }
     const waitMs = new Date(current.scheduled_for).getTime() - Date.now();
     await sleep(Math.min(1000, Math.max(250, waitMs)));
+  }
+  const { data: finalData } = await client
+    .from("agent_response_jobs")
+    .select("status,scheduled_for")
+    .eq("id", jobId)
+    .maybeSingle();
+  const finalStatus = (finalData as { status?: string; scheduled_for?: string } | null)?.status;
+  const finalScheduledFor = (finalData as { status?: string; scheduled_for?: string } | null)?.scheduled_for;
+  if (
+    finalStatus === "pending" &&
+    finalScheduledFor &&
+    new Date(finalScheduledFor).getTime() > Date.now()
+  ) {
+    logJobEvent("dispatch_rescheduled", { job_id: jobId, scheduled_for: finalScheduledFor });
+    return "rescheduled";
   }
   logJobEvent("wait_timeout", { job_id: jobId });
   return "timeout";

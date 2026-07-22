@@ -45,7 +45,37 @@ describe("omnichannel runtime contracts", () => {
     expect(metaWebhook).not.toContain("generateAgentResponse");
     expect(dispatcher).toContain("processMetaAgentResponseJob");
     expect(dispatcher).toContain("processEvolutionAgentResponseJob");
-    expect(burst).toContain("return [messages]");
+    expect(burst).toContain("messages.length > 0 ? [messages] : []");
+  });
+
+  it("uses the additive sliding-silence RPC and sends one unquoted Evolution reply", () => {
+    const jobs = source("lib/server/agent-response-jobs.ts");
+    const evolutionReply = source("lib/server/evolution-agent-reply.ts");
+    const migration = source(
+      "supabase/migrations/20260722171818_agent_single_consolidated_turn_v4.sql",
+    );
+
+    expect(jobs).toContain('rpc("upsert_agent_response_job_burst_v4"');
+    expect(jobs).toContain('return "rescheduled"');
+    expect(jobs).toContain('logJobEvent("dispatch_rescheduled"');
+    expect(migration).toContain("CREATE OR REPLACE FUNCTION public.upsert_agent_response_job_burst_v4");
+    expect(migration).toContain(
+      "v_scheduled_for := v_last_at + make_interval(secs => GREATEST(p_followup_seconds, 65))",
+    );
+    expect(migration).toContain(
+      "v_scheduled_for := p_received_at + make_interval(secs => GREATEST(p_initial_seconds, 65))",
+    );
+    expect(migration.indexOf("Provider retries are true no-ops")).toBeLessThan(
+      migration.indexOf("INSERT INTO public.conversation_states"),
+    );
+    expect(migration).toContain("OR v_job.agent_id IS DISTINCT FROM p_agent_id");
+    expect(migration).toContain("OR v_job.instance_name IS DISTINCT FROM p_instance_name");
+    expect(migration).toContain("GRANT EXECUTE ON FUNCTION public.upsert_agent_response_job_burst_v4");
+    expect(migration).toContain("TO service_role");
+    expect(migration).toContain("FROM PUBLIC, anon, authenticated");
+    expect(evolutionReply).toContain("const unit = burst.canonicalMessages");
+    expect(evolutionReply).not.toContain("for (let unitIndex = 0; unitIndex < burst.replyUnits.length");
+    expect(evolutionReply).not.toContain("quoted,");
   });
 
   it("rejects live response jobs without an exact connection and cancels only audited legacy jobs", () => {

@@ -14,12 +14,7 @@ export const DEFAULT_AGENT_SMART_WAIT: AgentSmartWaitSettings = {
   dedupeRepeated: true,
 };
 
-const EVOLUTION_SERIAL_DELIVERY_GRACE_SECONDS = 65;
-const EVOLUTION_BURST_MAX_SECONDS = 180;
-/** Entrega do webhook dentro deste atraso = fila da Evolution saudável agora. */
-const EVOLUTION_HEALTHY_DELIVERY_SECONDS = 15;
-/** Janela curta e humana para fragmento genuinamente incompleto em fila saudável. */
-const EVOLUTION_HEALTHY_FRAGMENT_SECONDS = 20;
+export const EVOLUTION_TRANSPORT_QUIET_SECONDS = 65;
 
 export type EvolutionInboundWaitSignal = {
   kind: "text" | "audio" | "image" | "video" | "document";
@@ -29,88 +24,10 @@ export type EvolutionInboundWaitSignal = {
   deliveryDelaySeconds?: number | null;
 };
 
-const EVOLUTION_SHORT_AMBIGUOUS_RE =
-  /^(?:oi|ol[aá]|opa|eai|e a[ií]|sim|s|ok|okay|pode(?:\s+ser)?|certo|isso|exato|beleza|obrigad[oa]|valeu|at[eé]\s+mais|bom\s+dia|boa\s+tarde|boa\s+noite)[.!?\s]*$/i;
-const EVOLUTION_WEEKDAY_RE =
-  /\b(?:segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo)(?:\s*-?\s*feira)?\b/i;
-const EVOLUTION_DATE_ONLY_RE =
-  /^(?:uai\s+)?(?:pode\s+ser\s+)?(?:hoje|amanh[ãa]|depois\s+de\s+amanh[ãa]|dia\s+\d{1,2}|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|(?:segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo)(?:\s*-?\s*feira)?)(?:\s+agora)?[.!?\s]*$/i;
-const EVOLUTION_TIME_ONLY_RE =
-  /^(?:[aàá]s?\s+)?(?:\d{1,2}(?::\d{2}|h(?:\d{2})?)|\d{1,2}\s*(?:hrs?|hs)|uma|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze)(?:\s*(?:horas?|hrs?|hs|da\s+manh[ãa]|da\s+tarde|da\s+noite))?[.!?\s]*$/i;
-const EVOLUTION_INCOMPLETE_END_RE =
-  /\b(?:e|ou|as|[aàá]s|para|pra|no|na|em|que|porque|com|sem|de|do|da)\s*[,.!?-]*$/i;
-const EVOLUTION_CANCEL_ACTION_RE =
-  /\b(?:cancelar|cancelamento|desmarcar)\b/i;
-const EVOLUTION_SCHEDULE_ACTION_RE =
-  /\b(?:remarcar|reagendar|agendar|marcar|alterar\s+(?:o\s+)?agendamento)\b/i;
-const EVOLUTION_DATE_HINT_RE =
-  /\b(?:hoje|amanha|depois\s+de\s+amanha|dia\s+\d{1,2}|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|segunda|terca|quarta|quinta|sexta|sabado|domingo)\b/i;
-const EVOLUTION_TIME_HINT_RE =
-  /\b(?:as?\s+)?(?:\d{1,2}(?::\d{2}|h(?:\d{2})?)|\d{1,2}\s*(?:hrs?|hs)|uma|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze)(?:\s*(?:horas?|hrs?|hs|da\s+manha|da\s+tarde|da\s+noite))?\b/i;
-const EVOLUTION_PENDING_RESPONSE_RE =
-  /^(?:sim|s|pode(?:\s+ser)?|confirmo|confirmado|ok|okay|certo|isso|exato|nao|melhor\s+nao|pode\s+manter|quero\s+manter|deixa|desisti)[.!?\s]*$/i;
-
-function evolutionTextNeedsHealthyFragmentAbsorb(
-  signal: EvolutionInboundWaitSignal,
-): boolean {
-  if (signal.kind !== "text") return false;
-  const text = (signal.text ?? "").trim();
-  if (!text) return false;
-  const foldedText = text.normalize("NFD").replace(/\p{Diacritic}/gu, "");
-  if (EVOLUTION_INCOMPLETE_END_RE.test(text)) return true;
-  if (EVOLUTION_DATE_ONLY_RE.test(text) || EVOLUTION_TIME_ONLY_RE.test(text)) return true;
-  if (
-    EVOLUTION_SCHEDULE_ACTION_RE.test(text) &&
-    !(EVOLUTION_DATE_HINT_RE.test(foldedText) && EVOLUTION_TIME_HINT_RE.test(foldedText))
-  ) {
-    return true;
-  }
-  return false;
-}
-
-/**
- * Saudações / ambíguos curtos e date-only com weekday nunca usam a lane
- * "entrega saudável = 7s". O metrônomo da Evolution (~60s) costuma seguir
- * exatamente esses primeiros fragmentos.
- */
-function evolutionTextForcesSerialGrace(signal: EvolutionInboundWaitSignal): boolean {
-  if (signal.kind !== "text") return false;
-  const text = (signal.text ?? "").trim();
-  if (!text) return false;
-  if (EVOLUTION_SHORT_AMBIGUOUS_RE.test(text)) return true;
-  const foldedText = text.normalize("NFD").replace(/\p{Diacritic}/gu, "");
-  if (EVOLUTION_WEEKDAY_RE.test(text) || EVOLUTION_WEEKDAY_RE.test(foldedText)) {
-    return !EVOLUTION_TIME_HINT_RE.test(foldedText);
-  }
-  return false;
-}
-
-/**
- * Decide se a PRIMEIRA mensagem precisa da janela longa da Evolution.
- * Follow-ups sempre usam o tempo curto configurado: quando o complemento
- * finalmente chega, não adicionamos mais um minuto antes de responder.
- */
 export function evolutionInboundNeedsExtendedInitialWait(
-  signal: EvolutionInboundWaitSignal,
+  _signal: EvolutionInboundWaitSignal,
 ): boolean {
-  if (signal.kind !== "text") return true;
-  const text = signal.text?.trim() ?? "";
-  const foldedText = text.normalize("NFD").replace(/\p{Diacritic}/gu, "");
-  if (!text) return true;
-  if (signal.hasPendingAgendaAction && EVOLUTION_PENDING_RESPONSE_RE.test(foldedText)) {
-    return false;
-  }
-  if (EVOLUTION_CANCEL_ACTION_RE.test(text)) return false;
-  if (EVOLUTION_SCHEDULE_ACTION_RE.test(text)) {
-    // Criação/remarcação só é completa quando o mesmo turno já contém data e
-    // hora. "Quero agendar amanhã" ainda pode receber "às 14h" com atraso.
-    return !(EVOLUTION_DATE_HINT_RE.test(foldedText) && EVOLUTION_TIME_HINT_RE.test(foldedText));
-  }
-  if (EVOLUTION_SHORT_AMBIGUOUS_RE.test(text)) return true;
-  if (EVOLUTION_DATE_ONLY_RE.test(text) || EVOLUTION_DATE_ONLY_RE.test(foldedText)) return true;
-  if (EVOLUTION_TIME_ONLY_RE.test(text) || EVOLUTION_TIME_ONLY_RE.test(foldedText)) return true;
-  if (EVOLUTION_INCOMPLETE_END_RE.test(text)) return true;
-  return false;
+  return true;
 }
 
 /**
@@ -120,52 +37,17 @@ export function evolutionInboundNeedsExtendedInitialWait(
  */
 export function evolutionBurstSafeSmartWait(
   settings: AgentSmartWaitSettings,
-  signal?: EvolutionInboundWaitSignal,
+  _signal?: EvolutionInboundWaitSignal,
 ): AgentSmartWaitSettings {
-  const extendedInitial = signal
-    ? evolutionInboundNeedsExtendedInitialWait(signal)
-    : true;
-
-  // Janela ADAPTATIVA: a espera longa existe para absorver a fila serializada
-  // da Evolution (~60 s entre webhooks do mesmo burst). Quando ESTA entrega
-  // chegou rápida (received − occurred pequeno), a fila está saudável agora e
-  // o lead merece a resposta na janela configurada do agente — EXCETO saudações
-  // / ambíguos curtos e date-only com weekday, que quase sempre recebem mais
-  // uma bolha no metrônomo Evolution. Atraso desconhecido ou alto mantém o
-  // fail-safe longo original.
-  const healthyDelivery =
-    typeof signal?.deliveryDelaySeconds === "number" &&
-    Number.isFinite(signal.deliveryDelaySeconds) &&
-    signal.deliveryDelaySeconds >= 0 &&
-    signal.deliveryDelaySeconds <= EVOLUTION_HEALTHY_DELIVERY_SECONDS;
-  const forceSerialGrace = signal ? evolutionTextForcesSerialGrace(signal) : false;
-  if (extendedInitial && healthyDelivery && !forceSerialGrace) {
-    const incompleteFragment = evolutionTextNeedsHealthyFragmentAbsorb(signal!);
-    return {
-      ...settings,
-      enabled: true,
-      initialSeconds: incompleteFragment
-        ? Math.max(settings.initialSeconds, EVOLUTION_HEALTHY_FRAGMENT_SECONDS)
-        : settings.initialSeconds,
-      followupSeconds: settings.followupSeconds,
-      maxSeconds: incompleteFragment
-        ? Math.max(settings.maxSeconds, DEFAULT_AGENT_SMART_WAIT.maxSeconds)
-        : settings.maxSeconds,
-    };
-  }
-
+  // Pure transport guard. Never inspect content, language, niche or agenda.
+  // The Evolution QR queue has delivered bubbles about 60 seconds apart, so
+  // every fragment restarts a 65-second quiet window.
   return {
     ...settings,
     enabled: true,
-    initialSeconds: extendedInitial
-      ? Math.max(settings.initialSeconds, EVOLUTION_SERIAL_DELIVERY_GRACE_SECONDS)
-      : settings.initialSeconds,
-    // O primeiro fragmento absorve a entrega serial. Depois que qualquer
-    // complemento chega, o silêncio curto configurado já encerra o burst.
-    followupSeconds: settings.followupSeconds,
-    maxSeconds: extendedInitial
-      ? Math.max(settings.maxSeconds, EVOLUTION_BURST_MAX_SECONDS)
-      : settings.maxSeconds,
+    initialSeconds: Math.max(settings.initialSeconds, EVOLUTION_TRANSPORT_QUIET_SECONDS),
+    followupSeconds: Math.max(settings.followupSeconds, EVOLUTION_TRANSPORT_QUIET_SECONDS),
+    maxSeconds: Math.max(settings.maxSeconds, EVOLUTION_TRANSPORT_QUIET_SECONDS),
   };
 }
 

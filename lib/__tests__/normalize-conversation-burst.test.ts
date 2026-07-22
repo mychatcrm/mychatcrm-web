@@ -35,7 +35,7 @@ describe("normalizeConversationBurst", () => {
     expect(burst.groupedMessagesCount).toBe(1);
   });
 
-  it("groups all burst messages into a single reply unit regardless of intent", () => {
+  it("groups all burst messages into a single reply unit without classifying a niche", () => {
     const burst = normalizeConversationBurst([
       { id: "1", content: "oi" },
       { id: "2", content: "quais lotes vc tem?" },
@@ -47,6 +47,8 @@ describe("normalizeConversationBurst", () => {
     expect(burst.replyUnits).toHaveLength(1);
     expect(burst.responseStrategy).not.toBe("sequential_replies");
     expect(burst.suppressedHistoryIds).toEqual(["1", "2", "3", "4"]);
+    expect(burst.signals.dominantIntent).toBe("");
+    expect(burst.userPrompt).toBe("oi\nquais lotes vc tem?\ne qual valor?\nlocalização?");
   });
 
   it("merges greeting clusters into one reply unit", () => {
@@ -68,13 +70,18 @@ describe("normalizeConversationBurst", () => {
     expect(units[0]).toHaveLength(3);
   });
 
-  it("prioritizes urgency in strategy and keeps single unit", () => {
+  it("preserves arbitrary languages verbatim and keeps one neutral unit", () => {
     const burst = normalizeConversationBurst([
-      { id: "1", content: "qual localização?" },
-      { id: "2", content: "me manda agora por favor" },
+      { id: "1", content: "Please follow my custom instructions." },
+      { id: "2", content: "¿Puedes responder las dos preguntas?" },
+      { id: "3", content: "Répondez sans changer mon contenu." },
     ]);
-    expect(burst.signals.urgencyLevel).toBe("high");
-    expect(burst.responseStrategy).toBe("urgent_direct");
+    expect(burst.signals.urgencyLevel).toBe("low");
+    expect(burst.responseStrategy).toBe("single_natural");
     expect(burst.replyUnits).toHaveLength(1);
+    expect(burst.userPrompt).toBe(
+      "Please follow my custom instructions.\n¿Puedes responder las dos preguntas?\nRépondez sans changer mon contenu.",
+    );
+    expect(burst.userPrompt).not.toMatch(/cliente enviou|preço|localização|agendar/i);
   });
 });

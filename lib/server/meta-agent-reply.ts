@@ -3,9 +3,10 @@ import {
   isAgentMissingInstructionsResult,
 } from "@/lib/ai/generate-agent-response";
 import { agendaPlanFromResult } from "@/lib/ai/agent-turn-plan";
+import { detectSupportedLanguageCode } from "@/lib/ai/language-detect";
+import { localizedAgentFailureReply } from "@/lib/agents/agent-failure-reply";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
-import { buildTextualReplyFallbackTopics } from "@/lib/conversas/inbound-message-dedupe";
 import {
   buildReplyUnitPrompt,
   normalizeConversationBurst,
@@ -150,7 +151,7 @@ export async function processMetaAgentResponseJob(
       burstMode: metadata.smartWaitBurstMode === "exact" ? "exact" : "relaxed",
     },
   );
-  const unit = burst.replyUnits[0] ?? [];
+  const unit = burst.canonicalMessages;
   const clientText = unit.map((message) => message.content.trim()).filter(Boolean).join("\n");
   const unitPrompt = burst.userPrompt || buildReplyUnitPrompt(unit);
 
@@ -177,8 +178,7 @@ export async function processMetaAgentResponseJob(
   }
   let replyText = result.ok
     ? result.text
-    : buildTextualReplyFallbackTopics(unit) ??
-      "Não consegui gerar uma resposta agora. Por favor tente de novo em instantes.";
+    : localizedAgentFailureReply(detectSupportedLanguageCode(unitPrompt));
 
   const timezone = resolveAgentTimezone({
     timezone: typeof metadata.timezone === "string" ? metadata.timezone : undefined,

@@ -7,13 +7,13 @@ import {
   type AgentAgendaPlan,
 } from "@/lib/ai/agent-turn-plan";
 import { detectSupportedLanguageCode, type SupportedLanguageCode } from "@/lib/ai/language-detect";
+import { localizedAgentFailureReply } from "@/lib/agents/agent-failure-reply";
 import {
   canUseTts,
   resolveAgentResponseSettingsFromStorage,
   resolveTriggeringInboundKind,
 } from "@/lib/agents";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
-import { buildTextualReplyFallbackTopics } from "@/lib/conversas/inbound-message-dedupe";
 import { buildReplyUnitPrompt, normalizeConversationBurst } from "@/lib/conversas/normalize-conversation-burst";
 import { shouldSuppressLateInboundFragment } from "@/lib/conversas/late-inbound-fragment";
 import {
@@ -134,18 +134,6 @@ type GeneratedReplyForUnit =
   | { ok: true; text: string; agendaPlan: AgentAgendaPlan | null }
   | { ok: false; error: "agent_missing_instructions" };
 
-function localizedGenericFailureReply(languageCode: SupportedLanguageCode): string {
-  const replies: Record<SupportedLanguageCode, string> = {
-    pt: "Não consegui gerar uma resposta agora. Por favor tente de novo em instantes.",
-    en: "I couldn't generate a response right now. Please try again in a moment.",
-    es: "No pude generar una respuesta ahora. Por favor inténtalo de nuevo en unos instantes.",
-    fr: "Je n'ai pas pu générer de réponse pour le moment. Veuillez réessayer dans quelques instants.",
-    de: "Ich konnte gerade keine Antwort erstellen. Bitte versuchen Sie es gleich noch einmal.",
-    it: "Non sono riuscito a generare una risposta ora. Riprova tra poco.",
-  };
-  return replies[languageCode];
-}
-
 async function saveOutboundMessage(opts: {
   tenantId: string;
   instanceName: string;
@@ -196,10 +184,6 @@ async function isGenerationStale(
   );
 }
 
-function humanTypingDelayMs(): number {
-  return 1000 + Math.floor(Math.random() * 1001);
-}
-
 function logFollowUp(event: string, payload: Record<string, unknown>): void {
   console.info("[agent-response-jobs]", { event, ...payload });
 }
@@ -244,7 +228,7 @@ async function generateReplyForUnit(params: {
 
   let replyText = result.ok
     ? result.text
-    : buildTextualReplyFallbackTopics(params.unit) ?? localizedGenericFailureReply(languageCode);
+    : localizedAgentFailureReply(languageCode);
 
   let agendaPlan = agendaPlanFromResult(result);
   if (result.ok) {
@@ -654,7 +638,7 @@ export async function processAgentResponseJob(
   console.info("[agent-response-jobs]", {
     event: "reply_units_count",
     job_id: job.id,
-    count: burst.replyUnits.length,
+    count: burst.canonicalMessages.length > 0 ? 1 : 0,
   });
 
   const handoffKeywords = Array.isArray(metadata.handoffKeywords)
@@ -769,20 +753,19 @@ export async function processAgentResponseJob(
   let handoffLastMessage: string | undefined;
   let repliesSent = 0;
 
-  for (let unitIndex = 0; unitIndex < burst.replyUnits.length; unitIndex++) {
-    if (
-      !skipGenerationCheck &&
-      ((await isGenerationStale(sb, job.id, generation)) ||
-        !(await isAgentConversationSequenceCurrent(sb, job)))
-    ) {
-      return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
-    }
+  const unitIndex = 0;
+  const unit = burst.canonicalMessages;
+  if (!unit.length) {
+    return { ok: false, error: "no_canonical_inbound_messages", dedupedCount: burst.dedupedCount };
+  }
+  if (
+    !skipGenerationCheck &&
+    ((await isGenerationStale(sb, job.id, generation)) ||
+      !(await isAgentConversationSequenceCurrent(sb, job)))
+  ) {
+    return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
+  }
 
-    if (unitIndex > 0) {
-      await sleep(humanTypingDelayMs());
-    }
-
-    const unit = burst.replyUnits[unitIndex]!;
     const unitPrompt = buildReplyUnitPrompt(unit);
     // AI-based detection: universal, nicho-agnóstica, com fallback automático para keywords
     const handoffCheck = handoffEnabled
@@ -794,8 +777,8 @@ export async function processAgentResponseJob(
       burst,
       suppressedHistoryIds: burst.suppressedHistoryIds,
       sb,
-      // Sempre usa o prompt consolidado do burst (buildHumanPrompt),
-      // que já lida com urgência, intent dominante e filtragem de saudações.
+      // A consolidação preserva texto, idioma e ordem; o prompt do cliente
+      // continua sendo a única fonte de comportamento do agente.
       promptOverride: burst.userPrompt,
     });
 
@@ -818,7 +801,7 @@ export async function processAgentResponseJob(
       event: "generated_response",
       job_id: job.id,
       unit_index: unitIndex + 1,
-      units_total: burst.replyUnits.length,
+      units_total: 1,
       ok: true,
     });
 
@@ -960,16 +943,6 @@ export async function processAgentResponseJob(
       }
     };
 
-    const quotedMessage = [...unit].reverse().find((m) => m.messageId && m.kind === "text");
-    const quoted = quotedMessage?.messageId
-      ? {
-          messageId: quotedMessage.messageId,
-          remoteJid: job.remote_jid,
-          fromMe: false,
-          conversation: quotedMessage.content,
-        }
-      : null;
-
     const languageCode = detectSupportedLanguageCode(unitPrompt);
     const useTts = canUseTts({
       agentResponseMode: responseMode,
@@ -1025,31 +998,32 @@ export async function processAgentResponseJob(
       kind: useTts ? "audio" : "text",
       content: textToSend.slice(0, 4000),
     });
-    if (outbound.action === "already_sent") {
-      repliesSent += 1;
-      continue;
-    }
-    if (outbound.action === "stale") {
-      return {
-        ok: false,
-        error: "generation_stale",
-        dedupedCount: burst.dedupedCount,
-      };
-    }
-    if (outbound.action === "blocked") {
-      return {
-        ok: false,
-        error: `authorization_blocked:${outbound.reason}`,
-        dedupedCount: burst.dedupedCount,
-      };
-    }
-    if (outbound.action === "ambiguous") {
-      return {
-        ok: false,
-        error: "outbound_dispatch_ambiguous",
-        dedupedCount: burst.dedupedCount,
-      };
-    }
+    outboundDispatch: {
+      if (outbound.action === "already_sent") {
+        repliesSent += 1;
+        break outboundDispatch;
+      }
+      if (outbound.action === "stale") {
+        return {
+          ok: false,
+          error: "generation_stale",
+          dedupedCount: burst.dedupedCount,
+        };
+      }
+      if (outbound.action === "blocked") {
+        return {
+          ok: false,
+          error: `authorization_blocked:${outbound.reason}`,
+          dedupedCount: burst.dedupedCount,
+        };
+      }
+      if (outbound.action === "ambiguous") {
+        return {
+          ok: false,
+          error: "outbound_dispatch_ambiguous",
+          dedupedCount: burst.dedupedCount,
+        };
+      }
 
     if (!(await isAgentConversationSequenceCurrent(sb, job))) {
       return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
@@ -1074,7 +1048,6 @@ export async function processAgentResponseJob(
           instanceName: job.instance_name,
           number,
           text: textToSend.slice(0, 4000),
-          quoted,
           resolveRecipient: true,
         }),
     });
@@ -1151,11 +1124,9 @@ export async function processAgentResponseJob(
       event: "final_outbound_sent",
       job_id: job.id,
       unit_index: unitIndex + 1,
-      units_total: burst.replyUnits.length,
+      units_total: 1,
     });
-
-    if (handoffTriggered) break;
-  }
+    }
 
   if (handoffTriggered) {
     const messages = await getRecentConversationMessages({
@@ -1252,10 +1223,10 @@ export async function processAgentResponseJob(
   }
 
   console.info("[agent-response-jobs]", {
-    event: "sequential_replies_completed",
+    event: "consolidated_response_completed",
     job_id: job.id,
     replies_sent: repliesSent,
-    units_total: burst.replyUnits.length,
+    units_total: 1,
   });
 
   return { ok: true, dedupedCount: burst.dedupedCount };
