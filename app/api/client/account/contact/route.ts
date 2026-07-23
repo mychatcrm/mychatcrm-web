@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { validateCheckoutPhone } from "@/lib/checkout-phone";
 import {
   confirmAccountPhoneVerification,
@@ -10,6 +11,13 @@ import { sendSystemNotification } from "@/lib/server/system-agent";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
+// O envio da mensagem de verificação (código) ou do aviso de remoção passa
+// pela Evolution (presença + delay de digitação + envio real), que pode
+// levar bem mais que o timeout padrão da função quando a Evolution está
+// lenta. Sem isto, a Vercel matava a função no meio do envio e devolvia 502
+// mesmo quando o telefone já tinha sido salvo — o usuário via erro e tinha
+// que atualizar a página pra ver o estado real.
+export const maxDuration = 60;
 
 type TenantContactRow = {
   system_notification_phone: string | null;
@@ -268,14 +276,18 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
             .eq("tenant_id", session.tenantId)
             .eq("id", member.id);
           if (error) throw new Error(error.message);
-          await notifyRemovedPhone({
-            tenantId: session.tenantId,
-            memberId: member.id,
-            phoneType,
-            oldPhone,
-            newPhone: phone,
-            changedByEmail: session.email,
-          });
+          // Aviso ao número antigo — não faz o usuário esperar o WhatsApp
+          // (presença + envio) para saber que o telefone foi salvo.
+          waitUntil(
+            notifyRemovedPhone({
+              tenantId: session.tenantId,
+              memberId: member.id,
+              phoneType,
+              oldPhone,
+              newPhone: phone,
+              changedByEmail: session.email,
+            }),
+          );
           return;
         }
 
@@ -294,14 +306,16 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
           .update({ [phoneColumn]: phone })
           .eq("id", session.tenantId);
         if (error) throw new Error(error.message);
-        await notifyRemovedPhone({
-          tenantId: session.tenantId,
-          memberId: member.id,
-          phoneType,
-          oldPhone,
-          newPhone: phone,
-          changedByEmail: session.email,
-        });
+        waitUntil(
+          notifyRemovedPhone({
+            tenantId: session.tenantId,
+            memberId: member.id,
+            phoneType,
+            oldPhone,
+            newPhone: phone,
+            changedByEmail: session.email,
+          }),
+        );
       },
     });
 
@@ -364,14 +378,16 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    await notifyRemovedPhone({
-      tenantId: session.tenantId,
-      memberId: session.employeeId ?? null,
-      phoneType,
-      oldPhone,
-      newPhone: normalized.phone,
-      changedByEmail: session.email,
-    });
+    waitUntil(
+      notifyRemovedPhone({
+        tenantId: session.tenantId,
+        memberId: session.employeeId ?? null,
+        phoneType,
+        oldPhone,
+        newPhone: normalized.phone,
+        changedByEmail: session.email,
+      }),
+    );
 
     return NextResponse.json({ ok: true, [bodyKey]: normalized.phone });
   }
