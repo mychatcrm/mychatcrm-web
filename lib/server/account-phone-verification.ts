@@ -80,7 +80,10 @@ export async function requestAccountPhoneVerification(params: {
   requestedByEmail: string;
   sb?: SupabaseServiceClient;
   send?: typeof sendSystemNotification;
-}): Promise<{ ok: true; phone: string; expiresAt: string } | { ok: false; error: string; status?: number }> {
+}): Promise<
+  | { ok: true; phone: string; expiresAt: string; dispatchSend: () => Promise<void> }
+  | { ok: false; error: string; status?: number }
+> {
   const validation = validateCheckoutPhone(params.rawPhone);
   if (!validation.ok) return { ok: false, error: validation.message, status: 400 };
 
@@ -152,46 +155,58 @@ export async function requestAccountPhoneVerification(params: {
   }
 
   const sender = params.send ?? sendSystemNotification;
-  const send = await sender(phone, buildVerificationMessage(code), "", {
-    type: "phone_verification_code",
-    metadata: {
-      tenant_id: params.tenantId,
-      member_id: params.memberId,
-      phone_type: params.phoneType,
-      phone_last4: safeLast4(phone),
-    },
-  });
+  const rowId = inserted.id;
 
-  if (!send.ok) {
-    await sb
+  // O envio de verdade passa pela Evolution (presença + digitação + envio),
+  // que sozinho já pode ultrapassar o tempo de execução da função na Vercel
+  // quando a Evolution está lenta — a função é encerrada no meio e o cliente
+  // via 502, mesmo com o código já persistido no banco. O chamador (rota)
+  // decide como despachar isto: em produção via waitUntil (não bloqueia a
+  // resposta — a caixa de "digite o código" já aparece), em testes/scripts
+  // pode ser aguardado diretamente.
+  const dispatchSend = async (): Promise<void> => {
+    const send = await sender(phone, buildVerificationMessage(code), "", {
+      type: "phone_verification_code",
+      metadata: {
+        tenant_id: params.tenantId,
+        member_id: params.memberId,
+        phone_type: params.phoneType,
+        phone_last4: safeLast4(phone),
+      },
+    });
+
+    if (!send.ok) {
+      await sb
+        .from("account_phone_verification_codes")
+        .update({
+          status: "failed",
+          updated_at: new Date().toISOString(),
+          metadata: {
+            requested_by_email: params.requestedByEmail,
+            phone_last4: safeLast4(phone),
+            send_error: send.error ?? "send_failed",
+          },
+        })
+        .eq("id", rowId);
+      console.warn("[account-phone-verification] send_failed_background", {
+        tenantId: params.tenantId,
+        phoneType: params.phoneType,
+        error: send.error,
+      });
+      return;
+    }
+
+    const { error: sentError } = await sb
       .from("account_phone_verification_codes")
-      .update({
-        status: "failed",
-        updated_at: new Date().toISOString(),
-        metadata: {
-          requested_by_email: params.requestedByEmail,
-          phone_last4: safeLast4(phone),
-          send_error: send.error ?? "send_failed",
-        },
-      })
-      .eq("id", inserted.id);
-    return {
-      ok: false,
-      error: "Não foi possível enviar o código pelo agente do sistema. Verifique a conexão do agente e tente novamente.",
-      status: 502,
-    };
-  }
+      .update({ status: "sent", updated_at: new Date().toISOString() })
+      .eq("id", rowId);
 
-  const { error: sentError } = await sb
-    .from("account_phone_verification_codes")
-    .update({ status: "sent", updated_at: new Date().toISOString() })
-    .eq("id", inserted.id);
+    if (sentError) {
+      console.error("[account-phone-verification] mark_sent_failed", sentError.message);
+    }
+  };
 
-  if (sentError) {
-    console.error("[account-phone-verification] mark_sent_failed", sentError.message);
-  }
-
-  return { ok: true, phone, expiresAt };
+  return { ok: true, phone, expiresAt, dispatchSend };
 }
 
 export async function confirmAccountPhoneVerification(params: {
