@@ -235,6 +235,10 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: requested.error }, { status: requested.status ?? 400 });
     }
 
+    // O código já está salvo — a caixa de "digite o código" pode aparecer
+    // agora. O envio de verdade pelo WhatsApp roda em segundo plano.
+    waitUntil(requested.dispatchSend());
+
     return NextResponse.json({
       ok: true,
       phone: requested.phone,

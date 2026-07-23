@@ -149,6 +149,14 @@ describe("account phone verification", () => {
     });
 
     expect(requested.ok).toBe(true);
+    // O código já está salvo (status "pending") antes do envio real — a rota
+    // responde ao cliente aqui e despacha o envio via waitUntil.
+    expect(sb.rows[0]?.status).toBe("pending");
+    expect(send).not.toHaveBeenCalled();
+
+    if (requested.ok) {
+      await requested.dispatchSend();
+    }
     expect(send).toHaveBeenCalledOnce();
     expect(sb.rows[0]?.status).toBe("sent");
 
