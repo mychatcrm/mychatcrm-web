@@ -324,7 +324,14 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
     });
 
     if (!confirmed.ok) {
-      return NextResponse.json({ error: confirmed.error }, { status: confirmed.status ?? 400 });
+      return NextResponse.json(
+        {
+          error: confirmed.error,
+          ...(confirmed.remainingAttempts !== undefined ? { remainingAttempts: confirmed.remainingAttempts } : {}),
+          ...(confirmed.locked !== undefined ? { locked: confirmed.locked } : {}),
+        },
+        { status: confirmed.status ?? 400 },
+      );
     }
 
     if (phoneType === "personal") {

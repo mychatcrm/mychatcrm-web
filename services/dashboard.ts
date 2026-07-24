@@ -1,5 +1,5 @@
 import type { ClientSession } from "@/lib/client-auth";
-import { getDashboardDataset, type DashboardDataset } from "@/lib/dashboard-data";
+import { getDashboardDataset, type DashboardDataset, type DashboardRouteKey } from "@/lib/dashboard-data";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { fetchOverviewStats } from "@/lib/server/dashboard-stats-query";
 
@@ -12,13 +12,24 @@ function formatDateISO(d: Date): string {
 
 /**
  * Carrega o dataset do dashboard com dados reais do Supabase.
- * O overviewStats é pré-carregado server-side para o range padrão (últimos 7 dias),
- * evitando flash de carregamento no primeiro render.
- * Se a query falhar (quota, erro de rede), retorna dataset sem overviewStats
- * e o client component faz o fetch por conta própria.
+ *
+ * O overviewStats (15 queries, uma delas até 10k linhas de whatsapp_messages)
+ * SÓ é pré-carregado server-side quando a rota é o próprio Overview — que é o
+ * único consumidor de `overviewStats`. Em qualquer outra rota (configuracoes,
+ * agentes, disparos…) essas queries eram puro desperdício bloqueando o render,
+ * a causa da lentidão percebida. Fora do Overview retornamos o dataset base
+ * síncrono, sem tocar o banco. O Overview mantém o pré-load (sem flash) e, se
+ * falhar, o próprio componente já faz o fetch client-side (fallback existente).
  */
-export async function loadDashboardDataset(session: ClientSession): Promise<DashboardDataset> {
+export async function loadDashboardDataset(
+  session: ClientSession,
+  routeKey?: DashboardRouteKey,
+): Promise<DashboardDataset> {
   const dataset = getDashboardDataset(session);
+
+  if (routeKey !== "overview") {
+    return dataset;
+  }
 
   try {
     const sb = createSupabaseServiceClient();
