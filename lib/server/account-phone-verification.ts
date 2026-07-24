@@ -9,7 +9,10 @@ type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
 const CODE_TTL_MS = 10 * 60 * 1000;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
-const MAX_SENDS_PER_WINDOW = 3;
+// A UI reenvia o código quando o timer de 60s zera ou o usuário esgota as
+// tentativas; 3 envios/15min travava esse fluxo cedo demais. 6 dá folga
+// (o próprio timer de 60s já espaça os reenvios naturalmente).
+const MAX_SENDS_PER_WINDOW = 6;
 const MAX_ATTEMPTS = 5;
 
 type VerificationRow = {
@@ -216,7 +219,10 @@ export async function confirmAccountPhoneVerification(params: {
   code: string;
   sb?: SupabaseServiceClient;
   applyVerifiedPhone: (phone: string) => Promise<void>;
-}): Promise<{ ok: true; phone: string } | { ok: false; error: string; status?: number }> {
+}): Promise<
+  | { ok: true; phone: string }
+  | { ok: false; error: string; status?: number; remainingAttempts?: number; locked?: boolean }
+> {
   const cleanCode = String(params.code ?? "").replace(/\D/g, "");
   if (cleanCode.length !== 6) {
     return { ok: false, error: "Digite o código de 6 dígitos enviado para o telefone.", status: 400 };
@@ -262,18 +268,21 @@ export async function confirmAccountPhoneVerification(params: {
 
   if (expected !== row.code_hash) {
     const attempts = (row.attempts ?? 0) + 1;
+    const locked = attempts >= MAX_ATTEMPTS;
     await sb
       .from("account_phone_verification_codes")
       .update({
         attempts,
-        status: attempts >= MAX_ATTEMPTS ? "locked" : "sent",
+        status: locked ? "locked" : "sent",
         updated_at: new Date().toISOString(),
       })
       .eq("id", row.id);
     return {
       ok: false,
-      error: attempts >= MAX_ATTEMPTS ? "Muitas tentativas incorretas. Solicite um novo código." : "Código incorreto.",
+      error: locked ? "Muitas tentativas incorretas. Solicite um novo código." : "Código incorreto.",
       status: 400,
+      remainingAttempts: Math.max(0, MAX_ATTEMPTS - attempts),
+      locked,
     };
   }
 

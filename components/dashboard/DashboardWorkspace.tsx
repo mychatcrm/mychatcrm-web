@@ -3550,6 +3550,37 @@ function formatAccountPhone(value: string | null | undefined): string {
   return `+${digits}`;
 }
 
+/** Janela em que o código de verificação fica "fresco" antes de oferecer reenvio. */
+const NOTIFICATION_CODE_WINDOW_MS = 60_000;
+const NOTIFICATION_MAX_ATTEMPTS = 5;
+
+/**
+ * Segundos restantes até `deadlineMs` (nulo = sem contagem). Re-renderiza a cada
+ * segundo enquanto há um deadline ativo e para sozinho ao zerar/limpar.
+ */
+function useCountdownSeconds(deadlineMs: number | null): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (deadlineMs == null) return;
+    setNow(Date.now());
+    if (Date.now() >= deadlineMs) return;
+    const id = setInterval(() => {
+      const current = Date.now();
+      setNow(current);
+      if (current >= deadlineMs) clearInterval(id);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [deadlineMs]);
+  if (deadlineMs == null) return 0;
+  return Math.max(0, Math.ceil((deadlineMs - now) / 1000));
+}
+
+function formatCountdown(totalSeconds: number): string {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
 function ConfiguracoesPage({ session }: { session: ClientSession }) {
   const tabs = ["Minha Conta", "Plano e Cobranca", "Notificacoes", "Seguranca"];
   const [activeTab, setActiveTab] = useState(tabs[0]);
@@ -3587,16 +3618,30 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
   const [systemNotificationCode, setSystemNotificationCode] = useState("");
   const [systemNotificationCodeError, setSystemNotificationCodeError] = useState<string | null>(null);
   const [systemNotificationPending, setSystemNotificationPending] = useState<{ phone: string; expiresAt: string } | null>(null);
+  const [systemNotificationDeadline, setSystemNotificationDeadline] = useState<number | null>(null);
+  const [systemNotificationRemaining, setSystemNotificationRemaining] = useState(NOTIFICATION_MAX_ATTEMPTS);
   const [appointmentNotificationPhone, setAppointmentNotificationPhone] = useState("");
   const [appointmentNotificationPhoneDraft, setAppointmentNotificationPhoneDraft] = useState("");
   const [appointmentNotificationCode, setAppointmentNotificationCode] = useState("");
   const [appointmentNotificationCodeError, setAppointmentNotificationCodeError] = useState<string | null>(null);
   const [appointmentNotificationPending, setAppointmentNotificationPending] = useState<{ phone: string; expiresAt: string } | null>(null);
+  const [appointmentNotificationDeadline, setAppointmentNotificationDeadline] = useState<number | null>(null);
+  const [appointmentNotificationRemaining, setAppointmentNotificationRemaining] = useState(NOTIFICATION_MAX_ATTEMPTS);
   const [canManageSystemNotificationPhone, setCanManageSystemNotificationPhone] = useState(false);
   const [contactSettingsLoading, setContactSettingsLoading] = useState(true);
   const [phoneSaving, setPhoneSaving] = useState(false);
   const [notificationPhoneSaving, setNotificationPhoneSaving] = useState(false);
   const [appointmentPhoneSaving, setAppointmentPhoneSaving] = useState(false);
+  // Timer de 60s + tentativas dos códigos de notificação. "Expirado" = timer
+  // zerou ou o usuário esgotou as 5 tentativas → a UI oferece "Gerar novo código".
+  const systemNotificationSecondsLeft = useCountdownSeconds(systemNotificationDeadline);
+  const appointmentNotificationSecondsLeft = useCountdownSeconds(appointmentNotificationDeadline);
+  const systemNotificationExpired =
+    Boolean(systemNotificationPending) &&
+    (systemNotificationSecondsLeft <= 0 || systemNotificationRemaining <= 0);
+  const appointmentNotificationExpired =
+    Boolean(appointmentNotificationPending) &&
+    (appointmentNotificationSecondsLeft <= 0 || appointmentNotificationRemaining <= 0);
   const [displayName, setDisplayName] = useState(session.displayName);
   const [namePopoverOpen, setNamePopoverOpen] = useState(false);
   const [nameNew, setNameNew] = useState("");
@@ -3843,9 +3888,15 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
             code: systemNotificationCode,
           }),
         });
-        const data = (await res.json().catch(() => null)) as { systemNotificationPhone?: string | null; error?: string } | null;
+        const data = (await res.json().catch(() => null)) as {
+          systemNotificationPhone?: string | null;
+          error?: string;
+          remainingAttempts?: number;
+          locked?: boolean;
+        } | null;
         if (!res.ok) {
           const message = data?.error || "Não foi possível confirmar o telefone de notificações.";
+          if (typeof data?.remainingAttempts === "number") setSystemNotificationRemaining(data.remainingAttempts);
           setSystemNotificationCodeError(message);
           setAccountMsg({ type: "err", text: message });
           return;
@@ -3856,6 +3907,7 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
         setSystemNotificationCode("");
         setSystemNotificationCodeError(null);
         setSystemNotificationPending(null);
+        setSystemNotificationDeadline(null);
         setAccountMsg({ type: "ok", text: "Telefone de notificações confirmado e atualizado." });
         return;
       }
@@ -3876,11 +3928,46 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
         return;
       }
       setSystemNotificationPending({ phone: data?.phone ?? systemNotificationPhoneDraft, expiresAt: data?.expiresAt ?? "" });
+      setSystemNotificationDeadline(Date.now() + NOTIFICATION_CODE_WINDOW_MS);
+      setSystemNotificationRemaining(NOTIFICATION_MAX_ATTEMPTS);
       setSystemNotificationCode("");
       setSystemNotificationCodeError(null);
       setAccountMsg({ type: "ok", text: "Código enviado pelo agente do sistema para o telefone de notificações." });
     } catch {
       setAccountMsg({ type: "err", text: "Não foi possível processar o telefone de notificações." });
+    } finally {
+      setNotificationPhoneSaving(false);
+    }
+  };
+
+  const resendSystemNotificationCode = async () => {
+    if (notificationPhoneSaving || !canManageSystemNotificationPhone) return;
+    const phone = systemNotificationPending?.phone ?? systemNotificationPhoneDraft;
+    setNotificationPhoneSaving(true);
+    try {
+      const res = await fetch("/api/client/account/contact", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          action: "request_phone_verification",
+          phoneType: "system_notification",
+          phone,
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as { phone?: string | null; expiresAt?: string; error?: string } | null;
+      if (!res.ok) {
+        setAccountMsg({ type: "err", text: data?.error || "Não foi possível reenviar o código." });
+        return;
+      }
+      setSystemNotificationPending({ phone: data?.phone ?? phone, expiresAt: data?.expiresAt ?? "" });
+      setSystemNotificationDeadline(Date.now() + NOTIFICATION_CODE_WINDOW_MS);
+      setSystemNotificationRemaining(NOTIFICATION_MAX_ATTEMPTS);
+      setSystemNotificationCode("");
+      setSystemNotificationCodeError(null);
+      setAccountMsg({ type: "ok", text: "Novo código enviado pelo agente do sistema." });
+    } catch {
+      setAccountMsg({ type: "err", text: "Não foi possível reenviar o código." });
     } finally {
       setNotificationPhoneSaving(false);
     }
@@ -3931,9 +4018,15 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
             code: appointmentNotificationCode,
           }),
         });
-        const data = (await res.json().catch(() => null)) as { appointmentNotificationPhone?: string | null; error?: string } | null;
+        const data = (await res.json().catch(() => null)) as {
+          appointmentNotificationPhone?: string | null;
+          error?: string;
+          remainingAttempts?: number;
+          locked?: boolean;
+        } | null;
         if (!res.ok) {
           const message = data?.error || "Não foi possível confirmar o telefone de notificações de agendamentos.";
+          if (typeof data?.remainingAttempts === "number") setAppointmentNotificationRemaining(data.remainingAttempts);
           setAppointmentNotificationCodeError(message);
           setAccountMsg({ type: "err", text: message });
           return;
@@ -3944,6 +4037,7 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
         setAppointmentNotificationCode("");
         setAppointmentNotificationCodeError(null);
         setAppointmentNotificationPending(null);
+        setAppointmentNotificationDeadline(null);
         setAccountMsg({ type: "ok", text: "Telefone de notificações de agendamentos confirmado e atualizado." });
         return;
       }
@@ -3964,11 +4058,46 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
         return;
       }
       setAppointmentNotificationPending({ phone: data?.phone ?? appointmentNotificationPhoneDraft, expiresAt: data?.expiresAt ?? "" });
+      setAppointmentNotificationDeadline(Date.now() + NOTIFICATION_CODE_WINDOW_MS);
+      setAppointmentNotificationRemaining(NOTIFICATION_MAX_ATTEMPTS);
       setAppointmentNotificationCode("");
       setAppointmentNotificationCodeError(null);
       setAccountMsg({ type: "ok", text: "Código enviado pelo agente do sistema para o telefone de notificações de agendamentos." });
     } catch {
       setAccountMsg({ type: "err", text: "Não foi possível processar o telefone de notificações de agendamentos." });
+    } finally {
+      setAppointmentPhoneSaving(false);
+    }
+  };
+
+  const resendAppointmentNotificationCode = async () => {
+    if (appointmentPhoneSaving || !canManageSystemNotificationPhone) return;
+    const phone = appointmentNotificationPending?.phone ?? appointmentNotificationPhoneDraft;
+    setAppointmentPhoneSaving(true);
+    try {
+      const res = await fetch("/api/client/account/contact", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          action: "request_phone_verification",
+          phoneType: "appointment_notification",
+          phone,
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as { phone?: string | null; expiresAt?: string; error?: string } | null;
+      if (!res.ok) {
+        setAccountMsg({ type: "err", text: data?.error || "Não foi possível reenviar o código." });
+        return;
+      }
+      setAppointmentNotificationPending({ phone: data?.phone ?? phone, expiresAt: data?.expiresAt ?? "" });
+      setAppointmentNotificationDeadline(Date.now() + NOTIFICATION_CODE_WINDOW_MS);
+      setAppointmentNotificationRemaining(NOTIFICATION_MAX_ATTEMPTS);
+      setAppointmentNotificationCode("");
+      setAppointmentNotificationCodeError(null);
+      setAccountMsg({ type: "ok", text: "Novo código enviado pelo agente do sistema." });
+    } catch {
+      setAccountMsg({ type: "err", text: "Não foi possível reenviar o código." });
     } finally {
       setAppointmentPhoneSaving(false);
     }
@@ -4527,6 +4656,7 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                     onChange={(ev) => {
                       setSystemNotificationPhoneDraft(ev.target.value);
                       setSystemNotificationPending(null);
+                      setSystemNotificationDeadline(null);
                       setSystemNotificationCode("");
                       setSystemNotificationCodeError(null);
                     }}
@@ -4546,29 +4676,61 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                         <span className="font-medium text-content">{formatAccountPhone(systemNotificationPending.phone)}</span>.
                         Confirme para este número receber alertas operacionais.
                       </p>
-                      <label className="mt-3 block text-xs font-medium text-content-muted" htmlFor="system-notification-phone-code">
-                        Código recebido
-                      </label>
-                      <Input
-                        id="system-notification-phone-code"
-                        className={`mt-1 ${systemNotificationCodeError ? "border-red-500 bg-red-500/10 text-red-700 focus-visible:ring-red-500 dark:text-red-100" : ""}`}
-                        inputMode="numeric"
-                        autoComplete="one-time-code"
-                        value={systemNotificationCode}
-                        onChange={(ev) => {
-                          setSystemNotificationCode(ev.target.value.replace(/\D/g, "").slice(0, 6));
-                          setSystemNotificationCodeError(null);
-                        }}
-                        placeholder="000000"
-                        disabled={notificationPhoneSaving}
-                        aria-invalid={Boolean(systemNotificationCodeError)}
-                        aria-describedby={systemNotificationCodeError ? "system-notification-phone-code-error" : undefined}
-                      />
-                      {systemNotificationCodeError ? (
-                        <p id="system-notification-phone-code-error" className="mt-2 text-[11px] font-medium text-red-500">
-                          {systemNotificationCodeError}
-                        </p>
-                      ) : null}
+                      {systemNotificationExpired ? (
+                        <div className="mt-3 space-y-2">
+                          <p className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                            {systemNotificationRemaining <= 0
+                              ? "Você errou o código 5 vezes."
+                              : "O tempo para digitar o código acabou."}{" "}
+                            Gere um novo código para tentar de novo.
+                          </p>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            isLoading={notificationPhoneSaving}
+                            onClick={resendSystemNotificationCode}
+                          >
+                            Gerar novo código
+                          </Button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="mt-3 flex items-center justify-between gap-2">
+                            <label className="block text-xs font-medium text-content-muted" htmlFor="system-notification-phone-code">
+                              Código recebido
+                            </label>
+                            <span className="shrink-0 text-[11px] font-medium tabular-nums text-content-secondary">
+                              Expira em {formatCountdown(systemNotificationSecondsLeft)}
+                            </span>
+                          </div>
+                          <Input
+                            id="system-notification-phone-code"
+                            className={`mt-1 ${systemNotificationCodeError ? "border-red-500 bg-red-500/10 text-red-700 focus-visible:ring-red-500 dark:text-red-100" : ""}`}
+                            inputMode="numeric"
+                            autoComplete="one-time-code"
+                            value={systemNotificationCode}
+                            onChange={(ev) => {
+                              setSystemNotificationCode(ev.target.value.replace(/\D/g, "").slice(0, 6));
+                              setSystemNotificationCodeError(null);
+                            }}
+                            placeholder="000000"
+                            disabled={notificationPhoneSaving}
+                            aria-invalid={Boolean(systemNotificationCodeError)}
+                            aria-describedby={systemNotificationCodeError ? "system-notification-phone-code-error" : undefined}
+                          />
+                          <p className="mt-1.5 text-[11px] text-content-faint">
+                            {systemNotificationRemaining}{" "}
+                            {systemNotificationRemaining === 1 ? "tentativa restante" : "tentativas restantes"} de{" "}
+                            {NOTIFICATION_MAX_ATTEMPTS}.
+                          </p>
+                          {systemNotificationCodeError ? (
+                            <p id="system-notification-phone-code-error" className="mt-2 text-[11px] font-medium text-red-500">
+                              {systemNotificationCodeError}
+                            </p>
+                          ) : null}
+                        </>
+                      )}
                     </div>
                   ) : null}
                   {!canManageSystemNotificationPhone ? (
@@ -4584,19 +4746,22 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                       disabled={!systemNotificationPhoneDraft || notificationPhoneSaving || contactSettingsLoading}
                       onClick={systemNotificationPending ? () => {
                         setSystemNotificationPending(null);
+                        setSystemNotificationDeadline(null);
                         setSystemNotificationCode("");
                         setSystemNotificationCodeError(null);
                       } : clearSystemNotificationPhone}
                     >
                       {systemNotificationPending ? "Trocar número" : "Limpar"}
                     </Button>
-                    <Button
-                      type="submit"
-                      size="sm"
-                      disabled={!canManageSystemNotificationPhone || contactSettingsLoading || notificationPhoneSaving}
-                    >
-                      {notificationPhoneSaving ? "Aguarde..." : systemNotificationPending ? "Confirmar código" : "Enviar código"}
-                    </Button>
+                    {systemNotificationExpired ? null : (
+                      <Button
+                        type="submit"
+                        size="sm"
+                        disabled={!canManageSystemNotificationPhone || contactSettingsLoading || notificationPhoneSaving}
+                      >
+                        {notificationPhoneSaving ? "Aguarde..." : systemNotificationPending ? "Confirmar código" : "Enviar código"}
+                      </Button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -4633,6 +4798,7 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                     onChange={(ev) => {
                       setAppointmentNotificationPhoneDraft(ev.target.value);
                       setAppointmentNotificationPending(null);
+                      setAppointmentNotificationDeadline(null);
                       setAppointmentNotificationCode("");
                       setAppointmentNotificationCodeError(null);
                     }}
@@ -4652,29 +4818,61 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                         <span className="font-medium text-content">{formatAccountPhone(appointmentNotificationPending.phone)}</span>.
                         Confirme para este número receber os avisos de agendamentos.
                       </p>
-                      <label className="mt-3 block text-xs font-medium text-content-muted" htmlFor="appointment-notification-phone-code">
-                        Código recebido
-                      </label>
-                      <Input
-                        id="appointment-notification-phone-code"
-                        className={`mt-1 ${appointmentNotificationCodeError ? "border-red-500 bg-red-500/10 text-red-700 focus-visible:ring-red-500 dark:text-red-100" : ""}`}
-                        inputMode="numeric"
-                        autoComplete="one-time-code"
-                        value={appointmentNotificationCode}
-                        onChange={(ev) => {
-                          setAppointmentNotificationCode(ev.target.value.replace(/\D/g, "").slice(0, 6));
-                          setAppointmentNotificationCodeError(null);
-                        }}
-                        placeholder="000000"
-                        disabled={appointmentPhoneSaving}
-                        aria-invalid={Boolean(appointmentNotificationCodeError)}
-                        aria-describedby={appointmentNotificationCodeError ? "appointment-notification-phone-code-error" : undefined}
-                      />
-                      {appointmentNotificationCodeError ? (
-                        <p id="appointment-notification-phone-code-error" className="mt-2 text-[11px] font-medium text-red-500">
-                          {appointmentNotificationCodeError}
-                        </p>
-                      ) : null}
+                      {appointmentNotificationExpired ? (
+                        <div className="mt-3 space-y-2">
+                          <p className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                            {appointmentNotificationRemaining <= 0
+                              ? "Você errou o código 5 vezes."
+                              : "O tempo para digitar o código acabou."}{" "}
+                            Gere um novo código para tentar de novo.
+                          </p>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            isLoading={appointmentPhoneSaving}
+                            onClick={resendAppointmentNotificationCode}
+                          >
+                            Gerar novo código
+                          </Button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="mt-3 flex items-center justify-between gap-2">
+                            <label className="block text-xs font-medium text-content-muted" htmlFor="appointment-notification-phone-code">
+                              Código recebido
+                            </label>
+                            <span className="shrink-0 text-[11px] font-medium tabular-nums text-content-secondary">
+                              Expira em {formatCountdown(appointmentNotificationSecondsLeft)}
+                            </span>
+                          </div>
+                          <Input
+                            id="appointment-notification-phone-code"
+                            className={`mt-1 ${appointmentNotificationCodeError ? "border-red-500 bg-red-500/10 text-red-700 focus-visible:ring-red-500 dark:text-red-100" : ""}`}
+                            inputMode="numeric"
+                            autoComplete="one-time-code"
+                            value={appointmentNotificationCode}
+                            onChange={(ev) => {
+                              setAppointmentNotificationCode(ev.target.value.replace(/\D/g, "").slice(0, 6));
+                              setAppointmentNotificationCodeError(null);
+                            }}
+                            placeholder="000000"
+                            disabled={appointmentPhoneSaving}
+                            aria-invalid={Boolean(appointmentNotificationCodeError)}
+                            aria-describedby={appointmentNotificationCodeError ? "appointment-notification-phone-code-error" : undefined}
+                          />
+                          <p className="mt-1.5 text-[11px] text-content-faint">
+                            {appointmentNotificationRemaining}{" "}
+                            {appointmentNotificationRemaining === 1 ? "tentativa restante" : "tentativas restantes"} de{" "}
+                            {NOTIFICATION_MAX_ATTEMPTS}.
+                          </p>
+                          {appointmentNotificationCodeError ? (
+                            <p id="appointment-notification-phone-code-error" className="mt-2 text-[11px] font-medium text-red-500">
+                              {appointmentNotificationCodeError}
+                            </p>
+                          ) : null}
+                        </>
+                      )}
                     </div>
                   ) : null}
                   {!canManageSystemNotificationPhone ? (
@@ -4690,19 +4888,22 @@ function ConfiguracoesPage({ session }: { session: ClientSession }) {
                       disabled={!appointmentNotificationPhoneDraft || appointmentPhoneSaving || contactSettingsLoading}
                       onClick={appointmentNotificationPending ? () => {
                         setAppointmentNotificationPending(null);
+                        setAppointmentNotificationDeadline(null);
                         setAppointmentNotificationCode("");
                         setAppointmentNotificationCodeError(null);
                       } : clearAppointmentNotificationPhone}
                     >
                       {appointmentNotificationPending ? "Trocar número" : "Limpar"}
                     </Button>
-                    <Button
-                      type="submit"
-                      size="sm"
-                      disabled={!canManageSystemNotificationPhone || contactSettingsLoading || appointmentPhoneSaving}
-                    >
-                      {appointmentPhoneSaving ? "Aguarde..." : appointmentNotificationPending ? "Confirmar código" : "Enviar código"}
-                    </Button>
+                    {appointmentNotificationExpired ? null : (
+                      <Button
+                        type="submit"
+                        size="sm"
+                        disabled={!canManageSystemNotificationPhone || contactSettingsLoading || appointmentPhoneSaving}
+                      >
+                        {appointmentPhoneSaving ? "Aguarde..." : appointmentNotificationPending ? "Confirmar código" : "Enviar código"}
+                      </Button>
+                    )}
                   </div>
                 </div>
               </div>

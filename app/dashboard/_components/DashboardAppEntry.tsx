@@ -13,7 +13,7 @@ export async function DashboardAppEntry({ routeKey }: { routeKey: DashboardRoute
   const session = await getClientSessionFromCookies();
   if (!session) return null; // middleware já redireciona antes de chegar aqui
 
-  const dataset = await loadDashboardDataset(session);
+  const dataset = await loadDashboardDataset(session, routeKey);
 
   return (
     <DashboardWorkspace routeKey={routeKey} session={session} serverDataset={dataset} />
