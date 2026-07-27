@@ -32,6 +32,7 @@ import {
   evolutionSendText,
   normalizeEvolutionConnectionState,
   pickEvolutionInstanceInfo,
+  reassertClientEvolutionAlwaysOnline,
   remoteJidToEvoNumber,
 } from "@/lib/integrations/evolution-api";
 import { isElevenlabsConfigured } from "@/lib/integrations/elevenlabs";
@@ -577,6 +578,25 @@ export async function POST(request: Request) {
             waJid: terminalDisconnect ? null : confirmedWaJid ?? undefined,
             preserveLifecycle: true,
           });
+          // Reafirma alwaysOnline a cada reconexão real (não só na criação da
+          // instância) — ver comentário de reassertClientEvolutionAlwaysOnline.
+          // Sem presença "sempre online" redeclarada na sessão viva, o WhatsApp
+          // entrega mensagens seguintes de um burst com ~60s de atraso cada.
+          if (
+            confirmedState === "open" &&
+            confirmedWaJid &&
+            previousRow &&
+            previousRow.tenant_id !== SYSTEM_TENANT_ID
+          ) {
+            waitUntil(
+              reassertClientEvolutionAlwaysOnline(instanceName).catch((err) => {
+                console.warn("[webhooks/evolution] reassert_always_online_error", {
+                  instanceName,
+                  err,
+                });
+              }),
+            );
+          }
           if (terminalDisconnect) {
             console.warn("[webhooks/evolution] terminal_disconnect", {
               instance_name: instanceName,

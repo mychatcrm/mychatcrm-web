@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   addDaysInTimezone,
   parseAppointmentDateTime,
+  resolveDateAnchorFromText,
   resolveScheduleDateTimeFromText,
+  resolveTimeSignalFromText,
   textHasExplicitTime,
   textHasImmediateNowExpression,
   textHasInvalidExplicitTime,
@@ -402,5 +404,39 @@ describe("'agora'/'já' nunca vira horário — incidente 'Esse horário já pas
     });
     expect(result?.time).toBe("14:00");
     expect(result?.date).not.toBeNull();
+  });
+});
+
+describe("resolveDateAnchorFromText / resolveTimeSignalFromText (incidente real da Helena)", () => {
+  it("resolve 'terçå' (til torto de autocorretor) para a próxima terça-feira", () => {
+    // NOW = sexta 05/06/2026 -> próxima terça = 09/06/2026.
+    expect(resolveDateAnchorFromText("terçå ou quarta, qual dia ta melhor pra vc?", TZ, NOW)).toBe(
+      "09/06/2026",
+    );
+  });
+
+  it("retorna null quando não há âncora de data no texto", () => {
+    expect(resolveDateAnchorFromText("pode ser sei lá, umas duas", TZ, NOW)).toBeNull();
+  });
+
+  it("resolve hora explícita '14h' da prosa do modelo", () => {
+    expect(
+      resolveTimeSignalFromText("Que tal agendarmos para terça-feira às 14h? Fica bom para você?"),
+    ).toBe("14:00");
+  });
+
+  it("'umas duas' sozinho (sem às/horas/período) não é reconhecido como hora", () => {
+    // Mesma guarda de parseWordHour: evita confundir "uma reunião" com 1h00.
+    expect(resolveTimeSignalFromText("pode ser sei lá, umas duas")).toBeNull();
+  });
+
+  it("desambigua 'duas horas' para 14h quando só a tarde cabe na disponibilidade", () => {
+    expect(
+      resolveTimeSignalFromText("duas horas", {
+        ativo: true,
+        horaInicio: "13:00",
+        horaFim: "18:00",
+      }),
+    ).toBe("14:00");
   });
 });

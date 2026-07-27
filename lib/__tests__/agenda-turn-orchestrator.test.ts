@@ -947,6 +947,76 @@ describe("resolveAgendaTurn", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  it("lead dá só a data ('terçå' com til torto, sem hora reconhecível) — usa a hora da PROSA VISÍVEL do modelo, nunca do JSON alucinado (incidente real Helena)", async () => {
+    // Sexta 05/06/2026 -> próxima terça = 09/06/2026. Reproduz o burst real: o
+    // lead nunca escreveu uma hora reconhecível ("umas duas" não conta sem
+    // às/horas/período), só a data ("terçå"). O plano oculto do modelo veio
+    // alucinado com uma data de 2023 (nunca deve ser usado); a hora certa só
+    // existe na frase que o próprio modelo mostrou ao lead.
+    vi.setSystemTime(new Date("2026-06-05T16:51:00-03:00"));
+    const { sb, rpc, pendingRows } = makeStructuredSb();
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      agentId: "agent-1",
+      timezone: "America/Sao_Paulo",
+      modelText: "Entendi! 😊 Que tal agendarmos para terça-feira às 14h? Fica bom para você?",
+      clientText: "pode ser sei lá, umas duas, terçå ou quarta, qual dia ta melhor pra vc?",
+      agendaAutomationEnabled: true,
+      agendaPlan: {
+        action: "propose_create",
+        date: "10/10/2023",
+        time: "14:00",
+        location: null,
+        eventId: null,
+      },
+      jobId: "33333333-3333-4333-8333-333333333333",
+      claimedGeneration: 1,
+      conversationSequence: 6,
+    });
+    expect(result.action).toBe("needs_confirmation");
+    expect(result.text).not.toBe(AGENDA_DATETIME_NEEDED_REPLY);
+    expect(pendingRows.at(-1)).toMatchObject({
+      proposed_date: "09/06/2026",
+      proposed_time: "14:00",
+      state: "pending",
+    });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("cliente com sinal de 'agora' não completa a hora pela prosa do modelo (não reabre incidente 'segunda agora')", async () => {
+    // Mesma família do incidente "Pode ser segunda agora": "agora" torna o
+    // pedido ambíguo demais para confiar na hora que o modelo propôs — cai no
+    // caminho antigo (pede data/hora de novo), nunca inventa um slot.
+    vi.setSystemTime(new Date("2026-06-05T16:51:00-03:00"));
+    const { sb, rpc, pendingRows } = makeStructuredSb();
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      agentId: "agent-1",
+      timezone: "America/Sao_Paulo",
+      modelText: "Conseguimos te receber na terça-feira às 14h. Fica bom para você?",
+      clientText: "pode ser terça agora",
+      agendaAutomationEnabled: true,
+      agendaPlan: {
+        action: "propose_create",
+        date: "10/10/2023",
+        time: "14:00",
+        location: null,
+        eventId: null,
+      },
+      jobId: "33333333-3333-4333-8333-333333333333",
+      claimedGeneration: 1,
+      conversationSequence: 7,
+    });
+    expect(result.action).toBe("none");
+    expect(result.text).toBe(AGENDA_DATETIME_NEEDED_REPLY);
+    expect(pendingRows).toHaveLength(0);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it("próxima segunda + 5 da tarde coalescidos resolve slot futuro (não PAST)", async () => {
     vi.setSystemTime(new Date("2026-06-01T16:51:00-03:00"));
     const { sb, rpc, pendingRows } = makeStructuredSb();

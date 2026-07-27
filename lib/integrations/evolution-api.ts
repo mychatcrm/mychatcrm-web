@@ -286,6 +286,46 @@ export async function applyClientEvolutionInstanceSettings(instanceName: string)
   }
 }
 
+/**
+ * Reaplica `alwaysOnline` incondicionalmente, sem checar o valor já persistido.
+ *
+ * `evolutionEnsureClientInstanceSettings` lê `/settings/find` e, se `alwaysOnline`
+ * já vier `true` ali, retorna sem nunca reenviar `/settings/set` — mas esse GET só
+ * reflete o registro `Setting` da Evolution, não se a sessão Baileys *viva atual*
+ * realmente redeclarou presença "sempre online" ao WhatsApp após reconectar
+ * (`markOnlineOnConnect` é, por natureza, algo por-conexão, não uma config estática
+ * — ver CLIENT_EVOLUTION_INSTANCE_SETTINGS acima). Esta função existe só para o
+ * caso de reconexão: sempre reenvia `/settings/set`, preservando os demais campos
+ * lidos, para forçar a Baileys a redeclarar presença na sessão nova.
+ */
+export async function reassertClientEvolutionAlwaysOnline(instanceName: string): Promise<void> {
+  const trimmed = instanceName.trim();
+  if (!trimmed) return;
+  const current = await evolutionFindInstanceSettings(trimmed);
+  if (!canSafelyRewriteEvolutionSettings(current)) {
+    console.warn("[evolution-api] reassert_always_online_skipped_unreadable_settings", {
+      instanceName: trimmed,
+    });
+    return;
+  }
+  const set = await evolutionSetInstanceSettings({
+    instanceName: trimmed,
+    settings: {
+      rejectCall: current.rejectCall,
+      msgCall: current.msgCall ?? "",
+      groupsIgnore: current.groupsIgnore,
+      alwaysOnline: true,
+      readMessages: current.readMessages,
+      readStatus: current.readStatus,
+      syncFullHistory: current.syncFullHistory,
+      ...(current.wavoipToken != null ? { wavoipToken: current.wavoipToken } : {}),
+    },
+  });
+  if (!set.ok) {
+    console.warn("[evolution-api] reassert_always_online_failed", { instanceName: trimmed });
+  }
+}
+
 export type EvolutionCreateInstanceResponse = {
   instance?: { instanceName?: string; status?: string };
   qrcode?: {

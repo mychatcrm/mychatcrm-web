@@ -426,9 +426,27 @@ export function textHasExplicitDateAnchor(text: string, timezone: string, now?: 
   return parseDateAnchor(foldAccents(text.toLowerCase()), today) !== null;
 }
 
+/** Igual a textHasExplicitDateAnchor, mas devolve a data (DD/MM/AAAA) resolvida em vez de um boolean. */
+export function resolveDateAnchorFromText(text: string, timezone: string, now?: Date): string | null {
+  const today = getZonedParts(now ?? new Date(), parseTimezone(timezone));
+  const anchor = parseDateAnchor(foldAccents(text.toLowerCase()), today);
+  return anchor ? formatWallDate(anchor) : null;
+}
+
 /** true se o texto contém uma hora explícita, numérica ou por extenso. */
 export function textHasExplicitTime(text: string): boolean {
   return parseTimeFromText(foldAccents(text.toLowerCase())) !== null;
+}
+
+/** Igual a textHasExplicitTime, mas devolve a hora (HH:MM) resolvida em vez de um boolean, desambiguando manhã/tarde pela disponibilidade do agente quando fornecida. */
+export function resolveTimeSignalFromText(
+  text: string,
+  agendaDisponibilidade?: AgendaAvailabilityWindow | null,
+): string | null {
+  const parsed = parseTimeFromText(foldAccents(text.toLowerCase()));
+  if (!parsed) return null;
+  const time = resolveAmbiguousTimeForAvailability(parsed, agendaDisponibilidade);
+  return `${String(time.hour).padStart(2, "0")}:${String(time.minute).padStart(2, "0")}`;
 }
 
 /** Detecta sintaxe de relógio explícita que foi rejeitada por faixa inválida. */

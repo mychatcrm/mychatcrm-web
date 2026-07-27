@@ -6,9 +6,12 @@ import {
   formatScheduleFieldsFromDate,
   localWallClockToUtc,
   parseAppointmentDateTime,
+  resolveDateAnchorFromText,
   resolveScheduleDateTimeFromText,
+  resolveTimeSignalFromText,
   textHasExplicitDateAnchor,
   textHasExplicitTime,
+  textHasImmediateNowExpression,
   textHasInvalidExplicitTime,
 } from "@/lib/server/agenda-datetime-parse";
 import { parseTimezone } from "@/lib/agents/agent-datetime";
@@ -2228,6 +2231,41 @@ async function resolveStructuredAgendaPlan(params: {
       : null;
     if (slotFromReply) {
       effectivePlan = { ...effectivePlan, date: slotFromReply.date, time: slotFromReply.time };
+    }
+  }
+
+  // Cliente deu só a DATA (ex.: "terça" sem hora reconhecível) — o bloco de
+  // "âncora parcial" acima já zerou effectivePlan para nunca herdar a hora que
+  // falta do campo OCULTO do modelo (fonte da alucinação de 2023). Mas a hora
+  // ausente pode estar, correta, na PROSA VISÍVEL do próprio modelo (ex.: "Que
+  // tal terça-feira às 14h?"), que não é alucinação escondida — é o texto que
+  // o lead literalmente vai ler. Preenche só a hora; a data que o lead já deu
+  // nunca é sobrescrita pelo modelo. Nunca ativa com sinal de "agora"/imediato
+  // no texto do cliente (mesmo veto de resolveScheduleDateTimeFromText) — um
+  // pedido "segunda agora" é ambíguo demais para completar com a hora do
+  // modelo (regressão coberta pelo incidente "Pode ser segunda agora").
+  // (Não há um ramo simétrico "hora sem data": quando o cliente só dá uma hora
+  // sem âncora, resolveScheduleDateTimeFromText já resolve isso para "hoje"
+  // — resolvedFromClient nunca fica null nesse caso, então esse bloco não
+  // seria alcançado.)
+  if (
+    action === "create" &&
+    !resolvedFromClient &&
+    !standaloneConfirmation &&
+    !(effectivePlan.date && effectivePlan.time) &&
+    textHasExplicitDateAnchor(params.clientText, params.timezone) &&
+    !textHasExplicitTime(params.clientText) &&
+    !textHasImmediateNowExpression(params.clientText)
+  ) {
+    const modelCleanForHalf = stripAgendaDirectives(params.modelText).trim();
+    const timeFromReply = modelCleanForHalf
+      ? resolveTimeSignalFromText(modelCleanForHalf, params.agendaDisponibilidade)
+      : null;
+    const dateFromClient = timeFromReply
+      ? resolveDateAnchorFromText(params.clientText, params.timezone)
+      : null;
+    if (timeFromReply && dateFromClient) {
+      effectivePlan = { ...effectivePlan, date: dateFromClient, time: timeFromReply };
     }
   }
   let cancelEvent: AgendaEventRow | null = null;
