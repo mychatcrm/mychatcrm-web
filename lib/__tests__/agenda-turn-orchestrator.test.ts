@@ -202,6 +202,7 @@ function makeStructuredSb(options: {
         chain.limit = () => chain;
         chain.then = (resolve: (value: { data: Record<string, unknown>[]; error: null }) => unknown) =>
           resolve({ data: options.events ?? [], error: null });
+        chain.maybeSingle = async () => ({ data: (options.events ?? [])[0] ?? null, error: null });
         return chain;
       }
       if (table === "agenda_mutation_operations" || table === "agenda_sync_outbox") {
@@ -1823,6 +1824,75 @@ describe("resolveAgendaTurn", () => {
       });
       expect(rpc).not.toHaveBeenCalled();
       expect(insertAgendaEventMock).not.toHaveBeenCalled();
+    });
+
+    it("incidente real 27/07: 'ok'/'obrigado' pos-agendamento nao reabre confirmacao do mesmo horario ja ativo", async () => {
+      // Lead confirmou e o agendamento ja existe (evento ativo real). No turno
+      // seguinte ele manda dois fragmentos de burst ("ok" + "obrigado",
+      // concatenados pelo smart-wait) - sem nenhum sinal de agenda - mas o
+      // modelo volta a alegar sucesso com o MESMO horario. Antes desta
+      // correcao, o agente reabria o ciclo de confirmacao ("Posso confirmar
+      // para 28/07/2026, as 14h?") para algo que o lead ja tinha confirmado,
+      // deixando-o achando que o agente esta com bug. Texto de duas linhas de
+      // proposito: um "obrigado" isolado ja cai no atalho de resposta curta
+      // existente (CONTEXT_FREE_SHORT_REPLY_RE) - o burst real de producao
+      // NAO bate nesse atalho, e e exatamente o caminho que esta guarda cobre.
+      const { sb, rpc, pendingRows } = makeStructuredSb({ events: [EXISTING_EVENT] });
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Perfeito, ficou agendado. A equipe vai te aguardar.",
+        clientText: "ok\nobrigado",
+        agendaAutomationEnabled: true,
+        agendaPlan: {
+          action: "create",
+          date: "10/06/2026",
+          time: "14:00",
+          location: null,
+          eventId: null,
+        },
+        jobId: "33333333-3333-4333-8333-333333333333",
+        claimedGeneration: 1,
+        conversationSequence: 4,
+      });
+      expect(result.action).toBe("none");
+      expect(result.text).toBe("Perfeito, ficou agendado. A equipe vai te aguardar.");
+      expect(pendingRows).toHaveLength(0);
+      expect(rpc).not.toHaveBeenCalled();
+      expect(insertAgendaEventMock).not.toHaveBeenCalled();
+    });
+
+    it("mesmo cenario, mas com horario diferente do evento ativo real: reabre confirmacao normalmente (nao regride)", async () => {
+      // Garante que a nova guarda so ativa quando o horario BATE com um
+      // evento real - se o modelo propoe outro horario, o fluxo normal de
+      // proposta continua intacto.
+      const { sb, rpc, pendingRows } = makeStructuredSb({ events: [EXISTING_EVENT] });
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Perfeito, ficou agendado. Te espero!",
+        clientText: "ok\nobrigado",
+        agendaAutomationEnabled: true,
+        agendaPlan: {
+          action: "create",
+          date: "15/06/2026",
+          time: "10:00",
+          location: null,
+          eventId: null,
+        },
+        jobId: "33333333-3333-4333-8333-333333333333",
+        claimedGeneration: 1,
+        conversationSequence: 4,
+      });
+      expect(result.action).toBe("needs_confirmation");
+      expect(pendingRows.length).toBeGreaterThan(0);
+      expect(rpc).not.toHaveBeenCalled();
     });
 
     it("incidente real 19/07: 'ta ficando doido?' + plano 2023 → mesmo tratamento, nunca 'já passou'", async () => {
