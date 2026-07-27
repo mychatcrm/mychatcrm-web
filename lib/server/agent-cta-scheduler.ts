@@ -885,6 +885,46 @@ export async function findNextActiveAgendaEvent(params: {
   return (data as AgendaEventRow | null) ?? null;
 }
 
+/**
+ * O local não tem parser determinístico como data/hora — o modelo pode
+ * inventar um endereço plausível no campo oculto (visto em produção: "Avenida
+ * Paulista, 1234" sem nenhuma base real). Só confia no local alegado pelo
+ * modelo quando (a) o próprio cliente escreveu esse texto, ou (b) já usamos
+ * exatamente esse local antes para este tenant (endereço real e recorrente,
+ * não uma alucinação nova a cada turno). Sem correspondência, omite o local
+ * em vez de gravar/repetir um endereço não verificado.
+ */
+async function resolveTrustedAgendaLocation(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  clientText: string;
+  modelLocation: string | null | undefined;
+}): Promise<string | null> {
+  const claimed = params.modelLocation?.trim();
+  if (!claimed) return null;
+  if (params.clientText.toLowerCase().includes(claimed.toLowerCase())) return claimed;
+
+  const { data, error } = await params.sb
+    .from("agenda_events")
+    .select("location")
+    .eq("tenant_id", params.tenantId)
+    .not("location", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(20);
+  if (error) return null;
+
+  const knownLocations = new Set(
+    ((data ?? []) as { location: string | null }[])
+      .map((r) => r.location?.trim().toLowerCase())
+      .filter((v): v is string => Boolean(v)),
+  );
+  // Nenhum agendamento anterior com local: nada para validar contra ainda —
+  // aceita a primeira ocorrência (não há como fazer melhor sem um endereço
+  // configurado explicitamente pelo operador).
+  if (knownLocations.size === 0) return claimed;
+  return knownLocations.has(claimed.toLowerCase()) ? claimed : null;
+}
+
 async function findUpcomingActiveAgendaEvents(params: {
   sb: SupabaseServiceClient;
   tenantId: string;
@@ -2335,6 +2375,17 @@ async function resolveStructuredAgendaPlan(params: {
         deferHandoff: true,
       };
     }
+  }
+  if (action !== "cancel" && effectivePlan.location) {
+    effectivePlan = {
+      ...effectivePlan,
+      location: await resolveTrustedAgendaLocation({
+        sb: params.sb,
+        tenantId: params.tenantId,
+        clientText: params.clientText,
+        modelLocation: effectivePlan.location,
+      }),
+    };
   }
   const scheduleComplete = action === "cancel" || Boolean(effectivePlan.date && effectivePlan.time);
 
