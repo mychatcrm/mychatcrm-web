@@ -4,8 +4,8 @@ import {
   canActorTargetEmployeeForAdminActions,
   collectSubtreeEmployeeIds,
   creatableHierarchyRolesForSessionStrict,
-  validateCreatorReportsToSelf,
 } from "@/lib/organization-hierarchy";
+import { resolveOrganizationRole } from "@/lib/organization-role";
 import {
   deleteTeamMembersCascadeFromDb,
   readTeamMembersFromDb,
@@ -17,6 +17,14 @@ import type { AddTeamEmployeeInput, TeamEmployee } from "@/lib/team-employees-ty
 import { TEAM_EMPLOYEE_DELETE_CONFIRM_PHRASE } from "@/lib/team-employees-types";
 import { canAddRole, validateTeamEmployeeInput, validateTeamEmployeeUpdate } from "@/lib/team-employees-validation";
 import { teamEmployeeForPublicResponse } from "@/lib/server/team-employees-public";
+
+function ownerOnlyResponse(session: { organizationRole?: "owner" | "director" | "manager" | "seller"; employeeId?: string }) {
+  if (resolveOrganizationRole(session) === "owner") return null;
+  return NextResponse.json(
+    { error: "Apenas o titular da conta pode gerir colaboradores." },
+    { status: 403 },
+  );
+}
 
 export async function GET() {
   const auth = await requireActiveClientSession();
@@ -30,6 +38,8 @@ export async function POST(request: Request) {
   const auth = await requireActiveClientSession();
   if (!auth.ok) return auth.response;
   const { session } = auth;
+  const forbidden = ownerOnlyResponse(session);
+  if (forbidden) return forbidden;
   const body = (await request.json().catch(() => null)) as Partial<AddTeamEmployeeInput> | null;
   if (!body?.nome || !body.email || !body.funcao || !body.initialPassword || !body.hierarchyRole) {
     return NextResponse.json({ error: "Dados incompletos." }, { status: 400 });
@@ -53,8 +63,6 @@ export async function POST(request: Request) {
   }
   const err = validateTeamEmployeeInput(list, input);
   if (err) return NextResponse.json({ error: err }, { status: 400 });
-  const hierErr = validateCreatorReportsToSelf(session, input);
-  if (hierErr) return NextResponse.json({ error: hierErr }, { status: 403 });
 
   const id = `emp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   const created: TeamEmployee = {
@@ -80,6 +88,8 @@ export async function PATCH(request: Request) {
   const auth = await requireActiveClientSession();
   if (!auth.ok) return auth.response;
   const { session } = auth;
+  const forbidden = ownerOnlyResponse(session);
+  if (forbidden) return forbidden;
   const body = (await request.json().catch(() => null)) as {
     id?: string;
     accountSuspended?: boolean;
@@ -138,6 +148,8 @@ export async function DELETE(request: Request) {
   const auth = await requireActiveClientSession();
   if (!auth.ok) return auth.response;
   const { session } = auth;
+  const forbidden = ownerOnlyResponse(session);
+  if (forbidden) return forbidden;
   const body = (await request.json().catch(() => null)) as { id?: string; confirmPhrase?: string } | null;
   const id = typeof body?.id === "string" ? body.id : "";
   const phrase = typeof body?.confirmPhrase === "string" ? body.confirmPhrase.trim() : "";

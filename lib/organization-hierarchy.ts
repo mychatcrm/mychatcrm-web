@@ -110,7 +110,7 @@ export function filterLeadsForSession(session: ClientSession, employees: TeamEmp
   return leads.filter((l) => leadMatchesOwnerScope(l, scope));
 }
 
-/** Dono ou papel estático demo (sem employeeId) pode gerir qualquer colaborador do tenant. */
+/** Dono ou papel estático demo (sem employeeId) pode gerir dados operacionais do tenant. */
 export function isBroadTenantAdmin(session: ClientSession): boolean {
   const org = resolveOrganizationRole(session);
   if (org === "owner") return true;
@@ -123,38 +123,14 @@ export function findEmployeeById(employees: TeamEmployee[], id: string): TeamEmp
 }
 
 /**
- * Quem o actor pode bloquear/apagar como alvo (não inclui cascata de apagar filhos — só o alvo directo).
- * Dono: todos. Diretor: gerentes e vendedores na sua árvore, não outro diretor. Gerente: só vendedores que reportam a ele.
+ * Gestão cadastral de colaboradores é exclusiva do titular da conta.
  */
 export function canActorTargetEmployeeForAdminActions(
   session: ClientSession,
-  employees: TeamEmployee[],
-  target: TeamEmployee,
+  _employees: TeamEmployee[],
+  _target: TeamEmployee,
 ): boolean {
-  const org = resolveOrganizationRole(session);
-  if (org === "seller") return false;
-  if (session.employeeId && session.employeeId === target.id) return false;
-  if (org === "owner") return true;
-
-  if (isBroadTenantAdmin(session)) {
-    if (org === "director") return target.hierarchyRole !== "director";
-    if (org === "manager") return target.hierarchyRole === "seller";
-  }
-
-  if (!session.employeeId) return false;
-  const actor = findEmployeeById(employees, session.employeeId);
-  if (!actor || actor.accountSuspended) return false;
-
-  if (actor.hierarchyRole === "manager") {
-    if (target.hierarchyRole !== "seller") return false;
-    return target.reportsToId === actor.id;
-  }
-  if (actor.hierarchyRole === "director") {
-    if (target.hierarchyRole === "director") return false;
-    const subtree = collectSubtreeEmployeeIds(employees, actor.id);
-    return subtree.has(target.id) && target.id !== actor.id;
-  }
-  return false;
+  return resolveOrganizationRole(session) === "owner";
 }
 
 export function canActorCreateRole(session: ClientSession, newRole: TeamHierarchyRole): boolean {
@@ -174,22 +150,14 @@ export function creatableHierarchyRolesForSessionStrict(session: ClientSession):
     if (p === "solo") return [];
     return ownerRoles;
   }
-  if (org === "director") return caps.maxManagers > 0 ? ["manager"] : [];
-  if (org === "manager") return caps.maxSellers > 0 ? ["seller"] : [];
   return [];
 }
 
-/** Quem cria o registo deve ser o superior directo (exceto dono / sessões demo amplas). */
+/** Gestão de colaboradores é exclusiva do titular da conta. */
 export function validateCreatorReportsToSelf(session: ClientSession, input: { hierarchyRole: TeamHierarchyRole; reportsToId?: string }): string | null {
   if (resolveOrganizationRole(session) === "owner") return null;
-  if (isBroadTenantAdmin(session)) return null;
-  if (!session.employeeId) return "Sessão sem vínculo a colaborador: não é possível criar subordinados.";
-  if (input.hierarchyRole === "manager") {
-    if (input.reportsToId !== session.employeeId) return "O gerente deve reportar ao seu diretor (si).";
-  } else if (input.hierarchyRole === "seller") {
-    if (input.reportsToId !== session.employeeId) return "O vendedor deve reportar ao seu gerente (si).";
-  }
-  return null;
+  void input;
+  return "Apenas o titular da conta pode gerir colaboradores.";
 }
 
 export function canTransferLeadToEmployee(

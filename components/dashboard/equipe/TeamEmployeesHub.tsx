@@ -147,8 +147,8 @@ export function TeamEmployeesHub({ session }: { session: ClientSession }) {
   const nSel = countTeamEmployeesByRole(list, "seller");
   const count = list.length;
 
-  const needsDirectorPick = hierarchyRole === "manager";
-  const needsManagerPick = hierarchyRole === "seller";
+  const canLinkDirector = hierarchyRole === "manager";
+  const canLinkManager = hierarchyRole === "seller";
 
   const atCapForSelectedRole = !canAddTeamEmployeeOfRole(list, hierarchyRole, session.plan, session.operationalLimits);
   const atTotalCap = count >= maxCollaboratorsTotal;
@@ -370,8 +370,8 @@ export function TeamEmployeesHub({ session }: { session: ClientSession }) {
             <p className="mt-1 text-sm leading-relaxed text-content-secondary">
               Hierarquia de <strong className="font-semibold text-content">diretor</strong>,{" "}
               <strong className="font-semibold text-content">gerente</strong> e{" "}
-              <strong className="font-semibold text-content">vendedor</strong>: cada nível reporta ao superior e
-              respeita os limites do seu plano (
+              <strong className="font-semibold text-content">vendedor</strong>, com vínculo hierárquico opcional e
+              dentro dos limites do seu plano (
               <strong className="font-semibold text-content">
                 {collabCaps.maxDirectors} diretores · {collabCaps.maxManagers} gerentes · {collabCaps.maxSellers}{" "}
                 vendedores
@@ -379,15 +379,14 @@ export function TeamEmployeesHub({ session }: { session: ClientSession }) {
               , até {maxCollaboratorsTotal} no total). Use estes registos nas regras de distribuição de leads.
             </p>
             <p className="mt-2 text-xs text-content-muted">
-              O <strong className="text-content-secondary">dono da conta</strong> cria diretores (e pode criar toda a
-              hierarquia). O <strong className="text-content-secondary">diretor</strong> cria gerentes. O{" "}
-              <strong className="text-content-secondary">gerente</strong> cria vendedores. Permissões de navegação no
-              painel seguem o papel de cada utilizador no login.
+              Somente o <strong className="text-content-secondary">titular da conta</strong> pode acessar esta página e
+              gerir a equipe. Gerentes podem ficar sem diretor e vendedores podem ficar sem gerente; o vínculo é
+              opcional e pode ser definido quando fizer sentido para a operação.
             </p>
             <p className="mt-2 text-xs text-content-muted">
-              Todos os campos do formulário são <strong className="text-content-secondary">obrigatórios</strong>, incluindo a
-              senha inicial: o colaborador poderá alterá-la nas <strong className="text-content-secondary">configurações da conta</strong>{" "}
-              depois de entrar com o email e a senha que definir aqui (quando o login estiver ligado a este registo).
+              Os campos marcados com * são <strong className="text-content-secondary">obrigatórios</strong>, incluindo a
+              senha inicial. O vínculo com diretor ou gerente é opcional. O colaborador poderá alterar a senha nas{" "}
+              <strong className="text-content-secondary">configurações da conta</strong> depois de entrar.
             </p>
             <p className="mt-2 text-xs text-content-muted">
               Depois, em{" "}
@@ -422,7 +421,7 @@ export function TeamEmployeesHub({ session }: { session: ClientSession }) {
           <p className="mt-3 text-sm text-content-muted">
             {planNorm === "solo"
               ? "O plano Solo não inclui colaboradores hierárquicos. Faça upgrade para adicionar diretores, gerentes e vendedores."
-              : "Apenas dono da conta, diretores e gerentes podem criar colaboradores aqui."}
+              : "Apenas o titular da conta pode criar e gerir colaboradores aqui."}
           </p>
         ) : (
           <div className="mt-4">
@@ -462,53 +461,51 @@ export function TeamEmployeesHub({ session }: { session: ClientSession }) {
             </Select>
           </div>
 
-          {needsDirectorPick ? (
+          {canLinkDirector ? (
             <div>
               <label className="text-xs font-medium text-content-muted" htmlFor="emp-diretor">
-                Diretor responsável <span className="text-primary">*</span>
+                Diretor responsável <span className="text-content-faint">(opcional)</span>
               </label>
               <Select
                 id="emp-diretor"
                 className="mt-1"
                 value={reportsToId}
                 onChange={(e) => setReportsToId(e.target.value)}
-                required
               >
-                <option value="">Selecione…</option>
+                <option value="">Sem diretor responsável</option>
                 {directors.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.nome}
                   </option>
                 ))}
               </Select>
-              {directors.length === 0 ? (
-                <p className={cn("mt-1 text-[11px]", isLight ? "text-amber-800" : "text-amber-200")}>Cadastre primeiro um diretor.</p>
-              ) : null}
+              <p className="mt-1 text-[11px] text-content-muted">
+                Pode deixar este gerente sem vínculo com um diretor.
+              </p>
             </div>
           ) : null}
 
-          {needsManagerPick ? (
+          {canLinkManager ? (
             <div>
               <label className="text-xs font-medium text-content-muted" htmlFor="emp-gerente">
-                Gerente responsável <span className="text-primary">*</span>
+                Gerente responsável <span className="text-content-faint">(opcional)</span>
               </label>
               <Select
                 id="emp-gerente"
                 className="mt-1"
                 value={reportsToId}
                 onChange={(e) => setReportsToId(e.target.value)}
-                required
               >
-                <option value="">Selecione…</option>
+                <option value="">Sem gerente responsável</option>
                 {managers.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.nome}
                   </option>
                 ))}
               </Select>
-              {managers.length === 0 ? (
-                <p className={cn("mt-1 text-[11px]", isLight ? "text-amber-800" : "text-amber-200")}>Cadastre primeiro um gerente.</p>
-              ) : null}
+              <p className="mt-1 text-[11px] text-content-muted">
+                Pode deixar este vendedor sem vínculo com um gerente.
+              </p>
             </div>
           ) : null}
 

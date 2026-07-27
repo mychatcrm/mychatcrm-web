@@ -25,13 +25,15 @@ export function validateTeamEmployeeInput(list: TeamEmployee[], input: AddTeamEm
   if (input.hierarchyRole === "director") {
     if (input.reportsToId) return "Diretor não deve ter superior.";
   } else if (input.hierarchyRole === "manager") {
-    if (!input.reportsToId) return "Selecione o diretor a quem o gerente reporta.";
-    const sup = list.find((e) => e.id === input.reportsToId);
-    if (!sup || sup.hierarchyRole !== "director") return "Superior inválido: escolha um diretor.";
+    if (input.reportsToId) {
+      const sup = list.find((e) => e.id === input.reportsToId);
+      if (!sup || sup.hierarchyRole !== "director") return "Superior inválido: escolha um diretor.";
+    }
   } else {
-    if (!input.reportsToId) return "Selecione o gerente responsável pelo vendedor.";
-    const sup = list.find((e) => e.id === input.reportsToId);
-    if (!sup || sup.hierarchyRole !== "manager") return "Superior inválido: escolha um gerente.";
+    if (input.reportsToId) {
+      const sup = list.find((e) => e.id === input.reportsToId);
+      if (!sup || sup.hierarchyRole !== "manager") return "Superior inválido: escolha um gerente.";
+    }
   }
   return null;
 }
