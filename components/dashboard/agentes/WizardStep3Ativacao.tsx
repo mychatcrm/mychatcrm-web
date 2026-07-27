@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import { FileText } from "lucide-react";
 import { WhatsAppGlyph } from "@/components/dashboard/crm/crm-phone";
+import type { MetaFormsForm } from "@/app/api/client/meta/forms/route";
 import type { AgentWizardDraft } from "@/lib/agents";
 import { ORGANIC_WHATSAPP_SOURCE, type LeadDistributionRule } from "@/lib/lead-distribution-rules";
 import { cn } from "@/lib/utils";
@@ -15,6 +16,21 @@ function getFormRulesForAgent(rules: LeadDistributionRule[], agentId: string): L
 
 function getOrganicRuleForAgent(rules: LeadDistributionRule[], agentId: string): LeadDistributionRule | undefined {
   return rules.find((r) => r.source === ORGANIC_WHATSAPP_SOURCE && r.agentIds.includes(agentId));
+}
+
+type LinkedForm = { formId: string; formName: string | null };
+
+function getLinkedForms(formRules: LeadDistributionRule[]): LinkedForm[] {
+  const seen = new Set<string>();
+  const out: LinkedForm[] = [];
+  for (const rule of formRules) {
+    for (const formId of rule.includedFormIds ?? []) {
+      if (seen.has(formId)) continue;
+      seen.add(formId);
+      out.push({ formId, formName: null });
+    }
+  }
+  return out;
 }
 
 export function WizardStep3Ativacao({
@@ -28,6 +44,7 @@ export function WizardStep3Ativacao({
   const [resolvedAgentId, setResolvedAgentId] = useState<string | null>(null);
   const [rules, setRules] = useState<LeadDistributionRule[]>([]);
   const [rulesLoading, setRulesLoading] = useState(true);
+  const [formNames, setFormNames] = useState<Record<string, string>>({});
 
   const agentIdFromPath = useMemo(() => {
     const match = pathname?.match(/\/dashboard\/agentes\/([^/]+)\/editar/);
@@ -80,9 +97,40 @@ export function WizardStep3Ativacao({
     };
   }, [agentId]);
 
-  const formRules = agentId ? getFormRulesForAgent(rules, agentId) : [];
+  const formRules = useMemo(() => (agentId ? getFormRulesForAgent(rules, agentId) : []), [rules, agentId]);
   const organicRule = agentId ? getOrganicRuleForAgent(rules, agentId) : undefined;
   const activeMode: "formulario" | "organico" | null = formRules.length > 0 ? "formulario" : organicRule ? "organico" : null;
+  const linkedForms = useMemo(() => getLinkedForms(formRules), [formRules]);
+
+  useEffect(() => {
+    const pageIds = [...new Set(formRules.map((r) => r.pageId).filter((id): id is string => Boolean(id)))];
+    if (pageIds.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const entries: Array<[string, string]> = [];
+      for (const pageId of pageIds) {
+        try {
+          const res = await fetch(`/api/client/meta/forms?page_id=${encodeURIComponent(pageId)}`, {
+            credentials: "same-origin",
+          });
+          if (!res.ok) continue;
+          const data = (await res.json()) as { forms?: MetaFormsForm[] };
+          for (const f of data.forms ?? []) {
+            if (f.form_name) entries.push([f.form_id, f.form_name]);
+          }
+        } catch {
+          /* ignore — mostra o id cru pra esse formulário */
+        }
+      }
+      if (!cancelled && entries.length > 0) {
+        setFormNames((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formRules.map((r) => r.pageId).join(",")]);
 
   const cardSelectedClass = "border-primary bg-primary/10 ring-1 ring-inset ring-primary/30";
   const cardNeutralClass = "border-line/60 bg-surface-card/60 opacity-70";
@@ -158,17 +206,13 @@ export function WizardStep3Ativacao({
             <section className="min-w-0 space-y-2 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
               <p className="text-sm font-semibold text-content">Formulários vinculados</p>
               <ul className="space-y-1.5">
-                {formRules.map((rule) => (
+                {linkedForms.map(({ formId }) => (
                   <li
-                    key={rule.id}
+                    key={formId}
                     className="rounded-lg border border-line/70 bg-surface-deep/40 px-3 py-2 text-xs text-content-secondary"
                   >
-                    <span className="block font-medium text-content">{rule.name || rule.id}</span>
-                    {rule.includedFormIds && rule.includedFormIds.length > 0 ? (
-                      <span className="mt-0.5 block text-[11px] text-content-muted">
-                        {rule.includedFormIds.join(", ")}
-                      </span>
-                    ) : null}
+                    <span className="block font-medium text-content">{formNames[formId] ?? formId}</span>
+                    <span className="mt-0.5 block text-[11px] text-content-muted">{formId}</span>
                   </li>
                 ))}
               </ul>
