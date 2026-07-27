@@ -198,6 +198,7 @@ function makeStructuredSb(options: {
         chain.eq = () => chain;
         chain.neq = () => chain;
         chain.gte = () => chain;
+        chain.not = () => chain;
         chain.order = () => chain;
         chain.limit = () => chain;
         chain.then = (resolve: (value: { data: Record<string, unknown>[]; error: null }) => unknown) =>
@@ -1893,6 +1894,86 @@ describe("resolveAgendaTurn", () => {
       expect(result.action).toBe("needs_confirmation");
       expect(pendingRows.length).toBeGreaterThan(0);
       expect(rpc).not.toHaveBeenCalled();
+    });
+
+    it("incidente real 27/07: modelo alucina endereco novo ('Avenida Paulista, 1234') - nunca grava nem repete local nao verificado", async () => {
+      // Log real da IA: o modelo inventou um endereco no campo oculto E na
+      // prosa visivel simultaneamente, sem nenhuma base real (nunca foi dito
+      // pelo cliente nem configurado). O tenant ja tem um endereco real e
+      // recorrente usado antes ("Rua T-3, Setor Bueno, Goiania") - o novo
+      // endereco alucinado nao bate com ele, entao deve ser descartado em vez
+      // de gravado no evento real ou repetido pro lead como se fosse certo.
+      const { sb, rpc, pendingRows } = makeStructuredSb({
+        pending: {
+          id: "pending-1",
+          action: "create",
+          event_id: null,
+          proposed_date: "10/06/2026",
+          proposed_time: "14:00",
+          proposed_location: "Avenida Paulista, 1234",
+          expires_at: "2099-01-01T00:00:00.000Z",
+          state: "pending",
+        },
+        events: [{ ...EXISTING_EVENT, location: "Rua T-3, Setor Bueno, Goiânia" }],
+      });
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Vou confirmar.",
+        clientText: "sim",
+        agendaAutomationEnabled: true,
+        agendaPlan: { action: "none", date: null, time: null, location: null, eventId: null },
+        operationKey: "agent-response-job:turn-location-1:1:0",
+        jobId: "33333333-3333-4333-8333-333333333333",
+        claimedGeneration: 1,
+        conversationSequence: 2,
+      });
+      expect(result.action).toBe("scheduled");
+      expect(result.text).not.toContain("Avenida Paulista");
+      expect(rpc).toHaveBeenCalledWith(
+        "apply_agent_agenda_mutation_guarded",
+        expect.objectContaining({ p_location: null }),
+      );
+    });
+
+    it("endereco alegado pelo modelo bate com o endereco real ja usado antes: mantido normalmente (não regride)", async () => {
+      const { sb, rpc } = makeStructuredSb({
+        pending: {
+          id: "pending-1",
+          action: "create",
+          event_id: null,
+          proposed_date: "10/06/2026",
+          proposed_time: "14:00",
+          proposed_location: "Rua T-3, Setor Bueno, Goiânia",
+          expires_at: "2099-01-01T00:00:00.000Z",
+          state: "pending",
+        },
+        events: [{ ...EXISTING_EVENT, location: "Rua T-3, Setor Bueno, Goiânia" }],
+      });
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Vou confirmar.",
+        clientText: "sim",
+        agendaAutomationEnabled: true,
+        agendaPlan: { action: "none", date: null, time: null, location: null, eventId: null },
+        operationKey: "agent-response-job:turn-location-2:1:0",
+        jobId: "33333333-3333-4333-8333-333333333333",
+        claimedGeneration: 1,
+        conversationSequence: 2,
+      });
+      expect(result.action).toBe("scheduled");
+      expect(result.text).toContain("Rua T-3, Setor Bueno, Goiânia");
+      expect(rpc).toHaveBeenCalledWith(
+        "apply_agent_agenda_mutation_guarded",
+        expect.objectContaining({ p_location: "Rua T-3, Setor Bueno, Goiânia" }),
+      );
     });
 
     it("incidente real 19/07: 'ta ficando doido?' + plano 2023 → mesmo tratamento, nunca 'já passou'", async () => {
