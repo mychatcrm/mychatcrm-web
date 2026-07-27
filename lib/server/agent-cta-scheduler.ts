@@ -2346,6 +2346,46 @@ async function resolveStructuredAgendaPlan(params: {
       location: effectivePlan.location,
     };
     const startAt = directiveStartAt(candidate, params.timezone);
+
+    // Cliente sem NENHUM sinal de mutação neste turno (ex.: "ok"/"obrigado"
+    // depois de já ter confirmado um agendamento), mas o modelo volta a
+    // alegar sucesso ("ficou agendado") com o MESMO horário de um evento
+    // ativo real deste contato: não reabre o ciclo de proposta/confirmação —
+    // isso fazia o agente perguntar "Posso confirmar?" de novo para algo que
+    // o lead já confirmou minutos antes (incidente real: "ok"/"obrigado" pós-
+    // agendamento). Mesma verificação (findNextActiveAgendaEvent) já usada no
+    // caminho legado para NÃO preservar afirmações não verificadas — aqui é o
+    // espelho: preserva quando a afirmação bate com um evento real, em vez de
+    // reabrir a proposta.
+    if (
+      action === "create" &&
+      !standaloneConfirmation &&
+      !pending &&
+      !Number.isNaN(startAt.getTime()) &&
+      !isInitialAgendaMutationRequest(params.clientText) &&
+      !RESCHEDULE_RE.test(params.clientText) &&
+      !detectAgendaCancelIntent(params.clientText)
+    ) {
+      const modelCleanForClaim = stripAgendaDirectives(params.modelText).trim();
+      if (AGENDA_SUCCESS_CLAIM_RE.test(modelCleanForClaim)) {
+        try {
+          const activeEvent = await findNextActiveAgendaEvent({
+            sb: params.sb,
+            tenantId: params.tenantId,
+            remoteJid: params.remoteJid,
+          });
+          const sameSlot =
+            activeEvent != null &&
+            Math.abs(new Date(activeEvent.start_at).getTime() - startAt.getTime()) < 60_000;
+          if (sameSlot) {
+            return { text: modelCleanForClaim, action: "none", deferHandoff: true };
+          }
+        } catch {
+          // Fail-open: segue o fluxo normal abaixo (nunca bloqueia nem duplica).
+        }
+      }
+    }
+
     const invalidOrPast = Number.isNaN(startAt.getTime()) || startAt.getTime() <= Date.now();
     const outsideAvailability =
       !invalidOrPast &&
