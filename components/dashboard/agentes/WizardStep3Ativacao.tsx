@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
-import { FileText } from "lucide-react";
+import { FileText, MessageCircleQuestion } from "lucide-react";
 import { WhatsAppGlyph } from "@/components/dashboard/crm/crm-phone";
 import type { MetaFormsForm } from "@/app/api/client/meta/forms/route";
 import type { AgentWizardDraft } from "@/lib/agents";
@@ -14,24 +14,117 @@ function getFormRulesForAgent(rules: LeadDistributionRule[], agentId: string): L
   return rules.filter((r) => r.source === "meta_form" && r.agentIds.includes(agentId));
 }
 
-function getOrganicRuleForAgent(rules: LeadDistributionRule[], agentId: string): LeadDistributionRule | undefined {
-  return rules.find((r) => r.source === ORGANIC_WHATSAPP_SOURCE && r.agentIds.includes(agentId));
+function getOrganicRulesForAgent(rules: LeadDistributionRule[], agentId: string): LeadDistributionRule[] {
+  return rules.filter((r) => r.source === ORGANIC_WHATSAPP_SOURCE && r.agentIds.includes(agentId));
 }
 
-type LinkedForm = { formId: string; pageId: string | null };
-
-/** Formulários vinculados às regras do agente, deduplicados por form_id. */
-function getLinkedForms(formRules: LeadDistributionRule[]): LinkedForm[] {
-  const seen = new Set<string>();
-  const out: LinkedForm[] = [];
-  for (const rule of formRules) {
-    for (const formId of rule.includedFormIds ?? []) {
-      if (seen.has(formId)) continue;
-      seen.add(formId);
-      out.push({ formId, pageId: rule.pageId ?? null });
-    }
+function RuleStatusBadge({ active }: { active?: boolean }) {
+  if (active === false) {
+    return (
+      <span className="shrink-0 rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-600 dark:text-red-400">
+        Regra inativa
+      </span>
+    );
   }
-  return out;
+  return (
+    <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+      Ativa
+    </span>
+  );
+}
+
+/** Um formulário confirmado ativo na Meta, dentro de uma regra específica. */
+function FormRuleCard({
+  rule,
+  formNames,
+  formNamesLoading,
+  pageFailed,
+}: {
+  rule: LeadDistributionRule;
+  formNames: Record<string, string>;
+  formNamesLoading: boolean;
+  pageFailed: boolean;
+}) {
+  const formIds = rule.includedFormIds ?? [];
+  const activeFormIds = pageFailed ? formIds : formIds.filter((id) => Boolean(formNames[id]));
+  const archivedCount = formIds.length - activeFormIds.length;
+
+  return (
+    <div className="min-w-0 space-y-2.5 rounded-xl border border-line bg-surface-card p-3.5 sm:p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="flex min-w-0 items-start gap-2.5">
+          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <FileText className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-content">{rule.name || "Regra sem nome"}</p>
+            <p className="mt-0.5 text-[11px] text-content-muted">
+              Conta de anúncio: <span className="font-medium text-content-secondary">{rule.pageLabel ?? rule.pageId ?? "—"}</span>
+            </p>
+            {rule.createdAtLabel ? (
+              <p className="text-[11px] text-content-muted">Vinculada em {rule.createdAtLabel}</p>
+            ) : null}
+          </div>
+        </div>
+        <RuleStatusBadge active={rule.active} />
+      </div>
+
+      {formNamesLoading ? (
+        <p className="text-xs text-content-muted">A verificar quais formulários estão ativos na Meta…</p>
+      ) : activeFormIds.length === 0 ? (
+        <p className="text-xs text-content-muted">
+          Nenhum formulário ativo nesta regra — os vinculados foram arquivados na Meta.
+        </p>
+      ) : (
+        <div>
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-content-faint">
+            {activeFormIds.length} formulário{activeFormIds.length > 1 ? "s" : ""} ativo{activeFormIds.length > 1 ? "s" : ""}
+            {archivedCount > 0 ? ` · ${archivedCount} arquivado${archivedCount > 1 ? "s" : ""} oculto${archivedCount > 1 ? "s" : ""}` : ""}
+          </p>
+          <ul className="space-y-1">
+            {activeFormIds.map((formId) => (
+              <li
+                key={formId}
+                className="flex items-baseline justify-between gap-2 rounded-lg bg-surface-deep/40 px-2.5 py-1.5 text-xs"
+              >
+                <span className="min-w-0 truncate font-medium text-content">
+                  {formNames[formId] ?? formId}
+                  {pageFailed ? (
+                    <span className="ml-1.5 font-normal text-amber-600 dark:text-amber-300/90">(não confirmado)</span>
+                  ) : null}
+                </span>
+                <span className="shrink-0 text-[10px] text-content-faint">{formId}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OrganicRuleCard({ rule }: { rule: LeadDistributionRule }) {
+  return (
+    <div className="min-w-0 rounded-xl border border-line bg-surface-card p-3.5 sm:p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="flex min-w-0 items-start gap-2.5">
+          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600">
+            <WhatsAppGlyph className="h-4 w-4 shrink-0" aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-content">{rule.name || "Atendimento direto (WhatsApp)"}</p>
+            <p className="mt-0.5 text-[11px] text-content-muted">
+              O agente atende quem entra em contacto direto pelo WhatsApp, sem ser por formulário.
+            </p>
+            {rule.createdAtLabel ? (
+              <p className="text-[11px] text-content-muted">Vinculada em {rule.createdAtLabel}</p>
+            ) : null}
+          </div>
+        </div>
+        <RuleStatusBadge active={rule.active} />
+      </div>
+    </div>
+  );
 }
 
 export function WizardStep3Ativacao({
@@ -103,8 +196,7 @@ export function WizardStep3Ativacao({
   }, [agentId]);
 
   const formRules = useMemo(() => (agentId ? getFormRulesForAgent(rules, agentId) : []), [rules, agentId]);
-  const organicRule = agentId ? getOrganicRuleForAgent(rules, agentId) : undefined;
-  const linkedForms = useMemo(() => getLinkedForms(formRules), [formRules]);
+  const organicRules = useMemo(() => (agentId ? getOrganicRulesForAgent(rules, agentId) : []), [rules, agentId]);
 
   useEffect(() => {
     const pageIds = [...new Set(formRules.map((r) => r.pageId).filter((id): id is string => Boolean(id)))];
@@ -146,30 +238,15 @@ export function WizardStep3Ativacao({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formRules.map((r) => r.pageId).join(",")]);
 
-  // Só mostra o que está confirmado ATIVO na Meta agora. Formulários cuja
-  // página falhou ao consultar ficam visíveis mesmo assim (incerto — melhor
-  // não esconder por erro de rede do que esconder um formulário ativo de verdade).
-  const activeLinkedForms = useMemo(
-    () =>
-      linkedForms.filter(
-        ({ formId, pageId }) => (pageId && failedPageIds.has(pageId)) || Boolean(formNames[formId]),
-      ),
-    [linkedForms, formNames, failedPageIds],
-  );
-
-  const activeMode: "formulario" | "organico" | null =
-    activeLinkedForms.length > 0 ? "formulario" : organicRule ? "organico" : null;
-
-  const cardSelectedClass = "border-primary bg-primary/10 ring-1 ring-inset ring-primary/30";
-  const cardNeutralClass = "border-line/60 bg-surface-card/60 opacity-70";
+  const nothingLinked = formRules.length === 0 && organicRules.length === 0;
 
   return (
     <div className="min-w-0 space-y-4">
       <div>
         <h3 className="text-base font-semibold text-content">Quando este agente deve ser acionado?</h3>
         <p className="mt-1 text-xs leading-relaxed text-content-muted">
-          Somente visualização — mostra o que já está vinculado a este agente. Para vincular ou trocar formulários e o
-          atendimento direto, use{" "}
+          Somente visualização — mostra exatamente o que está vinculado a este agente agora. Para vincular, trocar ou
+          remover formulários e o atendimento direto, use{" "}
           <Link href="/dashboard/integracoes-leads" className="font-semibold text-primary underline-offset-2 hover:underline">
             Integrações de Leads
           </Link>
@@ -183,87 +260,47 @@ export function WizardStep3Ativacao({
         </p>
       ) : rulesLoading ? (
         <p className="text-xs text-content-muted">A carregar origens vinculadas…</p>
+      ) : nothingLinked ? (
+        <div className="flex items-start gap-2.5 rounded-xl border border-dashed border-line/80 bg-surface-card/60 p-4">
+          <MessageCircleQuestion className="mt-0.5 h-4 w-4 shrink-0 text-content-faint" strokeWidth={1.75} aria-hidden />
+          <p className="text-xs leading-relaxed text-content-muted">
+            Nenhuma origem vinculada a este agente ainda. Vá em{" "}
+            <Link href="/dashboard/integracoes-leads" className="font-semibold text-primary underline-offset-2 hover:underline">
+              Integrações de Leads
+            </Link>{" "}
+            para vincular um formulário Meta ou ativar o atendimento direto por WhatsApp.
+          </p>
+        </div>
       ) : (
-        <>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div
-              aria-disabled
-              className={cn(
-                "flex min-h-[100px] cursor-default flex-col items-start gap-3 rounded-xl border p-4 text-left",
-                activeMode === "formulario" ? cardSelectedClass : cardNeutralClass,
-              )}
-            >
-              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                <FileText className="h-5 w-5" strokeWidth={1.75} aria-hidden />
-              </span>
-              <span>
-                <span className="block text-sm font-semibold text-content">Leads por formulário</span>
-                <span className="mt-1 block text-xs leading-relaxed text-content-muted">
-                  {formRules.length === 0
-                    ? "Nenhum formulário vinculado a este agente."
-                    : formNamesLoading
-                      ? "A verificar quais estão ativos na Meta…"
-                      : activeLinkedForms.length > 0
-                        ? `${activeLinkedForms.length} formulário${activeLinkedForms.length > 1 ? "s" : ""} ativo${activeLinkedForms.length > 1 ? "s" : ""}.`
-                        : "Os formulários vinculados estão todos arquivados na Meta."}
-                </span>
-              </span>
-            </div>
-
-            <div
-              aria-disabled
-              className={cn(
-                "flex min-h-[100px] cursor-default flex-col items-start gap-3 rounded-xl border p-4 text-left",
-                activeMode === "organico" ? cardSelectedClass : cardNeutralClass,
-              )}
-            >
-              <span
-                className={cn(
-                  "flex h-10 w-10 items-center justify-center rounded-xl",
-                  activeMode === "organico" ? "bg-emerald-500/15 text-emerald-600" : "bg-surface-deep text-content-muted",
-                )}
-              >
-                <WhatsAppGlyph className="h-6 w-6 shrink-0" aria-hidden />
-              </span>
-              <span>
-                <span className="block text-sm font-semibold text-content">Atendimento direto (WhatsApp)</span>
-                <span className="mt-1 block text-xs leading-relaxed text-content-muted">
-                  {organicRule ? "Ativo para este agente." : "Não vinculado a este agente."}
-                </span>
-              </span>
-            </div>
-          </div>
-
+        <div className="space-y-3">
           {formRules.length > 0 ? (
-            <section className="min-w-0 space-y-2 rounded-xl border border-line bg-surface-card p-3 sm:p-4">
-              <p className="text-sm font-semibold text-content">Formulários ativos vinculados</p>
-              {formNamesLoading ? (
-                <p className="text-xs text-content-muted">A verificar formulários ativos na Meta…</p>
-              ) : activeLinkedForms.length === 0 ? (
-                <p className="text-xs text-content-muted">Nenhum formulário ativo — os vinculados foram arquivados na Meta.</p>
-              ) : (
-                <ul className="space-y-1.5">
-                  {activeLinkedForms.map(({ formId, pageId }) => (
-                    <li
-                      key={formId}
-                      className="rounded-lg border border-line/70 bg-surface-deep/40 px-3 py-2 text-xs text-content-secondary"
-                    >
-                      <span className="block font-medium text-content">
-                        {formNames[formId] ?? formId}
-                        {pageId && failedPageIds.has(pageId) ? (
-                          <span className="ml-1.5 font-normal text-amber-600 dark:text-amber-300/90">
-                            (não confirmado — falha ao consultar a Meta)
-                          </span>
-                        ) : null}
-                      </span>
-                      <span className="mt-0.5 block text-[11px] text-content-muted">{formId}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-content-faint">Leads por formulário</p>
+              <div className="space-y-2.5">
+                {formRules.map((rule) => (
+                  <FormRuleCard
+                    key={rule.id}
+                    rule={rule}
+                    formNames={formNames}
+                    formNamesLoading={formNamesLoading}
+                    pageFailed={Boolean(rule.pageId && failedPageIds.has(rule.pageId))}
+                  />
+                ))}
+              </div>
+            </div>
           ) : null}
-        </>
+
+          {organicRules.length > 0 ? (
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-content-faint">Atendimento direto</p>
+              <div className="space-y-2.5">
+                {organicRules.map((rule) => (
+                  <OrganicRuleCard key={rule.id} rule={rule} />
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
       )}
     </div>
   );
