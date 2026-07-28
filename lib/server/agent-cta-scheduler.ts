@@ -165,7 +165,13 @@ function modelAsksNaturallyForMissingSlot(
   const aboutSlot =
     AGENDA_TOPIC_RE.test(trimmed) ||
     /\b(dia|data|hora|hor[aá]rio|quando|amanh[ãa]|hoje)\b/i.test(trimmed);
-  return asks && aboutSlot;
+  // "Posso já deixar uma conversa agendada?" é convite, não pergunta — não tem
+  // "?" nem "me diga"/"qual", mas também não afirma sucesso nem inventa slot
+  // concreto (já filtrado acima). Sem isso, o cliente que nunca falou de
+  // agenda (ex.: só perguntou "do que se trata?") recebia a cobrança robótica
+  // de "não consegui identificar a data e o horário" para um convite que o
+  // próprio modelo fez, sem o cliente ter tentado marcar nada ainda.
+  return (asks && aboutSlot) || isSoftAgendaInvite(trimmed, timezone);
 }
 
 /** Modelo já oferece outro horário dentro da janela, sem claim de sucesso. */
@@ -247,7 +253,7 @@ const CONFIRM_ASK_RE =
   /\b(posso confirmar|pode confirmar|confirma|confirmar|confirmando|tudo bem|tudo certo|serve|fica bom|pode ser|posso agendar|vou agendar)\b/i;
 const DATE_OR_TIME_IN_TEXT_RE = /\d{1,2}\/\d{1,2}|\d{1,2}[:h]\d{2}|\bàs\s+\d{1,2}/i;
 const AGENDA_TOPIC_RE =
-  /\b(agendamento|agendar|remarc|reagend|hor[aá]rio|compromisso|marcar|cancel)/i;
+  /\b(agendamento|agendar|agendad[ao]s?|remarc|reagend|hor[aá]rio|compromisso|marcar|cancel)/i;
 
 /**
  * Verifica se uma data/hora está dentro da janela de disponibilidade configurada.
