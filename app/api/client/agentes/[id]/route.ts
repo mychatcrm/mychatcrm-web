@@ -9,6 +9,7 @@ import {
   validateAgentCrmDestination,
   validateAgentResponseSettings,
 } from "@/lib/agents";
+import { describeAgentActivationBlock } from "@/lib/server/agent-plan-limit";
 import type { Agent } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -62,6 +63,11 @@ export async function PUT(
   } catch {
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
   }
+  // O upsert abaixo grava `agent.nome.trim()` em display_name; sem esta guarda
+  // um corpo sem nome derruba a rota com TypeError em vez de responder 400.
+  if (!agent.nome?.trim()) {
+    return NextResponse.json({ error: "Campo obrigatório em falta (nome)." }, { status: 400 });
+  }
   const responseSettingsError = validateAgentResponseSettings(agent);
   if (responseSettingsError) {
     return NextResponse.json({ error: responseSettingsError }, { status: 400 });
@@ -72,6 +78,16 @@ export async function PUT(
   }
 
   const sb = createSupabaseServiceClient();
+  const activationBlock = await describeAgentActivationBlock({
+    sb,
+    session,
+    agentId,
+    willBeActive: agent.status === "ativo",
+  });
+  if (activationBlock) {
+    return NextResponse.json({ error: activationBlock }, { status: 403 });
+  }
+
   const systemPrompt = assembleStoredSystemPrompt(agent);
   const now = new Date().toISOString();
   const responseSettings = sanitizeAgentResponseSettings(agent);
