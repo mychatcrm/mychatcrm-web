@@ -352,6 +352,25 @@ export function LeadDistributionHub({ session }: { session: ClientSession }) {
                       Redistribui
                     </Badge>
                   ) : null}
+                  {rule.agentIssues?.length ? (
+                    <Badge
+                      className={cn(
+                        "border-rose-500/45 bg-rose-500/10",
+                        isLight ? "text-rose-800" : "text-rose-200",
+                      )}
+                      title={rule.agentIssues
+                        .map((issue) =>
+                          issue.problem === "missing"
+                            ? `${issue.agentId}: agente não existe mais`
+                            : `${issue.agentId}: agente pausado`,
+                        )
+                        .join(" · ")}
+                    >
+                      {rule.agentIssues.some((issue) => issue.problem === "missing")
+                        ? "Agente não existe mais — leads não serão atendidos"
+                        : "Agente pausado — leads não serão atendidos"}
+                    </Badge>
+                  ) : null}
                   {rule.source === "meta_form" &&
                   ["automation_agent", "specific_agents", "round_robin"].includes(rule.distributionType) &&
                   !rule.connectionId ? (

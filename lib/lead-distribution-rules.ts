@@ -35,6 +35,16 @@ export type LeadFieldMapping = {
   formLabel?: string;
 };
 
+/**
+ * Agente referenciado pela regra que não vai atender: `missing` quando o
+ * agente não existe mais no tenant, `paused` quando existe mas está pausado.
+ * Nos dois casos o lead entra e a automação é bloqueada silenciosamente.
+ */
+export type LeadRuleAgentIssue = {
+  agentId: string;
+  problem: "missing" | "paused";
+};
+
 export type LeadDistributionRule = {
   id: string;
   name: string;
@@ -84,6 +94,8 @@ export type LeadDistributionRule = {
   };
   createdBy: string;
   createdAtLabel: string;
+  /** Preenchido pela API ao listar: agentes desta regra que não vão atender. */
+  agentIssues?: LeadRuleAgentIssue[];
 };
 
 const STORAGE_PREFIX = "mychatcrm.lead-rules.v1.";
