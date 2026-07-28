@@ -1,7 +1,9 @@
 import { notFound, redirect } from "next/navigation";
 import { AgentFormCompact } from "@/components/dashboard/agentes/AgentFormCompact";
-import { getAgentByIdForTenant } from "@/lib/agents";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
+import { loadTenantAgentById } from "@/lib/server/tenant-agents-db";
+
+export const dynamic = "force-dynamic";
 
 export default async function DashboardEditarAgentePage({
   params,
@@ -12,7 +14,7 @@ export default async function DashboardEditarAgentePage({
   if (!session) redirect("/login?from=/dashboard/agentes");
 
   const { id } = await params;
-  const agent = getAgentByIdForTenant(session.tenantId, id);
+  const agent = await loadTenantAgentById(session.tenantId, id);
   if (!agent) notFound();
 
   return <AgentFormCompact mode="edit" initialAgent={agent} tenantId={session.tenantId} />;

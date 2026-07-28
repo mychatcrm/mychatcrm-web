@@ -1,86 +1,28 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { buildTemplateAgentsForTenant } from "@/lib/agents/template-agents";
 import {
   agentCrmDestinationDbFields,
   assembleStoredSystemPrompt,
   normalizeAgentCrmDestination,
-  normalizeAgentVoiceId,
   sanitizeAgentResponseSettings,
   validateAgentCrmDestination,
   validateAgentResponseSettings,
 } from "@/lib/agents";
+import {
+  AGENT_SELECT_WITH_CRM,
+  BASE_AGENT_SELECT,
+  isMissingColumnError,
+  rowToAgent,
+} from "@/lib/server/tenant-agents-db";
+import { describeAgentActivationBlock } from "@/lib/server/agent-plan-limit";
 import type { Agent } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-const BASE_AGENT_SELECT = "agent_id, display_name, system_prompt, model, active, metadata, created_at, updated_at, voice_id, response_mode";
-const AGENT_SELECT_WITH_CRM = `${BASE_AGENT_SELECT}, crm_auto_move_enabled, crm_target_funnel_id, crm_target_column_id, crm_target_status`;
-const MISSING_COLUMN_CODES = new Set(["42703", "PGRST204"]);
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function rowToAgent(row: Record<string, unknown>, tenantId: string): Agent {
-  const responseSettings = sanitizeAgentResponseSettings({
-    responseMode: row.response_mode,
-    voiceId: row.voice_id,
-  });
-  const hasCrmColumns = Object.prototype.hasOwnProperty.call(row, "crm_auto_move_enabled");
-  const meta = row.metadata && typeof row.metadata === "object" ? (row.metadata as Agent) : null;
-  const crmDestination = normalizeAgentCrmDestination(
-    hasCrmColumns
-      ? {
-          crmAutoMoveEnabled: row.crm_auto_move_enabled === true,
-          crmTargetFunnelId: typeof row.crm_target_funnel_id === "string" ? row.crm_target_funnel_id : null,
-          crmTargetColumnId: typeof row.crm_target_column_id === "string" ? row.crm_target_column_id : null,
-          crmTargetStatus: typeof row.crm_target_status === "string" ? row.crm_target_status : null,
-        }
-      : (meta ?? {}),
-  );
-
-  // If full Agent was stored in metadata, use it (with DB overrides for live fields)
-  if (meta) {
-    return {
-      ...meta,
-      id: String(row.agent_id),
-      clientId: tenantId,
-      nome: String(row.display_name ?? meta.nome),
-      status: (row.active as boolean) ? "ativo" : "pausado",
-      atualizadoEm: String(row.updated_at ?? meta.atualizadoEm),
-      voiceId:
-        responseSettings.responseMode === "audio"
-          ? responseSettings.voiceId ?? normalizeAgentVoiceId(meta.voiceId)
-          : null,
-      responseMode: responseSettings.responseMode,
-      ...crmDestination,
-    };
-  }
-
-  // Reconstruct from templates as base, override with DB fields
-  const templates = buildTemplateAgentsForTenant(tenantId);
-  const base = structuredClone(templates[0]!);
-  return {
-    ...base,
-    id: String(row.agent_id),
-    clientId: tenantId,
-    nome: String(row.display_name ?? "Agente"),
-    systemPrompt: String(row.system_prompt ?? base.systemPrompt),
-    status: (row.active as boolean) ? "ativo" : "pausado",
-    criadoEm: String(row.created_at ?? base.criadoEm),
-    atualizadoEm: String(row.updated_at ?? base.atualizadoEm),
-    voiceId: responseSettings.voiceId,
-    responseMode: responseSettings.responseMode,
-    ...crmDestination,
-  };
-}
-
-function isMissingColumnError(error: { code?: string; message?: string } | null | undefined): boolean {
-  const message = error?.message?.toLowerCase() ?? "";
-  return Boolean(error?.code && MISSING_COLUMN_CODES.has(error.code)) || message.includes("crm_auto_move_enabled");
-}
 
 async function linkAgentToWhatsAppSlot(params: {
   sb: ReturnType<typeof createSupabaseServiceClient>;
@@ -173,6 +115,16 @@ export async function POST(request: Request) {
   }
 
   const sb = createSupabaseServiceClient();
+  const activationBlock = await describeAgentActivationBlock({
+    sb,
+    session,
+    agentId: agent.id,
+    willBeActive: agent.status === "ativo",
+  });
+  if (activationBlock) {
+    return NextResponse.json({ error: activationBlock }, { status: 403 });
+  }
+
   const systemPrompt = assembleStoredSystemPrompt(agent);
   const now = new Date().toISOString();
   const responseSettings = sanitizeAgentResponseSettings(agent);

@@ -10,21 +10,16 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import { SortableContext, arrayMove, rectSortingStrategy, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Bot, Plus, Sparkles } from "lucide-react";
-import { Badge } from "@/components/ui/Badge";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
-import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
-import { PanelSelect as Select } from "@/components/panel/ui/PanelSelect";
 import { AgentCreateOverlay, AgentManageOverlay } from "./AgentCreateOverlay";
 import { SortableAgentCard } from "./SortableAgentCard";
-import { listAgentsForTenant } from "@/lib/agents";
 import type { Agent } from "@/lib/types";
 import type { ClientSession } from "@/lib/client-auth";
 import { EXTRA_AGENT_MONTHLY_BRL, getPlanIncludedAgentLimitForSession } from "@/lib/plan-limits";
 import { formatBRL } from "@/lib/utils";
-import { typography } from "@/lib/typography";
 
 // ---------------------------------------------------------------------------
 // Order persistence (localStorage — apenas ordenação visual)
@@ -570,107 +565,5 @@ export function AgentsListSection({ session }: { session: ClientSession }) {
     >
       <AgentsListSectionInner session={session} />
     </Suspense>
-  );
-}
-
-export function AgentConversationsSection({
-  session,
-  agentId,
-}: {
-  session: ClientSession;
-  agentId: string;
-}) {
-  const agents = useMemo(() => listAgentsForTenant(session.tenantId), [session.tenantId]);
-  const agent = agents.find((item) => item.id === agentId);
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("todos");
-  const rows = [
-    { contato: "Marina Costa", etapa: "Qualificação", status: "ativa", handoff: "não", data: "Hoje 11:32" },
-    { contato: "Lucas Rios", etapa: "CTA", status: "convertida", handoff: "sim", data: "Hoje 10:10" },
-    { contato: "Patrícia Alves", etapa: "Apresentação", status: "andamento", handoff: "não", data: "Ontem 18:12" },
-  ].filter((item) => {
-    const matchSearch = `${item.contato} ${item.etapa}`.toLowerCase().includes(search.toLowerCase());
-    const matchStatus = status === "todos" ? true : item.status === status;
-    return matchSearch && matchStatus;
-  });
-
-  if (!agent) {
-    return (
-      <section className="rounded-xl border border-line bg-surface-card p-6">
-        <p className="text-sm text-content-secondary">Agente não encontrado para este cliente.</p>
-      </section>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-semibold text-content">{agent.nome} - Conversas</h2>
-          <p className="text-sm text-content-muted">Conversas associadas a este agente.</p>
-        </div>
-        <Badge className="border-primary/25 bg-primary/10 text-primary">{agent.metricas.conversasHoje} conversas hoje</Badge>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <Metric label="Total conversas" value={`${agent.metricas.conversasHoje * 22}`} />
-        <Metric label="Leads convertidos" value={`${agent.metricas.leadsConvertidos}`} />
-        <Metric label="Taxa de handoff" value={`${agent.metricas.handoffRate.toFixed(1)}%`} />
-        <Metric label="Satisfação média" value={`${agent.metricas.satisfacaoMedia.toFixed(1)}`} />
-        <Metric label="Tempo médio" value={`${agent.metricas.tempoMedioMin} min`} />
-      </div>
-
-      <section className="rounded-xl border border-line bg-surface-card p-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Input placeholder="Buscar contato" value={search} onChange={(event) => setSearch(event.target.value)} />
-          <Input type="date" />
-          <Select value={status} onChange={(event) => setStatus(event.target.value)}>
-            <option value="todos">Todos os status</option>
-            <option value="ativa">Ativa</option>
-            <option value="andamento">Andamento</option>
-            <option value="convertida">Convertida</option>
-          </Select>
-          <Select>
-            <option>Todas as etapas</option>
-            {agent.fluxo.map((step) => (
-              <option key={step.id}>{step.nome}</option>
-            ))}
-          </Select>
-        </div>
-        <div className="mt-4 min-w-0 overflow-x-auto [-webkit-overflow-scrolling:touch] touch-pan-x">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className={`text-left ${typography.ui.overline}`}>
-                <th className="px-3 py-2">Contato</th>
-                <th className="px-3 py-2">Etapa</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Handoff</th>
-                <th className="px-3 py-2">Última interação</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={`${row.contato}-${row.data}`} className="border-t border-line/70 text-content-secondary">
-                  <td className="px-3 py-3">{row.contato}</td>
-                  <td className="px-3 py-3">{row.etapa}</td>
-                  <td className="px-3 py-3">{row.status}</td>
-                  <td className="px-3 py-3">{row.handoff}</td>
-                  <td className="px-3 py-3">{row.data}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-line bg-surface-card p-4">
-      <p className="text-xs text-content-faint">{label}</p>
-      <p className="mt-1 text-xl font-semibold text-content">{value}</p>
-    </div>
   );
 }
