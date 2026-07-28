@@ -63,6 +63,10 @@ export type AgentWizardDraft = {
   handoffKeywords: string[];
   handoffMensagem: string;
   handoffNumero: string;
+  /** Se falso, remove do prompt as frases prontas de tom/velocidade/idioma. */
+  useSystemToneInstructions: boolean;
+  /** Se falso, remove do prompt o guia de estilo WhatsApp de fábrica. */
+  useSystemWhatsappStyleGuide: boolean;
   foraDaVez: "ignorar" | "padrao" | "mensagem";
   foraDaVezMensagem: string;
   /** Modo de resposta: texto (padrão) ou áudio via ElevenLabs TTS. */
@@ -203,6 +207,8 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     whatsappSlotIndex,
     ctaHandoffAtivo: agent.ctaHandoffAtivo ?? false,
     agendaAutomationEnabled: agent.agendaAutomationEnabled ?? false,
+    useSystemToneInstructions: agent.useSystemToneInstructions ?? true,
+    useSystemWhatsappStyleGuide: agent.useSystemWhatsappStyleGuide ?? true,
     agendaLembretes: agent.agendaLembretes ?? { ...DEFAULT_AGENDA_LEMBRETES, regras: [...DEFAULT_AGENDA_LEMBRETES.regras] },
     agendaDisponibilidade: {
       ...DEFAULT_AGENDA_DISPONIBILIDADE,
@@ -342,6 +348,8 @@ export const defaultWizardDraft: AgentWizardDraft = {
   whatsappSlotIndex: 0,
   ctaHandoffAtivo: true,
   agendaAutomationEnabled: false,
+  useSystemToneInstructions: true,
+  useSystemWhatsappStyleGuide: true,
   agendaLembretes: { ...DEFAULT_AGENDA_LEMBRETES, regras: [...DEFAULT_AGENDA_LEMBRETES.regras] },
   agendaDisponibilidade: { ...DEFAULT_AGENDA_DISPONIBILIDADE, diasSemana: [...DEFAULT_AGENDA_DISPONIBILIDADE.diasSemana] },
   ctaFinal: "Transferir para humano",

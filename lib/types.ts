@@ -357,4 +357,8 @@ export interface Agent {
   handoffMensagem?: string;
   /** Número WhatsApp do atendente humano para notificação de handoff. */
   handoffNumero?: string;
+  /** undefined/true = injeta frases prontas de tom/velocidade/idioma no prompt; false = só o que o operador escrever. */
+  useSystemToneInstructions?: boolean;
+  /** undefined/true = injeta o guia de estilo WhatsApp de fábrica no prompt; false = só o que o operador escrever. */
+  useSystemWhatsappStyleGuide?: boolean;
 }
