@@ -21,6 +21,7 @@ describe("buildAgentSystemPrompt", () => {
         crmAutoMoveEnabled: true,
         crmTargetFunnelId: "funil-default",
         crmTargetStatus: "contato",
+        agendaAutomationEnabled: true,
       },
       runtimeContext: {
         state: null,
@@ -62,8 +63,6 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("Max Vendas");
     expect(prompt).toContain("Tom de voz: Consultivo");
     expect(prompt).toContain("Não fale de concorrentes.");
-    expect(prompt).toContain("Modo de resposta configurado: audio");
-    expect(prompt).toContain("Destino CRM automático: ativo");
     expect(prompt).toContain("Dados do lead:");
     expect(prompt).toContain("Material: FAQ");
     expect(prompt).toContain("vídeo");
@@ -201,15 +200,24 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("PLANO ESTRUTURADO DA AGENDA");
   });
 
-  it("keeps agenda read-only when agenda automation is disabled", () => {
-    const prompt = buildAgentSystemPrompt({
-      languageInstruction: "Responda em português.",
-      agent: { nome: "Max Vendas", systemPrompt: "Ajude o cliente.", agendaAutomationEnabled: false },
-    });
+  it("omits the entire AGENDA block when agenda automation is disabled", () => {
+    for (const agendaAutomationEnabled of [false, undefined]) {
+      const prompt = buildAgentSystemPrompt({
+        languageInstruction: "Responda em português.",
+        agent: { nome: "Max Vendas", systemPrompt: "Ajude o cliente.", agendaAutomationEnabled },
+      });
 
-    expect(prompt).toContain("automação de agenda está desativada");
-    expect(prompt).toContain('use agenda.action="list"');
-    expect(prompt).toMatch(/nunca autorizam acessar compromissos de outra pessoa/i);
+      // A leitura de compromissos ("quero ver meus agendamentos") é detectada
+      // direto no texto do cliente por código (clientRequestedAgendaList),
+      // não depende deste texto do prompt — pode sumir sem quebrar a função.
+      expect(prompt).not.toContain("AGENDA\n");
+      expect(prompt).not.toContain("automação de agenda está desativada");
+      expect(prompt).not.toContain('agenda.action="list"');
+      expect(prompt).not.toContain("Não invente compromissos");
+      expect(prompt).not.toContain(
+        "Ao confirmar um agendamento, sempre repita a data, horário e local na sua resposta de confirmação.",
+      );
+    }
   });
 
   it("authorizes agenda as a system capability inside scope blocks when automation is on", () => {
@@ -331,5 +339,76 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("DADOS JÁ INFORMADOS PELO LEAD NO FORMULÁRIO META");
     expect(prompt).toContain("Renda bruta: R$ 8.000");
     expect(prompt).toContain("NUNCA pergunte de novo");
+  });
+
+  it("keeps the system tone and WhatsApp style blocks when the toggles are undefined or true", () => {
+    for (const agentOverrides of [
+      {},
+      { useSystemToneInstructions: true, useSystemWhatsappStyleGuide: true },
+    ]) {
+      const prompt = buildAgentSystemPrompt({
+        languageInstruction: "Responda em português.",
+        agent: { nome: "Max Vendas", tom: "casual", systemPrompt: "Ajude o cliente.", ...agentOverrides },
+      });
+
+      expect(prompt).toContain("INSTRUÇÕES OBRIGATÓRIAS DE COMPORTAMENTO");
+      expect(prompt).toContain("ESTILO WHATSAPP (OBRIGATÓRIO)");
+    }
+  });
+
+  it("drops the system tone instructions when useSystemToneInstructions is false", () => {
+    const prompt = buildAgentSystemPrompt({
+      languageInstruction: "Responda em português.",
+      agent: {
+        nome: "Max Vendas",
+        tom: "casual",
+        systemPrompt: "Ajude o cliente.",
+        useSystemToneInstructions: false,
+      },
+    });
+
+    expect(prompt).not.toContain("INSTRUÇÕES OBRIGATÓRIAS DE COMPORTAMENTO");
+    expect(prompt).toContain("ESTILO WHATSAPP (OBRIGATÓRIO)");
+  });
+
+  it("drops the WhatsApp style guide when useSystemWhatsappStyleGuide is false", () => {
+    const prompt = buildAgentSystemPrompt({
+      languageInstruction: "Responda em português.",
+      agent: {
+        nome: "Max Vendas",
+        tom: "casual",
+        systemPrompt: "Ajude o cliente.",
+        useSystemWhatsappStyleGuide: false,
+      },
+    });
+
+    expect(prompt).toContain("INSTRUÇÕES OBRIGATÓRIAS DE COMPORTAMENTO");
+    expect(prompt).not.toContain("ESTILO WHATSAPP (OBRIGATÓRIO)");
+  });
+
+  it("never includes the removed advanced-config noise block, regardless of toggles", () => {
+    for (const agentOverrides of [
+      {},
+      { useSystemToneInstructions: false, useSystemWhatsappStyleGuide: false },
+    ]) {
+      const prompt = buildAgentSystemPrompt({
+        languageInstruction: "Responda em português.",
+        agent: {
+          nome: "Max Vendas",
+          systemPrompt: "Ajude o cliente.",
+          responseMode: "audio",
+          crmAutoMoveEnabled: true,
+          crmTargetFunnelId: "funil-default",
+          crmTargetStatus: "contato",
+          ...agentOverrides,
+        },
+      });
+
+      expect(prompt).not.toContain("CONFIGURAÇÕES AVANÇADAS DO AGENTE");
+      expect(prompt).not.toContain("Modo de resposta configurado");
+      expect(prompt).not.toContain("Destino CRM automático");
+      expect(prompt).not.toContain("Origens/ativação");
+      expect(prompt).not.toContain("Comando de pausa humana");
+    }
   });
 });

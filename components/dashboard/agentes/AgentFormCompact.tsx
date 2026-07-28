@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, CalendarClock, Handshake, Kanban, RadioTower, Sparkles, Timer, Volume2 } from "lucide-react";
+import { Bot, CalendarClock, Handshake, Kanban, RadioTower, SlidersHorizontal, Sparkles, Timer, Volume2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useCrmFunnels } from "@/components/dashboard/CrmFunnelsContext";
@@ -16,6 +16,7 @@ import { WizardStep2Treinamento } from "./WizardStep2Treinamento";
 import { WizardStep3Ativacao } from "./WizardStep3Ativacao";
 import { WizardStep4Fluxo } from "./WizardStep4Fluxo";
 import { WizardStepAgendaAutomation } from "./WizardStepAgendaAutomation";
+import { WizardStepSystemBehavior } from "./WizardStepSystemBehavior";
 import { WizardStepFollowUpInteligente } from "./WizardStepFollowUpInteligente";
 import { WizardStepWhatsappLinha } from "./WizardStepWhatsappLinha";
 import { WizardStepVoz } from "./WizardStepVoz";
@@ -281,6 +282,13 @@ export function AgentFormCompact({
                   onChange={setDraft}
                   agentId={initialAgent?.id ?? (initialAgent as { agent_id?: string } | undefined)?.agent_id}
                 />
+              </AdvancedSection>
+              <AdvancedSection
+                title="Comportamento do sistema"
+                description="Escolha quais regras de estilo o sistema injeta no prompt além das suas instruções."
+                titleIcon={<SlidersHorizontal strokeWidth={1.75} />}
+              >
+                <WizardStepSystemBehavior draft={draft} onChange={setDraft} />
               </AdvancedSection>
               <AdvancedSection
                 title="Transferência humana"

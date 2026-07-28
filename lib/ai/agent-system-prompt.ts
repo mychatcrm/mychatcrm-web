@@ -13,15 +13,6 @@ function section(title: string, body: string | null | undefined): string | null 
   return content ? `${title}\n${content}` : null;
 }
 
-function compactJson(value: unknown): string {
-  if (value == null) return "não configurado";
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return "não configurado";
-  }
-}
-
 /**
  * Corpo injectado no prompt quando há ficheiros pré-configurados para envio (WhatsApp).
  * Posicionado **antes** de CTA/HANDOFF; texto neutro e prioridade sobre copy do cliente.
@@ -225,13 +216,12 @@ export function buildAgentSystemPrompt(params: {
 - As capacidades operacionais desta plataforma descritas neste prompt (como o bloco AGENDA) fazem parte do escopo técnico autorizado e não dependem de estarem citadas nas instruções configuradas.`
         : ""
     }`,
-    "Ao confirmar um agendamento, sempre repita a data, horário e local na sua resposta de confirmação.",
     `IDENTIDADE DO AGENTE
 Nome: ${clean(agent.nome) || "Agente de atendimento"}
 Tom de voz: ${clean(agent.tom) || "profissional"}
 Velocidade simulada: ${typeof agent.delayResposta === "number" ? `${agent.delayResposta}s` : "não informada"}
 Idioma configurado: ${clean(agent.idioma) || "Automático"}`,
-    buildBehavioralInstructions(agent),
+    agent.useSystemToneInstructions !== false ? buildBehavioralInstructions(agent) : null,
     ...instructionBlocks,
     `ESCOPO SOBERANO DO AGENTE
 - A identidade, o objetivo, o prompt e as regras configuradas acima são a única fonte de verdade sobre o que este agente atende, oferece e pode afirmar.
@@ -253,6 +243,7 @@ Número para transferência: ${clean(agent.handoffNumero) || "não configurado"}
 ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o cliente quiser falar com uma pessoa real (humano, atendente, responsável, especialista, vendedor, gerente, ou qualquer cargo), responda confirmando a transferência e inclua [[HANDOFF]] no final da resposta. Nada mais." : "REGRA CRÍTICA DE TRANSFERÊNCIA DESATIVADA: Nunca inclua [[HANDOFF]]. Se o cliente pedir atendimento humano, responda brevemente que não há atendimento humano disponível no momento e continue ajudando dentro do possível."}`,
     formatSystemDateTimeContextBlock(resolveAgentTimezone(agent)),
     (() => {
+      if (!agendaAutomationOn) return null;
       const agentTz = resolveAgentTimezone(agent as Parameters<typeof resolveAgentTimezone>[0]);
       const disp = (agent as { agendaDisponibilidade?: { ativo?: boolean; diasSemana?: number[]; horaInicio?: string; horaFim?: string; permitirAgendamentosSimultaneos?: boolean } }).agendaDisponibilidade;
       const DIAS_PT = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
@@ -304,8 +295,7 @@ ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o c
           return { calendarLine: null, validLine: null };
         }
       })();
-      const automationBlock = agent.agendaAutomationEnabled === true
-        ? `- CAPACIDADE OPERACIONAL DO SISTEMA: agendar, remarcar e cancelar compromissos é uma função técnica desta plataforma autorizada para este agente. As regras de escopo deste prompt não restringem esta capacidade; quando o cliente pedir para marcar, remarcar ou cancelar um horário, siga os passos abaixo normalmente.
+      const automationBlock = `- CAPACIDADE OPERACIONAL DO SISTEMA: agendar, remarcar e cancelar compromissos é uma função técnica desta plataforma autorizada para este agente. As regras de escopo deste prompt não restringem esta capacidade; quando o cliente pedir para marcar, remarcar ou cancelar um horário, siga os passos abaixo normalmente.
 - A automação de agenda está ativa para este agente.
 - FUSO HORÁRIO: Use sempre o fuso horário ${agentTz}. Datas e horas em diretivas devem estar no horário local (não UTC).
 
@@ -329,24 +319,13 @@ PLANO ESTRUTURADO DA AGENDA
             : ""
         }${calendar.calendarLine ? `\n${calendar.calendarLine}` : ""}${dispLine ? `\n${dispLine}` : ""}${
           calendar.validLine ? `\n${calendar.validLine}` : ""
-        }${slotLine ? `\n${slotLine}` : ""}`
-        : `- A automação de agenda está desativada para alterações. Você ainda pode consultar os compromissos do próprio telefone da conversa.
-- Em pedido de consulta, use agenda.action="list". Em qualquer pedido de criar, remarcar ou cancelar, não prometa alteração; o backend bloqueará a mutação.
-- Nomes, números escritos pelo cliente e identificadores de eventos nunca autorizam acessar compromissos de outra pessoa.`;
+        }${slotLine ? `\n${slotLine}` : ""}`;
       return `AGENDA
 - Consulte o contexto de agenda do contato antes de responder. Não invente compromissos.
 - Não crie um evento apenas porque o cliente perguntou sobre um agendamento.
+- Ao confirmar um agendamento, sempre repita a data, horário e local na sua resposta de confirmação.
 ${automationBlock}`;
     })(),
-    `CONFIGURAÇÕES AVANÇADAS DO AGENTE
-Modo de resposta configurado: ${clean((agent as { responseMode?: unknown }).responseMode) || "text"}
-Origens/ativação: ${compactJson((agent as { origens?: unknown }).origens)}
-Follow-up inteligente: ${compactJson((agent as { followUpInteligente?: unknown }).followUpInteligente)}
-Destino CRM automático: ${(agent as { crmAutoMoveEnabled?: unknown }).crmAutoMoveEnabled === true ? "ativo" : "inativo"}
-Funil CRM alvo: ${clean((agent as { crmTargetFunnelId?: unknown }).crmTargetFunnelId) || "não configurado"}
-Coluna/status CRM alvo: ${clean((agent as { crmTargetStatus?: unknown }).crmTargetStatus) || clean((agent as { crmTargetColumnId?: unknown }).crmTargetColumnId) || "não configurado"}
-Comando de pausa humana: ${clean((agent as { comandoPausaConversa?: unknown }).comandoPausaConversa) || "não configurado"}
-Comando de retomada: ${clean((agent as { comandoRetomaConversa?: unknown }).comandoRetomaConversa) || "não configurado"}`,
     `REGRAS DE SEGURANÇA E CONTEXTO
 - Nunca invente dados, preços, políticas, prazos ou garantias que não estejam nas instruções, histórico, lead ou materiais.
 - Se não souber, diga que vai confirmar com a equipe.
@@ -364,7 +343,8 @@ Comando de retomada: ${clean((agent as { comandoRetomaConversa?: unknown }).coma
 - “Oi”, “ok”, “sim”, “pode ser” e outras respostas curtas devem ser interpretadas junto com a última pergunta e o histórico, não como reinício.
 - Não repita uma pergunta que o cliente já respondeu; aproveite a informação e avance um passo por vez.`
       : null,
-    `ESTILO WHATSAPP (OBRIGATÓRIO)
+    agent.useSystemWhatsappStyleGuide !== false
+      ? `ESTILO WHATSAPP (OBRIGATÓRIO)
 - Soe humano, natural e direto — como atendente real no celular, não FAQ corporativo.
 - Responda em um único bloco coeso quando o cliente mandou várias mensagens seguidas.
 - Não repita apresentação, CTA, localização ou nome do produto, serviço ou assunto se já consta no histórico recente.
@@ -375,7 +355,8 @@ Comando de retomada: ${clean((agent as { comandoRetomaConversa?: unknown }).coma
 - Não use emoji em todas as mensagens. No máximo um, ocasionalmente, quando combinar com o tom configurado.
 - Faça no máximo uma pergunta por vez, salvo se o cliente pedir uma lista.
 - Datas visíveis ao cliente devem ser humanas: 17/07/2026 ou 17 de julho. Nunca mostre AAAA-MM-DD.
-- Horários visíveis devem ser naturais: 14h ou 14h30, não 14:00 de forma mecânica.`,
+- Horários visíveis devem ser naturais: 14h ou 14h30, não 14:00 de forma mecânica.`
+      : null,
     params.burstContext?.dominantIntent
       ? `BURST ATUAL DO CLIENTE
 Intenção dominante: ${params.burstContext.dominantIntent}
