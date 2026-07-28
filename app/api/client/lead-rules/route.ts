@@ -13,6 +13,10 @@ import {
 } from "@/lib/server/lead-rules-meta-sync";
 import { stringArray } from "@/lib/server/meta-form-authorization";
 import { validateMetaAutomationConnection } from "@/lib/server/lead-rules-connection-validation";
+import {
+  classifyRuleAgentIssues,
+  loadTenantAgentActivation,
+} from "@/lib/server/lead-rule-agent-health";
 
 export const dynamic = "force-dynamic";
 
@@ -96,7 +100,17 @@ export async function GET(): Promise<NextResponse> {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ rules: (data ?? []).map(leadRuleRowToClient) });
+  // Regra apontando para agente apagado ou pausado não atende ninguém, e o
+  // bloqueio acontece só na hora do lead. O painel precisa avisar antes.
+  const activation = await loadTenantAgentActivation(sb, session.tenantId);
+  const rules = (data ?? []).map((row) => {
+    const rule = leadRuleRowToClient(row);
+    if (!activation) return rule;
+    const agentIssues = classifyRuleAgentIssues(rule.agentIds, activation);
+    return agentIssues.length ? { ...rule, agentIssues } : rule;
+  });
+
+  return NextResponse.json({ rules });
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
