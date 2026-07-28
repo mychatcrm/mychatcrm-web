@@ -1976,6 +1976,47 @@ describe("resolveAgendaTurn", () => {
       );
     });
 
+    it("incidente real 27/07: cliente pergunta 'do que seria?' (nenhuma intencao de agenda) - convite natural do modelo passa direto, sem cobrar data/hora", async () => {
+      // Log real da IA: cliente so perguntou do que se tratava o cadastro -
+      // nenhum sinal de agendamento. O modelo respondeu explicando e ofereceu
+      // "Posso ja deixar uma conversa presencial... agendada." (convite, sem
+      // "?", sem data/hora concretas na prosa visivel) - mas o campo oculto
+      // veio com uma data alucinada de 2023. O guard antigo so reconhecia
+      // convite quando o modelo fazia uma PERGUNTA ("Fica bom pra voce?");
+      // um convite em forma de afirmacao caia no texto engessado pedindo
+      // "data e horario certinhos" para um cliente que nunca tentou agendar
+      // nada - o agente parecia burlado, cobrando algo que ninguem pediu.
+      const { sb, rpc, pendingRows } = makeStructuredSb();
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText:
+          "Perfeito! Seu cadastro foi sobre uma oportunidade para atuar no mercado imobiliário com a My Broker Office. Posso já deixar uma conversa presencial com um dos nossos gestores agendada.",
+        clientText: "Sim\nDo que seria?",
+        agendaAutomationEnabled: true,
+        agendaPlan: {
+          action: "propose_create",
+          date: "01/11/2023",
+          time: "14:00",
+          location: "My Broker Office",
+          eventId: null,
+        },
+        jobId: "33333333-3333-4333-8333-333333333333",
+        claimedGeneration: 1,
+        conversationSequence: 2,
+      });
+      expect(result.action).toBe("none");
+      expect(result.text).toBe(
+        "Perfeito! Seu cadastro foi sobre uma oportunidade para atuar no mercado imobiliário com a My Broker Office. Posso já deixar uma conversa presencial com um dos nossos gestores agendada.",
+      );
+      expect(result.text).not.toBe(AGENDA_DATETIME_NEEDED_REPLY);
+      expect(pendingRows).toHaveLength(0);
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
     it("incidente real 19/07: 'ta ficando doido?' + plano 2023 → mesmo tratamento, nunca 'já passou'", async () => {
       const { sb, rpc, pendingRows } = makeStructuredSb();
       const result = await resolveAgendaTurn({
