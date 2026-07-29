@@ -1247,6 +1247,14 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
               ))}
 
               <div className="flex flex-wrap gap-2 pt-1">
+                <a
+                  href="/api/meta/connect"
+                  className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-line bg-surface-elevated px-4 py-2 text-sm font-semibold text-content transition-colors hover:border-primary/40"
+                  title="Reabre a seleção de páginas do Facebook — use pra adicionar/remover páginas ou gerar um token novo, sem desconectar."
+                >
+                  <ExternalLink className="size-4" aria-hidden />
+                  Reconectar / Editar páginas
+                </a>
                 <Button
                   type="button"
                   variant="outline"
