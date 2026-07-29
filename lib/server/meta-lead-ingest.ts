@@ -62,6 +62,8 @@ import {
 type MetaConnectionRow = {
   tenant_id: string;
   page_access_token: string | null;
+  /** Necessário pra ler campanha/conjunto/anúncio — page_access_token não basta (ver resolveMetaLeadAdAttribution). */
+  user_access_token?: string | null;
   page_name?: string | null;
 };
 
@@ -127,7 +129,7 @@ async function loadMetaConnectionsForPage(params: {
 }): Promise<MetaConnectionRow[]> {
   const { data, error } = await params.sb
     .from("meta_connections")
-    .select("tenant_id, page_access_token, page_name")
+    .select("tenant_id, page_access_token, user_access_token, page_name")
     .eq("page_id", params.pageId);
 
   if (error) {
@@ -404,9 +406,10 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     return;
   }
 
-  const { tenant_id, page_access_token, page_name: connPageName } = conn as {
+  const { tenant_id, page_access_token, user_access_token, page_name: connPageName } = conn as {
     tenant_id: string;
     page_access_token: string;
+    user_access_token?: string | null;
     page_name?: string | null;
   };
 
@@ -543,6 +546,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
 
   const attribution = await resolveMetaLeadAdAttribution({
     pageAccessToken: page_access_token,
+    userAccessToken: user_access_token,
     graphLead: lead,
     webhook: value as Record<string, unknown>,
     webhookAdId: ad_id ?? null,
