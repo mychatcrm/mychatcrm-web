@@ -523,6 +523,12 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
                     <dd className="truncate">{ev.campaign_name}</dd>
                   </div>
                 ) : null}
+                {ev.adset_name ? (
+                  <div>
+                    <dt className="text-content-muted">Conjunto de anúncios</dt>
+                    <dd className="truncate">{ev.adset_name}</dd>
+                  </div>
+                ) : null}
                 {ev.ad_name ? (
                   <div>
                     <dt className="text-content-muted">Anúncio</dt>
