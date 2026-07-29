@@ -1,4 +1,14 @@
-export type MetaLeadEventBucket = "erro" | "ok" | "novo";
+export type MetaLeadEventBucket = "erro" | "ok" | "novo" | "sem_regra";
+
+/**
+ * Formulário/página sem nenhuma regra ativa que autorize. Não é erro — é
+ * comum ter campanha/formulário que o operador não quer automatizar de
+ * propósito. Fica separado de "erro" pra não sujar a aba que sinaliza
+ * problema real de configuração.
+ */
+export const META_LEAD_EVENT_NO_RULE_STEPS = new Set<string>([
+  "blocked_form_not_registered_in_lead_rules",
+]);
 
 /** current_step é sempre a última etapa (MetaLeadEventRecorder.step sobrescreve a cada chamada). */
 export const META_LEAD_EVENT_ERROR_STEPS = new Set<string>([
@@ -12,7 +22,6 @@ export const META_LEAD_EVENT_ERROR_STEPS = new Set<string>([
   "whatsapp_failed",
   "skipped_initial_outreach",
   "blocked_unauthorized_form",
-  "blocked_form_not_registered_in_lead_rules",
   "blocked_ambiguous_meta_page_form_tenant",
   "blocked_missing_meta_connection_for_resolved_tenant",
   "blocked_lead_quota_exhausted",
@@ -33,6 +42,7 @@ export const META_LEAD_EVENT_OK_STEPS = new Set<string>([
 ]);
 
 export function bucketMetaLeadEventStep(step: string): MetaLeadEventBucket {
+  if (META_LEAD_EVENT_NO_RULE_STEPS.has(step)) return "sem_regra";
   if (META_LEAD_EVENT_ERROR_STEPS.has(step)) return "erro";
   if (META_LEAD_EVENT_OK_STEPS.has(step)) return "ok";
   return "novo";
