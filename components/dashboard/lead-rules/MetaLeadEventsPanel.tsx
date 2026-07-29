@@ -21,6 +21,7 @@ const FILTER_OPTIONS: { id: FilterId; label: string }[] = [
   { id: "all", label: "Todos" },
   { id: "novo", label: "Novo" },
   { id: "ok", label: "OK" },
+  { id: "sem_regra", label: "Sem regra" },
   { id: "erro", label: "Erro" },
 ];
 
@@ -207,7 +208,7 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
   const [filter, setFilter] = useState<FilterId>("all");
 
   const counts = useMemo(() => {
-    const result: Record<FilterId, number> = { all: events.length, novo: 0, ok: 0, erro: 0 };
+    const result: Record<FilterId, number> = { all: events.length, novo: 0, ok: 0, sem_regra: 0, erro: 0 };
     for (const ev of events) result[bucketMetaLeadEventStep(ev.current_step)] += 1;
     return result;
   }, [events]);
@@ -445,11 +446,12 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
           const hint = errorMessageHint(ev.error_message);
           const lastSteps = Array.isArray(ev.steps_log) ? ev.steps_log.slice(-4) : [];
           const eventBucket = bucketMetaLeadEventStep(ev.current_step);
-          // Direcionamento manual fica disponível em Erro (nunca foi atendido) e em
-          // OK (o sistema marcou como atendido, mas o cliente quer trocar o
-          // atendente/agente porque pode não ter sido de verdade) — não aparece em
-          // "novo" pra não interferir com o pipeline automático ainda em curso.
-          const canManuallyAssign = eventBucket === "erro" || eventBucket === "ok";
+          // Direcionamento manual fica disponível em Erro e Sem regra (nunca foram
+          // atendidos automaticamente) e em OK (o sistema marcou como atendido, mas
+          // o cliente quer trocar o atendente/agente porque pode não ter sido de
+          // verdade) — não aparece em "novo" pra não interferir com o pipeline
+          // automático ainda em curso.
+          const canManuallyAssign = eventBucket === "erro" || eventBucket === "ok" || eventBucket === "sem_regra";
           return (
             <li
               key={ev.id}
