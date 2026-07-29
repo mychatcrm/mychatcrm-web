@@ -12,6 +12,11 @@ const SCOPES = [
   "pages_manage_metadata",
   "pages_manage_ads",
   "business_management",
+  // Sem isso, o token de página nunca conseguiu ler campanha/conjunto/anúncio
+  // via Graph API (/{ad_id}?fields=name,campaign{...},adset{...}) — falhava
+  // silenciosamente em todo lead, sempre, desde o início. pages_manage_ads só
+  // cobre gerenciar anúncios pela página, não ler objetos de conta de anúncio.
+  "ads_read",
 ].join(",");
 
 /** Redirects the authenticated tenant to Facebook OAuth consent screen. */
