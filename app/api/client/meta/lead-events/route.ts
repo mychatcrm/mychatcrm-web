@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import type { MetaLeadEventRow } from "@/lib/server/meta-lead-events-db";
+import { enrichMissingMetaLeadEventNames } from "@/lib/server/meta-lead-events-enrichment";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const { data, error } = await sb
     .from("meta_lead_events")
     .select(
-      "id, tenant_id, leadgen_id, page_id, form_id, ad_id, lead_id, name, phone, email, form_name, page_name, campaign_name, adset_name, ad_name, agent_id, agent_resolution_source, crm_sync_status, whatsapp_status, current_step, steps_log, form_fields, profile_metadata, error_message, created_at, updated_at",
+      "id, tenant_id, leadgen_id, page_id, form_id, ad_id, adset_id, lead_id, name, phone, email, form_name, page_name, campaign_id, campaign_name, adset_name, ad_name, agent_id, agent_resolution_source, crm_sync_status, whatsapp_status, current_step, steps_log, form_fields, profile_metadata, error_message, created_at, updated_at",
     )
     .eq("tenant_id", session.tenantId)
     .order("created_at", { ascending: false })
@@ -36,8 +37,13 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const events = (data ?? []) as MetaLeadEventRow[];
+  // Lead bloqueado (ex.: "Sem regra") nunca passa pela resolução de nomes no
+  // webhook — resolve sob demanda aqui e persiste, sem mexer no pipeline.
+  await enrichMissingMetaLeadEventNames(sb, session.tenantId, events);
+
   return NextResponse.json({
-    events: (data ?? []) as MetaLeadEventRow[],
+    events,
     tableReady: true,
   });
 }
