@@ -297,15 +297,24 @@ export type ResolvedMetaLeadAdAttribution = MetaAdContext & {
 /**
  * Resolve campanha/conjunto/anúncio: leadgen Graph (ad_id) → webhook → expand ad node.
  * Preenche nomes via ad{campaign,adset} ou fetch pontual por ID quando só houver ID.
+ *
+ * A leitura de objetos de conta de anúncio (ad/campaign/adset) exige o token de
+ * USUÁRIO, não o de página — confirmado testando o mesmo ad_id nos dois: o
+ * token de página sempre volta "does not exist / missing permissions" (mesmo
+ * com ads_read concedido), o de usuário lê normalmente. `pageAccessToken`
+ * continua sendo o fallback (mantém compatibilidade com chamadores antigos e
+ * com conexões sem user_access_token salvo).
  */
 export async function resolveMetaLeadAdAttribution(params: {
   pageAccessToken: string;
+  userAccessToken?: string | null;
   graphLead?: GraphLeadResponse | null;
   webhook?: Record<string, unknown>;
   webhookAdId?: string | null;
   webhookAdsetId?: string | null;
   webhookFormId?: string | null;
 }): Promise<ResolvedMetaLeadAdAttribution> {
+  const adAccessToken = params.userAccessToken?.trim() || params.pageAccessToken;
   const fromWebhook = extractLeadgenAttributionFromWebhook(params.webhook);
   const adId =
     graphIdField(params.graphLead?.ad_id) ??
@@ -323,7 +332,7 @@ export async function resolveMetaLeadAdAttribution(params: {
 
   let ctx: MetaAdContext = emptyAdContext();
   if (adId) {
-    ctx = await fetchGraphAdContext(adId, params.pageAccessToken);
+    ctx = await fetchGraphAdContext(adId, adAccessToken);
   }
 
   const resolvedAdsetId = ctx.adsetId ?? adsetId;
@@ -333,10 +342,10 @@ export async function resolveMetaLeadAdAttribution(params: {
   const adName = ctx.adName;
 
   if (resolvedAdsetId && !adsetName) {
-    adsetName = await fetchGraphObjectField(resolvedAdsetId, "name", params.pageAccessToken);
+    adsetName = await fetchGraphObjectField(resolvedAdsetId, "name", adAccessToken);
   }
   if (resolvedCampaignId && !campaignName) {
-    campaignName = await fetchGraphObjectField(resolvedCampaignId, "name", params.pageAccessToken);
+    campaignName = await fetchGraphObjectField(resolvedCampaignId, "name", adAccessToken);
   }
 
   return {

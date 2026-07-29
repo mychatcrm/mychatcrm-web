@@ -80,6 +80,58 @@ describe("resolveMetaLeadAdAttribution", () => {
     expect(resolved.adsetId).toBe("adset-77");
     expect(resolved.adsetName).toBe("Conjunto Norte");
   });
+
+  it("usa o token de usuário (não o de página) pra ler campanha/conjunto/anúncio", async () => {
+    // A Meta exige token de usuário pra objetos de conta de anúncio — o de
+    // página sempre volta "does not exist / missing permissions" mesmo com
+    // ads_read concedido (confirmado testando o mesmo ad_id nos dois tokens
+    // contra a API real). Regressão: garante que a URL chamada usa
+    // userAccessToken, nunca pageAccessToken, quando ambos estão presentes.
+    const calledUrls: string[] = [];
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      calledUrls.push(url);
+      if (url.includes("/ad-1")) {
+        return new Response(
+          JSON.stringify({
+            name: "Anúncio X",
+            campaign: { id: "camp-1", name: "Campanha X" },
+            adset: { id: "adset-1", name: "Conjunto X" },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    });
+
+    const resolved = await resolveMetaLeadAdAttribution({
+      pageAccessToken: "page-token-sem-ads-read",
+      userAccessToken: "user-token-com-ads-read",
+      graphLead: { id: "lg-1", ad_id: "ad-1", form_id: "form-1" },
+    });
+
+    expect(resolved.campaignName).toBe("Campanha X");
+    expect(calledUrls.some((u) => u.includes("user-token-com-ads-read"))).toBe(true);
+    expect(calledUrls.some((u) => u.includes("page-token-sem-ads-read"))).toBe(false);
+  });
+
+  it("cai pro token de página quando não há token de usuário salvo (compatibilidade)", async () => {
+    const calledUrls: string[] = [];
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      calledUrls.push(url);
+      return new Response(JSON.stringify({ name: "Anúncio Y" }), { status: 200 });
+    });
+
+    await resolveMetaLeadAdAttribution({
+      pageAccessToken: "page-token-only",
+      graphLead: { id: "lg-2", ad_id: "ad-2", form_id: "form-2" },
+    });
+
+    expect(calledUrls.some((u) => u.includes("page-token-only"))).toBe(true);
+  });
 });
 
 describe("buildLeadProfileMetadata campaign fields", () => {
