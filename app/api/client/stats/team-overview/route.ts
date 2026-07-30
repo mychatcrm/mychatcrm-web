@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { resolveAccessScope } from "@/lib/server/access-scope";
 import type { TeamMemberStats } from "@/lib/dashboard-data";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +19,37 @@ function pad2(n: number) {
 }
 function formatDateISO(d: Date): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+type MemberRow = { id: string; nome: string; funcao: string; hierarchy_role: string };
+
+/**
+ * Colaboradores que o autor da consulta pode ver no relatório:
+ * titular vê todos; diretor/gerente veem quem está nas equipes deles;
+ * vendedor vê apenas a si mesmo.
+ */
+async function restrictMembersToScope(
+  sb: ReturnType<typeof createSupabaseServiceClient>,
+  session: NonNullable<Awaited<ReturnType<typeof getClientSessionFromCookies>>>,
+  members: MemberRow[],
+): Promise<MemberRow[]> {
+  const scope = await resolveAccessScope(sb, session);
+  if (scope.kind === "all") return members;
+  if (scope.kind === "own") return members.filter((m) => m.id === scope.employeeId);
+  if (scope.teamIds.length === 0) return [];
+
+  const { data, error } = await sb
+    .from("team_members")
+    .select("employee_id")
+    .eq("tenant_id", session.tenantId)
+    .in("team_id", scope.teamIds);
+
+  if (error) {
+    console.error("[team-overview] team scope query failed", error.message);
+    return [];
+  }
+  const allowed = new Set((data ?? []).map((row) => String((row as { employee_id: string }).employee_id)));
+  return members.filter((m) => allowed.has(m.id));
 }
 
 export async function GET(req: Request) {
@@ -42,7 +74,7 @@ export async function GET(req: Request) {
   try {
     const sb = createSupabaseServiceClient();
 
-    const { data: members, error: membersError } = await sb
+    const { data: allMembers, error: membersError } = await sb
       .from("tenant_members")
       .select("id, nome, funcao, hierarchy_role")
       .eq("tenant_id", session.tenantId)
@@ -50,9 +82,15 @@ export async function GET(req: Request) {
       .order("nome", { ascending: true });
 
     if (membersError) throw membersError;
-    if (!members || members.length === 0) {
+    if (!allMembers || allMembers.length === 0) {
       return NextResponse.json([]);
     }
+
+    // Antes desta linha, qualquer gerente via o desempenho da empresa inteira,
+    // inclusive de equipes que não são dele. O recorte usa as mesmas equipes
+    // que definem a visibilidade de leads.
+    const members = await restrictMembersToScope(sb, session, allMembers);
+    if (members.length === 0) return NextResponse.json([]);
 
     const memberIds = members.map((m) => m.id as string);
 
