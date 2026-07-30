@@ -77,12 +77,16 @@ describe("CRM visible leads", () => {
     expect(preferredDefaultCrmFunnelId(DEFAULT_CRM_FUNNELS)).toBe("funil-default");
   });
 
-  it("does not hide unassigned WhatsApp leads for hierarchy-scoped CRM sessions", () => {
+  // A exceção que deixava lead automático sem dono visível a todos foi removida:
+  // como a ingestão nunca preenchia ownerEmployeeId, ela tornava todo lead de
+  // WhatsApp/Meta visível para qualquer vendedor. Agora a origem do lead não
+  // influencia a visibilidade — só o dono (e, no servidor, a equipe).
+  it("hides unassigned WhatsApp leads from hierarchy-scoped CRM sessions", () => {
     const visible = filterLeadsForSession(directorSession, [], [lead({ ownerEmployeeId: undefined })]);
-    expect(visible).toHaveLength(1);
+    expect(visible).toHaveLength(0);
   });
 
-  it("does not hide unassigned Meta Lead Ads leads for hierarchy-scoped CRM sessions", () => {
+  it("hides unassigned Meta Lead Ads leads from hierarchy-scoped CRM sessions", () => {
     const visible = filterLeadsForSession(directorSession, [], [
       lead({
         id: "d5995060-8fac-4bcc-87e5-0c5d9f3d9e51",
@@ -93,10 +97,10 @@ describe("CRM visible leads", () => {
         ownerEmployeeId: undefined,
       }),
     ]);
-    expect(visible).toHaveLength(1);
+    expect(visible).toHaveLength(0);
   });
 
-  it("still hides manual unassigned leads for hierarchy-scoped CRM sessions", () => {
+  it("hides manual unassigned leads from hierarchy-scoped CRM sessions", () => {
     const visible = filterLeadsForSession(directorSession, [], [
       lead({
         origem: "Entrada manual",
@@ -106,5 +110,13 @@ describe("CRM visible leads", () => {
       }),
     ]);
     expect(visible).toHaveLength(0);
+  });
+
+  it("keeps leads owned by the scoped employee, regardless of origin", () => {
+    const visible = filterLeadsForSession(directorSession, [], [
+      lead({ ownerEmployeeId: "emp-director" }),
+      lead({ id: "lead-2", ownerEmployeeId: "emp-outro" }),
+    ]);
+    expect(visible.map((l) => l.ownerEmployeeId)).toEqual(["emp-director"]);
   });
 });

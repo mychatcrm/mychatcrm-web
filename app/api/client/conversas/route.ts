@@ -8,6 +8,7 @@ import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { isConversationVisibleInInbox } from "@/lib/server/conversation-visibility";
 import { deriveConversationMode } from "@/lib/server/conversation-operation";
+import { resolveAccessScope, visibleLeadIds } from "@/lib/server/access-scope";
 
 export const dynamic = "force-dynamic";
 
@@ -104,6 +105,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Erro ao carregar conversas." }, { status: 503 });
   }
 
+  // Uma empresa pode usar o mesmo número para tudo, então a conversa só é
+  // visível para quem alcança o lead por trás dela. Conversa sem lead
+  // identificado fica restrita ao titular (mesma regra do legado sem equipe).
+  const scope = await resolveAccessScope(sb, session);
+  const allowedLeadIds = await visibleLeadIds(sb, session.tenantId, scope);
+
   const [{ data: states }, { data: leads }] = await Promise.all([
     sb
       .from("conversation_states")
@@ -160,6 +167,16 @@ export async function GET(request: Request) {
 
   const conversations = lastMessages
     .filter((row) => row.remote_jid && !hiddenJids.has(row.remote_jid))
+    .filter((row) => {
+      if (allowedLeadIds === null) return true; // titular: sem recorte
+      const stateRow = stateByJid.get(row.remote_jid);
+      let leadId = typeof stateRow?.lead_id === "string" ? stateRow.lead_id : null;
+      if (!leadId) {
+        const phone = phoneFromRemoteJid(row.remote_jid);
+        if (phone) leadId = phoneToLead.get(phone)?.id ?? null;
+      }
+      return Boolean(leadId && allowedLeadIds.has(leadId));
+    })
     .map((row) => {
       const stateRow = stateByJid.get(row.remote_jid);
       const conversation_mode = deriveConversationMode({
