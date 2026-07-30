@@ -81,6 +81,7 @@ function resolutionSourceLabel(source: string | null): string {
   const map: Record<string, string> = {
     rule: "regra ativa",
     mapping_current: "mapeamento sincronizado",
+    manual: "direcionado manualmente",
     unauthorized_form: "não autorizado",
     no_matching_rule: "sem regra",
     invalid_agent: "agente inválido",
@@ -90,6 +91,43 @@ function resolutionSourceLabel(source: string | null): string {
     tenant_active: "agente ativo tenant (legado)",
   };
   return source ? (map[source] ?? source) : "";
+}
+
+/** ID do funcionário do último passo manual_assigned_to_human, se houver. */
+function lastAssignedEmployeeId(steps: MetaLeadEventRow["steps_log"]): string | null {
+  if (!Array.isArray(steps)) return null;
+  for (let i = steps.length - 1; i >= 0; i -= 1) {
+    const s = steps[i];
+    if (s && typeof s === "object" && "step" in s && (s as { step: string }).step === "manual_assigned_to_human") {
+      const detail = (s as { detail?: Record<string, unknown> }).detail;
+      const id = detail?.employee_id;
+      return typeof id === "string" && id.trim() ? id.trim() : null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Uma única frase pra "pra quem foi direcionado" e "quem atende agora" — no
+ * modelo de dados atual são o mesmo valor (reatribuir sobrescreve agent_id),
+ * então não faz sentido fingir que são duas informações diferentes.
+ */
+function assignmentSummary(
+  ev: MetaLeadEventRow,
+  agentNamesById: Map<string, string>,
+): { label: string; caption: string | null } {
+  if (ev.agent_id) {
+    const name = agentNamesById.get(ev.agent_id) ?? ev.agent_id;
+    const source = resolutionSourceLabel(ev.agent_resolution_source);
+    return { label: `Agente ${name}`, caption: source || null };
+  }
+  const employeeId = lastAssignedEmployeeId(ev.steps_log);
+  if (employeeId) {
+    return { label: "Atendente humano", caption: `ID ${employeeId} — ver detalhes no CRM` };
+  }
+  const bucket = bucketMetaLeadEventStep(ev.current_step);
+  if (bucket === "novo") return { label: "Aguardando atendimento automático", caption: null };
+  return { label: "Sem atendimento definido", caption: null };
 }
 
 function crmBadge(status: string, errorMessage: string | null) {
@@ -217,6 +255,19 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
     () => (filter === "all" ? events : events.filter((ev) => bucketMetaLeadEventStep(ev.current_step) === filter)),
     [events, filter],
   );
+
+  // Nome real do agente pra exibir em "Atendimento" — sem isso o card só
+  // mostrava o agent_id cru (ex.: "ag-novo-1784296691624").
+  const [agentNamesById, setAgentNamesById] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    fetch("/api/client/lead-rules/agents", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json: { agents?: AgentOption[] } | null) => {
+        if (!json?.agents) return;
+        setAgentNamesById(new Map(json.agents.map((a) => [a.id, a.nome])));
+      })
+      .catch(() => {});
+  }, []);
 
   // ── Direcionamento manual (só disponível pra leads no balde "erro") ──────
   const [assignEventId, setAssignEventId] = useState<string | null>(null);
@@ -452,6 +503,13 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
           // verdade) — não aparece em "novo" pra não interferir com o pipeline
           // automático ainda em curso.
           const canManuallyAssign = eventBucket === "erro" || eventBucket === "ok" || eventBucket === "sem_regra";
+          const assignment = assignmentSummary(ev, agentNamesById);
+          const attributionRows: { label: string; value: string }[] = [
+            ...(ev.campaign_name ? [{ label: "Campanha", value: ev.campaign_name }] : []),
+            ...(ev.adset_name ? [{ label: "Conjunto de anúncios", value: ev.adset_name }] : []),
+            ...(ev.ad_name ? [{ label: "Anúncio", value: ev.ad_name }] : []),
+            { label: "Formulário", value: ev.form_name || ev.form_id || "—" },
+          ];
           return (
             <li
               key={ev.id}
@@ -460,12 +518,14 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
                 isLight ? "border-slate-200/70 bg-white/60" : "border-line/70 bg-surface-deep/40",
               )}
             >
+              {/* Nome + telefone em destaque, data do cadastro logo abaixo */}
               <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-semibold text-content">{ev.name || "Lead sem nome"}</p>
-                  <p className="mt-0.5 break-all text-xs text-content-muted sm:break-normal">
+                  <p className="truncate text-base font-bold leading-tight text-content">{ev.name || "Lead sem nome"}</p>
+                  <p className="mt-0.5 break-all text-sm text-content-secondary sm:break-normal">
                     {ev.phone || "—"} {ev.email ? `· ${ev.email}` : ""}
                   </p>
+                  <p className="mt-1 text-[11px] text-content-muted">Cadastrado em {formatWhen(ev.created_at)}</p>
                 </div>
                 <div className="flex w-full flex-wrap items-center gap-1.5 sm:w-auto sm:justify-end">
                   <Badge className={cn("text-[10px]", crm.className)} title={ev.lead_id ? `Lead CRM: ${ev.lead_id}` : undefined}>
@@ -504,70 +564,50 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
                 </div>
               </div>
 
-              <dl className="mt-3 grid gap-1 text-xs text-content-secondary sm:grid-cols-2">
-                <div>
-                  <dt className="text-content-muted">Formulário</dt>
-                  <dd className="truncate font-medium text-content">{ev.form_name || ev.form_id || "—"}</dd>
-                  {ev.form_name && ev.form_id ? (
-                    <dd className="truncate font-mono text-[10px] text-content-muted">ID {ev.form_id}</dd>
-                  ) : null}
-                </div>
-                <div>
-                  <dt className="text-content-muted">Página</dt>
-                  <dd className="truncate font-medium text-content">{ev.page_name || ev.page_id}</dd>
-                  {ev.page_name ? (
-                    <dd className="truncate font-mono text-[10px] text-content-muted">ID {ev.page_id}</dd>
-                  ) : null}
-                </div>
-                {ev.campaign_name ? (
-                  <div>
-                    <dt className="text-content-muted">Campanha</dt>
-                    <dd className="truncate">{ev.campaign_name}</dd>
+              {/* Origem: campanha → conjunto de anúncios → anúncio → formulário */}
+              <dl className="mt-3 grid gap-1.5 border-t border-line/40 pt-3 text-xs text-content-secondary sm:grid-cols-2">
+                {attributionRows.map((row) => (
+                  <div key={row.label}>
+                    <dt className="text-content-muted">{row.label}</dt>
+                    <dd className="truncate font-medium text-content">{row.value}</dd>
                   </div>
-                ) : null}
-                {ev.adset_name ? (
-                  <div>
-                    <dt className="text-content-muted">Conjunto de anúncios</dt>
-                    <dd className="truncate">{ev.adset_name}</dd>
-                  </div>
-                ) : null}
-                {ev.ad_name ? (
-                  <div>
-                    <dt className="text-content-muted">Anúncio</dt>
-                    <dd className="truncate">{ev.ad_name}</dd>
-                  </div>
-                ) : null}
+                ))}
+              </dl>
+
+              {/* Direcionamento / atendimento atual */}
+              <div
+                className={cn(
+                  "mt-3 rounded-lg border p-2.5",
+                  isLight ? "border-slate-200 bg-slate-50/70" : "border-line/50 bg-surface-elevated/25",
+                )}
+              >
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-content-muted">
+                  Direcionado para / em atendimento
+                </p>
+                <p className="mt-1 truncate text-xs font-medium text-content">
+                  {assignment.label}
+                  {assignment.caption ? <span className="font-normal text-content-muted"> — {assignment.caption}</span> : null}
+                </p>
+              </div>
+
+              {/* Metadados secundários: página, IDs técnicos, atalho pro CRM */}
+              <dl className="mt-2 grid gap-1 text-[11px] text-content-muted sm:grid-cols-2">
                 <div>
-                  <dt className="text-content-muted">Recebido</dt>
-                  <dd>{formatWhen(ev.created_at)}</dd>
+                  <dt className="text-content-faint">Página</dt>
+                  <dd className="truncate">{ev.page_name || ev.page_id}</dd>
                 </div>
                 <div>
-                  <dt className="text-content-muted">Agente</dt>
-                  <dd className="truncate">
-                    {ev.agent_id || "—"}
-                    {ev.agent_resolution_source ? (
-                      <span className="text-content-muted">
-                        {" "}
-                        ({resolutionSourceLabel(ev.agent_resolution_source)})
-                      </span>
-                    ) : null}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-content-muted">Leadgen ID</dt>
-                  <dd className="truncate font-mono text-[10px]">{ev.leadgen_id}</dd>
+                  <dt className="text-content-faint">Leadgen ID</dt>
+                  <dd className="truncate font-mono">{ev.leadgen_id}</dd>
                 </div>
                 {ev.lead_id ? (
                   <div className="sm:col-span-2">
-                    <dt className="text-content-muted">CRM</dt>
-                    <dd>
-                      <Link
-                        href={`/dashboard/crm?lead=${ev.lead_id}`}
-                        className="text-xs font-medium text-primary underline-offset-2 hover:underline"
-                      >
-                        Abrir lead no CRM ({ev.phone || "sem telefone"})
-                      </Link>
-                    </dd>
+                    <Link
+                      href={`/dashboard/crm?lead=${ev.lead_id}`}
+                      className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+                    >
+                      Abrir lead no CRM ({ev.phone || "sem telefone"})
+                    </Link>
                   </div>
                 ) : null}
               </dl>
