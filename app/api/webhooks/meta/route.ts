@@ -1,7 +1,14 @@
+import { waitUntil } from "@vercel/functions";
 import { NextRequest, NextResponse } from "next/server";
 import { verifyMetaSignature256 } from "@/lib/integrations/whatsapp-cloud";
 import { resolveMetaAppSecret } from "@/lib/server/meta-app-secret";
-import { processMetaLeadgenEvent, type LeadgenValue } from "@/lib/server/meta-lead-ingest";
+import type { LeadgenValue } from "@/lib/server/meta-lead-ingest";
+import {
+  buildMetaLeadgenInboxEvent,
+  enqueueMetaLeadgenEvents,
+  processMetaLeadgenInbox,
+  type MetaLeadgenInboxEvent,
+} from "@/lib/server/meta-leadgen-inbox";
 import { handleWhatsAppCloudWebhookPayload } from "@/lib/server/whatsapp-cloud-webhook-handler";
 
 export const dynamic = "force-dynamic";
@@ -47,7 +54,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return new NextResponse(challenge, { status: 200 });
   }
 
-  console.warn("[meta-webhook] Verification failed", { mode, token });
+  console.warn("[meta-webhook] Verification failed", {
+    mode,
+    tokenPresent: Boolean(token),
+  });
   return new NextResponse("Forbidden", { status: 403 });
 }
 
@@ -62,7 +72,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const rawBody = await req.text();
 
-  const signatureBypass = process.env.WEBHOOK_SIGNATURE_BYPASS === "true";
+  const signatureBypass =
+    process.env.NODE_ENV !== "production" &&
+    process.env.WEBHOOK_SIGNATURE_BYPASS === "true";
   const appSecret = resolveMetaAppSecret();
   if (signatureBypass) {
     console.warn("[meta-webhook] WEBHOOK_SIGNATURE_BYPASS=true — skipping signature check (REMOVE FOR PRODUCTION)");
@@ -75,10 +87,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         appSecretConfigured: true,
         hint: "Confira META_APP_SECRET na Vercel = App Secret do app Meta (developers.facebook.com)",
       });
-      return NextResponse.json({ ok: false, reason: "invalid_signature" }, { status: 200 });
+      return NextResponse.json({ ok: false, reason: "invalid_signature" }, { status: 401 });
     }
   } else {
-    console.warn("[meta-webhook] META_APP_SECRET not set — skipping signature check");
+    console.error("[meta-webhook] META_APP_SECRET not set — rejecting payload", { requestId });
+    return NextResponse.json({ ok: false, reason: "server_misconfigured" }, { status: 503 });
   }
 
   let payload: MetaWebhookPayload;
@@ -110,29 +123,85 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const changeCount = (payload.entry ?? []).reduce((n, e) => n + (e.changes?.length ?? 0), 0);
   console.info("[meta-webhook] Page payload accepted", { requestId, entryCount, changeCount });
 
-  await processLeadgenEntries(payload.entry ?? [], requestId);
+  const leadgenEvents = collectLeadgenEvents(payload.entry ?? [], requestId);
+  if (leadgenEvents.length === 0) {
+    return NextResponse.json({ ok: true }, { status: 200 });
+  }
 
-  return NextResponse.json({ ok: true }, { status: 200 });
+  let jobIds: string[];
+  try {
+    ({ jobIds } = await enqueueMetaLeadgenEvents({ events: leadgenEvents }));
+  } catch (error) {
+    console.error("[meta-webhook] Leadgen inbox persistence failed", {
+      requestId,
+      eventCount: leadgenEvents.length,
+      error:
+        error instanceof Error
+          ? error.message
+          : "meta_leadgen_inbox_persist_failed",
+    });
+    // Meta will retry this delivery. Never acknowledge a leadgen payload that
+    // was not durably persisted.
+    return NextResponse.json(
+      { ok: false, reason: "leadgen_persist_failed" },
+      { status: 503 },
+    );
+  }
+
+  waitUntil(
+    processMetaLeadgenInbox({
+      jobIds,
+      limit: Math.min(jobIds.length, 5),
+    })
+      .then((result) => {
+        console.info("[meta-leadgen-inbox] inline_completed", {
+          requestId,
+          ...result,
+        });
+      })
+      .catch((error) => {
+        console.error("[meta-leadgen-inbox] inline_failed", {
+          requestId,
+          error:
+            error instanceof Error
+              ? error.message
+              : "meta_leadgen_inbox_process_failed",
+        });
+      }),
+  );
+
+  return NextResponse.json(
+    { ok: true, queued: jobIds.length },
+    { status: 200 },
+  );
 }
 
-async function processLeadgenEntries(entries: MetaEntry[], requestId: string): Promise<void> {
+function collectLeadgenEvents(
+  entries: MetaEntry[],
+  requestId: string,
+): MetaLeadgenInboxEvent[] {
+  const events: MetaLeadgenInboxEvent[] = [];
   for (const entry of entries) {
     for (const change of entry.changes ?? []) {
       if (!LEADGEN_WEBHOOK_FIELDS.has(change.field)) continue;
-      console.info("[meta-webhook] Processing leadgen change", {
-        requestId,
-        field: change.field,
-        page_id: change.value?.page_id,
-        leadgen_id: change.value?.leadgen_id,
-      });
-      await processMetaLeadgenEvent(change.value).catch((err) => {
-        console.error("[meta-webhook] Error processing leadgen event", {
+      const event = buildMetaLeadgenInboxEvent(change.field, change.value);
+      if (!event) {
+        console.warn("[meta-webhook] Invalid leadgen change ignored", {
           requestId,
           field: change.field,
-          leadgen_id: change.value?.leadgen_id,
-          error: err instanceof Error ? err.message : String(err),
+          hasPageId: Boolean(change.value?.page_id),
+          hasLeadgenId: Boolean(change.value?.leadgen_id),
         });
+        continue;
+      }
+      console.info("[meta-webhook] Queueing leadgen change", {
+        requestId,
+        field: change.field,
+        page_id: event.page_id,
+        leadgen_id: event.leadgen_id,
       });
+      events.push(event);
     }
   }
+  return events;
 }

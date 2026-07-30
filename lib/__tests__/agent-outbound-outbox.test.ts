@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   markAgentOutboundFailed,
   markAgentOutboundSent,
+  prepareAutomatedOutbound,
   prepareAgentOutbound,
 } from "@/lib/server/agent-outbound-outbox";
 import type { AgentResponseJobRow } from "@/lib/server/agent-response-jobs";
@@ -34,7 +35,13 @@ const job: AgentResponseJobRow = {
   updated_at: "2026-07-16T10:00:00.000Z",
 };
 
-function makeSb(initial?: Record<string, unknown>) {
+function makeSb(
+  initial?: Record<string, unknown>,
+  authorization: { ok: boolean; reason: string } = {
+    ok: true,
+    reason: "allowed",
+  },
+) {
   let row: Record<string, unknown> | null = initial ? { ...initial } : null;
   const sb = {
     from: (table: string) => {
@@ -77,7 +84,7 @@ function makeSb(initial?: Record<string, unknown>) {
     },
     rpc: async (name: string) =>
       name === "authorize_agent_outbound_dispatch_v2"
-        ? { data: { ok: true, reason: "allowed" }, error: null }
+        ? { data: authorization, error: null }
         : { data: true, error: null },
   } as never;
   return { sb, get row() { return row; } };
@@ -205,5 +212,37 @@ describe("agent outbound outbox", () => {
       error: "network_error",
     });
     expect(failed.row).toMatchObject({ status: "failed", last_error: "network_error", claim_token: null });
+  });
+
+  it("atomically cancels an automated outbox row when authorization denies dispatch", async () => {
+    const state = makeSb(undefined, {
+      ok: false,
+      reason: "human_attending",
+    });
+
+    await expect(
+      prepareAutomatedOutbound({
+        sb: state.sb,
+        operationKey: "meta-leadgen:lead-1:initial",
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        journeyId: "423e4567-e89b-42d3-a456-426614174000",
+        connectionId: "connection-1",
+        channel: "evolution",
+        kind: "text",
+        content: "Mensagem",
+      }),
+    ).resolves.toEqual({
+      action: "blocked",
+      id: "outbound-1",
+      reason: "human_attending",
+    });
+    expect(state.row).toMatchObject({
+      status: "cancelled",
+      authorization_status: "blocked",
+      authorization_reason: "human_attending",
+      claim_token: null,
+    });
   });
 });

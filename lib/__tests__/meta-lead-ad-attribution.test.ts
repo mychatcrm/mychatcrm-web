@@ -32,7 +32,11 @@ describe("resolveMetaLeadAdAttribution", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     fetchMock.mockImplementation(async (input) => {
       const url = String(input);
-      if (url.includes("/120999") && url.includes("fields=name,campaign")) {
+      const fields = new URL(url).searchParams.get("fields");
+      if (
+        url.includes("/120999") &&
+        fields === "name,campaign{id,name},adset{id,name}"
+      ) {
         return new Response(
           JSON.stringify({
             name: "Anúncio Principal",
@@ -66,7 +70,10 @@ describe("resolveMetaLeadAdAttribution", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     fetchMock.mockImplementation(async (input) => {
       const url = String(input);
-      if (url.includes("/adset-77") && url.includes("fields=name")) {
+      if (
+        url.includes("/adset-77") &&
+        new URL(url).searchParams.get("fields") === "name"
+      ) {
         return new Response(JSON.stringify({ name: "Conjunto Norte" }), { status: 200 });
       }
       return new Response(JSON.stringify({}), { status: 404 });

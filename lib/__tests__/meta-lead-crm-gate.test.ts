@@ -55,11 +55,26 @@ describe("Meta CRM gate (isMetaFormAllowedForCrm)", () => {
     expect(result.reason).toBe("form_not_registered_in_lead_rules");
   });
 
-  it("blocks CRM for use_all_forms even if page matches", () => {
+  it("allows CRM for an all-forms rule on the exact page", () => {
     const result = evaluateMetaFormAllowedForCrmFromSnapshot({
       pageId: PAGE,
       formId: FORM_OTHER,
       rules: [rule({ use_all_forms: true, included_form_ids: [FORM_OTHER] })],
+    });
+    expect(result.allowed).toBe(true);
+  });
+
+  it("blocks an explicitly excluded form in an all-forms rule", () => {
+    const result = evaluateMetaFormAllowedForCrmFromSnapshot({
+      pageId: PAGE,
+      formId: FORM_OTHER,
+      rules: [
+        rule({
+          use_all_forms: true,
+          included_form_ids: [],
+          excluded_form_ids: [FORM_OTHER],
+        }),
+      ],
     });
     expect(result.allowed).toBe(false);
   });
@@ -193,7 +208,7 @@ describe("Meta tenant resolution by page + form", () => {
     });
   });
 
-  it("does not use use_all_forms as tenant authorization", () => {
+  it("uses an all-forms rule only for its exact tenant and page", () => {
     const result = resolveMetaTenantFromExplicitFormRulesSnapshot({
       pageId: PAGE,
       formId: FORM_IN_RULES,
@@ -206,6 +221,58 @@ describe("Meta tenant resolution by page + form", () => {
       ],
     });
 
-    expect(result.status).toBe("not_found");
+    expect(result).toMatchObject({
+      status: "resolved",
+      tenantId: "tenant-a",
+    });
+  });
+
+  it("blocks all-forms as ambiguous when two tenants claim the same page", () => {
+    const result = resolveMetaTenantFromExplicitFormRulesSnapshot({
+      pageId: PAGE,
+      formId: FORM_IN_RULES,
+      candidateTenantIds: ["tenant-a", "tenant-b"],
+      rules: [
+        tenantRule({
+          tenant_id: "tenant-a",
+          id: "rule-a",
+          use_all_forms: true,
+          included_form_ids: [],
+        }),
+        tenantRule({
+          tenant_id: "tenant-b",
+          id: "rule-b",
+          use_all_forms: true,
+          included_form_ids: [],
+        }),
+      ],
+    });
+
+    expect(result).toMatchObject({
+      status: "ambiguous",
+      tenantIds: ["tenant-a", "tenant-b"],
+    });
+  });
+
+  it("ignores rules from tenants that do not own a candidate page connection", () => {
+    const result = resolveMetaTenantFromExplicitFormRulesSnapshot({
+      pageId: PAGE,
+      formId: FORM_IN_RULES,
+      candidateTenantIds: ["tenant-owner"],
+      rules: [
+        tenantRule({
+          tenant_id: "tenant-attacker",
+          id: "rule-attacker",
+          use_all_forms: true,
+          included_form_ids: [],
+        }),
+      ],
+    });
+
+    expect(result).toMatchObject({
+      status: "not_found",
+      tenantIds: ["tenant-owner"],
+      reason: "form_not_registered_in_lead_rules",
+    });
   });
 });

@@ -62,10 +62,15 @@ export async function POST(): Promise<NextResponse> {
     okCount: results.filter((r) => r.subscribe.ok).length,
   });
 
-  return NextResponse.json({
-    ok: true,
-    app_id: appId,
-    webhook_url: "https://www.mychatcrm.com.br/api/webhooks/meta",
-    pages: results,
-  });
+  const okCount = results.filter((result) => result.subscribe.ok).length;
+  const allOk = okCount === results.length;
+  return NextResponse.json(
+    {
+      ok: allOk,
+      app_id: appId,
+      webhook_url: "https://www.mychatcrm.com.br/api/webhooks/meta",
+      pages: results,
+    },
+    { status: allOk ? 200 : okCount > 0 ? 207 : 409 },
+  );
 }

@@ -10,12 +10,28 @@ import { SITE_URL } from "@/lib/constants";
 import { buildClientSessionForTenant } from "@/lib/server/client-session-from-tenant";
 import { notifyTenantIntegrationConnected } from "@/lib/server/integration-disconnect-notifications";
 import { verifyMetaOAuthState } from "@/lib/server/meta-oauth-state";
-import { subscribePageToLeadgenWebhooks } from "@/lib/server/meta-page-webhook-subscribe";
+import {
+  META_GRAPH_BASE_URL,
+  MetaGraphRequestError,
+  metaGraphErrorCode,
+  metaGraphRequest,
+} from "@/lib/server/meta-graph-api";
+import { metaLeadsBusinessLoginConfiguration } from "@/lib/server/meta-leads-config";
+import {
+  metaCredentialFingerprint,
+  persistMetaConnectionHealth,
+  verifyMetaAppLeadgenWebhook,
+  verifyMetaPageLeadConnection,
+  verifyMetaUserAccessToken,
+} from "@/lib/server/meta-lead-connection-health";
 import { upsertWhatsAppCloudConnection } from "@/lib/server/whatsapp-cloud-connections";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
-const GRAPH = "https://graph.facebook.com/v19.0";
+const META_LEADS_GRAPH = META_GRAPH_BASE_URL;
+// Keep WhatsApp onboarding isolated from Lead Ads version/config rollouts.
+const WHATSAPP_GRAPH = "https://graph.facebook.com/v24.0";
 
 type TokenResponse = {
   access_token?: string;
@@ -29,25 +45,15 @@ type FacebookPage = {
   access_token: string;
 };
 
-type FacebookBusiness = {
-  id: string;
-  name?: string;
-};
-
 type PagesResponse = {
   data?: FacebookPage[];
   paging?: { next?: string };
   error?: { message: string; type?: string; code?: number };
 };
 
-type BusinessesResponse = {
-  data?: FacebookBusiness[];
-  paging?: { next?: string };
-  error?: { message: string; type?: string; code?: number };
-};
-
 type MeResponse = {
   id?: string;
+  client_business_id?: string;
   error?: { message: string };
 };
 
@@ -123,7 +129,6 @@ async function redirectToIntegracoes(
 
   console.info("[meta-callback] built-session", {
     present: Boolean(session),
-    token: session?.token?.slice(0, 12) ?? null,
   });
 
   if (!session) {
@@ -188,7 +193,7 @@ async function handleWhatsAppCloudCallback(
   const redirectUri = metaOAuthRedirectUri(tokenExchangeSiteUrl);
 
   // 1. Exchange code → short-lived token
-  const tokenUrl = new URL(`${GRAPH}/oauth/access_token`);
+  const tokenUrl = new URL(`${WHATSAPP_GRAPH}/oauth/access_token`);
   tokenUrl.searchParams.set("client_id", appId);
   tokenUrl.searchParams.set("client_secret", appSecret);
   tokenUrl.searchParams.set("redirect_uri", redirectUri);
@@ -209,7 +214,7 @@ async function handleWhatsAppCloudCallback(
   }
 
   // 2. Exchange → long-lived token
-  const longLivedUrl = new URL(`${GRAPH}/oauth/access_token`);
+  const longLivedUrl = new URL(`${WHATSAPP_GRAPH}/oauth/access_token`);
   longLivedUrl.searchParams.set("grant_type", "fb_exchange_token");
   longLivedUrl.searchParams.set("client_id", appId);
   longLivedUrl.searchParams.set("client_secret", appSecret);
@@ -231,7 +236,7 @@ async function handleWhatsAppCloudCallback(
   let wabaId: string | null = null;
 
   try {
-    const wabasUrl = `${GRAPH}/me/whatsapp_business_accounts?access_token=${encodeURIComponent(accessToken)}&fields=id&limit=5`;
+    const wabasUrl = `${WHATSAPP_GRAPH}/me/whatsapp_business_accounts?access_token=${encodeURIComponent(accessToken)}&fields=id&limit=5`;
     const wabasRes = await fetch(wabasUrl, { signal: AbortSignal.timeout(10_000) });
     const wabasData = (await wabasRes.json()) as WabaListResponse;
     wabaId = wabasData.data?.[0]?.id ?? null;
@@ -245,7 +250,7 @@ async function handleWhatsAppCloudCallback(
   // Fallback: enumerate Business Manager portfolios the user manages and look for WABAs there.
   if (!wabaId) {
     try {
-      const bizUrl = `${GRAPH}/me/businesses?access_token=${encodeURIComponent(accessToken)}&fields=id,name&limit=10`;
+      const bizUrl = `${WHATSAPP_GRAPH}/me/businesses?access_token=${encodeURIComponent(accessToken)}&fields=id,name&limit=10`;
       const bizRes = await fetch(bizUrl, { signal: AbortSignal.timeout(10_000) });
       const bizData = (await bizRes.json()) as { data?: { id: string; name?: string }[]; error?: { message: string } };
       console.info("[meta-callback/whatsapp] businesses (me/businesses)", {
@@ -257,7 +262,7 @@ async function handleWhatsAppCloudCallback(
 
         // Owned WABAs
         try {
-          const ownedUrl = `${GRAPH}/${encodeURIComponent(biz.id)}/owned_whatsapp_business_accounts?access_token=${encodeURIComponent(accessToken)}&fields=id&limit=5`;
+          const ownedUrl = `${WHATSAPP_GRAPH}/${encodeURIComponent(biz.id)}/owned_whatsapp_business_accounts?access_token=${encodeURIComponent(accessToken)}&fields=id&limit=5`;
           const ownedRes = await fetch(ownedUrl, { signal: AbortSignal.timeout(10_000) });
           const ownedData = (await ownedRes.json()) as WabaListResponse;
           wabaId = ownedData.data?.[0]?.id ?? null;
@@ -272,7 +277,7 @@ async function handleWhatsAppCloudCallback(
 
         // Client WABAs
         try {
-          const clientUrl = `${GRAPH}/${encodeURIComponent(biz.id)}/client_whatsapp_business_accounts?access_token=${encodeURIComponent(accessToken)}&fields=id&limit=5`;
+          const clientUrl = `${WHATSAPP_GRAPH}/${encodeURIComponent(biz.id)}/client_whatsapp_business_accounts?access_token=${encodeURIComponent(accessToken)}&fields=id&limit=5`;
           const clientRes = await fetch(clientUrl, { signal: AbortSignal.timeout(10_000) });
           const clientData = (await clientRes.json()) as WabaListResponse;
           wabaId = clientData.data?.[0]?.id ?? null;
@@ -294,7 +299,7 @@ async function handleWhatsAppCloudCallback(
   let verifiedName: string | null = null;
 
   if (wabaId) {
-    const phonesUrl = `${GRAPH}/${encodeURIComponent(wabaId)}/phone_numbers?access_token=${encodeURIComponent(accessToken)}&fields=id,display_phone_number,verified_name`;
+    const phonesUrl = `${WHATSAPP_GRAPH}/${encodeURIComponent(wabaId)}/phone_numbers?access_token=${encodeURIComponent(accessToken)}&fields=id,display_phone_number,verified_name`;
     try {
       const phonesRes = await fetch(phonesUrl, { signal: AbortSignal.timeout(10_000) });
       const phonesData = (await phonesRes.json()) as WaPhoneNumbersResponse;
@@ -336,13 +341,14 @@ async function handleWhatsAppCloudCallback(
 
 /** Handles the Facebook OAuth callback — exchanges code for tokens and saves pages. */
 export async function GET(req: NextRequest): Promise<NextResponse> {
+  const callbackStartedAt = Date.now();
   const params = req.nextUrl.searchParams;
   const code = params.get("code");
   const state = params.get("state");
   const error = params.get("error");
 
-  const siteUrl = metaOAuthPublicOrigin(req);
-  const tokenExchangeSiteUrl = (process.env.NEXT_PUBLIC_SITE_URL ?? siteUrl).replace(/\/$/, "");
+  // Must be byte-for-byte identical to the redirect_uri created by /connect.
+  const tokenExchangeSiteUrl = SITE_URL.replace(/\/$/, "");
 
   if (error) {
     console.warn("[meta-callback] User denied Facebook OAuth", { error });
@@ -378,7 +384,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const redirectUri = metaOAuthRedirectUri(tokenExchangeSiteUrl);
 
   // 1. Exchange code for short-lived user access token
-  const tokenUrl = new URL(`${GRAPH}/oauth/access_token`);
+  const tokenUrl = new URL(`${META_LEADS_GRAPH}/oauth/access_token`);
   tokenUrl.searchParams.set("client_id", appId);
   tokenUrl.searchParams.set("client_secret", appSecret);
   tokenUrl.searchParams.set("redirect_uri", redirectUri);
@@ -398,234 +404,525 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return redirectToIntegracoes(req, "meta=error&reason=network", sessionRestore);
   }
 
-  // 2. Exchange for long-lived user token
-  const longLivedUrl = new URL(`${GRAPH}/oauth/access_token`);
-  longLivedUrl.searchParams.set("grant_type", "fb_exchange_token");
-  longLivedUrl.searchParams.set("client_id", appId);
-  longLivedUrl.searchParams.set("client_secret", appSecret);
-  longLivedUrl.searchParams.set("fb_exchange_token", shortLivedToken);
-
+  // 2. Facebook Login for Business with a system-user token already returns
+  // the durable business integration token from the code exchange. Legacy
+  // OAuth still needs the explicit long-lived exchange, and that exchange must
+  // succeed — silently retaining a short token creates a connection that dies
+  // days later without warning.
+  const { configurationId, tokenMode } = metaLeadsBusinessLoginConfiguration();
+  const usesBusinessLoginConfiguration = Boolean(configurationId);
+  if (usesBusinessLoginConfiguration && !tokenMode) {
+    console.error("[meta-callback] META_LEADS_TOKEN_MODE is missing or invalid");
+    return redirectToIntegracoes(req, "meta=error&reason=server_config", sessionRestore);
+  }
   let userAccessToken: string;
-  try {
-    const llRes = await fetch(longLivedUrl.toString(), { signal: AbortSignal.timeout(10_000) });
-    const llData = (await llRes.json()) as LongLivedTokenResponse;
-    userAccessToken = llData.access_token ?? shortLivedToken;
-  } catch {
+  if (usesBusinessLoginConfiguration && tokenMode === "business_integration_system_user") {
     userAccessToken = shortLivedToken;
+  } else {
+    const longLivedUrl = new URL(`${META_LEADS_GRAPH}/oauth/access_token`);
+    longLivedUrl.searchParams.set("grant_type", "fb_exchange_token");
+    longLivedUrl.searchParams.set("client_id", appId);
+    longLivedUrl.searchParams.set("client_secret", appSecret);
+    longLivedUrl.searchParams.set("fb_exchange_token", shortLivedToken);
+
+    try {
+      const llRes = await fetch(longLivedUrl.toString(), { signal: AbortSignal.timeout(10_000) });
+      const llData = (await llRes.json()) as LongLivedTokenResponse;
+      if (!llRes.ok || !llData.access_token) {
+        console.error("[meta-callback] Long-lived token exchange failed", {
+          tenantId,
+          httpStatus: llRes.status,
+          apiError: llData.error?.message ?? null,
+        });
+        return redirectToIntegracoes(
+          req,
+          "meta=error&reason=long_lived_token",
+          sessionRestore,
+        );
+      }
+      userAccessToken = llData.access_token;
+    } catch (err) {
+      console.error(
+        "[meta-callback] Long-lived token exchange request failed",
+        err instanceof Error ? err.message : String(err),
+      );
+      return redirectToIntegracoes(req, "meta=error&reason=network", sessionRestore);
+    }
   }
 
-  // 3. Fetch pages from every available source (includes per-page long-lived tokens).
-  function redactGraphUrl(url: string): string {
-    return url.replaceAll(userAccessToken, "[REDACTED]");
+  // Validate the grant before it can create an operational connection. The
+  // explicit token mode comes from the Meta Business Login configuration,
+  // never from the mere presence of a config_id.
+  const [tokenCheck, appWebhook] = await Promise.all([
+    verifyMetaUserAccessToken({
+      userAccessToken,
+      appId,
+      appSecret,
+      requireDurable: true,
+    }),
+    verifyMetaAppLeadgenWebhook({
+      appId,
+      appSecret,
+    }),
+  ]);
+  const sb = createSupabaseServiceClient();
+  const grantCredentialFingerprint = metaCredentialFingerprint(
+    null,
+    userAccessToken,
+  );
+  if (tokenCheck.ok || tokenCheck.retryable) {
+    const tokenCheckRetrying = !tokenCheck.ok;
+    const { error: grantError } = await sb.from("meta_lead_grants").upsert(
+      {
+        tenant_id: tenantId,
+        user_access_token: userAccessToken,
+        credential_fingerprint: grantCredentialFingerprint,
+        token_kind: tokenCheck.ok ? tokenCheck.tokenKind : null,
+        token_mode: tokenMode ?? "user",
+        discovery_status: tokenCheckRetrying ? "retrying" : "discovering",
+        last_error_code: tokenCheckRetrying ? tokenCheck.code : null,
+        next_discovery_at: tokenCheckRetrying
+          ? new Date(Date.now() + 15 * 60_000).toISOString()
+          : new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "tenant_id" },
+    );
+    if (grantError) {
+      console.error("[meta-callback] Failed to save Meta grant", {
+        tenantId,
+        error: grantError.message,
+      });
+      return redirectToIntegracoes(
+        req,
+        "meta=error&reason=db_save",
+        sessionRestore,
+      );
+    }
+  }
+  if (!tokenCheck.ok) {
+    if (tokenCheck.retryable) {
+      return redirectToIntegracoes(
+        req,
+        `meta=partial&reason=${encodeURIComponent(
+          tokenCheck.code ?? "verification_retrying",
+        )}`,
+        sessionRestore,
+      );
+    }
+    return redirectToIntegracoes(
+      req,
+      `meta=action_required&reason=${encodeURIComponent(
+        tokenCheck.code ?? "permission_missing",
+      )}`,
+      sessionRestore,
+    );
   }
 
+  // 3. Fetch only assets explicitly returned by the grant. Business Login
+  // system-user tokens expose client_business_id; we persist it for auditing
+  // but do not enumerate unrelated businesses or infer ownership.
   function addPages(target: Map<string, FacebookPage>, rows: FacebookPage[]) {
     for (const page of rows) {
       if (!target.has(page.id)) target.set(page.id, page);
     }
   }
 
+  const assetDiscoveryDeadline = callbackStartedAt + 35_000;
+  let assetDiscoveryIncomplete = false;
   async function fetchPagesAttempt(
     attempt: string,
-    url: string,
-  ): Promise<{ pages: FacebookPage[]; apiError?: string }> {
+    path: string,
+  ): Promise<FacebookPage[]> {
     const pages: FacebookPage[] = [];
-    let nextUrl: string | undefined = url;
+    let nextUrl: string | undefined = path;
     let pageNumber = 0;
+    let firstPage = true;
 
     while (nextUrl && pageNumber < 20) {
+      if (Date.now() >= assetDiscoveryDeadline) {
+        assetDiscoveryIncomplete = true;
+        break;
+      }
       pageNumber += 1;
-      const pagesRes = await fetch(nextUrl, { signal: AbortSignal.timeout(10_000) });
-      const rawBody: unknown = await pagesRes.json();
-      const pagesData = rawBody as PagesResponse;
-      const rows = (pagesData.data ?? []).filter(
-        (p): p is FacebookPage => Boolean(p?.id && p?.name && p?.access_token),
-      );
-
-      console.info("[meta-callback] pages-fetch attempt", {
-        attempt,
-        tenantId,
-        pageNumber,
-        httpStatus: pagesRes.status,
-        httpOk: pagesRes.ok,
-        requestUrl: redactGraphUrl(nextUrl),
-        rowsReturned: pagesData.data?.length ?? 0,
-        validPages: rows.length,
-        apiError: pagesData.error?.message ?? null,
-      });
-
-      if (pagesData.error) return { pages, apiError: pagesData.error.message };
-
-      pages.push(...rows);
-      nextUrl = pagesData.paging?.next;
+      try {
+        const pagesData: PagesResponse = await metaGraphRequest<PagesResponse>(
+          nextUrl,
+          {
+            accessToken: userAccessToken,
+            searchParams: firstPage
+              ? { fields: "id,name,access_token", limit: 100 }
+              : undefined,
+          },
+        );
+        firstPage = false;
+        const rows = (pagesData.data ?? []).filter(
+          (page): page is FacebookPage =>
+            Boolean(page?.id && page?.name && page?.access_token),
+        );
+        pages.push(...rows);
+        console.info("[meta-callback] pages-fetch attempt", {
+          attempt,
+          tenantId,
+          pageNumber,
+          rowsReturned: pagesData.data?.length ?? 0,
+          validPages: rows.length,
+        });
+        nextUrl = pagesData.paging?.next;
+      } catch (error) {
+        assetDiscoveryIncomplete = true;
+        console.warn("[meta-callback] pages-fetch failed", {
+          attempt,
+          tenantId,
+          pageNumber,
+          code: metaGraphErrorCode(error),
+        });
+        break;
+      }
     }
+    if (nextUrl) assetDiscoveryIncomplete = true;
 
-    return { pages };
-  }
-
-  async function fetchBusinessesAttempt(url: string): Promise<{ businesses: FacebookBusiness[]; apiError?: string }> {
-    const businesses: FacebookBusiness[] = [];
-    let nextUrl: string | undefined = url;
-    let pageNumber = 0;
-
-    while (nextUrl && pageNumber < 20) {
-      pageNumber += 1;
-      const businessRes = await fetch(nextUrl, { signal: AbortSignal.timeout(10_000) });
-      const rawBody: unknown = await businessRes.json();
-      const businessData = rawBody as BusinessesResponse;
-      const rows = (businessData.data ?? []).filter((b): b is FacebookBusiness => Boolean(b?.id));
-
-      console.info("[meta-callback] businesses-fetch attempt", {
-        tenantId,
-        pageNumber,
-        httpStatus: businessRes.status,
-        httpOk: businessRes.ok,
-        requestUrl: redactGraphUrl(nextUrl),
-        rowsReturned: businessData.data?.length ?? 0,
-        validBusinesses: rows.length,
-        apiError: businessData.error?.message ?? null,
-      });
-
-      if (businessData.error) return { businesses, apiError: businessData.error.message };
-
-      businesses.push(...rows);
-      nextUrl = businessData.paging?.next;
-    }
-
-    return { businesses };
+    return pages;
   }
 
   const collectedPages = new Map<string, FacebookPage>();
-  let pagesFetchError: string | undefined;
+  let clientBusinessId: string | null = null;
   try {
-    const attempt1Url = `${GRAPH}/me/accounts?access_token=${encodeURIComponent(userAccessToken)}&fields=id,name,access_token`;
-    const attempt1 = await fetchPagesAttempt("me/accounts", attempt1Url);
-    addPages(collectedPages, attempt1.pages);
-    pagesFetchError = attempt1.apiError;
-
-    const meUrl = `${GRAPH}/me?access_token=${encodeURIComponent(userAccessToken)}&fields=id`;
-    const meRes = await fetch(meUrl, { signal: AbortSignal.timeout(10_000) });
-    const meRaw: unknown = await meRes.json();
-    const meData = meRaw as MeResponse;
+    const meData = await metaGraphRequest<MeResponse>("/me", {
+      accessToken: userAccessToken,
+      searchParams: { fields: "id,client_business_id" },
+    });
     const userId = meData.id;
-    console.info("[meta-callback] me/id for accounts fallback", {
+    clientBusinessId = meData.client_business_id?.trim() || null;
+    if (tokenCheck.ok) {
+      const { error: grantIdentityError } = await sb
+        .from("meta_lead_grants")
+        .update({
+          client_business_id: clientBusinessId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("tenant_id", tenantId)
+        .eq("credential_fingerprint", grantCredentialFingerprint);
+      if (grantIdentityError) {
+        console.warn("[meta-callback] Failed to update Meta grant identity", {
+          tenantId,
+          error: grantIdentityError.message,
+        });
+      }
+    }
+    console.info("[meta-callback] grant identity resolved", {
       tenantId,
-      httpStatus: meRes.status,
-      httpOk: meRes.ok,
-      requestUrl: redactGraphUrl(meUrl),
       userIdPresent: Boolean(userId),
-      apiError: meData.error?.message ?? null,
+      clientBusinessIdPresent: Boolean(clientBusinessId),
+      tokenMode: tokenMode ?? "legacy_user",
     });
 
-    if (userId) {
-      const attempt2Url = `${GRAPH}/${userId}/accounts?access_token=${encodeURIComponent(userAccessToken)}`;
-      const attempt2 = await fetchPagesAttempt(`${userId}/accounts`, attempt2Url);
-      addPages(collectedPages, attempt2.pages);
-      pagesFetchError = attempt2.apiError ?? pagesFetchError;
-    } else {
-      console.warn("[meta-callback] Could not resolve user id for accounts fallback", {
-        tenantId,
-        meError: meData.error?.message,
-      });
+    addPages(
+      collectedPages,
+      await fetchPagesAttempt("me/accounts", "/me/accounts"),
+    );
+
+    if (!usesBusinessLoginConfiguration && userId && collectedPages.size === 0) {
+      addPages(
+        collectedPages,
+        await fetchPagesAttempt(`${userId}/accounts`, `/${encodeURIComponent(userId)}/accounts`),
+      );
     }
 
-    const businessesUrl = `${GRAPH}/me/businesses?access_token=${encodeURIComponent(userAccessToken)}&fields=id,name`;
-    const businessesAttempt = await fetchBusinessesAttempt(businessesUrl);
-    pagesFetchError = businessesAttempt.apiError ?? pagesFetchError;
-
-    for (const business of businessesAttempt.businesses) {
-      const ownedPagesUrl = `${GRAPH}/${business.id}/owned_pages?access_token=${encodeURIComponent(userAccessToken)}&fields=id,name,access_token`;
-      const ownedPages = await fetchPagesAttempt(`${business.id}/owned_pages`, ownedPagesUrl);
-      addPages(collectedPages, ownedPages.pages);
-      pagesFetchError = ownedPages.apiError ?? pagesFetchError;
-
-      const clientPagesUrl = `${GRAPH}/${business.id}/client_pages?access_token=${encodeURIComponent(userAccessToken)}&fields=id,name,access_token`;
-      const clientPages = await fetchPagesAttempt(`${business.id}/client_pages`, clientPagesUrl);
-      addPages(collectedPages, clientPages.pages);
-      pagesFetchError = clientPages.apiError ?? pagesFetchError;
+    // Granular scope target IDs are an authoritative asset hint when a
+    // Business Integration System User does not populate /me/accounts.
+    if (collectedPages.size === 0) {
+      const targetIds = Array.from(
+        new Set(
+          Object.values(tokenCheck.granularScopeTargets).flat(),
+        ),
+      ).slice(0, 100);
+      for (let offset = 0; offset < targetIds.length; offset += 5) {
+        if (Date.now() >= assetDiscoveryDeadline) {
+          assetDiscoveryIncomplete = true;
+          break;
+        }
+        const batch = targetIds.slice(offset, offset + 5);
+        const resolved = await Promise.all(
+          batch.map(async (targetId) => {
+            try {
+              return await metaGraphRequest<FacebookPage>(
+                `/${encodeURIComponent(targetId)}`,
+                {
+                  accessToken: userAccessToken,
+                  searchParams: { fields: "id,name,access_token" },
+                },
+              );
+            } catch (error) {
+              // A granular target can be a business rather than a Page.
+              if (
+                error instanceof MetaGraphRequestError &&
+                error.retryable
+              ) {
+                assetDiscoveryIncomplete = true;
+              }
+              return null;
+            }
+          }),
+        );
+        for (const page of resolved) {
+          if (page?.id && page.name && page.access_token) {
+            addPages(collectedPages, [page]);
+          }
+        }
+      }
     }
   } catch (err) {
-    console.error("[meta-callback] Pages fetch request failed", err instanceof Error ? err.message : String(err));
+    if (tokenCheck.ok) {
+      await sb
+        .from("meta_lead_grants")
+        .update({
+          discovery_status: "retrying",
+          last_error_code: metaGraphErrorCode(err),
+          next_discovery_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("tenant_id", tenantId)
+        .eq("credential_fingerprint", grantCredentialFingerprint);
+    }
+    console.error("[meta-callback] Pages fetch request failed", {
+      tenantId,
+      code: metaGraphErrorCode(err),
+    });
     return redirectToIntegracoes(req, "meta=error&reason=network", sessionRestore);
   }
 
   const pages = Array.from(collectedPages.values());
+  if (tokenCheck.ok) {
+    const discoveryStatus = assetDiscoveryIncomplete
+      ? "retrying"
+      : pages.length > 0
+        ? "ready"
+        : "action_required";
+    const { error: grantStatusError } = await sb
+      .from("meta_lead_grants")
+      .update({
+        discovery_status: discoveryStatus,
+        last_error_code: assetDiscoveryIncomplete
+          ? "asset_discovery_incomplete"
+          : pages.length > 0
+            ? null
+            : "no_pages",
+        discovered_page_count: pages.length,
+        next_discovery_at: assetDiscoveryIncomplete
+          ? new Date(Date.now() + 15 * 60_000).toISOString()
+          : null,
+        last_discovered_at: assetDiscoveryIncomplete
+          ? null
+          : new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("tenant_id", tenantId)
+      .eq("credential_fingerprint", grantCredentialFingerprint);
+    if (grantStatusError) {
+      console.warn("[meta-callback] Failed to update grant discovery status", {
+        tenantId,
+        error: grantStatusError.message,
+      });
+    }
+  }
 
-  if (pagesFetchError && !pages.length) {
-    console.error("[meta-callback] Failed to fetch pages after all attempts", { message: pagesFetchError });
-    return redirectToIntegracoes(req, "meta=error&reason=pages_fetch", sessionRestore);
+  if (
+    usesBusinessLoginConfiguration &&
+    tokenMode === "business_integration_system_user" &&
+    !clientBusinessId
+  ) {
+    console.warn("[meta-callback] Business Login did not return client_business_id", {
+      tenantId,
+    });
+    return redirectToIntegracoes(
+      req,
+      "meta=action_required&reason=client_business_missing",
+      sessionRestore,
+    );
   }
 
   if (!pages.length) {
+    if (assetDiscoveryIncomplete) {
+      return redirectToIntegracoes(
+        req,
+        "meta=error&reason=asset_discovery_incomplete",
+        sessionRestore,
+      );
+    }
+    if (!tokenCheck.ok) {
+      return redirectToIntegracoes(
+        req,
+        `meta=action_required&reason=${encodeURIComponent(
+          tokenCheck.code ?? "permission_missing",
+        )}`,
+        sessionRestore,
+      );
+    }
     console.warn("[meta-callback] No pages returned for tenant after all attempts", { tenantId });
     return redirectToIntegracoes(req, "meta=no_pages", sessionRestore);
   }
 
-  // 4. Upsert all pages into meta_connections
-  const sb = createSupabaseServiceClient();
-
-  // Checked before the upsert so we can tell genuinely new pages apart from
-  // pages the tenant is just re-authorizing (upsert alone can't tell us that).
+  // 4. Persist the discovered assets without overwriting the last-known-good
+  // health of pages that were already connected. Absence from this grant is
+  // never interpreted as revocation; only an explicit provider error or a
+  // tenant-requested disconnect may revoke a page.
   const { data: existingPageRows } = await sb
     .from("meta_connections")
     .select("page_id")
-    .eq("tenant_id", tenantId)
-    .in("page_id", pages.map((p) => p.id));
+    .eq("tenant_id", tenantId);
   const existingPageIds = new Set((existingPageRows ?? []).map((r) => (r as { page_id: string }).page_id));
   const newPages = pages.filter((p) => !existingPageIds.has(p.id));
 
   const rows = pages.map((p) => ({
-    tenant_id: tenantId,
     page_id: p.id,
     page_name: p.name,
     page_access_token: p.access_token,
-    user_access_token: userAccessToken,
-    updated_at: new Date().toISOString(),
   }));
 
-  const { error: upsertErr } = await sb
-    .from("meta_connections")
-    .upsert(rows, { onConflict: "tenant_id,page_id" });
+  const { data: grantApplied, error: upsertErr } = await sb.rpc(
+    "upsert_meta_grant_discovered_pages",
+    {
+      p_tenant_id: tenantId,
+      p_expected_grant_fingerprint: grantCredentialFingerprint,
+      p_pages: rows,
+    },
+  );
 
   if (upsertErr) {
+    if (tokenCheck.ok) {
+      await sb
+        .from("meta_lead_grants")
+        .update({
+          discovery_status: "retrying",
+          last_error_code: "meta_connections_upsert_failed",
+          next_discovery_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("tenant_id", tenantId)
+        .eq("credential_fingerprint", grantCredentialFingerprint);
+    }
     console.error("[meta-callback] Failed to save meta_connections", upsertErr.message);
     return redirectToIntegracoes(req, "meta=error&reason=db_save", sessionRestore);
   }
+  if (grantApplied !== true) {
+    console.info("[meta-callback] Stale OAuth callback discarded", {
+      tenantId,
+    });
+    return redirectToIntegracoes(
+      req,
+      "meta=partial&reason=connection_superseded",
+      sessionRestore,
+    );
+  }
 
-  console.info("[meta-callback] Connected Meta pages for tenant", { tenantId, pageCount: pages.length });
+  // 5. Validate every selected Page with bounded concurrency. If a very large
+  // grant exceeds the callback deadline, remaining rows stay unverified and
+  // the periodic reconciler resumes idempotently.
+  const healthByPage = new Map<
+    string,
+    Awaited<ReturnType<typeof verifyMetaPageLeadConnection>>
+  >();
+  const verificationDeadline = callbackStartedAt + 75_000;
+  try {
+    for (let offset = 0; offset < pages.length; offset += 4) {
+      if (Date.now() >= verificationDeadline) break;
+      const batch = pages.slice(offset, offset + 4);
+      await Promise.all(
+        batch.map(async (page) => {
+          const health = await verifyMetaPageLeadConnection({
+            pageId: page.id,
+            pageAccessToken: page.access_token,
+            tokenCheck,
+            appWebhook,
+          });
+          const persisted = await persistMetaConnectionHealth({
+            sb,
+            tenantId,
+            pageId: page.id,
+            health,
+            expectedCredentialFingerprint: metaCredentialFingerprint(
+              page.access_token,
+              userAccessToken,
+            ),
+          });
+          healthByPage.set(page.id, {
+            ...health,
+            status: persisted.status,
+            leadAccessStatus: persisted.leadAccessStatus,
+          });
 
-  if (newPages.length > 0) {
+          const logPayload = {
+            tenantId,
+            pageId: page.id,
+            healthStatus: health.status,
+            healthCode: health.code,
+            leadAccessStatus: health.leadAccessStatus,
+            grantedScopeCount: health.grantedScopes.length,
+            subscribedFields: health.subscribedFields,
+          };
+          if (health.status === "ready") {
+            console.info("[meta-callback] Meta page verified ready", logPayload);
+          } else {
+            console.warn("[meta-callback] Meta page requires action", logPayload);
+          }
+        }),
+      );
+    }
+  } catch (healthError) {
+    console.error("[meta-callback] Failed to persist Meta health", {
+      tenantId,
+      error: healthError instanceof Error ? healthError.message : String(healthError),
+    });
+    return redirectToIntegracoes(req, "meta=error&reason=db_save", sessionRestore);
+  }
+
+  if (healthByPage.size === 0) {
+    return redirectToIntegracoes(
+      req,
+      "meta=action_required&reason=verification_pending",
+      sessionRestore,
+    );
+  }
+
+  const readyPages = pages.filter((page) => healthByPage.get(page.id)?.status === "ready");
+  const readyNewPages = readyPages.filter((page) => !existingPageIds.has(page.id));
+  if (readyNewPages.length > 0) {
     try {
       await notifyTenantIntegrationConnected({
         tenantId,
         integration: "facebook",
-        source: "meta_pages_oauth",
-        sourceKey: newPages.map((p) => p.id).join(","),
-        pageIds: newPages.map((p) => p.id),
-        pageNames: newPages.map((p) => p.name),
-        metadata: { page_count: newPages.length, total_pages_in_request: pages.length },
+        source: "meta_pages_oauth_verified",
+        sourceKey: readyNewPages.map((page) => page.id).join(","),
+        pageIds: readyNewPages.map((page) => page.id),
+        pageNames: readyNewPages.map((page) => page.name),
+        metadata: {
+          ready_page_count: readyNewPages.length,
+          total_pages_in_request: pages.length,
+          onboarding: usesBusinessLoginConfiguration ? "facebook_login_for_business" : "legacy_oauth",
+        },
       });
     } catch (notifyError) {
-      console.warn("[meta-callback] connect notification failed", notifyError);
+      console.warn("[meta-callback] verified connect notification failed", notifyError);
     }
   }
 
-  for (const page of pages) {
-    const sub = await subscribePageToLeadgenWebhooks(page.id, page.access_token);
-    if (sub.ok) {
-      console.info("[meta-callback] Page subscribed to leadgen webhooks", {
-        tenantId,
-        pageId: page.id,
-        subscribedFields: sub.subscribedFields,
-      });
-    } else {
-      console.warn("[meta-callback] Page leadgen webhook subscribe failed", {
-        tenantId,
-        pageId: page.id,
-        error: sub.error,
-      });
-    }
+  if (readyPages.length === pages.length && !assetDiscoveryIncomplete) {
+    return redirectToIntegracoes(req, "meta=connected", sessionRestore);
+  }
+  if (readyPages.length > 0) {
+    return redirectToIntegracoes(
+      req,
+      `meta=partial&ready=${readyPages.length}&total=${pages.length}`,
+      sessionRestore,
+    );
   }
 
-  return redirectToIntegracoes(req, "meta=connected", sessionRestore);
+  const firstFailure = Array.from(healthByPage.values())[0];
+  const reason = firstFailure?.code ?? appWebhook.code ?? tokenCheck.code ?? "verification_failed";
+  return redirectToIntegracoes(
+    req,
+    `meta=action_required&reason=${encodeURIComponent(reason)}`,
+    sessionRestore,
+  );
 }

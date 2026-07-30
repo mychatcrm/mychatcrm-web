@@ -224,7 +224,7 @@ export async function prepareAutomatedOutbound(params: {
   tenantId: string;
   remoteJid: string;
   agentId: string;
-  journeyId: string;
+  journeyId: string | null;
   connectionId: string;
   channel: "evolution" | "meta_cloud";
   kind: "text" | "audio" | "image" | "video" | "document" | "template";
@@ -277,6 +277,9 @@ export async function prepareAutomatedOutbound(params: {
     return { action: "already_sent", id: row.id };
   }
   if (row.status === "processing" || row.status === "ambiguous") {
+    if (row.status === "processing" && row.provider_message_id) {
+      return { action: "already_sent", id: row.id };
+    }
     return { action: "ambiguous", id: row.id };
   }
   const claimToken = crypto.randomUUID();
@@ -301,9 +304,31 @@ export async function prepareAutomatedOutbound(params: {
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,
   });
-  return authorization.ok
-    ? { action: "send", id: row.id, claimToken }
-    : { action: "blocked", id: row.id, reason: authorization.reason };
+  if (authorization.ok) {
+    return { action: "send", id: row.id, claimToken };
+  }
+  const { data: cancelled, error: cancelError } = await params.sb
+    .from("agent_outbound_outbox")
+    .update({
+      status: "cancelled",
+      authorization_status: "blocked",
+      authorization_reason: authorization.reason,
+      claim_token: null,
+      claim_expires_at: null,
+      last_error: authorization.reason,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", row.id)
+    .eq("status", "processing")
+    .eq("claim_token", claimToken)
+    .select("id")
+    .maybeSingle();
+  if (cancelError || !cancelled) {
+    throw new Error(
+      cancelError?.message ?? "outbound_blocked_claim_lost",
+    );
+  }
+  return { action: "blocked", id: row.id, reason: authorization.reason };
 }
 
 export async function markAgentOutboundSent(params: {
@@ -313,7 +338,7 @@ export async function markAgentOutboundSent(params: {
   providerMessageId?: string | null;
   job?: AgentResponseJobRow;
 }): Promise<void> {
-  const { error } = await params.sb
+  const { data, error } = await params.sb
     .from("agent_outbound_outbox")
     .update({
       status: "sent",
@@ -326,8 +351,12 @@ export async function markAgentOutboundSent(params: {
     })
     .eq("id", params.id)
     .eq("status", "processing")
-    .eq("claim_token", params.claimToken);
-  if (error) throw new Error(error.message);
+    .eq("claim_token", params.claimToken)
+    .select("id")
+    .maybeSingle();
+  if (error || !data) {
+    throw new Error(error?.message ?? "outbound_sent_claim_lost");
+  }
   if (params.job && Number(params.job.conversation_sequence ?? 0) > 0) {
     const { error: stateError } = await params.sb.rpc("mark_agent_conversation_response", {
       p_tenant_id: params.job.tenant_id,
@@ -350,7 +379,7 @@ export async function markAgentOutboundFailed(params: {
   claimToken: string;
   error: string;
 }): Promise<void> {
-  await params.sb
+  const { data, error } = await params.sb
     .from("agent_outbound_outbox")
     .update({
       status: "failed",
@@ -362,5 +391,127 @@ export async function markAgentOutboundFailed(params: {
     })
     .eq("id", params.id)
     .eq("status", "processing")
-    .eq("claim_token", params.claimToken);
+    .eq("claim_token", params.claimToken)
+    .select("id")
+    .maybeSingle();
+  if (error || !data) {
+    throw new Error(error?.message ?? "outbound_failed_claim_lost");
+  }
+}
+
+/**
+ * Fecha uma tentativa cujo resultado no provedor é desconhecido. Uma linha
+ * ambígua nunca é reenviada automaticamente, pois isso poderia duplicar a
+ * mensagem que o provedor aceitou antes de a conexão cair.
+ */
+export async function markAgentOutboundAmbiguous(params: {
+  sb: SupabaseServiceClient;
+  id: string;
+  claimToken: string;
+  reason: string;
+}): Promise<void> {
+  const { data, error } = await params.sb
+    .from("agent_outbound_outbox")
+    .update({
+      status: "ambiguous",
+      claim_token: null,
+      claim_expires_at: null,
+      last_error: params.reason.slice(0, 500),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", params.id)
+    .eq("status", "processing")
+    .eq("claim_token", params.claimToken)
+    .select("id")
+    .maybeSingle();
+  if (error || !data) {
+    throw new Error(error?.message ?? "outbound_ambiguous_claim_lost");
+  }
+}
+
+/**
+ * Reconcilia um dispatch cuja confirmação do provedor já foi persistida na
+ * mensagem, mas o worker caiu antes de fechar a outbox. O receipt inequívoco
+ * permite concluir sem repetir o envio.
+ */
+export async function reconcileAgentOutboundProviderReceipt(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  operationKey: string;
+  providerMessageId: string;
+}): Promise<boolean> {
+  const now = new Date().toISOString();
+  const { data, error } = await params.sb
+    .from("agent_outbound_outbox")
+    .update({
+      status: "sent",
+      provider_message_id: params.providerMessageId,
+      sent_at: now,
+      claim_token: null,
+      claim_expires_at: null,
+      last_error: null,
+      updated_at: now,
+    })
+    .eq("tenant_id", params.tenantId)
+    .eq("operation_key", params.operationKey)
+    .in("status", ["pending", "processing", "failed", "ambiguous"])
+    .select("id")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (data?.id) return true;
+
+  const { data: existing, error: existingError } = await params.sb
+    .from("agent_outbound_outbox")
+    .select("status,provider_message_id")
+    .eq("tenant_id", params.tenantId)
+    .eq("operation_key", params.operationKey)
+    .maybeSingle();
+  if (existingError) throw new Error(existingError.message);
+  return Boolean(
+    existing &&
+      ["sent", "delivered"].includes(String(existing.status ?? "")) &&
+      (!existing.provider_message_id ||
+        existing.provider_message_id === params.providerMessageId),
+  );
+}
+
+/**
+ * Fecha intenções que ainda não começaram quando atendimento humano impede a
+ * retomada. Dispatch já em voo, sem receipt, vira ambíguo e nunca é reenviado.
+ */
+export async function cancelAutomatedOutboundByOperationKey(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  operationKey: string;
+  reason: string;
+}): Promise<void> {
+  const now = new Date().toISOString();
+  const { error: cancelError } = await params.sb
+    .from("agent_outbound_outbox")
+    .update({
+      status: "cancelled",
+      claim_token: null,
+      claim_expires_at: null,
+      last_error: params.reason.slice(0, 500),
+      updated_at: now,
+    })
+    .eq("tenant_id", params.tenantId)
+    .eq("operation_key", params.operationKey)
+    .in("status", ["pending", "failed"]);
+  if (cancelError) throw new Error(cancelError.message);
+
+  const { error: ambiguousError } = await params.sb
+    .from("agent_outbound_outbox")
+    .update({
+      status: "ambiguous",
+      claim_token: null,
+      claim_expires_at: null,
+      last_error: "dispatch_ambiguous_during_human_takeover",
+      updated_at: now,
+    })
+    .eq("tenant_id", params.tenantId)
+    .eq("operation_key", params.operationKey)
+    .eq("status", "processing")
+    .is("provider_message_id", null);
+  if (ambiguousError) throw new Error(ambiguousError.message);
 }

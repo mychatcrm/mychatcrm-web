@@ -76,7 +76,9 @@ export function stringArray(value: unknown): string[] {
 
 function ruleMatchesExplicitForm(rule: MetaFormAuthRule, formId: string, pageId: string): boolean {
   if (rule.page_id && rule.page_id !== pageId) return false;
-  if (rule.use_all_forms === true) return false;
+  const excluded = stringArray(rule.excluded_form_ids);
+  if (excluded.includes(formId)) return false;
+  if (rule.use_all_forms === true) return true;
   const included = stringArray(rule.included_form_ids);
   return included.includes(formId);
 }
@@ -117,6 +119,8 @@ export function resolveMetaTenantFromExplicitFormRulesSnapshot(params: {
   const candidateTenantIds = Array.from(
     new Set((params.candidateTenantIds ?? []).map((id) => id.trim()).filter(Boolean)),
   );
+  const candidatesWereProvided = params.candidateTenantIds !== undefined;
+  const candidateTenantSet = new Set(candidateTenantIds);
 
   if (!formId) {
     return {
@@ -128,6 +132,10 @@ export function resolveMetaTenantFromExplicitFormRulesSnapshot(params: {
 
   const matches = params.rules
     .filter((rule) => rule.tenant_id.trim().length > 0)
+    .filter(
+      (rule) =>
+        !candidatesWereProvided || candidateTenantSet.has(rule.tenant_id.trim()),
+    )
     .filter((rule) => rule.page_id === pageId)
     .filter((rule) => ruleMatchesExplicitForm(rule, formId, pageId))
     .sort((a, b) => (a.order_index ?? 999) - (b.order_index ?? 999));
@@ -160,8 +168,9 @@ export function resolveMetaTenantFromExplicitFormRulesSnapshot(params: {
 }
 
 /**
- * CRM gate: formulário precisa estar em regra meta_form ativa com included_form_ids explícito.
- * Não usa mapeamento, use_all_forms, default_agent_id nem fallbacks de tenant.
+ * CRM gate: formulário precisa estar em uma regra meta_form ativa da Página
+ * exata, incluído diretamente ou pelo escopo use_all_forms e não excluído.
+ * Não usa mapeamento, default_agent_id nem fallbacks de tenant.
  */
 export function evaluateMetaFormAllowedForCrmFromSnapshot(params: {
   pageId: string;
@@ -200,8 +209,13 @@ export async function isMetaFormAllowedForCrm(params: {
   tenantId: string;
   pageId: string;
   formId: string;
+  throwOnQueryError?: boolean;
 }): Promise<MetaFormCrmAllowanceResult> {
-  const rules = await loadActiveMetaFormRules(params.sb, params.tenantId);
+  const rules = await loadActiveMetaFormRules(
+    params.sb,
+    params.tenantId,
+    { throwOnQueryError: params.throwOnQueryError },
+  );
   return evaluateMetaFormAllowedForCrmFromSnapshot({
     pageId: params.pageId,
     formId: params.formId,
@@ -283,6 +297,7 @@ export function evaluateMetaFormAuthorizationFromSnapshot(params: {
 export async function loadActiveMetaFormRules(
   sb: SupabaseServiceClient,
   tenantId: string,
+  options: { throwOnQueryError?: boolean } = {},
 ): Promise<MetaFormAuthRule[]> {
   const { data, error } = await sb
     .from("lead_distribution_rules")
@@ -296,6 +311,9 @@ export async function loadActiveMetaFormRules(
 
   if (error) {
     console.warn("[meta-form-auth] rules_query_failed", { tenant_id: tenantId, error: error.message });
+    if (options.throwOnQueryError) {
+      throw new Error("meta_form_rules_query_failed", { cause: error });
+    }
     return [];
   }
   return (data ?? []) as MetaFormAuthRule[];
@@ -308,6 +326,18 @@ export async function resolveMetaTenantFromExplicitFormRules(params: {
   candidateTenantIds?: string[];
 }): Promise<MetaFormTenantResolutionResult> {
   const pageId = params.pageId.trim();
+  const candidateTenantIds = Array.from(
+    new Set(
+      (params.candidateTenantIds ?? []).map((id) => id.trim()).filter(Boolean),
+    ),
+  );
+  if (params.candidateTenantIds !== undefined && candidateTenantIds.length === 0) {
+    return {
+      status: "not_found",
+      tenantIds: [],
+      reason: "form_not_registered_in_lead_rules",
+    };
+  }
   const { data, error } = await params.sb
     .from("lead_distribution_rules")
     .select(
@@ -316,6 +346,7 @@ export async function resolveMetaTenantFromExplicitFormRules(params: {
     .eq("active", true)
     .eq("source", "meta_form")
     .eq("page_id", pageId)
+    .in("tenant_id", candidateTenantIds)
     .order("order_index", { ascending: true });
 
   if (error) {
@@ -325,7 +356,7 @@ export async function resolveMetaTenantFromExplicitFormRules(params: {
     });
     return {
       status: "not_found",
-      tenantIds: params.candidateTenantIds ?? [],
+      tenantIds: candidateTenantIds,
       reason: "rules_query_failed",
     };
   }
@@ -334,7 +365,7 @@ export async function resolveMetaTenantFromExplicitFormRules(params: {
     pageId,
     formId: params.formId,
     rules: (data ?? []) as MetaFormTenantAuthRule[],
-    candidateTenantIds: params.candidateTenantIds,
+    candidateTenantIds,
   });
 }
 
@@ -343,6 +374,7 @@ async function pickRoundRobinAgent(
   tenantId: string,
   rule: MetaFormAuthRule,
   preferredAgentId?: string | null,
+  throwOnQueryError = false,
 ): Promise<string | null> {
   const agentIds = stringArray(rule.agent_ids);
   if (agentIds.length === 0) return null;
@@ -351,12 +383,15 @@ async function pickRoundRobinAgent(
 
   const counts = await Promise.all(
     agentIds.map(async (aid) => {
-      const { count } = await sb
+      const { count, error } = await sb
         .from("leads")
         .select("*", { count: "exact", head: true })
         .eq("tenant_id", tenantId)
         .eq("rule_id", rule.id)
         .eq("agent_id", aid);
+      if (error && throwOnQueryError) {
+        throw new Error("meta_round_robin_query_failed", { cause: error });
+      }
       return { aid, count: count || 0 };
     }),
   );
@@ -373,10 +408,15 @@ export async function resolveMetaFormAuthorization(params: {
   pageId: string;
   formId: string;
   agentId?: string | null;
+  throwOnQueryError?: boolean;
 }): Promise<MetaFormAuthorizationResult> {
   const formId = params.formId.trim();
   const pageId = params.pageId.trim();
-  const rules = await loadActiveMetaFormRules(params.sb, params.tenantId);
+  const rules = await loadActiveMetaFormRules(
+    params.sb,
+    params.tenantId,
+    { throwOnQueryError: params.throwOnQueryError },
+  );
 
   for (const rule of rules) {
     if (!ruleMatchesExplicitForm(rule, formId, pageId)) continue;
@@ -384,7 +424,13 @@ export async function resolveMetaFormAuthorization(params: {
 
     const picked =
       rule.distribution_type === "round_robin" && stringArray(rule.agent_ids).length > 1
-        ? await pickRoundRobinAgent(params.sb, params.tenantId, rule, params.agentId)
+        ? await pickRoundRobinAgent(
+            params.sb,
+            params.tenantId,
+            rule,
+            params.agentId,
+            params.throwOnQueryError,
+          )
         : pickAgentFromRule(rule, params.agentId);
 
     if (params.agentId?.trim() && !picked) {
@@ -521,6 +567,7 @@ async function isUsableTenantAgent(params: {
   sb: SupabaseServiceClient;
   tenantId: string;
   agentId: string | null | undefined;
+  throwOnQueryError?: boolean;
 }): Promise<{ ok: true } | { ok: false; reason: string }> {
   const id = params.agentId?.trim();
   if (!id) return { ok: false, reason: "empty_agent_id" };
@@ -530,7 +577,12 @@ async function isUsableTenantAgent(params: {
     .eq("tenant_id", params.tenantId)
     .eq("agent_id", id)
     .maybeSingle();
-  if (error) return { ok: false, reason: error.message };
+  if (error) {
+    if (params.throwOnQueryError) {
+      throw new Error("meta_agent_query_failed", { cause: error });
+    }
+    return { ok: false, reason: error.message };
+  }
   if (!data) return { ok: false, reason: "agent_not_found" };
   if (data.active !== true) return { ok: false, reason: "agent_inactive" };
   const metadata =
@@ -564,6 +616,7 @@ export async function resolveAuthorizedMetaLeadAgent(params: {
   pageId: string;
   formId: string;
   preferredAgentId?: string | null;
+  throwOnQueryError?: boolean;
 }): Promise<MetaFormAgentResolution> {
   const auth = await resolveMetaFormAuthorization({
     sb: params.sb,
@@ -571,6 +624,7 @@ export async function resolveAuthorizedMetaLeadAgent(params: {
     pageId: params.pageId,
     formId: params.formId,
     agentId: params.preferredAgentId,
+    throwOnQueryError: params.throwOnQueryError,
   });
 
   if (!auth.authorized || !auth.agentId) {
@@ -590,7 +644,11 @@ export async function resolveAuthorizedMetaLeadAgent(params: {
 
   // The form selects the agent and the transport together. Do not fall back to
   // a tenant's first Evolution instance when a rule is incomplete.
-  const rules = await loadActiveMetaFormRules(params.sb, params.tenantId);
+  const rules = await loadActiveMetaFormRules(
+    params.sb,
+    params.tenantId,
+    { throwOnQueryError: params.throwOnQueryError },
+  );
   const rule = rules.find((candidate) => candidate.id === auth.ruleId) ?? null;
   const connectionId = typeof rule?.connection_id === "string" ? rule.connection_id.trim() : "";
   const transportRaw = typeof rule?.transport === "string" ? rule.transport.trim() : null;
@@ -623,6 +681,7 @@ export async function resolveAuthorizedMetaLeadAgent(params: {
     sb: params.sb,
     tenantId: params.tenantId,
     agentId: auth.agentId,
+    throwOnQueryError: params.throwOnQueryError,
   });
   if (!usable.ok) {
     return {

@@ -560,6 +560,8 @@ export function NewLeadRuleWizard({
   const [distPickerOpen, setDistPickerOpen] = useState(false);
   const [distQuery, setDistQuery] = useState("");
   const [metaPages, setMetaPages] = useState<MetaStatusPage[]>([]);
+  const [metaPagesLoading, setMetaPagesLoading] = useState(false);
+  const [metaPagesError, setMetaPagesError] = useState<string | null>(null);
   const [whatsAppConnections, setWhatsAppConnections] = useState<
     Array<{
       id: string;
@@ -616,10 +618,37 @@ export function NewLeadRuleWizard({
 
   useEffect(() => {
     if (!open) return;
-    fetch("/api/client/meta/status", { credentials: "same-origin" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: { pages?: MetaStatusPage[] } | null) => setMetaPages(d?.pages || []))
-      .catch(() => setMetaPages([]));
+    const controller = new AbortController();
+    setMetaPagesLoading(true);
+    setMetaPagesError(null);
+    void (async () => {
+      try {
+        const response = await fetch("/api/client/meta/status", {
+          credentials: "same-origin",
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("meta_status_unavailable");
+        const data = (await response.json()) as { pages?: MetaStatusPage[] };
+        setMetaPages(
+          (data.pages ?? []).filter(
+            (page) =>
+              (page.health_status === "ready" ||
+                page.health_status === "degraded" ||
+                page.health_status === "legacy_grace") &&
+              !page.forms_error,
+          ),
+        );
+      } catch {
+        if (controller.signal.aborted) return;
+        setMetaPages([]);
+        setMetaPagesError(
+          "Não foi possível consultar suas Páginas Meta agora. Nenhuma regra foi alterada.",
+        );
+      } finally {
+        if (!controller.signal.aborted) setMetaPagesLoading(false);
+      }
+    })();
+    return () => controller.abort();
   }, [open]);
 
   useEffect(() => {
@@ -1412,6 +1441,19 @@ export function NewLeadRuleWizard({
                   <p className="mt-1 text-[11px] leading-relaxed text-content-muted">
                     Nada vem pré-selecionado — toque na página vinculada de onde quer puxar os formulários.
                   </p>
+                  {metaPagesLoading ? (
+                    <p className="mt-3 text-xs text-content-muted">
+                      Consultando Páginas Meta…
+                    </p>
+                  ) : metaPagesError ? (
+                    <p className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-content-secondary">
+                      {metaPagesError}
+                    </p>
+                  ) : metaPages.length === 0 && !draft.pageId.trim() ? (
+                    <p className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-content-secondary">
+                      Nenhuma Página Meta operacional está disponível. Verifique a conexão em Integrações.
+                    </p>
+                  ) : null}
                   <div
                     className="mt-3 overflow-hidden rounded-xl border border-line/80 bg-surface-deep/60"
                     role="radiogroup"

@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { metaGraphErrorCode, metaGraphRequest } from "@/lib/server/meta-graph-api";
 
 export const dynamic = "force-dynamic";
-
-const GRAPH = "https://graph.facebook.com/v19.0";
 
 export type MetaFormField = {
   key: string;
@@ -50,7 +49,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   // Validate that this page belongs to the tenant and retrieve the page access token.
   const { data: connection, error: dbError } = await sb
     .from("meta_connections")
-    .select("page_access_token")
+    .select("page_access_token, health_status, health_message")
     .eq("tenant_id", session.tenantId)
     .eq("page_id", pageId)
     .maybeSingle();
@@ -64,34 +63,44 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Página não conectada" }, { status: 404 });
   }
 
-  const { page_access_token } = connection as { page_access_token: string };
+  const { page_access_token, health_status, health_message } = connection as {
+    page_access_token: string;
+    health_status: string;
+    health_message: string | null;
+  };
+  if (
+    health_status !== "ready" &&
+    health_status !== "degraded" &&
+    health_status !== "legacy_grace"
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          health_message ??
+          "A conexão Meta ainda não foi validada. Verifique-a em Integrações.",
+      },
+      { status: 409 },
+    );
+  }
 
   console.info("[meta/form-fields] fetching", { formId, pageId, tenantId: session.tenantId });
 
-  // Fetch the form questions from the Meta Graph API.
-  const url = `${GRAPH}/${encodeURIComponent(formId)}?fields=questions&access_token=${encodeURIComponent(page_access_token)}`;
-
-  let res: Response;
-  try {
-    res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[meta/form-fields] network error", msg);
-    return NextResponse.json({ error: `Erro de rede ao contactar a Meta: ${msg}` }, { status: 502 });
-  }
-
   let raw: GraphFormResponse;
   try {
-    raw = (await res.json()) as GraphFormResponse;
+    raw = await metaGraphRequest<GraphFormResponse>(
+      `/${encodeURIComponent(formId)}`,
+      {
+        accessToken: page_access_token,
+        searchParams: { fields: "questions" },
+      },
+    );
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[meta/form-fields] JSON parse error", { status: res.status, msg });
-    return NextResponse.json({ error: "Resposta inválida da Meta API (JSON inválido)" }, { status: 502 });
-  }
-
-  if (raw.error) {
-    console.error("[meta/form-fields] Meta API error", raw.error.message, raw.error.code);
-    return NextResponse.json({ error: `Meta API: ${raw.error.message}` }, { status: 502 });
+    const code = metaGraphErrorCode(err);
+    console.error("[meta/form-fields] Graph error", { formId, pageId, code });
+    return NextResponse.json(
+      { error: `A Meta não permitiu consultar os campos deste formulário (${code}).` },
+      { status: 502 },
+    );
   }
 
   const fields: MetaFormField[] = (raw.questions ?? [])
