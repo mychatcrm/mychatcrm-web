@@ -9,9 +9,15 @@ export type ActiveOfferAccessRow = {
   archived_at: string | null;
 };
 
+/**
+ * Gerente tem o mesmo poder do diretor sobre listas de ligação — criar, gerir e
+ * arquivar —, só que restrito à equipe dele. O recorte de *quais leads* entram
+ * na lista vem de `lib/server/access-scope.ts`, então aqui basta liberar o
+ * papel: um gerente sem equipe simplesmente não alcança lead nenhum.
+ */
 export function canCreateActiveOffer(session: ClientSession): boolean {
   const role = resolveOrganizationRole(session);
-  return role === "owner" || role === "director";
+  return role === "owner" || role === "director" || role === "manager";
 }
 
 export function canManageActiveOffer(session: ClientSession): boolean {
@@ -49,7 +55,9 @@ export function canDispositionLead(params: {
   distributionMode: string;
 }): boolean {
   const role = resolveOrganizationRole(params.session);
-  if (role === "owner" || role === "director") return true;
+  // Gerente dispõe leads como o diretor; o alcance dele já está limitado à
+  // própria equipe pelo escopo aplicado ao montar e ler a lista.
+  if (role === "owner" || role === "director" || role === "manager") return true;
   if (role !== "seller" || !params.session.employeeId) return false;
   if (params.assigneeIds.length && !params.assigneeIds.includes(params.session.employeeId)) return false;
   if (params.distributionMode === "split_evenly" && params.assignedEmployeeId) {

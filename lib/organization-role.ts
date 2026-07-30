@@ -1,7 +1,17 @@
 /** Papel na conta: dono (pleno), direção, gestão ou vendedor (acesso restrito). */
 export type OrganizationRole = "owner" | "director" | "manager" | "seller";
 
-const SELLER_ROUTE_KEYS = new Set(["crm", "ofertas-ativas", "agenda", "lembretes", "suporte"]);
+// "conversas" só entrou aqui depois que a inbox passou a ser recortada no
+// servidor (lib/server/access-scope.ts): o vendedor vê apenas as conversas dos
+// leads atribuídos a ele, e pode pausar o agente para assumir o atendimento.
+const SELLER_ROUTE_KEYS = new Set([
+  "crm",
+  "conversas",
+  "ofertas-ativas",
+  "agenda",
+  "lembretes",
+  "suporte",
+]);
 
 const MANAGER_OR_DIRECTOR_ROUTE_KEYS = new Set([
   "overview",

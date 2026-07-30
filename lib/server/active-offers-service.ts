@@ -25,6 +25,7 @@ import type {
 } from "@/lib/active-offers-types";
 import { resolveOrganizationRole } from "@/lib/organization-role";
 import { readTeamMembersFromDb } from "@/lib/server/team-employees-db";
+import { resolveAccessScope, visibleLeadIds } from "@/lib/server/access-scope";
 
 type OfferRow = {
   id: string;
@@ -192,6 +193,23 @@ async function ensureLegacyProgressRows(sb: SupabaseClient, tenantId: string, of
   }
 }
 
+/**
+ * Interseção entre os leads que o filtro encontrou e os que o autor da lista
+ * realmente alcança. Sem isto, um gerente montaria uma lista de ligação com
+ * leads de outra equipe — o filtro inteligente varre o tenant inteiro.
+ */
+async function restrictLeadIdsToScope(
+  sb: SupabaseClient,
+  session: ClientSession,
+  leadIds: string[],
+): Promise<string[]> {
+  if (!leadIds.length) return leadIds;
+  const scope = await resolveAccessScope(sb as never, session);
+  const allowed = await visibleLeadIds(sb as never, session.tenantId, scope);
+  if (allowed === null) return leadIds; // titular: sem recorte
+  return leadIds.filter((id) => allowed.has(id));
+}
+
 export async function previewActiveOffer(
   sb: SupabaseClient,
   session: ClientSession,
@@ -199,7 +217,11 @@ export async function previewActiveOffer(
 ) {
   if (!canCreateActiveOffer(session)) throw new Error("Sem permissão para criar listas de ligação.");
   const normalized = normalizeActiveOfferFilter(filter);
-  const { leadIds, matchCount } = await matchActiveOfferLeads(sb, session.tenantId, normalized);
+  const matched = await matchActiveOfferLeads(sb, session.tenantId, normalized);
+  // O filtro inteligente varre o tenant todo; o gerente só pode alcançar leads
+  // da equipe dele, então o resultado é recortado antes de virar prévia.
+  const leadIds = await restrictLeadIdsToScope(sb, session, matched.leadIds);
+  const matchCount = leadIds.length === matched.leadIds.length ? matched.matchCount : leadIds.length;
   const sampleRows = leadIds.length
     ? await sb
         .from("leads")
@@ -239,7 +261,8 @@ export async function createActiveOfferFromFilter(
   if (!title) throw new Error("Informe um título para a lista.");
 
   const normalized = normalizeActiveOfferFilter(params.filter);
-  const { leadIds } = await matchActiveOfferLeads(sb, session.tenantId, normalized);
+  const matched = await matchActiveOfferLeads(sb, session.tenantId, normalized);
+  const leadIds = await restrictLeadIdsToScope(sb, session, matched.leadIds);
   if (!leadIds.length) throw new Error("Nenhum lead encontrado com os filtros selecionados.");
 
   const now = new Date().toISOString();
