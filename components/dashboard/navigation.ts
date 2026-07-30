@@ -133,6 +133,25 @@ export const dashboardNavPinnedItems: DashboardNavItem[] = [
     },
   },
   {
+    href: "/dashboard/equipes",
+    label: "Equipes",
+    headerTitle: "Equipes e isolamento de dados",
+    short: "EP",
+    routeKey: "equipes",
+    help: {
+      title: "Equipes",
+      summary:
+        "Agrupe colaboradores em equipes. Cada equipe enxerga apenas os próprios leads, conversas e agendamentos.",
+      items: [
+        "Só o titular da conta cria e edita equipes.",
+        "Um diretor pode estar em várias equipes; gerente e vendedor, em apenas uma.",
+        "Leads entram na equipe definida pela regra de distribuição que os recebeu.",
+      ],
+      example:
+        "Duas filiais no mesmo número de WhatsApp: cada uma vira uma equipe e nenhum vendedor vê o cliente da outra.",
+    },
+  },
+  {
     href: "/dashboard/disparos",
     label: "Disparos em Massa",
     short: "DM",

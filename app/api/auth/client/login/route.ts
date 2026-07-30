@@ -57,10 +57,15 @@ export async function POST(request: Request) {
       const companyName = isEnterpriseTenant && ent ? ent.organizationName : meta.companyName;
       const operationalLimits =
         isEnterpriseTenant && ent ? enterpriseLimitsToPlanLimits(ent.limits) : undefined;
-      const organizationRole =
-        isEnterpriseTenant && ent && teamHit.employee.id === ent.ownerEmployeeId
-          ? ("owner" as const)
-          : hierarchyRoleToOrganizationRole(teamHit.employee.hierarchyRole);
+      // `is_owner` é a fonte de verdade do titular em qualquer plano. O ramo
+      // Enterprise fica como retrocompatibilidade para tenants provisionados
+      // antes da migration de equipes.
+      const isAccountOwner =
+        teamHit.employee.isOwner === true ||
+        Boolean(isEnterpriseTenant && ent && teamHit.employee.id === ent.ownerEmployeeId);
+      const organizationRole = isAccountOwner
+        ? ("owner" as const)
+        : hierarchyRoleToOrganizationRole(teamHit.employee.hierarchyRole);
       session = registerLiveClientSession({
         tenantId: teamHit.tenantId,
         email: teamHit.employee.email,

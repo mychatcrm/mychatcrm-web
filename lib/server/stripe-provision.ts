@@ -175,6 +175,7 @@ async function provisionFromCheckoutData(input: CheckoutProvisionInput): Promise
   }
 
   await updateMemberPhoneIfPresent(sb, memberId, phone);
+  await markMemberAsAccountOwner(sb, memberId);
 
   // --- Provisionar limites do plano ---
   const limits = getPlanPolicy(planSlug);
@@ -221,6 +222,24 @@ async function provisionFromCheckoutData(input: CheckoutProvisionInput): Promise
   console.log("[stripe-provision] Tenant provisionado:", tenantId, "plano:", planSlug, "email:", email);
 
   return { tenantId, memberId, email, activationToken };
+}
+
+/**
+ * Marca quem acabou de assinar como titular da conta. É o que dá o papel
+ * `owner` na sessão (gerir colaboradores, equipes e plano) em qualquer plano —
+ * antes só tenants Enterprise conseguiam isso.
+ *
+ * Não derruba o provisionamento se falhar: a conta já existe e o login ainda
+ * funciona; o pior caso é o titular precisar do backfill da migration.
+ */
+async function markMemberAsAccountOwner(
+  sb: ReturnType<typeof createSupabaseServiceClient>,
+  memberId: string,
+): Promise<void> {
+  const { error } = await sb.from("tenant_members").update({ is_owner: true }).eq("id", memberId);
+  if (error) {
+    console.warn("[stripe-provision] tenant_members.is_owner:", error.message);
+  }
 }
 
 async function updateMemberPhoneIfPresent(

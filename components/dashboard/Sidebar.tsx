@@ -19,6 +19,7 @@ import {
   resolveOrganizationRole,
   sessionCanAccessPersonalSettings,
 } from "@/lib/organization-role";
+import { planSupportsTeams } from "@/lib/teams-types";
 import { useLeadUsageSnapshot } from "@/lib/use-lead-usage-snapshot";
 import { dashboardNavPinnedItems, type DashboardNavItem } from "./navigation";
 import { PanelBrandMark } from "@/components/panel/PanelBrandMark";
@@ -48,9 +49,16 @@ export function Sidebar({
   const canManageAccountPlan = sessionCanAccessPersonalSettings(session);
   const canCollaboratorProfilePopover = organizationRoleCanUseSidebarProfilePopover(orgRole);
   const settingsActive = pathname === "/dashboard/configuracoes" || pathname.startsWith("/dashboard/configuracoes/");
+  // Solo é uso individual: não expõe equipes nem no menu nem na rota.
+  const showsTeams = planSupportsTeams(session.plan);
   const visibleNavItems = useMemo(
-    () => dashboardNavPinnedItems.filter((it) => organizationRoleCanAccessDashboardRoute(orgRole, it.routeKey)),
-    [orgRole],
+    () =>
+      dashboardNavPinnedItems.filter(
+        (it) =>
+          organizationRoleCanAccessDashboardRoute(orgRole, it.routeKey) &&
+          (it.routeKey !== "equipes" || showsTeams),
+      ),
+    [orgRole, showsTeams],
   );
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const { isLight, mode, setMode } = usePanelAppearance();
