@@ -6,6 +6,7 @@ const DASHBOARD_FIRST_SEGMENT: Record<string, DashboardRouteKey> = {
   conversas: "conversas",
   "integracoes-leads": "integracoes-leads",
   colaboradores: "colaboradores",
+  equipes: "equipes",
   crm: "crm",
   "ofertas-ativas": "ofertas-ativas",
   agenda: "agenda",

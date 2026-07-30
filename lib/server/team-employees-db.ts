@@ -5,6 +5,8 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import type { TeamEmployee } from "@/lib/team-employees-types";
 
+type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
+
 type DbMember = {
   id: string;
   tenant_id: string;
@@ -16,6 +18,8 @@ type DbMember = {
   reports_to_id: string | null;
   ativo: boolean;
   account_suspended: boolean;
+  /** Ausente em bancos anteriores à migration de equipes — tratar como false. */
+  is_owner?: boolean | null;
 };
 
 function isPermissionDenied(error: { code?: string; message?: string } | null | undefined): boolean {
@@ -35,6 +39,7 @@ function toTeamEmployee(row: DbMember): TeamEmployee {
     hierarchyRole: row.hierarchy_role,
     reportsToId: row.reports_to_id ?? undefined,
     accountSuspended: row.account_suspended,
+    isOwner: row.is_owner === true,
   };
 }
 
@@ -63,6 +68,23 @@ export async function readTeamMembersFromDb(tenantId: string, actorEmail?: strin
   return (data as DbMember[]).map(toTeamEmployee);
 }
 
+/**
+ * `get_member_by_email` devolve uma lista fixa de colunas e não inclui
+ * `is_owner`. Em vez de recriar a RPC (SECURITY DEFINER, usada no login), lê a
+ * flag num select direto — o mesmo caminho que `readTeamMembersFromDb` já usa.
+ * Falha de permissão ou coluna ausente resolve como `false`, e aí o login cai
+ * no comportamento antigo (Enterprise via `enterprise_provisions`).
+ */
+export async function readIsOwnerFlag(sb: SupabaseServiceClient, memberId: string): Promise<boolean> {
+  const { data, error } = await sb
+    .from("tenant_members")
+    .select("is_owner")
+    .eq("id", memberId)
+    .maybeSingle();
+  if (error || !data) return false;
+  return (data as { is_owner?: boolean | null }).is_owner === true;
+}
+
 export async function findTeamMemberCredentials(
   emailLc: string,
   password: string,
@@ -87,7 +109,8 @@ export async function findTeamMemberCredentials(
   }
   if (checkErr || !check) return null;
 
-  return { tenantId: data.tenant_id, employee: toTeamEmployee(data) };
+  const isOwner = data.is_owner === true || (await readIsOwnerFlag(sb, data.id));
+  return { tenantId: data.tenant_id, employee: toTeamEmployee({ ...data, is_owner: isOwner }) };
 }
 
 export async function teamMemberEmailExistsInDb(emailLc: string): Promise<boolean> {

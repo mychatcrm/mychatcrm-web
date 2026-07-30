@@ -27,6 +27,12 @@ export type TeamEmployee = {
   hierarchyRole: TeamHierarchyRole;
   reportsToId?: string;
   accountSuspended?: boolean;
+  /**
+   * Titular da conta (quem assinou o plano). Um por tenant, garantido pelo
+   * índice parcial `tenant_members_single_owner_per_tenant`. É o que dá o papel
+   * `owner` na sessão — antes isso era inferido só para tenants Enterprise.
+   */
+  isOwner?: boolean;
 };
 
 export type AddTeamEmployeeInput = {

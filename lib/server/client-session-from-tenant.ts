@@ -12,7 +12,7 @@ import { normalizeToPlan } from "@/lib/plan-policy";
 import { enterpriseLimitsToPlanLimits } from "@/lib/enterprise-provision-limits";
 import { createSupabaseAnonClient, createSupabaseServiceClient } from "@/lib/supabase/server";
 import { readEnterpriseProvisionByTenant } from "@/lib/server/enterprise-provisions-db";
-import { readTeamMembersFromDb } from "@/lib/server/team-employees-db";
+import { readIsOwnerFlag, readTeamMembersFromDb } from "@/lib/server/team-employees-db";
 import { tenantPlanDefaults } from "@/lib/tenant-session-defaults";
 import type { EnterpriseProvisionRecord } from "@/lib/enterprise-provision-types";
 import type { TeamEmployee } from "@/lib/team-employees-types";
@@ -41,6 +41,8 @@ type DbMember = {
   reports_to_id: string | null;
   ativo: boolean;
   account_suspended: boolean;
+  /** Ausente em bancos anteriores à migration de equipes — tratar como false. */
+  is_owner?: boolean | null;
 };
 
 function dbMemberToEmployee(row: DbMember): TeamEmployee {
@@ -55,7 +57,17 @@ function dbMemberToEmployee(row: DbMember): TeamEmployee {
     hierarchyRole: row.hierarchy_role,
     reportsToId: row.reports_to_id ?? undefined,
     accountSuspended: row.account_suspended,
+    isOwner: row.is_owner === true,
   };
+}
+
+/** Nunca derruba a sessão: qualquer falha resolve como "não é titular". */
+async function readIsOwnerFlagSafely(memberId: string): Promise<boolean> {
+  try {
+    return await readIsOwnerFlag(createSupabaseServiceClient(), memberId);
+  } catch {
+    return false;
+  }
 }
 
 function normalizeTenantStatus(status: string | null | undefined): ClientAccountStatus {
@@ -224,10 +236,17 @@ export async function buildClientSessionForTenant(
     (isEnterpriseTenant && ent ? ent.organizationName : meta.companyName);
   const operationalLimits =
     isEnterpriseTenant && ent ? enterpriseLimitsToPlanLimits(ent.limits) : undefined;
-  const organizationRole =
-    isEnterpriseTenant && ent && employee.id === ent.ownerEmployeeId
-      ? ("owner" as const)
-      : hierarchyRoleToOrganizationRole(employee.hierarchyRole);
+  // `is_owner` é a fonte de verdade do titular em qualquer plano; o ramo
+  // Enterprise fica como retrocompatibilidade (ver app/api/auth/client/login).
+  // O select de membros usa lista fixa de colunas (não quebra se a migration de
+  // equipes ainda não rodou), então a flag é lida à parte, de forma tolerante.
+  const isAccountOwner =
+    employee.isOwner === true ||
+    Boolean(isEnterpriseTenant && ent && employee.id === ent.ownerEmployeeId) ||
+    (await readIsOwnerFlagSafely(employee.id));
+  const organizationRole = isAccountOwner
+    ? ("owner" as const)
+    : hierarchyRoleToOrganizationRole(employee.hierarchyRole);
 
   return registerLiveClientSession({
     tenantId,

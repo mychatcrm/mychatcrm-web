@@ -147,6 +147,7 @@ import { SuporteHub } from "./suporte/SuporteHub";
 import { BillingOffersPopover } from "./BillingOffersPopover";
 import { IntegracoesLeadsHub } from "./lead-rules/IntegracoesLeadsHub";
 import { TeamEmployeesHub } from "./equipe/TeamEmployeesHub";
+import { TeamsHub } from "./equipes/TeamsHub";
 import { BotStatusToggle } from "./BotStatusToggle";
 import { DashboardOverviewV2 } from "./overview/DashboardOverviewV2";
 import { AtendimentoV2 } from "./conversas/AtendimentoV2";
@@ -5140,6 +5141,8 @@ export function DashboardWorkspace({
         return <IntegracoesLeadsHub session={session} />;
       case "colaboradores":
         return <TeamEmployeesHub session={session} />;
+      case "equipes":
+        return <TeamsHub session={session} />;
       case "crm":
         return <CrmPage dataset={dataset} session={session} />;
       case "ofertas-ativas":
