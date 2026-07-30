@@ -19,6 +19,12 @@ export type LeadDistributionType =
   | "all_agents"
   /** Um agente de IA recebe o lead e dispara a primeira mensagem automática. */
   | "automation_agent"
+  /**
+   * O agente de IA atende E o lead já nasce atribuído a um vendedor: ele vê a
+   * conversa em «Conversas» desde o primeiro contacto e pode pausar o agente
+   * para assumir pessoalmente. `agentIds[0]` = agente, `employeeIds[0]` = vendedor.
+   */
+  | "agent_plus_seller"
   /** Colaboradores humanos registados em «Colaboradores» (hierarquia com limites por papel). */
   | "specific_employees"
   | "round_robin_employees"
@@ -65,6 +71,12 @@ export type LeadDistributionRule = {
   /** Quando `specific_employees` ou `rodízio entre colaboradores`; vazio com `all_employees` = todos os registados. */
   employeeIds: string[];
   mappings: LeadFieldMapping[];
+  /**
+   * Equipe dona dos leads que entram por esta regra. É o carimbo de origem:
+   * o lead nasce com este `team_id` e passa a ser visível só para essa equipe.
+   * `null` = sem equipe (fica visível apenas para o titular da conta).
+   */
+  teamId?: string | null;
   pageLabel?: string;
   pageId?: string;
   useAllForms?: boolean;
@@ -186,6 +198,7 @@ function normalizeLeadDistributionRule(r: LeadDistributionRule & Record<string, 
     "entry_owner",
     "all_agents",
     "automation_agent",
+    "agent_plus_seller",
     "specific_employees",
     "round_robin_employees",
     "all_employees",
@@ -227,6 +240,8 @@ export function distributionLabel(type: LeadDistributionType): string {
       return "Todos os agentes de IA";
     case "automation_agent":
       return "Agente de automação (mensagem automática)";
+    case "agent_plus_seller":
+      return "Atendimento com agente de IA + Vendedor";
     case "specific_employees":
       return "Colaboradores selecionados";
     case "round_robin_employees":

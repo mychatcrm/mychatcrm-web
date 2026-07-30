@@ -10,6 +10,7 @@ export const VALID_LEAD_DISTRIBUTION_TYPES = [
   "round_robin",
   "specific_agents",
   "automation_agent",
+  "agent_plus_seller",
   "all_agents",
   "specific_employees",
   "round_robin_employees",
@@ -32,6 +33,8 @@ export type LeadDistributionRuleRow = {
   conflict_inactivity_minutes: number | null;
   redistribution: boolean;
   distribution_type: LeadDistributionType;
+  /** Equipe dona dos leads desta regra (ver `LeadDistributionRule.teamId`). */
+  team_id: string | null;
   agent_ids: unknown;
   employee_ids: unknown;
   mappings: unknown;
@@ -86,6 +89,7 @@ export function leadRuleRowToClient(row: LeadDistributionRuleRow): LeadDistribut
     conflictInactivityMinutes: row.conflict_inactivity_minutes ?? 1440,
     redistribution: row.redistribution,
     distributionType: row.distribution_type,
+    teamId: row.team_id ?? null,
     agentIds: stringArray(row.agent_ids),
     employeeIds: stringArray(row.employee_ids),
     mappings: mappingsArray(row.mappings),
@@ -193,6 +197,10 @@ export function leadRuleClientToDbPayload(
         : 1440,
     redistribution: typeof body.redistribution === "boolean" ? body.redistribution : false,
     distribution_type: distributionType,
+    team_id: (() => {
+      const raw = body.teamId ?? body.team_id;
+      return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+    })(),
     agent_ids: stringArray(body.agentIds ?? body.agent_ids),
     employee_ids: stringArray(body.employeeIds ?? body.employee_ids),
     mappings: Array.isArray(body.mappings) ? body.mappings : [],

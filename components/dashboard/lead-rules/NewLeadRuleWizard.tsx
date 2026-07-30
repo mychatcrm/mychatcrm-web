@@ -20,6 +20,7 @@ import {
   Share2,
   User,
 } from "lucide-react";
+import type { Team } from "@/lib/teams-types";
 import { WhatsAppGlyph, WhatsAppQrMark } from "@/components/dashboard/crm/crm-phone";
 import { PanelAppearancePortalBridge, usePanelAppearance } from "@/components/panel/PanelAppearance";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
@@ -365,8 +366,14 @@ const DISTRIBUTION_CHOICES: {
   {
     value: "automation_agent",
     group: "ia",
-    label: "Atender com agente de IA",
+    label: "Atendimento com agente de IA",
     hint: "Escolha um agente ativo para iniciar o atendimento automaticamente.",
+  },
+  {
+    value: "agent_plus_seller",
+    group: "ia",
+    label: "Atendimento com agente de IA + Vendedor",
+    hint: "O agente atende e o vendedor escolhido acompanha em Conversas, podendo pausar a IA e assumir.",
   },
 ];
 
@@ -441,6 +448,8 @@ type Draft = {
   distributionType: LeadDistributionType | null;
   agentIds: string[];
   employeeIds: string[];
+  /** Equipe dona dos leads que entrarem por esta regra. */
+  teamId: string;
   conversionSendEnabled: boolean;
   conversionPixelId: string;
   conversionApiSecret: string;
@@ -471,6 +480,7 @@ const emptyDraft = (): Draft => ({
   distributionType: null,
   agentIds: [],
   employeeIds: [],
+  teamId: "",
   conversionSendEnabled: true,
   conversionPixelId: "",
   conversionApiSecret: "",
@@ -511,6 +521,7 @@ function ruleToDraft(r: LeadDistributionRule): Draft {
     distributionType: r.distributionType,
     agentIds: [...r.agentIds],
     employeeIds: [...(r.employeeIds ?? [])],
+    teamId: r.teamId ?? "",
     conversionSendEnabled: r.conversionSendEnabled ?? false,
     conversionPixelId: r.conversionPixelId ?? "",
     conversionApiSecret: r.conversionApiSecret ?? "",
@@ -608,6 +619,29 @@ export function NewLeadRuleWizard({
     window.addEventListener(TEAM_EMPLOYEES_UPDATED_EVENT, onEmp);
     return () => window.removeEventListener(TEAM_EMPLOYEES_UPDATED_EVENT, onEmp);
   }, []);
+
+  // Equipes do tenant — definem para quem os leads desta regra ficam visíveis.
+  const [teams, setTeams] = useState<Team[]>([]);
+  useEffect(() => {
+    if (!open) return;
+    fetch("/api/teams", { credentials: "same-origin", cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json: { teams?: Team[] } | null) => setTeams(json?.teams ?? []))
+      .catch(() => setTeams([]));
+  }, [open]);
+
+  /**
+   * Vendedores elegíveis no modo "IA + Vendedor". Com uma equipe escolhida, só
+   * os vendedores dela — designar alguém de fora criaria um lead que o próprio
+   * designado não conseguiria ver.
+   */
+  const sellerOptions = useMemo(() => {
+    const sellers = teamEmployees.filter((e) => e.hierarchyRole === "seller");
+    const team = teams.find((t) => t.id === draft.teamId);
+    if (!team) return sellers;
+    const memberIds = new Set(team.members.map((m) => m.employeeId));
+    return sellers.filter((e) => memberIds.has(e.id));
+  }, [teamEmployees, teams, draft.teamId]);
 
   useEffect(() => {
     if (!open) return;
@@ -1055,6 +1089,14 @@ export function NewLeadRuleWizard({
       if (draft.distributionType === "round_robin_employees" && draft.employeeIds.length === 0) return false;
       if (draft.distributionType === "specific_agents" && draft.agentIds.length === 0) return false;
       if (draft.distributionType === "automation_agent" && draft.agentIds.length !== 1) return false;
+      // "IA + Vendedor" precisa dos dois: sem o vendedor o lead nasceria sem
+      // dono e não apareceria para ninguém em Conversas.
+      if (
+        draft.distributionType === "agent_plus_seller" &&
+        (draft.agentIds.length !== 1 || draft.employeeIds.length !== 1)
+      ) {
+        return false;
+      }
       return true;
     }
     return true;
@@ -1099,6 +1141,10 @@ export function NewLeadRuleWizard({
       setStep(2);
       return;
     }
+    if (dist === "agent_plus_seller" && (draft.agentIds.length !== 1 || draft.employeeIds.length !== 1)) {
+      setStep(2);
+      return;
+    }
     if ((dist === "specific_employees" || dist === "round_robin_employees") && draft.employeeIds.length === 0) {
       setStep(2);
       return;
@@ -1120,7 +1166,7 @@ export function NewLeadRuleWizard({
     }
     if (
       draft.source === "meta_form" &&
-      ["automation_agent", "specific_agents", "round_robin"].includes(dist) &&
+      ["automation_agent", "agent_plus_seller", "specific_agents", "round_robin"].includes(dist) &&
       !draft.connectionId.trim()
     ) {
       setStep(0);
@@ -1129,7 +1175,7 @@ export function NewLeadRuleWizard({
     if (
       draft.source === "meta_form" &&
       draft.transport === "cloud_api" &&
-      ["automation_agent", "specific_agents", "round_robin"].includes(dist) &&
+      ["automation_agent", "agent_plus_seller", "specific_agents", "round_robin"].includes(dist) &&
       !draft.metaTemplateName.trim()
     ) {
       setStep(0);
@@ -1153,10 +1199,11 @@ export function NewLeadRuleWizard({
             ? draft.agentIds.slice(0, 1)
             : dist === "specific_agents"
             ? [...draft.agentIds]
-            : dist === "automation_agent"
+            : dist === "automation_agent" || dist === "agent_plus_seller"
               ? draft.agentIds.slice(0, 1)
               : [],
         mappings: draft.mappings,
+        teamId: draft.teamId || null,
         pageLabel: draft.pageLabel,
         pageId: draft.pageId,
         useAllForms: draft.useAllForms,
@@ -1166,7 +1213,12 @@ export function NewLeadRuleWizard({
         conversionPixelId: draft.conversionSendEnabled ? draft.conversionPixelId.trim() : "",
         conversionApiSecret: draft.conversionSendEnabled ? draft.conversionApiSecret : "",
         redistributionConfig: draft.redistribution ? draft.redistributionConfig : undefined,
-        employeeIds: dist === "specific_employees" || dist === "round_robin_employees" ? [...draft.employeeIds] : [],
+        employeeIds:
+        dist === "specific_employees" || dist === "round_robin_employees"
+          ? [...draft.employeeIds]
+          : dist === "agent_plus_seller"
+            ? draft.employeeIds.slice(0, 1)
+            : [],
       };
       onUpdated(rule);
       onClose();
@@ -1190,10 +1242,11 @@ export function NewLeadRuleWizard({
           ? draft.agentIds.slice(0, 1)
           : dist === "specific_agents"
             ? [...draft.agentIds]
-            : dist === "automation_agent"
+            : dist === "automation_agent" || dist === "agent_plus_seller"
               ? draft.agentIds.slice(0, 1)
               : [],
       mappings: draft.mappings,
+      teamId: draft.teamId || null,
       pageLabel: draft.pageLabel,
       pageId: draft.pageId,
       useAllForms: draft.useAllForms,
@@ -1203,7 +1256,12 @@ export function NewLeadRuleWizard({
       conversionPixelId: draft.conversionSendEnabled ? draft.conversionPixelId.trim() : "",
       conversionApiSecret: draft.conversionSendEnabled ? draft.conversionApiSecret : "",
       redistributionConfig: draft.redistribution ? draft.redistributionConfig : undefined,
-      employeeIds: dist === "specific_employees" || dist === "round_robin_employees" ? [...draft.employeeIds] : [],
+      employeeIds:
+        dist === "specific_employees" || dist === "round_robin_employees"
+          ? [...draft.employeeIds]
+          : dist === "agent_plus_seller"
+            ? draft.employeeIds.slice(0, 1)
+            : [],
       createdBy: displayName,
       createdAtLabel: new Date().toLocaleDateString("pt-BR"),
     };
@@ -2344,6 +2402,38 @@ export function NewLeadRuleWizard({
 
         {step === 2 ? (
           <>
+            {teams.length > 0 ? (
+              <div className="mb-4">
+                <label className="text-xs font-semibold text-content-muted" htmlFor={`${formId}-team`}>
+                  Equipe dona destes leads
+                </label>
+                <select
+                  id={`${formId}-team`}
+                  value={draft.teamId}
+                  onChange={(event) =>
+                    setDraft((d) => ({
+                      ...d,
+                      teamId: event.target.value,
+                      // Vendedor de outra equipe deixaria o lead invisível para ele.
+                      employeeIds: d.distributionType === "agent_plus_seller" ? [] : d.employeeIds,
+                    }))
+                  }
+                  className="mt-2 h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                >
+                  <option value="">Sem equipe (só o titular vê)</option>
+                  {teams.map((team) => (
+                    <option key={team.id} value={team.id}>
+                      {team.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1.5 text-[11px] leading-relaxed text-content-muted">
+                  Os leads que entrarem por esta regra ficam visíveis apenas para esta equipe — no
+                  CRM, nas Conversas e na Agenda. Sem equipe, só o titular da conta os enxerga.
+                </p>
+              </div>
+            ) : null}
+
             {isOrganicWhatsApp ? (
               <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 text-sm text-content-secondary">
                 <p className="font-semibold text-content">Um único agente de IA</p>
@@ -2440,15 +2530,17 @@ export function NewLeadRuleWizard({
                                                 ...d,
                                                 distributionType: c.value,
                                                 agentIds:
-                                                  c.value === "specific_agents" || c.value === "automation_agent"
-                                                    ? c.value === "automation_agent"
+                                                  c.value === "specific_agents"
+                                                    ? d.agentIds
+                                                    : c.value === "automation_agent" || c.value === "agent_plus_seller"
                                                       ? d.agentIds.slice(0, 1)
-                                                      : d.agentIds
-                                                    : [],
+                                                      : [],
                                                 employeeIds:
                                                   c.value === "specific_employees" || c.value === "round_robin_employees"
                                                     ? d.employeeIds
-                                                    : [],
+                                                    : c.value === "agent_plus_seller"
+                                                      ? d.employeeIds.slice(0, 1)
+                                                      : [],
                                               }));
                                               setDistPickerOpen(false);
                                               setDistQuery("");
@@ -2808,6 +2900,46 @@ export function NewLeadRuleWizard({
                               onChange={() => setDraft((d) => ({ ...d, agentIds: [a.id] }))}
                             />
                             <span className="text-sm text-content">{a.nome}</span>
+                          </label>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            ) : null}
+
+            {draft.distributionType === "agent_plus_seller" ? (
+              <div className="mt-4 rounded-xl border border-line bg-surface-deep/25 p-3">
+                <p className="text-xs font-medium text-content-muted">Vendedor designado</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-content-faint">
+                  O agente de IA inicia o atendimento e este vendedor acompanha em{" "}
+                  <strong className="text-content-muted">Conversas</strong> desde a primeira mensagem.
+                  Ele pode pausar a IA a qualquer momento e assumir pessoalmente. O lead fica visível
+                  só para ele (e para a direção da equipe).
+                </p>
+                {sellerOptions.length === 0 ? (
+                  <p className="mt-3 text-xs font-medium text-amber-300/90">
+                    Nenhum vendedor cadastrado.{" "}
+                    <Link href="/dashboard/colaboradores" className="text-primary underline-offset-2 hover:underline">
+                      Adicione em Colaboradores
+                    </Link>
+                    .
+                  </p>
+                ) : (
+                  <ul className="mt-3 space-y-2">
+                    {sellerOptions.map((emp) => {
+                      const checked = draft.employeeIds[0] === emp.id;
+                      return (
+                        <li key={emp.id}>
+                          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-line/60 px-3 py-2 hover:border-line">
+                            <input
+                              type="radio"
+                              name={`${formId}-seller`}
+                              checked={checked}
+                              onChange={() => setDraft((d) => ({ ...d, employeeIds: [emp.id] }))}
+                            />
+                            <span className="text-sm text-content">{emp.nome}</span>
                           </label>
                         </li>
                       );

@@ -8,6 +8,7 @@ import { resolveAgentCrmFieldsForLeadInsert } from "@/lib/server/auto-lead-upser
 import { buildNewLeadCrmFields, promoteLeadToContatoOnAgentEngagement } from "@/lib/server/crm-lead-lifecycle";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { MetaLeadEventRecorder } from "@/lib/server/meta-lead-events-db";
+import { buildLeadTeamPatch, loadRuleTeamAssignment } from "@/lib/server/meta-lead-team-assignment";
 import {
   crmBlockedUserMessage,
   isMetaFormAllowedForCrm,
@@ -614,7 +615,9 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
 
   const { data: existingLead } = await sb
     .from("leads")
-    .select("id, created_at, campaign_active, agent_id, campaign_agent_id, profile_metadata")
+    .select(
+      "id, created_at, campaign_active, agent_id, campaign_agent_id, profile_metadata, team_id, owner_employee_id",
+    )
     .eq("tenant_id", tenant_id)
     .eq("phone", phone)
     .maybeSingle();
@@ -676,6 +679,17 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       : mergeLeadProfileMetadata(existingLead?.profile_metadata, leadMetadata),
   };
 
+  // Carimbo de equipe: o lead herda a equipe da regra que o admitiu — sem isto
+  // ele nasce sem equipe e só o titular da conta o veria. No modo
+  // "IA + Vendedor" já nasce atribuído ao vendedor escolhido na regra.
+  const teamPatch = buildLeadTeamPatch({
+    assignment: await loadRuleTeamAssignment(sb, tenant_id, ruleId),
+    isNewLead,
+    currentTeamId: (existingLead as { team_id?: string | null } | null)?.team_id ?? null,
+    currentOwnerEmployeeId:
+      (existingLead as { owner_employee_id?: string | null } | null)?.owner_employee_id ?? null,
+  });
+
   const upsertPayload: Record<string, unknown> = isNewLead
     ? {
         tenant_id,
@@ -686,6 +700,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         last_seen: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         ...newLeadCrm,
+        ...teamPatch,
         ...(deferJourneyAttribution ? {} : attributionPayload),
       }
     : {
@@ -696,6 +711,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         source: "lead_ads",
         last_seen: new Date().toISOString(),
         updated_at: new Date().toISOString(),
+        ...teamPatch,
         ...(deferJourneyAttribution ? {} : { ...attributionPayload, ...crmFunnel }),
       };
 
