@@ -977,7 +977,7 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
               >
                 {PAGE_SIZE_OPTIONS.map((n) => (
                   <option key={n} value={n}>
-                    {n} em {n}
+                    {n}
                   </option>
                 ))}
                 <option value="all">Tudo</option>
