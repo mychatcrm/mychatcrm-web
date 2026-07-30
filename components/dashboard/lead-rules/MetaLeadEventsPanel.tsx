@@ -2,7 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertCircle, CheckCircle2, Clock, Loader2, RefreshCw, Trash2, UserCog } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Filter,
+  Loader2,
+  RefreshCw,
+  Trash2,
+  UserCog,
+  X,
+} from "lucide-react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
@@ -24,6 +36,128 @@ const FILTER_OPTIONS: { id: FilterId; label: string }[] = [
   { id: "sem_regra", label: "Sem regra" },
   { id: "erro", label: "Erro" },
 ];
+
+const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100] as const;
+type PageSize = (typeof PAGE_SIZE_OPTIONS)[number] | "all";
+
+type AdvancedFilters = {
+  search: string;
+  pageId: string;
+  formId: string;
+  campaignId: string;
+  adsetId: string;
+  adId: string;
+  agentId: string;
+  crmStatus: string;
+  waStatus: string;
+  dateFrom: string;
+  dateTo: string;
+};
+
+const EMPTY_ADVANCED_FILTERS: AdvancedFilters = {
+  search: "",
+  pageId: "",
+  formId: "",
+  campaignId: "",
+  adsetId: "",
+  adId: "",
+  agentId: "",
+  crmStatus: "",
+  waStatus: "",
+  dateFrom: "",
+  dateTo: "",
+};
+
+const CRM_STATUS_OPTIONS = [
+  { value: "synced", label: "CRM OK" },
+  { value: "failed", label: "CRM erro" },
+  { value: "blocked", label: "CRM bloqueado" },
+  { value: "pending", label: "CRM pendente" },
+];
+
+const WA_STATUS_OPTIONS = [
+  { value: "sent", label: "WhatsApp enviado" },
+  { value: "failed", label: "WhatsApp erro" },
+  { value: "blocked", label: "WhatsApp bloqueado" },
+  { value: "skipped", label: "WhatsApp não enviado" },
+  { value: "pending", label: "WhatsApp pendente" },
+];
+
+function matchesAdvancedFilters(ev: MetaLeadEventRow, f: AdvancedFilters): boolean {
+  if (f.search.trim()) {
+    const q = f.search.trim().toLowerCase();
+    const haystack = `${ev.name ?? ""} ${ev.phone ?? ""} ${ev.email ?? ""}`.toLowerCase();
+    if (!haystack.includes(q)) return false;
+  }
+  if (f.pageId && ev.page_id !== f.pageId) return false;
+  if (f.formId && ev.form_id !== f.formId) return false;
+  if (f.campaignId && ev.campaign_id !== f.campaignId) return false;
+  if (f.adsetId && ev.adset_id !== f.adsetId) return false;
+  if (f.adId && ev.ad_id !== f.adId) return false;
+  if (f.agentId && ev.agent_id !== f.agentId) return false;
+  if (f.crmStatus && ev.crm_sync_status !== f.crmStatus) return false;
+  if (f.waStatus && ev.whatsapp_status !== f.waStatus) return false;
+  if (f.dateFrom) {
+    const from = new Date(`${f.dateFrom}T00:00:00`);
+    if (!Number.isNaN(from.getTime()) && new Date(ev.created_at) < from) return false;
+  }
+  if (f.dateTo) {
+    const to = new Date(`${f.dateTo}T23:59:59`);
+    if (!Number.isNaN(to.getTime()) && new Date(ev.created_at) > to) return false;
+  }
+  return true;
+}
+
+type SelectOption = { value: string; label: string };
+
+/** Opções distintas (id → rótulo) presentes nos leads carregados, pra popular um <select> de filtro. */
+function distinctFieldOptions(
+  events: MetaLeadEventRow[],
+  idKey: "page_id" | "form_id" | "campaign_id" | "adset_id" | "ad_id",
+  nameKey: "page_name" | "form_name" | "campaign_name" | "adset_name" | "ad_name",
+): SelectOption[] {
+  const map = new Map<string, string>();
+  for (const ev of events) {
+    const id = ev[idKey];
+    if (!id) continue;
+    if (!map.has(id)) map.set(id, ev[nameKey] || id);
+  }
+  return Array.from(map.entries())
+    .map(([value, label]) => ({ value, label }))
+    .sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+}
+
+function FilterSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: SelectOption[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-content-muted">
+        {label}
+      </label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-9 w-full rounded-lg border border-line bg-surface-card px-2 text-xs text-content outline-none focus:border-primary/60"
+      >
+        <option value="">Todos</option>
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 const ROLE_LABEL: Record<TeamHierarchyRole, string> = {
   director: "Diretor",
@@ -244,17 +378,56 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterId>("all");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilters>(EMPTY_ADVANCED_FILTERS);
+  const [pageSize, setPageSize] = useState<PageSize>(10);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const advancedFilteredEvents = useMemo(
+    () => events.filter((ev) => matchesAdvancedFilters(ev, advancedFilters)),
+    [events, advancedFilters],
+  );
 
   const counts = useMemo(() => {
-    const result: Record<FilterId, number> = { all: events.length, novo: 0, ok: 0, sem_regra: 0, erro: 0 };
-    for (const ev of events) result[bucketMetaLeadEventStep(ev.current_step)] += 1;
+    const result: Record<FilterId, number> = { all: advancedFilteredEvents.length, novo: 0, ok: 0, sem_regra: 0, erro: 0 };
+    for (const ev of advancedFilteredEvents) result[bucketMetaLeadEventStep(ev.current_step)] += 1;
     return result;
-  }, [events]);
+  }, [advancedFilteredEvents]);
 
   const filteredEvents = useMemo(
-    () => (filter === "all" ? events : events.filter((ev) => bucketMetaLeadEventStep(ev.current_step) === filter)),
-    [events, filter],
+    () =>
+      filter === "all"
+        ? advancedFilteredEvents
+        : advancedFilteredEvents.filter((ev) => bucketMetaLeadEventStep(ev.current_step) === filter),
+    [advancedFilteredEvents, filter],
   );
+
+  const activeFilterCount = useMemo(
+    () => Object.values(advancedFilters).filter((v) => v.trim() !== "").length,
+    [advancedFilters],
+  );
+
+  const pageOptions = useMemo(() => distinctFieldOptions(events, "page_id", "page_name"), [events]);
+  const formOptions = useMemo(() => distinctFieldOptions(events, "form_id", "form_name"), [events]);
+  const campaignOptions = useMemo(() => distinctFieldOptions(events, "campaign_id", "campaign_name"), [events]);
+  const adsetOptions = useMemo(() => distinctFieldOptions(events, "adset_id", "adset_name"), [events]);
+  const adOptions = useMemo(() => distinctFieldOptions(events, "ad_id", "ad_name"), [events]);
+
+  const totalPages = pageSize === "all" ? 1 : Math.max(1, Math.ceil(filteredEvents.length / pageSize));
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter, advancedFilters, pageSize]);
+
+  useEffect(() => {
+    setCurrentPage((p) => Math.min(p, totalPages));
+  }, [totalPages]);
+
+  const pagedEvents = useMemo(() => {
+    if (pageSize === "all") return filteredEvents;
+    const start = (currentPage - 1) * pageSize;
+    return filteredEvents.slice(start, start + pageSize);
+  }, [filteredEvents, pageSize, currentPage]);
 
   // Nome real do agente pra exibir em "Atendimento" — sem isso o card só
   // mostrava o agent_id cru (ex.: "ag-novo-1784296691624").
@@ -268,6 +441,17 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
       })
       .catch(() => {});
   }, []);
+
+  const agentOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const ev of events) {
+      if (!ev.agent_id) continue;
+      if (!map.has(ev.agent_id)) map.set(ev.agent_id, agentNamesById.get(ev.agent_id) ?? ev.agent_id);
+    }
+    return Array.from(map.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+  }, [events, agentNamesById]);
 
   // ── Direcionamento manual (só disponível pra leads no balde "erro") ──────
   const [assignEventId, setAssignEventId] = useState<string | null>(null);
@@ -362,7 +546,7 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/client/meta/lead-events?limit=80", { cache: "no-store" });
+      const res = await fetch("/api/client/meta/lead-events?limit=1000", { cache: "no-store" });
       const json = (await res.json()) as { events?: MetaLeadEventRow[]; error?: string; tableReady?: boolean };
       if (!res.ok) throw new Error(json.error ?? "Falha ao carregar leads");
       setEvents(json.events ?? []);
@@ -414,18 +598,141 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
             Formulários Meta Lead Ads em tempo real — CRM, agente e WhatsApp automático.
           </p>
         </div>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          className="w-full sm:w-auto"
-          onClick={() => void refresh()}
-          disabled={loading}
-        >
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <RefreshCw className="h-4 w-4" aria-hidden />}
-          Atualizar
-        </Button>
+        <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+          <Button
+            type="button"
+            variant={filtersOpen || activeFilterCount > 0 ? "outline" : "secondary"}
+            size="sm"
+            className="w-full sm:w-auto"
+            onClick={() => setFiltersOpen((v) => !v)}
+          >
+            <Filter className="h-4 w-4" aria-hidden />
+            Filtros{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="w-full sm:w-auto"
+            onClick={() => void refresh()}
+            disabled={loading}
+          >
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <RefreshCw className="h-4 w-4" aria-hidden />}
+            Atualizar
+          </Button>
+        </div>
       </div>
+
+      {filtersOpen ? (
+        <div
+          className={cn(
+            "mb-4 rounded-xl border p-4",
+            isLight ? "border-slate-200 bg-surface-deep" : "border-line/80 bg-surface-card/60",
+          )}
+        >
+          <div className="mb-3">
+            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-content-muted">
+              Buscar por nome, telefone ou email
+            </label>
+            <input
+              type="text"
+              value={advancedFilters.search}
+              onChange={(e) => setAdvancedFilters((f) => ({ ...f, search: e.target.value }))}
+              placeholder="Ex.: João, 5511999999999, joao@email.com"
+              className="h-9 w-full rounded-lg border border-line bg-surface-card px-2.5 text-xs text-content outline-none focus:border-primary/60"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <FilterSelect
+              label="Página"
+              value={advancedFilters.pageId}
+              options={pageOptions}
+              onChange={(v) => setAdvancedFilters((f) => ({ ...f, pageId: v }))}
+            />
+            <FilterSelect
+              label="Formulário"
+              value={advancedFilters.formId}
+              options={formOptions}
+              onChange={(v) => setAdvancedFilters((f) => ({ ...f, formId: v }))}
+            />
+            <FilterSelect
+              label="Campanha"
+              value={advancedFilters.campaignId}
+              options={campaignOptions}
+              onChange={(v) => setAdvancedFilters((f) => ({ ...f, campaignId: v }))}
+            />
+            <FilterSelect
+              label="Conjunto de anúncios"
+              value={advancedFilters.adsetId}
+              options={adsetOptions}
+              onChange={(v) => setAdvancedFilters((f) => ({ ...f, adsetId: v }))}
+            />
+            <FilterSelect
+              label="Anúncio"
+              value={advancedFilters.adId}
+              options={adOptions}
+              onChange={(v) => setAdvancedFilters((f) => ({ ...f, adId: v }))}
+            />
+            <FilterSelect
+              label="Direcionado para (agente)"
+              value={advancedFilters.agentId}
+              options={agentOptions}
+              onChange={(v) => setAdvancedFilters((f) => ({ ...f, agentId: v }))}
+            />
+            <FilterSelect
+              label="Status CRM"
+              value={advancedFilters.crmStatus}
+              options={CRM_STATUS_OPTIONS}
+              onChange={(v) => setAdvancedFilters((f) => ({ ...f, crmStatus: v }))}
+            />
+            <FilterSelect
+              label="Status WhatsApp"
+              value={advancedFilters.waStatus}
+              options={WA_STATUS_OPTIONS}
+              onChange={(v) => setAdvancedFilters((f) => ({ ...f, waStatus: v }))}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-content-muted">
+                  De
+                </label>
+                <input
+                  type="date"
+                  value={advancedFilters.dateFrom}
+                  onChange={(e) => setAdvancedFilters((f) => ({ ...f, dateFrom: e.target.value }))}
+                  className="h-9 w-full rounded-lg border border-line bg-surface-card px-2 text-xs text-content outline-none focus:border-primary/60"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-content-muted">
+                  Até
+                </label>
+                <input
+                  type="date"
+                  value={advancedFilters.dateTo}
+                  onChange={(e) => setAdvancedFilters((f) => ({ ...f, dateTo: e.target.value }))}
+                  className="h-9 w-full rounded-lg border border-line bg-surface-card px-2 text-xs text-content outline-none focus:border-primary/60"
+                />
+              </div>
+            </div>
+          </div>
+
+          {activeFilterCount > 0 ? (
+            <div className="mt-3 flex justify-end">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setAdvancedFilters(EMPTY_ADVANCED_FILTERS)}
+              >
+                <X className="h-3.5 w-3.5" aria-hidden />
+                Limpar filtros
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div
         className={cn(
@@ -491,7 +798,7 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
       ) : null}
 
       <ul className="space-y-3">
-        {filteredEvents.map((ev) => {
+        {pagedEvents.map((ev) => {
           const crm = crmBadge(ev.crm_sync_status, ev.error_message);
           const wa = waBadge(ev.whatsapp_status, ev.error_message);
           const hint = errorMessageHint(ev.error_message);
@@ -652,6 +959,62 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
           );
         })}
       </ul>
+
+      {filteredEvents.length > 0 ? (
+        <div className="mt-5 flex flex-col items-center justify-between gap-3 border-t border-line/40 pt-4 sm:flex-row">
+          <p className="text-xs text-content-muted">
+            Mostrando {pageSize === "all" ? 1 : (currentPage - 1) * pageSize + 1}–
+            {pageSize === "all" ? filteredEvents.length : Math.min(currentPage * pageSize, filteredEvents.length)} de{" "}
+            {filteredEvents.length} leads
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-xs text-content-muted">
+              Exibir
+              <select
+                value={String(pageSize)}
+                onChange={(e) => setPageSize(e.target.value === "all" ? "all" : (Number(e.target.value) as PageSize))}
+                className="h-8 rounded-lg border border-line bg-surface-card px-2 text-xs text-content outline-none focus:border-primary/60"
+              >
+                {PAGE_SIZE_OPTIONS.map((n) => (
+                  <option key={n} value={n}>
+                    {n} em {n}
+                  </option>
+                ))}
+                <option value="all">Tudo</option>
+              </select>
+            </label>
+            {pageSize !== "all" && totalPages > 1 ? (
+              <div className="flex items-center gap-1.5">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="h-8 px-2"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  title="Página anterior"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
+                </Button>
+                <span className="text-xs text-content-muted">
+                  Página {currentPage} de {totalPages}
+                </span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="h-8 px-2"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  title="Próxima página"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {assignEventId ? (
         <Modal

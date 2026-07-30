@@ -7,7 +7,10 @@ import { enrichMissingMetaLeadEventNames } from "@/lib/server/meta-lead-events-e
 export const dynamic = "force-dynamic";
 
 const DEFAULT_LIMIT = 50;
-const MAX_LIMIT = 100;
+// Painel faz paginação e filtros no cliente (10/20/.../100/Tudo + busca por
+// campanha, conjunto, anúncio, agente, status, período) — precisa de todos os
+// leads recentes carregados de uma vez, não só os últimos 80/100.
+const MAX_LIMIT = 1000;
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const guard = await requireActiveClientSession();
