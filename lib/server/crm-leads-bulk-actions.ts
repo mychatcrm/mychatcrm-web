@@ -6,6 +6,7 @@ import {
   validateLeadStatusForUpdate,
 } from "@/lib/server/crm-lead-status-validation";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { leadInScope, type AccessScope, type ScopableLead } from "@/lib/server/access-scope";
 import type { TeamEmployee } from "@/lib/team-employees-types";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
@@ -99,6 +100,34 @@ async function requireAllTenantLeads(params: {
   return tenantLeadIds;
 }
 
+/**
+ * Pertencer ao tenant não basta: a ação em lote alcança até 100 leads de uma
+ * vez, então cada id precisa estar dentro do escopo de quem está agindo.
+ * Falha o lote inteiro se um só id estiver fora — nunca aplica parcialmente.
+ */
+async function requireAllLeadsInScope(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  ids: string[];
+  scope: AccessScope;
+}): Promise<void> {
+  if (params.scope.kind === "all") return;
+
+  const { data, error } = await params.sb
+    .from("leads")
+    .select("id, team_id, owner_employee_id")
+    .eq("tenant_id", params.tenantId)
+    .in("id", params.ids);
+
+  if (error) throw new Error("Não foi possível validar o acesso aos leads selecionados.");
+
+  const rows = (data ?? []) as Array<ScopableLead & { id: string }>;
+  const allowed = new Set(rows.filter((row) => leadInScope(row, params.scope)).map((row) => row.id));
+  if (allowed.size !== params.ids.length) {
+    throw new Error("Alguns leads selecionados não estão sob a sua responsabilidade.");
+  }
+}
+
 export function validateCrmBulkStatus(params: {
   status: unknown;
   allowedStatusIds?: unknown;
@@ -132,6 +161,8 @@ export async function executeCrmLeadBulkAction(params: {
   leadIds: unknown;
   payload?: Record<string, unknown>;
   teamEmployees?: TeamEmployee[];
+  /** Recorte de quem está agindo. Ausente = chamada interna sem sessão. */
+  scope?: AccessScope;
 }): Promise<CrmBulkActionResult> {
   const ids = normalizeCrmLeadIds(params.leadIds);
   const validationError = validateCommonIds(ids);
@@ -148,6 +179,14 @@ export async function executeCrmLeadBulkAction(params: {
   }
 
   await requireAllTenantLeads({ sb: params.sb, tenantId: params.tenantId, ids });
+  if (params.scope) {
+    await requireAllLeadsInScope({
+      sb: params.sb,
+      tenantId: params.tenantId,
+      ids,
+      scope: params.scope,
+    });
+  }
   const now = new Date().toISOString();
   const payload = params.payload ?? {};
 

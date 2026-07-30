@@ -4,6 +4,8 @@ import { toClientAgendaEvent } from "@/lib/agenda/client-event";
 import { broadcastAgendaChange } from "@/lib/server/agenda-realtime";
 import { createGoogleCalendarEvent } from "@/lib/server/google-calendar";
 import { insertAgendaEvent, listAgendaEvents } from "@/lib/server/google-calendar-db";
+import { resolveAccessScope, visibleLeadIds } from "@/lib/server/access-scope";
+import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +27,20 @@ export async function GET(request: Request) {
   const to = url.searchParams.get("to") || undefined;
   const q = url.searchParams.get("q")?.trim().toLowerCase();
   let rows = await listAgendaEvents(session.tenantId, from, to);
+
+  // Agendamento segue o lead: só aparece para quem alcança o lead vinculado.
+  // Evento sem lead (criado à mão na agenda) fica com quem o criou.
+  const sb = createSupabaseServiceClient();
+  const scope = await resolveAccessScope(sb, session);
+  const allowedLeadIds = await visibleLeadIds(sb, session.tenantId, scope);
+  if (allowedLeadIds !== null) {
+    rows = rows.filter((r) =>
+      r.lead_id
+        ? allowedLeadIds.has(r.lead_id)
+        : Boolean(session.employeeId) && r.created_by === session.employeeId,
+    );
+  }
+
   if (q) {
     rows = rows.filter((r) => r.title.toLowerCase().includes(q) || (r.location ?? "").toLowerCase().includes(q));
   }

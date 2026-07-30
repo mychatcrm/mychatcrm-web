@@ -68,40 +68,22 @@ export function crmOwnerIdScopeForSession(
   return null;
 }
 
+/**
+ * Este recorte no cliente é **defesa em profundidade** — a fronteira real é
+ * `lib/server/access-scope.ts`, aplicada na query antes de o dado sair do
+ * servidor.
+ *
+ * Havia aqui uma exceção que deixava todo lead automático sem dono visível a
+ * qualquer colaborador. Como a ingestão nunca preenchia `ownerEmployeeId`, na
+ * prática isso tornava *todos* os leads de WhatsApp/Meta visíveis para todos os
+ * vendedores — a causa exata do vazamento relatado. Foi removida: lead sem dono
+ * agora só aparece para quem tem escopo de equipe (diretor/gerente) ou para o
+ * titular.
+ */
 export function leadMatchesOwnerScope(lead: ClientLead, scope: Set<string> | null): boolean {
   if (scope === null) return true;
-  // Leads criados automaticamente ainda podem não ter responsável
-  // humano. Mantê-los visíveis no CRM do tenant evita que oportunidades novas
-  // sumam antes de alguém assumir/atribuir o atendimento.
-  if (!lead.ownerEmployeeId && isAutomaticInboundLead(lead)) return true;
   if (lead.ownerEmployeeId && scope.has(lead.ownerEmployeeId)) return true;
   return false;
-}
-
-function normalizeLeadSource(value: string | null | undefined): string {
-  return (value ?? "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
-}
-
-export function isAutomaticInboundLead(lead: ClientLead): boolean {
-  const haystack = [
-    lead.origem,
-    lead.tag,
-    lead.agenteEntrada,
-    lead.agenteAtendendo,
-    ...lead.tags,
-  ]
-    .map(normalizeLeadSource)
-    .join(" ");
-
-  return (
-    haystack.includes("whatsapp") ||
-    haystack.includes("meta") ||
-    haystack.includes("facebook") ||
-    haystack.includes("lead ads") ||
-    haystack.includes("lead_ads") ||
-    haystack.includes("formulario") ||
-    haystack.includes("form")
-  );
 }
 
 export function filterLeadsForSession(session: ClientSession, employees: TeamEmployee[], leads: ClientLead[]): ClientLead[] {

@@ -3,6 +3,7 @@ import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { deleteCrmLeadsForTenant, normalizeCrmLeadIds, validateCrmLeadIds } from "@/lib/server/crm-leads-delete";
 import { readTeamMembersFromDb } from "@/lib/server/team-employees-db";
+import { resolveAccessScope, scopeMatchesNothing } from "@/lib/server/access-scope";
 import type { ClientLead } from "@/lib/dashboard-data";
 import {
   commitTenantLeadQuotaReservation,
@@ -149,20 +150,31 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
   const sb = createSupabaseServiceClient();
-  const initial = await sb
-    .from("leads")
-    .select(LEAD_SELECT_WITH_FUNNEL)
-    .eq("tenant_id", session.tenantId)
-    .order("created_at", { ascending: false });
+
+  // Recorte por equipe/dono aplicado NA QUERY: nenhum lead fora do escopo sai
+  // do servidor, nem para quem chamar a API por fora do painel.
+  const scope = await resolveAccessScope(sb, session);
+  if (scopeMatchesNothing(scope)) {
+    return NextResponse.json({ leads: [] }, { headers: { "Cache-Control": "no-store" } });
+  }
+
+  const scopedQuery = (select: string) => {
+    const base = sb
+      .from("leads")
+      .select(select)
+      .eq("tenant_id", session.tenantId)
+      .order("created_at", { ascending: false });
+    if (scope.kind === "own") return base.eq("owner_employee_id", scope.employeeId);
+    if (scope.kind === "teams") return base.in("team_id", scope.teamIds);
+    return base;
+  };
+
+  const initial = await scopedQuery(LEAD_SELECT_WITH_FUNNEL);
   let data: unknown[] | null = initial.data;
   let error = initial.error;
 
   if (isMissingColumnError(error)) {
-    const fallback = await sb
-      .from("leads")
-      .select(BASE_LEAD_SELECT)
-      .eq("tenant_id", session.tenantId)
-      .order("created_at", { ascending: false });
+    const fallback = await scopedQuery(BASE_LEAD_SELECT);
     data = fallback.data as unknown[] | null;
     error = fallback.error;
   }

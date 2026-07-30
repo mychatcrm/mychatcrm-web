@@ -8,6 +8,7 @@ import {
   validateLeadStatusForUpdate,
 } from "@/lib/server/crm-lead-status-validation";
 import { readTeamMembersFromDb } from "@/lib/server/team-employees-db";
+import { loadLeadInScope, resolveAccessScope } from "@/lib/server/access-scope";
 import type { ClientLead } from "@/lib/dashboard-data";
 
 export const dynamic = "force-dynamic";
@@ -147,6 +148,12 @@ export async function GET(
   if (!params.id) return NextResponse.json({ error: "id em falta" }, { status: 400 });
 
   const sb = createSupabaseServiceClient();
+  // 404 (não 403) quando o lead é de outra equipe/vendedor: não revela que existe.
+  const scope = await resolveAccessScope(sb, session);
+  if (!(await loadLeadInScope(sb, session.tenantId, params.id, scope))) {
+    return NextResponse.json({ error: "Lead não encontrado." }, { status: 404 });
+  }
+
   const initial = await sb
     .from("leads")
     .select(LEAD_SELECT_WITH_PROFILE)
@@ -220,6 +227,13 @@ export async function PUT(
   }
 
   const sb = createSupabaseServiceClient();
+  // Sem isto, qualquer colaborador autenticado podia editar (e reatribuir) lead
+  // de outra equipe só chamando a API com o id.
+  const scope = await resolveAccessScope(sb, session);
+  if (!(await loadLeadInScope(sb, session.tenantId, params.id, scope))) {
+    return NextResponse.json({ error: "Lead não encontrado." }, { status: 404 });
+  }
+
   const initial = await sb
     .from("leads")
     .update(leadPayloadToUpdate(body))
@@ -263,6 +277,16 @@ export async function DELETE(
   if (validationError) return NextResponse.json({ error: validationError }, { status: 400 });
 
   const sb = createSupabaseServiceClient();
+  // Apaga só o que o escopo alcança. Se algum id estiver fora, responde 404
+  // para o lote inteiro, em vez de apagar em silêncio uma parte.
+  const scope = await resolveAccessScope(sb, session);
+  const inScope = await Promise.all(
+    ids.map((id) => loadLeadInScope(sb, session.tenantId, id, scope)),
+  );
+  if (inScope.some((lead) => !lead)) {
+    return NextResponse.json({ error: "Lead não encontrado." }, { status: 404 });
+  }
+
   try {
     const result = await deleteCrmLeadsForTenant({ sb, tenantId: session.tenantId, ids });
     return NextResponse.json({ ok: true, id: result.deletedIds[0] ?? null, ids: result.deletedIds, count: result.deletedCount });

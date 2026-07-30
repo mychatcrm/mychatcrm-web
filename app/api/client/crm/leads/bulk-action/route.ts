@@ -5,6 +5,7 @@ import {
   type CrmBulkAction,
 } from "@/lib/server/crm-leads-bulk-actions";
 import { readTeamMembersFromDb } from "@/lib/server/team-employees-db";
+import { resolveAccessScope } from "@/lib/server/access-scope";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +50,7 @@ export async function POST(request: Request) {
       leadIds: body.leadIds,
       payload: typeof body.payload === "object" && body.payload !== null ? (body.payload as Record<string, unknown>) : {},
       teamEmployees,
+      scope: await resolveAccessScope(sb, session),
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
