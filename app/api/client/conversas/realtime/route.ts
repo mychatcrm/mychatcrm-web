@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { filterConversationsInScope, resolveAccessScope } from "@/lib/server/access-scope";
 
 export const dynamic = "force-dynamic";
 
@@ -74,5 +75,21 @@ export async function POST(request: Request) {
     );
   }
 
-  return NextResponse.json({ messages: data ?? [] }, { headers: NO_STORE_HEADERS });
+  // O tópico de broadcast é por conta, então chegam aqui ids de conversas que
+  // quem pediu talvez não possa ver — e esta rota devolve o CONTEÚDO das
+  // mensagens. Sem este recorte, um vendedor leria em tempo real a conversa de
+  // qualquer colega. Id fora do alcance simplesmente não volta.
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  const scope = await resolveAccessScope(sb, session);
+  if (scope.kind === "all") {
+    return NextResponse.json({ messages: rows }, { headers: NO_STORE_HEADERS });
+  }
+
+  const jids = Array.from(new Set(rows.map((row) => String(row.remote_jid ?? "")).filter(Boolean)));
+  const allowedJids = new Set(await filterConversationsInScope(sb, session.tenantId, jids, scope));
+
+  return NextResponse.json(
+    { messages: rows.filter((row) => allowedJids.has(String(row.remote_jid ?? ""))) },
+    { headers: NO_STORE_HEADERS },
+  );
 }
