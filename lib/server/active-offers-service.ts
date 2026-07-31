@@ -26,6 +26,7 @@ import type {
 import { resolveOrganizationRole } from "@/lib/organization-role";
 import { readTeamMembersFromDb } from "@/lib/server/team-employees-db";
 import { resolveAccessScope, visibleLeadIds } from "@/lib/server/access-scope";
+import { deriveOfferTeamId, offerInTeamScope } from "@/lib/server/active-offers-team";
 
 type OfferRow = {
   id: string;
@@ -53,7 +54,7 @@ type ProgressRow = {
 };
 
 const OFFER_SELECT =
-  "id, tenant_id, title, status, created_by, created_at, updated_at, created_via, filter_snapshot, distribution_mode, archived_at";
+  "id, tenant_id, title, status, created_by, created_at, updated_at, created_via, filter_snapshot, distribution_mode, archived_at, team_id";
 
 const COMPLETED_DISPOSITIONS = new Set<ActiveOfferDisposition>([
   "answered_transfer",
@@ -285,6 +286,8 @@ export async function createActiveOfferFromFilter(
       created_via: "smart_filter",
       filter_snapshot: filterSnapshot,
       distribution_mode: params.distributionMode,
+      // Equipe dona da lista, derivada dos leads que entraram nela.
+      team_id: await deriveOfferTeamId(sb, session.tenantId, leadIds),
       updated_at: now,
     })
     .select(OFFER_SELECT)
@@ -393,8 +396,11 @@ export async function listActiveOffersForSession(sb: SupabaseClient, session: Cl
     assigneesByOffer.set(offerId, list);
   }
 
+  const listScope = await resolveAccessScope(sb as never, session);
   const visibleOffers = offerRows.filter((offer) => {
     if (resolveOrganizationRole(session) === "seller" && offer.archived_at) return false;
+    // Sem isto, diretor/gerente enxergavam as listas de toda a conta.
+    if (!offerInTeamScope(offer, listScope, session.email)) return false;
     return offerVisibleToEmployee({
       assigneeIds: assigneesByOffer.get(offer.id) ?? [],
       employeeId: session.employeeId,
@@ -449,6 +455,11 @@ export async function getActiveOfferDetail(
   await ensureLegacyProgressRows(sb, session.tenantId, offerId);
   const assigneeIds = await loadAssigneeIds(sb, session.tenantId, offerId);
   const isManagerView = canViewActiveOfferProgress(session);
+
+  const detailScope = await resolveAccessScope(sb as never, session);
+  if (!offerInTeamScope(offerRow, detailScope, session.email)) {
+    throw new Error("Lista de ligação não encontrada.");
+  }
 
   if (
     !offerVisibleToEmployee({
