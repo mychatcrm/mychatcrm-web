@@ -7,6 +7,7 @@ import {
 } from "@/lib/server/crm-lead-status-validation";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { leadInScope, type AccessScope, type ScopableLead } from "@/lib/server/access-scope";
+import { deriveOfferTeamId } from "@/lib/server/active-offers-team";
 import type { TeamEmployee } from "@/lib/team-employees-types";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
@@ -255,6 +256,8 @@ export async function executeCrmLeadBulkAction(params: {
         title,
         status: "active",
         created_by: params.actorEmail ?? null,
+        // Equipe dona da lista, derivada dos leads selecionados.
+        team_id: await deriveOfferTeamId(params.sb, params.tenantId, ids),
         updated_at: now,
       })
       .select("id, title, status, created_at")
