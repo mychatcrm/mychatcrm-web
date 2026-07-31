@@ -5,6 +5,7 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { filterConversationsInScope, resolveAccessScope } from "@/lib/server/access-scope";
 import { hideConversationsForTenant } from "@/lib/server/conversation-visibility";
 
 export const dynamic = "force-dynamic";
@@ -46,6 +47,21 @@ export async function POST(request: Request) {
   }
 
   const sb = createSupabaseServiceClient();
+  // Mesma regra do lote no CRM: se um jid estiver fora do alcance, recusa tudo
+  // em vez de arquivar parte em silêncio.
+  const inScope = await filterConversationsInScope(
+    sb,
+    session.tenantId,
+    jids,
+    await resolveAccessScope(sb, session),
+  );
+  if (inScope.length !== jids.length) {
+    return NextResponse.json(
+      { error: "Algumas conversas selecionadas não estão sob a sua responsabilidade." },
+      { status: 403 },
+    );
+  }
+
   const count = await hideConversationsForTenant({
     sb,
     tenantId: session.tenantId,

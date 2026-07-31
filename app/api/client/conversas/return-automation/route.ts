@@ -8,6 +8,7 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { conversationInScope, resolveAccessScope } from "@/lib/server/access-scope";
 import { returnConversationToAutomation } from "@/lib/server/conversation-operation";
 import { authorizeActiveJourney, isJourneyIsolationEnabled } from "@/lib/server/lead-journeys";
 
@@ -30,6 +31,10 @@ export async function POST(request: Request) {
   }
 
   const sb = createSupabaseServiceClient();
+  if (!(await conversationInScope(sb, session.tenantId, remoteJid, await resolveAccessScope(sb, session)))) {
+    return NextResponse.json({ error: "Conversa não encontrada" }, { status: 404 });
+  }
+
 
   let agentId: string | null = null;
   if (isJourneyIsolationEnabled()) {

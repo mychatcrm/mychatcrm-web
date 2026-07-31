@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { conversationInScope, resolveAccessScope } from "@/lib/server/access-scope";
 import { remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
 import { persistEvolutionSendReceipt } from "@/lib/server/evolution-customer-delivery";
 import { sendEvolutionTextWithConnectionRecovery } from "@/lib/server/evolution-send-recovery";
@@ -113,6 +114,10 @@ export async function POST(request: Request) {
   const tempId = clientTempId?.trim() || null;
 
   const sb = createSupabaseServiceClient();
+  if (!(await conversationInScope(sb, session.tenantId, remoteJid, await resolveAccessScope(sb, session)))) {
+    return NextResponse.json({ error: "Conversa não encontrada" }, { status: 404 });
+  }
+
   const stateRow = await loadStateOperationRow({
     sb,
     tenantId: session.tenantId,
