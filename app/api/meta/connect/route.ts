@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
 import { signMetaOAuthState } from "@/lib/server/meta-oauth-state";
 import { SITE_URL } from "@/lib/constants";
+import { META_GRAPH_API_VERSION } from "@/lib/server/meta-graph-api";
+import { metaLeadsBusinessLoginConfiguration } from "@/lib/server/meta-leads-config";
 
 export const dynamic = "force-dynamic";
 
@@ -49,12 +51,43 @@ export async function GET(): Promise<NextResponse> {
   const siteUrl = SITE_URL.replace(/\/$/, "");
   const redirectUri = `${siteUrl}/api/meta/callback`;
 
-  const fbUrl = new URL("https://www.facebook.com/v19.0/dialog/oauth");
+  const fbUrl = new URL(`https://www.facebook.com/${META_GRAPH_API_VERSION}/dialog/oauth`);
   fbUrl.searchParams.set("client_id", appId);
   fbUrl.searchParams.set("redirect_uri", redirectUri);
-  fbUrl.searchParams.set("scope", SCOPES);
   fbUrl.searchParams.set("response_type", "code");
   fbUrl.searchParams.set("state", state);
+
+  const { configurationId, tokenMode } = metaLeadsBusinessLoginConfiguration();
+  if (configurationId) {
+    if (!tokenMode) {
+      return NextResponse.json(
+        {
+          error:
+            "META_LEADS_TOKEN_MODE não está configurado para o Facebook Login for Business.",
+        },
+        { status: 503 },
+      );
+    }
+    // Facebook Login for Business is the supported SaaS onboarding. The
+    // configuration owns the requested assets and permissions; `scope` must
+    // not be mixed into this flow.
+    fbUrl.searchParams.set("config_id", configurationId);
+    fbUrl.searchParams.set("override_default_response_type", "true");
+  } else {
+    // Fallback de compatibilidade: sem `META_LEADS_CONFIG_ID` seguimos no OAuth
+    // clássico por `scope`, que é o fluxo em uso hoje e está funcionando.
+    //
+    // O comportamento original aqui era responder 503 em produção para forçar a
+    // migração para o Facebook Login for Business. Isso tiraria do ar a conexão
+    // Meta de quem já usa o produto no instante do deploy, antes de a variável
+    // existir no ambiente. Mantendo o fallback, o Login for Business passa a
+    // valer sozinho assim que a configuração for preenchida — sem janela de
+    // indisponibilidade e sem exigir coordenação entre deploy e ambiente.
+    console.warn(
+      "[meta-connect] META_LEADS_CONFIG_ID ausente — seguindo com OAuth por scope",
+    );
+    fbUrl.searchParams.set("scope", SCOPES);
+  }
 
   return NextResponse.redirect(fbUrl.toString());
 }

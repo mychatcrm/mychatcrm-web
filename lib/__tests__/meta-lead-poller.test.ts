@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSignedMetaWebhookHeaders,
   isMetaLeadAfterActivation,
+  isMetaConnectionPollEligible,
   isRecentMetaLead,
   metaLeadCreatedAtMs,
 } from "@/lib/server/meta-lead-poller";
@@ -38,5 +39,39 @@ describe("Meta lead poller helpers", () => {
 
     expect(headers["content-type"]).toBe("application/json");
     expect(headers["x-hub-signature-256"]).toMatch(/^sha256=[a-f0-9]{64}$/);
+  });
+
+  it("keeps polling as a fallback when only webhook transport is unhealthy", () => {
+    expect(
+      isMetaConnectionPollEligible({
+        health_status: "action_required",
+        health_code: "app_webhook_callback_mismatch",
+        lead_access_status: "verified_by_delivery",
+      }),
+    ).toBe(true);
+    expect(
+      isMetaConnectionPollEligible({
+        health_status: "degraded",
+        health_code: "graph_temporarily_unavailable",
+        lead_access_status: "verified_by_retrieval",
+      }),
+    ).toBe(true);
+  });
+
+  it("never polls when current Meta lead access is denied", () => {
+    expect(
+      isMetaConnectionPollEligible({
+        health_status: "action_required",
+        health_code: "lead_access_denied",
+        lead_access_status: "action_required",
+      }),
+    ).toBe(false);
+    expect(
+      isMetaConnectionPollEligible({
+        health_status: "retrying",
+        health_code: "graph_temporarily_unavailable",
+        lead_access_status: "unverified",
+      }),
+    ).toBe(false);
   });
 });

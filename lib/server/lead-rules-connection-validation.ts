@@ -6,25 +6,196 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { listWhatsAppMessageTemplates } from "@/lib/integrations/whatsapp-cloud";
 import { stringArray } from "@/lib/server/meta-form-authorization";
+import {
+  MetaGraphRequestError,
+  metaGraphErrorCode,
+  metaGraphRequest,
+} from "@/lib/server/meta-graph-api";
+import { ensureTenantPageLeadgenWebhookSubscription } from "@/lib/server/meta-page-webhook-subscribe";
 import { lookupWhatsAppCloudConnectionByPhoneNumberId } from "@/lib/server/whatsapp-cloud-connections";
 import type { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 const META_AUTOMATION_DISTRIBUTION_TYPES = new Set(["automation_agent", "specific_agents", "round_robin"]);
 
 type ServiceClient = ReturnType<typeof createSupabaseServiceClient>;
+type MetaFormsProbeResponse = {
+  data?: Array<{ id?: string; status?: string }>;
+  paging?: { next?: string };
+};
+
+function metaRuleGraphError(error: unknown, context: "forms" | "leads"): NextResponse {
+  const code = metaGraphErrorCode(error);
+  const retryable = error instanceof MetaGraphRequestError && error.retryable;
+  const permissionDenied = code === "permission_denied";
+  return NextResponse.json(
+    {
+      error: permissionDenied
+        ? context === "leads"
+          ? "A Meta não liberou o MyChatCRM no Acesso a Leads desta Página. No portfólio empresarial, atribua o CRM MyChatCRM à Página."
+          : "A Meta não permitiu consultar os formulários desta Página. Reconecte a conta e confirme o acesso à Página."
+        : retryable
+          ? "A Meta está temporariamente indisponível. Tente salvar a regra novamente em alguns instantes."
+          : "Não foi possível validar os formulários desta Página na Meta.",
+      code:
+        permissionDenied && context === "leads"
+          ? "lead_access_denied"
+          : permissionDenied
+            ? "forms_access_denied"
+            : code,
+    },
+    { status: retryable ? 503 : 409 },
+  );
+}
 
 export async function validateMetaAutomationConnection(
   sb: ServiceClient,
   tenantId: string,
   payload: Record<string, unknown>,
 ): Promise<NextResponse | null> {
-  if (
-    payload.source !== "meta_form" ||
-    !META_AUTOMATION_DISTRIBUTION_TYPES.has(String(payload.distribution_type)) ||
-    stringArray(payload.agent_ids).length === 0
-  ) {
-    return null;
+  if (payload.source !== "meta_form") return null;
+  const automationEnabled =
+    META_AUTOMATION_DISTRIBUTION_TYPES.has(String(payload.distribution_type)) &&
+    stringArray(payload.agent_ids).length > 0;
+
+  const pageId = typeof payload.page_id === "string" ? payload.page_id.trim() : "";
+  if (!pageId) {
+    return NextResponse.json(
+      { error: "Selecione a Página Meta exata desta regra." },
+      { status: 400 },
+    );
   }
+
+  const { data: metaPage, error: metaPageError } = await sb
+    .from("meta_connections")
+    .select(
+      "page_access_token, health_status, health_code, health_message, subscribed_fields, last_verified_at",
+    )
+    .eq("tenant_id", tenantId)
+    .eq("page_id", pageId)
+    .maybeSingle();
+  if (metaPageError) {
+    return NextResponse.json(
+      { error: "Não foi possível verificar a saúde da conexão Meta." },
+      { status: 503 },
+    );
+  }
+  if (!metaPage) {
+    return NextResponse.json(
+      { error: "A Página Meta desta regra não pertence a esta conta." },
+      { status: 400 },
+    );
+  }
+  const operational =
+    metaPage.health_status === "ready" ||
+    metaPage.health_status === "degraded" ||
+    metaPage.health_status === "legacy_grace";
+  if (!operational) {
+    return NextResponse.json(
+      {
+        error:
+          metaPage.health_message ??
+          "A conexão Meta ainda não foi validada. Verifique ou reconecte a Página em Integrações.",
+        code: metaPage.health_code ?? "meta_connection_not_ready",
+      },
+      { status: 409 },
+    );
+  }
+  const subscribedFields = Array.isArray(metaPage.subscribed_fields)
+    ? metaPage.subscribed_fields.filter(
+        (field): field is string => typeof field === "string",
+      )
+    : [];
+  const lastVerifiedAt =
+    typeof metaPage.last_verified_at === "string"
+      ? Date.parse(metaPage.last_verified_at)
+      : Number.NaN;
+  const cachedSubscriptionIsFresh =
+    subscribedFields.some((field) => field.toLowerCase() === "leadgen") &&
+    Number.isFinite(lastVerifiedAt) &&
+    lastVerifiedAt >= Date.now() - 24 * 60 * 60_000;
+
+  if (!cachedSubscriptionIsFresh) {
+    const subscription = await ensureTenantPageLeadgenWebhookSubscription({
+      sb,
+      tenantId,
+      pageId,
+    });
+    if (!subscription.ok) {
+      return NextResponse.json(
+        {
+          error:
+            "A Meta não confirmou a assinatura de leads desta Página. Verifique a conexão em Integrações antes de ativar a regra.",
+          code: subscription.error ?? "meta_leadgen_subscription_failed",
+        },
+        { status: 409 },
+      );
+    }
+  }
+
+  const useAllForms = payload.use_all_forms === true;
+  const includedFormIds = stringArray(payload.included_form_ids);
+  if (!useAllForms && includedFormIds.length === 0) {
+    return NextResponse.json(
+      { error: "Selecione ao menos um formulário Meta para esta regra." },
+      { status: 400 },
+    );
+  }
+
+  const activeFormIds = new Set<string>();
+  let nextUrl: string | undefined = `/${encodeURIComponent(pageId)}/leadgen_forms`;
+  let firstPage = true;
+  try {
+    for (let page = 0; nextUrl && page < 5; page += 1) {
+      const response: MetaFormsProbeResponse =
+        await metaGraphRequest<MetaFormsProbeResponse>(nextUrl, {
+        accessToken: String(metaPage.page_access_token),
+        searchParams: firstPage
+          ? { fields: "id,status", limit: 100 }
+          : undefined,
+        });
+      firstPage = false;
+      for (const form of response.data ?? []) {
+        if (form.id && form.status === "ACTIVE") activeFormIds.add(form.id);
+      }
+      nextUrl = response.paging?.next;
+    }
+  } catch (error) {
+    return metaRuleGraphError(error, "forms");
+  }
+
+  const missingForms = includedFormIds.filter((formId) => !activeFormIds.has(formId));
+  if (missingForms.length > 0) {
+    return NextResponse.json(
+      {
+        error:
+          "Um ou mais formulários selecionados não estão ativos ou não pertencem a esta Página. Atualize a lista e selecione-os novamente.",
+        code: "meta_form_not_available",
+      },
+      { status: 409 },
+    );
+  }
+  const leadProbeFormId = includedFormIds[0] ?? activeFormIds.values().next().value;
+  if (typeof leadProbeFormId !== "string" || !leadProbeFormId) {
+    return NextResponse.json(
+      {
+        error: "Nenhum formulário ativo foi encontrado nesta Página.",
+        code: "meta_active_form_missing",
+      },
+      { status: 409 },
+    );
+  }
+  try {
+    await metaGraphRequest(`/${encodeURIComponent(leadProbeFormId)}/leads`, {
+      accessToken: String(metaPage.page_access_token),
+      searchParams: { fields: "id", limit: 1 },
+    });
+  } catch (error) {
+    return metaRuleGraphError(error, "leads");
+  }
+
+  // CRM-only and human distribution rules still require an owned, healthy
+  // Meta Page with live form/lead access, but they do not require WhatsApp.
+  if (!automationEnabled) return null;
 
   const connectionId = typeof payload.connection_id === "string" ? payload.connection_id.trim() : "";
   if (!connectionId) {

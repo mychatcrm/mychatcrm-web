@@ -1,4 +1,8 @@
 import { buildMetaInitialOutreachUserPrompt } from "@/lib/meta-leads/form-metadata";
+import {
+  metaGraphErrorCode,
+  metaGraphRequest,
+} from "@/lib/server/meta-graph-api";
 
 export type GraphLeadFieldData = {
   name: string;
@@ -188,10 +192,14 @@ export async function fetchGraphObjectField(
   pageAccessToken: string,
 ): Promise<string | null> {
   try {
-    const url = `https://graph.facebook.com/v19.0/${encodeURIComponent(objectId)}?fields=${encodeURIComponent(field)}&access_token=${encodeURIComponent(pageAccessToken)}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
-    if (!res.ok) return null;
-    const data = (await res.json()) as Record<string, unknown>;
+    const data = await metaGraphRequest<Record<string, unknown>>(
+      `/${encodeURIComponent(objectId)}`,
+      {
+        accessToken: pageAccessToken,
+        searchParams: { fields: field },
+        timeoutMs: 8_000,
+      },
+    );
     const value = data[field];
     return typeof value === "string" && value.trim() ? value.trim() : null;
   } catch {
@@ -201,14 +209,15 @@ export async function fetchGraphObjectField(
 
 export async function fetchGraphAdContext(adId: string, pageAccessToken: string): Promise<MetaAdContext> {
   try {
-    const url = `https://graph.facebook.com/v19.0/${encodeURIComponent(adId)}?fields=name,campaign{id,name},adset{id,name}&access_token=${encodeURIComponent(pageAccessToken)}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
-    if (!res.ok) return emptyAdContext();
-    const data = (await res.json()) as {
+    const data = await metaGraphRequest<{
       name?: string;
       campaign?: { id?: string; name?: string };
       adset?: { id?: string; name?: string };
-    };
+    }>(`/${encodeURIComponent(adId)}`, {
+      accessToken: pageAccessToken,
+      searchParams: { fields: "name,campaign{id,name},adset{id,name}" },
+      timeoutMs: 8_000,
+    });
     return {
       adName: typeof data.name === "string" && data.name.trim() ? data.name.trim() : null,
       campaignId: typeof data.campaign?.id === "string" && data.campaign.id.trim() ? data.campaign.id.trim() : null,
@@ -235,12 +244,13 @@ function emptyAdContext(): MetaAdContext {
 export async function fetchFormQuestionLabels(formId: string, pageAccessToken: string): Promise<Map<string, string>> {
   const labels = new Map<string, string>();
   try {
-    const url = `https://graph.facebook.com/v19.0/${encodeURIComponent(formId)}?fields=questions{key,label}&access_token=${encodeURIComponent(pageAccessToken)}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
-    if (!res.ok) return labels;
-    const raw = (await res.json()) as {
+    const raw = await metaGraphRequest<{
       questions?: Array<{ key?: string; label?: string }> | { data?: Array<{ key?: string; label?: string }> };
-    };
+    }>(`/${encodeURIComponent(formId)}`, {
+      accessToken: pageAccessToken,
+      searchParams: { fields: "questions{key,label}" },
+      timeoutMs: 8_000,
+    });
     const list = Array.isArray(raw.questions)
       ? raw.questions
       : Array.isArray(raw.questions?.data)
@@ -359,19 +369,23 @@ export async function resolveMetaLeadAdAttribution(params: {
   };
 }
 
-export async function fetchGraphLead(leadgenId: string, pageAccessToken: string): Promise<GraphLeadResponse | null> {
+export async function fetchGraphLead(
+  leadgenId: string,
+  pageAccessToken: string,
+): Promise<GraphLeadResponse> {
   try {
-    const url = `https://graph.facebook.com/v19.0/${leadgenId}?fields=field_data,created_time,ad_id,form_id&access_token=${encodeURIComponent(pageAccessToken)}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.warn("[meta-webhook] Graph API error", { status: res.status, body: body.slice(0, 300) });
-      return null;
-    }
-    return (await res.json()) as GraphLeadResponse;
+    return await metaGraphRequest<GraphLeadResponse>(
+      `/${encodeURIComponent(leadgenId)}`,
+      {
+        accessToken: pageAccessToken,
+        searchParams: { fields: "field_data,created_time,ad_id,form_id" },
+      },
+    );
   } catch (err) {
-    console.warn("[meta-webhook] fetchGraphLead failed", { error: err instanceof Error ? err.message : String(err) });
-    return null;
+    console.warn("[meta-webhook] fetchGraphLead failed", {
+      code: metaGraphErrorCode(err),
+    });
+    throw err;
   }
 }
 

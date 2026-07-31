@@ -98,11 +98,12 @@ describe("enrichMissingMetaLeadEventNames", () => {
   });
 
   it("resolve campanha/conjunto/anúncio quando há ad_id, usando o token de usuário", async () => {
-    const calledUrls: string[] = [];
+    const sentTokens: string[] = [];
     const fetchMock = vi.spyOn(globalThis, "fetch");
-    fetchMock.mockImplementation(async (input) => {
+    fetchMock.mockImplementation(async (input, init) => {
       const url = String(input);
-      calledUrls.push(url);
+      // O token viaja no cabeçalho Authorization, não na URL.
+      sentTokens.push(String(new Headers(init?.headers).get("authorization") ?? url));
       if (url.includes("/ad-1")) {
         return new Response(
           JSON.stringify({
@@ -128,7 +129,7 @@ describe("enrichMissingMetaLeadEventNames", () => {
     expect(events[0]!.campaign_name).toBe("Campanha X");
     expect(events[0]!.adset_name).toBe("Conjunto X");
     expect(events[0]!.ad_name).toBe("Anúncio X");
-    expect(calledUrls.some((u) => u.includes("user-token"))).toBe(true);
+    expect(sentTokens.some((t) => t.includes("user-token"))).toBe(true);
   });
 
   it("não chama a Graph API nem escreve quando o evento já tem tudo preenchido", async () => {

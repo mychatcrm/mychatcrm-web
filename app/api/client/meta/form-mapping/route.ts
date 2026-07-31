@@ -4,48 +4,21 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
-type FormMappingBody = {
-  form_id: string;
-  agent_id: string;
-  form_name?: string;
-  page_id?: string;
-};
-
-/** Upserts a Lead Ads form → agent mapping for the authenticated tenant. */
-export async function POST(req: NextRequest): Promise<NextResponse> {
+/**
+ * Deprecated write path. Distribution authorization is exclusively managed by
+ * /dashboard/integracoes-leads and lead_distribution_rules.
+ */
+export async function POST(_req: NextRequest): Promise<NextResponse> {
   const guard = await requireActiveClientSession();
   if (!guard.ok) return guard.response;
-  const { session } = guard;
-
-  let body: FormMappingBody;
-  try {
-    body = (await req.json()) as FormMappingBody;
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-
-  const { form_id, agent_id, form_name, page_id } = body;
-  if (!form_id?.trim() || !agent_id?.trim()) {
-    return NextResponse.json({ error: "form_id and agent_id are required" }, { status: 400 });
-  }
-
-  const sb = createSupabaseServiceClient();
-  const { error } = await sb.from("meta_form_agent_mapping").upsert(
+  return NextResponse.json(
     {
-      tenant_id: session.tenantId,
-      form_id: form_id.trim(),
-      agent_id: agent_id.trim(),
-      form_name: form_name?.trim() ?? null,
-      page_id: page_id?.trim() ?? null,
+      error:
+        "Configure o agente e os formulários em Distribuição de Leads. Esta tela é a única fonte de autorização.",
+      code: "use_lead_distribution_rules",
     },
-    { onConflict: "tenant_id,form_id" },
+    { status: 409 },
   );
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  return NextResponse.json({ ok: true });
 }
 
 /** Removes a form → agent mapping. */

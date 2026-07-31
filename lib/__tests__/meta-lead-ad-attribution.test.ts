@@ -32,7 +32,11 @@ describe("resolveMetaLeadAdAttribution", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     fetchMock.mockImplementation(async (input) => {
       const url = String(input);
-      if (url.includes("/120999") && url.includes("fields=name,campaign")) {
+      const fields = new URL(url).searchParams.get("fields");
+      if (
+        url.includes("/120999") &&
+        fields === "name,campaign{id,name},adset{id,name}"
+      ) {
         return new Response(
           JSON.stringify({
             name: "Anúncio Principal",
@@ -66,7 +70,10 @@ describe("resolveMetaLeadAdAttribution", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     fetchMock.mockImplementation(async (input) => {
       const url = String(input);
-      if (url.includes("/adset-77") && url.includes("fields=name")) {
+      if (
+        url.includes("/adset-77") &&
+        new URL(url).searchParams.get("fields") === "name"
+      ) {
         return new Response(JSON.stringify({ name: "Conjunto Norte" }), { status: 200 });
       }
       return new Response(JSON.stringify({}), { status: 404 });
@@ -85,13 +92,14 @@ describe("resolveMetaLeadAdAttribution", () => {
     // A Meta exige token de usuário pra objetos de conta de anúncio — o de
     // página sempre volta "does not exist / missing permissions" mesmo com
     // ads_read concedido (confirmado testando o mesmo ad_id nos dois tokens
-    // contra a API real). Regressão: garante que a URL chamada usa
-    // userAccessToken, nunca pageAccessToken, quando ambos estão presentes.
-    const calledUrls: string[] = [];
+    // contra a API real). Regressão: garante que a chamada usa userAccessToken,
+    // nunca pageAccessToken, quando ambos estão presentes. O token viaja no
+    // cabeçalho Authorization (não na URL), para não vazar em log de acesso.
+    const sentTokens: string[] = [];
     const fetchMock = vi.spyOn(globalThis, "fetch");
-    fetchMock.mockImplementation(async (input) => {
+    fetchMock.mockImplementation(async (input, init) => {
       const url = String(input);
-      calledUrls.push(url);
+      sentTokens.push(String(new Headers(init?.headers).get("authorization") ?? url));
       if (url.includes("/ad-1")) {
         return new Response(
           JSON.stringify({
@@ -112,16 +120,15 @@ describe("resolveMetaLeadAdAttribution", () => {
     });
 
     expect(resolved.campaignName).toBe("Campanha X");
-    expect(calledUrls.some((u) => u.includes("user-token-com-ads-read"))).toBe(true);
-    expect(calledUrls.some((u) => u.includes("page-token-sem-ads-read"))).toBe(false);
+    expect(sentTokens.some((t) => t.includes("user-token-com-ads-read"))).toBe(true);
+    expect(sentTokens.some((t) => t.includes("page-token-sem-ads-read"))).toBe(false);
   });
 
   it("cai pro token de página quando não há token de usuário salvo (compatibilidade)", async () => {
-    const calledUrls: string[] = [];
+    const sentTokens: string[] = [];
     const fetchMock = vi.spyOn(globalThis, "fetch");
-    fetchMock.mockImplementation(async (input) => {
-      const url = String(input);
-      calledUrls.push(url);
+    fetchMock.mockImplementation(async (input, init) => {
+      sentTokens.push(String(new Headers(init?.headers).get("authorization") ?? input));
       return new Response(JSON.stringify({ name: "Anúncio Y" }), { status: 200 });
     });
 
@@ -130,7 +137,7 @@ describe("resolveMetaLeadAdAttribution", () => {
       graphLead: { id: "lg-2", ad_id: "ad-2", form_id: "form-2" },
     });
 
-    expect(calledUrls.some((u) => u.includes("page-token-only"))).toBe(true);
+    expect(sentTokens.some((t) => t.includes("page-token-only"))).toBe(true);
   });
 });
 

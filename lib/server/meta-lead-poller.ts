@@ -1,6 +1,7 @@
 import { createHmac } from "crypto";
 import type { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { isMetaFormAllowedForCrm } from "@/lib/server/meta-form-authorization";
+import { metaGraphErrorCode, metaGraphRequest } from "@/lib/server/meta-graph-api";
 import { processMetaLeadgenEvent } from "@/lib/server/meta-lead-ingest";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
@@ -9,6 +10,9 @@ type MetaConnectionRow = {
   tenant_id: string;
   page_id: string;
   page_access_token: string;
+  health_status: string;
+  health_code: string | null;
+  lead_access_status: string;
 };
 
 
@@ -49,6 +53,42 @@ export type MetaLeadPollerResult = {
 
 const DEFAULT_POLL_WINDOW_MINUTES = 10;
 const MAX_GRAPH_FORM_PAGES = 10;
+const POLLER_TRANSPORT_FAILURE_CODES = new Set([
+  "app_webhook_missing",
+  "app_webhook_callback_mismatch",
+  "subscription_failed",
+]);
+const VERIFIED_LEAD_ACCESS_STATUSES = new Set([
+  "verified_by_retrieval",
+  "verified_by_delivery",
+]);
+
+export function isMetaConnectionPollEligible(
+  connection: Pick<
+    MetaConnectionRow,
+    "health_status" | "health_code" | "lead_access_status"
+  >,
+): boolean {
+  if (
+    connection.health_status === "ready" ||
+    connection.health_status === "legacy_grace"
+  ) {
+    return true;
+  }
+  if (!VERIFIED_LEAD_ACCESS_STATUSES.has(connection.lead_access_status)) {
+    return false;
+  }
+  if (
+    connection.health_status === "degraded" ||
+    connection.health_status === "retrying"
+  ) {
+    return true;
+  }
+  return (
+    connection.health_status === "action_required" &&
+    POLLER_TRANSPORT_FAILURE_CODES.has(connection.health_code ?? "")
+  );
+}
 
 export function metaLeadCreatedAtMs(createdTime: string | undefined): number | null {
   if (!createdTime) return null;
@@ -110,23 +150,25 @@ export function isMetaLeadAfterActivation(createdTime: string | undefined, activ
 
 async function fetchGraphLeadFormsWithRecentLeads(pageId: string, pageAccessToken: string): Promise<GraphLeadForm[]> {
   const fields = "id,name,leads.limit(5){id,created_time,ad_id}";
-  let url =
-    `https://graph.facebook.com/v19.0/${encodeURIComponent(pageId)}/leadgen_forms` +
-    `?fields=${encodeURIComponent(fields)}&access_token=${encodeURIComponent(pageAccessToken)}`;
+  let url: string | undefined = `/${encodeURIComponent(pageId)}/leadgen_forms`;
+  let firstPage = true;
   const forms: GraphLeadForm[] = [];
 
   for (let page = 0; page < MAX_GRAPH_FORM_PAGES && url; page += 1) {
-    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`graph_leadgen_forms_failed status=${res.status} body=${body.slice(0, 180)}`);
-    }
-    const json = (await res.json()) as {
+    const json: {
       data?: GraphLeadForm[];
       paging?: { next?: string };
-    };
+    } = await metaGraphRequest<{
+      data?: GraphLeadForm[];
+      paging?: { next?: string };
+    }>(url, {
+      accessToken: pageAccessToken,
+      searchParams: firstPage ? { fields } : undefined,
+      timeoutMs: 15_000,
+    });
+    firstPage = false;
     forms.push(...(json.data ?? []));
-    url = json.paging?.next ?? "";
+    url = json.paging?.next;
   }
 
   return forms;
@@ -236,7 +278,16 @@ export async function processRecentMetaLeadAds(params: {
 }): Promise<MetaLeadPollerResult> {
   const { data: connections, error } = await params.sb
     .from("meta_connections")
-    .select("tenant_id, page_id, page_access_token")
+    .select(
+      "tenant_id, page_id, page_access_token, health_status, health_code, lead_access_status",
+    )
+    .in("health_status", [
+      "ready",
+      "legacy_grace",
+      "retrying",
+      "degraded",
+      "action_required",
+    ])
     .not("page_access_token", "is", null)
     .returns<MetaConnectionRow[]>();
   if (error) {
@@ -246,7 +297,15 @@ export async function processRecentMetaLeadAds(params: {
   const seen = new Set<string>();
   const uniqueConnections = (connections ?? []).filter((conn) => {
     const key = `${conn.tenant_id}:${conn.page_id}`;
-    if (!conn.tenant_id || !conn.page_id || !conn.page_access_token || seen.has(key)) return false;
+    if (
+      !conn.tenant_id ||
+      !conn.page_id ||
+      !conn.page_access_token ||
+      !isMetaConnectionPollEligible(conn) ||
+      seen.has(key)
+    ) {
+      return false;
+    }
     seen.add(key);
     return true;
   });
@@ -286,7 +345,7 @@ export async function processRecentMetaLeadAds(params: {
       console.error("[meta-lead-poller] connection_failed", {
         tenant_id: connection.tenant_id,
         page_id: connection.page_id,
-        error: err instanceof Error ? err.message : String(err),
+        code: metaGraphErrorCode(err),
       });
     }
   }
