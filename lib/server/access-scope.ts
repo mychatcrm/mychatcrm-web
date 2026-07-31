@@ -115,6 +115,116 @@ export async function loadLeadInScope(
   return leadInScope(lead, scope) ? lead : null;
 }
 
+function digitsOnly(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+/**
+ * A conversa é alcançável por quem alcança o lead por trás dela.
+ *
+ * Recortar só a listagem não bastava: as rotas de mensagem, envio, takeover e
+ * pausa recebem o `remoteJid` direto do cliente, então sem esta checagem um
+ * vendedor leria e responderia a conversa de um colega apenas sabendo o número.
+ *
+ * Conversa sem lead identificado fica restrita ao titular — mesma regra do
+ * legado sem equipe.
+ */
+export async function conversationInScope(
+  sb: SupabaseServiceClient,
+  tenantId: string,
+  remoteJid: string,
+  scope: AccessScope,
+): Promise<boolean> {
+  if (scope.kind === "all") return true;
+  if (scopeMatchesNothing(scope)) return false;
+
+  const { data: state } = await sb
+    .from("conversation_states")
+    .select("lead_id")
+    .eq("tenant_id", tenantId)
+    .eq("remote_jid", remoteJid)
+    .maybeSingle();
+
+  const leadId = typeof (state as { lead_id?: unknown } | null)?.lead_id === "string"
+    ? String((state as { lead_id: string }).lead_id)
+    : null;
+
+  if (leadId) {
+    return Boolean(await loadLeadInScope(sb, tenantId, leadId, scope));
+  }
+
+  // Sem `lead_id` na conversa, tenta casar pelo telefone — é assim que a
+  // listagem resolve o lead de conversas antigas.
+  const phone = digitsOnly(remoteJid.split("@")[0] ?? remoteJid);
+  if (phone.length < 10) return false;
+
+  const { data: lead } = await sb
+    .from("leads")
+    .select("team_id, owner_employee_id")
+    .eq("tenant_id", tenantId)
+    .eq("phone", phone)
+    .maybeSingle();
+
+  if (!lead) return false;
+  return leadInScope(lead as ScopableLead, scope);
+}
+
+/**
+ * Versão em lote de `conversationInScope`, em 3 consultas em vez de uma por
+ * conversa — a rota de arquivar aceita até 500 de uma vez.
+ */
+export async function filterConversationsInScope(
+  sb: SupabaseServiceClient,
+  tenantId: string,
+  remoteJids: string[],
+  scope: AccessScope,
+): Promise<string[]> {
+  if (scope.kind === "all") return remoteJids;
+  if (scopeMatchesNothing(scope) || remoteJids.length === 0) return [];
+
+  const allowedLeads = await visibleLeadIds(sb, tenantId, scope);
+  if (allowedLeads === null) return remoteJids;
+  if (allowedLeads.size === 0) return [];
+
+  const { data: states } = await sb
+    .from("conversation_states")
+    .select("remote_jid, lead_id")
+    .eq("tenant_id", tenantId)
+    .in("remote_jid", remoteJids);
+
+  const leadByJid = new Map<string, string>();
+  for (const row of (states ?? []) as Array<{ remote_jid?: unknown; lead_id?: unknown }>) {
+    if (typeof row.remote_jid === "string" && typeof row.lead_id === "string") {
+      leadByJid.set(row.remote_jid, row.lead_id);
+    }
+  }
+
+  // Conversas sem `lead_id` ainda podem casar pelo telefone.
+  const pending = remoteJids.filter((jid) => !leadByJid.has(jid));
+  const phoneToJid = new Map<string, string>();
+  for (const jid of pending) {
+    const phone = digitsOnly(jid.split("@")[0] ?? jid);
+    if (phone.length >= 10) phoneToJid.set(phone, jid);
+  }
+  if (phoneToJid.size > 0) {
+    const { data: leads } = await sb
+      .from("leads")
+      .select("id, phone")
+      .eq("tenant_id", tenantId)
+      .in("phone", Array.from(phoneToJid.keys()));
+    for (const row of (leads ?? []) as Array<{ id?: unknown; phone?: unknown }>) {
+      const phone = typeof row.phone === "string" ? digitsOnly(row.phone) : "";
+      const jid = phoneToJid.get(phone);
+      if (jid && typeof row.id === "string") leadByJid.set(jid, row.id);
+    }
+  }
+
+  return remoteJids.filter((jid) => {
+    const leadId = leadByJid.get(jid);
+    return Boolean(leadId && allowedLeads.has(leadId));
+  });
+}
+
 /**
  * Ids dos leads visíveis no escopo — base para recortar conversas e agenda,
  * que se ligam ao lead por `lead_id`.

@@ -12,6 +12,7 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { conversationInScope, resolveAccessScope } from "@/lib/server/access-scope";
 import { uploadMediaToR2 } from "@/lib/integrations/r2-storage";
 import {
   evolutionSendMedia,
@@ -175,6 +176,10 @@ export async function POST(request: Request) {
   const mediaUrl = r2Path ? `/api/client/media/${r2Key}` : null;
 
   const sb = createSupabaseServiceClient();
+  if (!(await conversationInScope(sb, session.tenantId, remoteJid, await resolveAccessScope(sb, session)))) {
+    return NextResponse.json({ error: "Conversa não encontrada" }, { status: 404 });
+  }
+
   const stateRow = await loadStateOperationRow({
     sb,
     tenantId: session.tenantId,

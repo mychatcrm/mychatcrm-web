@@ -6,6 +6,7 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { conversationInScope, resolveAccessScope } from "@/lib/server/access-scope";
 import { hideConversationsForTenant } from "@/lib/server/conversation-visibility";
 import {
   loadStateOperationRow,
@@ -26,6 +27,9 @@ export async function GET(
   if (!remoteJid) return NextResponse.json({ error: "jid em falta" }, { status: 400 });
 
   const sb = createSupabaseServiceClient();
+  if (!(await conversationInScope(sb, session.tenantId, remoteJid, await resolveAccessScope(sb, session)))) {
+    return NextResponse.json({ error: "Conversa não encontrada" }, { status: 404 });
+  }
 
   // Reconciliação de delivery não pode atrasar o histórico — status chega
   // depois via Realtime UPDATE ou poll do painel.

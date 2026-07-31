@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { resolveOrganizationRole } from "@/lib/organization-role";
 import { hideConversationsForTenant } from "@/lib/server/conversation-visibility";
 
 export const dynamic = "force-dynamic";
@@ -8,6 +9,15 @@ export const dynamic = "force-dynamic";
 export async function DELETE() {
   const session = await getClientSessionFromCookies();
   if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+
+  // Arquivar a caixa inteira do tenant atinge conversa de toda a gente —
+  // é ação do titular da conta, não de quem só enxerga a própria equipe.
+  if (resolveOrganizationRole(session) !== "owner") {
+    return NextResponse.json(
+      { error: "Apenas o titular da conta pode arquivar todas as conversas." },
+      { status: 403 },
+    );
+  }
 
   const sb = createSupabaseServiceClient();
   const { data, error } = await sb

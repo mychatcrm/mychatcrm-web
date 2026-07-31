@@ -5,6 +5,8 @@
  */
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
+import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { conversationInScope, resolveAccessScope } from "@/lib/server/access-scope";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
 import { fetchContactName } from "@/lib/integrations/evolution-api";
 
@@ -17,6 +19,12 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const jid = searchParams.get("jid");
   if (!jid) return NextResponse.json({ error: "jid em falta" }, { status: 400 });
+
+  const sbScope = createSupabaseServiceClient();
+  if (!(await conversationInScope(sbScope, session.tenantId, jid, await resolveAccessScope(sbScope, session)))) {
+    return NextResponse.json({ error: "Conversa não encontrada" }, { status: 404 });
+  }
+
 
   let instanceName: string | null = null;
   try {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { conversationInScope, resolveAccessScope } from "@/lib/server/access-scope";
 import { buildNewLeadCrmFields } from "@/lib/server/crm-lead-lifecycle";
 import {
   commitTenantLeadQuotaReservation,
@@ -36,6 +37,10 @@ export async function POST(
 
   const body = (await request.json().catch(() => ({}))) as { name?: unknown };
   const sb = createSupabaseServiceClient();
+  if (!(await conversationInScope(sb, session.tenantId, remoteJid, await resolveAccessScope(sb, session)))) {
+    return NextResponse.json({ error: "Conversa não encontrada" }, { status: 404 });
+  }
+
   const now = new Date().toISOString();
   const { data: state } = await sb
     .from("conversation_states")

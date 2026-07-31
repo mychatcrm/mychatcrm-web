@@ -5,6 +5,7 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { conversationInScope, resolveAccessScope } from "@/lib/server/access-scope";
 import { syncAutomationMode } from "@/lib/server/conversation-operation";
 import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
 
@@ -31,6 +32,10 @@ export async function POST(request: Request) {
 
   const instance = await getEvolutionInstanceByTenantId(session.tenantId);
   const sb = createSupabaseServiceClient();
+  if (!(await conversationInScope(sb, session.tenantId, remoteJid, await resolveAccessScope(sb, session)))) {
+    return NextResponse.json({ error: "Conversa não encontrada" }, { status: 404 });
+  }
+
   const mode = await syncAutomationMode({
     sb,
     tenantId: session.tenantId,
