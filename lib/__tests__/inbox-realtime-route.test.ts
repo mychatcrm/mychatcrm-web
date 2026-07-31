@@ -110,3 +110,95 @@ describe("/api/client/conversas/realtime", () => {
     expect(await response.json()).toEqual({ messages: [] });
   });
 });
+
+/**
+ * O tópico de broadcast é por conta, então o navegador de um vendedor recebe o
+ * id de QUALQUER mensagem do tenant. Esta rota devolve o conteúdo, então sem
+ * recorte ela entregaria a conversa do colega em tempo real.
+ */
+describe("/api/client/conversas/realtime — recorte por vendedor", () => {
+  const MINE = "33333333-3333-4333-8333-333333333333";
+  const COLLEAGUE = "44444444-4444-4444-8444-444444444444";
+
+  const tenantRows = [
+    {
+      id: MINE,
+      tenant_id: "tenant-own",
+      remote_jid: "5511999990001@s.whatsapp.net",
+      direction: "inbound",
+      kind: "text",
+      content: "mensagem do meu lead",
+      created_at: "2026-07-31T10:00:00.000Z",
+    },
+    {
+      id: COLLEAGUE,
+      tenant_id: "tenant-own",
+      remote_jid: "5511999990002@s.whatsapp.net",
+      direction: "inbound",
+      kind: "text",
+      content: "SEGREDO do lead do colega",
+      created_at: "2026-07-31T10:00:00.000Z",
+    },
+  ];
+
+  beforeEach(() => {
+    getClientSessionFromCookiesMock.mockReset();
+    createSupabaseServiceClientMock.mockReset();
+    getClientSessionFromCookiesMock.mockResolvedValue({
+      tenantId: "tenant-own",
+      organizationRole: "seller",
+      employeeId: "sel-1",
+    });
+
+    createSupabaseServiceClientMock.mockReturnValue({
+      rpc: vi.fn(async () => ({ data: "inbox:opaque", error: null })),
+      from: vi.fn((table: string) => {
+        const filters: Record<string, unknown> = {};
+        const chain: Record<string, unknown> = {
+          select: () => chain,
+          eq: (column: string, value: unknown) => {
+            filters[column] = value;
+            return chain;
+          },
+          in: (column: string, values: unknown[]) => {
+            filters[`in:${column}`] = values;
+            if (table === "whatsapp_messages") {
+              return Promise.resolve({
+                data: tenantRows.filter((row) => values.includes(row.id)),
+                error: null,
+              });
+            }
+            return chain;
+          },
+          then: (resolve: (v: unknown) => unknown) => {
+            if (table === "leads") {
+              // Só o lead do vendedor logado.
+              const owned = [{ id: "lead-mine", phone: "5511999990001" }];
+              return Promise.resolve({ data: owned, error: null }).then(resolve);
+            }
+            if (table === "conversation_states") {
+              return Promise.resolve({
+                data: [
+                  { remote_jid: "5511999990001@s.whatsapp.net", lead_id: "lead-mine" },
+                  { remote_jid: "5511999990002@s.whatsapp.net", lead_id: "lead-colega" },
+                ],
+                error: null,
+              }).then(resolve);
+            }
+            return Promise.resolve({ data: [], error: null }).then(resolve);
+          },
+        };
+        return chain;
+      }),
+    });
+  });
+
+  it("não devolve o conteúdo da conversa de um colega", async () => {
+    const response = await post([MINE, COLLEAGUE]);
+    const body = (await response.json()) as { messages: Array<{ id: string }> };
+
+    expect(response.status).toBe(200);
+    expect(body.messages.map((m) => m.id)).toEqual([MINE]);
+    expect(JSON.stringify(body)).not.toContain("SEGREDO");
+  });
+});
