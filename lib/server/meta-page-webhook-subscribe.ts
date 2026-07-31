@@ -1,7 +1,9 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-
-const GRAPH = "https://graph.facebook.com/v19.0";
+import {
+  metaGraphErrorCode,
+  metaGraphRequest,
+} from "@/lib/server/meta-graph-api";
 
 /** Campos Page webhook exigidos para Lead Ads (novo lead + atualizações). */
 export const META_PAGE_LEADGEN_WEBHOOK_FIELDS = "leadgen,leadgen_update";
@@ -9,7 +11,7 @@ export const META_PAGE_LEADGEN_WEBHOOK_FIELDS = "leadgen,leadgen_update";
 type GraphError = { message?: string; type?: string; code?: number };
 type SubscribedAppRow = { id?: string; name?: string; subscribed_fields?: string[] };
 type SubscribedAppsResponse = { data?: SubscribedAppRow[]; error?: GraphError };
-type SubscribeResponse = { success?: boolean; error?: GraphError };
+type SubscribeResponse = { success?: boolean };
 
 export type PageWebhookSubscribeResult = {
   pageId: string;
@@ -54,13 +56,14 @@ export async function fetchPageSubscribedApps(
   pageId: string,
   pageAccessToken: string,
 ): Promise<PageSubscribedAppsSnapshot> {
-  const url = `${GRAPH}/${encodeURIComponent(pageId)}/subscribed_apps?access_token=${encodeURIComponent(pageAccessToken)}`;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-    const data = (await res.json()) as SubscribedAppsResponse;
-    if (data.error) {
-      return { pageId, apps: [], error: data.error.message ?? "Graph API error" };
-    }
+    const data = await metaGraphRequest<SubscribedAppsResponse>(
+      `/${encodeURIComponent(pageId)}/subscribed_apps`,
+      {
+        accessToken: pageAccessToken,
+        searchParams: { fields: "id,name,subscribed_fields" },
+      },
+    );
     const apps = (data.data ?? []).map((row) => ({
       appId: row.id ?? "",
       appName: row.name ?? null,
@@ -71,7 +74,7 @@ export async function fetchPageSubscribedApps(
     return {
       pageId,
       apps: [],
-      error: err instanceof Error ? err.message : String(err),
+      error: `${metaGraphErrorCode(err)}:${err instanceof Error ? err.message : String(err)}`,
     };
   }
 }
@@ -81,26 +84,51 @@ export async function subscribePageToLeadgenWebhooks(
   pageId: string,
   pageAccessToken: string,
 ): Promise<PageWebhookSubscribeResult> {
-  const url = `${GRAPH}/${encodeURIComponent(pageId)}/subscribed_apps?subscribed_fields=${encodeURIComponent(META_PAGE_LEADGEN_WEBHOOK_FIELDS)}&access_token=${encodeURIComponent(pageAccessToken)}`;
   try {
-    const res = await fetch(url, { method: "POST", signal: AbortSignal.timeout(10_000) });
-    const data = (await res.json()) as SubscribeResponse;
-    if (data.error) {
-      return { pageId, ok: false, error: data.error.message ?? "Graph subscribe failed" };
+    const data = await metaGraphRequest<SubscribeResponse>(
+      `/${encodeURIComponent(pageId)}/subscribed_apps`,
+      {
+        accessToken: pageAccessToken,
+        method: "POST",
+        form: { subscribed_fields: META_PAGE_LEADGEN_WEBHOOK_FIELDS },
+      },
+    );
+    if (data.success !== true) {
+      return { pageId, ok: false, error: "subscription_post_not_confirmed" };
     }
-    if (!res.ok && !data.success) {
-      return { pageId, ok: false, error: `HTTP ${res.status}` };
-    }
+
     const after = await fetchPageSubscribedApps(pageId, pageAccessToken);
     const appId = expectedAppId();
-    const match = appId ? after.apps.find((a) => a.appId === appId) : after.apps[0];
+    if (!appId) {
+      return { pageId, ok: false, error: "missing_meta_app_id" };
+    }
+    if (after.error) {
+      return { pageId, ok: false, error: `subscription_verification_failed:${after.error}` };
+    }
+    const match = after.apps.find((a) => a.appId === appId);
+    const subscribedFields = match?.subscribedFields ?? [];
+    if (!match) {
+      return { pageId, ok: false, error: "subscription_app_not_found" };
+    }
+    if (!subscribedFields.some((field) => field.toLowerCase() === "leadgen")) {
+      return {
+        pageId,
+        ok: false,
+        error: "subscription_leadgen_missing",
+        subscribedFields,
+      };
+    }
     return {
       pageId,
       ok: true,
-      subscribedFields: match?.subscribedFields,
+      subscribedFields,
     };
   } catch (err) {
-    return { pageId, ok: false, error: err instanceof Error ? err.message : String(err) };
+    return {
+      pageId,
+      ok: false,
+      error: `${metaGraphErrorCode(err)}:${err instanceof Error ? err.message : String(err)}`,
+    };
   }
 }
 

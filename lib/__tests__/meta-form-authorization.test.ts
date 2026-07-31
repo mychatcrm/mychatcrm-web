@@ -49,11 +49,27 @@ describe("meta-form-authorization", () => {
     expect(result.source).toBe("no_matching_rule");
   });
 
-  it("does not authorize form only connected on page (use_all_forms)", () => {
+  it("authorizes a form through an explicit all-forms rule for the exact page", () => {
     const result = evaluateMetaFormAuthorizationFromSnapshot({
       pageId: PAGE,
       formId: FORM_OTHER,
       rules: [rule({ use_all_forms: true, included_form_ids: [] })],
+    });
+    expect(result.authorized).toBe(true);
+    expect(result.agentId).toBe(AGENT);
+  });
+
+  it("keeps an excluded form blocked inside an all-forms rule", () => {
+    const result = evaluateMetaFormAuthorizationFromSnapshot({
+      pageId: PAGE,
+      formId: FORM_OTHER,
+      rules: [
+        rule({
+          use_all_forms: true,
+          included_form_ids: [],
+          excluded_form_ids: [FORM_OTHER],
+        }),
+      ],
     });
     expect(result.authorized).toBe(false);
     expect(result.source).toBe("no_matching_rule");

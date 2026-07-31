@@ -104,4 +104,76 @@ describe("meta page webhook subscription", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toBe("missing_page_access_token");
   });
+
+  it("fails closed when POST succeeds but the exact app is absent afterwards", async () => {
+    const sb = supabaseWithConnection({
+      page_id: "page-1",
+      page_name: "Minha pagina",
+      page_access_token: "token",
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "different-app",
+                name: "Outro CRM",
+                subscribed_fields: ["leadgen"],
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await ensureTenantPageLeadgenWebhookSubscription({
+      sb: sb as unknown as Parameters<typeof ensureTenantPageLeadgenWebhookSubscription>[0]["sb"],
+      tenantId: "tenant-1",
+      pageId: "page-1",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("subscription_app_not_found");
+  });
+
+  it("fails closed when the exact app is present without leadgen", async () => {
+    const sb = supabaseWithConnection({
+      page_id: "page-1",
+      page_name: "Minha pagina",
+      page_access_token: "token",
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "app-123",
+                name: "MyChatCRM",
+                subscribed_fields: ["feed"],
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await ensureTenantPageLeadgenWebhookSubscription({
+      sb: sb as unknown as Parameters<typeof ensureTenantPageLeadgenWebhookSubscription>[0]["sb"],
+      tenantId: "tenant-1",
+      pageId: "page-1",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("subscription_leadgen_missing");
+  });
 });

@@ -59,6 +59,14 @@ import {
   resolveMetaLeadWhatsappConnection,
   sendMetaLeadInitialWhatsapp,
 } from "@/lib/server/meta-lead-whatsapp-outreach";
+import {
+  cancelAutomatedOutboundByOperationKey,
+  markAgentOutboundAmbiguous,
+  markAgentOutboundFailed,
+  markAgentOutboundSent,
+  prepareAutomatedOutbound,
+  reconcileAgentOutboundProviderReceipt,
+} from "@/lib/server/agent-outbound-outbox";
 
 type MetaConnectionRow = {
   tenant_id: string;
@@ -66,6 +74,7 @@ type MetaConnectionRow = {
   /** Necessário pra ler campanha/conjunto/anúncio — page_access_token não basta (ver resolveMetaLeadAdAttribution). */
   user_access_token?: string | null;
   page_name?: string | null;
+  health_status?: string | null;
 };
 
 export type LeadgenValue = {
@@ -77,9 +86,49 @@ export type LeadgenValue = {
   created_time?: number;
 };
 
+export class MetaLeadgenProcessingError extends Error {
+  readonly processingCode: string;
+  readonly retryable: boolean;
+
+  constructor(
+    processingCode: string,
+    retryable: boolean,
+    options?: { cause?: unknown },
+  ) {
+    super(processingCode, options);
+    this.name = "MetaLeadgenProcessingError";
+    this.processingCode = processingCode;
+    this.retryable = retryable;
+  }
+}
+
 function maskPhoneLast4(value: string): string {
   const digits = value.replace(/\D/g, "");
   return digits.slice(-4) || "empty";
+}
+
+function classifyInitialSendFailure(params: {
+  status?: number;
+  error?: string | null;
+}): { retryable: boolean; ambiguous: boolean } {
+  const status = Number(params.status ?? 0);
+  const error = String(params.error ?? "").toLowerCase();
+  if (
+    status === 0 ||
+    /timeout|timed out|network|fetch|socket|econn|enotfound/.test(error)
+  ) {
+    return { retryable: false, ambiguous: true };
+  }
+  if (error === "evolution_delivery_error") {
+    return { retryable: true, ambiguous: false };
+  }
+  if (status === 409 || status === 425 || status === 429) {
+    return { retryable: true, ambiguous: false };
+  }
+  if (status >= 500) {
+    return { retryable: false, ambiguous: true };
+  }
+  return { retryable: false, ambiguous: false };
 }
 
 async function revealMetaConversation(params: {
@@ -130,7 +179,7 @@ async function loadMetaConnectionsForPage(params: {
 }): Promise<MetaConnectionRow[]> {
   const { data, error } = await params.sb
     .from("meta_connections")
-    .select("tenant_id, page_access_token, user_access_token, page_name")
+    .select("tenant_id, page_access_token, user_access_token, page_name, health_status")
     .eq("page_id", params.pageId);
 
   if (error) {
@@ -138,23 +187,41 @@ async function loadMetaConnectionsForPage(params: {
       page_id: params.pageId,
       error: error.message,
     });
-    return [];
+    throw new MetaLeadgenProcessingError(
+      "meta_connections_query_failed",
+      true,
+      { cause: error },
+    );
   }
 
-  return ((data ?? []) as MetaConnectionRow[]).filter((conn) => Boolean(conn.tenant_id));
-}
-
-async function fetchGraphLeadFromAnyConnection(params: {
-  connections: MetaConnectionRow[];
-  leadgenId: string;
-}): Promise<{ lead: GraphLeadResponse; connection: MetaConnectionRow } | null> {
-  for (const connection of params.connections) {
-    const token = connection.page_access_token?.trim();
-    if (!token) continue;
-    const lead = await fetchGraphLead(params.leadgenId, token);
-    if (lead) return { lead, connection };
+  const allConnections = ((data ?? []) as MetaConnectionRow[]).filter(
+    (connection) => Boolean(connection.tenant_id),
+  );
+  const operational = allConnections.filter((connection) =>
+    ["ready", "degraded", "legacy_grace"].includes(
+      connection.health_status ?? "",
+    ),
+  );
+  if (operational.length > 0) return operational;
+  if (
+    allConnections.some((connection) =>
+      ["provisioning", "retrying", "unverified"].includes(
+        connection.health_status ?? "unverified",
+      ),
+    )
+  ) {
+    throw new MetaLeadgenProcessingError(
+      "meta_connection_not_operational_yet",
+      true,
+    );
   }
-  return null;
+  if (allConnections.length > 0) {
+    throw new MetaLeadgenProcessingError(
+      "meta_connection_not_operational",
+      false,
+    );
+  }
+  return [];
 }
 
 async function recordBlockedMetaLeadForTenants(params: {
@@ -219,7 +286,19 @@ async function loadRuleActivationStartedAtMs(params: {
     .eq("tenant_id", params.tenantId)
     .eq("id", params.ruleId)
     .maybeSingle();
-  if (error || !data) return null;
+  if (error) {
+    throw new MetaLeadgenProcessingError(
+      "meta_rule_activation_query_failed",
+      true,
+      { cause: error },
+    );
+  }
+  if (!data) {
+    throw new MetaLeadgenProcessingError(
+      "meta_rule_activation_missing",
+      true,
+    );
+  }
   const row = data as { created_at?: unknown; updated_at?: unknown };
   // Editing a rule/form selection starts a new safe boundary. Do not import
   // leads created before that configuration moment.
@@ -245,8 +324,16 @@ async function loadLeadRuleMappings(params: {
         rule_id: params.ruleId,
         error: error.message,
       });
+      throw new MetaLeadgenProcessingError(
+        "meta_rule_mappings_query_failed",
+        true,
+        { cause: error },
+      );
     }
-    return [];
+    throw new MetaLeadgenProcessingError(
+      "meta_rule_mappings_missing",
+      true,
+    );
   }
   const mappings = (data as { mappings?: unknown }).mappings;
   return Array.isArray(mappings) ? (mappings as LeadFieldMapping[]) : [];
@@ -281,39 +368,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     return;
   }
   const candidateTenantIds = uniqueTenantIds(connections);
-
-  const graphResult = await fetchGraphLeadFromAnyConnection({ connections, leadgenId: leadgen_id });
-  if (!graphResult) {
-    await Promise.all(
-      candidateTenantIds.map(async (tenantId) => {
-        const connection = connections.find((conn) => conn.tenant_id === tenantId);
-        const recorder = new MetaLeadEventRecorder(sb, {
-          tenant_id: tenantId,
-          leadgen_id,
-          page_id,
-          form_id: form_id ?? null,
-          ad_id: ad_id ?? null,
-          adset_id: ad_group_id ?? null,
-          raw_webhook: value as Record<string, unknown>,
-        });
-        await recorder.init();
-        await recorder.patch({
-          page_name: connection?.page_name?.trim() || null,
-          error_message: "graph_api_fetch_failed",
-        });
-        await recorder.step("graph_fetch_failed");
-      }),
-    );
-    console.warn("[meta-webhook] Could not fetch lead from Graph API", { leadgen_id });
-    return;
-  }
-
-  const lead = graphResult.lead;
-  const fields = parseFieldData(lead.field_data ?? []);
-  let phone = extractLeadPhone(fields);
-  let fullName = extractLeadName(fields);
-  let email = fields.email ?? null;
-  const resolvedFormId = (form_id ?? lead.form_id ?? "").trim();
+  const resolvedFormId = (form_id ?? "").trim();
 
   const tenantResolution = await resolveMetaTenantFromExplicitFormRules({
     sb,
@@ -323,6 +378,12 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
   });
 
   if (tenantResolution.status === "not_found") {
+    if (tenantResolution.reason === "rules_query_failed") {
+      throw new MetaLeadgenProcessingError(
+        "meta_lead_rules_query_failed",
+        true,
+      );
+    }
     const tenantsToRecord = tenantResolution.tenantIds.length > 0 ? tenantResolution.tenantIds : candidateTenantIds;
     await recordBlockedMetaLeadForTenants({
       sb,
@@ -332,9 +393,6 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       step: "blocked_form_not_registered_in_lead_rules",
       reason: tenantResolution.reason,
       formId: resolvedFormId || null,
-      name: fullName,
-      phone,
-      email,
       detail: {
         page_id,
         form_id: resolvedFormId || null,
@@ -359,9 +417,6 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       step: "blocked_ambiguous_meta_page_form_tenant",
       reason: tenantResolution.reason,
       formId: resolvedFormId || null,
-      name: fullName,
-      phone,
-      email,
       detail: {
         page_id,
         form_id: resolvedFormId || null,
@@ -388,9 +443,6 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       step: "blocked_missing_meta_connection_for_resolved_tenant",
       reason: "missing_meta_connection_for_resolved_tenant",
       formId: resolvedFormId || null,
-      name: fullName,
-      phone,
-      email,
       detail: {
         page_id,
         form_id: resolvedFormId || null,
@@ -413,6 +465,86 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     user_access_token?: string | null;
     page_name?: string | null;
   };
+
+  // Resolve the owning tenant before retrieving any personal data. A token
+  // from another tenant that happens to share the same Page must never be used
+  // to bypass that tenant's own Leads Access state.
+  let lead: Awaited<ReturnType<typeof fetchGraphLead>>;
+  try {
+    lead = await fetchGraphLead(leadgen_id, page_access_token);
+  } catch (error) {
+    const recorder = new MetaLeadEventRecorder(sb, {
+      tenant_id,
+      leadgen_id,
+      page_id,
+      form_id: resolvedFormId || null,
+      ad_id: ad_id ?? null,
+      adset_id: ad_group_id ?? null,
+      raw_webhook: value as Record<string, unknown>,
+    });
+    await recorder.init();
+    await recorder.patch({
+      page_name: connPageName?.trim() || null,
+      error_message: "graph_api_fetch_failed",
+    });
+    await recorder.step("graph_fetch_failed");
+    console.warn("[meta-webhook] Could not fetch lead from Graph API", {
+      tenant_id,
+      page_id,
+      leadgen_id,
+    });
+    throw error;
+  }
+  const graphFormId = lead.form_id?.trim() ?? "";
+  if (graphFormId && graphFormId !== resolvedFormId) {
+    await recordBlockedMetaLeadForTenants({
+      sb,
+      tenantIds: [tenant_id],
+      connections,
+      value,
+      step: "blocked_form_not_registered_in_lead_rules",
+      reason: "graph_form_id_mismatch",
+      formId: resolvedFormId || null,
+      detail: {
+        page_id,
+        webhook_form_id: resolvedFormId || null,
+        graph_form_id: graphFormId,
+        rule_id: tenantResolution.ruleId,
+      },
+    });
+    console.warn("[meta-webhook] Graph lead form differs from webhook rule", {
+      tenant_id,
+      page_id,
+      leadgen_id,
+      webhook_form_id: resolvedFormId,
+      graph_form_id: graphFormId,
+    });
+    return;
+  }
+
+  const webhookObservedAt = new Date().toISOString();
+  const { error: webhookHealthError } = await sb
+    .from("meta_connections")
+    .update({
+      last_webhook_at: webhookObservedAt,
+      lead_access_status: "verified_by_delivery",
+      last_lead_access_verified_at: webhookObservedAt,
+      updated_at: webhookObservedAt,
+    })
+    .eq("tenant_id", tenant_id)
+    .eq("page_id", page_id);
+  if (webhookHealthError) {
+    console.warn("[meta-webhook] delivery proof update failed", {
+      tenant_id,
+      page_id,
+      error: webhookHealthError.message,
+    });
+  }
+
+  const fields = parseFieldData(lead.field_data ?? []);
+  let phone = extractLeadPhone(fields);
+  let fullName = extractLeadName(fields);
+  let email = fields.email ?? null;
 
   const eventRecorder = new MetaLeadEventRecorder(sb, {
     tenant_id,
@@ -446,6 +578,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     tenantId: tenant_id,
     pageId: page_id,
     formId: resolvedFormId,
+    throwOnQueryError: true,
   });
 
   if (!crmAllowance.allowed) {
@@ -530,6 +663,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     tenantId: tenant_id,
     pageId: page_id,
     formId: resolvedFormId,
+    throwOnQueryError: true,
   });
   const agentId = agentResolution.authorized ? agentResolution.agentId : null;
 
@@ -613,7 +747,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
   });
   const newLeadCrm = buildNewLeadCrmFields(crmFunnel.crm_funnel_id);
 
-  const { data: existingLead } = await sb
+  const { data: existingLead, error: existingLeadError } = await sb
     .from("leads")
     .select(
       "id, created_at, campaign_active, agent_id, campaign_agent_id, profile_metadata, team_id, owner_employee_id",
@@ -621,6 +755,13 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     .eq("tenant_id", tenant_id)
     .eq("phone", phone)
     .maybeSingle();
+  if (existingLeadError) {
+    throw new MetaLeadgenProcessingError(
+      "existing_lead_lookup_failed",
+      true,
+      { cause: existingLeadError },
+    );
+  }
 
   const isNewLead = !existingLead;
   const tenantPlan = await getTenantPlanSnapshot(tenant_id);
@@ -640,6 +781,15 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     },
   });
   if (!quotaAdmission.admitted) {
+    if (
+      quotaAdmission.status === "unavailable" ||
+      quotaAdmission.reason === "lead_quota_unavailable"
+    ) {
+      throw new MetaLeadgenProcessingError(
+        "lead_quota_unavailable",
+        true,
+      );
+    }
     const reason = quotaAdmission.reason === "lead_quota_exhausted"
       ? "blocked_lead_quota_exhausted"
       : "blocked_lead_quota_unavailable";
@@ -732,7 +882,11 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       error: upsertErr.message,
       phone_last4: maskPhoneLast4(phone),
     });
-    return;
+    throw new MetaLeadgenProcessingError(
+      "crm_lead_upsert_failed",
+      true,
+      { cause: upsertErr },
+    );
   }
 
   await eventRecorder.step(isNewLead ? "crm_lead_created" : "crm_lead_updated");
@@ -753,7 +907,10 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
   if (!leadId) {
     await releaseTenantLeadQuotaReservation(quotaAdmission.eventId, "lead_id_missing_after_upsert");
     await eventRecorder.patch({ whatsapp_status: "skipped", error_message: "lead_id_missing_after_upsert" });
-    return;
+    throw new MetaLeadgenProcessingError(
+      "lead_id_missing_after_upsert",
+      true,
+    );
   }
   try {
     await commitTenantLeadQuotaReservation({ eventId: quotaAdmission.eventId, leadId });
@@ -1002,7 +1159,11 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         journey_id: journeyId,
         error: attributionError.message,
       });
-      return;
+      throw new MetaLeadgenProcessingError(
+        "crm_attribution_failed",
+        true,
+        { cause: attributionError },
+      );
     }
     await eventRecorder.step("crm_attribution_committed", {
       journey_id: journeyId,
@@ -1012,12 +1173,25 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
   }
 
   const initialMessageExternalId = `meta:${leadgen_id}:initial`;
-  const { data: existingInitialMessage } = await sb
+  const outboundOperationKey = `meta-leadgen:${leadgen_id}:initial`;
+  const { data: existingInitialMessage, error: existingMessageError } = await sb
     .from("whatsapp_messages")
-    .select("id, delivery_status, sent_at, created_at")
+    .select("id, content, delivery_status, provider_message_id, sent_at, created_at")
     .eq("tenant_id", tenant_id)
     .eq("message_id", initialMessageExternalId)
     .maybeSingle();
+  if (existingMessageError) {
+    throw new MetaLeadgenProcessingError(
+      "initial_whatsapp_message_lookup_failed",
+      true,
+      { cause: existingMessageError },
+    );
+  }
+  let resumableInitialMessage: {
+    id: string;
+    content: string;
+    delivery_status: string | null;
+  } | null = null;
   if (existingInitialMessage?.id) {
     await sb
       .from("whatsapp_messages")
@@ -1025,10 +1199,27 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       .eq("tenant_id", tenant_id)
       .eq("id", existingInitialMessage.id)
       .is("journey_id", null);
-    const alreadySent = ["pending", "sent", "delivered", "read"].includes(
-      existingInitialMessage.delivery_status ?? "",
-    );
+    const alreadySent =
+      ["sent", "delivered", "read"].includes(
+        existingInitialMessage.delivery_status ?? "",
+      ) ||
+      Boolean(
+        existingInitialMessage.delivery_status === "pending" &&
+        existingInitialMessage.provider_message_id,
+      );
     if (alreadySent) {
+      if (
+        typeof existingInitialMessage.provider_message_id === "string" &&
+        existingInitialMessage.provider_message_id.trim()
+      ) {
+        await reconcileAgentOutboundProviderReceipt({
+          sb,
+          tenantId: tenant_id,
+          operationKey: outboundOperationKey,
+          providerMessageId:
+            existingInitialMessage.provider_message_id.trim(),
+        });
+      }
       await revealMetaConversation({
         sb,
         tenantId: tenant_id,
@@ -1047,19 +1238,48 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     if (alreadySent) {
       await eventRecorder.step("whatsapp_sent", { reason: "same_leadgen_already_sent", message_id: existingInitialMessage.id });
       await eventRecorder.patch({ whatsapp_status: "sent", error_message: null, current_step: "whatsapp_sent" });
+      console.info("[meta-webhook] Initial outreach already accepted", {
+        tenant_id,
+        lead_id: leadId,
+        phone_last4: maskPhoneLast4(phone),
+        reason: "same_leadgen_already_sent",
+        delivery_status: existingInitialMessage.delivery_status ?? null,
+      });
+      return;
+    }
+
+    const persistedContent =
+      typeof existingInitialMessage.content === "string"
+        ? existingInitialMessage.content.trim()
+        : "";
+    if (
+      ["pending", "failed"].includes(
+        existingInitialMessage.delivery_status ?? "",
+      ) &&
+      persistedContent
+    ) {
+      resumableInitialMessage = {
+        id: existingInitialMessage.id,
+        content: persistedContent,
+        delivery_status: existingInitialMessage.delivery_status ?? null,
+      };
+      console.info("[meta-webhook] Resuming persisted initial outreach", {
+        tenant_id,
+        lead_id: leadId,
+        message_id: existingInitialMessage.id,
+        previous_status: existingInitialMessage.delivery_status ?? null,
+      });
     } else {
       await eventRecorder.step("skipped_duplicate", { reason: "same_leadgen_already_sent" });
       await eventRecorder.patch({ whatsapp_status: "skipped", error_message: "same_leadgen_already_sent" });
+      console.info("[meta-webhook] Initial outreach duplicate skipped", {
+        tenant_id,
+        lead_id: leadId,
+        phone_last4: maskPhoneLast4(phone),
+        delivery_status: existingInitialMessage.delivery_status ?? null,
+      });
+      return;
     }
-    console.info("[meta-webhook] Initial outreach skipped", {
-      tenant_id,
-      lead_id: leadId,
-      phone_last4: maskPhoneLast4(phone),
-      reason: "same_leadgen_already_sent",
-      delivery_status: existingInitialMessage.delivery_status ?? null,
-      inbox_status: alreadySent ? "sent" : "skipped",
-    });
-    return;
   }
 
   const humanAttending = await shouldSkipMetaOutreachForHumanAttending({
@@ -1068,6 +1288,22 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     remoteJid,
   });
   if (humanAttending) {
+    if (resumableInitialMessage) {
+      await sb
+        .from("whatsapp_messages")
+        .update({
+          delivery_status: "failed",
+          failed_reason: "human_attending_before_dispatch_resume",
+        })
+        .eq("tenant_id", tenant_id)
+        .eq("id", resumableInitialMessage.id);
+      await cancelAutomatedOutboundByOperationKey({
+        sb,
+        tenantId: tenant_id,
+        operationKey: outboundOperationKey,
+        reason: "human_attending_before_dispatch_resume",
+      });
+    }
     await eventRecorder.step("skipped_human_attending", { reason: "human_attending_today" });
     await eventRecorder.patch({ whatsapp_status: "skipped", error_message: "human_attending_today" });
     console.info("[meta-webhook] Initial outreach skipped — human attending today", {
@@ -1096,65 +1332,69 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     remote_jid_last4: maskPhoneLast4(remoteJid),
   });
 
-  const aiPrompt = buildMetaInitialAgentPrompt({
-    leadName: fullName,
-    phone,
-    email,
-    formName,
-    pageName: connPageName?.trim() || null,
-    campaignName: attribution.campaignName,
-    adsetName: attribution.adsetName,
-    adName: attribution.adName,
-    formFields: leadMetadata.form_fields,
-    profileMetadata: leadMetadata,
-  });
-
-  const aiResult = await generateAgentResponse({
-    tenantId: tenant_id,
-    agentId,
-    conversationId: remoteJid,
-    journeyId,
-    customerId: remoteJid,
-    feature: "agent_chat",
-    messages: [{ role: "user", content: aiPrompt }],
-  });
-
-  await eventRecorder.step("ai_response_generated", {
-    ok: aiResult.ok,
-    model: aiResult.ok ? aiResult.model : aiResult.model ?? null,
-    fallback_reason: aiResult.ok ? null : aiResult.detail ?? aiResult.code,
-  });
-
-  console.info("[meta-webhook] AI initial response generated", {
-    tenant_id,
-    lead_id: leadId,
-    agent_id: agentId,
-    ok: aiResult.ok,
-    model: aiResult.ok ? aiResult.model : aiResult.model ?? null,
-    fallback_reason: aiResult.ok ? null : aiResult.detail ?? aiResult.code,
-  });
-
-  if (isAgentMissingInstructionsResult(aiResult)) {
-    await eventRecorder.step("automation_blocked_agent_missing_instructions", {
-      agent_id: agentId,
-      journey_id: journeyId,
+  let replyText = resumableInitialMessage?.content ?? "";
+  if (!replyText) {
+    const aiPrompt = buildMetaInitialAgentPrompt({
+      leadName: fullName,
+      phone,
+      email,
+      formName,
+      pageName: connPageName?.trim() || null,
+      campaignName: attribution.campaignName,
+      adsetName: attribution.adsetName,
+      adName: attribution.adName,
+      formFields: leadMetadata.form_fields,
+      profileMetadata: leadMetadata,
     });
-    await eventRecorder.patch({
-      whatsapp_status: "blocked",
-      error_message: "agent_missing_instructions",
-      current_step: "automation_blocked_agent_missing_instructions",
+
+    const aiResult = await generateAgentResponse({
+      tenantId: tenant_id,
+      agentId,
+      conversationId: remoteJid,
+      journeyId,
+      customerId: remoteJid,
+      feature: "agent_chat",
+      messages: [{ role: "user", content: aiPrompt }],
     });
-    console.warn("[meta-webhook] automation blocked because agent has no instructions", {
+
+    await eventRecorder.step("ai_response_generated", {
+      ok: aiResult.ok,
+      model: aiResult.ok ? aiResult.model : aiResult.model ?? null,
+      fallback_reason: aiResult.ok ? null : aiResult.detail ?? aiResult.code,
+    });
+
+    console.info("[meta-webhook] AI initial response generated", {
       tenant_id,
       lead_id: leadId,
       agent_id: agentId,
-      journey_id: journeyId,
+      ok: aiResult.ok,
+      model: aiResult.ok ? aiResult.model : aiResult.model ?? null,
+      fallback_reason: aiResult.ok ? null : aiResult.detail ?? aiResult.code,
     });
-    return;
-  }
 
-  const replyText =
-    sanitizeInitialReply(aiResult.ok ? aiResult.text : "") || buildFallbackInitialMessage(fullName);
+    if (isAgentMissingInstructionsResult(aiResult)) {
+      await eventRecorder.step("automation_blocked_agent_missing_instructions", {
+        agent_id: agentId,
+        journey_id: journeyId,
+      });
+      await eventRecorder.patch({
+        whatsapp_status: "blocked",
+        error_message: "agent_missing_instructions",
+        current_step: "automation_blocked_agent_missing_instructions",
+      });
+      console.warn("[meta-webhook] automation blocked because agent has no instructions", {
+        tenant_id,
+        lead_id: leadId,
+        agent_id: agentId,
+        journey_id: journeyId,
+      });
+      return;
+    }
+
+    replyText =
+      sanitizeInitialReply(aiResult.ok ? aiResult.text : "") ||
+      buildFallbackInitialMessage(fullName);
+  }
 
   const messageChannel = resolvedConnection.transport === "cloud_api" ? "meta_cloud" : "evolution";
   const messageConnectionId =
@@ -1162,24 +1402,32 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       ? resolvedConnection.phoneNumberId
       : resolvedConnection.instance.id;
 
-  const { data: savedMessage, error: msgErr } = await sb
-    .from("whatsapp_messages")
-    .insert({
-      tenant_id,
-      remote_jid: remoteJid,
-      direction: "outbound",
-      kind: "text",
-      content: replyText.slice(0, 4000),
-      message_id: initialMessageExternalId,
-      agent_id: agentId,
-      lead_id: leadId,
-      journey_id: journeyId,
-      delivery_status: "pending",
-      channel: messageChannel,
-      connection_id: messageConnectionId,
-    })
-    .select("id")
-    .maybeSingle();
+  let savedMessage: { id: string } | null = resumableInitialMessage
+    ? { id: resumableInitialMessage.id }
+    : null;
+  let msgErr: { message: string } | null = null;
+  if (!savedMessage) {
+    const inserted = await sb
+      .from("whatsapp_messages")
+      .insert({
+        tenant_id,
+        remote_jid: remoteJid,
+        direction: "outbound",
+        kind: "text",
+        content: replyText.slice(0, 4000),
+        message_id: initialMessageExternalId,
+        agent_id: agentId,
+        lead_id: leadId,
+        journey_id: journeyId,
+        delivery_status: "pending",
+        channel: messageChannel,
+        connection_id: messageConnectionId,
+      })
+      .select("id")
+      .maybeSingle();
+    savedMessage = inserted.data as { id: string } | null;
+    msgErr = inserted.error;
+  }
 
   if (msgErr || !savedMessage?.id) {
     await eventRecorder.step("whatsapp_failed", { error: msgErr?.message ?? "missing_saved_message" });
@@ -1189,9 +1437,100 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       lead_id: leadId,
       error: msgErr?.message ?? "missing_saved_message",
     });
-    return;
+    throw new MetaLeadgenProcessingError(
+      "initial_whatsapp_message_persist_failed",
+      true,
+      { cause: msgErr ?? undefined },
+    );
   }
 
+  const preparedOutbound = await prepareAutomatedOutbound({
+    sb,
+    operationKey: outboundOperationKey,
+    tenantId: tenant_id,
+    remoteJid,
+    agentId,
+    journeyId,
+    connectionId: messageConnectionId,
+    channel: messageChannel,
+    kind: resolvedConnection.transport === "cloud_api" ? "template" : "text",
+    content: replyText,
+    leadId,
+  });
+  if (preparedOutbound.action === "already_sent") {
+    await sb
+      .from("whatsapp_messages")
+      .update({
+        delivery_status: "sent",
+        failed_reason: null,
+      })
+      .eq("tenant_id", tenant_id)
+      .eq("id", savedMessage.id);
+    await eventRecorder.step("whatsapp_sent", {
+      reason: "outbound_already_sent",
+      message_id: savedMessage.id,
+      outbox_id: preparedOutbound.id,
+    });
+    await eventRecorder.patch({
+      whatsapp_status: "sent",
+      error_message: null,
+      current_step: "whatsapp_sent",
+    });
+    return;
+  }
+  if (
+    preparedOutbound.action === "blocked" ||
+    preparedOutbound.action === "stale"
+  ) {
+    const reason =
+      preparedOutbound.action === "blocked"
+        ? preparedOutbound.reason
+        : "outbound_stale";
+    await sb
+      .from("whatsapp_messages")
+      .update({
+        delivery_status: "failed",
+        failed_reason: reason,
+      })
+      .eq("tenant_id", tenant_id)
+      .eq("id", savedMessage.id);
+    await eventRecorder.step("automation_blocked_by_journey", {
+      reason,
+      journey_id: journeyId,
+      outbox_id: preparedOutbound.id,
+    });
+    await eventRecorder.patch({
+      whatsapp_status: "blocked",
+      error_message: reason,
+      current_step: "automation_blocked_by_journey",
+    });
+    return;
+  }
+  if (preparedOutbound.action === "ambiguous") {
+    await sb
+      .from("whatsapp_messages")
+      .update({
+        delivery_status: "failed",
+        failed_reason: "outbound_dispatch_ambiguous",
+      })
+      .eq("tenant_id", tenant_id)
+      .eq("id", savedMessage.id);
+    await eventRecorder.step("whatsapp_failed", {
+      reason: "outbound_dispatch_ambiguous",
+      outbox_id: preparedOutbound.id,
+    });
+    await eventRecorder.patch({
+      whatsapp_status: "failed",
+      error_message: "outbound_dispatch_ambiguous",
+    });
+    throw new MetaLeadgenProcessingError(
+      "outbound_dispatch_ambiguous",
+      false,
+    );
+  }
+
+  let outboundFinalized = false;
+  let providerDispatchStarted = false;
   try {
     if (journeyIsolationEnabled) {
       const currentJourney = await authorizeActiveJourney({
@@ -1213,9 +1552,17 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
           })
           .eq("tenant_id", tenant_id)
           .eq("id", savedMessage.id);
+        await markAgentOutboundFailed({
+          sb,
+          id: preparedOutbound.id,
+          claimToken: preparedOutbound.claimToken,
+          error: "journey_superseded_before_send",
+        });
+        outboundFinalized = true;
         return;
       }
     }
+    providerDispatchStarted = true;
     const send = await sendMetaLeadInitialWhatsapp({
       connection: resolvedConnection,
       evoNumber,
@@ -1255,6 +1602,28 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         })
         .eq("tenant_id", tenant_id)
         .eq("id", savedMessage.id);
+      const failure = classifyInitialSendFailure({
+        status: send.status,
+        error: send.error,
+      });
+      if (failure.ambiguous) {
+        await markAgentOutboundAmbiguous({
+          sb,
+          id: preparedOutbound.id,
+          claimToken: preparedOutbound.claimToken,
+          reason: "initial_whatsapp_dispatch_ambiguous",
+        });
+      } else {
+        await markAgentOutboundFailed({
+          sb,
+          id: preparedOutbound.id,
+          claimToken: preparedOutbound.claimToken,
+          error: failure.retryable
+            ? "initial_whatsapp_dispatch_retryable"
+            : "initial_whatsapp_dispatch_rejected",
+        });
+      }
+      outboundFinalized = true;
       await scheduleLeadRedistribution({
         sb,
         tenantId: tenant_id,
@@ -1263,7 +1632,12 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         currentAgentId: agentId,
         trigger: "delivery_failed",
       });
-      return;
+      throw new MetaLeadgenProcessingError(
+        failure.ambiguous
+          ? "initial_whatsapp_dispatch_ambiguous"
+          : "initial_whatsapp_dispatch_failed",
+        failure.retryable,
+      );
     }
 
     let acceptedStatus: "pending" | "sent" = "sent";
@@ -1284,11 +1658,17 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         .update({
           delivery_status: "sent",
           provider_message_id: providerMessageId,
-          message_id: providerMessageId ?? initialMessageExternalId,
         })
         .eq("tenant_id", tenant_id)
         .eq("id", savedMessage.id);
     }
+    await markAgentOutboundSent({
+      sb,
+      id: preparedOutbound.id,
+      claimToken: preparedOutbound.claimToken,
+      providerMessageId,
+    });
+    outboundFinalized = true;
 
     const sentAt = new Date().toISOString();
     await Promise.all([
@@ -1359,6 +1739,40 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (err instanceof MetaLeadgenProcessingError) {
+      throw err;
+    }
+    if (outboundFinalized) {
+      console.error("[meta-webhook] Initial WhatsApp post-send processing failed", {
+        error: message,
+        tenant_id,
+        lead_id: leadId,
+        phone_last4: maskPhoneLast4(phone),
+      });
+      await eventRecorder.step("whatsapp_sent", {
+        reason: "postprocess_failed_after_provider_acceptance",
+        error: message,
+        outbox_id: preparedOutbound.id,
+      }).catch(() => undefined);
+      return;
+    }
+
+    const ambiguous = providerDispatchStarted;
+    if (ambiguous) {
+      await markAgentOutboundAmbiguous({
+        sb,
+        id: preparedOutbound.id,
+        claimToken: preparedOutbound.claimToken,
+        reason: "initial_whatsapp_dispatch_ambiguous",
+      });
+    } else {
+      await markAgentOutboundFailed({
+        sb,
+        id: preparedOutbound.id,
+        claimToken: preparedOutbound.claimToken,
+        error: "initial_whatsapp_pre_dispatch_failed",
+      });
+    }
     await eventRecorder.step("whatsapp_failed", { error: message });
     await eventRecorder.patch({ whatsapp_status: "failed", error_message: message });
     console.error("[meta-webhook] Failed to send initial WhatsApp message", {
@@ -1375,5 +1789,12 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       })
       .eq("tenant_id", tenant_id)
       .eq("id", savedMessage.id);
+    throw new MetaLeadgenProcessingError(
+      ambiguous
+        ? "initial_whatsapp_dispatch_ambiguous"
+        : "initial_whatsapp_pre_dispatch_failed",
+      !ambiguous,
+      { cause: err },
+    );
   }
 }

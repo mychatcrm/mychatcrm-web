@@ -19,6 +19,14 @@
     {
       "path": "/api/internal/evolution/reconcile",
       "schedule": "30 5 * * *"
+    },
+    {
+      "path": "/api/internal/meta-connections/reconcile",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/internal/meta-leadgen-inbox/process",
+      "schedule": "30 6 * * *"
     }
   ]
 }
