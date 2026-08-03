@@ -179,6 +179,10 @@ describe("Meta Lead connection health", () => {
       appWebhook: validAppWebhook(),
     });
 
+    const pageProbeUrl = String(fetchMock.mock.calls[0]?.[0] ?? "");
+    expect(pageProbeUrl).toContain("fields=id%2Cname");
+    expect(pageProbeUrl).not.toContain("tasks");
+
     expect(result).toMatchObject({
       status: "action_required",
       code: "lead_access_denied",
