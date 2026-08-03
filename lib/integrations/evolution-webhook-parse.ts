@@ -217,11 +217,7 @@ function pushMessageFromNode(node: unknown, out: EvolutionInboundMessage[]) {
 // Public API
 // ---------------------------------------------------------------------------
 
-/**
- * Extrai mensagens recebidas (texto, áudio ou imagem) a partir do payload Evolution v2.
- * Filtra mensagens enviadas por nós (fromMe) e grupos (@g.us).
- */
-export function extractInboundMessagesFromEvolutionPayload(
+function extractAllMessagesFromEvolutionPayload(
   payload: Record<string, unknown>,
 ): EvolutionInboundMessage[] {
   const out: EvolutionInboundMessage[] = [];
@@ -237,7 +233,7 @@ export function extractInboundMessagesFromEvolutionPayload(
         pushMessageFromNode(item, out);
       }
     }
-    return out.filter((m) => !m.fromMe);
+    return out;
   }
 
   if (typeof data === "object") {
@@ -249,7 +245,28 @@ export function extractInboundMessagesFromEvolutionPayload(
     }
   }
 
-  return out.filter((m) => !m.fromMe);
+  return out;
+}
+
+/**
+ * Extrai mensagens recebidas (texto, áudio ou imagem) a partir do payload Evolution v2.
+ * Filtra mensagens enviadas por nós (fromMe) e grupos (@g.us).
+ */
+export function extractInboundMessagesFromEvolutionPayload(
+  payload: Record<string, unknown>,
+): EvolutionInboundMessage[] {
+  return extractAllMessagesFromEvolutionPayload(payload).filter((m) => !m.fromMe);
+}
+
+/**
+ * Extrai mensagens enviadas por nós (fromMe) — inclui tanto o echo de envios
+ * feitos pelo painel/agente quanto mensagens digitadas direto no aparelho
+ * conectado, que de outra forma nunca chegariam ao CRM. Filtra grupos (@g.us).
+ */
+export function extractFromMeMessagesFromEvolutionPayload(
+  payload: Record<string, unknown>,
+): EvolutionInboundMessage[] {
+  return extractAllMessagesFromEvolutionPayload(payload).filter((m) => m.fromMe);
 }
 
 /**
