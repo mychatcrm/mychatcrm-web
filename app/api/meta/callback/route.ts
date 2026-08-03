@@ -600,6 +600,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   const collectedPages = new Map<string, FacebookPage>();
   let clientBusinessId: string | null = null;
+
+  // `/me?fields=client_business_id` is useful for auditing Business Login
+  // grants, but it is not a prerequisite for discovering Pages. Meta can
+  // return a valid token from `/debug_token` while rejecting `/me` for some
+  // business-scoped grants. Never turn that optional identity probe into a
+  // fatal OAuth callback failure.
   try {
     const meData = await metaGraphRequest<MeResponse>("/me", {
       accessToken: userAccessToken,
@@ -630,18 +636,19 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       clientBusinessIdPresent: Boolean(clientBusinessId),
       tokenMode: tokenMode ?? "legacy_user",
     });
+  } catch (error) {
+    console.warn("[meta-callback] optional grant identity lookup failed", {
+      tenantId,
+      code: metaGraphErrorCode(error),
+      tokenMode: tokenMode ?? "legacy_user",
+    });
+  }
 
+  try {
     addPages(
       collectedPages,
       await fetchPagesAttempt("me/accounts", "/me/accounts"),
     );
-
-    if (!usesBusinessLoginConfiguration && userId && collectedPages.size === 0) {
-      addPages(
-        collectedPages,
-        await fetchPagesAttempt(`${userId}/accounts`, `/${encodeURIComponent(userId)}/accounts`),
-      );
-    }
 
     // Granular scope target IDs are an authoritative asset hint when a
     // Business Integration System User does not populate /me/accounts.
