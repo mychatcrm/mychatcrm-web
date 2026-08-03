@@ -155,6 +155,21 @@ function makeFakeSupabase(initial: Record<string, Row[]>) {
 
   return {
     tables,
+    rpc: async (name: string, args: Row) => {
+      if (name !== "append_meta_lead_event_step") {
+        throw new Error(`unexpected rpc ${name}`);
+      }
+      const row = table("meta_lead_events").find((candidate) => candidate.id === args.p_event_id);
+      if (!row) return { data: false, error: null };
+      const steps = Array.isArray(row.steps_log) ? row.steps_log : [];
+      row.steps_log = [
+        ...steps,
+        { step: args.p_step, at: args.p_at, ...(args.p_detail as Row) },
+      ];
+      row.current_step = args.p_step;
+      row.updated_at = args.p_at;
+      return { data: true, error: null };
+    },
     from: (name: string) => ({
       select: () => selectBuilder(name),
       update: (patch: Row) => updateBuilder(name, patch),

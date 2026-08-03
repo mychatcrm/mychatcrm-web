@@ -184,6 +184,25 @@ describe("agent outbound outbox", () => {
     expect(state.row).toMatchObject({ status: "ambiguous", last_error: "dispatch_ambiguous" });
   });
 
+  it("does not steal an outbox claim that is still active", async () => {
+    const state = makeSb({
+      id: "outbound-1",
+      status: "processing",
+      attempts: 1,
+      claim_token: "active-claim",
+      claim_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      provider_message_id: null,
+    });
+
+    await expect(prepareAgentOutbound({
+      sb: state.sb,
+      job,
+      generation: 1,
+      content: "Resposta consolidada",
+    })).resolves.toEqual({ action: "in_progress", id: "outbound-1" });
+    expect(state.row).toMatchObject({ status: "processing", claim_token: "active-claim" });
+  });
+
   it("finalizes success and releases a retryable failure only with the claim token", async () => {
     const success = makeSb({
       id: "outbound-1",

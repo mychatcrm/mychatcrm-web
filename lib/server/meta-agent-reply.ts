@@ -256,6 +256,9 @@ export async function processMetaAgentResponseJob(
   if (outbound.action === "ambiguous") {
     return { ok: false, error: "outbound_dispatch_ambiguous", dedupedCount: burst.dedupedCount };
   }
+  if (outbound.action === "in_progress") {
+    return { ok: false, error: "outbound_dispatch_in_progress", dedupedCount: burst.dedupedCount };
+  }
 
   const connection = await lookupWhatsAppCloudConnectionByPhoneNumberId(job.connection_id);
   const token = connection?.access_token?.trim() || process.env.WHATSAPP_ACCESS_TOKEN?.trim();

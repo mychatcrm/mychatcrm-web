@@ -151,24 +151,19 @@ export class MetaLeadEventRecorder {
   async step(step: MetaLeadEventStep, detail?: Record<string, unknown>): Promise<void> {
     if (this.disabled || !this.eventId) return;
     const at = new Date().toISOString();
-    const { data: row } = await this.sb
-      .from("meta_lead_events")
-      .select("steps_log")
-      .eq("id", this.eventId)
-      .maybeSingle();
-    const prev = Array.isArray(row?.steps_log) ? row.steps_log : [];
-    const steps_log = [...prev, { step, at, ...(detail ? { detail } : {}) }];
-    await this.sb
-      .from("meta_lead_events")
-      .update({
-        current_step: step,
-        steps_log,
-        updated_at: at,
-        ...(detail?.error_message && typeof detail.error_message === "string"
-          ? { error_message: detail.error_message }
-          : {}),
-      })
-      .eq("id", this.eventId);
+    const { error } = await this.sb.rpc("append_meta_lead_event_step", {
+      p_event_id: this.eventId,
+      p_step: step,
+      p_at: at,
+      p_detail: detail ?? null,
+    });
+    if (error) {
+      console.warn("[meta-lead-events] atomic step failed", {
+        event_id: this.eventId,
+        step,
+        error: error.message,
+      });
+    }
   }
 
   async patch(fields: Record<string, unknown>): Promise<void> {

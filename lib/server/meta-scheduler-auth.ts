@@ -8,7 +8,7 @@ const UUID_PATTERN =
 const SIGNATURE_PATTERN = /^sha256=([0-9a-f]{64})$/i;
 
 export type MetaSchedulerAuthResult =
-  | { ok: true }
+  | { ok: true; nonce: string; issuedAt: string }
   | {
       ok: false;
       status: 401 | 503;
@@ -104,7 +104,7 @@ export function verifyMetaSchedulerRequest(
     .digest("hex");
 
   return safeHexEquals(signatureMatch[1].toLowerCase(), expected)
-    ? { ok: true }
+    ? { ok: true, nonce, issuedAt: new Date(timestampSeconds * 1000).toISOString() }
     : {
         ok: false,
         status: 401,

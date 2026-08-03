@@ -181,3 +181,20 @@ export async function ensureMetaLeadWebhookSubscriptionForRule(
 
   return result;
 }
+
+/** Keeps the historical-lead boundary stable across unrelated rule edits. */
+export async function syncMetaFormCaptureBoundariesForRule(
+  sb: SupabaseClient,
+  rule: LeadDistributionRuleRow,
+): Promise<void> {
+  const isActiveMetaRule = rule.source === "meta_form" && rule.active !== false;
+  const { error } = await sb.rpc("sync_meta_form_capture_boundaries", {
+    p_tenant_id: rule.tenant_id,
+    p_rule_id: rule.id,
+    p_page_id: rule.page_id?.trim() || null,
+    p_form_ids: stringArray(rule.included_form_ids),
+    p_use_all_forms: rule.use_all_forms === true,
+    p_active: isActiveMetaRule,
+  });
+  if (error) throw new Error(`meta_capture_boundary_sync_failed:${error.message}`);
+}
