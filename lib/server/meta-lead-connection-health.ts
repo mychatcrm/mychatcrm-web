@@ -507,7 +507,11 @@ export async function verifyMetaPageLeadConnection(params: {
       `/${encodeURIComponent(params.pageId)}`,
       {
         accessToken: params.pageAccessToken,
-        searchParams: { fields: "id,name,tasks" },
+        // `tasks` was removed from the Page node in Graph API v25.0. The
+        // granted scopes and the functional Lead Ads probes below are the
+        // authoritative checks; requesting the removed field makes every
+        // otherwise valid Page fail with OAuth error #100.
+        searchParams: { fields: "id,name" },
       },
     );
     if (page.id !== params.pageId) {
@@ -518,9 +522,7 @@ export async function verifyMetaPageLeadConnection(params: {
         appWebhookCallbackVerified: true,
       });
     }
-    pageTasks = Array.isArray(page.tasks)
-      ? page.tasks.filter((task) => typeof task === "string")
-      : [];
+    pageTasks = [];
   } catch (error) {
     const code = metaGraphErrorCode(error);
     return healthFromFailure({
