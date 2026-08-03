@@ -2,6 +2,8 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Archive,
+  ArrowLeft,
   Check,
   CheckCheck,
   CheckSquare,
@@ -13,6 +15,7 @@ import {
   Paperclip,
   Phone,
   Play,
+  RotateCcw,
   Search,
   Send,
   Smile,
@@ -249,8 +252,14 @@ async function apiLoadAgents(): Promise<AgentOption[]> {
     .map((a) => ({ id: String(a.id), nome: String(a.nome ?? "Agente") }));
 }
 
-async function apiLoadConversations(connectionId?: string | null): Promise<WaConversation[]> {
-  const qs = connectionId ? `?connectionId=${encodeURIComponent(connectionId)}` : "";
+async function apiLoadConversations(
+  connectionId?: string | null,
+  options?: { archived?: boolean },
+): Promise<WaConversation[]> {
+  const params = new URLSearchParams();
+  if (connectionId) params.set("connectionId", connectionId);
+  if (options?.archived) params.set("archived", "true");
+  const qs = params.toString() ? `?${params.toString()}` : "";
   const res = await fetch(`/api/client/conversas${qs}`, { cache: "no-store" });
   if (!res.ok) return [];
   const data = (await res.json()) as {
@@ -261,6 +270,18 @@ async function apiLoadConversations(connectionId?: string | null): Promise<WaCon
     messages: [],
     messagesLoaded: false,
   }));
+}
+
+async function apiRestoreConversations(remoteJids: string[]): Promise<void> {
+  const res = await fetch("/api/client/conversas/restore", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ remoteJids }),
+  });
+  if (!res.ok) {
+    const detail = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(detail.error ?? `Erro ${res.status} ao restaurar conversas.`);
+  }
 }
 
 async function apiLoadConnections(): Promise<ConnectionOption[]> {
@@ -597,6 +618,14 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
   const [confirmAction, setConfirmAction] = useState<"all" | "selected" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+
+  // Conversas arquivadas — visualização e restauração. "Limpar tudo" arquiva
+  // sem apagar, mas até aqui não havia como voltar pelo painel.
+  const [archivedView, setArchivedView] = useState(false);
+  const [archivedConversations, setArchivedConversations] = useState<WaConversation[]>([]);
+  const [archivedLoading, setArchivedLoading] = useState(false);
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [selectedForRestore, setSelectedForRestore] = useState<Set<string>>(new Set());
 
   // Filtros (chips visíveis + popover de período/modo/número)
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -1125,6 +1154,61 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
     }
   };
 
+  const openArchivedView = useCallback(async () => {
+    setHeaderMenuOpen(false);
+    setArchivedView(true);
+    setSelectedForRestore(new Set());
+    setActionError(null);
+    setArchivedLoading(true);
+    try {
+      const list = await apiLoadConversations(connectionFilterRef.current, { archived: true });
+      setArchivedConversations(list);
+    } finally {
+      setArchivedLoading(false);
+    }
+  }, []);
+
+  const closeArchivedView = () => {
+    setArchivedView(false);
+    setArchivedConversations([]);
+    setSelectedForRestore(new Set());
+  };
+
+  const toggleSelectForRestore = (jid: string) => {
+    setSelectedForRestore((prev) => {
+      const next = new Set(prev);
+      if (next.has(jid)) next.delete(jid);
+      else next.add(jid);
+      return next;
+    });
+  };
+
+  const handleRestore = async (jids: string[]) => {
+    if (restoreBusy || jids.length === 0) return;
+    setRestoreBusy(true);
+    setActionError(null);
+    const jidSet = new Set(jids);
+    const previous = archivedConversations;
+    setArchivedConversations((prev) => prev.filter((c) => !jidSet.has(c.remoteJid)));
+    setSelectedForRestore((prev) => {
+      const next = new Set(prev);
+      for (const jid of jids) next.delete(jid);
+      return next;
+    });
+    try {
+      await apiRestoreConversations(jids);
+      // A lista principal está com Realtime + poll; um refresh explícito
+      // evita esperar o próximo tick pra a conversa restaurada aparecer.
+      const list = await apiLoadConversations(connectionFilterRef.current);
+      setConversations(list);
+    } catch (e) {
+      setArchivedConversations(previous);
+      setActionError(e instanceof Error ? e.message : "Erro ao restaurar conversas.");
+    } finally {
+      setRestoreBusy(false);
+    }
+  };
+
   const handleTakeover = useCallback(async () => {
     if (!selectedJid || takeoverBusy) return;
     setTakeoverBusy(true);
@@ -1294,6 +1378,14 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
                       <Trash2 size={15} strokeWidth={1.9} />
                       Limpar todas as conversas
                     </button>
+                    <button
+                      type="button"
+                      onClick={openArchivedView}
+                      className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-[13px] font-medium text-mc-text transition-colors hover:bg-mc-surface-2"
+                    >
+                      <Archive size={15} strokeWidth={1.9} />
+                      Ver arquivadas
+                    </button>
                   </div>
                 )}
               </div>
@@ -1312,6 +1404,62 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
           </div>
         </div>
 
+        {archivedView ? (
+          <>
+            <div className="flex items-center justify-between gap-2 border-b border-mc-border px-5 py-3">
+              <button
+                type="button"
+                onClick={closeArchivedView}
+                className="flex items-center gap-1.5 text-[12.5px] font-semibold text-mc-muted transition-colors hover:text-mc-text"
+              >
+                <ArrowLeft size={15} strokeWidth={2} />
+                Voltar
+              </button>
+              <span className="text-[12.5px] font-semibold text-mc-text">Conversas arquivadas</span>
+              <span className="w-[52px]" />
+            </div>
+            <div className="flex-1 overflow-y-auto p-3">
+              {archivedLoading && (
+                <div className="space-y-2 p-2">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="h-16 animate-pulse rounded-mc-base bg-mc-surface-2" />
+                  ))}
+                </div>
+              )}
+              {!archivedLoading && archivedConversations.length === 0 && (
+                <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
+                  <Archive size={28} strokeWidth={1.5} className="text-mc-muted/50" />
+                  <p className="text-[13px] text-mc-muted">Nenhuma conversa arquivada.</p>
+                </div>
+              )}
+              <div className="space-y-1">
+                {archivedConversations.map((conv) => (
+                  <div
+                    key={conv.remoteJid}
+                    className="flex items-center justify-between gap-2 rounded-mc-base px-3 py-2.5 hover:bg-mc-surface-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-[13.5px] font-semibold text-mc-text">
+                        {conv.lead_name ?? jidToPhone(conv.remoteJid)}
+                      </p>
+                      <p className="truncate text-[12px] text-mc-muted">{conv.lastContent}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRestore([conv.remoteJid])}
+                      disabled={restoreBusy}
+                      className="flex shrink-0 items-center gap-1.5 rounded-mc-base border border-mc-border px-2.5 py-1.5 text-[12px] font-semibold text-mc-text transition-colors hover:bg-mc-surface-2 disabled:opacity-40"
+                    >
+                      <RotateCcw size={13} strokeWidth={2} />
+                      Restaurar
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
         {/* Filtros / barra de seleção */}
         {selectionMode ? (
           <div className="flex items-center justify-between gap-2 border-b border-mc-border px-5 py-3">
@@ -1544,6 +1692,8 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
             ))}
           </div>
         </div>
+          </>
+        )}
       </div>
 
       {/* ── Chat panel ── */}

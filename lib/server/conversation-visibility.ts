@@ -123,6 +123,40 @@ export async function hideConversationsForTenant(params: {
   return affected;
 }
 
+/**
+ * Restaura conversa(s) arquivada(s) para a caixa de entrada — a contrapartida
+ * manual de `hideConversationsForTenant`. Sem isto, uma conversa arquivada
+ * (ex.: por engano, pelo "Limpar tudo") só volta sozinha quando o cliente
+ * manda mensagem de novo (`revealConversationOnInbound`); não havia como o
+ * operador trazê-la de volta pelo painel.
+ */
+export async function unhideConversationsForTenant(params: {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  remoteJids: string[];
+}): Promise<number> {
+  const jids = [...new Set(params.remoteJids.map((j) => j.trim()).filter(Boolean))];
+  if (!jids.length) return 0;
+
+  const sb = params.sb ?? createSupabaseServiceClient();
+  let affected = 0;
+
+  for (const remoteJid of jids) {
+    const state = await upsertConversationState({
+      sb,
+      tenantId: params.tenantId,
+      remoteJid,
+      isHidden: false,
+      archivedAt: null,
+      hiddenAt: null,
+      hiddenBy: null,
+    });
+    if (state) affected += 1;
+  }
+
+  return affected;
+}
+
 export async function revealConversationOnInbound(params: {
   sb?: SupabaseServiceClient;
   tenantId: string;

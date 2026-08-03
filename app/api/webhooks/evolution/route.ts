@@ -18,6 +18,7 @@ import {
 import {
   extractConnectionState,
   extractConnectionStatusReason,
+  extractFromMeMessagesFromEvolutionPayload,
   extractInboundMessagesFromEvolutionPayload,
   extractInstanceJid,
   extractInstanceName,
@@ -52,7 +53,11 @@ import {
 } from "@/lib/server/conversation-memory";
 import { applyHumanConversationCommand } from "@/lib/server/conversation-human-control";
 import { revealConversationOnInbound } from "@/lib/server/conversation-visibility";
-import { isAgentAutomationAllowed, markWaitingForHuman } from "@/lib/server/conversation-operation";
+import {
+  isAgentAutomationAllowed,
+  markWaitingForHuman,
+  takeoverConversation,
+} from "@/lib/server/conversation-operation";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import {
   evolutionBurstSafeSmartWait,
@@ -467,6 +472,71 @@ async function saveMessage(opts: {
 }
 
 /**
+ * Mensagem fromMe:true que NÃO é o echo de um envio já registrado (painel ou
+ * agente sempre gravam `provider_message_id` com o id retornado pela Evolution
+ * ao enviar) — ou seja, foi digitada direto no aparelho conectado. Sem isto,
+ * essas mensagens eram descartadas silenciosamente: nunca apareciam no CRM
+ * para outros operadores e o agente podia responder por cima, contradizendo
+ * o que o humano acabou de dizer ao cliente.
+ */
+async function captureDirectPhoneOutbound(params: {
+  tenantId: string;
+  connectionId: string;
+  msg: EvolutionInboundMessage;
+}): Promise<void> {
+  const { tenantId, connectionId, msg } = params;
+  if (!msg.messageId) return;
+
+  try {
+    const sb = createSupabaseServiceClient();
+
+    const { data: existing } = await sb
+      .from("whatsapp_messages")
+      .select("id")
+      .eq("tenant_id", tenantId)
+      .eq("provider_message_id", msg.messageId)
+      .limit(1)
+      .maybeSingle();
+    if (existing) return;
+
+    const saved = await saveMessage({
+      tenantId,
+      remoteJid: msg.remoteJid,
+      direction: "outbound",
+      kind: kindFromMsg(msg),
+      content: contentFromMsg(msg),
+      messageId: msg.messageId,
+      agentId: "human",
+      connectionId,
+      providerMessageId: msg.messageId,
+      providerRemoteJid: msg.providerRemoteJid,
+      occurredAt: msg.occurredAt,
+      receivedAt: new Date().toISOString(),
+      deliveryStatus: "sent",
+    });
+    if (!saved || saved.duplicate) return;
+
+    console.info("[webhooks/evolution] direct_phone_outbound_captured", {
+      tenant_id: tenantId,
+      message_id: msg.messageId,
+      remote_jid_last4: msg.remoteJid.replace(/\D/g, "").slice(-4),
+    });
+
+    // Um humano acabou de responder direto no celular — pausa a automação
+    // para o agente não responder por cima do que ele já disse ao cliente.
+    await takeoverConversation({
+      sb,
+      tenantId,
+      remoteJid: msg.remoteJid,
+      actorId: "human_phone",
+      actorName: "Atendimento (WhatsApp)",
+    });
+  } catch (e) {
+    console.warn("[webhooks/evolution] direct_phone_outbound_capture_failed", e);
+  }
+}
+
+/**
  * Evolution API v2 → eventos `MESSAGES_UPSERT`, `CONNECTION_UPDATE`.
  * Suporta mensagens de texto, áudio (Whisper) e imagem (GPT-4o vision).
  * URL: `/api/webhooks/evolution?token=EVOLUTION_WEBHOOK_SECRET`
@@ -752,6 +822,19 @@ export async function POST(request: Request) {
     }
 
     const inbound = extractInboundMessagesFromEvolutionPayload(payload);
+
+    // Instância do sistema (verificação/OTP) não tem operador humano digitando
+    // no aparelho — nada a capturar ali.
+    if (row.tenant_id !== SYSTEM_TENANT_ID) {
+      const fromMeMessages = extractFromMeMessagesFromEvolutionPayload(payload);
+      if (fromMeMessages.length > 0) {
+        await Promise.all(
+          fromMeMessages.map((msg) =>
+            captureDirectPhoneOutbound({ tenantId: row.tenant_id, connectionId: row.id, msg }),
+          ),
+        );
+      }
+    }
 
     // Bug 3 fix: split the per-message loop into two serial phases so that ALL messages
     // from a batch Evolution payload are persisted to DB before any smart-wait flow starts.

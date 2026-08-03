@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { processDueAgendaReminderJobs } from "@/lib/server/agenda-reminder-jobs";
 import { processDueFollowUpJobs } from "@/lib/server/follow-up-jobs";
 import { verifyInternalApiRequest } from "@/lib/server/internal-api-auth";
 import { processDueLeadRedistributions } from "@/lib/server/lead-redistribution";
@@ -62,8 +63,17 @@ export async function POST(request: Request) {
       });
     }
 
+    let agendaReminders: Awaited<ReturnType<typeof processDueAgendaReminderJobs>> | null = null;
+    try {
+      agendaReminders = await processDueAgendaReminderJobs({ sb: createSupabaseServiceClient() });
+      console.info("[agenda-reminder-jobs]", { event: "follow_up_hook_completed", ...agendaReminders });
+    } catch (reminderErr) {
+      const message = reminderErr instanceof Error ? reminderErr.message : String(reminderErr);
+      console.warn("[agenda-reminder-jobs]", { event: "follow_up_hook_failed", error: message });
+    }
+
     console.info("[follow-up-jobs]", { event: "process_completed", ...result });
-    return NextResponse.json({ ok: true, ...result, metaLeadPoll, omnichannel });
+    return NextResponse.json({ ok: true, ...result, metaLeadPoll, omnichannel, agendaReminders });
   } catch (error) {
     const message = error instanceof Error ? error.message : "process_failed";
     console.error("[follow-up-jobs]", { event: "process_error", error: message });

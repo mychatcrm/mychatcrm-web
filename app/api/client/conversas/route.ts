@@ -92,7 +92,12 @@ export async function GET(request: Request) {
   const session = await getClientSessionFromCookies();
   if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
-  const connectionId = new URL(request.url).searchParams.get("connectionId");
+  const url = new URL(request.url);
+  const connectionId = url.searchParams.get("connectionId");
+  // "Ver arquivadas": mesma lista, invertendo o filtro de visibilidade —
+  // é o que dá ao operador uma forma de enxergar (e restaurar) o que foi
+  // arquivado, sem precisar de acesso direto ao banco.
+  const archivedOnly = url.searchParams.get("archived") === "true";
 
   const sb = createSupabaseServiceClient();
 
@@ -160,13 +165,21 @@ export async function GET(request: Request) {
       )
       .map((row) => String(row.remote_jid)),
   );
+  // Sem estado (conversa nova, nunca arquivada) nunca deve aparecer na lista
+  // de arquivadas.
+  const stateExists = new Set((states ?? []).map((row) => String(row.remote_jid)));
 
   const stateByJid = new Map(
     (states ?? []).map((row) => [String(row.remote_jid), row as Record<string, unknown>]),
   );
 
   const conversations = lastMessages
-    .filter((row) => row.remote_jid && !hiddenJids.has(row.remote_jid))
+    .filter((row) => {
+      if (!row.remote_jid) return false;
+      return archivedOnly
+        ? hiddenJids.has(row.remote_jid) && stateExists.has(row.remote_jid)
+        : !hiddenJids.has(row.remote_jid);
+    })
     .filter((row) => {
       if (allowedLeadIds === null) return true; // titular: sem recorte
       const stateRow = stateByJid.get(row.remote_jid);

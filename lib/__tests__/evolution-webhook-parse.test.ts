@@ -3,10 +3,47 @@ import { buildEvolutionInstanceName, buildFreshEvolutionInstanceName } from "@/l
 import {
   extractInboundTextsFromEvolutionPayload,
   extractConnectionStatusReason,
+  extractFromMeMessagesFromEvolutionPayload,
+  extractInboundMessagesFromEvolutionPayload,
   extractInstanceJid,
   extractMessageDeliveryUpdates,
   isTerminalEvolutionDisconnectReason,
 } from "@/lib/integrations/evolution-webhook-parse";
+
+describe("extractFromMeMessagesFromEvolutionPayload", () => {
+  it("returns only fromMe:true messages, excluding groups", () => {
+    const payload = {
+      event: "messages.upsert",
+      data: [
+        {
+          key: { remoteJid: "5511999999999@s.whatsapp.net", fromMe: true, id: "OUT1" },
+          messageTimestamp: 1_700_000_000,
+          message: { conversation: "Confirmado, te espero amanhã!" },
+        },
+        {
+          key: { remoteJid: "5511999999999@s.whatsapp.net", fromMe: false, id: "IN1" },
+          messageTimestamp: 1_700_000_001,
+          message: { conversation: "Oi" },
+        },
+        {
+          key: { remoteJid: "1203630@g.us", fromMe: true, id: "OUT-GROUP" },
+          messageTimestamp: 1_700_000_002,
+          message: { conversation: "grupo" },
+        },
+      ],
+    };
+
+    const fromMe = extractFromMeMessagesFromEvolutionPayload(payload);
+    expect(fromMe).toHaveLength(1);
+    expect(fromMe[0].messageId).toBe("OUT1");
+    expect(fromMe[0].fromMe).toBe(true);
+    if (fromMe[0].type === "text") expect(fromMe[0].text).toBe("Confirmado, te espero amanhã!");
+
+    const inbound = extractInboundMessagesFromEvolutionPayload(payload);
+    expect(inbound).toHaveLength(1);
+    expect(inbound[0].messageId).toBe("IN1");
+  });
+});
 
 describe("buildEvolutionInstanceName", () => {
   it("is deterministic per tenant and slot", () => {
