@@ -149,6 +149,7 @@ describe("Meta leadgen durable inbox", () => {
       completed: 1,
       retrying: 0,
       deadLetter: 0,
+      reviewRequired: 0,
       claimLost: 0,
       errors: 0,
     });
@@ -161,7 +162,7 @@ describe("Meta leadgen durable inbox", () => {
     );
     const rpc = vi.fn(async (name: string) => {
       if (name === "claim_meta_leadgen_events") return { data: [row], error: null };
-      if (name === "fail_meta_leadgen_event") return { data: "retrying", error: null };
+      if (name === "fail_meta_leadgen_event_v2") return { data: "retrying", error: null };
       throw new Error(`unexpected rpc ${name}`);
     });
 
@@ -171,14 +172,14 @@ describe("Meta leadgen durable inbox", () => {
     });
 
     const failureCall = rpc.mock.calls.find(
-      ([name]) => name === "fail_meta_leadgen_event",
+      ([name]) => name === "fail_meta_leadgen_event_v2",
     );
     expect(failureCall?.[1]).toMatchObject({
       p_id: "job-1",
       p_claim_token: row.claim_token,
       p_error_code: "upstream_network_error",
       p_error_fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
-      p_force_terminal: false,
+      p_retryable: true,
     });
     expect(JSON.stringify(failureCall)).not.toContain("person@example.com");
     expect(JSON.stringify(failureCall)).not.toContain("5511999999999");
@@ -195,7 +196,7 @@ describe("Meta leadgen durable inbox", () => {
     );
     const rpc = vi.fn(async (name: string) => {
       if (name === "claim_meta_leadgen_events") return { data: [row], error: null };
-      if (name === "fail_meta_leadgen_event") return { data: "dead_letter", error: null };
+      if (name === "fail_meta_leadgen_event_v2") return { data: "dead_letter", error: null };
       throw new Error(`unexpected rpc ${name}`);
     });
 
@@ -205,14 +206,35 @@ describe("Meta leadgen durable inbox", () => {
     });
 
     expect(rpc).toHaveBeenCalledWith(
-      "fail_meta_leadgen_event",
+      "fail_meta_leadgen_event_v2",
       expect.objectContaining({
         p_error_code: "outbound_dispatch_ambiguous",
-        p_force_terminal: true,
+        p_retryable: false,
       }),
     );
     expect(result.deadLetter).toBe(1);
     expect(result.retrying).toBe(0);
+  });
+
+  it("moves an exhausted retryable failure to manual review instead of losing it", async () => {
+    const row = claimedRow({ attempts: 8, max_attempts: 8 });
+    processMetaLeadgenEvent.mockRejectedValueOnce(new Error("fetch failed"));
+    const rpc = vi.fn(async (name: string) => {
+      if (name === "claim_meta_leadgen_events") return { data: [row], error: null };
+      if (name === "fail_meta_leadgen_event_v2") {
+        return { data: "review_required", error: null };
+      }
+      throw new Error(`unexpected rpc ${name}`);
+    });
+
+    const result = await processMetaLeadgenInbox({ sb: { rpc } as never, limit: 1 });
+
+    expect(rpc).toHaveBeenCalledWith(
+      "fail_meta_leadgen_event_v2",
+      expect.objectContaining({ p_retryable: true }),
+    );
+    expect(result.reviewRequired).toBe(1);
+    expect(result.deadLetter).toBe(0);
   });
 
   it("terminalizes and audits a stale crash after the final allowed claim", () => {

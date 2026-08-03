@@ -111,6 +111,7 @@ function isTransientFailure(error: string): boolean {
     e.includes("timeout") ||
     e.includes("fetch") ||
     e.includes("network") ||
+    e.includes("in_progress") ||
     e.includes("rate")
   );
 }

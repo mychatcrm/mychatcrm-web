@@ -22,6 +22,7 @@ export type PreparedAgentOutbound =
   | { action: "send"; id: string; claimToken: string }
   | { action: "already_sent"; id: string }
   | { action: "ambiguous"; id: string }
+  | { action: "in_progress"; id: string }
   | { action: "blocked"; id: string; reason: string }
   | { action: "stale"; id: string };
 
@@ -146,6 +147,13 @@ export async function prepareAgentOutbound(params: {
   if (row.status === "processing" || row.status === "ambiguous") {
     if (row.status === "processing" && row.provider_message_id) {
       return { action: "already_sent", id: row.id };
+    }
+    if (
+      row.status === "processing" &&
+      row.claim_expires_at &&
+      Date.parse(row.claim_expires_at) > Date.now()
+    ) {
+      return { action: "in_progress", id: row.id };
     }
     await params.sb
       .from("agent_outbound_outbox")
@@ -279,6 +287,13 @@ export async function prepareAutomatedOutbound(params: {
   if (row.status === "processing" || row.status === "ambiguous") {
     if (row.status === "processing" && row.provider_message_id) {
       return { action: "already_sent", id: row.id };
+    }
+    if (
+      row.status === "processing" &&
+      row.claim_expires_at &&
+      Date.parse(row.claim_expires_at) > Date.now()
+    ) {
+      return { action: "in_progress", id: row.id };
     }
     return { action: "ambiguous", id: row.id };
   }

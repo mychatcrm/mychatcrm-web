@@ -4,6 +4,7 @@ import { signMetaOAuthState } from "@/lib/server/meta-oauth-state";
 import { SITE_URL } from "@/lib/constants";
 import { META_GRAPH_API_VERSION } from "@/lib/server/meta-graph-api";
 import { metaLeadsBusinessLoginConfiguration } from "@/lib/server/meta-leads-config";
+import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -32,8 +33,19 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json({ error: "META_APP_ID not configured on server." }, { status: 503 });
   }
 
+  const nonce = crypto.randomUUID();
+  const sb = createSupabaseServiceClient();
+  const { data: generation, error: beginError } = await sb.rpc("begin_meta_lead_oauth", {
+    p_tenant_id: session.tenantId,
+    p_nonce: nonce,
+  });
+  if (beginError || !Number.isSafeInteger(Number(generation))) {
+    return NextResponse.json({ error: "Não foi possível iniciar a conexão Meta." }, { status: 503 });
+  }
+
   const state = await signMetaOAuthState({
     tenantId: session.tenantId,
+    nonce,
     ...(session.employeeId ? { employeeId: session.employeeId } : {}),
     employeeEmail: session.email,
   });

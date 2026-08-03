@@ -5,6 +5,7 @@ const STATE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 
 export type MetaOAuthStateInput = {
   tenantId: string;
+  nonce?: string;
   employeeId?: string;
   employeeEmail?: string;
   /** Distinguishes OAuth flows; omit for Lead Ads (default). */
@@ -13,6 +14,7 @@ export type MetaOAuthStateInput = {
 
 export type MetaOAuthStatePayload = {
   tenantId: string;
+  nonce?: string;
   employeeId?: string;
   employeeEmail?: string;
   /** Distinguishes OAuth flows; absent on legacy Lead Ads tokens. */
@@ -48,6 +50,7 @@ export async function signMetaOAuthState(input: MetaOAuthStateInput): Promise<st
 
   const payload = JSON.stringify({
     tenantId: input.tenantId,
+    ...(input.nonce ? { nonce: input.nonce } : {}),
     ...(input.employeeId ? { employeeId: input.employeeId } : {}),
     ...(input.employeeEmail ? { employeeEmail: input.employeeEmail.trim().toLowerCase() } : {}),
     ...(input.flow ? { flow: input.flow } : {}),
@@ -88,6 +91,7 @@ export async function verifyMetaOAuthState(state: string): Promise<MetaOAuthStat
       employeeId?: string;
       employeeEmail?: string;
       flow?: string;
+      nonce?: string;
       timestamp?: number;
       /** Legado: states assinados antes da migração para `timestamp`. */
       exp?: number;
@@ -106,6 +110,7 @@ export async function verifyMetaOAuthState(state: string): Promise<MetaOAuthStat
 
     return {
       tenantId: parsed.tenantId,
+      ...(parsed.nonce ? { nonce: parsed.nonce } : {}),
       ...(parsed.employeeId ? { employeeId: parsed.employeeId } : {}),
       ...(parsed.employeeEmail ? { employeeEmail: parsed.employeeEmail } : {}),
       ...(parsed.flow ? { flow: parsed.flow } : {}),

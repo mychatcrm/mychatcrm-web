@@ -373,6 +373,20 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return handleWhatsAppCloudCallback(req, code, sessionRestore, tokenExchangeSiteUrl);
   }
 
+  const oauthNonce = oauthState.nonce?.trim();
+  if (!oauthNonce) {
+    return redirectToIntegracoes(req, "meta=error&reason=invalid_state", sessionRestore);
+  }
+  const oauthSb = createSupabaseServiceClient();
+  const { data: callbackClaimed, error: callbackClaimError } = await oauthSb.rpc(
+    "claim_meta_lead_oauth_callback",
+    { p_tenant_id: tenantId, p_nonce: oauthNonce },
+  );
+  if (callbackClaimError || callbackClaimed !== true) {
+    console.info("[meta-callback] stale or replayed callback rejected", { tenantId });
+    return redirectToIntegracoes(req, "meta=error&reason=stale_callback", sessionRestore);
+  }
+
   // ── Lead Ads OAuth (existing code below, untouched) ───────────────────────
   const appId = process.env.META_APP_ID?.trim();
   const appSecret = process.env.META_APP_SECRET?.trim();
@@ -465,33 +479,32 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       appSecret,
     }),
   ]);
-  const sb = createSupabaseServiceClient();
+  const sb = oauthSb;
   const grantCredentialFingerprint = metaCredentialFingerprint(
     null,
     userAccessToken,
   );
   if (tokenCheck.ok || tokenCheck.retryable) {
     const tokenCheckRetrying = !tokenCheck.ok;
-    const { error: grantError } = await sb.from("meta_lead_grants").upsert(
+    const { data: savedFingerprint, error: grantError } = await sb.rpc(
+      "save_meta_lead_oauth_grant",
       {
-        tenant_id: tenantId,
-        user_access_token: userAccessToken,
-        credential_fingerprint: grantCredentialFingerprint,
-        token_kind: tokenCheck.ok ? tokenCheck.tokenKind : null,
-        token_mode: tokenMode ?? "user",
-        discovery_status: tokenCheckRetrying ? "retrying" : "discovering",
-        last_error_code: tokenCheckRetrying ? tokenCheck.code : null,
-        next_discovery_at: tokenCheckRetrying
+        p_tenant_id: tenantId,
+        p_nonce: oauthNonce,
+        p_user_access_token: userAccessToken,
+        p_token_kind: tokenCheck.ok ? tokenCheck.tokenKind : null,
+        p_token_mode: tokenMode ?? "user",
+        p_discovery_status: tokenCheckRetrying ? "retrying" : "discovering",
+        p_last_error_code: tokenCheckRetrying ? tokenCheck.code : null,
+        p_next_discovery_at: tokenCheckRetrying
           ? new Date(Date.now() + 15 * 60_000).toISOString()
           : new Date().toISOString(),
-        updated_at: new Date().toISOString(),
       },
-      { onConflict: "tenant_id" },
     );
-    if (grantError) {
+    if (grantError || savedFingerprint !== grantCredentialFingerprint) {
       console.error("[meta-callback] Failed to save Meta grant", {
         tenantId,
-        error: grantError.message,
+        error: grantError?.message ?? "stale_callback",
       });
       return redirectToIntegracoes(
         req,
@@ -602,7 +615,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           updated_at: new Date().toISOString(),
         })
         .eq("tenant_id", tenantId)
-        .eq("credential_fingerprint", grantCredentialFingerprint);
+        .eq("credential_fingerprint", grantCredentialFingerprint)
+        .eq("oauth_nonce", oauthNonce);
       if (grantIdentityError) {
         console.warn("[meta-callback] Failed to update Meta grant identity", {
           tenantId,
@@ -683,7 +697,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           updated_at: new Date().toISOString(),
         })
         .eq("tenant_id", tenantId)
-        .eq("credential_fingerprint", grantCredentialFingerprint);
+        .eq("credential_fingerprint", grantCredentialFingerprint)
+        .eq("oauth_nonce", oauthNonce);
     }
     console.error("[meta-callback] Pages fetch request failed", {
       tenantId,
@@ -718,7 +733,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         updated_at: new Date().toISOString(),
       })
       .eq("tenant_id", tenantId)
-      .eq("credential_fingerprint", grantCredentialFingerprint);
+      .eq("credential_fingerprint", grantCredentialFingerprint)
+      .eq("oauth_nonce", oauthNonce);
     if (grantStatusError) {
       console.warn("[meta-callback] Failed to update grant discovery status", {
         tenantId,
@@ -781,10 +797,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }));
 
   const { data: grantApplied, error: upsertErr } = await sb.rpc(
-    "upsert_meta_grant_discovered_pages",
+    "upsert_meta_grant_discovered_pages_v2",
     {
       p_tenant_id: tenantId,
       p_expected_grant_fingerprint: grantCredentialFingerprint,
+      p_oauth_nonce: oauthNonce,
       p_pages: rows,
     },
   );
@@ -800,7 +817,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           updated_at: new Date().toISOString(),
         })
         .eq("tenant_id", tenantId)
-        .eq("credential_fingerprint", grantCredentialFingerprint);
+        .eq("credential_fingerprint", grantCredentialFingerprint)
+        .eq("oauth_nonce", oauthNonce);
     }
     console.error("[meta-callback] Failed to save meta_connections", upsertErr.message);
     return redirectToIntegracoes(req, "meta=error&reason=db_save", sessionRestore);
@@ -908,6 +926,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
 
   if (readyPages.length === pages.length && !assetDiscoveryIncomplete) {
+    await sb.rpc("complete_meta_lead_oauth", { p_tenant_id: tenantId, p_nonce: oauthNonce });
     return redirectToIntegracoes(req, "meta=connected", sessionRestore);
   }
   if (readyPages.length > 0) {

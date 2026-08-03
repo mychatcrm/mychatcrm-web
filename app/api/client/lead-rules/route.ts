@@ -10,6 +10,7 @@ import {
   ensureMetaLeadWebhookSubscriptionForRule,
   reconcileMetaFormMappingsWithRules,
   syncMetaFormAgentMappingForRule,
+  syncMetaFormCaptureBoundariesForRule,
 } from "@/lib/server/lead-rules-meta-sync";
 import { stringArray } from "@/lib/server/meta-form-authorization";
 import { validateMetaAutomationConnection } from "@/lib/server/lead-rules-connection-validation";
@@ -186,6 +187,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   let metaWebhookSubscription = null;
   if (data.source === "meta_form") {
+    await syncMetaFormCaptureBoundariesForRule(sb, data);
     await syncMetaFormAgentMappingForRule(sb, data);
     await reconcileMetaFormMappingsWithRules(sb, session.tenantId);
     metaWebhookSubscription = await ensureMetaLeadWebhookSubscriptionForRule(sb, data);

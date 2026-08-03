@@ -21,6 +21,7 @@ function emptyInboxResult(): MetaLeadgenInboxProcessResult {
     completed: 0,
     retrying: 0,
     deadLetter: 0,
+    reviewRequired: 0,
     claimLost: 0,
     errors: 0,
   };
@@ -34,6 +35,7 @@ function mergeInboxResult(
   total.completed += batch.completed;
   total.retrying += batch.retrying;
   total.deadLetter += batch.deadLetter;
+  total.reviewRequired += batch.reviewRequired;
   total.claimLost += batch.claimLost;
   total.errors += batch.errors;
 }
@@ -52,7 +54,7 @@ async function drainMetaLeadgenInbox(): Promise<MetaLeadgenInboxProcessResult> {
   return total;
 }
 
-async function runMetaMaintenance(): Promise<void> {
+async function runMetaMaintenance(params: { runId: string; leaseToken: string }): Promise<void> {
   const [inboxResult, healthResult] = await Promise.allSettled([
     drainMetaLeadgenInbox(),
     reconcileMetaLeadConnections({
@@ -89,6 +91,36 @@ async function runMetaMaintenance(): Promise<void> {
           : "meta_health_maintenance_failed",
     });
   }
+
+  const inbox = inboxResult.status === "fulfilled" ? inboxResult.value : emptyInboxResult();
+  const health = healthResult.status === "fulfilled" ? healthResult.value : null;
+  const status = inboxResult.status === "fulfilled" && healthResult.status === "fulfilled"
+    ? "completed"
+    : inboxResult.status === "rejected" && healthResult.status === "rejected"
+      ? "failed"
+      : "partial";
+  const sb = createSupabaseServiceClient();
+  const { error: finishError } = await sb.rpc("finish_meta_maintenance_run_v2", {
+    p_run_id: params.runId,
+    p_lease_token: params.leaseToken,
+    p_status: status,
+    p_inbox_claimed: inbox.claimed,
+    p_inbox_completed: inbox.completed,
+    p_inbox_retrying: inbox.retrying,
+    p_inbox_dead_letter: inbox.deadLetter,
+    p_inbox_review_required: inbox.reviewRequired,
+    p_inbox_claim_lost: inbox.claimLost,
+    p_inbox_errors: inbox.errors,
+    p_health_checked: health?.checked ?? 0,
+    p_health_ready: health?.ready ?? 0,
+    p_health_degraded: health?.degraded ?? 0,
+    p_health_action_required: health?.actionRequired ?? 0,
+    p_grants_checked: health?.grantsChecked ?? 0,
+    p_pages_discovered: health?.pagesDiscovered ?? 0,
+    p_inbox_error_code: inboxResult.status === "rejected" ? "inbox_maintenance_failed" : null,
+    p_health_error_code: healthResult.status === "rejected" ? "health_maintenance_failed" : null,
+  });
+  if (finishError) console.error("[meta-maintenance] finish_failed", { error: finishError.message });
 }
 
 export async function POST(request: Request) {
@@ -105,7 +137,24 @@ export async function POST(request: Request) {
     );
   }
 
-  waitUntil(runMetaMaintenance());
+  const sb = createSupabaseServiceClient();
+  const { data: claimRows, error: claimError } = await sb.rpc(
+    "claim_meta_maintenance_request",
+    {
+      p_nonce: auth.nonce,
+      p_issued_at: auth.issuedAt,
+      p_clock_skew_seconds: 120,
+      p_lease_seconds: 55,
+    },
+  );
+  const claim = Array.isArray(claimRows) ? claimRows[0] : claimRows;
+  if (claimError || !claim || claim.accepted !== true || !claim.run_id || !claim.lease_token) {
+    return NextResponse.json(
+      { ok: true, accepted: false, reason: claimError?.message ?? claim?.code ?? "lease_unavailable" },
+      { status: 202, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+  waitUntil(runMetaMaintenance({ runId: claim.run_id, leaseToken: claim.lease_token }));
   return NextResponse.json(
     { ok: true, accepted: true },
     {

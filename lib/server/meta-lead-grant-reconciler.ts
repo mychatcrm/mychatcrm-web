@@ -16,6 +16,7 @@ type GrantRow = {
   token_kind: string | null;
   token_mode: "business_integration_system_user" | "user" | null;
   client_business_id: string | null;
+  oauth_nonce: string;
 };
 
 type GrantedPage = {
@@ -51,6 +52,7 @@ async function updateGrant(
     .update({ ...values, updated_at: new Date().toISOString() })
     .eq("tenant_id", grant.tenant_id)
     .eq("credential_fingerprint", grant.credential_fingerprint)
+    .eq("oauth_nonce", grant.oauth_nonce)
     .select("tenant_id")
     .maybeSingle<{ tenant_id: string }>();
   if (error) {
@@ -194,10 +196,11 @@ async function discoverGrant(params: {
   const now = new Date().toISOString();
   if (pages.size > 0) {
     const { data: applied, error } = await sb.rpc(
-      "upsert_meta_grant_discovered_pages",
+      "upsert_meta_grant_discovered_pages_v2",
       {
         p_tenant_id: grant.tenant_id,
         p_expected_grant_fingerprint: grant.credential_fingerprint,
+        p_oauth_nonce: grant.oauth_nonce,
         p_pages: Array.from(pages.values()).map((page) => ({
           page_id: page.id,
           page_name: page.name,
@@ -247,7 +250,7 @@ export async function reconcileMetaLeadGrantDiscovery(params: {
   const { data, error } = await params.sb
     .from("meta_lead_grants")
     .select(
-      "tenant_id, user_access_token, credential_fingerprint, token_kind, token_mode, client_business_id",
+      "tenant_id, user_access_token, credential_fingerprint, token_kind, token_mode, client_business_id, oauth_nonce",
     )
     .in("discovery_status", ["pending", "discovering", "retrying"])
     .or(`next_discovery_at.is.null,next_discovery_at.lte.${now}`)

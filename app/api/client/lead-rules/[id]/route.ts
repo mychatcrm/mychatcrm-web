@@ -13,6 +13,7 @@ import {
   ensureMetaLeadWebhookSubscriptionForRule,
   reconcileMetaFormMappingsWithRules,
   syncMetaFormAgentMappingForRule,
+  syncMetaFormCaptureBoundariesForRule,
 } from "@/lib/server/lead-rules-meta-sync";
 
 export const dynamic = "force-dynamic";
@@ -192,7 +193,11 @@ export async function PUT(req: NextRequest, { params }: RouteContext): Promise<N
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   let metaWebhookSubscription = null;
+  if (existing.source === "meta_form" && data.source !== "meta_form") {
+    await syncMetaFormCaptureBoundariesForRule(sb, { ...existing, active: false });
+  }
   if (data.source === "meta_form") {
+    await syncMetaFormCaptureBoundariesForRule(sb, data);
     if (stringArray(data.agent_ids).length === 0) {
       await deleteMetaFormMappingsForRule(sb, data);
       await reconcileMetaFormMappingsWithRules(sb, session.tenantId);

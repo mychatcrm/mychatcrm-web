@@ -147,8 +147,6 @@ async function revealMetaConversation(params: {
     leadId: params.leadId,
     agentId: params.agentId,
     channel: "whatsapp",
-    status: "active",
-    humanPaused: false,
     lastMessageAt: params.lastMessageAt,
     isHidden: false,
     archivedAt: null,
@@ -278,13 +276,19 @@ async function loadRuleActivationStartedAtMs(params: {
   sb: ReturnType<typeof createSupabaseServiceClient>;
   tenantId: string;
   ruleId: string | null;
+  pageId: string;
+  formId: string;
 }): Promise<number | null> {
   if (!params.ruleId) return null;
   const { data, error } = await params.sb
-    .from("lead_distribution_rules")
-    .select("created_at, updated_at")
+    .from("meta_form_capture_boundaries")
+    .select("activated_at")
     .eq("tenant_id", params.tenantId)
-    .eq("id", params.ruleId)
+    .eq("rule_id", params.ruleId)
+    .eq("page_id", params.pageId)
+    .in("form_id", [params.formId, "*"])
+    .order("form_id", { ascending: false })
+    .limit(1)
     .maybeSingle();
   if (error) {
     throw new MetaLeadgenProcessingError(
@@ -299,10 +303,7 @@ async function loadRuleActivationStartedAtMs(params: {
       true,
     );
   }
-  const row = data as { created_at?: unknown; updated_at?: unknown };
-  // Editing a rule/form selection starts a new safe boundary. Do not import
-  // leads created before that configuration moment.
-  return timestampMsFromDb(row.updated_at) ?? timestampMsFromDb(row.created_at);
+  return timestampMsFromDb((data as { activated_at?: unknown }).activated_at);
 }
 
 async function loadLeadRuleMappings(params: {
@@ -634,6 +635,8 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     sb,
     tenantId: tenant_id,
     ruleId,
+    pageId: page_id,
+    formId: resolvedFormId,
   });
   if (!leadCreatedAtMs || !activationStartedAtMs || leadCreatedAtMs < activationStartedAtMs) {
     await eventRecorder.step("blocked_historical_lead", {
@@ -1323,6 +1326,16 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     journeyId,
     lastMessageAt: new Date().toISOString(),
   });
+  if (state?.humanPaused) {
+    await eventRecorder.step("skipped_human_attending", {
+      reason: "human_attending_during_meta_reveal",
+    });
+    await eventRecorder.patch({
+      whatsapp_status: "skipped",
+      error_message: "human_attending_during_meta_reveal",
+    });
+    return;
+  }
   await eventRecorder.step("conversation_state_created", { state_id: state?.id ?? null });
   console.info("[meta-webhook] Conversation state upserted", {
     tenant_id,
@@ -1527,6 +1540,9 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       "outbound_dispatch_ambiguous",
       false,
     );
+  }
+  if (preparedOutbound.action === "in_progress") {
+    throw new MetaLeadgenProcessingError("outbound_dispatch_in_progress", true);
   }
 
   let outboundFinalized = false;

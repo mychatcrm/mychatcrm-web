@@ -685,6 +685,9 @@ export async function processAgentResponseJob(
     if (outbound.action === "ambiguous") {
       return { ok: false, error: "outbound_dispatch_ambiguous", dedupedCount: burst.dedupedCount };
     }
+    if (outbound.action === "in_progress") {
+      return { ok: false, error: "outbound_dispatch_in_progress", dedupedCount: burst.dedupedCount };
+    }
     if (!(await isAgentConversationSequenceCurrent(sb, job))) {
       return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
     }
@@ -1021,6 +1024,13 @@ export async function processAgentResponseJob(
         return {
           ok: false,
           error: "outbound_dispatch_ambiguous",
+          dedupedCount: burst.dedupedCount,
+        };
+      }
+      if (outbound.action === "in_progress") {
+        return {
+          ok: false,
+          error: "outbound_dispatch_in_progress",
           dedupedCount: burst.dedupedCount,
         };
       }

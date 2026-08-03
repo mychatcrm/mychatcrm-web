@@ -26,7 +26,7 @@ export type MetaLeadgenInboxRow = {
   ad_group_id: string | null;
   event_field: MetaLeadgenEventField;
   provider_created_at: string | null;
-  status: "pending" | "processing" | "retrying" | "completed" | "dead_letter";
+  status: "pending" | "processing" | "retrying" | "completed" | "dead_letter" | "review_required";
   attempts: number;
   max_attempts: number;
   claim_token: string | null;
@@ -37,6 +37,7 @@ export type MetaLeadgenInboxProcessResult = {
   completed: number;
   retrying: number;
   deadLetter: number;
+  reviewRequired: number;
   claimLost: number;
   errors: number;
 };
@@ -211,29 +212,31 @@ async function failClaimedJob(
   sb: SupabaseServiceClient,
   row: MetaLeadgenInboxRow,
   error: unknown,
-): Promise<"retrying" | "dead_letter" | "claim_lost"> {
+): Promise<"retrying" | "dead_letter" | "review_required" | "claim_lost"> {
   if (!row.claim_token) return "claim_lost";
   const failure = classifyMetaLeadgenInboxFailure(error);
   const delaySeconds = metaLeadgenRetryDelaySeconds(row.attempts);
   const nextAttemptAt = new Date(Date.now() + delaySeconds * 1000).toISOString();
-  const { data, error: rpcError } = await sb.rpc("fail_meta_leadgen_event", {
+  const { data, error: rpcError } = await sb.rpc("fail_meta_leadgen_event_v2", {
     p_id: row.id,
     p_claim_token: row.claim_token,
     p_error_code: failure.code,
     p_error_fingerprint: failure.fingerprint,
     p_next_attempt_at: nextAttemptAt,
-    p_force_terminal: failure.terminal,
+    p_retryable: !failure.terminal,
   });
   if (rpcError) {
     throw new Error("meta_leadgen_inbox_fail_failed", { cause: rpcError });
   }
-  return data === "retrying" || data === "dead_letter" ? data : "claim_lost";
+  return data === "retrying" || data === "dead_letter" || data === "review_required"
+    ? data
+    : "claim_lost";
 }
 
 async function processClaimedJob(
   sb: SupabaseServiceClient,
   row: MetaLeadgenInboxRow,
-): Promise<"completed" | "retrying" | "dead_letter" | "claim_lost" | "error"> {
+): Promise<"completed" | "retrying" | "dead_letter" | "review_required" | "claim_lost" | "error"> {
   try {
     await processMetaLeadgenEvent(leadgenValueFromInboxRow(row));
     const completed = await completeClaimedJob(sb, row);
@@ -297,6 +300,7 @@ export async function processMetaLeadgenInbox(params: {
     completed: 0,
     retrying: 0,
     deadLetter: 0,
+    reviewRequired: 0,
     claimLost: 0,
     errors: 0,
   };
@@ -304,6 +308,7 @@ export async function processMetaLeadgenInbox(params: {
     if (outcome === "completed") result.completed += 1;
     else if (outcome === "retrying") result.retrying += 1;
     else if (outcome === "dead_letter") result.deadLetter += 1;
+    else if (outcome === "review_required") result.reviewRequired += 1;
     else if (outcome === "claim_lost") result.claimLost += 1;
     else result.errors += 1;
   }
