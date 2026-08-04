@@ -349,6 +349,20 @@ export interface Agent {
   agendaLembretes?: AgentAgendaLembretes;
   /** Janela de disponibilidade para agendamentos (dias da semana + horários). */
   agendaDisponibilidade?: AgentAgendaDisponibilidade;
+  /**
+   * Move o card do lead no CRM quando o agente confirma (ou remarca) um
+   * agendamento. Depende de `agendaAutomationEnabled`.
+   */
+  agendaCrmMoveOnScheduleEnabled?: boolean;
+  agendaCrmScheduleFunnelId?: string | null;
+  agendaCrmScheduleColumnId?: string | null;
+  /**
+   * Move o card do lead no CRM quando o agendamento é cancelado — pela conversa
+   * ou pelo painel da agenda. Destino independente do de agendamento.
+   */
+  agendaCrmMoveOnCancelEnabled?: boolean;
+  agendaCrmCancelFunnelId?: string | null;
+  agendaCrmCancelColumnId?: string | null;
   /** CTA final configurado no wizard (ex.: transferir para humano). */
   ctaFinal?: string;
   /** Palavras-chave adicionais que disparam handoff automático. */

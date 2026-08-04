@@ -17,6 +17,7 @@ import {
 import { parseTimezone } from "@/lib/agents/agent-datetime";
 import { normalizeCanonicalWhatsAppPhone } from "@/lib/integrations/whatsapp-contact-identity";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { applyAgendaCrmMove } from "@/lib/server/agenda-crm-move";
 import { broadcastAgendaChange } from "@/lib/server/agenda-realtime";
 import {
   cancelGoogleCalendarEvent,
@@ -1533,6 +1534,17 @@ async function executeAgendaDirectiveAtomically(params: {
       timezone: params.timezone,
       agentId: params.agentId ?? null,
     });
+    // Dentro do guard `changed && !deduplicated` de propósito: o card só se
+    // move uma vez por mudança real da agenda. Falha aqui nunca invalida o
+    // compromisso, que já foi confirmado ao cliente.
+    await applyAgendaCrmMove({
+      sb: params.sb,
+      tenantId: params.tenantId,
+      action: syncedResult.action,
+      agentId: params.agentId ?? syncedResult.event.agent_id,
+      leadId: params.leadId ?? syncedResult.event.lead_id,
+      attendeePhone: syncedResult.event.attendee_phone,
+    }).catch(() => undefined);
   }
 
   return { action: syncedResult.action, eventId: syncedResult.event.id };
@@ -1587,6 +1599,14 @@ export async function executeAgendaDirective(params: {
       timezone: params.timezone,
       agentId: params.agentId ?? null,
     });
+    await applyAgendaCrmMove({
+      sb,
+      tenantId: params.tenantId,
+      action: "cancelled",
+      agentId: params.agentId ?? event.agent_id,
+      leadId: params.leadId ?? event.lead_id,
+      attendeePhone: event.attendee_phone,
+    }).catch(() => undefined);
     return { action: "cancelled", eventId: event.id };
   }
 
@@ -1612,6 +1632,14 @@ export async function executeAgendaDirective(params: {
       timezone: params.timezone,
       agentId: params.agentId ?? null,
     });
+    await applyAgendaCrmMove({
+      sb,
+      tenantId: params.tenantId,
+      action: "scheduled",
+      agentId: params.agentId ?? inserted.agent_id,
+      leadId: params.leadId ?? inserted.lead_id,
+      attendeePhone: inserted.attendee_phone,
+    }).catch(() => undefined);
     return { action: "scheduled", eventId: inserted.id };
   }
   try {
@@ -1629,6 +1657,14 @@ export async function executeAgendaDirective(params: {
     timezone: params.timezone,
     agentId: params.agentId ?? null,
   });
+  await applyAgendaCrmMove({
+    sb,
+    tenantId: params.tenantId,
+    action: "rescheduled",
+    agentId: params.agentId ?? inserted.agent_id,
+    leadId: params.leadId ?? inserted.lead_id,
+    attendeePhone: inserted.attendee_phone,
+  }).catch(() => undefined);
   return { action: "rescheduled", eventId: inserted.id };
 }
 

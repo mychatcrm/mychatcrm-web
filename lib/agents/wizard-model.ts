@@ -84,6 +84,14 @@ export type AgentWizardDraft = {
   crmTargetFunnelId: string;
   /** Coluna/etapa de destino para movimento automático no CRM. */
   crmTargetColumnId: string;
+  /** Move o card do lead quando o agente confirma/remarca um agendamento. */
+  agendaCrmMoveOnScheduleEnabled: boolean;
+  agendaCrmScheduleFunnelId: string;
+  agendaCrmScheduleColumnId: string;
+  /** Move o card do lead quando o agendamento é cancelado. */
+  agendaCrmMoveOnCancelEnabled: boolean;
+  agendaCrmCancelFunnelId: string;
+  agendaCrmCancelColumnId: string;
 };
 
 const WIZARD_ORIGIN_ORDER: readonly OriginType[] = ["lead_ads", "ctw", "keyword", "organico", "crm"];
@@ -231,6 +239,12 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     crmAutoMoveEnabled: crmDestination.crmAutoMoveEnabled,
     crmTargetFunnelId: crmDestination.crmTargetFunnelId ?? targetFunnel.id,
     crmTargetColumnId: crmDestination.crmTargetColumnId ?? targetColumn,
+    agendaCrmMoveOnScheduleEnabled: agent.agendaCrmMoveOnScheduleEnabled ?? false,
+    agendaCrmScheduleFunnelId: agent.agendaCrmScheduleFunnelId ?? targetFunnel.id,
+    agendaCrmScheduleColumnId: agent.agendaCrmScheduleColumnId ?? targetColumn,
+    agendaCrmMoveOnCancelEnabled: agent.agendaCrmMoveOnCancelEnabled ?? false,
+    agendaCrmCancelFunnelId: agent.agendaCrmCancelFunnelId ?? targetFunnel.id,
+    agendaCrmCancelColumnId: agent.agendaCrmCancelColumnId ?? targetColumn,
   };
 }
 
@@ -293,6 +307,31 @@ export function validateCompactAgentDraft(
     if (!targetFunnel) return "Escolha um funil válido em «Destino do lead no CRM».";
     if (!isValidColunaForFunnel(draft.crmTargetColumnId, targetFunnel)) {
       return "Escolha uma coluna válida em «Destino do lead no CRM».";
+    }
+  }
+  // Os destinos da agenda só existem quando o agente pode mexer na agenda.
+  if (draft.agendaAutomationEnabled) {
+    for (const rule of [
+      {
+        enabled: draft.agendaCrmMoveOnScheduleEnabled,
+        funnelId: draft.agendaCrmScheduleFunnelId,
+        columnId: draft.agendaCrmScheduleColumnId,
+        label: "ao agendar",
+      },
+      {
+        enabled: draft.agendaCrmMoveOnCancelEnabled,
+        funnelId: draft.agendaCrmCancelFunnelId,
+        columnId: draft.agendaCrmCancelColumnId,
+        label: "ao cancelar",
+      },
+    ]) {
+      if (!rule.enabled) continue;
+      if (!crmFunnels?.length) return "Carregue os funis do CRM antes de configurar o destino da agenda.";
+      const funnel = crmFunnels.find((f) => f.id === rule.funnelId);
+      if (!funnel) return `Escolha um funil válido em «Agenda» (${rule.label}).`;
+      if (!isValidColunaForFunnel(rule.columnId, funnel)) {
+        return `Escolha uma coluna válida em «Agenda» (${rule.label}).`;
+      }
     }
   }
   return null;
@@ -368,4 +407,10 @@ export const defaultWizardDraft: AgentWizardDraft = {
   crmAutoMoveEnabled: false,
   crmTargetFunnelId: DEFAULT_CRM_FUNNELS[0]!.id,
   crmTargetColumnId: DEFAULT_CRM_FUNNELS[0]!.columns[0]!.id,
+  agendaCrmMoveOnScheduleEnabled: false,
+  agendaCrmScheduleFunnelId: DEFAULT_CRM_FUNNELS[0]!.id,
+  agendaCrmScheduleColumnId: DEFAULT_CRM_FUNNELS[0]!.columns[0]!.id,
+  agendaCrmMoveOnCancelEnabled: false,
+  agendaCrmCancelFunnelId: DEFAULT_CRM_FUNNELS[0]!.id,
+  agendaCrmCancelColumnId: DEFAULT_CRM_FUNNELS[0]!.columns[0]!.id,
 };

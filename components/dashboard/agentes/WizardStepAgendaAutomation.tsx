@@ -1,6 +1,8 @@
 "use client";
 
+import { PanelSelect as Select } from "@/components/panel/ui/PanelSelect";
 import { Toggle } from "@/components/ui/Toggle";
+import { useCrmFunnels } from "@/components/dashboard/CrmFunnelsContext";
 import type { AgentWizardDraft } from "@/lib/agents";
 import type { AgentAgendaLembreteRegra } from "@/lib/types";
 
@@ -313,8 +315,146 @@ export function WizardStepAgendaAutomation({
               </div>
             )}
           </div>
+
+          {/* ─── Movimento do card no CRM ────────────────────────────────── */}
+          <div className="space-y-3 border-t border-line pt-4">
+            <div>
+              <p className="text-sm font-medium text-content">Mover o card no CRM</p>
+              <p className="mt-0.5 text-xs text-content-muted">
+                Opcional. Quando o agendamento acontece ou é cancelado, o card do lead vai
+                sozinho para a coluna escolhida — inclusive quando alguém cancela pelo painel
+                da Agenda.
+              </p>
+            </div>
+
+            <AgendaCrmTargetPicker
+              idPrefix="agenda-crm-schedule"
+              label="Ao agendar"
+              description="Card vai para esta coluna quando o agente confirma ou remarca um compromisso."
+              enabled={draft.agendaCrmMoveOnScheduleEnabled}
+              funnelId={draft.agendaCrmScheduleFunnelId}
+              columnId={draft.agendaCrmScheduleColumnId}
+              onChange={(patch) => onChange({ ...draft, ...patch })}
+              keys={{
+                enabled: "agendaCrmMoveOnScheduleEnabled",
+                funnelId: "agendaCrmScheduleFunnelId",
+                columnId: "agendaCrmScheduleColumnId",
+              }}
+            />
+
+            <AgendaCrmTargetPicker
+              idPrefix="agenda-crm-cancel"
+              label="Ao cancelar"
+              description="Card vai para esta coluna quando o agendamento é cancelado, pela conversa ou pelo painel."
+              enabled={draft.agendaCrmMoveOnCancelEnabled}
+              funnelId={draft.agendaCrmCancelFunnelId}
+              columnId={draft.agendaCrmCancelColumnId}
+              onChange={(patch) => onChange({ ...draft, ...patch })}
+              keys={{
+                enabled: "agendaCrmMoveOnCancelEnabled",
+                funnelId: "agendaCrmCancelFunnelId",
+                columnId: "agendaCrmCancelColumnId",
+              }}
+            />
+          </div>
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * Toggle + par funil/coluna. Os dois destinos da agenda (agendar e cancelar)
+ * são independentes e usam este mesmo controle.
+ */
+function AgendaCrmTargetPicker({
+  idPrefix,
+  label,
+  description,
+  enabled,
+  funnelId,
+  columnId,
+  onChange,
+  keys,
+}: {
+  idPrefix: string;
+  label: string;
+  description: string;
+  enabled: boolean;
+  funnelId: string;
+  columnId: string;
+  onChange: (patch: Partial<AgentWizardDraft>) => void;
+  keys: {
+    enabled: "agendaCrmMoveOnScheduleEnabled" | "agendaCrmMoveOnCancelEnabled";
+    funnelId: "agendaCrmScheduleFunnelId" | "agendaCrmCancelFunnelId";
+    columnId: "agendaCrmScheduleColumnId" | "agendaCrmCancelColumnId";
+  };
+}) {
+  const { funnels } = useCrmFunnels();
+  const selectedFunnel = funnels.find((f) => f.id === funnelId) ?? funnels[0];
+  const stageOptions = selectedFunnel?.columns ?? [];
+  const selectedColumn = stageOptions.some((c) => c.id === columnId)
+    ? columnId
+    : (stageOptions[0]?.id ?? "");
+
+  return (
+    <div className="space-y-3">
+      <Toggle
+        id={`${idPrefix}-enabled`}
+        checked={enabled}
+        onChange={(value) =>
+          onChange(
+            value
+              ? {
+                  [keys.enabled]: true,
+                  [keys.funnelId]: selectedFunnel?.id ?? funnelId,
+                  [keys.columnId]: selectedColumn,
+                }
+              : { [keys.enabled]: false },
+          )
+        }
+        label={label}
+        description={description}
+      />
+
+      {enabled && (
+        <div className="grid min-w-0 gap-3 rounded-xl border border-line bg-surface-deep/40 p-3 pl-1 sm:grid-cols-2 sm:pl-3">
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-content-secondary">Funil</p>
+            <Select
+              value={selectedFunnel?.id ?? ""}
+              onChange={(event) => {
+                const funnel = funnels.find((f) => f.id === event.target.value);
+                if (!funnel) return;
+                onChange({
+                  [keys.funnelId]: funnel.id,
+                  [keys.columnId]: funnel.columns[0]?.id ?? "",
+                });
+              }}
+            >
+              {funnels.map((funnel) => (
+                <option key={funnel.id} value={funnel.id}>
+                  {funnel.nome}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-content-secondary">Coluna de destino</p>
+            <Select
+              key={selectedFunnel?.id ?? "no-funnel"}
+              value={selectedColumn}
+              onChange={(event) => onChange({ [keys.columnId]: event.target.value })}
+            >
+              {stageOptions.map((column) => (
+                <option key={column.id} value={column.id}>
+                  {column.title}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
