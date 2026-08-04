@@ -11,6 +11,7 @@ import type { ClientSession } from "@/lib/client-auth";
 import type { Agent } from "@/lib/types";
 import { distributionLabel, sourceLabel, type LeadDistributionRule } from "@/lib/lead-distribution-rules";
 import { cn } from "@/lib/utils";
+import { isMetaAutomationDistributionType } from "@/lib/meta-lead-automation";
 import { MAX_ORG_DIRECTORS, MAX_ORG_MANAGERS, MAX_ORG_SELLERS, MAX_TEAM_EMPLOYEES } from "@/lib/team-employees-types";
 
 async function readApiError(res: Response, fallback: string): Promise<string> {
@@ -372,7 +373,7 @@ export function LeadDistributionHub({ session }: { session: ClientSession }) {
                     </Badge>
                   ) : null}
                   {rule.source === "meta_form" &&
-                  ["automation_agent", "specific_agents", "round_robin"].includes(rule.distributionType) &&
+                  isMetaAutomationDistributionType(rule.distributionType) &&
                   !rule.connectionId ? (
                     <Badge
                       className={cn(
