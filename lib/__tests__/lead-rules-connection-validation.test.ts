@@ -93,6 +93,37 @@ describe("validateMetaAutomationConnection", () => {
     expect(result).toBeNull();
   });
 
+  it("validates Evolution connection for agent_plus_seller automation", async () => {
+    const result = await validateMetaAutomationConnection(makeSb({ id: "evo-1" }), "t1", {
+      source: "meta_form",
+      distribution_type: "agent_plus_seller",
+      agent_ids: ["a1"],
+      employee_ids: ["seller-1"],
+      page_id: "page-1",
+      included_form_ids: ["form-1"],
+      connection_id: "evo-1",
+      transport: "evolution",
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it("rejects agent_plus_seller without exactly one AI and one seller", async () => {
+    const result = await validateMetaAutomationConnection(makeSb({ id: "evo-1" }), "t1", {
+      source: "meta_form",
+      distribution_type: "agent_plus_seller",
+      agent_ids: ["a1"],
+      employee_ids: [],
+      page_id: "page-1",
+      included_form_ids: ["form-1"],
+      connection_id: "evo-1",
+      transport: "evolution",
+    });
+
+    expect(result).toBeInstanceOf(NextResponse);
+    expect(result?.status).toBe(400);
+  });
+
   it("rejects Cloud without template", async () => {
     lookupWhatsAppCloudConnectionByPhoneNumberIdMock.mockResolvedValue({
       tenant_id: "t1",

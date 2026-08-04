@@ -113,7 +113,11 @@ export async function syncMetaFormAgentMappingForRule(
   rule: LeadDistributionRuleRow,
 ): Promise<void> {
   if (rule.source !== "meta_form") return;
-  if (rule.distribution_type !== "automation_agent" && rule.distribution_type !== "specific_agents") return;
+  if (
+    rule.distribution_type !== "automation_agent" &&
+    rule.distribution_type !== "agent_plus_seller" &&
+    rule.distribution_type !== "specific_agents"
+  ) return;
   if (rule.use_all_forms === true) {
     console.warn("[lead-rules] use_all_forms sync skipped — explicit forms only", { rule_id: rule.id });
     return;

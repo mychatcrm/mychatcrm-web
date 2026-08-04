@@ -4,6 +4,7 @@
  */
 import "server-only";
 import { NextResponse } from "next/server";
+import { isMetaAutomationDistributionType } from "@/lib/meta-lead-automation";
 import { listWhatsAppMessageTemplates } from "@/lib/integrations/whatsapp-cloud";
 import { stringArray } from "@/lib/server/meta-form-authorization";
 import {
@@ -14,8 +15,6 @@ import {
 import { ensureTenantPageLeadgenWebhookSubscription } from "@/lib/server/meta-page-webhook-subscribe";
 import { lookupWhatsAppCloudConnectionByPhoneNumberId } from "@/lib/server/whatsapp-cloud-connections";
 import type { createSupabaseServiceClient } from "@/lib/supabase/server";
-
-const META_AUTOMATION_DISTRIBUTION_TYPES = new Set(["automation_agent", "specific_agents", "round_robin"]);
 
 type ServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 type MetaFormsProbeResponse = {
@@ -53,9 +52,26 @@ export async function validateMetaAutomationConnection(
   payload: Record<string, unknown>,
 ): Promise<NextResponse | null> {
   if (payload.source !== "meta_form") return null;
+  const agentIds = stringArray(payload.agent_ids);
+  const employeeIds = stringArray(payload.employee_ids);
+  if (isMetaAutomationDistributionType(payload.distribution_type) && agentIds.length === 0) {
+    return NextResponse.json(
+      { error: "Selecione um agente de IA ativo para esta regra." },
+      { status: 400 },
+    );
+  }
+  if (
+    payload.distribution_type === "agent_plus_seller" &&
+    (agentIds.length !== 1 || employeeIds.length !== 1)
+  ) {
+    return NextResponse.json(
+      { error: "Selecione exatamente um agente de IA e um vendedor para esta regra." },
+      { status: 400 },
+    );
+  }
   const automationEnabled =
-    META_AUTOMATION_DISTRIBUTION_TYPES.has(String(payload.distribution_type)) &&
-    stringArray(payload.agent_ids).length > 0;
+    isMetaAutomationDistributionType(payload.distribution_type) &&
+    agentIds.length > 0;
 
   const pageId = typeof payload.page_id === "string" ? payload.page_id.trim() : "";
   if (!pageId) {

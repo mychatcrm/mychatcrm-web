@@ -1,4 +1,5 @@
 import type { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { isMetaAutomationDistributionType } from "@/lib/meta-lead-automation";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -62,12 +63,6 @@ export type MetaFormTenantResolutionResult =
       reason: "ambiguous_meta_page_form_tenant";
     };
 
-const AUTOMATION_DISTRIBUTION_TYPES = new Set([
-  "automation_agent",
-  "specific_agents",
-  "round_robin",
-]);
-
 export function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
@@ -91,7 +86,7 @@ export function metaRuleExplicitlyAuthorizesAgent(params: {
 }): boolean {
   return (
     ruleMatchesExplicitForm(params.rule, params.formId.trim(), params.pageId.trim()) &&
-    AUTOMATION_DISTRIBUTION_TYPES.has(params.rule.distribution_type) &&
+    isMetaAutomationDistributionType(params.rule.distribution_type) &&
     stringArray(params.rule.agent_ids).includes(params.agentId.trim())
   );
 }
@@ -252,7 +247,7 @@ export function evaluateMetaFormAuthorizationFromSnapshot(params: {
 
   for (const rule of sortedRules) {
     if (!ruleMatchesExplicitForm(rule, formId, pageId)) continue;
-    if (!AUTOMATION_DISTRIBUTION_TYPES.has(rule.distribution_type)) continue;
+    if (!isMetaAutomationDistributionType(rule.distribution_type)) continue;
 
     const picked = pickAgentFromRule(rule, preferredAgentId);
     if (preferredAgentId && !picked) {
@@ -420,7 +415,7 @@ export async function resolveMetaFormAuthorization(params: {
 
   for (const rule of rules) {
     if (!ruleMatchesExplicitForm(rule, formId, pageId)) continue;
-    if (!AUTOMATION_DISTRIBUTION_TYPES.has(rule.distribution_type)) continue;
+    if (!isMetaAutomationDistributionType(rule.distribution_type)) continue;
 
     const picked =
       rule.distribution_type === "round_robin" && stringArray(rule.agent_ids).length > 1

@@ -38,6 +38,21 @@ describe("meta-form-authorization", () => {
     expect(result.ruleId).toBe("rule-1");
   });
 
+  it("authorizes the AI in an agent_plus_seller rule", () => {
+    const result = evaluateMetaFormAuthorizationFromSnapshot({
+      pageId: PAGE,
+      formId: FORM_AUTHORIZED,
+      rules: [rule({ distribution_type: "agent_plus_seller" })],
+    });
+
+    expect(result).toMatchObject({
+      authorized: true,
+      agentId: AGENT,
+      ruleId: "rule-1",
+      source: "rule",
+    });
+  });
+
   it("does not authorize form without matching rule", () => {
     const result = evaluateMetaFormAuthorizationFromSnapshot({
       pageId: PAGE,

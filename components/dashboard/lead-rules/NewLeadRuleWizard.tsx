@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils";
 import type { Agent } from "@/lib/types";
 import type { MetaStatusPage } from "@/app/api/client/meta/status/route";
 import type { MetaFormsForm } from "@/app/api/client/meta/forms/route";
+import { isMetaAutomationDistributionType } from "@/lib/meta-lead-automation";
 import type { MetaFormField } from "@/app/api/client/meta/form-fields/route";
 import {
   ORGANIC_WHATSAPP_SOURCE,
@@ -1112,7 +1113,7 @@ export function NewLeadRuleWizard({
       if (!draft.distributionType) return false;
       if (
         draft.source === "meta_form" &&
-        ["automation_agent", "specific_agents", "round_robin"].includes(draft.distributionType) &&
+        isMetaAutomationDistributionType(draft.distributionType) &&
         !draft.connectionId.trim()
       ) {
         return false;
@@ -1120,7 +1121,7 @@ export function NewLeadRuleWizard({
       if (
         draft.source === "meta_form" &&
         draft.transport === "cloud_api" &&
-        ["automation_agent", "specific_agents", "round_robin"].includes(draft.distributionType) &&
+        isMetaAutomationDistributionType(draft.distributionType) &&
         !draft.metaTemplateName.trim()
       ) {
         return false;

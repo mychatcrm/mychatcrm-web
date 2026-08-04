@@ -21,7 +21,6 @@ import {
 
 export const dynamic = "force-dynamic";
 
-const META_AUTOMATION_DISTRIBUTION_TYPES = new Set(["automation_agent", "specific_agents", "round_robin"]);
 const ORGANIC_AGENT_DISTRIBUTION_TYPES = new Set(["automation_agent", "specific_agents", "round_robin"]);
 
 /**
@@ -137,15 +136,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     payload = leadRuleClientToDbPayload(body, session.tenantId, count ?? 999);
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Invalid payload" }, { status: 400 });
-  }
-
-  if (
-    payload.source === "meta_form" &&
-    typeof payload.distribution_type === "string" &&
-    META_AUTOMATION_DISTRIBUTION_TYPES.has(payload.distribution_type) &&
-    stringArray(payload.agent_ids).length === 0
-  ) {
-    return NextResponse.json({ error: "Selecione um agente de IA ativo para esta regra." }, { status: 400 });
   }
 
   const organicValidationError = validateOrganicRulePayload(payload);
