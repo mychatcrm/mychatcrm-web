@@ -6,7 +6,12 @@ import {
   validateLeadStatusForUpdate,
 } from "@/lib/server/crm-lead-status-validation";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { leadInScope, type AccessScope, type ScopableLead } from "@/lib/server/access-scope";
+import {
+  leadInScope,
+  SCOPABLE_LEAD_COLUMNS,
+  type AccessScope,
+  type ScopableLead,
+} from "@/lib/server/access-scope";
 import { deriveOfferTeamId } from "@/lib/server/active-offers-team";
 import type { TeamEmployee } from "@/lib/team-employees-types";
 
@@ -116,7 +121,7 @@ async function requireAllLeadsInScope(params: {
 
   const { data, error } = await params.sb
     .from("leads")
-    .select("id, team_id, owner_employee_id")
+    .select(`id, ${SCOPABLE_LEAD_COLUMNS}`)
     .eq("tenant_id", params.tenantId)
     .in("id", params.ids);
 

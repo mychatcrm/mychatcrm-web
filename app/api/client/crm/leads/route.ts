@@ -159,11 +159,15 @@ export async function GET() {
   }
 
   const scopedQuery = (select: string) => {
-    const base = sb
+    let base = sb
       .from("leads")
       .select(select)
       .eq("tenant_id", session.tenantId)
       .order("created_at", { ascending: false });
+    // Funis liberados restringem por cima do recorte por dono/equipe.
+    if (scope.kind !== "all" && scope.funnelIds?.length) {
+      base = base.in("crm_funnel_id", scope.funnelIds);
+    }
     if (scope.kind === "own") return base.eq("owner_employee_id", scope.employeeId);
     if (scope.kind === "teams") return base.in("team_id", scope.teamIds);
     return base;

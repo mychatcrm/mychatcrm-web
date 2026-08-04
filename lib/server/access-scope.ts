@@ -22,13 +22,54 @@ type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 export type AccessScope =
   /** Titular: sem recorte. */
   | { kind: "all" }
-  /** Diretor/gerente: leads cujas equipes estão nesta lista. */
-  | { kind: "teams"; teamIds: string[] }
-  /** Vendedor: apenas os leads atribuídos a ele. */
-  | { kind: "own"; employeeId: string };
+  /**
+   * Diretor/gerente: leads cujas equipes estão nesta lista.
+   * `funnelIds` (opcional) restringe adicionalmente aos funis liberados.
+   */
+  | { kind: "teams"; teamIds: string[]; funnelIds?: string[] }
+  /**
+   * Vendedor: apenas os leads atribuídos a ele.
+   * `funnelIds` (opcional) restringe adicionalmente aos funis liberados.
+   */
+  | { kind: "own"; employeeId: string; funnelIds?: string[] };
 
 /** Escopo que não casa com nada — usado quando o papel não resolve um recorte seguro. */
 export const EMPTY_TEAM_SCOPE: AccessScope = { kind: "teams", teamIds: [] };
+
+/**
+ * Funis liberados para o colaborador.
+ *
+ * `null` = sem restrição por funil (nenhuma liberação configurada). É o padrão
+ * e mantém o comportamento anterior — liberar funis é opt-in, senão o deploy
+ * esconderia os leads de todo mundo até o titular configurar.
+ */
+async function resolveAllowedFunnelIds(
+  sb: SupabaseServiceClient,
+  tenantId: string,
+  employeeId: string,
+): Promise<string[] | null> {
+  const { data, error } = await sb
+    .from("crm_funnel_access")
+    .select("funnel_id")
+    .eq("tenant_id", tenantId)
+    .eq("employee_id", employeeId);
+
+  if (error) {
+    // Falha de leitura não pode virar liberação geral nem bloqueio total:
+    // mantém o recorte por dono/equipe, que é a fronteira principal.
+    console.error("[access-scope] crm_funnel_access query failed", error.message);
+    return null;
+  }
+
+  const funnelIds = Array.from(
+    new Set(
+      (data ?? [])
+        .map((row) => String((row as { funnel_id: string }).funnel_id).trim())
+        .filter(Boolean),
+    ),
+  );
+  return funnelIds.length ? funnelIds : null;
+}
 
 export async function resolveAccessScope(
   sb: SupabaseServiceClient,
@@ -42,7 +83,11 @@ export async function resolveAccessScope(
   // `null` aqui, o que significava "vê tudo").
   if (!session.employeeId) return EMPTY_TEAM_SCOPE;
 
-  if (role === "seller") return { kind: "own", employeeId: session.employeeId };
+  const funnelIds = await resolveAllowedFunnelIds(sb, session.tenantId, session.employeeId);
+
+  if (role === "seller") {
+    return { kind: "own", employeeId: session.employeeId, ...(funnelIds ? { funnelIds } : {}) };
+  }
 
   const { data, error } = await sb
     .from("team_members")
@@ -58,7 +103,7 @@ export async function resolveAccessScope(
   const teamIds = Array.from(
     new Set((data ?? []).map((row) => String((row as { team_id: string }).team_id))),
   );
-  return { kind: "teams", teamIds };
+  return { kind: "teams", teamIds, ...(funnelIds ? { funnelIds } : {}) };
 }
 
 /** `true` quando o escopo não pode casar com nenhuma linha — evita ida ao banco. */
@@ -70,7 +115,21 @@ export function scopeMatchesNothing(scope: AccessScope): boolean {
 export type ScopableLead = {
   team_id?: string | null;
   owner_employee_id?: string | null;
+  crm_funnel_id?: string | null;
 };
+
+/** Colunas que `leadInScope` precisa ler — usado em todo select de recorte. */
+export const SCOPABLE_LEAD_COLUMNS = "team_id, owner_employee_id, crm_funnel_id";
+
+/**
+ * Restrição por funil, quando configurada. Lead sem funil definido não aparece
+ * para quem tem liberação explícita — a liberação é uma lista fechada.
+ */
+function funnelInScope(lead: ScopableLead, funnelIds: string[] | undefined): boolean {
+  if (!funnelIds?.length) return true;
+  const funnelId = lead.crm_funnel_id?.trim();
+  return Boolean(funnelId && funnelIds.includes(funnelId));
+}
 
 /**
  * Mesma decisão de `applyLeadScope`, para quando o lead já está em memória
@@ -78,6 +137,8 @@ export type ScopableLead = {
  */
 export function leadInScope(lead: ScopableLead, scope: AccessScope): boolean {
   if (scope.kind === "all") return true;
+  // A liberação por funil só restringe — nunca amplia o recorte por dono/equipe.
+  if (!funnelInScope(lead, scope.funnelIds)) return false;
   if (scope.kind === "own") {
     return Boolean(lead.owner_employee_id) && lead.owner_employee_id === scope.employeeId;
   }
@@ -105,7 +166,7 @@ export async function loadLeadInScope(
 
   const { data, error } = await sb
     .from("leads")
-    .select("id, team_id, owner_employee_id")
+    .select(`id, ${SCOPABLE_LEAD_COLUMNS}`)
     .eq("tenant_id", tenantId)
     .eq("id", leadId)
     .maybeSingle();
@@ -160,7 +221,7 @@ export async function conversationInScope(
 
   const { data: lead } = await sb
     .from("leads")
-    .select("team_id, owner_employee_id")
+    .select(SCOPABLE_LEAD_COLUMNS)
     .eq("tenant_id", tenantId)
     .eq("phone", phone)
     .maybeSingle();
@@ -238,7 +299,10 @@ export async function visibleLeadIds(
   if (scope.kind === "all") return null;
   if (scopeMatchesNothing(scope)) return new Set();
 
-  const base = sb.from("leads").select("id").eq("tenant_id", tenantId);
+  let base = sb.from("leads").select("id").eq("tenant_id", tenantId);
+  // Recorte por funil na própria query, quando o colaborador tem liberação.
+  if (scope.funnelIds?.length) base = base.in("crm_funnel_id", scope.funnelIds);
+
   const { data, error } =
     scope.kind === "own"
       ? await base.eq("owner_employee_id", scope.employeeId)
