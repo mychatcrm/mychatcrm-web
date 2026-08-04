@@ -152,6 +152,88 @@ describe("validateMetaAutomationConnection", () => {
     expect(result).toBeNull();
   });
 
+  it("keeps an active form and prunes archived forms from the same Page", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.includes("/leadgen_forms")) {
+          return new Response(
+            JSON.stringify({
+              data: [
+                { id: "form-archived", status: "ARCHIVED" },
+                { id: "form-active", status: "ACTIVE" },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.includes("/form-active/leads")) {
+          return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        }
+        throw new Error(`Unexpected Meta URL: ${url}`);
+      }),
+    );
+    const payload = {
+      source: "meta_form",
+      distribution_type: "crm_only",
+      agent_ids: [],
+      page_id: "page-1",
+      included_form_ids: ["form-archived", "form-active"],
+    };
+
+    const result = await validateMetaAutomationConnection(makeSb(), "t1", payload);
+
+    expect(result).toBeNull();
+    expect(payload.included_form_ids).toEqual(["form-active"]);
+  });
+
+  it("still rejects a form that does not belong to the selected Page", async () => {
+    const result = await validateMetaAutomationConnection(makeSb(), "t1", {
+      source: "meta_form",
+      distribution_type: "crm_only",
+      agent_ids: [],
+      page_id: "page-1",
+      included_form_ids: ["form-from-another-page"],
+    });
+
+    expect(result).toBeInstanceOf(NextResponse);
+    expect(result?.status).toBe(409);
+    await expect(result?.json()).resolves.toMatchObject({
+      code: "meta_form_not_available",
+    });
+  });
+
+  it("explains when every selected form is archived", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.includes("/leadgen_forms")) {
+          return new Response(
+            JSON.stringify({ data: [{ id: "form-archived", status: "ARCHIVED" }] }),
+            { status: 200 },
+          );
+        }
+        throw new Error(`Unexpected Meta URL: ${url}`);
+      }),
+    );
+
+    const result = await validateMetaAutomationConnection(makeSb(), "t1", {
+      source: "meta_form",
+      distribution_type: "crm_only",
+      agent_ids: [],
+      page_id: "page-1",
+      included_form_ids: ["form-archived"],
+    });
+
+    expect(result).toBeInstanceOf(NextResponse);
+    expect(result?.status).toBe(409);
+    await expect(result?.json()).resolves.toMatchObject({
+      code: "meta_active_form_missing",
+    });
+  });
+
   it("rejects a rule when Meta denies live CRM lead access", async () => {
     vi.stubGlobal(
       "fetch",

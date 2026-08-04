@@ -893,7 +893,27 @@ export function NewLeadRuleWizard({
           setFormsError(d.error);
           setAvailableForms([]);
         } else {
-          setAvailableForms(d.forms ?? []);
+          const forms = d.forms ?? [];
+          const activeFormIds = new Set(forms.map((form) => form.form_id));
+          setAvailableForms(forms);
+          // Regras criadas no passado podem manter formulários que a Meta
+          // arquivou depois. Eles não aparecem mais na lista ativa e não devem
+          // contaminar a edição, o mapeamento de campos ou o salvamento de um
+          // formulário novo da mesma Página.
+          setDraft((current) => {
+            if (current.source !== "meta_form" || current.pageId !== draft.pageId) {
+              return current;
+            }
+            const includedFormIds = current.includedFormIds.filter((id) => activeFormIds.has(id));
+            const excludedFormIds = current.excludedFormIds.filter((id) => activeFormIds.has(id));
+            if (
+              includedFormIds.length === current.includedFormIds.length &&
+              excludedFormIds.length === current.excludedFormIds.length
+            ) {
+              return current;
+            }
+            return { ...current, includedFormIds, excludedFormIds };
+          });
           setFormsError(null);
         }
       })
