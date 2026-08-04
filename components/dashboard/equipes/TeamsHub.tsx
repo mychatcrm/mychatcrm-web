@@ -8,6 +8,7 @@ import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
 import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
+import { FunnelAccessPanel } from "./FunnelAccessPanel";
 import type { ClientSession } from "@/lib/client-auth";
 import { resolveOrganizationRole } from "@/lib/organization-role";
 import { refreshTeamEmployeesFromApi } from "@/lib/team-employees-client-cache";
@@ -308,6 +309,8 @@ export function TeamsHub({ session }: { session: ClientSession }) {
           })}
         </ul>
       )}
+
+      <FunnelAccessPanel employees={employees} />
 
       {draft ? (
         <Modal

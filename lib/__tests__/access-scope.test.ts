@@ -35,6 +35,8 @@ function fakeSupabase(options: {
   teamError?: string;
   leadRows?: Array<{ id: string }>;
   leadRow?: ScopableLead | null;
+  funnelAccessRows?: Array<{ funnel_id: string }>;
+  funnelAccessError?: string;
   onLeadFilter?: (filter: { column: string; value: unknown }) => void;
 }) {
   return {
@@ -43,7 +45,12 @@ function fakeSupabase(options: {
       const result =
         table === "team_members"
           ? { data: options.teamRows ?? [], error: options.teamError ? { message: options.teamError } : null }
-          : { data: options.leadRows ?? [], error: null };
+          : table === "crm_funnel_access"
+            ? {
+                data: options.funnelAccessRows ?? [],
+                error: options.funnelAccessError ? { message: options.funnelAccessError } : null,
+              }
+            : { data: options.leadRows ?? [], error: null };
 
       const chain = {
         select: () => chain,
@@ -260,5 +267,93 @@ describe("visibleLeadIds", () => {
     const ids = await visibleLeadIds(sb, "tenant-a", { kind: "teams", teamIds: ["t1", "t2"] });
     expect(ids).toEqual(new Set(["lead-1", "lead-2"]));
     expect(filtros).toContainEqual({ column: "team_id", value: ["t1", "t2"] });
+  });
+});
+
+describe("liberação de funil por colaborador", () => {
+  it("não restringe quando o titular não liberou nenhum funil", async () => {
+    const scope = await resolveAccessScope(
+      fakeSupabase({ funnelAccessRows: [] }),
+      session({ organizationRole: "seller", employeeId: "sel-1" }),
+    );
+    expect(scope).toEqual({ kind: "own", employeeId: "sel-1" });
+    expect((scope as { funnelIds?: string[] }).funnelIds).toBeUndefined();
+  });
+
+  it("carrega os funis liberados para o vendedor", async () => {
+    const scope = await resolveAccessScope(
+      fakeSupabase({ funnelAccessRows: [{ funnel_id: "funil-a" }, { funnel_id: "funil-b" }] }),
+      session({ organizationRole: "seller", employeeId: "sel-1" }),
+    );
+    expect(scope).toEqual({ kind: "own", employeeId: "sel-1", funnelIds: ["funil-a", "funil-b"] });
+  });
+
+  it("aplica a liberação também a diretor e gerente", async () => {
+    const scope = await resolveAccessScope(
+      fakeSupabase({ teamRows: [{ team_id: "t1" }], funnelAccessRows: [{ funnel_id: "funil-a" }] }),
+      session({ organizationRole: "manager", employeeId: "man-1" }),
+    );
+    expect(scope).toEqual({ kind: "teams", teamIds: ["t1"], funnelIds: ["funil-a"] });
+  });
+
+  it("mantém o recorte por dono quando a leitura da liberação falha", async () => {
+    const scope = await resolveAccessScope(
+      fakeSupabase({ funnelAccessError: "boom" }),
+      session({ organizationRole: "seller", employeeId: "sel-1" }),
+    );
+    // Falha de leitura não pode virar liberação geral nem bloqueio total.
+    expect(scope).toEqual({ kind: "own", employeeId: "sel-1" });
+  });
+
+  it("esconde o lead que está fora dos funis liberados", () => {
+    const scope: AccessScope = { kind: "own", employeeId: "sel-1", funnelIds: ["funil-a"] };
+    const meuLeadNoFunilLiberado: ScopableLead = {
+      owner_employee_id: "sel-1",
+      crm_funnel_id: "funil-a",
+    };
+    const meuLeadEmOutroFunil: ScopableLead = {
+      owner_employee_id: "sel-1",
+      crm_funnel_id: "funil-z",
+    };
+
+    expect(leadInScope(meuLeadNoFunilLiberado, scope)).toBe(true);
+    expect(leadInScope(meuLeadEmOutroFunil, scope)).toBe(false);
+  });
+
+  it("nunca amplia: lead de colega no funil liberado continua invisível", () => {
+    const scope: AccessScope = { kind: "own", employeeId: "sel-1", funnelIds: ["funil-a"] };
+    const leadDoColega: ScopableLead = {
+      owner_employee_id: "sel-2",
+      crm_funnel_id: "funil-a",
+    };
+    expect(leadInScope(leadDoColega, scope)).toBe(false);
+  });
+
+  it("lead sem funil definido não entra numa liberação explícita", () => {
+    const scope: AccessScope = { kind: "own", employeeId: "sel-1", funnelIds: ["funil-a"] };
+    expect(leadInScope({ owner_employee_id: "sel-1", crm_funnel_id: null }, scope)).toBe(false);
+    // Sem liberação, o mesmo lead aparece normalmente.
+    expect(leadInScope({ owner_employee_id: "sel-1", crm_funnel_id: null }, { kind: "own", employeeId: "sel-1" })).toBe(true);
+  });
+
+  it("o titular nunca é restringido por funil", () => {
+    expect(leadInScope({ crm_funnel_id: "funil-z" }, { kind: "all" })).toBe(true);
+  });
+
+  it("filtra por crm_funnel_id na própria query de visibleLeadIds", async () => {
+    const filtros: Array<{ column: string; value: unknown }> = [];
+    const sb = fakeSupabase({
+      leadRows: [{ id: "lead-1" }],
+      onLeadFilter: (f) => filtros.push(f),
+    });
+
+    await visibleLeadIds(sb, "tenant-a", {
+      kind: "own",
+      employeeId: "sel-1",
+      funnelIds: ["funil-a"],
+    });
+
+    expect(filtros).toContainEqual({ column: "crm_funnel_id", value: ["funil-a"] });
+    expect(filtros).toContainEqual({ column: "owner_employee_id", value: "sel-1" });
   });
 });
