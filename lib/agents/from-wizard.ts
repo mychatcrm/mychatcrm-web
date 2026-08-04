@@ -4,6 +4,35 @@ import { sanitizeAgentResponseSettings } from "./response-settings";
 import { sanitizeAgentSmartWaitSettings } from "./smart-wait-settings";
 import type { AgentWizardDraft } from "./wizard-model";
 
+/**
+ * Destinos CRM da agenda. Ficam nulos quando o agente não pode mexer na agenda
+ * ou quando o move daquele lado está desligado — assim uma config antiga nunca
+ * volta a valer sozinha ao religar o toggle de Agenda.
+ */
+function agendaCrmMoveFields(
+  draft: AgentWizardDraft,
+): Pick<
+  Agent,
+  | "agendaCrmMoveOnScheduleEnabled"
+  | "agendaCrmScheduleFunnelId"
+  | "agendaCrmScheduleColumnId"
+  | "agendaCrmMoveOnCancelEnabled"
+  | "agendaCrmCancelFunnelId"
+  | "agendaCrmCancelColumnId"
+> {
+  const agendaOn = draft.agendaAutomationEnabled ?? false;
+  const scheduleOn = agendaOn && draft.agendaCrmMoveOnScheduleEnabled;
+  const cancelOn = agendaOn && draft.agendaCrmMoveOnCancelEnabled;
+  return {
+    agendaCrmMoveOnScheduleEnabled: scheduleOn,
+    agendaCrmScheduleFunnelId: scheduleOn ? draft.agendaCrmScheduleFunnelId : null,
+    agendaCrmScheduleColumnId: scheduleOn ? draft.agendaCrmScheduleColumnId : null,
+    agendaCrmMoveOnCancelEnabled: cancelOn,
+    agendaCrmCancelFunnelId: cancelOn ? draft.agendaCrmCancelFunnelId : null,
+    agendaCrmCancelColumnId: cancelOn ? draft.agendaCrmCancelColumnId : null,
+  };
+}
+
 function followUpAndTimezoneFromDraft(draft: AgentWizardDraft) {
   const timezone =
     (typeof draft.timezone === "string" && draft.timezone.trim()) ||
@@ -63,6 +92,7 @@ export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDr
     useSystemWhatsappStyleGuide: draft.useSystemWhatsappStyleGuide ?? true,
     agendaLembretes: draft.agendaLembretes,
     agendaDisponibilidade: draft.agendaDisponibilidade,
+    ...agendaCrmMoveFields(draft),
     ctaFinal: draft.ctaFinal ?? "Transferir para humano",
     handoffKeywords: draft.handoffKeywords ?? ["humano", "especialista"],
     handoffMensagem: draft.handoffMensagem ?? "",
@@ -137,6 +167,7 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
     useSystemWhatsappStyleGuide: draft.useSystemWhatsappStyleGuide ?? true,
     agendaLembretes: draft.agendaLembretes,
     agendaDisponibilidade: draft.agendaDisponibilidade,
+    ...agendaCrmMoveFields(draft),
     ctaFinal: draft.ctaFinal ?? "Transferir para humano",
     handoffKeywords: draft.handoffKeywords ?? ["humano", "especialista"],
     handoffMensagem: draft.handoffMensagem ?? "",

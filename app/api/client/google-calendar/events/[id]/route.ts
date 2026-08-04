@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
+import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { applyAgendaCrmMove } from "@/lib/server/agenda-crm-move";
 import { broadcastAgendaChange } from "@/lib/server/agenda-realtime";
 import { toClientAgendaEvent } from "@/lib/agenda/client-event";
 import { cancelGoogleCalendarEvent, updateGoogleCalendarEvent } from "@/lib/server/google-calendar";
@@ -112,6 +114,16 @@ export async function DELETE(_request: Request, { params }: { params: { id: stri
     }
   }
   await cancelAgendaEvent(session.tenantId, id);
+  // O card no CRM acompanha o estado real da agenda, não importa se o
+  // cancelamento veio da conversa ou daqui. Nunca bloqueia o cancelamento.
+  await applyAgendaCrmMove({
+    sb: createSupabaseServiceClient(),
+    tenantId: session.tenantId,
+    action: "cancelled",
+    agentId: row.agent_id,
+    leadId: row.lead_id,
+    attendeePhone: row.attendee_phone,
+  }).catch(() => undefined);
   await broadcastAgendaChange(session.tenantId, "delete");
   return NextResponse.json({ ok: true });
 }
