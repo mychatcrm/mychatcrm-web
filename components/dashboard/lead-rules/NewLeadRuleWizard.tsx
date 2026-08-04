@@ -2912,9 +2912,12 @@ export function NewLeadRuleWizard({
               </div>
             ) : null}
 
-            {draft.distributionType === "automation_agent" && !isOrganicWhatsApp ? (
+            {(draft.distributionType === "automation_agent" || draft.distributionType === "agent_plus_seller") &&
+            !isOrganicWhatsApp ? (
               <div className="mt-4 rounded-xl border border-primary/25 bg-primary/[0.06] p-3">
-                <p className="text-xs font-semibold text-primary">Agente de automação</p>
+                <p className="text-xs font-semibold text-primary">
+                  {draft.distributionType === "agent_plus_seller" ? "Agente de IA" : "Agente de automação"}
+                </p>
                 <p className="mt-1 text-[11px] leading-relaxed text-content-secondary">
                   Escolha <strong className="text-content">um</strong> agente de IA. Ele recebe o lead assim que entra e dispara a{" "}
                   <strong className="text-content">primeira mensagem automática</strong> (conforme o fluxo e templates configurados em Agentes).
@@ -3271,7 +3274,10 @@ export function NewLeadRuleWizard({
                   </div>
                   <div className="min-w-0 flex-1 pb-8">
                     <p className="text-[11px] font-bold uppercase tracking-wide text-content-muted">Agentes de IA</p>
-                    {draft.distributionType === "specific_agents" || draft.distributionType === "automation_agent" || isOrganicWhatsApp ? (
+                    {draft.distributionType === "specific_agents" ||
+                    draft.distributionType === "automation_agent" ||
+                    draft.distributionType === "agent_plus_seller" ||
+                    isOrganicWhatsApp ? (
                       draft.agentIds.length ? (
                         <ul className="mt-2 flex flex-wrap gap-2">
                           {draft.agentIds.map((id) => {
@@ -3330,6 +3336,36 @@ export function NewLeadRuleWizard({
                         </ul>
                       ) : (
                         <p className="mt-2 text-xs font-medium text-amber-300/90">Nenhum colaborador seleccionado.</p>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+
+                {draft.distributionType === "agent_plus_seller" ? (
+                  <div className="flex gap-3.5">
+                    <div className="flex w-5 shrink-0 flex-col items-center pt-1">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-teal-400 ring-2 ring-surface-card" aria-hidden />
+                      <div className="mt-1 min-h-[1.25rem] w-px flex-1 bg-line/55" aria-hidden />
+                    </div>
+                    <div className="min-w-0 flex-1 pb-8">
+                      <p className="text-[11px] font-bold uppercase tracking-wide text-content-muted">Vendedor designado</p>
+                      {draft.employeeIds.length ? (
+                        <ul className="mt-2 flex flex-wrap gap-2">
+                          {draft.employeeIds.map((id) => {
+                            const nome = sellerOptions.find((e) => e.id === id)?.nome;
+                            if (!nome) return null;
+                            return (
+                              <li
+                                key={id}
+                                className="inline-flex max-w-full items-center truncate rounded-full border border-teal-400/30 bg-teal-500/10 px-2.5 py-0.5 text-xs font-medium text-teal-200"
+                              >
+                                {nome}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : (
+                        <p className="mt-2 text-xs font-medium text-amber-300/90">Nenhum vendedor seleccionado — ajuste no passo «Distribuição».</p>
                       )}
                     </div>
                   </div>
