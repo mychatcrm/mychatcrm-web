@@ -198,3 +198,39 @@ export async function syncMetaFormCaptureBoundariesForRule(
   });
   if (error) throw new Error(`meta_capture_boundary_sync_failed:${error.message}`);
 }
+
+/**
+ * Rebuilds the derived Meta form artifacts that are intentionally removed on
+ * disconnect. The original lead rules remain the source of truth, and the
+ * boundary RPC assigns a fresh activation timestamp only when a boundary is
+ * missing, so reconnecting never imports historical leads.
+ */
+export async function restoreMetaLeadRuleArtifactsForReadyPages(
+  sb: SupabaseClient,
+  tenantId: string,
+  readyPageIds: readonly string[],
+): Promise<{ syncedRuleCount: number }> {
+  const pageIds = Array.from(
+    new Set(readyPageIds.map((pageId) => pageId.trim()).filter(Boolean)),
+  );
+  if (pageIds.length === 0) return { syncedRuleCount: 0 };
+
+  const { data, error } = await sb
+    .from("lead_distribution_rules")
+    .select("*")
+    .eq("tenant_id", tenantId)
+    .eq("source", "meta_form")
+    .eq("active", true)
+    .in("page_id", pageIds);
+  if (error) {
+    throw new Error(`meta_rule_artifact_restore_query_failed:${error.message}`);
+  }
+
+  const rules = (data ?? []) as LeadDistributionRuleRow[];
+  for (const rule of rules) {
+    await syncMetaFormCaptureBoundariesForRule(sb, rule);
+    await syncMetaFormAgentMappingForRule(sb, rule);
+  }
+
+  return { syncedRuleCount: rules.length };
+}

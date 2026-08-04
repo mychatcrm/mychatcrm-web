@@ -24,6 +24,7 @@ import {
   verifyMetaPageLeadConnection,
   verifyMetaUserAccessToken,
 } from "@/lib/server/meta-lead-connection-health";
+import { restoreMetaLeadRuleArtifactsForReadyPages } from "@/lib/server/lead-rules-meta-sync";
 import { upsertWhatsAppCloudConnection } from "@/lib/server/whatsapp-cloud-connections";
 
 export const dynamic = "force-dynamic";
@@ -911,6 +912,30 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
 
   const readyPages = pages.filter((page) => healthByPage.get(page.id)?.status === "ready");
+  if (readyPages.length > 0) {
+    try {
+      const restored = await restoreMetaLeadRuleArtifactsForReadyPages(
+        sb,
+        tenantId,
+        readyPages.map((page) => page.id),
+      );
+      console.info("[meta-callback] Meta rule artifacts restored", {
+        tenantId,
+        readyPageCount: readyPages.length,
+        syncedRuleCount: restored.syncedRuleCount,
+      });
+    } catch (restoreError) {
+      console.error("[meta-callback] Failed to restore Meta rule artifacts", {
+        tenantId,
+        error: restoreError instanceof Error ? restoreError.message : String(restoreError),
+      });
+      return redirectToIntegracoes(
+        req,
+        "meta=action_required&reason=rule_sync_failed",
+        sessionRestore,
+      );
+    }
+  }
   const readyNewPages = readyPages.filter((page) => !existingPageIds.has(page.id));
   if (readyNewPages.length > 0) {
     try {
