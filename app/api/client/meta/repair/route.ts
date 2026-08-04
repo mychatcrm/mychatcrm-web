@@ -8,6 +8,7 @@ import {
   verifyMetaPageLeadConnection,
   verifyMetaUserAccessToken,
 } from "@/lib/server/meta-lead-connection-health";
+import { restoreMetaLeadRuleArtifactsForReadyPages } from "@/lib/server/lead-rules-meta-sync";
 
 export const dynamic = "force-dynamic";
 
@@ -126,6 +127,26 @@ export async function POST(): Promise<NextResponse> {
   }
 
   const readyCount = results.filter((result) => result.status === "ready").length;
+  if (readyCount > 0) {
+    try {
+      await restoreMetaLeadRuleArtifactsForReadyPages(
+        sb,
+        session.tenantId,
+        results
+          .filter((result) => result.status === "ready")
+          .map((result) => result.page_id),
+      );
+    } catch (restoreError) {
+      console.error("[meta/repair] rule artifact restore failed", {
+        tenantId: session.tenantId,
+        error: restoreError instanceof Error ? restoreError.message : String(restoreError),
+      });
+      return NextResponse.json(
+        { error: "A conexão foi verificada, mas as regras de leads não puderam ser reativadas." },
+        { status: 500, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+  }
   const allReady = readyCount === results.length;
   console.info("[meta/repair] verification complete", {
     tenantId: session.tenantId,

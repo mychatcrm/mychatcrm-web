@@ -34,4 +34,21 @@ describe("Meta OAuth callback resilience", () => {
       callbackSource.slice(optionalIdentityFailure, pageDiscovery),
     ).not.toContain("meta=error&reason=network");
   });
+
+  it("restores form rule artifacts before completing a reconnect", () => {
+    const readyPages = callbackSource.indexOf("const readyPages = pages.filter");
+    const restoreArtifacts = callbackSource.indexOf(
+      "await restoreMetaLeadRuleArtifactsForReadyPages",
+    );
+    const completeOauth = callbackSource.indexOf(
+      'await sb.rpc("complete_meta_lead_oauth"',
+    );
+
+    expect(readyPages).toBeGreaterThan(-1);
+    expect(restoreArtifacts).toBeGreaterThan(readyPages);
+    expect(completeOauth).toBeGreaterThan(restoreArtifacts);
+    expect(callbackSource).toContain(
+      '"meta=action_required&reason=rule_sync_failed"',
+    );
+  });
 });
