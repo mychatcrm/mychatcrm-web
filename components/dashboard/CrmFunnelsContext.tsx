@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ClientPlan } from "@/lib/client-auth";
 import type { PlanLimits } from "@/lib/plan-policy";
 import {
@@ -41,23 +41,95 @@ export function CrmFunnelsProvider({
   operationalLimits?: PlanLimits | null;
 }) {
   const [funnels, setFunnels] = useState<CrmFunnel[]>(() => getCrmFunnelsSnapshot());
+  // Enquanto o servidor não respondeu, o localStorage segue valendo para a UI
+  // não piscar — mas nada é enviado de volta, senão um cache velho de outra
+  // máquina sobrescreveria a configuração real do tenant.
+  const [hydrated, setHydrated] = useState(false);
+  const lastSyncedRef = useRef<string | null>(null);
 
   const maxFunnels = useMemo(
     () => getPlanMaxSalesFunnels(normalizeClientPlan(clientPlan), operationalLimits),
     [clientPlan, operationalLimits],
   );
 
-  const reload = useCallback(() => {
-    setFunnels(getCrmFunnelsSnapshot());
+  const adopt = useCallback((next: CrmFunnel[]) => {
+    lastSyncedRef.current = JSON.stringify(next);
+    persistCrmFunnels(next);
+    setFunnels(next);
   }, []);
+
+  /**
+   * Carrega do servidor — fonte de verdade desde 04/08/2026. Se o tenant ainda
+   * não tem nenhum funil lá, sobe os que existiam no navegador (o servidor só
+   * aceita esse seed do titular e só enquanto a lista estiver vazia).
+   */
+  const loadFromServer = useCallback(async () => {
+    try {
+      const res = await fetch("/api/client/crm/funnels", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json()) as { funnels?: CrmFunnel[] };
+      const remote = Array.isArray(data.funnels) ? data.funnels : [];
+
+      if (remote.length > 0) {
+        adopt(remote);
+        return;
+      }
+
+      const local = getCrmFunnelsSnapshot();
+      const seed = await fetch("/api/client/crm/funnels", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ funnels: local, seedOnly: true }),
+      });
+      if (!seed.ok) return;
+      const seeded = (await seed.json()) as { funnels?: CrmFunnel[] };
+      if (Array.isArray(seeded.funnels) && seeded.funnels.length) adopt(seeded.funnels);
+    } catch {
+      // Offline ou rede instável: segue com o cache local até a próxima carga.
+    } finally {
+      setHydrated(true);
+    }
+  }, [adopt]);
+
+  useEffect(() => {
+    void loadFromServer();
+  }, [loadFromServer]);
+
+  // Publica no servidor toda alteração feita depois da hidratação.
+  useEffect(() => {
+    if (!hydrated) return;
+    const serialized = JSON.stringify(funnels);
+    if (serialized === lastSyncedRef.current) return;
+    lastSyncedRef.current = serialized;
+
+    void (async () => {
+      try {
+        const res = await fetch("/api/client/crm/funnels", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ funnels }),
+        });
+        // 403 (não é titular) ou limite de plano: o servidor recusou, então a
+        // tela precisa voltar ao que vale de verdade em vez de mostrar uma
+        // alteração que não foi salva.
+        if (!res.ok) await loadFromServer();
+      } catch {
+        // Rede caiu: o localStorage segura até a próxima carga.
+      }
+    })();
+  }, [funnels, hydrated, loadFromServer]);
+
+  const reload = useCallback(() => {
+    void loadFromServer();
+  }, [loadFromServer]);
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (event.key === CRM_FUNNELS_STORAGE_KEY) reload();
+      if (event.key === CRM_FUNNELS_STORAGE_KEY) setFunnels(getCrmFunnelsSnapshot());
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, [reload]);
+  }, []);
 
   const addFunnel = useCallback(
     (nome: string) => {
