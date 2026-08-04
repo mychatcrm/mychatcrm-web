@@ -141,6 +141,7 @@ export async function validateMetaAutomationConnection(
     );
   }
 
+  const pageFormIds = new Set<string>();
   const activeFormIds = new Set<string>();
   let nextUrl: string | undefined = `/${encodeURIComponent(pageId)}/leadgen_forms`;
   let firstPage = true;
@@ -155,7 +156,9 @@ export async function validateMetaAutomationConnection(
         });
       firstPage = false;
       for (const form of response.data ?? []) {
-        if (form.id && form.status === "ACTIVE") activeFormIds.add(form.id);
+        if (!form.id) continue;
+        pageFormIds.add(form.id);
+        if (form.status === "ACTIVE") activeFormIds.add(form.id);
       }
       nextUrl = response.paging?.next;
     }
@@ -163,7 +166,7 @@ export async function validateMetaAutomationConnection(
     return metaRuleGraphError(error, "forms");
   }
 
-  const missingForms = includedFormIds.filter((formId) => !activeFormIds.has(formId));
+  const missingForms = includedFormIds.filter((formId) => !pageFormIds.has(formId));
   if (missingForms.length > 0) {
     return NextResponse.json(
       {
@@ -174,7 +177,29 @@ export async function validateMetaAutomationConnection(
       { status: 409 },
     );
   }
-  const leadProbeFormId = includedFormIds[0] ?? activeFormIds.values().next().value;
+
+  // A Meta mantém formulários arquivados no catálogo da Página. Regras antigas
+  // podem, portanto, carregar IDs que eram válidos quando foram salvos. Ao
+  // editar a regra, preserve os formulários ainda ativos e descarte somente os
+  // arquivados da mesma Página; um ID que não pertence à Página continua sendo
+  // bloqueado acima. Isso evita que um formulário legado impeça a inclusão de
+  // um formulário novo e ativo.
+  const activeIncludedFormIds = includedFormIds.filter((formId) => activeFormIds.has(formId));
+  if (!useAllForms) {
+    if (activeIncludedFormIds.length === 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Os formulários selecionados estão arquivados na Meta. Atualize a lista e selecione ao menos um formulário ativo.",
+          code: "meta_active_form_missing",
+        },
+        { status: 409 },
+      );
+    }
+    payload.included_form_ids = activeIncludedFormIds;
+  }
+
+  const leadProbeFormId = activeIncludedFormIds[0] ?? activeFormIds.values().next().value;
   if (typeof leadProbeFormId !== "string" || !leadProbeFormId) {
     return NextResponse.json(
       {
