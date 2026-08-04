@@ -19,6 +19,8 @@ import {
   replaceCrmFunnelsInDb,
   seedCrmFunnelsIfEmpty,
 } from "@/lib/server/crm-funnels-db";
+import { resolveAllowedFunnelIds } from "@/lib/server/crm-funnel-access-db";
+import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import type { CrmFunnel } from "@/lib/crm-funnels";
 
 export const dynamic = "force-dynamic";
@@ -61,8 +63,25 @@ function parseFunnels(value: unknown): CrmFunnel[] | null {
 export async function GET() {
   const guard = await requireActiveClientSession();
   if (!guard.ok) return guard.response;
+  const { session } = guard;
 
-  const funnels = await listCrmFunnelsFromDb(guard.session.tenantId);
+  const sb = createSupabaseServiceClient();
+  const funnels = await listCrmFunnelsFromDb(session.tenantId, sb);
+
+  // Titular sempre vê tudo. Colaborador com liberação configurada só recebe
+  // os funis liberados — a rota nunca devolve o que ele não pode enxergar,
+  // não só esconde na tela.
+  if (resolveOrganizationRole(session) !== "owner" && session.employeeId) {
+    const allowed = await resolveAllowedFunnelIds(session.tenantId, session.employeeId, sb);
+    if (allowed) {
+      const allowedSet = new Set(allowed);
+      return NextResponse.json(
+        { funnels: funnels.filter((funnel) => allowedSet.has(funnel.id)) },
+        { headers: { "Cache-Control": "no-store" } },
+      );
+    }
+  }
+
   return NextResponse.json({ funnels }, { headers: { "Cache-Control": "no-store" } });
 }
 

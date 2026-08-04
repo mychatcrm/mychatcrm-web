@@ -16,6 +16,7 @@
 import type { createSupabaseServiceClient } from "@/lib/supabase/server";
 import type { ClientSession } from "@/lib/client-auth";
 import { resolveOrganizationRole } from "@/lib/organization-role";
+import { resolveAllowedFunnelIds } from "@/lib/server/crm-funnel-access-db";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -36,41 +37,6 @@ export type AccessScope =
 /** Escopo que não casa com nada — usado quando o papel não resolve um recorte seguro. */
 export const EMPTY_TEAM_SCOPE: AccessScope = { kind: "teams", teamIds: [] };
 
-/**
- * Funis liberados para o colaborador.
- *
- * `null` = sem restrição por funil (nenhuma liberação configurada). É o padrão
- * e mantém o comportamento anterior — liberar funis é opt-in, senão o deploy
- * esconderia os leads de todo mundo até o titular configurar.
- */
-async function resolveAllowedFunnelIds(
-  sb: SupabaseServiceClient,
-  tenantId: string,
-  employeeId: string,
-): Promise<string[] | null> {
-  const { data, error } = await sb
-    .from("crm_funnel_access")
-    .select("funnel_id")
-    .eq("tenant_id", tenantId)
-    .eq("employee_id", employeeId);
-
-  if (error) {
-    // Falha de leitura não pode virar liberação geral nem bloqueio total:
-    // mantém o recorte por dono/equipe, que é a fronteira principal.
-    console.error("[access-scope] crm_funnel_access query failed", error.message);
-    return null;
-  }
-
-  const funnelIds = Array.from(
-    new Set(
-      (data ?? [])
-        .map((row) => String((row as { funnel_id: string }).funnel_id).trim())
-        .filter(Boolean),
-    ),
-  );
-  return funnelIds.length ? funnelIds : null;
-}
-
 export async function resolveAccessScope(
   sb: SupabaseServiceClient,
   session: ClientSession,
@@ -83,7 +49,7 @@ export async function resolveAccessScope(
   // `null` aqui, o que significava "vê tudo").
   if (!session.employeeId) return EMPTY_TEAM_SCOPE;
 
-  const funnelIds = await resolveAllowedFunnelIds(sb, session.tenantId, session.employeeId);
+  const funnelIds = await resolveAllowedFunnelIds(session.tenantId, session.employeeId, sb);
 
   if (role === "seller") {
     return { kind: "own", employeeId: session.employeeId, ...(funnelIds ? { funnelIds } : {}) };

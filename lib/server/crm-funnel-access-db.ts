@@ -14,6 +14,44 @@ type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
 export type FunnelAccessByEmployee = Record<string, string[]>;
 
+/**
+ * Funis liberados para UM colaborador.
+ *
+ * `null` = sem restrição por funil (nenhuma liberação configurada) — é o
+ * padrão, e mantém o comportamento anterior à Fase 2. Fonte única: tanto o
+ * recorte de leads (`access-scope.ts`) quanto a lista de funis que o painel
+ * mostra (`GET /api/client/crm/funnels`) chamam esta função, para nunca
+ * divergir sobre o que um colaborador tem liberado.
+ */
+export async function resolveAllowedFunnelIds(
+  tenantId: string,
+  employeeId: string,
+  sb?: SupabaseServiceClient,
+): Promise<string[] | null> {
+  const client = sb ?? createSupabaseServiceClient();
+  const { data, error } = await client
+    .from("crm_funnel_access")
+    .select("funnel_id")
+    .eq("tenant_id", tenantId)
+    .eq("employee_id", employeeId);
+
+  if (error) {
+    // Falha de leitura não pode virar liberação geral nem bloqueio total —
+    // ver o mesmo raciocínio em access-scope.ts.
+    console.error("[crm-funnel-access] resolve failed", error.code, error.message);
+    return null;
+  }
+
+  const funnelIds = Array.from(
+    new Set(
+      (data ?? [])
+        .map((row) => String((row as { funnel_id: string }).funnel_id).trim())
+        .filter(Boolean),
+    ),
+  );
+  return funnelIds.length ? funnelIds : null;
+}
+
 export async function listFunnelAccessForTenant(
   tenantId: string,
   sb?: SupabaseServiceClient,

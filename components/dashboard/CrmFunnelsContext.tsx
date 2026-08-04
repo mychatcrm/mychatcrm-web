@@ -33,12 +33,21 @@ export function CrmFunnelsProvider({
   children,
   clientPlan,
   operationalLimits,
+  isOwner,
 }: {
   children: ReactNode;
   /** Plano da sessão do painel — define o teto de funis comerciais. */
   clientPlan: ClientPlan;
   /** Enterprise: limites resolvidos no login (cookie assinado). */
   operationalLimits?: PlanLimits | null;
+  /**
+   * Só o titular pode alterar os funis do tenant (a API já recusa com 403).
+   * Aqui é defesa em profundidade: um colaborador com liberação parcial só
+   * recebe o subconjunto liberado do servidor — se o cliente publicasse esse
+   * subconjunto de volta, sobrescreveria a lista completa do tenant. Sem
+   * `isOwner`, o contexto nunca tenta publicar, só lê.
+   */
+  isOwner: boolean;
 }) {
   const [funnels, setFunnels] = useState<CrmFunnel[]>(() => getCrmFunnelsSnapshot());
   // Enquanto o servidor não respondeu, o localStorage segue valendo para a UI
@@ -75,6 +84,12 @@ export function CrmFunnelsProvider({
         return;
       }
 
+      // Colaborador não-titular nunca semeia: a API recusaria (só o titular
+      // escreve) e ele só recebe do servidor o subconjunto liberado — subir o
+      // que sobrou no navegador dele não corresponderia à configuração real
+      // do tenant.
+      if (!isOwner) return;
+
       const local = getCrmFunnelsSnapshot();
       const seed = await fetch("/api/client/crm/funnels", {
         method: "PUT",
@@ -89,15 +104,17 @@ export function CrmFunnelsProvider({
     } finally {
       setHydrated(true);
     }
-  }, [adopt]);
+  }, [adopt, isOwner]);
 
   useEffect(() => {
     void loadFromServer();
   }, [loadFromServer]);
 
-  // Publica no servidor toda alteração feita depois da hidratação.
+  // Publica no servidor toda alteração feita depois da hidratação. Só o
+  // titular: um colaborador restrito só tem o subconjunto liberado em
+  // memória, e publicar isso sobrescreveria a lista completa do tenant.
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || !isOwner) return;
     const serialized = JSON.stringify(funnels);
     if (serialized === lastSyncedRef.current) return;
     lastSyncedRef.current = serialized;
@@ -117,7 +134,7 @@ export function CrmFunnelsProvider({
         // Rede caiu: o localStorage segura até a próxima carga.
       }
     })();
-  }, [funnels, hydrated, loadFromServer]);
+  }, [funnels, hydrated, isOwner, loadFromServer]);
 
   const reload = useCallback(() => {
     void loadFromServer();

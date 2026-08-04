@@ -7,6 +7,7 @@ import { DashboardOverviewDateFilter } from "./DashboardWorkspace";
 import Link from "next/link";
 import { Drawer } from "@/components/ui/Drawer";
 import type { ClientSession } from "@/lib/client-auth";
+import { resolveOrganizationRole } from "@/lib/organization-role";
 import { dashboardNavPinnedItems, dashboardSettingsHelp } from "./navigation";
 import { PanelAppearanceProvider, type PanelAppearanceMode } from "@/components/panel/PanelAppearance";
 import { PanelHelp } from "@/components/panel/ui/PanelHelp";
@@ -228,7 +229,11 @@ export function DashboardShell({
       initialMode={initialPanelTheme}
       className="flex h-[100dvh] max-h-[100dvh] min-h-0 w-full overflow-hidden"
     >
-      <CrmFunnelsProvider clientPlan={session.plan} operationalLimits={session.operationalLimits}>
+      <CrmFunnelsProvider
+        clientPlan={session.plan}
+        operationalLimits={session.operationalLimits}
+        isOwner={resolveOrganizationRole(session) === "owner"}
+      >
         <DashboardShellInner session={session}>
           {children}
         </DashboardShellInner>
