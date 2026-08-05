@@ -1,4 +1,5 @@
 import type { AiGenerateResult } from "@/lib/ai/types";
+import type { AgentExternalApiLookupRequest } from "@/lib/external-api/types";
 
 export type AgentAgendaPlanAction =
   | "none"
@@ -21,6 +22,7 @@ export type AgentAgendaPlan = {
 export type AgentTurnPlan = {
   reply: string;
   agenda: AgentAgendaPlan;
+  externalApiLookups: AgentExternalApiLookupRequest[];
 };
 
 const ACTIONS = new Set<AgentAgendaPlanAction>([
@@ -74,8 +76,16 @@ export const AGENT_TURN_RESPONSE_FORMAT = {
         },
         required: ["action", "date", "time", "location", "eventId"],
       },
+      externalApiLookups: {
+        type: "array", maxItems: 2,
+        items: { type: "object", additionalProperties: false, properties: {
+          connectorId: { type: "string" }, operationKey: { type: "string" },
+          arguments: { type: "array", maxItems: 20, items: { type: "object", additionalProperties: false,
+            properties: { name: { type: "string" }, value: { type: "string" } }, required: ["name", "value"] } },
+        }, required: ["connectorId", "operationKey", "arguments"] },
+      },
     },
-    required: ["reply", "agenda"],
+    required: ["reply", "agenda", "externalApiLookups"],
   },
 } as const;
 
@@ -129,6 +139,20 @@ export function parseAgentTurnPlan(value: unknown): AgentTurnPlan | null {
   if (typeof agenda.action !== "string" || !ACTIONS.has(agenda.action as AgentAgendaPlanAction)) {
     return null;
   }
+  const rawLookups = Array.isArray(row.externalApiLookups) ? row.externalApiLookups.slice(0, 2) : [];
+  const externalApiLookups: AgentExternalApiLookupRequest[] = [];
+  for (const lookup of rawLookups) {
+    if (!lookup || typeof lookup !== "object" || Array.isArray(lookup)) continue;
+    const item = lookup as Record<string, unknown>;
+    if (typeof item.connectorId !== "string" || typeof item.operationKey !== "string" || !Array.isArray(item.arguments)) continue;
+    const args = item.arguments.slice(0, 20).flatMap((argument) => {
+      if (!argument || typeof argument !== "object" || Array.isArray(argument)) return [];
+      const pair = argument as Record<string, unknown>;
+      return typeof pair.name === "string" && ["string", "number", "boolean"].includes(typeof pair.value)
+        ? [{ name: pair.name, value: pair.value as string | number | boolean }] : [];
+    });
+    externalApiLookups.push({ connectorId: item.connectorId, operationKey: item.operationKey, arguments: args });
+  }
   return {
     reply: row.reply.trim(),
     agenda: {
@@ -138,6 +162,7 @@ export function parseAgentTurnPlan(value: unknown): AgentTurnPlan | null {
       location: nullableString(agenda.location),
       eventId: nullableString(agenda.eventId),
     },
+    externalApiLookups,
   };
 }
 

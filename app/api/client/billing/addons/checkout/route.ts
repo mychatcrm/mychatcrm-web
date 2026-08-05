@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
-import { createBillingAddonCheckout } from "@/lib/server/billing-addons";
+import { createBillingAddonCheckout, ensureExternalApiConnectorStripeCatalog } from "@/lib/server/billing-addons";
+import { resolveOrganizationRole } from "@/lib/organization-role";
 
 export const dynamic = "force-dynamic";
 
@@ -27,14 +28,18 @@ export async function POST(request: Request) {
   const addonCode = typeof body?.addonCode === "string" ? body.addonCode : "";
   const quantity = Number(body?.quantity);
   if (!addonCode.trim()) return NextResponse.json({ error: "Capacidade adicional inválida." }, { status: 400 });
+  if (addonCode === "api_connector_recurring" && resolveOrganizationRole(guard.session) !== "owner") {
+    return NextResponse.json({ error: "Apenas o titular pode contratar APIs adicionais." }, { status: 403 });
+  }
 
   try {
+    if (addonCode === "api_connector_recurring") await ensureExternalApiConnectorStripeCatalog();
     const checkout = await createBillingAddonCheckout({
       tenantId: guard.session.tenantId,
       addonCode,
       quantity,
-      successPath: addonCode.includes("whatsapp") ? "/dashboard/integracoes" : "/dashboard/configuracoes",
-      cancelPath: addonCode.includes("whatsapp") ? "/dashboard/integracoes" : "/dashboard/configuracoes",
+      successPath: addonCode.includes("whatsapp") || addonCode.includes("api_connector") ? "/dashboard/integracoes" : "/dashboard/configuracoes",
+      cancelPath: addonCode.includes("whatsapp") || addonCode.includes("api_connector") ? "/dashboard/integracoes" : "/dashboard/configuracoes",
     });
     return NextResponse.json({ url: checkout.url, checkoutSessionId: checkout.checkoutSessionId });
   } catch (error) {

@@ -28,6 +28,7 @@ import type { MetaStatusResponse } from "@/app/api/client/meta/status/route";
 import type { TenantWhatsappConnection } from "@/lib/server/tenant-whatsapp-connections";
 import type { SlotProvider } from "@/lib/server/whatsapp-slot-provider";
 import { loadFbSdk } from "@/lib/client/facebook-sdk";
+import { ExternalApiConnectorsPanel } from "./ExternalApiConnectorsPanel";
 
 function safeRun<T>(fn: () => T, fallback: T): T {
   try {
@@ -1437,6 +1438,8 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
           )}
         </div>
       </section>
+
+      <ExternalApiConnectorsPanel />
 
       {/* Disconnect confirmation modal */}
       {disconnectModalOpen ? (

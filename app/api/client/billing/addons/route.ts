@@ -11,7 +11,7 @@ import {
 export const dynamic = "force-dynamic";
 
 function requestedKind(value: string | null): BillingAddonKind | undefined {
-  return value === "lead_capacity" || value === "whatsapp_line" ? value : undefined;
+  return value === "lead_capacity" || value === "whatsapp_line" || value === "api_connector" ? value : undefined;
 }
 
 /** Authenticated, tenant-safe storefront data. Stripe identifiers never leave the server. */
@@ -32,6 +32,7 @@ export async function GET(request: Request) {
           leadCapacityRecurring: sumTenantEntitlementQuantity(entitlements, "lead_capacity", "recurring"),
           leadCapacityTopup: sumTenantEntitlementQuantity(entitlements, "lead_capacity", "one_time"),
           whatsappLines: sumTenantEntitlementQuantity(entitlements, "whatsapp_line", "recurring"),
+          apiConnectors: sumTenantEntitlementQuantity(entitlements, "api_connector", "recurring"),
         },
       },
       { headers: { "Cache-Control": "no-store" } },

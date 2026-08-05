@@ -298,6 +298,8 @@ export interface Agent {
   /** Regras e preferências extras em texto livre (além de `respostasProibidas`). */
   promptRegrasAdicionais?: string;
   arquivosTreinamento: TrainingFile[];
+  /** Conectores REST/JSON de consulta explicitamente vinculados pelo titular. */
+  externalApiConnectorIds?: string[];
   respostasProibidas: string;
   /**
    * Texto exato enviado no chat (ex.: pelo humano no WhatsApp) que pausa o agente só naquela conversa.
