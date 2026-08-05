@@ -2635,6 +2635,36 @@ async function resolveStructuredAgendaPlan(params: {
   }
 }
 
+/**
+ * O modelo às vezes classifica agenda.action="list" (consultar compromisso
+ * existente) uma resposta que na verdade está respondendo a uma pergunta de
+ * agendamento em aberto do próprio agente — ex.: agente pergunta "Podemos
+ * agendar um horário?" e o cliente responde "Sim, amanhã às duas". Não há
+ * verbo explícito de agendamento nessa resposta ("quero agendar", "pode
+ * marcar"), então nenhuma regra de `isInitialAgendaMutationRequest` cobre o
+ * caso — a decisão fica 100% com o modelo, que aqui errou.
+ *
+ * Reusa só sinais determinísticos que o resto do arquivo já usa (nenhuma
+ * lógica nova de data/hora): a pergunta anterior do agente tinha contexto de
+ * agenda E a resposta do cliente tem confirmação curta ou sinal de data/hora.
+ * Universal — não depende do nicho/negócio configurado pelo cliente.
+ */
+export function listPlanLooksLikeScheduleAnswer(params: {
+  clientText: string;
+  priorAssistantText?: string | null;
+  timezone: string;
+}): boolean {
+  const prior = params.priorAssistantText?.trim();
+  if (!prior || !textHasSchedulingContext(prior)) return false;
+  const text = params.clientText.trim();
+  if (!text) return false;
+  return (
+    CONFIRMATION_RE.test(text.toLowerCase()) ||
+    textHasExplicitDateAnchor(text, params.timezone) ||
+    textHasExplicitTime(text)
+  );
+}
+
 /** Orquestra confirmação, fallback e execução de agenda antes do envio ao lead. */
 export async function resolveAgendaTurn(params: {
   sb?: SupabaseServiceClient;
@@ -2674,9 +2704,32 @@ export async function resolveAgendaTurn(params: {
     isInitialAgendaMutationRequest(params.clientText) ||
     RESCHEDULE_RE.test(params.clientText) ||
     detectAgendaCancelIntent(params.clientText);
+
+  // Corrige o plano ANTES de decidir o ramo — assim toda a lógica de baixo
+  // (âncora de data/hora, disponibilidade, proposta em duas fases) já recebe
+  // um plano de agendamento normal, em vez de precisar de um caminho especial.
+  let agendaPlan = params.agendaPlan;
+  if (
+    agendaPlan?.action === "list" &&
+    !clientRequestedMutation &&
+    !clientRequestedAgendaList(params.clientText) &&
+    listPlanLooksLikeScheduleAnswer({
+      clientText: params.clientText,
+      priorAssistantText: params.priorAssistantText,
+      timezone: params.timezone,
+    })
+  ) {
+    console.info("[agent-agenda-turn]", {
+      tenant_id: params.tenantId,
+      agent_id: params.agentId,
+      action: "list_plan_reclassified_as_schedule",
+    });
+    agendaPlan = { ...agendaPlan, action: "propose_create" };
+  }
+
   const requestedList =
     clientRequestedAgendaList(params.clientText) ||
-    (params.agendaPlan?.action === "list" && !clientRequestedMutation);
+    (agendaPlan?.action === "list" && !clientRequestedMutation);
   if (requestedList) {
     return finalize(await resolveContactAgendaList({
       sb: params.sb ?? createSupabaseServiceClient(),
@@ -2693,7 +2746,7 @@ export async function resolveAgendaTurn(params: {
     if (
       parsed.directives.length > 0 ||
       parsed.invalid ||
-      (params.agendaPlan?.action ?? "none") !== "none" ||
+      (agendaPlan?.action ?? "none") !== "none" ||
       clientRequestedMutation ||
       modelClaimedMutation
     ) {
@@ -2708,15 +2761,15 @@ export async function resolveAgendaTurn(params: {
     return finalize({ text: cleanText, action: "none" });
   }
 
-  if (params.agendaPlan && params.agentId) {
+  if (agendaPlan && params.agentId) {
     const continuesCancelDisambiguation =
       assistantAskedCancelDisambiguation(params.priorAssistantText) &&
       params.clientText.trim().length > 0;
     const structuredPlan =
-      params.agendaPlan.action === "none" &&
+      agendaPlan.action === "none" &&
       (detectAgendaCancelIntent(params.clientText) || continuesCancelDisambiguation)
-        ? { ...params.agendaPlan, action: "propose_cancel" as const }
-        : params.agendaPlan;
+        ? { ...agendaPlan, action: "propose_cancel" as const }
+        : agendaPlan;
     const structured = await resolveStructuredAgendaPlan({
       sb: params.sb ?? createSupabaseServiceClient(),
       tenantId: params.tenantId,
