@@ -35,7 +35,7 @@ export async function getExternalApiCapacity(tenantId: string): Promise<External
 export async function listExternalApiConnectors(tenantId: string): Promise<{ connectors: ExternalApiConnectorSummary[]; capacity: ExternalApiCapacity }> {
   const sb = createSupabaseServiceClient();
   const [{ data, error }, capacity] = await Promise.all([
-    sb.from("external_api_connectors").select("*, external_api_operations(*), agent_external_api_connectors(agent_id)")
+    sb.from("external_api_connectors").select("*, external_api_operations!external_api_operations_connector_id_tenant_id_fkey(*), agent_external_api_connectors(agent_id)")
       .eq("tenant_id", tenantId).order("is_primary", { ascending: false }).order("created_at", { ascending: true }),
     getExternalApiCapacity(tenantId),
   ]);
