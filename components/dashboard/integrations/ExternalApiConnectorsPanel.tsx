@@ -4,10 +4,18 @@ import { useCallback, useEffect, useState } from "react";
 import { DatabaseZap, Loader2, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { Modal } from "@/components/ui/Modal";
+import { createStandardExternalApiOperations } from "@/lib/external-api/standard-contract";
 import type { ExternalApiConnectorInput, ExternalApiConnectorSummary, ExternalApiOperationInput } from "@/lib/external-api/types";
 
+type ExternalApiConnectorDraft = ExternalApiConnectorInput & { operations: ExternalApiOperationInput[] };
+
 const emptyOperation = (): ExternalApiOperationInput => ({ operationKey: "consultar", name: "Consultar", description: "Consulta informações na API", method: "GET", pathTemplate: "/", parameters: [], responseMapping: {}, cacheTtlSeconds: 0, enabled: true });
-const emptyConnector = (): ExternalApiConnectorInput => ({ name: "", description: "", baseUrl: "https://", authType: "none", enabled: true, operations: [emptyOperation()] });
+const usesStandardContract = (operations: ExternalApiOperationInput[]) => {
+  const signature = (operation: ExternalApiOperationInput) => `${operation.operationKey}:${operation.method}:${operation.pathTemplate}`;
+  const expected = createStandardExternalApiOperations().map(signature);
+  return operations.length === expected.length && operations.every((operation, index) => signature(operation) === expected[index]);
+};
+const emptyConnector = (): ExternalApiConnectorDraft => ({ name: "", description: "", baseUrl: "https://", authType: "none", enabled: true, operations: createStandardExternalApiOperations() });
 
 export function ExternalApiConnectorsPanel() {
   const [items, setItems] = useState<ExternalApiConnectorSummary[]>([]);
@@ -15,7 +23,8 @@ export function ExternalApiConnectorsPanel() {
   const [canManage, setCanManage] = useState(false);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<ExternalApiConnectorSummary | null | "new">(null);
-  const [draft, setDraft] = useState<ExternalApiConnectorInput>(emptyConnector);
+  const [draft, setDraft] = useState<ExternalApiConnectorDraft>(emptyConnector);
+  const [advanced, setAdvanced] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -29,6 +38,7 @@ export function ExternalApiConnectorsPanel() {
 
   const openEditor = (item?: ExternalApiConnectorSummary) => {
     setError(""); setEditing(item ?? "new");
+    setAdvanced(item ? !usesStandardContract(item.operations) : false);
     setDraft(item ? { name: item.name, description: item.description, baseUrl: item.baseUrl, authType: item.authType,
       authHeaderName: item.authHeaderName ?? undefined, authUsername: item.authUsername ?? undefined, enabled: item.enabled,
       operations: item.operations } : emptyConnector());
@@ -37,8 +47,9 @@ export function ExternalApiConnectorsPanel() {
     setBusy(true); setError("");
     try {
       const id = editing && editing !== "new" ? editing.id : null;
+      const payload = advanced ? draft : { ...draft, description: "", operations: createStandardExternalApiOperations() };
       const response = await fetch(id ? `/api/client/external-api-connectors/${id}` : "/api/client/external-api-connectors", {
-        method: id ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft),
+        method: id ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error ?? "Não foi possível salvar a API.");
@@ -73,12 +84,15 @@ export function ExternalApiConnectorsPanel() {
     <Modal open={editing !== null} onClose={() => setEditing(null)} title={editing === "new" ? "Adicionar API externa" : "Editar API externa"} footer={<div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => setEditing(null)}>Cancelar</Button><Button onClick={() => void save()} isLoading={busy}>Salvar</Button></div>}>
       <div className="space-y-4 text-sm">
         <label className="block">Nome<input className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })}/></label>
-        <label className="block">Descrição para o agente<textarea className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })}/></label>
         <label className="block">URL-base HTTPS<input className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.baseUrl} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}/></label>
         <label className="block">Autenticação<select className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.authType} onChange={(e) => setDraft({ ...draft, authType: e.target.value as ExternalApiConnectorInput["authType"] })}><option value="none">Sem chave</option><option value="bearer">Bearer</option><option value="api_key">API Key em header</option><option value="basic">Basic</option></select></label>
         {draft.authType === "api_key" ? <label className="block">Nome do header<input className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.authHeaderName ?? "X-Api-Key"} onChange={(e) => setDraft({ ...draft, authHeaderName: e.target.value })}/></label> : null}
         {draft.authType === "basic" ? <label className="block">Usuário<input className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.authUsername ?? ""} onChange={(e) => setDraft({ ...draft, authUsername: e.target.value })}/></label> : null}
         {draft.authType !== "none" ? <label className="block">Segredo {editing !== "new" ? "(deixe vazio para manter)" : ""}<input type="password" autoComplete="new-password" className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.secret ?? ""} onChange={(e) => setDraft({ ...draft, secret: e.target.value })}/></label> : null}
+        <div className="rounded-lg border border-line bg-surface-elevated p-3">
+          <button type="button" className="flex w-full items-center justify-between text-left" aria-expanded={advanced} onClick={() => setAdvanced((current) => !current)}><span><strong>Modo avançado</strong><span className="mt-0.5 block text-xs text-content-muted">Opcional: use apenas quando a API não seguir o contrato padrão.</span></span><span aria-hidden>{advanced ? "−" : "+"}</span></button>
+        </div>
+        {advanced ? <><label className="block">Descrição para o agente<textarea className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })}/></label>
         <div className="space-y-3"><div className="flex justify-between"><strong>Operações de consulta</strong><Button variant="ghost" onClick={() => draft.operations.length < 10 && setDraft({ ...draft, operations: [...draft.operations, emptyOperation()] })}>+ Operação</Button></div>
           {draft.operations.map((operation, index) => <div key={index} className="grid gap-2 rounded-lg border border-line p-3 sm:grid-cols-2">
             <input aria-label="Chave" className="rounded border border-line bg-surface-elevated p-2" value={operation.operationKey} onChange={(e) => setDraft({ ...draft, operations: draft.operations.map((o,i) => i === index ? { ...o, operationKey: e.target.value } : o) })}/>
@@ -99,7 +113,7 @@ export function ExternalApiConnectorsPanel() {
             </div></div>
             <label className="text-xs">Cache<select className="ml-2 rounded border border-line bg-surface-elevated p-2" value={operation.cacheTtlSeconds} onChange={(e) => setDraft({ ...draft, operations: draft.operations.map((o,i) => i === index ? { ...o, cacheTtlSeconds: Number(e.target.value) as 0 | 30 | 60 | 120 | 300 } : o) })}><option value="0">Desligado</option><option value="30">30s</option><option value="60">60s</option><option value="120">120s</option><option value="300">300s</option></select></label>
             {draft.operations.length > 1 ? <button type="button" className="text-right text-xs text-danger" onClick={() => setDraft({ ...draft, operations: draft.operations.filter((_,i) => i !== index) })}>Remover operação</button> : null}
-          </div>)}</div>
+          </div>)}</div></> : <p className="text-xs text-content-muted">O MyChatCRM usará automaticamente lista, busca e detalhe e normalizará a resposta JSON.</p>}
       </div>
     </Modal>
   </section>;

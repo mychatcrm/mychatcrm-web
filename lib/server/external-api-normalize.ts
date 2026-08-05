@@ -50,10 +50,65 @@ function normalizeRecord(row: unknown, mapping: ExternalApiResponseMapping): Ext
   };
 }
 
+function hasExplicitMapping(mapping: ExternalApiResponseMapping): boolean {
+  return Boolean(
+    mapping.itemsPath || mapping.id || mapping.title || mapping.availability || mapping.price ||
+    mapping.currency || mapping.link || mapping.media || Object.keys(mapping.attributes ?? {}).length,
+  );
+}
+
+function firstValue(row: unknown, keys: string[]): unknown {
+  if (!row || typeof row !== "object" || Array.isArray(row)) return undefined;
+  const record = row as Record<string, unknown>;
+  for (const key of keys) if (record[key] !== undefined && record[key] !== null) return record[key];
+  return undefined;
+}
+
+function standardRows(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== "object") return payload == null ? [] : [payload];
+  const record = payload as Record<string, unknown>;
+  for (const key of ["items", "results", "records", "data"]) {
+    if (Array.isArray(record[key])) return record[key] as unknown[];
+  }
+  for (const key of ["item", "result", "record", "data"]) {
+    if (record[key] && typeof record[key] === "object" && !Array.isArray(record[key])) return [record[key]];
+  }
+  return [payload];
+}
+
+function normalizeStandardRecord(row: unknown): ExternalApiNormalizedRecord {
+  const rawAttributes = firstValue(row, ["attributes"]);
+  const attributes: ExternalApiNormalizedRecord["attributes"] = {};
+  if (rawAttributes && typeof rawAttributes === "object" && !Array.isArray(rawAttributes)) {
+    for (const [key, value] of Object.entries(rawAttributes).slice(0, 30)) attributes[key.slice(0, 80)] = scalar(value);
+  }
+  const mediaValue = firstValue(row, ["media", "images"]);
+  const media = (Array.isArray(mediaValue) ? mediaValue : mediaValue == null ? [] : [mediaValue])
+    .map(stringValue).filter((item): item is string => Boolean(item)).slice(0, MAX_MEDIA);
+  return {
+    id: stringValue(firstValue(row, ["id"])),
+    title: stringValue(firstValue(row, ["title", "name"])),
+    availability: scalar(firstValue(row, ["availability", "available"])),
+    price: scalar(firstValue(row, ["price"])) as string | number | null,
+    currency: stringValue(firstValue(row, ["currency"])),
+    link: stringValue(firstValue(row, ["link", "url"])),
+    media,
+    attributes,
+  };
+}
+
 export function normalizeExternalApiResponse(
   payload: unknown,
   mapping: ExternalApiResponseMapping,
 ): ExternalApiNormalizedResult {
+  if (!hasExplicitMapping(mapping)) {
+    const rows = standardRows(payload);
+    return {
+      records: rows.slice(0, MAX_RECORDS).map(normalizeStandardRecord),
+      truncated: rows.length > MAX_RECORDS,
+    };
+  }
   const selected = mapping.itemsPath ? valueAt(payload, mapping.itemsPath) : payload;
   const rows = Array.isArray(selected) ? selected : selected == null ? [] : [selected];
   return {

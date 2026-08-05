@@ -44,4 +44,22 @@ describe("external API connectors", () => {
       { itemsPath: "data", id: "sku", title: "label", availability: "stock", price: "cost", attributes: {} });
     expect(result.records[0]).toMatchObject({ id: "1", title: "Item", availability: 3, price: 9.9 });
   });
+
+  it("creates the standard list, search and detail contract when operations are omitted", () => {
+    const result = validateExternalApiConnectorInput({
+      name: "Sistema externo", description: "", baseUrl: "https://api.example.com/v1", authType: "none", enabled: true,
+    });
+    expect(result.operations.map(({ operationKey, pathTemplate }) => ({ operationKey, pathTemplate }))).toEqual([
+      { operationKey: "listar", pathTemplate: "/" },
+      { operationKey: "buscar", pathTemplate: "/search" },
+      { operationKey: "detalhar", pathTemplate: "/{id}" },
+    ]);
+  });
+
+  it("normalizes the standard HTTP/JSON contract without a manual mapping", () => {
+    const result = normalizeExternalApiResponse({ items: [{ id: "a1", title: "Registro", availability: true, price: 19.9,
+      currency: "BRL", link: "https://example.com/a1", media: ["https://example.com/a1.jpg"], attributes: { color: "blue" } }] }, {});
+    expect(result.records[0]).toEqual({ id: "a1", title: "Registro", availability: true, price: 19.9,
+      currency: "BRL", link: "https://example.com/a1", media: ["https://example.com/a1.jpg"], attributes: { color: "blue" } });
+  });
 });

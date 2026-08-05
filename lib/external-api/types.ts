@@ -45,7 +45,7 @@ export type ExternalApiConnectorInput = {
   authUsername?: string;
   secret?: string;
   enabled: boolean;
-  operations: ExternalApiOperationInput[];
+  operations?: ExternalApiOperationInput[];
 };
 
 export type ExternalApiConnectorSummary = {
