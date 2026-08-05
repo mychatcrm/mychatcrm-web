@@ -3,7 +3,7 @@ import {
   isAgentMissingInstructionsResult,
 } from "@/lib/ai/generate-agent-response";
 import { agendaPlanFromResult } from "@/lib/ai/agent-turn-plan";
-import { detectSupportedLanguageCode } from "@/lib/ai/language-detect";
+import { detectSupportedLanguageCode, resolveConfiguredLanguageCode } from "@/lib/ai/language-detect";
 import { localizedAgentFailureReply } from "@/lib/agents/agent-failure-reply";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
@@ -207,6 +207,10 @@ export async function processMetaAgentResponseJob(
     modelText: replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim(),
     agendaPlan: agendaPlanFromResult(result),
     clientText,
+    languageCode: resolveConfiguredLanguageCode(
+      typeof metadata.idioma === "string" ? metadata.idioma : null,
+      clientText,
+    ),
     priorAssistantText: priorAgendaAssistantTextFromMessages(history, timezone),
     recentClientMessages: recentClientTexts(history),
     agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,

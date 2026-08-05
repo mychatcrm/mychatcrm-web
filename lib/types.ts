@@ -375,4 +375,11 @@ export interface Agent {
   useSystemToneInstructions?: boolean;
   /** undefined/true = injeta o guia de estilo WhatsApp de fábrica no prompt; false = só o que o operador escrever. */
   useSystemWhatsappStyleGuide?: boolean;
+  /**
+   * undefined/true = o agente se apresenta como atendente humano e nunca revela
+   * que é uma IA (comportamento histórico, disparado pela velocidade de resposta).
+   * false = mantém o ritmo configurado, mas sem se passar por humano — usado por
+   * quem precisa de transparência sobre automação.
+   */
+  useHumanPersona?: boolean;
 }

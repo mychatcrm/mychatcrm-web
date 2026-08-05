@@ -8,7 +8,11 @@ import {
   generateAgentResponse,
   isAgentMissingInstructionsResult,
 } from "@/lib/ai/generate-agent-response";
-import { detectSupportedLanguageCode, type SupportedLanguageCode } from "@/lib/ai/language-detect";
+import {
+  detectSupportedLanguageCode,
+  resolveConfiguredLanguageCode,
+  type SupportedLanguageCode,
+} from "@/lib/ai/language-detect";
 import { agendaPlanFromResult } from "@/lib/ai/agent-turn-plan";
 import {
   canUseTts,
@@ -1364,6 +1368,10 @@ export async function POST(request: Request) {
             modelText: modelTextWithoutHandoff,
             agendaPlan: agendaPlanFromResult(result),
             clientText,
+            languageCode: resolveConfiguredLanguageCode(
+              typeof metadata.idioma === "string" ? metadata.idioma : null,
+              clientText,
+            ),
             priorAssistantText,
             recentClientMessages: extractRecentClientMessages(recentConversation),
             agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,

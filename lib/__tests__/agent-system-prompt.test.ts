@@ -412,3 +412,66 @@ describe("buildAgentSystemPrompt", () => {
     }
   });
 });
+
+describe("engine universal — sem contradição e sem persona forçada", () => {
+  function build(agentOverrides: Record<string, unknown>) {
+    return buildAgentSystemPrompt({
+      languageInstruction: "LANG",
+      agent: {
+        nome: "Agente",
+        systemPrompt: "Atenda bem.",
+        idioma: "Automático",
+        ...agentOverrides,
+      },
+      runtimeContext: null,
+    });
+  }
+
+  describe("item 1: 'confirmar com a equipe' não contradiz o handoff desligado", () => {
+    it("com transferência humana ATIVA, mantém a promessa de confirmar com a equipe", () => {
+      const prompt = build({ ctaHandoffAtivo: true });
+      expect(prompt).toContain("diga que vai confirmar com a equipe");
+    });
+
+    it("com transferência humana DESLIGADA, nunca promete retorno de outra pessoa", () => {
+      const prompt = build({ ctaHandoffAtivo: false });
+      // Antes, o prompt mandava "confirmar com a equipe" ao mesmo tempo que
+      // proibia dizer que alguém retornaria — o modelo obedecia ora um, ora outro.
+      expect(prompt).not.toContain("diga que vai confirmar com a equipe");
+      expect(prompt).toContain("não tem essa informação");
+      expect(prompt).toContain("Nunca prometa que outra pessoa vai confirmar ou retornar");
+    });
+  });
+
+  describe("item 4: toggle de persona humana", () => {
+    it("por padrão (campo ausente) mantém o comportamento histórico", () => {
+      const prompt = build({ delayResposta: 2 });
+      expect(prompt).toContain("Nunca demonstre que é uma IA");
+    });
+
+    it("ligado explicitamente mantém a persona humana", () => {
+      const prompt = build({ delayResposta: 2, useHumanPersona: true });
+      expect(prompt).toContain("Nunca demonstre que é uma IA");
+    });
+
+    it("desligado remove a impersonação MAS preserva o ritmo configurado", () => {
+      const prompt = build({ delayResposta: 2, useHumanPersona: false });
+      expect(prompt).not.toContain("Nunca demonstre que é uma IA");
+      expect(prompt).not.toContain("Você é um ser humano");
+      // O que o operador configurou (velocidade) continua valendo.
+      expect(prompt).toContain("COMPORTAMENTO:");
+      expect(prompt).toContain("digita na hora");
+    });
+
+    it("desligado também preserva o ritmo na faixa de resposta mais lenta", () => {
+      const prompt = build({ delayResposta: 10, useHumanPersona: false });
+      expect(prompt).not.toContain("ser humano ocupado");
+      expect(prompt).toContain("várias conversas ao mesmo tempo");
+    });
+
+    it("sem velocidade configurada, o toggle não injeta nada", () => {
+      const prompt = build({ delayResposta: 0, useHumanPersona: false });
+      expect(prompt).not.toContain("COMPORTAMENTO:");
+    });
+  });
+});

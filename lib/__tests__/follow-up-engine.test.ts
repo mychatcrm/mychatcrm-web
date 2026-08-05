@@ -347,3 +347,71 @@ describe("buildFollowUpAiInstruction", () => {
     expect(instr).toContain("prazo de resposta");
   });
 });
+
+describe("follow-up universal — sem vocabulário de nicho", () => {
+  const FOLLOW_UP_TYPES = ["silence", "sla_breach", "human_abandoned", "lead_cooling"] as const;
+  const MODES = ["agressivo", "moderado", "suave"] as const;
+
+  function build(
+    followUpType: (typeof FOLLOW_UP_TYPES)[number],
+    modo: (typeof MODES)[number],
+    useHumanPersona?: boolean,
+  ) {
+    return buildFollowUpAiInstruction({
+      decision: {
+        shouldSend: true,
+        reason: "customer_silence",
+        skipReason: null,
+        followUpType,
+        priority: 4,
+        urgency: "medium",
+        nextRetryAt: null,
+        cooldownActive: false,
+        humanBlocked: false,
+        spamRisk: false,
+        businessHoursBlocked: false,
+      },
+      leadName: "Alex",
+      settings: { ...DEFAULT_FOLLOW_UP_INTELIGENTE, modo },
+      attemptNumber: 0,
+      ...(useHumanPersona === undefined ? {} : { useHumanPersona }),
+    });
+  }
+
+  it("nenhuma combinação de tipo e modo presume venda", () => {
+    // A engine atende recrutamento, clínica, suporte, educação, cobrança. Presumir
+    // "concorrentes"/"oportunidade"/"decisão de compra" quebrava todos esses nichos.
+    const VOCABULARIO_DE_NICHO =
+      /concorrent|oportunidade|venda|vender|compra|comprar|neg[óo]cio fechad|proposta comercial/i;
+
+    for (const followUpType of FOLLOW_UP_TYPES) {
+      for (const modo of MODES) {
+        const instr = build(followUpType, modo);
+        expect(instr, `${followUpType}/${modo} vazou vocabulário de nicho`).not.toMatch(
+          VOCABULARIO_DE_NICHO,
+        );
+      }
+    }
+  });
+
+  it("mantém a mecânica de retomada em todos os tipos", () => {
+    for (const followUpType of FOLLOW_UP_TYPES) {
+      const instr = build(followUpType, "moderado");
+      expect(instr).toContain("Alex");
+      expect(instr).toContain("Nível de urgência: medium");
+      expect(instr).toContain("primeira tentativa");
+    }
+  });
+
+  it("por padrão esconde que a retomada é automática (comportamento histórico)", () => {
+    expect(build("silence", "moderado")).toContain("Não revele que é um sistema automático");
+  });
+
+  it("com useHumanPersona desligado, não manda esconder a automação", () => {
+    const instr = build("silence", "moderado", false);
+    expect(instr).not.toContain("Não revele que é um sistema automático");
+    // O resto da instrução continua intacto.
+    expect(instr).toContain("Nível de urgência: medium");
+    expect(instr).toContain("Seja breve");
+  });
+});

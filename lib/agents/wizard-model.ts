@@ -67,6 +67,8 @@ export type AgentWizardDraft = {
   useSystemToneInstructions: boolean;
   /** Se falso, remove do prompt o guia de estilo WhatsApp de fábrica. */
   useSystemWhatsappStyleGuide: boolean;
+  /** Se falso, o agente mantém o ritmo configurado mas não se passa por humano. */
+  useHumanPersona: boolean;
   foraDaVez: "ignorar" | "padrao" | "mensagem";
   foraDaVezMensagem: string;
   /** Modo de resposta: texto (padrão) ou áudio via ElevenLabs TTS. */
@@ -217,6 +219,7 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     agendaAutomationEnabled: agent.agendaAutomationEnabled ?? false,
     useSystemToneInstructions: agent.useSystemToneInstructions ?? true,
     useSystemWhatsappStyleGuide: agent.useSystemWhatsappStyleGuide ?? true,
+    useHumanPersona: agent.useHumanPersona ?? true,
     agendaLembretes: agent.agendaLembretes ?? { ...DEFAULT_AGENDA_LEMBRETES, regras: [...DEFAULT_AGENDA_LEMBRETES.regras] },
     agendaDisponibilidade: {
       ...DEFAULT_AGENDA_DISPONIBILIDADE,
@@ -389,6 +392,7 @@ export const defaultWizardDraft: AgentWizardDraft = {
   agendaAutomationEnabled: false,
   useSystemToneInstructions: true,
   useSystemWhatsappStyleGuide: true,
+  useHumanPersona: true,
   agendaLembretes: { ...DEFAULT_AGENDA_LEMBRETES, regras: [...DEFAULT_AGENDA_LEMBRETES.regras] },
   agendaDisponibilidade: { ...DEFAULT_AGENDA_DISPONIBILIDADE, diasSemana: [...DEFAULT_AGENDA_DISPONIBILIDADE.diasSemana] },
   ctaFinal: "Transferir para humano",
