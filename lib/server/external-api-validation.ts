@@ -6,6 +6,7 @@ import type {
   ExternalApiOperationInput,
   ExternalApiParameterDefinition,
 } from "@/lib/external-api/types";
+import { createStandardExternalApiOperations } from "@/lib/external-api/standard-contract";
 
 const OPERATION_KEY = /^[a-z][a-z0-9_]{0,63}$/;
 const PARAMETER_NAME = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
@@ -149,7 +150,9 @@ export function validateExternalApiConnectorInput(input: ExternalApiConnectorInp
   const authTypes = new Set<ExternalApiAuthType>(["none", "bearer", "api_key", "basic"]);
   if (!authTypes.has(input.authType)) throw new Error("external_api_invalid_auth_type");
   const { baseUrl, baseOrigin } = normalizeExternalApiBaseUrl(input.baseUrl);
-  const operations = Array.isArray(input.operations) ? input.operations.map(validateOperation) : [];
+  const operations = Array.isArray(input.operations) && input.operations.length
+    ? input.operations.map(validateOperation)
+    : createStandardExternalApiOperations().map(validateOperation);
   if (operations.length < 1 || operations.length > 10) throw new Error("external_api_operation_count");
   if (new Set(operations.map((item) => item.operationKey)).size !== operations.length) {
     throw new Error("external_api_duplicate_operation_key");
