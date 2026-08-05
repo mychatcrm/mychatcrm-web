@@ -15,6 +15,7 @@ import {
   isInitialAgendaMutationRequest,
   clientRequestedAgendaList,
   isStandaloneAgendaConfirmation,
+  listPlanLooksLikeScheduleAnswer,
   priorAgendaAssistantTextFromMessages,
   resolveAgendaTurn,
   sanitizeAgendaReplyForNoHandoff,
@@ -411,6 +412,136 @@ describe("resolveAgendaTurn", () => {
     expect(clientRequestedAgendaList("tem algum agendamento meu aí?")).toBe(true);
     expect(clientRequestedAgendaList("quero cancelar meu agendamento")).toBe(false);
     expect(clientRequestedAgendaList("quero remarcar meu compromisso")).toBe(false);
+  });
+
+  describe("listPlanLooksLikeScheduleAnswer — modelo classifica 'list' errado numa resposta de agendamento", () => {
+    const SCHEDULING_QUESTION = "Podemos agendar um horário para conversar?";
+    const UNRELATED_QUESTION = "Posso te ajudar com mais alguma coisa?";
+
+    it("reconhece confirmação curta respondendo pergunta de agendamento em aberto", () => {
+      expect(
+        listPlanLooksLikeScheduleAnswer({
+          clientText: "Sim",
+          priorAssistantText: SCHEDULING_QUESTION,
+          timezone: "America/Sao_Paulo",
+        }),
+      ).toBe(true);
+    });
+
+    it("reconhece data e hora explícitas respondendo pergunta de agendamento em aberto", () => {
+      expect(
+        listPlanLooksLikeScheduleAnswer({
+          clientText: "Amanhã às 15h",
+          priorAssistantText: SCHEDULING_QUESTION,
+          timezone: "America/Sao_Paulo",
+        }),
+      ).toBe(true);
+    });
+
+    it("regressão do incidente real: 'Sim' + data/hora digitada errada, sem acento", () => {
+      // Texto exatamente como chegou do burst: "Sim" e "Amanhas as duas" (sem
+      // til, sem espaço antes do "as") — o detector de data não reconhece
+      // "amanhas", mas a confirmação "Sim" e o horário "duas" já bastam.
+      expect(
+        listPlanLooksLikeScheduleAnswer({
+          clientText: "Sim\nAmanhas as duas",
+          priorAssistantText: SCHEDULING_QUESTION,
+          timezone: "America/Sao_Paulo",
+        }),
+      ).toBe(true);
+    });
+
+    it("não dispara sem pergunta de agendamento em aberto antes", () => {
+      expect(
+        listPlanLooksLikeScheduleAnswer({
+          clientText: "Sim",
+          priorAssistantText: UNRELATED_QUESTION,
+          timezone: "America/Sao_Paulo",
+        }),
+      ).toBe(false);
+    });
+
+    it("não dispara sem nenhum sinal de confirmação ou data/hora no texto do cliente", () => {
+      expect(
+        listPlanLooksLikeScheduleAnswer({
+          clientText: "Qual é o valor?",
+          priorAssistantText: SCHEDULING_QUESTION,
+          timezone: "America/Sao_Paulo",
+        }),
+      ).toBe(false);
+    });
+
+    it("não dispara sem contexto anterior nenhum", () => {
+      expect(
+        listPlanLooksLikeScheduleAnswer({
+          clientText: "Sim",
+          priorAssistantText: null,
+          timezone: "America/Sao_Paulo",
+        }),
+      ).toBe(false);
+    });
+  });
+
+  describe("plano 'list' mal classificado dentro de resolveAgendaTurn", () => {
+    it("reclassifica 'list' como agendamento quando o cliente responde a uma pergunta de agendamento em aberto", async () => {
+      const { sb, rpc, pendingRows } = makeStructuredSb();
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Vou verificar a disponibilidade.",
+        clientText: "Sim, amanhã às 15h",
+        priorAssistantText: "Podemos agendar um horário para conversar?",
+        agendaAutomationEnabled: true,
+        agendaPlan: { action: "list", date: null, time: null, location: null, eventId: null },
+        operationKey: "agent-response-job:turn-list-1:1:0",
+      });
+
+      // Nunca mais "não encontrei nenhum agendamento" para quem está tentando marcar um.
+      expect(result.action).not.toBe("listed");
+      expect(result.text).not.toContain("Não encontrei nenhum agendamento");
+      expect(result.action).toBe("needs_confirmation");
+      expect(result.text).toContain("02/06/2026");
+      expect(pendingRows[0]).toMatchObject({ action: "create", proposed_date: "02/06/2026" });
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
+    it("preserva uma consulta genuína mesmo com plano 'list' e contexto de agendamento em aberto", async () => {
+      const sb = makeSb(EXISTING_EVENT) as ReturnType<typeof makeSb> & { rpc: ReturnType<typeof vi.fn> };
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Vou verificar.",
+        clientText: "Quero ver meus agendamentos",
+        priorAssistantText: "Podemos agendar um horário para conversar?",
+        agendaAutomationEnabled: true,
+        agendaPlan: { action: "list", date: null, time: null, location: null, eventId: null },
+      });
+
+      expect(result.action).toBe("listed");
+      expect(result.text).toContain("Encontrei este agendamento para o seu número");
+    });
+
+    it("não reclassifica 'list' sem uma pergunta de agendamento em aberto antes", async () => {
+      const sb = makeSb(null) as ReturnType<typeof makeSb> & { rpc: ReturnType<typeof vi.fn> };
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        timezone: "America/Sao_Paulo",
+        modelText: "Vou verificar.",
+        clientText: "Sim",
+        priorAssistantText: "Posso te ajudar com mais alguma coisa?",
+        agendaAutomationEnabled: true,
+        agendaPlan: { action: "list", date: null, time: null, location: null, eventId: null },
+      });
+
+      expect(result.action).toBe("listed");
+    });
   });
 
   describe("plano estruturado da agenda", () => {
