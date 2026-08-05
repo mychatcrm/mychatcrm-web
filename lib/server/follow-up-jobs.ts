@@ -941,6 +941,7 @@ export async function processFollowUpJob(
       leadName: lead?.name ?? null,
       settings,
       attemptNumber: job.attempts,
+      useHumanPersona: metadata.useHumanPersona !== false,
     });
 
     const aiResult = await generateAgentResponse({

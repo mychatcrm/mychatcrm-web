@@ -345,24 +345,34 @@ export function evaluateFollowUpNeed(ctx: FollowUpEvalContext): FollowUpDecision
   };
 }
 
+/**
+ * Textos injetados em TODO follow-up, de TODO agente — precisam ser neutros de
+ * segmento. Cada cliente configura o próprio contexto (recrutamento, saúde,
+ * suporte, educação, cobrança…); presumir um funil comercial fazia a retomada
+ * soar fora de contexto para a maioria deles.
+ *
+ * A intensidade e a estratégia de cada modo/tipo continuam idênticas — só o
+ * vocabulário deixou de assumir um segmento. Coberto por
+ * `agent-engine-universal-contract.test.ts`.
+ */
 const MODO_MAP: Record<FollowUpMode, string> = {
   agressivo:
-    "Seja direto. Mencione o interesse concreto do cliente e crie urgência legítima. Peça um próximo passo ou decisão.",
+    "Seja direto e objetivo. Retome o ponto concreto que ficou em aberto e peça uma resposta clara sobre o próximo passo.",
   moderado:
     "Retome a conversa de forma natural. Mencione o que já foi discutido e mostre que ainda está disponível.",
   suave:
-    "Seja gentil e breve. Mostre disponibilidade sem pressionar. Deixe o cliente no comando do ritmo.",
+    "Seja gentil e breve. Mostre disponibilidade sem pressionar. Deixe a pessoa no comando do ritmo.",
 };
 
 const TYPE_MAP: Record<FollowUpType, (name: string) => string> = {
   silence: (n) =>
-    `O cliente${n} não respondeu após a última mensagem. Retome de forma contextual, lembrando o assunto real.`,
+    `A pessoa${n} não respondeu após a última mensagem. Retome de forma contextual, lembrando o assunto real.`,
   sla_breach: (n) =>
-    `O prazo de resposta foi ultrapassado para este lead${n}. Crie uma mensagem relevante — o lead pode estar avaliando concorrentes.`,
+    `O prazo de resposta deste atendimento${n} foi ultrapassado. Retome reconhecendo a demora e voltando ao ponto que ficou em aberto.`,
   human_abandoned: (n) =>
-    `Um atendente humano estava em contato com o cliente${n} mas não deu continuidade. Retome com sensibilidade; não exponha a falha interna.`,
+    `Um atendente humano estava em contato${n} mas não deu continuidade. Retome com sensibilidade; não exponha a falha interna.`,
   lead_cooling: (n) =>
-    `Este lead${n} demonstrou interesse mas a conversa esfriou. Recupere a oportunidade usando dados já compartilhados.`,
+    `Este atendimento${n} teve engajamento e depois esfriou. Retome a partir do que já foi conversado, sem recomeçar do zero.`,
 };
 
 export function buildFollowUpAiInstruction(params: {
@@ -373,8 +383,11 @@ export function buildFollowUpAiInstruction(params: {
     "modo" | "usarDadosFormularioMeta" | "usarHistoricoCrm" | "usarHistoricoWhatsapp"
   >;
   attemptNumber: number;
+  /** Ausente = comportamento histórico (esconde que a retomada é automática). */
+  useHumanPersona?: boolean;
 }): string {
   const { decision, leadName, settings, attemptNumber } = params;
+  const useHumanPersona = params.useHumanPersona !== false;
   const nameStr = leadName ? ` (${leadName})` : "";
 
   const typeCtx =
@@ -412,8 +425,8 @@ export function buildFollowUpAiInstruction(params: {
     "Regras obrigatórias:",
     ...sourceLines,
     "- Nunca use templates genéricos como «Olá, tudo bem?» sem contexto.",
-    "- Não revele que é um sistema automático de follow-up.",
-    "- Seja breve, natural e humano.",
+    ...(useHumanPersona ? ["- Não revele que é um sistema automático de follow-up."] : []),
+    "- Seja breve e natural.",
     `- Nível de urgência: ${decision.urgency}.`,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }

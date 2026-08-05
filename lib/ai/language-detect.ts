@@ -128,3 +128,22 @@ export function detectSupportedLanguageCode(text: string | null | undefined): Su
 export function supportedLanguageName(code: SupportedLanguageCode): string {
   return LANGUAGE_NAMES[code];
 }
+
+/**
+ * Idioma efetivo das mensagens que o SISTEMA gera (não o modelo): usa o idioma
+ * fixo configurado no agente quando houver, senão detecta o do cliente.
+ *
+ * Espelha a regra de `buildLanguageInstruction` — sem isto, um agente
+ * configurado para responder sempre em inglês recebia mensagem de sistema em
+ * português no meio da conversa.
+ */
+export function resolveConfiguredLanguageCode(
+  agentIdioma: string | null | undefined,
+  fallbackText: string,
+): SupportedLanguageCode {
+  const idioma = (agentIdioma ?? "").trim().toLowerCase();
+  if (idioma === "português br" || idioma === "portugues br" || idioma === "pt-br") return "pt";
+  if (idioma === "inglês" || idioma === "ingles" || idioma === "english") return "en";
+  if (idioma === "espanhol" || idioma === "español" || idioma === "spanish") return "es";
+  return detectSupportedLanguageCode(fallbackText);
+}

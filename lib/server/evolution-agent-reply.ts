@@ -6,7 +6,11 @@ import {
   agendaPlanFromResult,
   type AgentAgendaPlan,
 } from "@/lib/ai/agent-turn-plan";
-import { detectSupportedLanguageCode, type SupportedLanguageCode } from "@/lib/ai/language-detect";
+import {
+  detectSupportedLanguageCode,
+  resolveConfiguredLanguageCode,
+  type SupportedLanguageCode,
+} from "@/lib/ai/language-detect";
 import { localizedAgentFailureReply } from "@/lib/agents/agent-failure-reply";
 import {
   canUseTts,
@@ -848,6 +852,10 @@ export async function processAgentResponseJob(
       modelText: modelTextWithoutHandoff,
       agendaPlan: generatedReply.agendaPlan,
       clientText: consolidatedInboundTextFromUnit(unit),
+      languageCode: resolveConfiguredLanguageCode(
+        typeof metadata.idioma === "string" ? metadata.idioma : null,
+        consolidatedInboundTextFromUnit(unit),
+      ),
       priorAssistantText,
       recentClientMessages,
       agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,

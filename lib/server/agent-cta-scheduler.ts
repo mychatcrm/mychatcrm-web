@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { PostgrestSingleResponse } from "@supabase/supabase-js";
-import { detectSupportedLanguageCode } from "@/lib/ai/language-detect";
+import { detectSupportedLanguageCode, type SupportedLanguageCode } from "@/lib/ai/language-detect";
 import {
   formatScheduleFieldsFromDate,
   localWallClockToUtc,
@@ -107,6 +107,156 @@ export const AGENDA_PAST_DATETIME_REPLY =
   "Esse horário já passou. Me diga outro dia e horário que eu verifico para você.";
 export const AGENDA_INVALID_TIME_REPLY =
   "Esse horário não existe. Me diga uma hora válida entre 00:00 e 23:59 para eu verificar para você.";
+
+/**
+ * Traduções das respostas fixas de agenda.
+ *
+ * O agente atende em 6 idiomas e a listagem de compromissos já respondia
+ * traduzida, mas estas mensagens saíam sempre em pt-BR — um agente configurado
+ * em inglês ou espanhol devolvia português no meio da conversa.
+ *
+ * A chave de cada entrada é o próprio texto pt-BR (as constantes acima), o que
+ * permite localizar num único ponto de saída por comparação exata, sem propagar
+ * o idioma pelos ~30 pontos que produzem estas respostas. Mesmo espírito de
+ * `localizedAgentFailureReply`.
+ */
+const AGENDA_REPLY_TRANSLATIONS: ReadonlyMap<string, Record<SupportedLanguageCode, string>> =
+  new Map([
+    [
+      AGENDA_FAILURE_REPLY,
+      {
+        pt: AGENDA_FAILURE_REPLY,
+        en: "I couldn't confirm that change to the schedule right now. Our team will check and get back to you shortly.",
+        es: "No pude confirmar ese cambio en la agenda ahora. Nuestro equipo lo revisará y te responderá en breve.",
+        fr: "Je n'ai pas pu confirmer cette modification de l'agenda pour le moment. Notre équipe va vérifier et vous répondre sous peu.",
+        de: "Ich konnte diese Terminänderung gerade nicht bestätigen. Unser Team prüft das und meldet sich in Kürze.",
+        it: "Non sono riuscito a confermare questa modifica in agenda ora. Il nostro team verificherà e ti risponderà a breve.",
+      },
+    ],
+    [
+      AGENDA_FAILURE_REPLY_NO_HANDOFF,
+      {
+        pt: AGENDA_FAILURE_REPLY_NO_HANDOFF,
+        en: "I couldn't confirm that change to the schedule right now. Please try again shortly or tell me another date and time.",
+        es: "No pude confirmar ese cambio en la agenda ahora. Inténtalo de nuevo en unos instantes o dime otra fecha y hora.",
+        fr: "Je n'ai pas pu confirmer cette modification de l'agenda pour le moment. Réessayez dans un instant ou indiquez-moi une autre date et heure.",
+        de: "Ich konnte diese Terminänderung gerade nicht bestätigen. Bitte versuchen Sie es gleich noch einmal oder nennen Sie mir ein anderes Datum und eine andere Uhrzeit.",
+        it: "Non sono riuscito a confermare questa modifica in agenda ora. Riprova tra poco o indicami un'altra data e ora.",
+      },
+    ],
+    [
+      AGENDA_SUCCESS_REPLY_SCHEDULED,
+      {
+        pt: AGENDA_SUCCESS_REPLY_SCHEDULED,
+        en: "All set, your appointment is confirmed.",
+        es: "Listo, tu cita está confirmada.",
+        fr: "C'est fait, votre rendez-vous est confirmé.",
+        de: "Fertig, Ihr Termin ist bestätigt.",
+        it: "Fatto, il tuo appuntamento è confermato.",
+      },
+    ],
+    [
+      AGENDA_SUCCESS_REPLY_RESCHEDULED,
+      {
+        pt: AGENDA_SUCCESS_REPLY_RESCHEDULED,
+        en: "All set, your appointment has been rescheduled.",
+        es: "Listo, tu cita fue reprogramada.",
+        fr: "C'est fait, votre rendez-vous a été reporté.",
+        de: "Fertig, Ihr Termin wurde verschoben.",
+        it: "Fatto, il tuo appuntamento è stato riprogrammato.",
+      },
+    ],
+    [
+      AGENDA_SUCCESS_REPLY_CANCELLED,
+      {
+        pt: AGENDA_SUCCESS_REPLY_CANCELLED,
+        en: "Done, I've cancelled your appointment.",
+        es: "Listo, cancelé tu cita.",
+        fr: "C'est fait, j'ai annulé votre rendez-vous.",
+        de: "Erledigt, ich habe Ihren Termin storniert.",
+        it: "Fatto, ho cancellato il tuo appuntamento.",
+      },
+    ],
+    [
+      AGENDA_AUTOMATION_DISABLED_REPLY,
+      {
+        pt: AGENDA_AUTOMATION_DISABLED_REPLY,
+        en: "I can look up your existing appointments, but I can't create, reschedule or cancel appointments here at the moment.",
+        es: "Puedo consultar tus citas existentes, pero no puedo crear, reprogramar ni cancelar citas por aquí en este momento.",
+        fr: "Je peux consulter vos rendez-vous existants, mais je ne peux pas créer, reporter ou annuler de rendez-vous ici pour le moment.",
+        de: "Ich kann Ihre bestehenden Termine einsehen, aber im Moment hier keine Termine anlegen, verschieben oder stornieren.",
+        it: "Posso consultare i tuoi appuntamenti esistenti, ma al momento non posso crearne, riprogrammarne o cancellarne da qui.",
+      },
+    ],
+    [
+      AGENDA_SLOT_TAKEN_REPLY,
+      {
+        pt: AGENDA_SLOT_TAKEN_REPLY,
+        en: "That time just became unavailable on our schedule. Could you suggest another date or time? I'll check availability and confirm right away.",
+        es: "Ese horario acaba de quedar no disponible en nuestra agenda. ¿Puedes indicarme otra fecha u hora? Verifico la disponibilidad y te confirmo enseguida.",
+        fr: "Ce créneau vient de devenir indisponible dans notre agenda. Pouvez-vous m'indiquer une autre date ou heure ? Je vérifie la disponibilité et je confirme aussitôt.",
+        de: "Dieser Termin ist in unserem Kalender gerade belegt worden. Können Sie mir ein anderes Datum oder eine andere Uhrzeit nennen? Ich prüfe die Verfügbarkeit und bestätige sofort.",
+        it: "Quell'orario è appena diventato non disponibile nella nostra agenda. Puoi indicarmi un'altra data o ora? Verifico la disponibilità e confermo subito.",
+      },
+    ],
+    [
+      AGENDA_UNVERIFIED_CLAIM_REPLY,
+      {
+        pt: AGENDA_UNVERIFIED_CLAIM_REPLY,
+        en: "One moment — I haven't recorded that change to the schedule yet. Confirm the exact date and time (for example: 20/07 at 14:00) and I'll record it right now.",
+        es: "Un momento — todavía no registré ese cambio en la agenda. Confírmame la fecha y la hora exactas (por ejemplo: 20/07 a las 14:00) y lo registro ahora mismo.",
+        fr: "Un instant — je n'ai pas encore enregistré cette modification dans l'agenda. Confirmez-moi la date et l'heure exactes (par exemple : 20/07 à 14:00) et je l'enregistre tout de suite.",
+        de: "Einen Moment — ich habe diese Änderung noch nicht im Kalender erfasst. Bestätigen Sie mir das genaue Datum und die Uhrzeit (zum Beispiel: 20.07. um 14:00), dann trage ich es sofort ein.",
+        it: "Un attimo — non ho ancora registrato questa modifica in agenda. Confermami la data e l'ora esatte (per esempio: 20/07 alle 14:00) e la registro subito.",
+      },
+    ],
+    [
+      AGENDA_DATETIME_NEEDED_REPLY,
+      {
+        pt: AGENDA_DATETIME_NEEDED_REPLY,
+        en: "I couldn't work out the exact date and time. Tell me the day and time you prefer (for example: 20/07 at 2pm) and I'll check for you.",
+        es: "No pude identificar la fecha y la hora exactas. Dime el día y la hora que prefieres (por ejemplo: 20/07 a las 14h) y lo verifico para ti.",
+        fr: "Je n'ai pas réussi à identifier la date et l'heure exactes. Indiquez-moi le jour et l'heure que vous préférez (par exemple : 20/07 à 14h) et je vérifie pour vous.",
+        de: "Ich konnte das genaue Datum und die Uhrzeit nicht erkennen. Nennen Sie mir den gewünschten Tag und die Uhrzeit (zum Beispiel: 20.07. um 14 Uhr), dann prüfe ich das für Sie.",
+        it: "Non sono riuscito a identificare la data e l'ora esatte. Dimmi il giorno e l'ora che preferisci (per esempio: 20/07 alle 14) e verifico per te.",
+      },
+    ],
+    [
+      AGENDA_PAST_DATETIME_REPLY,
+      {
+        pt: AGENDA_PAST_DATETIME_REPLY,
+        en: "That time has already passed. Tell me another day and time and I'll check for you.",
+        es: "Ese horario ya pasó. Dime otro día y hora y lo verifico para ti.",
+        fr: "Ce créneau est déjà passé. Indiquez-moi un autre jour et une autre heure et je vérifie pour vous.",
+        de: "Dieser Zeitpunkt liegt bereits in der Vergangenheit. Nennen Sie mir einen anderen Tag und eine andere Uhrzeit, dann prüfe ich das für Sie.",
+        it: "Quell'orario è già passato. Dimmi un altro giorno e orario e verifico per te.",
+      },
+    ],
+    [
+      AGENDA_INVALID_TIME_REPLY,
+      {
+        pt: AGENDA_INVALID_TIME_REPLY,
+        en: "That time doesn't exist. Give me a valid time between 00:00 and 23:59 so I can check for you.",
+        es: "Ese horario no existe. Dime una hora válida entre 00:00 y 23:59 para verificarlo.",
+        fr: "Cette heure n'existe pas. Donnez-moi une heure valide entre 00:00 et 23:59 pour que je vérifie.",
+        de: "Diese Uhrzeit gibt es nicht. Nennen Sie mir eine gültige Uhrzeit zwischen 00:00 und 23:59, damit ich prüfen kann.",
+        it: "Quell'ora non esiste. Dimmi un orario valido tra le 00:00 e le 23:59 così verifico.",
+      },
+    ],
+  ]);
+
+/**
+ * Devolve a versão da resposta fixa no idioma pedido. Texto que não é uma
+ * resposta fixa do sistema (prosa do modelo, que já vem no idioma certo) passa
+ * intacto.
+ */
+export function localizeAgendaReply(
+  text: string,
+  languageCode?: SupportedLanguageCode | null,
+): string {
+  if (!languageCode || languageCode === "pt") return text;
+  return AGENDA_REPLY_TRANSLATIONS.get(text)?.[languageCode] ?? text;
+}
 
 function agendaFailureReplyForError(
   error: unknown,
@@ -527,8 +677,15 @@ export function sanitizeAgendaReplyForNoHandoff(text: string): string {
 function finalizeResolveAgendaTurnResult(
   result: ResolveAgendaTurnResult,
   ctaHandoffAtivo?: boolean,
+  languageCode?: SupportedLanguageCode | null,
 ): ResolveAgendaTurnResult {
-  if (ctaHandoffAtivo !== false) return result;
+  // Localiza no último ponto antes de sair: qualquer resposta fixa do sistema
+  // produzida acima (em pt-BR) vira o texto do idioma da conversa.
+  const localized = (r: ResolveAgendaTurnResult): ResolveAgendaTurnResult => {
+    const text = localizeAgendaReply(r.text, languageCode);
+    return text === r.text ? r : { ...r, text };
+  };
+  if (ctaHandoffAtivo !== false) return localized(result);
   // O texto de sucesso já foi produzido pelo backend somente depois do commit
   // real e contém data/hora em formato humano. Substituí-lo por uma constante
   // curta ("Agendamento confirmado.") apagava contexto e voltava a soar robótico.
@@ -543,28 +700,28 @@ function finalizeResolveAgendaTurnResult(
         `às ${Number(hour)}h${minute}`,
       );
     if (result.action === "cancelled") {
-      return { ...result, text: AGENDA_SUCCESS_REPLY_CANCELLED };
+      return localized({ ...result, text: AGENDA_SUCCESS_REPLY_CANCELLED });
     }
     if (/\b\d{2}\/\d{2}\/\d{4}\b/.test(sanitized)) {
-      return { ...result, text: sanitized };
+      return localized({ ...result, text: sanitized });
     }
-    return {
+    return localized({
       ...result,
       text:
         result.action === "rescheduled"
           ? AGENDA_SUCCESS_REPLY_RESCHEDULED
           : AGENDA_SUCCESS_REPLY_SCHEDULED,
-    };
+    });
   }
   if (result.action === "failed") {
     // Só o texto genérico (que cita "nossa equipe") é trocado; mensagens específicas
     // por motivo (fora da janela, horário ocupado) já são neutras e ficam intactas.
     if (result.text === AGENDA_FAILURE_REPLY) {
-      return { ...result, text: AGENDA_FAILURE_REPLY_NO_HANDOFF };
+      return localized({ ...result, text: AGENDA_FAILURE_REPLY_NO_HANDOFF });
     }
-    return result;
+    return localized(result);
   }
-  return { ...result, text: sanitizeAgendaReplyForNoHandoff(result.text) };
+  return localized({ ...result, text: sanitizeAgendaReplyForNoHandoff(result.text) });
 }
 
 /** Última proposta de agenda do assistente no histórico (não o burst atual). */
@@ -2696,10 +2853,19 @@ export async function resolveAgendaTurn(params: {
    *  complementos que chegaram em jobs anteriores (ex.: data num turno, hora no
    *  seguinte). Já filtradas por tenant+journey e janela segura pelo chamador. */
   recentClientMessages?: string[] | null;
+  /**
+   * Idioma das respostas fixas do sistema. O chamador resolve com a mesma regra
+   * do prompt (idioma fixo do agente quando configurado; senão o do cliente).
+   * Ausente = detecta do texto do cliente, que é o que a listagem de
+   * compromissos já fazia — sem isso, tudo saía em pt-BR.
+   */
+  languageCode?: SupportedLanguageCode | null;
 }): Promise<ResolveAgendaTurnResult> {
   const cleanText = stripAgendaDirectives(params.modelText);
+  const replyLanguage =
+    params.languageCode ?? detectSupportedLanguageCode(params.clientText);
   const finalize = (result: ResolveAgendaTurnResult) =>
-    finalizeResolveAgendaTurnResult(result, params.ctaHandoffAtivo);
+    finalizeResolveAgendaTurnResult(result, params.ctaHandoffAtivo, replyLanguage);
   const clientRequestedMutation =
     isInitialAgendaMutationRequest(params.clientText) ||
     RESCHEDULE_RE.test(params.clientText) ||

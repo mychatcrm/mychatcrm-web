@@ -34,6 +34,13 @@ export function WizardStepSystemBehavior({
           label="Guia de estilo de escrita padrão (WhatsApp)"
           description="Regras de fábrica sobre como escrever: mensagens curtas, variar a abertura, no máximo um emoji ocasional, datas em formato humano. Desligado, o estilo de escrita fica 100% a critério das suas instruções."
         />
+        <Toggle
+          id="use-human-persona"
+          checked={draft.useHumanPersona}
+          onChange={(v) => onChange({ ...draft, useHumanPersona: v })}
+          label="Assumir que é uma pessoa (não revelar que é IA)"
+          description="Ligado, o agente se apresenta como atendente humano e não revela que é uma IA nem que a retomada de follow-up é automática. Desligado, ele mantém o mesmo ritmo de resposta configurado acima, mas responde com honestidade se perguntarem se é um robô — use quando o seu setor exigir transparência sobre automação."
+        />
       </div>
     </div>
   );
