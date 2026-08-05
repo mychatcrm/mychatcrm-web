@@ -11,6 +11,8 @@ export const PLAN_ANNUAL_DISCOUNT_PERCENT = 17;
 
 /** Cada plano inclui 1 número WhatsApp (API oficial); cada número adicional cobrado à parte. */
 export const WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL = 75;
+/** Todos os planos incluem um conector REST/JSON; cada conector adicional é recorrente. */
+export const EXTERNAL_API_EXTRA_MONTHLY_BRL = 49.9;
 
 const WHATSAPP_INCLUDED_LABEL = "1 número WhatsApp (API oficial)";
 const WHATSAPP_EXTRA_LABEL = `+R$ ${WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL}/mês por número adicional`;
@@ -78,6 +80,7 @@ export const SALES_PLANS: SalesPlan[] = [
       FEATURES_ALL,
       "Sem diretores, gerentes ou vendedores — só a sua conta (trabalho solo).",
       "Até 2 agentes de IA incluídos (+ agentes adicionais à parte).",
+      "1 API externa incluída; adicionais por R$ 49,90/mês.",
       "Leads no CRM Kanban ilimitados (cadastro e integrações).",
       "Até 5 funis de vendas no CRM Kanban.",
       "Até 500 leads atendidos por mês (contagem de cobrança).",
@@ -97,6 +100,7 @@ export const SALES_PLANS: SalesPlan[] = [
       FEATURES_ALL,
       "Até 1 diretor, 3 gerentes e 30 vendedores.",
       "Até 5 agentes de IA incluídos.",
+      "1 API externa incluída; adicionais por R$ 49,90/mês.",
       "Leads no CRM Kanban ilimitados (cadastro e integrações).",
       "Até 12 funis de vendas no CRM Kanban.",
       "Até 5.000 leads atendidos por mês (contagem de cobrança).",
@@ -115,6 +119,7 @@ export const SALES_PLANS: SalesPlan[] = [
       FEATURES_ALL,
       "Até 5 diretores, 25 gerentes e 30 vendedores.",
       "Até 30 agentes de IA incluídos.",
+      "1 API externa incluída; adicionais por R$ 49,90/mês.",
       "Leads no CRM Kanban ilimitados (cadastro e integrações).",
       "Até 25 funis de vendas no CRM Kanban.",
       "Até 15.000 leads atendidos por mês (contagem de cobrança).",
@@ -193,6 +198,10 @@ export const PLAN_COMPARISON_SECTIONS: PlanComparisonSection[] = [
           [E]: `+R$ ${WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL}/mês`,
           [C]: `+R$ ${WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL}/mês`,
         },
+      },
+      {
+        label: "APIs externas para consulta dos agentes",
+        cells: { [S]: "1 incluída; +R$ 49,90/mês cada", [E]: "1 incluída; +R$ 49,90/mês cada", [C]: "1 incluída; +R$ 49,90/mês cada" },
       },
     ],
   },

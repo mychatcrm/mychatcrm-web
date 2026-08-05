@@ -67,7 +67,7 @@ async function saveCatalogItem(request: Request) {
   const code = normalizedCode(input.code);
   const title = typeof input.title === "string" ? input.title.trim().slice(0, 120) : "";
   const description = typeof input.description === "string" ? input.description.trim().slice(0, 500) || null : null;
-  const kind = input.kind === "whatsapp_line" ? "whatsapp_line" : input.kind === "lead_capacity" ? "lead_capacity" : null;
+  const kind = input.kind === "whatsapp_line" || input.kind === "lead_capacity" || input.kind === "api_connector" ? input.kind : null;
   const billingMode = input.billingMode === "one_time" ? "one_time" : input.billingMode === "recurring" ? "recurring" : null;
   const includedQuantity = Number(input.includedQuantity);
   const active = input.active === true;

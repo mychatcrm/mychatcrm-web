@@ -22,6 +22,7 @@ import { WizardStepWhatsappLinha } from "./WizardStepWhatsappLinha";
 import { WizardStepVoz } from "./WizardStepVoz";
 import { WizardStepSmartWait } from "./WizardStepSmartWait";
 import { WizardStepCrmLeadDestination } from "./WizardStepCrmLeadDestination";
+import { WizardStepExternalApis } from "./WizardStepExternalApis";
 import { AGENT_FIELD_HELP } from "./agent-field-help-content";
 import { FieldHelp } from "./agent-field-help";
 
@@ -264,6 +265,7 @@ export function AgentFormCompact({
 
           <FormSection title="Treinamento" description="Instruções e materiais que definem a personalidade e conhecimento.">
             <WizardStep2Treinamento draft={draft} onChange={setDraft} agentId={initialAgent?.id} />
+            <WizardStepExternalApis draft={draft} onChange={setDraft} />
           </FormSection>
 
           <div className="panel-surface-card min-w-0 rounded-xl bg-surface-card/70 p-3.5 sm:p-4">

@@ -272,6 +272,7 @@ async function generateReplyForUnit(params: {
           dominantIntent: params.burst.signals.dominantIntent,
         },
         schedulingContextBlock: params.schedulingContextBlock,
+        externalApiLookups: false,
       });
       if (retry.ok) {
         replyText = retry.text;

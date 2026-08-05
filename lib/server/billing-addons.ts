@@ -5,7 +5,7 @@ import { SITE_URL } from "@/lib/constants";
 import { getStripe } from "@/lib/stripe";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
-export type BillingAddonKind = "lead_capacity" | "whatsapp_line";
+export type BillingAddonKind = "lead_capacity" | "whatsapp_line" | "api_connector";
 export type BillingAddonMode = "recurring" | "one_time";
 
 export type BillingAddonCatalogItem = {
@@ -66,7 +66,7 @@ function parseCatalog(row: Record<string, unknown>): BillingAddonCatalogItem {
     code: String(row.code),
     title: String(row.title),
     description: typeof row.description === "string" ? row.description : null,
-    kind: row.kind === "whatsapp_line" ? "whatsapp_line" : "lead_capacity",
+    kind: row.kind === "whatsapp_line" || row.kind === "api_connector" ? row.kind : "lead_capacity",
     billing_mode: row.billing_mode === "one_time" ? "one_time" : "recurring",
     included_quantity: Math.max(1, Number(row.included_quantity ?? 1)),
     stripe_product_id: typeof row.stripe_product_id === "string" ? row.stripe_product_id : null,
@@ -84,7 +84,7 @@ function parseEntitlement(row: Record<string, unknown>): TenantBillingEntitlemen
     id: String(row.id),
     tenant_id: String(row.tenant_id),
     addon_catalog_id: typeof row.addon_catalog_id === "string" ? row.addon_catalog_id : null,
-    kind: row.kind === "whatsapp_line" ? "whatsapp_line" : "lead_capacity",
+    kind: row.kind === "whatsapp_line" || row.kind === "api_connector" ? row.kind : "lead_capacity",
     billing_mode: row.billing_mode === "one_time" ? "one_time" : "recurring",
     quantity: Math.max(1, Number(row.quantity ?? 1)),
     status: ["active", "scheduled_cancel", "cancelled", "expired", "revoked"].includes(String(row.status))
@@ -149,6 +149,47 @@ export async function getBillingAddonByCode(code: string): Promise<BillingAddonC
     .maybeSingle();
   if (error) throw new Error(`[billing-addons] get_catalog:${error.message}`);
   return data ? parseCatalog(data as Record<string, unknown>) : null;
+}
+
+/**
+ * Provisiona o catálogo fixo de conectores no Stripe de forma idempotente.
+ * O navegador nunca informa preço nem Product/Price ID; a primeira tentativa
+ * de compra conclui a configuração automaticamente usando a chave do servidor.
+ */
+export async function ensureExternalApiConnectorStripeCatalog(): Promise<void> {
+  const sb = createSupabaseServiceClient();
+  const { data: row, error } = await sb.from("billing_addon_catalog").select("*")
+    .eq("code", "api_connector_recurring").maybeSingle();
+  if (error) throw new Error(`[billing-addons] api_connector_catalog:${error.message}`);
+  if (!row) throw new Error("billing_addon_not_available");
+  const catalog = parseCatalog(row as Record<string, unknown>);
+  if (catalog.active && catalog.stripe_product_id && catalog.stripe_price_id) return;
+
+  const stripe = getStripe();
+  let product: Stripe.Product | null = null;
+  try {
+    const search = await stripe.products.search({ query: `metadata['mychatcrm_code']:'api_connector_recurring'`, limit: 1 });
+    product = search.data[0] ?? null;
+  } catch {
+    const products = await stripe.products.list({ active: true, limit: 100 });
+    product = products.data.find((item) => item.metadata.mychatcrm_code === "api_connector_recurring") ?? null;
+  }
+  product ??= await stripe.products.create({
+    name: "Conector de API adicional",
+    description: "Uma API REST/JSON adicional para consultas de agentes MyChatCRM.",
+    metadata: { mychatcrm_code: "api_connector_recurring", read_only: "true" },
+  }, { idempotencyKey: "mychatcrm-api-connector-product-v1" });
+  const prices = await stripe.prices.list({ product: product.id, active: true, type: "recurring", limit: 100 });
+  const price = prices.data.find((item) => item.currency === "brl" && item.unit_amount === 4990 && item.recurring?.interval === "month")
+    ?? await stripe.prices.create({ product: product.id, currency: "brl", unit_amount: 4990,
+      recurring: { interval: "month" }, nickname: "Conector API adicional — mensal",
+      metadata: { mychatcrm_code: "api_connector_recurring" } },
+    { idempotencyKey: "mychatcrm-api-connector-price-brl-4990-month-v1" });
+  const { error: updateError } = await sb.from("billing_addon_catalog").update({
+    stripe_product_id: product.id, stripe_price_id: price.id, amount_cents: 4990,
+    currency: "brl", interval_unit: "month", active: true, updated_at: new Date().toISOString(),
+  }).eq("id", catalog.id).eq("code", "api_connector_recurring");
+  if (updateError) throw new Error(`[billing-addons] api_connector_activate:${updateError.message}`);
 }
 
 export async function getBillingAddonById(id: string): Promise<BillingAddonCatalogItem | null> {
@@ -347,7 +388,7 @@ export async function syncBillingAddonSubscription(params: {
   terminal?: boolean;
 }): Promise<void> {
   const subscriptionId = params.subscription.id;
-  const isTerminal = params.terminal === true || params.subscription.status === "canceled";
+  const isTerminal = params.terminal === true || ["canceled", "unpaid", "paused", "incomplete", "incomplete_expired"].includes(params.subscription.status);
   const status = isTerminal ? "cancelled" : params.subscription.cancel_at_period_end ? "scheduled_cancel" : "active";
   const validUntil =
     isTerminal

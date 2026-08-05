@@ -44,6 +44,7 @@ export type AgentWizardDraft = {
   /** Fuso IANA (metadata.timezone na raiz; espelhado em followUpInteligente ao salvar). */
   timezone: string;
   arquivosTreinamento: Agent["arquivosTreinamento"];
+  externalApiConnectorIds: string[];
   origens: AgentOrigin[];
   fluxo: FlowStep[];
   followUps: FollowUp[];
@@ -208,6 +209,7 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     respostasProibidas: agent.respostasProibidas,
     idioma: agent.idioma,
     arquivosTreinamento: agent.arquivosTreinamento,
+    externalApiConnectorIds: agent.externalApiConnectorIds ?? [],
     origens: normalizeOrigensForWizard(agent.origens),
     fluxo: agent.fluxo,
     followUps: agent.followUps,
@@ -357,6 +359,7 @@ export const defaultWizardDraft: AgentWizardDraft = {
   idioma: "Português BR",
   timezone: DEFAULT_FOLLOW_UP_INTELIGENTE.timezone ?? "UTC",
   arquivosTreinamento: [],
+  externalApiConnectorIds: [],
   origens: [
     { tipo: "lead_ads", ativo: false, config: { formIds: [], enviarPrimeiro: true, delayPrimeiro: 0, mensagemInicial: "" } },
     { tipo: "ctw", ativo: false, config: { adIds: [] } },

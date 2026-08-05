@@ -11,6 +11,8 @@ import {
 } from "@/lib/agents";
 import { describeAgentActivationBlock } from "@/lib/server/agent-plan-limit";
 import type { Agent } from "@/lib/types";
+import { resolveOrganizationRole } from "@/lib/organization-role";
+import { listAgentExternalApiConnectorIds, syncAgentExternalApiConnectors } from "@/lib/server/external-api-connectors";
 
 export const dynamic = "force-dynamic";
 
@@ -93,6 +95,10 @@ export async function PUT(
   const responseSettings = sanitizeAgentResponseSettings(agent);
   const normalizedCrmDestination = normalizeAgentCrmDestination(agent);
   const crmDestination = agentCrmDestinationDbFields(agent);
+  const canManageExternalApis = resolveOrganizationRole(session) === "owner";
+  const existingConnectorIds = await listAgentExternalApiConnectorIds(session.tenantId, agentId);
+  const requestedConnectorIds = canManageExternalApis && Array.isArray(agent.externalApiConnectorIds) ? agent.externalApiConnectorIds : existingConnectorIds;
+  const metadataAgent = { ...agent }; delete metadataAgent.externalApiConnectorIds;
 
   const initial = await sb
     .from("tenant_agents")
@@ -104,7 +110,7 @@ export async function PUT(
         system_prompt: systemPrompt || agent.systemPrompt || "",
         model: null,
         active: agent.status === "ativo",
-        metadata: { ...agent, ...responseSettings, ...normalizedCrmDestination },
+        metadata: { ...metadataAgent, ...responseSettings, ...normalizedCrmDestination },
         updated_at: now,
         voice_id: responseSettings.voiceId,
         response_mode: responseSettings.responseMode,
@@ -127,7 +133,7 @@ export async function PUT(
           system_prompt: systemPrompt || agent.systemPrompt || "",
           model: null,
           active: agent.status === "ativo",
-          metadata: { ...agent, ...responseSettings, ...normalizedCrmDestination },
+          metadata: { ...metadataAgent, ...responseSettings, ...normalizedCrmDestination },
           updated_at: now,
           voice_id: responseSettings.voiceId,
           response_mode: responseSettings.responseMode,
@@ -150,12 +156,14 @@ export async function PUT(
     agentId,
     slotIndex: agent.whatsappSlotIndex,
   });
+  if (canManageExternalApis) await syncAgentExternalApiConnectors(session.tenantId, agentId, requestedConnectorIds);
 
   return NextResponse.json({
     agent: {
       ...agent,
       ...responseSettings,
       ...normalizedCrmDestination,
+      ...(canManageExternalApis ? { externalApiConnectorIds: requestedConnectorIds } : {}),
       atualizadoEm: now,
     },
   });

@@ -17,6 +17,8 @@ import {
 } from "@/lib/server/tenant-agents-db";
 import { describeAgentActivationBlock } from "@/lib/server/agent-plan-limit";
 import type { Agent } from "@/lib/types";
+import { resolveOrganizationRole } from "@/lib/organization-role";
+import { syncAgentExternalApiConnectors } from "@/lib/server/external-api-connectors";
 
 export const dynamic = "force-dynamic";
 
@@ -83,6 +85,13 @@ export async function GET() {
   const agents: Agent[] = (data ?? []).map((row) =>
     rowToAgent(row as Record<string, unknown>, session.tenantId),
   );
+  const owner = resolveOrganizationRole(session) === "owner";
+  if (owner && agents.length) {
+    const { data: links } = await sb.from("agent_external_api_connectors").select("agent_id,connector_id").eq("tenant_id", session.tenantId);
+    const byAgent = new Map<string, string[]>();
+    for (const link of links ?? []) byAgent.set(String(link.agent_id), [...(byAgent.get(String(link.agent_id)) ?? []), String(link.connector_id)]);
+    for (const agent of agents) agent.externalApiConnectorIds = byAgent.get(agent.id) ?? [];
+  } else for (const agent of agents) delete agent.externalApiConnectorIds;
 
   return NextResponse.json({ agents }, { headers: { "Cache-Control": "no-store" } });
 }
@@ -130,6 +139,9 @@ export async function POST(request: Request) {
   const responseSettings = sanitizeAgentResponseSettings(agent);
   const normalizedCrmDestination = normalizeAgentCrmDestination(agent);
   const crmDestination = agentCrmDestinationDbFields(agent);
+  const canManageExternalApis = resolveOrganizationRole(session) === "owner";
+  const requestedConnectorIds = canManageExternalApis && Array.isArray(agent.externalApiConnectorIds) ? agent.externalApiConnectorIds : [];
+  const metadataAgent = { ...agent }; delete metadataAgent.externalApiConnectorIds;
 
   const initial = await sb
     .from("tenant_agents")
@@ -141,7 +153,7 @@ export async function POST(request: Request) {
         system_prompt: systemPrompt || agent.systemPrompt || "",
         model: null,
         active: agent.status === "ativo",
-        metadata: { ...agent, ...responseSettings, ...normalizedCrmDestination },
+        metadata: { ...metadataAgent, ...responseSettings, ...normalizedCrmDestination },
         updated_at: now,
         voice_id: responseSettings.voiceId,
         response_mode: responseSettings.responseMode,
@@ -165,7 +177,7 @@ export async function POST(request: Request) {
           system_prompt: systemPrompt || agent.systemPrompt || "",
           model: null,
           active: agent.status === "ativo",
-          metadata: { ...agent, ...responseSettings, ...normalizedCrmDestination },
+          metadata: { ...metadataAgent, ...responseSettings, ...normalizedCrmDestination },
           updated_at: now,
           voice_id: responseSettings.voiceId,
           response_mode: responseSettings.responseMode,
@@ -189,7 +201,9 @@ export async function POST(request: Request) {
     agentId: agent.id,
     slotIndex: agent.whatsappSlotIndex,
   });
+  if (canManageExternalApis) await syncAgentExternalApiConnectors(session.tenantId, agent.id, requestedConnectorIds);
 
   const created = rowToAgent(data as Record<string, unknown>, session.tenantId);
+  if (canManageExternalApis) created.externalApiConnectorIds = requestedConnectorIds;
   return NextResponse.json({ agent: created }, { status: 201 });
 }

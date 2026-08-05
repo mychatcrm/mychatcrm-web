@@ -40,6 +40,7 @@ describe("structured agent turn plan", () => {
         location: null,
         eventId: null,
       },
+      externalApiLookups: [],
     });
   });
 
