@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
-  ArrowLeftRight,
   BadgeCheck,
   Check,
   ChevronDown,
@@ -27,6 +26,7 @@ import { EvolutionQrSlotPanel } from "@/components/dashboard/integrations/Evolut
 import type { MetaStatusResponse } from "@/app/api/client/meta/status/route";
 import type { TenantWhatsappConnection } from "@/lib/server/tenant-whatsapp-connections";
 import type { SlotProvider, SlotPurpose } from "@/lib/server/whatsapp-slot-provider";
+import { groupWhatsappLinesByPurpose } from "@/lib/whatsapp-line-grouping";
 import { loadFbSdk } from "@/lib/client/facebook-sdk";
 import { ExternalApiConnectorsPanel } from "./ExternalApiConnectorsPanel";
 
@@ -98,6 +98,12 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const [purposeBySlot, setPurposeBySlot] = useState<Record<number, SlotPurpose | null>>({});
   const [purposeSavingSlot, setPurposeSavingSlot] = useState<number | null>(null);
   const [purposeErrorBySlot, setPurposeErrorBySlot] = useState<Record<number, string | null>>({});
+  // "+ Adicionar outro número" — qual seção está alocando e o erro dela, se houver.
+  const [allocatingSection, setAllocatingSection] = useState<SlotPurpose | null>(null);
+  const [allocateErrorBySection, setAllocateErrorBySection] = useState<Record<SlotPurpose, string | null>>({
+    forms: null,
+    direct: null,
+  });
   const [extraLineQty, setExtraLineQty] = useState(1);
   const [extraLineBuying, setExtraLineBuying] = useState(false);
   const [extraLineOffer, setExtraLineOffer] = useState<{
@@ -543,7 +549,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   // FB.login() must be called synchronously within the user-gesture context.
   // The SDK and config_id are pre-loaded on mount (see useEffect above) so no
   // awaits are needed before calling FB.login(), preventing popup blockers.
-  const connectWaCloud = useCallback((slotIndex: number) => {
+  const connectWaCloud = useCallback((slotIndex: number, allowSwap = false) => {
     const cfg = waCloudConfigRef.current;
     if (!window.FB || !cfg) {
       const reason = waCloudSdkErrorRef.current;
@@ -641,6 +647,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                   waba_id: wabaId,
                   phone_number_id: phoneNumberId,
                   slotIndex,
+                  ...(allowSwap ? { allowSwap: true } : {}),
                 }),
               });
               const exchData = (await exchRes.json()) as {
@@ -707,6 +714,51 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     return map;
   }, [connections, slotIndices]);
 
+  // Eixo da tela: duas seções fixas por finalidade, não "Linha N" numerada.
+  // groupWhatsappLinesByPurpose é puro — testado em unidade separadamente.
+  const lineGrouping = useMemo(
+    () =>
+      groupWhatsappLinesByPurpose(
+        slotIndices.map((slotIndex) => {
+          const pair = connectionsBySlot.get(slotIndex);
+          return {
+            slotIndex,
+            purpose: purposeBySlot[slotIndex] ?? null,
+            connected: Boolean(pair?.evo?.connected) || Boolean(pair?.meta?.connected),
+          };
+        }),
+      ),
+    [slotIndices, connectionsBySlot, purposeBySlot],
+  );
+
+  const allocateLine = useCallback(
+    async (purpose: SlotPurpose) => {
+      setAllocatingSection(purpose);
+      setAllocateErrorBySection((prev) => ({ ...prev, [purpose]: null }));
+      try {
+        const res = await fetch("/api/client/whatsapp/allocate-line", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ purpose }),
+        });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(data.error ?? "Não foi possível liberar outra linha.");
+        }
+        await Promise.all([loadConnections(), loadSlotCapacity()]);
+      } catch (err) {
+        setAllocateErrorBySection((prev) => ({
+          ...prev,
+          [purpose]: err instanceof Error ? err.message : "Falha ao adicionar outro número.",
+        }));
+      } finally {
+        setAllocatingSection(null);
+      }
+    },
+    [loadConnections, loadSlotCapacity],
+  );
+
   const metaPages = metaStatus?.pages ?? [];
   const metaConnected = Boolean(metaStatus?.connected);
   const metaHasPages = metaPages.length > 0;
@@ -725,6 +777,413 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     }).length;
     return { waLinesReady: ready, waLineCount: slotIndices.length };
   }, [connectionsBySlot, slotIndices]);
+
+  /**
+   * Cartão de uma linha — reusado nas duas seções fixas (Formulários Meta /
+   * WhatsApp Direto) e na faixa isolada de linhas sem finalidade ainda.
+   * `sectionPurpose` não nulo esconde o seletor de finalidade (a seção já É a
+   * finalidade); só a faixa de migração passa `null` e mostra o seletor.
+   */
+  const renderLineCard = (slotIndex: number, sectionPurpose: SlotPurpose | null) => {
+    const pair = connectionsBySlot.get(slotIndex);
+    const evoConnected = Boolean(pair?.evo?.connected);
+    const metaConnected2 = Boolean(pair?.meta?.connected);
+    const activeProvider: SlotProvider = pair?.evo?.activeProvider ?? pair?.meta?.activeProvider ?? "evolution";
+    const bothConnected = evoConnected && metaConnected2;
+    const waCloudStatus = waCloudStatusBySlot[slotIndex] ?? null;
+    const waCloudLoading = waCloudLoadingBySlot[slotIndex] ?? true;
+    const waCloudBanner = waCloudBannerBySlot[slotIndex] ?? null;
+    const waCloudConnecting = waCloudConnectingSlot === slotIndex;
+    const waCloudDisconnecting = waCloudDisconnectingSlot === slotIndex;
+    const switchError = switchErrorBySlot[slotIndex] ?? null;
+    const switchBlockedRules = switchBlockedRulesBySlot[slotIndex] ?? [];
+    const linePurpose = purposeBySlot[slotIndex] ?? null;
+    const purposeSaving = purposeSavingSlot === slotIndex;
+    const purposeError = purposeErrorBySlot[slotIndex] ?? null;
+    // Um método por vez: o lado inativo, quando conectado, disponibiliza-se
+    // como conexão nova para o OUTRO método — não pode furar a trava.
+    const qrAllowSwap = metaConnected2 && !evoConnected;
+    const cloudAllowSwap = evoConnected && !metaConnected2;
+
+    return (
+      <div
+        key={slotIndex}
+        className={cn(
+          "rounded-xl border p-4 sm:p-5",
+          isLight ? "border-emerald-200/80 bg-surface-deep/90" : "border-emerald-500/20 bg-surface-deep/25",
+        )}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-2 border-b border-line/60 pb-3">
+          <div>
+            <p className="text-sm font-semibold text-content">Linha {slotIndex + 1}</p>
+            {!bothConnected ? (
+              <p className="mt-0.5 text-[11px] text-content-muted">
+                {evoConnected || metaConnected2
+                  ? `Respondendo por ${activeProvider === "cloud_api" ? "API Meta" : "QR Code"}.`
+                  : "Ainda sem número conectado nesta linha."}
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        {sectionPurpose === null ? (
+          // Faixa de migração: linha com número conectado mas sem finalidade
+          // travada ainda — só aqui o seletor antigo continua disponível.
+          <div className="mt-3 rounded-lg border border-line/70 bg-surface-card/40 px-3 py-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <label
+                  className="text-[11px] font-semibold uppercase tracking-wide text-content-muted"
+                  htmlFor={`line-purpose-${slotIndex}`}
+                >
+                  Finalidade desta linha
+                </label>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-content-muted">
+                  Escolha pra mover esta linha pra uma das seções acima.
+                </p>
+              </div>
+              <select
+                id={`line-purpose-${slotIndex}`}
+                value={linePurpose ?? ""}
+                disabled={purposeSaving}
+                onChange={(event) =>
+                  void changeSlotPurpose(
+                    slotIndex,
+                    event.target.value === "" ? null : (event.target.value as SlotPurpose),
+                  )
+                }
+                className="h-9 shrink-0 rounded-lg border border-line bg-surface-card px-2.5 text-xs text-content outline-none focus:border-primary/60 disabled:opacity-60"
+              >
+                <option value="">Sem finalidade</option>
+                <option value="forms">Formulários Meta</option>
+                <option value="direct">WhatsApp direto</option>
+              </select>
+            </div>
+            {purposeError ? (
+              <p className={cn("mt-2 text-[11px] leading-relaxed", isLight ? "text-amber-800" : "text-amber-300/90")}>
+                {purposeError}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {bothConnected ? (
+          <div
+            className={cn(
+              "mt-3 space-y-2 rounded-lg border px-3 py-2.5 text-xs",
+              isLight ? "border-amber-200 bg-amber-50 text-amber-800" : "border-amber-500/30 bg-amber-500/10 text-amber-300",
+            )}
+          >
+            <p className="flex items-start gap-1.5">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+              Esta linha tem QR e API Meta conectados ao mesmo tempo. Escolha qual mantém — a outra precisa ser
+              desconectada manualmente ali embaixo depois.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={switchingSlot === slotIndex}
+                isLoading={switchingSlot === slotIndex && activeProvider !== "evolution"}
+                onClick={() => void switchSlotProvider(slotIndex, "evolution")}
+              >
+                Manter QR Code
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={switchingSlot === slotIndex}
+                isLoading={switchingSlot === slotIndex && activeProvider !== "cloud_api"}
+                onClick={() => void switchSlotProvider(slotIndex, "cloud_api")}
+              >
+                Manter API Meta
+              </Button>
+            </div>
+            {switchError ? <p className="text-rose-700 dark:text-rose-300">{switchError}</p> : null}
+          </div>
+        ) : null}
+        {switchBlockedRules.length > 0 ? (
+          <div
+            className={cn(
+              "mt-2 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs",
+              isLight ? "border-amber-200 bg-amber-50 text-amber-800" : "border-amber-500/30 bg-amber-500/10 text-amber-300",
+            )}
+          >
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            <p>
+              {switchBlockedRules.length === 1 ? "A regra" : "As regras"}{" "}
+              <strong>{switchBlockedRules.map((rule) => rule.name ?? "sem nome").join(", ")}</strong>{" "}
+              {switchBlockedRules.length === 1 ? "continua" : "continuam"} respondendo pelo QR Code — precisa de um
+              template do WhatsApp aprovado pela Meta para o 1º contacto de Lead Ads.
+            </p>
+          </div>
+        ) : null}
+
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          {/* ── Coluna QR / Evolution ── */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="flex items-center gap-1.5 text-xs font-semibold text-content">
+                <QrCode className="size-3.5 shrink-0 text-primary" aria-hidden />
+                QR Code
+              </p>
+              {evoConnected ? (
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[9px] font-semibold text-emerald-700 dark:text-emerald-300">
+                  Conectado
+                </span>
+              ) : qrAllowSwap ? (
+                <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[9px] font-semibold text-primary">
+                  Trocar método
+                </span>
+              ) : null}
+            </div>
+            <EvolutionQrSlotPanel
+              key={`evo-qr-${tenantId}-${slotIndex}`}
+              slotIndex={slotIndex}
+              autoProvision={false}
+              allowSwap={qrAllowSwap}
+            />
+            {evoConnected ? (
+              <div className="space-y-2 rounded-xl border border-line/70 bg-surface-card/40 p-3">
+                <p className="text-xs font-semibold text-content">Teste de envio (texto livre)</p>
+                <p className="text-[11px] leading-relaxed text-content-muted">
+                  Envia «Teste MyChatCRM — QR Code OK» para validar esta conexão.
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <input
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    placeholder="5562999999999"
+                    value={evoTestPhoneBySlot[slotIndex] ?? ""}
+                    onChange={(event) =>
+                      setEvoTestPhoneBySlot((prev) => ({
+                        ...prev,
+                        [slotIndex]: event.target.value.replace(/[^\d+\s()-]/g, ""),
+                      }))
+                    }
+                    className="h-10 min-w-0 flex-1 rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                  />
+                  <Button
+                    type="button"
+                    className="shrink-0 gap-1.5"
+                    isLoading={evoTestBusySlot === slotIndex}
+                    disabled={!(evoTestPhoneBySlot[slotIndex] ?? "").replace(/\D/g, "")}
+                    onClick={() => void sendEvoTest(slotIndex)}
+                  >
+                    <Send className="size-3.5" aria-hidden />
+                    Enviar teste
+                  </Button>
+                </div>
+                {evoTestResultBySlot[slotIndex] ? (
+                  <p
+                    className={cn(
+                      "text-[11px] leading-relaxed",
+                      evoTestResultBySlot[slotIndex]?.ok
+                        ? "text-emerald-700 dark:text-emerald-300"
+                        : "text-amber-800 dark:text-amber-300",
+                    )}
+                  >
+                    {evoTestResultBySlot[slotIndex]?.text}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          {/* ── Coluna API Meta ── */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="flex items-center gap-1.5 text-xs font-semibold text-content">
+                <BadgeCheck className="size-3.5 shrink-0 text-primary" aria-hidden />
+                API Meta
+              </p>
+              {metaConnected2 ? (
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[9px] font-semibold text-emerald-700 dark:text-emerald-300">
+                  Conectado
+                </span>
+              ) : cloudAllowSwap ? (
+                <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[9px] font-semibold text-primary">
+                  Trocar método
+                </span>
+              ) : null}
+            </div>
+
+            <div className="space-y-3 rounded-xl border border-line bg-surface-deep/30 p-4 text-sm text-content-secondary">
+              {waCloudBanner ? (
+                <div
+                  className={cn(
+                    "flex items-start gap-2 rounded-lg border px-3 py-2 text-xs",
+                    waCloudBanner.startsWith("✅")
+                      ? isLight
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                        : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                      : isLight
+                        ? "border-amber-200 bg-amber-50 text-amber-800"
+                        : "border-amber-500/30 bg-amber-500/10 text-amber-300",
+                  )}
+                >
+                  <span className="mt-0.5 shrink-0">
+                    {waCloudBanner.startsWith("✅") ? <BadgeCheck className="size-3.5" aria-hidden /> : <AlertTriangle className="size-3.5" aria-hidden />}
+                  </span>
+                  <p>{waCloudBanner}</p>
+                </div>
+              ) : null}
+
+              {waCloudLoading ? (
+                <div className="flex items-center gap-2 text-xs text-content-muted">
+                  <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                  A verificar conexão…
+                </div>
+              ) : waCloudStatus?.connected ? (
+                <div className="space-y-3">
+                  <div
+                    className={cn(
+                      "flex items-center gap-3 rounded-xl border p-3",
+                      isLight ? "border-emerald-200 bg-emerald-50/60" : "border-emerald-500/25 bg-emerald-500/[0.07]",
+                    )}
+                  >
+                    <BadgeCheck className={cn("size-5 shrink-0", isLight ? "text-emerald-600" : "text-emerald-400")} aria-hidden />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-content">{waCloudStatus.display_phone ?? waCloudStatus.phone_number_id}</p>
+                      {waCloudStatus.verified_name ? (
+                        <p className="text-xs text-content-secondary">{waCloudStatus.verified_name}</p>
+                      ) : null}
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="shrink-0 border-rose-500/30 text-rose-600 hover:border-rose-500/50 hover:bg-rose-500/5 dark:text-rose-400"
+                    isLoading={waCloudDisconnecting}
+                    onClick={() => void disconnectWaCloud(slotIndex)}
+                  >
+                    <Unlink className="size-4" aria-hidden />
+                    Desconectar API Meta
+                  </Button>
+
+                  <div className="space-y-2 rounded-xl border border-line/70 bg-surface-card/40 p-3">
+                    <p className="text-xs font-semibold text-content">Teste de envio (texto livre)</p>
+                    <p className="text-[11px] leading-relaxed text-content-muted">
+                      Envia «Teste MyChatCRM — API Meta OK» para validar o token/número. Fora da janela de 24h a
+                      Meta pode recusar (131047) — Lead Ads usa template aprovado.
+                    </p>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <input
+                        type="tel"
+                        inputMode="tel"
+                        autoComplete="tel"
+                        placeholder="5562999999999"
+                        value={waCloudTestPhoneBySlot[slotIndex] ?? ""}
+                        onChange={(event) =>
+                          setWaCloudTestPhoneBySlot((prev) => ({
+                            ...prev,
+                            [slotIndex]: event.target.value.replace(/[^\d+\s()-]/g, ""),
+                          }))
+                        }
+                        className="h-10 min-w-0 flex-1 rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                      />
+                      <Button
+                        type="button"
+                        className="shrink-0 gap-1.5"
+                        isLoading={waCloudTestBusySlot === slotIndex}
+                        disabled={!(waCloudTestPhoneBySlot[slotIndex] ?? "").replace(/\D/g, "")}
+                        onClick={() => void sendWaCloudTest(slotIndex)}
+                      >
+                        <Send className="size-3.5" aria-hidden />
+                        Enviar teste
+                      </Button>
+                    </div>
+                    {waCloudTestResultBySlot[slotIndex] ? (
+                      <p
+                        className={cn(
+                          "text-[11px] leading-relaxed",
+                          waCloudTestResultBySlot[slotIndex]?.ok
+                            ? "text-emerald-700 dark:text-emerald-300"
+                            : "text-amber-800 dark:text-amber-300",
+                        )}
+                      >
+                        {waCloudTestResultBySlot[slotIndex]?.text}
+                      </p>
+                    ) : null}
+                    {waCloudTestResultBySlot[slotIndex]?.code === "invalid_token" ? (
+                      <p className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
+                        Use o botão <strong>“Desconectar API Meta”</strong> acima e reconecte para gerar um token
+                        novo.
+                      </p>
+                    ) : null}
+                    {waCloudTestResultBySlot[slotIndex]?.code === "outside_24h_window" ? (
+                      (waCloudTestResultBySlot[slotIndex]?.availableTemplates?.length ?? 0) > 0 ? (
+                        <div className="space-y-2 rounded-lg border border-line/60 bg-surface-card/60 p-2.5">
+                          <p className="text-[11px] font-semibold text-content">
+                            Validar mesmo assim com um template aprovado
+                          </p>
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <select
+                              value={waCloudTestTemplateBySlot[slotIndex] ?? ""}
+                              onChange={(event) =>
+                                setWaCloudTestTemplateBySlot((prev) => ({
+                                  ...prev,
+                                  [slotIndex]: event.target.value,
+                                }))
+                              }
+                              className="h-10 min-w-0 flex-1 rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                            >
+                              <option value="">Selecione um template aprovado</option>
+                              {waCloudTestResultBySlot[slotIndex]?.availableTemplates?.map((t) => (
+                                <option key={t.name} value={t.name}>
+                                  {t.name}
+                                </option>
+                              ))}
+                            </select>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="shrink-0 gap-1.5"
+                              isLoading={waCloudTestBusySlot === slotIndex}
+                              disabled={!waCloudTestTemplateBySlot[slotIndex]}
+                              onClick={() => void sendWaCloudTest(slotIndex, waCloudTestTemplateBySlot[slotIndex])}
+                            >
+                              <Send className="size-3.5" aria-hidden />
+                              Enviar via template aprovado
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-[11px] leading-relaxed text-content-muted">
+                          Nenhum template aprovado encontrado nesta WABA para usar como alternativa — aprove um no
+                          Gerenciador da Meta pra poder validar fora da janela de 24h.
+                        </p>
+                      )
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-xs leading-relaxed text-content-secondary">
+                    {cloudAllowSwap
+                      ? "Conectar aqui troca o método desta linha: assim que confirmar, o QR Code é desligado sozinho."
+                      : "Conecte via Meta API Oficial. O processo é guiado pela própria Meta — sem copiar chaves ou configurações manuais."}
+                  </p>
+                  <Button
+                    type="button"
+                    isLoading={waCloudConnecting}
+                    onClick={() => connectWaCloud(slotIndex, cloudAllowSwap)}
+                    className="min-h-[44px] gap-2 bg-primary px-5 text-white hover:bg-primary-hover"
+                  >
+                    {!waCloudConnecting && <ExternalLink className="size-4" aria-hidden />}
+                    {cloudAllowSwap ? "Trocar para API Meta" : "Conectar API Meta"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-8">
@@ -766,10 +1225,9 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
               <p className={cn(typography.ui.overline, "text-emerald-700 dark:text-emerald-300/90")}>Canal principal</p>
               <h3 className="font-display text-lg font-bold text-content">WhatsApp Business</h3>
               <p className="text-xs text-content-secondary">
-                Tem <strong className="text-content">{slotIndices.length}</strong>{" "}
-                {slotIndices.length === 1 ? "linha" : "linhas"} (plano + extras). Cada linha aceita{" "}
-                <strong className="text-content">QR e API Meta ao mesmo tempo</strong> — troque entre eles sem
-                desconectar nenhum dos dois.
+                Um número pra <strong className="text-content">Formulários Meta</strong> e outro pra{" "}
+                <strong className="text-content">WhatsApp Direto</strong> — cada um usa QR ou API Meta, nunca os
+                dois ao mesmo tempo. Compre linhas extra pra adicionar mais números a qualquer uma das seções.
               </p>
             </div>
           </div>
@@ -845,8 +1303,8 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
           </div>
           <p className="text-sm text-content-secondary">
             Com <strong className="text-content">QR</strong>, o código é gerado no seu servidor WhatsApp (Evolution) e aparece aqui. Com <strong className="text-content">API Meta</strong>, o
-            caminho oficial para número verificado e envios em massa. Ligue os dois numa mesma linha e use o botão de
-            troca para decidir qual responde, sem perder a configuração do outro lado.
+            caminho oficial para número verificado e envios em massa. Cada número usa só um dos dois — pra trocar de
+            método, use «Trocar método» dentro da linha.
           </p>
           <details
             className={cn(
@@ -861,384 +1319,106 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
               O QR liga à Evolution na VPS: o MyChatCRM cria a instância e mostra o código. A API Meta é a opção certa para empresas com templates aprovados.
             </p>
           </details>
-          <div className="space-y-5">
-            {slotIndices.map((slotIndex) => {
-              const isBase = slotIndex < slotCapacity.includedLines;
-              const lineTitle = isBase ? `Linha ${slotIndex + 1} — número incluído no plano` : `Linha ${slotIndex + 1} — número extra`;
-              const pair = connectionsBySlot.get(slotIndex);
-              const evoConnected = Boolean(pair?.evo?.connected);
-              const metaConnected2 = Boolean(pair?.meta?.connected);
-              const activeProvider: SlotProvider = pair?.evo?.activeProvider ?? pair?.meta?.activeProvider ?? "evolution";
-              const bothConnected = evoConnected && metaConnected2;
-              const waCloudStatus = waCloudStatusBySlot[slotIndex] ?? null;
-              const waCloudLoading = waCloudLoadingBySlot[slotIndex] ?? true;
-              const waCloudBanner = waCloudBannerBySlot[slotIndex] ?? null;
-              const waCloudConnecting = waCloudConnectingSlot === slotIndex;
-              const waCloudDisconnecting = waCloudDisconnectingSlot === slotIndex;
-              const switchError = switchErrorBySlot[slotIndex] ?? null;
-              const switchBlockedRules = switchBlockedRulesBySlot[slotIndex] ?? [];
-              const linePurpose = purposeBySlot[slotIndex] ?? null;
-              const purposeSaving = purposeSavingSlot === slotIndex;
-              const purposeError = purposeErrorBySlot[slotIndex] ?? null;
-
-              return (
-                <div
-                  key={slotIndex}
-                  className={cn(
-                    "rounded-xl border p-4 sm:p-5",
-                    isLight ? "border-emerald-200/80 bg-surface-deep/90" : "border-emerald-500/20 bg-surface-deep/25",
-                  )}
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-2 border-b border-line/60 pb-3">
-                    <div>
-                      <p className="text-sm font-semibold text-content">{lineTitle}</p>
-                      <p className="mt-0.5 text-[11px] text-content-muted">
-                        Ligue QR e API Meta nesta linha ao mesmo tempo — nenhum dos dois é desconectado ao trocar.
-                      </p>
-                    </div>
-                    <Badge
-                      className={cn(
-                        "shrink-0 text-[10px]",
-                        "border-emerald-500/40 bg-emerald-500/15",
-                        isLight ? "text-emerald-700" : "text-emerald-300",
-                      )}
-                    >
-                      Respondendo: {activeProvider === "cloud_api" ? "API Meta" : "QR Code"}
-                    </Badge>
-                  </div>
-
-                  {/* Finalidade da linha: é o que impede formulário e WhatsApp
-                      direto de dividirem o mesmo número. «Livre» mantém o
-                      comportamento antigo, sem restrição nenhuma. */}
-                  <div className="mt-3 rounded-lg border border-line/70 bg-surface-card/40 px-3 py-2.5">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <label
-                          className="text-[11px] font-semibold uppercase tracking-wide text-content-muted"
-                          htmlFor={`line-purpose-${slotIndex}`}
-                        >
-                          Finalidade desta linha
-                        </label>
-                        <p className="mt-0.5 text-[11px] leading-relaxed text-content-muted">
-                          Trava quais regras podem usar este número. «Livre» aceita qualquer regra.
-                        </p>
-                      </div>
-                      <select
-                        id={`line-purpose-${slotIndex}`}
-                        value={linePurpose ?? ""}
-                        disabled={purposeSaving}
-                        onChange={(event) =>
-                          void changeSlotPurpose(
-                            slotIndex,
-                            event.target.value === "" ? null : (event.target.value as SlotPurpose),
-                          )
-                        }
-                        className="h-9 shrink-0 rounded-lg border border-line bg-surface-card px-2.5 text-xs text-content outline-none focus:border-primary/60 disabled:opacity-60"
-                      >
-                        <option value="">Livre (sem restrição)</option>
-                        <option value="forms">Formulários Meta</option>
-                        <option value="direct">WhatsApp direto</option>
-                      </select>
-                    </div>
-                    {purposeError ? (
-                      <p
-                        className={cn(
-                          "mt-2 text-[11px] leading-relaxed",
-                          isLight ? "text-amber-800" : "text-amber-300/90",
-                        )}
-                      >
-                        {purposeError}
-                      </p>
-                    ) : null}
-                  </div>
-
-                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                    {/* ── Coluna QR / Evolution ── */}
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <p className="flex items-center gap-1.5 text-xs font-semibold text-content">
-                          <QrCode className="size-3.5 shrink-0 text-primary" aria-hidden />
-                          QR Code
-                        </p>
-                        {activeProvider === "evolution" ? (
-                          <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[9px] font-semibold text-emerald-700 dark:text-emerald-300">
-                            Ativo
-                          </span>
-                        ) : null}
-                      </div>
-                      <EvolutionQrSlotPanel key={`evo-qr-${tenantId}-${slotIndex}`} slotIndex={slotIndex} autoProvision={false} />
-                      {evoConnected ? (
-                        <div className="space-y-2 rounded-xl border border-line/70 bg-surface-card/40 p-3">
-                          <p className="text-xs font-semibold text-content">Teste de envio (texto livre)</p>
-                          <p className="text-[11px] leading-relaxed text-content-muted">
-                            Envia «Teste MyChatCRM — QR Code OK» para validar esta conexão.
-                          </p>
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                            <input
-                              type="tel"
-                              inputMode="tel"
-                              autoComplete="tel"
-                              placeholder="5562999999999"
-                              value={evoTestPhoneBySlot[slotIndex] ?? ""}
-                              onChange={(event) =>
-                                setEvoTestPhoneBySlot((prev) => ({
-                                  ...prev,
-                                  [slotIndex]: event.target.value.replace(/[^\d+\s()-]/g, ""),
-                                }))
-                              }
-                              className="h-10 min-w-0 flex-1 rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
-                            />
-                            <Button
-                              type="button"
-                              className="shrink-0 gap-1.5"
-                              isLoading={evoTestBusySlot === slotIndex}
-                              disabled={!(evoTestPhoneBySlot[slotIndex] ?? "").replace(/\D/g, "")}
-                              onClick={() => void sendEvoTest(slotIndex)}
-                            >
-                              <Send className="size-3.5" aria-hidden />
-                              Enviar teste
-                            </Button>
-                          </div>
-                          {evoTestResultBySlot[slotIndex] ? (
-                            <p
-                              className={cn(
-                                "text-[11px] leading-relaxed",
-                                evoTestResultBySlot[slotIndex]?.ok
-                                  ? "text-emerald-700 dark:text-emerald-300"
-                                  : "text-amber-800 dark:text-amber-300",
-                              )}
-                            >
-                              {evoTestResultBySlot[slotIndex]?.text}
-                            </p>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </div>
-
-                    {/* ── Coluna API Meta ── */}
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <p className="flex items-center gap-1.5 text-xs font-semibold text-content">
-                          <BadgeCheck className="size-3.5 shrink-0 text-primary" aria-hidden />
-                          API Meta
-                        </p>
-                        {activeProvider === "cloud_api" ? (
-                          <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[9px] font-semibold text-emerald-700 dark:text-emerald-300">
-                            Ativo
-                          </span>
-                        ) : null}
-                      </div>
-
-                      <div className="space-y-3 rounded-xl border border-line bg-surface-deep/30 p-4 text-sm text-content-secondary">
-                        {waCloudBanner ? (
-                          <div
-                            className={cn(
-                              "flex items-start gap-2 rounded-lg border px-3 py-2 text-xs",
-                              waCloudBanner.startsWith("✅")
-                                ? isLight
-                                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                                  : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                                : isLight
-                                  ? "border-amber-200 bg-amber-50 text-amber-800"
-                                  : "border-amber-500/30 bg-amber-500/10 text-amber-300",
-                            )}
-                          >
-                            <span className="mt-0.5 shrink-0">
-                              {waCloudBanner.startsWith("✅") ? <BadgeCheck className="size-3.5" aria-hidden /> : <AlertTriangle className="size-3.5" aria-hidden />}
-                            </span>
-                            <p>{waCloudBanner}</p>
-                          </div>
-                        ) : null}
-
-                        {waCloudLoading ? (
-                          <div className="flex items-center gap-2 text-xs text-content-muted">
-                            <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                            A verificar conexão…
-                          </div>
-                        ) : waCloudStatus?.connected ? (
-                          <div className="space-y-3">
-                            <div
-                              className={cn(
-                                "flex items-center gap-3 rounded-xl border p-3",
-                                isLight ? "border-emerald-200 bg-emerald-50/60" : "border-emerald-500/25 bg-emerald-500/[0.07]",
-                              )}
-                            >
-                              <BadgeCheck className={cn("size-5 shrink-0", isLight ? "text-emerald-600" : "text-emerald-400")} aria-hidden />
-                              <div className="min-w-0 flex-1">
-                                <p className="font-semibold text-content">{waCloudStatus.display_phone ?? waCloudStatus.phone_number_id}</p>
-                                {waCloudStatus.verified_name ? (
-                                  <p className="text-xs text-content-secondary">{waCloudStatus.verified_name}</p>
-                                ) : null}
-                              </div>
-                            </div>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="shrink-0 border-rose-500/30 text-rose-600 hover:border-rose-500/50 hover:bg-rose-500/5 dark:text-rose-400"
-                              isLoading={waCloudDisconnecting}
-                              onClick={() => void disconnectWaCloud(slotIndex)}
-                            >
-                              <Unlink className="size-4" aria-hidden />
-                              Desconectar API Meta
-                            </Button>
-
-                            <div className="space-y-2 rounded-xl border border-line/70 bg-surface-card/40 p-3">
-                              <p className="text-xs font-semibold text-content">Teste de envio (texto livre)</p>
-                              <p className="text-[11px] leading-relaxed text-content-muted">
-                                Envia «Teste MyChatCRM — API Meta OK» para validar o token/número. Fora da janela de
-                                24h a Meta pode recusar (131047) — Lead Ads usa template aprovado.
-                              </p>
-                              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                                <input
-                                  type="tel"
-                                  inputMode="tel"
-                                  autoComplete="tel"
-                                  placeholder="5562999999999"
-                                  value={waCloudTestPhoneBySlot[slotIndex] ?? ""}
-                                  onChange={(event) =>
-                                    setWaCloudTestPhoneBySlot((prev) => ({
-                                      ...prev,
-                                      [slotIndex]: event.target.value.replace(/[^\d+\s()-]/g, ""),
-                                    }))
-                                  }
-                                  className="h-10 min-w-0 flex-1 rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
-                                />
-                                <Button
-                                  type="button"
-                                  className="shrink-0 gap-1.5"
-                                  isLoading={waCloudTestBusySlot === slotIndex}
-                                  disabled={!(waCloudTestPhoneBySlot[slotIndex] ?? "").replace(/\D/g, "")}
-                                  onClick={() => void sendWaCloudTest(slotIndex)}
-                                >
-                                  <Send className="size-3.5" aria-hidden />
-                                  Enviar teste
-                                </Button>
-                              </div>
-                              {waCloudTestResultBySlot[slotIndex] ? (
-                                <p
-                                  className={cn(
-                                    "text-[11px] leading-relaxed",
-                                    waCloudTestResultBySlot[slotIndex]?.ok
-                                      ? "text-emerald-700 dark:text-emerald-300"
-                                      : "text-amber-800 dark:text-amber-300",
-                                  )}
-                                >
-                                  {waCloudTestResultBySlot[slotIndex]?.text}
-                                </p>
-                              ) : null}
-                              {waCloudTestResultBySlot[slotIndex]?.code === "invalid_token" ? (
-                                <p className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
-                                  Use o botão <strong>“Desconectar API Meta”</strong> acima e reconecte para gerar
-                                  um token novo.
-                                </p>
-                              ) : null}
-                              {waCloudTestResultBySlot[slotIndex]?.code === "outside_24h_window" ? (
-                                (waCloudTestResultBySlot[slotIndex]?.availableTemplates?.length ?? 0) > 0 ? (
-                                  <div className="space-y-2 rounded-lg border border-line/60 bg-surface-card/60 p-2.5">
-                                    <p className="text-[11px] font-semibold text-content">
-                                      Validar mesmo assim com um template aprovado
-                                    </p>
-                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                                      <select
-                                        value={waCloudTestTemplateBySlot[slotIndex] ?? ""}
-                                        onChange={(event) =>
-                                          setWaCloudTestTemplateBySlot((prev) => ({
-                                            ...prev,
-                                            [slotIndex]: event.target.value,
-                                          }))
-                                        }
-                                        className="h-10 min-w-0 flex-1 rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
-                                      >
-                                        <option value="">Selecione um template aprovado</option>
-                                        {waCloudTestResultBySlot[slotIndex]?.availableTemplates?.map((t) => (
-                                          <option key={t.name} value={t.name}>
-                                            {t.name}
-                                          </option>
-                                        ))}
-                                      </select>
-                                      <Button
-                                        type="button"
-                                        variant="outline"
-                                        className="shrink-0 gap-1.5"
-                                        isLoading={waCloudTestBusySlot === slotIndex}
-                                        disabled={!waCloudTestTemplateBySlot[slotIndex]}
-                                        onClick={() =>
-                                          void sendWaCloudTest(slotIndex, waCloudTestTemplateBySlot[slotIndex])
-                                        }
-                                      >
-                                        <Send className="size-3.5" aria-hidden />
-                                        Enviar via template aprovado
-                                      </Button>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <p className="text-[11px] leading-relaxed text-content-muted">
-                                    Nenhum template aprovado encontrado nesta WABA para usar como alternativa —
-                                    aprove um no Gerenciador da Meta pra poder validar fora da janela de 24h.
-                                  </p>
-                                )
-                              ) : null}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="space-y-3">
-                            <p className="text-xs leading-relaxed text-content-secondary">
-                              Conecte via Meta API Oficial. O processo é guiado pela própria Meta — sem copiar chaves
-                              ou configurações manuais.
-                            </p>
-                            <Button
-                              type="button"
-                              isLoading={waCloudConnecting}
-                              onClick={() => connectWaCloud(slotIndex)}
-                              className="min-h-[44px] gap-2 bg-primary px-5 text-white hover:bg-primary-hover"
-                            >
-                              {!waCloudConnecting && <ExternalLink className="size-4" aria-hidden />}
-                              Conectar API Meta
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-line/40 pt-3">
-                    <p className="flex-1 text-[11px] text-content-muted">
-                      {bothConnected
-                        ? "Os dois métodos estão ligados — escolha qual responde sem desconectar o outro."
-                        : "Ligue QR e API Meta nesta linha para poder trocar entre eles sem desconectar."}
-                    </p>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={!bothConnected || switchingSlot === slotIndex}
-                      isLoading={switchingSlot === slotIndex}
-                      onClick={() => void switchSlotProvider(slotIndex, activeProvider === "evolution" ? "cloud_api" : "evolution")}
-                    >
-                      <ArrowLeftRight className="size-3.5" aria-hidden />
-                      Trocar para {activeProvider === "evolution" ? "API Meta" : "QR Code"}
-                    </Button>
-                  </div>
-                  {switchError ? <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{switchError}</p> : null}
-                  {switchBlockedRules.length > 0 ? (
-                    <div
-                      className={cn(
-                        "mt-2 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs",
-                        isLight ? "border-amber-200 bg-amber-50 text-amber-800" : "border-amber-500/30 bg-amber-500/10 text-amber-300",
-                      )}
-                    >
-                      <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-                      <p>
-                        {switchBlockedRules.length === 1 ? "A regra" : "As regras"}{" "}
-                        <strong>{switchBlockedRules.map((rule) => rule.name ?? "sem nome").join(", ")}</strong>{" "}
-                        {switchBlockedRules.length === 1 ? "continua" : "continuam"} respondendo pelo QR Code — precisa
-                        de um template do WhatsApp aprovado pela Meta para o 1º contacto de Lead Ads. Configure o
-                        template em Distribuição de Leads para migrar {switchBlockedRules.length === 1 ? "essa regra" : "essas regras"} para a API Meta.
-                      </p>
-                    </div>
+          <div className="space-y-6">
+            {/* ── Seção Formulários Meta ── */}
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-sm font-bold text-content">Formulários Meta</h4>
+                {lineGrouping.forms.length > 0 && lineGrouping.freeCapacity > 0 ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    isLoading={allocatingSection === "forms"}
+                    onClick={() => void allocateLine("forms")}
+                  >
+                    + Adicionar outro número
+                  </Button>
+                ) : null}
+              </div>
+              <p className="text-xs text-content-muted">
+                Número que atende leads de Lead Ads. Escolha QR ou API Meta — nunca os dois ao mesmo tempo.
+              </p>
+              {allocateErrorBySection.forms ? (
+                <p className="text-xs text-rose-600 dark:text-rose-400">{allocateErrorBySection.forms}</p>
+              ) : null}
+              {lineGrouping.forms.length > 0 ? (
+                lineGrouping.forms.map((slotIndex) => renderLineCard(slotIndex, "forms"))
+              ) : (
+                <div className="rounded-xl border border-dashed border-line/70 bg-surface-deep/20 p-4 text-center">
+                  <p className="text-xs text-content-muted">Nenhum número conectado ainda.</p>
+                  <Button
+                    type="button"
+                    className="mt-2"
+                    size="sm"
+                    isLoading={allocatingSection === "forms"}
+                    disabled={lineGrouping.freeCapacity === 0}
+                    onClick={() => void allocateLine("forms")}
+                  >
+                    Conectar número
+                  </Button>
+                  {lineGrouping.freeCapacity === 0 ? (
+                    <p className="mt-2 text-[11px] text-content-muted">Sem capacidade livre — compre mais uma linha acima.</p>
                   ) : null}
                 </div>
-              );
-            })}
+              )}
+            </div>
+
+            {/* ── Seção WhatsApp Direto ── */}
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-sm font-bold text-content">WhatsApp Direto</h4>
+                {lineGrouping.direct.length > 0 && lineGrouping.freeCapacity > 0 ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    isLoading={allocatingSection === "direct"}
+                    onClick={() => void allocateLine("direct")}
+                  >
+                    + Adicionar outro número
+                  </Button>
+                ) : null}
+              </div>
+              <p className="text-xs text-content-muted">
+                Número que atende contato espontâneo, sem formulário. Escolha QR ou API Meta — nunca os dois ao mesmo tempo.
+              </p>
+              {allocateErrorBySection.direct ? (
+                <p className="text-xs text-rose-600 dark:text-rose-400">{allocateErrorBySection.direct}</p>
+              ) : null}
+              {lineGrouping.direct.length > 0 ? (
+                lineGrouping.direct.map((slotIndex) => renderLineCard(slotIndex, "direct"))
+              ) : (
+                <div className="rounded-xl border border-dashed border-line/70 bg-surface-deep/20 p-4 text-center">
+                  <p className="text-xs text-content-muted">Nenhum número conectado ainda.</p>
+                  <Button
+                    type="button"
+                    className="mt-2"
+                    size="sm"
+                    isLoading={allocatingSection === "direct"}
+                    disabled={lineGrouping.freeCapacity === 0}
+                    onClick={() => void allocateLine("direct")}
+                  >
+                    Conectar número
+                  </Button>
+                  {lineGrouping.freeCapacity === 0 ? (
+                    <p className="mt-2 text-[11px] text-content-muted">Sem capacidade livre — compre mais uma linha acima.</p>
+                  ) : null}
+                </div>
+              )}
+            </div>
+
+            {/* ── Faixa de migração: linha conectada sem finalidade travada ── */}
+            {lineGrouping.pendingWithConnection.length > 0 ? (
+              <div className="space-y-3">
+                <h4 className="text-sm font-bold text-content">Linhas sem finalidade definida</h4>
+                <p className="text-xs text-content-muted">
+                  Conectadas antes desta separação existir. Escolha a finalidade de cada uma pra mover pra uma das
+                  seções acima.
+                </p>
+                {lineGrouping.pendingWithConnection.map((slotIndex) => renderLineCard(slotIndex, null))}
+              </div>
+            ) : null}
           </div>
         </div>
       </section>

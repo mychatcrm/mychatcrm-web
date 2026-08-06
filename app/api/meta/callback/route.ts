@@ -26,6 +26,9 @@ import {
 } from "@/lib/server/meta-lead-connection-health";
 import { restoreMetaLeadRuleArtifactsForReadyPages } from "@/lib/server/lead-rules-meta-sync";
 import { upsertWhatsAppCloudConnection } from "@/lib/server/whatsapp-cloud-connections";
+import { resolveOrAllocateSlotForPurpose } from "@/lib/server/whatsapp-slot-provider";
+import { serverWhatsAppSlotCapacity } from "@/lib/server/whatsapp-slot-server";
+import { getExtraWhatsappSlots } from "@/lib/server/whatsapp-extra-slots-db";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -322,9 +325,23 @@ async function handleWhatsAppCloudCallback(
   }
 
   // 5. Save to DB
+  // Este fluxo (redirect OAuth) é legado — o botão atual usa o popup do SDK,
+  // que já passa slotIndex explícito para /exchange-code. Não achamos nada na
+  // UI que ainda dispare este caminho, mas se disparar, resolver a linha por
+  // finalidade em vez de slot 0 fixo evita atropelar quem já ocupa aquele
+  // slot com outra finalidade — falha visível é melhor que ponto cego.
+  const session = await buildClientSessionForTenant(tenantId);
+  const extraWhatsappSlots = session ? await getExtraWhatsappSlots(tenantId) : 0;
+  const totalSlots = session ? serverWhatsAppSlotCapacity(session, extraWhatsappSlots) : 1;
+  const allocation = await resolveOrAllocateSlotForPurpose({ tenantId, purpose: "forms", totalSlots });
+  if (!allocation.ok) {
+    console.warn("[meta-callback/whatsapp] no_capacity_for_forms_line", { tenantId });
+    return redirectToIntegracoes(req, "whatsapp=no_capacity", sessionRestore);
+  }
+
   const { error: dbErr } = await upsertWhatsAppCloudConnection({
     tenantId,
-    slotIndex: 0,
+    slotIndex: allocation.slotIndex,
     phoneNumberId,
     wabaId,
     accessToken,

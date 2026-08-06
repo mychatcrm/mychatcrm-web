@@ -92,6 +92,77 @@ export async function setSlotPurpose(
   return { error: error?.message ?? null };
 }
 
+export type AllocateSlotForPurposeResult =
+  | { ok: true; slotIndex: number; isNewSlot: boolean }
+  | { ok: false; reason: "no_capacity" };
+
+/** Slots com número conectado de verdade (QR aberto ou Cloud ativa), qualquer finalidade. */
+async function listConnectedSlotIndices(tenantId: string): Promise<Set<number>> {
+  const sb = createSupabaseServiceClient();
+  const [evoRes, cloudRes] = await Promise.all([
+    sb
+      .from("tenant_evolution_instances")
+      .select("slot_index, connection_state")
+      .eq("tenant_id", tenantId),
+    sb
+      .from("whatsapp_cloud_connections")
+      .select("slot_index")
+      .eq("tenant_id", tenantId)
+      .eq("active", true),
+  ]);
+  const connected = new Set<number>();
+  for (const row of (evoRes.data ?? []) as Array<{ slot_index: number; connection_state: string | null }>) {
+    if (row.connection_state === "open") connected.add(row.slot_index);
+  }
+  for (const row of (cloudRes.data ?? []) as Array<{ slot_index: number }>) {
+    connected.add(row.slot_index);
+  }
+  return connected;
+}
+
+/**
+ * Escolhe (ou reusa) a linha desta finalidade, pra quem conecta clicando numa
+ * seção ("Formulários Meta" / "WhatsApp Direto") em vez de escolher um número
+ * de linha à mão.
+ *
+ * - Já existe linha com essa finalidade → reusa a de menor índice (caso comum:
+ *   1 número por seção).
+ * - Senão, pega a menor linha dentro da capacidade do plano que não tem
+ *   finalidade divergente **nem** número conectado — uma linha "livre" mas já
+ *   conectada (o caso raro de migração) não é reaproveitada em silêncio; ela
+ *   fica pra resolução manual, fora deste caminho.
+ * - Sem linha livre dentro da capacidade → `no_capacity` (o chamador oferece
+ *   comprar mais uma linha).
+ */
+export async function resolveOrAllocateSlotForPurpose(params: {
+  tenantId: string;
+  purpose: SlotPurpose;
+  totalSlots: number;
+}): Promise<AllocateSlotForPurposeResult> {
+  const purposes = await getSlotPurposesForTenant(params.tenantId);
+
+  const existing = [...purposes.entries()]
+    .filter(([, purpose]) => purpose === params.purpose)
+    .map(([slotIndex]) => slotIndex)
+    .sort((a, b) => a - b)[0];
+  if (existing !== undefined) return { ok: true, slotIndex: existing, isNewSlot: false };
+
+  const connectedSlots = await listConnectedSlotIndices(params.tenantId);
+  for (let slotIndex = 0; slotIndex < params.totalSlots; slotIndex += 1) {
+    const currentPurpose = purposes.get(slotIndex) ?? null;
+    if (currentPurpose && currentPurpose !== params.purpose) continue;
+    if (connectedSlots.has(slotIndex)) continue;
+
+    const { error } = await setSlotPurpose(params.tenantId, slotIndex, params.purpose);
+    if (error) {
+      console.warn("[whatsapp-slot-provider] allocate_purpose_failed", params.tenantId, slotIndex, error);
+      continue;
+    }
+    return { ok: true, slotIndex, isNewSlot: true };
+  }
+  return { ok: false, reason: "no_capacity" };
+}
+
 export type SlotProviderSwitchResult = {
   /** Regras de lead_distribution_rules que foram repontadas pro novo lado. */
   switchedRuleIds: string[];

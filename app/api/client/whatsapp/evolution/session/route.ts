@@ -40,6 +40,8 @@ import {
 } from "@/lib/server/integration-disconnect-notifications";
 import { assertSlotIndexAllowed } from "@/lib/server/whatsapp-slot-server";
 import { getExtraWhatsappSlots } from "@/lib/server/whatsapp-extra-slots-db";
+import { deleteWhatsAppCloudConnection, getWhatsAppCloudConnection } from "@/lib/server/whatsapp-cloud-connections";
+import { setSlotActiveProvider } from "@/lib/server/whatsapp-slot-provider";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -114,9 +116,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "EVOLUTION_WEBHOOK_SECRET em falta." }, { status: 503 });
   }
 
-  let body: { slotIndex?: number };
+  let body: { slotIndex?: number; allowSwap?: boolean };
   try {
-    body = (await request.json()) as { slotIndex?: number };
+    body = (await request.json()) as { slotIndex?: number; allowSwap?: boolean };
   } catch {
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
   }
@@ -124,6 +126,22 @@ export async function POST(request: Request) {
   const extraWhatsappSlots = await getExtraWhatsappSlots(session.tenantId);
   if (!Number.isInteger(slotIndex) || !assertSlotIndexAllowed(session, slotIndex, extraWhatsappSlots)) {
     return NextResponse.json({ error: "slotIndex inválido" }, { status: 400 });
+  }
+
+  // Um método por vez por linha. `allowSwap` só é setado pelo fluxo guiado de
+  // troca (/api/client/whatsapp/swap-provider), que já desconectou o lado
+  // antigo antes de chegar aqui — nunca vem direto da UI de conectar.
+  if (!body.allowSwap) {
+    const cloudConnection = await getWhatsAppCloudConnection(session.tenantId, slotIndex);
+    if (cloudConnection?.active) {
+      return NextResponse.json(
+        {
+          error: "Esta linha já usa a API Meta oficial. Desconecte-a antes de trocar pra QR, ou use «Trocar método».",
+          code: "other_provider_connected",
+        },
+        { status: 409 },
+      );
+    }
   }
 
   let existingRow = await getEvolutionInstanceByTenantSlot(session.tenantId, slotIndex);
@@ -469,6 +487,24 @@ export async function GET(request: Request) {
       },
       { status: 503 },
     );
+  }
+
+  // Troca guiada de método: um QR novo só chega a parear com a API Meta ainda
+  // ativa na mesma linha se o POST que o criou passou `allowSwap` (a trava da
+  // Etapa 2 bloqueia qualquer outro caminho) — então, confirmado o QR live,
+  // este é o momento de fechar a troca: reponta as regras pro QR (as duas
+  // conexões ainda existem, então o repontamento de setSlotActiveProvider
+  // funciona sem lacuna) e só então desliga a API Meta, que fica redundante.
+  if (ownerJidConfirmedThisPoll && resolvedWaJid && resolvedWaJid !== row.wa_jid) {
+    const cloudConnection = await getWhatsAppCloudConnection(session.tenantId, slotIndex);
+    if (cloudConnection?.active) {
+      await setSlotActiveProvider(session.tenantId, slotIndex, "evolution");
+      try {
+        await deleteWhatsAppCloudConnection(session.tenantId, slotIndex);
+      } catch (err) {
+        console.warn("[evolution/session] swap_cleanup_cloud_disconnect_failed", err);
+      }
+    }
   }
 
   if (shouldNotifyWhatsappDisconnect({ previousState: row.connection_state, nextState: remoteState })) {

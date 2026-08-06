@@ -105,6 +105,7 @@ export function EvolutionQrSlotPanel({
   statusApiPath = "/api/client/whatsapp/evolution/status",
   autoProvision = true,
   seedQrDataUrl = null,
+  allowSwap = false,
 }: {
   slotIndex: number;
   sessionApiPath?: string;
@@ -120,6 +121,11 @@ export function EvolutionQrSlotPanel({
   strictVerifiedRemoval?: boolean;
   /** QR injetado pelo hub após "Forçar reconexão" (PATCH session). */
   seedQrDataUrl?: string | null;
+  /**
+   * Troca guiada de método: permite iniciar QR mesmo com API Meta ainda ativa
+   * na mesma linha (a rota fecha a troca sozinha assim que o QR confirmar).
+   */
+  allowSwap?: boolean;
 }) {
   const { isLight } = usePanelAppearance();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -255,7 +261,7 @@ export function EvolutionQrSlotPanel({
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slotIndex }),
+        body: JSON.stringify({ slotIndex, ...(allowSwap ? { allowSwap: true } : {}) }),
       });
       const j = await readSessionJson(res);
       applySessionPayload(res, j);
@@ -263,7 +269,7 @@ export function EvolutionQrSlotPanel({
     } finally {
       setBusy(false);
     }
-  }, [applySessionPayload, sessionApiPath, slotIndex]);
+  }, [allowSwap, applySessionPayload, sessionApiPath, slotIndex]);
 
   const handleDisconnect = useCallback(async () => {
     if (
