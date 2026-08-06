@@ -159,30 +159,3 @@ export function incrementConfiguredExtraSlots(tenantId: string): WhatsAppExtraSl
   persist(tenantId, next);
   return next;
 }
-
-/**
- * Alinha `configuredSlots` com o que está realmente ligado em Integrações: cada linha extra (índice ≥ 1)
- * com método QR ou Meta conta como configurada (até o máximo contratado).
- */
-export function updateConfiguredExtrasFromSlotMethods(
-  tenantId: string,
-  slots: ReadonlyArray<"qr" | "meta" | null | undefined>,
-): WhatsAppExtraSlotsState {
-  const prev = readWhatsAppExtraSlotsState(tenantId);
-  if (prev.purchasedSlots <= 0) {
-    if (prev.configuredSlots === 0) return prev;
-    const next: WhatsAppExtraSlotsState = { ...prev, configuredSlots: 0 };
-    persist(tenantId, next);
-    return next;
-  }
-  let n = 0;
-  for (let i = 1; i <= prev.purchasedSlots && i < slots.length; i++) {
-    const m = slots[i];
-    if (m === "qr" || m === "meta") n += 1;
-  }
-  n = Math.min(prev.purchasedSlots, n);
-  if (n === prev.configuredSlots) return prev;
-  const next: WhatsAppExtraSlotsState = { ...prev, configuredSlots: n };
-  persist(tenantId, next);
-  return next;
-}

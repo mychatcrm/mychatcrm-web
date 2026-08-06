@@ -45,6 +45,7 @@ import { deliverAgentReplyWithOptionalTts } from "@/lib/server/agent-tts-outboun
 import { resolveOutboundMediaForAgentResponse } from "@/lib/server/agent-media-files";
 import { sendAgentOutboundMediaViaEvolution } from "@/lib/server/send-agent-outbound-media-evolution";
 import { getEvolutionInstanceByName, updateEvolutionInstanceStateByName } from "@/lib/server/tenant-evolution-instance-db";
+import { assertEvolutionWaJidUnique } from "@/lib/server/whatsapp-number-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { uploadMediaToR2 } from "@/lib/integrations/r2-storage";
 import {
@@ -643,6 +644,28 @@ export async function POST(request: Request) {
                 confirmedState = "open";
                 confirmedWaJid = instanceInfo.ownerJid;
               }
+            }
+          }
+
+          // Um número por linha. A checagem só roda quando a Evolution confirma
+          // um jid novo — pareamento de verdade —, então fica fora do caminho
+          // quente de reconexão. Rejeitou: a sessão já foi derrubada e a linha
+          // marcada como fechada lá dentro; não gravar nada por cima disso.
+          if (
+            confirmedState === "open" &&
+            confirmedWaJid &&
+            previousRow &&
+            previousRow.tenant_id !== SYSTEM_TENANT_ID &&
+            confirmedWaJid !== previousRow.wa_jid
+          ) {
+            const uniqueness = await assertEvolutionWaJidUnique({
+              tenantId: previousRow.tenant_id,
+              slotIndex: previousRow.slot_index,
+              instanceName,
+              waJid: confirmedWaJid,
+            });
+            if (!uniqueness.ok) {
+              return NextResponse.json({ ok: true, rejected: "duplicate_number" });
             }
           }
 
@@ -1385,8 +1408,9 @@ export async function POST(request: Request) {
               metadata.agendaDisponibilidade !== null
                 ? (metadata.agendaDisponibilidade as import("@/lib/types").AgentAgendaDisponibilidade)
                 : null,
-            slotIndex:
-              typeof metadata.whatsappSlotIndex === "number" ? metadata.whatsappSlotIndex : 0,
+            // Linha derivada da conexão que recebeu a mensagem: o lembrete tem
+            // que sair pelo mesmo número que hospedou a conversa.
+            slotIndex: row.slot_index ?? 0,
             operationKey: msg.messageId
               ? `evolution:${row.tenant_id}:${msg.messageId}`
               : null,

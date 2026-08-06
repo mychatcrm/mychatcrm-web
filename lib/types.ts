@@ -312,8 +312,10 @@ export interface Agent {
   /** Fuso IANA do agente (prompt, horários de follow-up). Padrão: UTC. */
   timezone?: string;
   /**
-   * Linha WhatsApp (0 = numero incluido no plano; 1+ = extras contratados).
-   * O metodo QR/API define-se em Integracoes; o agente fica associado a este indice.
+   * @deprecated Não é mais lido em runtime nem editável no painel. Quem define
+   * a linha do agente é a regra em Integrações de Leads, e a linha de envio dos
+   * lembretes é derivada da conexão que recebeu a conversa. Mantido só porque
+   * agentes já gravados carregam o campo em `tenant_agents.metadata`.
    */
   whatsappSlotIndex?: number;
   origens: AgentOrigin[];

@@ -1,10 +1,16 @@
 import type { ClientSession } from "@/lib/client-auth";
-import { getPlanPolicy, normalizeToPlan } from "@/lib/plan-policy";
+import { getPlanIncludedWhatsAppLinesForSession } from "@/lib/plan-limits";
 
+/**
+ * Quantas linhas WhatsApp o tenant pode usar: incluídas no plano + extras compradas.
+ *
+ * Passa por `getPlanIncludedWhatsAppLinesForSession` de propósito. O override de
+ * `operationalLimits` (gravado em `enterprise_provisions`) vence a policy, então
+ * resolver isso à mão aqui deixava este ponto fora de sincronia com o resto do
+ * código — que é o único lugar que decide quantos slots existem de verdade.
+ */
 export function serverWhatsAppSlotCapacity(session: ClientSession, extraWhatsappSlots = 0): number {
-  const plan = normalizeToPlan(session.plan);
-  const policy = getPlanPolicy(plan);
-  const included = Math.max(1, session.operationalLimits?.includedWhatsAppLines ?? policy.includedWhatsAppLines);
+  const included = Math.max(1, getPlanIncludedWhatsAppLinesForSession(session));
   return included + extraWhatsappSlots;
 }
 

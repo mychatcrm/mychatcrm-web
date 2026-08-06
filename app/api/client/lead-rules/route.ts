@@ -14,6 +14,7 @@ import {
 } from "@/lib/server/lead-rules-meta-sync";
 import { stringArray } from "@/lib/server/meta-form-authorization";
 import { validateMetaAutomationConnection } from "@/lib/server/lead-rules-connection-validation";
+import { validateRuleLinePurpose } from "@/lib/server/lead-rules-line-purpose";
 import {
   classifyRuleAgentIssues,
   loadTenantAgentActivation,
@@ -140,6 +141,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const organicValidationError = validateOrganicRulePayload(payload);
   if (organicValidationError) return organicValidationError;
+  // Antes do validador Meta de propósito: a trava de finalidade custa duas
+  // queries locais, enquanto o validador faz várias idas ao Graph.
+  const linePurposeError = await validateRuleLinePurpose(sb, session.tenantId, payload);
+  if (linePurposeError) return linePurposeError;
   const metaConnectionValidationError = await validateMetaAutomationConnection(sb, session.tenantId, payload);
   if (metaConnectionValidationError) return metaConnectionValidationError;
 

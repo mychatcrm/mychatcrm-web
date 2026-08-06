@@ -45,7 +45,7 @@ export async function GET() {
     });
   } catch (err) {
     console.error("[extra-whatsapp/GET] query failed:", err);
-    return NextResponse.json({ extraSlots: 0, totalSlots: 1, includedLines: 1 });
+    return NextResponse.json({ extraSlots: 0, totalSlots: 2, includedLines: 2 });
   }
 }
 

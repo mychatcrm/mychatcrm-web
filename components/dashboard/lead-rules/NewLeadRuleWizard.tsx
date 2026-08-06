@@ -46,6 +46,11 @@ import {
   type LeadRuleSource,
 } from "@/lib/lead-distribution-rules";
 import {
+  filterConnectionsForRuleSource,
+  requiredPurposeForSource,
+  type LinePurpose,
+} from "@/lib/lead-rule-line-purpose-filter";
+import {
   buildLeadRuleMappingsFromFields,
   buildLeadRuleMappingsFromMetaFormGroups,
   computeFormMappingHealth,
@@ -581,10 +586,11 @@ export function NewLeadRuleWizard({
       instance_name: string;
       connection_state: string;
       wa_jid: string | null;
+      purpose?: LinePurpose;
     }>
   >([]);
   const [cloudApiConnections, setCloudApiConnections] = useState<
-    Array<{ connectionId: string; label: string; slotIndex: number; connected: boolean }>
+    Array<{ connectionId: string; label: string; slotIndex: number; connected: boolean; purpose?: LinePurpose }>
   >([]);
   const [metaTemplates, setMetaTemplates] = useState<
     Array<{ name: string; status: string; language: string | null; bodyText: string | null }>
@@ -699,6 +705,7 @@ export function NewLeadRuleWizard({
               instance_name: string;
               connection_state: string;
               wa_jid: string | null;
+              purpose?: LinePurpose;
             }>;
           } | null,
         ) => setWhatsAppConnections(payload?.connections ?? []),
@@ -716,6 +723,7 @@ export function NewLeadRuleWizard({
               slotIndex: number;
               connected: boolean;
             }>;
+            purposes?: Record<string, LinePurpose>;
           } | null,
         ) =>
           setCloudApiConnections(
@@ -726,6 +734,7 @@ export function NewLeadRuleWizard({
                 label: c.label,
                 slotIndex: c.slotIndex,
                 connected: c.connected,
+                purpose: payload?.purposes?.[String(c.slotIndex)] ?? null,
               })),
           ),
       )
@@ -860,6 +869,28 @@ export function NewLeadRuleWizard({
   }, [draft.source]);
 
   const isOrganicWhatsApp = draft.source === ORGANIC_WHATSAPP_SOURCE;
+
+  // Só linhas compatíveis com a origem desta regra. A conexão já selecionada
+  // nunca some da lista — ver filterConnectionsForRuleSource.
+  const selectableEvolutionConnections = useMemo(
+    () => filterConnectionsForRuleSource(whatsAppConnections, draft.source, draft.connectionId),
+    [whatsAppConnections, draft.source, draft.connectionId],
+  );
+  const selectableCloudConnections = useMemo(
+    () =>
+      filterConnectionsForRuleSource(
+        cloudApiConnections.map((c) => ({ ...c, id: c.connectionId })),
+        draft.source,
+        draft.connectionId,
+      ),
+    [cloudApiConnections, draft.source, draft.connectionId],
+  );
+  const requiredLinePurpose = requiredPurposeForSource(draft.source);
+  const requiredLinePurposeLabel =
+    requiredLinePurpose === "forms" ? "formulários Meta" : "WhatsApp direto";
+  /** Sufixo de aviso quando a linha selecionada não bate com a finalidade exigida. */
+  const purposeMismatchSuffix = (purpose: LinePurpose) =>
+    requiredLinePurpose && purpose && purpose !== requiredLinePurpose ? " · finalidade divergente" : "";
 
   const facebookPageSelectOptions = useMemo(() => {
     const opts = metaPages.map((page) => ({
@@ -1992,14 +2023,21 @@ export function NewLeadRuleWizard({
                       className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
                     >
                       <option value="">Selecione uma conexão</option>
-                      {whatsAppConnections.map((connection) => (
+                      {selectableEvolutionConnections.map((connection) => (
                         <option key={connection.id} value={connection.id}>
                           Linha {connection.slot_index + 1} ·{" "}
                           {connection.wa_jid?.split("@")[0] || connection.instance_name}
                           {connection.connection_state === "open" ? " · conectada" : " · desconectada"}
+                          {purposeMismatchSuffix(connection.purpose ?? null)}
                         </option>
                       ))}
                     </select>
+                    {selectableEvolutionConnections.length === 0 && whatsAppConnections.length > 0 ? (
+                      <p className="mt-1.5 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
+                        Nenhuma linha marcada para {requiredLinePurposeLabel}. Marque a finalidade de uma linha em
+                        Integrações → WhatsApp.
+                      </p>
+                    ) : null}
                     <p className="mt-1.5 text-[11px] leading-relaxed text-content-muted">
                       Obrigatória quando a regra atende com IA. Regras antigas sem conexão continuam visíveis, mas não
                       iniciam atendimento até serem corrigidas.
@@ -2014,9 +2052,11 @@ export function NewLeadRuleWizard({
                       >
                         Número Cloud API
                       </label>
-                      {cloudApiConnections.length === 0 ? (
+                      {selectableCloudConnections.length === 0 ? (
                         <p className="rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-                          Nenhum número Cloud API conectado. Vá em Integrações → API Meta e conecte uma linha.
+                          {cloudApiConnections.length === 0
+                            ? "Nenhum número Cloud API conectado. Vá em Integrações → API Meta e conecte uma linha."
+                            : `Nenhuma linha Cloud API marcada para ${requiredLinePurposeLabel}. Marque a finalidade de uma linha em Integrações → WhatsApp.`}
                         </p>
                       ) : (
                         <select
@@ -2033,10 +2073,11 @@ export function NewLeadRuleWizard({
                           className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
                         >
                           <option value="">Selecione o número Cloud</option>
-                          {cloudApiConnections.map((connection) => (
+                          {selectableCloudConnections.map((connection) => (
                             <option key={connection.connectionId} value={connection.connectionId}>
                               Linha {connection.slotIndex + 1} · {connection.label}
                               {connection.connected ? " · conectada" : ""}
+                              {purposeMismatchSuffix(connection.purpose ?? null)}
                             </option>
                           ))}
                         </select>
@@ -2143,14 +2184,21 @@ export function NewLeadRuleWizard({
                       className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
                     >
                       <option value="">Selecione uma conexão</option>
-                      {whatsAppConnections.map((connection) => (
+                      {selectableEvolutionConnections.map((connection) => (
                         <option key={connection.id} value={connection.id}>
                           Linha {connection.slot_index + 1} ·{" "}
                           {connection.wa_jid?.split("@")[0] || connection.instance_name}
                           {connection.connection_state === "open" ? " · conectada" : " · desconectada"}
+                          {purposeMismatchSuffix(connection.purpose ?? null)}
                         </option>
                       ))}
                     </select>
+                    {selectableEvolutionConnections.length === 0 && whatsAppConnections.length > 0 ? (
+                      <p className="mt-1.5 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
+                        Nenhuma linha marcada para {requiredLinePurposeLabel}. Marque a finalidade de uma linha em
+                        Integrações → WhatsApp.
+                      </p>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="mt-3 space-y-3">

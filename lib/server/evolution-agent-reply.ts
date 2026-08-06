@@ -843,6 +843,10 @@ export async function processAgentResponseJob(
     if (!skipGenerationCheck && (await isGenerationStale(sb, job.id, generation))) {
       return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
     }
+    // A linha do lembrete vem da conexão que hospedou a conversa, não de uma
+    // escolha guardada no agente: o lembrete tem que sair pelo mesmo número.
+    const inboundInstance = await getEvolutionInstanceByName(job.instance_name);
+
     const agendaTurn = await resolveAgendaTurn({
       sb,
       tenantId: job.tenant_id,
@@ -869,7 +873,7 @@ export async function processAgentResponseJob(
         typeof metadata.agendaDisponibilidade === "object" && metadata.agendaDisponibilidade !== null
           ? (metadata.agendaDisponibilidade as import("@/lib/types").AgentAgendaDisponibilidade)
           : null,
-      slotIndex: typeof metadata.whatsappSlotIndex === "number" ? metadata.whatsappSlotIndex : 0,
+      slotIndex: inboundInstance?.slot_index ?? 0,
       operationKey: `agent-response-job:${job.id}:${generation}:${unitIndex}`,
       jobId: skipGenerationCheck ? null : job.id,
       claimedGeneration: skipGenerationCheck ? null : generation,

@@ -26,30 +26,6 @@ export const dynamic = "force-dynamic";
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function linkAgentToWhatsAppSlot(params: {
-  sb: ReturnType<typeof createSupabaseServiceClient>;
-  tenantId: string;
-  agentId: string;
-  slotIndex?: number | null;
-}): Promise<void> {
-  if (!Number.isFinite(params.slotIndex)) return;
-  const slotIndex = Math.max(0, Math.floor(Number(params.slotIndex)));
-
-  // Always update default_agent_id
-  const { error } = await params.sb
-    .from("tenant_evolution_instances")
-    .update({ default_agent_id: params.agentId, updated_at: new Date().toISOString() })
-    .eq("tenant_id", params.tenantId)
-    .eq("slot_index", slotIndex);
-  if (error && !isMissingColumnError(error)) {
-    console.warn("[api/client/agentes] WhatsApp slot default link", error.code, error.message);
-  }
-
-  // organic_agent_id is intentionally controlled only by whatsapp_organico
-  // lead rules. Creating/editing an agent must never authorize private WhatsApp
-  // automation by itself.
-}
-
 // ---------------------------------------------------------------------------
 // GET — lista agentes do tenant
 // ---------------------------------------------------------------------------
@@ -195,12 +171,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Erro ao criar agente." }, { status: 503 });
   }
 
-  await linkAgentToWhatsAppSlot({
-    sb,
-    tenantId: session.tenantId,
-    agentId: agent.id,
-    slotIndex: agent.whatsappSlotIndex,
-  });
   if (canManageExternalApis) await syncAgentExternalApiConnectors(session.tenantId, agent.id, requestedConnectorIds);
 
   const created = rowToAgent(data as Record<string, unknown>, session.tenantId);

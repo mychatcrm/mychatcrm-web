@@ -9,12 +9,16 @@ export type PlanBillingCycle = "monthly" | "annual";
 /** Desconto aplicado ao equivalente mensal quando o cliente escolhe faturamento anual (vitrine). */
 export const PLAN_ANNUAL_DISCOUNT_PERCENT = 17;
 
-/** Cada plano inclui 1 número WhatsApp (API oficial); cada número adicional cobrado à parte. */
+/**
+ * Cada plano inclui 2 números WhatsApp (API oficial); cada número adicional cobrado à parte.
+ * São duas linhas porque formulários Meta e WhatsApp direto são atendidos por linhas
+ * separadas — ver a finalidade por linha em `tenant_whatsapp_slot_state.purpose`.
+ */
 export const WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL = 75;
 /** Todos os planos incluem um conector REST/JSON; cada conector adicional é recorrente. */
 export const EXTERNAL_API_EXTRA_MONTHLY_BRL = 49.9;
 
-const WHATSAPP_INCLUDED_LABEL = "1 número WhatsApp (API oficial)";
+const WHATSAPP_INCLUDED_LABEL = "2 números WhatsApp (API oficial)";
 const WHATSAPP_EXTRA_LABEL = `+R$ ${WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL}/mês por número adicional`;
 
 export function planEffectiveMonthlyBRL(priceMonthly: number, cycle: PlanBillingCycle): number {

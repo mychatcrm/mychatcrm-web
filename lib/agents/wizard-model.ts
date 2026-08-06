@@ -16,7 +16,6 @@ import type {
   KeywordRule,
   OriginType,
 } from "@/lib/types";
-import { totalWhatsAppLinesForTenant } from "@/lib/whatsapp-connection-storage";
 import { DEFAULT_SYSTEM_PROMPT_TEMPLATE } from "./default-system-prompt-template";
 import { normalizeInstructionMode } from "./instruction-mode";
 import { normalizeAgentCrmDestination } from "./crm-destination";
@@ -51,7 +50,6 @@ export type AgentWizardDraft = {
   followUpInteligente: AgentFollowUpInteligente;
   funil: Agent["funil"];
   /** Indice da linha WhatsApp (0 plano, 1+ extras) — ver Integracoes. */
-  whatsappSlotIndex: number;
   /** Se falso, CTA/handoff ficam só nas instruções (campos abaixo ocultos). */
   ctaHandoffAtivo: boolean;
   /** Se true, o agente pode alterar a agenda usando diretivas estruturadas. */
@@ -175,9 +173,6 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     targetFunnel.columns.find((column) => column.id === crmDestination.crmTargetColumnId)?.id ??
     targetFunnel.columns[0]?.id ??
     fallbackColumn;
-  const waCap = totalWhatsAppLinesForTenant(agent.clientId);
-  const rawWa = agent.whatsappSlotIndex ?? 0;
-  const whatsappSlotIndex = Math.min(Math.max(0, Math.floor(rawWa)), Math.max(0, waCap - 1));
   const smartWait = sanitizeAgentSmartWaitSettings({
     enabled: agent.smartWaitEnabled,
     initialSeconds: agent.smartWaitInitialSeconds,
@@ -216,7 +211,6 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     timezone,
     followUpInteligente,
     funil: { ...legacyFunil },
-    whatsappSlotIndex,
     ctaHandoffAtivo: agent.ctaHandoffAtivo ?? false,
     agendaAutomationEnabled: agent.agendaAutomationEnabled ?? false,
     useSystemToneInstructions: agent.useSystemToneInstructions ?? true,
@@ -278,20 +272,12 @@ ${
 export function validateCompactAgentDraft(
   draft: AgentWizardDraft,
   crmFunnels?: readonly CrmFunnel[],
-  tenantId?: string,
 ): string | null {
   if (!draft.nome.trim()) return "Informe o nome do agente.";
   if (draft.instructionMode === "simple") {
     if (!draft.simplePrompt.trim()) return "Preencha o prompt do agente.";
   } else if (!draft.systemPrompt.trim()) {
     return "Preencha as instruções do agente.";
-  }
-  if (tenantId && typeof window !== "undefined") {
-    const cap = totalWhatsAppLinesForTenant(tenantId);
-    const idx = Math.max(0, Math.floor(Number.isFinite(draft.whatsappSlotIndex) ? draft.whatsappSlotIndex : 0));
-    if (idx < 0 || idx >= cap) {
-      return "Escolha uma linha WhatsApp valida em «Numero WhatsApp do agente» (Integracoes).";
-    }
   }
   if (!draft.origens.some((origin) => origin?.ativo)) return "Ative pelo menos uma origem em «Ativação e origens».";
   if (!draft.fluxo.length) return "Mantenha ao menos uma etapa no fluxo.";
@@ -390,7 +376,6 @@ export const defaultWizardDraft: AgentWizardDraft = {
     slaHoras: 2,
     maxFollowUps: 0,
   },
-  whatsappSlotIndex: 0,
   ctaHandoffAtivo: true,
   agendaAutomationEnabled: false,
   useSystemToneInstructions: true,

@@ -5,7 +5,7 @@
 
 import { PLAN_CHECKOUT_SLUGS } from "@/lib/plans";
 
-export const PLAN_POLICY_VERSION = 1 as const;
+export const PLAN_POLICY_VERSION = 2 as const;
 
 /** Slugs canónicos de assinatura (painel + cookies + billing). */
 export type NormalizedPlan = "solo" | "equipa" | "escala" | "enterprise";
@@ -31,7 +31,7 @@ const POLICY: Record<NormalizedPlan, PlanLimits> = {
     includedAgents: 2,
     maxSalesFunnels: 5,
     monthlyAttendedLeadsCap: 500,
-    includedWhatsAppLines: 1,
+    includedWhatsAppLines: 2,
   },
   equipa: {
     maxDirectors: 1,
@@ -40,7 +40,7 @@ const POLICY: Record<NormalizedPlan, PlanLimits> = {
     includedAgents: 5,
     maxSalesFunnels: 12,
     monthlyAttendedLeadsCap: 5000,
-    includedWhatsAppLines: 1,
+    includedWhatsAppLines: 2,
   },
   escala: {
     maxDirectors: 5,
@@ -49,7 +49,7 @@ const POLICY: Record<NormalizedPlan, PlanLimits> = {
     includedAgents: 30,
     maxSalesFunnels: 25,
     monthlyAttendedLeadsCap: 15000,
-    includedWhatsAppLines: 1,
+    includedWhatsAppLines: 2,
   },
   enterprise: {
     maxDirectors: 5,
@@ -58,7 +58,7 @@ const POLICY: Record<NormalizedPlan, PlanLimits> = {
     includedAgents: 30,
     maxSalesFunnels: 100,
     monthlyAttendedLeadsCap: 100_000,
-    includedWhatsAppLines: 1,
+    includedWhatsAppLines: 2,
   },
 };
 
