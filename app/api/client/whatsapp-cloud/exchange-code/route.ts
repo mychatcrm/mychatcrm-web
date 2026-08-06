@@ -9,6 +9,9 @@ import { registerWhatsAppCloudNumber, subscribeAppToWaba } from "@/lib/server/wh
 import { findCloudNumberConflict } from "@/lib/server/whatsapp-number-guard";
 import { assertSlotIndexAllowed } from "@/lib/server/whatsapp-slot-server";
 import { getExtraWhatsappSlots } from "@/lib/server/whatsapp-extra-slots-db";
+import { getEvolutionInstanceByTenantSlot } from "@/lib/server/tenant-evolution-instance-db";
+import { setSlotActiveProvider } from "@/lib/server/whatsapp-slot-provider";
+import { removeEvolutionSlotSafely } from "@/lib/server/evolution-slot-lifecycle";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +38,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (!guard.ok) return guard.response;
   const { session } = guard;
 
-  const body = (await req.json()) as { code?: string; waba_id?: string; phone_number_id?: string; slotIndex?: number };
+  const body = (await req.json()) as {
+    code?: string;
+    waba_id?: string;
+    phone_number_id?: string;
+    slotIndex?: number;
+    allowSwap?: boolean;
+  };
   const { code, waba_id, phone_number_id } = body;
 
   if (!code || !waba_id || !phone_number_id) {
@@ -46,6 +55,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const extraWhatsappSlots = await getExtraWhatsappSlots(session.tenantId);
   if (!Number.isInteger(slotIndex) || !assertSlotIndexAllowed(session, slotIndex, extraWhatsappSlots)) {
     return NextResponse.json({ error: "slotIndex inválido" }, { status: 400 });
+  }
+
+  // Um método por vez por linha. `allowSwap` só vem do fluxo guiado de troca
+  // (/api/client/whatsapp/swap-provider), que já desconectou o QR antes de
+  // chegar aqui — nunca vem direto da UI de conectar.
+  if (!body.allowSwap) {
+    const evoInstance = await getEvolutionInstanceByTenantSlot(session.tenantId, slotIndex);
+    if (evoInstance?.connection_state === "open") {
+      return NextResponse.json(
+        {
+          error: "Esta linha já usa QR Code. Desconecte-o antes de trocar pra API Meta, ou use «Trocar método».",
+          code: "other_provider_connected",
+        },
+        { status: 409 },
+      );
+    }
   }
 
   const appId = process.env.META_APP_ID?.trim();
@@ -172,6 +197,26 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (dbErr) {
     console.error("[exchange-code] db save failed", dbErr);
     return NextResponse.json({ error: "Failed to save connection" }, { status: 500 });
+  }
+
+  // Troca guiada de método: uma conexão Cloud só chega aqui com QR ainda aberto
+  // na mesma linha se veio de `allowSwap` (a trava da Etapa 2 bloqueia qualquer
+  // outro caminho). Confirmada a Cloud, fecha a troca: reponta as regras pra
+  // ela (as duas conexões ainda existem, então o repontamento funciona sem
+  // lacuna) e só então desliga o QR, que fica redundante.
+  if (body.allowSwap) {
+    const evoInstance = await getEvolutionInstanceByTenantSlot(session.tenantId, slotIndex);
+    if (evoInstance?.connection_state === "open") {
+      await setSlotActiveProvider(session.tenantId, slotIndex, "cloud_api");
+      const cleanup = await removeEvolutionSlotSafely({
+        tenantId: session.tenantId,
+        slotIndex,
+        mode: "deleting",
+      });
+      if (cleanup.state !== "complete" && cleanup.state !== "missing") {
+        console.warn("[exchange-code] swap_cleanup_qr_disconnect_pending", cleanup.state);
+      }
+    }
   }
 
   if (isNewConnection) {
