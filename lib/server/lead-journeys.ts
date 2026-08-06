@@ -7,6 +7,10 @@ import {
   isAgentAuthorizedForDirectWhatsApp,
   resolveDirectWhatsAppAgentFromRules,
 } from "@/lib/server/agent-channel-authorization";
+import {
+  classifyRuleAgentIssues,
+  loadTenantAgentActivation,
+} from "@/lib/server/lead-rule-agent-health";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -443,6 +447,72 @@ export async function authorizeActiveJourney(params: {
   return { ok: false, reason: "manual_journey_has_no_automation", journey };
 }
 
+/**
+ * Razões de bloqueio que significam "a configuração mudou depois que esta
+ * jornada começou", e não "este contato não pode ser atendido".
+ *
+ * Sem recuperação, trocar o agente de uma regra de WhatsApp direto deixava o
+ * contato sem resposta até a jornada expirar (até 24h): toda mensagem seguinte
+ * batia em `journey_direct_rule_revoked` e nunca era reavaliada pela regra
+ * atual. `journey_expired` tem o mesmo efeito por outro caminho — a jornada já
+ * foi fechada no banco e mesmo assim bloqueava a mensagem que a expirou.
+ *
+ * Fora da lista de propósito: jornada de outra origem (formulário, campanha,
+ * manual) nunca pode ser sequestrada pela regra orgânica, e `manual_review` é
+ * decisão humana pendente, não configuração quebrada.
+ */
+const RECOVERABLE_DIRECT_JOURNEY_REASONS = new Set([
+  "journey_direct_rule_revoked",
+  "journey_agent_inactive",
+  "journey_agent_mismatch",
+  "journey_connection_missing",
+  "journey_expired",
+]);
+
+function isRecoverableDirectJourney(
+  result: Extract<JourneyAuthorizationResult, { ok: false }>,
+): boolean {
+  if (!result.journey || result.journey.source !== "whatsapp_direct") return false;
+  return RECOVERABLE_DIRECT_JOURNEY_REASONS.has(result.reason);
+}
+
+/**
+ * Fecha a jornada superada **antes** de ativar a substituta.
+ *
+ * A ordem é carga estrutural: `activate_lead_journey` só supersede a jornada
+ * corrente sob `latest_wins`. Sob `priority_wins`/`keep_until_inactive` a nova
+ * nasceria já `superseded`, e sob `manual_review` as duas ficariam paradas —
+ * os três casos deixando o contato travado uma segunda vez. Com a velha
+ * fechada, a RPC cria uma jornada limpa sob qualquer política.
+ */
+async function closeStaleDirectJourney(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  journeyId: string;
+  reason: string;
+}): Promise<boolean> {
+  const now = new Date().toISOString();
+  const { error } = await params.sb
+    .from("lead_journeys")
+    .update({
+      status: "closed",
+      ended_at: now,
+      updated_at: now,
+      metadata: { recovered_from: params.reason, recovered_at: now },
+    })
+    .eq("tenant_id", params.tenantId)
+    .eq("id", params.journeyId);
+  if (error) {
+    console.warn("[lead-journeys] close_stale_failed", {
+      tenant_id: params.tenantId,
+      journey_id: params.journeyId,
+      error: error.message,
+    });
+    return false;
+  }
+  return true;
+}
+
 export async function resolveDirectJourneyAgent(params: {
   sb: SupabaseServiceClient;
   tenantId: string;
@@ -460,14 +530,30 @@ export async function resolveDirectJourneyAgent(params: {
       : { ok: false, reason: "blocked_no_direct_whatsapp_rule", journey: null };
   }
 
-  const existing = await authorizeActiveJourney({
+  let existing = await authorizeActiveJourney({
     sb: params.sb,
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,
     connectionId: params.connectionId,
   });
   if (existing.ok) return existing;
-  if (existing.journey) return existing;
+
+  // Contato com atendimento em andamento que escreve numa outra linha do mesmo
+  // tenant continua com quem já o atende: a jornada mantém agente e base de
+  // autorização, e só o transporte da resposta muda (sai pela linha que
+  // recebeu). O isolamento entre contas não é afetado — a consulta de jornada
+  // já é escopada por tenant_id.
+  if (!existing.ok && existing.reason === "journey_connection_mismatch") {
+    const continuation = await authorizeActiveJourney({
+      sb: params.sb,
+      tenantId: params.tenantId,
+      remoteJid: params.remoteJid,
+    });
+    if (continuation.ok) return continuation;
+    existing = continuation;
+  }
+
+  if (existing.journey && !isRecoverableDirectJourney(existing)) return existing;
 
   const { data, error } = await params.sb
     .from("lead_distribution_rules")
@@ -477,7 +563,7 @@ export async function resolveDirectJourneyAgent(params: {
     .eq("source", "whatsapp_organico")
     .order("order_index", { ascending: true });
   if (error) {
-    return { ok: false, reason: "direct_rule_query_failed", journey: null };
+    return existing.journey ? existing : { ok: false, reason: "direct_rule_query_failed", journey: null };
   }
   const matchingRules = ((data ?? []) as Array<Record<string, unknown>>).filter((candidate) => {
     const ruleConnection = text(candidate.connection_id);
@@ -489,20 +575,43 @@ export async function resolveDirectJourneyAgent(params: {
       connection_id: params.connectionId ?? null,
       rule_count: matchingRules.length,
     });
-    return { ok: false, reason: "direct_rule_ambiguous", journey: null };
+    return existing.journey ? existing : { ok: false, reason: "direct_rule_ambiguous", journey: null };
   }
   const rule = matchingRules[0] ?? null;
   const ruleAgentIds = rule ? stringArray(rule.agent_ids) : [];
   if (rule && ruleAgentIds.length !== 1) {
-    return {
-      ok: false,
-      reason: "direct_rule_invalid_agent_count",
-      journey: null,
-    };
+    return existing.journey
+      ? existing
+      : { ok: false, reason: "direct_rule_invalid_agent_count", journey: null };
   }
   const agentId = ruleAgentIds[0] ?? null;
   if (!rule || !agentId) {
-    return { ok: false, reason: "blocked_no_direct_whatsapp_rule", journey: null };
+    return existing.journey
+      ? existing
+      : { ok: false, reason: "blocked_no_direct_whatsapp_rule", journey: null };
+  }
+
+  // Só troca a jornada por um substituto que de facto atende. Sem isto, uma
+  // regra que ainda aponta para o mesmo agente pausado faria a jornada ser
+  // fechada e recriada a cada mensagem, sem nunca responder.
+  if (existing.journey) {
+    const activation = await loadTenantAgentActivation(params.sb, params.tenantId);
+    if (!activation || classifyRuleAgentIssues([agentId], activation).length > 0) {
+      return existing;
+    }
+    const closed = await closeStaleDirectJourney({
+      sb: params.sb,
+      tenantId: params.tenantId,
+      journeyId: existing.journey.id,
+      reason: existing.reason,
+    });
+    if (!closed) return existing;
+    console.info("[lead-journeys] direct_journey_recovered", {
+      tenant_id: params.tenantId,
+      old_journey_id: existing.journey.id,
+      reason: existing.reason,
+      new_agent_id: agentId,
+    });
   }
 
   const journey = await activateLeadJourney({

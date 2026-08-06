@@ -52,7 +52,6 @@ export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDr
   const { timezone, followUpInteligente } = followUpAndTimezoneFromDraft(draft);
   return {
     ...existing,
-    whatsappSlotIndex: draft.whatsappSlotIndex ?? 0,
     nome: draft.nome.trim(),
     cor: draft.cor,
     avatar: draft.avatar,
@@ -120,7 +119,6 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
     ...base,
     id: `ag-novo-${Date.now()}`,
     clientId: tenantId,
-    whatsappSlotIndex: draft.whatsappSlotIndex ?? 0,
     nome: draft.nome.trim(),
     cor: draft.cor,
     avatar: draft.avatar,

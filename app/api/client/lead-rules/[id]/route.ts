@@ -8,6 +8,7 @@ import {
 } from "@/lib/server/lead-distribution-rules";
 import { stringArray } from "@/lib/server/meta-form-authorization";
 import { validateMetaAutomationConnection } from "@/lib/server/lead-rules-connection-validation";
+import { validateRuleLinePurpose } from "@/lib/server/lead-rules-line-purpose";
 import {
   deleteMetaFormMappingsForRule,
   ensureMetaLeadWebhookSubscriptionForRule,
@@ -142,6 +143,10 @@ export async function PUT(req: NextRequest, { params }: RouteContext): Promise<N
 
   const organicValidationError = validateOrganicRulePayload(payload);
   if (organicValidationError) return organicValidationError;
+  // Antes do validador Meta de propósito: a trava de finalidade custa duas
+  // queries locais, enquanto o validador faz várias idas ao Graph.
+  const linePurposeError = await validateRuleLinePurpose(sb, session.tenantId, payload);
+  if (linePurposeError) return linePurposeError;
   const metaConnectionValidationError = await validateMetaAutomationConnection(sb, session.tenantId, payload);
   if (metaConnectionValidationError) return metaConnectionValidationError;
 

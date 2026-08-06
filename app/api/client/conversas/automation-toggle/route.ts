@@ -7,7 +7,7 @@ import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { conversationInScope, resolveAccessScope } from "@/lib/server/access-scope";
 import { syncAutomationMode } from "@/lib/server/conversation-operation";
-import { getEvolutionInstanceByTenantId } from "@/lib/server/tenant-evolution-instance-db";
+import { resolveConversationAgentId } from "@/lib/server/conversation-agent-resolve";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +30,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "enabled deve ser boolean" }, { status: 400 });
   }
 
-  const instance = await getEvolutionInstanceByTenantId(session.tenantId);
   const sb = createSupabaseServiceClient();
   if (!(await conversationInScope(sb, session.tenantId, remoteJid, await resolveAccessScope(sb, session)))) {
     return NextResponse.json({ error: "Conversa não encontrada" }, { status: 404 });
@@ -43,7 +42,7 @@ export async function POST(request: Request) {
     enabled: body.enabled,
     actorId: session.employeeId ?? session.email,
     actorName: session.displayName,
-    agentId: instance?.default_agent_id ?? null,
+    agentId: await resolveConversationAgentId({ sb, tenantId: session.tenantId, remoteJid }),
   });
 
   return NextResponse.json({

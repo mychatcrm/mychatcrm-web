@@ -6,6 +6,7 @@ import {
   upsertWhatsAppCloudConnection,
 } from "@/lib/server/whatsapp-cloud-connections";
 import { registerWhatsAppCloudNumber, subscribeAppToWaba } from "@/lib/server/whatsapp-cloud-onboarding";
+import { findCloudNumberConflict } from "@/lib/server/whatsapp-number-guard";
 import { assertSlotIndexAllowed } from "@/lib/server/whatsapp-slot-server";
 import { getExtraWhatsappSlots } from "@/lib/server/whatsapp-extra-slots-db";
 
@@ -120,11 +121,43 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // 4. Save to DB
-  // Checked before the upsert (whose conflict key is phone_number_id alone,
-  // not tenant-scoped) so we know whether this is a genuinely new connection
-  // for this tenant, vs. a token-refresh reauth of an already-connected number.
+  // Checked before the upsert so we know whether this is a genuinely new
+  // connection for this tenant, vs. a token-refresh reauth of an
+  // already-connected number.
   const existingConnection = await lookupWhatsAppCloudConnectionByPhoneNumberId(phone_number_id);
   const isNewConnection = !existingConnection || existingConnection.tenant_id !== session.tenantId;
+
+  // Um número por linha. `whatsapp_cloud_connections` tem UNIQUE global em
+  // phone_number_id, então sem esta pré-checagem o conflito viraria um 23505
+  // cru → 500 "Failed to save connection", sem o operador saber o que houve.
+  if (existingConnection && existingConnection.tenant_id !== session.tenantId) {
+    return NextResponse.json(
+      { error: "Este número já está ligado em outra conta do MyChatCRM. Desconecte-o lá antes de ligar aqui, ou fale com o suporte." },
+      { status: 409 },
+    );
+  }
+  if (
+    existingConnection &&
+    existingConnection.tenant_id === session.tenantId &&
+    existingConnection.slot_index !== slotIndex
+  ) {
+    return NextResponse.json(
+      { error: `Este número já está ligado na Linha ${existingConnection.slot_index + 1} desta conta. Cada número atende uma linha só.` },
+      { status: 409 },
+    );
+  }
+
+  // Cruzado: o mesmo número físico pareado por QR noutra linha. Só roda quando
+  // a Graph devolveu o número (a chamada acima é best-effort) — sem ele, seguir
+  // é melhor do que travar um onboarding legítimo por causa de rede instável.
+  const cloudConflict = await findCloudNumberConflict({
+    tenantId: session.tenantId,
+    slotIndex,
+    displayPhone,
+  });
+  if (cloudConflict) {
+    return NextResponse.json({ error: cloudConflict.message }, { status: 409 });
+  }
 
   const { error: dbErr } = await upsertWhatsAppCloudConnection({
     tenantId: session.tenantId,

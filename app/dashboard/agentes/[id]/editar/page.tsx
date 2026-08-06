@@ -17,5 +17,5 @@ export default async function DashboardEditarAgentePage({
   const agent = await loadTenantAgentById(session.tenantId, id);
   if (!agent) notFound();
 
-  return <AgentFormCompact mode="edit" initialAgent={agent} tenantId={session.tenantId} />;
+  return <AgentFormCompact mode="edit" initialAgent={agent} />;
 }

@@ -27,6 +27,7 @@ import {
   upsertTenantEvolutionInstance,
 } from "@/lib/server/tenant-evolution-instance-db";
 import { reconcileLiveEvolutionInstance } from "@/lib/server/evolution-instance-reconciliation";
+import { assertEvolutionWaJidUnique } from "@/lib/server/whatsapp-number-guard";
 import {
   removeEvolutionSlotSafely,
   type EvolutionSlotRemovalResult,
@@ -419,6 +420,28 @@ export async function GET(request: Request) {
         resolvedWaJid = instanceInfo.ownerJid;
         ownerJidConfirmedThisPoll = true;
       }
+    }
+  }
+
+  // Um número por linha. Só dispara quando este poll confirmou um jid novo —
+  // pareamento de verdade, não reconexão da mesma sessão. Rejeitou: a sessão já
+  // foi derrubada lá dentro e o jid não é gravado nesta linha.
+  if (ownerJidConfirmedThisPoll && resolvedWaJid && resolvedWaJid !== row.wa_jid) {
+    const uniqueness = await assertEvolutionWaJidUnique({
+      tenantId: session.tenantId,
+      slotIndex,
+      instanceName: row.instance_name,
+      waJid: resolvedWaJid,
+    });
+    if (!uniqueness.ok) {
+      return NextResponse.json({
+        error: uniqueness.message,
+        instanceName: row.instance_name,
+        connectionState: "close",
+        qrDataUrl: null as string | null,
+        pairingCode: null as string | null,
+        waJid: null as string | null,
+      });
     }
   }
 

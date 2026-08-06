@@ -26,7 +26,7 @@ import { typography } from "@/lib/typography";
 import { EvolutionQrSlotPanel } from "@/components/dashboard/integrations/EvolutionQrSlotPanel";
 import type { MetaStatusResponse } from "@/app/api/client/meta/status/route";
 import type { TenantWhatsappConnection } from "@/lib/server/tenant-whatsapp-connections";
-import type { SlotProvider } from "@/lib/server/whatsapp-slot-provider";
+import type { SlotProvider, SlotPurpose } from "@/lib/server/whatsapp-slot-provider";
 import { loadFbSdk } from "@/lib/client/facebook-sdk";
 import { ExternalApiConnectorsPanel } from "./ExternalApiConnectorsPanel";
 
@@ -87,13 +87,17 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const waCloudSdkErrorRef = useRef<string | null>(null);
 
   // ── Linhas WhatsApp reais (Evolution + Meta) — substitui o localStorage ───
-  const [slotCapacity, setSlotCapacity] = useState({ totalSlots: 1, extraSlots: 0, includedLines: 1 });
+  const [slotCapacity, setSlotCapacity] = useState({ totalSlots: 2, extraSlots: 0, includedLines: 2 });
   const [connections, setConnections] = useState<TenantWhatsappConnection[]>([]);
   const [switchingSlot, setSwitchingSlot] = useState<number | null>(null);
   const [switchErrorBySlot, setSwitchErrorBySlot] = useState<Record<number, string | null>>({});
   const [switchBlockedRulesBySlot, setSwitchBlockedRulesBySlot] = useState<
     Record<number, { id: string; name: string | null }[]>
   >({});
+  // Finalidade travada por linha: "forms" | "direct" | null (livre).
+  const [purposeBySlot, setPurposeBySlot] = useState<Record<number, SlotPurpose | null>>({});
+  const [purposeSavingSlot, setPurposeSavingSlot] = useState<number | null>(null);
+  const [purposeErrorBySlot, setPurposeErrorBySlot] = useState<Record<number, string | null>>({});
   const [extraLineQty, setExtraLineQty] = useState(1);
   const [extraLineBuying, setExtraLineBuying] = useState(false);
   const [extraLineOffer, setExtraLineOffer] = useState<{
@@ -119,9 +123,9 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
         } | null;
       };
       setSlotCapacity({
-        totalSlots: data.totalSlots ?? 1,
+        totalSlots: data.totalSlots ?? 2,
         extraSlots: data.extraSlots ?? 0,
-        includedLines: data.includedLines ?? 1,
+        includedLines: data.includedLines ?? 2,
       });
       setExtraLineOffer(data.offer ?? null);
     } catch {
@@ -133,12 +137,54 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     try {
       const res = await fetch("/api/client/whatsapp/connections", { credentials: "same-origin" });
       if (!res.ok) return;
-      const data = (await res.json()) as { connections?: TenantWhatsappConnection[] };
+      const data = (await res.json()) as {
+        connections?: TenantWhatsappConnection[];
+        purposes?: Record<string, SlotPurpose | null>;
+      };
       setConnections(data.connections ?? []);
+      const parsed: Record<number, SlotPurpose | null> = {};
+      for (const [slot, purpose] of Object.entries(data.purposes ?? {})) {
+        const index = Number(slot);
+        if (Number.isInteger(index)) parsed[index] = purpose ?? null;
+      }
+      setPurposeBySlot(parsed);
     } catch {
       /* mantém lista anterior */
     }
   }, []);
+
+  /**
+   * Trava a finalidade da linha. Recusa vinda do servidor (regra da finalidade
+   * oposta ainda apontando para esta linha) aparece no mesmo lugar do erro de
+   * troca de método, e nada é alterado localmente.
+   */
+  const changeSlotPurpose = useCallback(
+    async (slotIndex: number, purpose: SlotPurpose | null) => {
+      setPurposeSavingSlot(slotIndex);
+      setPurposeErrorBySlot((prev) => ({ ...prev, [slotIndex]: null }));
+      try {
+        const res = await fetch("/api/client/whatsapp/slot-purpose", {
+          method: "PATCH",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slotIndex, purpose }),
+        });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(data.error ?? "Não foi possível salvar a finalidade desta linha.");
+        }
+        setPurposeBySlot((prev) => ({ ...prev, [slotIndex]: purpose }));
+      } catch (err) {
+        setPurposeErrorBySlot((prev) => ({
+          ...prev,
+          [slotIndex]: err instanceof Error ? err.message : "Falha ao salvar a finalidade.",
+        }));
+      } finally {
+        setPurposeSavingSlot(null);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     void loadSlotCapacity();
@@ -817,7 +863,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
           </details>
           <div className="space-y-5">
             {slotIndices.map((slotIndex) => {
-              const isBase = slotIndex === 0;
+              const isBase = slotIndex < slotCapacity.includedLines;
               const lineTitle = isBase ? `Linha ${slotIndex + 1} — número incluído no plano` : `Linha ${slotIndex + 1} — número extra`;
               const pair = connectionsBySlot.get(slotIndex);
               const evoConnected = Boolean(pair?.evo?.connected);
@@ -831,6 +877,9 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
               const waCloudDisconnecting = waCloudDisconnectingSlot === slotIndex;
               const switchError = switchErrorBySlot[slotIndex] ?? null;
               const switchBlockedRules = switchBlockedRulesBySlot[slotIndex] ?? [];
+              const linePurpose = purposeBySlot[slotIndex] ?? null;
+              const purposeSaving = purposeSavingSlot === slotIndex;
+              const purposeError = purposeErrorBySlot[slotIndex] ?? null;
 
               return (
                 <div
@@ -856,6 +905,51 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                     >
                       Respondendo: {activeProvider === "cloud_api" ? "API Meta" : "QR Code"}
                     </Badge>
+                  </div>
+
+                  {/* Finalidade da linha: é o que impede formulário e WhatsApp
+                      direto de dividirem o mesmo número. «Livre» mantém o
+                      comportamento antigo, sem restrição nenhuma. */}
+                  <div className="mt-3 rounded-lg border border-line/70 bg-surface-card/40 px-3 py-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <label
+                          className="text-[11px] font-semibold uppercase tracking-wide text-content-muted"
+                          htmlFor={`line-purpose-${slotIndex}`}
+                        >
+                          Finalidade desta linha
+                        </label>
+                        <p className="mt-0.5 text-[11px] leading-relaxed text-content-muted">
+                          Trava quais regras podem usar este número. «Livre» aceita qualquer regra.
+                        </p>
+                      </div>
+                      <select
+                        id={`line-purpose-${slotIndex}`}
+                        value={linePurpose ?? ""}
+                        disabled={purposeSaving}
+                        onChange={(event) =>
+                          void changeSlotPurpose(
+                            slotIndex,
+                            event.target.value === "" ? null : (event.target.value as SlotPurpose),
+                          )
+                        }
+                        className="h-9 shrink-0 rounded-lg border border-line bg-surface-card px-2.5 text-xs text-content outline-none focus:border-primary/60 disabled:opacity-60"
+                      >
+                        <option value="">Livre (sem restrição)</option>
+                        <option value="forms">Formulários Meta</option>
+                        <option value="direct">WhatsApp direto</option>
+                      </select>
+                    </div>
+                    {purposeError ? (
+                      <p
+                        className={cn(
+                          "mt-2 text-[11px] leading-relaxed",
+                          isLight ? "text-amber-800" : "text-amber-300/90",
+                        )}
+                      >
+                        {purposeError}
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="mt-4 grid gap-4 lg:grid-cols-2">

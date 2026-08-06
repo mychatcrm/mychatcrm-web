@@ -109,7 +109,6 @@ export function AgentCreateOverlay({
         key={formKey}
         mode="create"
         embedded
-        tenantId={session.tenantId}
         onRequestClose={onClose}
         onSubmit={handleSubmit}
       />
@@ -155,7 +154,6 @@ export function AgentManageOverlay({
           mode="edit"
           initialAgent={agent}
           embedded
-          tenantId={agent.clientId}
           onRequestClose={onClose}
           onSubmit={handleSubmit}
           onDeleteAgent={() => {

@@ -18,7 +18,6 @@ import { WizardStep4Fluxo } from "./WizardStep4Fluxo";
 import { WizardStepAgendaAutomation } from "./WizardStepAgendaAutomation";
 import { WizardStepSystemBehavior } from "./WizardStepSystemBehavior";
 import { WizardStepFollowUpInteligente } from "./WizardStepFollowUpInteligente";
-import { WizardStepWhatsappLinha } from "./WizardStepWhatsappLinha";
 import { WizardStepVoz } from "./WizardStepVoz";
 import { WizardStepSmartWait } from "./WizardStepSmartWait";
 import { WizardStepCrmLeadDestination } from "./WizardStepCrmLeadDestination";
@@ -100,7 +99,6 @@ export function AgentFormCompact({
   embedded,
   onRequestClose,
   onDeleteAgent,
-  tenantId,
 }: {
   initialAgent?: Agent;
   mode: "create" | "edit";
@@ -110,8 +108,6 @@ export function AgentFormCompact({
   onRequestClose?: () => void;
   /** Só em edição no overlay: após confirmação com frase, remove o agente. */
   onDeleteAgent?: () => void;
-  /** Para validar e listar linhas WhatsApp (Integrações + plano). */
-  tenantId?: string;
 }) {
   const { funnels } = useCrmFunnels();
   const [draft, setDraft] = useState<AgentWizardDraft>(() => {
@@ -135,7 +131,7 @@ export function AgentFormCompact({
   const [simulationError, setSimulationError] = useState("");
 
   const submit = () => {
-    const message = validateCompactAgentDraft(draft, funnels, tenantId);
+    const message = validateCompactAgentDraft(draft, funnels);
     if (message) {
       setError(message);
       return;
@@ -252,12 +248,6 @@ export function AgentFormCompact({
           <FormSection title="Identidade" description="Nome, cor, avatar e fuso horário usados pelo agente.">
             <WizardStep1Identidade draft={draft} onChange={setDraft} />
           </FormSection>
-
-          {tenantId ? (
-            <FormSection title="WhatsApp" description="Linha usada para enviar e receber mensagens deste agente.">
-              <WizardStepWhatsappLinha tenantId={tenantId} draft={draft} onChange={setDraft} />
-            </FormSection>
-          ) : null}
 
           <FormSection title="Tempo de resposta" description="Controle como o agente agrupa mensagens antes de responder.">
             <WizardStepSmartWait draft={draft} onChange={setDraft} />

@@ -21,6 +21,77 @@ export async function getSlotActiveProvider(tenantId: string, slotIndex: number)
   return (data?.active_provider as SlotProvider | undefined) ?? "evolution";
 }
 
+/**
+ * Finalidade travada de uma linha. `null` = livre: a linha aceita qualquer
+ * regra, que é o comportamento histórico e o padrão de quem nunca escolheu.
+ */
+export type SlotPurpose = "forms" | "direct";
+
+function asSlotPurpose(value: unknown): SlotPurpose | null {
+  return value === "forms" || value === "direct" ? value : null;
+}
+
+export async function getSlotPurpose(tenantId: string, slotIndex: number): Promise<SlotPurpose | null> {
+  const sb = createSupabaseServiceClient();
+  const { data, error } = await sb
+    .from("tenant_whatsapp_slot_state")
+    .select("purpose")
+    .eq("tenant_id", tenantId)
+    .eq("slot_index", slotIndex)
+    .maybeSingle();
+  if (error) {
+    // Falha de leitura não pode travar regra nenhuma: sem finalidade conhecida,
+    // a linha se comporta como livre (igual a antes desta coluna existir).
+    console.warn("[whatsapp-slot-provider] purpose_query_failed", error.code ?? "", error.message);
+    return null;
+  }
+  return asSlotPurpose((data as { purpose?: unknown } | null)?.purpose);
+}
+
+/** Finalidade de todas as linhas do tenant numa query só, para as listagens. */
+export async function getSlotPurposesForTenant(tenantId: string): Promise<Map<number, SlotPurpose | null>> {
+  const purposes = new Map<number, SlotPurpose | null>();
+  const sb = createSupabaseServiceClient();
+  const { data, error } = await sb
+    .from("tenant_whatsapp_slot_state")
+    .select("slot_index, purpose")
+    .eq("tenant_id", tenantId);
+  if (error) {
+    console.warn("[whatsapp-slot-provider] purposes_query_failed", error.code ?? "", error.message);
+    return purposes;
+  }
+  for (const row of (data ?? []) as Array<{ slot_index?: unknown; purpose?: unknown }>) {
+    if (typeof row.slot_index !== "number") continue;
+    purposes.set(row.slot_index, asSlotPurpose(row.purpose));
+  }
+  return purposes;
+}
+
+/**
+ * Grava a finalidade da linha. Resolve `active_provider` antes do upsert porque
+ * a coluna é NOT NULL e a linha pode ainda não ter registro — gravar o padrão
+ * resolvido ("evolution") é semanticamente idêntico a não ter registro nenhum.
+ */
+export async function setSlotPurpose(
+  tenantId: string,
+  slotIndex: number,
+  purpose: SlotPurpose | null,
+): Promise<{ error: string | null }> {
+  const activeProvider = await getSlotActiveProvider(tenantId, slotIndex);
+  const sb = createSupabaseServiceClient();
+  const { error } = await sb.from("tenant_whatsapp_slot_state").upsert(
+    {
+      tenant_id: tenantId,
+      slot_index: slotIndex,
+      active_provider: activeProvider,
+      purpose,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "tenant_id,slot_index" },
+  );
+  return { error: error?.message ?? null };
+}
+
 export type SlotProviderSwitchResult = {
   /** Regras de lead_distribution_rules que foram repontadas pro novo lado. */
   switchedRuleIds: string[];
@@ -73,6 +144,10 @@ export async function setSlotActiveProvider(
       ? [evoConnectionId, cloudConnectionId, "cloud_api" as const]
       : [cloudConnectionId, evoConnectionId, "evolution" as const];
 
+  // `purpose` fica de fora do payload de propósito: o upsert só grava as chaves
+  // presentes, então a finalidade travada da linha sobrevive à troca QR↔API Meta.
+  // Alternar provedor nunca cruza fronteira de finalidade — as duas pontas são
+  // da mesma linha —, então não há o que revalidar aqui.
   await sb.from("tenant_whatsapp_slot_state").upsert(
     {
       tenant_id: tenantId,

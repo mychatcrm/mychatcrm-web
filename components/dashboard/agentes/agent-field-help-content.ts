@@ -7,9 +7,6 @@ export const AGENT_FIELD_HELP = {
 
   avatar: "Ícone visual do agente. Facilita identificar rapidamente qual bot é qual quando há vários agentes criados.",
 
-  whatsappLinha:
-    'Número do WhatsApp que este agente usa para responder. Cada agente pode usar uma linha diferente. Configure as linhas em Integrações → WhatsApp. Ex.: Linha 1 = vendas, Linha 2 = suporte técnico',
-
   // ── SmartWait ───────────────────────────────────────────────────────────────
   smartWaitAtivar:
     'Esta proteção fica sempre ativa: o agente espera o contato terminar uma sequência curta de mensagens, consolida o contexto e envia uma única resposta coerente. Os tempos abaixo continuam personalizáveis',

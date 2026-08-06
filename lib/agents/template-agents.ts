@@ -63,7 +63,6 @@ export function buildTemplateAgentsForTenant(clientId: string): Agent[] {
       ],
       respostasProibidas: "Não prometer desconto sem regra publicada. Não enviar dados de outros clientes.",
       idioma: "Português BR",
-      whatsappSlotIndex: 0,
       comandoPausaConversa: "Oi cheguei",
       comandoRetomaConversa: "Oi ainda tem interesse?",
       origens: [
@@ -162,7 +161,6 @@ export function buildTemplateAgentsForTenant(clientId: string): Agent[] {
       ],
       respostasProibidas: "Não garantir prazo legal sem revisão humana. Não criticar concorrentes pelo nome.",
       idioma: "Português BR",
-      whatsappSlotIndex: 0,
       origens: [
         { tipo: "ctw", ativo: true, config: { adIds: ["CTW_DEMO"] } },
         {
@@ -245,7 +243,6 @@ export function buildTemplateAgentsForTenant(clientId: string): Agent[] {
       ],
       respostasProibidas: "Não cancelar planos pelo chat. Não pedir senha ou chaves de API completas.",
       idioma: "Português BR",
-      whatsappSlotIndex: 0,
       origens: [
         { tipo: "crm", ativo: true, config: {} },
         {

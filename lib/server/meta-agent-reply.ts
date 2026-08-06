@@ -197,6 +197,10 @@ export async function processMetaAgentResponseJob(
   ) {
     return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
   }
+  // Resolvida aqui (e não só na hora do envio) porque a linha do lembrete de
+  // agenda tem que sair da conexão que hospedou a conversa.
+  const connection = await lookupWhatsAppCloudConnectionByPhoneNumberId(job.connection_id);
+
   const agendaTurn = await resolveAgendaTurn({
     sb,
     tenantId: job.tenant_id,
@@ -223,9 +227,7 @@ export async function processMetaAgentResponseJob(
       metadata.agendaDisponibilidade && typeof metadata.agendaDisponibilidade === "object"
         ? (metadata.agendaDisponibilidade as AgentAgendaDisponibilidade)
         : null,
-    slotIndex: typeof metadata.whatsappSlotIndex === "number"
-      ? metadata.whatsappSlotIndex
-      : 0,
+    slotIndex: connection?.slot_index ?? 0,
     operationKey: `agent-response-job:${job.id}:${generation}:0`,
     jobId: job.id,
     claimedGeneration: generation,
@@ -264,7 +266,6 @@ export async function processMetaAgentResponseJob(
     return { ok: false, error: "outbound_dispatch_in_progress", dedupedCount: burst.dedupedCount };
   }
 
-  const connection = await lookupWhatsAppCloudConnectionByPhoneNumberId(job.connection_id);
   const token = connection?.access_token?.trim() || process.env.WHATSAPP_ACCESS_TOKEN?.trim();
   if (!token) {
     await markAgentOutboundFailed({
