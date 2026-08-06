@@ -98,10 +98,6 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const [purposeBySlot, setPurposeBySlot] = useState<Record<number, SlotPurpose | null>>({});
   const [purposeSavingSlot, setPurposeSavingSlot] = useState<number | null>(null);
   const [purposeErrorBySlot, setPurposeErrorBySlot] = useState<Record<number, string | null>>({});
-  // Método escolhido explicitamente por linha (QR ou API Meta) — quando ausente,
-  // segue o que já está conectado; picker aparece só quando não há nada conectado
-  // e nenhuma escolha explícita ainda.
-  const [methodChoiceBySlot, setMethodChoiceBySlot] = useState<Record<number, SlotProvider | null>>({});
   // "+ Adicionar outro número" — qual seção está alocando e o erro dela, se houver.
   const [allocatingSection, setAllocatingSection] = useState<SlotPurpose | null>(null);
   const [allocateErrorBySection, setAllocateErrorBySection] = useState<Record<SlotPurpose, string | null>>({
@@ -195,17 +191,6 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     },
     [],
   );
-
-  // Volta a escolha de método desta linha pro que já está conectado (ou pro
-  // picker, se nada estiver conectado) — usado por "Cancelar" e "Escolher outro".
-  const resetMethodChoice = useCallback((slotIndex: number) => {
-    setMethodChoiceBySlot((prev) => {
-      if (!(slotIndex in prev)) return prev;
-      const next = { ...prev };
-      delete next[slotIndex];
-      return next;
-    });
-  }, []);
 
   useEffect(() => {
     void loadSlotCapacity();
@@ -827,273 +812,6 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     // como conexão nova para o OUTRO método — não pode furar a trava.
     const qrAllowSwap = metaConnected2 && !evoConnected;
     const cloudAllowSwap = evoConnected && !metaConnected2;
-    // Escolha explícita de método: fora do caso raro bothConnected, só um
-    // método é mostrado por vez — botão, nunca as duas colunas juntas.
-    const connectedProvider: SlotProvider | null = evoConnected ? "evolution" : metaConnected2 ? "cloud_api" : null;
-    const methodChoice = methodChoiceBySlot[slotIndex];
-    const displayedProvider: SlotProvider | null = methodChoice !== undefined ? methodChoice : connectedProvider;
-    const otherProvider: SlotProvider = displayedProvider === "cloud_api" ? "evolution" : "cloud_api";
-
-    const qrColumn = (
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <p className="flex items-center gap-1.5 text-xs font-semibold text-content">
-            <QrCode className="size-3.5 shrink-0 text-primary" aria-hidden />
-            QR Code
-          </p>
-          {evoConnected ? (
-            <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[9px] font-semibold text-emerald-700 dark:text-emerald-300">
-              Conectado
-            </span>
-          ) : qrAllowSwap ? (
-            <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[9px] font-semibold text-primary">
-              Trocar método
-            </span>
-          ) : null}
-        </div>
-        <EvolutionQrSlotPanel
-          key={`evo-qr-${tenantId}-${slotIndex}`}
-          slotIndex={slotIndex}
-          autoProvision={false}
-          allowSwap={qrAllowSwap}
-        />
-        {evoConnected ? (
-          <div className="space-y-2 rounded-xl border border-line/70 bg-surface-card/40 p-3">
-            <p className="text-xs font-semibold text-content">Teste de envio (texto livre)</p>
-            <p className="text-[11px] leading-relaxed text-content-muted">
-              Envia «Teste MyChatCRM — QR Code OK» para validar esta conexão.
-            </p>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <input
-                type="tel"
-                inputMode="tel"
-                autoComplete="tel"
-                placeholder="5562999999999"
-                value={evoTestPhoneBySlot[slotIndex] ?? ""}
-                onChange={(event) =>
-                  setEvoTestPhoneBySlot((prev) => ({
-                    ...prev,
-                    [slotIndex]: event.target.value.replace(/[^\d+\s()-]/g, ""),
-                  }))
-                }
-                className="h-10 min-w-0 flex-1 rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
-              />
-              <Button
-                type="button"
-                className="shrink-0 gap-1.5"
-                isLoading={evoTestBusySlot === slotIndex}
-                disabled={!(evoTestPhoneBySlot[slotIndex] ?? "").replace(/\D/g, "")}
-                onClick={() => void sendEvoTest(slotIndex)}
-              >
-                <Send className="size-3.5" aria-hidden />
-                Enviar teste
-              </Button>
-            </div>
-            {evoTestResultBySlot[slotIndex] ? (
-              <p
-                className={cn(
-                  "text-[11px] leading-relaxed",
-                  evoTestResultBySlot[slotIndex]?.ok
-                    ? "text-emerald-700 dark:text-emerald-300"
-                    : "text-amber-800 dark:text-amber-300",
-                )}
-              >
-                {evoTestResultBySlot[slotIndex]?.text}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-    );
-
-    const cloudColumn = (
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <p className="flex items-center gap-1.5 text-xs font-semibold text-content">
-            <BadgeCheck className="size-3.5 shrink-0 text-primary" aria-hidden />
-            API Meta
-          </p>
-          {metaConnected2 ? (
-            <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[9px] font-semibold text-emerald-700 dark:text-emerald-300">
-              Conectado
-            </span>
-          ) : cloudAllowSwap ? (
-            <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[9px] font-semibold text-primary">
-              Trocar método
-            </span>
-          ) : null}
-        </div>
-
-        <div className="space-y-3 rounded-xl border border-line bg-surface-deep/30 p-4 text-sm text-content-secondary">
-          {waCloudBanner ? (
-            <div
-              className={cn(
-                "flex items-start gap-2 rounded-lg border px-3 py-2 text-xs",
-                waCloudBanner.startsWith("✅")
-                  ? isLight
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                    : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                  : isLight
-                    ? "border-amber-200 bg-amber-50 text-amber-800"
-                    : "border-amber-500/30 bg-amber-500/10 text-amber-300",
-              )}
-            >
-              <span className="mt-0.5 shrink-0">
-                {waCloudBanner.startsWith("✅") ? <BadgeCheck className="size-3.5" aria-hidden /> : <AlertTriangle className="size-3.5" aria-hidden />}
-              </span>
-              <p>{waCloudBanner}</p>
-            </div>
-          ) : null}
-
-          {waCloudLoading ? (
-            <div className="flex items-center gap-2 text-xs text-content-muted">
-              <Loader2 className="size-3.5 animate-spin" aria-hidden />
-              A verificar conexão…
-            </div>
-          ) : waCloudStatus?.connected ? (
-            <div className="space-y-3">
-              <div
-                className={cn(
-                  "flex items-center gap-3 rounded-xl border p-3",
-                  isLight ? "border-emerald-200 bg-emerald-50/60" : "border-emerald-500/25 bg-emerald-500/[0.07]",
-                )}
-              >
-                <BadgeCheck className={cn("size-5 shrink-0", isLight ? "text-emerald-600" : "text-emerald-400")} aria-hidden />
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-content">{waCloudStatus.display_phone ?? waCloudStatus.phone_number_id}</p>
-                  {waCloudStatus.verified_name ? (
-                    <p className="text-xs text-content-secondary">{waCloudStatus.verified_name}</p>
-                  ) : null}
-                </div>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                className="shrink-0 border-rose-500/30 text-rose-600 hover:border-rose-500/50 hover:bg-rose-500/5 dark:text-rose-400"
-                isLoading={waCloudDisconnecting}
-                onClick={() => void disconnectWaCloud(slotIndex)}
-              >
-                <Unlink className="size-4" aria-hidden />
-                Desconectar API Meta
-              </Button>
-
-              <div className="space-y-2 rounded-xl border border-line/70 bg-surface-card/40 p-3">
-                <p className="text-xs font-semibold text-content">Teste de envio (texto livre)</p>
-                <p className="text-[11px] leading-relaxed text-content-muted">
-                  Envia «Teste MyChatCRM — API Meta OK» para validar o token/número. Fora da janela de 24h a
-                  Meta pode recusar (131047) — Lead Ads usa template aprovado.
-                </p>
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <input
-                    type="tel"
-                    inputMode="tel"
-                    autoComplete="tel"
-                    placeholder="5562999999999"
-                    value={waCloudTestPhoneBySlot[slotIndex] ?? ""}
-                    onChange={(event) =>
-                      setWaCloudTestPhoneBySlot((prev) => ({
-                        ...prev,
-                        [slotIndex]: event.target.value.replace(/[^\d+\s()-]/g, ""),
-                      }))
-                    }
-                    className="h-10 min-w-0 flex-1 rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
-                  />
-                  <Button
-                    type="button"
-                    className="shrink-0 gap-1.5"
-                    isLoading={waCloudTestBusySlot === slotIndex}
-                    disabled={!(waCloudTestPhoneBySlot[slotIndex] ?? "").replace(/\D/g, "")}
-                    onClick={() => void sendWaCloudTest(slotIndex)}
-                  >
-                    <Send className="size-3.5" aria-hidden />
-                    Enviar teste
-                  </Button>
-                </div>
-                {waCloudTestResultBySlot[slotIndex] ? (
-                  <p
-                    className={cn(
-                      "text-[11px] leading-relaxed",
-                      waCloudTestResultBySlot[slotIndex]?.ok
-                        ? "text-emerald-700 dark:text-emerald-300"
-                        : "text-amber-800 dark:text-amber-300",
-                    )}
-                  >
-                    {waCloudTestResultBySlot[slotIndex]?.text}
-                  </p>
-                ) : null}
-                {waCloudTestResultBySlot[slotIndex]?.code === "invalid_token" ? (
-                  <p className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
-                    Use o botão <strong>“Desconectar API Meta”</strong> acima e reconecte para gerar um token
-                    novo.
-                  </p>
-                ) : null}
-                {waCloudTestResultBySlot[slotIndex]?.code === "outside_24h_window" ? (
-                  (waCloudTestResultBySlot[slotIndex]?.availableTemplates?.length ?? 0) > 0 ? (
-                    <div className="space-y-2 rounded-lg border border-line/60 bg-surface-card/60 p-2.5">
-                      <p className="text-[11px] font-semibold text-content">
-                        Validar mesmo assim com um template aprovado
-                      </p>
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                        <select
-                          value={waCloudTestTemplateBySlot[slotIndex] ?? ""}
-                          onChange={(event) =>
-                            setWaCloudTestTemplateBySlot((prev) => ({
-                              ...prev,
-                              [slotIndex]: event.target.value,
-                            }))
-                          }
-                          className="h-10 min-w-0 flex-1 rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
-                        >
-                          <option value="">Selecione um template aprovado</option>
-                          {waCloudTestResultBySlot[slotIndex]?.availableTemplates?.map((t) => (
-                            <option key={t.name} value={t.name}>
-                              {t.name}
-                            </option>
-                          ))}
-                        </select>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="shrink-0 gap-1.5"
-                          isLoading={waCloudTestBusySlot === slotIndex}
-                          disabled={!waCloudTestTemplateBySlot[slotIndex]}
-                          onClick={() => void sendWaCloudTest(slotIndex, waCloudTestTemplateBySlot[slotIndex])}
-                        >
-                          <Send className="size-3.5" aria-hidden />
-                          Enviar via template aprovado
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="text-[11px] leading-relaxed text-content-muted">
-                      Nenhum template aprovado encontrado nesta WABA para usar como alternativa — aprove um no
-                      Gerenciador da Meta pra poder validar fora da janela de 24h.
-                    </p>
-                  )
-                ) : null}
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <p className="text-xs leading-relaxed text-content-secondary">
-                {cloudAllowSwap
-                  ? "Conectar aqui troca o método desta linha: assim que confirmar, o QR Code é desligado sozinho."
-                  : "Conecte via Meta API Oficial. O processo é guiado pela própria Meta — sem copiar chaves ou configurações manuais."}
-              </p>
-              <Button
-                type="button"
-                isLoading={waCloudConnecting}
-                onClick={() => connectWaCloud(slotIndex, cloudAllowSwap)}
-                className="min-h-[44px] gap-2 bg-primary px-5 text-white hover:bg-primary-hover"
-              >
-                {!waCloudConnecting && <ExternalLink className="size-4" aria-hidden />}
-                {cloudAllowSwap ? "Trocar para API Meta" : "Conectar API Meta"}
-              </Button>
-            </div>
-          )}
-        </div>
-      </div>
-    );
 
     return (
       <div
@@ -1211,65 +929,266 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
           </div>
         ) : null}
 
-        {bothConnected ? (
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            {qrColumn}
-            {cloudColumn}
-          </div>
-        ) : (
-          <div className="mt-4">
-            {displayedProvider === null ? (
-              <div className="space-y-3 rounded-xl border border-dashed border-line/70 bg-surface-card/30 p-5 text-center">
-                <p className="text-sm text-content-secondary">Escolha como esta linha vai conectar:</p>
-                <div className="flex flex-col justify-center gap-2 sm:flex-row">
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          {/* ── Coluna QR / Evolution ── */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="flex items-center gap-1.5 text-xs font-semibold text-content">
+                <QrCode className="size-3.5 shrink-0 text-primary" aria-hidden />
+                QR Code
+              </p>
+              {evoConnected ? (
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[9px] font-semibold text-emerald-700 dark:text-emerald-300">
+                  Conectado
+                </span>
+              ) : qrAllowSwap ? (
+                <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[9px] font-semibold text-primary">
+                  Trocar método
+                </span>
+              ) : null}
+            </div>
+            <EvolutionQrSlotPanel
+              key={`evo-qr-${tenantId}-${slotIndex}`}
+              slotIndex={slotIndex}
+              autoProvision={false}
+              allowSwap={qrAllowSwap}
+            />
+            {evoConnected ? (
+              <div className="space-y-2 rounded-xl border border-line/70 bg-surface-card/40 p-3">
+                <p className="text-xs font-semibold text-content">Teste de envio (texto livre)</p>
+                <p className="text-[11px] leading-relaxed text-content-muted">
+                  Envia «Teste MyChatCRM — QR Code OK» para validar esta conexão.
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <input
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    placeholder="5562999999999"
+                    value={evoTestPhoneBySlot[slotIndex] ?? ""}
+                    onChange={(event) =>
+                      setEvoTestPhoneBySlot((prev) => ({
+                        ...prev,
+                        [slotIndex]: event.target.value.replace(/[^\d+\s()-]/g, ""),
+                      }))
+                    }
+                    className="h-10 min-w-0 flex-1 rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                  />
                   <Button
                     type="button"
-                    variant="outline"
-                    className="gap-2"
-                    onClick={() => setMethodChoiceBySlot((prev) => ({ ...prev, [slotIndex]: "evolution" }))}
+                    className="shrink-0 gap-1.5"
+                    isLoading={evoTestBusySlot === slotIndex}
+                    disabled={!(evoTestPhoneBySlot[slotIndex] ?? "").replace(/\D/g, "")}
+                    onClick={() => void sendEvoTest(slotIndex)}
                   >
-                    <QrCode className="size-4" aria-hidden />
-                    Conectar via QR Code
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="gap-2"
-                    onClick={() => setMethodChoiceBySlot((prev) => ({ ...prev, [slotIndex]: "cloud_api" }))}
-                  >
-                    <BadgeCheck className="size-4" aria-hidden />
-                    Conectar via API Meta
+                    <Send className="size-3.5" aria-hidden />
+                    Enviar teste
                   </Button>
                 </div>
+                {evoTestResultBySlot[slotIndex] ? (
+                  <p
+                    className={cn(
+                      "text-[11px] leading-relaxed",
+                      evoTestResultBySlot[slotIndex]?.ok
+                        ? "text-emerald-700 dark:text-emerald-300"
+                        : "text-amber-800 dark:text-amber-300",
+                    )}
+                  >
+                    {evoTestResultBySlot[slotIndex]?.text}
+                  </p>
+                ) : null}
               </div>
-            ) : (
-              <>
-                {displayedProvider === "evolution" ? qrColumn : cloudColumn}
-                <div className="mt-3 flex items-center gap-3">
-                  {connectedProvider === displayedProvider && connectedProvider !== null ? (
-                    <button
-                      type="button"
-                      className="text-xs font-medium text-primary hover:underline"
-                      onClick={() => setMethodChoiceBySlot((prev) => ({ ...prev, [slotIndex]: otherProvider }))}
-                    >
-                      Trocar para {otherProvider === "evolution" ? "QR Code" : "API Meta"}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="text-xs font-medium text-content-muted hover:text-content hover:underline"
-                      onClick={() => resetMethodChoice(slotIndex)}
-                    >
-                      {connectedProvider !== null
-                        ? `Cancelar, manter ${connectedProvider === "evolution" ? "QR Code" : "API Meta"}`
-                        : "← Escolher outro método"}
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
+            ) : null}
           </div>
-        )}
+
+          {/* ── Coluna API Meta ── */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="flex items-center gap-1.5 text-xs font-semibold text-content">
+                <BadgeCheck className="size-3.5 shrink-0 text-primary" aria-hidden />
+                API Meta
+              </p>
+              {metaConnected2 ? (
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[9px] font-semibold text-emerald-700 dark:text-emerald-300">
+                  Conectado
+                </span>
+              ) : cloudAllowSwap ? (
+                <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[9px] font-semibold text-primary">
+                  Trocar método
+                </span>
+              ) : null}
+            </div>
+
+            <div className="space-y-3 rounded-xl border border-line bg-surface-deep/30 p-4 text-sm text-content-secondary">
+              {waCloudBanner ? (
+                <div
+                  className={cn(
+                    "flex items-start gap-2 rounded-lg border px-3 py-2 text-xs",
+                    waCloudBanner.startsWith("✅")
+                      ? isLight
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                        : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                      : isLight
+                        ? "border-amber-200 bg-amber-50 text-amber-800"
+                        : "border-amber-500/30 bg-amber-500/10 text-amber-300",
+                  )}
+                >
+                  <span className="mt-0.5 shrink-0">
+                    {waCloudBanner.startsWith("✅") ? <BadgeCheck className="size-3.5" aria-hidden /> : <AlertTriangle className="size-3.5" aria-hidden />}
+                  </span>
+                  <p>{waCloudBanner}</p>
+                </div>
+              ) : null}
+
+              {waCloudLoading ? (
+                <div className="flex items-center gap-2 text-xs text-content-muted">
+                  <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                  A verificar conexão…
+                </div>
+              ) : waCloudStatus?.connected ? (
+                <div className="space-y-3">
+                  <div
+                    className={cn(
+                      "flex items-center gap-3 rounded-xl border p-3",
+                      isLight ? "border-emerald-200 bg-emerald-50/60" : "border-emerald-500/25 bg-emerald-500/[0.07]",
+                    )}
+                  >
+                    <BadgeCheck className={cn("size-5 shrink-0", isLight ? "text-emerald-600" : "text-emerald-400")} aria-hidden />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-content">{waCloudStatus.display_phone ?? waCloudStatus.phone_number_id}</p>
+                      {waCloudStatus.verified_name ? (
+                        <p className="text-xs text-content-secondary">{waCloudStatus.verified_name}</p>
+                      ) : null}
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="shrink-0 border-rose-500/30 text-rose-600 hover:border-rose-500/50 hover:bg-rose-500/5 dark:text-rose-400"
+                    isLoading={waCloudDisconnecting}
+                    onClick={() => void disconnectWaCloud(slotIndex)}
+                  >
+                    <Unlink className="size-4" aria-hidden />
+                    Desconectar API Meta
+                  </Button>
+
+                  <div className="space-y-2 rounded-xl border border-line/70 bg-surface-card/40 p-3">
+                    <p className="text-xs font-semibold text-content">Teste de envio (texto livre)</p>
+                    <p className="text-[11px] leading-relaxed text-content-muted">
+                      Envia «Teste MyChatCRM — API Meta OK» para validar o token/número. Fora da janela de 24h a
+                      Meta pode recusar (131047) — Lead Ads usa template aprovado.
+                    </p>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <input
+                        type="tel"
+                        inputMode="tel"
+                        autoComplete="tel"
+                        placeholder="5562999999999"
+                        value={waCloudTestPhoneBySlot[slotIndex] ?? ""}
+                        onChange={(event) =>
+                          setWaCloudTestPhoneBySlot((prev) => ({
+                            ...prev,
+                            [slotIndex]: event.target.value.replace(/[^\d+\s()-]/g, ""),
+                          }))
+                        }
+                        className="h-10 min-w-0 flex-1 rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                      />
+                      <Button
+                        type="button"
+                        className="shrink-0 gap-1.5"
+                        isLoading={waCloudTestBusySlot === slotIndex}
+                        disabled={!(waCloudTestPhoneBySlot[slotIndex] ?? "").replace(/\D/g, "")}
+                        onClick={() => void sendWaCloudTest(slotIndex)}
+                      >
+                        <Send className="size-3.5" aria-hidden />
+                        Enviar teste
+                      </Button>
+                    </div>
+                    {waCloudTestResultBySlot[slotIndex] ? (
+                      <p
+                        className={cn(
+                          "text-[11px] leading-relaxed",
+                          waCloudTestResultBySlot[slotIndex]?.ok
+                            ? "text-emerald-700 dark:text-emerald-300"
+                            : "text-amber-800 dark:text-amber-300",
+                        )}
+                      >
+                        {waCloudTestResultBySlot[slotIndex]?.text}
+                      </p>
+                    ) : null}
+                    {waCloudTestResultBySlot[slotIndex]?.code === "invalid_token" ? (
+                      <p className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
+                        Use o botão <strong>“Desconectar API Meta”</strong> acima e reconecte para gerar um token
+                        novo.
+                      </p>
+                    ) : null}
+                    {waCloudTestResultBySlot[slotIndex]?.code === "outside_24h_window" ? (
+                      (waCloudTestResultBySlot[slotIndex]?.availableTemplates?.length ?? 0) > 0 ? (
+                        <div className="space-y-2 rounded-lg border border-line/60 bg-surface-card/60 p-2.5">
+                          <p className="text-[11px] font-semibold text-content">
+                            Validar mesmo assim com um template aprovado
+                          </p>
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <select
+                              value={waCloudTestTemplateBySlot[slotIndex] ?? ""}
+                              onChange={(event) =>
+                                setWaCloudTestTemplateBySlot((prev) => ({
+                                  ...prev,
+                                  [slotIndex]: event.target.value,
+                                }))
+                              }
+                              className="h-10 min-w-0 flex-1 rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                            >
+                              <option value="">Selecione um template aprovado</option>
+                              {waCloudTestResultBySlot[slotIndex]?.availableTemplates?.map((t) => (
+                                <option key={t.name} value={t.name}>
+                                  {t.name}
+                                </option>
+                              ))}
+                            </select>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="shrink-0 gap-1.5"
+                              isLoading={waCloudTestBusySlot === slotIndex}
+                              disabled={!waCloudTestTemplateBySlot[slotIndex]}
+                              onClick={() => void sendWaCloudTest(slotIndex, waCloudTestTemplateBySlot[slotIndex])}
+                            >
+                              <Send className="size-3.5" aria-hidden />
+                              Enviar via template aprovado
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-[11px] leading-relaxed text-content-muted">
+                          Nenhum template aprovado encontrado nesta WABA para usar como alternativa — aprove um no
+                          Gerenciador da Meta pra poder validar fora da janela de 24h.
+                        </p>
+                      )
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-xs leading-relaxed text-content-secondary">
+                    {cloudAllowSwap
+                      ? "Conectar aqui troca o método desta linha: assim que confirmar, o QR Code é desligado sozinho."
+                      : "Conecte via Meta API Oficial. O processo é guiado pela própria Meta — sem copiar chaves ou configurações manuais."}
+                  </p>
+                  <Button
+                    type="button"
+                    isLoading={waCloudConnecting}
+                    onClick={() => connectWaCloud(slotIndex, cloudAllowSwap)}
+                    className="min-h-[44px] gap-2 bg-primary px-5 text-white hover:bg-primary-hover"
+                  >
+                    {!waCloudConnecting && <ExternalLink className="size-4" aria-hidden />}
+                    {cloudAllowSwap ? "Trocar para API Meta" : "Conectar API Meta"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     );
   };
