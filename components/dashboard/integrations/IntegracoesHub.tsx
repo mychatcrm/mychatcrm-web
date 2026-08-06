@@ -192,9 +192,10 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     [],
   );
 
+  const [slotDataReady, setSlotDataReady] = useState(false);
   useEffect(() => {
-    void loadSlotCapacity();
-    void loadConnections();
+    setSlotDataReady(false);
+    void Promise.all([loadSlotCapacity(), loadConnections()]).finally(() => setSlotDataReady(true));
   }, [loadSlotCapacity, loadConnections, tenantId]);
 
   useEffect(() => {
@@ -758,6 +759,25 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     },
     [loadConnections, loadSlotCapacity],
   );
+
+  // Assim que a área existe e tem linha livre, a linha aparece sozinha — sem
+  // exigir um clique preliminar só pra revelar as opções de conexão (QR/API
+  // Meta). Uma tentativa por finalidade por carregamento da página; se falhar,
+  // o botão "Conectar número" do estado vazio continua servindo de retry manual.
+  const autoAllocateAttemptedRef = useRef<Set<SlotPurpose>>(new Set());
+  useEffect(() => {
+    if (!slotDataReady || allocatingSection) return;
+    const purposeToTry: SlotPurpose | null =
+      lineGrouping.forms.length === 0
+        ? "forms"
+        : lineGrouping.direct.length === 0
+          ? "direct"
+          : null;
+    if (!purposeToTry || lineGrouping.freeCapacity === 0) return;
+    if (autoAllocateAttemptedRef.current.has(purposeToTry)) return;
+    autoAllocateAttemptedRef.current.add(purposeToTry);
+    void allocateLine(purposeToTry);
+  }, [slotDataReady, allocatingSection, lineGrouping, allocateLine]);
 
   const metaPages = metaStatus?.pages ?? [];
   const metaConnected = Boolean(metaStatus?.connected);
