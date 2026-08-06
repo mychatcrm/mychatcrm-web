@@ -778,6 +778,14 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     return { waLinesReady: ready, waLineCount: slotIndices.length };
   }, [connectionsBySlot, slotIndices]);
 
+  const countConnected = (slots: number[]) =>
+    slots.filter((slotIndex) => {
+      const pair = connectionsBySlot.get(slotIndex);
+      return Boolean(pair?.evo?.connected) || Boolean(pair?.meta?.connected);
+    }).length;
+  const formsConnectedCount = countConnected(lineGrouping.forms);
+  const directConnectedCount = countConnected(lineGrouping.direct);
+
   /**
    * Cartão de uma linha — reusado nas duas seções fixas (Formulários Meta /
    * WhatsApp Direto) e na faixa isolada de linhas sem finalidade ainda.
@@ -1204,8 +1212,178 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
         </div>
       ) : null}
 
+      {/* ── Capacidade de linhas: compartilhada pelas duas áreas abaixo ── */}
+      <div
+        className={cn(
+          "space-y-3 rounded-xl border p-4 sm:p-5",
+          isLight ? "border-line bg-surface-card" : "border-line bg-surface-card/40",
+        )}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className={cn(typography.ui.overline, "text-content-muted")}>Linhas WhatsApp</p>
+            <p className="text-sm text-content-secondary">
+              Um número pra <strong className="text-content">Formulários Meta</strong> (área azul abaixo) e outro pra{" "}
+              <strong className="text-content">WhatsApp Direto</strong> (área verde) — cada linha usa QR ou API
+              Meta, nunca os dois ao mesmo tempo.
+            </p>
+          </div>
+          <Badge
+            className={cn(
+              "shrink-0 text-[10px]",
+              waLineStatus.waLinesReady > 0
+                ? cn("border-emerald-500/40 bg-emerald-500/15", isLight ? "text-emerald-700" : "text-emerald-300")
+                : "border-line bg-surface-elevated/50 text-content-secondary",
+            )}
+          >
+            {waLineStatus.waLinesReady}/{waLineStatus.waLineCount} conectadas
+          </Badge>
+        </div>
+        {slotCapacity.extraSlots > 0 ? (
+          <p className="text-xs leading-relaxed text-content-muted">
+            Tem <strong className="text-content">{slotCapacity.extraSlots}</strong>{" "}
+            {slotCapacity.extraSlots === 1 ? "linha extra contratada" : "linhas extra contratadas"} (
+            {formatBRL(extraLinePrice)}/{extraLineInterval} por linha), além das {slotCapacity.includedLines} do
+            plano.
+          </p>
+        ) : null}
+        <div
+          className={cn(
+            "flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3",
+            isLight ? "border-primary/20 bg-primary/[0.04]" : "border-primary/25 bg-primary/[0.06]",
+          )}
+        >
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-content">Adicionar linha WhatsApp</p>
+            <p className="mt-1 text-xs leading-relaxed text-content-secondary">
+              Compra capacidade extra pra conectar outro número em qualquer uma das duas áreas abaixo. Só define
+              quantas linhas — não pede telefone no checkout.
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              aria-label="Diminuir quantidade de linhas"
+              disabled={extraLineQty <= 1 || extraLineBuying}
+              onClick={() => setExtraLineQty((value) => Math.max(1, value - 1))}
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface-card font-semibold text-content transition hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              −
+            </button>
+            <span className="min-w-6 text-center text-sm font-semibold tabular-nums text-content">{extraLineQty}</span>
+            <button
+              type="button"
+              aria-label="Aumentar quantidade de linhas"
+              disabled={extraLineQty >= 10 || extraLineBuying}
+              onClick={() => setExtraLineQty((value) => Math.min(10, value + 1))}
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface-card font-semibold text-content transition hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              +
+            </button>
+            <Button type="button" onClick={() => void buyExtraLine()} isLoading={extraLineBuying}>
+              Comprar linha
+            </Button>
+          </div>
+        </div>
+        <details
+          className={cn(
+            "rounded-lg border text-sm",
+            isLight ? "border-slate-200 bg-surface-deep/50" : "border-line bg-surface-deep/20",
+          )}
+        >
+          <summary className="cursor-pointer select-none px-3 py-2 font-medium text-content [&::-webkit-details-marker]:hidden">
+            Detalhes para equipa técnica (Evolution / Meta)
+          </summary>
+          <p className="border-t border-line/60 px-3 py-2 text-xs leading-relaxed text-content-muted">
+            Com <strong className="text-content">QR</strong>, o código é gerado no seu servidor WhatsApp (Evolution,
+            na VPS) e aparece aqui. Com <strong className="text-content">API Meta</strong>, o caminho oficial pra
+            número verificado e envios em massa. Cada número usa só um dos dois — pra trocar de método, use «Trocar
+            método» dentro da linha.
+          </p>
+        </details>
+      </div>
+
+      {/* ── Área 1: Formulários Meta (azul — combina com a área Facebook logo abaixo) ── */}
       <section
-        id="canal-whatsapp"
+        id="canal-formularios-meta"
+        className={cn(
+          "overflow-hidden rounded-xl border",
+          isLight ? "border-blue-200/70 bg-surface-card" : "border-blue-500/25 bg-surface-card/40",
+        )}
+      >
+        <div
+          className={cn(
+            "flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4 sm:px-6",
+            isLight ? "border-blue-100 bg-blue-50/50" : "border-blue-500/15 bg-blue-500/[0.06]",
+          )}
+        >
+          <div className="flex items-center gap-3">
+            <span className={cn("flex h-11 w-11 items-center justify-center rounded-xl bg-blue-500/15", isLight ? "text-blue-600" : "text-blue-300")}>
+              <Share2 className="size-5" strokeWidth={2} aria-hidden />
+            </span>
+            <div>
+              <p className={cn(typography.ui.overline, "text-blue-700 dark:text-blue-300/90")}>Área 1 de 2</p>
+              <h3 className="font-display text-lg font-bold text-content">Formulários Meta</h3>
+              <p className="text-xs text-content-secondary">Número que atende leads de Lead Ads.</p>
+            </div>
+          </div>
+          <Badge
+            className={cn(
+              "shrink-0 text-[10px]",
+              formsConnectedCount > 0
+                ? cn("border-blue-500/40 bg-blue-500/15", isLight ? "text-blue-700" : "text-blue-300")
+                : "border-line bg-surface-elevated/50 text-content-secondary",
+            )}
+          >
+            {formsConnectedCount}/{Math.max(lineGrouping.forms.length, 1)} conectada{Math.max(lineGrouping.forms.length, 1) === 1 ? "" : "s"}
+          </Badge>
+        </div>
+        <div className="space-y-3 p-5 sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-content-muted">
+              Escolha QR ou API Meta pra este número — nunca os dois ao mesmo tempo.
+            </p>
+            {lineGrouping.forms.length > 0 && lineGrouping.freeCapacity > 0 ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                isLoading={allocatingSection === "forms"}
+                onClick={() => void allocateLine("forms")}
+              >
+                + Adicionar outro número
+              </Button>
+            ) : null}
+          </div>
+          {allocateErrorBySection.forms ? (
+            <p className="text-xs text-rose-600 dark:text-rose-400">{allocateErrorBySection.forms}</p>
+          ) : null}
+          {lineGrouping.forms.length > 0 ? (
+            lineGrouping.forms.map((slotIndex) => renderLineCard(slotIndex, "forms"))
+          ) : (
+            <div className="rounded-xl border border-dashed border-line/70 bg-surface-deep/20 p-4 text-center">
+              <p className="text-xs text-content-muted">Nenhum número conectado ainda.</p>
+              <Button
+                type="button"
+                className="mt-2"
+                size="sm"
+                isLoading={allocatingSection === "forms"}
+                disabled={lineGrouping.freeCapacity === 0}
+                onClick={() => void allocateLine("forms")}
+              >
+                Conectar número
+              </Button>
+              {lineGrouping.freeCapacity === 0 ? (
+                <p className="mt-2 text-[11px] text-content-muted">Sem capacidade livre — compre mais uma linha acima.</p>
+              ) : null}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* ── Área 2: WhatsApp Direto (verde) ── */}
+      <section
+        id="canal-whatsapp-direto"
         className={cn(
           "overflow-hidden rounded-xl border",
           isLight ? "border-emerald-200/60 bg-surface-card" : "border-emerald-500/20 bg-surface-card/40",
@@ -1222,206 +1400,81 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
               <Plug className="size-5" strokeWidth={2} aria-hidden />
             </span>
             <div>
-              <p className={cn(typography.ui.overline, "text-emerald-700 dark:text-emerald-300/90")}>Canal principal</p>
-              <h3 className="font-display text-lg font-bold text-content">WhatsApp Business</h3>
-              <p className="text-xs text-content-secondary">
-                Um número pra <strong className="text-content">Formulários Meta</strong> e outro pra{" "}
-                <strong className="text-content">WhatsApp Direto</strong> — cada um usa QR ou API Meta, nunca os
-                dois ao mesmo tempo. Compre linhas extra pra adicionar mais números a qualquer uma das seções.
-              </p>
+              <p className={cn(typography.ui.overline, "text-emerald-700 dark:text-emerald-300/90")}>Área 2 de 2</p>
+              <h3 className="font-display text-lg font-bold text-content">WhatsApp Direto</h3>
+              <p className="text-xs text-content-secondary">Número que atende contato espontâneo, sem formulário.</p>
             </div>
           </div>
           <Badge
             className={cn(
-              "mr-5 shrink-0 self-center text-[10px] sm:mr-6",
-              waLineStatus.waLinesReady > 0
+              "shrink-0 text-[10px]",
+              directConnectedCount > 0
                 ? cn("border-emerald-500/40 bg-emerald-500/15", isLight ? "text-emerald-700" : "text-emerald-300")
                 : "border-line bg-surface-elevated/50 text-content-secondary",
             )}
           >
-            {waLineStatus.waLinesReady}/{waLineStatus.waLineCount} conectadas
+            {directConnectedCount}/{Math.max(lineGrouping.direct.length, 1)} conectada{Math.max(lineGrouping.direct.length, 1) === 1 ? "" : "s"}
           </Badge>
         </div>
-        <div className="space-y-4 p-5 sm:p-6">
-          {slotCapacity.extraSlots > 0 ? (
-            <div
-              className={cn(
-                "rounded-xl border p-4 text-sm ",
-                isLight
-                  ? "border-emerald-200 bg-emerald-50/90 text-content-secondary"
-                  : "border-emerald-500/30 bg-emerald-950/25 text-content-secondary",
-              )}
-              role="region"
-              aria-label="Linhas WhatsApp extra"
-            >
-              <p className="font-semibold text-content">Linhas WhatsApp extra</p>
-              <p className="mt-2 text-xs leading-relaxed">
-                Tem <strong className="text-content">{slotCapacity.extraSlots}</strong>{" "}
-                {slotCapacity.extraSlots === 1 ? "linha extra contratada" : "linhas extra contratadas"} (
-                {formatBRL(extraLinePrice)}/{extraLineInterval} por linha), além das{" "}
-                {slotCapacity.includedLines} do plano. Cada número <strong className="text-content">liga-se aqui</strong>{" "}
-                (QR ou API da Meta); a compra só define quantas linhas — não pede telefone no checkout.
-              </p>
-            </div>
-          ) : null}
-          <div
-            className={cn(
-              "flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4",
-              isLight ? "border-primary/20 bg-primary/[0.04]" : "border-primary/25 bg-primary/[0.06]",
-            )}
-          >
-            <div className="min-w-0">
-              <p className="font-semibold text-content">Adicionar linha WhatsApp</p>
-              <p className="mt-1 text-xs leading-relaxed text-content-secondary">
-                Compra uma capacidade extra para conectar outro número nesta página. A nova linha só é liberada após confirmação do Stripe.
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <button
-                type="button"
-                aria-label="Diminuir quantidade de linhas"
-                disabled={extraLineQty <= 1 || extraLineBuying}
-                onClick={() => setExtraLineQty((value) => Math.max(1, value - 1))}
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface-card font-semibold text-content transition hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                −
-              </button>
-              <span className="min-w-6 text-center text-sm font-semibold tabular-nums text-content">{extraLineQty}</span>
-              <button
-                type="button"
-                aria-label="Aumentar quantidade de linhas"
-                disabled={extraLineQty >= 10 || extraLineBuying}
-                onClick={() => setExtraLineQty((value) => Math.min(10, value + 1))}
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface-card font-semibold text-content transition hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                +
-              </button>
-              <Button type="button" onClick={() => void buyExtraLine()} isLoading={extraLineBuying}>
-                Comprar linha
-              </Button>
-            </div>
-          </div>
-          <p className="text-sm text-content-secondary">
-            Com <strong className="text-content">QR</strong>, o código é gerado no seu servidor WhatsApp (Evolution) e aparece aqui. Com <strong className="text-content">API Meta</strong>, o
-            caminho oficial para número verificado e envios em massa. Cada número usa só um dos dois — pra trocar de
-            método, use «Trocar método» dentro da linha.
-          </p>
-          <details
-            className={cn(
-              "rounded-lg border text-sm",
-              isLight ? "border-slate-200 bg-surface-deep/50" : "border-line bg-surface-deep/20",
-            )}
-          >
-            <summary className="cursor-pointer select-none px-3 py-2 font-medium text-content [&::-webkit-details-marker]:hidden">
-              Detalhes para equipa técnica (Evolution / Meta)
-            </summary>
-            <p className="border-t border-line/60 px-3 py-2 text-xs leading-relaxed text-content-muted">
-              O QR liga à Evolution na VPS: o MyChatCRM cria a instância e mostra o código. A API Meta é a opção certa para empresas com templates aprovados.
+        <div className="space-y-3 p-5 sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-content-muted">
+              Escolha QR ou API Meta pra este número — nunca os dois ao mesmo tempo.
             </p>
-          </details>
-          <div className="space-y-6">
-            {/* ── Seção Formulários Meta ── */}
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h4 className="text-sm font-bold text-content">Formulários Meta</h4>
-                {lineGrouping.forms.length > 0 && lineGrouping.freeCapacity > 0 ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    isLoading={allocatingSection === "forms"}
-                    onClick={() => void allocateLine("forms")}
-                  >
-                    + Adicionar outro número
-                  </Button>
-                ) : null}
-              </div>
-              <p className="text-xs text-content-muted">
-                Número que atende leads de Lead Ads. Escolha QR ou API Meta — nunca os dois ao mesmo tempo.
-              </p>
-              {allocateErrorBySection.forms ? (
-                <p className="text-xs text-rose-600 dark:text-rose-400">{allocateErrorBySection.forms}</p>
-              ) : null}
-              {lineGrouping.forms.length > 0 ? (
-                lineGrouping.forms.map((slotIndex) => renderLineCard(slotIndex, "forms"))
-              ) : (
-                <div className="rounded-xl border border-dashed border-line/70 bg-surface-deep/20 p-4 text-center">
-                  <p className="text-xs text-content-muted">Nenhum número conectado ainda.</p>
-                  <Button
-                    type="button"
-                    className="mt-2"
-                    size="sm"
-                    isLoading={allocatingSection === "forms"}
-                    disabled={lineGrouping.freeCapacity === 0}
-                    onClick={() => void allocateLine("forms")}
-                  >
-                    Conectar número
-                  </Button>
-                  {lineGrouping.freeCapacity === 0 ? (
-                    <p className="mt-2 text-[11px] text-content-muted">Sem capacidade livre — compre mais uma linha acima.</p>
-                  ) : null}
-                </div>
-              )}
-            </div>
-
-            {/* ── Seção WhatsApp Direto ── */}
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h4 className="text-sm font-bold text-content">WhatsApp Direto</h4>
-                {lineGrouping.direct.length > 0 && lineGrouping.freeCapacity > 0 ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    isLoading={allocatingSection === "direct"}
-                    onClick={() => void allocateLine("direct")}
-                  >
-                    + Adicionar outro número
-                  </Button>
-                ) : null}
-              </div>
-              <p className="text-xs text-content-muted">
-                Número que atende contato espontâneo, sem formulário. Escolha QR ou API Meta — nunca os dois ao mesmo tempo.
-              </p>
-              {allocateErrorBySection.direct ? (
-                <p className="text-xs text-rose-600 dark:text-rose-400">{allocateErrorBySection.direct}</p>
-              ) : null}
-              {lineGrouping.direct.length > 0 ? (
-                lineGrouping.direct.map((slotIndex) => renderLineCard(slotIndex, "direct"))
-              ) : (
-                <div className="rounded-xl border border-dashed border-line/70 bg-surface-deep/20 p-4 text-center">
-                  <p className="text-xs text-content-muted">Nenhum número conectado ainda.</p>
-                  <Button
-                    type="button"
-                    className="mt-2"
-                    size="sm"
-                    isLoading={allocatingSection === "direct"}
-                    disabled={lineGrouping.freeCapacity === 0}
-                    onClick={() => void allocateLine("direct")}
-                  >
-                    Conectar número
-                  </Button>
-                  {lineGrouping.freeCapacity === 0 ? (
-                    <p className="mt-2 text-[11px] text-content-muted">Sem capacidade livre — compre mais uma linha acima.</p>
-                  ) : null}
-                </div>
-              )}
-            </div>
-
-            {/* ── Faixa de migração: linha conectada sem finalidade travada ── */}
-            {lineGrouping.pendingWithConnection.length > 0 ? (
-              <div className="space-y-3">
-                <h4 className="text-sm font-bold text-content">Linhas sem finalidade definida</h4>
-                <p className="text-xs text-content-muted">
-                  Conectadas antes desta separação existir. Escolha a finalidade de cada uma pra mover pra uma das
-                  seções acima.
-                </p>
-                {lineGrouping.pendingWithConnection.map((slotIndex) => renderLineCard(slotIndex, null))}
-              </div>
+            {lineGrouping.direct.length > 0 && lineGrouping.freeCapacity > 0 ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                isLoading={allocatingSection === "direct"}
+                onClick={() => void allocateLine("direct")}
+              >
+                + Adicionar outro número
+              </Button>
             ) : null}
           </div>
+          {allocateErrorBySection.direct ? (
+            <p className="text-xs text-rose-600 dark:text-rose-400">{allocateErrorBySection.direct}</p>
+          ) : null}
+          {lineGrouping.direct.length > 0 ? (
+            lineGrouping.direct.map((slotIndex) => renderLineCard(slotIndex, "direct"))
+          ) : (
+            <div className="rounded-xl border border-dashed border-line/70 bg-surface-deep/20 p-4 text-center">
+              <p className="text-xs text-content-muted">Nenhum número conectado ainda.</p>
+              <Button
+                type="button"
+                className="mt-2"
+                size="sm"
+                isLoading={allocatingSection === "direct"}
+                disabled={lineGrouping.freeCapacity === 0}
+                onClick={() => void allocateLine("direct")}
+              >
+                Conectar número
+              </Button>
+              {lineGrouping.freeCapacity === 0 ? (
+                <p className="mt-2 text-[11px] text-content-muted">Sem capacidade livre — compre mais uma linha acima.</p>
+              ) : null}
+            </div>
+          )}
         </div>
       </section>
+
+      {/* ── Faixa de migração: linha conectada sem finalidade travada (raro) ── */}
+      {lineGrouping.pendingWithConnection.length > 0 ? (
+        <div
+          className={cn(
+            "space-y-3 rounded-xl border p-4 sm:p-5",
+            isLight ? "border-amber-200 bg-amber-50/60" : "border-amber-500/25 bg-amber-500/[0.06]",
+          )}
+        >
+          <h4 className="text-sm font-bold text-content">Linhas sem finalidade definida</h4>
+          <p className="text-xs text-content-muted">
+            Conectadas antes desta separação existir. Escolha a finalidade de cada uma pra mover pra uma das áreas
+            acima.
+          </p>
+          {lineGrouping.pendingWithConnection.map((slotIndex) => renderLineCard(slotIndex, null))}
+        </div>
+      ) : null}
 
       <section
         id="canal-facebook"
