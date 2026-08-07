@@ -192,9 +192,10 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     [],
   );
 
+  const [slotDataReady, setSlotDataReady] = useState(false);
   useEffect(() => {
-    void loadSlotCapacity();
-    void loadConnections();
+    setSlotDataReady(false);
+    void Promise.all([loadSlotCapacity(), loadConnections()]).finally(() => setSlotDataReady(true));
   }, [loadSlotCapacity, loadConnections, tenantId]);
 
   useEffect(() => {
@@ -759,6 +760,26 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     [loadConnections, loadSlotCapacity],
   );
 
+  // Assim que a área existe e tem linha livre, a linha aparece sozinha — sem
+  // exigir um clique preliminar só pra revelar as opções de conexão (QR/API
+  // Meta), igual à Linha 1. Uma tentativa por finalidade por carregamento da
+  // página; se falhar, o botão "Conectar número" do estado vazio continua
+  // servindo de retry manual.
+  const autoAllocateAttemptedRef = useRef<Set<SlotPurpose>>(new Set());
+  useEffect(() => {
+    if (!slotDataReady || allocatingSection) return;
+    const purposeToTry: SlotPurpose | null =
+      lineGrouping.forms.length === 0
+        ? "forms"
+        : lineGrouping.direct.length === 0
+          ? "direct"
+          : null;
+    if (!purposeToTry || lineGrouping.freeCapacity === 0) return;
+    if (autoAllocateAttemptedRef.current.has(purposeToTry)) return;
+    autoAllocateAttemptedRef.current.add(purposeToTry);
+    void allocateLine(purposeToTry);
+  }, [slotDataReady, allocatingSection, lineGrouping, allocateLine]);
+
   const metaPages = metaStatus?.pages ?? [];
   const metaConnected = Boolean(metaStatus?.connected);
   const metaHasPages = metaPages.length > 0;
@@ -1322,7 +1343,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
               <Share2 className="size-5" strokeWidth={2} aria-hidden />
             </span>
             <div>
-              <p className={cn(typography.ui.overline, "text-blue-700 dark:text-blue-300/90")}>Área 1 de 2</p>
+              <p className={cn(typography.ui.overline, "text-blue-700 dark:text-blue-300/90")}>Linha 1</p>
               <h3 className="font-display text-lg font-bold text-content">Formulários Meta</h3>
               <p className="text-xs text-content-secondary">Número que atende leads de Lead Ads.</p>
             </div>
@@ -1400,7 +1421,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
               <Plug className="size-5" strokeWidth={2} aria-hidden />
             </span>
             <div>
-              <p className={cn(typography.ui.overline, "text-emerald-700 dark:text-emerald-300/90")}>Área 2 de 2</p>
+              <p className={cn(typography.ui.overline, "text-emerald-700 dark:text-emerald-300/90")}>Linha 2</p>
               <h3 className="font-display text-lg font-bold text-content">WhatsApp Direto</h3>
               <p className="text-xs text-content-secondary">Número que atende contato espontâneo, sem formulário.</p>
             </div>
