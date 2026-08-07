@@ -150,6 +150,10 @@ export function EvolutionQrSlotPanel({
   // True após o usuário desconectar manualmente: não recriamos a instância sozinhos;
   // mostramos o CTA "Conectar" para uma nova ligação sob demanda.
   const [manuallyDisconnected, setManuallyDisconnected] = useState(false);
+  // True depois da primeira resposta do GET de sessão. Antes disso não sabemos
+  // se a linha já tem número pareado — mostrar o CTA "Conectar" nesse meio
+  // tempo deixaria a pessoa clicar e abrir uma segunda sessão na mesma linha.
+  const [sessionChecked, setSessionChecked] = useState(false);
 
   const clearPoll = useCallback(() => {
     if (pollRef.current) {
@@ -434,6 +438,7 @@ export function EvolutionQrSlotPanel({
       const j = await readSessionJson(res);
       if (cancelled) return;
       applySessionPayload(res, j);
+      setSessionChecked(true);
       if (cancelled) return;
       const st = j.connectionState ?? "";
       const hasQr = Boolean(j.qrDataUrl);
@@ -462,10 +467,13 @@ export function EvolutionQrSlotPanel({
 
   const unifiedAlert = useMemo(() => deriveUnifiedAlert(infraHint, error), [infraHint, error]);
   const waNumber = formatWaNumber(waJid);
-  // Mostra o CTA explícito de "Conectar" (em vez de criar a instância sozinho) quando
-  // o auto-provisionamento está desligado OU logo após uma desconexão manual.
+  // Mostra o CTA explícito de "Conectar" só depois de confirmar com o servidor
+  // que não há número pareado nesta linha (manualmente desconectado, estado
+  // "none", ou nunca teve waJid) — nunca durante o "close"/"connecting" de uma
+  // linha que já tem número, pra não deixar abrir uma segunda sessão ali.
   const showConnectCta =
-    (!autoProvision || manuallyDisconnected || connectionState === "none" || !waJid) &&
+    sessionChecked &&
+    (manuallyDisconnected || connectionState === "none" || !waJid) &&
     connectionState !== "open" &&
     connectionState !== "provisioning" &&
     connectionState !== "deleting" &&
@@ -584,6 +592,14 @@ export function EvolutionQrSlotPanel({
           </p>
         </div>
       </details>
+
+      {/* ── Verificando estado antes de decidir o que mostrar ── */}
+      {!sessionChecked ? (
+        <div className="flex items-center gap-2 text-xs text-content-secondary">
+          <Loader2 className="size-3.5 animate-spin text-primary" aria-hidden />
+          <span>A verificar conexão…</span>
+        </div>
+      ) : null}
 
       {/* ── Connect CTA (autoProvision off: leave empty until user connects) ── */}
       {showConnectCta ? (
@@ -809,7 +825,7 @@ export function EvolutionQrSlotPanel({
       ) : null}
 
       {/* ── Status label ── */}
-      {(!error || infraHint) && !showConnectCta ? (
+      {sessionChecked && (!error || infraHint) && !showConnectCta ? (
         <p className="text-xs text-content-muted">
           {connectionState === "open"
             ? "Ligado — o WhatsApp nesta linha está ativo."
@@ -822,7 +838,7 @@ export function EvolutionQrSlotPanel({
       ) : null}
 
       {/* ── Action buttons (hidden while loading or when Connect CTA is shown) ── */}
-      {!busy && !showConnectCta && !lifecyclePending ? (
+      {sessionChecked && !busy && !showConnectCta && !lifecyclePending ? (
         <div className="flex flex-wrap gap-2">
           {!waJid ? (
             <Button
