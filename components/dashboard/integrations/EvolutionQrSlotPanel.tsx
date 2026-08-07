@@ -452,18 +452,31 @@ export function EvolutionQrSlotPanel({
     };
   }, [applySessionPayload, slotIndex, startOrRefreshSession, autoProvision, sessionApiPath]);
 
-  // Polling while not connected
+  // Polling while not connected. Cada tick chega à VPS da Evolution de verdade
+  // (não é só leitura de banco) — 3s só faz sentido enquanto algo está de fato
+  // em andamento (QR na tela, aguardando scan, ou uma transição de estado).
+  // Parado em "close"/"none" sem nada acontecendo, 3s em 3s é carga desnecessária
+  // na VPS por cada linha ociosa — com 2+ linhas isso soma rápido.
   useEffect(() => {
     clearPoll();
     if (connectionState === "open") return;
     if (error) return;
     // Não pollar após desconexão manual: evita re-descoberta da instância pela Evolution.
     if (manuallyDisconnected) return;
-    pollRef.current = setInterval(() => {
-      void refresh();
-    }, 3_000);
+    const timeSensitive =
+      Boolean(qrDataUrl) ||
+      connectionState === "connecting" ||
+      connectionState === "provisioning" ||
+      connectionState === "deleting" ||
+      connectionState === "resetting";
+    pollRef.current = setInterval(
+      () => {
+        void refresh();
+      },
+      timeSensitive ? 3_000 : 20_000,
+    );
     return clearPoll;
-  }, [connectionState, refresh, clearPoll, manuallyDisconnected, error]);
+  }, [connectionState, refresh, clearPoll, manuallyDisconnected, error, qrDataUrl]);
 
   const unifiedAlert = useMemo(() => deriveUnifiedAlert(infraHint, error), [infraHint, error]);
   const waNumber = formatWaNumber(waJid);
