@@ -10,6 +10,8 @@ import { extractEvolutionSendReceipt } from "@/lib/integrations/evolution-messag
 import { normalizeCanonicalWhatsAppPhone } from "@/lib/integrations/whatsapp-contact-identity";
 
 const DEFAULT_TIMEOUT_MS = 25_000;
+/** Acima disto, a chamada à VPS vira log — instrumentação pra medir a latência real. */
+const EVOLUTION_SLOW_CALL_LOG_MS = 1_500;
 const MESSAGE_STATUS_POLL_ATTEMPTS = 4;
 const MESSAGE_STATUS_POLL_INTERVAL_MS = 500;
 
@@ -112,6 +114,7 @@ export async function evolutionFetchJson<T>(
   const { timeoutMs = DEFAULT_TIMEOUT_MS, ...rest } = init;
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
+  const startedAt = Date.now();
   try {
     const res = await fetch(url, {
       ...rest,
@@ -141,6 +144,13 @@ export async function evolutionFetchJson<T>(
     return { ok: false, status: 0, error: msg };
   } finally {
     clearTimeout(t);
+    // Só o que é lento de verdade vira log — o objetivo é saber se a latência
+    // da VPS ainda pesa depois de cortarmos as chamadas repetidas, sem inundar
+    // os logs com o caminho feliz. `path` não carrega dado de cliente.
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs >= EVOLUTION_SLOW_CALL_LOG_MS) {
+      console.warn("[evolution-api] slow_call", { path, ms: elapsedMs });
+    }
   }
 }
 
