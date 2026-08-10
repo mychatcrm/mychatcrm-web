@@ -6,12 +6,16 @@ const {
   getEvolutionInstanceByTenantSlotMock,
   getWhatsAppCloudConnectionMock,
   setSlotActiveProviderMock,
+  removeEvolutionSlotSafelyMock,
+  deleteWhatsAppCloudConnectionMock,
 } = vi.hoisted(() => ({
   requireActiveClientSessionMock: vi.fn(),
   getExtraWhatsappSlotsMock: vi.fn(),
   getEvolutionInstanceByTenantSlotMock: vi.fn(),
   getWhatsAppCloudConnectionMock: vi.fn(),
   setSlotActiveProviderMock: vi.fn(),
+  removeEvolutionSlotSafelyMock: vi.fn(),
+  deleteWhatsAppCloudConnectionMock: vi.fn(),
 }));
 
 vi.mock("@/lib/server/client-session-guard", () => ({ requireActiveClientSession: requireActiveClientSessionMock }));
@@ -19,7 +23,11 @@ vi.mock("@/lib/server/whatsapp-extra-slots-db", () => ({ getExtraWhatsappSlots: 
 vi.mock("@/lib/server/tenant-evolution-instance-db", () => ({
   getEvolutionInstanceByTenantSlot: getEvolutionInstanceByTenantSlotMock,
 }));
-vi.mock("@/lib/server/whatsapp-cloud-connections", () => ({ getWhatsAppCloudConnection: getWhatsAppCloudConnectionMock }));
+vi.mock("@/lib/server/evolution-slot-lifecycle", () => ({ removeEvolutionSlotSafely: removeEvolutionSlotSafelyMock }));
+vi.mock("@/lib/server/whatsapp-cloud-connections", () => ({
+  getWhatsAppCloudConnection: getWhatsAppCloudConnectionMock,
+  deleteWhatsAppCloudConnection: deleteWhatsAppCloudConnectionMock,
+}));
 vi.mock("@/lib/server/whatsapp-slot-provider", () => ({ setSlotActiveProvider: setSlotActiveProviderMock }));
 
 import { PATCH } from "@/app/api/client/whatsapp/slot-provider/route";
@@ -40,6 +48,8 @@ describe("PATCH /api/client/whatsapp/slot-provider", () => {
     getEvolutionInstanceByTenantSlotMock.mockReset();
     getWhatsAppCloudConnectionMock.mockReset();
     setSlotActiveProviderMock.mockReset();
+    removeEvolutionSlotSafelyMock.mockReset();
+    deleteWhatsAppCloudConnectionMock.mockReset();
     requireActiveClientSessionMock.mockResolvedValue({ ok: true, session });
     getExtraWhatsappSlotsMock.mockResolvedValue(0);
   });
@@ -72,6 +82,52 @@ describe("PATCH /api/client/whatsapp/slot-provider", () => {
     expect(res.status).toBe(200);
     expect(body).toEqual({ ok: true, activeProvider: "cloud_api", blockedRules: [] });
     expect(setSlotActiveProviderMock).toHaveBeenCalledWith("t1", 0, "cloud_api");
+  });
+
+  it("disconnects the Meta side when switching to evolution and both are connected", async () => {
+    getEvolutionInstanceByTenantSlotMock.mockResolvedValue({ connection_state: "open" });
+    getWhatsAppCloudConnectionMock.mockResolvedValue({ active: true });
+    setSlotActiveProviderMock.mockResolvedValue({ switchedRuleIds: [], blockedRules: [] });
+
+    const res = await PATCH(makeRequest({ slotIndex: 0, provider: "evolution" }));
+
+    expect(res.status).toBe(200);
+    expect(deleteWhatsAppCloudConnectionMock).toHaveBeenCalledWith("t1", 0);
+    expect(removeEvolutionSlotSafelyMock).not.toHaveBeenCalled();
+  });
+
+  it("does not touch the Meta side when switching to evolution and Meta isn't connected", async () => {
+    getEvolutionInstanceByTenantSlotMock.mockResolvedValue({ connection_state: "open" });
+    getWhatsAppCloudConnectionMock.mockResolvedValue(null);
+    setSlotActiveProviderMock.mockResolvedValue({ switchedRuleIds: [], blockedRules: [] });
+
+    const res = await PATCH(makeRequest({ slotIndex: 0, provider: "evolution" }));
+
+    expect(res.status).toBe(200);
+    expect(deleteWhatsAppCloudConnectionMock).not.toHaveBeenCalled();
+  });
+
+  it("disconnects the QR side when switching to cloud_api and both are connected", async () => {
+    getWhatsAppCloudConnectionMock.mockResolvedValue({ active: true });
+    getEvolutionInstanceByTenantSlotMock.mockResolvedValue({ connection_state: "open" });
+    setSlotActiveProviderMock.mockResolvedValue({ switchedRuleIds: [], blockedRules: [] });
+
+    const res = await PATCH(makeRequest({ slotIndex: 0, provider: "cloud_api" }));
+
+    expect(res.status).toBe(200);
+    expect(removeEvolutionSlotSafelyMock).toHaveBeenCalledWith({ tenantId: "t1", slotIndex: 0, mode: "deleting" });
+    expect(deleteWhatsAppCloudConnectionMock).not.toHaveBeenCalled();
+  });
+
+  it("does not touch the QR side when switching to cloud_api and QR isn't open", async () => {
+    getWhatsAppCloudConnectionMock.mockResolvedValue({ active: true });
+    getEvolutionInstanceByTenantSlotMock.mockResolvedValue({ connection_state: "close" });
+    setSlotActiveProviderMock.mockResolvedValue({ switchedRuleIds: [], blockedRules: [] });
+
+    const res = await PATCH(makeRequest({ slotIndex: 0, provider: "cloud_api" }));
+
+    expect(res.status).toBe(200);
+    expect(removeEvolutionSlotSafelyMock).not.toHaveBeenCalled();
   });
 
   it("surfaces blockedRules so the UI can warn about Lead Ads rules still needing a Meta template", async () => {

@@ -905,8 +905,8 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
           >
             <p className="flex items-start gap-1.5">
               <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-              Esta linha tem QR e API Meta conectados ao mesmo tempo. Escolha qual mantém — a outra precisa ser
-              desconectada manualmente ali embaixo depois.
+              Esta linha tem QR e API Meta conectados ao mesmo tempo. Escolha qual mantém — a outra é desconectada
+              automaticamente.
             </p>
             <div className="flex flex-wrap gap-2">
               <Button
