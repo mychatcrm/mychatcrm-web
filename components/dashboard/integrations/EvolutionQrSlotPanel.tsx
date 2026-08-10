@@ -106,6 +106,7 @@ export function EvolutionQrSlotPanel({
   autoProvision = true,
   seedQrDataUrl = null,
   allowSwap = false,
+  connectSignal = 0,
 }: {
   slotIndex: number;
   sessionApiPath?: string;
@@ -126,6 +127,12 @@ export function EvolutionQrSlotPanel({
    * na mesma linha (a rota fecha a troca sozinha assim que o QR confirmar).
    */
   allowSwap?: boolean;
+  /**
+   * Contador que o hub incrementa para pedir "gere o QR agora" sem o usuário
+   * ter de achar o botão dentro deste painel — usado pelo botão "Trocar para
+   * QR Code" do controle de método da linha.
+   */
+  connectSignal?: number;
 }) {
   const { isLight } = usePanelAppearance();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -274,6 +281,18 @@ export function EvolutionQrSlotPanel({
       setBusy(false);
     }
   }, [allowSwap, applySessionPayload, sessionApiPath, slotIndex]);
+
+  // O hub pede a geração do QR incrementando `connectSignal` (botão "Trocar
+  // para QR Code"). Guarda o último valor visto para reagir só à mudança —
+  // `startOrRefreshSession` troca de identidade quando `allowSwap` muda, e sem
+  // esta comparação isso dispararia uma sessão nova sem ninguém ter clicado.
+  const lastConnectSignalRef = useRef(connectSignal);
+  useEffect(() => {
+    if (connectSignal === lastConnectSignalRef.current) return;
+    lastConnectSignalRef.current = connectSignal;
+    if (!connectSignal) return;
+    void startOrRefreshSession();
+  }, [connectSignal, startOrRefreshSession]);
 
   const handleDisconnect = useCallback(async () => {
     if (

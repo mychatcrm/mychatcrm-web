@@ -11,6 +11,7 @@ import {
   Loader2,
   Plug,
   QrCode,
+  RefreshCw,
   Send,
   Share2,
   Unlink,
@@ -94,6 +95,12 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const [switchBlockedRulesBySlot, setSwitchBlockedRulesBySlot] = useState<
     Record<number, { id: string; name: string | null }[]>
   >({});
+  // Troca de método em andamento por linha: pra qual método a pessoa pediu
+  // pra ir. O método antigo continua ativo até o novo confirmar — o backend
+  // desliga o antigo sozinho nesse momento (allowSwap nas rotas de conectar).
+  const [methodSwapTargetBySlot, setMethodSwapTargetBySlot] = useState<Record<number, SlotProvider>>({});
+  // Incrementado pra pedir ao EvolutionQrSlotPanel que gere o QR agora.
+  const [qrConnectSignalBySlot, setQrConnectSignalBySlot] = useState<Record<number, number>>({});
   // Finalidade travada por linha: "forms" | "direct" | null (livre).
   const [purposeBySlot, setPurposeBySlot] = useState<Record<number, SlotPurpose | null>>({});
   const [purposeSavingSlot, setPurposeSavingSlot] = useState<number | null>(null);
@@ -780,6 +787,57 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     void allocateLine(purposeToTry);
   }, [slotDataReady, allocatingSection, lineGrouping, allocateLine]);
 
+  /**
+   * Botão único de troca de método da linha. Não desliga nada aqui: só abre a
+   * conexão do método novo com `allowSwap`, e é a própria rota de conectar que
+   * — assim que a conexão nova confirma — reponta as regras e desliga o método
+   * antigo. Assim a linha nunca fica sem WhatsApp nenhum no meio do caminho, e
+   * se a pessoa desistir no meio, o método antigo continua respondendo.
+   */
+  const startMethodSwap = useCallback(
+    (slotIndex: number, target: SlotProvider) => {
+      const targetLabel = target === "cloud_api" ? "API Meta" : "QR Code";
+      const currentLabel = target === "cloud_api" ? "QR Code" : "API Meta";
+      if (
+        typeof window !== "undefined" &&
+        !window.confirm(
+          `Trocar a Linha ${slotIndex + 1} para ${targetLabel}?\n\n` +
+            `O ${currentLabel} continua respondendo até a nova conexão ser confirmada — só então ele é desligado automaticamente.`,
+        )
+      ) {
+        return;
+      }
+      setMethodSwapTargetBySlot((prev) => ({ ...prev, [slotIndex]: target }));
+      if (target === "cloud_api") {
+        connectWaCloud(slotIndex, true);
+      } else {
+        setQrConnectSignalBySlot((prev) => ({ ...prev, [slotIndex]: (prev[slotIndex] ?? 0) + 1 }));
+      }
+    },
+    [connectWaCloud],
+  );
+
+  // Fecha o aviso de "troca em andamento" assim que o método de destino
+  // aparece conectado — quem confirma a troca é o servidor, não este clique.
+  useEffect(() => {
+    setMethodSwapTargetBySlot((prev) => {
+      const entries = Object.entries(prev);
+      if (entries.length === 0) return prev;
+      const next = { ...prev };
+      let changed = false;
+      for (const [slotKey, target] of entries) {
+        const slotIndex = Number(slotKey);
+        const pair = connectionsBySlot.get(slotIndex);
+        const done = target === "cloud_api" ? Boolean(pair?.meta?.connected) : Boolean(pair?.evo?.connected);
+        if (done) {
+          delete next[slotIndex];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [connectionsBySlot]);
+
   const metaPages = metaStatus?.pages ?? [];
   const metaConnected = Boolean(metaStatus?.connected);
   const metaHasPages = metaPages.length > 0;
@@ -833,6 +891,23 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     // como conexão nova para o OUTRO método — não pode furar a trava.
     const qrAllowSwap = metaConnected2 && !evoConnected;
     const cloudAllowSwap = evoConnected && !metaConnected2;
+    // Controle de método: só faz sentido quando exatamente um lado está
+    // conectado. Sem nada conectado, as duas colunas abaixo já são a escolha;
+    // com os dois (caso herdado), a caixa âmbar de resolução é que resolve.
+    const singleConnectedProvider: SlotProvider | null = bothConnected
+      ? null
+      : evoConnected
+        ? "evolution"
+        : metaConnected2
+          ? "cloud_api"
+          : null;
+    const swapTarget: SlotProvider | null =
+      singleConnectedProvider === "evolution" ? "cloud_api" : singleConnectedProvider === "cloud_api" ? "evolution" : null;
+    const swapInFlight = methodSwapTargetBySlot[slotIndex] ?? null;
+    const connectedLabel =
+      singleConnectedProvider === "evolution"
+        ? (pair?.evo?.label ?? "QR Code")
+        : (pair?.meta?.label ?? "API Meta");
 
     return (
       <div
@@ -854,6 +929,76 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
             ) : null}
           </div>
         </div>
+
+        {/* ── Controle único de método da linha ── */}
+        {singleConnectedProvider && swapTarget ? (
+          <div
+            className={cn(
+              "mt-3 rounded-lg border px-3 py-3",
+              isLight ? "border-line/70 bg-surface-card/60" : "border-line/70 bg-surface-card/30",
+            )}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-content-muted">
+                  Método de conexão
+                </p>
+                <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-content">
+                  <span className="size-2 shrink-0 rounded-full bg-emerald-500" aria-hidden />
+                  <span className="truncate">{connectedLabel}</span>
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0 gap-1.5"
+                disabled={waCloudConnecting}
+                onClick={() => startMethodSwap(slotIndex, swapTarget)}
+              >
+                <RefreshCw className="size-3.5" aria-hidden />
+                Trocar para {swapTarget === "cloud_api" ? "API Meta" : "QR Code"}
+              </Button>
+            </div>
+            {swapInFlight ? (
+              <div
+                className={cn(
+                  "mt-2 space-y-1.5 text-[11px] leading-relaxed",
+                  isLight ? "text-amber-800" : "text-amber-300/90",
+                )}
+              >
+                <p className="flex items-start gap-1.5">
+                  <Loader2 className="mt-0.5 size-3 shrink-0 animate-spin" aria-hidden />
+                  <span>
+                    Troca em andamento — conclua a conexão do{" "}
+                    <strong>{swapInFlight === "cloud_api" ? "API Meta" : "QR Code"}</strong> abaixo. O método atual
+                    continua respondendo até lá.
+                  </span>
+                </p>
+                {/* Desistir é só local: nada foi alterado no servidor ainda. */}
+                <button
+                  type="button"
+                  className="text-[11px] font-medium underline underline-offset-2 hover:opacity-80"
+                  onClick={() =>
+                    setMethodSwapTargetBySlot((prev) => {
+                      if (!(slotIndex in prev)) return prev;
+                      const next = { ...prev };
+                      delete next[slotIndex];
+                      return next;
+                    })
+                  }
+                >
+                  Desistir da troca (mantém o método atual)
+                </button>
+              </div>
+            ) : (
+              <p className="mt-2 text-[11px] leading-relaxed text-content-muted">
+                Cada linha usa um método por vez. Ao trocar, o método atual continua respondendo até a nova conexão
+                ser confirmada — só então ele é desligado automaticamente, sem perder as regras já configuradas.
+              </p>
+            )}
+          </div>
+        ) : null}
 
         {sectionPurpose === null ? (
           // Faixa de migração: linha com número conectado mas sem finalidade
@@ -973,6 +1118,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
               slotIndex={slotIndex}
               autoProvision={false}
               allowSwap={qrAllowSwap}
+              connectSignal={qrConnectSignalBySlot[slotIndex] ?? 0}
             />
             {evoConnected ? (
               <div className="space-y-2 rounded-xl border border-line/70 bg-surface-card/40 p-3">
