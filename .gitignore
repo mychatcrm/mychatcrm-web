@@ -46,3 +46,9 @@ logs/cleanup-*.log
 # os arquivos de demo (tenant-mychatcrm-demo.json, tenant-clinica-oral-prime.json) podem
 # ser mantidos em git pois são dados fictícios de exemplo. Tenants reais não devem ser commitados.
 data/team-employees/tenant-[^m][^y]*.json
+
+# worktrees criados por sessões isoladas do Claude Code.
+# Já entraram no repo uma vez como gitlink órfão (modo 160000 sem .gitmodules),
+# deixando o `git status` sujo e um ponteiro de submódulo quebrado no clone.
+# `.claude/launch.json` continua versionado de propósito — é config do projeto.
+.claude/worktrees/
