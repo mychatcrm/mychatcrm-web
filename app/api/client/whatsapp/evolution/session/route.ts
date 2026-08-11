@@ -47,6 +47,25 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 /**
+ * Janela mínima entre duas checagens de deriva de config (webhook + settings)
+ * da MESMA instância. A checagem existe porque a Evolution pode perder a config
+ * silenciosamente, mas é uma verificação de saúde — não precisa correr a cada
+ * poll do painel (era até 20x/min por linha, 2 idas à VPS cada). Um Map em
+ * memória basta: cold start apenas refaz a checagem uma vez, o que é inofensivo.
+ */
+const CONFIG_DRIFT_CHECK_INTERVAL_MS = 5 * 60_000;
+const lastConfigDriftCheckAt = new Map<string, number>();
+
+/** True (e marca o relógio) quando esta instância pode ser checada agora. */
+function claimConfigDriftCheck(instanceName: string): boolean {
+  const now = Date.now();
+  const last = lastConfigDriftCheckAt.get(instanceName) ?? 0;
+  if (now - last < CONFIG_DRIFT_CHECK_INTERVAL_MS) return false;
+  lastConfigDriftCheckAt.set(instanceName, now);
+  return true;
+}
+
+/**
  * POST — cria/reaproveita instância Evolution, configura webhook e devolve QR + estado.
  * GET ?slotIndex= — estado remoto + QR se aplicável.
  * DELETE ?slotIndex= — remove a instância na Evolution após prova de ausência
@@ -411,32 +430,74 @@ export async function GET(request: Request) {
     );
   }
 
-  const liveConnection = await reconcileLiveEvolutionInstance(row);
-  if (liveConnection.ok) row = liveConnection.instance;
+  // As duas provas independentes deste poll, buscadas em paralelo: o
+  // `connectionState` decide open/close e o fetch ESCOPADO traz o `ownerJid`
+  // que veta um "open" zumbi. A semântica é a mesma de antes — o que sai é a
+  // repetição: cada uma dessas duas chamadas era feita duas vezes por poll
+  // (uma dentro de reconcileLiveEvolutionInstance, outra aqui) e o inventário
+  // COMPLETO da VPS era baixado mesmo com a linha saudável, o que dominava o
+  // tempo de resposta desta rota.
+  const [stateRes, scopedFetch] = await Promise.all([
+    evolutionConnectionState(row.instance_name),
+    evolutionFetchInstances(row.instance_name),
+  ]);
 
-  const stateRes = await evolutionConnectionState(row.instance_name);
-  let remoteState = normalizeEvolutionConnectionState(
-    stateRes.ok ? parseEvolutionConnectionStatePayload(stateRes.data) : row.connection_state,
-    normalizeEvolutionConnectionState(row.connection_state, "close"),
-  );
+  // A instância desta linha existe mesmo na VPS? Quando existe, não há nada a
+  // reconciliar: o registro aponta pra uma instância real. Só quando ela some
+  // (ou a consulta falha) é que vale baixar o inventário inteiro e procurar uma
+  // instância irmã conectada — a auto-cura de reset interrompido, que é o caso
+  // raro pra que reconcileLiveEvolutionInstance existe.
+  const scopedInfo = scopedFetch.ok
+    ? pickEvolutionInstanceInfo(scopedFetch.data, row.instance_name)
+    : null;
 
-  // Zombie check: connectionStatus="open" não garante que Session table tem chaves Baileys.
-  // Se fetchInstances retornar ownerJid ausente → sessão zumbi → forçar reconexão com QR.
+  let remoteState = normalizeEvolutionConnectionState(row.connection_state, "close");
   let resolvedWaJid = row.wa_jid;
   // Só true quando este poll confirmou, agora, um ownerJid real via fetchInstances —
   // usado para exigir prova fresca antes de avisar "conectado" (ver abaixo). Sem essa
   // prova, "open" pode ser um estado zumbi que o fetchInstances não conseguiu corrigir
   // (erro de rede, timeout) e o wa_jid seria só o valor antigo em cache (row.wa_jid).
   let ownerJidConfirmedThisPoll = false;
-  if (remoteState === "open") {
-    const fetchResult = await evolutionFetchInstances(row.instance_name);
-    if (fetchResult.ok) {
-      const instanceInfo = pickEvolutionInstanceInfo(fetchResult.data, row.instance_name);
-      if (!instanceInfo?.ownerJid) {
+
+  if (scopedInfo) {
+    remoteState = normalizeEvolutionConnectionState(
+      stateRes.ok ? parseEvolutionConnectionStatePayload(stateRes.data) : row.connection_state,
+      remoteState,
+    );
+    // Zombie check: connectionStatus="open" não garante que Session table tem chaves Baileys.
+    // Se fetchInstances retornar ownerJid ausente → sessão zumbi → forçar reconexão com QR.
+    if (remoteState === "open") {
+      if (!scopedInfo.ownerJid) {
         remoteState = "close";
       } else {
-        resolvedWaJid = instanceInfo.ownerJid;
+        resolvedWaJid = scopedInfo.ownerJid;
         ownerJidConfirmedThisPoll = true;
+      }
+    }
+  } else {
+    // Instância ausente na VPS (ou consulta falhou): caminho de recuperação.
+    // Reconcilia contra o inventário completo — pode adotar uma irmã conectada
+    // e trocar row.instance_name, então o estado é relido na instância final.
+    const liveConnection = await reconcileLiveEvolutionInstance(row);
+    if (liveConnection.ok) row = liveConnection.instance;
+
+    const recoveredState = await evolutionConnectionState(row.instance_name);
+    remoteState = normalizeEvolutionConnectionState(
+      recoveredState.ok
+        ? parseEvolutionConnectionStatePayload(recoveredState.data)
+        : row.connection_state,
+      normalizeEvolutionConnectionState(row.connection_state, "close"),
+    );
+    if (remoteState === "open") {
+      const recoveredFetch = await evolutionFetchInstances(row.instance_name);
+      if (recoveredFetch.ok) {
+        const instanceInfo = pickEvolutionInstanceInfo(recoveredFetch.data, row.instance_name);
+        if (!instanceInfo?.ownerJid) {
+          remoteState = "close";
+        } else {
+          resolvedWaJid = instanceInfo.ownerJid;
+          ownerJidConfirmedThisPoll = true;
+        }
       }
     }
   }
@@ -558,7 +619,7 @@ export async function GET(request: Request) {
     // mensagem chega em /api/webhooks/evolution. Sempre que o painel confirma
     // uma sessão viva, confere a config e re-aplica se necessário.
     const webhookSecretGet = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
-    if (ownerJidConfirmedThisPoll && webhookSecretGet) {
+    if (ownerJidConfirmedThisPoll && webhookSecretGet && claimConfigDriftCheck(row.instance_name)) {
       try {
         const expectedUrl = buildEvolutionWebhookUrl(getPublicBaseUrlFromRequest(request), webhookSecretGet);
         const [settings, webhook] = await Promise.all([
