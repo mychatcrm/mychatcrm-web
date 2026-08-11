@@ -78,6 +78,28 @@ export async function updateCrmLeadInApi(leadId: string, patch: Partial<ClientLe
   return updated ?? null;
 }
 
+export async function moveCrmLeadCardInApi(params: {
+  leadId: string;
+  funilId: string;
+  status: string;
+  previousLeadId: string | null;
+  nextLeadId: string | null;
+}): Promise<{ id: string; funilId: string; status: string; crmPosition: number }> {
+  const res = await fetch("/api/client/crm/leads/move", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || `CRM lead move ${res.status}`);
+  }
+  const data = (await res.json()) as {
+    lead: { id: string; funilId: string; status: string; crmPosition: number };
+  };
+  return data.lead;
+}
+
 export async function deleteCrmLeadInApi(leadId: string): Promise<void> {
   const res = await fetch(`/api/client/crm/leads/${encodeURIComponent(leadId)}`, {
     method: "DELETE",

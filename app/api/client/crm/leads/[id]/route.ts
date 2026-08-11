@@ -15,7 +15,8 @@ export const dynamic = "force-dynamic";
 
 const BASE_LEAD_SELECT = "id, tenant_id, name, phone, email, source, status, notes, agent_id, last_seen, last_message_at, created_at, updated_at";
 const LEAD_SELECT_WITH_FUNNEL = `${BASE_LEAD_SELECT}, crm_funnel_id, owner_employee_id`;
-const LEAD_SELECT_WITH_PROFILE = `${LEAD_SELECT_WITH_FUNNEL}, profile_metadata`;
+const LEAD_SELECT_WITH_ORDER = `${LEAD_SELECT_WITH_FUNNEL}, crm_position`;
+const LEAD_SELECT_WITH_PROFILE = `${LEAD_SELECT_WITH_ORDER}, profile_metadata`;
 const MISSING_COLUMN_CODES = new Set(["42703", "PGRST204"]);
 
 type LeadRow = {
@@ -34,12 +35,13 @@ type LeadRow = {
   updated_at: string | null;
   crm_funnel_id?: string | null;
   owner_employee_id?: string | null;
+  crm_position?: number | string | null;
   profile_metadata?: Record<string, unknown> | null;
 };
 
 function isMissingColumnError(error: { code?: string; message?: string } | null | undefined): boolean {
   const message = error?.message?.toLowerCase() ?? "";
-  return Boolean(error?.code && MISSING_COLUMN_CODES.has(error.code)) || message.includes("crm_funnel_id") || message.includes("owner_employee_id");
+  return Boolean(error?.code && MISSING_COLUMN_CODES.has(error.code)) || message.includes("crm_funnel_id") || message.includes("owner_employee_id") || message.includes("crm_position");
 }
 
 function toDateISO(value: string | null | undefined): string {
@@ -89,6 +91,7 @@ function rowToClientLead(row: LeadRow, ownerNamesById?: Map<string, string>): Cl
   const ownerName = ownerEmployeeId ? ownerNamesById?.get(ownerEmployeeId) ?? "Atendente" : "Equipe";
   return {
     id: row.id,
+    crmPosition: row.crm_position == null ? undefined : Number(row.crm_position),
     funilId: row.crm_funnel_id?.trim() || "funil-default",
     dataEntradaISO: toDateISO(row.created_at),
     nome: row.name?.trim() || row.phone?.trim() || "Lead sem nome",
@@ -239,7 +242,7 @@ export async function PUT(
     .update(leadPayloadToUpdate(body))
     .eq("tenant_id", session.tenantId)
     .eq("id", params.id)
-    .select(LEAD_SELECT_WITH_FUNNEL)
+    .select(LEAD_SELECT_WITH_ORDER)
     .single();
   let data: unknown = initial.data;
   let error = initial.error;
