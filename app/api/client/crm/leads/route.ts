@@ -15,6 +15,7 @@ export const dynamic = "force-dynamic";
 
 const BASE_LEAD_SELECT = "id, tenant_id, name, phone, email, source, status, notes, agent_id, last_seen, last_message_at, created_at, updated_at";
 const LEAD_SELECT_WITH_FUNNEL = `${BASE_LEAD_SELECT}, crm_funnel_id, owner_employee_id`;
+const LEAD_SELECT_WITH_ORDER = `${LEAD_SELECT_WITH_FUNNEL}, crm_position`;
 const MISSING_COLUMN_CODES = new Set(["42703", "PGRST204"]);
 
 type LeadRow = {
@@ -33,11 +34,12 @@ type LeadRow = {
   updated_at: string | null;
   crm_funnel_id?: string | null;
   owner_employee_id?: string | null;
+  crm_position?: number | string | null;
 };
 
 function isMissingColumnError(error: { code?: string; message?: string } | null | undefined): boolean {
   const message = error?.message?.toLowerCase() ?? "";
-  return Boolean(error?.code && MISSING_COLUMN_CODES.has(error.code)) || message.includes("crm_funnel_id") || message.includes("owner_employee_id");
+  return Boolean(error?.code && MISSING_COLUMN_CODES.has(error.code)) || message.includes("crm_funnel_id") || message.includes("owner_employee_id") || message.includes("crm_position");
 }
 
 function toDateISO(value: string | null | undefined): string {
@@ -87,6 +89,7 @@ function rowToClientLead(row: LeadRow, ownerNamesById?: Map<string, string>): Cl
   const ownerName = ownerEmployeeId ? ownerNamesById?.get(ownerEmployeeId) ?? "Atendente" : "Equipe";
   return {
     id: row.id,
+    crmPosition: row.crm_position == null ? undefined : Number(row.crm_position),
     funilId: row.crm_funnel_id?.trim() || "funil-default",
     dataEntradaISO: toDateISO(row.created_at),
     nome: row.name?.trim() || row.phone?.trim() || "Lead sem nome",
@@ -158,12 +161,14 @@ export async function GET() {
     return NextResponse.json({ leads: [] }, { headers: { "Cache-Control": "no-store" } });
   }
 
-  const scopedQuery = (select: string) => {
+  const scopedQuery = (select: string, withPosition: boolean) => {
     let base = sb
       .from("leads")
       .select(select)
-      .eq("tenant_id", session.tenantId)
-      .order("created_at", { ascending: false });
+      .eq("tenant_id", session.tenantId);
+    base = withPosition
+      ? base.order("crm_position", { ascending: true, nullsFirst: false }).order("created_at", { ascending: false })
+      : base.order("created_at", { ascending: false });
     // Funis liberados restringem por cima do recorte por dono/equipe.
     if (scope.kind !== "all" && scope.funnelIds?.length) {
       base = base.in("crm_funnel_id", scope.funnelIds);
@@ -173,14 +178,19 @@ export async function GET() {
     return base;
   };
 
-  const initial = await scopedQuery(LEAD_SELECT_WITH_FUNNEL);
+  const initial = await scopedQuery(LEAD_SELECT_WITH_ORDER, true);
   let data: unknown[] | null = initial.data;
   let error = initial.error;
 
   if (isMissingColumnError(error)) {
-    const fallback = await scopedQuery(BASE_LEAD_SELECT);
+    const fallback = await scopedQuery(LEAD_SELECT_WITH_FUNNEL, false);
     data = fallback.data as unknown[] | null;
     error = fallback.error;
+    if (isMissingColumnError(error)) {
+      const legacyFallback = await scopedQuery(BASE_LEAD_SELECT, false);
+      data = legacyFallback.data as unknown[] | null;
+      error = legacyFallback.error;
+    }
   }
 
   if (error) {
@@ -255,7 +265,7 @@ export async function POST(request: Request) {
   const initial = await sb
     .from("leads")
     .insert(payload)
-    .select(LEAD_SELECT_WITH_FUNNEL)
+    .select(LEAD_SELECT_WITH_ORDER)
     .single();
   let data: unknown = initial.data;
   let error = initial.error;

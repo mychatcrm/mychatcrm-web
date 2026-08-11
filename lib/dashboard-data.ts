@@ -31,6 +31,8 @@ export const CRM_LEAD_SEM_OWNER_LABEL = "(Sem responsável)";
 
 export type ClientLead = {
   id: string;
+  /** Ordem persistida do card dentro da coluna do Kanban. */
+  crmPosition?: number;
   /** Funil de vendas (CRM) a que este lead pertence — id em `lib/crm-funnels`. */
   funilId: string;
   /** Data em que o lead entrou no CRM (calendário local), `YYYY-MM-DD`. */

@@ -18,17 +18,20 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   DndContext,
+  DragOverlay,
+  type CollisionDetection,
   type DragEndEvent,
+  type DragStartEvent,
   KeyboardSensor,
   PointerSensor,
   closestCorners,
+  pointerWithin,
   useDroppable,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
 import {
   SortableContext,
-  arrayMove,
   sortableKeyboardCoordinates,
   useSortable,
   verticalListSortingStrategy,
@@ -125,11 +128,16 @@ import {
   fetchCrmLeadsFromApi,
   loadCrmLeadsFromApiWithLocalMigration,
   loadCrmLeadsSnapshot,
+  moveCrmLeadCardInApi,
   persistCrmLeadsSnapshot,
   runCrmLeadBulkActionInApi,
   subscribeToCrmLeadsRealtime,
   updateCrmLeadInApi,
 } from "@/lib/crm-leads-storage";
+import {
+  calculateCrmKanbanMove,
+  CRM_KANBAN_COLUMN_DROPPABLE_PREFIX,
+} from "@/lib/crm-kanban-move";
 import { ActiveOffersHub } from "@/components/dashboard/ofertas-ativas/ActiveOffersHub";
 import { LeadThermometerInline } from "./crm/LeadThermometer";
 import { CrmAddLeadModal } from "./crm/CrmAddLeadModal";
@@ -832,42 +840,24 @@ function OverviewPage({
 }
 
 
-const CRM_KANBAN_COL_PREFIX = "crm-kanban:";
+const CRM_KANBAN_COL_PREFIX = CRM_KANBAN_COLUMN_DROPPABLE_PREFIX;
 /** Texto exato que o utilizador deve escrever para confirmar apagar um funil. */
 const DELETE_FUNNEL_CONFIRM_TEXT = "QUERO APAGAR";
 
-/** Reescreve a ordem dos leads numa coluna do funil (`funilId` + `status`) mantendo o resto da lista na mesma ordem. */
-function reorderLeadsForFunnelColumn(
-  prev: ClientLead[],
-  funilId: string,
-  status: string,
-  orderedIds: string[],
-  leadById: Map<string, ClientLead>,
-): ClientLead[] {
-  const out: ClientLead[] = [];
-  let placed = false;
-  for (const l of prev) {
-    if (l.funilId !== funilId || l.status !== status) {
-      out.push(l);
-      continue;
-    }
-    if (!placed) {
-      for (const id of orderedIds) {
-        const node = leadById.get(id);
-        if (node) out.push(node);
-      }
-      placed = true;
-      continue;
-    }
+const crmKanbanCollisionDetection: CollisionDetection = (args) => {
+  const pointerCollisions = pointerWithin(args).filter(
+    (collision) => String(collision.id) !== String(args.active.id),
+  );
+  if (pointerCollisions.length > 0) {
+    const cardCollision = pointerCollisions.find(
+      (collision) => !String(collision.id).startsWith(CRM_KANBAN_COL_PREFIX),
+    );
+    return cardCollision ? [cardCollision] : pointerCollisions;
   }
-  if (!placed && orderedIds.length) {
-    for (const id of orderedIds) {
-      const node = leadById.get(id);
-      if (node) out.push(node);
-    }
-  }
-  return out;
-}
+  return closestCorners(args).filter(
+    (collision) => String(collision.id) !== String(args.active.id),
+  );
+};
 
 function crmStageTone(
   columnId: string,
@@ -975,6 +965,7 @@ function CrmKanbanLeadCard({
   selected,
   onToggleSelected,
   lastDragEndedAtRef,
+  dragDisabled,
 }: {
   lead: ClientLead;
   temperature: LeadTemperatureResult;
@@ -982,10 +973,12 @@ function CrmKanbanLeadCard({
   selected: boolean;
   onToggleSelected: (leadId: string) => void;
   lastDragEndedAtRef: MutableRefObject<number>;
+  dragDisabled: boolean;
 }) {
   const { isLight } = usePanelAppearance();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: lead.id,
+    disabled: dragDisabled,
   });
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -1006,7 +999,6 @@ function CrmKanbanLeadCard({
       style={style}
       className={cn(
         "group relative overflow-hidden rounded-lg border border-line/70 bg-surface-card/95 text-left outline-none",
-        "cursor-grab active:cursor-grabbing",
         "transition-[border-color,background-color,box-shadow,transform] duration-200 ease-out",
         crmStyles.leadCard,
         "hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-[0_24px_58px_-42px_rgba(242,68,0,0.45)]",
@@ -1016,8 +1008,6 @@ function CrmKanbanLeadCard({
         selected && "border-primary/55 bg-primary/[0.06] ring-2 ring-primary/25",
         isDragging && "z-40 cursor-grabbing opacity-[0.96] ring-2 ring-primary/35",
       )}
-      {...listeners}
-      {...attributes}
       role="button"
       tabIndex={0}
       onClick={() => {
@@ -1044,7 +1034,22 @@ function CrmKanbanLeadCard({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-0.5">
-            <GripVertical className="h-4 w-4 text-content-faint opacity-0 transition-opacity group-hover:opacity-70" strokeWidth={1.8} aria-hidden />
+            <button
+              type="button"
+              className={cn(
+                "flex h-7 w-7 touch-none items-center justify-center rounded-md text-content-faint",
+                "cursor-grab transition hover:bg-primary/10 hover:text-content active:cursor-grabbing",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+                dragDisabled && "cursor-wait opacity-45",
+              )}
+              aria-label={`Mover o card de ${lead.nome}`}
+              title="Segure e arraste para mover"
+              onClick={(event) => event.stopPropagation()}
+              {...listeners}
+              {...attributes}
+            >
+              <GripVertical className="h-4 w-4" strokeWidth={1.8} aria-hidden />
+            </button>
             <label
               className={cn(
                 "inline-flex h-6 w-6 items-center justify-center rounded-md text-content-muted transition hover:bg-primary/10",
@@ -1122,6 +1127,27 @@ function CrmKanbanLeadCard({
   );
 }
 
+function CrmKanbanDragPreview({ lead }: { lead: ClientLead }) {
+  return (
+    <div className="w-64 rotate-[1deg] rounded-xl border border-primary/45 bg-surface-card px-4 py-3 shadow-2xl ring-2 ring-primary/20">
+      <div className="flex items-center gap-2.5">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/12 text-xs font-bold text-primary">
+          {lead.nome
+            .split(/\s+/)
+            .filter(Boolean)
+            .slice(0, 2)
+            .map((part) => part[0]?.toLocaleUpperCase("pt-BR"))
+            .join("") || "L"}
+        </div>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-content">{lead.nome}</p>
+          <p className="truncate text-[11px] text-content-muted">Solte na posição desejada</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CrmPage({
   dataset,
   session,
@@ -1151,6 +1177,7 @@ function CrmPage({
   const [leads, setLeads] = useState<ClientLead[]>(() =>
     dataset.leads.map((l) => ({ ...l })),
   );
+  const leadsRef = useRef(leads);
   const [leadsLoadedFromApi, setLeadsLoadedFromApi] = useState(false);
   const [newFunnelOpen, setNewFunnelOpen] = useState(false);
   const [newFunnelNome, setNewFunnelNome] = useState("");
@@ -1184,6 +1211,9 @@ function CrmPage({
   const [bulkActionBusy, setBulkActionBusy] = useState<"assign" | "status" | "offer" | null>(null);
   const [bulkActionError, setBulkActionError] = useState<string | null>(null);
   const [crmPipelineError, setCrmPipelineError] = useState<string | null>(null);
+  const [activeKanbanLeadId, setActiveKanbanLeadId] = useState<string | null>(null);
+  const [pendingCrmMoveIds, setPendingCrmMoveIds] = useState<Set<string>>(() => new Set());
+  const pendingCrmMoveIdsRef = useRef<Set<string>>(new Set());
   const [assignAttendantOpen, setAssignAttendantOpen] = useState(false);
   const [assignAttendantId, setAssignAttendantId] = useState("");
   const [changeStatusOpen, setChangeStatusOpen] = useState(false);
@@ -1194,6 +1224,10 @@ function CrmPage({
   const [deleteLeadConfirm, setDeleteLeadConfirm] = useState<{ ids: string[]; names: string[] } | null>(null);
   const [deleteLeadError, setDeleteLeadError] = useState<string | null>(null);
   const [deleteLeadBusy, setDeleteLeadBusy] = useState(false);
+
+  useEffect(() => {
+    leadsRef.current = leads;
+  }, [leads]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1244,6 +1278,7 @@ function CrmPage({
   useEffect(() => {
     let cancelled = false;
     const unsubscribe = subscribeToCrmLeadsRealtime(dataset.tenantId, () => {
+      if (pendingCrmMoveIdsRef.current.size > 0) return;
       void fetchCrmLeadsFromApi()
         .then((remoteLeads) => {
           if (cancelled) return;
@@ -1316,97 +1351,83 @@ function CrmPage({
     lastKanbanDragEndedAtRef.current = Date.now();
   }, []);
 
+  const onKanbanDragStart = useCallback((event: DragStartEvent) => {
+    const leadId = String(event.active.id);
+    if (!leadsRef.current.some((lead) => lead.id === leadId)) return;
+    setActiveKanbanLeadId(leadId);
+  }, []);
+
   const onKanbanDragEnd = useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over || !activeFunnel) return;
       const activeId = String(active.id);
       const overId = String(over.id);
-      if (activeId === overId) return;
-
-      const fid = activeFunnel.id;
-      const allowed = activeFunnel.columns.map((c) => c.id);
-
-      setLeads((prev) => {
-        const activeLead = prev.find((l) => l.id === activeId);
-        if (!activeLead || activeLead.funilId !== fid) return prev;
-
-        if (overId.startsWith(CRM_KANBAN_COL_PREFIX)) {
-          const targetStatus = overId.slice(CRM_KANBAN_COL_PREFIX.length);
-          if (!allowed.includes(targetStatus)) return prev;
-          if (activeLead.status === targetStatus) return prev;
-
-          queueMicrotask(() => {
-            appendCrmTimelineEvent({
-              leadId: activeLead.id,
-              lead: { ...activeLead, status: targetStatus },
-              funnel: activeFunnel,
-              item: buildPipelineMoveItem(activeLead.id, activeLead.status, targetStatus, activeFunnel),
-            });
-            void updateCrmLeadInApi(activeLead.id, { status: targetStatus, funilId: fid })
-              .then(() => setCrmPipelineError(null))
-              .catch(() => {
-                setLeads((current) =>
-                  current.map((l) => (l.id === activeLead.id ? { ...activeLead } : l)),
-                );
-                setCrmPipelineError("Não foi possível salvar a movimentação do lead. Tente novamente.");
-              });
-          });
-
-          const moved = { ...activeLead, status: targetStatus };
-          const rest = prev.filter((l) => l.id !== activeId);
-          const byId = new Map(rest.map((l) => [l.id, l]));
-          byId.set(moved.id, moved);
-          const targetIds = rest.filter((l) => l.funilId === fid && l.status === targetStatus).map((l) => l.id);
-          const newIds = [...targetIds, moved.id];
-          return reorderLeadsForFunnelColumn(rest, fid, targetStatus, newIds, byId);
-        }
-
-        const overLead = prev.find((l) => l.id === overId);
-        if (!overLead || overLead.funilId !== fid) return prev;
-        const targetStatus = overLead.status;
-        if (!allowed.includes(targetStatus)) return prev;
-
-        if (activeLead.status === targetStatus) {
-          const colIds = prev.filter((l) => l.funilId === fid && l.status === targetStatus).map((l) => l.id);
-          const oldIdx = colIds.indexOf(activeId);
-          const newIdx = colIds.indexOf(overId);
-          if (oldIdx < 0 || newIdx < 0) return prev;
-          const newIds = arrayMove(colIds, oldIdx, newIdx);
-          return reorderLeadsForFunnelColumn(prev, fid, targetStatus, newIds, new Map(prev.map((l) => [l.id, l])));
-        }
-
-        if (activeLead.status !== targetStatus) {
-          queueMicrotask(() => {
-            appendCrmTimelineEvent({
-              leadId: activeLead.id,
-              lead: { ...activeLead, status: targetStatus },
-              funnel: activeFunnel,
-              item: buildPipelineMoveItem(activeLead.id, activeLead.status, targetStatus, activeFunnel),
-            });
-            void updateCrmLeadInApi(activeLead.id, { status: targetStatus, funilId: fid })
-              .then(() => setCrmPipelineError(null))
-              .catch(() => {
-                setLeads((current) =>
-                  current.map((l) => (l.id === activeLead.id ? { ...activeLead } : l)),
-                );
-                setCrmPipelineError("Não foi possível salvar a movimentação do lead. Tente novamente.");
-              });
-          });
-        }
-
-        const moved = { ...activeLead, status: targetStatus };
-        const rest = prev.filter((l) => l.id !== activeId);
-        const byId = new Map(rest.map((l) => [l.id, l]));
-        byId.set(moved.id, moved);
-        const targetIds = rest.filter((l) => l.funilId === fid && l.status === targetStatus).map((l) => l.id);
-        const insertAt = targetIds.indexOf(overId);
-        if (insertAt < 0) return prev;
-        const newIds = [...targetIds.slice(0, insertAt), moved.id, ...targetIds.slice(insertAt)];
-        return reorderLeadsForFunnelColumn(rest, fid, targetStatus, newIds, byId);
+      const move = calculateCrmKanbanMove({
+        leads: leadsRef.current,
+        activeId,
+        overId,
+        funnelId: activeFunnel.id,
+        allowedStatusIds: activeFunnel.columns.map((column) => column.id),
       });
+      if (!move || pendingCrmMoveIdsRef.current.has(activeId)) return;
+
+      const pending = new Set(pendingCrmMoveIdsRef.current);
+      pending.add(activeId);
+      pendingCrmMoveIdsRef.current = pending;
+      setPendingCrmMoveIds(pending);
+      leadsRef.current = move.nextLeads;
+      setLeads(move.nextLeads);
+      setCrmPipelineError(null);
+
+      void (async () => {
+        try {
+          const saved = await moveCrmLeadCardInApi({
+            leadId: activeId,
+            funilId: activeFunnel.id,
+            status: move.targetStatus,
+            previousLeadId: move.previousLeadId,
+            nextLeadId: move.nextLeadId,
+          });
+
+          setLeads((current) => {
+            const next = current.map((lead) =>
+              lead.id === saved.id ? { ...lead, crmPosition: saved.crmPosition } : lead,
+            );
+            leadsRef.current = next;
+            return next;
+          });
+
+          if (move.changedColumn) {
+            appendCrmTimelineEvent({
+              leadId: activeId,
+              lead: move.movedLead,
+              funnel: activeFunnel,
+              item: buildPipelineMoveItem(activeId, move.originalLead.status, move.targetStatus, activeFunnel),
+            });
+          }
+        } catch {
+          setCrmPipelineError("Não foi possível salvar a movimentação do lead. A ordem foi atualizada novamente.");
+        } finally {
+          const remaining = new Set(pendingCrmMoveIdsRef.current);
+          remaining.delete(activeId);
+          pendingCrmMoveIdsRef.current = remaining;
+          setPendingCrmMoveIds(remaining);
+
+          try {
+            const remoteLeads = await fetchCrmLeadsFromApi();
+            const visibleLeads = normalizeLeadsForVisibleCrmFunnel(remoteLeads, funnels);
+            leadsRef.current = visibleLeads;
+            setLeads(visibleLeads);
+            persistCrmLeadsSnapshot(dataset.tenantId, visibleLeads);
+          } catch {
+            // A confirmação da RPC já é suficiente; o polling fará a próxima
+            // reconciliação caso este GET isolado falhe.
+          }
+        }
+      })();
     },
-    [activeFunnel],
+    [activeFunnel, dataset.tenantId, funnels],
   );
 
   const searchFiltered = useMemo(
@@ -1453,6 +1474,9 @@ function CrmPage({
     () => applyCrmLeadFilters(pipelineBase, crmAppliedFilters),
     [pipelineBase, crmAppliedFilters],
   );
+  const activeKanbanLead = activeKanbanLeadId
+    ? leads.find((lead) => lead.id === activeKanbanLeadId) ?? null
+    : null;
 
   const selectedVisibleLeadCount = useMemo(
     () => pipelineLeads.filter((lead) => selectedLeadIds.has(lead.id)).length,
@@ -2715,12 +2739,17 @@ function CrmPage({
                 `}</style>
               <DndContext
                 sensors={sensors}
-                collisionDetection={closestCorners}
+                collisionDetection={crmKanbanCollisionDetection}
+                onDragStart={onKanbanDragStart}
                 onDragEnd={(e) => {
                   markKanbanDragUi();
+                  setActiveKanbanLeadId(null);
                   onKanbanDragEnd(e);
                 }}
-                onDragCancel={markKanbanDragUi}
+                onDragCancel={() => {
+                  markKanbanDragUi();
+                  setActiveKanbanLeadId(null);
+                }}
                 autoScroll={{ acceleration: 14, interval: 5 }}
               >
                 <div
@@ -2753,12 +2782,18 @@ function CrmPage({
                             selected={selectedLeadIds.has(lead.id)}
                             onToggleSelected={toggleLeadSelected}
                             lastDragEndedAtRef={lastKanbanDragEndedAtRef}
+                            dragDisabled={pendingCrmMoveIds.size > 0}
                           />
                         ))}
                       </CrmKanbanColumn>
                     );
                   })}
                 </div>
+                <DragOverlay dropAnimation={{ duration: 180, easing: "ease-out" }}>
+                  {activeKanbanLead ? (
+                    <CrmKanbanDragPreview lead={activeKanbanLead} />
+                  ) : null}
+                </DragOverlay>
               </DndContext>
               </>
             ) : (
