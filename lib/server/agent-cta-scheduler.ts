@@ -63,7 +63,7 @@ const AGENDA_REJECTION_RE =
 const RESCHEDULE_RE =
   /\b(remarcar|reagendar|trocar\s+(o\s+)?hor[aá]rio|mudar\s+(a\s+)?data|outro\s+hor[aá]rio|alterar\s+agendamento)\b/i;
 const SCHEDULING_RE =
-  /\b(agendamento|agend|cancelamento|cancelar|remarcar|reagendar|reuni[aã]o|visita|hor[aá]rio|amanh[ãa]|hoje|segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo|\d{1,2}[:h]\d{2}|\d{1,2}\/\d{1,2})\b/i;
+  /\b(agend(?:amento|ar|ad[oa]s?)?|cancelamento|cancelar|remarcar|reagendar|reuni[aã]o|visita|hor[aá]rio|amanh[ãa]|hoje|segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo|\d{1,2}[:h]\d{2}|\d{1,2}\/\d{1,2})\b/i;
 const AGENDA_READ_INTENT_RE =
   /\b(?:meus?|minhas?|meu|minha)\s+(?:pr[oó]ximos?\s+)?(?:agendamentos?|compromissos?|hor[aá]rios?|reuni[oõ]es?|visitas?|citas?|appointments?|meetings?)\b|\b(?:agendamentos?|compromissos?|hor[aá]rios?|reuni[oõ]es?|visitas?|citas?|appointments?|meetings?)\b[^.!?\n]{0,24}\b(?:meus?|minhas?|meu|minha)\b|\b(?:consultar|consult|ver|veja|olhar|olha|mostrar|mostre|listar|liste|check|show|list|revisar)\b[^.!?\n]{0,50}\b(?:agenda|agendamentos?|compromissos?|citas?|appointments?|meetings?)\b|\b(?:quando|what\s+time|when|cu[aá]ndo)\b[^.!?\n]{0,50}\b(?:agendamento|appointment|cita|reuni[aã]o|meeting|hor[aá]rio)\b/i;
 const AGENDA_DIRECTIVE_RE = /\[\[\s*(AGENDAR|CANCELAR_AGENDA)\s*(?::\s*([^\]]*))?\]\]/gi;
@@ -546,6 +546,9 @@ export function isInitialAgendaMutationRequest(userText: string): boolean {
     ) ||
     /\b(cancelar|remarcar|reagendar|desmarcar)\s+(meu|minha|o|a)?\s*agendamento/i.test(text) ||
     /\b(?:pode|podem)\s+(?:me\s+)?(?:cancelar|remarcar|reagendar|agendar|marcar|desmarcar)\b/i.test(text) ||
+    /\b(?:podemos|poder[ií]a(?:mos|m)?|vamos)\s+(?:me\s+|nos\s+)?(?:cancelar|remarcar|reagendar|agendar|marcar|desmarcar)\b/i.test(text) ||
+    /\b(?:can|could|may|would)\s+(?:you\s+|we\s+)?(?:schedule|book|reschedule|cancel)\b/i.test(text) ||
+    /\b(?:podemos|podr[ií]a(?:mos|n)?|puede(?:n)?)\s+(?:agendar|programar|reservar|reprogramar|cancelar)\b/i.test(text) ||
     /^(cancelar|remarcar|reagendar|desmarcar|agendar|agenda|agende|marcar|marca|marque)\b/i.test(text)
   );
 }
@@ -735,6 +738,13 @@ export function priorAgendaAssistantTextFromMessages(
     const text = stripAgendaDirectives(message.content.trim());
     if (!text) continue;
     if (assistantProposedAgendaMutationConfirmation(text, timezone)) {
+      return text;
+    }
+    // Convites sem data/hora ("tem um tempinho para agendar?", "que tal
+    // marcarmos?") também são contexto conversacional de agenda. Eles não
+    // autorizam nenhuma mutação por si só; apenas impedem que a resposta do
+    // lead seja interpretada como consulta de compromissos existentes.
+    if (isSoftAgendaInvite(text, timezone)) {
       return text;
     }
     // Uma resposta posterior encerra a proposta anterior. Continuar buscando
@@ -2250,6 +2260,8 @@ async function resolveStructuredAgendaPlan(params: {
   recentClientMessages?: string[] | null;
   /** Último outbound do agente nesta jornada (soft-invite Meta, etc.). */
   priorAssistantText?: string | null;
+  /** O modelo tentou consultar compromissos sem pedido explícito do lead. */
+  recoveredFromMisclassifiedList?: boolean;
 }): Promise<ResolveAgendaTurnResult | null> {
   const pending = await loadPendingAgendaAction({
     sb: params.sb,
@@ -2453,11 +2465,13 @@ async function resolveStructuredAgendaPlan(params: {
   // candidato muda para algo que o humano de fato leu.
   if (
     action === "create" &&
+    !params.recoveredFromMisclassifiedList &&
     !resolvedFromClient &&
     !standaloneConfirmation &&
     !(effectivePlan.date && effectivePlan.time) &&
     !textHasExplicitDateAnchor(params.clientText, params.timezone) &&
-    !textHasExplicitTime(params.clientText)
+    !textHasExplicitTime(params.clientText) &&
+    !textHasImmediateNowExpression(params.clientText)
   ) {
     const modelCleanForSlot = stripAgendaDirectives(params.modelText).trim();
     const slotFromReply = modelCleanForSlot
@@ -2489,6 +2503,7 @@ async function resolveStructuredAgendaPlan(params: {
   // seria alcançado.)
   if (
     action === "create" &&
+    !params.recoveredFromMisclassifiedList &&
     !resolvedFromClient &&
     !standaloneConfirmation &&
     !(effectivePlan.date && effectivePlan.time) &&
@@ -2719,9 +2734,12 @@ async function resolveStructuredAgendaPlan(params: {
     // pendente. Mesmo filtro já usado nos outros ramos deste arquivo — deixa
     // passar perguntas humanas genéricas, troca por AGENDA_DATETIME_NEEDED_REPLY
     // quando o texto do modelo afirma uma hora que ninguém confirmou.
-    const naturalMissingSlotText = modelAsksNaturallyForMissingSlot(modelCleanForConfirm, params.timezone)
-      ? modelCleanForConfirm
-      : AGENDA_DATETIME_NEEDED_REPLY;
+    const naturalMissingSlotText =
+      params.recoveredFromMisclassifiedList && !modelCleanForConfirm.includes("?")
+        ? AGENDA_DATETIME_NEEDED_REPLY
+        : modelAsksNaturallyForMissingSlot(modelCleanForConfirm, params.timezone)
+          ? modelCleanForConfirm
+          : AGENDA_DATETIME_NEEDED_REPLY;
     return {
       text: scheduleComplete
         ? action === "cancel" && cancelEvent
@@ -2870,33 +2888,49 @@ export async function resolveAgendaTurn(params: {
     isInitialAgendaMutationRequest(params.clientText) ||
     RESCHEDULE_RE.test(params.clientText) ||
     detectAgendaCancelIntent(params.clientText);
+  const clientRequestedList = clientRequestedAgendaList(params.clientText);
 
   // Corrige o plano ANTES de decidir o ramo — assim toda a lógica de baixo
   // (âncora de data/hora, disponibilidade, proposta em duas fases) já recebe
   // um plano de agendamento normal, em vez de precisar de um caminho especial.
   let agendaPlan = params.agendaPlan;
+  let recoveredFromMisclassifiedList = false;
+  let blockedMisclassifiedList = false;
   if (
     agendaPlan?.action === "list" &&
-    !clientRequestedMutation &&
-    !clientRequestedAgendaList(params.clientText) &&
-    listPlanLooksLikeScheduleAnswer({
-      clientText: params.clientText,
-      priorAssistantText: params.priorAssistantText,
-      timezone: params.timezone,
-    })
+    !clientRequestedList
   ) {
+    const recoveredAction: AgentAgendaPlanAction = detectAgendaCancelIntent(params.clientText)
+      ? "propose_cancel"
+      : RESCHEDULE_RE.test(params.clientText)
+        ? "propose_reschedule"
+        : isInitialAgendaMutationRequest(params.clientText) ||
+            listPlanLooksLikeScheduleAnswer({
+              clientText: params.clientText,
+              priorAssistantText: params.priorAssistantText,
+              timezone: params.timezone,
+            })
+          ? "propose_create"
+          : "none";
     console.info("[agent-agenda-turn]", {
       tenant_id: params.tenantId,
       agent_id: params.agentId,
-      action: "list_plan_reclassified_as_schedule",
+      action:
+        recoveredAction === "none"
+          ? "list_plan_blocked_without_read_intent"
+          : "list_plan_reclassified_as_schedule",
+      recovered_action: recoveredAction,
     });
-    agendaPlan = { ...agendaPlan, action: "propose_create" };
+    agendaPlan = { ...agendaPlan, action: recoveredAction };
+    recoveredFromMisclassifiedList = recoveredAction !== "none";
+    blockedMisclassifiedList = recoveredAction === "none";
   }
 
-  const requestedList =
-    clientRequestedAgendaList(params.clientText) ||
-    (agendaPlan?.action === "list" && !clientRequestedMutation);
-  if (requestedList) {
+  // A consulta de compromissos é a única ação de agenda que não pode ser
+  // inferida apenas pelo modelo: exige pedido explícito do próprio lead. Isso
+  // impede que um `list` mal classificado substitua uma conversa de criação
+  // pela resposta fixa "nenhum agendamento ativo".
+  if (clientRequestedList) {
     return finalize(await resolveContactAgendaList({
       sb: params.sb ?? createSupabaseServiceClient(),
       tenantId: params.tenantId,
@@ -2924,6 +2958,10 @@ export async function resolveAgendaTurn(params: {
       });
       return finalize({ text: AGENDA_AUTOMATION_DISABLED_REPLY, action: "blocked", deferHandoff: true });
     }
+    return finalize({ text: cleanText, action: "none" });
+  }
+
+  if (blockedMisclassifiedList) {
     return finalize({ text: cleanText, action: "none" });
   }
 
@@ -2957,6 +2995,7 @@ export async function resolveAgendaTurn(params: {
       journeyId: params.journeyId,
       recentClientMessages: params.recentClientMessages,
       priorAssistantText: params.priorAssistantText,
+      recoveredFromMisclassifiedList,
     });
     if (structured) return finalize(structured);
   }

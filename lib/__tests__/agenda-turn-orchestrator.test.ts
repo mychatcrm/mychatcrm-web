@@ -301,6 +301,16 @@ describe("priorAgendaAssistantTextFromMessages", () => {
     ]);
     expect(prior).toBeNull();
   });
+
+  it("preserva convite de agenda sem data e hora como contexto, sem autorizar mutação", () => {
+    const text =
+      "Você tem um tempinho para agendar uma entrevista presencial com um dos nossos gestores?";
+    const prior = priorAgendaAssistantTextFromMessages([
+      { role: "assistant", content: text },
+      { role: "user", content: "Poderia ser hoje?" },
+    ], "America/Sao_Paulo");
+    expect(prior).toBe(text);
+  });
 });
 
 describe("resolveAgendaTurn", () => {
@@ -412,6 +422,9 @@ describe("resolveAgendaTurn", () => {
     expect(clientRequestedAgendaList("tem algum agendamento meu aí?")).toBe(true);
     expect(clientRequestedAgendaList("quero cancelar meu agendamento")).toBe(false);
     expect(clientRequestedAgendaList("quero remarcar meu compromisso")).toBe(false);
+    expect(isInitialAgendaMutationRequest("Poderíamos agendar agora?")).toBe(true);
+    expect(isInitialAgendaMutationRequest("Could we schedule now?")).toBe(true);
+    expect(isInitialAgendaMutationRequest("¿Podríamos agendar ahora?")).toBe(true);
   });
 
   describe("listPlanLooksLikeScheduleAnswer — modelo classifica 'list' errado numa resposta de agendamento", () => {
@@ -508,6 +521,83 @@ describe("resolveAgendaTurn", () => {
       expect(rpc).not.toHaveBeenCalled();
     });
 
+    it("regressão 11/08: convite inicial + disponibilidade hoje nunca vira consulta", async () => {
+      const { sb, rpc, pendingRows } = makeStructuredSb();
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText:
+          "As entrevistas acontecem de segunda a sexta, das 9h às 18h. Vou verificar o próximo horário disponível para você.",
+        clientText: "Excelente!\nEstou disponível hoje em tempo integral\nPoderia ser hoje?",
+        priorAssistantText:
+          "Você tem um tempinho para agendar uma entrevista presencial com um dos nossos gestores?",
+        agendaAutomationEnabled: true,
+        agendaPlan: { action: "list", date: null, time: null, location: null, eventId: null },
+        operationKey: "agent-response-job:incident-11-08:first:0",
+        jobId: "33333333-3333-4333-8333-333333333333",
+        claimedGeneration: 3,
+        conversationSequence: 3,
+      });
+
+      expect(result.action).toBe("none");
+      expect(result.text).toBe(AGENDA_DATETIME_NEEDED_REPLY);
+      expect(result.text).not.toContain("agendamento ativo para este número");
+      expect(pendingRows).toHaveLength(0);
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
+    it("regressão 11/08: 'Poderíamos agendar agora?' pede slot concreto, nunca consulta", async () => {
+      const { sb, rpc, pendingRows } = makeStructuredSb();
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText:
+          "As entrevistas acontecem de segunda a sexta, das 9h às 18h. Vou verificar o próximo horário disponível para você.",
+        clientText: "Poderíamos agendar agora?",
+        priorAssistantText: "Não encontrei nenhum agendamento ativo para este número.",
+        agendaAutomationEnabled: true,
+        agendaPlan: { action: "list", date: null, time: null, location: null, eventId: null },
+        operationKey: "agent-response-job:incident-11-08:second:0",
+        jobId: "33333333-3333-4333-8333-333333333333",
+        claimedGeneration: 1,
+        conversationSequence: 4,
+      });
+
+      expect(result.action).toBe("none");
+      expect(result.text).toBe(AGENDA_DATETIME_NEEDED_REPLY);
+      expect(result.text).not.toContain("agendamento ativo para este número");
+      expect(pendingRows).toHaveLength(0);
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
+    it("bloqueia list do modelo sem pedido explícito e preserva conversa comum", async () => {
+      const sb = makeSb(null) as ReturnType<typeof makeSb> & { rpc: ReturnType<typeof vi.fn> };
+      const result = await resolveAgendaTurn({
+        sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Claro! Posso explicar melhor como funciona.",
+        clientText: "Pode explicar melhor?",
+        agendaAutomationEnabled: true,
+        agendaPlan: { action: "list", date: null, time: null, location: null, eventId: null },
+        jobId: "33333333-3333-4333-8333-333333333333",
+      });
+
+      expect(result).toMatchObject({
+        action: "none",
+        text: "Claro! Posso explicar melhor como funciona.",
+      });
+      expect(sb.rpc).not.toHaveBeenCalled();
+    });
+
     it("preserva uma consulta genuína mesmo com plano 'list' e contexto de agendamento em aberto", async () => {
       const sb = makeSb(EXISTING_EVENT) as ReturnType<typeof makeSb> & { rpc: ReturnType<typeof vi.fn> };
       const result = await resolveAgendaTurn({
@@ -526,7 +616,7 @@ describe("resolveAgendaTurn", () => {
       expect(result.text).toContain("Encontrei este agendamento para o seu número");
     });
 
-    it("não reclassifica 'list' sem uma pergunta de agendamento em aberto antes", async () => {
+    it("não executa 'list' do modelo sem pedido explícito do lead", async () => {
       const sb = makeSb(null) as ReturnType<typeof makeSb> & { rpc: ReturnType<typeof vi.fn> };
       const result = await resolveAgendaTurn({
         sb,
@@ -540,7 +630,9 @@ describe("resolveAgendaTurn", () => {
         agendaPlan: { action: "list", date: null, time: null, location: null, eventId: null },
       });
 
-      expect(result.action).toBe("listed");
+      expect(result.action).toBe("none");
+      expect(result.text).toBe("Vou verificar.");
+      expect(sb.rpc).not.toHaveBeenCalled();
     });
   });
 
