@@ -4,7 +4,9 @@ import {
 } from "@/lib/ai/generate-agent-response";
 import {
   agendaPlanFromResult,
+  leadOutcomeFromResult,
   type AgentAgendaPlan,
+  type AgentLeadOutcome,
 } from "@/lib/ai/agent-turn-plan";
 import {
   detectSupportedLanguageCode,
@@ -72,6 +74,7 @@ import { extractEvolutionSendReceipt } from "@/lib/integrations/evolution-messag
 import { deliverAgentReplyWithOptionalTts } from "@/lib/server/agent-tts-outbound";
 import { promoteLeadToContatoOnAgentEngagement } from "@/lib/server/crm-lead-lifecycle";
 import { applyCrmMoveOnLeadReply } from "@/lib/server/agent-crm-move";
+import { applyAgentLeadOutcome } from "@/lib/server/agent-lead-outcome";
 import { resolveOutboundMediaForAgentResponse } from "@/lib/server/agent-media-files";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import {
@@ -136,7 +139,12 @@ type PendingInboundRow = {
 };
 
 type GeneratedReplyForUnit =
-  | { ok: true; text: string; agendaPlan: AgentAgendaPlan | null }
+  | {
+      ok: true;
+      text: string;
+      agendaPlan: AgentAgendaPlan | null;
+      leadOutcome: AgentLeadOutcome | null;
+    }
   | { ok: false; error: "agent_missing_instructions" };
 
 async function saveOutboundMessage(opts: {
@@ -236,6 +244,7 @@ async function generateReplyForUnit(params: {
     : localizedAgentFailureReply(languageCode);
 
   let agendaPlan = agendaPlanFromResult(result);
+  let leadOutcome = leadOutcomeFromResult(result);
   if (result.ok) {
     const recentOutbound = (
       await getRecentConversationMessages({
@@ -278,11 +287,12 @@ async function generateReplyForUnit(params: {
       if (retry.ok) {
         replyText = retry.text;
         agendaPlan = agendaPlanFromResult(retry);
+        leadOutcome = leadOutcomeFromResult(retry);
       }
     }
   }
 
-  return { ok: true, text: replyText, agendaPlan };
+  return { ok: true, text: replyText, agendaPlan, leadOutcome };
 }
 
 export async function processAgentResponseJob(
@@ -761,6 +771,8 @@ export async function processAgentResponseJob(
   let handoffReason: string | undefined;
   let handoffLastMessage: string | undefined;
   let repliesSent = 0;
+  /** Desfecho declarado no turno; só é aplicado depois que a resposta sai. */
+  let turnLeadOutcome: AgentLeadOutcome | null = null;
 
   const unitIndex = 0;
   const unit = burst.canonicalMessages;
@@ -804,6 +816,8 @@ export async function processAgentResponseJob(
         dedupedCount: burst.dedupedCount,
       };
     }
+
+    turnLeadOutcome = generatedReply.leadOutcome;
     const replyText = generatedReply.text;
 
     console.info("[agent-response-jobs]", {
@@ -1246,6 +1260,17 @@ export async function processAgentResponseJob(
     tenantId: job.tenant_id,
     agentId: job.agent_id,
     leadId: job.lead_id,
+  });
+  // Descarte do lead, se o agente declarou e o dono configurou. Por último e
+  // depois do envio: a última mensagem do agente já saiu, e só então o
+  // atendimento automático deste contato é encerrado.
+  await applyAgentLeadOutcome({
+    sb,
+    tenantId: job.tenant_id,
+    remoteJid: job.remote_jid,
+    agentId: job.agent_id,
+    leadId: job.lead_id,
+    outcome: turnLeadOutcome,
   });
   if (job.journey_id) {
     await touchLeadJourney({

@@ -40,6 +40,8 @@ describe("structured agent turn plan", () => {
         location: null,
         eventId: null,
       },
+      // Ausente na resposta do modelo: vira "none" em vez de invalidar o turno.
+      leadOutcome: { action: "none", reason: null },
       externalApiLookups: [],
     });
   });

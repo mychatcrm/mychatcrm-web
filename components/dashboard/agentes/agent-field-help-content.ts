@@ -102,6 +102,37 @@ export const AGENT_FIELD_HELP = {
   crmRespostaColuna:
     'Etapa dentro do funil escolhido para onde o card vai quando o lead responder.',
 
+  // ── Descarte de leads ────────────────────────────────────────────────────────
+  descarteDesqualificadoAtivar:
+    'Permite que o agente encerre o atendimento de quem não atende os requisitos do que você oferece. Com isso ligado, o card muda de coluna, o agente para de responder e nenhum follow-up é enviado para aquele lead. A conversa continua visível e reversível em Conversas.',
+
+  descarteDesqualificadoCriterios:
+    'Escreva com suas palavras o que desqualifica alguém NO SEU NEGÓCIO — região que você não atende, requisito obrigatório que a pessoa não cumpre, perfil que não se encaixa. O agente só encerra com base nisso. Ser específico é o que protege leads bons de serem descartados por engano.',
+
+  descarteDesqualificadoFunil:
+    'Funil onde o lead desqualificado será posicionado. Pode ser o mesmo dos outros momentos ou um funil separado de descarte.',
+
+  descarteDesqualificadoColuna:
+    'Etapa dentro do funil escolhido para onde o card vai ao ser desqualificado.',
+
+  descarteSemInteresseAtivar:
+    'Permite que o agente encerre o atendimento de quem desistiu do que procurava. Mesmo efeito da desqualificação — card movido, agente calado, follow-up interrompido — mas com coluna e critérios próprios.',
+
+  descarteSemInteresseCriterios:
+    'Escreva o que conta como desistência de verdade no seu caso. Atenção: "agora não", "depois eu vejo" ou "me chama semana que vem" NÃO são desistência — são adiamento, e o agente é instruído a tratá-los como conversa em andamento. Descreva a recusa clara que deve encerrar o atendimento.',
+
+  descarteSemInteresseFunil:
+    'Funil onde o lead sem interesse será posicionado. Costuma ser diferente do funil de desqualificados, para separar quem não servia de quem desistiu.',
+
+  descarteSemInteresseColuna:
+    'Etapa dentro do funil escolhido para onde o card vai quando o lead desiste.',
+
+  descarteRetomar:
+    'Desligado: se o lead descartado voltar a falar, o agente continua calado e a conversa espera alguém da sua equipe reativar no painel. Ligado: o agente volta a atender sozinho e segue até concluir o que foi programado, e o card volta para a coluna de «quando o lead responder».',
+
+  descarteNotificar:
+    'Envia um aviso no WhatsApp do atendente configurado em «Transferência humana», com o contato e o motivo do descarte. Desligado, o descarte fica registrado só no CRM e na conversa.',
+
   // ── Movimentação no CRM ao longo do follow-up ────────────────────────────────
   crmFollowUpNaoMover:
     'O follow-up é enviado normalmente, mas o card não muda de lugar. Use quando você acompanha as tentativas de retomada pela conversa e não quer uma etapa separada para isso.',

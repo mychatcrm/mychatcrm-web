@@ -13,7 +13,11 @@ import {
   resolveConfiguredLanguageCode,
   type SupportedLanguageCode,
 } from "@/lib/ai/language-detect";
-import { agendaPlanFromResult } from "@/lib/ai/agent-turn-plan";
+import { agendaPlanFromResult, leadOutcomeFromResult } from "@/lib/ai/agent-turn-plan";
+import {
+  applyAgentLeadOutcome,
+  resumeAfterLeadOutcomeIfConfigured,
+} from "@/lib/server/agent-lead-outcome";
 import {
   canUseTts,
   inboundKindFromEvolutionType,
@@ -1169,6 +1173,21 @@ export async function POST(request: Request) {
 
           const sbState = createSupabaseServiceClient();
 
+          // Lead descartado que voltou a falar. Tem que vir ANTES do portão:
+          // com a conversa pausada o agente nunca chegaria a ver esta mensagem
+          // e o lead ficaria falando sozinho. Só destrava quando a pausa foi do
+          // próprio descarte E o operador configurou a retomada — pausa de
+          // handoff ou do vendedor nunca é tocada aqui.
+          await resumeAfterLeadOutcomeIfConfigured({
+            sb: sbState,
+            tenantId: row.tenant_id,
+            remoteJid: msg.remoteJid,
+            agentId,
+            leadId,
+            pausedBy: state?.pausedBy ?? null,
+            pausedReason: state?.pausedReason ?? null,
+          });
+
           const automationAllowed = await isAgentAutomationAllowed({
             sb: sbState,
             tenantId: row.tenant_id,
@@ -1705,6 +1724,18 @@ export async function POST(request: Request) {
               journeyId: journey?.id ?? null,
             });
             await sendOutboundMediaSafe();
+            // Descarte do lead, se o agente declarou e o dono configurou. Por
+            // último: a resposta já saiu, e só então o atendimento automático
+            // deste contato é encerrado.
+            await applyAgentLeadOutcome({
+              sb: sbState,
+              tenantId: row.tenant_id,
+              remoteJid: msg.remoteJid,
+              agentId,
+              leadId,
+              outcome: leadOutcomeFromResult(result),
+              metadata,
+            });
           } else {
             console.error("[webhooks/evolution] outbound send failed after TTS gate");
             await releaseTenantLeadQuotaReservation(directQuotaReservationId, "initial_direct_delivery_failed");

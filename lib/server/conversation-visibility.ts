@@ -39,6 +39,9 @@ export function isStructuralAutomationBlock(state: {
   if (state.pausedBy === "human_command" || state.pausedReason === "manual_pause_command") {
     return true;
   }
+  // Lead descartado pelo agente: reabrir uma conversa arquivada não pode
+  // ressuscitar o atendimento automático por tabela.
+  if (state.pausedBy === "agent_lead_outcome") return true;
   return false;
 }
 

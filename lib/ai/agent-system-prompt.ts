@@ -1,7 +1,7 @@
 import { formatSystemDateTimeContextBlock, resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import { agentUsesSimpleInstructions } from "@/lib/agents/instruction-mode";
 import { buildMetaFormKnownFactsPromptBlock } from "@/lib/meta-leads/form-metadata";
-import type { Agent } from "@/lib/types";
+import type { Agent, AgentLeadOutcomeConfig } from "@/lib/types";
 import type { AgentRuntimeContext } from "@/lib/server/conversation-memory";
 
 function clean(value: unknown): string {
@@ -151,6 +151,59 @@ function buildBehavioralInstructions(agent: {
   return `INSTRUÇÕES OBRIGATÓRIAS DE COMPORTAMENTO\n${lines.join("\n")}`;
 }
 
+/**
+ * Bloco de descarte de lead.
+ *
+ * Duas automações opcionais que o dono do agente liga. Quando ligadas, os
+ * critérios que ELE escreveu entram no prompt na íntegra — o modelo nunca
+ * decide sozinho o que é "não qualificado", porque isso varia por negócio
+ * (renda, idade, região, porte…) e um palpite desliga o atendimento de um lead
+ * bom.
+ *
+ * Com nenhuma ligada, o bloco vira proibição explícita: `none` sempre. Sem essa
+ * frase o campo existiria no schema sem regra de uso, que é convite para o
+ * modelo preenchê-lo por conta própria.
+ */
+function buildLeadOutcomeInstructions(agent: {
+  leadOutcomeDisqualified?: AgentLeadOutcomeConfig;
+  leadOutcomeLostInterest?: AgentLeadOutcomeConfig;
+}): string {
+  const enabled: string[] = [];
+
+  const disqualified = agent.leadOutcomeDisqualified;
+  if (disqualified?.ativo && clean(disqualified.criterios)) {
+    enabled.push(
+      `- "disqualified" — use APENAS quando o lead se enquadrar nestes critérios definidos pelo cliente:\n${clean(disqualified.criterios)}`,
+    );
+  }
+
+  const lostInterest = agent.leadOutcomeLostInterest;
+  if (lostInterest?.ativo && clean(lostInterest.criterios)) {
+    enabled.push(
+      `- "lost_interest" — use APENAS quando o lead se enquadrar nestes critérios definidos pelo cliente:\n${clean(lostInterest.criterios)}`,
+    );
+  }
+
+  if (!enabled.length) {
+    return `DESFECHO DO LEAD
+Este agente não classifica desfecho. O campo leadOutcome.action deve ser sempre "none" e leadOutcome.reason sempre null, em todas as respostas, sem exceção.`;
+  }
+
+  return `DESFECHO DO LEAD
+O campo leadOutcome declara que a conversa chegou a um desfecho terminal. Padrão absoluto: "none".
+
+Desfechos habilitados neste agente:
+${enabled.join("\n")}
+
+REGRAS OBRIGATÓRIAS
+- Na dúvida, use "none". Declarar desfecho ENCERRA o atendimento automático deste lead: você para de responder e nenhuma retomada é enviada.
+- Adiamento não é desfecho. "agora não", "depois eu vejo", "me chama semana que vem", silêncio ou demora são "none".
+- Irritação, reclamação ou pedido para falar com humano não são desfecho — trate pelo caminho normal.
+- Só declare o desfecho com base no que o lead disse de forma clara nesta conversa, nunca por suposição sobre o perfil dele.
+- Ao declarar, preencha leadOutcome.reason com uma frase curta citando o critério atendido. Este texto é lido pela equipe do cliente.
+- Responda ao lead normalmente no mesmo turno: a sua mensagem ainda é enviada. Encerre com naturalidade e educação, sem anunciar que ele foi classificado, descartado ou removido de qualquer lista.`;
+}
+
 function formatRuntimeContext(ctx?: AgentRuntimeContext | null): string[] {
   if (!ctx) return [];
   const parts: string[] = [];
@@ -257,6 +310,7 @@ Mensagem de handoff: ${clean(agent.handoffMensagem) || "não configurada"}
 Palavras de handoff: ${handoffKeywords.length ? handoffKeywords.join(", ") : "padrão do sistema"}
 Número para transferência: ${clean(agent.handoffNumero) || "não configurado"}
 ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o cliente quiser falar com uma pessoa real (humano, atendente, responsável, especialista, vendedor, gerente, ou qualquer cargo), responda confirmando a transferência e inclua [[HANDOFF]] no final da resposta. Nada mais." : "REGRA CRÍTICA DE TRANSFERÊNCIA DESATIVADA: Nunca inclua [[HANDOFF]]. Se o cliente pedir atendimento humano, responda brevemente que não há atendimento humano disponível no momento e continue ajudando dentro do possível."}`,
+    buildLeadOutcomeInstructions(agent),
     formatSystemDateTimeContextBlock(resolveAgentTimezone(agent)),
     (() => {
       if (!agendaAutomationOn) return null;

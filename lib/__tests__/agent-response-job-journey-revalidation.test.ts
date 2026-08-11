@@ -34,6 +34,11 @@ vi.mock("@/lib/server/lead-journeys", () => ({
 vi.mock("@/lib/server/conversation-operation", () => ({
   isAgentAutomationAllowed: isAgentAutomationAllowedMock,
 }));
+// A retomada de lead descartado roda antes do portão de automação. Irrelevante
+// aqui — este teste é sobre revalidação de jornada.
+vi.mock("@/lib/server/agent-lead-outcome", () => ({
+  resumeAfterLeadOutcomeIfConfigured: async () => false,
+}));
 vi.mock("@/lib/server/agent-auto-contact-guard", () => ({
   canAgentAutoContactLead: canAgentAutoContactLeadMock,
 }));

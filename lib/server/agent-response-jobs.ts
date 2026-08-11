@@ -15,6 +15,7 @@ import {
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { processAgentResponseJobByChannel } from "@/lib/server/agent-response-job-dispatcher";
 import { getInternalApiToken, internalApiAuthHeaders } from "@/lib/server/internal-api-auth";
+import { resumeAfterLeadOutcomeIfConfigured } from "@/lib/server/agent-lead-outcome";
 import {
   authorizeActiveJourney,
   isJourneyIsolationEnabled,
@@ -493,6 +494,19 @@ export async function tryProcessAgentResponseJob(
       });
       return "skipped";
     }
+    // Lead descartado que voltou a falar. Precisa vir ANTES do portão de
+    // automação: senão o job é cancelado e o agente nunca vê a mensagem. Este
+    // processamento é compartilhado pelos dois transportes (QR e API Meta), o
+    // que faz deste o ponto certo. Só destrava pausa do próprio descarte, e só
+    // quando o operador configurou a retomada.
+    await resumeAfterLeadOutcomeIfConfigured({
+      sb: client,
+      tenantId: job.tenant_id,
+      remoteJid: job.remote_jid,
+      agentId: job.agent_id,
+      leadId: job.lead_id,
+    });
+
     // journeyId do próprio job é obrigatório aqui: sem ele, com isolamento de
     // jornadas ligado (produção), a revalidação devolve "missing_active_journey"
     // e cancela TODO job — o agente ficava mudo depois da resposta do lead.

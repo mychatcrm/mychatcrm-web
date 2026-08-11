@@ -289,6 +289,33 @@ export type AgentAgendaDisponibilidade = {
   permitirAgendamentosSimultaneos?: boolean;
 };
 
+/**
+ * Descarte de lead pelo agente: desqualificado ou sem interesse.
+ *
+ * Automação terminal — move o card, cala o agente e mata os follow-ups daquele
+ * lead. Por isso tudo chega desligado e sem destino: só passa a existir quando
+ * o dono do agente liga, escreve os critérios do próprio negócio e escolhe a
+ * coluna.
+ *
+ * `criterios` é obrigatório quando ligado. "Lead não qualificado" não significa
+ * nada sozinho — sem os critérios do cliente o modelo inventaria os dele.
+ */
+export type AgentLeadOutcomeConfig = {
+  ativo: boolean;
+  /** O que caracteriza este desfecho NO NEGÓCIO DO CLIENTE. Texto livre do operador. */
+  criterios: string;
+  funnelId: string | null;
+  columnId: string | null;
+  /**
+   * O que fazer se o lead descartado voltar a mandar mensagem.
+   * false (padrão) = agente segue calado e o vendedor libera no painel.
+   * true = agente retoma sozinho e segue até concluir o que foi programado.
+   */
+  retomarAoVoltar: boolean;
+  /** Avisar pelo WhatsApp do atendente, no mesmo caminho da transferência humana. */
+  notificar: boolean;
+};
+
 export interface Agent {
   id: string;
   clientId: string;
@@ -365,13 +392,19 @@ export interface Agent {
   crmTargetStatus?: string | null;
   /**
    * Segundo destino, independente do de cima: move o card quando o lead
-   * RESPONDE pela primeira vez, separando "ainda não respondeu" de "conversa
-   * em andamento". Só na primeira resposta — depois o card fica onde a equipe
-   * deixar (trava em `leads.first_reply_at`).
+   * RESPONDE, separando "ainda não respondeu" de "conversa em andamento".
+   * Card arrastado à mão sai do controle da automação (trava em
+   * `leads.agent_crm_column_id`).
    */
   crmMoveOnLeadReplyEnabled?: boolean;
   crmReplyFunnelId?: string | null;
   crmReplyColumnId?: string | null;
+  /**
+   * Descarte de leads pelo agente. Duas automações independentes e desligadas
+   * por padrão; ver `AgentLeadOutcomeConfig`.
+   */
+  leadOutcomeDisqualified?: AgentLeadOutcomeConfig;
+  leadOutcomeLostInterest?: AgentLeadOutcomeConfig;
   /** Se true, CTA/handoff estruturado está ativo para este agente. */
   ctaHandoffAtivo?: boolean;
   /** Se true, o agente pode criar, remarcar e cancelar compromissos pela conversa. */

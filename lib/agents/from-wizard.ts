@@ -1,4 +1,4 @@
-import type { Agent, AgentFollowUpInteligente } from "@/lib/types";
+import type { Agent, AgentFollowUpInteligente, AgentLeadOutcomeConfig } from "@/lib/types";
 import { listAgentsForTenant } from "./registry";
 import { sanitizeAgentResponseSettings } from "./response-settings";
 import { sanitizeAgentSmartWaitSettings } from "./smart-wait-settings";
@@ -46,6 +46,36 @@ function leadReplyCrmMoveFields(
     crmMoveOnLeadReplyEnabled: replyOn,
     crmReplyFunnelId: replyOn ? draft.crmReplyFunnelId : null,
     crmReplyColumnId: replyOn ? draft.crmReplyColumnId : null,
+  };
+}
+
+/**
+ * Descarte de leads. Desligado zera critérios e destino.
+ *
+ * Mais rígido que os outros destinos por ser automação terminal: sem critérios
+ * escritos ela nem chega a ficar ativa, e desligar não deixa texto guardado que
+ * volte a valer se alguém religar o toggle sem reler o que estava ali.
+ */
+function leadOutcomeFields(config: AgentLeadOutcomeConfig | undefined): AgentLeadOutcomeConfig {
+  const criterios = config?.criterios?.trim() ?? "";
+  const ativo = config?.ativo === true && Boolean(criterios);
+  if (!ativo) {
+    return {
+      ativo: false,
+      criterios: "",
+      funnelId: null,
+      columnId: null,
+      retomarAoVoltar: false,
+      notificar: false,
+    };
+  }
+  return {
+    ativo: true,
+    criterios,
+    funnelId: config?.funnelId ?? null,
+    columnId: config?.columnId ?? null,
+    retomarAoVoltar: config?.retomarAoVoltar === true,
+    notificar: config?.notificar === true,
   };
 }
 
@@ -144,6 +174,8 @@ export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDr
     agendaDisponibilidade: draft.agendaDisponibilidade,
     ...agendaCrmMoveFields(draft),
     ...leadReplyCrmMoveFields(draft),
+    leadOutcomeDisqualified: leadOutcomeFields(draft.leadOutcomeDisqualified),
+    leadOutcomeLostInterest: leadOutcomeFields(draft.leadOutcomeLostInterest),
     ctaFinal: draft.ctaFinal ?? "Transferir para humano",
     handoffKeywords: draft.handoffKeywords ?? ["humano", "especialista"],
     handoffMensagem: draft.handoffMensagem ?? "",
@@ -221,6 +253,8 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
     agendaDisponibilidade: draft.agendaDisponibilidade,
     ...agendaCrmMoveFields(draft),
     ...leadReplyCrmMoveFields(draft),
+    leadOutcomeDisqualified: leadOutcomeFields(draft.leadOutcomeDisqualified),
+    leadOutcomeLostInterest: leadOutcomeFields(draft.leadOutcomeLostInterest),
     ctaFinal: draft.ctaFinal ?? "Transferir para humano",
     handoffKeywords: draft.handoffKeywords ?? ["humano", "especialista"],
     handoffMensagem: draft.handoffMensagem ?? "",
