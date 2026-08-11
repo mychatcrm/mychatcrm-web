@@ -90,6 +90,18 @@ export const AGENT_FIELD_HELP = {
   crmRegraBackend:
     'Esta configuração se aplica apenas aos leads do seu espaço de trabalho vinculados a este agente. Não afeta outros agentes nem outras contas.',
 
+  crmRespostaNaoMover:
+    'O lead permanece na mesma etapa quando responder. Use quando o primeiro contato já coloca o card onde você quer e você prefere mover daí em diante à mão.',
+
+  crmRespostaMover:
+    'Quando o lead responder pela primeira vez, o card muda para o funil e etapa escolhidos abaixo — separando quem já respondeu de quem ainda não. Acontece uma única vez: se depois alguém mover o card à mão, as próximas mensagens do lead não o trazem de volta.',
+
+  crmRespostaFunil:
+    'Funil onde o lead será posicionado ao responder pela primeira vez. Pode ser o mesmo do primeiro contato ou outro.',
+
+  crmRespostaColuna:
+    'Etapa dentro do funil escolhido para onde o card vai quando o lead responder pela primeira vez.',
+
   // ── Follow-up A) Ativação ────────────────────────────────────────────────────
   followUpAtivar:
     'Ativa o sistema de retomada automática de conversas sem resposta. O agente cria mensagens personalizadas com base no histórico real da conversa — sem textos genéricos. Respeita horário comercial, cooldown anti-spam e atendimento humano ativo. Ex.: cliente não responde há 2 horas → agente retoma citando exatamente o que foi discutido',

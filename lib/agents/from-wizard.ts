@@ -33,6 +33,22 @@ function agendaCrmMoveFields(
   };
 }
 
+/**
+ * Destino da primeira resposta do lead. Não depende do destino do primeiro
+ * contato: o dono da conta pode querer mover só quando o lead responde. Funil e
+ * coluna só são gravados com a opção ligada — desligar não guarda lixo.
+ */
+function leadReplyCrmMoveFields(
+  draft: AgentWizardDraft,
+): Pick<Agent, "crmMoveOnLeadReplyEnabled" | "crmReplyFunnelId" | "crmReplyColumnId"> {
+  const replyOn = draft.crmMoveOnLeadReplyEnabled ?? false;
+  return {
+    crmMoveOnLeadReplyEnabled: replyOn,
+    crmReplyFunnelId: replyOn ? draft.crmReplyFunnelId : null,
+    crmReplyColumnId: replyOn ? draft.crmReplyColumnId : null,
+  };
+}
+
 function followUpAndTimezoneFromDraft(draft: AgentWizardDraft) {
   const timezone =
     (typeof draft.timezone === "string" && draft.timezone.trim()) ||
@@ -94,6 +110,7 @@ export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDr
     agendaLembretes: draft.agendaLembretes,
     agendaDisponibilidade: draft.agendaDisponibilidade,
     ...agendaCrmMoveFields(draft),
+    ...leadReplyCrmMoveFields(draft),
     ctaFinal: draft.ctaFinal ?? "Transferir para humano",
     handoffKeywords: draft.handoffKeywords ?? ["humano", "especialista"],
     handoffMensagem: draft.handoffMensagem ?? "",
@@ -170,6 +187,7 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
     agendaLembretes: draft.agendaLembretes,
     agendaDisponibilidade: draft.agendaDisponibilidade,
     ...agendaCrmMoveFields(draft),
+    ...leadReplyCrmMoveFields(draft),
     ctaFinal: draft.ctaFinal ?? "Transferir para humano",
     handoffKeywords: draft.handoffKeywords ?? ["humano", "especialista"],
     handoffMensagem: draft.handoffMensagem ?? "",

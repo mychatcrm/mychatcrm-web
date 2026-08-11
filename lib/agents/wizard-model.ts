@@ -85,6 +85,10 @@ export type AgentWizardDraft = {
   crmTargetFunnelId: string;
   /** Coluna/etapa de destino para movimento automático no CRM. */
   crmTargetColumnId: string;
+  /** Move o card do lead quando ele responde pela primeira vez. */
+  crmMoveOnLeadReplyEnabled: boolean;
+  crmReplyFunnelId: string;
+  crmReplyColumnId: string;
   /** Move o card do lead quando o agente confirma/remarca um agendamento. */
   agendaCrmMoveOnScheduleEnabled: boolean;
   agendaCrmScheduleFunnelId: string;
@@ -238,6 +242,9 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     crmAutoMoveEnabled: crmDestination.crmAutoMoveEnabled,
     crmTargetFunnelId: crmDestination.crmTargetFunnelId ?? targetFunnel.id,
     crmTargetColumnId: crmDestination.crmTargetColumnId ?? targetColumn,
+    crmMoveOnLeadReplyEnabled: agent.crmMoveOnLeadReplyEnabled ?? false,
+    crmReplyFunnelId: agent.crmReplyFunnelId ?? targetFunnel.id,
+    crmReplyColumnId: agent.crmReplyColumnId ?? targetColumn,
     agendaCrmMoveOnScheduleEnabled: agent.agendaCrmMoveOnScheduleEnabled ?? false,
     agendaCrmScheduleFunnelId: agent.agendaCrmScheduleFunnelId ?? targetFunnel.id,
     agendaCrmScheduleColumnId: agent.agendaCrmScheduleColumnId ?? targetColumn,
@@ -298,6 +305,16 @@ export function validateCompactAgentDraft(
     if (!targetFunnel) return "Escolha um funil válido em «Destino do lead no CRM».";
     if (!isValidColunaForFunnel(draft.crmTargetColumnId, targetFunnel)) {
       return "Escolha uma coluna válida em «Destino do lead no CRM».";
+    }
+  }
+  // Destino da primeira resposta: independente do de cima — o dono da conta
+  // pode querer mover só quando o lead responde, sem mover no primeiro contato.
+  if (draft.crmMoveOnLeadReplyEnabled) {
+    if (!crmFunnels?.length) return "Carregue os funis do CRM antes de configurar o destino automático.";
+    const replyFunnel = crmFunnels.find((f) => f.id === draft.crmReplyFunnelId);
+    if (!replyFunnel) return "Escolha um funil válido em «Quando o lead responder».";
+    if (!isValidColunaForFunnel(draft.crmReplyColumnId, replyFunnel)) {
+      return "Escolha uma coluna válida em «Quando o lead responder».";
     }
   }
   // Os destinos da agenda só existem quando o agente pode mexer na agenda.
@@ -399,6 +416,9 @@ export const defaultWizardDraft: AgentWizardDraft = {
   crmAutoMoveEnabled: false,
   crmTargetFunnelId: DEFAULT_CRM_FUNNELS[0]!.id,
   crmTargetColumnId: DEFAULT_CRM_FUNNELS[0]!.columns[0]!.id,
+  crmMoveOnLeadReplyEnabled: false,
+  crmReplyFunnelId: DEFAULT_CRM_FUNNELS[0]!.id,
+  crmReplyColumnId: DEFAULT_CRM_FUNNELS[0]!.columns[0]!.id,
   agendaCrmMoveOnScheduleEnabled: false,
   agendaCrmScheduleFunnelId: DEFAULT_CRM_FUNNELS[0]!.id,
   agendaCrmScheduleColumnId: DEFAULT_CRM_FUNNELS[0]!.columns[0]!.id,

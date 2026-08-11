@@ -71,6 +71,7 @@ import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evol
 import { extractEvolutionSendReceipt } from "@/lib/integrations/evolution-message-receipt";
 import { deliverAgentReplyWithOptionalTts } from "@/lib/server/agent-tts-outbound";
 import { promoteLeadToContatoOnAgentEngagement } from "@/lib/server/crm-lead-lifecycle";
+import { applyCrmMoveOnFirstLeadReply } from "@/lib/server/agent-crm-move";
 import { resolveOutboundMediaForAgentResponse } from "@/lib/server/agent-media-files";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import {
@@ -1234,6 +1235,16 @@ export async function processAgentResponseJob(
   await promoteLeadToContatoOnAgentEngagement({
     sb,
     tenantId: job.tenant_id,
+    leadId: job.lead_id,
+    agentId: job.agent_id,
+  });
+  // Este job só existe porque o lead mandou mensagem — é o ponto onde "o lead
+  // respondeu" é verdade. Move o card uma vez, se o agente tiver esse destino
+  // configurado. Nunca lança: a resposta ao lead não pode falhar por causa do CRM.
+  await applyCrmMoveOnFirstLeadReply({
+    sb,
+    tenantId: job.tenant_id,
+    agentId: job.agent_id,
     leadId: job.lead_id,
   });
   if (job.journey_id) {

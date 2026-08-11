@@ -488,7 +488,7 @@ export async function assignMetaLeadEventToAgent(params: {
       hiddenAt: null,
       hiddenBy: null,
     }),
-    promoteLeadToContatoOnAgentEngagement({ sb, tenantId, leadId }),
+    promoteLeadToContatoOnAgentEngagement({ sb, tenantId, leadId, agentId }),
     journeyId ? touchLeadJourney({ sb, tenantId, journeyId, leadId, occurredAt: sentAt }) : Promise.resolve(),
   ]);
 

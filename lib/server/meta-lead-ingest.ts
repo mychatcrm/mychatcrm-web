@@ -1717,7 +1717,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         hiddenAt: null,
         hiddenBy: null,
       }),
-      promoteLeadToContatoOnAgentEngagement({ sb, tenantId: tenant_id, leadId }),
+      promoteLeadToContatoOnAgentEngagement({ sb, tenantId: tenant_id, leadId, agentId }),
       journeyId
         ? touchLeadJourney({
             sb,

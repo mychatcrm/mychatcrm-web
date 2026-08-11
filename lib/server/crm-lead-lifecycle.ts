@@ -29,12 +29,23 @@ export function buildNewLeadCrmFields(crmFunnelId?: string | null): {
 }
 
 /**
- * Quando o agente passa a atender (primeira resposta automática), move de "novo" → "contato".
+ * Quando o agente passa a atender, tira o lead de "novo".
+ *
+ * O destino é a coluna configurada no agente em «Destino do lead no CRM».
+ * Antes era sempre `CRM_KANBAN_STATUS_CONTATO` fixo, o que fazia a tela
+ * prometer uma escolha que este caminho ignorava: quem apontasse para outra
+ * coluna via o lead cair em "contato" do mesmo jeito. `contato` continua sendo
+ * o destino de quem não configurou nada, então nada muda para esses.
+ *
+ * A guarda de status continua: só promove quem ainda está em "novo" (ou sem
+ * status). Um card que a equipe já moveu não é puxado de volta.
  */
 export async function promoteLeadToContatoOnAgentEngagement(params: {
   sb: SupabaseServiceClient;
   tenantId: string;
   leadId: string | null | undefined;
+  /** Sem agente resolvido, cai no destino padrão. */
+  agentId?: string | null;
 }): Promise<boolean> {
   const leadId = params.leadId?.trim();
   if (!leadId) return false;
@@ -48,12 +59,29 @@ export async function promoteLeadToContatoOnAgentEngagement(params: {
 
   if (!row) return false;
   const current = typeof row.status === "string" ? row.status.trim() : "";
-  if (current === CRM_KANBAN_STATUS_CONTATO) return false;
   if (current && current !== CRM_KANBAN_STATUS_NOVO) return false;
+
+  const configured = await resolveAgentCrmMoveTarget(params.sb, {
+    tenantId: params.tenantId,
+    agentId: params.agentId ?? null,
+  });
+  const targetStatus =
+    configured.enabled && configured.columnId ? configured.columnId : CRM_KANBAN_STATUS_CONTATO;
+
+  // Já está onde deveria ficar: nada a fazer.
+  if (current === targetStatus) return false;
+
+  const patch: Record<string, unknown> = {
+    status: targetStatus,
+    updated_at: new Date().toISOString(),
+  };
+  if (configured.enabled && configured.funnelId) {
+    patch.crm_funnel_id = configured.funnelId;
+  }
 
   const { error } = await params.sb
     .from("leads")
-    .update({ status: CRM_KANBAN_STATUS_CONTATO, updated_at: new Date().toISOString() })
+    .update(patch)
     .eq("tenant_id", params.tenantId)
     .eq("id", leadId);
 
@@ -66,10 +94,12 @@ export async function promoteLeadToContatoOnAgentEngagement(params: {
     return false;
   }
 
-  console.info("[crm-lead-lifecycle] lead_promoted_to_contato", {
+  console.info("[crm-lead-lifecycle] lead_promoted_on_engagement", {
     tenant_id: params.tenantId,
     lead_id: leadId,
     from_status: current || CRM_KANBAN_STATUS_NOVO,
+    to_status: targetStatus,
+    configured: configured.enabled,
   });
   return true;
 }
