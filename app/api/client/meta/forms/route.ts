@@ -4,6 +4,10 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { metaGraphErrorCode, metaGraphRequest } from "@/lib/server/meta-graph-api";
 
 export const dynamic = "force-dynamic";
+export const preferredRegion = "gru1";
+
+const META_FORMS_CACHE_MS = 5 * 60_000;
+const formsCache = new Map<string, { expiresAt: number; forms: MetaFormsForm[] }>();
 
 export type MetaFormsForm = {
   form_id: string;
@@ -24,6 +28,7 @@ type GraphFormsResponse = {
 
 /** Returns all leadgen forms for a connected Facebook page. */
 export async function GET(req: NextRequest): Promise<NextResponse> {
+  const startedAt = performance.now();
   const guard = await requireActiveClientSession();
   if (!guard.ok) return guard.response;
   const { session } = guard;
@@ -31,6 +36,20 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const pageId = req.nextUrl.searchParams.get("page_id");
   if (!pageId?.trim()) {
     return NextResponse.json({ error: "page_id é obrigatório" }, { status: 400 });
+  }
+
+  const cacheKey = `${session.tenantId}:${pageId.trim()}`;
+  const cached = formsCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return NextResponse.json(
+      { forms: cached.forms } satisfies MetaFormsResponse,
+      {
+        headers: {
+          "Cache-Control": "private, no-store",
+          "Server-Timing": `meta-forms-cache;dur=${Math.round(performance.now() - startedAt)}`,
+        },
+      },
+    );
   }
 
   const sb = createSupabaseServiceClient();
@@ -109,5 +128,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
 
   const activeForms = forms.filter((f) => f.status === "ACTIVE");
-  return NextResponse.json({ forms: activeForms } satisfies MetaFormsResponse);
+  formsCache.set(cacheKey, { expiresAt: Date.now() + META_FORMS_CACHE_MS, forms: activeForms });
+  return NextResponse.json(
+    { forms: activeForms } satisfies MetaFormsResponse,
+    {
+      headers: {
+        "Cache-Control": "private, no-store",
+        "Server-Timing": `meta-forms;dur=${Math.round(performance.now() - startedAt)}`,
+      },
+    },
+  );
 }

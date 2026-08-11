@@ -1,9 +1,10 @@
 import { cookies } from "next/headers";
+import { cache } from "react";
 import { CLIENT_SESSION_COOKIE, getClientSessionByToken } from "@/lib/client-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 /** Apenas Server Components / Route Handlers — usa `next/headers` (não importar a partir de `"use client"`). */
-export async function getClientSessionFromCookies() {
+const readClientSessionFromCookies = async () => {
   const store = await cookies();
   const session = await getClientSessionByToken(store.get(CLIENT_SESSION_COOKIE)?.value);
   if (!session) return null;
@@ -30,4 +31,7 @@ export async function getClientSessionFromCookies() {
   }
 
   return session;
-}
+};
+
+/** Dedupe layout + page reads inside the same React Server Components request. */
+export const getClientSessionFromCookies = cache(readClientSessionFromCookies);

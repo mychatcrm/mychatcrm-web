@@ -142,7 +142,6 @@ import { useCrmFunnels } from "./CrmFunnelsContext";
 import { DisparosMassaHub } from "./disparos/DisparosMassaHub";
 import { AgendaHub } from "./agenda/AgendaHub";
 import { LembretesHub } from "./lembretes/LembretesHub";
-import { IntegracoesHub } from "./integrations/IntegracoesHub";
 import { SuporteHub } from "./suporte/SuporteHub";
 import { BillingOffersPopover } from "./BillingOffersPopover";
 import { IntegracoesLeadsHub } from "./lead-rules/IntegracoesLeadsHub";
@@ -5169,14 +5168,9 @@ export function DashboardWorkspace({
           </Panel>
         );
       case "integracoes":
-        return (
-          <Panel
-            title="Integrações"
-            description="Ligue WhatsApp, Facebook e outras ferramentas ao seu fluxo de trabalho — passo a passo simples, sem comandos."
-          >
-            <IntegracoesHub tenantId={session.tenantId} />
-          </Panel>
-        );
+        // /dashboard/integracoes possui uma página dedicada e um snapshot
+        // server-side. A rota estática tem precedência sobre o catch-all.
+        return null;
       case "configuracoes":
         return <ConfiguracoesPage session={session} />;
       case "suporte":

@@ -1,6 +1,6 @@
 import "server-only";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { getSlotActiveProvider, type SlotProvider } from "@/lib/server/whatsapp-slot-provider";
+import type { SlotProvider } from "@/lib/server/whatsapp-slot-provider";
 
 export type TenantWhatsappConnection = {
   /** UUID de tenant_evolution_instances (QR) ou phone_number_id (Meta) — mesmo valor gravado em whatsapp_messages.connection_id. */
@@ -27,7 +27,7 @@ function formatJidPhone(jid: string | null): string | null {
  */
 export async function listTenantWhatsappConnections(tenantId: string): Promise<TenantWhatsappConnection[]> {
   const sb = createSupabaseServiceClient();
-  const [evoRes, metaRes] = await Promise.all([
+  const [evoRes, metaRes, slotStateRes] = await Promise.all([
     sb
       .from("tenant_evolution_instances")
       .select("id, slot_index, wa_jid, connection_state")
@@ -39,6 +39,10 @@ export async function listTenantWhatsappConnections(tenantId: string): Promise<T
       .eq("tenant_id", tenantId)
       .eq("active", true)
       .order("slot_index", { ascending: true }),
+    sb
+      .from("tenant_whatsapp_slot_state")
+      .select("slot_index, active_provider")
+      .eq("tenant_id", tenantId),
   ]);
 
   const evoRows = (evoRes.data ?? []) as { id: string; slot_index: number; wa_jid: string | null; connection_state: string }[];
@@ -49,10 +53,10 @@ export async function listTenantWhatsappConnections(tenantId: string): Promise<T
     active: boolean;
   }[];
 
-  const slotIndices = Array.from(new Set([...evoRows.map((r) => r.slot_index), ...metaRows.map((r) => r.slot_index)]));
-  const activeProviderBySlot = new Map(
-    await Promise.all(slotIndices.map(async (slot) => [slot, await getSlotActiveProvider(tenantId, slot)] as const)),
-  );
+  const activeProviderBySlot = new Map<number, SlotProvider>();
+  for (const row of (slotStateRes.data ?? []) as Array<{ slot_index: number; active_provider: string }>) {
+    activeProviderBySlot.set(row.slot_index, row.active_provider === "cloud_api" ? "cloud_api" : "evolution");
+  }
 
   const evoConnections: TenantWhatsappConnection[] = evoRows.map((row) => {
     const phone = formatJidPhone(row.wa_jid);

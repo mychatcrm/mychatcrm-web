@@ -29,6 +29,12 @@ type EvolutionStatusJson = {
   evolutionPingError?: string | null;
 };
 
+export type EvolutionInitialSession = {
+  instanceName: string | null;
+  connectionState: string;
+  waJid: string | null;
+};
+
 async function readSessionJson(res: Response): Promise<SessionJson> {
   try {
     return (await res.json()) as SessionJson;
@@ -107,6 +113,10 @@ export function EvolutionQrSlotPanel({
   seedQrDataUrl = null,
   allowSwap = false,
   connectSignal = 0,
+  initialSession = null,
+  deferInitialCheck = false,
+  infrastructureStatus = null,
+  onSessionStateChange,
 }: {
   slotIndex: number;
   sessionApiPath?: string;
@@ -133,19 +143,31 @@ export function EvolutionQrSlotPanel({
    * QR Code" do controle de método da linha.
    */
   connectSignal?: number;
+  /** Estado persistido, seguro para pintar a interface sem consultar a VPS. */
+  initialSession?: EvolutionInitialSession | null;
+  /** Quando true, a confirmação remota só começa depois do primeiro paint. */
+  deferInitialCheck?: boolean;
+  /** Resultado da verificação compartilhada da VPS feita pelo componente pai. */
+  infrastructureStatus?: EvolutionStatusJson | null;
+  onSessionStateChange?: (session: EvolutionInitialSession) => void;
 }) {
   const { isLight } = usePanelAppearance();
+  const initialConnectionState = initialSession?.connectionState;
+  const initialWaJid = initialSession?.waJid;
+  const initialInstanceName = initialSession?.instanceName;
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollBusyRef = useRef(false);
   const qrReceivedAtRef = useRef<number | null>(null);
   const prevQrFingerprintRef = useRef<string | null>(null);
+  const onSessionStateChangeRef = useRef(onSessionStateChange);
+  const initialSessionRef = useRef(initialSession);
   const imgAltId = useId();
 
-  const [connectionState, setConnectionState] = useState<string>("");
+  const [connectionState, setConnectionState] = useState<string>(initialConnectionState ?? "");
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [pairingCode, setPairingCode] = useState<string | null>(null);
-  const [waJid, setWaJid] = useState<string | null>(null);
-  const [instanceName, setInstanceName] = useState<string | null>(null);
+  const [waJid, setWaJid] = useState<string | null>(initialWaJid ?? null);
+  const [instanceName, setInstanceName] = useState<string | null>(initialInstanceName ?? null);
   const [busy, setBusy] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -160,7 +182,7 @@ export function EvolutionQrSlotPanel({
   // True depois da primeira resposta do GET de sessão. Antes disso não sabemos
   // se a linha já tem número pareado — mostrar o CTA "Conectar" nesse meio
   // tempo deixaria a pessoa clicar e abrir uma segunda sessão na mesma linha.
-  const [sessionChecked, setSessionChecked] = useState(false);
+  const [sessionChecked, setSessionChecked] = useState(Boolean(initialSession));
 
   const clearPoll = useCallback(() => {
     if (pollRef.current) {
@@ -178,6 +200,33 @@ export function EvolutionQrSlotPanel({
     const id = requestAnimationFrame(() => setConnectedVisible(true));
     return () => cancelAnimationFrame(id);
   }, [connectionState]);
+
+  useEffect(() => {
+    onSessionStateChangeRef.current = onSessionStateChange;
+  }, [onSessionStateChange]);
+
+  useEffect(() => {
+    if (!initialConnectionState) return;
+    setConnectionState(initialConnectionState);
+    setWaJid(initialWaJid ?? null);
+    setInstanceName(initialInstanceName ?? null);
+    setSessionChecked(true);
+  }, [initialConnectionState, initialInstanceName, initialWaJid]);
+
+  useEffect(() => {
+    onSessionStateChangeRef.current?.({ connectionState, waJid, instanceName });
+  }, [connectionState, instanceName, waJid]);
+
+  useEffect(() => {
+    if (!infrastructureStatus) return;
+    if (infrastructureStatus.evolutionConfigured && infrastructureStatus.evolutionReachable === false) {
+      setInfraHint(
+        `A aplicação não conseguiu contactar a Evolution na VPS (${infrastructureStatus.evolutionPingError ?? "erro desconhecido"}). Verifique firewall, URL base da API e se o processo está a correr.`,
+      );
+    } else if (infrastructureStatus.evolutionReachable === true) {
+      setInfraHint(null);
+    }
+  }, [infrastructureStatus]);
 
   // QR vindo do hub (reconnect PATCH) — força exibição mesmo se o painel achava "open".
   useEffect(() => {
@@ -425,6 +474,7 @@ export function EvolutionQrSlotPanel({
 
   // Infra check on mount
   useEffect(() => {
+    if (deferInitialCheck) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -445,12 +495,13 @@ export function EvolutionQrSlotPanel({
     return () => {
       cancelled = true;
     };
-  }, [statusApiPath]);
+  }, [deferInitialCheck, statusApiPath]);
 
   // Initial session load + auto-start
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const load = async () => {
       const res = await fetch(`${sessionApiPath}?slotIndex=${slotIndex}`, {
         credentials: "same-origin",
       });
@@ -465,11 +516,22 @@ export function EvolutionQrSlotPanel({
       if (autoProvision && res.ok && !lifecycleActive && st === "none" && !hasQr) {
         await startOrRefreshSession();
       }
-    })();
+    };
+    if (deferInitialCheck) {
+      // Estado none já é suficiente para mostrar o CTA. Só linhas existentes
+      // precisam confirmar a sessão remota depois que a tela ficou utilizável.
+      const persistedSession = initialSessionRef.current;
+      if (persistedSession && persistedSession.connectionState !== "none") {
+        timer = setTimeout(() => void load(), 1_200);
+      }
+    } else {
+      void load();
+    }
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
     };
-  }, [applySessionPayload, slotIndex, startOrRefreshSession, autoProvision, sessionApiPath]);
+  }, [applySessionPayload, slotIndex, startOrRefreshSession, autoProvision, sessionApiPath, deferInitialCheck]);
 
   // Polling while not connected. Cada tick chega à VPS da Evolution de verdade
   // (não é só leitura de banco) — 3s só faz sentido enquanto algo está de fato
@@ -488,12 +550,8 @@ export function EvolutionQrSlotPanel({
       connectionState === "provisioning" ||
       connectionState === "deleting" ||
       connectionState === "resetting";
-    pollRef.current = setInterval(
-      () => {
-        void refresh();
-      },
-      timeSensitive ? 3_000 : 20_000,
-    );
+    if (!timeSensitive) return;
+    pollRef.current = setInterval(() => void refresh(), 3_000);
     return clearPoll;
   }, [connectionState, refresh, clearPoll, manuallyDisconnected, error, qrDataUrl]);
 

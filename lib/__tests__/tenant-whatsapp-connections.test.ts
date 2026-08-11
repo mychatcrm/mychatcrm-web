@@ -14,9 +14,7 @@ function fakeQuery(data: unknown): ThenableResult {
 }
 
 const createSupabaseServiceClient = vi.hoisted(() => vi.fn());
-const getSlotActiveProvider = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/supabase/server", () => ({ createSupabaseServiceClient }));
-vi.mock("@/lib/server/whatsapp-slot-provider", () => ({ getSlotActiveProvider }));
 
 import { listTenantWhatsappConnections } from "@/lib/server/tenant-whatsapp-connections";
 
@@ -35,12 +33,15 @@ describe("listTenantWhatsappConnections", () => {
             { phone_number_id: "1224395060758616", slot_index: 0, display_phone: "+55 62 8206-7910", active: true },
           ]);
         }
+        if (table === "tenant_whatsapp_slot_state") {
+          return fakeQuery([
+            { slot_index: 0, active_provider: "cloud_api" },
+            { slot_index: 1, active_provider: "evolution" },
+          ]);
+        }
         throw new Error(`unexpected table ${table}`);
       },
     });
-    getSlotActiveProvider.mockImplementation(async (_tenantId: string, slot: number) =>
-      slot === 0 ? "cloud_api" : "evolution",
-    );
 
     const connections = await listTenantWhatsappConnections("tenant-1");
 

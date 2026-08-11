@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -29,7 +30,18 @@ import type { TenantWhatsappConnection } from "@/lib/server/tenant-whatsapp-conn
 import type { SlotProvider, SlotPurpose } from "@/lib/server/whatsapp-slot-provider";
 import { groupWhatsappLinesByPurpose } from "@/lib/whatsapp-line-grouping";
 import { loadFbSdk } from "@/lib/client/facebook-sdk";
-import { ExternalApiConnectorsPanel } from "./ExternalApiConnectorsPanel";
+import type {
+  IntegrationsDashboardSnapshotV1,
+  IntegrationsRevalidationResponse,
+} from "@/lib/integrations/dashboard-snapshot";
+
+const ExternalApiConnectorsPanel = dynamic(
+  () => import("./ExternalApiConnectorsPanel").then((module) => module.ExternalApiConnectorsPanel),
+  {
+    ssr: false,
+    loading: () => <div className="h-36 animate-pulse rounded-2xl border border-line bg-surface-card" aria-hidden />,
+  },
+);
 
 function safeRun<T>(fn: () => T, fallback: T): T {
   try {
@@ -39,15 +51,21 @@ function safeRun<T>(fn: () => T, fallback: T): T {
   }
 }
 
-export function IntegracoesHub({ tenantId }: { tenantId: string }) {
+export function IntegracoesHub({
+  tenantId,
+  initialSnapshot,
+}: {
+  tenantId: string;
+  initialSnapshot: IntegrationsDashboardSnapshotV1;
+}) {
   const { isLight } = usePanelAppearance();
   const [banner, setBanner] = useState<string | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
 
   // ── Meta Lead Ads state ───────────────────────────────────────────────────
-  const [metaStatus, setMetaStatus] = useState<MetaStatusResponse | null>(null);
-  const [metaLoading, setMetaLoading] = useState(true);
+  const [metaStatus, setMetaStatus] = useState<MetaStatusResponse | null>(initialSnapshot.meta);
+  const [metaLoading, setMetaLoading] = useState(false);
   const [metaLoadError, setMetaLoadError] = useState(false);
   const [metaRepairing, setMetaRepairing] = useState(false);
   const [metaDisconnecting, setMetaDisconnecting] = useState(false);
@@ -58,7 +76,9 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   type WaCloudState =
     | { connected: false }
     | { connected: true; phone_number_id: string; display_phone: string | null; verified_name: string | null };
-  const [waCloudStatusBySlot, setWaCloudStatusBySlot] = useState<Record<number, WaCloudState>>({});
+  const [waCloudStatusBySlot, setWaCloudStatusBySlot] = useState<Record<number, WaCloudState>>(
+    initialSnapshot.whatsapp.cloudBySlot,
+  );
   const [waCloudLoadingBySlot, setWaCloudLoadingBySlot] = useState<Record<number, boolean>>({});
   const [waCloudConnectingSlot, setWaCloudConnectingSlot] = useState<number | null>(null);
   const [waCloudDisconnectingSlot, setWaCloudDisconnectingSlot] = useState<number | null>(null);
@@ -88,8 +108,16 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const waCloudSdkErrorRef = useRef<string | null>(null);
 
   // ── Linhas WhatsApp reais (Evolution + Meta) — substitui o localStorage ───
-  const [slotCapacity, setSlotCapacity] = useState({ totalSlots: 2, extraSlots: 0, includedLines: 2 });
-  const [connections, setConnections] = useState<TenantWhatsappConnection[]>([]);
+  const [slotCapacity, setSlotCapacity] = useState(initialSnapshot.whatsapp.capacity);
+  const [connections, setConnections] = useState<TenantWhatsappConnection[]>(initialSnapshot.whatsapp.connections);
+  const [evolutionBySlot, setEvolutionBySlot] = useState(initialSnapshot.whatsapp.evolutionBySlot);
+  const [externalApisSnapshot, setExternalApisSnapshot] = useState(initialSnapshot.externalApis);
+  const [lastSnapshotAt, setLastSnapshotAt] = useState(initialSnapshot.generatedAt);
+  const [revalidating, setRevalidating] = useState(false);
+  const revalidatingRef = useRef(false);
+  const initialRevalidationRef = useRef(false);
+  const [remoteCheckedAt, setRemoteCheckedAt] = useState<string | null>(null);
+  const [evolutionRemoteHealth, setEvolutionRemoteHealth] = useState<IntegrationsRevalidationResponse["evolution"]>(null);
   const [switchingSlot, setSwitchingSlot] = useState<number | null>(null);
   const [switchErrorBySlot, setSwitchErrorBySlot] = useState<Record<number, string | null>>({});
   const [switchBlockedRulesBySlot, setSwitchBlockedRulesBySlot] = useState<
@@ -102,7 +130,9 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   // Incrementado pra pedir ao EvolutionQrSlotPanel que gere o QR agora.
   const [qrConnectSignalBySlot, setQrConnectSignalBySlot] = useState<Record<number, number>>({});
   // Finalidade travada por linha: "forms" | "direct" | null (livre).
-  const [purposeBySlot, setPurposeBySlot] = useState<Record<number, SlotPurpose | null>>({});
+  const [purposeBySlot, setPurposeBySlot] = useState<Record<number, SlotPurpose | null>>(
+    initialSnapshot.whatsapp.purposeBySlot,
+  );
   const [purposeSavingSlot, setPurposeSavingSlot] = useState<number | null>(null);
   const [purposeErrorBySlot, setPurposeErrorBySlot] = useState<Record<number, string | null>>({});
   // "+ Adicionar outro número" — qual seção está alocando e o erro dela, se houver.
@@ -117,54 +147,72 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     amount_cents: number | null;
     currency: string;
     interval_unit: "month" | "year" | null;
-  } | null>(null);
+  } | null>(initialSnapshot.whatsapp.offer);
   const extraLinePrice = (extraLineOffer?.amount_cents ?? WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL * 100) / 100;
   const extraLineInterval = extraLineOffer?.interval_unit === "year" ? "ano" : "mês";
 
-  const loadSlotCapacity = useCallback(async () => {
-    try {
-      const res = await fetch("/api/checkout/extra-whatsapp", { credentials: "same-origin" });
-      if (!res.ok) return;
-      const data = (await res.json()) as {
-        extraSlots?: number;
-        totalSlots?: number;
-        includedLines?: number;
-        offer?: {
-          amount_cents: number | null;
-          currency: string;
-          interval_unit: "month" | "year" | null;
-        } | null;
-      };
-      setSlotCapacity({
-        totalSlots: data.totalSlots ?? 2,
-        extraSlots: data.extraSlots ?? 0,
-        includedLines: data.includedLines ?? 2,
-      });
-      setExtraLineOffer(data.offer ?? null);
-    } catch {
-      /* mantém capacidade anterior */
-    }
-  }, []);
+  const applySnapshot = useCallback((snapshot: IntegrationsDashboardSnapshotV1) => {
+    setSlotCapacity(snapshot.whatsapp.capacity);
+    setExtraLineOffer(snapshot.whatsapp.offer);
+    setConnections(snapshot.whatsapp.connections);
+    setPurposeBySlot(snapshot.whatsapp.purposeBySlot);
+    setWaCloudStatusBySlot(snapshot.whatsapp.cloudBySlot);
+    setEvolutionBySlot(snapshot.whatsapp.evolutionBySlot);
+    setMetaStatus(snapshot.meta);
+    setExternalApisSnapshot(snapshot.externalApis);
+    setLastSnapshotAt(snapshot.generatedAt);
+    setMetaLoadError(false);
+    window.dispatchEvent(new CustomEvent("mychatcrm:integrations-snapshot", {
+      detail: { tenantId, extraSlots: snapshot.whatsapp.capacity.extraSlots },
+    }));
+  }, [tenantId]);
 
-  const loadConnections = useCallback(async () => {
+  const refreshSnapshot = useCallback(async (): Promise<IntegrationsDashboardSnapshotV1 | null> => {
     try {
-      const res = await fetch("/api/client/whatsapp/connections", { credentials: "same-origin" });
-      if (!res.ok) return;
-      const data = (await res.json()) as {
-        connections?: TenantWhatsappConnection[];
-        purposes?: Record<string, SlotPurpose | null>;
-      };
-      setConnections(data.connections ?? []);
-      const parsed: Record<number, SlotPurpose | null> = {};
-      for (const [slot, purpose] of Object.entries(data.purposes ?? {})) {
-        const index = Number(slot);
-        if (Number.isInteger(index)) parsed[index] = purpose ?? null;
-      }
-      setPurposeBySlot(parsed);
+      const res = await fetch("/api/client/integrations/bootstrap", {
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      if (!res.ok) return null;
+      const snapshot = await res.json() as IntegrationsDashboardSnapshotV1;
+      applySnapshot(snapshot);
+      return snapshot;
     } catch {
-      /* mantém lista anterior */
+      return null;
     }
-  }, []);
+  }, [applySnapshot]);
+
+  const revalidateProviders = useCallback(async () => {
+    if (revalidatingRef.current) return;
+    revalidatingRef.current = true;
+    setRevalidating(true);
+    try {
+      const res = await fetch("/api/client/integrations/revalidate", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providers: ["meta", "evolution"],
+          slots: Array.from({ length: slotCapacity.totalSlots }, (_item, index) => index),
+        }),
+      });
+      if (!res.ok) return;
+      const result = await res.json() as IntegrationsRevalidationResponse;
+      applySnapshot(result.snapshot);
+      setEvolutionRemoteHealth(result.evolution);
+      setRemoteCheckedAt(result.checkedAt);
+    } catch {
+      // Estado persistido continua visível. Falha de saúde nunca apaga ligação.
+    } finally {
+      revalidatingRef.current = false;
+      setRevalidating(false);
+    }
+  }, [applySnapshot, slotCapacity.totalSlots]);
+
+  // Compatibilidade com os handlers existentes: toda atualização explícita
+  // usa o mesmo snapshot, sem repetir capacidade, Cloud e provider por slot.
+  const loadSlotCapacity = refreshSnapshot;
+  const loadConnections = refreshSnapshot;
 
   /**
    * Trava a finalidade da linha. Recusa vinda do servidor (regra da finalidade
@@ -199,11 +247,44 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     [],
   );
 
-  const [slotDataReady, setSlotDataReady] = useState(false);
+  const [slotDataReady] = useState(true);
+  const [autoAllocationReady, setAutoAllocationReady] = useState(false);
   useEffect(() => {
-    setSlotDataReady(false);
-    void Promise.all([loadSlotCapacity(), loadConnections()]).finally(() => setSlotDataReady(true));
-  }, [loadSlotCapacity, loadConnections, tenantId]);
+    const timer = window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("mychatcrm:integrations-snapshot", {
+        detail: { tenantId, extraSlots: initialSnapshot.whatsapp.capacity.extraSlots },
+      }));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [initialSnapshot.whatsapp.capacity.extraSlots, tenantId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer = 0;
+    const frame = initialRevalidationRef.current ? 0 : requestAnimationFrame(() => {
+      timer = window.setTimeout(() => {
+        if (!cancelled) void revalidateProviders();
+      }, 0);
+    });
+    initialRevalidationRef.current = true;
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      const last = remoteCheckedAt ? Date.parse(remoteCheckedAt) : 0;
+      if (Date.now() - last > 30_000) void revalidateProviders();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      if (frame) cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [remoteCheckedAt, revalidateProviders, tenantId]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setAutoAllocationReady(true), 1_200);
+    return () => window.clearTimeout(timer);
+  }, [tenantId]);
 
   useEffect(() => {
     if (searchParams.get("addon") === "success") {
@@ -211,14 +292,6 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
       setBanner("Pagamento confirmado. A capacidade será atualizada assim que o Stripe concluir o webhook.");
     }
   }, [loadSlotCapacity, searchParams]);
-
-  // Mantém o badge "ativo"/"conectado" e o botão de troca atualizados mesmo
-  // enquanto o EvolutionQrSlotPanel (que faz seu próprio polling) muda de
-  // estado sem avisar o componente pai.
-  useEffect(() => {
-    const id = setInterval(() => void loadConnections(), 5_000);
-    return () => clearInterval(id);
-  }, [loadConnections]);
 
   const switchSlotProvider = useCallback(
     async (slotIndex: number, provider: SlotProvider) => {
@@ -276,22 +349,10 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const loadMetaStatus = useCallback(async (): Promise<MetaStatusResponse | null> => {
     setMetaLoading(true);
     try {
-      const res = await fetch("/api/client/meta/status", { credentials: "same-origin" });
-      if (!res.ok) throw new Error("Unable to load Meta status");
-
-      const data = (await res.json()) as MetaStatusResponse;
-      const pages = data.pages ?? [];
-      const nextStatus = {
-        connected: Boolean(data.connected),
-        action_required: Boolean(data.action_required),
-        verification_pending: Boolean(data.verification_pending),
-        grant_discovery_status: data.grant_discovery_status ?? null,
-        grant_error_code: data.grant_error_code ?? null,
-        pages,
-      } satisfies MetaStatusResponse;
-      setMetaStatus(nextStatus);
+      const snapshot = await refreshSnapshot();
+      if (!snapshot) throw new Error("Unable to load Meta status");
       setMetaLoadError(false);
-      return nextStatus;
+      return snapshot.meta;
     } catch {
       // Preserve the last known state: a temporary API outage is not a
       // disconnection and must never invite the customer to reconnect blindly.
@@ -300,53 +361,79 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     } finally {
       setMetaLoading(false);
     }
+  }, [refreshSnapshot]);
+
+  const loadedMetaFormsPagesRef = useRef<Set<string>>(new Set());
+  const loadMetaFormsForPage = useCallback(async (pageId: string) => {
+    if (loadedMetaFormsPagesRef.current.has(pageId)) return;
+    loadedMetaFormsPagesRef.current.add(pageId);
+    try {
+      const response = await fetch(`/api/client/meta/forms?page_id=${encodeURIComponent(pageId)}`, {
+        credentials: "same-origin",
+      });
+      if (!response.ok) throw new Error("meta_forms_unavailable");
+      const data = await response.json() as { forms?: Array<{ form_id: string; form_name: string | null }> };
+      setMetaStatus((current) => current ? {
+        ...current,
+        pages: current.pages.map((page) => {
+          if (page.page_id !== pageId) return page;
+          const known = new Map(page.forms.map((form) => [form.form_id, form]));
+          return {
+            ...page,
+            forms_error: null,
+            forms: (data.forms ?? []).map((form) => ({
+              form_id: form.form_id,
+              form_name: form.form_name,
+              agent_id: known.get(form.form_id)?.agent_id ?? null,
+              has_active_rule: known.get(form.form_id)?.has_active_rule ?? page.all_forms_have_active_rule === true,
+            })),
+          };
+        }),
+      } : current);
+    } catch {
+      loadedMetaFormsPagesRef.current.delete(pageId);
+    }
   }, []);
 
   // ── WhatsApp Cloud status — carregado por linha ───────────────────────────
   const loadWaCloudStatus = useCallback(async (slotIndex: number): Promise<WaCloudState | null> => {
     setWaCloudLoadingBySlot((prev) => ({ ...prev, [slotIndex]: true }));
     try {
-      const res = await fetch(`/api/client/whatsapp-cloud/status?slotIndex=${slotIndex}`, { credentials: "same-origin" });
-      if (!res.ok) throw new Error("Unable to load WhatsApp Cloud status");
-      const data = (await res.json()) as WaCloudState;
-      setWaCloudStatusBySlot((prev) => ({ ...prev, [slotIndex]: data }));
-      return data;
+      const snapshot = await refreshSnapshot();
+      if (!snapshot) throw new Error("Unable to load WhatsApp Cloud status");
+      return snapshot.whatsapp.cloudBySlot[slotIndex] ?? { connected: false };
     } catch {
-      setWaCloudStatusBySlot((prev) => ({ ...prev, [slotIndex]: { connected: false } }));
       return null;
     } finally {
       setWaCloudLoadingBySlot((prev) => ({ ...prev, [slotIndex]: false }));
     }
-  }, []);
+  }, [refreshSnapshot]);
 
-  useEffect(() => {
-    for (let slotIndex = 0; slotIndex < slotCapacity.totalSlots; slotIndex += 1) {
-      void loadWaCloudStatus(slotIndex);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slotCapacity.totalSlots]);
-
-  // Pre-load the FB SDK once on mount so window.FB is ready before the user
-  // clicks Conectar em qualquer linha — FB.login() precisa ser síncrono no
-  // gesto do usuário (senão o popup é bloqueado).
-  useEffect(() => {
-    if (waCloudConfigRef.current) return; // already loaded
-    void (async () => {
-      try {
-        const res = await fetch("/api/client/whatsapp-cloud/sdk-config", { credentials: "same-origin" });
-        if (!res.ok) {
-          waCloudSdkErrorRef.current = `sdk-config ${res.status}`;
-          return;
-        }
-        const cfg = (await res.json()) as { app_id: string; config_id: string };
-        await loadFbSdk(cfg.app_id);
-        waCloudConfigRef.current = cfg;
-        waCloudSdkErrorRef.current = null;
-      } catch (err) {
-        waCloudSdkErrorRef.current = err instanceof Error ? err.message : String(err);
+  const prepareWaCloudSdk = useCallback(async () => {
+    if (waCloudConfigRef.current) return;
+    try {
+      const res = await fetch("/api/client/whatsapp-cloud/sdk-config", { credentials: "same-origin" });
+      if (!res.ok) {
+        waCloudSdkErrorRef.current = `sdk-config ${res.status}`;
+        return;
       }
-    })();
+      const cfg = (await res.json()) as { app_id: string; config_id: string };
+      await loadFbSdk(cfg.app_id);
+      waCloudConfigRef.current = cfg;
+      waCloudSdkErrorRef.current = null;
+    } catch (err) {
+      waCloudSdkErrorRef.current = err instanceof Error ? err.message : String(err);
+    }
   }, []);
+
+  // SDK Meta fica fora do caminho crítico. Carrega depois do primeiro paint;
+  // os botões também antecipam a preparação ao receber foco/ponteiro.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void prepareWaCloudSdk();
+    }, 1_500);
+    return () => window.clearTimeout(timer);
+  }, [prepareWaCloudSdk]);
 
   // Show banner if redirected back from OAuth
   useEffect(() => {
@@ -377,8 +464,6 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
       setMetaBanner("Nenhuma página Facebook encontrada nesta conta.");
     } else if (meta === "error") {
       setMetaBanner("Erro ao conectar com a Meta. Tente novamente.");
-    } else {
-      void loadMetaStatus();
     }
   }, [searchParams, loadMetaStatus]);
 
@@ -754,7 +839,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
           const data = (await res.json().catch(() => ({}))) as { error?: string };
           throw new Error(data.error ?? "Não foi possível liberar outra linha.");
         }
-        await Promise.all([loadConnections(), loadSlotCapacity()]);
+        await loadConnections();
       } catch (err) {
         setAllocateErrorBySection((prev) => ({
           ...prev,
@@ -764,7 +849,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
         setAllocatingSection(null);
       }
     },
-    [loadConnections, loadSlotCapacity],
+    [loadConnections],
   );
 
   // Assim que a área existe e tem linha livre, a linha aparece sozinha — sem
@@ -774,7 +859,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   // servindo de retry manual.
   const autoAllocateAttemptedRef = useRef<Set<SlotPurpose>>(new Set());
   useEffect(() => {
-    if (!slotDataReady || allocatingSection) return;
+    if (!slotDataReady || !autoAllocationReady || allocatingSection) return;
     const purposeToTry: SlotPurpose | null =
       lineGrouping.forms.length === 0
         ? "forms"
@@ -785,7 +870,7 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     if (autoAllocateAttemptedRef.current.has(purposeToTry)) return;
     autoAllocateAttemptedRef.current.add(purposeToTry);
     void allocateLine(purposeToTry);
-  }, [slotDataReady, allocatingSection, lineGrouping, allocateLine]);
+  }, [slotDataReady, autoAllocationReady, allocatingSection, lineGrouping, allocateLine]);
 
   /**
    * Botão único de troca de método da linha. Não desliga nada aqui: só abre a
@@ -865,6 +950,37 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
   const formsConnectedCount = countConnected(lineGrouping.forms);
   const directConnectedCount = countConnected(lineGrouping.direct);
 
+  const updateEvolutionState = useCallback((slotIndex: number, state: {
+    connectionState: string;
+    waJid: string | null;
+    instanceName: string | null;
+  }) => {
+    setEvolutionBySlot((previous) => {
+      const current = previous[slotIndex];
+      if (!current) return previous;
+      if (
+        current.connectionState === state.connectionState &&
+        current.waJid === state.waJid &&
+        current.instanceName === state.instanceName
+      ) return previous;
+      return {
+        ...previous,
+        [slotIndex]: {
+          ...current,
+          connectionState: state.connectionState,
+          waJid: state.waJid,
+          instanceName: state.instanceName ?? current.instanceName,
+          updatedAt: new Date().toISOString(),
+        },
+      };
+    });
+    setConnections((previous) => previous.map((connection) =>
+      connection.slotIndex === slotIndex && connection.transport === "evolution"
+        ? { ...connection, connected: state.connectionState === "open" }
+        : connection,
+    ));
+  }, []);
+
   /**
    * Cartão de uma linha — reusado nas duas seções fixas (Formulários Meta /
    * WhatsApp Direto) e na faixa isolada de linhas sem finalidade ainda.
@@ -877,8 +993,9 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
     const metaConnected2 = Boolean(pair?.meta?.connected);
     const activeProvider: SlotProvider = pair?.evo?.activeProvider ?? pair?.meta?.activeProvider ?? "evolution";
     const bothConnected = evoConnected && metaConnected2;
+    const evoSnapshot = evolutionBySlot[slotIndex] ?? null;
     const waCloudStatus = waCloudStatusBySlot[slotIndex] ?? null;
-    const waCloudLoading = waCloudLoadingBySlot[slotIndex] ?? true;
+    const waCloudLoading = waCloudLoadingBySlot[slotIndex] ?? false;
     const waCloudBanner = waCloudBannerBySlot[slotIndex] ?? null;
     const waCloudConnecting = waCloudConnectingSlot === slotIndex;
     const waCloudDisconnecting = waCloudDisconnectingSlot === slotIndex;
@@ -1119,6 +1236,18 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
               autoProvision={false}
               allowSwap={qrAllowSwap}
               connectSignal={qrConnectSignalBySlot[slotIndex] ?? 0}
+              initialSession={evoSnapshot ? {
+                instanceName: evoSnapshot.instanceName,
+                connectionState: evoSnapshot.connectionState,
+                waJid: evoSnapshot.waJid,
+              } : { instanceName: null, connectionState: "none", waJid: null }}
+              deferInitialCheck
+              infrastructureStatus={evolutionRemoteHealth ? {
+                evolutionConfigured: evolutionRemoteHealth.configured,
+                evolutionReachable: evolutionRemoteHealth.reachable,
+                evolutionPingError: evolutionRemoteHealth.error,
+              } : null}
+              onSessionStateChange={(session) => updateEvolutionState(slotIndex, session)}
             />
             {evoConnected ? (
               <div className="space-y-2 rounded-xl border border-line/70 bg-surface-card/40 p-3">
@@ -1345,6 +1474,8 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                   <Button
                     type="button"
                     isLoading={waCloudConnecting}
+                    onPointerEnter={() => void prepareWaCloudSdk()}
+                    onFocus={() => void prepareWaCloudSdk()}
                     onClick={() => connectWaCloud(slotIndex, cloudAllowSwap)}
                     className="min-h-[44px] gap-2 bg-primary px-5 text-white hover:bg-primary-hover"
                   >
@@ -1362,6 +1493,25 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
 
   return (
     <div className="space-y-8">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line/60 bg-surface-card/55 px-4 py-3 text-xs text-content-muted">
+        <span>
+          {revalidating
+            ? "Atualizando estados técnicos em segundo plano…"
+            : evolutionRemoteHealth?.reachable === null && evolutionRemoteHealth?.error
+              ? "Estado salvo exibido. Não foi possível confirmar todos os serviços agora."
+              : "Integrações carregadas pelo último estado confiável salvo."}
+          {lastSnapshotAt ? ` · Snapshot ${lastSnapshotAt.slice(11, 16)} UTC` : ""}
+        </span>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 font-semibold text-content transition-colors hover:bg-surface-elevated disabled:opacity-60"
+          onClick={() => void revalidateProviders()}
+          disabled={revalidating}
+        >
+          <RefreshCw className={cn("size-3.5", revalidating && "animate-spin")} aria-hidden />
+          Atualizar agora
+        </button>
+      </div>
       {banner ? (
         <div
           className={cn(
@@ -1785,6 +1935,9 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
                   <details
                     key={page.page_id}
                     open={!pageReady}
+                    onToggle={(event) => {
+                      if (event.currentTarget.open) void loadMetaFormsForPage(page.page_id);
+                    }}
                     className={cn(
                       "rounded-lg border",
                       pageReady
@@ -1933,7 +2086,10 @@ export function IntegracoesHub({ tenantId }: { tenantId: string }) {
         </div>
       </section>
 
-      <ExternalApiConnectorsPanel />
+      <ExternalApiConnectorsPanel
+        initialData={externalApisSnapshot}
+        canManage={initialSnapshot.permissions.canManageExternalApis}
+      />
 
       {/* Disconnect confirmation modal */}
       {disconnectModalOpen ? (
