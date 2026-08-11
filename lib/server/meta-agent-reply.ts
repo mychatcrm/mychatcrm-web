@@ -38,7 +38,7 @@ import {
   isJourneyIsolationEnabled,
   touchLeadJourney,
 } from "@/lib/server/lead-journeys";
-import { applyCrmMoveOnFirstLeadReply } from "@/lib/server/agent-crm-move";
+import { applyCrmMoveOnLeadReply } from "@/lib/server/agent-crm-move";
 import { scheduleLeadRedistribution } from "@/lib/server/lead-redistribution";
 import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
 import { lookupWhatsAppCloudConnectionByPhoneNumberId } from "@/lib/server/whatsapp-cloud-connections";
@@ -378,7 +378,7 @@ export async function processMetaAgentResponseJob(
   // Este job só existe porque o lead mandou mensagem — é o ponto onde "o lead
   // respondeu" é verdade. Move o card uma vez, se o agente tiver esse destino
   // configurado. Nunca lança: a resposta ao lead não pode falhar por causa do CRM.
-  await applyCrmMoveOnFirstLeadReply({
+  await applyCrmMoveOnLeadReply({
     sb,
     tenantId: job.tenant_id,
     agentId: job.agent_id,

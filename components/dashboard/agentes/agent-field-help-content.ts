@@ -94,13 +94,50 @@ export const AGENT_FIELD_HELP = {
     'O lead permanece na mesma etapa quando responder. Use quando o primeiro contato já coloca o card onde você quer e você prefere mover daí em diante à mão.',
 
   crmRespostaMover:
-    'Quando o lead responder pela primeira vez, o card muda para o funil e etapa escolhidos abaixo — separando quem já respondeu de quem ainda não. Acontece uma única vez: se depois alguém mover o card à mão, as próximas mensagens do lead não o trazem de volta.',
+    'Quando o lead responder, o card muda para o funil e etapa escolhidos abaixo — separando quem já respondeu de quem ainda não. Se alguém da sua equipe arrastar o card à mão, o agente para de mexer nele e a posição escolhida pela equipe é respeitada.',
 
   crmRespostaFunil:
-    'Funil onde o lead será posicionado ao responder pela primeira vez. Pode ser o mesmo do primeiro contato ou outro.',
+    'Funil onde o lead será posicionado ao responder. Pode ser o mesmo do primeiro contato ou outro.',
 
   crmRespostaColuna:
-    'Etapa dentro do funil escolhido para onde o card vai quando o lead responder pela primeira vez.',
+    'Etapa dentro do funil escolhido para onde o card vai quando o lead responder.',
+
+  // ── Movimentação no CRM ao longo do follow-up ────────────────────────────────
+  crmFollowUpNaoMover:
+    'O follow-up é enviado normalmente, mas o card não muda de lugar. Use quando você acompanha as tentativas de retomada pela conversa e não quer uma etapa separada para isso.',
+
+  crmFollowUpMover:
+    'Assim que o agente disparar um follow-up, o card vai para o funil e etapa escolhidos abaixo — o vendedor bate o olho no quadro e já sabe quem parou de responder e está sendo retomado. Cada novo disparo mantém o card lá.',
+
+  crmFollowUpFunil:
+    'Funil onde o card será posicionado quando o follow-up disparar. Pode ser o mesmo dos outros momentos ou um funil só de retomada.',
+
+  crmFollowUpColuna:
+    'Etapa dentro do funil escolhido para onde o card vai no disparo do follow-up. Vale a etapa que você usa para "sumiu, estou retomando".',
+
+  crmExhaustedNaoMover:
+    'O follow-up encerra silenciosamente e o card fica onde estava. Use quando você mesmo revisa e arquiva os leads frios.',
+
+  crmExhaustedMover:
+    'Quando todas as tentativas de follow-up saírem sem nenhuma resposta, o card vai para o funil e etapa escolhidos abaixo. É o fim da linha da automação para aquele lead — o agente não envia mais nada até ele voltar a falar.',
+
+  crmExhaustedFunil:
+    'Funil onde o card será posicionado quando o follow-up esgotar todas as tentativas.',
+
+  crmExhaustedColuna:
+    'Etapa dentro do funil escolhido para onde o card vai quando as tentativas acabam sem resposta. Vale a etapa que você usa para lead frio ou desistiu.',
+
+  crmReturnNaoMover:
+    'O agente volta a atender normalmente, mas o card continua onde o esgotamento deixou. Use quando você prefere reposicionar o lead recuperado à mão.',
+
+  crmReturnMover:
+    'Se um lead que já tinha esgotado as tentativas voltar a falar, o card sai da etapa de frio e vai para o funil e etapa escolhidos abaixo. É o resgate: o vendedor vê que aquele lead dado como perdido voltou.',
+
+  crmReturnFunil:
+    'Funil onde o card será posicionado quando um lead esgotado voltar a responder.',
+
+  crmReturnColuna:
+    'Etapa dentro do funil escolhido para onde o card vai quando o lead esgotado volta a falar. Costuma ser a mesma etapa de atendimento ativo.',
 
   // ── Follow-up A) Ativação ────────────────────────────────────────────────────
   followUpAtivar:

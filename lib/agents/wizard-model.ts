@@ -296,6 +296,37 @@ export function validateCompactAgentDraft(
     if ((followUpInteligente.intervaloVerificacaoMinutos ?? 0) < 1) {
       return "Em «Configurações de Follow-up», o intervalo de verificação deve ser de pelo menos 1 minuto.";
     }
+    // Movimentação no CRM ao longo do ciclo: cada destino é opcional e
+    // independente, mas quem liga precisa dizer para onde. Só vale checar com
+    // o follow-up ativo — desligado, nenhum desses momentos acontece.
+    for (const rule of [
+      {
+        enabled: followUpInteligente.crmMoveOnFollowUpEnabled,
+        funnelId: followUpInteligente.crmFollowUpFunnelId,
+        columnId: followUpInteligente.crmFollowUpColumnId,
+        label: "ao disparar o follow-up",
+      },
+      {
+        enabled: followUpInteligente.crmMoveOnExhaustedEnabled,
+        funnelId: followUpInteligente.crmExhaustedFunnelId,
+        columnId: followUpInteligente.crmExhaustedColumnId,
+        label: "ao esgotar as tentativas",
+      },
+      {
+        enabled: followUpInteligente.crmMoveOnReturnAfterExhaustedEnabled,
+        funnelId: followUpInteligente.crmReturnFunnelId,
+        columnId: followUpInteligente.crmReturnColumnId,
+        label: "quando o lead voltar",
+      },
+    ]) {
+      if (!rule.enabled) continue;
+      if (!crmFunnels?.length) return "Carregue os funis do CRM antes de configurar o destino do follow-up.";
+      const funnel = crmFunnels.find((f) => f.id === rule.funnelId);
+      if (!funnel) return `Escolha um funil válido em «Follow-up» (${rule.label}).`;
+      if (!isValidColunaForFunnel(rule.columnId ?? "", funnel)) {
+        return `Escolha uma coluna válida em «Follow-up» (${rule.label}).`;
+      }
+    }
   }
   const responseSettingsError = validateAgentResponseSettings(draft);
   if (responseSettingsError) return responseSettingsError;

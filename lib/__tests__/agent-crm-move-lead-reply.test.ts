@@ -4,12 +4,13 @@ import { describe, expect, it } from "vitest";
 import { resolveAgentCrmMoveTarget } from "@/lib/server/agent-crm-move";
 
 /**
- * Segundo destino do agente: mover o card quando o lead RESPONDE.
+ * Destino do agente quando o lead RESPONDE.
  *
  * Dois contratos importam aqui e nenhum é óbvio lendo só a assinatura:
  *  1. este destino não pode depender da agenda (o move de agendamento depende);
- *  2. move só na PRIMEIRA resposta — senão cada mensagem nova do lead desfaria
- *     o que a equipe moveu à mão.
+ *  2. quem trava a repetição é a procedência do card (`agent_crm_column_id`),
+ *     não o carimbo de primeira resposta — senão o ciclo respondeu → sumiu →
+ *     follow-up → respondeu de novo nunca fecharia.
  */
 
 function source(path: string): string {
@@ -73,26 +74,31 @@ describe("resolveAgentCrmMoveTarget — lead_replied", () => {
   });
 });
 
-describe("contrato: move da primeira resposta", () => {
+describe("contrato: move na resposta do lead", () => {
   const moveSource = source("lib/server/agent-crm-move.ts");
 
-  it("reivindica first_reply_at com escrita condicional (uma vez só, à prova de corrida)", () => {
-    // Sem o `.is(..., null)` a reivindicação deixaria de ser atômica e duas
-    // mensagens simultâneas moveriam o card duas vezes.
+  it("carimba first_reply_at com escrita condicional (não sobrescreve o original)", () => {
     expect(moveSource).toContain('.is("first_reply_at", null)');
   });
 
-  it("só move depois de reivindicar o carimbo", () => {
-    const claimIndex = moveSource.indexOf("claimFirstReply");
-    const applyIndex = moveSource.indexOf("applyCrmMoveOnFirstLeadReply");
-    expect(claimIndex).toBeGreaterThan(-1);
-    expect(applyIndex).toBeGreaterThan(-1);
+  it("first_reply_at é registro, não trava: o move não depende do resultado do carimbo", () => {
+    // Se o carimbo voltasse a ser a condição, o segundo ciclo de follow-up
+    // deixaria o card parado para sempre na coluna de retomada.
+    expect(moveSource).not.toContain("claimFirstReply");
+    expect(moveSource).toContain("stampFirstReply");
+  });
+
+  it("decide a ação pelo estado do follow-up do lead", () => {
+    // Lead que já tinha esgotado e volta a falar é lead recuperado: destino
+    // próprio, não o destino de resposta comum.
+    expect(moveSource).toContain("loadFollowUpStatus");
+    expect(moveSource).toContain("lead_returned_after_exhausted");
   });
 
   it("é chamado nos DOIS caminhos de resposta (QR e API Meta)", () => {
     // Se entrar só num, o comportamento muda conforme o método de conexão da
     // linha — que é exatamente o tipo de diferença invisível que gera bug.
-    expect(source("lib/server/evolution-agent-reply.ts")).toContain("applyCrmMoveOnFirstLeadReply");
-    expect(source("lib/server/meta-agent-reply.ts")).toContain("applyCrmMoveOnFirstLeadReply");
+    expect(source("lib/server/evolution-agent-reply.ts")).toContain("applyCrmMoveOnLeadReply");
+    expect(source("lib/server/meta-agent-reply.ts")).toContain("applyCrmMoveOnLeadReply");
   });
 });

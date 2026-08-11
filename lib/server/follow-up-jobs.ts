@@ -16,6 +16,7 @@ import {
   getEvolutionInstanceByTenantId,
 } from "@/lib/server/tenant-evolution-instance-db";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
+import { applyAgentCrmMove } from "@/lib/server/agent-crm-move";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
   buildFollowUpAiInstruction,
@@ -1160,6 +1161,19 @@ export async function processFollowUpJob(
         .eq("id", lead.id);
     }
 
+    // O follow-up saiu: se o dono do agente configurou, o card avisa o vendedor
+    // que este lead parou de responder. Esgotou tudo? o move do esgotamento
+    // (logo abaixo) é quem vale — não este.
+    if (lead?.id && nextAttempts < job.max_attempts) {
+      await applyAgentCrmMove({
+        sb: client,
+        tenantId: job.tenant_id,
+        action: "follow_up_sent",
+        agentId: job.agent_id,
+        leadId: lead.id,
+      });
+    }
+
     await recordEvent(client, "follow_up_sent", {
       ...commonEventParams,
       followUpActive: settings.ativo,
@@ -1197,6 +1211,20 @@ export async function processFollowUpJob(
           })
           .eq("id", lead.id);
       }
+      // Todas as tentativas foram usadas e o lead nunca respondeu. Se o dono do
+      // agente configurou, o card sai da fila ativa do vendedor. Depois do
+      // update de status acima, para que um retorno do lead já seja lido como
+      // "voltou depois de esgotado".
+      if (lead?.id) {
+        await applyAgentCrmMove({
+          sb: client,
+          tenantId: job.tenant_id,
+          action: "follow_up_exhausted",
+          agentId: job.agent_id,
+          leadId: lead.id,
+        });
+      }
+
       await recordEvent(client, "follow_up_exhausted", {
         ...commonEventParams,
         followUpActive: settings.ativo,
