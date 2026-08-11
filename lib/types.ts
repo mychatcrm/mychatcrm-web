@@ -345,6 +345,15 @@ export interface Agent {
   crmTargetColumnId?: string | null;
   /** Alias do status/coluna usado pela tabela leads. */
   crmTargetStatus?: string | null;
+  /**
+   * Segundo destino, independente do de cima: move o card quando o lead
+   * RESPONDE pela primeira vez, separando "ainda não respondeu" de "conversa
+   * em andamento". Só na primeira resposta — depois o card fica onde a equipe
+   * deixar (trava em `leads.first_reply_at`).
+   */
+  crmMoveOnLeadReplyEnabled?: boolean;
+  crmReplyFunnelId?: string | null;
+  crmReplyColumnId?: string | null;
   /** Se true, CTA/handoff estruturado está ativo para este agente. */
   ctaHandoffAtivo?: boolean;
   /** Se true, o agente pode criar, remarcar e cancelar compromissos pela conversa. */
