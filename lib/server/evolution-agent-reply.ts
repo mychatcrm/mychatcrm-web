@@ -1236,6 +1236,7 @@ export async function processAgentResponseJob(
     sb,
     tenantId: job.tenant_id,
     leadId: job.lead_id,
+    agentId: job.agent_id,
   });
   // Este job só existe porque o lead mandou mensagem — é o ponto onde "o lead
   // respondeu" é verdade. Move o card uma vez, se o agente tiver esse destino
