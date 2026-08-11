@@ -1,9 +1,9 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 import { Sidebar } from "./Sidebar";
-import { DashboardOverviewDateFilter } from "./DashboardWorkspace";
 import Link from "next/link";
 import { Drawer } from "@/components/ui/Drawer";
 import type { ClientSession } from "@/lib/client-auth";
@@ -14,6 +14,11 @@ import { PanelHelp } from "@/components/panel/ui/PanelHelp";
 import { CrmFunnelsProvider } from "./CrmFunnelsContext";
 import { cn } from "@/lib/utils";
 import { Bell, Menu, Search } from "lucide-react";
+
+const DashboardOverviewDateFilter = dynamic(
+  () => import("./DashboardWorkspace").then((module) => module.DashboardOverviewDateFilter),
+  { ssr: false },
+);
 
 function DashboardShellInner({
   children,

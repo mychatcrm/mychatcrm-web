@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { DatabaseZap, Loader2, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { DatabaseZap, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { Modal } from "@/components/ui/Modal";
 import { createStandardExternalApiOperations } from "@/lib/external-api/standard-contract";
 import type { ExternalApiConnectorInput, ExternalApiConnectorSummary, ExternalApiOperationInput } from "@/lib/external-api/types";
+import type { ExternalApiConnectorCard, IntegrationsDashboardSnapshotV1 } from "@/lib/integrations/dashboard-snapshot";
 
 type ExternalApiConnectorDraft = ExternalApiConnectorInput & { operations: ExternalApiOperationInput[] };
 
@@ -17,31 +18,69 @@ const usesStandardContract = (operations: ExternalApiOperationInput[]) => {
 };
 const emptyConnector = (): ExternalApiConnectorDraft => ({ name: "", description: "", baseUrl: "https://", authType: "none", enabled: true, operations: createStandardExternalApiOperations() });
 
-export function ExternalApiConnectorsPanel() {
-  const [items, setItems] = useState<ExternalApiConnectorSummary[]>([]);
-  const [capacity, setCapacity] = useState({ used: 0, total: 1, purchased: 0 });
-  const [canManage, setCanManage] = useState(false);
-  const [loading, setLoading] = useState(true);
+type SnapshotBackedConnector = ExternalApiConnectorSummary & { operationCount: number; detailsLoaded: boolean };
+
+function fromSnapshot(item: ExternalApiConnectorCard): SnapshotBackedConnector {
+  return {
+    ...item,
+    credentialMask: null,
+    operations: [],
+    operationCount: item.operationCount,
+    detailsLoaded: false,
+  };
+}
+
+export function ExternalApiConnectorsPanel({
+  initialData,
+  canManage: initialCanManage,
+}: {
+  initialData: IntegrationsDashboardSnapshotV1["externalApis"];
+  canManage: boolean;
+}) {
+  const [items, setItems] = useState<SnapshotBackedConnector[]>(() => initialData.connectors.map(fromSnapshot));
+  const [capacity, setCapacity] = useState(initialData.capacity);
+  const [canManage, setCanManage] = useState(initialCanManage);
   const [editing, setEditing] = useState<ExternalApiConnectorSummary | null | "new">(null);
   const [draft, setDraft] = useState<ExternalApiConnectorDraft>(emptyConnector);
   const [advanced, setAdvanced] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<SnapshotBackedConnector[]> => {
     const response = await fetch("/api/client/external-api-connectors", { cache: "no-store" });
     if (!response.ok) throw new Error("Não foi possível carregar as APIs externas.");
     const data = await response.json();
-    setItems(data.connectors ?? []); setCapacity(data.capacity ?? { used: 0, total: 1, purchased: 0 }); setCanManage(data.canManage === true);
+    const next = ((data.connectors ?? []) as ExternalApiConnectorSummary[]).map((item) => ({
+      ...item,
+      operationCount: item.operations.length,
+      detailsLoaded: true,
+    }));
+    setItems(next); setCapacity(data.capacity ?? { used: 0, total: 1, purchased: 0, included: 1 }); setCanManage(data.canManage === true);
+    return next;
   }, []);
-  useEffect(() => { void load().catch((e) => setError(e.message)).finally(() => setLoading(false)); }, [load]);
 
-  const openEditor = (item?: ExternalApiConnectorSummary) => {
+  useEffect(() => {
+    setItems(initialData.connectors.map(fromSnapshot));
+    setCapacity(initialData.capacity);
+    setCanManage(initialCanManage);
+  }, [initialCanManage, initialData]);
+
+  const openEditor = async (item?: SnapshotBackedConnector) => {
+    let editable = item;
+    if (item && !item.detailsLoaded) {
+      try {
+        editable = (await load()).find((candidate) => candidate.id === item.id) ?? item;
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : "Não foi possível carregar os detalhes da API.");
+        return;
+      }
+    }
     setError(""); setEditing(item ?? "new");
-    setAdvanced(item ? !usesStandardContract(item.operations) : false);
-    setDraft(item ? { name: item.name, description: item.description, baseUrl: item.baseUrl, authType: item.authType,
-      authHeaderName: item.authHeaderName ?? undefined, authUsername: item.authUsername ?? undefined, enabled: item.enabled,
-      operations: item.operations } : emptyConnector());
+    setAdvanced(editable ? !usesStandardContract(editable.operations) : false);
+    setDraft(editable ? { name: editable.name, description: editable.description, baseUrl: editable.baseUrl, authType: editable.authType,
+      authHeaderName: editable.authHeaderName ?? undefined, authUsername: editable.authUsername ?? undefined, enabled: editable.enabled,
+      operations: editable.operations } : emptyConnector());
+    if (editable) setEditing(editable);
   };
   const save = async () => {
     setBusy(true); setError("");
@@ -69,16 +108,15 @@ export function ExternalApiConnectorsPanel() {
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><div className="flex items-center gap-2"><DatabaseZap className="size-5 text-primary"/><h2 className="font-semibold text-content">APIs externas dos agentes</h2></div>
         <p className="mt-1 text-sm text-content-muted">Conectores REST/JSON universais, somente para consultas. 1 API está incluída em todos os planos.</p></div>
-      {canManage ? <div className="flex gap-2"><Button variant="outline" onClick={() => void buy()} disabled={busy}>+ API por R$ 49,90/mês</Button><Button onClick={() => capacity.used < capacity.total ? openEditor() : void buy()}><Plus className="size-4"/>Adicionar API</Button></div> : null}
+      {canManage ? <div className="flex gap-2"><Button variant="outline" onClick={() => void buy()} disabled={busy}>+ API por R$ 49,90/mês</Button><Button onClick={() => capacity.used < capacity.total ? void openEditor() : void buy()}><Plus className="size-4"/>Adicionar API</Button></div> : null}
     </div>
     <div className="mt-4 rounded-xl bg-surface-elevated p-3 text-sm text-content-secondary">Capacidade: <strong>{capacity.used}/{capacity.total}</strong> conectores · {capacity.purchased} extra(s) pago(s)</div>
     {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
-    {loading ? <div className="mt-5 flex items-center gap-2 text-sm text-content-muted"><Loader2 className="size-4 animate-spin"/>Carregando…</div> :
-      <div className="mt-4 grid gap-3">{items.map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line p-4">
+    <div className="mt-4 grid gap-3">{items.map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line p-4">
         <div><div className="flex items-center gap-2"><strong className="text-content">{item.name}</strong><span className="rounded-full bg-surface-elevated px-2 py-0.5 text-xs text-content-muted">{item.billingStatus === "included" ? "Incluída" : item.effective ? "Extra ativa" : "Suspensa por cobrança"}</span></div>
-          <p className="mt-1 text-xs text-content-muted">{item.baseUrl} · {item.operations.length} operação(ões) · {item.agentCount} agente(s)</p></div>
-        {canManage ? <div className="flex gap-2"><Button variant="outline" onClick={async () => { const response = await fetch(`/api/client/external-api-connectors/${item.id}/test`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }); const data = await response.json(); alert(response.ok ? `Teste concluído: ${data.data?.records?.length ?? 0} resultado(s).` : `Falha no teste: ${data.errorCode ?? data.error ?? "não identificada"}`); }}>Testar</Button><Button variant="outline" onClick={() => openEditor(item)}>Editar</Button><Button variant="ghost" onClick={async () => { if (!confirm("Remover esta API?")) return; await fetch(`/api/client/external-api-connectors/${item.id}`, { method: "DELETE" }); await load(); }}><Trash2 className="size-4"/></Button></div> : null}
-      </div>)}</div>}
+          <p className="mt-1 text-xs text-content-muted">{item.baseUrl} · {item.operationCount} operação(ões) · {item.agentCount} agente(s)</p></div>
+        {canManage ? <div className="flex gap-2"><Button variant="outline" onClick={async () => { const response = await fetch(`/api/client/external-api-connectors/${item.id}/test`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }); const data = await response.json(); alert(response.ok ? `Teste concluído: ${data.data?.records?.length ?? 0} resultado(s).` : `Falha no teste: ${data.errorCode ?? data.error ?? "não identificada"}`); }}>Testar</Button><Button variant="outline" onClick={() => void openEditor(item)}>Editar</Button><Button variant="ghost" onClick={async () => { if (!confirm("Remover esta API?")) return; await fetch(`/api/client/external-api-connectors/${item.id}`, { method: "DELETE" }); await load(); }}><Trash2 className="size-4"/></Button></div> : null}
+      </div>)}</div>
     {!canManage ? <p className="mt-4 flex items-center gap-2 text-sm text-content-muted"><ShieldCheck className="size-4"/>Somente o titular da conta pode cadastrar credenciais e contratar capacidade.</p> : null}
 
     <Modal open={editing !== null} onClose={() => setEditing(null)} title={editing === "new" ? "Adicionar API externa" : "Editar API externa"} footer={<div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => setEditing(null)}>Cancelar</Button><Button onClick={() => void save()} isLoading={busy}>Salvar</Button></div>}>

@@ -209,13 +209,22 @@ export function Sidebar({
   }, [session.tenantId]);
 
   useEffect(() => {
+    if (pathname === "/dashboard/integracoes") {
+      const onSnapshot = (event: Event) => {
+        const detail = (event as CustomEvent<{ tenantId?: string; extraSlots?: number }>).detail;
+        if (detail?.tenantId !== session.tenantId) return;
+        setExtraSlotsDb(Math.max(0, Number(detail.extraSlots ?? 0)));
+      };
+      window.addEventListener("mychatcrm:integrations-snapshot", onSnapshot);
+      return () => window.removeEventListener("mychatcrm:integrations-snapshot", onSnapshot);
+    }
     fetch("/api/checkout/extra-whatsapp")
       .then((r) => (r.ok ? r.json() : null))
       .then((d: { extraSlots?: number } | null) => {
         if (d) setExtraSlotsDb(d.extraSlots ?? 0);
       })
       .catch(() => {});
-  }, [session.tenantId]);
+  }, [pathname, session.tenantId]);
 
   const logout = async () => {
     await fetch("/api/auth/client/logout", { method: "POST" }).catch(() => null);

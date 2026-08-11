@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
 import { Inter } from "next/font/google";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 import { BRAND_LOGO, BRAND_ORANGE } from "@/lib/brand";
 import { defaultMetadata } from "@/lib/seo";
@@ -47,6 +48,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <Suspense fallback={null}>
             <RootChatWidget />
           </Suspense>
+          <SpeedInsights />
         </ThemeProvider>
       </body>
     </html>
