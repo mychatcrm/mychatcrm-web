@@ -19,11 +19,38 @@ export type AgentAgendaPlan = {
   eventId: string | null;
 };
 
+/**
+ * Desfecho do lead declarado pelo agente no turno.
+ *
+ * `disqualified` = não atende os critérios do negócio; `lost_interest` = desistiu
+ * do que procurava. Os dois são terminais: quando o dono do agente configura, o
+ * card muda de coluna e o atendimento automático para.
+ *
+ * O modelo só pode declarar isso quando o operador escreveu os critérios do
+ * próprio negócio no agente — o prompt proíbe explicitamente caso contrário.
+ */
+export type AgentLeadOutcomeAction = "none" | "disqualified" | "lost_interest";
+
+export type AgentLeadOutcome = {
+  action: AgentLeadOutcomeAction;
+  /** Justificativa curta do agente, registrada na timeline para o vendedor auditar. */
+  reason: string | null;
+};
+
 export type AgentTurnPlan = {
   reply: string;
   agenda: AgentAgendaPlan;
+  leadOutcome: AgentLeadOutcome;
   externalApiLookups: AgentExternalApiLookupRequest[];
 };
+
+const LEAD_OUTCOME_ACTIONS = new Set<AgentLeadOutcomeAction>([
+  "none",
+  "disqualified",
+  "lost_interest",
+]);
+
+const LEAD_OUTCOME_REASON_MAX = 200;
 
 const ACTIONS = new Set<AgentAgendaPlanAction>([
   "none",
@@ -76,6 +103,24 @@ export const AGENT_TURN_RESPONSE_FORMAT = {
         },
         required: ["action", "date", "time", "location", "eventId"],
       },
+      leadOutcome: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          action: {
+            type: "string",
+            enum: ["none", "disqualified", "lost_interest"],
+            description:
+              "Use 'none' por padrão. Só declare desfecho quando os critérios configurados neste agente forem atendidos.",
+          },
+          reason: {
+            type: ["string", "null"],
+            description:
+              "Justificativa curta do desfecho, citando o critério atendido. Null quando action é 'none'.",
+          },
+        },
+        required: ["action", "reason"],
+      },
       externalApiLookups: {
         type: "array", maxItems: 2,
         items: { type: "object", additionalProperties: false, properties: {
@@ -85,7 +130,7 @@ export const AGENT_TURN_RESPONSE_FORMAT = {
         }, required: ["connectorId", "operationKey", "arguments"] },
       },
     },
-    required: ["reply", "agenda", "externalApiLookups"],
+    required: ["reply", "agenda", "leadOutcome", "externalApiLookups"],
   },
 } as const;
 
@@ -130,6 +175,30 @@ export function normalizeAgentAgendaTime(value: unknown): string | null {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
+/**
+ * Lê o desfecho SEM poder de veto sobre o turno.
+ *
+ * Campo ausente, tipo errado ou valor desconhecido viram `none` em vez de
+ * invalidar o plano inteiro. Um desvio de schema aqui deixaria o lead sem
+ * resposta nenhuma (`INVALID_STRUCTURED_REPLY`) — preço alto demais para um
+ * campo cujo silêncio significa exatamente "nada a fazer".
+ */
+function parseLeadOutcome(value: unknown): AgentLeadOutcome {
+  const none: AgentLeadOutcome = { action: "none", reason: null };
+  if (!value || typeof value !== "object" || Array.isArray(value)) return none;
+  const row = value as Record<string, unknown>;
+  if (
+    typeof row.action !== "string" ||
+    !LEAD_OUTCOME_ACTIONS.has(row.action as AgentLeadOutcomeAction)
+  ) {
+    return none;
+  }
+  const action = row.action as AgentLeadOutcomeAction;
+  if (action === "none") return none;
+  const reason = nullableString(row.reason);
+  return { action, reason: reason ? reason.slice(0, LEAD_OUTCOME_REASON_MAX) : null };
+}
+
 export function parseAgentTurnPlan(value: unknown): AgentTurnPlan | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const row = value as Record<string, unknown>;
@@ -162,6 +231,7 @@ export function parseAgentTurnPlan(value: unknown): AgentTurnPlan | null {
       location: nullableString(agenda.location),
       eventId: nullableString(agenda.eventId),
     },
+    leadOutcome: parseLeadOutcome(row.leadOutcome),
     externalApiLookups,
   };
 }
@@ -185,4 +255,9 @@ export function normalizeAgentTurnResult(result: AiGenerateResult): AiGenerateRe
 export function agendaPlanFromResult(result: AiGenerateResult): AgentAgendaPlan | null {
   if (!result.ok) return null;
   return parseAgentTurnPlan(result.structuredData)?.agenda ?? null;
+}
+
+export function leadOutcomeFromResult(result: AiGenerateResult): AgentLeadOutcome | null {
+  if (!result.ok) return null;
+  return parseAgentTurnPlan(result.structuredData)?.leadOutcome ?? null;
 }

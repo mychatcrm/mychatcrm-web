@@ -3,7 +3,8 @@
  * somente se) o dono da conta tiver configurado aquele destino no agente.
  *
  * Eventos suportados hoje: agendamento criado/remarcado, agendamento
- * cancelado, e a primeira resposta do lead.
+ * cancelado, resposta do lead, o ciclo de follow-up (disparo, esgotamento e
+ * retorno) e o descarte do lead (desqualificado ou sem interesse).
  *
  * Efeito colateral deliberadamente isolado: `applyAgentCrmMove` nunca lança.
  * Nem um agendamento confirmado nem uma resposta ao lead podem falhar porque o
@@ -21,7 +22,9 @@ export type AgentCrmMoveAction =
   | "lead_replied"
   | "follow_up_sent"
   | "follow_up_exhausted"
-  | "lead_returned_after_exhausted";
+  | "lead_returned_after_exhausted"
+  | "lead_disqualified"
+  | "lead_lost_interest";
 
 export type AgentCrmMoveTarget = {
   funnelId: string;
@@ -66,6 +69,24 @@ export function resolveAgentCrmMoveTarget(
     if (metadata.crmMoveOnLeadReplyEnabled !== true) return null;
     const funnelId = textOrNull(metadata.crmReplyFunnelId);
     const columnId = textOrNull(metadata.crmReplyColumnId);
+    if (!funnelId || !columnId) return null;
+    return { funnelId, columnId };
+  }
+
+  // Descarte do lead. A config é um objeto próprio por automação, e o destino
+  // só existe com `ativo` E critérios escritos: sem os critérios do cliente o
+  // desfecho nunca deveria ter sido declarado, então mover seria agir sobre uma
+  // decisão que não tinha regra.
+  if (action === "lead_disqualified" || action === "lead_lost_interest") {
+    const raw =
+      action === "lead_disqualified"
+        ? metadata.leadOutcomeDisqualified
+        : metadata.leadOutcomeLostInterest;
+    const config = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
+    if (!config || config.ativo !== true) return null;
+    if (!textOrNull(config.criterios)) return null;
+    const funnelId = textOrNull(config.funnelId);
+    const columnId = textOrNull(config.columnId);
     if (!funnelId || !columnId) return null;
     return { funnelId, columnId };
   }

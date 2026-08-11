@@ -528,6 +528,176 @@ export async function markWaitingForHuman(params: {
   }
 }
 
+/** Motivo de pausa gravado quando o AGENTE descarta o lead. */
+export const LEAD_OUTCOME_PAUSED_BY = "agent_lead_outcome";
+
+export type LeadOutcomePauseReason = "disqualified" | "lost_interest";
+
+/**
+ * Encerra o atendimento automático de um lead descartado pelo agente.
+ *
+ * Espelha `markWaitingForHuman`, com uma diferença de intenção: ali alguém é
+ * chamado para assumir; aqui ninguém é. Por isso `mode: "human"` e
+ * `handoffSuggested: false` — o vendedor pode escrever se quiser, mas nada fica
+ * pendurado na fila dele pedindo atenção.
+ *
+ * Cancelar os dois tipos de job é obrigatório, não higiene: sem isso um
+ * follow-up já agendado dispara depois e o lead "descartado" continua recebendo
+ * mensagem.
+ */
+export async function pauseConversationForLeadOutcome(params: {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  leadId?: string | null;
+  agentId?: string | null;
+  outcome: LeadOutcomePauseReason;
+  /** Justificativa dada pelo agente, exibida na timeline para a equipe auditar. */
+  detail?: string | null;
+  /** WhatsApp do atendente responsável. Só notifica quando o operador pediu. */
+  notifyNumero?: string | null;
+}): Promise<void> {
+  const sb = params.sb ?? createSupabaseServiceClient();
+  const title =
+    params.outcome === "disqualified"
+      ? "Agente marcou o lead como desqualificado"
+      : "Agente marcou que o lead perdeu o interesse";
+
+  const state = await patchConversationOperation({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    leadId: params.leadId,
+    agentId: params.agentId,
+    mode: "human",
+    humanPaused: true,
+    pausedReason: params.outcome,
+    pausedBy: LEAD_OUTCOME_PAUSED_BY,
+    handoffSuggested: false,
+    handoffReason: null,
+  });
+
+  await logConversationEvent({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    leadId: params.leadId ?? null,
+    stateId: state?.id ?? null,
+    eventType: "lead_outcome",
+    title,
+    detail: params.detail ?? null,
+    actorType: "agent",
+    actorId: params.agentId ?? null,
+    transferReason: params.outcome,
+  });
+
+  await cancelPendingAgentResponseJobs({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    reason: `lead_outcome_${params.outcome}`,
+  });
+
+  await cancelPendingFollowUpJobs({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    reason: `lead_outcome_${params.outcome}`,
+  });
+
+  const notifyDigits = (params.notifyNumero ?? "").replace(/\D/g, "");
+  if (notifyDigits.length < 10) return;
+  try {
+    const instanceName = await getSystemAgentInstanceName();
+    if (!instanceName) return;
+    await sendSystemNotification(notifyDigits, buildLeadOutcomeNotificationText(params), instanceName, {
+      type: "lead_outcome_alert",
+      metadata: {
+        tenant_id: params.tenantId,
+        remote_jid: params.remoteJid,
+        outcome: params.outcome,
+        agent_id: params.agentId ?? null,
+      },
+    });
+  } catch (error) {
+    console.warn("[conversation-operation] lead_outcome_notify_error", {
+      tenant_id: params.tenantId,
+      error: error instanceof Error ? error.message : "notify_failed",
+    });
+  }
+}
+
+function buildLeadOutcomeNotificationText(params: {
+  remoteJid: string;
+  outcome: LeadOutcomePauseReason;
+  detail?: string | null;
+}): string {
+  const label = params.outcome === "disqualified" ? "desqualificado" : "sem interesse";
+  const phone = params.remoteJid.split("@")[0] ?? params.remoteJid;
+  const reason = params.detail?.trim();
+  return [
+    `Lead marcado como ${label} pelo agente.`,
+    `Contato: ${phone}`,
+    reason ? `Motivo: ${reason}` : null,
+    "O atendimento automático deste contato foi encerrado. Abra a conversa no painel para retomar.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * Devolve a conversa à automação depois de um descarte — e SOMENTE nesse caso.
+ *
+ * A guarda em `pausedBy` é a parte importante: uma conversa pausada por handoff
+ * ou pelo próprio vendedor jamais pode ser destravada por aqui. Devolve `true`
+ * quando efetivamente retomou, para o chamador seguir com o turno.
+ */
+export async function resumeConversationAfterLeadOutcome(params: {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  leadId?: string | null;
+  agentId?: string | null;
+}): Promise<boolean> {
+  const sb = params.sb ?? createSupabaseServiceClient();
+  const state = await getConversationState({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+  });
+  if (!state?.humanPaused) return false;
+  if (state.pausedBy !== LEAD_OUTCOME_PAUSED_BY) return false;
+
+  const resumed = await patchConversationOperation({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    leadId: params.leadId,
+    agentId: params.agentId,
+    mode: "automation",
+    humanPaused: false,
+    pausedReason: null,
+    pausedBy: null,
+    handoffSuggested: false,
+    handoffReason: null,
+  });
+  if (!resumed) return false;
+
+  await logConversationEvent({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    leadId: params.leadId ?? null,
+    stateId: resumed.id,
+    eventType: "return_automation",
+    title: "Lead descartado voltou a falar e o agente retomou",
+    detail: state.pausedReason,
+    actorType: "agent",
+    actorId: params.agentId ?? null,
+  });
+  return true;
+}
+
 export async function syncAutomationMode(params: {
   sb?: SupabaseServiceClient;
   tenantId: string;

@@ -10,6 +10,7 @@ import type {
   AgentAgendaDisponibilidade,
   AgentAgendaLembretes,
   AgentFollowUpInteligente,
+  AgentLeadOutcomeConfig,
   AgentOrigin,
   FollowUp,
   FlowStep,
@@ -97,6 +98,19 @@ export type AgentWizardDraft = {
   agendaCrmMoveOnCancelEnabled: boolean;
   agendaCrmCancelFunnelId: string;
   agendaCrmCancelColumnId: string;
+  /** Descarte de leads: desqualificado e sem interesse. Ver `AgentLeadOutcomeConfig`. */
+  leadOutcomeDisqualified: AgentLeadOutcomeConfig;
+  leadOutcomeLostInterest: AgentLeadOutcomeConfig;
+};
+
+/** Descarte desligado e sem destino — o estado inicial de todo agente. */
+export const EMPTY_LEAD_OUTCOME: AgentLeadOutcomeConfig = {
+  ativo: false,
+  criterios: "",
+  funnelId: null,
+  columnId: null,
+  retomarAoVoltar: false,
+  notificar: false,
 };
 
 const WIZARD_ORIGIN_ORDER: readonly OriginType[] = ["lead_ads", "ctw", "keyword", "organico", "crm"];
@@ -245,6 +259,8 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     crmMoveOnLeadReplyEnabled: agent.crmMoveOnLeadReplyEnabled ?? false,
     crmReplyFunnelId: agent.crmReplyFunnelId ?? targetFunnel.id,
     crmReplyColumnId: agent.crmReplyColumnId ?? targetColumn,
+    leadOutcomeDisqualified: { ...EMPTY_LEAD_OUTCOME, ...agent.leadOutcomeDisqualified },
+    leadOutcomeLostInterest: { ...EMPTY_LEAD_OUTCOME, ...agent.leadOutcomeLostInterest },
     agendaCrmMoveOnScheduleEnabled: agent.agendaCrmMoveOnScheduleEnabled ?? false,
     agendaCrmScheduleFunnelId: agent.agendaCrmScheduleFunnelId ?? targetFunnel.id,
     agendaCrmScheduleColumnId: agent.agendaCrmScheduleColumnId ?? targetColumn,
@@ -348,6 +364,23 @@ export function validateCompactAgentDraft(
       return "Escolha uma coluna válida em «Quando o lead responder».";
     }
   }
+  // Descarte de leads. Ligar sem critérios é o erro perigoso: sem eles o modelo
+  // não tem regra nenhuma para encerrar o atendimento de um lead.
+  for (const rule of [
+    { config: draft.leadOutcomeDisqualified, label: "Lead desqualificado" },
+    { config: draft.leadOutcomeLostInterest, label: "Lead sem interesse" },
+  ]) {
+    if (!rule.config?.ativo) continue;
+    if (!rule.config.criterios?.trim()) {
+      return `Descreva os critérios de «${rule.label}» em «Descarte de leads» — sem eles o agente não pode decidir.`;
+    }
+    if (!crmFunnels?.length) return "Carregue os funis do CRM antes de configurar o descarte de leads.";
+    const funnel = crmFunnels.find((f) => f.id === rule.config.funnelId);
+    if (!funnel) return `Escolha um funil válido em «Descarte de leads» (${rule.label}).`;
+    if (!isValidColunaForFunnel(rule.config.columnId ?? "", funnel)) {
+      return `Escolha uma coluna válida em «Descarte de leads» (${rule.label}).`;
+    }
+  }
   // Os destinos da agenda só existem quando o agente pode mexer na agenda.
   if (draft.agendaAutomationEnabled) {
     for (const rule of [
@@ -447,6 +480,8 @@ export const defaultWizardDraft: AgentWizardDraft = {
   crmAutoMoveEnabled: false,
   crmTargetFunnelId: DEFAULT_CRM_FUNNELS[0]!.id,
   crmTargetColumnId: DEFAULT_CRM_FUNNELS[0]!.columns[0]!.id,
+  leadOutcomeDisqualified: { ...EMPTY_LEAD_OUTCOME },
+  leadOutcomeLostInterest: { ...EMPTY_LEAD_OUTCOME },
   crmMoveOnLeadReplyEnabled: false,
   crmReplyFunnelId: DEFAULT_CRM_FUNNELS[0]!.id,
   crmReplyColumnId: DEFAULT_CRM_FUNNELS[0]!.columns[0]!.id,

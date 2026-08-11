@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, CalendarClock, Handshake, Kanban, RadioTower, SlidersHorizontal, Sparkles, Timer, Volume2 } from "lucide-react";
+import { Bot, CalendarClock, Handshake, Kanban, RadioTower, SlidersHorizontal, Sparkles, Timer, UserMinus, Volume2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useCrmFunnels } from "@/components/dashboard/CrmFunnelsContext";
@@ -21,6 +21,7 @@ import { WizardStepFollowUpInteligente } from "./WizardStepFollowUpInteligente";
 import { WizardStepVoz } from "./WizardStepVoz";
 import { WizardStepSmartWait } from "./WizardStepSmartWait";
 import { WizardStepCrmLeadDestination } from "./WizardStepCrmLeadDestination";
+import { WizardStepLeadOutcome } from "./WizardStepLeadOutcome";
 import { WizardStepExternalApis } from "./WizardStepExternalApis";
 import { AGENT_FIELD_HELP } from "./agent-field-help-content";
 import { FieldHelp } from "./agent-field-help";
@@ -295,6 +296,13 @@ export function AgentFormCompact({
                 titleIcon={<Kanban strokeWidth={1.75} />}
               >
                 <WizardStepCrmLeadDestination draft={draft} onChange={setDraft} />
+              </AdvancedSection>
+              <AdvancedSection
+                title="Descarte de leads"
+                description="Opcional: o agente encerra o atendimento de quem não serve ou desistiu, e move o card. Chega desligado."
+                titleIcon={<UserMinus strokeWidth={1.75} />}
+              >
+                <WizardStepLeadOutcome draft={draft} onChange={setDraft} />
               </AdvancedSection>
               <AdvancedSection
                 title="Agenda"

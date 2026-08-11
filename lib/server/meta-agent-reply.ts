@@ -2,7 +2,7 @@ import {
   generateAgentResponse,
   isAgentMissingInstructionsResult,
 } from "@/lib/ai/generate-agent-response";
-import { agendaPlanFromResult } from "@/lib/ai/agent-turn-plan";
+import { agendaPlanFromResult, leadOutcomeFromResult } from "@/lib/ai/agent-turn-plan";
 import { detectSupportedLanguageCode, resolveConfiguredLanguageCode } from "@/lib/ai/language-detect";
 import { localizedAgentFailureReply } from "@/lib/agents/agent-failure-reply";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
@@ -39,6 +39,7 @@ import {
   touchLeadJourney,
 } from "@/lib/server/lead-journeys";
 import { applyCrmMoveOnLeadReply } from "@/lib/server/agent-crm-move";
+import { applyAgentLeadOutcome } from "@/lib/server/agent-lead-outcome";
 import { scheduleLeadRedistribution } from "@/lib/server/lead-redistribution";
 import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
 import { lookupWhatsAppCloudConnectionByPhoneNumberId } from "@/lib/server/whatsapp-cloud-connections";
@@ -383,6 +384,17 @@ export async function processMetaAgentResponseJob(
     tenantId: job.tenant_id,
     agentId: job.agent_id,
     leadId: job.lead_id,
+  });
+  // Descarte do lead, se o agente declarou e o dono configurou. Depois do
+  // envio: a última mensagem já saiu e só então o atendimento é encerrado.
+  await applyAgentLeadOutcome({
+    sb,
+    tenantId: job.tenant_id,
+    remoteJid: job.remote_jid,
+    agentId: job.agent_id,
+    leadId: job.lead_id,
+    outcome: leadOutcomeFromResult(result),
+    metadata,
   });
   if (job.journey_id) {
     await touchLeadJourney({
