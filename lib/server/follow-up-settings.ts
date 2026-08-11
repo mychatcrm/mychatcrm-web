@@ -28,12 +28,48 @@ export const DEFAULT_FOLLOW_UP_INTELIGENTE: AgentFollowUpInteligente = {
   timezone: "UTC",
   retomadaHumanoTempoValor: null,   // null = sem restrição (retrocompatível)
   retomadaHumanoTempoUnidade: "horas" as const,
+  // Movimentação do card no CRM ao longo do ciclo de follow-up. Tudo desligado
+  // e sem destino: nenhum agente muda de comportamento até o dono da conta
+  // ligar e escolher o funil e a coluna.
+  crmMoveOnFollowUpEnabled: false,
+  crmFollowUpFunnelId: null,
+  crmFollowUpColumnId: null,
+  crmMoveOnExhaustedEnabled: false,
+  crmExhaustedFunnelId: null,
+  crmExhaustedColumnId: null,
+  crmMoveOnReturnAfterExhaustedEnabled: false,
+  crmReturnFunnelId: null,
+  crmReturnColumnId: null,
 };
 
 function bool(src: Record<string, unknown>, key: string, fallback: boolean): boolean {
   if (src[key] === true) return true;
   if (src[key] === false) return false;
   return fallback;
+}
+
+function text(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+/**
+ * Lê um destino de CRM (ligado + funil + coluna) da config salva.
+ *
+ * Config pela metade — ligado mas sem funil ou sem coluna — vira desligado.
+ * Nunca preenchemos um funil ou uma coluna por conta própria: quem escolhe o
+ * destino é o dono do agente, e um palpite nosso moveria cards para o lugar
+ * errado no CRM do cliente.
+ */
+function crmDestino(
+  src: Record<string, unknown>,
+  enabledKey: string,
+  funnelKey: string,
+  columnKey: string,
+): { enabled: boolean; funnelId: string | null; columnId: string | null } {
+  const funnelId = text(src[funnelKey]);
+  const columnId = text(src[columnKey]);
+  const enabled = src[enabledKey] === true && Boolean(funnelId) && Boolean(columnId);
+  return enabled ? { enabled, funnelId, columnId } : { enabled: false, funnelId: null, columnId: null };
 }
 
 export function followUpInteligenteFromMetadata(
@@ -73,6 +109,25 @@ export function followUpInteligenteFromMetadata(
     : defaults.diasAtivos;
 
   const permitirSla = bool(src, "permitirSlaVencido", defaults.permitirSlaVencido);
+
+  const followUpDestino = crmDestino(
+    src,
+    "crmMoveOnFollowUpEnabled",
+    "crmFollowUpFunnelId",
+    "crmFollowUpColumnId",
+  );
+  const esgotadoDestino = crmDestino(
+    src,
+    "crmMoveOnExhaustedEnabled",
+    "crmExhaustedFunnelId",
+    "crmExhaustedColumnId",
+  );
+  const retornoDestino = crmDestino(
+    src,
+    "crmMoveOnReturnAfterExhaustedEnabled",
+    "crmReturnFunnelId",
+    "crmReturnColumnId",
+  );
 
   return {
     ativo: src.ativo === true,
@@ -136,5 +191,17 @@ export function followUpInteligenteFromMetadata(
     )
       ? (src.retomadaHumanoTempoUnidade as "minutos" | "horas" | "dias")
       : "horas",
+    // Destinos de CRM: um destino só existe quando ligado E com funil e coluna
+    // preenchidos. Config pela metade equivale a desligado — nunca escolhemos
+    // um funil ou uma coluna no lugar do dono da conta.
+    crmMoveOnFollowUpEnabled: followUpDestino.enabled,
+    crmFollowUpFunnelId: followUpDestino.funnelId,
+    crmFollowUpColumnId: followUpDestino.columnId,
+    crmMoveOnExhaustedEnabled: esgotadoDestino.enabled,
+    crmExhaustedFunnelId: esgotadoDestino.funnelId,
+    crmExhaustedColumnId: esgotadoDestino.columnId,
+    crmMoveOnReturnAfterExhaustedEnabled: retornoDestino.enabled,
+    crmReturnFunnelId: retornoDestino.funnelId,
+    crmReturnColumnId: retornoDestino.columnId,
   };
 }

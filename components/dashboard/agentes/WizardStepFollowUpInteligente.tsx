@@ -3,12 +3,14 @@
 import { useState } from "react";
 import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
 import { PanelSelect } from "@/components/panel/ui/PanelSelect";
+import { useCrmFunnels } from "@/components/dashboard/CrmFunnelsContext";
 import type { AgentWizardDraft } from "@/lib/agents";
 import { DEFAULT_FOLLOW_UP_INTELIGENTE } from "@/lib/server/follow-up-settings";
 import type { AgentFollowUpInteligente } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { AGENT_FIELD_HELP } from "./agent-field-help-content";
 import { FieldTitle, InlineFieldTitle } from "./agent-field-help";
+import { CrmDestinationBlock } from "./CrmDestinationBlock";
 
 function parsePositiveInt(raw: string, fallback: number, max: number) {
   const n = parseInt(raw, 10);
@@ -138,6 +140,8 @@ export function WizardStepFollowUpInteligente({
   };
   const setF = (patch: Partial<AgentFollowUpInteligente>) =>
     onChange({ ...draft, followUpInteligente: { ...f, ...patch } });
+
+  const { funnels } = useCrmFunnels();
 
   const [testJid, setTestJid] = useState("");
   const [testLoading, setTestLoading] = useState(false);
@@ -558,6 +562,117 @@ export function WizardStepFollowUpInteligente({
             <p className="text-xs text-content-muted">Salve o agente para habilitar o teste com ID persistido.</p>
           ) : null}
         </div>
+      </SectionBlock>
+
+      <SectionBlock
+        title="Movimentação no CRM"
+        description="Opcional. Move o card do lead conforme o follow-up avança, para o vendedor saber de relance em que pé está cada conversa. Nada acontece até você ligar e escolher o destino."
+      >
+        {!f.ativo ? (
+          <p className="text-xs leading-relaxed text-content-muted">
+            Ative o follow-up acima para configurar estes destinos — sem ele, os momentos abaixo não
+            chegam a acontecer.
+          </p>
+        ) : (
+          <div className="space-y-6">
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm font-semibold text-content">Quando o follow-up for disparado</p>
+                <p className="mt-0.5 text-xs text-content-muted">
+                  O lead parou de responder e o agente retomou o contato.
+                </p>
+              </div>
+              <CrmDestinationBlock
+                funnels={funnels}
+                enabled={f.crmMoveOnFollowUpEnabled ?? false}
+                funnelId={f.crmFollowUpFunnelId ?? ""}
+                columnId={f.crmFollowUpColumnId ?? ""}
+                help={{
+                  offTitle: "Deixar onde está",
+                  onTitle: "Mover para funil/coluna",
+                  off: AGENT_FIELD_HELP.crmFollowUpNaoMover,
+                  on: AGENT_FIELD_HELP.crmFollowUpMover,
+                  funnel: AGENT_FIELD_HELP.crmFollowUpFunil,
+                  column: AGENT_FIELD_HELP.crmFollowUpColuna,
+                }}
+                onChange={(next) =>
+                  setF({
+                    crmMoveOnFollowUpEnabled: next.enabled,
+                    crmFollowUpFunnelId: next.enabled ? next.funnelId : null,
+                    crmFollowUpColumnId: next.enabled ? next.columnId : null,
+                  })
+                }
+              />
+            </div>
+
+            <div className="space-y-4 border-t border-line/60 pt-6">
+              <div>
+                <p className="text-sm font-semibold text-content">Quando esgotar todas as tentativas</p>
+                <p className="mt-0.5 text-xs text-content-muted">
+                  Todos os follow-ups saíram e o lead não respondeu nenhum.
+                </p>
+              </div>
+              <CrmDestinationBlock
+                funnels={funnels}
+                enabled={f.crmMoveOnExhaustedEnabled ?? false}
+                funnelId={f.crmExhaustedFunnelId ?? ""}
+                columnId={f.crmExhaustedColumnId ?? ""}
+                help={{
+                  offTitle: "Deixar onde está",
+                  onTitle: "Mover para funil/coluna",
+                  off: AGENT_FIELD_HELP.crmExhaustedNaoMover,
+                  on: AGENT_FIELD_HELP.crmExhaustedMover,
+                  funnel: AGENT_FIELD_HELP.crmExhaustedFunil,
+                  column: AGENT_FIELD_HELP.crmExhaustedColuna,
+                }}
+                onChange={(next) =>
+                  setF({
+                    crmMoveOnExhaustedEnabled: next.enabled,
+                    crmExhaustedFunnelId: next.enabled ? next.funnelId : null,
+                    crmExhaustedColumnId: next.enabled ? next.columnId : null,
+                  })
+                }
+              />
+            </div>
+
+            <div className="space-y-4 border-t border-line/60 pt-6">
+              <div>
+                <p className="text-sm font-semibold text-content">
+                  Quando o lead voltar depois de esgotado
+                </p>
+                <p className="mt-0.5 text-xs text-content-muted">
+                  Lead recuperado: já tinha esgotado as tentativas e voltou a falar.
+                </p>
+              </div>
+              <CrmDestinationBlock
+                funnels={funnels}
+                enabled={f.crmMoveOnReturnAfterExhaustedEnabled ?? false}
+                funnelId={f.crmReturnFunnelId ?? ""}
+                columnId={f.crmReturnColumnId ?? ""}
+                help={{
+                  offTitle: "Deixar onde está",
+                  onTitle: "Mover para funil/coluna",
+                  off: AGENT_FIELD_HELP.crmReturnNaoMover,
+                  on: AGENT_FIELD_HELP.crmReturnMover,
+                  funnel: AGENT_FIELD_HELP.crmReturnFunil,
+                  column: AGENT_FIELD_HELP.crmReturnColuna,
+                }}
+                onChange={(next) =>
+                  setF({
+                    crmMoveOnReturnAfterExhaustedEnabled: next.enabled,
+                    crmReturnFunnelId: next.enabled ? next.funnelId : null,
+                    crmReturnColumnId: next.enabled ? next.columnId : null,
+                  })
+                }
+              />
+            </div>
+
+            <p className="text-xs leading-relaxed text-content-muted">
+              O agente só move cards que ele mesmo posicionou. Se alguém da equipe arrastar o card à
+              mão, a automação para de mexer nele.
+            </p>
+          </div>
+        )}
       </SectionBlock>
     </div>
   );

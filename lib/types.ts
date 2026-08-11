@@ -205,6 +205,24 @@ export interface AgentFollowUpInteligente {
    */
   retomadaHumanoTempoValor?: number | null;
   retomadaHumanoTempoUnidade?: "minutos" | "horas" | "dias";
+  /**
+   * Movimentação do card no CRM ao longo do ciclo de follow-up. Os três são
+   * opcionais e independentes: nada acontece até o dono do agente ligar e
+   * escolher funil + coluna. Todos dependem de `ativo` — sem follow-up, os
+   * eventos que os disparam não existem.
+   */
+  /** Ao disparar um follow-up (o lead parou de responder). */
+  crmMoveOnFollowUpEnabled?: boolean;
+  crmFollowUpFunnelId?: string | null;
+  crmFollowUpColumnId?: string | null;
+  /** Ao esgotar todas as tentativas sem nenhuma resposta. */
+  crmMoveOnExhaustedEnabled?: boolean;
+  crmExhaustedFunnelId?: string | null;
+  crmExhaustedColumnId?: string | null;
+  /** Quando o lead volta a falar depois de esgotado — lead recuperado. */
+  crmMoveOnReturnAfterExhaustedEnabled?: boolean;
+  crmReturnFunnelId?: string | null;
+  crmReturnColumnId?: string | null;
 }
 
 export interface AgentSchedule {

@@ -1,4 +1,4 @@
-import type { Agent } from "@/lib/types";
+import type { Agent, AgentFollowUpInteligente } from "@/lib/types";
 import { listAgentsForTenant } from "./registry";
 import { sanitizeAgentResponseSettings } from "./response-settings";
 import { sanitizeAgentSmartWaitSettings } from "./smart-wait-settings";
@@ -49,6 +49,35 @@ function leadReplyCrmMoveFields(
   };
 }
 
+/**
+ * Destinos de CRM do ciclo de follow-up (disparo, esgotamento e retorno do
+ * lead). Mesma regra dos outros destinos: funil e coluna só ficam gravados com
+ * a opção ligada, para desligar não deixar lixo que volte a valer sozinho.
+ *
+ * Todos zeram quando o follow-up está desligado — sem follow-up, nenhum desses
+ * momentos chega a acontecer, e config órfã só confunde na próxima edição.
+ */
+function followUpCrmMoveFields(followUp: AgentFollowUpInteligente): Partial<AgentFollowUpInteligente> {
+  const followUpOn = followUp.ativo === true;
+  const on = (flag: boolean | undefined) => followUpOn && flag === true;
+
+  const disparoOn = on(followUp.crmMoveOnFollowUpEnabled);
+  const esgotadoOn = on(followUp.crmMoveOnExhaustedEnabled);
+  const retornoOn = on(followUp.crmMoveOnReturnAfterExhaustedEnabled);
+
+  return {
+    crmMoveOnFollowUpEnabled: disparoOn,
+    crmFollowUpFunnelId: disparoOn ? (followUp.crmFollowUpFunnelId ?? null) : null,
+    crmFollowUpColumnId: disparoOn ? (followUp.crmFollowUpColumnId ?? null) : null,
+    crmMoveOnExhaustedEnabled: esgotadoOn,
+    crmExhaustedFunnelId: esgotadoOn ? (followUp.crmExhaustedFunnelId ?? null) : null,
+    crmExhaustedColumnId: esgotadoOn ? (followUp.crmExhaustedColumnId ?? null) : null,
+    crmMoveOnReturnAfterExhaustedEnabled: retornoOn,
+    crmReturnFunnelId: retornoOn ? (followUp.crmReturnFunnelId ?? null) : null,
+    crmReturnColumnId: retornoOn ? (followUp.crmReturnColumnId ?? null) : null,
+  };
+}
+
 function followUpAndTimezoneFromDraft(draft: AgentWizardDraft) {
   const timezone =
     (typeof draft.timezone === "string" && draft.timezone.trim()) ||
@@ -56,7 +85,11 @@ function followUpAndTimezoneFromDraft(draft: AgentWizardDraft) {
     "UTC";
   return {
     timezone,
-    followUpInteligente: { ...draft.followUpInteligente, timezone },
+    followUpInteligente: {
+      ...draft.followUpInteligente,
+      timezone,
+      ...followUpCrmMoveFields(draft.followUpInteligente),
+    },
   };
 }
 
