@@ -6,8 +6,15 @@ export type MaintenanceSnapshot = {
   estimatedReturnAt?: string;
 };
 
-/** Estado de manutenção muda raramente; TTL um pouco maior reduz fetches internos no Edge. */
-const CACHE_MS = 6000;
+/**
+ * Estado de manutenção muda raramente (manutenção planejada), mas esta função
+ * roda em TODA requisição de dashboard/API. Como este cache é uma variável de
+ * módulo do isolate Edge — não compartilhada entre isolates — um TTL curto
+ * significava que requisições em paralelo quase sempre erravam e cada uma
+ * pagava um round-trip HTTP interno. 60s corta isso sem custo real: ligar a
+ * manutenção passa a levar até ~1 min pra valer em todo lugar.
+ */
+const CACHE_MS = 60_000;
 
 let cache: { data: MaintenanceSnapshot; t: number } | null = null;
 
@@ -23,8 +30,12 @@ export async function fetchMaintenanceSnapshot(request: NextRequest): Promise<Ma
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 1200);
     const url = new URL("/api/maintenance/status", request.nextUrl.origin);
+    // Sem `no-store`: a rota agora responde com `s-maxage`, então o CDN da
+    // Vercel pode servir esta leitura sem invocar a função serverless de novo.
+    // Diferente do cache de isolate acima, esse é compartilhado — é o que
+    // resolve o caso de várias requisições em paralelo (o mount da tela de
+    // Integrações dispara ~11 de uma vez).
     const res = await fetch(url.toString(), {
-      cache: "no-store",
       signal: ctrl.signal,
       headers: { accept: "application/json" },
     });

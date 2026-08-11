@@ -6,7 +6,19 @@ import { readMaintenanceStatePublic } from "@/lib/server/maintenance-store-db";
 // o estado de manutenção estático em produção.
 export const dynamic = "force-dynamic";
 
-/** Estado público (sem dados internos além da mensagem configurada). */
+/**
+ * Estado público (sem dados internos além da mensagem configurada).
+ *
+ * `s-maxage` em vez de `no-store`: o middleware consulta esta rota em TODA
+ * requisição de dashboard/API, e o cache dele é uma variável de módulo do
+ * isolate Edge — não compartilhada entre isolates, então requisições em
+ * paralelo (a tela de Integrações dispara ~11 no mount) erravam o cache e
+ * invocavam esta função de novo. Medido: 526 chamadas em 2h. Deixando o CDN
+ * da Vercel guardar a resposta, esse tráfego some quase todo.
+ *
+ * O preço é o flag demorar até ~30s pra propagar quando ligado/desligado —
+ * aceitável para manutenção planejada, que é o único uso desta rota.
+ */
 export async function GET() {
   const s = await readMaintenanceStatePublic();
   return NextResponse.json(
@@ -15,6 +27,6 @@ export async function GET() {
       message: s.message || undefined,
       estimatedReturnAt: s.estimatedReturnAt || undefined,
     },
-    { headers: { "Cache-Control": "no-store, max-age=0" } },
+    { headers: { "Cache-Control": "public, s-maxage=30, stale-while-revalidate=300" } },
   );
 }
