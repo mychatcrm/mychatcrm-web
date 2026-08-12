@@ -73,6 +73,11 @@ export async function assertEvolutionWaJidUnique(params: {
     preserveLifecycle: true,
   });
 
+  // Calculada uma vez e reusada: é o mesmo texto que explicaria o conflito na
+  // tela, agora também mandado no aviso de WhatsApp — sem isso o cliente só via
+  // "reconecte a linha" e reconectar com o mesmo número derruba de novo, sempre.
+  const conflictMessage = describeNumberConflict(conflict, params.tenantId);
+
   try {
     await notifyTenantIntegrationDisconnected({
       tenantId: params.tenantId,
@@ -83,6 +88,7 @@ export async function assertEvolutionWaJidUnique(params: {
       state: "close",
       previousState: "open",
       manual: false,
+      reasonMessage: conflictMessage,
       metadata: {
         slot_index: params.slotIndex,
         reason: "duplicate_number",
@@ -94,7 +100,7 @@ export async function assertEvolutionWaJidUnique(params: {
     console.warn("[whatsapp-number-guard] notify_failed", error);
   }
 
-  return { ok: false, message: describeNumberConflict(conflict, params.tenantId), owner: conflict };
+  return { ok: false, message: conflictMessage, owner: conflict };
 }
 
 /**

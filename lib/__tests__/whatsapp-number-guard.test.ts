@@ -83,6 +83,13 @@ describe("assertEvolutionWaJidUnique", () => {
     expect(notifyTenantIntegrationDisconnectedMock).toHaveBeenCalledWith(
       expect.objectContaining({ source: "whatsapp_number_duplicate" }),
     );
+    // O aviso de WhatsApp tem que levar o MESMO motivo específico que a tela
+    // mostraria — reconectar com o número duplicado derruba de novo, sempre,
+    // então "reconecte a linha" sozinho (sem motivo) é instrução enganosa.
+    const expectedMessage = result.ok === false ? result.message : undefined;
+    expect(notifyTenantIntegrationDisconnectedMock).toHaveBeenCalledWith(
+      expect.objectContaining({ reasonMessage: expectedMessage }),
+    );
   });
 
   it("bloqueia número já usado por outra conta sem vazar dados dela", async () => {

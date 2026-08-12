@@ -66,6 +66,32 @@ describe("integration disconnect notifications", () => {
     expect(facebook).toContain("Meta Lead Ads");
   });
 
+  it("usa reasonMessage no lugar do motivo genérico e NÃO manda reconectar", () => {
+    // Regressão: número duplicado (mesmo número já ligado em outra linha/conta)
+    // derrubava a sessão e mandava só "reconecte a linha" — reconectar com o
+    // MESMO número derruba de novo, sempre. O cliente nunca via o motivo real.
+    const message = buildIntegrationDisconnectedMessage({
+      integration: "whatsapp",
+      tenantName: "My Broker Office",
+      state: "close",
+      reasonMessage: "Este número já está ligado na Linha 1 desta conta. Cada número atende uma linha só: desligue lá antes de ligar aqui.",
+    });
+    expect(message).toContain("Este número já está ligado na Linha 1 desta conta");
+    expect(message).toContain("My Broker Office");
+    expect(message).not.toContain("reconecte a linha");
+    expect(message).not.toContain("saiu do estado conectado");
+  });
+
+  it("sem reasonMessage, mantém o texto genérico de sempre (comportamento antigo intacto)", () => {
+    const message = buildIntegrationDisconnectedMessage({
+      integration: "whatsapp",
+      tenantName: "My Broker Office",
+      state: "close",
+    });
+    expect(message).toContain("saiu do estado conectado");
+    expect(message).toContain("reconecte a linha");
+  });
+
   it("uses the dedicated system notification phone before owner/member fallbacks", async () => {
     const queriedTables: string[] = [];
     const sb = {
