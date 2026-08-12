@@ -287,6 +287,40 @@ describe("buildAgentSystemPrompt", () => {
       expect(prompt).toContain("CALENDÁRIO REAL");
       expect(prompt).not.toContain("DATAS VÁLIDAS MAIS PRÓXIMAS");
     });
+
+    it("proíbe combinar o dia da semana de uma data com o número de outra", () => {
+      // Regressão de produção: hoje era quarta-feira 12/08/2026, e o agente
+      // propôs "quarta-feira, dia 15" — mas 15/08/2026 é sábado. O contexto
+      // injetado sempre casa dia da semana e data corretamente (mesmo cálculo);
+      // o que faltava era proibir o modelo de recombiná-los na prosa.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-08-12T12:00:00-03:00"));
+      const prompt = buildAgentSystemPrompt({
+        languageInstruction: "Responda em português.",
+        agent: {
+          nome: "Recrutamento",
+          systemPrompt: "Ajude o cliente.",
+          agendaAutomationEnabled: true,
+          timezone: "America/Sao_Paulo",
+          agendaDisponibilidade: {
+            ativo: true,
+            diasSemana: [1, 2, 3, 4, 5],
+            horaInicio: "09:00",
+            horaFim: "18:00",
+          },
+        },
+      });
+
+      expect(prompt).toContain("quarta-feira 12/08/2026 (hoje)");
+      // 15/08/2026 é sábado — não pode aparecer em DATAS VÁLIDAS (só seg-sex).
+      const validLine = prompt.split("\n").find((l) => l.includes("DATAS VÁLIDAS")) ?? "";
+      expect(validLine).not.toContain("15/08/2026");
+      expect(prompt).toContain(
+        "nunca calcule o dia da semana de cabeça nem combine um dia da semana de uma data com o número de outra",
+      );
+      expect(prompt).toContain("nem combine o dia da semana de uma entrada com a data de outra");
+      expect(prompt).toContain("nunca escreva um dia da semana separado da data");
+    });
   });
 
   it("omits the agenda scope carve-out when automation is off", () => {
