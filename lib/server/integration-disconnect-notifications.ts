@@ -223,9 +223,23 @@ export function buildIntegrationDisconnectedMessage(params: {
   pageName?: string | null;
   state?: string | null;
   manual?: boolean;
+  /**
+   * Explicação específica do motivo (ex.: número duplicado em outra linha),
+   * já pronta para o cliente. Quando presente, SUBSTITUI a frase genérica de
+   * motivo e a instrução final de "reconecte a linha" — reconectar com o
+   * mesmo número só repetiria a mesma queda, então mandar reconectar aqui
+   * seria instrução ativamente errada.
+   */
+  reasonMessage?: string | null;
 }): string {
   const greeting = params.ownerName ? `Olá, ${params.ownerName}.` : "Olá.";
   if (params.integration === "whatsapp") {
+    if (params.reasonMessage) {
+      return [
+        `${greeting} Aviso do MyChatCRM: a linha de WhatsApp da conta ${params.tenantName} foi desconectada. ${params.reasonMessage}`,
+        "Enquanto estiver desconectada, os agentes não conseguem enviar mensagens automáticas por essa linha.",
+      ].join(" ");
+    }
     const reason = params.manual
       ? "A linha de WhatsApp foi desconectada manualmente"
       : `A linha de WhatsApp saiu do estado conectado${params.state ? ` (${params.state})` : ""}`;
@@ -298,6 +312,8 @@ export async function notifyTenantIntegrationDisconnected(params: {
   state?: string | null;
   previousState?: string | null;
   manual?: boolean;
+  /** Ver `buildIntegrationDisconnectedMessage` — explicação específica do motivo, pronta para o cliente. */
+  reasonMessage?: string | null;
   metadata?: Record<string, unknown>;
 }): Promise<{ ok: boolean; skipped?: string; error?: string }> {
   if (params.tenantId === SYSTEM_TENANT_ID) {
@@ -338,6 +354,7 @@ export async function notifyTenantIntegrationDisconnected(params: {
     pageName: params.pageName,
     state: params.state,
     manual: params.manual,
+    reasonMessage: params.reasonMessage,
   });
 
   const metadata = {
