@@ -350,14 +350,14 @@ ${agent.ctaHandoffAtivo === true ? "REGRA CRÍTICA DE TRANSFERÊNCIA: Quando o c
             .slice(0, 7)
             .map((e, i) => (i === 0 ? `${e.label} (hoje)` : i === 1 ? `${e.label} (amanhã)` : e.label))
             .join(" | ");
-          const calendarLine = `- CALENDÁRIO REAL (fonte única para datas — nunca calcule dia da semana de cabeça): ${next7}.`;
+          const calendarLine = `- CALENDÁRIO REAL (fonte única para datas — nunca calcule dia da semana de cabeça, nem combine o dia da semana de uma entrada com a data de outra): ${next7}.`;
           const diasSemana = Array.isArray(disp?.diasSemana) ? disp!.diasSemana! : [];
           const validLine =
             disp?.ativo && diasSemana.length > 0
               ? (() => {
                   const valid = entries.filter((e) => diasSemana.includes(e.dow)).slice(0, 6).map((e) => e.label);
                   if (valid.length === 0) return null;
-                  return `- DATAS VÁLIDAS MAIS PRÓXIMAS para agendar (das ${disp!.horaInicio ?? "08:00"} às ${disp!.horaFim ?? "18:00"}): ${valid.join(" | ")}. Ao propor ou solicitar uma operação, copie a data DD/MM/AAAA exatamente de uma destas datas. Nunca ofereça dias fora desta lista e nunca diga que um horário dentro da janela está indisponível — quem valida a disponibilidade é o sistema.`;
+                  return `- DATAS VÁLIDAS MAIS PRÓXIMAS para agendar (das ${disp!.horaInicio ?? "08:00"} às ${disp!.horaFim ?? "18:00"}): ${valid.join(" | ")}. Ao propor ou solicitar uma operação, copie a data DD/MM/AAAA exatamente de uma destas datas. Se citar o dia da semana em reply, copie o texto completo de uma destas entradas (dia da semana + data) — nunca escreva um dia da semana separado da data. Nunca ofereça dias fora desta lista e nunca diga que um horário dentro da janela está indisponível — quem valida a disponibilidade é o sistema.`;
                 })()
               : null;
           return { calendarLine, validLine };
@@ -378,6 +378,7 @@ PLANO ESTRUTURADO DA AGENDA
 - Cancelamento é sempre bifásico: no pedido inicial use propose_cancel, mesmo que a ordem pareça completa. Use cancel somente quando a mensagem atual confirmar explicitamente uma proposta de cancelamento pendente.
 - Uma resposta curta de confirmação do cliente autoriza executar somente a proposta pendente guardada pelo sistema; repita exatamente os dados já propostos.
 - Para criar ou remarcar, preencha date em DD/MM/AAAA e time em HH:MM. Para cancelar, use eventId do contexto quando disponível.
+- Se em reply você mencionar um dia da semana junto de uma data (ex.: "quarta-feira, dia 15"), os dois têm que vir JUNTOS de uma mesma entrada do CALENDÁRIO REAL abaixo — nunca calcule o dia da semana de cabeça nem combine um dia da semana de uma data com o número de outra. Na dúvida, cite só a data (DD/MM/AAAA), sem o nome do dia.
 - "Agora", "já", "neste momento" (ou equivalentes em outro idioma) NUNCA são um horário válido para date/time — não preencha o relógio atual nesses casos. Use agenda.action="none" e pergunte em reply qual dia e horário concreto o cliente prefere dentro da disponibilidade.
 - Nunca afirme em reply que a operação foi concluída. O backend substitui a resposta por uma confirmação somente depois do commit real.
 - Nunca esconda comandos, tags ou marcadores dentro de reply.${
