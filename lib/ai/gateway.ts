@@ -14,6 +14,10 @@ const DEFAULT_MODEL = "gpt-4o-mini";
 const DEFAULT_TIMEOUT_MS = 25_000;
 const MAX_MESSAGES = 32;
 const MAX_MESSAGE_CONTENT = 8_000;
+/** Tentativas totais (1 original + 2 repetições) para falhas transitórias. */
+const MAX_ATTEMPTS = 3;
+const BASE_RETRY_DELAY_MS = 700;
+const MAX_RETRY_DELAY_MS = 4_000;
 
 function normalizeTemperature(value: unknown): number {
   const n = Number(value);
@@ -46,6 +50,55 @@ function extractProviderRefusal(data: unknown): string | null {
   const d = data as { choices?: Array<{ message?: { refusal?: string | null } }> };
   const refusal = d?.choices?.[0]?.message?.refusal;
   return typeof refusal === "string" && refusal.trim() ? refusal.trim() : null;
+}
+
+type ProviderError = {
+  /** `insufficient_quota`, `rate_limit_exceeded`, `invalid_api_key`… */
+  code: string | null;
+  type: string | null;
+  message: string | null;
+};
+
+/**
+ * Motivo real da recusa, como a OpenAI o devolve.
+ *
+ * Sem isto, um 429 por FALTA DE CRÉDITO (`insufficient_quota`) e um 429 por
+ * EXCESSO DE CHAMADAS (`rate_limit_exceeded`) ficavam indistinguíveis no log —
+ * problemas diferentes, com soluções opostas: um se resolve no faturamento da
+ * OpenAI, o outro esperando ou reduzindo o ritmo. Guardar só "OPENAI_429"
+ * deixava o diagnóstico impossível sem acesso ao painel da OpenAI.
+ */
+function extractProviderError(data: unknown): ProviderError {
+  const err = (data as { error?: { code?: unknown; type?: unknown; message?: unknown } })?.error;
+  const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
+  return { code: str(err?.code), type: str(err?.type), message: str(err?.message) };
+}
+
+/** Linha única e legível para o log de uso (campo sanitizado, 240 chars). */
+function describeProviderError(status: number, error: ProviderError): string {
+  const label = error.code ?? error.type;
+  const head = label ? `OPENAI_${status} ${label}` : `OPENAI_${status}`;
+  return error.message ? `${head}: ${error.message}` : head;
+}
+
+/**
+ * Vale a pena tentar de novo?
+ *
+ * `insufficient_quota` é estado de faturamento: repetir só gasta tempo e falha
+ * igual. Excesso de chamadas e instabilidade do provedor, sim — normalmente
+ * passam em segundos.
+ */
+function isRetryableFailure(status: number, error: ProviderError): boolean {
+  if (status === 429) return error.code !== "insufficient_quota";
+  return status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function retryDelayMs(attempt: number, retryAfterHeader: string | null): number {
+  const parsed = Number.parseFloat(retryAfterHeader ?? "");
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return Math.min(parsed * 1_000, MAX_RETRY_DELAY_MS);
+  }
+  return Math.min(BASE_RETRY_DELAY_MS * 2 ** (attempt - 1), MAX_RETRY_DELAY_MS);
 }
 
 function extractUsage(data: unknown): { input: number; output: number; total: number } {
@@ -171,37 +224,72 @@ export async function generateAIResponse(input: AiGenerateInput): Promise<AiGene
   }
 
   const timeoutMs = Number(process.env.AI_REQUEST_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS);
+  const totalBudgetMs = Number.isFinite(timeoutMs) ? timeoutMs : DEFAULT_TIMEOUT_MS;
+  // Orçamento TOTAL, não por tentativa: com repetições, um teto por tentativa
+  // deixaria a função rodar por múltiplos do timeout e estourar o limite do
+  // serverless. Cada tentativa recebe só o tempo que ainda sobra.
+  const deadline = started + totalBudgetMs;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) ? timeoutMs : DEFAULT_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), totalBudgetMs);
+
+  const requestBody = JSON.stringify({
+    model,
+    temperature: normalizeTemperature(input.temperature),
+    messages: safeMessages.map((m) => ({ role: m.role, content: m.content })),
+    ...(input.responseFormat
+      ? {
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: input.responseFormat.name,
+              strict: true,
+              schema: input.responseFormat.schema,
+            },
+          },
+        }
+      : {}),
+  });
 
   try {
-    const response = await fetch(OPENAI_URL, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        temperature: normalizeTemperature(input.temperature),
-        messages: safeMessages.map((m) => ({ role: m.role, content: m.content })),
-        ...(input.responseFormat
-          ? {
-              response_format: {
-                type: "json_schema",
-                json_schema: {
-                  name: input.responseFormat.name,
-                  strict: true,
-                  schema: input.responseFormat.schema,
-                },
-              },
-            }
-          : {}),
-      }),
-    });
+    let response: Response;
+    let json: unknown;
+    let attempt = 0;
+
+    // Uma recusa transitória da OpenAI (excesso de chamadas, instabilidade) não
+    // pode custar a PRIMEIRA impressão de um lead: sem repetir, o lead recebia
+    // para sempre a mensagem genérica de fallback.
+    for (;;) {
+      attempt += 1;
+      response = await fetch(OPENAI_URL, {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: requestBody,
+      });
+      json = await response.json().catch(() => ({}));
+
+      if (response.ok || attempt >= MAX_ATTEMPTS) break;
+
+      const failure = extractProviderError(json);
+      if (!isRetryableFailure(response.status, failure)) break;
+
+      const delayMs = retryDelayMs(attempt, response.headers.get("retry-after"));
+      // Só espera se ainda houver tempo para a espera E para a tentativa seguinte.
+      if (Date.now() + delayMs >= deadline) break;
+
+      integrationLog("openai", "warn", "retrying transient failure", {
+        attempt,
+        status: response.status,
+        provider_code: failure.code ?? failure.type ?? undefined,
+        delay_ms: delayMs,
+      });
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+
     const providerRequestId = response.headers.get("x-request-id") ?? undefined;
-    const json = await response.json().catch(() => ({}));
     const usage = extractUsage(json);
     const text = extractProviderMessage(json);
     const refusal = extractProviderRefusal(json);
@@ -214,11 +302,18 @@ export async function generateAIResponse(input: AiGenerateInput): Promise<AiGene
     const latencyMs = Date.now() - started;
 
     if (!response.ok) {
-      const code = response.status === 401 || response.status === 403
-        ? "UPSTREAM_AUTH"
-        : response.status === 429
-          ? "UPSTREAM_RATE_LIMIT"
-          : "UPSTREAM_ERROR";
+      const failure = extractProviderError(json);
+      // Falta de crédito devolve 429 igual a excesso de chamadas. Separar os
+      // dois é o que permite agir: um é faturamento, o outro é ritmo.
+      const code =
+        response.status === 401 || response.status === 403
+          ? "UPSTREAM_AUTH"
+          : failure.code === "insufficient_quota"
+            ? "UPSTREAM_QUOTA"
+            : response.status === 429
+              ? "UPSTREAM_RATE_LIMIT"
+              : "UPSTREAM_ERROR";
+      const detail = describeProviderError(response.status, failure);
       await persistTracking({
         input,
         status: "error",
@@ -231,9 +326,20 @@ export async function generateAIResponse(input: AiGenerateInput): Promise<AiGene
         latencyMs,
         providerRequestId,
         errorCode: code,
-        errorMessage: `OPENAI_${response.status}`,
+        errorMessage: detail,
       });
-      return { ok: false, code, detail: `OPENAI_${response.status}`, provider: "openai", model, latencyMs };
+      // Também no log da Vercel: quando um cliente reclama, o motivo tem que
+      // estar visível sem depender de consulta ao banco.
+      integrationLog("openai", "error", "request failed", {
+        status: response.status,
+        code,
+        provider_code: failure.code ?? undefined,
+        provider_type: failure.type ?? undefined,
+        provider_message: failure.message ?? undefined,
+        attempts: attempt,
+        provider_request_id: providerRequestId,
+      });
+      return { ok: false, code, detail, provider: "openai", model, latencyMs };
     }
 
     if (refusal) {

@@ -54,6 +54,8 @@ export type AiErrorCode =
   | "LIMIT_EXCEEDED"
   | "UPSTREAM_AUTH"
   | "UPSTREAM_RATE_LIMIT"
+  /** Faturamento da OpenAI: sem crédito ou teto de gasto atingido. Repetir não resolve. */
+  | "UPSTREAM_QUOTA"
   | "UPSTREAM_ERROR"
   | "TIMEOUT"
   | "NETWORK"
