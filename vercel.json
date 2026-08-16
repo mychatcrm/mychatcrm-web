@@ -27,6 +27,10 @@
     {
       "path": "/api/internal/meta-leadgen-inbox/process",
       "schedule": "30 6 * * *"
+    },
+    {
+      "path": "/api/internal/process-omnichannel",
+      "schedule": "0 * * * *"
     }
   ]
 }

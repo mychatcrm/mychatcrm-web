@@ -20,6 +20,8 @@ import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
 import { listTenantWhatsappConnections } from "@/lib/server/tenant-whatsapp-connections";
 import { lookupWhatsAppCloudConnectionByPhoneNumberId } from "@/lib/server/whatsapp-cloud-connections";
 import { persistEvolutionSendReceipt } from "@/lib/server/evolution-customer-delivery";
+import { isBroadcastAgentRow } from "@/lib/server/broadcast-agent-identity";
+import { isWithinBusinessHours } from "@/lib/server/follow-up-engine";
 import {
   markAgentOutboundFailed,
   markAgentOutboundSent,
@@ -292,12 +294,19 @@ export async function createWhatsAppCampaign(params: {
 
   const { data: agent } = await params.sb
     .from("tenant_agents")
-    .select("agent_id, active")
+    .select("agent_id, active, metadata")
     .eq("tenant_id", params.tenantId)
     .eq("agent_id", input.agentId)
     .eq("active", true)
     .maybeSingle();
   if (!agent) throw new Error("campaign_agent_not_available");
+  // Quem responde ao disparo é atendido por ESTE agente — ele passa a ser o
+  // dono da conversa e do lead. Deixar um agente de atendimento assumir esse
+  // papel arrastaria a base antiga para dentro do funil de lead novo, que é
+  // exatamente a mistura que a separação existe para impedir.
+  if (!isBroadcastAgentRow(agent as Record<string, unknown>)) {
+    throw new Error("campaign_agent_not_broadcast");
+  }
 
   let messageTemplate = input.messageTemplate.trim();
   let metaTemplateName: string | null = null;
@@ -660,6 +669,50 @@ async function processRecipient(params: {
   return "sent";
 }
 
+export type CampaignSendWindow = {
+  ativo: boolean;
+  diasAtivos: number[];
+  horaInicio: number;
+  minutoInicio: number;
+  horaFim: number;
+  minutoFim: number;
+  timezone: string;
+};
+
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(n)));
+}
+
+/**
+ * Lê a janela de envio gravada na campanha.
+ *
+ * Devolve `null` quando não há janela ativa — e aí a campanha envia a qualquer
+ * hora, que é o comportamento de sempre. Config pela metade (ligada mas sem
+ * dia nenhum marcado) também vira `null`: uma janela que nunca abre travaria a
+ * campanha para sempre em silêncio, pior que não ter janela.
+ */
+export function parseCampaignSendWindow(raw: unknown): CampaignSendWindow | null {
+  const config = object(raw);
+  if (config.ativo !== true) return null;
+
+  const diasAtivos = Array.isArray(config.diasAtivos)
+    ? [...new Set(config.diasAtivos.map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))]
+    : [];
+  if (diasAtivos.length === 0) return null;
+
+  return {
+    ativo: true,
+    diasAtivos,
+    horaInicio: clampInt(config.horaInicio, 0, 23, 8),
+    minutoInicio: clampInt(config.minutoInicio, 0, 59, 0),
+    horaFim: clampInt(config.horaFim, 0, 23, 18),
+    minutoFim: clampInt(config.minutoFim, 0, 59, 0),
+    timezone: text(config.timezone) ?? "America/Sao_Paulo",
+  };
+}
+
 /** Margem antes do maxDuration (120s) da function — o resto fica pra próxima passada, nunca arrisca timeout no meio de um envio. */
 const PROCESS_TIME_BUDGET_MS = 100_000;
 
@@ -684,6 +737,15 @@ export async function processDueWhatsAppCampaigns(
   const outcomes: Record<string, number> = {};
   let processed = 0;
   for (const campaign of (campaigns ?? []) as Array<Record<string, unknown>>) {
+    // Antes de resolver a conexão de propósito: no transporte Cloud isso custa
+    // idas ao Graph, e não faz sentido pagar por elas para descobrir logo em
+    // seguida que a campanha está fora da janela de envio.
+    const sendWindow = parseCampaignSendWindow(campaign.send_window);
+    if (sendWindow && !isWithinBusinessHours(new Date(), sendWindow)) {
+      outcomes.outside_send_window = (outcomes.outside_send_window ?? 0) + 1;
+      continue;
+    }
+
     let sender: RecipientSender | null = null;
     if (String(campaign.transport) === "cloud_api") {
       const cloudConn = await lookupWhatsAppCloudConnectionByPhoneNumberId(String(campaign.connection_id));

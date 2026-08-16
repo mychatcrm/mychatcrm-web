@@ -3,7 +3,9 @@ import { requireActiveClientSession } from "@/lib/server/client-session-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { createWhatsAppCampaign, processDueWhatsAppCampaigns } from "@/lib/server/whatsapp-campaigns";
 import { listTenantWhatsappConnections } from "@/lib/server/tenant-whatsapp-connections";
-import { DISPAROS_DEFAULT_AGENT_ID, ensureDisparosDefaultAgent } from "@/lib/server/disparos-default-agent";
+import { ensureDisparosDefaultAgent, listBroadcastAgents } from "@/lib/server/disparos-default-agent";
+import { isBroadcastAgentRow } from "@/lib/server/broadcast-agent-identity";
+import { resolveActiveBroadcastAgentLimit } from "@/lib/server/agent-plan-limit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -12,7 +14,7 @@ export async function GET() {
   const guard = await requireActiveClientSession();
   if (!guard.ok) return guard.response;
   const sb = createSupabaseServiceClient();
-  const [campaigns, connections, agents, eligible, disparosAgent] = await Promise.all([
+  const [campaigns, connections, agents, eligible, broadcastAgents] = await Promise.all([
     sb
       .from("whatsapp_campaigns")
       .select("*")
@@ -25,7 +27,6 @@ export async function GET() {
       .select("agent_id, display_name, active, metadata")
       .eq("tenant_id", guard.session.tenantId)
       .eq("active", true)
-      .neq("agent_id", DISPAROS_DEFAULT_AGENT_ID)
       .order("display_name", { ascending: true }),
     sb
       .from("leads")
@@ -33,27 +34,31 @@ export async function GET() {
       .eq("tenant_id", guard.session.tenantId)
       .eq("whatsapp_opt_in", true)
       .is("whatsapp_opt_out_at", null),
-    sb
-      .from("tenant_agents")
-      .select("agent_id, display_name")
-      .eq("tenant_id", guard.session.tenantId)
-      .eq("agent_id", DISPAROS_DEFAULT_AGENT_ID)
-      .maybeSingle(),
+    listBroadcastAgents(guard.session.tenantId),
   ]);
 
   const firstError = campaigns.error ?? agents.error ?? eligible.error;
   if (firstError) {
     return NextResponse.json({ error: firstError.message }, { status: 503 });
   }
+
+  // O dropdown de agentes de atendimento nunca pode oferecer um agente de
+  // Disparos: a filtragem é pela marca no metadata, não pelo id fixo — do
+  // segundo agente em diante os ids são gerados.
+  const attendanceAgents = (agents.data ?? []).filter(
+    (row) => !isBroadcastAgentRow(row as Record<string, unknown>),
+  );
+
   return NextResponse.json(
     {
       campaigns: campaigns.data ?? [],
       connections,
-      agents: agents.data ?? [],
+      agents: attendanceAgents,
       eligibleRecipients: eligible.count ?? 0,
-      disparosAgent: disparosAgent.data
-        ? { agentId: disparosAgent.data.agent_id, displayName: disparosAgent.data.display_name }
-        : null,
+      broadcastAgents,
+      broadcastAgentLimit: resolveActiveBroadcastAgentLimit(guard.session),
+      // Compatibilidade com a UI atual, que ainda lê `disparosAgent`.
+      disparosAgent: broadcastAgents[0] ?? null,
     },
     { headers: { "Cache-Control": "no-store" } },
   );
@@ -123,6 +128,8 @@ export async function POST(request: Request) {
       campaign_message_too_long: "A mensagem ultrapassa 4.000 caracteres.",
       campaign_connection_not_available: "Selecione um WhatsApp conectado.",
       campaign_agent_not_available: "O agente selecionado não está ativo.",
+      campaign_agent_not_broadcast:
+        "Só um Agente de Disparos pode conduzir campanha — ele atende quem responder, com prompt próprio de resgate. Escolha «Usar o Agente do Disparos» em vez de um agente de atendimento.",
       campaign_meta_template_required: "Escolha um modelo (template) aprovado pela Meta pra essa linha.",
       campaign_meta_template_not_approved: "Esse modelo ainda não está aprovado pela Meta — escolha outro ou aguarde a aprovação.",
       campaign_has_no_opted_in_recipients:
