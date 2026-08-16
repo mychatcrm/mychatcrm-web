@@ -30,7 +30,7 @@
     },
     {
       "path": "/api/internal/process-omnichannel",
-      "schedule": "0 * * * *"
+      "schedule": "0 7 * * *"
     }
   ]
 }

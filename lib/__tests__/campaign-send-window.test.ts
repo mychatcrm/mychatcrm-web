@@ -115,15 +115,37 @@ describe("contrato: janela e cron", () => {
     expect(campaigns).toContain('import { isWithinBusinessHours } from "@/lib/server/follow-up-engine"');
   });
 
-  it("disparos têm cron próprio, de hora em hora", () => {
-    // Sai de carona no process-follow-ups (1×/dia): um disparo travado
-    // atrasava o follow-up e vice-versa.
+  it("disparos têm cron próprio, em horário separado do follow-up", () => {
+    // Sai de carona no process-follow-ups: um disparo travado atrasava o
+    // follow-up e vice-versa. Horário distinto para não empilhar funções na
+    // mesma janela.
     const vercel = JSON.parse(source("vercel.json")) as {
       crons: Array<{ path: string; schedule: string }>;
     };
     const omni = vercel.crons.find((c) => c.path === "/api/internal/process-omnichannel");
     expect(omni).toBeDefined();
-    expect(omni?.schedule).toBe("0 * * * *");
+    const outros = vercel.crons
+      .filter((c) => c.path !== "/api/internal/process-omnichannel")
+      .map((c) => c.schedule);
+    expect(outros).not.toContain(omni?.schedule);
+  });
+
+  it("TODO cron é diário — o plano Hobby recusa o DEPLOY se não for", () => {
+    // Aprendido na marra: um `0 * * * *` fez o deploy do eb903e2 falhar ANTES
+    // de virar build, e a produção ficou presa no commit anterior sem aviso
+    // óbvio. No Hobby, expressão que rode mais de uma vez por dia é recusada.
+    // https://vercel.com/docs/cron-jobs/usage-and-pricing
+    const vercel = JSON.parse(source("vercel.json")) as {
+      crons: Array<{ path: string; schedule: string }>;
+    };
+    for (const cron of vercel.crons) {
+      const [minuto, hora] = cron.schedule.split(" ");
+      expect(minuto, `${cron.path}: minuto precisa ser fixo`).toMatch(/^\d+$/);
+      expect(
+        hora,
+        `${cron.path}: hora precisa ser fixa — «${cron.schedule}» rodaria mais de 1×/dia e o Hobby recusa o deploy`,
+      ).toMatch(/^\d+$/);
+    }
   });
 
   it("a rota do cron realmente processa campanhas", () => {
