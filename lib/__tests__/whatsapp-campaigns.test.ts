@@ -157,7 +157,7 @@ describe("createWhatsAppCampaign — transporte cloud_api (API Meta)", () => {
     ]);
     let captured: Row | undefined;
     const sb = makeSb({
-      agentRow: { agent_id: "agent-1", active: true },
+      agentRow: { agent_id: "disparos-default", active: true, metadata: { isBroadcastAgent: true } },
       leadRows: [OPTED_IN_LEAD],
       insertedCampaign: { id: "camp-1" },
       captureCampaignInsert: (payload) => {
@@ -190,7 +190,7 @@ describe("createWhatsAppCampaign — transporte cloud_api (API Meta)", () => {
 
   it("rejeita quando nenhum template foi escolhido", async () => {
     const sb = makeSb({
-      agentRow: { agent_id: "agent-1", active: true },
+      agentRow: { agent_id: "disparos-default", active: true, metadata: { isBroadcastAgent: true } },
       leadRows: [OPTED_IN_LEAD],
       insertedCampaign: { id: "camp-1" },
     });
@@ -217,7 +217,7 @@ describe("createWhatsAppCampaign — transporte cloud_api (API Meta)", () => {
       { name: "promo_v1", status: "PENDING", category: "MARKETING", language: "pt_BR", bodyText: "Oi {{1}}", bodyParamCount: 1 },
     ]);
     const sb = makeSb({
-      agentRow: { agent_id: "agent-1", active: true },
+      agentRow: { agent_id: "disparos-default", active: true, metadata: { isBroadcastAgent: true } },
       leadRows: [OPTED_IN_LEAD],
       insertedCampaign: { id: "camp-1" },
     });

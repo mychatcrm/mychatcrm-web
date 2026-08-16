@@ -15,6 +15,7 @@ import {
 import { stringArray } from "@/lib/server/meta-form-authorization";
 import { validateMetaAutomationConnection } from "@/lib/server/lead-rules-connection-validation";
 import { validateRuleLinePurpose } from "@/lib/server/lead-rules-line-purpose";
+import { isBroadcastAgentRow } from "@/lib/server/broadcast-agent-identity";
 import {
   classifyRuleAgentIssues,
   loadTenantAgentActivation,
@@ -61,6 +62,44 @@ async function syncOrganicAgentId(
     tenant_id: tenantId,
     agent_id: firstAgentId,
   });
+}
+
+/**
+ * Agente de Disparos não atende lead novo — ponto.
+ *
+ * Ele existe para resgatar base antiga com prompt próprio, e uma regra de
+ * distribuição apontada para ele mandaria lead novo cair nesse prompt de
+ * resgate. É a mistura que a separação entre os dois tipos existe para
+ * impedir, e a UI sozinha não protege: qualquer POST direto passaria.
+ */
+async function rejectBroadcastAgentsInRule(
+  sb: ReturnType<typeof createSupabaseServiceClient>,
+  tenantId: string,
+  payload: Record<string, unknown>,
+): Promise<NextResponse | null> {
+  const agentIds = stringArray(payload.agent_ids);
+  if (agentIds.length === 0) return null;
+
+  const { data, error } = await sb
+    .from("tenant_agents")
+    .select("agent_id, display_name, metadata")
+    .eq("tenant_id", tenantId)
+    .in("agent_id", agentIds);
+
+  if (error) {
+    console.warn("[lead-rules] broadcast_guard_query_failed", error.code ?? "", error.message);
+    return null;
+  }
+
+  const offender = (data ?? []).find((row) => isBroadcastAgentRow(row as Record<string, unknown>));
+  if (!offender) return null;
+
+  return NextResponse.json(
+    {
+      error: `«${offender.display_name ?? offender.agent_id}» é um agente de Disparos e não pode atender leads novos. Escolha um agente de atendimento, ou use este agente em /dashboard/disparos.`,
+    },
+    { status: 400 },
+  );
 }
 
 function validateOrganicRulePayload(payload: Record<string, unknown>): NextResponse | null {
@@ -141,6 +180,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const organicValidationError = validateOrganicRulePayload(payload);
   if (organicValidationError) return organicValidationError;
+  const broadcastAgentError = await rejectBroadcastAgentsInRule(sb, session.tenantId, payload);
+  if (broadcastAgentError) return broadcastAgentError;
   // Antes do validador Meta de propósito: a trava de finalidade custa duas
   // queries locais, enquanto o validador faz várias idas ao Graph.
   const linePurposeError = await validateRuleLinePurpose(sb, session.tenantId, payload);
