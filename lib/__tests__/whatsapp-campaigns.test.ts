@@ -43,6 +43,7 @@ vi.mock("@/lib/server/lead-redistribution", () => ({
 }));
 
 import {
+  computeDistinctLeadTags,
   createWhatsAppCampaign,
   leadMatchesWhatsAppCampaignAudience,
   parseCampaignAudienceBlocks,
@@ -76,6 +77,24 @@ describe("WhatsApp campaign helpers", () => {
     expect(leadMatchesWhatsAppCampaignAudience(lead, "tag", "outro")).toBe(false);
     expect(leadMatchesWhatsAppCampaignAudience(lead, "funnel_stage", "contato")).toBe(true);
     expect(leadMatchesWhatsAppCampaignAudience(lead, "funnel_stage", "novo")).toBe(false);
+  });
+});
+
+describe("computeDistinctLeadTags", () => {
+  it("deduplica case-insensitive mantendo a primeira grafia vista e ordena", () => {
+    const leads = [
+      { profile_metadata: { tags: ["VIP", "Retorno"] } },
+      { profile_metadata: { tags: ["vip", "Frio"] } },
+      { profile_metadata: {} },
+      { profile_metadata: { tags: "não é array" } },
+      { profile_metadata: null },
+      {},
+    ];
+    expect(computeDistinctLeadTags(leads)).toEqual(["Frio", "Retorno", "VIP"]);
+  });
+
+  it("devolve vazio quando nenhum lead tem tags", () => {
+    expect(computeDistinctLeadTags([{ profile_metadata: {} }])).toEqual([]);
   });
 });
 

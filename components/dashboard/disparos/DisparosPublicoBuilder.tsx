@@ -19,8 +19,8 @@
 import { useCallback, useEffect, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { Keyboard, Plus, Trash2, Upload, Users } from "lucide-react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
-import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
 import { cn } from "@/lib/utils";
+import type { CrmFunnel } from "@/lib/crm-funnels";
 
 export type PublicoFiltroCrm = "todos" | "tag" | "etapa";
 
@@ -160,17 +160,29 @@ function CrmBlockCard({
   onRemove,
   isLight,
   onAfterOptIn,
+  funnels,
+  availableTags,
 }: {
   block: PublicoCrmBlock;
   onUpdate: UpdateFn;
   onRemove: (id: string) => void;
   isLight: boolean;
   onAfterOptIn?: () => void;
+  funnels: CrmFunnel[];
+  availableTags: string[];
 }) {
   const [optInBusy, setOptInBusy] = useState(false);
   const apiType = publicoFiltroToApi(block.filtro);
   const valor = block.valor;
   const id = block.id;
+
+  // Funil sendo navegado na coluna "Por funil" — separado de `valor` (que só
+  // guarda o id da coluna) porque trocar de funil pra olhar as colunas dele
+  // não deveria depender de já ter escolhido uma coluna antes.
+  const [browsingFunnelIdOverride, setBrowsingFunnelIdOverride] = useState<string | null>(null);
+  const funnelContainingValue = funnels.find((f) => f.columns.some((c) => c.id === valor));
+  const browsingFunnelId = browsingFunnelIdOverride ?? funnelContainingValue?.id ?? funnels[0]?.id ?? "";
+  const browsingFunnel = funnels.find((f) => f.id === browsingFunnelId) ?? null;
 
   const refreshPreview = useCallback(() => {
     if (apiType !== "all" && !valor.trim()) {
@@ -216,7 +228,20 @@ function CrmBlockCard({
             <button
               key={opt.id}
               type="button"
-              onClick={() => onUpdate(id, { filtro: opt.id, valor: opt.id === "todos" ? "" : block.valor })}
+              onClick={() => {
+                // Trocar de filtro já deixa um valor válido selecionado — um
+                // select vazio (sem opção batendo) é o que fazia parecer que
+                // não tinha nada pra escolher.
+                if (opt.id === "todos") {
+                  onUpdate(id, { filtro: "todos", valor: "" });
+                } else if (opt.id === "etapa") {
+                  const jaValido = funnels.some((f) => f.columns.some((c) => c.id === block.valor));
+                  onUpdate(id, { filtro: "etapa", valor: jaValido ? block.valor : funnels[0]?.columns[0]?.id ?? "" });
+                } else {
+                  const jaValido = availableTags.includes(block.valor);
+                  onUpdate(id, { filtro: "tag", valor: jaValido ? block.valor : availableTags[0] ?? "" });
+                }
+              }}
               className={cn(
                 "rounded-lg border px-3 py-2.5 text-left text-xs transition-all",
                 active
@@ -230,13 +255,62 @@ function CrmBlockCard({
           );
         })}
       </div>
-      {block.filtro !== "todos" ? (
-        <Input
-          value={block.valor}
-          onChange={(e) => onUpdate(id, { valor: e.target.value })}
-          placeholder={block.filtro === "tag" ? "Tag exata do lead" : "ID da etapa do funil"}
-          className="mt-2.5 rounded-lg"
-        />
+      {block.filtro === "tag" ? (
+        availableTags.length > 0 ? (
+          <select
+            value={block.valor}
+            onChange={(e) => onUpdate(id, { valor: e.target.value })}
+            className="mt-2.5 h-11 w-full rounded-lg border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+          >
+            {availableTags.map((tag) => (
+              <option key={tag} value={tag}>
+                {tag}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <p className="mt-2.5 rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+            Nenhuma tag encontrada nos seus leads ainda.
+          </p>
+        )
+      ) : null}
+      {block.filtro === "etapa" ? (
+        funnels.length > 0 ? (
+          <div className="mt-2.5 space-y-2">
+            {funnels.length > 1 ? (
+              <select
+                value={browsingFunnelId}
+                onChange={(e) => {
+                  const nextFunnel = funnels.find((f) => f.id === e.target.value);
+                  setBrowsingFunnelIdOverride(e.target.value);
+                  onUpdate(id, { valor: nextFunnel?.columns[0]?.id ?? "" });
+                }}
+                className="h-11 w-full rounded-lg border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+              >
+                {funnels.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.nome}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            <select
+              value={block.valor}
+              onChange={(e) => onUpdate(id, { valor: e.target.value })}
+              className="h-11 w-full rounded-lg border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+            >
+              {(browsingFunnel?.columns ?? []).map((column) => (
+                <option key={column.id} value={column.id}>
+                  {column.title}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <p className="mt-2.5 rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+            Nenhum funil configurado ainda.
+          </p>
+        )
       ) : null}
       <div
         className={cn(
@@ -416,9 +490,11 @@ type Props = {
   onChange: Dispatch<SetStateAction<PublicoBlock[]>>;
   isLight: boolean;
   onAfterOptIn?: () => void;
+  funnels: CrmFunnel[];
+  availableTags: string[];
 };
 
-export function DisparosPublicoBuilder({ blocks, onChange, isLight, onAfterOptIn }: Props) {
+export function DisparosPublicoBuilder({ blocks, onChange, isLight, onAfterOptIn, funnels, availableTags }: Props) {
   const updateBlock = useCallback<UpdateFn>(
     (id, patch) => {
       onChange((prev) => prev.map((block) => (block.id === id ? ({ ...block, ...patch } as PublicoBlock) : block)));
@@ -447,6 +523,8 @@ export function DisparosPublicoBuilder({ blocks, onChange, isLight, onAfterOptIn
             onUpdate={updateBlock}
             onRemove={removeBlock}
             onAfterOptIn={onAfterOptIn}
+            funnels={funnels}
+            availableTags={availableTags}
           />
         ) : (
           <ContatosBlockCard key={block.id} block={block} isLight={isLight} onUpdate={updateBlock} onRemove={removeBlock} />

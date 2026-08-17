@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { createWhatsAppCampaign, processDueWhatsAppCampaigns } from "@/lib/server/whatsapp-campaigns";
+import { computeDistinctLeadTags, createWhatsAppCampaign, processDueWhatsAppCampaigns } from "@/lib/server/whatsapp-campaigns";
 import { listTenantWhatsappConnections } from "@/lib/server/tenant-whatsapp-connections";
 import { ensureDisparosDefaultAgent, listBroadcastAgents } from "@/lib/server/disparos-default-agent";
 import { isBroadcastAgentRow } from "@/lib/server/broadcast-agent-identity";
@@ -14,7 +14,7 @@ export async function GET() {
   const guard = await requireActiveClientSession();
   if (!guard.ok) return guard.response;
   const sb = createSupabaseServiceClient();
-  const [campaigns, connections, agents, eligible, broadcastAgents] = await Promise.all([
+  const [campaigns, connections, agents, eligible, broadcastAgents, tagsQuery] = await Promise.all([
     sb
       .from("whatsapp_campaigns")
       .select("*")
@@ -35,6 +35,14 @@ export async function GET() {
       .eq("whatsapp_opt_in", true)
       .is("whatsapp_opt_out_at", null),
     listBroadcastAgents(guard.session.tenantId),
+    // Alimenta o seletor de "Por tag" do público — sem isso o cliente tinha
+    // que adivinhar o texto exato de uma tag pra digitar num campo livre.
+    sb
+      .from("leads")
+      .select("profile_metadata")
+      .eq("tenant_id", guard.session.tenantId)
+      .not("phone", "is", null)
+      .limit(5000),
   ]);
 
   const firstError = campaigns.error ?? agents.error ?? eligible.error;
@@ -59,6 +67,7 @@ export async function GET() {
       broadcastAgentLimit: resolveActiveBroadcastAgentLimit(guard.session),
       // Compatibilidade com a UI atual, que ainda lê `disparosAgent`.
       disparosAgent: broadcastAgents[0] ?? null,
+      availableTags: computeDistinctLeadTags((tagsQuery.data ?? []) as Array<Record<string, unknown>>),
     },
     { headers: { "Cache-Control": "no-store" } },
   );
