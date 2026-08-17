@@ -17,7 +17,6 @@ import {
   Sparkles,
   Square,
   Trash2,
-  Upload,
   UserCog,
   Users,
   Zap,
@@ -34,15 +33,17 @@ import {
   type DisparosDraft,
 } from "@/components/dashboard/disparos/disparos-drafts-storage";
 import { SITUATION_TEMPLATES } from "@/components/dashboard/disparos/disparos-situation-templates";
+import {
+  buildAudienceBlocksPayload,
+  createCrmBlock,
+  DisparosPublicoBuilder,
+  estimatePublicoTotal,
+  hasUsablePublico,
+  type PublicoBlock,
+} from "@/components/dashboard/disparos/DisparosPublicoBuilder";
 
 const DEFAULT_MESSAGE =
   "Ola {{nome}}, preparamos uma condicao especial para {{empresa}}. Responda SIM para receber o link seguro.";
-
-const AUDIENCE = [
-  { id: "todos" as const, label: "Base completa", hint: "Todos os leads com opt-in" },
-  { id: "tag" as const, label: "Por tag", hint: "Segmentos do CRM Kanban" },
-  { id: "etapa" as const, label: "Por funil", hint: "Colunas do CRM Kanban" },
-];
 
 const THROUGHPUT = [
   { id: "suave" as const, label: "Suave", perMinute: 10, sub: "Mais seguro — 10 msgs/min" },
@@ -125,8 +126,6 @@ type CampaignRow = {
   created_at: string;
 };
 
-type AudiencePreview = { totalMatched: number; optedIn: number; notOptedIn: number };
-
 function newDraftId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
   return `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -145,7 +144,7 @@ export function DisparosMassaHub() {
   const { isLight } = usePanelAppearance();
   const taRef = useRef<HTMLTextAreaElement>(null);
   const [campaignName, setCampaignName] = useState("");
-  const [audienceId, setAudienceId] = useState<(typeof AUDIENCE)[number]["id"]>("todos");
+  const [publicoBlocks, setPublicoBlocks] = useState<PublicoBlock[]>(() => [createCrmBlock()]);
   const [schedule, setSchedule] = useState("");
   const [body, setBody] = useState(DEFAULT_MESSAGE);
   const [throughput, setThroughput] = useState<(typeof THROUGHPUT)[number]["id"]>("normal");
@@ -165,25 +164,15 @@ export function DisparosMassaHub() {
   const [connectionId, setConnectionId] = useState("");
   const [agentMode, setAgentMode] = useState<"existing" | "disparos">("existing");
   const [agentId, setAgentId] = useState("");
-  const [audienceValue, setAudienceValue] = useState("");
   const [eligibleRecipients, setEligibleRecipients] = useState(0);
   const [campaignBusy, setCampaignBusy] = useState(false);
   const [campaignError, setCampaignError] = useState<string | null>(null);
-  const [audiencePreview, setAudiencePreview] = useState<AudiencePreview | null>(null);
-  const [audiencePreviewLoading, setAudiencePreviewLoading] = useState(false);
-  const [optInBusy, setOptInBusy] = useState(false);
   const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([]);
   const [metaTemplateName, setMetaTemplateName] = useState("");
   const [processingCampaignId, setProcessingCampaignId] = useState<string | null>(null);
   const [showTemplateGallery, setShowTemplateGallery] = useState(false);
   const [showDrafts, setShowDrafts] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [showImport, setShowImport] = useState(false);
-  const [importText, setImportText] = useState("");
-  const [importOptIn, setImportOptIn] = useState(false);
-  const [importBusy, setImportBusy] = useState(false);
-  const [importResult, setImportResult] = useState<string | null>(null);
-  const [importError, setImportError] = useState<string | null>(null);
 
   useEffect(() => {
     setDrafts(loadDisparosDrafts());
@@ -244,96 +233,6 @@ export function DisparosMassaHub() {
     };
   }, [isMetaTransport, connectionId]);
 
-  const audienceApiType = audienceId === "etapa" ? "funnel_stage" : audienceId === "todos" ? "all" : "tag";
-
-  const refreshAudiencePreview = useCallback(() => {
-    if (audienceApiType !== "all" && !audienceValue.trim()) {
-      setAudiencePreview(null);
-      return;
-    }
-    setAudiencePreviewLoading(true);
-    const qs = new URLSearchParams({ type: audienceApiType, ...(audienceValue.trim() ? { value: audienceValue.trim() } : {}) });
-    fetch(`/api/client/whatsapp-campaigns/audience-preview?${qs.toString()}`)
-      .then((r) => r.json())
-      .then((data: AudiencePreview) => setAudiencePreview(data))
-      .catch(() => setAudiencePreview(null))
-      .finally(() => setAudiencePreviewLoading(false));
-  }, [audienceApiType, audienceValue]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(refreshAudiencePreview, 350);
-    return () => window.clearTimeout(timer);
-  }, [refreshAudiencePreview]);
-
-  const handleImport = useCallback(async () => {
-    setImportBusy(true);
-    setImportError(null);
-    setImportResult(null);
-    try {
-      const res = await fetch("/api/client/whatsapp-campaigns/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: importText, optIn: importOptIn }),
-      });
-      const payload = (await res.json()) as {
-        error?: string;
-        created?: number;
-        reused?: number;
-        optedInCount?: number;
-        duplicatesInFile?: number;
-        invalidCount?: number;
-        truncated?: boolean;
-      };
-      if (!res.ok) throw new Error(payload.error ?? "Não foi possível importar a lista.");
-
-      // Relato completo de propósito: importação silenciosa esconde linha
-      // descartada, e o cliente só descobre quando o disparo não alcança quem
-      // ele esperava.
-      const partes = [`${payload.created ?? 0} contato(s) novo(s)`];
-      if (payload.reused) partes.push(`${payload.reused} já existia(m) no CRM`);
-      if (payload.optedInCount) partes.push(`${payload.optedInCount} autorizado(s)`);
-      if (payload.duplicatesInFile) partes.push(`${payload.duplicatesInFile} repetido(s) na lista`);
-      if (payload.invalidCount) partes.push(`${payload.invalidCount} linha(s) inválida(s)`);
-      if (payload.truncated) partes.push("lista cortada no limite de 5.000");
-      setImportResult(`${partes.join(" · ")}.`);
-      setImportText("");
-      await loadCampaignData();
-    } catch (error) {
-      setImportError(error instanceof Error ? error.message : "Falha ao importar.");
-    } finally {
-      setImportBusy(false);
-    }
-  }, [importText, importOptIn, loadCampaignData]);
-
-  const handleBulkOptIn = useCallback(async () => {
-    setOptInBusy(true);
-    setCampaignError(null);
-    try {
-      const res = await fetch("/api/client/whatsapp-campaigns/audience-opt-in", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          audienceType: audienceApiType,
-          audienceValue: audienceApiType === "all" ? null : audienceValue.trim(),
-        }),
-      });
-      const data = (await res.json()) as { error?: string; optedInCount?: number };
-      if (!res.ok) throw new Error(data.error ?? "Erro ao autorizar leads.");
-      setDraftNotice(
-        data.optedInCount
-          ? `${data.optedInCount} lead(s) autorizado(s) a receber WhatsApp.`
-          : "Todos os leads deste público já estavam autorizados.",
-      );
-      window.setTimeout(() => setDraftNotice(null), 4000);
-      refreshAudiencePreview();
-      await loadCampaignData();
-    } catch (error) {
-      setCampaignError(error instanceof Error ? error.message : "Erro ao autorizar leads.");
-    } finally {
-      setOptInBusy(false);
-    }
-  }, [audienceApiType, audienceValue, loadCampaignData, refreshAudiencePreview]);
-
   const scheduleSummary = schedule
     ? new Date(schedule).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })
     : "Enviar agora";
@@ -349,7 +248,9 @@ export function DisparosMassaHub() {
   const riskWarning = useMemo(() => {
     const perMinute = THROUGHPUT.find((t) => t.id === throughput)?.perMinute ?? 20;
     // Quem de fato vai receber: só lead com opt-in ativo entra no disparo.
-    const total = audiencePreview?.optedIn ?? eligibleRecipients;
+    // Estimativa somada de todos os públicos — pode contar duas vezes quem
+    // está em mais de um bloco, o dedupe de verdade é no servidor.
+    const total = estimatePublicoTotal(publicoBlocks);
     if (total <= 0) return null;
 
     const avisos: string[] = [];
@@ -384,7 +285,7 @@ export function DisparosMassaHub() {
 
     if (avisos.length === 0) return null;
     return `Atenção: ${avisos.join("; ")}. Isso pode fazer o WhatsApp bloquear seu número.`;
-  }, [throughput, windowActive, windowStart, windowEnd, windowDays, audiencePreview, eligibleRecipients]);
+  }, [throughput, windowActive, windowStart, windowEnd, windowDays, publicoBlocks]);
   const charCount = body.length;
   const preview = previewBody(body);
   const selectedMetaTemplate = useMemo(
@@ -416,10 +317,15 @@ export function DisparosMassaHub() {
     setSavingDraft(true);
     const stamp = new Date().toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
     const name = campaignName.trim() || `Rascunho ${stamp}`;
+    // Só os blocos de CRM são salvos no rascunho — lista importada e contatos
+    // digitados já viraram leads reais no momento em que foram confirmados,
+    // então recarregar o rascunho depois não teria o que "desfazer" ali.
     const draft: DisparosDraft = {
       id: newDraftId(),
       name,
-      audienceId,
+      audienceBlocks: publicoBlocks
+        .filter((b): b is Extract<PublicoBlock, { kind: "crm" }> => b.kind === "crm")
+        .map((b) => ({ filtro: b.filtro, valor: b.valor })),
       schedule,
       throughput,
       body,
@@ -429,11 +335,15 @@ export function DisparosMassaHub() {
     setDraftNotice("Rascunho salvo neste navegador (local).");
     window.setTimeout(() => setDraftNotice(null), 4500);
     window.setTimeout(() => setSavingDraft(false), 400);
-  }, [audienceId, body, campaignName, commitDrafts, schedule, throughput]);
+  }, [body, campaignName, commitDrafts, publicoBlocks, schedule, throughput]);
 
   const handleLoadDraft = useCallback((d: DisparosDraft) => {
     setCampaignName(d.name);
-    setAudienceId(d.audienceId);
+    setPublicoBlocks(
+      d.audienceBlocks.length > 0
+        ? d.audienceBlocks.map((b) => ({ ...createCrmBlock(), filtro: b.filtro, valor: b.valor }))
+        : [createCrmBlock()],
+    );
     setSchedule(d.schedule);
     setThroughput(d.throughput);
     setBody(d.body);
@@ -490,6 +400,7 @@ export function DisparosMassaHub() {
     Boolean(connectionId) &&
     Boolean(campaignName.trim()) &&
     (agentMode === "disparos" || Boolean(agentId)) &&
+    hasUsablePublico(publicoBlocks) &&
     (isMetaTransport ? Boolean(metaTemplateName) : Boolean(body.trim()));
 
   const handleScheduleCampaign = useCallback(async () => {
@@ -504,8 +415,7 @@ export function DisparosMassaHub() {
           connectionId,
           agentMode,
           agentId: agentMode === "existing" ? agentId : undefined,
-          audienceType: audienceApiType,
-          audienceValue: audienceId === "todos" ? null : audienceValue,
+          audienceBlocks: buildAudienceBlocksPayload(publicoBlocks),
           messageTemplate: isMetaTransport ? "" : body,
           metaTemplateName: isMetaTransport ? metaTemplateName : undefined,
           metaTemplateLang: isMetaTransport ? selectedMetaTemplate?.language ?? "pt_BR" : undefined,
@@ -535,18 +445,20 @@ export function DisparosMassaHub() {
   }, [
     agentId,
     agentMode,
-    audienceApiType,
-    audienceId,
-    audienceValue,
     body,
     campaignName,
     connectionId,
     isMetaTransport,
     loadCampaignData,
     metaTemplateName,
+    publicoBlocks,
     schedule,
     selectedMetaTemplate,
     throughput,
+    windowActive,
+    windowDays,
+    windowStart,
+    windowEnd,
   ]);
 
   const handleCancelCampaign = useCallback(async (campaignId: string) => {
@@ -719,149 +631,17 @@ export function DisparosMassaHub() {
               <Users className="size-4 text-primary" aria-hidden />
               Público
             </div>
-            <div className="grid gap-2 sm:grid-cols-3">
-              {AUDIENCE.map((opt) => {
-                const active = opt.id === audienceId;
-                return (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => setAudienceId(opt.id)}
-                    className={cn(
-                      "rounded-xl border px-3 py-3 text-left text-sm transition-all",
-                      active
-                        ? "border-primary/60 bg-primary/10 "
-                        : "border-line bg-surface-card/40 hover:border-primary/35 hover:bg-surface-elevated/30",
-                    )}
-                  >
-                    <div className="font-semibold text-content">{opt.label}</div>
-                    <div className="mt-0.5 text-[11px] text-content-secondary">{opt.hint}</div>
-                  </button>
-                );
-              })}
-            </div>
-            {audienceId !== "todos" ? (
-              <Input
-                value={audienceValue}
-                onChange={(event) => setAudienceValue(event.target.value)}
-                placeholder={audienceId === "tag" ? "Tag exata do lead" : "ID da etapa do funil"}
-                className="mt-3 rounded-xl"
-              />
-            ) : null}
-            <div
-              className={cn(
-                "mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2.5",
-                isLight ? "border-slate-200/80 bg-slate-50/60" : "border-line/70 bg-surface-card/30",
-              )}
-            >
-              <div className="text-xs text-content-secondary">
-                {audiencePreviewLoading ? (
-                  "Contando leads…"
-                ) : audiencePreview ? (
-                  <>
-                    <strong className="text-content">{audiencePreview.totalMatched}</strong> lead(s) neste público ·{" "}
-                    <strong className="text-emerald-500">{audiencePreview.optedIn}</strong> já autorizado(s)
-                    {audiencePreview.notOptedIn > 0 ? (
-                      <>
-                        {" "}
-                        · <strong className="text-amber-500">{audiencePreview.notOptedIn}</strong> sem autorização ainda
-                      </>
-                    ) : null}
-                  </>
-                ) : (
-                  "Digite o valor do público pra ver a contagem."
-                )}
-              </div>
-              {audiencePreview && audiencePreview.notOptedIn > 0 ? (
-                <Button type="button" variant="secondary" size="sm" onClick={handleBulkOptIn} isLoading={optInBusy}>
-                  Autorizar todos esses leads
-                </Button>
-              ) : null}
-            </div>
-
-            <div className="mt-4 border-t border-line/60 pt-4">
-              <button
-                type="button"
-                onClick={() => setShowImport((v) => !v)}
-                className="flex w-full items-center justify-between text-left text-xs font-medium text-content-secondary transition-colors hover:text-content"
-              >
-                <span className="flex items-center gap-1.5">
-                  <Upload className="size-3.5 text-primary" aria-hidden />
-                  Importar lista de fora do CRM
-                </span>
-                <ChevronDown
-                  className={cn("size-4 shrink-0 transition-transform", showImport && "rotate-180")}
-                  aria-hidden
-                />
-              </button>
-
-              {showImport ? (
-                <div className="mt-3 space-y-3">
-                  <textarea
-                    value={importText}
-                    onChange={(e) => setImportText(e.target.value)}
-                    placeholder={"nome,telefone\nMaria Silva,5562991234567\nJoão Souza,(62) 99765-4321"}
-                    className="min-h-[120px] w-full resize-y rounded-xl border border-line bg-surface-card/40 px-3 py-2.5 font-mono text-xs text-content outline-none"
-                  />
-                  <p className="text-[11px] leading-relaxed text-content-secondary">
-                    Cole do Excel ou de um CSV. Aceita vírgula ou ponto e vírgula, com ou sem
-                    cabeçalho. Contato que já existe no CRM é reaproveitado, não duplicado.
-                  </p>
-
-                  <label className="flex items-start gap-2 text-[11px] leading-relaxed text-content-secondary">
-                    <input
-                      type="checkbox"
-                      checked={importOptIn}
-                      onChange={(e) => setImportOptIn(e.target.checked)}
-                      className="mt-0.5 size-3.5 shrink-0 accent-primary"
-                    />
-                    <span>
-                      Marcar estes contatos como autorizados a receber WhatsApp. Só marque se você
-                      realmente tem o consentimento — disparo para quem não pediu é o caminho mais
-                      rápido para o número ser bloqueado.
-                    </span>
-                  </label>
-
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    onClick={handleImport}
-                    isLoading={importBusy}
-                    disabled={!importText.trim()}
-                  >
-                    Importar contatos
-                  </Button>
-
-                  {importResult ? (
-                    <div
-                      className={cn(
-                        "rounded-xl border px-3 py-2.5 text-[11px] leading-relaxed",
-                        isLight
-                          ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                          : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
-                      )}
-                      role="status"
-                    >
-                      {importResult}
-                    </div>
-                  ) : null}
-                  {importError ? (
-                    <div
-                      className={cn(
-                        "rounded-xl border px-3 py-2.5 text-[11px] leading-relaxed",
-                        isLight
-                          ? "border-red-200 bg-red-50 text-red-900"
-                          : "border-red-500/30 bg-red-500/10 text-red-200",
-                      )}
-                      role="alert"
-                    >
-                      {importError}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
+            <p className="mb-3 text-[11px] leading-relaxed text-content-secondary">
+              Combine quantos públicos quiser no mesmo disparo — CRM, lista importada e contatos
+              digitados na hora. Adicione mais de um bloco do mesmo tipo se precisar (3 tags
+              diferentes, por exemplo).
+            </p>
+            <DisparosPublicoBuilder
+              blocks={publicoBlocks}
+              onChange={setPublicoBlocks}
+              isLight={isLight}
+              onAfterOptIn={loadCampaignData}
+            />
           </div>
 
           <div

@@ -95,11 +95,9 @@ export async function POST(request: Request) {
         name: typeof body.name === "string" ? body.name : "",
         connectionId: typeof body.connectionId === "string" ? body.connectionId : "",
         agentId,
-        audienceType:
-          body.audienceType === "tag" || body.audienceType === "funnel_stage"
-            ? body.audienceType
-            : "all",
-        audienceValue: typeof body.audienceValue === "string" ? body.audienceValue : null,
+        // Cru de propósito: quem valida é parseCampaignAudienceBlocks, dentro
+        // de createWhatsAppCampaign — mesmo padrão do sendWindow logo abaixo.
+        audienceBlocks: body.audienceBlocks,
         messageTemplate: typeof body.messageTemplate === "string" ? body.messageTemplate : "",
         metaTemplateName: typeof body.metaTemplateName === "string" ? body.metaTemplateName : null,
         metaTemplateLang: typeof body.metaTemplateLang === "string" ? body.metaTemplateLang : null,
@@ -128,6 +126,7 @@ export async function POST(request: Request) {
     const messages: Record<string, string> = {
       omnichannel_journeys_disabled: "Campanhas omnichannel ainda não foram ativadas.",
       campaign_required_fields: "Preencha nome, conexão, agente e mensagem.",
+      campaign_audience_required: "Adicione pelo menos um público — CRM, lista importada ou contato digitado.",
       campaign_message_too_long: "A mensagem ultrapassa 4.000 caracteres.",
       campaign_connection_not_available: "Selecione um WhatsApp conectado.",
       campaign_agent_not_available: "O agente selecionado não está ativo.",

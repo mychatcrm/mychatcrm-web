@@ -2,10 +2,19 @@ export const DISPAROS_DRAFTS_STORAGE_KEY = "mychatcrm.disparos.drafts.v1";
 
 export const DISPAROS_DRAFTS_UPDATED_EVENT = "mychatcrm-disparos-drafts-updated";
 
+/** Só filtros do CRM são salváveis num rascunho — ver DisparosDraft. */
+export type DisparosDraftCrmBlock = { filtro: "todos" | "tag" | "etapa"; valor: string };
+
 export type DisparosDraft = {
   id: string;
   name: string;
-  audienceId: "todos" | "tag" | "etapa";
+  /**
+   * Só blocos de CRM (filtro + valor). Lista importada e contatos digitados
+   * já viraram leads reais no momento em que o cliente confirmou o bloco —
+   * carregar o rascunho depois não teria como "desfazer" aquilo, então esses
+   * blocos não fazem sentido guardar aqui.
+   */
+  audienceBlocks: DisparosDraftCrmBlock[];
   schedule: string;
   throughput: "suave" | "normal" | "acelerado";
   body: string;
@@ -16,6 +25,13 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
 }
 
+function isDisparosDraftCrmBlock(v: unknown): v is DisparosDraftCrmBlock {
+  if (!isRecord(v)) return false;
+  return (
+    (v.filtro === "todos" || v.filtro === "tag" || v.filtro === "etapa") && typeof v.valor === "string"
+  );
+}
+
 export function isDisparosDraft(v: unknown): v is DisparosDraft {
   if (!isRecord(v)) return false;
   return (
@@ -24,7 +40,8 @@ export function isDisparosDraft(v: unknown): v is DisparosDraft {
     typeof v.body === "string" &&
     typeof v.updatedAt === "string" &&
     typeof v.schedule === "string" &&
-    (v.audienceId === "todos" || v.audienceId === "tag" || v.audienceId === "etapa") &&
+    Array.isArray(v.audienceBlocks) &&
+    v.audienceBlocks.every(isDisparosDraftCrmBlock) &&
     (v.throughput === "suave" || v.throughput === "normal" || v.throughput === "acelerado")
   );
 }
