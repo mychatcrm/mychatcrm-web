@@ -50,6 +50,8 @@ type CampaignInput = {
   metaTemplateLang?: string | null;
   throughput?: CampaignThroughput;
   scheduledAt?: string | null;
+  /** Janela de envio; ver `parseCampaignSendWindow`. Ausente = envia a qualquer hora. */
+  sendWindow?: unknown;
 };
 
 function text(value: unknown): string | null {
@@ -369,6 +371,9 @@ export async function createWhatsAppCampaign(params: {
       throughput,
       status: "scheduled",
       scheduled_at: scheduledAt,
+      // Normalizada na gravação: guardar o que o cliente mandou cru deixaria
+      // dia inválido ou hora fora de faixa cair no processador.
+      send_window: parseCampaignSendWindow(input.sendWindow) ?? {},
       total_recipients: leads.length,
       created_by: params.createdBy ?? null,
       updated_at: now,

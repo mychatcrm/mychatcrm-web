@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
+  AlertTriangle,
   BookOpen,
   Bot,
   CalendarClock,
@@ -16,6 +17,7 @@ import {
   Sparkles,
   Square,
   Trash2,
+  Upload,
   UserCog,
   Users,
   Zap,
@@ -46,6 +48,16 @@ const THROUGHPUT = [
   { id: "suave" as const, label: "Suave", perMinute: 10, sub: "Mais seguro — 10 msgs/min" },
   { id: "normal" as const, label: "Normal", perMinute: 20, sub: "Equilíbrio recomendado — 20 msgs/min" },
   { id: "acelerado" as const, label: "Acelerado", perMinute: 40, sub: "Só se o número já é bem estabelecido — 40 msgs/min" },
+];
+
+const WEEK_DAYS = [
+  { label: "Dom", value: 0 },
+  { label: "Seg", value: 1 },
+  { label: "Ter", value: 2 },
+  { label: "Qua", value: 3 },
+  { label: "Qui", value: 4 },
+  { label: "Sex", value: 5 },
+  { label: "Sáb", value: 6 },
 ];
 
 const VARIABLES = [
@@ -137,6 +149,12 @@ export function DisparosMassaHub() {
   const [schedule, setSchedule] = useState("");
   const [body, setBody] = useState(DEFAULT_MESSAGE);
   const [throughput, setThroughput] = useState<(typeof THROUGHPUT)[number]["id"]>("normal");
+  // Janela de envio: desligada por padrão mantém o comportamento de sempre
+  // (envia a qualquer hora). Ligada, só envia nos dias e horários escolhidos.
+  const [windowActive, setWindowActive] = useState(false);
+  const [windowDays, setWindowDays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [windowStart, setWindowStart] = useState("09:00");
+  const [windowEnd, setWindowEnd] = useState("18:00");
   const [drafts, setDrafts] = useState<DisparosDraft[]>([]);
   const [draftNotice, setDraftNotice] = useState<string | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
@@ -160,6 +178,12 @@ export function DisparosMassaHub() {
   const [showTemplateGallery, setShowTemplateGallery] = useState(false);
   const [showDrafts, setShowDrafts] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importOptIn, setImportOptIn] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importResult, setImportResult] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   useEffect(() => {
     setDrafts(loadDisparosDrafts());
@@ -241,6 +265,46 @@ export function DisparosMassaHub() {
     return () => window.clearTimeout(timer);
   }, [refreshAudiencePreview]);
 
+  const handleImport = useCallback(async () => {
+    setImportBusy(true);
+    setImportError(null);
+    setImportResult(null);
+    try {
+      const res = await fetch("/api/client/whatsapp-campaigns/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: importText, optIn: importOptIn }),
+      });
+      const payload = (await res.json()) as {
+        error?: string;
+        created?: number;
+        reused?: number;
+        optedInCount?: number;
+        duplicatesInFile?: number;
+        invalidCount?: number;
+        truncated?: boolean;
+      };
+      if (!res.ok) throw new Error(payload.error ?? "Não foi possível importar a lista.");
+
+      // Relato completo de propósito: importação silenciosa esconde linha
+      // descartada, e o cliente só descobre quando o disparo não alcança quem
+      // ele esperava.
+      const partes = [`${payload.created ?? 0} contato(s) novo(s)`];
+      if (payload.reused) partes.push(`${payload.reused} já existia(m) no CRM`);
+      if (payload.optedInCount) partes.push(`${payload.optedInCount} autorizado(s)`);
+      if (payload.duplicatesInFile) partes.push(`${payload.duplicatesInFile} repetido(s) na lista`);
+      if (payload.invalidCount) partes.push(`${payload.invalidCount} linha(s) inválida(s)`);
+      if (payload.truncated) partes.push("lista cortada no limite de 5.000");
+      setImportResult(`${partes.join(" · ")}.`);
+      setImportText("");
+      await loadCampaignData();
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Falha ao importar.");
+    } finally {
+      setImportBusy(false);
+    }
+  }, [importText, importOptIn, loadCampaignData]);
+
   const handleBulkOptIn = useCallback(async () => {
     setOptInBusy(true);
     setCampaignError(null);
@@ -274,6 +338,53 @@ export function DisparosMassaHub() {
     ? new Date(schedule).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })
     : "Enviar agora";
   const throughputLabel = THROUGHPUT.find((t) => t.id === throughput)?.label ?? "Normal";
+
+  /**
+   * Aviso — nunca bloqueio. Quem decide é o dono do número; o nosso papel é
+   * ele não descobrir o risco depois que o WhatsApp já derrubou a linha.
+   *
+   * Dois perigos diferentes: mandar rápido demais (ritmo) e concentrar muita
+   * mensagem numa janela curta, que é o padrão que mais parece robô.
+   */
+  const riskWarning = useMemo(() => {
+    const perMinute = THROUGHPUT.find((t) => t.id === throughput)?.perMinute ?? 20;
+    // Quem de fato vai receber: só lead com opt-in ativo entra no disparo.
+    const total = audiencePreview?.optedIn ?? eligibleRecipients;
+    if (total <= 0) return null;
+
+    const avisos: string[] = [];
+    if (throughput === "acelerado") {
+      avisos.push(
+        "o ritmo Acelerado (40 msgs/min) só é seguro em número já aquecido, com histórico de conversa",
+      );
+    }
+
+    if (windowActive) {
+      const [h1 = 0, m1 = 0] = windowStart.split(":").map(Number);
+      const [h2 = 0, m2 = 0] = windowEnd.split(":").map(Number);
+      const minutosPorDia = Math.max(0, h2 * 60 + m2 - (h1 * 60 + m1));
+      const capacidadeDiaria = minutosPorDia * perMinute;
+      if (windowDays.length === 0) {
+        avisos.push("nenhum dia da semana está marcado, então nada vai ser enviado");
+      } else if (capacidadeDiaria > 0 && total > capacidadeDiaria * 3) {
+        const dias = Math.ceil(total / capacidadeDiaria);
+        avisos.push(
+          `nessa janela cabem ~${capacidadeDiaria.toLocaleString("pt-BR")} mensagens por dia, então esta lista levaria ~${dias} dia(s) de envio`,
+        );
+      } else if (minutosPorDia > 0 && minutosPorDia <= 120 && total > 300) {
+        avisos.push(
+          "concentrar muita mensagem numa janela curta é o padrão que mais chama atenção do WhatsApp",
+        );
+      }
+    } else if (total > 500) {
+      avisos.push(
+        "sem janela de horário, o envio pode cair de madrugada — hora em que resposta é rara e denúncia é comum",
+      );
+    }
+
+    if (avisos.length === 0) return null;
+    return `Atenção: ${avisos.join("; ")}. Isso pode fazer o WhatsApp bloquear seu número.`;
+  }, [throughput, windowActive, windowStart, windowEnd, windowDays, audiencePreview, eligibleRecipients]);
   const charCount = body.length;
   const preview = previewBody(body);
   const selectedMetaTemplate = useMemo(
@@ -400,6 +511,16 @@ export function DisparosMassaHub() {
           metaTemplateLang: isMetaTransport ? selectedMetaTemplate?.language ?? "pt_BR" : undefined,
           throughput,
           scheduledAt: schedule || null,
+          sendWindow: windowActive
+            ? {
+                ativo: true,
+                diasAtivos: windowDays,
+                horaInicio: Number(windowStart.split(":")[0] ?? 9),
+                minutoInicio: Number(windowStart.split(":")[1] ?? 0),
+                horaFim: Number(windowEnd.split(":")[0] ?? 18),
+                minutoFim: Number(windowEnd.split(":")[1] ?? 0),
+              }
+            : null,
         }),
       });
       const payload = (await response.json()) as { error?: string };
@@ -657,6 +778,90 @@ export function DisparosMassaHub() {
                 </Button>
               ) : null}
             </div>
+
+            <div className="mt-4 border-t border-line/60 pt-4">
+              <button
+                type="button"
+                onClick={() => setShowImport((v) => !v)}
+                className="flex w-full items-center justify-between text-left text-xs font-medium text-content-secondary transition-colors hover:text-content"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Upload className="size-3.5 text-primary" aria-hidden />
+                  Importar lista de fora do CRM
+                </span>
+                <ChevronDown
+                  className={cn("size-4 shrink-0 transition-transform", showImport && "rotate-180")}
+                  aria-hidden
+                />
+              </button>
+
+              {showImport ? (
+                <div className="mt-3 space-y-3">
+                  <textarea
+                    value={importText}
+                    onChange={(e) => setImportText(e.target.value)}
+                    placeholder={"nome,telefone\nMaria Silva,5562991234567\nJoão Souza,(62) 99765-4321"}
+                    className="min-h-[120px] w-full resize-y rounded-xl border border-line bg-surface-card/40 px-3 py-2.5 font-mono text-xs text-content outline-none"
+                  />
+                  <p className="text-[11px] leading-relaxed text-content-secondary">
+                    Cole do Excel ou de um CSV. Aceita vírgula ou ponto e vírgula, com ou sem
+                    cabeçalho. Contato que já existe no CRM é reaproveitado, não duplicado.
+                  </p>
+
+                  <label className="flex items-start gap-2 text-[11px] leading-relaxed text-content-secondary">
+                    <input
+                      type="checkbox"
+                      checked={importOptIn}
+                      onChange={(e) => setImportOptIn(e.target.checked)}
+                      className="mt-0.5 size-3.5 shrink-0 accent-primary"
+                    />
+                    <span>
+                      Marcar estes contatos como autorizados a receber WhatsApp. Só marque se você
+                      realmente tem o consentimento — disparo para quem não pediu é o caminho mais
+                      rápido para o número ser bloqueado.
+                    </span>
+                  </label>
+
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleImport}
+                    isLoading={importBusy}
+                    disabled={!importText.trim()}
+                  >
+                    Importar contatos
+                  </Button>
+
+                  {importResult ? (
+                    <div
+                      className={cn(
+                        "rounded-xl border px-3 py-2.5 text-[11px] leading-relaxed",
+                        isLight
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                          : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+                      )}
+                      role="status"
+                    >
+                      {importResult}
+                    </div>
+                  ) : null}
+                  {importError ? (
+                    <div
+                      className={cn(
+                        "rounded-xl border px-3 py-2.5 text-[11px] leading-relaxed",
+                        isLight
+                          ? "border-red-200 bg-red-50 text-red-900"
+                          : "border-red-500/30 bg-red-500/10 text-red-200",
+                      )}
+                      role="alert"
+                    >
+                      {importError}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           </div>
 
           <div
@@ -835,6 +1040,107 @@ export function DisparosMassaHub() {
                     {THROUGHPUT.find((t) => t.id === throughput)?.sub}
                   </p>
                 </div>
+
+                <div className="border-t border-line/60 pt-4">
+                  <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-content-secondary">
+                    <CalendarClock className="size-3.5" aria-hidden />
+                    Horários permitidos
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setWindowActive((v) => !v)}
+                    className={cn(
+                      "flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left text-xs transition-colors",
+                      windowActive
+                        ? "border-primary/60 bg-primary/10 text-content"
+                        : "border-line bg-surface-card/40 text-content-secondary hover:border-primary/35",
+                    )}
+                  >
+                    <span>
+                      {windowActive
+                        ? "Só envia dentro dos dias e horários escolhidos"
+                        : "Envia a qualquer hora, todos os dias"}
+                    </span>
+                    <span className="text-[11px] font-medium text-primary">
+                      {windowActive ? "Configurado" : "Definir"}
+                    </span>
+                  </button>
+
+                  {windowActive ? (
+                    <div className="mt-3 space-y-3 rounded-xl border border-line bg-surface-deep/30 p-3">
+                      <div>
+                        <span className="mb-1.5 block text-[11px] font-medium text-content-secondary">
+                          Dias da semana
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {WEEK_DAYS.map((day) => {
+                            const on = windowDays.includes(day.value);
+                            return (
+                              <button
+                                key={day.value}
+                                type="button"
+                                onClick={() =>
+                                  setWindowDays((current) =>
+                                    on
+                                      ? current.filter((d) => d !== day.value)
+                                      : [...current, day.value].sort((a, b) => a - b),
+                                  )
+                                }
+                                className={cn(
+                                  "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                                  on
+                                    ? "border-primary bg-primary text-white"
+                                    : "border-line text-content-secondary hover:border-primary/40",
+                                )}
+                              >
+                                {day.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <span className="mb-1 block text-[11px] font-medium text-content-secondary">
+                            Começa às
+                          </span>
+                          <Input
+                            type="time"
+                            value={windowStart}
+                            onChange={(e) => setWindowStart(e.target.value)}
+                            className="rounded-xl"
+                          />
+                        </div>
+                        <div>
+                          <span className="mb-1 block text-[11px] font-medium text-content-secondary">
+                            Para às
+                          </span>
+                          <Input
+                            type="time"
+                            value={windowEnd}
+                            onChange={(e) => setWindowEnd(e.target.value)}
+                            className="rounded-xl"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                {riskWarning ? (
+                  <div
+                    className={cn(
+                      "flex items-start gap-2 rounded-xl border px-3 py-2.5 text-[11px] leading-relaxed",
+                      isLight
+                        ? "border-amber-300 bg-amber-50 text-amber-900"
+                        : "border-amber-500/40 bg-amber-500/10 text-amber-200",
+                    )}
+                    role="status"
+                  >
+                    <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                    <span>{riskWarning}</span>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
