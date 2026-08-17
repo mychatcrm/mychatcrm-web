@@ -39,12 +39,23 @@ export const CAMPAIGN_THROUGHPUT_PER_MINUTE: Record<CampaignThroughput, number> 
   acelerado: 40,
 };
 
+/**
+ * Um "público" da campanha. A campanha pode combinar quantos blocos o cliente
+ * quiser — um filtro do CRM, uma lista importada e alguns contatos digitados
+ * na mesma campanha, ou vários blocos do mesmo tipo (3 tags diferentes, por
+ * exemplo). `leads` carrega ids já resolvidos (import/manual já gravaram o
+ * lead antes da campanha existir); `crm` é resolvido no momento da criação.
+ */
+export type CampaignAudienceBlockInput =
+  | { kind: "crm"; filter: "all" | "tag" | "funnel_stage"; value?: string | null }
+  | { kind: "leads"; leadIds: string[] };
+
 type CampaignInput = {
   name: string;
   connectionId: string;
   agentId: string;
-  audienceType: "all" | "tag" | "funnel_stage";
-  audienceValue?: string | null;
+  /** Cru de propósito; ver `parseCampaignAudienceBlocks`, chamado dentro de `createWhatsAppCampaign`. */
+  audienceBlocks: unknown;
   messageTemplate: string;
   metaTemplateName?: string | null;
   metaTemplateLang?: string | null;
@@ -246,7 +257,7 @@ export function buildWhatsAppCampaignTemplateParams(lead: Record<string, unknown
 
 export function leadMatchesWhatsAppCampaignAudience(
   lead: Record<string, unknown>,
-  audienceType: CampaignInput["audienceType"],
+  audienceType: "all" | "tag" | "funnel_stage",
   audienceValue: string | null,
 ): boolean {
   if (audienceType === "all") return true;
@@ -261,6 +272,73 @@ export function leadMatchesWhatsAppCampaignAudience(
   return tags.includes(audienceValue.toLowerCase());
 }
 
+const CAMPAIGN_AUDIENCE_LEAD_COLUMNS =
+  "id, name, phone, status, profile_metadata, whatsapp_opt_in_at, whatsapp_opt_in_source";
+
+/**
+ * Une os públicos da campanha num único conjunto de leads, sem repetir quem
+ * bate em mais de um bloco (ex.: contato importado que também está na tag
+ * escolhida no mesmo disparo). Cada bloco só entrega quem já tem opt-in ativo
+ * — inclusive os blocos de contatos explícitos, porque `leadIds` pode incluir
+ * um lead reaproveitado que nunca autorizou.
+ */
+export async function resolveWhatsAppCampaignAudience(
+  sb: ServiceClient,
+  tenantId: string,
+  blocks: CampaignAudienceBlockInput[],
+): Promise<Array<Record<string, unknown>>> {
+  const resolved = new Map<string, Record<string, unknown>>();
+
+  const crmBlocks = blocks.filter(
+    (block): block is Extract<CampaignAudienceBlockInput, { kind: "crm" }> => block.kind === "crm",
+  );
+  if (crmBlocks.length > 0) {
+    const { data: candidateRows, error } = await sb
+      .from("leads")
+      .select(CAMPAIGN_AUDIENCE_LEAD_COLUMNS)
+      .eq("tenant_id", tenantId)
+      .eq("whatsapp_opt_in", true)
+      .is("whatsapp_opt_out_at", null)
+      .not("whatsapp_opt_in_at", "is", null)
+      .not("whatsapp_opt_in_source", "is", null)
+      .not("phone", "is", null)
+      .limit(5000);
+    if (error) throw new Error(`campaign_audience_query:${error.message}`);
+    for (const lead of (candidateRows ?? []) as Array<Record<string, unknown>>) {
+      const matchesAnyBlock = crmBlocks.some((block) =>
+        leadMatchesWhatsAppCampaignAudience(lead, block.filter, text(block.value)),
+      );
+      if (matchesAnyBlock) resolved.set(String(lead.id), lead);
+    }
+  }
+
+  const explicitIds = [
+    ...new Set(
+      blocks
+        .filter((block): block is Extract<CampaignAudienceBlockInput, { kind: "leads" }> => block.kind === "leads")
+        .flatMap((block) => block.leadIds.map((id) => String(id).trim()).filter(Boolean)),
+    ),
+  ].filter((id) => !resolved.has(id));
+  if (explicitIds.length > 0) {
+    const { data: explicitRows, error } = await sb
+      .from("leads")
+      .select(CAMPAIGN_AUDIENCE_LEAD_COLUMNS)
+      .eq("tenant_id", tenantId)
+      .eq("whatsapp_opt_in", true)
+      .is("whatsapp_opt_out_at", null)
+      .not("whatsapp_opt_in_at", "is", null)
+      .not("whatsapp_opt_in_source", "is", null)
+      .not("phone", "is", null)
+      .in("id", explicitIds);
+    if (error) throw new Error(`campaign_audience_query:${error.message}`);
+    for (const lead of (explicitRows ?? []) as Array<Record<string, unknown>>) {
+      resolved.set(String(lead.id), lead);
+    }
+  }
+
+  return [...resolved.values()];
+}
+
 async function resolveMetaTemplate(params: {
   tenantId: string;
   phoneNumberId: string;
@@ -273,6 +351,27 @@ async function resolveMetaTemplate(params: {
     accessToken: cloudConnection.access_token,
   });
   return templates.find((t) => t.name === params.templateName) ?? null;
+}
+
+/** Lê os blocos de público crus do cliente — nunca confia na forma que chega. */
+export function parseCampaignAudienceBlocks(raw: unknown): CampaignAudienceBlockInput[] {
+  if (!Array.isArray(raw)) return [];
+  const blocks: CampaignAudienceBlockInput[] = [];
+  for (const item of raw) {
+    const entry = object(item);
+    if (entry.kind === "crm") {
+      const filter =
+        entry.filter === "tag" || entry.filter === "funnel_stage" || entry.filter === "all" ? entry.filter : null;
+      if (!filter) continue;
+      blocks.push({ kind: "crm", filter, value: text(entry.value) });
+    } else if (entry.kind === "leads") {
+      const leadIds = Array.isArray(entry.leadIds)
+        ? [...new Set(entry.leadIds.map((id) => String(id).trim()).filter(Boolean))]
+        : [];
+      if (leadIds.length > 0) blocks.push({ kind: "leads", leadIds });
+    }
+  }
+  return blocks;
 }
 
 export async function createWhatsAppCampaign(params: {
@@ -330,22 +429,9 @@ export async function createWhatsAppCampaign(params: {
     if (messageTemplate.length > 4000) throw new Error("campaign_message_too_long");
   }
 
-  const { data: candidateRows, error: leadError } = await params.sb
-    .from("leads")
-    .select("id, name, phone, status, profile_metadata, whatsapp_opt_in_at, whatsapp_opt_in_source")
-    .eq("tenant_id", params.tenantId)
-    .eq("whatsapp_opt_in", true)
-    .is("whatsapp_opt_out_at", null)
-    .not("whatsapp_opt_in_at", "is", null)
-    .not("whatsapp_opt_in_source", "is", null)
-    .not("phone", "is", null)
-    .limit(5000);
-  if (leadError) throw new Error(`campaign_audience_query:${leadError.message}`);
-
-  const audienceValue = text(input.audienceValue);
-  const leads = ((candidateRows ?? []) as Array<Record<string, unknown>>).filter((lead) =>
-    leadMatchesWhatsAppCampaignAudience(lead, input.audienceType, audienceValue),
-  );
+  const audienceBlocks = parseCampaignAudienceBlocks(input.audienceBlocks);
+  if (audienceBlocks.length === 0) throw new Error("campaign_audience_required");
+  const leads = await resolveWhatsAppCampaignAudience(params.sb, params.tenantId, audienceBlocks);
   if (leads.length === 0) throw new Error("campaign_has_no_opted_in_recipients");
 
   const now = new Date().toISOString();
@@ -355,6 +441,14 @@ export async function createWhatsAppCampaign(params: {
       : now;
   const throughput: CampaignThroughput =
     input.throughput && input.throughput in CAMPAIGN_THROUGHPUT_PER_MINUTE ? input.throughput : "normal";
+  // audience_type/audience_config viram resumo legível quando dá pra resumir
+  // num único filtro; audience_blocks guarda a configuração completa sempre —
+  // sem isso, uma campanha com 3 públicos combinados ficaria irrecuperável
+  // depois de criada (o campo resumo não tem como representar a combinação).
+  const singleCrmBlock =
+    audienceBlocks.length === 1 && audienceBlocks[0]!.kind === "crm"
+      ? (audienceBlocks[0] as Extract<CampaignAudienceBlockInput, { kind: "crm" }>)
+      : null;
   const { data: campaign, error } = await params.sb
     .from("whatsapp_campaigns")
     .insert({
@@ -363,8 +457,9 @@ export async function createWhatsAppCampaign(params: {
       connection_id: connection.connectionId,
       transport: connection.transport,
       agent_id: input.agentId,
-      audience_type: input.audienceType,
-      audience_config: audienceValue ? { value: audienceValue } : {},
+      audience_type: singleCrmBlock?.filter ?? "custom",
+      audience_config: singleCrmBlock && text(singleCrmBlock.value) ? { value: text(singleCrmBlock.value) } : {},
+      audience_blocks: audienceBlocks,
       message_template: messageTemplate,
       meta_template_name: metaTemplateName,
       meta_template_lang: metaTemplateLang,

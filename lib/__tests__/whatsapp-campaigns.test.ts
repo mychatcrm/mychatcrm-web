@@ -45,7 +45,9 @@ vi.mock("@/lib/server/lead-redistribution", () => ({
 import {
   createWhatsAppCampaign,
   leadMatchesWhatsAppCampaignAudience,
+  parseCampaignAudienceBlocks,
   renderWhatsAppCampaignTemplate,
+  resolveWhatsAppCampaignAudience,
 } from "@/lib/server/whatsapp-campaigns";
 
 describe("WhatsApp campaign helpers", () => {
@@ -81,7 +83,7 @@ type Row = Record<string, unknown>;
 
 function makeBuilder(resultProvider: () => { data: unknown; error: unknown }, captureInsert?: (payload: unknown) => void) {
   const builder: Record<string, unknown> = {};
-  const chainMethods = ["select", "eq", "is", "not", "limit", "order", "update", "delete"];
+  const chainMethods = ["select", "eq", "is", "not", "limit", "order", "update", "delete", "in"];
   chainMethods.forEach((method) => {
     builder[method] = () => builder;
   });
@@ -173,7 +175,7 @@ describe("createWhatsAppCampaign — transporte cloud_api (API Meta)", () => {
         name: "Campanha Meta",
         connectionId: "pn-1",
         agentId: "agent-1",
-        audienceType: "all",
+        audienceBlocks: [{ kind: "crm", filter: "all" }],
         messageTemplate: "",
         metaTemplateName: "promo_v1",
         metaTemplateLang: null,
@@ -203,7 +205,7 @@ describe("createWhatsAppCampaign — transporte cloud_api (API Meta)", () => {
           name: "Campanha Meta",
           connectionId: "pn-1",
           agentId: "agent-1",
-          audienceType: "all",
+          audienceBlocks: [{ kind: "crm", filter: "all" }],
           messageTemplate: "",
           metaTemplateName: null,
           throughput: "normal",
@@ -230,13 +232,128 @@ describe("createWhatsAppCampaign — transporte cloud_api (API Meta)", () => {
           name: "Campanha Meta",
           connectionId: "pn-1",
           agentId: "agent-1",
-          audienceType: "all",
+          audienceBlocks: [{ kind: "crm", filter: "all" }],
           messageTemplate: "",
           metaTemplateName: "promo_v1",
           throughput: "normal",
         },
       }),
     ).rejects.toThrow("campaign_meta_template_not_approved");
+  });
+});
+
+describe("parseCampaignAudienceBlocks", () => {
+  it("descarta blocos malformados e mantém os válidos", () => {
+    expect(
+      parseCampaignAudienceBlocks([
+        { kind: "crm", filter: "tag", value: "vip" },
+        { kind: "crm", filter: "esquisito" },
+        { kind: "leads", leadIds: ["lead-1", "lead-1", "  ", "lead-2"] },
+        { kind: "leads", leadIds: [] },
+        { kind: "outro" },
+        null,
+        "string",
+      ]),
+    ).toEqual([
+      { kind: "crm", filter: "tag", value: "vip" },
+      { kind: "leads", leadIds: ["lead-1", "lead-2"] },
+    ]);
+  });
+
+  it("devolve lista vazia quando não é um array", () => {
+    expect(parseCampaignAudienceBlocks(undefined)).toEqual([]);
+    expect(parseCampaignAudienceBlocks("não é array")).toEqual([]);
+  });
+});
+
+describe("resolveWhatsAppCampaignAudience", () => {
+  it("une bloco de CRM com bloco de leads explícitos sem duplicar quem bate nos dois", async () => {
+    let call = 0;
+    const sb = {
+      from: (table: string) => {
+        if (table !== "leads") throw new Error(`unexpected table ${table}`);
+        call += 1;
+        const rows =
+          call === 1
+            ? [
+                {
+                  id: "lead-1",
+                  name: "Ana",
+                  phone: "5511900000001",
+                  status: "novo",
+                  profile_metadata: { tags: ["vip"] },
+                  whatsapp_opt_in_at: "2026-01-01T00:00:00.000Z",
+                  whatsapp_opt_in_source: "crm_manual_confirmation",
+                },
+              ]
+            : [
+                {
+                  id: "lead-1",
+                  name: "Ana",
+                  phone: "5511900000001",
+                  status: "novo",
+                  profile_metadata: { tags: ["vip"] },
+                  whatsapp_opt_in_at: "2026-01-01T00:00:00.000Z",
+                  whatsapp_opt_in_source: "crm_manual_confirmation",
+                },
+                {
+                  id: "lead-2",
+                  name: "Beto",
+                  phone: "5511900000002",
+                  status: "novo",
+                  profile_metadata: {},
+                  whatsapp_opt_in_at: "2026-01-01T00:00:00.000Z",
+                  whatsapp_opt_in_source: "csv_import",
+                },
+              ];
+        return makeBuilder(() => ({ data: rows, error: null }));
+      },
+    } as never;
+
+    const result = await resolveWhatsAppCampaignAudience(sb, "tenant-1", [
+      { kind: "crm", filter: "tag", value: "vip" },
+      { kind: "leads", leadIds: ["lead-1", "lead-2"] },
+    ]);
+
+    expect(result.map((row) => row.id).sort()).toEqual(["lead-1", "lead-2"]);
+    // Só consulta leads explícitos que ainda não vieram do bloco de CRM.
+    expect(call).toBe(2);
+  });
+
+  it("não bate no banco de novo quando todo leadId explícito já veio do bloco de CRM", async () => {
+    let call = 0;
+    const sb = {
+      from: () => {
+        call += 1;
+        return makeBuilder(() => ({
+          data: [
+            {
+              id: "lead-1",
+              name: "Ana",
+              phone: "5511900000001",
+              status: "novo",
+              profile_metadata: {},
+              whatsapp_opt_in_at: "2026-01-01T00:00:00.000Z",
+              whatsapp_opt_in_source: "crm_manual_confirmation",
+            },
+          ],
+          error: null,
+        }));
+      },
+    } as never;
+
+    const result = await resolveWhatsAppCampaignAudience(sb, "tenant-1", [
+      { kind: "crm", filter: "all" },
+      { kind: "leads", leadIds: ["lead-1"] },
+    ]);
+
+    expect(result.map((row) => row.id)).toEqual(["lead-1"]);
+    expect(call).toBe(1);
+  });
+
+  it("devolve vazio quando não sobra nenhum bloco usável", async () => {
+    const sb = { from: () => { throw new Error("não deveria consultar o banco"); } } as never;
+    expect(await resolveWhatsAppCampaignAudience(sb, "tenant-1", [])).toEqual([]);
   });
 });
 
@@ -259,7 +376,7 @@ describe("createWhatsAppCampaign — agente obrigatório", () => {
           name: "Campanha",
           connectionId: "evo-1",
           agentId: "",
-          audienceType: "all",
+          audienceBlocks: [{ kind: "crm", filter: "all" }],
           messageTemplate: "Olá {{nome}}",
           throughput: "normal",
         },
@@ -278,11 +395,96 @@ describe("createWhatsAppCampaign — agente obrigatório", () => {
           name: "Campanha",
           connectionId: "evo-1",
           agentId: "agent-inativo",
-          audienceType: "all",
+          audienceBlocks: [{ kind: "crm", filter: "all" }],
           messageTemplate: "Olá {{nome}}",
           throughput: "normal",
         },
       }),
     ).rejects.toThrow("campaign_agent_not_available");
+  });
+});
+
+describe("createWhatsAppCampaign — público obrigatório", () => {
+  beforeEach(() => {
+    listTenantWhatsappConnectionsMock.mockReset();
+    listTenantWhatsappConnectionsMock.mockResolvedValue([
+      { connectionId: "evo-1", transport: "evolution", label: "QR Code", slotIndex: 0, connected: true, activeProvider: "evolution" },
+    ]);
+  });
+
+  it("rejeita quando nenhum público foi adicionado", async () => {
+    const sb = makeSb({
+      agentRow: { agent_id: "disparos-default", active: true, metadata: { isBroadcastAgent: true } },
+      leadRows: [OPTED_IN_LEAD],
+      insertedCampaign: { id: "camp-1" },
+    });
+
+    await expect(
+      createWhatsAppCampaign({
+        sb,
+        tenantId: "tenant-1",
+        input: {
+          name: "Campanha",
+          connectionId: "evo-1",
+          agentId: "agent-1",
+          audienceBlocks: [],
+          messageTemplate: "Olá {{nome}}",
+          throughput: "normal",
+        },
+      }),
+    ).rejects.toThrow("campaign_audience_required");
+  });
+
+  it("cria a campanha combinando um bloco de CRM com um bloco de leads explícitos", async () => {
+    let captured: Row | undefined;
+    let leadsCallCount = 0;
+    const sb = {
+      from: (table: string) => {
+        if (table === "tenant_agents") {
+          return makeBuilder(() => ({
+            data: { agent_id: "disparos-default", active: true, metadata: { isBroadcastAgent: true } },
+            error: null,
+          }));
+        }
+        if (table === "leads") {
+          leadsCallCount += 1;
+          return makeBuilder(() => ({ data: [OPTED_IN_LEAD], error: null }));
+        }
+        if (table === "whatsapp_campaigns") {
+          return makeBuilder(
+            () => ({ data: { id: "camp-1" }, error: null }),
+            (payload) => {
+              captured = payload as Row;
+            },
+          );
+        }
+        if (table === "whatsapp_campaign_recipients") return makeBuilder(() => ({ data: null, error: null }));
+        throw new Error(`unexpected table ${table}`);
+      },
+    } as never;
+
+    const campaign = await createWhatsAppCampaign({
+      sb,
+      tenantId: "tenant-1",
+      input: {
+        name: "Campanha combinada",
+        connectionId: "evo-1",
+        agentId: "agent-1",
+        audienceBlocks: [
+          { kind: "crm", filter: "all" },
+          { kind: "leads", leadIds: ["lead-1"] },
+        ],
+        messageTemplate: "Olá {{nome}}",
+        throughput: "normal",
+      },
+    });
+
+    expect(campaign).toEqual({ id: "camp-1" });
+    expect(leadsCallCount).toBe(1); // lead-1 já veio do bloco de CRM, não repete a consulta
+    expect(captured?.audience_type).toBe("custom");
+    expect(captured?.audience_blocks).toEqual([
+      { kind: "crm", filter: "all", value: null },
+      { kind: "leads", leadIds: ["lead-1"] },
+    ]);
   });
 });

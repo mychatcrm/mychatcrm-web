@@ -10,9 +10,15 @@
  *    destinatário. Cobrar na importação faria 5.000 contatos importados
  *    queimarem 5.000 leads do mês mesmo que só 100 recebessem mensagem.
  *
- * 2. O opt-in gravado aqui tem origem própria (`csv_import`), separada do
- *    opt-in em massa da tela. São consentimentos de natureza diferente e
- *    misturar os dois apagaria a trilha de onde cada autorização veio.
+ * 2. O opt-in gravado aqui tem origem própria — `csv_import` para lista colada
+ *    em massa, `manual_entry` para contato digitado um a um no público
+ *    "Digitar manualmente" — separada do opt-in em massa da tela. São
+ *    consentimentos de natureza diferente e misturar apagaria a trilha de
+ *    onde cada autorização veio.
+ *
+ * A resposta devolve `leadIds` (inseridos + reaproveitados): quem chama esta
+ * rota usa esse conjunto pra montar um bloco de público explícito na
+ * campanha — a importação em si não manda a campanha pra ninguém.
  */
 import { NextResponse } from "next/server";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
@@ -25,13 +31,16 @@ import { CRM_KANBAN_STATUS_NOVO } from "@/lib/server/crm-lead-lifecycle";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-const OPT_IN_SOURCE = "csv_import";
-
 export async function POST(request: Request) {
   const guard = await requireActiveClientSession();
   if (!guard.ok) return guard.response;
 
-  const body = (await request.json().catch(() => ({}))) as { content?: unknown; optIn?: unknown };
+  const body = (await request.json().catch(() => ({}))) as {
+    content?: unknown;
+    optIn?: unknown;
+    source?: unknown;
+  };
+  const optInSource = body.source === "manual_entry" ? "manual_entry" : "csv_import";
   const content = typeof body.content === "string" ? body.content : "";
   if (!content.trim()) {
     return NextResponse.json({ error: "Envie o conteúdo da lista." }, { status: 400 });
@@ -101,7 +110,7 @@ export async function POST(request: Request) {
         tenantId,
         phone: contact.phone,
         contactName: contact.name,
-        source: OPT_IN_SOURCE,
+        source: optInSource,
         status: CRM_KANBAN_STATUS_NOVO,
         occurredAt: now,
       }),
@@ -142,7 +151,7 @@ export async function POST(request: Request) {
         .update({
           whatsapp_opt_in: true,
           whatsapp_opt_in_at: now,
-          whatsapp_opt_in_source: OPT_IN_SOURCE,
+          whatsapp_opt_in_source: optInSource,
           whatsapp_opt_out_at: null,
           updated_at: now,
         })
@@ -164,5 +173,6 @@ export async function POST(request: Request) {
     truncated: parsed.truncated,
     invalid: parsed.invalid.slice(0, 20),
     invalidCount: parsed.invalid.length,
+    leadIds: [...insertedIds, ...reusedIds],
   });
 }
