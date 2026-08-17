@@ -272,6 +272,29 @@ export function leadMatchesWhatsAppCampaignAudience(
   return tags.includes(audienceValue.toLowerCase());
 }
 
+/**
+ * Tags distintas realmente em uso pelos leads do tenant — alimenta o seletor
+ * de "Por tag" do público do disparo. Sem isso o cliente tinha que adivinhar
+ * o texto exato de uma tag pra digitar, e ia digitar errado.
+ *
+ * Dedupe é case-insensitive (a comparação em `leadMatchesWhatsAppCampaignAudience`
+ * também é), guardando a primeira grafia vista como forma de exibição.
+ */
+export function computeDistinctLeadTags(leads: Array<Record<string, unknown>>): string[] {
+  const seen = new Map<string, string>();
+  for (const lead of leads) {
+    const metadata = object(lead.profile_metadata);
+    if (!Array.isArray(metadata.tags)) continue;
+    for (const raw of metadata.tags) {
+      const tag = String(raw).trim();
+      if (!tag) continue;
+      const key = tag.toLowerCase();
+      if (!seen.has(key)) seen.set(key, tag);
+    }
+  }
+  return [...seen.values()].sort((a, b) => a.localeCompare(b, "pt-BR")).slice(0, 200);
+}
+
 const CAMPAIGN_AUDIENCE_LEAD_COLUMNS =
   "id, name, phone, status, profile_metadata, whatsapp_opt_in_at, whatsapp_opt_in_source";
 

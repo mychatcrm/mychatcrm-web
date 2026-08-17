@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
+  ArrowLeft,
   BookOpen,
   Bot,
   CalendarClock,
@@ -11,21 +12,18 @@ import {
   ChevronDown,
   Gauge,
   Layers,
-  RefreshCw,
   Send,
   ShieldCheck,
   Sparkles,
-  Square,
-  Trash2,
   UserCog,
   Users,
   Zap,
 } from "lucide-react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
-import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
+import { useCrmFunnels } from "@/components/dashboard/CrmFunnelsContext";
 import { WhatsAppGlyph } from "@/components/dashboard/crm/crm-phone";
 import {
   loadDisparosDrafts,
@@ -41,6 +39,7 @@ import {
   hasUsablePublico,
   type PublicoBlock,
 } from "@/components/dashboard/disparos/DisparosPublicoBuilder";
+import { DisparosCampanhasList, type DisparosHistoryRow } from "@/components/dashboard/disparos/DisparosCampanhasList";
 
 const DEFAULT_MESSAGE =
   "Ola {{nome}}, preparamos uma condicao especial para {{empresa}}. Responda SIM para receber o link seguro.";
@@ -142,7 +141,11 @@ function StepBadge({ n }: { n: number }) {
 
 export function DisparosMassaHub() {
   const { isLight } = usePanelAppearance();
+  const { funnels } = useCrmFunnels();
   const taRef = useRef<HTMLTextAreaElement>(null);
+  // Tela abre sempre na lista (vazia ou com cards) — o formulário só aparece
+  // quando o cliente pede pra criar ou continuar um rascunho.
+  const [view, setView] = useState<"list" | "create">("list");
   const [campaignName, setCampaignName] = useState("");
   const [publicoBlocks, setPublicoBlocks] = useState<PublicoBlock[]>(() => [createCrmBlock()]);
   const [schedule, setSchedule] = useState("");
@@ -165,13 +168,13 @@ export function DisparosMassaHub() {
   const [agentMode, setAgentMode] = useState<"existing" | "disparos">("existing");
   const [agentId, setAgentId] = useState("");
   const [eligibleRecipients, setEligibleRecipients] = useState(0);
+  const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [campaignBusy, setCampaignBusy] = useState(false);
   const [campaignError, setCampaignError] = useState<string | null>(null);
   const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([]);
   const [metaTemplateName, setMetaTemplateName] = useState("");
   const [processingCampaignId, setProcessingCampaignId] = useState<string | null>(null);
   const [showTemplateGallery, setShowTemplateGallery] = useState(false);
-  const [showDrafts, setShowDrafts] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
@@ -188,6 +191,7 @@ export function DisparosMassaHub() {
         agents?: CampaignAgent[];
         eligibleRecipients?: number;
         disparosAgent?: { agentId: string; displayName: string } | null;
+        availableTags?: string[];
       };
       if (!response.ok) throw new Error(payload.error ?? "Não foi possível carregar campanhas.");
       setCampaigns(payload.campaigns ?? []);
@@ -195,6 +199,7 @@ export function DisparosMassaHub() {
       setAgents(payload.agents ?? []);
       setEligibleRecipients(payload.eligibleRecipients ?? 0);
       setDisparosAgent(payload.disparosAgent ?? null);
+      setAvailableTags(payload.availableTags ?? []);
       setConnectionId((current) => current || payload.connections?.[0]?.connectionId || "");
     } catch (error) {
       setCampaignError(error instanceof Error ? error.message : "Não foi possível carregar campanhas.");
@@ -360,6 +365,39 @@ export function DisparosMassaHub() {
     [commitDrafts],
   );
 
+  /** Volta o formulário aos padrões — usado ao abrir "Nova campanha" pra não herdar sobra de uma edição anterior. */
+  const resetCampaignForm = useCallback(() => {
+    setCampaignName("");
+    setPublicoBlocks([createCrmBlock()]);
+    setSchedule("");
+    setBody(DEFAULT_MESSAGE);
+    setThroughput("normal");
+    setWindowActive(false);
+    setWindowDays([1, 2, 3, 4, 5]);
+    setWindowStart("09:00");
+    setWindowEnd("18:00");
+    setAgentMode("existing");
+    setAgentId("");
+    setMetaTemplateName("");
+    setShowTemplateGallery(false);
+    setShowAdvanced(false);
+    setCampaignError(null);
+  }, []);
+
+  const handleCreateNew = useCallback(() => {
+    resetCampaignForm();
+    setDraftNotice(null);
+    setView("create");
+  }, [resetCampaignForm]);
+
+  const handleEditDraft = useCallback(
+    (d: DisparosDraft) => {
+      handleLoadDraft(d);
+      setView("create");
+    },
+    [handleLoadDraft],
+  );
+
   const applySituationTemplate = useCallback((text: string, title: string) => {
     setBody(text);
     if (!campaignName.trim()) setCampaignName(`Campanha · ${title}`);
@@ -386,15 +424,6 @@ export function DisparosMassaHub() {
       })),
     [campaigns],
   );
-
-  const statusLabel = (status: CampaignRow["status"]) => {
-    if (status === "completed") return "Concluída";
-    if (status === "scheduled") return "Agendada";
-    if (status === "processing") return "Processando";
-    if (status === "cancelled") return "Cancelada";
-    if (status === "failed") return "Falhou";
-    return "Rascunho";
-  };
 
   const canSchedule =
     Boolean(connectionId) &&
@@ -436,7 +465,9 @@ export function DisparosMassaHub() {
       const payload = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Não foi possível agendar a campanha.");
       setDraftNotice("Campanha criada — os primeiros envios já começaram.");
+      window.setTimeout(() => setDraftNotice(null), 4500);
       await loadCampaignData();
+      setView("list");
     } catch (error) {
       setCampaignError(error instanceof Error ? error.message : "Não foi possível agendar a campanha.");
     } finally {
@@ -483,18 +514,58 @@ export function DisparosMassaHub() {
 
   return (
     <div className="space-y-6">
-      <div
-        className={cn(
-          "relative overflow-hidden rounded-xl border p-6 sm:p-8",
-          isLight
-            ? "border-slate-200/90 bg-surface-deep"
-            : "border-line/80 bg-surface-card",
-        )}
-      >
+      {draftNotice ? (
+        <div
+          className={cn(
+            "flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium",
+            isLight ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+          )}
+          role="status"
+        >
+          <Check className="size-4 shrink-0 text-emerald-500" aria-hidden />
+          {draftNotice}
+        </div>
+      ) : null}
+      {campaignError ? (
+        <div className="rounded-xl border border-rose-500/35 bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-500" role="alert">
+          {campaignError}
+        </div>
+      ) : null}
+
+      {view === "list" ? (
+        <DisparosCampanhasList
+          isLight={isLight}
+          history={history}
+          drafts={drafts}
+          processingCampaignId={processingCampaignId}
+          onCreateNew={handleCreateNew}
+          onEditDraft={handleEditDraft}
+          onDeleteDraft={handleDeleteDraft}
+          onCancelCampaign={handleCancelCampaign}
+          onProcessNow={handleProcessNow}
+        />
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={() => setView("list")}
+            className="flex items-center gap-1.5 text-xs font-medium text-content-secondary transition-colors hover:text-content"
+          >
+            <ArrowLeft className="size-3.5" aria-hidden />
+            Voltar
+          </button>
+          <div
+            className={cn(
+              "relative overflow-hidden rounded-xl border p-6 sm:p-8",
+              isLight
+                ? "border-slate-200/90 bg-surface-deep"
+                : "border-line/80 bg-surface-card",
+            )}
+          >
         <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0 space-y-2">
             <h3 className="text-balance text-2xl font-semibold tracking-tight text-content sm:text-3xl">
-              Disparo em massa
+              Nova campanha
             </h3>
             <p className="max-w-xl text-pretty text-sm leading-relaxed text-content-secondary sm:text-base">
               Siga os passos abaixo — o envio começa assim que você confirmar.
@@ -641,6 +712,8 @@ export function DisparosMassaHub() {
               onChange={setPublicoBlocks}
               isLight={isLight}
               onAfterOptIn={loadCampaignData}
+              funnels={funnels}
+              availableTags={availableTags}
             />
           </div>
 
@@ -924,23 +997,6 @@ export function DisparosMassaHub() {
               </div>
             ) : null}
 
-            {draftNotice ? (
-              <div
-                className={cn(
-                  "mt-3 flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium",
-                  isLight ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
-                )}
-                role="status"
-              >
-                <Check className="size-4 shrink-0 text-emerald-500" aria-hidden />
-                {draftNotice}
-              </div>
-            ) : null}
-            {campaignError ? (
-              <div className="mt-3 rounded-xl border border-rose-500/35 bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-500" role="alert">
-                {campaignError}
-              </div>
-            ) : null}
             <div className="mt-4 flex flex-wrap gap-3">
               <Button
                 type="button"
@@ -966,58 +1022,6 @@ export function DisparosMassaHub() {
                 </Button>
               ) : null}
             </div>
-            {!isMetaTransport && drafts.length > 0 ? (
-              <div className="mt-6 border-t border-line pt-5">
-                <button
-                  type="button"
-                  onClick={() => setShowDrafts((v) => !v)}
-                  className="flex w-full items-center justify-between gap-2 text-left"
-                >
-                  <span className="text-xs font-semibold uppercase tracking-wide text-content-secondary">
-                    Meus rascunhos ({drafts.length})
-                  </span>
-                  <ChevronDown className={cn("size-4 shrink-0 text-content-secondary transition-transform", showDrafts && "rotate-180")} aria-hidden />
-                </button>
-                {showDrafts ? (
-                  <ul className="mt-3 max-h-[220px] space-y-2 overflow-y-auto pr-1">
-                    {drafts.map((d) => {
-                      const when = new Date(d.updatedAt).toLocaleString("pt-BR", {
-                        dateStyle: "short",
-                        timeStyle: "short",
-                      });
-                      return (
-                        <li
-                          key={d.id}
-                          className={cn(
-                            "flex items-center gap-2 rounded-xl border px-3 py-2.5",
-                            isLight ? "border-slate-200/90 bg-surface-card" : "border-line/80 bg-surface-card/40",
-                          )}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-medium text-content">{d.name}</div>
-                            <div className="text-[10px] text-content-secondary">{when}</div>
-                          </div>
-                          <Button type="button" variant="ghost" size="sm" className="shrink-0 px-3" onClick={() => handleLoadDraft(d)}>
-                            Carregar
-                          </Button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteDraft(d.id)}
-                            className={cn(
-                              "grid size-10 shrink-0 place-items-center rounded-xl border border-transparent text-content-secondary transition-colors",
-                              isLight ? "hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-600" : "hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-300",
-                            )}
-                            aria-label={`Excluir rascunho ${d.name}`}
-                          >
-                            <Trash2 className="size-4" />
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : null}
-              </div>
-            ) : null}
           </div>
         </div>
 
@@ -1053,83 +1057,10 @@ export function DisparosMassaHub() {
               </div>
             </div>
           </div>
-
-          <div
-            className={cn(
-              "rounded-xl border p-5 sm:p-6",
-              isLight ? "border-slate-200/80 bg-surface-deep/90" : "border-line bg-surface-deep/35",
-            )}
-          >
-            <div className="mb-4 flex items-center justify-between gap-2">
-              <span className="text-sm font-semibold text-content">Historico de campanhas</span>
-              <Badge className="text-[10px]">Dados persistidos</Badge>
-            </div>
-            {history.length === 0 ? (
-              <p className="text-xs text-content-secondary">
-                Nenhuma campanha persistida ainda. Campanhas só aceitam leads com opt-in ativo.
-              </p>
-            ) : <ul className="space-y-3">
-              {history.map((row) => (
-                <li
-                  key={row.id}
-                  className={cn(
-                    "flex items-center gap-4 rounded-xl border px-4 py-3",
-                    isLight ? "border-slate-200/80 bg-slate-50/80" : "border-line/80 bg-surface-card/40",
-                  )}
-                >
-                  <div className="relative size-12 shrink-0">
-                    <div
-                      className="absolute inset-0 rounded-xl"
-                      style={{
-                        background: `conic-gradient(rgb(34 197 94) ${row.delivered * 3.6}deg, rgba(148,163,184,0.28) 0)`,
-                      }}
-                      aria-hidden
-                    />
-                    <div
-                      className={cn(
-                        "absolute inset-[3px] grid place-items-center rounded-[0.65rem] text-[11px] font-bold tabular-nums",
-                        isLight ? "bg-surface-deep text-content" : "bg-slate-950 text-slate-100",
-                      )}
-                    >
-                      {row.delivered}%
-                    </div>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-medium text-content">{row.name}</div>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-content-secondary">
-                      <span>{statusLabel(row.status)}</span>
-                      <span className="text-content-secondary/50">·</span>
-                      <span>{row.window}</span>
-                    </div>
-                  </div>
-                  {row.status === "processing" ? (
-                    <button
-                      type="button"
-                      onClick={() => void handleProcessNow(row.id)}
-                      disabled={processingCampaignId === row.id}
-                      className="grid size-9 shrink-0 place-items-center rounded-lg text-content-secondary transition-colors hover:bg-primary/10 hover:text-primary disabled:opacity-50"
-                      aria-label={`Enviar próximo lote agora — ${row.name}`}
-                      title="Enviar próximo lote agora"
-                    >
-                      <RefreshCw className={cn("size-4", processingCampaignId === row.id && "animate-spin")} aria-hidden />
-                    </button>
-                  ) : null}
-                  {["draft", "scheduled", "processing"].includes(row.status) ? (
-                    <button
-                      type="button"
-                      onClick={() => void handleCancelCampaign(row.id)}
-                      className="grid size-9 shrink-0 place-items-center rounded-lg text-content-secondary transition-colors hover:bg-rose-500/10 hover:text-rose-500"
-                      aria-label={`Cancelar campanha ${row.name}`}
-                    >
-                      <Square className="size-4" aria-hidden />
-                    </button>
-                  ) : null}
-                </li>
-              ))}
-            </ul>}
-          </div>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }
