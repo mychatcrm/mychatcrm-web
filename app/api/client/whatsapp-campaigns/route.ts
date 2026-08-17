@@ -105,6 +105,9 @@ export async function POST(request: Request) {
         metaTemplateLang: typeof body.metaTemplateLang === "string" ? body.metaTemplateLang : null,
         throughput,
         scheduledAt: typeof body.scheduledAt === "string" ? body.scheduledAt : null,
+        // Cru de propósito: quem valida e normaliza é parseCampaignSendWindow,
+        // um lugar só, usado tanto na gravação quanto na leitura do processador.
+        sendWindow: body.sendWindow,
       },
     });
 
