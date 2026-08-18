@@ -441,6 +441,49 @@ function isWithinAgendaAvailability(
   return totalMin >= startMin && totalMin < endMin;
 }
 
+export type AgendaPlanDateTimeCheck =
+  | { ok: true }
+  | { ok: false; errorReason: "agenda_datetime_needed" | "invalid_or_past_agenda_datetime" | "outside_agenda_availability" };
+
+/**
+ * Valida a data/hora de um plano de agenda (propose_create/propose_reschedule/
+ * create/reschedule) contra o relógio real e a disponibilidade configurada do
+ * agente — mesma regra que `insertStructuredAgendaEvent` já aplica na hora de
+ * confirmar, só que ANTES da resposta chegar ao cliente.
+ *
+ * Sem isso, uma data alucinada pelo modelo (fora do CALENDÁRIO REAL injetado)
+ * só era barrada no commit final; até lá o cliente já tinha visto a data
+ * errada no texto. Ver `checkAgendaPlanDateTime` em generate-agent-response.ts.
+ */
+export function checkAgendaPlanDateTime(params: {
+  date: string | null;
+  time: string | null;
+  timezone: string;
+  agendaDisponibilidade?: AgentAgendaDisponibilidade | null;
+  now?: Date;
+}): AgendaPlanDateTimeCheck {
+  const normalizedDate = normalizeAgentAgendaDate(params.date);
+  const normalizedTime = normalizeAgentAgendaTime(params.time);
+  if (!normalizedDate || !normalizedTime) return { ok: false, errorReason: "agenda_datetime_needed" };
+  const [day, month, year] = normalizedDate.split("/").map(Number);
+  const [hour, minute] = normalizedTime.split(":").map(Number);
+  const startAt = localWallClockToUtc(
+    { year: year!, month: month!, day: day!, hour: hour!, minute: minute! },
+    parseTimezone(params.timezone),
+  );
+  const now = params.now ?? new Date();
+  if (Number.isNaN(startAt.getTime()) || startAt.getTime() <= now.getTime()) {
+    return { ok: false, errorReason: "invalid_or_past_agenda_datetime" };
+  }
+  if (
+    params.agendaDisponibilidade?.ativo &&
+    !isWithinAgendaAvailability(startAt, params.agendaDisponibilidade, params.timezone)
+  ) {
+    return { ok: false, errorReason: "outside_agenda_availability" };
+  }
+  return { ok: true };
+}
+
 export type AgendaEventSummary = {
   id: string;
   title: string;
@@ -2077,7 +2120,7 @@ type PendingAgendaActionRow = {
   conversation_sequence: number | null;
 };
 
-function executableAction(action: AgentAgendaPlanAction): PendingAgendaActionRow["action"] | null {
+export function executableAction(action: AgentAgendaPlanAction): PendingAgendaActionRow["action"] | null {
   if (action === "create" || action === "propose_create") return "create";
   if (action === "reschedule" || action === "propose_reschedule") return "reschedule";
   if (action === "cancel" || action === "propose_cancel") return "cancel";

@@ -22,9 +22,17 @@ import {
   AGENT_TURN_RESPONSE_FORMAT,
   normalizeAgentTurnResult,
   parseAgentTurnPlan,
+  type AgentAgendaPlanAction,
 } from "@/lib/ai/agent-turn-plan";
 import { preserveActiveConversationContinuity } from "@/lib/conversas/conversation-continuity-guard";
 import { executeAgentExternalApiLookup, listAgentExternalApiTools } from "@/lib/server/external-api-executor";
+import {
+  AGENDA_DATETIME_NEEDED_REPLY,
+  AGENDA_PAST_DATETIME_REPLY,
+  buildOutsideAvailabilityReply,
+  checkAgendaPlanDateTime,
+  executableAction,
+} from "@/lib/server/agent-cta-scheduler";
 
 type AiGenerateFailureResult = Extract<AiGenerateResult, { ok: false }>;
 
@@ -449,6 +457,92 @@ export async function generateAgentResponse(params: {
     });
     normalized = normalizeAgentTurnResult(finalResult);
     if (!normalized.ok) return normalized;
+  }
+
+  // -------------------------------------------------------------------------
+  // Validação da data/hora proposta na agenda — ANTES de responder ao cliente.
+  // -------------------------------------------------------------------------
+  // O CALENDÁRIO REAL/DATAS VÁLIDAS injetado no prompt já é calculado a partir
+  // do relógio real (ver agent-system-prompt.ts), mas isso é instrução, não
+  // garantia: o modelo pode ignorá-la e propor uma data que não existe em
+  // nenhuma entrada real. Até aqui, essa validação só rodava no commit final
+  // (insertStructuredAgendaEvent), depois que o cliente já tinha visto a data
+  // errada no texto. Repete a mesma regra aqui, mais cedo.
+  if (baseAgent.agendaAutomationEnabled === true) {
+    let currentPlan = parseAgentTurnPlan(normalized.structuredData);
+    const needsDateTimeCheck = (action: AgentAgendaPlanAction | undefined) =>
+      action !== undefined && (executableAction(action) === "create" || executableAction(action) === "reschedule");
+
+    if (currentPlan && needsDateTimeCheck(currentPlan.agenda.action)) {
+      const timezone = resolveAgentTimezone(baseAgent);
+      const agendaDisponibilidade = baseAgent.agendaDisponibilidade ?? null;
+      const check = checkAgendaPlanDateTime({
+        date: currentPlan.agenda.date,
+        time: currentPlan.agenda.time,
+        timezone,
+        agendaDisponibilidade,
+      });
+      if (!check.ok) {
+        const correctionNote = `\n\nCORREÇÃO OBRIGATÓRIA: a data/horário que você propôs (${currentPlan.agenda.date ?? "—"} ${currentPlan.agenda.time ?? "—"}) não corresponde a nenhuma entrada real do calendário — está no passado, é inválida ou fica fora da disponibilidade configurada. Proponha de novo usando exatamente uma data e horário reais de uma entrada do CALENDÁRIO REAL / DATAS VÁLIDAS acima.`;
+        const retryResult = await generateAIResponse({
+          tenantId: params.tenantId.trim(),
+          agentId: params.agentId.trim(),
+          customerId: params.customerId ?? params.conversationId ?? null,
+          feature: params.feature,
+          model,
+          temperature,
+          messages: [
+            { role: "system", content: `${systemPrompt}${correctionNote}` },
+            ...historyMessages,
+            ...tailMessages,
+          ],
+          metadata: {
+            conversationId: params.conversationId ?? null,
+            accountId: params.accountId ?? null,
+            userId: params.userId ?? null,
+            simulation: params.simulation === true,
+          },
+          responseFormat: AGENT_TURN_RESPONSE_FORMAT,
+        });
+        const retryNormalized = normalizeAgentTurnResult(retryResult);
+        const retryPlan = retryNormalized.ok ? parseAgentTurnPlan(retryNormalized.structuredData) : null;
+        const retryCheck =
+          retryPlan && needsDateTimeCheck(retryPlan.agenda.action)
+            ? checkAgendaPlanDateTime({
+                date: retryPlan.agenda.date,
+                time: retryPlan.agenda.time,
+                timezone,
+                agendaDisponibilidade,
+              })
+            : { ok: true as const };
+
+        if (retryNormalized.ok && retryPlan && retryCheck.ok) {
+          normalized = retryNormalized;
+          currentPlan = retryPlan;
+        } else {
+          // Segunda tentativa também falhou — nunca deixa uma data inventada
+          // chegar ao cliente. Cai numa resposta genérica já traduzida e
+          // desliga a operação de agenda deste turno.
+          const fallbackReply =
+            check.errorReason === "outside_agenda_availability"
+              ? buildOutsideAvailabilityReply(agendaDisponibilidade)
+              : check.errorReason === "agenda_datetime_needed"
+                ? AGENDA_DATETIME_NEEDED_REPLY
+                : AGENDA_PAST_DATETIME_REPLY;
+          const safeStructuredData =
+            normalized.structuredData &&
+            typeof normalized.structuredData === "object" &&
+            !Array.isArray(normalized.structuredData)
+              ? {
+                  ...(normalized.structuredData as Record<string, unknown>),
+                  reply: fallbackReply,
+                  agenda: { action: "none", date: null, time: null, location: null, eventId: null },
+                }
+              : normalized.structuredData;
+          normalized = { ...normalized, text: fallbackReply, structuredData: safeStructuredData };
+        }
+      }
+    }
   }
 
   const priorInteractionMs = memory.lastInteractionAt ? Date.parse(memory.lastInteractionAt) : NaN;

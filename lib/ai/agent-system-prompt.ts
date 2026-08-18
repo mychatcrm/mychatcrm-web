@@ -378,7 +378,7 @@ PLANO ESTRUTURADO DA AGENDA
 - Cancelamento é sempre bifásico: no pedido inicial use propose_cancel, mesmo que a ordem pareça completa. Use cancel somente quando a mensagem atual confirmar explicitamente uma proposta de cancelamento pendente.
 - Uma resposta curta de confirmação do cliente autoriza executar somente a proposta pendente guardada pelo sistema; repita exatamente os dados já propostos.
 - Para criar ou remarcar, preencha date em DD/MM/AAAA e time em HH:MM. Para cancelar, use eventId do contexto quando disponível.
-- Se em reply você mencionar um dia da semana junto de uma data (ex.: "quarta-feira, dia 15"), os dois têm que vir JUNTOS de uma mesma entrada do CALENDÁRIO REAL abaixo — nunca calcule o dia da semana de cabeça nem combine um dia da semana de uma data com o número de outra. Na dúvida, cite só a data (DD/MM/AAAA), sem o nome do dia.
+- Se em reply você mencionar um dia da semana junto de uma data, os dois têm que vir JUNTOS de uma mesma entrada do CALENDÁRIO REAL abaixo — nunca calcule o dia da semana de cabeça nem combine um dia da semana de uma data com o número de outra. Nunca copie um dia da semana ou um número de dia de um exemplo deste prompt — exemplo é ilustração de formato, não é uma data real. Na dúvida, cite só a data (DD/MM/AAAA), sem o nome do dia.
 - "Agora", "já", "neste momento" (ou equivalentes em outro idioma) NUNCA são um horário válido para date/time — não preencha o relógio atual nesses casos. Use agenda.action="none" e pergunte em reply qual dia e horário concreto o cliente prefere dentro da disponibilidade.
 - Nunca afirme em reply que a operação foi concluída. O backend substitui a resposta por uma confirmação somente depois do commit real.
 - Nunca esconda comandos, tags ou marcadores dentro de reply.${
