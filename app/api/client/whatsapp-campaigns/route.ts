@@ -86,12 +86,15 @@ export async function POST(request: Request) {
   try {
     const sb = createSupabaseServiceClient();
     const agentMode = body.agentMode === "disparos" ? "disparos" : "existing";
+    const explicitAgentId = typeof body.agentId === "string" ? body.agentId.trim() : "";
+    // Em modo disparos, um id explícito vem de quem já escolheu/configurou um
+    // agente de Disparos na tela — a validação de que é mesmo de Disparos (e
+    // não um agente de atendimento) já acontece dentro de createWhatsAppCampaign.
+    // Sem id (tela antiga, ou primeira vez), cai no agente padrão de sempre.
     const agentId =
       agentMode === "disparos"
-        ? (await ensureDisparosDefaultAgent(guard.session.tenantId)).agentId
-        : typeof body.agentId === "string"
-          ? body.agentId
-          : "";
+        ? explicitAgentId || (await ensureDisparosDefaultAgent(guard.session.tenantId)).agentId
+        : explicitAgentId;
 
     const throughput =
       body.throughput === "suave" || body.throughput === "acelerado" ? body.throughput : "normal";
