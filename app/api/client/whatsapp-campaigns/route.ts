@@ -115,6 +115,9 @@ export async function POST(request: Request) {
         // Cru de propósito: quem valida e normaliza é parseCampaignSendWindow,
         // um lugar só, usado tanto na gravação quanto na leitura do processador.
         sendWindow: body.sendWindow,
+        // Cru de propósito: quem valida é parseCampaignLeadDestination, dentro
+        // de createWhatsAppCampaign — mesmo padrão do sendWindow acima.
+        leadDestination: body.leadDestination,
       },
     });
 
