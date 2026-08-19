@@ -9,6 +9,7 @@ const {
   activateLeadJourneyMock,
   touchLeadJourneyMock,
   scheduleLeadRedistributionMock,
+  readTeamMembersFromDbMock,
 } = vi.hoisted(() => ({
   listTenantWhatsappConnectionsMock: vi.fn(),
   lookupWhatsAppCloudConnectionByPhoneNumberIdMock: vi.fn(),
@@ -18,6 +19,7 @@ const {
   activateLeadJourneyMock: vi.fn(),
   touchLeadJourneyMock: vi.fn(),
   scheduleLeadRedistributionMock: vi.fn(),
+  readTeamMembersFromDbMock: vi.fn(),
 }));
 
 vi.mock("@/lib/server/tenant-whatsapp-connections", () => ({
@@ -41,12 +43,17 @@ vi.mock("@/lib/server/lead-journeys", () => ({
 vi.mock("@/lib/server/lead-redistribution", () => ({
   scheduleLeadRedistribution: scheduleLeadRedistributionMock,
 }));
+vi.mock("@/lib/server/team-employees-db", () => ({
+  readTeamMembersFromDb: readTeamMembersFromDbMock,
+}));
 
 import {
+  buildCampaignLeadPatch,
   computeDistinctLeadTags,
   createWhatsAppCampaign,
   leadMatchesWhatsAppCampaignAudience,
   parseCampaignAudienceBlocks,
+  parseCampaignLeadDestination,
   renderWhatsAppCampaignTemplate,
   resolveWhatsAppCampaignAudience,
 } from "@/lib/server/whatsapp-campaigns";
@@ -468,6 +475,97 @@ describe("createWhatsAppCampaign — agente obrigatório", () => {
         },
       }),
     ).rejects.toThrow("campaign_agent_not_available");
+  });
+});
+
+describe("createWhatsAppCampaign — vendedor atribuído", () => {
+  beforeEach(() => {
+    listTenantWhatsappConnectionsMock.mockReset();
+    readTeamMembersFromDbMock.mockReset();
+    listTenantWhatsappConnectionsMock.mockResolvedValue([
+      { connectionId: "evo-1", transport: "evolution", label: "QR Code", slotIndex: 0, connected: true, activeProvider: "evolution" },
+    ]);
+  });
+
+  const baseInput = {
+    name: "Campanha",
+    connectionId: "evo-1",
+    agentId: "disparos-default",
+    audienceBlocks: [{ kind: "crm" as const, filter: "all" as const }],
+    messageTemplate: "Olá {{nome}}",
+    throughput: "normal" as const,
+  };
+
+  it("rejeita ownerEmployeeId que não existe na equipe do tenant", async () => {
+    readTeamMembersFromDbMock.mockResolvedValue([{ id: "emp-outro", nome: "Outro", ativo: true }]);
+    const sb = makeSb({
+      agentRow: { agent_id: "disparos-default", active: true, metadata: { isBroadcastAgent: true } },
+      leadRows: [OPTED_IN_LEAD],
+      insertedCampaign: { id: "camp-1" },
+    });
+
+    await expect(
+      createWhatsAppCampaign({
+        sb,
+        tenantId: "tenant-1",
+        input: { ...baseInput, leadDestination: { ownerAction: "atribuir", ownerEmployeeId: "emp-1" } },
+      }),
+    ).rejects.toThrow("campaign_owner_employee_invalid");
+  });
+
+  it("rejeita funcionário inativo", async () => {
+    readTeamMembersFromDbMock.mockResolvedValue([{ id: "emp-1", nome: "Ana", ativo: false }]);
+    const sb = makeSb({
+      agentRow: { agent_id: "disparos-default", active: true, metadata: { isBroadcastAgent: true } },
+      leadRows: [OPTED_IN_LEAD],
+      insertedCampaign: { id: "camp-1" },
+    });
+
+    await expect(
+      createWhatsAppCampaign({
+        sb,
+        tenantId: "tenant-1",
+        input: { ...baseInput, leadDestination: { ownerAction: "atribuir", ownerEmployeeId: "emp-1" } },
+      }),
+    ).rejects.toThrow("campaign_owner_employee_invalid");
+  });
+
+  it("aceita funcionário ativo da equipe e grava no lead_destination", async () => {
+    readTeamMembersFromDbMock.mockResolvedValue([{ id: "emp-1", nome: "Ana", ativo: true }]);
+    let captured: Row | undefined;
+    const sb = makeSb({
+      agentRow: { agent_id: "disparos-default", active: true, metadata: { isBroadcastAgent: true } },
+      leadRows: [OPTED_IN_LEAD],
+      insertedCampaign: { id: "camp-1" },
+      captureCampaignInsert: (payload) => {
+        captured = payload as Row;
+      },
+    });
+
+    await createWhatsAppCampaign({
+      sb,
+      tenantId: "tenant-1",
+      input: { ...baseInput, leadDestination: { ownerAction: "atribuir", ownerEmployeeId: "emp-1" } },
+    });
+
+    expect((captured?.lead_destination as Row)?.ownerAction).toBe("atribuir");
+    expect((captured?.lead_destination as Row)?.ownerEmployeeId).toBe("emp-1");
+  });
+
+  it("não consulta a equipe quando ownerAction não é 'atribuir' — não paga o custo à toa", async () => {
+    const sb = makeSb({
+      agentRow: { agent_id: "disparos-default", active: true, metadata: { isBroadcastAgent: true } },
+      leadRows: [OPTED_IN_LEAD],
+      insertedCampaign: { id: "camp-1" },
+    });
+
+    await createWhatsAppCampaign({
+      sb,
+      tenantId: "tenant-1",
+      input: { ...baseInput, leadDestination: { ownerAction: "soltar" } },
+    });
+
+    expect(readTeamMembersFromDbMock).not.toHaveBeenCalled();
   });
 });
 

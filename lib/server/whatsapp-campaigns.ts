@@ -27,6 +27,8 @@ import {
   markAgentOutboundSent,
   prepareAutomatedOutbound,
 } from "@/lib/server/agent-outbound-outbox";
+import { readTeamMembersFromDb } from "@/lib/server/team-employees-db";
+import { pauseConversationAfterCampaignSend } from "@/lib/server/conversation-operation";
 
 type ServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -74,6 +76,8 @@ type CampaignInput = {
   sendWindow?: unknown;
   /** Destino do lead ao entrar no disparo; ver `parseCampaignLeadDestination`. Ausente = não mexe em funil/coluna/dono. */
   leadDestination?: unknown;
+  /** `false` = manda só a mensagem e pausa a automação depois (humano assume). Ausente/`true` = comportamento de sempre. */
+  continueWithAgent?: boolean;
 };
 
 function text(value: unknown): string | null {
@@ -522,6 +526,17 @@ export async function createWhatsAppCampaign(params: {
     audienceBlocks.length === 1 && audienceBlocks[0]!.kind === "crm"
       ? (audienceBlocks[0] as Extract<CampaignAudienceBlockInput, { kind: "crm" }>)
       : null;
+
+  // Normalizada na gravação: guardar o que o cliente mandou cru deixaria dia
+  // inválido, hora fora de faixa ou vendedor inexistente cair no processador
+  // só no momento do envio, bem mais difícil de diagnosticar.
+  const leadDestination = parseCampaignLeadDestination(input.leadDestination);
+  if (leadDestination.ownerAction === "atribuir" && leadDestination.ownerEmployeeId) {
+    const teamEmployees = await readTeamMembersFromDb(params.tenantId);
+    const employee = teamEmployees.find((e) => e.id === leadDestination.ownerEmployeeId);
+    if (!employee || !employee.ativo) throw new Error("campaign_owner_employee_invalid");
+  }
+
   const { data: campaign, error } = await params.sb
     .from("whatsapp_campaigns")
     .insert({
@@ -539,10 +554,9 @@ export async function createWhatsAppCampaign(params: {
       throughput,
       status: "scheduled",
       scheduled_at: scheduledAt,
-      // Normalizada na gravação: guardar o que o cliente mandou cru deixaria
-      // dia inválido ou hora fora de faixa cair no processador.
       send_window: parseCampaignSendWindow(input.sendWindow) ?? {},
-      lead_destination: parseCampaignLeadDestination(input.leadDestination),
+      lead_destination: leadDestination,
+      continue_with_agent: input.continueWithAgent !== false,
       total_recipients: leads.length,
       created_by: params.createdBy ?? null,
       updated_at: now,
@@ -601,8 +615,10 @@ export function buildCampaignLeadPatch(
     patch.crm_funnel_id = destination.funnelId;
     patch.status = destination.columnId;
   }
-  if (destination.releaseOwner) {
+  if (destination.ownerAction === "soltar") {
     patch.owner_employee_id = null;
+  } else if (destination.ownerAction === "atribuir" && destination.ownerEmployeeId) {
+    patch.owner_employee_id = destination.ownerEmployeeId;
   }
   return patch;
 }
@@ -863,6 +879,19 @@ async function processRecipient(params: {
     currentAgentId: journey.agentId,
     trigger: "customer_silence",
   });
+  // Disparo "único": a mensagem já saiu, mas o dono da conta configurou pra
+  // não continuar a conversa pela IA — pausa a automação agora que o resto do
+  // upsert (agent_id, journey) já está gravado. O botão de "reativar
+  // automação" do CRM já existente destrava isso quando quiserem.
+  if (params.campaign.continue_with_agent === false) {
+    await pauseConversationAfterCampaignSend({
+      sb: params.sb,
+      tenantId,
+      remoteJid: jid,
+      leadId: text(lead.id),
+      agentId: text(params.campaign.agent_id),
+    });
+  }
   return "sent";
 }
 
@@ -915,33 +944,52 @@ export function parseCampaignSendWindow(raw: unknown): CampaignSendWindow | null
  * agente de IA (`leads.agent_id`) não é opção aqui — acontece sempre, em
  * `processRecipient`, porque é a isolação do agente de disparos já em
  * produção. Isto cobre só o que o dono da conta pode escolher por campanha:
- * mover o card pra outro funil/coluna, e/ou soltar o vendedor humano
+ * mover o card pra outro funil/coluna, e o que fazer com o vendedor humano
  * responsável.
  */
+export type CampaignOwnerAction = "manter" | "soltar" | "atribuir";
+
 export type CampaignLeadDestination = {
   moveToFunnel: boolean;
   funnelId: string | null;
   columnId: string | null;
-  releaseOwner: boolean;
+  ownerAction: CampaignOwnerAction;
+  /** Só preenchido quando `ownerAction === "atribuir"`. Validado em `createWhatsAppCampaign`. */
+  ownerEmployeeId: string | null;
 };
 
 /**
  * Lê o destino gravado na campanha. `moveToFunnel` só fica `true` quando
  * funil E coluna vêm preenchidos — meia-configuração (ligado sem destino
  * escolhido) não move nada, mesmo raciocínio de `parseCampaignSendWindow`.
- * `releaseOwner` é independente: dá pra soltar o vendedor sem mover de
- * funil, ou mover sem soltar o vendedor.
+ *
+ * `ownerAction` é independente do funil: dá pra soltar/atribuir o vendedor
+ * sem mover de funil, ou mover sem mexer no vendedor. `"atribuir"` sem
+ * `ownerEmployeeId` cai pra `"manter"` — meia-configuração não reatribui
+ * ninguém. Compatibilidade: campanha antiga só tinha `releaseOwner`
+ * (booleano); sem `ownerAction` explícito, `releaseOwner: true` vira
+ * `"soltar"`.
  */
 export function parseCampaignLeadDestination(raw: unknown): CampaignLeadDestination {
   const config = object(raw);
   const funnelId = text(config.funnelId);
   const columnId = text(config.columnId);
   const moveToFunnel = config.moveToFunnel === true && Boolean(funnelId && columnId);
+  const ownerEmployeeId = text(config.ownerEmployeeId);
+
+  let ownerAction: CampaignOwnerAction = "manter";
+  if (config.ownerAction === "atribuir" && ownerEmployeeId) {
+    ownerAction = "atribuir";
+  } else if (config.ownerAction === "soltar" || (config.ownerAction === undefined && config.releaseOwner === true)) {
+    ownerAction = "soltar";
+  }
+
   return {
     moveToFunnel,
     funnelId: moveToFunnel ? funnelId : null,
     columnId: moveToFunnel ? columnId : null,
-    releaseOwner: config.releaseOwner === true,
+    ownerAction,
+    ownerEmployeeId: ownerAction === "atribuir" ? ownerEmployeeId : null,
   };
 }
 

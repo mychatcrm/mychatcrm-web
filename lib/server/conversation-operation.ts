@@ -645,6 +645,58 @@ function buildLeadOutcomeNotificationText(params: {
     .join("\n");
 }
 
+/** Motivo de pausa gravado quando um disparo em massa é configurado como "mensagem única". */
+export const CAMPAIGN_ONE_SHOT_PAUSED_BY = "whatsapp_campaign_one_shot";
+
+/**
+ * Encerra a automação logo após um disparo configurado como "só essa
+ * mensagem" — a campanha manda o texto normalmente, mas quem responder não é
+ * atendido automaticamente; um humano precisa assumir. Espelha
+ * `pauseConversationForLeadOutcome`, sem as partes de notificação e sem
+ * `outcome` (aqui não há descarte, só decisão de não continuar a conversa).
+ *
+ * Não precisa de retomada própria: o botão genérico de "reativar automação"
+ * do CRM (`syncAutomationMode`) não filtra por `pausedBy`, então já destrava
+ * esta pausa como qualquer outra.
+ */
+export async function pauseConversationAfterCampaignSend(params: {
+  sb?: SupabaseServiceClient;
+  tenantId: string;
+  remoteJid: string;
+  leadId?: string | null;
+  agentId?: string | null;
+}): Promise<void> {
+  const sb = params.sb ?? createSupabaseServiceClient();
+
+  const state = await patchConversationOperation({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    leadId: params.leadId,
+    agentId: params.agentId,
+    mode: "human",
+    humanPaused: true,
+    pausedReason: "campaign_one_shot",
+    pausedBy: CAMPAIGN_ONE_SHOT_PAUSED_BY,
+    handoffSuggested: false,
+    handoffReason: null,
+  });
+
+  await logConversationEvent({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    leadId: params.leadId ?? null,
+    stateId: state?.id ?? null,
+    eventType: "campaign_one_shot",
+    title: "Disparo configurado como mensagem única — atendimento automático não continua",
+    detail: null,
+    actorType: "agent",
+    actorId: params.agentId ?? null,
+    transferReason: "campaign_one_shot",
+  });
+}
+
 /**
  * Devolve a conversa à automação depois de um descarte — e SOMENTE nesse caso.
  *

@@ -66,6 +66,12 @@ const WEEK_DAYS = [
   { label: "Sáb", value: 6 },
 ];
 
+const OWNER_ACTIONS: Array<{ id: "manter" | "soltar" | "atribuir"; label: string; hint: string }> = [
+  { id: "manter", label: "Manter vendedor atual", hint: "Não mexe em quem já é responsável" },
+  { id: "atribuir", label: "Atribuir a um vendedor", hint: "Escolha quem fica responsável" },
+  { id: "soltar", label: "Deixar sem vendedor", hint: "Sem dono até alguém puxar" },
+];
+
 const VARIABLES = [
   { snippet: "{{nome}}", sample: "Marina" },
   { snippet: "{{empresa}}", sample: "Clinica Vista" },
@@ -109,6 +115,13 @@ type CampaignConnection = {
 type CampaignAgent = {
   agent_id: string;
   display_name: string | null;
+};
+
+type TeamEmployeeOption = {
+  id: string;
+  nome: string;
+  ativo: boolean;
+  accountSuspended: boolean;
 };
 
 type MetaTemplate = {
@@ -191,7 +204,13 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
   const [destMoveEnabled, setDestMoveEnabled] = useState(false);
   const [destFunnelId, setDestFunnelId] = useState("");
   const [destColumnId, setDestColumnId] = useState("");
-  const [destReleaseOwner, setDestReleaseOwner] = useState(false);
+  // Vendedor responsável: "manter" preserva o comportamento de sempre.
+  const [ownerAction, setOwnerAction] = useState<"manter" | "soltar" | "atribuir">("manter");
+  const [ownerEmployeeId, setOwnerEmployeeId] = useState("");
+  const [teamEmployees, setTeamEmployees] = useState<TeamEmployeeOption[]>([]);
+  // Depois do disparo: por padrão a IA continua atendendo quem responder —
+  // igual ao comportamento de sempre.
+  const [continueWithAgent, setContinueWithAgent] = useState(true);
   const [drafts, setDrafts] = useState<DisparosDraft[]>([]);
   const [draftNotice, setDraftNotice] = useState<string | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
@@ -261,10 +280,27 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
     }
   }, []);
 
+  const loadTeamEmployees = useCallback(async () => {
+    try {
+      const response = await fetch("/api/team-employees", { cache: "no-store" });
+      if (!response.ok) return;
+      const payload = (await response.json()) as { employees?: TeamEmployeeOption[] };
+      setTeamEmployees(payload.employees ?? []);
+    } catch {
+      // Silencioso: sem a lista, "atribuir a um vendedor" só fica sem opções.
+    }
+  }, []);
+
   useEffect(() => {
     void loadCampaignData();
     void loadFullAgents();
-  }, [loadCampaignData, loadFullAgents]);
+    void loadTeamEmployees();
+  }, [loadCampaignData, loadFullAgents, loadTeamEmployees]);
+
+  const activeTeamEmployees = useMemo(
+    () => teamEmployees.filter((employee) => employee.ativo && !employee.accountSuspended),
+    [teamEmployees],
+  );
 
   const broadcastAgents = useMemo(
     () => fullAgents.filter((agent) => agent.isBroadcastAgent === true),
@@ -486,6 +522,9 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
     setWindowEnd("18:00");
     setAgentMode("existing");
     setAgentId("");
+    setOwnerAction("manter");
+    setOwnerEmployeeId("");
+    setContinueWithAgent(true);
     setMetaTemplateName("");
     setShowTemplateGallery(false);
     setShowAdvanced(false);
@@ -572,8 +611,10 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
             moveToFunnel: destMoveEnabled,
             funnelId: destFunnelId || null,
             columnId: destColumnId || null,
-            releaseOwner: destReleaseOwner,
+            ownerAction,
+            ownerEmployeeId: ownerAction === "atribuir" ? ownerEmployeeId || null : null,
           },
+          continueWithAgent,
         }),
       });
       const payload = (await response.json()) as { error?: string };
@@ -607,7 +648,9 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
     destMoveEnabled,
     destFunnelId,
     destColumnId,
-    destReleaseOwner,
+    ownerAction,
+    ownerEmployeeId,
+    continueWithAgent,
     broadcastAgentId,
   ]);
 
@@ -1000,25 +1043,94 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
                 column: "Coluna/etapa dentro desse funil.",
               }}
             />
-            <button
-              type="button"
-              onClick={() => setDestReleaseOwner((v) => !v)}
-              className={cn(
-                "mt-3 flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left text-xs transition-colors",
-                destReleaseOwner
-                  ? "border-primary/60 bg-primary/10 text-content"
-                  : "border-line bg-surface-card/40 text-content-secondary hover:border-primary/35",
-              )}
-            >
-              <span>
-                {destReleaseOwner
-                  ? "Solta o vendedor responsável — o card fica sem dono até alguém puxar de novo"
-                  : "Mantém o vendedor responsável, se houver"}
+            <div className="mt-3">
+              <span className="mb-1.5 block text-[11px] font-medium text-content-secondary">
+                Vendedor responsável
               </span>
-              <span className="text-[11px] font-medium text-primary">
-                {destReleaseOwner ? "Ativado" : "Manter"}
+              <div className="grid gap-2 sm:grid-cols-3">
+                {OWNER_ACTIONS.map((opt) => {
+                  const active = opt.id === ownerAction;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => {
+                        setOwnerAction(opt.id);
+                        if (opt.id === "atribuir" && !ownerEmployeeId) {
+                          setOwnerEmployeeId(activeTeamEmployees[0]?.id ?? "");
+                        }
+                      }}
+                      className={cn(
+                        "rounded-lg border px-3 py-2.5 text-left text-xs transition-all",
+                        active
+                          ? "border-primary/60 bg-primary/10"
+                          : "border-line bg-surface-card/40 hover:border-primary/35 hover:bg-surface-elevated/30",
+                      )}
+                    >
+                      <div className="font-semibold text-content">{opt.label}</div>
+                      <div className="mt-0.5 text-[10px] text-content-secondary">{opt.hint}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              {ownerAction === "atribuir" ? (
+                activeTeamEmployees.length > 0 ? (
+                  <select
+                    value={ownerEmployeeId}
+                    onChange={(event) => setOwnerEmployeeId(event.target.value)}
+                    className="mt-2.5 h-11 w-full rounded-lg border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                  >
+                    {activeTeamEmployees.map((employee) => (
+                      <option key={employee.id} value={employee.id}>
+                        {employee.nome}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="mt-2.5 rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+                    Nenhum vendedor ativo encontrado na equipe.
+                  </p>
+                )
+              ) : null}
+            </div>
+
+            <div className="mt-4 border-t border-line/60 pt-4">
+              <span className="mb-1.5 block text-[11px] font-medium text-content-secondary">
+                Depois do disparo
               </span>
-            </button>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => setContinueWithAgent(true)}
+                  className={cn(
+                    "rounded-lg border px-3 py-2.5 text-left text-xs transition-all",
+                    continueWithAgent
+                      ? "border-primary/60 bg-primary/10"
+                      : "border-line bg-surface-card/40 hover:border-primary/35 hover:bg-surface-elevated/30",
+                  )}
+                >
+                  <div className="font-semibold text-content">IA continua atendendo</div>
+                  <div className="mt-0.5 text-[10px] text-content-secondary">
+                    Quem responder é conduzido pelo agente de disparos
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setContinueWithAgent(false)}
+                  className={cn(
+                    "rounded-lg border px-3 py-2.5 text-left text-xs transition-all",
+                    !continueWithAgent
+                      ? "border-primary/60 bg-primary/10"
+                      : "border-line bg-surface-card/40 hover:border-primary/35 hover:bg-surface-elevated/30",
+                  )}
+                >
+                  <div className="font-semibold text-content">Só essa mensagem</div>
+                  <div className="mt-0.5 text-[10px] text-content-secondary">
+                    Não continua a conversa — um humano assume as respostas
+                  </div>
+                </button>
+              </div>
+            </div>
           </div>
 
           <div
