@@ -327,6 +327,12 @@ export interface Agent {
   genero?: AgentGender;
   objetivo: AgentObjective;
   status: AgentStatus;
+  /**
+   * Marca de isolamento: agente feito só pra conduzir quem responde a um
+   * disparo em massa, separado da cota e dos dropdowns de agente normal.
+   * Ausente/false em qualquer agente de atendimento.
+   */
+  isBroadcastAgent?: boolean;
   tom: string;
   delayResposta: number;
   /** Criatividade do modelo (0.01–1). Menor = mais direto; maior = mais variado. */

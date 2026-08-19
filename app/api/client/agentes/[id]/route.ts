@@ -10,6 +10,10 @@ import {
   validateAgentResponseSettings,
 } from "@/lib/agents";
 import { describeAgentActivationBlock } from "@/lib/server/agent-plan-limit";
+import {
+  DISPAROS_DEFAULT_AGENT_ID,
+  isBroadcastAgentMetadata,
+} from "@/lib/server/broadcast-agent-identity";
 import type { Agent } from "@/lib/types";
 import { resolveOrganizationRole } from "@/lib/organization-role";
 import { listAgentExternalApiConnectorIds, syncAgentExternalApiConnectors } from "@/lib/server/external-api-connectors";
@@ -62,11 +66,15 @@ export async function PUT(
   }
 
   const sb = createSupabaseServiceClient();
+  // Cota de agente de Disparos é separada da de atendimento — quem decide é o
+  // próprio payload que está sendo salvo, não o estado antigo no banco.
+  const isBroadcastAgent = agentId === DISPAROS_DEFAULT_AGENT_ID || isBroadcastAgentMetadata(agent);
   const activationBlock = await describeAgentActivationBlock({
     sb,
     session,
     agentId,
     willBeActive: agent.status === "ativo",
+    isBroadcastAgent,
   });
   if (activationBlock) {
     return NextResponse.json({ error: activationBlock }, { status: 403 });
