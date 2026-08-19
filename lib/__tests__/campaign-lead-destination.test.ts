@@ -9,9 +9,9 @@ import {
  *
  * A troca do agente de IA (leads.agent_id) sempre acontece — é a isolação do
  * agente de disparos, já em produção, e não é opção aqui. O que o dono da
- * conta pode escolher, por campanha, é só o funil/coluna e o vendedor
- * responsável. Sem configurar nada, o comportamento é o de sempre: nada muda
- * além do agente.
+ * conta pode escolher, por campanha, é só o funil/coluna e o que fazer com o
+ * vendedor responsável (manter, soltar ou atribuir a um específico). Sem
+ * configurar nada, o comportamento é o de sempre: nada muda além do agente.
  */
 
 const NOW = "2026-08-18T12:00:00.000Z";
@@ -23,7 +23,8 @@ describe("parseCampaignLeadDestination", () => {
         moveToFunnel: false,
         funnelId: null,
         columnId: null,
-        releaseOwner: false,
+        ownerAction: "manter",
+        ownerEmployeeId: null,
       });
     }
   });
@@ -37,24 +38,55 @@ describe("parseCampaignLeadDestination", () => {
   it("resolve o destino completo", () => {
     expect(
       parseCampaignLeadDestination({ moveToFunnel: true, funnelId: "funil-1", columnId: "col-1" }),
-    ).toEqual({ moveToFunnel: true, funnelId: "funil-1", columnId: "col-1", releaseOwner: false });
+    ).toEqual({
+      moveToFunnel: true,
+      funnelId: "funil-1",
+      columnId: "col-1",
+      ownerAction: "manter",
+      ownerEmployeeId: null,
+    });
   });
 
-  it("releaseOwner é independente de moveToFunnel", () => {
-    expect(parseCampaignLeadDestination({ releaseOwner: true })).toEqual({
+  it("ownerAction 'soltar' é independente de moveToFunnel", () => {
+    expect(parseCampaignLeadDestination({ ownerAction: "soltar" })).toEqual({
       moveToFunnel: false,
       funnelId: null,
       columnId: null,
-      releaseOwner: true,
+      ownerAction: "soltar",
+      ownerEmployeeId: null,
     });
     expect(
       parseCampaignLeadDestination({
         moveToFunnel: true,
         funnelId: "funil-1",
         columnId: "col-1",
-        releaseOwner: true,
+        ownerAction: "soltar",
       }),
-    ).toEqual({ moveToFunnel: true, funnelId: "funil-1", columnId: "col-1", releaseOwner: true });
+    ).toEqual({ moveToFunnel: true, funnelId: "funil-1", columnId: "col-1", ownerAction: "soltar", ownerEmployeeId: null });
+  });
+
+  it("ownerAction 'atribuir' com funcionário resolve", () => {
+    expect(parseCampaignLeadDestination({ ownerAction: "atribuir", ownerEmployeeId: "emp-1" })).toEqual({
+      moveToFunnel: false,
+      funnelId: null,
+      columnId: null,
+      ownerAction: "atribuir",
+      ownerEmployeeId: "emp-1",
+    });
+  });
+
+  it("ownerAction 'atribuir' SEM ownerEmployeeId cai pra 'manter' — meia-configuração não reatribui ninguém", () => {
+    expect(parseCampaignLeadDestination({ ownerAction: "atribuir" }).ownerAction).toBe("manter");
+    expect(parseCampaignLeadDestination({ ownerAction: "atribuir", ownerEmployeeId: "" }).ownerAction).toBe("manter");
+  });
+
+  it("compatibilidade: releaseOwner antigo (booleano) sem ownerAction vira 'soltar'", () => {
+    expect(parseCampaignLeadDestination({ releaseOwner: true }).ownerAction).toBe("soltar");
+    expect(parseCampaignLeadDestination({ releaseOwner: false }).ownerAction).toBe("manter");
+  });
+
+  it("ownerAction explícito sempre vence sobre o releaseOwner antigo", () => {
+    expect(parseCampaignLeadDestination({ releaseOwner: true, ownerAction: "manter" }).ownerAction).toBe("manter");
   });
 
   it("valor não-objeto nunca quebra — vem de jsonb do banco", () => {
@@ -63,7 +95,8 @@ describe("parseCampaignLeadDestination", () => {
         moveToFunnel: false,
         funnelId: null,
         columnId: null,
-        releaseOwner: false,
+        ownerAction: "manter",
+        ownerEmployeeId: null,
       });
     }
   });
@@ -97,9 +130,17 @@ describe("buildCampaignLeadPatch", () => {
     expect(patch.owner_employee_id).toBeUndefined();
   });
 
-  it("releaseOwner ligado: zera owner_employee_id sem mexer em funil/coluna", () => {
+  it("ownerAction 'manter': nunca escreve owner_employee_id", () => {
     const patch = buildCampaignLeadPatch(
-      { ...campaignBase, lead_destination: { releaseOwner: true } },
+      { ...campaignBase, lead_destination: { ownerAction: "manter" } },
+      NOW,
+    );
+    expect(patch.owner_employee_id).toBeUndefined();
+  });
+
+  it("ownerAction 'soltar': zera owner_employee_id sem mexer em funil/coluna", () => {
+    const patch = buildCampaignLeadPatch(
+      { ...campaignBase, lead_destination: { ownerAction: "soltar" } },
       NOW,
     );
     expect(patch.owner_employee_id).toBeNull();
@@ -107,22 +148,36 @@ describe("buildCampaignLeadPatch", () => {
     expect(patch.status).toBeUndefined();
   });
 
-  it("os dois ligados ao mesmo tempo", () => {
+  it("ownerAction 'atribuir': grava o id do funcionário escolhido", () => {
+    const patch = buildCampaignLeadPatch(
+      { ...campaignBase, lead_destination: { ownerAction: "atribuir", ownerEmployeeId: "emp-1" } },
+      NOW,
+    );
+    expect(patch.owner_employee_id).toBe("emp-1");
+  });
+
+  it("mover funil e atribuir vendedor ao mesmo tempo", () => {
     const patch = buildCampaignLeadPatch(
       {
         ...campaignBase,
-        lead_destination: { moveToFunnel: true, funnelId: "funil-1", columnId: "col-1", releaseOwner: true },
+        lead_destination: {
+          moveToFunnel: true,
+          funnelId: "funil-1",
+          columnId: "col-1",
+          ownerAction: "atribuir",
+          ownerEmployeeId: "emp-1",
+        },
       },
       NOW,
     );
     expect(patch.crm_funnel_id).toBe("funil-1");
     expect(patch.status).toBe("col-1");
-    expect(patch.owner_employee_id).toBeNull();
+    expect(patch.owner_employee_id).toBe("emp-1");
   });
 
   it("agent_id da campanha sempre vence — isolação não é opcional", () => {
     const patch = buildCampaignLeadPatch(
-      { ...campaignBase, lead_destination: { moveToFunnel: false, releaseOwner: false } },
+      { ...campaignBase, lead_destination: { moveToFunnel: false, ownerAction: "manter" } },
       NOW,
     );
     expect(patch.agent_id).toBe("disparos-default");

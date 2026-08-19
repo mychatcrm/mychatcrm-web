@@ -121,6 +121,7 @@ export async function POST(request: Request) {
         // Cru de propósito: quem valida é parseCampaignLeadDestination, dentro
         // de createWhatsAppCampaign — mesmo padrão do sendWindow acima.
         leadDestination: body.leadDestination,
+        continueWithAgent: body.continueWithAgent !== false,
       },
     });
 
@@ -152,6 +153,7 @@ export async function POST(request: Request) {
       campaign_has_no_opted_in_recipients:
         "Nenhum lead deste público possui opt-in WhatsApp ativo.",
       disparos_default_agent_create_failed: "Não foi possível preparar o Agente do Disparos. Tente novamente.",
+      campaign_owner_employee_invalid: "O vendedor escolhido não existe mais ou está inativo. Selecione outro.",
     };
     return NextResponse.json({ error: messages[code] ?? "Não foi possível criar a campanha.", code }, { status: 422 });
   }
