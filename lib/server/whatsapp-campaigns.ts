@@ -63,6 +63,8 @@ type CampaignInput = {
   scheduledAt?: string | null;
   /** Janela de envio; ver `parseCampaignSendWindow`. Ausente = envia a qualquer hora. */
   sendWindow?: unknown;
+  /** Destino do lead ao entrar no disparo; ver `parseCampaignLeadDestination`. Ausente = não mexe em funil/coluna/dono. */
+  leadDestination?: unknown;
 };
 
 function text(value: unknown): string | null {
@@ -492,6 +494,7 @@ export async function createWhatsAppCampaign(params: {
       // Normalizada na gravação: guardar o que o cliente mandou cru deixaria
       // dia inválido ou hora fora de faixa cair no processador.
       send_window: parseCampaignSendWindow(input.sendWindow) ?? {},
+      lead_destination: parseCampaignLeadDestination(input.leadDestination),
       total_recipients: leads.length,
       created_by: params.createdBy ?? null,
       updated_at: now,
@@ -525,6 +528,36 @@ export async function createWhatsAppCampaign(params: {
 type RecipientSender =
   | { transport: "evolution"; instanceName: string }
   | { transport: "cloud_api"; phoneNumberId: string; accessToken: string; templateName: string; templateLang: string; bodyParamCount: number };
+
+/**
+ * Patch de `leads` aplicado quando o disparo sai. `agent_id` sempre muda pro
+ * agente da campanha — isolação obrigatória, não é opção. `crm_funnel_id`/
+ * `status` (id da coluna) e `owner_employee_id` só mudam se o dono da conta
+ * configurou isso nesta campanha (`lead_destination`); sem config, o card
+ * fica exatamente onde estava.
+ */
+export function buildCampaignLeadPatch(
+  campaign: Record<string, unknown>,
+  now: string,
+): Record<string, unknown> {
+  const patch: Record<string, unknown> = {
+    source: "whatsapp_campaign",
+    agent_id: text(campaign.agent_id),
+    agent_assignment_source: "whatsapp_campaign",
+    last_message_at: now,
+    last_seen: now,
+    updated_at: now,
+  };
+  const destination = parseCampaignLeadDestination(campaign.lead_destination);
+  if (destination.moveToFunnel) {
+    patch.crm_funnel_id = destination.funnelId;
+    patch.status = destination.columnId;
+  }
+  if (destination.releaseOwner) {
+    patch.owner_employee_id = null;
+  }
+  return patch;
+}
 
 async function processRecipient(params: {
   sb: ServiceClient;
@@ -769,14 +802,7 @@ async function processRecipient(params: {
       ),
     params.sb
       .from("leads")
-      .update({
-        source: "whatsapp_campaign",
-        agent_id: text(params.campaign.agent_id),
-        agent_assignment_source: "whatsapp_campaign",
-        last_message_at: now,
-        last_seen: now,
-        updated_at: now,
-      })
+      .update(buildCampaignLeadPatch(params.campaign, now))
       .eq("tenant_id", tenantId)
       .eq("id", lead.id),
     touchLeadJourney({ sb: params.sb, tenantId, journeyId: journey.id }),
@@ -833,6 +859,41 @@ export function parseCampaignSendWindow(raw: unknown): CampaignSendWindow | null
     horaFim: clampInt(config.horaFim, 0, 23, 18),
     minutoFim: clampInt(config.minutoFim, 0, 59, 0),
     timezone: text(config.timezone) ?? "America/Sao_Paulo",
+  };
+}
+
+/**
+ * O que fazer com o lead no CRM quando ele entra num disparo. A troca do
+ * agente de IA (`leads.agent_id`) não é opção aqui — acontece sempre, em
+ * `processRecipient`, porque é a isolação do agente de disparos já em
+ * produção. Isto cobre só o que o dono da conta pode escolher por campanha:
+ * mover o card pra outro funil/coluna, e/ou soltar o vendedor humano
+ * responsável.
+ */
+export type CampaignLeadDestination = {
+  moveToFunnel: boolean;
+  funnelId: string | null;
+  columnId: string | null;
+  releaseOwner: boolean;
+};
+
+/**
+ * Lê o destino gravado na campanha. `moveToFunnel` só fica `true` quando
+ * funil E coluna vêm preenchidos — meia-configuração (ligado sem destino
+ * escolhido) não move nada, mesmo raciocínio de `parseCampaignSendWindow`.
+ * `releaseOwner` é independente: dá pra soltar o vendedor sem mover de
+ * funil, ou mover sem soltar o vendedor.
+ */
+export function parseCampaignLeadDestination(raw: unknown): CampaignLeadDestination {
+  const config = object(raw);
+  const funnelId = text(config.funnelId);
+  const columnId = text(config.columnId);
+  const moveToFunnel = config.moveToFunnel === true && Boolean(funnelId && columnId);
+  return {
+    moveToFunnel,
+    funnelId: moveToFunnel ? funnelId : null,
+    columnId: moveToFunnel ? columnId : null,
+    releaseOwner: config.releaseOwner === true,
   };
 }
 

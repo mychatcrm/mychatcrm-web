@@ -24,6 +24,7 @@ import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
 import { cn } from "@/lib/utils";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 import { useCrmFunnels } from "@/components/dashboard/CrmFunnelsContext";
+import { CrmDestinationBlock } from "@/components/dashboard/agentes/CrmDestinationBlock";
 import { WhatsAppGlyph } from "@/components/dashboard/crm/crm-phone";
 import {
   loadDisparosDrafts,
@@ -157,6 +158,13 @@ export function DisparosMassaHub() {
   const [windowDays, setWindowDays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [windowStart, setWindowStart] = useState("09:00");
   const [windowEnd, setWindowEnd] = useState("18:00");
+  // Destino do lead ao entrar no disparo: desligado por padrão mantém o
+  // comportamento de sempre (funil/coluna e vendedor responsável não mudam).
+  // A troca do agente de IA não é opção aqui — acontece sempre, no servidor.
+  const [destMoveEnabled, setDestMoveEnabled] = useState(false);
+  const [destFunnelId, setDestFunnelId] = useState("");
+  const [destColumnId, setDestColumnId] = useState("");
+  const [destReleaseOwner, setDestReleaseOwner] = useState(false);
   const [drafts, setDrafts] = useState<DisparosDraft[]>([]);
   const [draftNotice, setDraftNotice] = useState<string | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
@@ -460,6 +468,12 @@ export function DisparosMassaHub() {
                 minutoFim: Number(windowEnd.split(":")[1] ?? 0),
               }
             : null,
+          leadDestination: {
+            moveToFunnel: destMoveEnabled,
+            funnelId: destFunnelId || null,
+            columnId: destColumnId || null,
+            releaseOwner: destReleaseOwner,
+          },
         }),
       });
       const payload = (await response.json()) as { error?: string };
@@ -490,6 +504,10 @@ export function DisparosMassaHub() {
     windowDays,
     windowStart,
     windowEnd,
+    destMoveEnabled,
+    destFunnelId,
+    destColumnId,
+    destReleaseOwner,
   ]);
 
   const handleCancelCampaign = useCallback(async (campaignId: string) => {
@@ -978,6 +996,54 @@ export function DisparosMassaHub() {
                       </div>
                     </div>
                   ) : null}
+                </div>
+
+                <div className="border-t border-line/60 pt-4">
+                  <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-content-secondary">
+                    <UserCog className="size-3.5" aria-hidden />
+                    Destino do lead no CRM
+                  </label>
+                  <p className="mb-2.5 text-[11px] text-content-secondary">
+                    Quem responder ao disparo passa a ser atendido pelo agente de disparos automaticamente — isso não é opcional. As opções abaixo controlam só o funil/coluna e o vendedor responsável no CRM.
+                  </p>
+                  <CrmDestinationBlock
+                    funnels={funnels}
+                    enabled={destMoveEnabled}
+                    funnelId={destFunnelId}
+                    columnId={destColumnId}
+                    onChange={(next) => {
+                      setDestMoveEnabled(next.enabled);
+                      setDestFunnelId(next.funnelId);
+                      setDestColumnId(next.columnId);
+                    }}
+                    help={{
+                      offTitle: "Manter no funil atual",
+                      off: "O card do lead continua no mesmo funil e coluna de onde ele já estava.",
+                      onTitle: "Mover para outro funil",
+                      on: "Ao entrar no disparo, o card do lead é movido para o funil e coluna escolhidos abaixo.",
+                      funnel: "Funil para onde o card vai quando o disparo sair.",
+                      column: "Coluna/etapa dentro desse funil.",
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setDestReleaseOwner((v) => !v)}
+                    className={cn(
+                      "mt-3 flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left text-xs transition-colors",
+                      destReleaseOwner
+                        ? "border-primary/60 bg-primary/10 text-content"
+                        : "border-line bg-surface-card/40 text-content-secondary hover:border-primary/35",
+                    )}
+                  >
+                    <span>
+                      {destReleaseOwner
+                        ? "Solta o vendedor responsável — o card fica sem dono até alguém puxar de novo"
+                        : "Mantém o vendedor responsável, se houver"}
+                    </span>
+                    <span className="text-[11px] font-medium text-primary">
+                      {destReleaseOwner ? "Ativado" : "Manter"}
+                    </span>
+                  </button>
                 </div>
 
                 {riskWarning ? (
