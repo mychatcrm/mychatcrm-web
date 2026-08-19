@@ -12,6 +12,8 @@ import {
   ChevronDown,
   Gauge,
   Layers,
+  Pencil,
+  Plus,
   Send,
   ShieldCheck,
   Sparkles,
@@ -631,6 +633,20 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
 
   return (
     <div className="space-y-6">
+      <AgentCreateOverlay
+        open={createBroadcastOpen}
+        onClose={() => setCreateBroadcastOpen(false)}
+        session={session}
+        formKey={broadcastFormKey}
+        onCreated={handleBroadcastAgentCreated}
+      />
+      <AgentManageOverlay
+        agent={manageBroadcastAgent}
+        onClose={() => setManageBroadcastAgent(null)}
+        formKey={broadcastFormKey}
+        onUpdated={handleBroadcastAgentUpdated}
+        onDeleted={handleBroadcastAgentDeleted}
+      />
       {draftNotice ? (
         <div
           className={cn(
@@ -650,33 +666,94 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
       ) : null}
 
       {view === "list" ? (
-        <DisparosCampanhasList
-          isLight={isLight}
-          history={history}
-          drafts={drafts}
-          processingCampaignId={processingCampaignId}
-          onCreateNew={handleCreateNew}
-          onEditDraft={handleEditDraft}
-          onDeleteDraft={handleDeleteDraft}
-          onCancelCampaign={handleCancelCampaign}
-          onProcessNow={handleProcessNow}
-        />
+        <>
+          <DisparosCampanhasList
+            isLight={isLight}
+            history={history}
+            drafts={drafts}
+            processingCampaignId={processingCampaignId}
+            onCreateNew={handleCreateNew}
+            onEditDraft={handleEditDraft}
+            onDeleteDraft={handleDeleteDraft}
+            onCancelCampaign={handleCancelCampaign}
+            onProcessNow={handleProcessNow}
+          />
+
+          <div
+            className={cn(
+              "rounded-xl border p-5 sm:p-6",
+              isLight ? "border-slate-200/80 bg-surface-deep/90" : "border-line bg-surface-deep/35",
+            )}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-sm font-semibold text-content">
+                  <Bot className="size-4 text-primary" aria-hidden />
+                  Agentes de Disparos
+                </div>
+                <p className="mt-1 max-w-lg text-xs leading-relaxed text-content-secondary">
+                  Separados dos seus agentes de atendimento — quem responder a um disparo é conduzido por um
+                  destes, e cada um fica salvo pra reaproveitar em qualquer campanha futura.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                className="shrink-0 gap-2"
+                disabled={atBroadcastAgentCap}
+                title={
+                  atBroadcastAgentCap
+                    ? `Seu plano permite ${broadcastAgentLimit} agente${broadcastAgentLimit === 1 ? "" : "s"} de Disparos ativo${broadcastAgentLimit === 1 ? "" : "s"}.`
+                    : undefined
+                }
+                onClick={() => {
+                  setBroadcastFormKey((k) => k + 1);
+                  setCreateBroadcastOpen(true);
+                }}
+              >
+                <Plus className="size-4" aria-hidden />
+                Novo agente de Disparos
+              </Button>
+            </div>
+            {broadcastAgents.length === 0 ? (
+              <p className="mt-4 rounded-xl border border-dashed border-line px-3 py-4 text-center text-xs text-content-secondary">
+                Nenhum agente de Disparos criado ainda — crie um pra já deixar pronto pra próxima campanha.
+              </p>
+            ) : (
+              <div className="mt-4 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+                {broadcastAgents.map((agent) => (
+                  <div
+                    key={agent.id}
+                    className={cn(
+                      "flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5",
+                      isLight ? "border-slate-200/80 bg-surface-card" : "border-line/70 bg-surface-card/30",
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-content">{agent.nome}</div>
+                      <div className="mt-0.5 text-[11px] text-content-secondary">
+                        {agent.status === "ativo" ? "Ativo" : "Pausado"}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setManageBroadcastAgent(agent);
+                        setBroadcastFormKey((k) => k + 1);
+                      }}
+                      aria-label={`Configurar ${agent.nome}`}
+                      className="grid size-8 shrink-0 place-items-center rounded-lg text-content-secondary transition-colors hover:bg-primary/10 hover:text-primary"
+                    >
+                      <Pencil className="size-3.5" aria-hidden />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
       ) : (
         <>
-          <AgentCreateOverlay
-            open={createBroadcastOpen}
-            onClose={() => setCreateBroadcastOpen(false)}
-            session={session}
-            formKey={broadcastFormKey}
-            onCreated={handleBroadcastAgentCreated}
-          />
-          <AgentManageOverlay
-            agent={manageBroadcastAgent}
-            onClose={() => setManageBroadcastAgent(null)}
-            formKey={broadcastFormKey}
-            onUpdated={handleBroadcastAgentUpdated}
-            onDeleted={handleBroadcastAgentDeleted}
-          />
           <button
             type="button"
             onClick={() => setView("list")}
