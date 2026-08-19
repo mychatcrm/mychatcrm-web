@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   listTenantWhatsappConnectionsMock,
@@ -77,6 +77,50 @@ describe("WhatsApp campaign helpers", () => {
     expect(leadMatchesWhatsAppCampaignAudience(lead, "tag", "outro")).toBe(false);
     expect(leadMatchesWhatsAppCampaignAudience(lead, "funnel_stage", "contato")).toBe(true);
     expect(leadMatchesWhatsAppCampaignAudience(lead, "funnel_stage", "novo")).toBe(false);
+  });
+});
+
+describe("leadMatchesWhatsAppCampaignAudience — data de cadastro", () => {
+  // Quarta-feira, meio-dia em São Paulo.
+  const NOW = new Date("2026-08-19T15:00:00.000Z");
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("cadastro_dias: pega quem tem N dias ou mais, não quem tem menos", () => {
+    const antigo = { created_at: "2026-06-01T12:00:00.000Z" }; // ~79 dias atrás
+    const recente = { created_at: "2026-08-15T12:00:00.000Z" }; // 4 dias atrás
+    expect(leadMatchesWhatsAppCampaignAudience(antigo, "cadastro_dias", "30")).toBe(true);
+    expect(leadMatchesWhatsAppCampaignAudience(recente, "cadastro_dias", "30")).toBe(false);
+    expect(leadMatchesWhatsAppCampaignAudience(recente, "cadastro_dias", "0")).toBe(true);
+  });
+
+  it("cadastro_dias: valor inválido nunca bate (nem trava)", () => {
+    const lead = { created_at: "2026-06-01T12:00:00.000Z" };
+    expect(leadMatchesWhatsAppCampaignAudience(lead, "cadastro_dias", "não é número")).toBe(false);
+    expect(leadMatchesWhatsAppCampaignAudience(lead, "cadastro_dias", "-5")).toBe(false);
+    expect(leadMatchesWhatsAppCampaignAudience({ created_at: "data inválida" }, "cadastro_dias", "30")).toBe(false);
+  });
+
+  it("cadastro_data: bate só o dia exato, no fuso America/Sao_Paulo", () => {
+    // 19/08 às 23h UTC ainda é 19/08 em São Paulo (UTC-3); 20/08 às 02h UTC também é 19/08 lá.
+    const noDia = { created_at: "2026-08-20T02:30:00.000Z" };
+    const outroDia = { created_at: "2026-08-18T23:30:00.000Z" }; // 18/08 em São Paulo
+    expect(leadMatchesWhatsAppCampaignAudience(noDia, "cadastro_data", "2026-08-19")).toBe(true);
+    expect(leadMatchesWhatsAppCampaignAudience(outroDia, "cadastro_data", "2026-08-19")).toBe(false);
+  });
+
+  it("cadastro_data: sem created_at ou valor vazio nunca bate", () => {
+    expect(leadMatchesWhatsAppCampaignAudience({}, "cadastro_data", "2026-08-19")).toBe(false);
+    expect(leadMatchesWhatsAppCampaignAudience({ created_at: "2026-08-19T12:00:00.000Z" }, "cadastro_data", null)).toBe(
+      false,
+    );
   });
 });
 
@@ -266,6 +310,8 @@ describe("parseCampaignAudienceBlocks", () => {
     expect(
       parseCampaignAudienceBlocks([
         { kind: "crm", filter: "tag", value: "vip" },
+        { kind: "crm", filter: "cadastro_dias", value: "30" },
+        { kind: "crm", filter: "cadastro_data", value: "2026-08-19" },
         { kind: "crm", filter: "esquisito" },
         { kind: "leads", leadIds: ["lead-1", "lead-1", "  ", "lead-2"] },
         { kind: "leads", leadIds: [] },
@@ -275,6 +321,8 @@ describe("parseCampaignAudienceBlocks", () => {
       ]),
     ).toEqual([
       { kind: "crm", filter: "tag", value: "vip" },
+      { kind: "crm", filter: "cadastro_dias", value: "30" },
+      { kind: "crm", filter: "cadastro_data", value: "2026-08-19" },
       { kind: "leads", leadIds: ["lead-1", "lead-2"] },
     ]);
   });

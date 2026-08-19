@@ -46,8 +46,17 @@ export const CAMPAIGN_THROUGHPUT_PER_MINUTE: Record<CampaignThroughput, number> 
  * exemplo). `leads` carrega ids já resolvidos (import/manual já gravaram o
  * lead antes da campanha existir); `crm` é resolvido no momento da criação.
  */
+export type CampaignAudienceCrmFilter =
+  | "all"
+  | "tag"
+  | "funnel_stage"
+  /** `value` = número de dias (string). Cadastrado há esse tanto de dias ou mais. */
+  | "cadastro_dias"
+  /** `value` = data "AAAA-MM-DD". Cadastrado exatamente nesse dia. */
+  | "cadastro_data";
+
 export type CampaignAudienceBlockInput =
-  | { kind: "crm"; filter: "all" | "tag" | "funnel_stage"; value?: string | null }
+  | { kind: "crm"; filter: CampaignAudienceCrmFilter; value?: string | null }
   | { kind: "leads"; leadIds: string[] };
 
 type CampaignInput = {
@@ -257,15 +266,48 @@ export function buildWhatsAppCampaignTemplateParams(lead: Record<string, unknown
   ];
 }
 
+/** Fuso fixo pra decidir "mesmo dia de cadastro" — mesmo padrão de `parseCampaignSendWindow`. */
+const CAMPAIGN_AUDIENCE_TIMEZONE = "America/Sao_Paulo";
+
+/** `true` quando `createdAt` caiu no mesmo dia-calendário (fuso fixo) que `dateStr` ("AAAA-MM-DD"). */
+function leadCreatedOnDate(createdAt: unknown, dateStr: string): boolean {
+  if (typeof createdAt !== "string") return false;
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) return false;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: CAMPAIGN_AUDIENCE_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}` === dateStr;
+}
+
+/** `true` quando `createdAt` tem `minDays` dias ou mais — base parada, o alvo típico de resgate. */
+function leadOlderThanDays(createdAt: unknown, minDays: number): boolean {
+  if (typeof createdAt !== "string") return false;
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) return false;
+  return date.getTime() <= Date.now() - minDays * 86_400_000;
+}
+
 export function leadMatchesWhatsAppCampaignAudience(
   lead: Record<string, unknown>,
-  audienceType: "all" | "tag" | "funnel_stage",
+  audienceType: CampaignAudienceCrmFilter,
   audienceValue: string | null,
 ): boolean {
   if (audienceType === "all") return true;
   if (!audienceValue) return false;
   if (audienceType === "funnel_stage") {
     return String(lead.status ?? "") === audienceValue;
+  }
+  if (audienceType === "cadastro_dias") {
+    const days = Number(audienceValue);
+    return Number.isFinite(days) && days >= 0 && leadOlderThanDays(lead.created_at, days);
+  }
+  if (audienceType === "cadastro_data") {
+    return leadCreatedOnDate(lead.created_at, audienceValue);
   }
   const metadata = object(lead.profile_metadata);
   const tags = Array.isArray(metadata.tags)
@@ -298,7 +340,7 @@ export function computeDistinctLeadTags(leads: Array<Record<string, unknown>>): 
 }
 
 const CAMPAIGN_AUDIENCE_LEAD_COLUMNS =
-  "id, name, phone, status, profile_metadata, whatsapp_opt_in_at, whatsapp_opt_in_source";
+  "id, name, phone, status, profile_metadata, whatsapp_opt_in_at, whatsapp_opt_in_source, created_at";
 
 /**
  * Une os públicos da campanha num único conjunto de leads, sem repetir quem
@@ -385,8 +427,14 @@ export function parseCampaignAudienceBlocks(raw: unknown): CampaignAudienceBlock
   for (const item of raw) {
     const entry = object(item);
     if (entry.kind === "crm") {
-      const filter =
-        entry.filter === "tag" || entry.filter === "funnel_stage" || entry.filter === "all" ? entry.filter : null;
+      const filter: CampaignAudienceCrmFilter | null =
+        entry.filter === "tag" ||
+        entry.filter === "funnel_stage" ||
+        entry.filter === "all" ||
+        entry.filter === "cadastro_dias" ||
+        entry.filter === "cadastro_data"
+          ? entry.filter
+          : null;
       if (!filter) continue;
       blocks.push({ kind: "crm", filter, value: text(entry.value) });
     } else if (entry.kind === "leads") {
