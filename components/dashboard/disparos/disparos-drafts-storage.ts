@@ -3,7 +3,7 @@ export const DISPAROS_DRAFTS_STORAGE_KEY = "mychatcrm.disparos.drafts.v1";
 export const DISPAROS_DRAFTS_UPDATED_EVENT = "mychatcrm-disparos-drafts-updated";
 
 /** Só filtros do CRM são salváveis num rascunho — ver DisparosDraft. */
-export type DisparosDraftCrmBlock = { filtro: "todos" | "tag" | "etapa"; valor: string };
+export type DisparosDraftCrmBlock = { filtro: "todos" | "tag" | "etapa" | "dias" | "data"; valor: string };
 
 export type DisparosDraft = {
   id: string;
@@ -28,7 +28,8 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 function isDisparosDraftCrmBlock(v: unknown): v is DisparosDraftCrmBlock {
   if (!isRecord(v)) return false;
   return (
-    (v.filtro === "todos" || v.filtro === "tag" || v.filtro === "etapa") && typeof v.valor === "string"
+    (v.filtro === "todos" || v.filtro === "tag" || v.filtro === "etapa" || v.filtro === "dias" || v.filtro === "data") &&
+    typeof v.valor === "string"
   );
 }
 

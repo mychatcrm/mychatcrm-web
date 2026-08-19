@@ -22,7 +22,7 @@ import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { cn } from "@/lib/utils";
 import type { CrmFunnel } from "@/lib/crm-funnels";
 
-export type PublicoFiltroCrm = "todos" | "tag" | "etapa";
+export type PublicoFiltroCrm = "todos" | "tag" | "etapa" | "dias" | "data";
 
 export type PublicoAudiencePreview = { totalMatched: number; optedIn: number; notOptedIn: number };
 
@@ -74,8 +74,19 @@ export function createContatosBlock(origem: "import" | "manual"): PublicoContato
   };
 }
 
-export function publicoFiltroToApi(filtro: PublicoFiltroCrm): "all" | "tag" | "funnel_stage" {
-  return filtro === "etapa" ? "funnel_stage" : filtro === "tag" ? "tag" : "all";
+export function publicoFiltroToApi(
+  filtro: PublicoFiltroCrm,
+): "all" | "tag" | "funnel_stage" | "cadastro_dias" | "cadastro_data" {
+  if (filtro === "etapa") return "funnel_stage";
+  if (filtro === "tag") return "tag";
+  if (filtro === "dias") return "cadastro_dias";
+  if (filtro === "data") return "cadastro_data";
+  return "all";
+}
+
+/** Hoje em "AAAA-MM-DD", pro valor inicial do filtro "Data de cadastro". */
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 /** true quando o bloco já tem gente pra receber — bloco em edição não conta. */
@@ -111,6 +122,8 @@ const CRM_FILTROS: Array<{ id: PublicoFiltroCrm; label: string; hint: string }> 
   { id: "todos", label: "Base completa", hint: "Todos os leads com opt-in" },
   { id: "tag", label: "Por tag", hint: "Segmentos do CRM Kanban" },
   { id: "etapa", label: "Por funil", hint: "Colunas do CRM Kanban" },
+  { id: "dias", label: "Dias no CRM", hint: "Base parada há X dias ou mais" },
+  { id: "data", label: "Data de cadastro", hint: "Só quem cadastrou num dia certo" },
 ];
 
 type UpdateFn = (id: string, patch: Record<string, unknown>) => void;
@@ -237,9 +250,15 @@ function CrmBlockCard({
                 } else if (opt.id === "etapa") {
                   const jaValido = funnels.some((f) => f.columns.some((c) => c.id === block.valor));
                   onUpdate(id, { filtro: "etapa", valor: jaValido ? block.valor : funnels[0]?.columns[0]?.id ?? "" });
-                } else {
+                } else if (opt.id === "tag") {
                   const jaValido = availableTags.includes(block.valor);
                   onUpdate(id, { filtro: "tag", valor: jaValido ? block.valor : availableTags[0] ?? "" });
+                } else if (opt.id === "dias") {
+                  const jaValido = /^\d+$/.test(block.valor);
+                  onUpdate(id, { filtro: "dias", valor: jaValido ? block.valor : "30" });
+                } else {
+                  const jaValido = /^\d{4}-\d{2}-\d{2}$/.test(block.valor);
+                  onUpdate(id, { filtro: "data", valor: jaValido ? block.valor : todayIsoDate() });
                 }
               }}
               className={cn(
@@ -311,6 +330,34 @@ function CrmBlockCard({
             Nenhum funil configurado ainda.
           </p>
         )
+      ) : null}
+      {block.filtro === "dias" ? (
+        <div className="mt-2.5">
+          <label className="mb-1 block text-[11px] font-medium text-content-secondary">
+            Cadastrados há pelo menos quantos dias?
+          </label>
+          <input
+            type="number"
+            min={0}
+            value={block.valor}
+            onChange={(e) => onUpdate(id, { valor: e.target.value })}
+            className="h-11 w-full rounded-lg border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+          />
+          <p className="mt-1 text-[10px] text-content-secondary">
+            Ex.: 30 pega quem está no CRM há 30 dias ou mais — bom pra resgatar base parada.
+          </p>
+        </div>
+      ) : null}
+      {block.filtro === "data" ? (
+        <div className="mt-2.5">
+          <label className="mb-1 block text-[11px] font-medium text-content-secondary">Cadastrados em que dia?</label>
+          <input
+            type="date"
+            value={block.valor}
+            onChange={(e) => onUpdate(id, { valor: e.target.value })}
+            className="h-11 w-full rounded-lg border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+          />
+        </div>
       ) : null}
       <div
         className={cn(
