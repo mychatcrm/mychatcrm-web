@@ -47,15 +47,3 @@ describe("cota de agente de Disparos chega até as rotas genéricas de agente", 
     }
   });
 });
-
-describe("campanha em modo disparos aceita um agente específico", () => {
-  const route = source("app/api/client/whatsapp-campaigns/route.ts");
-
-  it("usa o agentId explícito quando o cliente escolheu um", () => {
-    expect(route).toContain("explicitAgentId ||");
-  });
-
-  it("continua caindo no agente padrão quando nada foi escolhido (compatibilidade)", () => {
-    expect(route).toContain("ensureDisparosDefaultAgent(guard.session.tenantId)");
-  });
-});

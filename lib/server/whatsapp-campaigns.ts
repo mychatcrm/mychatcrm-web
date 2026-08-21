@@ -20,7 +20,6 @@ import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
 import { listTenantWhatsappConnections } from "@/lib/server/tenant-whatsapp-connections";
 import { lookupWhatsAppCloudConnectionByPhoneNumberId } from "@/lib/server/whatsapp-cloud-connections";
 import { persistEvolutionSendReceipt } from "@/lib/server/evolution-customer-delivery";
-import { isBroadcastAgentRow } from "@/lib/server/broadcast-agent-identity";
 import { isWithinBusinessHours } from "@/lib/server/follow-up-engine";
 import {
   markAgentOutboundFailed,
@@ -478,13 +477,6 @@ export async function createWhatsAppCampaign(params: {
     .eq("active", true)
     .maybeSingle();
   if (!agent) throw new Error("campaign_agent_not_available");
-  // Quem responde ao disparo é atendido por ESTE agente — ele passa a ser o
-  // dono da conversa e do lead. Deixar um agente de atendimento assumir esse
-  // papel arrastaria a base antiga para dentro do funil de lead novo, que é
-  // exatamente a mistura que a separação existe para impedir.
-  if (!isBroadcastAgentRow(agent as Record<string, unknown>)) {
-    throw new Error("campaign_agent_not_broadcast");
-  }
 
   let messageTemplate = input.messageTemplate.trim();
   let metaTemplateName: string | null = null;

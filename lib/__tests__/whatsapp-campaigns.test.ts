@@ -476,6 +476,29 @@ describe("createWhatsAppCampaign — agente obrigatório", () => {
       }),
     ).rejects.toThrow("campaign_agent_not_available");
   });
+
+  it("aceita um agente de atendimento normal (sem isBroadcastAgent) — a tela de disparos só usa Meus Agentes agora", async () => {
+    const sb = makeSb({
+      agentRow: { agent_id: "ag-normal-1", active: true, metadata: {} },
+      leadRows: [OPTED_IN_LEAD],
+      insertedCampaign: { id: "camp-1" },
+    });
+
+    const campaign = await createWhatsAppCampaign({
+      sb,
+      tenantId: "tenant-1",
+      input: {
+        name: "Campanha",
+        connectionId: "evo-1",
+        agentId: "ag-normal-1",
+        audienceBlocks: [{ kind: "crm", filter: "all" }],
+        messageTemplate: "Olá {{nome}}",
+        throughput: "normal",
+      },
+    });
+
+    expect(campaign).toEqual({ id: "camp-1" });
+  });
 });
 
 describe("createWhatsAppCampaign — vendedor atribuído", () => {

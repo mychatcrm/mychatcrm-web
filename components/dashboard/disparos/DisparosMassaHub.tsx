@@ -6,14 +6,11 @@ import {
   AlertTriangle,
   ArrowLeft,
   BookOpen,
-  Bot,
   CalendarClock,
   Check,
   ChevronDown,
   Gauge,
   Layers,
-  Pencil,
-  Plus,
   Send,
   ShieldCheck,
   Sparkles,
@@ -25,11 +22,8 @@ import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { PanelInput as Input } from "@/components/panel/ui/PanelInput";
 import { cn } from "@/lib/utils";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
-import type { ClientSession } from "@/lib/client-auth";
-import type { Agent } from "@/lib/types";
 import { useCrmFunnels } from "@/components/dashboard/CrmFunnelsContext";
 import { CrmDestinationBlock } from "@/components/dashboard/agentes/CrmDestinationBlock";
-import { AgentCreateOverlay, AgentManageOverlay } from "@/components/dashboard/agentes/AgentCreateOverlay";
 import { WhatsAppGlyph } from "@/components/dashboard/crm/crm-phone";
 import {
   loadDisparosDrafts,
@@ -158,29 +152,7 @@ function StepBadge({ n }: { n: number }) {
   );
 }
 
-/**
- * CRUD genérico de agentes, mesmo endpoint de /dashboard/agentes — um agente
- * de Disparos é só uma linha de tenant_agents com `isBroadcastAgent: true` no
- * metadata, sem rota própria (ver lib/server/broadcast-agent-identity.ts).
- */
-async function saveAgentToDb(agent: Agent, method: "POST" | "PUT"): Promise<Agent> {
-  const url = method === "POST" ? "/api/client/agentes" : `/api/client/agentes/${encodeURIComponent(agent.id)}`;
-  const response = await fetch(url, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(agent),
-  });
-  const data = (await response.json().catch(() => ({}))) as { agent?: Agent; error?: string };
-  if (!response.ok) throw new Error(data.error ?? "Não foi possível salvar o agente de disparos.");
-  return data.agent ?? agent;
-}
-
-async function deleteAgentFromDb(agentId: string): Promise<void> {
-  const response = await fetch(`/api/client/agentes/${encodeURIComponent(agentId)}`, { method: "DELETE" });
-  if (!response.ok) throw new Error("Não foi possível remover o agente de disparos.");
-}
-
-export function DisparosMassaHub({ session }: { session: ClientSession }) {
+export function DisparosMassaHub() {
   const { isLight } = usePanelAppearance();
   const { funnels } = useCrmFunnels();
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -218,17 +190,7 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
   const [agents, setAgents] = useState<CampaignAgent[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignRow[]>([]);
   const [connectionId, setConnectionId] = useState("");
-  const [agentMode, setAgentMode] = useState<"existing" | "disparos">("existing");
   const [agentId, setAgentId] = useState("");
-  // Agentes de Disparos: lista completa vem de /api/client/agentes (mesma
-  // rota de /dashboard/agentes) — filtrada aqui por isBroadcastAgent, porque
-  // é o único jeito de ter o objeto Agent inteiro pra editar inline.
-  const [fullAgents, setFullAgents] = useState<Agent[]>([]);
-  const [broadcastAgentLimit, setBroadcastAgentLimit] = useState(1);
-  const [broadcastAgentId, setBroadcastAgentId] = useState("");
-  const [createBroadcastOpen, setCreateBroadcastOpen] = useState(false);
-  const [manageBroadcastAgent, setManageBroadcastAgent] = useState<Agent | null>(null);
-  const [broadcastFormKey, setBroadcastFormKey] = useState(0);
   const [eligibleRecipients, setEligibleRecipients] = useState(0);
   const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [campaignBusy, setCampaignBusy] = useState(false);
@@ -252,7 +214,6 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
         connections?: CampaignConnection[];
         agents?: CampaignAgent[];
         eligibleRecipients?: number;
-        broadcastAgentLimit?: number;
         availableTags?: string[];
       };
       if (!response.ok) throw new Error(payload.error ?? "Não foi possível carregar campanhas.");
@@ -260,23 +221,10 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
       setConnections(payload.connections ?? []);
       setAgents(payload.agents ?? []);
       setEligibleRecipients(payload.eligibleRecipients ?? 0);
-      setBroadcastAgentLimit(typeof payload.broadcastAgentLimit === "number" ? payload.broadcastAgentLimit : 1);
       setAvailableTags(payload.availableTags ?? []);
       setConnectionId((current) => current || payload.connections?.[0]?.connectionId || "");
     } catch (error) {
       setCampaignError(error instanceof Error ? error.message : "Não foi possível carregar campanhas.");
-    }
-  }, []);
-
-  const loadFullAgents = useCallback(async () => {
-    try {
-      const response = await fetch("/api/client/agentes", { cache: "no-store" });
-      if (!response.ok) return;
-      const payload = (await response.json()) as { agents?: Agent[] };
-      setFullAgents(payload.agents ?? []);
-    } catch {
-      // Silencioso: a tela de disparos continua funcionando com o agente
-      // padrão criado no servidor, só perde a edição inline aqui.
     }
   }, []);
 
@@ -293,66 +241,13 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
 
   useEffect(() => {
     void loadCampaignData();
-    void loadFullAgents();
     void loadTeamEmployees();
-  }, [loadCampaignData, loadFullAgents, loadTeamEmployees]);
+  }, [loadCampaignData, loadTeamEmployees]);
 
   const activeTeamEmployees = useMemo(
     () => teamEmployees.filter((employee) => employee.ativo && !employee.accountSuspended),
     [teamEmployees],
   );
-
-  const broadcastAgents = useMemo(
-    () => fullAgents.filter((agent) => agent.isBroadcastAgent === true),
-    [fullAgents],
-  );
-  const activeBroadcastCount = useMemo(
-    () => broadcastAgents.filter((agent) => agent.status === "ativo").length,
-    [broadcastAgents],
-  );
-  const atBroadcastAgentCap = activeBroadcastCount >= broadcastAgentLimit;
-
-  // Seleciona o primeiro automaticamente quando existe pelo menos um salvo e
-  // nada foi escolhido ainda (ou o escolhido sumiu — ex.: foi apagado).
-  useEffect(() => {
-    if (broadcastAgents.length === 0) return;
-    if (broadcastAgentId && broadcastAgents.some((agent) => agent.id === broadcastAgentId)) return;
-    setBroadcastAgentId(broadcastAgents[0]!.id);
-  }, [broadcastAgents, broadcastAgentId]);
-
-  const handleBroadcastAgentCreated = useCallback((agent: Agent) => {
-    // O wizard cria todo agente novo "inativo" por padrão — mas o cliente
-    // acabou de configurar este pra usar JÁ nesta campanha, então força ativo
-    // (mesmo comportamento que ensureDisparosDefaultAgent já tinha no servidor).
-    const stamped: Agent = { ...agent, isBroadcastAgent: true, status: "ativo" };
-    setFullAgents((current) => [stamped, ...current]);
-    setBroadcastAgentId(stamped.id);
-    saveAgentToDb(stamped, "POST")
-      .then((saved) => setFullAgents((current) => current.map((a) => (a.id === stamped.id ? saved : a))))
-      .catch((error) => {
-        setFullAgents((current) => current.filter((a) => a.id !== stamped.id));
-        setBroadcastAgentId((current) => (current === stamped.id ? "" : current));
-        setCampaignError(error instanceof Error ? error.message : "Não foi possível salvar o agente de disparos.");
-      });
-  }, []);
-
-  const handleBroadcastAgentUpdated = useCallback((agent: Agent) => {
-    const stamped: Agent = { ...agent, isBroadcastAgent: true };
-    setFullAgents((current) => current.map((a) => (a.id === stamped.id ? stamped : a)));
-    saveAgentToDb(stamped, "PUT")
-      .then((saved) => setFullAgents((current) => current.map((a) => (a.id === stamped.id ? saved : a))))
-      .catch((error) => {
-        setCampaignError(error instanceof Error ? error.message : "Não foi possível salvar o agente de disparos.");
-      });
-  }, []);
-
-  const handleBroadcastAgentDeleted = useCallback((deletedAgentId: string) => {
-    setFullAgents((current) => current.filter((a) => a.id !== deletedAgentId));
-    setBroadcastAgentId((current) => (current === deletedAgentId ? "" : current));
-    deleteAgentFromDb(deletedAgentId).catch((error) => {
-      console.warn("[disparos] falha ao apagar agente de disparos:", error);
-    });
-  }, []);
 
   const selectedConnection = useMemo(
     () => connections.find((c) => c.connectionId === connectionId) ?? null,
@@ -520,7 +415,6 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
     setWindowDays([1, 2, 3, 4, 5]);
     setWindowStart("09:00");
     setWindowEnd("18:00");
-    setAgentMode("existing");
     setAgentId("");
     setOwnerAction("manter");
     setOwnerEmployeeId("");
@@ -575,7 +469,7 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
   const canSchedule =
     Boolean(connectionId) &&
     Boolean(campaignName.trim()) &&
-    (agentMode === "disparos" || Boolean(agentId)) &&
+    Boolean(agentId) &&
     hasUsablePublico(publicoBlocks) &&
     (isMetaTransport ? Boolean(metaTemplateName) : Boolean(body.trim()));
 
@@ -589,8 +483,7 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
         body: JSON.stringify({
           name: campaignName,
           connectionId,
-          agentMode,
-          agentId: agentMode === "existing" ? agentId : broadcastAgentId || undefined,
+          agentId,
           audienceBlocks: buildAudienceBlocksPayload(publicoBlocks),
           messageTemplate: isMetaTransport ? "" : body,
           metaTemplateName: isMetaTransport ? metaTemplateName : undefined,
@@ -630,7 +523,6 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
     }
   }, [
     agentId,
-    agentMode,
     body,
     campaignName,
     connectionId,
@@ -651,7 +543,6 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
     ownerAction,
     ownerEmployeeId,
     continueWithAgent,
-    broadcastAgentId,
   ]);
 
   const handleCancelCampaign = useCallback(async (campaignId: string) => {
@@ -676,20 +567,6 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
 
   return (
     <div className="space-y-6">
-      <AgentCreateOverlay
-        open={createBroadcastOpen}
-        onClose={() => setCreateBroadcastOpen(false)}
-        session={session}
-        formKey={broadcastFormKey}
-        onCreated={handleBroadcastAgentCreated}
-      />
-      <AgentManageOverlay
-        agent={manageBroadcastAgent}
-        onClose={() => setManageBroadcastAgent(null)}
-        formKey={broadcastFormKey}
-        onUpdated={handleBroadcastAgentUpdated}
-        onDeleted={handleBroadcastAgentDeleted}
-      />
       {draftNotice ? (
         <div
           className={cn(
@@ -709,92 +586,17 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
       ) : null}
 
       {view === "list" ? (
-        <>
-          <DisparosCampanhasList
-            isLight={isLight}
-            history={history}
-            drafts={drafts}
-            processingCampaignId={processingCampaignId}
-            onCreateNew={handleCreateNew}
-            onEditDraft={handleEditDraft}
-            onDeleteDraft={handleDeleteDraft}
-            onCancelCampaign={handleCancelCampaign}
-            onProcessNow={handleProcessNow}
-          />
-
-          <div
-            className={cn(
-              "rounded-xl border p-5 sm:p-6",
-              isLight ? "border-slate-200/80 bg-surface-deep/90" : "border-line bg-surface-deep/35",
-            )}
-          >
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 text-sm font-semibold text-content">
-                  <Bot className="size-4 text-primary" aria-hidden />
-                  Agentes de Disparos
-                </div>
-                <p className="mt-1 max-w-lg text-xs leading-relaxed text-content-secondary">
-                  Separados dos seus agentes de atendimento — quem responder a um disparo é conduzido por um
-                  destes, e cada um fica salvo pra reaproveitar em qualquer campanha futura.
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="secondary"
-                className="shrink-0 gap-2"
-                disabled={atBroadcastAgentCap}
-                title={
-                  atBroadcastAgentCap
-                    ? `Seu plano permite ${broadcastAgentLimit} agente${broadcastAgentLimit === 1 ? "" : "s"} de Disparos ativo${broadcastAgentLimit === 1 ? "" : "s"}.`
-                    : undefined
-                }
-                onClick={() => {
-                  setBroadcastFormKey((k) => k + 1);
-                  setCreateBroadcastOpen(true);
-                }}
-              >
-                <Plus className="size-4" aria-hidden />
-                Novo agente de Disparos
-              </Button>
-            </div>
-            {broadcastAgents.length === 0 ? (
-              <p className="mt-4 rounded-xl border border-dashed border-line px-3 py-4 text-center text-xs text-content-secondary">
-                Nenhum agente de Disparos criado ainda — crie um pra já deixar pronto pra próxima campanha.
-              </p>
-            ) : (
-              <div className="mt-4 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-                {broadcastAgents.map((agent) => (
-                  <div
-                    key={agent.id}
-                    className={cn(
-                      "flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5",
-                      isLight ? "border-slate-200/80 bg-surface-card" : "border-line/70 bg-surface-card/30",
-                    )}
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-content">{agent.nome}</div>
-                      <div className="mt-0.5 text-[11px] text-content-secondary">
-                        {agent.status === "ativo" ? "Ativo" : "Pausado"}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setManageBroadcastAgent(agent);
-                        setBroadcastFormKey((k) => k + 1);
-                      }}
-                      aria-label={`Configurar ${agent.nome}`}
-                      className="grid size-8 shrink-0 place-items-center rounded-lg text-content-secondary transition-colors hover:bg-primary/10 hover:text-primary"
-                    >
-                      <Pencil className="size-3.5" aria-hidden />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </>
+        <DisparosCampanhasList
+          isLight={isLight}
+          history={history}
+          drafts={drafts}
+          processingCampaignId={processingCampaignId}
+          onCreateNew={handleCreateNew}
+          onEditDraft={handleEditDraft}
+          onDeleteDraft={handleDeleteDraft}
+          onCancelCampaign={handleCancelCampaign}
+          onProcessNow={handleProcessNow}
+        />
       ) : (
         <>
           <button
@@ -893,121 +695,23 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
               <UserCog className="size-4 text-primary" aria-hidden />
               Quem responde
             </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => setAgentMode("existing")}
-                className={cn(
-                  "rounded-xl border px-3 py-3 text-left text-sm transition-all",
-                  agentMode === "existing" ? "border-primary/60 bg-primary/10" : "border-line bg-surface-card/40 hover:border-primary/35",
-                )}
-              >
-                <div className="font-semibold text-content">Meu agente</div>
-                <div className="mt-0.5 text-[11px] text-content-secondary">Escolha um dos seus agentes de IA</div>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAgentMode("disparos");
-                  if (broadcastAgents.length === 0) {
-                    setBroadcastFormKey((k) => k + 1);
-                    setCreateBroadcastOpen(true);
-                  }
-                }}
-                className={cn(
-                  "rounded-xl border px-3 py-3 text-left text-sm transition-all",
-                  agentMode === "disparos" ? "border-primary/60 bg-primary/10" : "border-line bg-surface-card/40 hover:border-primary/35",
-                )}
-              >
-                <div className="flex items-center gap-1.5 font-semibold text-content">
-                  <Bot className="size-3.5 text-primary" aria-hidden />
-                  Agente do Disparos
-                </div>
-                <div className="mt-0.5 text-[11px] text-content-secondary">
-                  {broadcastAgents.length > 0
-                    ? `${broadcastAgents.length} salvo${broadcastAgents.length > 1 ? "s" : ""} — separado do atendimento`
-                    : "Configure agora — separado dos agentes de atendimento"}
-                </div>
-              </button>
-            </div>
-            {agentMode === "existing" ? (
-              <select
-                value={agentId}
-                onChange={(event) => setAgentId(event.target.value)}
-                className="mt-3 h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
-              >
-                <option value="">Selecione um agente</option>
-                {agents.map((agent) => (
-                  <option key={agent.agent_id} value={agent.agent_id}>
-                    {agent.display_name || agent.agent_id}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <div className="mt-3 space-y-2.5">
-                {broadcastAgents.length > 0 ? (
-                  <>
-                    <select
-                      value={broadcastAgentId}
-                      onChange={(event) => setBroadcastAgentId(event.target.value)}
-                      className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
-                    >
-                      {broadcastAgents.map((broadcastCandidate) => (
-                        <option key={broadcastCandidate.id} value={broadcastCandidate.id}>
-                          {broadcastCandidate.nome}
-                          {broadcastCandidate.status !== "ativo" ? " (pausado)" : ""}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const current =
-                            broadcastAgents.find((a) => a.id === broadcastAgentId) ?? broadcastAgents[0] ?? null;
-                          setManageBroadcastAgent(current);
-                          setBroadcastFormKey((k) => k + 1);
-                        }}
-                        className="rounded-lg border border-line px-3 py-1.5 text-[11px] font-medium text-content-secondary transition-colors hover:border-primary/40 hover:text-content"
-                      >
-                        Configurar este agente
-                      </button>
-                      <button
-                        type="button"
-                        disabled={atBroadcastAgentCap}
-                        title={
-                          atBroadcastAgentCap
-                            ? `Seu plano permite ${broadcastAgentLimit} agente${broadcastAgentLimit === 1 ? "" : "s"} de Disparos ativo${broadcastAgentLimit === 1 ? "" : "s"}.`
-                            : undefined
-                        }
-                        onClick={() => {
-                          setBroadcastFormKey((k) => k + 1);
-                          setCreateBroadcastOpen(true);
-                        }}
-                        className="rounded-lg border border-primary/35 px-3 py-1.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        + Criar outro agente de Disparos
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setBroadcastFormKey((k) => k + 1);
-                      setCreateBroadcastOpen(true);
-                    }}
-                    className="flex h-11 w-full items-center justify-center rounded-xl border border-primary/35 text-sm font-medium text-primary transition-colors hover:bg-primary/10"
-                  >
-                    Configurar agente de Disparos agora
-                  </button>
-                )}
-                <p className="text-[11px] text-content-secondary">
-                  Separado dos seus agentes de atendimento — só ele conduz quem responder a este disparo, e fica
-                  salvo pra reaproveitar em outra campanha.
-                </p>
-              </div>
-            )}
+            <select
+              value={agentId}
+              onChange={(event) => setAgentId(event.target.value)}
+              className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+            >
+              <option value="">Selecione um agente</option>
+              {agents.map((agent) => (
+                <option key={agent.agent_id} value={agent.agent_id}>
+                  {agent.display_name || agent.agent_id}
+                </option>
+              ))}
+            </select>
+            {agents.length === 0 ? (
+              <p className="mt-2 text-[11px] text-content-secondary">
+                Nenhum agente ativo ainda — crie um em Meus Agentes antes de agendar um disparo.
+              </p>
+            ) : null}
           </div>
 
           <div
@@ -1021,8 +725,8 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
               Destino do lead no CRM
             </div>
             <p className="mb-3 text-[11px] leading-relaxed text-content-secondary">
-              Quem responder ao disparo passa a ser atendido pelo agente de disparos automaticamente — isso não é
-              opcional. As opções abaixo controlam só o funil/coluna e o vendedor responsável no CRM.
+              Quem responder ao disparo passa a ser atendido pelo agente escolhido acima automaticamente — isso não
+              é opcional. As opções abaixo controlam só o funil/coluna e o vendedor responsável no CRM.
             </p>
             <CrmDestinationBlock
               funnels={funnels}
@@ -1111,7 +815,7 @@ export function DisparosMassaHub({ session }: { session: ClientSession }) {
                 >
                   <div className="font-semibold text-content">IA continua atendendo</div>
                   <div className="mt-0.5 text-[10px] text-content-secondary">
-                    Quem responder é conduzido pelo agente de disparos
+                    Quem responder é conduzido pelo agente escolhido acima
                   </div>
                 </button>
                 <button
