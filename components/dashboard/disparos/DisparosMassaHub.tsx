@@ -422,7 +422,7 @@ export function DisparosMassaHub() {
           // gravação. Diferente do clique na tela, onde vazio pode ser só um
           // estado transitório de quem está montando a seleção.
           scopeMode:
-            block.scope.funnelIds.length > 0 || block.scope.columnIds.length > 0
+            block.scope.funnelIds.length > 0 || block.scope.columns.length > 0
               ? ("custom" as const)
               : ("all" as const),
           scope: block.scope,

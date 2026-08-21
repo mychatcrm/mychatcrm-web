@@ -87,16 +87,31 @@ describe("POST /api/client/whatsapp-campaigns/audience-preview", () => {
 
   it("recorta por funil escolhido", async () => {
     const res = await audiencePreviewPOST(
-      jsonRequest(PREVIEW_URL, { scope: { funnelIds: ["funil-vendas"], columnIds: [] }, period: { mode: "all" } }),
+      jsonRequest(PREVIEW_URL, { scope: { funnelIds: ["funil-vendas"], columns: [] }, period: { mode: "all" } }),
     );
     expect(await res.json()).toEqual({ totalMatched: 2, optedIn: 1, notOptedIn: 1 });
   });
 
-  it("recorta por coluna escolhida, de qualquer funil", async () => {
+  it("recorta por coluna escolhida de um funil específico", async () => {
     const res = await audiencePreviewPOST(
-      jsonRequest(PREVIEW_URL, { scope: { funnelIds: [], columnIds: ["contato"] }, period: { mode: "all" } }),
+      jsonRequest(PREVIEW_URL, {
+        scope: { funnelIds: [], columns: [{ funnelId: "funil-pos", columnId: "contato" }] },
+        period: { mode: "all" },
+      }),
     );
     expect(await res.json()).toEqual({ totalMatched: 1, optedIn: 0, notOptedIn: 1 });
+  });
+
+  it("BUG real corrigido: a mesma coluna de OUTRO funil não entra no recorte", async () => {
+    const res = await audiencePreviewPOST(
+      jsonRequest(PREVIEW_URL, {
+        scope: { funnelIds: [], columns: [{ funnelId: "funil-vendas", columnId: "contato" }] },
+        period: { mode: "all" },
+      }),
+    );
+    // "contato" só existe no funil-pos nesta fixture — pedir a coluna "contato"
+    // do funil-vendas não pode bater em ninguém.
+    expect(await res.json()).toEqual({ totalMatched: 0, optedIn: 0, notOptedIn: 0 });
   });
 
   it("retorna 401 sem sessão", async () => {
@@ -132,7 +147,7 @@ describe("POST /api/client/whatsapp-campaigns/audience-opt-in", () => {
     });
 
     const res = await audienceOptInPOST(
-      jsonRequest(OPT_IN_URL, { scope: { funnelIds: ["funil-vendas"], columnIds: [] }, period: { mode: "all" } }),
+      jsonRequest(OPT_IN_URL, { scope: { funnelIds: ["funil-vendas"], columns: [] }, period: { mode: "all" } }),
     );
 
     expect(await res.json()).toEqual({ ok: true, optedInCount: 1 });
