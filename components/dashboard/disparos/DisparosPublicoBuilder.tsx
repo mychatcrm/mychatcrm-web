@@ -124,6 +124,30 @@ export function estimatePublicoTotal(blocks: PublicoBlock[]): number {
   }, 0);
 }
 
+/**
+ * Funil inteiro e colunas soltas são escolhas INDEPENDENTES: marcar um nunca
+ * apaga o outro. Antes, marcar "funil inteiro" varria as colunas daquele
+ * funil escolhidas antes — cliente selecionava uma coluna, marcava o funil e
+ * a coluna sumia sozinha, sem ele pedir. Marcar as duas coisas ao mesmo tempo
+ * é redundante (o funil inteiro já cobre a coluna), mas redundante não é
+ * errado — sumir sozinho é que era o problema.
+ */
+export function toggleFunnelInScope(scope: PublicoCrmScope, funnelId: string): PublicoCrmScope {
+  const on = scope.funnelIds.includes(funnelId);
+  return {
+    funnelIds: on ? scope.funnelIds.filter((f) => f !== funnelId) : [...scope.funnelIds, funnelId],
+    columnIds: scope.columnIds,
+  };
+}
+
+export function toggleColumnInScope(scope: PublicoCrmScope, columnId: string): PublicoCrmScope {
+  const on = scope.columnIds.includes(columnId);
+  return {
+    funnelIds: scope.funnelIds,
+    columnIds: on ? scope.columnIds.filter((c) => c !== columnId) : [...scope.columnIds, columnId],
+  };
+}
+
 export function buildAudienceBlocksPayload(blocks: PublicoBlock[]) {
   return blocks.filter(isBlockUsable).map((block) =>
     block.kind === "crm"
@@ -292,27 +316,8 @@ function CrmBlockCard({
     }
   }, [scopeKey, periodKey, refreshPreview, onAfterOptIn]);
 
-  const toggleFunnel = (funnelId: string, columnIds: string[]) => {
-    const on = scope.funnelIds.includes(funnelId);
-    onUpdate(id, {
-      scope: {
-        funnelIds: on ? scope.funnelIds.filter((f) => f !== funnelId) : [...scope.funnelIds, funnelId],
-        // Marcar o funil inteiro absorve as colunas soltas dele — deixar as
-        // duas coisas marcadas ao mesmo tempo confunde sem mudar o resultado.
-        columnIds: on ? scope.columnIds : scope.columnIds.filter((c) => !columnIds.includes(c)),
-      },
-    });
-  };
-
-  const toggleColumn = (columnId: string) => {
-    const on = scope.columnIds.includes(columnId);
-    onUpdate(id, {
-      scope: {
-        funnelIds: scope.funnelIds,
-        columnIds: on ? scope.columnIds.filter((c) => c !== columnId) : [...scope.columnIds, columnId],
-      },
-    });
-  };
+  const toggleFunnel = (funnelId: string) => onUpdate(id, { scope: toggleFunnelInScope(scope, funnelId) });
+  const toggleColumn = (columnId: string) => onUpdate(id, { scope: toggleColumnInScope(scope, columnId) });
 
   return (
     <BlockShell icon={Users} title="Base do CRM" onRemove={() => onRemove(id)} isLight={isLight}>
@@ -340,7 +345,6 @@ function CrmBlockCard({
           funnels.length > 0 ? (
             <div className="mt-2.5 space-y-2">
               {funnels.map((funnel) => {
-                const columnIds = funnel.columns.map((c) => c.id);
                 const funnelOn = scope.funnelIds.includes(funnel.id);
                 return (
                   <div
@@ -354,32 +358,40 @@ function CrmBlockCard({
                       <input
                         type="checkbox"
                         checked={funnelOn}
-                        onChange={() => toggleFunnel(funnel.id, columnIds)}
+                        onChange={() => toggleFunnel(funnel.id)}
                         className="size-3.5 shrink-0 accent-primary"
                       />
                       {funnel.nome}
                       <span className="text-[10px] font-normal text-content-secondary">(funil inteiro)</span>
                     </label>
-                    {!funnelOn && funnel.columns.length > 0 ? (
-                      <div className="mt-2 flex flex-wrap gap-1.5 pl-5">
-                        {funnel.columns.map((column) => {
-                          const on = scope.columnIds.includes(column.id);
-                          return (
-                            <button
-                              key={column.id}
-                              type="button"
-                              onClick={() => toggleColumn(column.id)}
-                              className={cn(
-                                "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
-                                on
-                                  ? "border-primary bg-primary text-white"
-                                  : "border-line text-content-secondary hover:border-primary/40",
-                              )}
-                            >
-                              {column.title}
-                            </button>
-                          );
-                        })}
+                    {funnel.columns.length > 0 ? (
+                      <div className="mt-2 pl-5">
+                        {funnelOn ? (
+                          <p className="mb-1.5 text-[10px] text-content-secondary">
+                            Funil inteiro já cobre todas as colunas — marcar uma aqui não muda nada.
+                          </p>
+                        ) : null}
+                        <div className="flex flex-wrap gap-1.5">
+                          {funnel.columns.map((column) => {
+                            const on = scope.columnIds.includes(column.id);
+                            return (
+                              <button
+                                key={column.id}
+                                type="button"
+                                onClick={() => toggleColumn(column.id)}
+                                className={cn(
+                                  "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                                  on
+                                    ? "border-primary bg-primary text-white"
+                                    : "border-line text-content-secondary hover:border-primary/40",
+                                  funnelOn && "opacity-60",
+                                )}
+                              >
+                                {column.title}
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                     ) : null}
                   </div>
