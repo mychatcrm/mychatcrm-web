@@ -9,37 +9,33 @@
 import { NextResponse } from "next/server";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { leadMatchesWhatsAppCampaignAudience, type CampaignAudienceCrmFilter } from "@/lib/server/whatsapp-campaigns";
+import {
+  CAMPAIGN_AUDIENCE_LEAD_COLUMNS,
+  leadMatchesCrmAudienceBlock,
+  parseCrmPeriod,
+  parseCrmScope,
+} from "@/lib/server/whatsapp-campaigns";
 
 export const dynamic = "force-dynamic";
-
-const CRM_FILTER_TYPES = new Set<CampaignAudienceCrmFilter>([
-  "tag",
-  "funnel_stage",
-  "cadastro_dias",
-  "cadastro_data",
-]);
 
 export async function POST(request: Request) {
   const guard = await requireActiveClientSession();
   if (!guard.ok) return guard.response;
 
-  const body = (await request.json().catch(() => ({}))) as { audienceType?: unknown; audienceValue?: unknown };
-  const rawType = body.audienceType as CampaignAudienceCrmFilter | undefined;
-  const audienceType: CampaignAudienceCrmFilter = rawType && CRM_FILTER_TYPES.has(rawType) ? rawType : "all";
-  const audienceValue = typeof body.audienceValue === "string" ? body.audienceValue.trim() || null : null;
+  const body = (await request.json().catch(() => ({}))) as { scope?: unknown; period?: unknown };
+  const block = { scope: parseCrmScope(body.scope), period: parseCrmPeriod(body.period) };
 
   const sb = createSupabaseServiceClient();
   const { data, error } = await sb
     .from("leads")
-    .select("id, status, profile_metadata, whatsapp_opt_in, whatsapp_opt_out_at, created_at")
+    .select(`${CAMPAIGN_AUDIENCE_LEAD_COLUMNS}, whatsapp_opt_in, whatsapp_opt_out_at`)
     .eq("tenant_id", guard.session.tenantId)
     .not("phone", "is", null)
     .limit(5000);
   if (error) return NextResponse.json({ error: error.message }, { status: 503 });
 
   const notOptedIn = (data ?? [])
-    .filter((lead) => leadMatchesWhatsAppCampaignAudience(lead as Record<string, unknown>, audienceType, audienceValue))
+    .filter((lead) => leadMatchesCrmAudienceBlock(lead as Record<string, unknown>, block))
     .filter((lead) => lead.whatsapp_opt_in !== true || lead.whatsapp_opt_out_at)
     .map((lead) => lead.id);
 

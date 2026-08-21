@@ -3,7 +3,6 @@ import { requireActiveClientSession } from "@/lib/server/client-session-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
   CAMPAIGN_ACTIVE_LIMIT,
-  computeDistinctLeadTags,
   createWhatsAppCampaign,
   processDueWhatsAppCampaigns,
 } from "@/lib/server/whatsapp-campaigns";
@@ -16,7 +15,7 @@ export async function GET() {
   const guard = await requireActiveClientSession();
   if (!guard.ok) return guard.response;
   const sb = createSupabaseServiceClient();
-  const [campaigns, connections, agents, eligible, tagsQuery] = await Promise.all([
+  const [campaigns, connections, agents, eligible] = await Promise.all([
     sb
       .from("whatsapp_campaigns")
       .select("*")
@@ -39,14 +38,6 @@ export async function GET() {
       .eq("tenant_id", guard.session.tenantId)
       .eq("whatsapp_opt_in", true)
       .is("whatsapp_opt_out_at", null),
-    // Alimenta o seletor de "Por tag" do público — sem isso o cliente tinha
-    // que adivinhar o texto exato de uma tag pra digitar num campo livre.
-    sb
-      .from("leads")
-      .select("profile_metadata")
-      .eq("tenant_id", guard.session.tenantId)
-      .not("phone", "is", null)
-      .limit(5000),
   ]);
 
   const firstError = campaigns.error ?? agents.error ?? eligible.error;
@@ -61,7 +52,6 @@ export async function GET() {
       agents: agents.data ?? [],
       eligibleRecipients: eligible.count ?? 0,
       activeCampaignLimit: CAMPAIGN_ACTIVE_LIMIT,
-      availableTags: computeDistinctLeadTags((tagsQuery.data ?? []) as Array<Record<string, unknown>>),
     },
     { headers: { "Cache-Control": "no-store" } },
   );

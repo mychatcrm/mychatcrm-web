@@ -50,23 +50,38 @@ export const CAMPAIGN_ACTIVE_LIMIT = 5;
 const CAMPAIGN_ACTIVE_STATUSES = ["scheduled", "processing"] as const;
 
 /**
- * Um "público" da campanha. A campanha pode combinar quantos blocos o cliente
- * quiser — um filtro do CRM, uma lista importada e alguns contatos digitados
- * na mesma campanha, ou vários blocos do mesmo tipo (3 tags diferentes, por
- * exemplo). `leads` carrega ids já resolvidos (import/manual já gravaram o
- * lead antes da campanha existir); `crm` é resolvido no momento da criação.
+ * Um "público" da campanha. São só três origens: base do CRM, lista importada
+ * de arquivo e contatos digitados na hora. A campanha pode combinar quantos
+ * blocos quiser. `leads` carrega ids já resolvidos (import/manual já gravaram
+ * o lead antes da campanha existir); `crm` é resolvido no momento da criação.
+ *
+ * O bloco de CRM é uma pergunta de cada vez, na ordem que o cliente pensa:
+ *  1. DE ONDE (`scope`): tudo, ou funis/colunas escolhidos a dedo.
+ *  2. DE QUANDO (`period`): tudo, ou recorte por cadastro / silêncio.
+ *
+ * Antes disso eram cinco filtros soltos e mutuamente exclusivos (base
+ * completa, tag, funil, dias, data), o que impedia o pedido mais comum —
+ * "coluna X do funil Y, só quem está parado há 30 dias" — e ainda obrigava a
+ * empilhar blocos pra somar dois funis.
  */
-export type CampaignAudienceCrmFilter =
-  | "all"
-  | "tag"
-  | "funnel_stage"
-  /** `value` = número de dias (string). Cadastrado há esse tanto de dias ou mais. */
-  | "cadastro_dias"
-  /** `value` = data "AAAA-MM-DD". Cadastrado exatamente nesse dia. */
-  | "cadastro_data";
+export type CampaignCrmScope = {
+  /** Funis inteiros. Vazio + `columnIds` vazio = todos os funis. */
+  funnelIds: string[];
+  /** Colunas específicas, de qualquer funil. Soma com `funnelIds` (OU, não E). */
+  columnIds: string[];
+};
+
+export type CampaignCrmPeriod =
+  | { mode: "all" }
+  /** Cadastrado há `days` dias ou mais — base parada. */
+  | { mode: "cadastro_dias"; days: number }
+  /** Cadastrado exatamente nesse dia ("AAAA-MM-DD"). */
+  | { mode: "cadastro_data"; date: string }
+  /** Sem trocar mensagem há `days` dias ou mais. Quem nunca falou entra. */
+  | { mode: "sem_contato_dias"; days: number };
 
 export type CampaignAudienceBlockInput =
-  | { kind: "crm"; filter: CampaignAudienceCrmFilter; value?: string | null }
+  | { kind: "crm"; scope: CampaignCrmScope; period: CampaignCrmPeriod }
   | { kind: "leads"; leadIds: string[] };
 
 type CampaignInput = {
@@ -304,55 +319,43 @@ function leadOlderThanDays(createdAt: unknown, minDays: number): boolean {
   return date.getTime() <= Date.now() - minDays * 86_400_000;
 }
 
-export function leadMatchesWhatsAppCampaignAudience(
+/** `true` quando a última troca de mensagem tem `minDays` dias ou mais. Quem NUNCA falou entra: silêncio total também é silêncio. */
+function leadSilentForDays(lastMessageAt: unknown, minDays: number): boolean {
+  if (typeof lastMessageAt !== "string") return true;
+  const date = new Date(lastMessageAt);
+  if (Number.isNaN(date.getTime())) return true;
+  return date.getTime() <= Date.now() - minDays * 86_400_000;
+}
+
+/** Escopo vazio dos dois lados = base inteira. */
+function leadInCrmScope(lead: Record<string, unknown>, scope: CampaignCrmScope): boolean {
+  if (scope.funnelIds.length === 0 && scope.columnIds.length === 0) return true;
+  const funnelId = text(lead.crm_funnel_id);
+  const columnId = text(lead.status);
+  // OU, não E: "funil de Vendas inteiro + a coluna Proposta do funil de Pós"
+  // é uma soma de dois recortes, não uma interseção impossível.
+  if (funnelId && scope.funnelIds.includes(funnelId)) return true;
+  if (columnId && scope.columnIds.includes(columnId)) return true;
+  return false;
+}
+
+function leadInCrmPeriod(lead: Record<string, unknown>, period: CampaignCrmPeriod): boolean {
+  if (period.mode === "all") return true;
+  if (period.mode === "cadastro_dias") return leadOlderThanDays(lead.created_at, period.days);
+  if (period.mode === "cadastro_data") return leadCreatedOnDate(lead.created_at, period.date);
+  return leadSilentForDays(lead.last_message_at, period.days);
+}
+
+/** Escopo E período: as duas perguntas do bloco precisam bater juntas. */
+export function leadMatchesCrmAudienceBlock(
   lead: Record<string, unknown>,
-  audienceType: CampaignAudienceCrmFilter,
-  audienceValue: string | null,
+  block: { scope: CampaignCrmScope; period: CampaignCrmPeriod },
 ): boolean {
-  if (audienceType === "all") return true;
-  if (!audienceValue) return false;
-  if (audienceType === "funnel_stage") {
-    return String(lead.status ?? "") === audienceValue;
-  }
-  if (audienceType === "cadastro_dias") {
-    const days = Number(audienceValue);
-    return Number.isFinite(days) && days >= 0 && leadOlderThanDays(lead.created_at, days);
-  }
-  if (audienceType === "cadastro_data") {
-    return leadCreatedOnDate(lead.created_at, audienceValue);
-  }
-  const metadata = object(lead.profile_metadata);
-  const tags = Array.isArray(metadata.tags)
-    ? metadata.tags.map((value) => String(value).toLowerCase())
-    : [];
-  return tags.includes(audienceValue.toLowerCase());
+  return leadInCrmScope(lead, block.scope) && leadInCrmPeriod(lead, block.period);
 }
 
-/**
- * Tags distintas realmente em uso pelos leads do tenant — alimenta o seletor
- * de "Por tag" do público do disparo. Sem isso o cliente tinha que adivinhar
- * o texto exato de uma tag pra digitar, e ia digitar errado.
- *
- * Dedupe é case-insensitive (a comparação em `leadMatchesWhatsAppCampaignAudience`
- * também é), guardando a primeira grafia vista como forma de exibição.
- */
-export function computeDistinctLeadTags(leads: Array<Record<string, unknown>>): string[] {
-  const seen = new Map<string, string>();
-  for (const lead of leads) {
-    const metadata = object(lead.profile_metadata);
-    if (!Array.isArray(metadata.tags)) continue;
-    for (const raw of metadata.tags) {
-      const tag = String(raw).trim();
-      if (!tag) continue;
-      const key = tag.toLowerCase();
-      if (!seen.has(key)) seen.set(key, tag);
-    }
-  }
-  return [...seen.values()].sort((a, b) => a.localeCompare(b, "pt-BR")).slice(0, 200);
-}
-
-const CAMPAIGN_AUDIENCE_LEAD_COLUMNS =
-  "id, name, phone, status, profile_metadata, whatsapp_opt_in_at, whatsapp_opt_in_source, created_at";
+export const CAMPAIGN_AUDIENCE_LEAD_COLUMNS =
+  "id, name, phone, status, crm_funnel_id, profile_metadata, whatsapp_opt_in_at, whatsapp_opt_in_source, created_at, last_message_at";
 
 /**
  * Une os públicos da campanha num único conjunto de leads, sem repetir quem
@@ -384,9 +387,7 @@ export async function resolveWhatsAppCampaignAudience(
       .limit(5000);
     if (error) throw new Error(`campaign_audience_query:${error.message}`);
     for (const lead of (candidateRows ?? []) as Array<Record<string, unknown>>) {
-      const matchesAnyBlock = crmBlocks.some((block) =>
-        leadMatchesWhatsAppCampaignAudience(lead, block.filter, text(block.value)),
-      );
+      const matchesAnyBlock = crmBlocks.some((block) => leadMatchesCrmAudienceBlock(lead, block));
       if (matchesAnyBlock) resolved.set(String(lead.id), lead);
     }
   }
@@ -432,6 +433,36 @@ async function resolveMetaTemplate(params: {
   return templates.find((t) => t.name === params.templateName) ?? null;
 }
 
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((item) => String(item).trim()).filter(Boolean))];
+}
+
+/** Escopo ilegível (ou ausente) vira base inteira — nunca um público vazio silencioso. */
+export function parseCrmScope(raw: unknown): CampaignCrmScope {
+  const config = object(raw);
+  return { funnelIds: stringList(config.funnelIds), columnIds: stringList(config.columnIds) };
+}
+
+/**
+ * Período ilegível vira "todo o período". Um número de dias inválido não pode
+ * virar recorte: `Number("abc")` daria NaN e toda comparação de data seria
+ * falsa, produzindo um público vazio sem o cliente entender por quê.
+ */
+export function parseCrmPeriod(raw: unknown): CampaignCrmPeriod {
+  const config = object(raw);
+  if (config.mode === "cadastro_data") {
+    const date = text(config.date);
+    return date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? { mode: "cadastro_data", date } : { mode: "all" };
+  }
+  if (config.mode === "cadastro_dias" || config.mode === "sem_contato_dias") {
+    const days = Number(config.days);
+    if (!Number.isFinite(days) || days < 0) return { mode: "all" };
+    return { mode: config.mode, days: Math.floor(days) };
+  }
+  return { mode: "all" };
+}
+
 /** Lê os blocos de público crus do cliente — nunca confia na forma que chega. */
 export function parseCampaignAudienceBlocks(raw: unknown): CampaignAudienceBlockInput[] {
   if (!Array.isArray(raw)) return [];
@@ -439,16 +470,11 @@ export function parseCampaignAudienceBlocks(raw: unknown): CampaignAudienceBlock
   for (const item of raw) {
     const entry = object(item);
     if (entry.kind === "crm") {
-      const filter: CampaignAudienceCrmFilter | null =
-        entry.filter === "tag" ||
-        entry.filter === "funnel_stage" ||
-        entry.filter === "all" ||
-        entry.filter === "cadastro_dias" ||
-        entry.filter === "cadastro_data"
-          ? entry.filter
-          : null;
-      if (!filter) continue;
-      blocks.push({ kind: "crm", filter, value: text(entry.value) });
+      blocks.push({
+        kind: "crm",
+        scope: parseCrmScope(entry.scope),
+        period: parseCrmPeriod(entry.period),
+      });
     } else if (entry.kind === "leads") {
       const leadIds = Array.isArray(entry.leadIds)
         ? [...new Set(entry.leadIds.map((id) => String(id).trim()).filter(Boolean))]
@@ -519,15 +545,6 @@ export async function createWhatsAppCampaign(params: {
       : now;
   const throughput: CampaignThroughput =
     input.throughput && input.throughput in CAMPAIGN_THROUGHPUT_PER_MINUTE ? input.throughput : "normal";
-  // audience_type/audience_config viram resumo legível quando dá pra resumir
-  // num único filtro; audience_blocks guarda a configuração completa sempre —
-  // sem isso, uma campanha com 3 públicos combinados ficaria irrecuperável
-  // depois de criada (o campo resumo não tem como representar a combinação).
-  const singleCrmBlock =
-    audienceBlocks.length === 1 && audienceBlocks[0]!.kind === "crm"
-      ? (audienceBlocks[0] as Extract<CampaignAudienceBlockInput, { kind: "crm" }>)
-      : null;
-
   // Normalizada na gravação: guardar o que o cliente mandou cru deixaria dia
   // inválido, hora fora de faixa ou vendedor inexistente cair no processador
   // só no momento do envio, bem mais difícil de diagnosticar.
@@ -556,8 +573,12 @@ export async function createWhatsAppCampaign(params: {
       connection_id: connection.connectionId,
       transport: connection.transport,
       agent_id: input.agentId,
-      audience_type: singleCrmBlock?.filter ?? "custom",
-      audience_config: singleCrmBlock && text(singleCrmBlock.value) ? { value: text(singleCrmBlock.value) } : {},
+      // audience_type/audience_config são resumo legado de quando o público
+      // era um filtro único. Um bloco agora carrega escopo E período, e a
+      // campanha pode ter vários — nada disso cabe no resumo, então ele fica
+      // sempre "custom" e `audience_blocks` é a fonte de verdade.
+      audience_type: "custom",
+      audience_config: {},
       audience_blocks: audienceBlocks,
       message_template: messageTemplate,
       meta_template_name: metaTemplateName,

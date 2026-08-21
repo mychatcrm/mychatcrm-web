@@ -1,43 +1,39 @@
 /**
- * GET /api/client/whatsapp-campaigns/audience-preview?type=&value=
- * Contagem real de quantos leads o público bate e quantos já têm opt-in
- * WhatsApp ativo — substitui os números fixos (~12,4k etc.) que a tela de
- * Disparos mostrava antes.
+ * POST /api/client/whatsapp-campaigns/audience-preview
+ * Contagem real de quantos leads o bloco de público bate e quantos já têm
+ * opt-in WhatsApp ativo. É POST (não GET) porque o bloco carrega escopo
+ * (listas de funis/colunas) + período, que não cabem bem em query string.
  */
 import { NextResponse } from "next/server";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { leadMatchesWhatsAppCampaignAudience, type CampaignAudienceCrmFilter } from "@/lib/server/whatsapp-campaigns";
+import {
+  CAMPAIGN_AUDIENCE_LEAD_COLUMNS,
+  leadMatchesCrmAudienceBlock,
+  parseCrmPeriod,
+  parseCrmScope,
+} from "@/lib/server/whatsapp-campaigns";
 
 export const dynamic = "force-dynamic";
 
-const CRM_FILTER_TYPES = new Set<CampaignAudienceCrmFilter>([
-  "tag",
-  "funnel_stage",
-  "cadastro_dias",
-  "cadastro_data",
-]);
-
-export async function GET(request: Request) {
+export async function POST(request: Request) {
   const guard = await requireActiveClientSession();
   if (!guard.ok) return guard.response;
 
-  const params = new URL(request.url).searchParams;
-  const rawType = params.get("type") as CampaignAudienceCrmFilter | null;
-  const audienceType: CampaignAudienceCrmFilter = rawType && CRM_FILTER_TYPES.has(rawType) ? rawType : "all";
-  const audienceValue = params.get("value")?.trim() || null;
+  const body = (await request.json().catch(() => ({}))) as { scope?: unknown; period?: unknown };
+  const block = { scope: parseCrmScope(body.scope), period: parseCrmPeriod(body.period) };
 
   const sb = createSupabaseServiceClient();
   const { data, error } = await sb
     .from("leads")
-    .select("id, status, profile_metadata, whatsapp_opt_in, whatsapp_opt_out_at, created_at")
+    .select(`${CAMPAIGN_AUDIENCE_LEAD_COLUMNS}, whatsapp_opt_in, whatsapp_opt_out_at`)
     .eq("tenant_id", guard.session.tenantId)
     .not("phone", "is", null)
     .limit(5000);
   if (error) return NextResponse.json({ error: error.message }, { status: 503 });
 
   const matched = (data ?? []).filter((lead) =>
-    leadMatchesWhatsAppCampaignAudience(lead as Record<string, unknown>, audienceType, audienceValue),
+    leadMatchesCrmAudienceBlock(lead as Record<string, unknown>, block),
   );
   const optedIn = matched.filter((lead) => lead.whatsapp_opt_in === true && !lead.whatsapp_opt_out_at).length;
 
