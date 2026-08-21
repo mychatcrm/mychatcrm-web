@@ -12,30 +12,30 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServiceClient: createSupabaseServiceClientMock,
 }));
 
-import { GET as audiencePreviewGET } from "@/app/api/client/whatsapp-campaigns/audience-preview/route";
+import { POST as audiencePreviewPOST } from "@/app/api/client/whatsapp-campaigns/audience-preview/route";
 import { POST as audienceOptInPOST } from "@/app/api/client/whatsapp-campaigns/audience-opt-in/route";
 
 type Row = Record<string, unknown>;
 
 const LEADS: Row[] = [
   {
-    id: "lead-vip-opted",
+    id: "lead-vendas-opted",
+    crm_funnel_id: "funil-vendas",
     status: "novo",
-    profile_metadata: { tags: ["vip"] },
     whatsapp_opt_in: true,
     whatsapp_opt_out_at: null,
   },
   {
-    id: "lead-vip-not-opted",
+    id: "lead-vendas-not-opted",
+    crm_funnel_id: "funil-vendas",
     status: "novo",
-    profile_metadata: { tags: ["vip"] },
     whatsapp_opt_in: false,
     whatsapp_opt_out_at: null,
   },
   {
-    id: "lead-outro-not-opted",
+    id: "lead-pos-not-opted",
+    crm_funnel_id: "funil-pos",
     status: "contato",
-    profile_metadata: { tags: ["frio"] },
     whatsapp_opt_in: false,
     whatsapp_opt_out_at: null,
   },
@@ -60,7 +60,14 @@ function makeLeadsBuilder(rows: Row[], onUpdate?: (payload: unknown, ids: string
   return builder;
 }
 
-describe("GET /api/client/whatsapp-campaigns/audience-preview", () => {
+function jsonRequest(url: string, body: unknown) {
+  return new Request(url, { method: "POST", body: JSON.stringify(body) });
+}
+
+const PREVIEW_URL = "https://example.test/api/client/whatsapp-campaigns/audience-preview";
+const OPT_IN_URL = "https://example.test/api/client/whatsapp-campaigns/audience-opt-in";
+
+describe("POST /api/client/whatsapp-campaigns/audience-preview", () => {
   beforeEach(() => {
     requireActiveClientSessionMock.mockReset();
     createSupabaseServiceClientMock.mockReset();
@@ -73,25 +80,31 @@ describe("GET /api/client/whatsapp-campaigns/audience-preview", () => {
     });
   });
 
-  it("conta certo para público 'todos': todos batem, só quem tem opt-in ativo conta como optedIn", async () => {
-    const res = await audiencePreviewGET(new Request("https://example.test/api/client/whatsapp-campaigns/audience-preview?type=all"));
-    const body = await res.json();
-
-    expect(body).toEqual({ totalMatched: 3, optedIn: 1, notOptedIn: 2 });
+  it("escopo vazio = base inteira; só quem tem opt-in ativo conta como optedIn", async () => {
+    const res = await audiencePreviewPOST(jsonRequest(PREVIEW_URL, {}));
+    expect(await res.json()).toEqual({ totalMatched: 3, optedIn: 1, notOptedIn: 2 });
   });
 
-  it("conta certo para público por tag: só os leads com a tag batem", async () => {
-    const res = await audiencePreviewGET(
-      new Request("https://example.test/api/client/whatsapp-campaigns/audience-preview?type=tag&value=vip"),
+  it("recorta por funil escolhido", async () => {
+    const res = await audiencePreviewPOST(
+      jsonRequest(PREVIEW_URL, { scope: { funnelIds: ["funil-vendas"], columnIds: [] }, period: { mode: "all" } }),
     );
-    const body = await res.json();
+    expect(await res.json()).toEqual({ totalMatched: 2, optedIn: 1, notOptedIn: 1 });
+  });
 
-    expect(body).toEqual({ totalMatched: 2, optedIn: 1, notOptedIn: 1 });
+  it("recorta por coluna escolhida, de qualquer funil", async () => {
+    const res = await audiencePreviewPOST(
+      jsonRequest(PREVIEW_URL, { scope: { funnelIds: [], columnIds: ["contato"] }, period: { mode: "all" } }),
+    );
+    expect(await res.json()).toEqual({ totalMatched: 1, optedIn: 0, notOptedIn: 1 });
   });
 
   it("retorna 401 sem sessão", async () => {
-    requireActiveClientSessionMock.mockResolvedValue({ ok: false, response: Response.json({ error: "Não autenticado." }, { status: 401 }) });
-    const res = await audiencePreviewGET(new Request("https://example.test/api/client/whatsapp-campaigns/audience-preview?type=all"));
+    requireActiveClientSessionMock.mockResolvedValue({
+      ok: false,
+      response: Response.json({ error: "Não autenticado." }, { status: 401 }),
+    });
+    const res = await audiencePreviewPOST(jsonRequest(PREVIEW_URL, {}));
     expect(res.status).toBe(401);
   });
 });
@@ -103,7 +116,7 @@ describe("POST /api/client/whatsapp-campaigns/audience-opt-in", () => {
     requireActiveClientSessionMock.mockResolvedValue({ ok: true, session: { tenantId: "tenant-1" } });
   });
 
-  it("autoriza só os leads da tag escolhida que ainda não tinham opt-in", async () => {
+  it("autoriza só os leads do escopo escolhido que ainda não tinham opt-in", async () => {
     let updatePayload: Row | undefined;
     let updatedIds: string[] = [];
     createSupabaseServiceClientMock.mockReturnValue({
@@ -119,15 +132,11 @@ describe("POST /api/client/whatsapp-campaigns/audience-opt-in", () => {
     });
 
     const res = await audienceOptInPOST(
-      new Request("https://example.test/api/client/whatsapp-campaigns/audience-opt-in", {
-        method: "POST",
-        body: JSON.stringify({ audienceType: "tag", audienceValue: "vip" }),
-      }),
+      jsonRequest(OPT_IN_URL, { scope: { funnelIds: ["funil-vendas"], columnIds: [] }, period: { mode: "all" } }),
     );
-    const body = await res.json();
 
-    expect(body).toEqual({ ok: true, optedInCount: 1 });
-    expect(updatedIds).toEqual(["lead-vip-not-opted"]);
+    expect(await res.json()).toEqual({ ok: true, optedInCount: 1 });
+    expect(updatedIds).toEqual(["lead-vendas-not-opted"]);
     expect(updatePayload?.whatsapp_opt_in).toBe(true);
     expect(updatePayload?.whatsapp_opt_in_source).toBe("disparos_bulk_opt_in");
   });
@@ -138,7 +147,15 @@ describe("POST /api/client/whatsapp-campaigns/audience-opt-in", () => {
       from: (table: string) => {
         if (table === "leads") {
           return makeLeadsBuilder(
-            [{ id: "lead-vip-opted", status: "novo", profile_metadata: { tags: ["vip"] }, whatsapp_opt_in: true, whatsapp_opt_out_at: null }],
+            [
+              {
+                id: "lead-vendas-opted",
+                crm_funnel_id: "funil-vendas",
+                status: "novo",
+                whatsapp_opt_in: true,
+                whatsapp_opt_out_at: null,
+              },
+            ],
             onUpdate,
           );
         }
@@ -146,26 +163,18 @@ describe("POST /api/client/whatsapp-campaigns/audience-opt-in", () => {
       },
     });
 
-    const res = await audienceOptInPOST(
-      new Request("https://example.test/api/client/whatsapp-campaigns/audience-opt-in", {
-        method: "POST",
-        body: JSON.stringify({ audienceType: "tag", audienceValue: "vip" }),
-      }),
-    );
-    const body = await res.json();
+    const res = await audienceOptInPOST(jsonRequest(OPT_IN_URL, {}));
 
-    expect(body).toEqual({ ok: true, optedInCount: 0 });
+    expect(await res.json()).toEqual({ ok: true, optedInCount: 0 });
     expect(onUpdate).not.toHaveBeenCalled();
   });
 
   it("retorna 401 sem sessão", async () => {
-    requireActiveClientSessionMock.mockResolvedValue({ ok: false, response: Response.json({ error: "Não autenticado." }, { status: 401 }) });
-    const res = await audienceOptInPOST(
-      new Request("https://example.test/api/client/whatsapp-campaigns/audience-opt-in", {
-        method: "POST",
-        body: JSON.stringify({ audienceType: "all" }),
-      }),
-    );
+    requireActiveClientSessionMock.mockResolvedValue({
+      ok: false,
+      response: Response.json({ error: "Não autenticado." }, { status: 401 }),
+    });
+    const res = await audienceOptInPOST(jsonRequest(OPT_IN_URL, {}));
     expect(res.status).toBe(401);
   });
 });

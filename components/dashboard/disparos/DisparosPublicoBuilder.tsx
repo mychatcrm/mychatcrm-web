@@ -1,16 +1,18 @@
 "use client";
 
 /**
- * Público do disparo — a campanha pode combinar quantos blocos o cliente
- * quiser: filtros do CRM, listas importadas e contatos digitados na hora,
- * repetidos à vontade (3 tags diferentes, uma lista + o CRM inteiro, etc.).
+ * Público do disparo — três origens, nada além disso: base do CRM, lista
+ * importada de arquivo e contatos digitados na hora. A campanha combina
+ * quantos blocos quiser.
  *
- * Cada bloco resolve pra um conjunto de leads de forma independente:
- * - "crm" é resolvido no servidor no momento de criar a campanha (mesmo
- *   filtro all/tag/funnel_stage de sempre).
- * - "contatos" (import ou manual) já chega com `leadIds` prontos — a rota de
- *   importação roda assim que o cliente confirma o bloco, não só quando a
- *   campanha é criada, pra ele ver na hora quantos contatos entraram.
+ * O bloco de CRM é um fluxo de duas perguntas, na ordem que o cliente pensa:
+ *  1. DE ONDE: a base inteira, ou funis/colunas escolhidos a dedo (vários).
+ *  2. DE QUANDO: todo o período, ou recorte por data de cadastro / silêncio.
+ *
+ * Antes eram cinco filtros soltos e mutuamente exclusivos (base completa, tag,
+ * funil, dias no CRM, data de cadastro) numa grade só — impossível pedir
+ * "coluna Proposta, só quem está parado há 30 dias", e somar dois funis
+ * exigia empilhar blocos.
  *
  * `buildAudienceBlocksPayload` é o que vira `audienceBlocks` no POST da
  * campanha; `estimatePublicoTotal`/`hasUsablePublico` alimentam o aviso de
@@ -22,15 +24,23 @@ import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { cn } from "@/lib/utils";
 import type { CrmFunnel } from "@/lib/crm-funnels";
 
-export type PublicoFiltroCrm = "todos" | "tag" | "etapa" | "dias" | "data";
-
 export type PublicoAudiencePreview = { totalMatched: number; optedIn: number; notOptedIn: number };
+
+/** Espelha `CampaignCrmScope` do servidor: vazio dos dois lados = base inteira. */
+export type PublicoCrmScope = { funnelIds: string[]; columnIds: string[] };
+
+/** Espelha `CampaignCrmPeriod` do servidor. */
+export type PublicoCrmPeriod =
+  | { mode: "all" }
+  | { mode: "cadastro_dias"; days: number }
+  | { mode: "cadastro_data"; date: string }
+  | { mode: "sem_contato_dias"; days: number };
 
 export type PublicoCrmBlock = {
   id: string;
   kind: "crm";
-  filtro: PublicoFiltroCrm;
-  valor: string;
+  scope: PublicoCrmScope;
+  period: PublicoCrmPeriod;
   preview: PublicoAudiencePreview | null;
   previewLoading: boolean;
 };
@@ -56,7 +66,14 @@ function newBlockId() {
 }
 
 export function createCrmBlock(): PublicoCrmBlock {
-  return { id: newBlockId(), kind: "crm", filtro: "todos", valor: "", preview: null, previewLoading: false };
+  return {
+    id: newBlockId(),
+    kind: "crm",
+    scope: { funnelIds: [], columnIds: [] },
+    period: { mode: "all" },
+    preview: null,
+    previewLoading: false,
+  };
 }
 
 export function createContatosBlock(origem: "import" | "manual"): PublicoContatosBlock {
@@ -72,21 +89,6 @@ export function createContatosBlock(origem: "import" | "manual"): PublicoContato
     busy: false,
     erro: null,
   };
-}
-
-export function publicoFiltroToApi(
-  filtro: PublicoFiltroCrm,
-): "all" | "tag" | "funnel_stage" | "cadastro_dias" | "cadastro_data" {
-  if (filtro === "etapa") return "funnel_stage";
-  if (filtro === "tag") return "tag";
-  if (filtro === "dias") return "cadastro_dias";
-  if (filtro === "data") return "cadastro_data";
-  return "all";
-}
-
-/** Hoje em "AAAA-MM-DD", pro valor inicial do filtro "Data de cadastro". */
-function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 /** true quando o bloco já tem gente pra receber — bloco em edição não conta. */
@@ -109,22 +111,15 @@ export function estimatePublicoTotal(blocks: PublicoBlock[]): number {
 export function buildAudienceBlocksPayload(blocks: PublicoBlock[]) {
   return blocks.filter(isBlockUsable).map((block) =>
     block.kind === "crm"
-      ? {
-          kind: "crm" as const,
-          filter: publicoFiltroToApi(block.filtro),
-          value: block.filtro === "todos" ? null : block.valor.trim() || null,
-        }
+      ? { kind: "crm" as const, scope: block.scope, period: block.period }
       : { kind: "leads" as const, leadIds: block.leadIds },
   );
 }
 
-const CRM_FILTROS: Array<{ id: PublicoFiltroCrm; label: string; hint: string }> = [
-  { id: "todos", label: "Base completa", hint: "Todos os leads com opt-in" },
-  { id: "tag", label: "Por tag", hint: "Segmentos do CRM Kanban" },
-  { id: "etapa", label: "Por funil", hint: "Colunas do CRM Kanban" },
-  { id: "dias", label: "Dias no CRM", hint: "Base parada há X dias ou mais" },
-  { id: "data", label: "Data de cadastro", hint: "Só quem cadastrou num dia certo" },
-];
+/** Hoje em "AAAA-MM-DD", pro valor inicial do recorte por data exata. */
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
 type UpdateFn = (id: string, patch: Record<string, unknown>) => void;
 
@@ -167,6 +162,46 @@ function BlockShell({
   );
 }
 
+/** Rótulo de etapa dentro do bloco — deixa claro que é "primeiro isso, depois aquilo". */
+function StepLabel({ n, children }: { n: number; children: ReactNode }) {
+  return (
+    <span className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-content-secondary">
+      <span className="grid size-4 place-items-center rounded-full bg-primary/15 text-[9px] font-bold text-primary">
+        {n}
+      </span>
+      {children}
+    </span>
+  );
+}
+
+function ChoiceButton({
+  active,
+  title,
+  hint,
+  onClick,
+}: {
+  active: boolean;
+  title: string;
+  hint?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "rounded-lg border px-3 py-2.5 text-left text-xs transition-all",
+        active
+          ? "border-primary/60 bg-primary/10"
+          : "border-line bg-surface-card/40 hover:border-primary/35 hover:bg-surface-elevated/30",
+      )}
+    >
+      <div className="font-semibold text-content">{title}</div>
+      {hint ? <div className="mt-0.5 text-[10px] text-content-secondary">{hint}</div> : null}
+    </button>
+  );
+}
+
 function CrmBlockCard({
   block,
   onUpdate,
@@ -174,7 +209,6 @@ function CrmBlockCard({
   isLight,
   onAfterOptIn,
   funnels,
-  availableTags,
 }: {
   block: PublicoCrmBlock;
   onUpdate: UpdateFn;
@@ -182,33 +216,28 @@ function CrmBlockCard({
   isLight: boolean;
   onAfterOptIn?: () => void;
   funnels: CrmFunnel[];
-  availableTags: string[];
 }) {
   const [optInBusy, setOptInBusy] = useState(false);
-  const apiType = publicoFiltroToApi(block.filtro);
-  const valor = block.valor;
   const id = block.id;
-
-  // Funil sendo navegado na coluna "Por funil" — separado de `valor` (que só
-  // guarda o id da coluna) porque trocar de funil pra olhar as colunas dele
-  // não deveria depender de já ter escolhido uma coluna antes.
-  const [browsingFunnelIdOverride, setBrowsingFunnelIdOverride] = useState<string | null>(null);
-  const funnelContainingValue = funnels.find((f) => f.columns.some((c) => c.id === valor));
-  const browsingFunnelId = browsingFunnelIdOverride ?? funnelContainingValue?.id ?? funnels[0]?.id ?? "";
-  const browsingFunnel = funnels.find((f) => f.id === browsingFunnelId) ?? null;
+  const { scope, period } = block;
+  const baseInteira = scope.funnelIds.length === 0 && scope.columnIds.length === 0;
+  // Serializado: o efeito de preview precisa reagir ao CONTEÚDO do escopo e do
+  // período, não à identidade dos objetos (que muda a cada render e dispararia
+  // uma requisição por tecla digitada em qualquer campo da tela).
+  const scopeKey = JSON.stringify(scope);
+  const periodKey = JSON.stringify(period);
 
   const refreshPreview = useCallback(() => {
-    if (apiType !== "all" && !valor.trim()) {
-      onUpdate(id, { preview: null, previewLoading: false });
-      return;
-    }
     onUpdate(id, { previewLoading: true });
-    const qs = new URLSearchParams({ type: apiType, ...(valor.trim() ? { value: valor.trim() } : {}) });
-    fetch(`/api/client/whatsapp-campaigns/audience-preview?${qs.toString()}`)
+    fetch("/api/client/whatsapp-campaigns/audience-preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: JSON.parse(scopeKey), period: JSON.parse(periodKey) }),
+    })
       .then((r) => r.json())
       .then((data: PublicoAudiencePreview) => onUpdate(id, { preview: data, previewLoading: false }))
       .catch(() => onUpdate(id, { preview: null, previewLoading: false }));
-  }, [apiType, valor, id, onUpdate]);
+  }, [id, onUpdate, scopeKey, periodKey]);
 
   useEffect(() => {
     const timer = window.setTimeout(refreshPreview, 350);
@@ -221,7 +250,7 @@ function CrmBlockCard({
       const res = await fetch("/api/client/whatsapp-campaigns/audience-opt-in", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ audienceType: apiType, audienceValue: apiType === "all" ? null : valor.trim() }),
+        body: JSON.stringify({ scope: JSON.parse(scopeKey), period: JSON.parse(periodKey) }),
       });
       if (res.ok) {
         refreshPreview();
@@ -230,138 +259,216 @@ function CrmBlockCard({
     } finally {
       setOptInBusy(false);
     }
-  }, [apiType, valor, refreshPreview, onAfterOptIn]);
+  }, [scopeKey, periodKey, refreshPreview, onAfterOptIn]);
+
+  const toggleFunnel = (funnelId: string, columnIds: string[]) => {
+    const on = scope.funnelIds.includes(funnelId);
+    onUpdate(id, {
+      scope: {
+        funnelIds: on ? scope.funnelIds.filter((f) => f !== funnelId) : [...scope.funnelIds, funnelId],
+        // Marcar o funil inteiro absorve as colunas soltas dele — deixar as
+        // duas coisas marcadas ao mesmo tempo confunde sem mudar o resultado.
+        columnIds: on ? scope.columnIds : scope.columnIds.filter((c) => !columnIds.includes(c)),
+      },
+    });
+  };
+
+  const toggleColumn = (columnId: string) => {
+    const on = scope.columnIds.includes(columnId);
+    onUpdate(id, {
+      scope: {
+        funnelIds: scope.funnelIds,
+        columnIds: on ? scope.columnIds.filter((c) => c !== columnId) : [...scope.columnIds, columnId],
+      },
+    });
+  };
 
   return (
     <BlockShell icon={Users} title="Base do CRM" onRemove={() => onRemove(id)} isLight={isLight}>
-      <div className="grid gap-2 sm:grid-cols-3">
-        {CRM_FILTROS.map((opt) => {
-          const active = opt.id === block.filtro;
-          return (
-            <button
-              key={opt.id}
-              type="button"
-              onClick={() => {
-                // Trocar de filtro já deixa um valor válido selecionado — um
-                // select vazio (sem opção batendo) é o que fazia parecer que
-                // não tinha nada pra escolher.
-                if (opt.id === "todos") {
-                  onUpdate(id, { filtro: "todos", valor: "" });
-                } else if (opt.id === "etapa") {
-                  const jaValido = funnels.some((f) => f.columns.some((c) => c.id === block.valor));
-                  onUpdate(id, { filtro: "etapa", valor: jaValido ? block.valor : funnels[0]?.columns[0]?.id ?? "" });
-                } else if (opt.id === "tag") {
-                  const jaValido = availableTags.includes(block.valor);
-                  onUpdate(id, { filtro: "tag", valor: jaValido ? block.valor : availableTags[0] ?? "" });
-                } else if (opt.id === "dias") {
-                  const jaValido = /^\d+$/.test(block.valor);
-                  onUpdate(id, { filtro: "dias", valor: jaValido ? block.valor : "30" });
-                } else {
-                  const jaValido = /^\d{4}-\d{2}-\d{2}$/.test(block.valor);
-                  onUpdate(id, { filtro: "data", valor: jaValido ? block.valor : todayIsoDate() });
-                }
-              }}
-              className={cn(
-                "rounded-lg border px-3 py-2.5 text-left text-xs transition-all",
-                active
-                  ? "border-primary/60 bg-primary/10"
-                  : "border-line bg-surface-card/40 hover:border-primary/35 hover:bg-surface-elevated/30",
-              )}
-            >
-              <div className="font-semibold text-content">{opt.label}</div>
-              <div className="mt-0.5 text-[10px] text-content-secondary">{opt.hint}</div>
-            </button>
-          );
-        })}
+      <div>
+        <StepLabel n={1}>De onde vêm os leads</StepLabel>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <ChoiceButton
+            active={baseInteira}
+            title="Todos os funis"
+            hint="A base inteira do CRM"
+            onClick={() => onUpdate(id, { scope: { funnelIds: [], columnIds: [] } })}
+          />
+          <ChoiceButton
+            active={!baseInteira}
+            title="Escolher funis e colunas"
+            hint="Pode marcar mais de um"
+            onClick={() => {
+              if (!baseInteira) return;
+              const first = funnels[0];
+              onUpdate(id, { scope: { funnelIds: first ? [first.id] : [], columnIds: [] } });
+            }}
+          />
+        </div>
+
+        {!baseInteira ? (
+          funnels.length > 0 ? (
+            <div className="mt-2.5 space-y-2">
+              {funnels.map((funnel) => {
+                const columnIds = funnel.columns.map((c) => c.id);
+                const funnelOn = scope.funnelIds.includes(funnel.id);
+                return (
+                  <div
+                    key={funnel.id}
+                    className={cn(
+                      "rounded-lg border p-2.5",
+                      isLight ? "border-slate-200/80 bg-surface-deep/50" : "border-line/70 bg-surface-deep/30",
+                    )}
+                  >
+                    <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-content">
+                      <input
+                        type="checkbox"
+                        checked={funnelOn}
+                        onChange={() => toggleFunnel(funnel.id, columnIds)}
+                        className="size-3.5 shrink-0 accent-primary"
+                      />
+                      {funnel.nome}
+                      <span className="text-[10px] font-normal text-content-secondary">(funil inteiro)</span>
+                    </label>
+                    {!funnelOn && funnel.columns.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-1.5 pl-5">
+                        {funnel.columns.map((column) => {
+                          const on = scope.columnIds.includes(column.id);
+                          return (
+                            <button
+                              key={column.id}
+                              type="button"
+                              onClick={() => toggleColumn(column.id)}
+                              className={cn(
+                                "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                                on
+                                  ? "border-primary bg-primary text-white"
+                                  : "border-line text-content-secondary hover:border-primary/40",
+                              )}
+                            >
+                              {column.title}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="mt-2.5 rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+              Nenhum funil configurado ainda.
+            </p>
+          )
+        ) : null}
       </div>
-      {block.filtro === "tag" ? (
-        availableTags.length > 0 ? (
-          <select
-            value={block.valor}
-            onChange={(e) => onUpdate(id, { valor: e.target.value })}
-            className="mt-2.5 h-11 w-full rounded-lg border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
-          >
-            {availableTags.map((tag) => (
-              <option key={tag} value={tag}>
-                {tag}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <p className="mt-2.5 rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
-            Nenhuma tag encontrada nos seus leads ainda.
-          </p>
-        )
-      ) : null}
-      {block.filtro === "etapa" ? (
-        funnels.length > 0 ? (
+
+      <div className="mt-4 border-t border-line/60 pt-3">
+        <StepLabel n={2}>De quando</StepLabel>
+        <div className="grid gap-2 sm:grid-cols-3">
+          <ChoiceButton
+            active={period.mode === "all"}
+            title="Todo o período"
+            hint="Sem recorte de tempo"
+            onClick={() => onUpdate(id, { period: { mode: "all" } })}
+          />
+          <ChoiceButton
+            active={period.mode === "cadastro_dias" || period.mode === "cadastro_data"}
+            title="Por cadastro"
+            hint="Quando entrou no CRM"
+            onClick={() => {
+              if (period.mode === "cadastro_dias" || period.mode === "cadastro_data") return;
+              onUpdate(id, { period: { mode: "cadastro_dias", days: 30 } });
+            }}
+          />
+          <ChoiceButton
+            active={period.mode === "sem_contato_dias"}
+            title="Sem falar há um tempo"
+            hint="Parou de responder"
+            onClick={() => {
+              if (period.mode === "sem_contato_dias") return;
+              onUpdate(id, { period: { mode: "sem_contato_dias", days: 30 } });
+            }}
+          />
+        </div>
+
+        {period.mode === "cadastro_dias" || period.mode === "cadastro_data" ? (
           <div className="mt-2.5 space-y-2">
-            {funnels.length > 1 ? (
-              <select
-                value={browsingFunnelId}
-                onChange={(e) => {
-                  const nextFunnel = funnels.find((f) => f.id === e.target.value);
-                  setBrowsingFunnelIdOverride(e.target.value);
-                  onUpdate(id, { valor: nextFunnel?.columns[0]?.id ?? "" });
-                }}
-                className="h-11 w-full rounded-lg border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() =>
+                  period.mode !== "cadastro_dias" && onUpdate(id, { period: { mode: "cadastro_dias", days: 30 } })
+                }
+                className={cn(
+                  "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                  period.mode === "cadastro_dias"
+                    ? "border-primary bg-primary text-white"
+                    : "border-line text-content-secondary hover:border-primary/40",
+                )}
               >
-                {funnels.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.nome}
-                  </option>
-                ))}
-              </select>
-            ) : null}
-            <select
-              value={block.valor}
-              onChange={(e) => onUpdate(id, { valor: e.target.value })}
-              className="h-11 w-full rounded-lg border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
-            >
-              {(browsingFunnel?.columns ?? []).map((column) => (
-                <option key={column.id} value={column.id}>
-                  {column.title}
-                </option>
-              ))}
-            </select>
+                Há X dias ou mais
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  period.mode !== "cadastro_data" &&
+                  onUpdate(id, { period: { mode: "cadastro_data", date: todayIsoDate() } })
+                }
+                className={cn(
+                  "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                  period.mode === "cadastro_data"
+                    ? "border-primary bg-primary text-white"
+                    : "border-line text-content-secondary hover:border-primary/40",
+                )}
+              >
+                Num dia específico
+              </button>
+            </div>
+            {period.mode === "cadastro_dias" ? (
+              <div>
+                <input
+                  type="number"
+                  min={0}
+                  value={period.days}
+                  onChange={(e) => onUpdate(id, { period: { mode: "cadastro_dias", days: Number(e.target.value) } })}
+                  className="h-11 w-full rounded-lg border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                />
+                <p className="mt-1 text-[10px] text-content-secondary">
+                  Pega quem está no CRM há esse tanto de dias ou mais — base parada.
+                </p>
+              </div>
+            ) : (
+              <input
+                type="date"
+                value={period.date}
+                onChange={(e) => onUpdate(id, { period: { mode: "cadastro_data", date: e.target.value } })}
+                className="h-11 w-full rounded-lg border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+              />
+            )}
           </div>
-        ) : (
-          <p className="mt-2.5 rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
-            Nenhum funil configurado ainda.
-          </p>
-        )
-      ) : null}
-      {block.filtro === "dias" ? (
-        <div className="mt-2.5">
-          <label className="mb-1 block text-[11px] font-medium text-content-secondary">
-            Cadastrados há pelo menos quantos dias?
-          </label>
-          <input
-            type="number"
-            min={0}
-            value={block.valor}
-            onChange={(e) => onUpdate(id, { valor: e.target.value })}
-            className="h-11 w-full rounded-lg border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
-          />
-          <p className="mt-1 text-[10px] text-content-secondary">
-            Ex.: 30 pega quem está no CRM há 30 dias ou mais — bom pra resgatar base parada.
-          </p>
-        </div>
-      ) : null}
-      {block.filtro === "data" ? (
-        <div className="mt-2.5">
-          <label className="mb-1 block text-[11px] font-medium text-content-secondary">Cadastrados em que dia?</label>
-          <input
-            type="date"
-            value={block.valor}
-            onChange={(e) => onUpdate(id, { valor: e.target.value })}
-            className="h-11 w-full rounded-lg border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
-          />
-        </div>
-      ) : null}
+        ) : null}
+
+        {period.mode === "sem_contato_dias" ? (
+          <div className="mt-2.5">
+            <input
+              type="number"
+              min={0}
+              value={period.days}
+              onChange={(e) => onUpdate(id, { period: { mode: "sem_contato_dias", days: Number(e.target.value) } })}
+              className="h-11 w-full rounded-lg border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+            />
+            <p className="mt-1 text-[10px] text-content-secondary">
+              Sem trocar mensagem há esse tanto de dias. Quem nunca falou também entra.
+            </p>
+          </div>
+        ) : null}
+      </div>
+
       <div
         className={cn(
-          "mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2",
+          "mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2",
           isLight ? "border-slate-200/80 bg-slate-50/60" : "border-line/70 bg-surface-card/30",
         )}
       >
@@ -380,7 +487,7 @@ function CrmBlockCard({
               ) : null}
             </>
           ) : (
-            "Digite o valor pra ver a contagem."
+            "Nenhum lead encontrado com esses critérios."
           )}
         </div>
         {block.preview && block.preview.notOptedIn > 0 ? (
@@ -538,10 +645,9 @@ type Props = {
   isLight: boolean;
   onAfterOptIn?: () => void;
   funnels: CrmFunnel[];
-  availableTags: string[];
 };
 
-export function DisparosPublicoBuilder({ blocks, onChange, isLight, onAfterOptIn, funnels, availableTags }: Props) {
+export function DisparosPublicoBuilder({ blocks, onChange, isLight, onAfterOptIn, funnels }: Props) {
   const updateBlock = useCallback<UpdateFn>(
     (id, patch) => {
       onChange((prev) => prev.map((block) => (block.id === id ? ({ ...block, ...patch } as PublicoBlock) : block)));
@@ -571,7 +677,6 @@ export function DisparosPublicoBuilder({ blocks, onChange, isLight, onAfterOptIn
             onRemove={removeBlock}
             onAfterOptIn={onAfterOptIn}
             funnels={funnels}
-            availableTags={availableTags}
           />
         ) : (
           <ContatosBlockCard key={block.id} block={block} isLight={isLight} onUpdate={updateBlock} onRemove={removeBlock} />
@@ -583,7 +688,7 @@ export function DisparosPublicoBuilder({ blocks, onChange, isLight, onAfterOptIn
           onClick={() => addBlock(createCrmBlock())}
           className="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-line px-3 py-2.5 text-xs font-medium text-content-secondary transition-colors hover:border-primary/45 hover:text-primary"
         >
-          <Plus className="size-3.5" aria-hidden /> CRM
+          <Plus className="size-3.5" aria-hidden /> Base do CRM
         </button>
         <button
           type="button"

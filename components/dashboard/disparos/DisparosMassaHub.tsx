@@ -193,7 +193,6 @@ export function DisparosMassaHub() {
   const [agentId, setAgentId] = useState("");
   const [eligibleRecipients, setEligibleRecipients] = useState(0);
   const [activeCampaignLimit, setActiveCampaignLimit] = useState(5);
-  const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [campaignBusy, setCampaignBusy] = useState(false);
   const [campaignError, setCampaignError] = useState<string | null>(null);
   const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([]);
@@ -216,7 +215,6 @@ export function DisparosMassaHub() {
         agents?: CampaignAgent[];
         eligibleRecipients?: number;
         activeCampaignLimit?: number;
-        availableTags?: string[];
       };
       if (!response.ok) throw new Error(payload.error ?? "Não foi possível carregar campanhas.");
       setCampaigns(payload.campaigns ?? []);
@@ -224,7 +222,6 @@ export function DisparosMassaHub() {
       setAgents(payload.agents ?? []);
       setEligibleRecipients(payload.eligibleRecipients ?? 0);
       setActiveCampaignLimit(typeof payload.activeCampaignLimit === "number" ? payload.activeCampaignLimit : 5);
-      setAvailableTags(payload.availableTags ?? []);
       setConnectionId((current) => current || payload.connections?.[0]?.connectionId || "");
     } catch (error) {
       setCampaignError(error instanceof Error ? error.message : "Não foi possível carregar campanhas.");
@@ -372,7 +369,7 @@ export function DisparosMassaHub() {
       name,
       audienceBlocks: publicoBlocks
         .filter((b): b is Extract<PublicoBlock, { kind: "crm" }> => b.kind === "crm")
-        .map((b) => ({ filtro: b.filtro, valor: b.valor })),
+        .map((b) => ({ scope: b.scope, period: b.period })),
       schedule,
       throughput,
       body,
@@ -388,7 +385,7 @@ export function DisparosMassaHub() {
     setCampaignName(d.name);
     setPublicoBlocks(
       d.audienceBlocks.length > 0
-        ? d.audienceBlocks.map((b) => ({ ...createCrmBlock(), filtro: b.filtro, valor: b.valor }))
+        ? d.audienceBlocks.map((b) => ({ ...createCrmBlock(), scope: b.scope, period: b.period }))
         : [createCrmBlock()],
     );
     setSchedule(d.schedule);
@@ -871,7 +868,6 @@ export function DisparosMassaHub() {
               isLight={isLight}
               onAfterOptIn={loadCampaignData}
               funnels={funnels}
-              availableTags={availableTags}
             />
           </div>
 
