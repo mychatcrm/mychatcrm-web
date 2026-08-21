@@ -35,6 +35,10 @@ type Props = {
   history: DisparosHistoryRow[];
   drafts: DisparosDraft[];
   processingCampaignId: string | null;
+  /** Quantas campanhas agendadas/processando existem agora — mesma contagem que o servidor usa pro teto. */
+  activeCampaignCount: number;
+  /** Teto de campanhas ativas ao mesmo tempo, igual pra todos os planos. */
+  activeCampaignLimit: number;
   onCreateNew: () => void;
   onEditDraft: (draft: DisparosDraft) => void;
   onDeleteDraft: (id: string) => void;
@@ -47,6 +51,8 @@ export function DisparosCampanhasList({
   history,
   drafts,
   processingCampaignId,
+  activeCampaignCount,
+  activeCampaignLimit,
   onCreateNew,
   onEditDraft,
   onDeleteDraft,
@@ -54,6 +60,7 @@ export function DisparosCampanhasList({
   onProcessNow,
 }: Props) {
   const isEmpty = history.length === 0 && drafts.length === 0;
+  const atCampaignLimit = activeCampaignCount >= activeCampaignLimit;
 
   return (
     <div className="space-y-6">
@@ -80,9 +87,15 @@ export function DisparosCampanhasList({
             variant="gradient"
             className="shrink-0 gap-2"
             onClick={onCreateNew}
+            disabled={atCampaignLimit}
+            title={
+              atCampaignLimit
+                ? `Limite de ${activeCampaignLimit} disparos ativos ao mesmo tempo atingido. Aguarde um terminar ou cancele algum.`
+                : undefined
+            }
           >
             <Plus className="size-4" aria-hidden />
-            Nova campanha
+            Criar disparo
           </Button>
         </div>
       </div>
@@ -105,17 +118,9 @@ export function DisparosCampanhasList({
           </div>
           <p className="max-w-sm text-xs leading-relaxed text-content-secondary">
             Crie sua primeira campanha pra resgatar clientes antigos, uma lista
-            importada ou uma tag do CRM.
+            importada ou uma tag do CRM. As campanhas que você criar aparecem
+            aqui.
           </p>
-          <Button
-            type="button"
-            variant="gradient"
-            className="mt-2 gap-2"
-            onClick={onCreateNew}
-          >
-            <Plus className="size-4" aria-hidden />
-            Criar disparo
-          </Button>
         </div>
       ) : (
         <>

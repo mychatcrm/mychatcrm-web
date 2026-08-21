@@ -173,6 +173,8 @@ function makeSb(options: {
   leadRows: Row[];
   insertedCampaign: Row;
   captureCampaignInsert?: (payload: unknown) => void;
+  /** Quantas campanhas ativas o teto já vê — mesmo builder serve a contagem e o insert. */
+  activeCampaignCount?: number;
 }) {
   return {
     from: (table: string) => {
@@ -180,7 +182,7 @@ function makeSb(options: {
       if (table === "leads") return makeBuilder(() => ({ data: options.leadRows, error: null }));
       if (table === "whatsapp_campaigns") {
         return makeBuilder(
-          () => ({ data: options.insertedCampaign, error: null }),
+          () => ({ data: options.insertedCampaign, count: options.activeCampaignCount ?? 0, error: null }),
           options.captureCampaignInsert,
         );
       }
@@ -589,6 +591,61 @@ describe("createWhatsAppCampaign — vendedor atribuído", () => {
     });
 
     expect(readTeamMembersFromDbMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("createWhatsAppCampaign — limite de campanhas ativas", () => {
+  beforeEach(() => {
+    listTenantWhatsappConnectionsMock.mockReset();
+    listTenantWhatsappConnectionsMock.mockResolvedValue([
+      { connectionId: "evo-1", transport: "evolution", label: "QR Code", slotIndex: 0, connected: true, activeProvider: "evolution" },
+    ]);
+  });
+
+  const baseInput = {
+    name: "Campanha",
+    connectionId: "evo-1",
+    agentId: "ag-1",
+    audienceBlocks: [{ kind: "crm" as const, filter: "all" as const }],
+    messageTemplate: "Olá {{nome}}",
+    throughput: "normal" as const,
+  };
+
+  it("rejeita a 6ª campanha quando já existem 5 ativas — teto igual pra todos os planos", async () => {
+    const sb = makeSb({
+      agentRow: { agent_id: "ag-1", active: true, metadata: {} },
+      leadRows: [OPTED_IN_LEAD],
+      insertedCampaign: { id: "camp-6" },
+      activeCampaignCount: 5,
+    });
+
+    await expect(createWhatsAppCampaign({ sb, tenantId: "tenant-1", input: baseInput })).rejects.toThrow(
+      "campaign_active_limit_reached",
+    );
+  });
+
+  it("aceita normalmente com 4 ativas (abaixo do teto de 5)", async () => {
+    const sb = makeSb({
+      agentRow: { agent_id: "ag-1", active: true, metadata: {} },
+      leadRows: [OPTED_IN_LEAD],
+      insertedCampaign: { id: "camp-5" },
+      activeCampaignCount: 4,
+    });
+
+    const campaign = await createWhatsAppCampaign({ sb, tenantId: "tenant-1", input: baseInput });
+    expect(campaign).toEqual({ id: "camp-5" });
+  });
+
+  it("sem nenhuma ativa, aceita normalmente", async () => {
+    const sb = makeSb({
+      agentRow: { agent_id: "ag-1", active: true, metadata: {} },
+      leadRows: [OPTED_IN_LEAD],
+      insertedCampaign: { id: "camp-1" },
+      activeCampaignCount: 0,
+    });
+
+    const campaign = await createWhatsAppCampaign({ sb, tenantId: "tenant-1", input: baseInput });
+    expect(campaign).toEqual({ id: "camp-1" });
   });
 });
 
