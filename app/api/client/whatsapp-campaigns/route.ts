@@ -20,6 +20,9 @@ export async function GET() {
       .from("whatsapp_campaigns")
       .select("*")
       .eq("tenant_id", guard.session.tenantId)
+      // Ordem escolhida a dedo primeiro; quem nunca foi arrastado
+      // (display_order NULL) vem depois, do mais recente pro mais antigo.
+      .order("display_order", { ascending: true, nullsFirst: false })
       .order("created_at", { ascending: false })
       .limit(100),
     listTenantWhatsappConnections(guard.session.tenantId),

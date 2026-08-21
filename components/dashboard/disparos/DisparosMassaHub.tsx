@@ -11,7 +11,7 @@ import {
   ChevronDown,
   Gauge,
   Layers,
-  Send,
+  Trash2,
   ShieldCheck,
   Sparkles,
   UserCog,
@@ -25,11 +25,6 @@ import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 import { useCrmFunnels } from "@/components/dashboard/CrmFunnelsContext";
 import { CrmDestinationBlock } from "@/components/dashboard/agentes/CrmDestinationBlock";
 import { WhatsAppGlyph } from "@/components/dashboard/crm/crm-phone";
-import {
-  loadDisparosDrafts,
-  persistDisparosDrafts,
-  type DisparosDraft,
-} from "@/components/dashboard/disparos/disparos-drafts-storage";
 import { SITUATION_TEMPLATES } from "@/components/dashboard/disparos/disparos-situation-templates";
 import {
   buildAudienceBlocksPayload,
@@ -38,6 +33,8 @@ import {
   estimatePublicoTotal,
   hasUsablePublico,
   type PublicoBlock,
+  type PublicoCrmPeriod,
+  type PublicoCrmScope,
 } from "@/components/dashboard/disparos/DisparosPublicoBuilder";
 import { DisparosCampanhasList, type DisparosHistoryRow } from "@/components/dashboard/disparos/DisparosCampanhasList";
 
@@ -96,8 +93,6 @@ function previewMetaTemplate(bodyText: string | null) {
     .replaceAll("{{3}}", "(11) 98765-4321");
 }
 
-const MAX_DRAFTS = 30;
-
 type CampaignConnection = {
   connectionId: string;
   transport: "evolution" | "cloud_api";
@@ -130,18 +125,36 @@ type MetaTemplate = {
 type CampaignRow = {
   id: string;
   name: string;
-  status: "draft" | "scheduled" | "processing" | "completed" | "cancelled" | "failed";
+  status: "draft" | "scheduled" | "processing" | "paused" | "completed" | "cancelled" | "failed";
   total_recipients: number;
   total_sent: number;
   total_failed: number;
   scheduled_at: string | null;
   created_at: string;
+  // Campos usados só ao reabrir a campanha pra editar.
+  connection_id?: string | null;
+  agent_id?: string | null;
+  message_template?: string | null;
+  meta_template_name?: string | null;
+  throughput?: string | null;
+  continue_with_agent?: boolean | null;
+  audience_blocks?: Array<{ kind?: string; scope?: PublicoCrmScope; period?: PublicoCrmPeriod }> | null;
+  send_window?: {
+    ativo?: boolean;
+    diasAtivos?: number[];
+    horaInicio?: number;
+    minutoInicio?: number;
+    horaFim?: number;
+    minutoFim?: number;
+  } | null;
+  lead_destination?: {
+    moveToFunnel?: boolean;
+    funnelId?: string | null;
+    columnId?: string | null;
+    ownerAction?: string;
+    ownerEmployeeId?: string | null;
+  } | null;
 };
-
-function newDraftId() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
-  return `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
 
 /** Numerozinho de passo — só orientação visual pro leigo saber onde está, sem afetar nada funcional. */
 function StepBadge({ n }: { n: number }) {
@@ -183,9 +196,9 @@ export function DisparosMassaHub() {
   // Depois do disparo: por padrão a IA continua atendendo quem responder —
   // igual ao comportamento de sempre.
   const [continueWithAgent, setContinueWithAgent] = useState(true);
-  const [drafts, setDrafts] = useState<DisparosDraft[]>([]);
   const [draftNotice, setDraftNotice] = useState<string | null>(null);
-  const [savingDraft, setSavingDraft] = useState(false);
+  /** Id da campanha sendo editada — quando setado, salvar substitui em vez de criar outra. */
+  const [editingCampaignId, setEditingCampaignId] = useState<string | null>(null);
   const [connections, setConnections] = useState<CampaignConnection[]>([]);
   const [agents, setAgents] = useState<CampaignAgent[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignRow[]>([]);
@@ -197,13 +210,9 @@ export function DisparosMassaHub() {
   const [campaignError, setCampaignError] = useState<string | null>(null);
   const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([]);
   const [metaTemplateName, setMetaTemplateName] = useState("");
-  const [processingCampaignId, setProcessingCampaignId] = useState<string | null>(null);
+  const [busyCampaignId, setBusyCampaignId] = useState<string | null>(null);
   const [showTemplateGallery, setShowTemplateGallery] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-
-  useEffect(() => {
-    setDrafts(loadDisparosDrafts());
-  }, []);
 
   const loadCampaignData = useCallback(async () => {
     try {
@@ -349,62 +358,12 @@ export function DisparosMassaHub() {
     setBody(el.value);
   }, []);
 
-  const commitDrafts = useCallback((buildNext: (prev: DisparosDraft[]) => DisparosDraft[]) => {
-    setDrafts((prev) => {
-      const next = buildNext(prev).slice(0, MAX_DRAFTS);
-      persistDisparosDrafts(next);
-      return next;
-    });
+  const notify = useCallback((message: string) => {
+    setDraftNotice(message);
+    window.setTimeout(() => setDraftNotice(null), 4000);
   }, []);
 
-  const handleSaveDraft = useCallback(() => {
-    setSavingDraft(true);
-    const stamp = new Date().toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
-    const name = campaignName.trim() || `Rascunho ${stamp}`;
-    // Só os blocos de CRM são salvos no rascunho — lista importada e contatos
-    // digitados já viraram leads reais no momento em que foram confirmados,
-    // então recarregar o rascunho depois não teria o que "desfazer" ali.
-    const draft: DisparosDraft = {
-      id: newDraftId(),
-      name,
-      audienceBlocks: publicoBlocks
-        .filter((b): b is Extract<PublicoBlock, { kind: "crm" }> => b.kind === "crm")
-        .map((b) => ({ scope: b.scope, period: b.period })),
-      schedule,
-      throughput,
-      body,
-      updatedAt: new Date().toISOString(),
-    };
-    commitDrafts((prev) => [draft, ...prev]);
-    setDraftNotice("Rascunho salvo neste navegador (local).");
-    window.setTimeout(() => setDraftNotice(null), 4500);
-    window.setTimeout(() => setSavingDraft(false), 400);
-  }, [body, campaignName, commitDrafts, publicoBlocks, schedule, throughput]);
-
-  const handleLoadDraft = useCallback((d: DisparosDraft) => {
-    setCampaignName(d.name);
-    setPublicoBlocks(
-      d.audienceBlocks.length > 0
-        ? d.audienceBlocks.map((b) => ({ ...createCrmBlock(), scope: b.scope, period: b.period }))
-        : [createCrmBlock()],
-    );
-    setSchedule(d.schedule);
-    setThroughput(d.throughput);
-    setBody(d.body);
-    setDraftNotice("Rascunho carregado no editor.");
-    window.setTimeout(() => setDraftNotice(null), 3500);
-  }, []);
-
-  const handleDeleteDraft = useCallback(
-    (id: string) => {
-      commitDrafts((prev) => prev.filter((d) => d.id !== id));
-      setDraftNotice("Rascunho removido.");
-      window.setTimeout(() => setDraftNotice(null), 3000);
-    },
-    [commitDrafts],
-  );
-
-  /** Volta o formulário aos padrões — usado ao abrir "Nova campanha" pra não herdar sobra de uma edição anterior. */
+  /** Volta o formulário aos padrões — usado ao abrir "Criar disparo" pra não herdar sobra de uma edição anterior. */
   const resetCampaignForm = useCallback(() => {
     setCampaignName("");
     setPublicoBlocks([createCrmBlock()]);
@@ -427,16 +386,67 @@ export function DisparosMassaHub() {
 
   const handleCreateNew = useCallback(() => {
     resetCampaignForm();
+    setEditingCampaignId(null);
     setDraftNotice(null);
     setView("create");
   }, [resetCampaignForm]);
 
-  const handleEditDraft = useCallback(
-    (d: DisparosDraft) => {
-      handleLoadDraft(d);
+  /**
+   * Editar carrega a campanha salva de volta no mesmo formulário de criação.
+   * O público volta só nos blocos de CRM: os blocos de contatos já viraram
+   * leads reais no momento da importação, e `audience_blocks` guarda só os
+   * ids deles — reidratar isso como "lista importada" daria a impressão falsa
+   * de que o arquivo original está ali pra editar.
+   */
+  const handleEditCampaign = useCallback(
+    (campaignId: string) => {
+      const campaign = campaigns.find((c) => c.id === campaignId);
+      if (!campaign) return;
+      resetCampaignForm();
+      setEditingCampaignId(campaignId);
+      setCampaignName(campaign.name);
+      setConnectionId(campaign.connection_id ?? "");
+      setAgentId(campaign.agent_id ?? "");
+      setBody(campaign.message_template ?? DEFAULT_MESSAGE);
+      setThroughput(
+        campaign.throughput === "suave" || campaign.throughput === "acelerado" ? campaign.throughput : "normal",
+      );
+      setMetaTemplateName(campaign.meta_template_name ?? "");
+
+      const crmBlocks = (campaign.audience_blocks ?? [])
+        .filter((block): block is { kind: "crm"; scope: PublicoCrmScope; period: PublicoCrmPeriod } => block?.kind === "crm")
+        .map((block) => ({ ...createCrmBlock(), scope: block.scope, period: block.period }));
+      setPublicoBlocks(crmBlocks.length > 0 ? crmBlocks : [createCrmBlock()]);
+
+      const janela = campaign.send_window;
+      if (janela?.ativo) {
+        setWindowActive(true);
+        setWindowDays(Array.isArray(janela.diasAtivos) ? janela.diasAtivos : [1, 2, 3, 4, 5]);
+        setWindowStart(
+          `${String(janela.horaInicio ?? 9).padStart(2, "0")}:${String(janela.minutoInicio ?? 0).padStart(2, "0")}`,
+        );
+        setWindowEnd(
+          `${String(janela.horaFim ?? 18).padStart(2, "0")}:${String(janela.minutoFim ?? 0).padStart(2, "0")}`,
+        );
+        setShowAdvanced(true);
+      }
+
+      const destino = campaign.lead_destination;
+      if (destino?.moveToFunnel && destino.funnelId && destino.columnId) {
+        setDestMoveEnabled(true);
+        setDestFunnelId(destino.funnelId);
+        setDestColumnId(destino.columnId);
+      }
+      if (destino?.ownerAction === "soltar" || destino?.ownerAction === "atribuir") {
+        setOwnerAction(destino.ownerAction);
+        setOwnerEmployeeId(destino.ownerEmployeeId ?? "");
+      }
+      setContinueWithAgent(campaign.continue_with_agent !== false);
+
+      setDraftNotice(null);
       setView("create");
     },
-    [handleLoadDraft],
+    [campaigns, resetCampaignForm],
   );
 
   const applySituationTemplate = useCallback((text: string, title: string) => {
@@ -451,17 +461,11 @@ export function DisparosMassaHub() {
       campaigns.map((campaign) => ({
         id: campaign.id,
         name: campaign.name,
-        delivered:
-          campaign.total_recipients > 0
-            ? Math.round((campaign.total_sent / campaign.total_recipients) * 100)
-            : 0,
         status: campaign.status,
-        window: campaign.scheduled_at
-          ? new Date(campaign.scheduled_at).toLocaleString("pt-BR", {
-              dateStyle: "short",
-              timeStyle: "short",
-            })
-          : "Imediato",
+        totalRecipients: campaign.total_recipients ?? 0,
+        totalSent: campaign.total_sent ?? 0,
+        totalFailed: campaign.total_failed ?? 0,
+        scheduledLabel: `${(campaign.total_recipients ?? 0).toLocaleString("pt-BR")} contatos`,
       })),
     [campaigns],
   );
@@ -518,17 +522,26 @@ export function DisparosMassaHub() {
         }),
       });
       const payload = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(payload.error ?? "Não foi possível agendar a campanha.");
-      setDraftNotice("Campanha criada — os primeiros envios já começaram.");
-      window.setTimeout(() => setDraftNotice(null), 4500);
+      if (!response.ok) throw new Error(payload.error ?? "Não foi possível salvar o disparo.");
+      // Editar é recriar: o card só é editável enquanto nada foi enviado, e aí
+      // recriar é equivalente a alterar — sem o risco de mexer no público de
+      // uma campanha com fila em andamento. O antigo sai depois que o novo já
+      // existe, pra uma falha aqui nunca perder a configuração.
+      if (editingCampaignId) {
+        await fetch(`/api/client/whatsapp-campaigns/${encodeURIComponent(editingCampaignId)}`, { method: "DELETE" });
+      }
+      // Salvar não dispara: o card nasce parado esperando o play.
+      notify(editingCampaignId ? "Disparo atualizado." : "Disparo salvo. Dê play no card quando quiser começar.");
       await loadCampaignData();
+      setEditingCampaignId(null);
       setView("list");
     } catch (error) {
-      setCampaignError(error instanceof Error ? error.message : "Não foi possível agendar a campanha.");
+      setCampaignError(error instanceof Error ? error.message : "Não foi possível salvar o disparo.");
     } finally {
       setCampaignBusy(false);
     }
   }, [
+    notify,
     agentId,
     body,
     campaignName,
@@ -550,26 +563,78 @@ export function DisparosMassaHub() {
     ownerAction,
     ownerEmployeeId,
     continueWithAgent,
+    editingCampaignId,
   ]);
 
-  const handleCancelCampaign = useCallback(async (campaignId: string) => {
-    const response = await fetch(`/api/client/whatsapp-campaigns/${encodeURIComponent(campaignId)}`, {
-      method: "DELETE",
-    });
-    if (response.ok) await loadCampaignData();
-  }, [loadCampaignData]);
-
-  const handleProcessNow = useCallback(
+  const handleDeleteCampaign = useCallback(
     async (campaignId: string) => {
-      setProcessingCampaignId(campaignId);
+      setBusyCampaignId(campaignId);
       try {
-        await fetch(`/api/client/whatsapp-campaigns/${encodeURIComponent(campaignId)}/process`, { method: "POST" });
-        await loadCampaignData();
+        const response = await fetch(`/api/client/whatsapp-campaigns/${encodeURIComponent(campaignId)}`, {
+          method: "DELETE",
+        });
+        if (response.ok) {
+          notify("Disparo excluído.");
+          await loadCampaignData();
+        }
       } finally {
-        setProcessingCampaignId(null);
+        setBusyCampaignId(null);
       }
     },
-    [loadCampaignData],
+    [loadCampaignData, notify],
+  );
+
+  /** Play, pause e começar do zero — todos passam pela mesma rota de controle. */
+  const handleControl = useCallback(
+    async (campaignId: string, action: "start" | "pause" | "reset") => {
+      setBusyCampaignId(campaignId);
+      setCampaignError(null);
+      try {
+        const response = await fetch(
+          `/api/client/whatsapp-campaigns/${encodeURIComponent(campaignId)}/control`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action }),
+          },
+        );
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        if (!response.ok) throw new Error(payload.error ?? "Não foi possível executar a ação.");
+        notify(
+          action === "start"
+            ? "Disparo iniciado."
+            : action === "pause"
+              ? "Disparo pausado — o play retoma de onde parou."
+              : "Disparo voltou do zero.",
+        );
+        await loadCampaignData();
+      } catch (error) {
+        setCampaignError(error instanceof Error ? error.message : "Não foi possível executar a ação.");
+      } finally {
+        setBusyCampaignId(null);
+      }
+    },
+    [loadCampaignData, notify],
+  );
+
+  /**
+   * Ordem nova aplicada na hora e persistida em segundo plano: arrastar tem
+   * que responder na hora, e se a gravação falhar a próxima carga devolve a
+   * ordem antiga — nada se perde.
+   */
+  const handleReorder = useCallback(
+    (orderedIds: string[]) => {
+      setCampaigns((current) => {
+        const byId = new Map(current.map((c) => [c.id, c]));
+        return orderedIds.map((id) => byId.get(id)).filter((c): c is CampaignRow => Boolean(c));
+      });
+      void fetch("/api/client/whatsapp-campaigns/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderedIds }),
+      }).catch(() => undefined);
+    },
+    [],
   );
 
   return (
@@ -596,15 +661,16 @@ export function DisparosMassaHub() {
         <DisparosCampanhasList
           isLight={isLight}
           history={history}
-          drafts={drafts}
-          processingCampaignId={processingCampaignId}
+          busyCampaignId={busyCampaignId}
           activeCampaignCount={activeCampaignCount}
           activeCampaignLimit={activeCampaignLimit}
           onCreateNew={handleCreateNew}
-          onEditDraft={handleEditDraft}
-          onDeleteDraft={handleDeleteDraft}
-          onCancelCampaign={handleCancelCampaign}
-          onProcessNow={handleProcessNow}
+          onReorder={handleReorder}
+          onStart={(id) => void handleControl(id, "start")}
+          onPause={(id) => void handleControl(id, "pause")}
+          onReset={(id) => void handleControl(id, "reset")}
+          onEdit={handleEditCampaign}
+          onDelete={(id) => void handleDeleteCampaign(id)}
         />
       ) : (
         <>
@@ -1151,7 +1217,7 @@ export function DisparosMassaHub() {
               </div>
             ) : null}
 
-            <div className="mt-4 flex flex-wrap gap-3">
+            <div className="mt-4 flex flex-wrap items-center gap-3">
               <Button
                 type="button"
                 variant="gradient"
@@ -1160,21 +1226,25 @@ export function DisparosMassaHub() {
                 isLoading={campaignBusy}
                 disabled={!canSchedule}
               >
-                <Zap className="size-4" aria-hidden />
-                Agendar disparo
+                <Check className="size-4" aria-hidden />
+                Salvar
               </Button>
-              {!isMetaTransport ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="gap-2"
-                  onClick={handleSaveDraft}
-                  isLoading={savingDraft}
-                >
-                  <Send className="size-4" aria-hidden />
-                  Salvar rascunho
-                </Button>
-              ) : null}
+              <Button
+                type="button"
+                variant="secondary"
+                className="gap-2"
+                onClick={() => {
+                  resetCampaignForm();
+                  setEditingCampaignId(null);
+                  setView("list");
+                }}
+              >
+                <Trash2 className="size-4" aria-hidden />
+                Excluir
+              </Button>
+              <span className="text-[11px] text-content-secondary">
+                Salvar não começa a enviar — o disparo vira um card e você dá play quando quiser.
+              </span>
             </div>
           </div>
         </div>

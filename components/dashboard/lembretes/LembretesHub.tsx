@@ -13,11 +13,6 @@ import { CRM_LEADS_UPDATED_EVENT, crmLeadsStorageKey, loadCrmLeadsSnapshot } fro
 import { CRM_FUNNELS_STORAGE_KEY } from "@/lib/crm-funnels";
 import { useCrmFunnels } from "@/components/dashboard/CrmFunnelsContext";
 import { AGENDA_EVENTS_LS_KEY, AGENDA_EVENTS_UPDATED_EVENT, loadAgendaEvents } from "@/components/dashboard/agenda/agenda-storage";
-import {
-  DISPAROS_DRAFTS_STORAGE_KEY,
-  DISPAROS_DRAFTS_UPDATED_EVENT,
-  loadDisparosDrafts,
-} from "@/components/dashboard/disparos/disparos-drafts-storage";
 import { buildLembretesFeed, type LembretesPulseItem } from "./build-lembretes-feed";
 
 function formatWhen(at: Date | null) {
@@ -77,17 +72,14 @@ export function LembretesHub({ dataset }: { dataset: DashboardDataset }) {
     bump();
     const onExtras = () => bump();
     const onAgenda = () => bump();
-    const onDisparos = () => bump();
     const onCrmLeads = () => bump();
     window.addEventListener(LEAD_EXTRAS_UPDATED_EVENT, onExtras);
     window.addEventListener(AGENDA_EVENTS_UPDATED_EVENT, onAgenda);
-    window.addEventListener(DISPAROS_DRAFTS_UPDATED_EVENT, onDisparos);
     window.addEventListener(CRM_LEADS_UPDATED_EVENT, onCrmLeads);
     const leadsKey = crmLeadsStorageKey(dataset.tenantId);
     const onStorage = (e: StorageEvent) => {
       if (
         e.key === AGENDA_EVENTS_LS_KEY ||
-        e.key === DISPAROS_DRAFTS_STORAGE_KEY ||
         e.key === LEAD_EXTRAS_STORAGE_KEY ||
         e.key === CRM_FUNNELS_STORAGE_KEY ||
         e.key === leadsKey
@@ -101,7 +93,6 @@ export function LembretesHub({ dataset }: { dataset: DashboardDataset }) {
     return () => {
       window.removeEventListener(LEAD_EXTRAS_UPDATED_EVENT, onExtras);
       window.removeEventListener(AGENDA_EVENTS_UPDATED_EVENT, onAgenda);
-      window.removeEventListener(DISPAROS_DRAFTS_UPDATED_EVENT, onDisparos);
       window.removeEventListener(CRM_LEADS_UPDATED_EVENT, onCrmLeads);
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("focus", bump);
@@ -118,7 +109,6 @@ export function LembretesHub({ dataset }: { dataset: DashboardDataset }) {
       funnels,
       extras: loadLeadExtras(),
       agendaEvents: loadAgendaEvents(),
-      disparosDrafts: loadDisparosDrafts(),
     });
   }, [dataset, funnels, tick]);
 
