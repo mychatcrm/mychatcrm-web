@@ -119,7 +119,10 @@ export function isWithinBusinessHours(
   now: Date,
   settings: Pick<AgentFollowUpInteligente, "horaInicio" | "minutoInicio" | "horaFim" | "minutoFim" | "diasAtivos" | "timezone">,
 ): boolean {
-  const tz = settings.timezone ?? "UTC";
+  // Sem fuso salvo (dado legado/incompleto), cai no mesmo padrão da plataforma
+  // (América/São Paulo) — não em UTC, que adiantaria a janela comercial em 3h
+  // pro público majoritariamente brasileiro.
+  const tz = settings.timezone ?? "America/Sao_Paulo";
   const { hour, minute, day } = getLocalTimeComponents(now, tz);
   if (settings.diasAtivos.length > 0 && !settings.diasAtivos.includes(day)) return false;
   const nowMinutes = toTotalMinutes(hour, minute);
