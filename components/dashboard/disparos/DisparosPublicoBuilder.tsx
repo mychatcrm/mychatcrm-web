@@ -18,7 +18,7 @@
  * campanha; `estimatePublicoTotal`/`hasUsablePublico` alimentam o aviso de
  * risco e a validação do botão de agendar em DisparosMassaHub.
  */
-import { useCallback, useEffect, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { Keyboard, Plus, Trash2, Upload, Users } from "lucide-react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { cn } from "@/lib/utils";
@@ -115,6 +115,13 @@ export function buildAudienceBlocksPayload(blocks: PublicoBlock[]) {
       : { kind: "leads" as const, leadIds: block.leadIds },
   );
 }
+
+/**
+ * Teto do arquivo lido no navegador. A rota já corta a lista em 5.000 linhas;
+ * isto existe só pra um arquivo gigante escolhido por engano não travar a aba
+ * antes de chegar lá.
+ */
+const MAX_IMPORT_FILE_BYTES = 2 * 1024 * 1024;
 
 /** Hoje em "AAAA-MM-DD", pro valor inicial do recorte por data exata. */
 function todayIsoDate(): string {
@@ -513,6 +520,44 @@ function ContatosBlockCard({
 }) {
   const isManual = block.origem === "manual";
   const id = block.id;
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+
+  /**
+   * O arquivo é lido AQUI e vira texto no mesmo campo de colar — a rota de
+   * import recebe `content` como string, então não há upload de binário
+   * envolvido. Também deixa o cliente conferir e corrigir o conteúdo antes de
+   * confirmar, em vez de mandar um arquivo às cegas.
+   */
+  const handleFile = useCallback(
+    async (file: File) => {
+      setFileName(null);
+      if (file.size > MAX_IMPORT_FILE_BYTES) {
+        onUpdate(id, { erro: "Arquivo muito grande (máx. 2 MB). Divida a lista em partes." });
+        return;
+      }
+      // .xlsx é um zip binário: ler como texto devolveria lixo e o cliente só
+      // descobriria no erro genérico de "nenhum telefone válido".
+      if (!/\.(csv|txt|tsv)$/i.test(file.name)) {
+        onUpdate(id, {
+          erro: "Formato não suportado. Salve como CSV (no Excel: Arquivo → Salvar como → CSV) e envie de novo.",
+        });
+        return;
+      }
+      try {
+        const text = await file.text();
+        if (!text.trim()) {
+          onUpdate(id, { erro: "O arquivo está vazio." });
+          return;
+        }
+        setFileName(file.name);
+        onUpdate(id, { rascunhoTexto: text, erro: null });
+      } catch {
+        onUpdate(id, { erro: "Não foi possível ler o arquivo." });
+      }
+    },
+    [id, onUpdate],
+  );
 
   const handleConfirm = useCallback(async () => {
     if (!block.rascunhoTexto.trim()) return;
@@ -580,9 +625,44 @@ function ContatosBlockCard({
         </div>
       ) : (
         <div className="space-y-2.5">
+          {!isManual ? (
+            <div>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".csv,.txt,.tsv,text/csv,text/plain"
+                className="sr-only"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void handleFile(file);
+                  // Zera pra que escolher o MESMO arquivo de novo dispare o onChange.
+                  e.target.value = "";
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className={cn(
+                  "flex w-full items-center justify-center gap-2 rounded-lg border border-dashed px-3 py-3 text-xs font-medium transition-colors",
+                  isLight
+                    ? "border-slate-300 text-content-secondary hover:border-primary/45 hover:text-primary"
+                    : "border-line text-content-secondary hover:border-primary/45 hover:text-primary",
+                )}
+              >
+                <Upload className="size-4" aria-hidden />
+                {fileName ? `Trocar arquivo — ${fileName}` : "Escolher arquivo (CSV)"}
+              </button>
+              <p className="mt-1.5 text-center text-[10px] text-content-secondary">
+                ou cole a lista no campo abaixo
+              </p>
+            </div>
+          ) : null}
           <textarea
             value={block.rascunhoTexto}
-            onChange={(e) => onUpdate(id, { rascunhoTexto: e.target.value })}
+            onChange={(e) => {
+              setFileName(null);
+              onUpdate(id, { rascunhoTexto: e.target.value });
+            }}
             placeholder={
               isManual
                 ? "Um contato por linha — ex.: Maria Silva, 62991234567"
@@ -597,7 +677,7 @@ function ContatosBlockCard({
           <p className="text-[11px] leading-relaxed text-content-secondary">
             {isManual
               ? "Bom pra adicionar alguns contatos específicos, sem precisar de arquivo."
-              : "Cole do Excel ou de um CSV. Aceita vírgula ou ponto e vírgula, com ou sem cabeçalho."}{" "}
+              : "Envie um CSV ou cole direto do Excel. Aceita vírgula ou ponto e vírgula, com ou sem cabeçalho."}{" "}
             Contato que já existe no CRM é reaproveitado, não duplicado.
           </p>
           <label className="flex items-start gap-2 text-[11px] leading-relaxed text-content-secondary">
