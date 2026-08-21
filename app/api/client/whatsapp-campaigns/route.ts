@@ -3,9 +3,6 @@ import { requireActiveClientSession } from "@/lib/server/client-session-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { computeDistinctLeadTags, createWhatsAppCampaign, processDueWhatsAppCampaigns } from "@/lib/server/whatsapp-campaigns";
 import { listTenantWhatsappConnections } from "@/lib/server/tenant-whatsapp-connections";
-import { ensureDisparosDefaultAgent, listBroadcastAgents } from "@/lib/server/disparos-default-agent";
-import { isBroadcastAgentRow } from "@/lib/server/broadcast-agent-identity";
-import { resolveActiveBroadcastAgentLimit } from "@/lib/server/agent-plan-limit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -14,7 +11,7 @@ export async function GET() {
   const guard = await requireActiveClientSession();
   if (!guard.ok) return guard.response;
   const sb = createSupabaseServiceClient();
-  const [campaigns, connections, agents, eligible, broadcastAgents, tagsQuery] = await Promise.all([
+  const [campaigns, connections, agents, eligible, tagsQuery] = await Promise.all([
     sb
       .from("whatsapp_campaigns")
       .select("*")
@@ -22,9 +19,12 @@ export async function GET() {
       .order("created_at", { ascending: false })
       .limit(100),
     listTenantWhatsappConnections(guard.session.tenantId),
+    // O disparo só conduz com agentes já criados em Meus Agentes — sem
+    // categoria própria, sem criar por aqui. Evita o cliente acumulando
+    // agentes isolados só pra usar uma vez numa campanha.
     sb
       .from("tenant_agents")
-      .select("agent_id, display_name, active, metadata")
+      .select("agent_id, display_name, active")
       .eq("tenant_id", guard.session.tenantId)
       .eq("active", true)
       .order("display_name", { ascending: true }),
@@ -34,7 +34,6 @@ export async function GET() {
       .eq("tenant_id", guard.session.tenantId)
       .eq("whatsapp_opt_in", true)
       .is("whatsapp_opt_out_at", null),
-    listBroadcastAgents(guard.session.tenantId),
     // Alimenta o seletor de "Por tag" do público — sem isso o cliente tinha
     // que adivinhar o texto exato de uma tag pra digitar num campo livre.
     sb
@@ -50,23 +49,12 @@ export async function GET() {
     return NextResponse.json({ error: firstError.message }, { status: 503 });
   }
 
-  // O dropdown de agentes de atendimento nunca pode oferecer um agente de
-  // Disparos: a filtragem é pela marca no metadata, não pelo id fixo — do
-  // segundo agente em diante os ids são gerados.
-  const attendanceAgents = (agents.data ?? []).filter(
-    (row) => !isBroadcastAgentRow(row as Record<string, unknown>),
-  );
-
   return NextResponse.json(
     {
       campaigns: campaigns.data ?? [],
       connections,
-      agents: attendanceAgents,
+      agents: agents.data ?? [],
       eligibleRecipients: eligible.count ?? 0,
-      broadcastAgents,
-      broadcastAgentLimit: resolveActiveBroadcastAgentLimit(guard.session),
-      // Compatibilidade com a UI atual, que ainda lê `disparosAgent`.
-      disparosAgent: broadcastAgents[0] ?? null,
       availableTags: computeDistinctLeadTags((tagsQuery.data ?? []) as Array<Record<string, unknown>>),
     },
     { headers: { "Cache-Control": "no-store" } },
@@ -85,16 +73,7 @@ export async function POST(request: Request) {
 
   try {
     const sb = createSupabaseServiceClient();
-    const agentMode = body.agentMode === "disparos" ? "disparos" : "existing";
-    const explicitAgentId = typeof body.agentId === "string" ? body.agentId.trim() : "";
-    // Em modo disparos, um id explícito vem de quem já escolheu/configurou um
-    // agente de Disparos na tela — a validação de que é mesmo de Disparos (e
-    // não um agente de atendimento) já acontece dentro de createWhatsAppCampaign.
-    // Sem id (tela antiga, ou primeira vez), cai no agente padrão de sempre.
-    const agentId =
-      agentMode === "disparos"
-        ? explicitAgentId || (await ensureDisparosDefaultAgent(guard.session.tenantId)).agentId
-        : explicitAgentId;
+    const agentId = typeof body.agentId === "string" ? body.agentId.trim() : "";
 
     const throughput =
       body.throughput === "suave" || body.throughput === "acelerado" ? body.throughput : "normal";
@@ -146,13 +125,10 @@ export async function POST(request: Request) {
       campaign_message_too_long: "A mensagem ultrapassa 4.000 caracteres.",
       campaign_connection_not_available: "Selecione um WhatsApp conectado.",
       campaign_agent_not_available: "O agente selecionado não está ativo.",
-      campaign_agent_not_broadcast:
-        "Só um Agente de Disparos pode conduzir campanha — ele atende quem responder, com prompt próprio de resgate. Escolha «Usar o Agente do Disparos» em vez de um agente de atendimento.",
       campaign_meta_template_required: "Escolha um modelo (template) aprovado pela Meta pra essa linha.",
       campaign_meta_template_not_approved: "Esse modelo ainda não está aprovado pela Meta — escolha outro ou aguarde a aprovação.",
       campaign_has_no_opted_in_recipients:
         "Nenhum lead deste público possui opt-in WhatsApp ativo.",
-      disparos_default_agent_create_failed: "Não foi possível preparar o Agente do Disparos. Tente novamente.",
       campaign_owner_employee_invalid: "O vendedor escolhido não existe mais ou está inativo. Selecione outro.",
     };
     return NextResponse.json({ error: messages[code] ?? "Não foi possível criar a campanha.", code }, { status: 422 });

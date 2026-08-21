@@ -5190,7 +5190,7 @@ export function DashboardWorkspace({
             description="Segmentacao, mensagem dinamica, janela de envio e telemetria de campanhas."
             className="overflow-hidden"
           >
-            <DisparosMassaHub session={session} />
+            <DisparosMassaHub />
           </Panel>
         );
       case "lembretes":

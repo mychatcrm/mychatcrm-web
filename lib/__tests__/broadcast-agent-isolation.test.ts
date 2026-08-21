@@ -10,15 +10,15 @@ import {
 } from "@/lib/server/broadcast-agent-identity";
 
 /**
- * Agente de Disparos e agente de atendimento não se misturam.
+ * Agente de Disparos e agente de atendimento.
  *
- * O de Disparos resgata base antiga com prompt próprio e vira dono da conversa
- * de quem responde; o de atendimento cuida de lead novo. Trocar um pelo outro
- * joga base fria dentro do funil de lead novo (ou o contrário), que é o dano
- * que esta separação existe para impedir.
- *
- * As duas pontas precisam de trava, porque a UI sozinha não protege: qualquer
- * POST direto na API passaria por cima do dropdown.
+ * A tela de disparos passou a usar só os agentes já criados em Meus Agentes
+ * (sem categoria própria, sem criar agente por lá) — ver
+ * lib/server/whatsapp-campaigns.ts e app/api/client/whatsapp-campaigns/route.ts.
+ * `isBroadcastAgentRow`/`isBroadcastAgentMetadata` continuam existindo porque
+ * a regra de distribuição de leads ainda recusa um agente marcado como
+ * Disparos (linhas legadas ou marcadas manualmente), e a cota separada em
+ * agent-plan-limit.ts também depende da marca.
  */
 
 function source(path: string): string {
@@ -61,9 +61,10 @@ describe("identidade do agente de Disparos", () => {
   });
 });
 
-describe("contrato: as duas pontas do isolamento", () => {
+describe("contrato: regra de distribuição ainda recusa agente marcado como Disparos", () => {
   it("regra de distribuição recusa agente de Disparos", () => {
-    // Sem isto, lead novo cairia no prompt de resgate de base antiga.
+    // Sem isto, lead novo cairia no prompt de resgate de base antiga — vale
+    // pra linhas legadas ou marcadas manualmente, mesmo sem UI criando novas.
     const rules = source("app/api/client/lead-rules/route.ts");
     expect(rules).toContain("rejectBroadcastAgentsInRule");
     expect(rules).toContain("isBroadcastAgentRow");
@@ -72,26 +73,10 @@ describe("contrato: as duas pontas do isolamento", () => {
     expect(guardIndex).toBeGreaterThan(-1);
   });
 
-  it("campanha recusa agente de atendimento", () => {
-    // Sem isto, o agente normal viraria dono da conversa de resgate e a base
-    // antiga entraria no funil de lead novo.
+  it("a tela de disparos não recusa mais agente de atendimento — agora é a única opção", () => {
+    // Confirma a reversão: não sobrou nenhum resquício da exigência antiga.
     const campaigns = source("lib/server/whatsapp-campaigns.ts");
-    expect(campaigns).toContain("campaign_agent_not_broadcast");
-    expect(campaigns).toContain("isBroadcastAgentRow");
-  });
-
-  it("o erro da campanha tem mensagem traduzida para o cliente", () => {
-    // Código cru vazando na tela é o mesmo que erro silencioso.
-    expect(source("app/api/client/whatsapp-campaigns/route.ts")).toContain(
-      "campaign_agent_not_broadcast",
-    );
-  });
-
-  it("o dropdown de agentes de atendimento filtra pela marca, não pelo id fixo", () => {
-    // Do segundo agente de Disparos em diante os ids são gerados; filtrar por
-    // id deixaria os novos vazarem para o dropdown de atendimento.
-    const route = source("app/api/client/whatsapp-campaigns/route.ts");
-    expect(route).toContain("isBroadcastAgentRow");
-    expect(route).not.toContain('.neq("agent_id", DISPAROS_DEFAULT_AGENT_ID)');
+    expect(campaigns).not.toContain("campaign_agent_not_broadcast");
+    expect(campaigns).not.toContain("isBroadcastAgentRow");
   });
 });
