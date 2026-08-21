@@ -65,10 +65,21 @@ const CAMPAIGN_ACTIVE_STATUSES = ["scheduled", "processing"] as const;
  * empilhar blocos pra somar dois funis.
  */
 export type CampaignCrmScope = {
-  /** Funis inteiros. Vazio + `columnIds` vazio = todos os funis. */
+  /** Funis inteiros. Vazio + `columns` vazio = todos os funis. */
   funnelIds: string[];
-  /** Colunas específicas, de qualquer funil. Soma com `funnelIds` (OU, não E). */
-  columnIds: string[];
+  /**
+   * Colunas específicas, cada uma amarrada ao SEU funil. Soma com
+   * `funnelIds` (OU, não E) — "funil de Vendas inteiro + a coluna Proposta
+   * do funil de Pós" é uma soma de dois recortes.
+   *
+   * O par `{funnelId, columnId}` existe porque o id da coluna sozinho é
+   * ambíguo: funis diferentes reaproveitam os mesmos ids de etapa do modelo
+   * de Kanban (ex.: "proposta" existe em vários funis). Guardar só o id da
+   * coluna faria "marcar a coluna Proposta do funil A" bater também em todo
+   * lead na coluna Proposta de QUALQUER outro funil — nunca foi isso que se
+   * pediu ao escolher uma coluna de um funil específico.
+   */
+  columns: Array<{ funnelId: string; columnId: string }>;
 };
 
 export type CampaignCrmPeriod =
@@ -329,13 +340,17 @@ function leadSilentForDays(lastMessageAt: unknown, minDays: number): boolean {
 
 /** Escopo vazio dos dois lados = base inteira. */
 function leadInCrmScope(lead: Record<string, unknown>, scope: CampaignCrmScope): boolean {
-  if (scope.funnelIds.length === 0 && scope.columnIds.length === 0) return true;
+  if (scope.funnelIds.length === 0 && scope.columns.length === 0) return true;
   const funnelId = text(lead.crm_funnel_id);
   const columnId = text(lead.status);
   // OU, não E: "funil de Vendas inteiro + a coluna Proposta do funil de Pós"
   // é uma soma de dois recortes, não uma interseção impossível.
   if (funnelId && scope.funnelIds.includes(funnelId)) return true;
-  if (columnId && scope.columnIds.includes(columnId)) return true;
+  // Os dois lados do par têm que bater: é a coluna X DESTE funil, não a
+  // coluna X de qualquer funil que por acaso reaproveite o mesmo id de etapa.
+  if (funnelId && columnId && scope.columns.some((c) => c.funnelId === funnelId && c.columnId === columnId)) {
+    return true;
+  }
   return false;
 }
 
@@ -438,10 +453,27 @@ function stringList(value: unknown): string[] {
   return [...new Set(value.map((item) => String(item).trim()).filter(Boolean))];
 }
 
+function crmScopeColumns(value: unknown): Array<{ funnelId: string; columnId: string }> {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: Array<{ funnelId: string; columnId: string }> = [];
+  for (const item of value) {
+    const row = object(item);
+    const funnelId = text(row.funnelId);
+    const columnId = text(row.columnId);
+    if (!funnelId || !columnId) continue;
+    const key = `${funnelId}::${columnId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ funnelId, columnId });
+  }
+  return out;
+}
+
 /** Escopo ilegível (ou ausente) vira base inteira — nunca um público vazio silencioso. */
 export function parseCrmScope(raw: unknown): CampaignCrmScope {
   const config = object(raw);
-  return { funnelIds: stringList(config.funnelIds), columnIds: stringList(config.columnIds) };
+  return { funnelIds: stringList(config.funnelIds), columns: crmScopeColumns(config.columns) };
 }
 
 /**

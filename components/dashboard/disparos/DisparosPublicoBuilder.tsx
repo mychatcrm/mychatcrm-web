@@ -26,8 +26,18 @@ import type { CrmFunnel } from "@/lib/crm-funnels";
 
 export type PublicoAudiencePreview = { totalMatched: number; optedIn: number; notOptedIn: number };
 
-/** Espelha `CampaignCrmScope` do servidor: vazio dos dois lados = base inteira. */
-export type PublicoCrmScope = { funnelIds: string[]; columnIds: string[] };
+/**
+ * Espelha `CampaignCrmScope` do servidor: vazio dos dois lados = base
+ * inteira. Cada coluna carrega o id do SEU funil junto — funis diferentes
+ * reaproveitam os mesmos ids de etapa do Kanban (ex.: "proposta" existe em
+ * vários funis), então guardar só o id da coluna faria marcar uma coluna de
+ * um funil acender a mesma coluna em todos os outros que têm etapa com esse
+ * id, e o servidor bateria em leads de QUALQUER um deles.
+ */
+export type PublicoCrmScope = {
+  funnelIds: string[];
+  columns: Array<{ funnelId: string; columnId: string }>;
+};
 
 /** Espelha `CampaignCrmPeriod` do servidor. */
 export type PublicoCrmPeriod =
@@ -78,7 +88,7 @@ export function createCrmBlock(): PublicoCrmBlock {
     id: newBlockId(),
     kind: "crm",
     scopeMode: "all",
-    scope: { funnelIds: [], columnIds: [] },
+    scope: { funnelIds: [], columns: [] },
     period: { mode: "all" },
     preview: null,
     previewLoading: false,
@@ -107,7 +117,7 @@ function isBlockUsable(block: PublicoBlock): boolean {
     // que algo foi de fato marcado — um escopo vazio em modo custom não pode
     // virar "base inteira" sozinho, que é como o servidor lê `scope` vazio.
     if (block.scopeMode === "all") return true;
-    return block.scope.funnelIds.length > 0 || block.scope.columnIds.length > 0;
+    return block.scope.funnelIds.length > 0 || block.scope.columns.length > 0;
   }
   return block.status === "pronto" && block.leadIds.length > 0;
 }
@@ -136,15 +146,22 @@ export function toggleFunnelInScope(scope: PublicoCrmScope, funnelId: string): P
   const on = scope.funnelIds.includes(funnelId);
   return {
     funnelIds: on ? scope.funnelIds.filter((f) => f !== funnelId) : [...scope.funnelIds, funnelId],
-    columnIds: scope.columnIds,
+    columns: scope.columns,
   };
 }
 
-export function toggleColumnInScope(scope: PublicoCrmScope, columnId: string): PublicoCrmScope {
-  const on = scope.columnIds.includes(columnId);
+/**
+ * A coluna é identificada pelo PAR (funnelId, columnId) — nunca só pelo id
+ * da coluna. Marcar "Proposta" do Funil A não pode acender "Proposta" do
+ * Funil B só porque os dois reaproveitam o mesmo id de etapa do Kanban.
+ */
+export function toggleColumnInScope(scope: PublicoCrmScope, funnelId: string, columnId: string): PublicoCrmScope {
+  const on = scope.columns.some((c) => c.funnelId === funnelId && c.columnId === columnId);
   return {
     funnelIds: scope.funnelIds,
-    columnIds: on ? scope.columnIds.filter((c) => c !== columnId) : [...scope.columnIds, columnId],
+    columns: on
+      ? scope.columns.filter((c) => !(c.funnelId === funnelId && c.columnId === columnId))
+      : [...scope.columns, { funnelId, columnId }],
   };
 }
 
@@ -271,7 +288,7 @@ function CrmBlockCard({
   // Modo "custom" sem nada marcado ainda: o servidor lê escopo vazio como
   // "base inteira", então contar leads aqui daria um número enganoso (a base
   // toda) pra uma seleção que na verdade está incompleta.
-  const customSemSelecao = scopeMode === "custom" && scope.funnelIds.length === 0 && scope.columnIds.length === 0;
+  const customSemSelecao = scopeMode === "custom" && scope.funnelIds.length === 0 && scope.columns.length === 0;
   // Serializado: o efeito de preview precisa reagir ao CONTEÚDO do escopo e do
   // período, não à identidade dos objetos (que muda a cada render e dispararia
   // uma requisição por tecla digitada em qualquer campo da tela).
@@ -317,7 +334,8 @@ function CrmBlockCard({
   }, [scopeKey, periodKey, refreshPreview, onAfterOptIn]);
 
   const toggleFunnel = (funnelId: string) => onUpdate(id, { scope: toggleFunnelInScope(scope, funnelId) });
-  const toggleColumn = (columnId: string) => onUpdate(id, { scope: toggleColumnInScope(scope, columnId) });
+  const toggleColumn = (funnelId: string, columnId: string) =>
+    onUpdate(id, { scope: toggleColumnInScope(scope, funnelId, columnId) });
 
   return (
     <BlockShell icon={Users} title="Base do CRM" onRemove={() => onRemove(id)} isLight={isLight}>
@@ -328,7 +346,7 @@ function CrmBlockCard({
             active={baseInteira}
             title="Todos os funis"
             hint="A base inteira do CRM"
-            onClick={() => onUpdate(id, { scopeMode: "all", scope: { funnelIds: [], columnIds: [] } })}
+            onClick={() => onUpdate(id, { scopeMode: "all", scope: { funnelIds: [], columns: [] } })}
           />
           <ChoiceButton
             active={!baseInteira}
@@ -336,7 +354,7 @@ function CrmBlockCard({
             hint="Pode marcar mais de um"
             onClick={() => {
               if (!baseInteira) return;
-              onUpdate(id, { scopeMode: "custom", scope: { funnelIds: [], columnIds: [] } });
+              onUpdate(id, { scopeMode: "custom", scope: { funnelIds: [], columns: [] } });
             }}
           />
         </div>
@@ -373,12 +391,17 @@ function CrmBlockCard({
                         ) : null}
                         <div className="flex flex-wrap gap-1.5">
                           {funnel.columns.map((column) => {
-                            const on = scope.columnIds.includes(column.id);
+                            // Marcada só se o par (ESTE funil, esta coluna) estiver no
+                            // scope — nunca acende por causa de outro funil que tenha
+                            // uma coluna com o mesmo id.
+                            const on = scope.columns.some(
+                              (c) => c.funnelId === funnel.id && c.columnId === column.id,
+                            );
                             return (
                               <button
                                 key={column.id}
                                 type="button"
-                                onClick={() => toggleColumn(column.id)}
+                                onClick={() => toggleColumn(funnel.id, column.id)}
                                 className={cn(
                                   "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
                                   on

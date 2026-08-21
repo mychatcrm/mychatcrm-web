@@ -3,7 +3,7 @@ import { createCrmBlock, hasUsablePublico, buildAudienceBlocksPayload, type Publ
 
 /**
  * BUG: em "Escolher funis e colunas", o modo era derivado de `scope` estar
- * vazio (`funnelIds.length === 0 && columnIds.length === 0`). Ao desmarcar a
+ * vazio (`funnelIds.length === 0 && columns.length === 0`). Ao desmarcar a
  * caixa "funil inteiro" pra depois escolher só colunas específicas, o escopo
  * ficava vazio por um instante — e a tela reinterpretava isso como "voltar
  * pra Todos os funis", fechando a seção inteira debaixo do clique.
@@ -25,17 +25,17 @@ describe("cenário do bug: desmarcar o único funil escolhido", () => {
     let block: PublicoCrmBlock = {
       ...createCrmBlock(),
       scopeMode: "custom",
-      scope: { funnelIds: ["funil-1"], columnIds: [] },
+      scope: { funnelIds: ["funil-1"], columns: [] },
     };
 
     // Desmarca a caixa do funil (pra depois escolher colunas dele a dedo).
-    block = { ...block, scope: { funnelIds: [], columnIds: [] } };
+    block = { ...block, scope: { funnelIds: [], columns: [] } };
 
     // O bug: `baseInteira` era `scope.funnelIds.length === 0 && ...`, que
     // agora daria true e fecharia a seção "Escolher funis e colunas".
     expect(block.scopeMode).toBe("custom");
     expect(block.scope.funnelIds).toHaveLength(0);
-    expect(block.scope.columnIds).toHaveLength(0);
+    expect(block.scope.columns).toHaveLength(0);
   });
 });
 
@@ -44,7 +44,7 @@ describe("isBlockUsable via hasUsablePublico — custom vazio não vira 'todo mu
     const block: PublicoCrmBlock = {
       ...createCrmBlock(),
       scopeMode: "custom",
-      scope: { funnelIds: [], columnIds: [] },
+      scope: { funnelIds: [], columns: [] },
     };
     expect(hasUsablePublico([block])).toBe(false);
   });
@@ -58,7 +58,7 @@ describe("isBlockUsable via hasUsablePublico — custom vazio não vira 'todo mu
     const block: PublicoCrmBlock = {
       ...createCrmBlock(),
       scopeMode: "custom",
-      scope: { funnelIds: [], columnIds: ["coluna-1"] },
+      scope: { funnelIds: [], columns: [{ funnelId: "funil-1", columnId: "coluna-1" }] },
     };
     expect(hasUsablePublico([block])).toBe(true);
   });
@@ -69,7 +69,7 @@ describe("buildAudienceBlocksPayload — nunca manda um custom vazio pro servido
     const block: PublicoCrmBlock = {
       ...createCrmBlock(),
       scopeMode: "custom",
-      scope: { funnelIds: [], columnIds: [] },
+      scope: { funnelIds: [], columns: [] },
     };
     expect(buildAudienceBlocksPayload([block])).toHaveLength(0);
   });
@@ -78,6 +78,6 @@ describe("buildAudienceBlocksPayload — nunca manda um custom vazio pro servido
     const block: PublicoCrmBlock = { ...createCrmBlock(), scopeMode: "all" };
     const payload = buildAudienceBlocksPayload([block]);
     expect(payload).toHaveLength(1);
-    expect(payload[0]).toMatchObject({ kind: "crm", scope: { funnelIds: [], columnIds: [] } });
+    expect(payload[0]).toMatchObject({ kind: "crm", scope: { funnelIds: [], columns: [] } });
   });
 });

@@ -59,7 +59,7 @@ import {
   resolveWhatsAppCampaignAudience,
 } from "@/lib/server/whatsapp-campaigns";
 
-const TODA_A_BASE = { scope: { funnelIds: [], columnIds: [] }, period: { mode: "all" as const } };
+const TODA_A_BASE = { scope: { funnelIds: [], columns: [] }, period: { mode: "all" as const } };
 
 describe("WhatsApp campaign helpers", () => {
   const lead = {
@@ -96,32 +96,43 @@ describe("leadMatchesCrmAudienceBlock — escopo (de onde)", () => {
   });
 
   it("funil inteiro pega o lead independente da coluna", () => {
-    const block = { scope: { funnelIds: ["funil-vendas"], columnIds: [] }, period: semPeriodo };
+    const block = { scope: { funnelIds: ["funil-vendas"], columns: [] }, period: semPeriodo };
     expect(leadMatchesCrmAudienceBlock(lead, block)).toBe(true);
     expect(leadMatchesCrmAudienceBlock({ crm_funnel_id: "outro", status: "proposta" }, block)).toBe(false);
   });
 
-  it("coluna específica pega só quem está nela", () => {
-    const block = { scope: { funnelIds: [], columnIds: ["proposta"] }, period: semPeriodo };
+  it("coluna específica pega só quem está nela E no funil dela", () => {
+    const block = { scope: { funnelIds: [], columns: [{ funnelId: "funil-vendas", columnId: "proposta" }] }, period: semPeriodo };
     expect(leadMatchesCrmAudienceBlock(lead, block)).toBe(true);
     expect(leadMatchesCrmAudienceBlock({ crm_funnel_id: "funil-vendas", status: "novo" }, block)).toBe(false);
   });
 
+  it("BUG real corrigido: coluna de um funil NÃO bate em lead de outro funil com a mesma coluna", () => {
+    // Funis diferentes reaproveitam os mesmos ids de etapa do Kanban — "proposta"
+    // existe em vários funis. Marcar a coluna Proposta do funil de Vendas não
+    // pode acender a coluna Proposta do funil de Pós-Venda.
+    const block = { scope: { funnelIds: [], columns: [{ funnelId: "funil-vendas", columnId: "proposta" }] }, period: semPeriodo };
+    expect(leadMatchesCrmAudienceBlock({ crm_funnel_id: "funil-pos", status: "proposta" }, block)).toBe(false);
+  });
+
   it("funis e colunas SOMAM (OU), não se cruzam — é o pedido 'funil A inteiro + coluna X do funil B'", () => {
-    const block = { scope: { funnelIds: ["funil-pos"], columnIds: ["proposta"] }, period: semPeriodo };
-    // Bate pela coluna, mesmo estando em outro funil.
+    const block = {
+      scope: { funnelIds: ["funil-pos"], columns: [{ funnelId: "funil-vendas", columnId: "proposta" }] },
+      period: semPeriodo,
+    };
+    // Bate pela coluna do funil de Vendas.
     expect(leadMatchesCrmAudienceBlock(lead, block)).toBe(true);
-    // Bate pelo funil, mesmo numa coluna não listada.
+    // Bate pelo funil de Pós inteiro, mesmo numa coluna não listada.
     expect(leadMatchesCrmAudienceBlock({ crm_funnel_id: "funil-pos", status: "novo" }, block)).toBe(true);
-    // Não bate por nenhum dos dois.
-    expect(leadMatchesCrmAudienceBlock({ crm_funnel_id: "funil-x", status: "novo" }, block)).toBe(false);
+    // Mesma coluna "proposta", mas de um TERCEIRO funil — não bate por nenhum dos dois.
+    expect(leadMatchesCrmAudienceBlock({ crm_funnel_id: "funil-x", status: "proposta" }, block)).toBe(false);
   });
 });
 
 describe("leadMatchesCrmAudienceBlock — período (de quando)", () => {
   // Quarta-feira, meio-dia em São Paulo.
   const NOW = new Date("2026-08-19T15:00:00.000Z");
-  const todoEscopo = { funnelIds: [], columnIds: [] };
+  const todoEscopo = { funnelIds: [], columns: [] };
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -156,7 +167,7 @@ describe("leadMatchesCrmAudienceBlock — período (de quando)", () => {
 
   it("escopo E período precisam bater JUNTOS", () => {
     const block = {
-      scope: { funnelIds: ["funil-vendas"], columnIds: [] },
+      scope: { funnelIds: ["funil-vendas"], columns: [] },
       period: { mode: "cadastro_dias" as const, days: 30 },
     };
     const antigo = "2026-06-01T12:00:00.000Z";
@@ -172,14 +183,36 @@ describe("leadMatchesCrmAudienceBlock — período (de quando)", () => {
 describe("parseCrmScope / parseCrmPeriod", () => {
   it("escopo ausente ou ilegível vira base inteira — nunca público vazio silencioso", () => {
     for (const bad of [null, undefined, {}, "texto", 42, []]) {
-      expect(parseCrmScope(bad)).toEqual({ funnelIds: [], columnIds: [] });
+      expect(parseCrmScope(bad)).toEqual({ funnelIds: [], columns: [] });
     }
   });
 
-  it("escopo dedupe e descarta entradas vazias", () => {
-    expect(parseCrmScope({ funnelIds: ["a", "a", "  ", "b"], columnIds: ["c", "c"] })).toEqual({
+  it("escopo dedupe funis e descarta entradas vazias", () => {
+    expect(parseCrmScope({ funnelIds: ["a", "a", "  ", "b"], columns: [] })).toEqual({
       funnelIds: ["a", "b"],
-      columnIds: ["c"],
+      columns: [],
+    });
+  });
+
+  it("colunas exigem o par funnelId+columnId — descarta o que vier faltando um dos dois", () => {
+    expect(
+      parseCrmScope({
+        funnelIds: [],
+        columns: [
+          { funnelId: "funil-1", columnId: "proposta" },
+          { funnelId: "funil-1", columnId: "proposta" }, // duplicado, cai fora
+          { funnelId: "funil-2", columnId: "proposta" }, // par diferente, mesmo columnId — fica
+          { funnelId: "", columnId: "novo" }, // funnelId vazio — descarta
+          { funnelId: "funil-3" }, // sem columnId — descarta
+          "string solta",
+        ],
+      }),
+    ).toEqual({
+      funnelIds: [],
+      columns: [
+        { funnelId: "funil-1", columnId: "proposta" },
+        { funnelId: "funil-2", columnId: "proposta" },
+      ],
     });
   });
 
@@ -381,11 +414,11 @@ describe("parseCampaignAudienceBlocks", () => {
       parseCampaignAudienceBlocks([
         {
           kind: "crm",
-          scope: { funnelIds: ["funil-1"], columnIds: [] },
+          scope: { funnelIds: ["funil-1"], columns: [] },
           period: { mode: "cadastro_dias", days: 30 },
         },
         // Bloco de CRM sem nada configurado ainda vale: é a base inteira.
-        { kind: "crm", scope: { funnelIds: [], columnIds: [] }, period: { mode: "all" } },
+        { kind: "crm", scope: { funnelIds: [], columns: [] }, period: { mode: "all" } },
         { kind: "leads", leadIds: ["lead-1", "lead-1", "  ", "lead-2"] },
         { kind: "leads", leadIds: [] },
         { kind: "outro" },
@@ -395,10 +428,10 @@ describe("parseCampaignAudienceBlocks", () => {
     ).toEqual([
       {
         kind: "crm",
-        scope: { funnelIds: ["funil-1"], columnIds: [] },
+        scope: { funnelIds: ["funil-1"], columns: [] },
         period: { mode: "cadastro_dias", days: 30 },
       },
-      { kind: "crm", scope: { funnelIds: [], columnIds: [] }, period: { mode: "all" } },
+      { kind: "crm", scope: { funnelIds: [], columns: [] }, period: { mode: "all" } },
       { kind: "leads", leadIds: ["lead-1", "lead-2"] },
     ]);
   });
@@ -423,6 +456,7 @@ describe("resolveWhatsAppCampaignAudience", () => {
                   id: "lead-1",
                   name: "Ana",
                   phone: "5511900000001",
+                  crm_funnel_id: "funil-1",
                   status: "novo",
                   profile_metadata: { tags: ["vip"] },
                   whatsapp_opt_in_at: "2026-01-01T00:00:00.000Z",
@@ -434,6 +468,7 @@ describe("resolveWhatsAppCampaignAudience", () => {
                   id: "lead-1",
                   name: "Ana",
                   phone: "5511900000001",
+                  crm_funnel_id: "funil-1",
                   status: "novo",
                   profile_metadata: { tags: ["vip"] },
                   whatsapp_opt_in_at: "2026-01-01T00:00:00.000Z",
@@ -454,7 +489,7 @@ describe("resolveWhatsAppCampaignAudience", () => {
     } as never;
 
     const result = await resolveWhatsAppCampaignAudience(sb, "tenant-1", [
-      { kind: "crm", scope: { funnelIds: [], columnIds: ["novo"] }, period: { mode: "all" } },
+      { kind: "crm", scope: { funnelIds: [], columns: [{ funnelId: "funil-1", columnId: "novo" }] }, period: { mode: "all" } },
       { kind: "leads", leadIds: ["lead-1", "lead-2"] },
     ]);
 
@@ -486,7 +521,7 @@ describe("resolveWhatsAppCampaignAudience", () => {
     } as never;
 
     const result = await resolveWhatsAppCampaignAudience(sb, "tenant-1", [
-      { kind: "crm", scope: { funnelIds: [], columnIds: [] }, period: { mode: "all" } },
+      { kind: "crm", scope: { funnelIds: [], columns: [] }, period: { mode: "all" } },
       { kind: "leads", leadIds: ["lead-1"] },
     ]);
 
@@ -783,7 +818,7 @@ describe("createWhatsAppCampaign — público obrigatório", () => {
         connectionId: "evo-1",
         agentId: "agent-1",
         audienceBlocks: [
-          { kind: "crm", scope: { funnelIds: [], columnIds: [] }, period: { mode: "all" } },
+          { kind: "crm", scope: { funnelIds: [], columns: [] }, period: { mode: "all" } },
           { kind: "leads", leadIds: ["lead-1"] },
         ],
         messageTemplate: "Olá {{nome}}",
@@ -795,7 +830,7 @@ describe("createWhatsAppCampaign — público obrigatório", () => {
     expect(leadsCallCount).toBe(1); // lead-1 já veio do bloco de CRM, não repete a consulta
     expect(captured?.audience_type).toBe("custom");
     expect(captured?.audience_blocks).toEqual([
-      { kind: "crm", scope: { funnelIds: [], columnIds: [] }, period: { mode: "all" } },
+      { kind: "crm", scope: { funnelIds: [], columns: [] }, period: { mode: "all" } },
       { kind: "leads", leadIds: ["lead-1"] },
     ]);
   });
