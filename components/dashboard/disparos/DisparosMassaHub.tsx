@@ -253,6 +253,99 @@ export function DisparosMassaHub() {
     void loadTeamEmployees();
   }, [loadCampaignData, loadTeamEmployees]);
 
+  // `campaignsRef` existe só pra o loop de envio abaixo ler o status mais
+  // recente sem precisar recriar a função a cada mudança de `campaigns`.
+  const campaignsRef = useRef<CampaignRow[]>(campaigns);
+  useEffect(() => {
+    campaignsRef.current = campaigns;
+  }, [campaigns]);
+
+  const activeCampaignIdsKey = useMemo(
+    () =>
+      campaigns
+        .filter((c) => c.status === "scheduled" || c.status === "processing")
+        .map((c) => c.id)
+        .join(","),
+    [campaigns],
+  );
+
+  /**
+   * Sem isto, um disparo só andava de novo quando alguém apertava play/pause
+   * de novo, ou no cron diário (`/api/internal/process-omnichannel`, uma vez
+   * por dia) — na prática o envio TRAVAVA depois da primeira leva, e a barra
+   * de progresso do card ficava parada por até 24h. Enquanto a tela de
+   * Disparos estiver aberta, chama a rota de processar em sequência — assim
+   * que uma passada volta, chama de novo — pra qualquer disparo em fila ou
+   * enviando. Reclamar um destinatário já é atômico no servidor
+   * (`processRecipient`), então duas passadas se cruzando nunca manda a
+   * mesma mensagem duas vezes.
+   */
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const drivingCampaignIdsRef = useRef<Set<string>>(new Set());
+  const driveCampaignSending = useCallback(
+    async (campaignId: string) => {
+      try {
+        while (isMountedRef.current) {
+          const stillActive = campaignsRef.current.some(
+            (c) => c.id === campaignId && (c.status === "scheduled" || c.status === "processing"),
+          );
+          if (!stillActive) break;
+
+          let processedCount = 0;
+          try {
+            const response = await fetch(
+              `/api/client/whatsapp-campaigns/${encodeURIComponent(campaignId)}/process`,
+              { method: "POST" },
+            );
+            if (response.ok) {
+              const payload = (await response.json().catch(() => ({}))) as { processed?: number };
+              processedCount = typeof payload.processed === "number" ? payload.processed : 0;
+            }
+          } catch {
+            // Falha de rede nesta passada — tenta de novo no próximo ciclo,
+            // sem assustar quem só está olhando a tela.
+          }
+
+          if (!isMountedRef.current) break;
+          await loadCampaignData();
+
+          // Nada processado agora (ex.: destinatário com retry agendado pra
+          // daqui a pouco) — espera um instante antes de tentar de novo, pra
+          // não martelar o servidor sem parar.
+          if (processedCount === 0) await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        }
+      } finally {
+        drivingCampaignIdsRef.current.delete(campaignId);
+      }
+    },
+    [loadCampaignData],
+  );
+
+  useEffect(() => {
+    if (!activeCampaignIdsKey) return;
+    for (const id of activeCampaignIdsKey.split(",")) {
+      if (drivingCampaignIdsRef.current.has(id)) continue;
+      drivingCampaignIdsRef.current.add(id);
+      void driveCampaignSending(id);
+    }
+  }, [activeCampaignIdsKey, driveCampaignSending]);
+
+  // Atualiza a porcentagem do card em tempo real enquanto algo está ativo —
+  // inclusive quando quem está enviando é outra aba ou o próprio servidor,
+  // não só o loop acima.
+  useEffect(() => {
+    if (!activeCampaignIdsKey) return;
+    const timer = window.setInterval(() => void loadCampaignData(), 2500);
+    return () => window.clearInterval(timer);
+  }, [activeCampaignIdsKey, loadCampaignData]);
+
   const activeTeamEmployees = useMemo(
     () => teamEmployees.filter((employee) => employee.ativo && !employee.accountSuspended),
     [teamEmployees],
