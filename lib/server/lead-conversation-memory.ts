@@ -40,6 +40,15 @@ export function buildRecognitionHint(params: {
   summary: ConversationSummary | null;
   lead: LeadRuntimeContext | null;
   hasPriorMessages: boolean;
+  /**
+   * Última mensagem que SAIU em nome do agente (assistant), seja ela gerada
+   * pelo modelo ou enviada por um disparo em massa com `continue_with_agent`.
+   * Quando existe e é recente, citamos o texto literal — uma instrução
+   * genérica ("não se reapresente") perde fácil para um roteiro de "primeira
+   * mensagem" bem específico e repetido no prompt do próprio agente; citar o
+   * que já foi mandado dá ao modelo algo concreto e inegável pra não repetir.
+   */
+  lastAssistantMessage?: { content: string; createdAt: string } | null;
 }): string | null {
   if (!params.hasPriorMessages && !params.summary?.summary && !params.lead?.aiSummary) {
     return null;
@@ -48,6 +57,16 @@ export function buildRecognitionHint(params: {
   const lastInteractionMs = params.lastInteractionAt ? Date.parse(params.lastInteractionAt) : NaN;
   const elapsedMs = Number.isNaN(lastInteractionMs) ? null : Math.max(0, Date.now() - lastInteractionMs);
   if (params.hasPriorMessages && elapsedMs !== null && elapsedMs < 12 * 60 * 60 * 1000) {
+    const lastOwnMessage = textOrNull(params.lastAssistantMessage?.content)?.slice(0, 400);
+    if (lastOwnMessage) {
+      return (
+        "PRIORIDADE MÁXIMA — mensagem que você mesmo (ou um disparo em seu nome) já enviou a este contato há pouco: " +
+        `"${lastOwnMessage}". ` +
+        "O contato já viu essa mensagem. NÃO a repita, não se reapresente e não refaça a mesma pergunta de abertura — " +
+        "mesmo que seu roteiro tenha um exemplo de 'primeira mensagem' parecido com isso; essa instrução de continuidade " +
+        "tem prioridade sobre esse exemplo. Responda diretamente ao que o contato acabou de escrever e leve a conversa adiante."
+      );
+    }
     return (
       "Conversa em andamento: o cliente já está falando com você neste atendimento. " +
       "Não cumprimente de novo, não se reapresente e não diga que vai retomar ou continuar a conversa. " +
@@ -402,11 +421,15 @@ export async function buildLeadConversationMemory(params: {
     },
     params.sourceOptions,
   );
+  const lastAssistantMessageRow = [...filteredMessages].reverse().find((m) => m.role === "assistant") ?? null;
   const recognitionHint = buildRecognitionHint({
     lastInteractionAt,
     summary,
     lead,
     hasPriorMessages: recentMessages.length > 0,
+    lastAssistantMessage: lastAssistantMessageRow
+      ? { content: lastAssistantMessageRow.content, createdAt: lastAssistantMessageRow.createdAt }
+      : null,
   });
 
   console.info("[lead-memory]", {

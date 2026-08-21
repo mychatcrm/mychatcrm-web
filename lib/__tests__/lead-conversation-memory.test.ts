@@ -39,6 +39,50 @@ describe("lead conversation memory", () => {
     expect(hint).toContain("orçamento");
   });
 
+  it("cita a última mensagem do próprio agente quando ela existe e é recente — prioridade sobre o roteiro do prompt", () => {
+    // Reproduz o bug real: uma campanha manda a abertura, o lead responde
+    // algo neutro ("boa tarde"), e o agente não pode repetir a mesma abertura
+    // só porque o prompt dele tem um exemplo de "primeira mensagem".
+    const hint = buildRecognitionHint({
+      lastInteractionAt: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+      summary: null,
+      lead: null,
+      hasPriorMessages: true,
+      lastAssistantMessage: {
+        content: "Oi, Fulano! Você deixou um cadastro há um tempo. Ainda tem interesse em conhecer melhor?",
+        createdAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+      },
+    });
+    expect(hint).toContain("PRIORIDADE MÁXIMA");
+    expect(hint).toContain("Oi, Fulano! Você deixou um cadastro há um tempo");
+    expect(hint).toContain("prioridade sobre esse exemplo");
+    expect(hint).not.toContain("Conversa em andamento: o cliente já está falando");
+  });
+
+  it("sem mensagem própria recente, cai no aviso genérico de continuidade", () => {
+    const hint = buildRecognitionHint({
+      lastInteractionAt: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+      summary: null,
+      lead: null,
+      hasPriorMessages: true,
+      lastAssistantMessage: null,
+    });
+    expect(hint).toContain("Conversa em andamento");
+    expect(hint).not.toContain("PRIORIDADE MÁXIMA");
+  });
+
+  it("corta a mensagem citada pra não inflar o prompt com uma mensagem gigante", () => {
+    const hint = buildRecognitionHint({
+      lastInteractionAt: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+      summary: null,
+      lead: null,
+      hasPriorMessages: true,
+      lastAssistantMessage: { content: "x".repeat(1000), createdAt: new Date().toISOString() },
+    });
+    // A citação em si fica em até 400 chars — não os 1000 originais.
+    expect(hint?.match(/x+/)?.[0]).toHaveLength(400);
+  });
+
   it("does not invent recognition without history", () => {
     expect(
       buildRecognitionHint({
