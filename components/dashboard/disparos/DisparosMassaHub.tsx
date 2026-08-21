@@ -415,7 +415,19 @@ export function DisparosMassaHub() {
 
       const crmBlocks = (campaign.audience_blocks ?? [])
         .filter((block): block is { kind: "crm"; scope: PublicoCrmScope; period: PublicoCrmPeriod } => block?.kind === "crm")
-        .map((block) => ({ ...createCrmBlock(), scope: block.scope, period: block.period }));
+        .map((block) => ({
+          ...createCrmBlock(),
+          // Reconstruindo a partir do que foi salvo: aqui, sim, o escopo
+          // vazio significa "Todos os funis" — é o próprio contrato de
+          // gravação. Diferente do clique na tela, onde vazio pode ser só um
+          // estado transitório de quem está montando a seleção.
+          scopeMode:
+            block.scope.funnelIds.length > 0 || block.scope.columnIds.length > 0
+              ? ("custom" as const)
+              : ("all" as const),
+          scope: block.scope,
+          period: block.period,
+        }));
       setPublicoBlocks(crmBlocks.length > 0 ? crmBlocks : [createCrmBlock()]);
 
       const janela = campaign.send_window;

@@ -39,6 +39,14 @@ export type PublicoCrmPeriod =
 export type PublicoCrmBlock = {
   id: string;
   kind: "crm";
+  /**
+   * Modo escolhido a dedo pelo clique em "Todos os funis" vs "Escolher funis
+   * e colunas" — não é derivado do `scope` estar vazio. Antes era derivado, e
+   * isso causava o bug de desmarcar um funil (pra depois escolher só colunas
+   * dele) zerar o `scope` momentaneamente e a tela reinterpretar isso como
+   * "voltar pra Todos os funis", fechando a seção inteira embaixo do clique.
+   */
+  scopeMode: "all" | "custom";
   scope: PublicoCrmScope;
   period: PublicoCrmPeriod;
   preview: PublicoAudiencePreview | null;
@@ -69,6 +77,7 @@ export function createCrmBlock(): PublicoCrmBlock {
   return {
     id: newBlockId(),
     kind: "crm",
+    scopeMode: "all",
     scope: { funnelIds: [], columnIds: [] },
     period: { mode: "all" },
     preview: null,
@@ -93,7 +102,14 @@ export function createContatosBlock(origem: "import" | "manual"): PublicoContato
 
 /** true quando o bloco já tem gente pra receber — bloco em edição não conta. */
 function isBlockUsable(block: PublicoBlock): boolean {
-  return block.kind === "crm" || (block.status === "pronto" && block.leadIds.length > 0);
+  if (block.kind === "crm") {
+    // "Todos os funis" sempre vale. "Escolher funis e colunas" só vale depois
+    // que algo foi de fato marcado — um escopo vazio em modo custom não pode
+    // virar "base inteira" sozinho, que é como o servidor lê `scope` vazio.
+    if (block.scopeMode === "all") return true;
+    return block.scope.funnelIds.length > 0 || block.scope.columnIds.length > 0;
+  }
+  return block.status === "pronto" && block.leadIds.length > 0;
 }
 
 export function hasUsablePublico(blocks: PublicoBlock[]): boolean {
@@ -226,8 +242,12 @@ function CrmBlockCard({
 }) {
   const [optInBusy, setOptInBusy] = useState(false);
   const id = block.id;
-  const { scope, period } = block;
-  const baseInteira = scope.funnelIds.length === 0 && scope.columnIds.length === 0;
+  const { scope, period, scopeMode } = block;
+  const baseInteira = scopeMode === "all";
+  // Modo "custom" sem nada marcado ainda: o servidor lê escopo vazio como
+  // "base inteira", então contar leads aqui daria um número enganoso (a base
+  // toda) pra uma seleção que na verdade está incompleta.
+  const customSemSelecao = scopeMode === "custom" && scope.funnelIds.length === 0 && scope.columnIds.length === 0;
   // Serializado: o efeito de preview precisa reagir ao CONTEÚDO do escopo e do
   // período, não à identidade dos objetos (que muda a cada render e dispararia
   // uma requisição por tecla digitada em qualquer campo da tela).
@@ -235,6 +255,10 @@ function CrmBlockCard({
   const periodKey = JSON.stringify(period);
 
   const refreshPreview = useCallback(() => {
+    if (customSemSelecao) {
+      onUpdate(id, { preview: { totalMatched: 0, optedIn: 0, notOptedIn: 0 }, previewLoading: false });
+      return;
+    }
     onUpdate(id, { previewLoading: true });
     fetch("/api/client/whatsapp-campaigns/audience-preview", {
       method: "POST",
@@ -244,7 +268,7 @@ function CrmBlockCard({
       .then((r) => r.json())
       .then((data: PublicoAudiencePreview) => onUpdate(id, { preview: data, previewLoading: false }))
       .catch(() => onUpdate(id, { preview: null, previewLoading: false }));
-  }, [id, onUpdate, scopeKey, periodKey]);
+  }, [id, onUpdate, scopeKey, periodKey, customSemSelecao]);
 
   useEffect(() => {
     const timer = window.setTimeout(refreshPreview, 350);
@@ -299,7 +323,7 @@ function CrmBlockCard({
             active={baseInteira}
             title="Todos os funis"
             hint="A base inteira do CRM"
-            onClick={() => onUpdate(id, { scope: { funnelIds: [], columnIds: [] } })}
+            onClick={() => onUpdate(id, { scopeMode: "all", scope: { funnelIds: [], columnIds: [] } })}
           />
           <ChoiceButton
             active={!baseInteira}
@@ -307,8 +331,7 @@ function CrmBlockCard({
             hint="Pode marcar mais de um"
             onClick={() => {
               if (!baseInteira) return;
-              const first = funnels[0];
-              onUpdate(id, { scope: { funnelIds: first ? [first.id] : [], columnIds: [] } });
+              onUpdate(id, { scopeMode: "custom", scope: { funnelIds: [], columnIds: [] } });
             }}
           />
         </div>
@@ -480,7 +503,9 @@ function CrmBlockCard({
         )}
       >
         <div className="text-[11px] text-content-secondary">
-          {block.previewLoading ? (
+          {customSemSelecao ? (
+            "Marque ao menos um funil ou coluna acima."
+          ) : block.previewLoading ? (
             "Contando leads…"
           ) : block.preview ? (
             <>
