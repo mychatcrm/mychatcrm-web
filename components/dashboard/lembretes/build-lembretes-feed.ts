@@ -3,7 +3,6 @@ import type { CrmFunnel } from "@/lib/crm-funnels";
 import { funnelColumnTitle } from "@/lib/crm-funnels";
 import { getLeadTimelineResolved, type CrmLeadExtrasStore } from "@/lib/crm-lead-extras";
 import type { AgendaEventRecord } from "@/components/dashboard/agenda/agenda-storage";
-import type { DisparosDraft } from "@/components/dashboard/disparos/disparos-drafts-storage";
 
 export type LembretesPulseItem = {
   id: string;
@@ -56,9 +55,8 @@ export function buildLembretesFeed(input: {
   funnels: CrmFunnel[];
   extras: CrmLeadExtrasStore;
   agendaEvents: AgendaEventRecord[];
-  disparosDrafts: DisparosDraft[];
 }): LembretesPulseItem[] {
-  const { dataset, leads, funnels, extras, agendaEvents, disparosDrafts } = input;
+  const { dataset, leads, funnels, extras, agendaEvents } = input;
   const items: LembretesPulseItem[] = [];
   const activityCutoff = addDays(startOfToday(), -30);
 
@@ -153,23 +151,6 @@ export function buildLembretesFeed(input: {
       href: "/dashboard/overview",
     });
   });
-
-  for (const d of disparosDrafts) {
-    let at: Date | null = null;
-    if (d.schedule) {
-      const parsed = new Date(d.schedule);
-      if (!Number.isNaN(parsed.getTime())) at = parsed;
-    }
-    items.push({
-      id: `disp-${d.id}`,
-      source: "disparo",
-      label: "Disparos",
-      title: d.name,
-      detail: at ? `Disparo agendado · ritmo ${d.throughput}` : `Rascunho · ritmo ${d.throughput}`,
-      at,
-      href: "/dashboard/disparos",
-    });
-  }
 
   dataset.reminderItems.forEach((text, i) => {
     items.push({

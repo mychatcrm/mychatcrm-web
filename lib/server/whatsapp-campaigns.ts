@@ -584,7 +584,10 @@ export async function createWhatsAppCampaign(params: {
       meta_template_name: metaTemplateName,
       meta_template_lang: metaTemplateLang,
       throughput,
-      status: "scheduled",
+      // Salvar NÃO dispara: a campanha nasce parada e o cliente dá play no
+      // card quando quiser. Antes, criar já começava a mandar — tirava dele a
+      // chance de revisar antes de a base inteira receber.
+      status: "draft",
       scheduled_at: scheduledAt,
       send_window: parseCampaignSendWindow(input.sendWindow) ?? {},
       lead_destination: leadDestination,
@@ -1137,6 +1140,9 @@ export async function processDueWhatsAppCampaigns(
     const sent = rows.filter((row) => row.status === "sent").length;
     const failed = rows.filter((row) => row.status === "failed").length;
     const pending = rows.some((row) => ["pending", "processing"].includes(row.status));
+    // O `.in(status)` é o que respeita uma pausa feita DURANTE esta passada:
+    // sem ele, este update final devolveria a campanha para "processing" e o
+    // pause do cliente seria desfeito sozinho segundos depois.
     await sb
       .from("whatsapp_campaigns")
       .update({
@@ -1146,7 +1152,101 @@ export async function processDueWhatsAppCampaigns(
         completed_at: pending ? null : new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
-      .eq("id", campaign.id);
+      .eq("id", campaign.id)
+      .in("status", ["scheduled", "processing"]);
   }
   return { processed, outcomes };
+}
+
+/**
+ * Ações do card na tela: dar play, pausar e voltar do zero.
+ *
+ * Retomar não precisa de nenhuma mágica: `whatsapp_campaign_recipients` guarda
+ * quem já recebeu, então voltar o status pra "scheduled" faz o processador
+ * continuar exatamente da fila que estava — sem reenviar pra ninguém.
+ */
+export type CampaignControlAction = "start" | "pause" | "reset";
+
+export async function controlWhatsAppCampaign(params: {
+  sb: ServiceClient;
+  tenantId: string;
+  campaignId: string;
+  action: CampaignControlAction;
+}): Promise<Record<string, unknown>> {
+  const { data: current, error: loadError } = await params.sb
+    .from("whatsapp_campaigns")
+    .select("id, status")
+    .eq("tenant_id", params.tenantId)
+    .eq("id", params.campaignId)
+    .maybeSingle();
+  if (loadError) throw new Error(`campaign_load:${loadError.message}`);
+  if (!current) throw new Error("campaign_not_found");
+
+  const status = String((current as { status: unknown }).status);
+  const now = new Date().toISOString();
+
+  if (params.action === "pause") {
+    if (!["scheduled", "processing"].includes(status)) throw new Error("campaign_not_running");
+    return updateCampaignRow(params, { status: "paused", updated_at: now });
+  }
+
+  if (params.action === "start") {
+    if (!["draft", "paused"].includes(status)) throw new Error("campaign_not_startable");
+    // `scheduled_at` volta pra agora: uma campanha salva ontem com data de
+    // ontem não deve ficar esperando nada — play significa "manda agora".
+    return updateCampaignRow(params, { status: "scheduled", scheduled_at: now, updated_at: now });
+  }
+
+  // reset: devolve TODO destinatário pra fila e zera o placar. Só o que já foi
+  // enviado de verdade não volta atrás — a mensagem no WhatsApp do lead não
+  // tem como ser desfeita, mas ele entra de novo na fila e recebe outra vez,
+  // que é exatamente o que "começar do zero" quer dizer.
+  const { error: recipientsError } = await params.sb
+    .from("whatsapp_campaign_recipients")
+    .update({ status: "pending", sent_at: null, message_id: null, attempts: 0, last_error: null, next_attempt_at: now, updated_at: now })
+    .eq("tenant_id", params.tenantId)
+    .eq("campaign_id", params.campaignId);
+  if (recipientsError) throw new Error(`campaign_reset_recipients:${recipientsError.message}`);
+
+  return updateCampaignRow(params, {
+    status: "draft",
+    total_sent: 0,
+    total_failed: 0,
+    started_at: null,
+    completed_at: null,
+    scheduled_at: now,
+    updated_at: now,
+  });
+}
+
+async function updateCampaignRow(
+  params: { sb: ServiceClient; tenantId: string; campaignId: string },
+  patch: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const { data, error } = await params.sb
+    .from("whatsapp_campaigns")
+    .update(patch)
+    .eq("tenant_id", params.tenantId)
+    .eq("id", params.campaignId)
+    .select("*")
+    .single();
+  if (error || !data) throw new Error(`campaign_update:${error?.message ?? "missing_campaign"}`);
+  return data as Record<string, unknown>;
+}
+
+/** Ordem escolhida a dedo pelo cliente arrastando os cards. */
+export async function reorderWhatsAppCampaigns(params: {
+  sb: ServiceClient;
+  tenantId: string;
+  orderedIds: string[];
+}): Promise<void> {
+  await Promise.all(
+    params.orderedIds.map((id, index) =>
+      params.sb
+        .from("whatsapp_campaigns")
+        .update({ display_order: index })
+        .eq("tenant_id", params.tenantId)
+        .eq("id", id),
+    ),
+  );
 }

@@ -1,75 +1,145 @@
 "use client";
 
 /**
- * Tela inicial de /dashboard/disparos — cards de campanhas e rascunhos, com
- * estado vazio explícito na primeira visita. Antes disso a tela abria direto
- * no formulário de criação, o que confundia quem só queria ver o que já tinha
- * disparado.
+ * Tela inicial de /dashboard/disparos — os cards de controle das campanhas.
+ *
+ * Cada disparo salvo vira um card com play/pause/zerar/editar/excluir e a
+ * barra de progresso. Não existe mais "rascunho local": salvar já cria a
+ * campanha parada no servidor, e o card É o rascunho até alguém dar play.
+ *
+ * Os cards são arrastáveis (mesmo padrão de /dashboard/agentes) porque a
+ * ordem que importa é a do cliente, não a data de criação.
  */
-import { Megaphone, Plus, RefreshCw, Square, Trash2 } from "lucide-react";
+import {
+  DndContext,
+  type DragEndEvent,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { SortableContext, arrayMove, rectSortingStrategy, sortableKeyboardCoordinates, useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { Megaphone, Plus } from "lucide-react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
-import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils";
-import type { DisparosDraft } from "@/components/dashboard/disparos/disparos-drafts-storage";
+import { DisparoCard, DisparoDragHandle, type DisparoCardRow } from "@/components/dashboard/disparos/DisparoCard";
 
-export type DisparosHistoryRow = {
-  id: string;
-  name: string;
-  delivered: number;
-  status:
-    "draft" | "scheduled" | "processing" | "completed" | "cancelled" | "failed";
-  window: string;
-};
+export type DisparosHistoryRow = DisparoCardRow;
 
-const STATUS_LABEL: Record<DisparosHistoryRow["status"], string> = {
-  completed: "Concluída",
-  scheduled: "Agendada",
-  processing: "Processando",
-  cancelled: "Cancelada",
-  failed: "Falhou",
-  draft: "Rascunho",
-};
+function SortableDisparoCard({
+  row,
+  isLight,
+  busy,
+  onStart,
+  onPause,
+  onReset,
+  onEdit,
+  onDelete,
+}: {
+  row: DisparosHistoryRow;
+  isLight: boolean;
+  busy: boolean;
+  onStart: () => void;
+  onPause: () => void;
+  onReset: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
+    id: row.id,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn("h-full min-w-0", isDragging && "relative z-20")}
+    >
+      <div
+        className={cn(
+          "h-full rounded-xl transition-shadow",
+          isDragging && "ring-2 ring-primary/25 ring-offset-2 ring-offset-surface-base",
+        )}
+      >
+        <DisparoCard
+          row={row}
+          isLight={isLight}
+          busy={busy}
+          dragHandle={
+            <DisparoDragHandle
+              setActivatorNodeRef={setActivatorNodeRef}
+              listeners={listeners}
+              attributes={attributes}
+              isDragging={isDragging}
+            />
+          }
+          onStart={onStart}
+          onPause={onPause}
+          onReset={onReset}
+          onEdit={onEdit}
+          onDelete={onDelete}
+        />
+      </div>
+    </div>
+  );
+}
 
 type Props = {
   isLight: boolean;
   history: DisparosHistoryRow[];
-  drafts: DisparosDraft[];
-  processingCampaignId: string | null;
+  /** Id da campanha com ação em andamento — desabilita os botões só daquele card. */
+  busyCampaignId: string | null;
   /** Quantas campanhas agendadas/processando existem agora — mesma contagem que o servidor usa pro teto. */
   activeCampaignCount: number;
   /** Teto de campanhas ativas ao mesmo tempo, igual pra todos os planos. */
   activeCampaignLimit: number;
   onCreateNew: () => void;
-  onEditDraft: (draft: DisparosDraft) => void;
-  onDeleteDraft: (id: string) => void;
-  onCancelCampaign: (id: string) => void;
-  onProcessNow: (id: string) => void;
+  onReorder: (orderedIds: string[]) => void;
+  onStart: (id: string) => void;
+  onPause: (id: string) => void;
+  onReset: (id: string) => void;
+  onEdit: (id: string) => void;
+  onDelete: (id: string) => void;
 };
 
 export function DisparosCampanhasList({
   isLight,
   history,
-  drafts,
-  processingCampaignId,
+  busyCampaignId,
   activeCampaignCount,
   activeCampaignLimit,
   onCreateNew,
-  onEditDraft,
-  onDeleteDraft,
-  onCancelCampaign,
-  onProcessNow,
+  onReorder,
+  onStart,
+  onPause,
+  onReset,
+  onEdit,
+  onDelete,
 }: Props) {
-  const isEmpty = history.length === 0 && drafts.length === 0;
   const atCampaignLimit = activeCampaignCount >= activeCampaignLimit;
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = history.findIndex((row) => row.id === active.id);
+    const newIndex = history.findIndex((row) => row.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+    onReorder(arrayMove(history, oldIndex, newIndex).map((row) => row.id));
+  };
 
   return (
     <div className="space-y-6">
       <div
         className={cn(
           "relative overflow-hidden rounded-xl border p-6 sm:p-8",
-          isLight
-            ? "border-slate-200/90 bg-surface-deep"
-            : "border-line/80 bg-surface-card",
+          isLight ? "border-slate-200/90 bg-surface-deep" : "border-line/80 bg-surface-card",
         )}
       >
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -78,8 +148,8 @@ export function DisparosCampanhasList({
               Disparo em massa
             </h3>
             <p className="max-w-xl text-pretty text-sm leading-relaxed text-content-secondary sm:text-base">
-              Resgate clientes antigos ou uma lista importada com uma campanha
-              de WhatsApp.
+              Resgate clientes antigos ou uma lista importada com uma campanha de WhatsApp. Salve agora e dê play
+              quando quiser.
             </p>
           </div>
           <Button
@@ -100,174 +170,45 @@ export function DisparosCampanhasList({
         </div>
       </div>
 
-      {isEmpty ? (
+      {history.length === 0 ? (
         <div
           className={cn(
             "flex flex-col items-center gap-3 rounded-xl border border-dashed p-12 text-center",
-            isLight
-              ? "border-slate-300 bg-surface-deep/60"
-              : "border-line bg-surface-deep/20",
+            isLight ? "border-slate-300 bg-surface-deep/60" : "border-line bg-surface-deep/20",
           )}
         >
-          <Megaphone
-            className="size-10 text-content-secondary/60"
-            aria-hidden
-          />
-          <div className="text-sm font-semibold text-content">
-            Nenhum disparo criado ainda
-          </div>
+          <Megaphone className="size-10 text-content-secondary/60" aria-hidden />
+          <div className="text-sm font-semibold text-content">Nenhum disparo criado ainda</div>
           <p className="max-w-sm text-xs leading-relaxed text-content-secondary">
-            Crie sua primeira campanha pra resgatar clientes antigos, uma lista
-            importada ou uma tag do CRM. As campanhas que você criar aparecem
-            aqui.
+            Crie seu primeiro disparo pra resgatar clientes antigos, uma lista importada ou uma etapa do CRM. Ele
+            aparece aqui como um card, e você dá play quando estiver pronto.
           </p>
         </div>
       ) : (
-        <>
-          {drafts.length > 0 ? (
-            <div className="space-y-3">
-              <span className="text-xs font-semibold uppercase tracking-wide text-content-secondary">
-                Rascunhos ({drafts.length})
-              </span>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {drafts.map((d) => {
-                  const when = new Date(d.updatedAt).toLocaleString("pt-BR", {
-                    dateStyle: "short",
-                    timeStyle: "short",
-                  });
-                  return (
-                    <div
-                      key={d.id}
-                      className={cn(
-                        "flex flex-col gap-3 rounded-xl border p-4",
-                        isLight
-                          ? "border-slate-200/90 bg-surface-card"
-                          : "border-line/80 bg-surface-card/40",
-                      )}
-                    >
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-content">
-                          {d.name}
-                        </div>
-                        <div className="text-[11px] text-content-secondary">
-                          Salvo {when}
-                        </div>
-                      </div>
-                      <div className="mt-auto flex items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          className="flex-1"
-                          onClick={() => onEditDraft(d)}
-                        >
-                          Continuar editando
-                        </Button>
-                        <button
-                          type="button"
-                          onClick={() => onDeleteDraft(d.id)}
-                          aria-label={`Excluir rascunho ${d.name}`}
-                          className={cn(
-                            "grid size-9 shrink-0 place-items-center rounded-lg text-content-secondary transition-colors",
-                            isLight
-                              ? "hover:bg-rose-500/10 hover:text-rose-600"
-                              : "hover:bg-rose-500/10 hover:text-rose-300",
-                          )}
-                        >
-                          <Trash2 className="size-4" aria-hidden />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-
-          {history.length > 0 ? (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold uppercase tracking-wide text-content-secondary">
-                  Campanhas ({history.length})
-                </span>
-                <Badge className="text-[10px]">Dados persistidos</Badge>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="space-y-3">
+          <span className="text-xs font-semibold uppercase tracking-wide text-content-secondary">
+            Seus disparos ({history.length})
+          </span>
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={history.map((row) => row.id)} strategy={rectSortingStrategy}>
+              <div className="grid auto-rows-fr gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {history.map((row) => (
-                  <div
+                  <SortableDisparoCard
                     key={row.id}
-                    className={cn(
-                      "flex items-center gap-3 rounded-xl border p-4",
-                      isLight
-                        ? "border-slate-200/80 bg-slate-50/80"
-                        : "border-line/80 bg-surface-card/40",
-                    )}
-                  >
-                    <div className="relative size-11 shrink-0">
-                      <div
-                        className="absolute inset-0 rounded-xl"
-                        style={{
-                          background: `conic-gradient(rgb(34 197 94) ${row.delivered * 3.6}deg, rgba(148,163,184,0.28) 0)`,
-                        }}
-                        aria-hidden
-                      />
-                      <div
-                        className={cn(
-                          "absolute inset-[3px] grid place-items-center rounded-[0.6rem] text-[10px] font-bold tabular-nums",
-                          isLight
-                            ? "bg-surface-deep text-content"
-                            : "bg-slate-950 text-slate-100",
-                        )}
-                      >
-                        {row.delivered}%
-                      </div>
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate font-medium text-content">
-                        {row.name}
-                      </div>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-content-secondary">
-                        <span>{STATUS_LABEL[row.status]}</span>
-                        <span className="text-content-secondary/50">·</span>
-                        <span>{row.window}</span>
-                      </div>
-                    </div>
-                    {row.status === "processing" ? (
-                      <button
-                        type="button"
-                        onClick={() => onProcessNow(row.id)}
-                        disabled={processingCampaignId === row.id}
-                        className="grid size-9 shrink-0 place-items-center rounded-lg text-content-secondary transition-colors hover:bg-primary/10 hover:text-primary disabled:opacity-50"
-                        aria-label={`Enviar próximo lote agora — ${row.name}`}
-                        title="Enviar próximo lote agora"
-                      >
-                        <RefreshCw
-                          className={cn(
-                            "size-4",
-                            processingCampaignId === row.id && "animate-spin",
-                          )}
-                          aria-hidden
-                        />
-                      </button>
-                    ) : null}
-                    {["draft", "scheduled", "processing"].includes(
-                      row.status,
-                    ) ? (
-                      <button
-                        type="button"
-                        onClick={() => onCancelCampaign(row.id)}
-                        className="grid size-9 shrink-0 place-items-center rounded-lg text-content-secondary transition-colors hover:bg-rose-500/10 hover:text-rose-500"
-                        aria-label={`Cancelar campanha ${row.name}`}
-                      >
-                        <Square className="size-4" aria-hidden />
-                      </button>
-                    ) : null}
-                  </div>
+                    row={row}
+                    isLight={isLight}
+                    busy={busyCampaignId === row.id}
+                    onStart={() => onStart(row.id)}
+                    onPause={() => onPause(row.id)}
+                    onReset={() => onReset(row.id)}
+                    onEdit={() => onEdit(row.id)}
+                    onDelete={() => onDelete(row.id)}
+                  />
                 ))}
               </div>
-            </div>
-          ) : null}
-        </>
+            </SortableContext>
+          </DndContext>
+        </div>
       )}
     </div>
   );
