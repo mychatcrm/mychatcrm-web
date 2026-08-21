@@ -13,7 +13,7 @@
  * demais.
  */
 import { useState } from "react";
-import { GripVertical, Pause, Pencil, Play, RotateCcw, Trash2 } from "lucide-react";
+import { GripVertical, Pause, Pencil, Play, Square, Trash2 } from "lucide-react";
 import type { DraggableAttributes } from "@dnd-kit/core";
 import type { SyntheticListenerMap } from "@dnd-kit/core/dist/hooks/utilities";
 import { cn } from "@/lib/utils";
@@ -115,6 +115,78 @@ function IconAction({
       )}
     >
       <Icon className="size-4" aria-hidden />
+    </button>
+  );
+}
+
+/**
+ * Tecla de aparelho de som: quadrada, com relevo, e afundando ao apertar.
+ *
+ * O relevo vem de um `box-shadow` interno claro em cima e escuro embaixo
+ * (luz vindo de cima) — no estado apertado a ordem inverte e a tecla parece
+ * afundar no painel. Um `translate-y` de 1px no `:active` completa o gesto.
+ */
+function TransportKey({
+  icon: Icon,
+  label,
+  onClick,
+  disabled,
+  active,
+  accent = "neutral",
+  filled,
+}: {
+  icon: typeof Play;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  /** Tecla travada apertada — o play fica assim enquanto o disparo corre. */
+  active?: boolean;
+  accent?: "neutral" | "play" | "pause" | "stop";
+  filled?: boolean;
+}) {
+  const accentColor =
+    accent === "play"
+      ? "text-emerald-500 dark:text-emerald-400"
+      : accent === "pause"
+        ? "text-amber-500 dark:text-amber-400"
+        : accent === "stop"
+          ? "text-rose-500 dark:text-rose-400"
+          : "text-content-secondary";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      aria-pressed={active}
+      title={label}
+      className={cn(
+        "group/key relative grid h-10 flex-1 place-items-center rounded-[5px] border transition-all duration-75",
+        "border-black/25 bg-gradient-to-b from-surface-elevated/95 to-surface-elevated/60",
+        "shadow-[inset_0_1px_0_rgba(255,255,255,0.28),inset_0_-2px_3px_rgba(0,0,0,0.3),0_1px_2px_rgba(0,0,0,0.35)]",
+        "hover:from-surface-elevated hover:to-surface-elevated/75",
+        "active:translate-y-[1px] active:shadow-[inset_0_2px_4px_rgba(0,0,0,0.45)]",
+        active &&
+          "translate-y-[1px] from-surface-deep to-surface-deep shadow-[inset_0_2px_5px_rgba(0,0,0,0.5)]",
+        "disabled:cursor-not-allowed disabled:opacity-30 disabled:active:translate-y-0",
+        "disabled:active:shadow-[inset_0_1px_0_rgba(255,255,255,0.28),inset_0_-2px_3px_rgba(0,0,0,0.3),0_1px_2px_rgba(0,0,0,0.35)]",
+      )}
+    >
+      <Icon
+        className={cn("size-[15px] transition-colors", accentColor)}
+        fill={filled ? "currentColor" : "none"}
+        strokeWidth={filled ? 0 : 2}
+        aria-hidden
+      />
+      {/* LED de estado, como o pontinho vermelho dos aparelhos antigos. */}
+      <span
+        className={cn(
+          "absolute bottom-1 size-1 rounded-full transition-opacity",
+          active ? "bg-emerald-400 opacity-100 shadow-[0_0_4px_rgba(52,211,153,0.9)]" : "opacity-0",
+        )}
+        aria-hidden
+      />
     </button>
   );
 }
@@ -261,42 +333,70 @@ export function DisparoCard({
           </div>
         </div>
       ) : (
-        <div className="mt-auto flex items-center gap-1.5">
-          {isRunning ? (
-            <button
-              type="button"
-              onClick={onPause}
-              disabled={busy}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-amber-500/15 px-3 py-2 text-xs font-semibold text-amber-600 transition-colors hover:bg-amber-500/25 disabled:opacity-50 dark:text-amber-300"
-            >
-              <Pause className="size-3.5" aria-hidden />
-              Pausar
-            </button>
-          ) : (
-            <button
-              type="button"
+        <div className="mt-auto space-y-2">
+          {/* Botoeira de aparelho de som: painel afundado com as três teclas. */}
+          <div
+            className={cn(
+              "flex items-center gap-1.5 rounded-lg border p-1.5",
+              isLight
+                ? "border-slate-300/80 bg-slate-100/80 shadow-[inset_0_2px_4px_rgba(0,0,0,0.10)]"
+                : "border-black/35 bg-black/25 shadow-[inset_0_2px_5px_rgba(0,0,0,0.45)]",
+            )}
+          >
+            <TransportKey
+              icon={Play}
+              label={
+                canStart
+                  ? row.status === "paused"
+                    ? "Retomar de onde parou"
+                    : "Iniciar disparo"
+                  : "Já terminou — use STOP pra rodar de novo"
+              }
               onClick={onStart}
               disabled={busy || !canStart}
-              title={canStart ? undefined : "Este disparo já terminou. Use «Começar do zero» pra rodar de novo."}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <Play className="size-3.5" aria-hidden />
-              {row.status === "paused" ? "Retomar" : "Iniciar"}
-            </button>
-          )}
-          <IconAction
-            icon={RotateCcw}
-            label="Começar do zero"
-            onClick={() => setConfirming("reset")}
-            disabled={busy || !canReset}
-          />
-          <IconAction
-            icon={Pencil}
-            label={canEdit ? "Editar" : "Só dá pra editar antes do primeiro envio"}
-            onClick={onEdit}
-            disabled={busy || !canEdit}
-          />
-          <IconAction icon={Trash2} label="Excluir" onClick={() => setConfirming("delete")} disabled={busy} tone="danger" />
+              active={isRunning}
+              accent="play"
+              filled
+            />
+            <TransportKey
+              icon={Pause}
+              label="Pausar"
+              onClick={onPause}
+              disabled={busy || !isRunning}
+              active={row.status === "paused"}
+              accent="pause"
+              filled
+            />
+            <TransportKey
+              icon={Square}
+              label="Começar do zero"
+              onClick={() => setConfirming("reset")}
+              disabled={busy || !canReset}
+              accent="stop"
+              filled
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-medium uppercase tracking-wider text-content-secondary/70">
+              {isRunning ? "Rodando" : row.status === "paused" ? "Em pausa" : "Parado"}
+            </span>
+            <div className="flex items-center gap-0.5">
+              <IconAction
+                icon={Pencil}
+                label={canEdit ? "Editar" : "Só dá pra editar antes do primeiro envio"}
+                onClick={onEdit}
+                disabled={busy || !canEdit}
+              />
+              <IconAction
+                icon={Trash2}
+                label="Excluir"
+                onClick={() => setConfirming("delete")}
+                disabled={busy}
+                tone="danger"
+              />
+            </div>
+          </div>
         </div>
       )}
     </div>
