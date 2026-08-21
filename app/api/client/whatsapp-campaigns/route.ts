@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { computeDistinctLeadTags, createWhatsAppCampaign, processDueWhatsAppCampaigns } from "@/lib/server/whatsapp-campaigns";
+import {
+  CAMPAIGN_ACTIVE_LIMIT,
+  computeDistinctLeadTags,
+  createWhatsAppCampaign,
+  processDueWhatsAppCampaigns,
+} from "@/lib/server/whatsapp-campaigns";
 import { listTenantWhatsappConnections } from "@/lib/server/tenant-whatsapp-connections";
 
 export const dynamic = "force-dynamic";
@@ -55,6 +60,7 @@ export async function GET() {
       connections,
       agents: agents.data ?? [],
       eligibleRecipients: eligible.count ?? 0,
+      activeCampaignLimit: CAMPAIGN_ACTIVE_LIMIT,
       availableTags: computeDistinctLeadTags((tagsQuery.data ?? []) as Array<Record<string, unknown>>),
     },
     { headers: { "Cache-Control": "no-store" } },
@@ -130,6 +136,7 @@ export async function POST(request: Request) {
       campaign_has_no_opted_in_recipients:
         "Nenhum lead deste público possui opt-in WhatsApp ativo.",
       campaign_owner_employee_invalid: "O vendedor escolhido não existe mais ou está inativo. Selecione outro.",
+      campaign_active_limit_reached: `Limite de ${CAMPAIGN_ACTIVE_LIMIT} disparos ativos ao mesmo tempo atingido. Aguarde um terminar ou cancele algum antes de criar outro.`,
     };
     return NextResponse.json({ error: messages[code] ?? "Não foi possível criar a campanha.", code }, { status: 422 });
   }

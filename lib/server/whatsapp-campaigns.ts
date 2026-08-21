@@ -41,6 +41,15 @@ export const CAMPAIGN_THROUGHPUT_PER_MINUTE: Record<CampaignThroughput, number> 
 };
 
 /**
+ * Teto de campanhas ATIVAS (agendada ou processando) por tenant, igual pra
+ * todos os planos — pedido explícito do dono da conta, não depende de plano.
+ * Conta só o que ainda não terminou: concluída/cancelada/falhou libera vaga
+ * pra outra, então não trava o cliente pra sempre depois de 5 disparos.
+ */
+export const CAMPAIGN_ACTIVE_LIMIT = 5;
+const CAMPAIGN_ACTIVE_STATUSES = ["scheduled", "processing"] as const;
+
+/**
  * Um "público" da campanha. A campanha pode combinar quantos blocos o cliente
  * quiser — um filtro do CRM, uma lista importada e alguns contatos digitados
  * na mesma campanha, ou vários blocos do mesmo tipo (3 tags diferentes, por
@@ -527,6 +536,16 @@ export async function createWhatsAppCampaign(params: {
     const teamEmployees = await readTeamMembersFromDb(params.tenantId);
     const employee = teamEmployees.find((e) => e.id === leadDestination.ownerEmployeeId);
     if (!employee || !employee.ativo) throw new Error("campaign_owner_employee_invalid");
+  }
+
+  const { count: activeCampaignCount, error: activeCountError } = await params.sb
+    .from("whatsapp_campaigns")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", params.tenantId)
+    .in("status", CAMPAIGN_ACTIVE_STATUSES);
+  if (activeCountError) throw new Error(`campaign_active_count_query:${activeCountError.message}`);
+  if ((activeCampaignCount ?? 0) >= CAMPAIGN_ACTIVE_LIMIT) {
+    throw new Error("campaign_active_limit_reached");
   }
 
   const { data: campaign, error } = await params.sb

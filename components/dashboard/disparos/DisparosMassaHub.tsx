@@ -192,6 +192,7 @@ export function DisparosMassaHub() {
   const [connectionId, setConnectionId] = useState("");
   const [agentId, setAgentId] = useState("");
   const [eligibleRecipients, setEligibleRecipients] = useState(0);
+  const [activeCampaignLimit, setActiveCampaignLimit] = useState(5);
   const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [campaignBusy, setCampaignBusy] = useState(false);
   const [campaignError, setCampaignError] = useState<string | null>(null);
@@ -214,6 +215,7 @@ export function DisparosMassaHub() {
         connections?: CampaignConnection[];
         agents?: CampaignAgent[];
         eligibleRecipients?: number;
+        activeCampaignLimit?: number;
         availableTags?: string[];
       };
       if (!response.ok) throw new Error(payload.error ?? "Não foi possível carregar campanhas.");
@@ -221,6 +223,7 @@ export function DisparosMassaHub() {
       setConnections(payload.connections ?? []);
       setAgents(payload.agents ?? []);
       setEligibleRecipients(payload.eligibleRecipients ?? 0);
+      setActiveCampaignLimit(typeof payload.activeCampaignLimit === "number" ? payload.activeCampaignLimit : 5);
       setAvailableTags(payload.availableTags ?? []);
       setConnectionId((current) => current || payload.connections?.[0]?.connectionId || "");
     } catch (error) {
@@ -466,6 +469,13 @@ export function DisparosMassaHub() {
     [campaigns],
   );
 
+  // Mesma contagem que o servidor usa pro teto: só o que ainda não terminou
+  // ocupa vaga. Concluída/cancelada/falhou libera espaço pra outra.
+  const activeCampaignCount = useMemo(
+    () => campaigns.filter((c) => c.status === "scheduled" || c.status === "processing").length,
+    [campaigns],
+  );
+
   const canSchedule =
     Boolean(connectionId) &&
     Boolean(campaignName.trim()) &&
@@ -591,6 +601,8 @@ export function DisparosMassaHub() {
           history={history}
           drafts={drafts}
           processingCampaignId={processingCampaignId}
+          activeCampaignCount={activeCampaignCount}
+          activeCampaignLimit={activeCampaignLimit}
           onCreateNew={handleCreateNew}
           onEditDraft={handleEditDraft}
           onDeleteDraft={handleDeleteDraft}
