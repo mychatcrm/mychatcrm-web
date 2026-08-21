@@ -236,8 +236,10 @@ describe("schedule guard (unit)", () => {
     ).toBe(false);
   });
 
-  it("DEFAULT timezone is UTC", () => {
-    expect(DEFAULT_FOLLOW_UP_INTELIGENTE.timezone).toBe("UTC");
+  it("DEFAULT timezone is America/Sao_Paulo — plataforma pt-BR, não UTC", () => {
+    // UTC como padrão adiantava a janela comercial em 3h sem o cliente notar
+    // (ex.: horaFim=18 em UTC = 15h em Brasília).
+    expect(DEFAULT_FOLLOW_UP_INTELIGENTE.timezone).toBe("America/Sao_Paulo");
   });
 });
 
@@ -312,7 +314,10 @@ describe("timezone-aware business hours", () => {
 // Os testes abaixo simulam exatamente essa lógica aplicada em processFollowUpJob.
 
 describe("business hours bypass — cron roda depois do slot agendado", () => {
-  const base = { ...DEFAULT_FOLLOW_UP_INTELIGENTE, ativo: true };
+  // Cenários deste bloco são narrados em horários UTC fixos (ver comentários);
+  // trava o fuso explicitamente pra não depender de qual timezone é o padrão
+  // da plataforma no momento.
+  const base = { ...DEFAULT_FOLLOW_UP_INTELIGENTE, ativo: true, timezone: "UTC" };
 
   function effectiveSettings(
     scheduledAt: Date,
@@ -488,13 +493,13 @@ describe("janela de envio com minutos", () => {
     // { horaInicio: 8, horaFim: 18 } sem minutos → equivale a 08:00–18:00
     const inside = new Date("2026-05-22T10:00:00.000Z"); // 10:00 UTC sexta
     const atEnd = new Date("2026-05-22T18:00:00.000Z"); // 18:00 UTC (exclusivo)
-    const cfg = { horaInicio: 8, horaFim: 18, diasAtivos: [1, 2, 3, 4, 5] as number[] };
+    const cfg = { horaInicio: 8, horaFim: 18, diasAtivos: [1, 2, 3, 4, 5] as number[], timezone: "UTC" };
     expect(isWithinBusinessHours(inside, cfg)).toBe(true);
     expect(isWithinBusinessHours(atEnd, cfg)).toBe(false);
   });
 
   it("minutoInicio=0, minutoFim=0 explícitos → equivalente ao backward compat", () => {
-    const cfg = { horaInicio: 8, minutoInicio: 0, horaFim: 18, minutoFim: 0, diasAtivos: [1, 2, 3, 4, 5] as number[] };
+    const cfg = { horaInicio: 8, minutoInicio: 0, horaFim: 18, minutoFim: 0, diasAtivos: [1, 2, 3, 4, 5] as number[], timezone: "UTC" };
     const atStart = new Date("2026-05-22T08:00:00.000Z");
     const beforeStart = new Date("2026-05-22T07:59:00.000Z");
     expect(isWithinBusinessHours(atStart, cfg)).toBe(true);

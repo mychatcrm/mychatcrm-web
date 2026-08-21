@@ -59,7 +59,7 @@ export function WizardStep1Identidade({
           help="Define o fuso usado na data/hora do prompt do agente e na janela de horário do follow-up."
         />
         <PanelSelect
-          value={draft.timezone ?? "UTC"}
+          value={draft.timezone ?? "America/Sao_Paulo"}
           onChange={(e) => {
             const timezone = e.target.value;
             onChange({

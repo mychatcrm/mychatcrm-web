@@ -25,7 +25,12 @@ export const DEFAULT_FOLLOW_UP_INTELIGENTE: AgentFollowUpInteligente = {
   usarDadosFormularioMeta: true,
   usarHistoricoCrm: true,
   usarHistoricoWhatsapp: true,
-  timezone: "UTC",
+  // Plataforma pt-BR, público majoritariamente brasileiro: "UTC (padrão)" era
+  // o primeiro item do seletor e ninguém pensava em trocar — o agente nascia
+  // com a janela de horário comercial do follow-up 3h adiantada em relação a
+  // Brasília (ex.: horaFim=18 em UTC vira 15h em Brasília — o follow-up parava
+  // de disparar 3h antes do fim do expediente real, sem o cliente perceber).
+  timezone: "America/Sao_Paulo",
   retomadaHumanoTempoValor: null,   // null = sem restrição (retrocompatível)
   retomadaHumanoTempoUnidade: "horas" as const,
   // Movimentação do card no CRM ao longo do ciclo de follow-up. Tudo desligado

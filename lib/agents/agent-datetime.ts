@@ -2,15 +2,20 @@ import type { Agent, AgentFollowUpInteligente } from "@/lib/types";
 
 const VALID_IANA_RE = /^[A-Za-z]+(?:\/[A-Za-z_]+){0,2}$/;
 
+// Sem fuso salvo (ou valor ilegível), cai no padrão da plataforma —
+// América/São Paulo, não UTC. Público majoritariamente brasileiro: cair em
+// UTC adiantava a janela comercial do follow-up em 3h sem o cliente notar.
+const FALLBACK_TIMEZONE = "America/Sao_Paulo";
+
 export function parseTimezone(raw: unknown): string {
-  if (typeof raw !== "string" || !raw.trim()) return "UTC";
+  if (typeof raw !== "string" || !raw.trim()) return FALLBACK_TIMEZONE;
   const tz = raw.trim();
-  if (!VALID_IANA_RE.test(tz)) return "UTC";
+  if (!VALID_IANA_RE.test(tz)) return FALLBACK_TIMEZONE;
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: tz });
     return tz;
   } catch {
-    return "UTC";
+    return FALLBACK_TIMEZONE;
   }
 }
 

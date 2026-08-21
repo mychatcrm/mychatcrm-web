@@ -202,7 +202,7 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     (typeof agent.timezone === "string" && agent.timezone.trim()) ||
     agent.followUpInteligente?.timezone ||
     DEFAULT_FOLLOW_UP_INTELIGENTE.timezone ||
-    "UTC";
+    "America/Sao_Paulo";
   const followUpInteligente = agent.followUpInteligente
     ? { ...DEFAULT_FOLLOW_UP_INTELIGENTE, ...agent.followUpInteligente, timezone }
     : { ...DEFAULT_FOLLOW_UP_INTELIGENTE, timezone };
@@ -424,7 +424,7 @@ export const defaultWizardDraft: AgentWizardDraft = {
   promptRegrasAdicionais: "",
   respostasProibidas: "",
   idioma: "Português BR",
-  timezone: DEFAULT_FOLLOW_UP_INTELIGENTE.timezone ?? "UTC",
+  timezone: DEFAULT_FOLLOW_UP_INTELIGENTE.timezone ?? "America/Sao_Paulo",
   arquivosTreinamento: [],
   externalApiConnectorIds: [],
   origens: [

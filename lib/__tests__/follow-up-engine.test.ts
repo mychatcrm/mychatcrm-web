@@ -249,14 +249,14 @@ describe("isWithinBusinessHours", () => {
   it("returns true inside 08-18 on a weekday", () => {
     const now = new Date("2026-05-22T10:00:00.000Z"); // Friday 10h UTC
     expect(
-      isWithinBusinessHours(now, { horaInicio: 8, horaFim: 18, diasAtivos: [1, 2, 3, 4, 5] }),
+      isWithinBusinessHours(now, { horaInicio: 8, horaFim: 18, diasAtivos: [1, 2, 3, 4, 5], timezone: "UTC" }),
     ).toBe(true);
   });
 
   it("returns false at 18:00 (exclusive end)", () => {
     const now = new Date("2026-05-22T18:00:00.000Z");
     expect(
-      isWithinBusinessHours(now, { horaInicio: 8, horaFim: 18, diasAtivos: [1, 2, 3, 4, 5] }),
+      isWithinBusinessHours(now, { horaInicio: 8, horaFim: 18, diasAtivos: [1, 2, 3, 4, 5], timezone: "UTC" }),
     ).toBe(false);
   });
 
@@ -270,7 +270,7 @@ describe("isWithinBusinessHours", () => {
   it("returns true on any day when diasAtivos is empty", () => {
     const now = new Date("2026-05-23T10:00:00.000Z"); // Saturday
     expect(
-      isWithinBusinessHours(now, { horaInicio: 8, horaFim: 18, diasAtivos: [] }),
+      isWithinBusinessHours(now, { horaInicio: 8, horaFim: 18, diasAtivos: [], timezone: "UTC" }),
     ).toBe(true);
   });
 });
@@ -282,6 +282,7 @@ describe("nextBusinessHourStart", () => {
       horaInicio: 8,
       horaFim: 18,
       diasAtivos: [1, 2, 3, 4, 5],
+      timezone: "UTC",
     });
     expect(next.getUTCDay()).toBe(1); // Monday
     expect(next.getUTCHours()).toBe(8);
@@ -293,6 +294,7 @@ describe("nextBusinessHourStart", () => {
       horaInicio: 8,
       horaFim: 18,
       diasAtivos: [1, 2, 3, 4, 5],
+      timezone: "UTC",
     });
     expect(next.getUTCDay()).toBe(5); // Friday
     expect(next.getUTCHours()).toBe(8);
