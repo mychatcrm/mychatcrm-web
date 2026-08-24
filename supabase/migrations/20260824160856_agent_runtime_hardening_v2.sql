@@ -346,6 +346,20 @@ update public.follow_up_jobs f
  left join public.lead_distribution_rules r on r.id = j.rule_id
  where f.journey_id = j.id;
 
+-- `automation_epoch` acabou de ser criada, então TODA linha existente está
+-- nula — sem este backfill, a limpeza logo abaixo cancelaria follow-ups
+-- legítimos, já agendados para leads reais, apenas por causa da coluna nova.
+-- A época verdadeira é a da conversa: preenchê-la aqui preserva o job e
+-- mantém a garantia original (um takeover posterior invalida a época e o
+-- follow-up é descartado na hora do envio, como deve ser).
+update public.follow_up_jobs f
+   set automation_epoch = s.automation_epoch
+  from public.conversation_states s
+ where f.automation_epoch is null
+   and s.tenant_id = f.tenant_id
+   and s.remote_jid = f.remote_jid
+   and s.channel = 'whatsapp';
+
 -- Old queued work that cannot be tied to one exact authorization is retained
 -- for audit but never guessed or replayed after the rollout.
 update public.follow_up_jobs
