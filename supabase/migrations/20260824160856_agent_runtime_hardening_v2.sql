@@ -67,7 +67,7 @@ returns boolean
 language plpgsql
 security invoker
 set search_path = public, pg_temp
-as $$
+as $fn0$
 begin
   if p_reason not in ('agenda_timezone_required', 'follow_up_timezone_required') then
     raise exception 'agent_runtime_review_reason_not_allowed';
@@ -85,7 +85,7 @@ begin
 
   return found;
 end;
-$$;
+$fn0$;
 
 revoke all on function public.mark_agent_runtime_review_reason_v1(text, text, text)
   from public, anon, authenticated;
@@ -177,7 +177,7 @@ returns jsonb
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn1$
 declare
   v_journey public.lead_journeys%rowtype;
   v_rule public.lead_distribution_rules%rowtype;
@@ -214,7 +214,7 @@ begin
      or not v_rule.active
      or v_rule.tenant_id is distinct from p_tenant_id
      or v_rule.connection_id is distinct from p_connection_id
-     or not (coalesce(v_rule.agent_ids, '[]'::jsonb) ? p_agent_id)
+     or not (jsonb_exists(coalesce(v_rule.agent_ids, '[]'::jsonb), p_agent_id))
      or (p_channel = 'evolution' and v_rule.transport is distinct from 'evolution')
      or (p_channel = 'meta_cloud' and v_rule.transport is distinct from 'cloud_api') then
     raise exception 'agent_response_job_rule_mismatch';
@@ -234,10 +234,10 @@ begin
        or v_journey.page_id is null
        or v_journey.form_id is null
        or v_rule.page_id is distinct from v_journey.page_id
-       or coalesce(v_rule.excluded_form_ids, '[]'::jsonb) ? v_journey.form_id
+       or jsonb_exists(coalesce(v_rule.excluded_form_ids, '[]'::jsonb), v_journey.form_id)
        or (
          coalesce(v_rule.use_all_forms, false) = false
-         and not (coalesce(v_rule.included_form_ids, '[]'::jsonb) ? v_journey.form_id)
+         and not (jsonb_exists(coalesce(v_rule.included_form_ids, '[]'::jsonb), v_journey.form_id))
        )
        or v_rule.distribution_type not in (
          'automation_agent', 'agent_plus_seller', 'specific_agents', 'round_robin'
@@ -288,7 +288,7 @@ begin
   end if;
   return v_job || jsonb_build_object('rule_id', p_rule_id);
 end;
-$$;
+$fn1$;
 
 revoke all on function public.upsert_agent_response_job_burst_v5(
   text,text,text,text,text,text,uuid,uuid,timestamptz,timestamptz,
@@ -384,7 +384,7 @@ returns trigger
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn2$
 begin
   if new.status <> 'processing' then
     new.claim_token := null;
@@ -394,7 +394,7 @@ begin
   end if;
   return new;
 end;
-$$;
+$fn2$;
 
 drop trigger if exists follow_up_jobs_clear_claim_v2 on public.follow_up_jobs;
 create trigger follow_up_jobs_clear_claim_v2
@@ -435,7 +435,7 @@ returns setof public.follow_up_jobs
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn3$
 declare
   v_now timestamptz := clock_timestamp();
   v_limit integer := greatest(1, least(coalesce(p_limit, 10), 50));
@@ -479,7 +479,7 @@ begin
    where f.id = due.id
   returning f.*;
 end;
-$$;
+$fn3$;
 
 revoke all on function public.claim_follow_up_jobs_v2(integer, integer)
   from public, anon, authenticated;
@@ -497,7 +497,7 @@ returns public.follow_up_jobs
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn4$
 declare
   v_now timestamptz := clock_timestamp();
   v_claim_seconds integer := greatest(30, least(coalesce(p_claim_seconds, 90), 300));
@@ -525,7 +525,7 @@ begin
 
   return v_claimed;
 end;
-$$;
+$fn4$;
 
 revoke all on function public.claim_follow_up_job_v2(uuid, integer)
   from public, anon, authenticated;
@@ -541,7 +541,7 @@ returns boolean
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn5$
 declare
   v_updated integer;
 begin
@@ -558,7 +558,7 @@ begin
   get diagnostics v_updated = row_count;
   return v_updated = 1;
 end;
-$$;
+$fn5$;
 
 revoke all on function public.heartbeat_follow_up_job_v2(uuid, uuid, integer)
   from public, anon, authenticated;
@@ -574,7 +574,7 @@ returns integer
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn6$
 declare
   v_recovered integer;
 begin
@@ -592,7 +592,7 @@ begin
   get diagnostics v_recovered = row_count;
   return v_recovered;
 end;
-$$;
+$fn6$;
 
 revoke all on function public.recover_expired_follow_up_jobs_v2(timestamptz)
   from public, anon, authenticated;
@@ -617,7 +617,7 @@ returns jsonb
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn7$
 declare
   v_now timestamptz := clock_timestamp();
   v_job public.follow_up_jobs;
@@ -681,7 +681,7 @@ begin
     'nextJobId', v_next_id
   );
 end;
-$$;
+$fn7$;
 
 revoke all on function public.finish_follow_up_job_v2(
   uuid, uuid, text, integer, timestamptz, text, integer, text, timestamptz
@@ -703,7 +703,7 @@ returns integer
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn8$
 declare
   v_cancelled integer;
 begin
@@ -718,7 +718,7 @@ begin
   get diagnostics v_cancelled = row_count;
   return v_cancelled;
 end;
-$$;
+$fn8$;
 
 revoke all on function public.cancel_active_follow_up_jobs_v2(text, text, text, uuid)
   from public, anon, authenticated;
@@ -735,12 +735,12 @@ returns jsonb
 language sql
 security invoker
 set search_path = public
-as $$
+as $fn9$
   select jsonb_build_object(
     'rules', (
       select count(*) from public.lead_distribution_rules r
        where r.tenant_id = p_tenant_id and r.active
-         and coalesce(r.agent_ids, '[]'::jsonb) ? p_agent_id
+         and jsonb_exists(coalesce(r.agent_ids, '[]'::jsonb), p_agent_id)
     ),
     'journeys', (
       select count(*) from public.lead_journeys j
@@ -771,7 +771,7 @@ as $$
        where i.tenant_id = p_tenant_id and i.organic_agent_id = p_agent_id
     )
   );
-$$;
+$fn9$;
 
 revoke all on function public.get_agent_dependency_report_v1(text, text)
   from public, anon, authenticated;
@@ -804,7 +804,7 @@ returns jsonb
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn10$
 declare
   v_current public.tenant_agents%rowtype;
   v_saved public.tenant_agents%rowtype;
@@ -935,7 +935,7 @@ begin
     'row', to_jsonb(v_saved)
   );
 end;
-$$;
+$fn10$;
 
 revoke all on function public.save_tenant_agent_v2(
   text,text,boolean,bigint,text,text,boolean,jsonb,text,text,boolean,text,text,text,text,text[],boolean,uuid[]
@@ -954,7 +954,7 @@ returns jsonb
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn11$
 declare
   v_current public.tenant_agents%rowtype;
   v_dependencies jsonb;
@@ -992,7 +992,7 @@ begin
    where tenant_id = p_tenant_id and agent_id = p_agent_id;
   return jsonb_build_object('ok', true);
 end;
-$$;
+$fn11$;
 
 revoke all on function public.archive_tenant_agent_v1(text, text, bigint, text)
   from public, anon, authenticated;
@@ -1037,7 +1037,7 @@ returns jsonb
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn12$
 declare
   v_state public.conversation_states%rowtype;
   v_journey public.lead_journeys%rowtype;
@@ -1080,7 +1080,7 @@ begin
        or v_rule.id is null or not v_rule.active
        or v_rule.tenant_id is distinct from p_tenant_id
        or v_rule.connection_id is distinct from v_journey.connection_id
-       or not (coalesce(v_rule.agent_ids, '[]'::jsonb) ? v_journey.agent_id) then
+       or not (jsonb_exists(coalesce(v_rule.agent_ids, '[]'::jsonb), v_journey.agent_id)) then
       raise exception 'automation_authorization_invalid';
     end if;
 
@@ -1100,10 +1100,10 @@ begin
          or v_journey.page_id is null
          or v_journey.form_id is null
          or v_rule.page_id is distinct from v_journey.page_id
-         or coalesce(v_rule.excluded_form_ids, '[]'::jsonb) ? v_journey.form_id
+         or jsonb_exists(coalesce(v_rule.excluded_form_ids, '[]'::jsonb), v_journey.form_id)
          or (
            coalesce(v_rule.use_all_forms, false) = false
-           and not (coalesce(v_rule.included_form_ids, '[]'::jsonb) ? v_journey.form_id)
+           and not (jsonb_exists(coalesce(v_rule.included_form_ids, '[]'::jsonb), v_journey.form_id))
          )
          or v_rule.distribution_type not in (
            'automation_agent', 'agent_plus_seller', 'specific_agents', 'round_robin'
@@ -1208,7 +1208,7 @@ begin
 
   return jsonb_build_object('state', to_jsonb(v_state), 'event', v_event);
 end;
-$$;
+$fn12$;
 
 revoke all on function public.set_conversation_operation_v3(
   text,text,uuid,text,text,boolean,text,text,boolean,text,text,text,text,text,text,
@@ -1238,7 +1238,7 @@ returns jsonb
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn13$
 declare
   v_out public.agent_outbound_outbox%rowtype;
   v_state public.conversation_states%rowtype;
@@ -1308,7 +1308,7 @@ begin
     elsif v_rule.tenant_id is distinct from v_out.tenant_id
        or v_rule.connection_id is null
        or v_rule.connection_id is distinct from v_out.connection_id
-       or not (coalesce(v_rule.agent_ids, '[]'::jsonb) ? v_out.agent_id) then
+       or not (jsonb_exists(coalesce(v_rule.agent_ids, '[]'::jsonb), v_out.agent_id)) then
       v_reason := 'rule_scope_mismatch';
     elsif v_out.channel = 'evolution' and v_rule.transport is distinct from 'evolution' then
       v_reason := 'rule_transport_mismatch';
@@ -1331,10 +1331,10 @@ begin
       v_journey.page_id is null
       or v_journey.form_id is null
       or v_rule.page_id is distinct from v_journey.page_id
-      or coalesce(v_rule.excluded_form_ids, '[]'::jsonb) ? v_journey.form_id
+      or jsonb_exists(coalesce(v_rule.excluded_form_ids, '[]'::jsonb), v_journey.form_id)
       or (
         coalesce(v_rule.use_all_forms, false) = false
-        and not (coalesce(v_rule.included_form_ids, '[]'::jsonb) ? v_journey.form_id)
+        and not (jsonb_exists(coalesce(v_rule.included_form_ids, '[]'::jsonb), v_journey.form_id))
       )
     ) then
       v_reason := 'meta_form_scope_mismatch';
@@ -1417,7 +1417,7 @@ begin
   );
   return jsonb_build_object('ok', false, 'reason', v_reason);
 end;
-$$;
+$fn13$;
 
 revoke all on function public.authorize_agent_outbound_dispatch_v3(uuid,uuid,bigint)
   from public, anon, authenticated;
@@ -1432,7 +1432,7 @@ returns jsonb
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn14$
 declare
   v_closed integer := 0;
   v_cancelled_followups integer := 0;
@@ -1474,7 +1474,7 @@ begin
           and r.tenant_id = f.tenant_id
           and r.active
           and r.connection_id = f.connection_id
-          and coalesce(r.agent_ids, '[]'::jsonb) ? f.agent_id
+          and jsonb_exists(coalesce(r.agent_ids, '[]'::jsonb), f.agent_id)
           and (
             (f.channel = 'evolution' and r.transport = 'evolution') or
             (f.channel = 'meta_cloud' and r.transport in ('cloud_api', 'meta_cloud'))
@@ -1491,7 +1491,7 @@ begin
     'cancelledFollowUps', v_cancelled_followups
   );
 end;
-$$;
+$fn14$;
 
 revoke all on function public.reconcile_agent_runtime_state_v1(integer)
   from public, anon, authenticated;
@@ -1524,7 +1524,7 @@ returns jsonb
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn15$
 declare
   v_out public.agent_outbound_outbox%rowtype;
   v_provider_id text := nullif(btrim(coalesce(p_provider_message_id, '')), '');
@@ -1638,7 +1638,7 @@ begin
     'providerMessageId', v_provider_id
   );
 end;
-$$;
+$fn15$;
 
 revoke all on function public.finalize_agent_outbound_delivery_v1(
   uuid,uuid,text,text,text,text,text,text,text

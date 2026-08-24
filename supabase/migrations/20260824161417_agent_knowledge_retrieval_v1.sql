@@ -152,7 +152,7 @@ returns public.agent_knowledge_files
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn0$
 declare
   v_count integer;
   v_total bigint;
@@ -200,7 +200,7 @@ begin
   ) returning * into v_file;
   return v_file;
 end;
-$$;
+$fn0$;
 
 revoke all on function public.reserve_agent_knowledge_file_v1(
   uuid, text, text, text, text, text, bigint, text, text
@@ -218,7 +218,7 @@ returns uuid
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn1$
 declare
   v_file public.agent_knowledge_files%rowtype;
   v_job_id uuid;
@@ -264,7 +264,7 @@ begin
   ) returning id into v_job_id;
   return v_job_id;
 end;
-$$;
+$fn1$;
 
 revoke all on function public.enqueue_agent_knowledge_job_v1(text, text, uuid)
   from public, anon, authenticated;
@@ -280,7 +280,7 @@ returns text
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn2$
 declare
   v_storage_key text;
 begin
@@ -300,7 +300,7 @@ begin
    where id = p_file_id and tenant_id = p_tenant_id and agent_id = p_agent_id;
   return v_storage_key;
 end;
-$$;
+$fn2$;
 
 revoke all on function public.delete_agent_knowledge_file_v1(text, text, uuid)
   from public, anon, authenticated;
@@ -315,7 +315,7 @@ returns setof public.agent_knowledge_jobs
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn3$
 declare
   v_now timestamptz := clock_timestamp();
   v_limit integer := greatest(1, least(coalesce(p_limit, 2), 5));
@@ -370,7 +370,7 @@ begin
   )
   select c.* from claimed c;
 end;
-$$;
+$fn3$;
 
 revoke all on function public.claim_agent_knowledge_jobs_v1(integer, integer)
   from public, anon, authenticated;
@@ -386,7 +386,7 @@ returns boolean
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn4$
 declare
   v_updated integer;
 begin
@@ -403,7 +403,7 @@ begin
   get diagnostics v_updated = row_count;
   return v_updated = 1;
 end;
-$$;
+$fn4$;
 
 revoke all on function public.heartbeat_agent_knowledge_job_v1(uuid, uuid, integer)
   from public, anon, authenticated;
@@ -419,7 +419,7 @@ returns boolean
 language plpgsql
 security invoker
 set search_path = public, extensions
-as $$
+as $fn5$
 declare
   v_job public.agent_knowledge_jobs%rowtype;
   v_chunk jsonb;
@@ -474,7 +474,7 @@ begin
    where id = v_job.id and claim_token = p_claim_token;
   return true;
 end;
-$$;
+$fn5$;
 
 revoke all on function public.insert_agent_knowledge_chunks_v1(uuid, uuid, jsonb)
   from public, anon, authenticated;
@@ -493,7 +493,7 @@ returns boolean
 language plpgsql
 security invoker
 set search_path = public
-as $$
+as $fn6$
 declare
   v_job public.agent_knowledge_jobs%rowtype;
   v_actual_chunks integer;
@@ -550,7 +550,7 @@ begin
   end if;
   return true;
 end;
-$$;
+$fn6$;
 
 revoke all on function public.finish_agent_knowledge_job_v1(uuid, uuid, boolean, integer, text, text)
   from public, anon, authenticated;
@@ -576,7 +576,7 @@ stable
 security invoker
 set search_path = public, extensions
 set hnsw.iterative_scan = 'strict_order'
-as $$
+as $fn7$
   select c.id, c.file_id, c.source_label, c.content,
          1 - (c.embedding <=> p_embedding) as similarity
     from public.agent_knowledge_chunks c
@@ -597,7 +597,7 @@ as $$
      and 1 - (c.embedding <=> p_embedding) >= greatest(0, least(coalesce(p_match_threshold, 0.35), 1))
    order by c.embedding <=> p_embedding
    limit greatest(1, least(coalesce(p_match_count, 8), 20));
-$$;
+$fn7$;
 
 revoke all on function public.match_agent_knowledge_chunks_v1(
   text, text, extensions.vector, double precision, integer
