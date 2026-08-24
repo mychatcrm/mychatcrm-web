@@ -1084,6 +1084,37 @@ describe("resolveAgendaTurn", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  it("lead novo manda só 'Ok' (zero sinal de agenda): nunca herda date/time do campo oculto do modelo, mesmo já vencido — incidente real de produção", async () => {
+    // Cenário exato reportado: primeira mensagem do lead é "Ok" — sem data,
+    // sem hora, sem a palavra "agendar". O campo OCULTO do modelo (agendaPlan)
+    // trazia um horário já passado (hoje 08h, "agora" é meio-dia) e o texto
+    // VISÍVEL do modelo também não propõe nenhum horário real. Antes da
+    // correção, isso sobrevivia intocado e o agente respondia "Esse horário
+    // já passou" para um pedido de agendamento que o lead nunca fez.
+    const { sb, rpc, pendingRows } = makeStructuredSb();
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      agentId: "agent-1",
+      timezone: "America/Sao_Paulo",
+      modelText: "Perfeito! Vamos seguir com o agendamento.",
+      clientText: "Ok",
+      priorAssistantText: "Olá! Recebemos seu cadastro. Vamos conversar sobre a oportunidade?",
+      agendaAutomationEnabled: true,
+      agendaPlan: { action: "create", date: "01/06/2026", time: "08:00", location: null, eventId: null },
+      jobId: "33333333-3333-4333-8333-333333333333",
+      claimedGeneration: 1,
+      conversationSequence: 2,
+    });
+    // O essencial: o horário inventado no campo oculto nunca aparece pro lead
+    // como se fosse dele, e nada é marcado/confirmado a partir de um "Ok" solto.
+    expect(result.text).not.toBe(AGENDA_PAST_DATETIME_REPLY);
+    expect(result.action).not.toBe("scheduled");
+    expect(pendingRows).toHaveLength(0);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it("soft-invite + Pode ser + modelo com slot concreto grava pending (não early-return)", async () => {
     const { sb, rpc, pendingRows } = makeStructuredSb();
     const result = await resolveAgendaTurn({

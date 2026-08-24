@@ -2480,22 +2480,26 @@ async function resolveStructuredAgendaPlan(params: {
     ? { ...normalizedEffectivePlan, date: resolvedFromClient.date, time: resolvedFromClient.time }
     : normalizedEffectivePlan;
 
-  // Âncora parcial do lead sem resolução completa: não herdar date/time inventados
-  // pelo modelo (causava "Esse horário já passou" com hoje 14h).
+  // Sem resolução completa a partir do texto do lead: não herdar date/time
+  // inventados pelo modelo. Cobria só a âncora PARCIAL (lead deu data OU hora,
+  // não as duas) ou um pedido incompleto de "agendar" — mas um lead sem
+  // NENHUM sinal de agenda (ex.: só "Ok") também caía neste ramo e, por não
+  // bater em nenhum dos três casos abaixo, effectivePlan seguia com o date/time
+  // OCULTO do modelo intocado. Incidente real: lead novo manda só "Ok" (zero
+  // sinal — nem data, nem hora, nem a palavra "agendar"), o campo oculto do
+  // modelo trazia um horário já passado, e a validação abaixo respondia
+  // honestamente "Esse horário já passou" para um pedido que o lead nunca fez.
+  // Se chegamos aqui, resolvedFromClient já é null — ou seja, o texto do lead
+  // NUNCA deu um par data+hora completo e verificável. Não existe cenário em
+  // que o campo oculto do modelo seja confiável neste ponto: sempre zera, e o
+  // bloco seguinte ("Cliente sem NENHUM sinal de agenda") tenta recuperar um
+  // horário só do que o modelo escreveu no texto que o lead de fato lê.
   if (
     action !== "cancel" &&
     !resolvedFromClient &&
     !standaloneConfirmation
   ) {
-    const clientDate = textHasExplicitDateAnchor(params.clientText, params.timezone);
-    const clientTime = textHasExplicitTime(params.clientText);
-    const incompleteScheduleAsk =
-      !clientDate &&
-      !clientTime &&
-      /\b(?:agendar|marcar|remarcar|reagendar|agendamento)\b/i.test(params.clientText);
-    if ((clientDate && !clientTime) || (clientTime && !clientDate) || incompleteScheduleAsk) {
-      effectivePlan = { ...effectivePlan, date: null, time: null };
-    }
+    effectivePlan = { ...effectivePlan, date: null, time: null };
   }
 
   // Cliente sem NENHUM sinal de agenda ("Uai pode ser", "ta ficando doido?"):
