@@ -1,5 +1,5 @@
 export const COMMON_TIMEZONES: { label: string; value: string }[] = [
-  { label: "América/São Paulo (BRT, UTC-3) (padrão)", value: "America/Sao_Paulo" },
+  { label: "América/São Paulo (BRT, UTC-3)", value: "America/Sao_Paulo" },
   { label: "UTC", value: "UTC" },
   { label: "América/Manaus (AMT, UTC-4)", value: "America/Manaus" },
   { label: "América/Belém (BRT, UTC-3)", value: "America/Belem" },

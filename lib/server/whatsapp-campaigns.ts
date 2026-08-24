@@ -99,6 +99,8 @@ type CampaignInput = {
   name: string;
   connectionId: string;
   agentId: string;
+  /** Regra explícita de Integrações de Leads que autoriza este agente nesta conexão. */
+  ruleId: string;
   /** Cru de propósito; ver `parseCampaignAudienceBlocks`, chamado dentro de `createWhatsAppCampaign`. */
   audienceBlocks: unknown;
   messageTemplate: string;
@@ -122,6 +124,52 @@ function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+}
+
+async function campaignRuleAuthorizesConfiguration(
+  sb: ServiceClient,
+  campaign: Record<string, unknown>,
+): Promise<boolean> {
+  const tenantId = text(campaign.tenant_id);
+  const ruleId = text(campaign.rule_id);
+  const agentId = text(campaign.agent_id);
+  const connectionId = text(campaign.connection_id);
+  const transport = text(campaign.transport);
+  if (!tenantId || !ruleId || !agentId || !connectionId || !transport) return false;
+
+  const [{ data: rule, error }, { data: agent, error: agentError }] = await Promise.all([
+    sb
+      .from("lead_distribution_rules")
+      .select("source, active, transport, connection_id, agent_ids")
+      .eq("tenant_id", tenantId)
+      .eq("id", ruleId)
+      .maybeSingle(),
+    sb
+      .from("tenant_agents")
+      .select("active, metadata")
+      .eq("tenant_id", tenantId)
+      .eq("agent_id", agentId)
+      .maybeSingle(),
+  ]);
+  if (error || agentError || !rule || !agent || agent.active !== true) return false;
+  const agentStatus = text(object(agent.metadata).status)?.toLowerCase();
+  if (agentStatus === "inativo" || agentStatus === "pausado") return false;
+  const row = rule as Record<string, unknown>;
+  const agentIds = stringArray(row.agent_ids);
+  return (
+    row.source === "whatsapp_campaign" &&
+    row.active === true &&
+    row.transport === transport &&
+    row.connection_id === connectionId &&
+    agentIds.length === 1 &&
+    agentIds[0] === agentId
+  );
 }
 
 function digits(value: unknown): string {
@@ -531,6 +579,8 @@ export async function createWhatsAppCampaign(params: {
   if (!name || !input.connectionId || !input.agentId?.trim()) {
     throw new Error("campaign_required_fields");
   }
+  const ruleId = input.ruleId?.trim();
+  if (!ruleId) throw new Error("campaign_rule_required");
 
   const connections = await listTenantWhatsappConnections(params.tenantId);
   const connection = connections.find((c) => c.connectionId === input.connectionId && c.connected);
@@ -543,7 +593,30 @@ export async function createWhatsAppCampaign(params: {
     .eq("agent_id", input.agentId)
     .eq("active", true)
     .maybeSingle();
-  if (!agent) throw new Error("campaign_agent_not_available");
+  const agentStatus = text(object(agent?.metadata).status)?.toLowerCase();
+  if (!agent || agentStatus === "inativo" || agentStatus === "pausado") {
+    throw new Error("campaign_agent_not_available");
+  }
+
+  const { data: rule, error: ruleError } = await params.sb
+    .from("lead_distribution_rules")
+    .select("id, source, active, transport, connection_id, agent_ids")
+    .eq("tenant_id", params.tenantId)
+    .eq("id", ruleId)
+    .eq("source", "whatsapp_campaign")
+    .eq("active", true)
+    .maybeSingle();
+  if (ruleError) throw new Error(`campaign_rule_query:${ruleError.message}`);
+  const authorizedAgents = stringArray((rule as Record<string, unknown> | null)?.agent_ids);
+  if (
+    !rule ||
+    authorizedAgents.length !== 1 ||
+    authorizedAgents[0] !== input.agentId ||
+    String((rule as Record<string, unknown>).connection_id ?? "") !== connection.connectionId ||
+    String((rule as Record<string, unknown>).transport ?? "") !== connection.transport
+  ) {
+    throw new Error("campaign_rule_not_authorized");
+  }
 
   let messageTemplate = input.messageTemplate.trim();
   let metaTemplateName: string | null = null;
@@ -605,6 +678,7 @@ export async function createWhatsAppCampaign(params: {
       connection_id: connection.connectionId,
       transport: connection.transport,
       agent_id: input.agentId,
+      rule_id: ruleId,
       // audience_type/audience_config são resumo legado de quando o público
       // era um filtro único. Um bloco agora carrega escopo E período, e a
       // campanha pode ter vários — nada disso cabe no resumo, então ele fica
@@ -735,6 +809,7 @@ async function processRecipient(params: {
     phone,
     leadId: String(lead.id),
     agentId: text(params.campaign.agent_id),
+    ruleId: text(params.campaign.rule_id),
     campaignId: String(params.campaign.id),
     connectionId: String(params.campaign.connection_id),
     source: "whatsapp_campaign",
@@ -760,6 +835,7 @@ async function processRecipient(params: {
     remoteJid: jid,
     agentId: journey.agentId!,
     journeyId: journey.id,
+    ruleId: journey.ruleId!,
     connectionId: String(params.campaign.connection_id),
     channel: params.sender.transport === "cloud_api" ? "meta_cloud" : "evolution",
     kind: params.sender.transport === "cloud_api" ? "template" : "text",
@@ -1084,6 +1160,21 @@ export async function processDueWhatsAppCampaigns(
   const outcomes: Record<string, number> = {};
   let processed = 0;
   for (const campaign of (campaigns ?? []) as Array<Record<string, unknown>>) {
+    if (!(await campaignRuleAuthorizesConfiguration(sb, campaign))) {
+      await sb
+        .from("whatsapp_campaigns")
+        .update({
+          status: "review_required",
+          review_reason: "campaign_rule_not_authorized",
+          updated_at: now,
+        })
+        .eq("tenant_id", campaign.tenant_id)
+        .eq("id", campaign.id)
+        .in("status", ["scheduled", "processing"]);
+      outcomes.rule_review_required = (outcomes.rule_review_required ?? 0) + 1;
+      continue;
+    }
+
     // Antes de resolver a conexão de propósito: no transporte Cloud isso custa
     // idas ao Graph, e não faz sentido pagar por elas para descobrir logo em
     // seguida que a campanha está fora da janela de envio.
@@ -1207,7 +1298,7 @@ export async function controlWhatsAppCampaign(params: {
 }): Promise<Record<string, unknown>> {
   const { data: current, error: loadError } = await params.sb
     .from("whatsapp_campaigns")
-    .select("id, status")
+    .select("id, tenant_id, status, rule_id, agent_id, connection_id, transport")
     .eq("tenant_id", params.tenantId)
     .eq("id", params.campaignId)
     .maybeSingle();
@@ -1224,6 +1315,14 @@ export async function controlWhatsAppCampaign(params: {
 
   if (params.action === "start") {
     if (!["draft", "paused"].includes(status)) throw new Error("campaign_not_startable");
+    if (!(await campaignRuleAuthorizesConfiguration(params.sb, current as Record<string, unknown>))) {
+      await updateCampaignRow(params, {
+        status: "review_required",
+        review_reason: "campaign_rule_not_authorized",
+        updated_at: now,
+      });
+      throw new Error("campaign_rule_not_authorized");
+    }
     // `scheduled_at` volta pra agora: uma campanha salva ontem com data de
     // ontem não deve ficar esperando nada — play significa "manda agora".
     return updateCampaignRow(params, { status: "scheduled", scheduled_at: now, updated_at: now });

@@ -1,29 +1,44 @@
+import { waitUntil } from "@vercel/functions";
 import { NextResponse } from "next/server";
-import { getClientSessionFromCookies } from "@/lib/client-auth-server";
+import { requireAgentManagementSession } from "@/lib/server/agent-management-access";
 import { reprocessAgentKnowledgeFile } from "@/lib/server/agent-knowledge-files";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { processAgentKnowledgeJobs } from "@/lib/server/agent-knowledge-processing";
+import { assertManageableTenantAgent } from "@/lib/server/agent-management-record";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 export async function POST(
   _request: Request,
   { params }: { params: { id: string; fileId: string } },
 ) {
-  const session = await getClientSessionFromCookies();
-  if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  const guard = await requireAgentManagementSession();
+  if (!guard.ok) return guard.response;
+  const { session } = guard.value;
   const agentId = params.id?.trim();
   const fileId = params.fileId?.trim();
   if (!agentId || !fileId) return NextResponse.json({ error: "id em falta" }, { status: 400 });
 
   const sb = createSupabaseServiceClient();
   try {
+    await assertManageableTenantAgent(sb, session.tenantId, agentId);
     const file = await reprocessAgentKnowledgeFile({
       sb,
       tenantId: session.tenantId,
       agentId,
       fileId,
     });
+    waitUntil(
+      processAgentKnowledgeJobs({ limit: 1 }).catch((error) => {
+        console.warn("[agent-knowledge] immediate_reprocess_failed", {
+          tenant_id: session.tenantId,
+          agent_id: agentId,
+          file_id: fileId,
+          error: error instanceof Error ? error.message : "knowledge_processing_failed",
+        });
+      }),
+    );
     return NextResponse.json({ file });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro ao reprocessar material.";

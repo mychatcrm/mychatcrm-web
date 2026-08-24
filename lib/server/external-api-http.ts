@@ -2,49 +2,20 @@ import "server-only";
 
 import { lookup } from "node:dns";
 import { request as httpsRequest } from "node:https";
-import { isIP } from "node:net";
 import type { LookupAddress, LookupOptions } from "node:dns";
 import type {
   ExternalApiAuthType,
   ExternalApiOperationInput,
 } from "@/lib/external-api/types";
+import {
+  isBlockedExternalApiIp,
+  normalizedIpLiteral,
+} from "@/lib/server/external-api-network-policy";
 
 const MAX_RESPONSE_BYTES = 512 * 1024;
 const REQUEST_TIMEOUT_MS = 8_000;
 
-function ipv4Number(ip: string): number | null {
-  const parts = ip.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return null;
-  return (((parts[0]! << 24) >>> 0) + (parts[1]! << 16) + (parts[2]! << 8) + parts[3]!) >>> 0;
-}
-
-function inV4Range(value: number, base: number, bits: number): boolean {
-  if (bits === 0) return true;
-  const mask = (0xffffffff << (32 - bits)) >>> 0;
-  return (value & mask) === (base & mask);
-}
-
-export function isBlockedExternalApiIp(address: string): boolean {
-  const kind = isIP(address);
-  if (kind === 4) {
-    const value = ipv4Number(address);
-    if (value == null) return true;
-    const ranges: Array<[string, number]> = [
-      ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8],
-      ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.0.0.0", 24], ["192.0.2.0", 24],
-      ["192.168.0.0", 16], ["198.18.0.0", 15], ["198.51.100.0", 24], ["203.0.113.0", 24],
-      ["224.0.0.0", 4], ["240.0.0.0", 4],
-    ];
-    return ranges.some(([base, bits]) => inV4Range(value, ipv4Number(base)!, bits));
-  }
-  if (kind !== 6) return true;
-  const normalized = address.toLowerCase();
-  if (normalized === "::" || normalized === "::1") return true;
-  if (normalized.startsWith("fc") || normalized.startsWith("fd") || normalized.startsWith("fe8") || normalized.startsWith("fe9") || normalized.startsWith("fea") || normalized.startsWith("feb")) return true;
-  if (normalized.startsWith("ff") || normalized.startsWith("2001:db8:")) return true;
-  const mapped = normalized.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  return mapped ? isBlockedExternalApiIp(mapped[1]!) : false;
-}
+export { isBlockedExternalApiIp } from "@/lib/server/external-api-network-policy";
 
 function safeLookup(
   hostname: string,
@@ -85,10 +56,10 @@ export function buildExternalApiRequest(params: {
   authType: ExternalApiAuthType;
   authHeaderName?: string | null;
   credential?: Record<string, string> | null;
-}): { url: URL; headers: Record<string, string>; body: string | null } {
+}): { url: URL; headers: Record<string, string>; body: null } {
   let path = params.operation.pathTemplate;
   const query = new URLSearchParams();
-  const body: Record<string, string | number | boolean> = {};
+  if (params.operation.method !== "GET") throw new Error("external_api_read_only_method_required");
   for (const definition of params.operation.parameters) {
     const value = coerceArgument(params.args[definition.name], definition.type);
     if (value == null) {
@@ -97,7 +68,7 @@ export function buildExternalApiRequest(params: {
     }
     if (definition.in === "path") path = path.replace(`{${definition.name}}`, encodeURIComponent(String(value)));
     if (definition.in === "query") query.set(definition.name, String(value));
-    if (definition.in === "body") body[definition.name] = value;
+    if (definition.in === "body") throw new Error("external_api_get_body_not_allowed");
   }
   if (/\{[^}]+\}/.test(path)) throw new Error("external_api_missing_path_argument");
   const relative = path.replace(/^\/+/, "");
@@ -111,13 +82,16 @@ export function buildExternalApiRequest(params: {
   if (params.authType === "basic") {
     headers.Authorization = `Basic ${Buffer.from(`${params.credential?.username ?? ""}:${params.credential?.password ?? ""}`, "utf8").toString("base64")}`;
   }
-  const hasBody = params.operation.method === "POST" && Object.keys(body).length > 0;
-  if (hasBody) headers["Content-Type"] = "application/json";
-  return { url, headers, body: hasBody ? JSON.stringify(body) : null };
+  return { url, headers, body: null };
 }
 
-function requestJsonOnce(request: { url: URL; method: "GET" | "POST"; headers: Record<string, string>; body: string | null }): Promise<{ status: number; payload: unknown }> {
+function requestJsonOnce(request: { url: URL; method: "GET"; headers: Record<string, string>; body: null }): Promise<{ status: number; payload: unknown }> {
   return new Promise((resolve, reject) => {
+    const literalIp = normalizedIpLiteral(request.url.hostname);
+    if (literalIp && isBlockedExternalApiIp(literalIp)) {
+      reject(new Error("external_api_private_ip_blocked"));
+      return;
+    }
     const req = httpsRequest(
       request.url,
       {
@@ -152,17 +126,19 @@ function requestJsonOnce(request: { url: URL; method: "GET" | "POST"; headers: R
     );
     req.on("timeout", () => req.destroy(new Error("external_api_timeout")));
     req.on("error", reject);
-    if (request.body) req.write(request.body);
     req.end();
   });
 }
 
 export async function executeExternalApiHttpRequest(params: {
   url: URL;
-  method: "GET" | "POST";
+  method: "GET";
   headers: Record<string, string>;
-  body: string | null;
+  body: null;
 }): Promise<{ status: number; payload: unknown }> {
+  if (params.method !== "GET" || params.body !== null) {
+    throw new Error("external_api_read_only_method_required");
+  }
   const first = await requestJsonOnce(params);
   if (first.status !== 429 && first.status < 500) return first;
   await new Promise((resolve) => setTimeout(resolve, 250));

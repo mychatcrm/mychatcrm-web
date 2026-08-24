@@ -64,6 +64,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       campaign_not_found: "Campanha não encontrada.",
       campaign_not_running: "Essa campanha não está enviando agora.",
       campaign_not_startable: "Só dá pra iniciar uma campanha parada ou pausada.",
+      campaign_rule_not_authorized:
+        "Esta campanha precisa de uma regra ativa que autorize exatamente o mesmo agente e a mesma conexão.",
     };
     const known = messages[code];
     return NextResponse.json({ error: known ?? "Não foi possível executar a ação.", code }, { status: known ? 422 : 503 });

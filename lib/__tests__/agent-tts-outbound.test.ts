@@ -83,4 +83,31 @@ describe("deliverAgentReplyWithOptionalTts", () => {
     expect(result.ttsFallbackToText).toBe(true);
     expect(result.sent).toBe(true);
   });
+
+  it("uses the channel adapter for TTS without calling Evolution", async () => {
+    const sendText = vi.fn(async () => ({ ok: true }));
+    const sendAudio = vi.fn(async (audio: Buffer) => ({
+      ok: audio.equals(Buffer.from("mp3")),
+      status: 200,
+      data: { messages: [{ id: "wamid.audio" }] },
+    }));
+
+    const result = await deliverAgentReplyWithOptionalTts({
+      instanceName: "meta-phone-number-id",
+      number: "5511999999999",
+      text: "Arbitrary multilingual reply",
+      voiceId: "voice_1",
+      languageCode: "en",
+      tenantId: "tenant-a",
+      useTts: true,
+      logScope: "test-meta",
+      sendText,
+      sendAudio,
+    });
+
+    expect(sendAudio).toHaveBeenCalledOnce();
+    expect(evolutionSendAudio).not.toHaveBeenCalled();
+    expect(sendText).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ channel: "audio", usedTts: true, sent: true });
+  });
 });

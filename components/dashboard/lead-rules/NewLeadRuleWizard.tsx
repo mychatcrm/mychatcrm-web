@@ -14,6 +14,7 @@ import {
   Link2,
   Loader2,
   Mail,
+  Megaphone,
   MessageCircle,
   Phone,
   Search,
@@ -37,6 +38,7 @@ import type { MetaFormsForm } from "@/app/api/client/meta/forms/route";
 import { isMetaAutomationDistributionType } from "@/lib/meta-lead-automation";
 import type { MetaFormField } from "@/app/api/client/meta/form-fields/route";
 import {
+  CAMPAIGN_WHATSAPP_SOURCE,
   ORGANIC_WHATSAPP_SOURCE,
   distributionLabel,
   sourceLabel,
@@ -218,7 +220,12 @@ const GENERIC_LEAD_FIELD_CATALOG: { key: string; label: string }[] = [
 
 function catalogForSource(source: LeadRuleSource | null): { key: string; label: string }[] {
   if (source === "meta_form") return META_LEAD_FORM_FIELD_CATALOG;
-  if (source === "whatsapp_api" || source === "whatsapp_qr" || source === ORGANIC_WHATSAPP_SOURCE) return WHATSAPP_LEAD_FIELD_CATALOG;
+  if (
+    source === "whatsapp_api" ||
+    source === "whatsapp_qr" ||
+    source === ORGANIC_WHATSAPP_SOURCE ||
+    source === CAMPAIGN_WHATSAPP_SOURCE
+  ) return WHATSAPP_LEAD_FIELD_CATALOG;
   return GENERIC_LEAD_FIELD_CATALOG;
 }
 
@@ -868,7 +875,20 @@ export function NewLeadRuleWizard({
     });
   }, [draft.source]);
 
+  /** Campanha: uma conexão e um agente explícitos, sem redistribuição implícita. */
+  useEffect(() => {
+    if (draft.source !== CAMPAIGN_WHATSAPP_SOURCE) return;
+    setDraft((current) => ({
+      ...current,
+      redistribution: false,
+      distributionType: "automation_agent",
+      agentIds: current.agentIds.slice(0, 1),
+      employeeIds: [],
+    }));
+  }, [draft.source]);
+
   const isOrganicWhatsApp = draft.source === ORGANIC_WHATSAPP_SOURCE;
+  const isCampaignWhatsApp = draft.source === CAMPAIGN_WHATSAPP_SOURCE;
 
   // Só linhas compatíveis com a origem desta regra. A conexão já selecionada
   // nunca some da lista — ver filterConnectionsForRuleSource.
@@ -1125,9 +1145,13 @@ export function NewLeadRuleWizard({
       if (draft.source === ORGANIC_WHATSAPP_SOURCE && !draft.connectionId.trim()) {
         return false;
       }
+      if (draft.source === CAMPAIGN_WHATSAPP_SOURCE && !draft.connectionId.trim()) {
+        return false;
+      }
       return base;
     }
     if (step === 1) {
+      if (isCampaignWhatsApp) return true;
       if (draft.source === "meta_form" && !draft.useAllForms && mappingStepHealthByForm.length > 0) {
         return mappingStepHealthByForm.every((h) => h.canAdvance);
       }
@@ -1140,6 +1164,9 @@ export function NewLeadRuleWizard({
         if (!draft.connectionId.trim()) return false;
         if (draft.transport === "cloud_api" && !draft.metaTemplateName.trim()) return false;
         return true;
+      }
+      if (isCampaignWhatsApp) {
+        return draft.distributionType === "automation_agent" && draft.agentIds.length === 1 && Boolean(draft.connectionId.trim());
       }
       if (!draft.distributionType) return false;
       if (
@@ -1195,6 +1222,7 @@ export function NewLeadRuleWizard({
     draft.transport,
     draft.useAllForms,
     isOrganicWhatsApp,
+    isCampaignWhatsApp,
     mappingStepHealthByForm,
     step,
     teamEmployees.length,
@@ -1207,6 +1235,13 @@ export function NewLeadRuleWizard({
     }
     if (isOrganicWhatsApp && draft.agentIds.length !== 1) {
       setStep(2);
+      return;
+    }
+    if (
+      isCampaignWhatsApp &&
+      (draft.distributionType !== "automation_agent" || draft.agentIds.length !== 1 || !draft.connectionId.trim())
+    ) {
+      setStep(draft.connectionId.trim() ? 2 : 0);
       return;
     }
     if (!draft.distributionType) {
@@ -1485,6 +1520,12 @@ export function NewLeadRuleWizard({
                       sub: "Mensagens espontâneas no privado",
                       iconBg: isLight ? "bg-emerald-500/12 text-emerald-700" : "bg-emerald-500/12 text-emerald-200",
                     },
+                    {
+                      id: CAMPAIGN_WHATSAPP_SOURCE,
+                      title: "Campanhas WhatsApp",
+                      sub: "Autoriza disparos numa linha e agente exatos",
+                      iconBg: isLight ? "bg-violet-500/12 text-violet-700" : "bg-violet-500/12 text-violet-200",
+                    },
                   ] as const
                 ).map((card) => {
                   const selected = draft.source === card.id;
@@ -1513,7 +1554,9 @@ export function NewLeadRuleWizard({
                         </span>
                       ) : null}
                       <span className={cn("mb-3 flex h-12 w-12 items-center justify-center rounded-xl", card.iconBg)}>
-                        {card.id === ORGANIC_WHATSAPP_SOURCE ? (
+                        {card.id === CAMPAIGN_WHATSAPP_SOURCE ? (
+                          <Megaphone className="h-7 w-7 shrink-0" aria-hidden />
+                        ) : card.id === ORGANIC_WHATSAPP_SOURCE ? (
                           <WhatsAppGlyph className="h-7 w-7 shrink-0" aria-hidden />
                         ) : card.id === "meta_form" ? (
                           <FacebookMark className="h-7 w-7" />
@@ -2131,6 +2174,77 @@ export function NewLeadRuleWizard({
               </div>
             ) : null}
 
+            {draft.source === CAMPAIGN_WHATSAPP_SOURCE ? (
+              <div className="rounded-xl border border-violet-500/20 bg-violet-500/[0.06] p-4 text-sm text-content-secondary">
+                <p className="font-medium text-content">Conexão autorizada para campanhas</p>
+                <p className="mt-1 text-xs leading-relaxed">
+                  Esta regra só poderá ser usada quando o disparo escolher esta mesma conexão e o agente definido nela.
+                </p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {[
+                    { value: "evolution" as const, label: "QR Code / Evolution" },
+                    { value: "cloud_api" as const, label: "Cloud API oficial" },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() =>
+                        setDraft((current) => ({
+                          ...current,
+                          transport: option.value,
+                          connectionId: current.transport === option.value ? current.connectionId : "",
+                          metaTemplateName: "",
+                        }))
+                      }
+                      className={cn(
+                        "rounded-lg px-3 py-2 text-left text-xs font-semibold transition",
+                        draft.transport === option.value
+                          ? "bg-primary text-white"
+                          : "bg-surface-card text-content hover:bg-surface-deep",
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-3">
+                  <label
+                    htmlFor={`${formId}-campaign-connection`}
+                    className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-content-muted"
+                  >
+                    Número / conexão exata <span className="text-primary">*</span>
+                  </label>
+                  <select
+                    id={`${formId}-campaign-connection`}
+                    value={draft.connectionId}
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, connectionId: event.target.value }))
+                    }
+                    className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
+                  >
+                    <option value="">Selecione uma conexão</option>
+                    {draft.transport === "evolution"
+                      ? selectableEvolutionConnections.map((connection) => (
+                          <option key={connection.id} value={connection.id}>
+                            Linha {connection.slot_index + 1} ·{" "}
+                            {connection.wa_jid?.split("@")[0] || connection.instance_name}
+                            {connection.connection_state === "open" ? " · conectada" : " · desconectada"}
+                          </option>
+                        ))
+                      : selectableCloudConnections.map((connection) => (
+                          <option key={connection.connectionId} value={connection.connectionId}>
+                            Linha {connection.slotIndex + 1} · {connection.label}
+                            {connection.connected ? " · conectada" : " · desconectada"}
+                          </option>
+                        ))}
+                  </select>
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-content-muted">
+                    O disparo será bloqueado se agente, transporte ou conexão divergirem desta regra.
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
             {draft.source === ORGANIC_WHATSAPP_SOURCE ? (
               <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] p-4 text-sm text-content-secondary">
                 <p className="font-medium text-content">Transporte do WhatsApp direto</p>
@@ -2545,12 +2659,13 @@ export function NewLeadRuleWizard({
               </div>
             ) : null}
 
-            {isOrganicWhatsApp ? (
+            {isOrganicWhatsApp || isCampaignWhatsApp ? (
               <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 text-sm text-content-secondary">
                 <p className="font-semibold text-content">Um único agente de IA</p>
                 <p className="mt-1 text-xs leading-relaxed">
-                  Contactos que chegam pelo WhatsApp <strong className="text-content">sem campanha paga</strong> seguem sempre para o mesmo agente, para não haver
-                  duas IAs a responder ao mesmo número.
+                  {isCampaignWhatsApp
+                    ? "Cada disparo deverá escolher esta regra, a mesma conexão e o mesmo agente. Nenhum agente será inferido automaticamente."
+                    : "Contactos que chegam pelo WhatsApp sem campanha paga seguem sempre para o mesmo agente, para não haver duas IAs a responder ao mesmo número."}
                 </p>
               </div>
             ) : (
@@ -2743,6 +2858,7 @@ export function NewLeadRuleWizard({
               </div>
             </div>
 
+            {!isCampaignWhatsApp ? (
             <div className="mt-4 rounded-xl border border-line bg-surface-deep/25 p-3">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
@@ -2945,6 +3061,7 @@ export function NewLeadRuleWizard({
                 </>
               ) : null}
             </div>
+            ) : null}
 
             {(draft.distributionType === "specific_agents" && !isOrganicWhatsApp) || isOrganicWhatsApp ? (
               <div className="mt-4 rounded-xl border border-line bg-surface-deep/25 p-3">

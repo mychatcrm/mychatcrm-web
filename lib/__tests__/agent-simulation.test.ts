@@ -10,7 +10,18 @@ const generateAIResponseMock = vi.fn(async () => ({
 }));
 
 vi.mock("@/lib/agents/inference-store", () => ({
-  getInferenceProfileByTenantAgent: vi.fn(async () => null),
+  getInferenceProfileByTenantAgent: vi.fn(async () => ({
+    tenantId: "tenant-test",
+    agentId: "agent-test",
+    displayName: "Configured agent",
+    systemPrompt: "Follow the tenant configuration exactly.",
+    model: null,
+    metadata: {
+      instructionMode: "pro",
+      systemPrompt: "Follow the tenant configuration exactly.",
+      idioma: "Automático",
+    },
+  })),
 }));
 
 vi.mock("@/lib/ai/gateway", () => ({

@@ -1,3 +1,5 @@
+import type { AgentExternalApiLookupRequest } from "@/lib/external-api/types";
+
 export type AiProvider = "openai";
 
 export type AiFeature =
@@ -10,9 +12,28 @@ export type AiFeature =
 
 export type AiRole = "user" | "assistant" | "system";
 
+export type AiMessageRetention = "required" | "history" | "retrieval" | "auxiliary";
+
+export type AiMessageSource =
+  | "technical_rules"
+  | "client_prompt"
+  | "current_message"
+  | "confirmed_tool_result"
+  | "conversation_history"
+  | "retrieved_material"
+  | "auxiliary_data";
+
 export type AiMessage = {
   role: AiRole;
   content: string;
+  /**
+   * Política local de orçamento. Não é enviada ao provedor.
+   *
+   * Ausente mantém compatibilidade: mensagens `system` e a mensagem final são
+   * obrigatórias; as demais são histórico redutível.
+   */
+  retention?: AiMessageRetention;
+  source?: AiMessageSource;
 };
 
 export type AiGenerateInput = {
@@ -46,6 +67,8 @@ export type AiGenerateSuccess = {
   providerRequestId?: string;
   estimatedCostUsd: number;
   structuredData?: unknown;
+  /** Consultas GET já executadas pelo orquestrador; nunca são comandos pendentes. */
+  externalApiLookupTrace?: AgentExternalApiLookupRequest[];
 };
 
 export type AiErrorCode =
@@ -62,7 +85,17 @@ export type AiErrorCode =
   | "EMPTY_REPLY"
   | "INVALID_STRUCTURED_REPLY"
   | "REFUSED"
-  | "MEDIA_DOWNLOAD_FAILED";
+  | "MEDIA_DOWNLOAD_FAILED"
+  | "AGENT_CONTEXT_OVERFLOW";
+
+export type AiContextOverflow = {
+  model: string;
+  contextWindowTokens: number;
+  maxInputTokens: number;
+  requiredTokens: number;
+  overflowTokens: number;
+  correction: string;
+};
 
 export type AiGenerateFailure = {
   ok: false;
@@ -73,6 +106,7 @@ export type AiGenerateFailure = {
   latencyMs?: number;
   usage?: Partial<AiUsage>;
   estimatedCostUsd?: number;
+  contextOverflow?: AiContextOverflow;
 };
 
 export type AiGenerateResult = AiGenerateSuccess | AiGenerateFailure;

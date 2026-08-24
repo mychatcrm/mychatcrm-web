@@ -291,6 +291,112 @@ export async function sendWhatsAppTextMessage(params: {
   return { ok: true, status: res.status, messageId: data.messages?.[0]?.id };
 }
 
+export type WhatsAppCloudMediaKind = "audio" | "image" | "video" | "document";
+
+/**
+ * Envia mídia por URL HTTPS ou por media id previamente carregado na Meta.
+ * O caller escolhe exatamente uma das duas origens; credenciais e URLs nunca
+ * são colocadas em query string.
+ */
+export async function sendWhatsAppMediaMessage(params: {
+  toWaId: string;
+  kind: WhatsAppCloudMediaKind;
+  phoneNumberId: string;
+  accessToken: string;
+  mediaId?: string | null;
+  link?: string | null;
+  caption?: string | null;
+  filename?: string | null;
+}): Promise<{ ok: boolean; status: number; messageId?: string; error?: string }> {
+  const to = normalizeWhatsAppCloudToWaId(params.toWaId);
+  const mediaId = params.mediaId?.trim() || null;
+  const link = params.link?.trim() || null;
+  if (!to) return { ok: false, status: 400, error: "invalid_to_wa_id" };
+  if ((mediaId ? 1 : 0) + (link ? 1 : 0) !== 1) {
+    return { ok: false, status: 400, error: "invalid_media_source" };
+  }
+
+  const media: Record<string, string> = mediaId ? { id: mediaId } : { link: link! };
+  if (params.kind !== "audio" && params.caption?.trim()) {
+    media.caption = params.caption.trim().slice(0, 1024);
+  }
+  if (params.kind === "document" && params.filename?.trim()) {
+    media.filename = params.filename.trim().slice(0, 240);
+  }
+
+  const url = `${GRAPH_API}/${encodeURIComponent(params.phoneNumberId)}/messages`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${params.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: params.kind,
+        [params.kind]: media,
+      }),
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      error: error instanceof Error ? error.message : "meta_media_send_failed",
+    };
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    return { ok: false, status: res.status, error: body.slice(0, 500) };
+  }
+  const data = (await res.json().catch(() => ({}))) as { messages?: Array<{ id?: string }> };
+  return { ok: true, status: res.status, messageId: data.messages?.[0]?.id };
+}
+
+/** Carrega bytes no endpoint de mídia da conexão exata antes do envio. */
+export async function uploadWhatsAppCloudMedia(params: {
+  phoneNumberId: string;
+  accessToken: string;
+  buffer: Buffer;
+  mimeType: string;
+  filename: string;
+}): Promise<{ ok: boolean; status: number; mediaId?: string; error?: string }> {
+  const form = new FormData();
+  form.append("messaging_product", "whatsapp");
+  form.append("type", params.mimeType);
+  form.append(
+    "file",
+    new Blob([new Uint8Array(params.buffer)], { type: params.mimeType }),
+    params.filename,
+  );
+  let res: Response;
+  try {
+    res = await fetch(`${GRAPH_API}/${encodeURIComponent(params.phoneNumberId)}/media`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${params.accessToken}` },
+      body: form,
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      error: error instanceof Error ? error.message : "meta_media_upload_failed",
+    };
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    return { ok: false, status: res.status, error: body.slice(0, 500) };
+  }
+  const data = (await res.json().catch(() => ({}))) as { id?: string };
+  return data.id
+    ? { ok: true, status: res.status, mediaId: data.id }
+    : { ok: false, status: res.status, error: "meta_media_id_missing" };
+}
+
 /**
  * A Meta rejeita parâmetro de template com quebra de linha/tab ou mais de 4
  * espaços seguidos (erro 132018) — corpos de mensagem no app são compostos em

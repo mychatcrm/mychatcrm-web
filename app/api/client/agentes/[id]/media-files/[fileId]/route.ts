@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getClientSessionFromCookies } from "@/lib/client-auth-server";
+import { requireAgentManagementSession } from "@/lib/server/agent-management-access";
 import {
   completeAgentMediaUpload,
   removeAgentMediaFile,
@@ -7,6 +7,7 @@ import {
 } from "@/lib/server/agent-media-files";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import type { AgentMediaFile } from "@/lib/server/agent-media-files";
+import { assertManageableTenantAgent } from "@/lib/server/agent-management-record";
 
 export const dynamic = "force-dynamic";
 
@@ -24,14 +25,16 @@ function toApiFile(file: AgentMediaFile) {
 }
 
 export async function POST(_request: Request, { params }: { params: { id: string; fileId: string } }) {
-  const session = await getClientSessionFromCookies();
-  if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  const guard = await requireAgentManagementSession();
+  if (!guard.ok) return guard.response;
+  const { session } = guard.value;
   const agentId = params.id?.trim();
   const fileId = params.fileId?.trim();
   if (!agentId || !fileId) return NextResponse.json({ error: "id em falta" }, { status: 400 });
 
   const sb = createSupabaseServiceClient();
   try {
+    await assertManageableTenantAgent(sb, session.tenantId, agentId);
     const file = await completeAgentMediaUpload({
       sb,
       tenantId: session.tenantId,
@@ -46,8 +49,9 @@ export async function POST(_request: Request, { params }: { params: { id: string
 }
 
 export async function PATCH(request: Request, { params }: { params: { id: string; fileId: string } }) {
-  const session = await getClientSessionFromCookies();
-  if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  const guard = await requireAgentManagementSession();
+  if (!guard.ok) return guard.response;
+  const { session } = guard.value;
   const agentId = params.id?.trim();
   const fileId = params.fileId?.trim();
   if (!agentId || !fileId) return NextResponse.json({ error: "id em falta" }, { status: 400 });
@@ -66,6 +70,7 @@ export async function PATCH(request: Request, { params }: { params: { id: string
 
   const sb = createSupabaseServiceClient();
   try {
+    await assertManageableTenantAgent(sb, session.tenantId, agentId);
     const file = await updateAgentMediaDescription({
       sb,
       tenantId: session.tenantId,
@@ -81,14 +86,16 @@ export async function PATCH(request: Request, { params }: { params: { id: string
 }
 
 export async function DELETE(_request: Request, { params }: { params: { id: string; fileId: string } }) {
-  const session = await getClientSessionFromCookies();
-  if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  const guard = await requireAgentManagementSession();
+  if (!guard.ok) return guard.response;
+  const { session } = guard.value;
   const agentId = params.id?.trim();
   const fileId = params.fileId?.trim();
   if (!agentId || !fileId) return NextResponse.json({ error: "id em falta" }, { status: 400 });
 
   const sb = createSupabaseServiceClient();
   try {
+    await assertManageableTenantAgent(sb, session.tenantId, agentId);
     await removeAgentMediaFile({
       sb,
       tenantId: session.tenantId,

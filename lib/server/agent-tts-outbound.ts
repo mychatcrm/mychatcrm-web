@@ -20,12 +20,23 @@ export async function deliverAgentReplyWithOptionalTts(params: {
   number: string;
   text: string;
   voiceId: string;
-  languageCode: SupportedLanguageCode;
+  /** Derivado do texto final; ausente deixa o modelo multilíngue inferir o idioma. */
+  languageCode?: SupportedLanguageCode;
   tenantId: string;
   useTts: boolean;
   logScope: string;
   logContext?: Record<string, unknown>;
   sendText: () => Promise<{ ok: boolean; status?: number; error?: string | null; data?: unknown }>;
+  /**
+   * Adaptador opcional para transportes que não são Evolution (Meta Cloud).
+   * Recebe os bytes já gerados; upload e envio ficam no adaptador da conexão.
+   */
+  sendAudio?: (audio: Buffer) => Promise<{
+    ok: boolean;
+    status?: number;
+    error?: string | null;
+    data?: unknown;
+  }>;
 }): Promise<AgentTtsDeliveryResult> {
   const text = params.text.slice(0, 4000);
   if (!params.useTts) {
@@ -44,12 +55,6 @@ export async function deliverAgentReplyWithOptionalTts(params: {
   }
 
   try {
-    const resolvedRecipient = await resolveEvolutionSendNumber({
-      instanceName: params.instanceName,
-      number: params.number,
-    });
-    if (resolvedRecipient.status === "not_found") throw new Error("evolution_recipient_not_found");
-    const sendNumber = resolvedRecipient.status === "exists" ? resolvedRecipient.sendNumber : params.number;
     const audioBuffer = await textToSpeechElevenLabs(text, params.voiceId, {
       languageCode: params.languageCode,
     });
@@ -57,11 +62,26 @@ export async function deliverAgentReplyWithOptionalTts(params: {
     const r2Key = await uploadMediaToR2(audioBuffer, ttsKey, "audio/mpeg");
     const mediaUrl = r2Key ? `/api/client/media/${ttsKey}` : null;
 
-    const send = await evolutionSendAudio({
-      instanceName: params.instanceName,
-      number: sendNumber,
-      audio: audioBuffer.toString("base64"),
-    });
+    const send = params.sendAudio
+      ? await params.sendAudio(audioBuffer)
+      : await (async () => {
+          const resolvedRecipient = await resolveEvolutionSendNumber({
+            instanceName: params.instanceName,
+            number: params.number,
+          });
+          if (resolvedRecipient.status === "not_found") {
+            throw new Error("evolution_recipient_not_found");
+          }
+          const sendNumber =
+            resolvedRecipient.status === "exists"
+              ? resolvedRecipient.sendNumber
+              : params.number;
+          return evolutionSendAudio({
+            instanceName: params.instanceName,
+            number: sendNumber,
+            audio: audioBuffer.toString("base64"),
+          });
+        })();
 
     if (send.ok) {
       return {

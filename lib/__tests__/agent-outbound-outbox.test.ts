@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   markAgentOutboundFailed,
   markAgentOutboundSent,
@@ -128,6 +128,64 @@ describe("agent outbound outbox", () => {
       status: "processing",
       content: "Resposta consolidada",
       attempts: 1,
+    });
+  });
+
+  describe("identidade de regra (v5) — a exigência segue a flag de rollout", () => {
+    const FLAG = "AGENT_RULE_IDENTITY_V5_ENABLED";
+    const original = process.env[FLAG];
+    afterEach(() => {
+      if (original === undefined) delete process.env[FLAG];
+      else process.env[FLAG] = original;
+    });
+
+    it("com a flag DESLIGADA, job legado sem rule_id continua despachando", async () => {
+      // Regressão real: o bloqueio por `rule_missing` nasceu incondicional.
+      // Como os jobs só passam a carregar `rule_id` DEPOIS da flag ligar, o
+      // estado padrão do rollout bloquearia toda resposta do agente em
+      // produção. O fail-closed só vale depois que o tenant entra na v5.
+      delete process.env[FLAG];
+      const state = makeSb();
+      const result = await prepareAgentOutbound({
+        sb: state.sb,
+        job: { ...job, rule_id: null },
+        generation: 1,
+        content: "Resposta consolidada",
+      });
+      expect(result.action).toBe("send");
+    });
+
+    it("com a flag LIGADA, job sem rule_id é bloqueado (fail-closed)", async () => {
+      process.env[FLAG] = "true";
+      const state = makeSb();
+      const result = await prepareAgentOutbound({
+        sb: state.sb,
+        job: { ...job, rule_id: null },
+        generation: 1,
+        content: "Resposta consolidada",
+      });
+      expect(result).toEqual({ action: "blocked", id: job.id, reason: "rule_missing" });
+    });
+
+    it("com a flag DESLIGADA, disparo automático de jornada legada sem regra continua saindo", async () => {
+      // 15 jornadas ativas em produção não têm `rule_id` (9 delas de campanha).
+      // Bloquear incondicionalmente silenciaria follow-ups, campanhas e mídia.
+      delete process.env[FLAG];
+      const state = makeSb();
+      const result = await prepareAutomatedOutbound({
+        sb: state.sb,
+        operationKey: "follow-up:legado:1",
+        tenantId: "tenant-1",
+        remoteJid: job.remote_jid,
+        agentId: "agent-1",
+        journeyId: null,
+        ruleId: null,
+        connectionId: "connection-1",
+        channel: "evolution",
+        kind: "text",
+        content: "Follow-up legado",
+      });
+      expect(result.action).not.toBe("blocked");
     });
   });
 

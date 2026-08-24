@@ -3,10 +3,18 @@
  * para agentes configurados em «Agentes». Persistência local por tenant.
  */
 
-export type LeadRuleSource = "meta_form" | "whatsapp_api" | "whatsapp_qr" | "whatsapp_organico" | "other";
+export type LeadRuleSource =
+  | "meta_form"
+  | "whatsapp_api"
+  | "whatsapp_qr"
+  | "whatsapp_organico"
+  | "whatsapp_campaign"
+  | "other";
 
 /** WhatsApp de contacto direto (sem tráfego pago): no máximo uma regra e um agente por tenant (evita conflitos). */
 export const ORGANIC_WHATSAPP_SOURCE: LeadRuleSource = "whatsapp_organico";
+/** Campanhas em massa: a regra autoriza exatamente um agente numa conexão exata. */
+export const CAMPAIGN_WHATSAPP_SOURCE: LeadRuleSource = "whatsapp_campaign";
 
 export function hasOrganicWhatsAppRule(rules: LeadDistributionRule[]): boolean {
   return rules.some((r) => r.source === ORGANIC_WHATSAPP_SOURCE);
@@ -223,6 +231,8 @@ export function sourceLabel(source: LeadRuleSource): string {
       return "WhatsApp QR";
     case "whatsapp_organico":
       return "WhatsApp direto (sem anúncios)";
+    case "whatsapp_campaign":
+      return "Campanhas de WhatsApp";
     default:
       return "Outras integrações";
   }

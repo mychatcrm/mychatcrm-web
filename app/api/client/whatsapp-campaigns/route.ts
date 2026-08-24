@@ -15,7 +15,7 @@ export async function GET() {
   const guard = await requireActiveClientSession();
   if (!guard.ok) return guard.response;
   const sb = createSupabaseServiceClient();
-  const [campaigns, connections, agents, eligible] = await Promise.all([
+  const [campaigns, connections, agents, eligible, campaignRules] = await Promise.all([
     sb
       .from("whatsapp_campaigns")
       .select("*")
@@ -31,7 +31,7 @@ export async function GET() {
     // agentes isolados só pra usar uma vez numa campanha.
     sb
       .from("tenant_agents")
-      .select("agent_id, display_name, active")
+      .select("agent_id, display_name, active, metadata")
       .eq("tenant_id", guard.session.tenantId)
       .eq("active", true)
       .order("display_name", { ascending: true }),
@@ -41,18 +41,63 @@ export async function GET() {
       .eq("tenant_id", guard.session.tenantId)
       .eq("whatsapp_opt_in", true)
       .is("whatsapp_opt_out_at", null),
+    sb
+      .from("lead_distribution_rules")
+      .select("id, name, transport, connection_id, agent_ids")
+      .eq("tenant_id", guard.session.tenantId)
+      .eq("source", "whatsapp_campaign")
+      .eq("active", true)
+      .order("order_index", { ascending: true }),
   ]);
 
-  const firstError = campaigns.error ?? agents.error ?? eligible.error;
+  const firstError = campaigns.error ?? agents.error ?? eligible.error ?? campaignRules.error;
   if (firstError) {
     return NextResponse.json({ error: firstError.message }, { status: 503 });
   }
+
+  const activeAgentIds = new Set(
+    (agents.data ?? [])
+      .filter((agent) => {
+        const metadata =
+          agent.metadata && typeof agent.metadata === "object" && !Array.isArray(agent.metadata)
+            ? (agent.metadata as Record<string, unknown>)
+            : {};
+        const status = typeof metadata.status === "string" ? metadata.status.toLowerCase() : "ativo";
+        return status !== "inativo" && status !== "pausado";
+      })
+      .map((agent) => String(agent.agent_id)),
+  );
+  const connectedKeys = new Set(
+    connections
+      .filter((connection) => connection.connected)
+      .map((connection) => `${connection.transport}:${connection.connectionId}`),
+  );
+  const rules = ((campaignRules.data ?? []) as Array<Record<string, unknown>>)
+    .map((rule) => {
+      const agentIds = Array.isArray(rule.agent_ids)
+        ? rule.agent_ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+        : [];
+      return {
+        id: String(rule.id),
+        name: String(rule.name),
+        transport: String(rule.transport) as "evolution" | "cloud_api",
+        connectionId: String(rule.connection_id ?? ""),
+        agentId: agentIds.length === 1 ? agentIds[0]! : "",
+      };
+    })
+    .filter(
+      (rule) =>
+        Boolean(rule.agentId) &&
+        activeAgentIds.has(rule.agentId) &&
+        connectedKeys.has(`${rule.transport}:${rule.connectionId}`),
+    );
 
   return NextResponse.json(
     {
       campaigns: campaigns.data ?? [],
       connections,
       agents: agents.data ?? [],
+      campaignRules: rules,
       eligibleRecipients: eligible.count ?? 0,
       activeCampaignLimit: CAMPAIGN_ACTIVE_LIMIT,
     },
@@ -85,6 +130,7 @@ export async function POST(request: Request) {
         name: typeof body.name === "string" ? body.name : "",
         connectionId: typeof body.connectionId === "string" ? body.connectionId : "",
         agentId,
+        ruleId: typeof body.ruleId === "string" ? body.ruleId : "",
         // Cru de propósito: quem valida é parseCampaignAudienceBlocks, dentro
         // de createWhatsAppCampaign — mesmo padrão do sendWindow logo abaixo.
         audienceBlocks: body.audienceBlocks,
@@ -124,6 +170,10 @@ export async function POST(request: Request) {
       campaign_message_too_long: "A mensagem ultrapassa 4.000 caracteres.",
       campaign_connection_not_available: "Selecione um WhatsApp conectado.",
       campaign_agent_not_available: "O agente selecionado não está ativo.",
+      campaign_rule_required:
+        "Selecione a regra de campanha criada em Integrações de Leads.",
+      campaign_rule_not_authorized:
+        "A regra selecionada não autoriza este agente nesta conexão. Revise a regra em Integrações de Leads.",
       campaign_meta_template_required: "Escolha um modelo (template) aprovado pela Meta pra essa linha.",
       campaign_meta_template_not_approved: "Esse modelo ainda não está aprovado pela Meta — escolha outro ou aguarde a aprovação.",
       campaign_has_no_opted_in_recipients:

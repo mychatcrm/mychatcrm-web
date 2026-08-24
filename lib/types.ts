@@ -118,6 +118,8 @@ export interface TrainingFile {
   sizeBytes?: number;
   /** Estado da extração de texto para o agente (materiais no R2). */
   extractedTextStatus?: "pending" | "processing" | "ready" | "failed" | "unsupported";
+  /** Código seguro e sem conteúdo do arquivo quando o processamento falha. */
+  extractionError?: string;
 }
 
 export interface KeywordRule {
@@ -379,6 +381,11 @@ export interface Agent {
   metricas: AgentMetrics;
   criadoEm: string;
   atualizadoEm: string;
+  /** Versão transacional da configuração persistida no backend. */
+  configVersion?: number;
+  /** Diagnóstico de configuração legado sem bloquear recursos válidos. */
+  reviewStatus?: "ready" | "action_required";
+  reviewReasons?: string[];
   /** ID da voz no ElevenLabs para respostas em áudio (TTS). Null = texto. */
   voiceId?: string | null;
   /** Modo de resposta do agente: 'text' (padrão) ou 'audio' (TTS via ElevenLabs). */
@@ -441,15 +448,13 @@ export interface Agent {
   handoffMensagem?: string;
   /** Número WhatsApp do atendente humano para notificação de handoff. */
   handoffNumero?: string;
-  /** undefined/true = injeta frases prontas de tom/velocidade/idioma no prompt; false = só o que o operador escrever. */
+  /** true somente por escolha explícita do operador; ausente/false = apenas prompts do cliente. */
   useSystemToneInstructions?: boolean;
-  /** undefined/true = injeta o guia de estilo WhatsApp de fábrica no prompt; false = só o que o operador escrever. */
+  /** @deprecated O runtime universal não injeta guia de estilo de fábrica. */
   useSystemWhatsappStyleGuide?: boolean;
   /**
-   * undefined/true = o agente se apresenta como atendente humano e nunca revela
-   * que é uma IA (comportamento histórico, disparado pela velocidade de resposta).
-   * false = mantém o ritmo configurado, mas sem se passar por humano — usado por
-   * quem precisa de transparência sobre automação.
+   * @deprecated O runtime universal ignora este campo. Identidade e
+   * transparência vêm exclusivamente dos prompts configurados pelo cliente.
    */
   useHumanPersona?: boolean;
 }

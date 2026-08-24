@@ -1464,6 +1464,7 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     remoteJid,
     agentId,
     journeyId,
+    ruleId,
     connectionId: messageConnectionId,
     channel: messageChannel,
     kind: resolvedConnection.transport === "cloud_api" ? "template" : "text",

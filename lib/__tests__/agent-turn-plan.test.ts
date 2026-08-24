@@ -31,6 +31,8 @@ describe("structured agent turn plan", () => {
         location: null,
         eventId: null,
       },
+      handoff: { requested: false, reason: null },
+      media: { filenames: [] },
     })).toEqual({
       reply: "Vou verificar e registrar esse horário.",
       agenda: {
@@ -40,6 +42,8 @@ describe("structured agent turn plan", () => {
         location: null,
         eventId: null,
       },
+      handoff: { requested: false, reason: null },
+      media: { filenames: [] },
       // Ausente na resposta do modelo: vira "none" em vez de invalidar o turno.
       leadOutcome: { action: "none", reason: null },
       externalApiLookups: [],

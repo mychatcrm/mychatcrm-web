@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
@@ -106,6 +107,14 @@ type CampaignAgent = {
   display_name: string | null;
 };
 
+type CampaignRule = {
+  id: string;
+  name: string;
+  transport: "evolution" | "cloud_api";
+  connectionId: string;
+  agentId: string;
+};
+
 type TeamEmployeeOption = {
   id: string;
   nome: string;
@@ -125,7 +134,15 @@ type MetaTemplate = {
 type CampaignRow = {
   id: string;
   name: string;
-  status: "draft" | "scheduled" | "processing" | "paused" | "completed" | "cancelled" | "failed";
+  status:
+    | "draft"
+    | "scheduled"
+    | "processing"
+    | "paused"
+    | "review_required"
+    | "completed"
+    | "cancelled"
+    | "failed";
   total_recipients: number;
   total_sent: number;
   total_failed: number;
@@ -134,6 +151,7 @@ type CampaignRow = {
   // Campos usados só ao reabrir a campanha pra editar.
   connection_id?: string | null;
   agent_id?: string | null;
+  rule_id?: string | null;
   message_template?: string | null;
   meta_template_name?: string | null;
   throughput?: string | null;
@@ -201,9 +219,11 @@ export function DisparosMassaHub() {
   const [editingCampaignId, setEditingCampaignId] = useState<string | null>(null);
   const [connections, setConnections] = useState<CampaignConnection[]>([]);
   const [agents, setAgents] = useState<CampaignAgent[]>([]);
+  const [campaignRules, setCampaignRules] = useState<CampaignRule[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignRow[]>([]);
   const [connectionId, setConnectionId] = useState("");
   const [agentId, setAgentId] = useState("");
+  const [ruleId, setRuleId] = useState("");
   const [eligibleRecipients, setEligibleRecipients] = useState(0);
   const [activeCampaignLimit, setActiveCampaignLimit] = useState(5);
   const [campaignBusy, setCampaignBusy] = useState(false);
@@ -222,6 +242,7 @@ export function DisparosMassaHub() {
         campaigns?: CampaignRow[];
         connections?: CampaignConnection[];
         agents?: CampaignAgent[];
+        campaignRules?: CampaignRule[];
         eligibleRecipients?: number;
         activeCampaignLimit?: number;
       };
@@ -229,6 +250,7 @@ export function DisparosMassaHub() {
       setCampaigns(payload.campaigns ?? []);
       setConnections(payload.connections ?? []);
       setAgents(payload.agents ?? []);
+      setCampaignRules(payload.campaignRules ?? []);
       setEligibleRecipients(payload.eligibleRecipients ?? 0);
       setActiveCampaignLimit(typeof payload.activeCampaignLimit === "number" ? payload.activeCampaignLimit : 5);
       setConnectionId((current) => current || payload.connections?.[0]?.connectionId || "");
@@ -356,6 +378,21 @@ export function DisparosMassaHub() {
     [connections, connectionId],
   );
   const isMetaTransport = selectedConnection?.transport === "cloud_api";
+  const matchingCampaignRules = useMemo(
+    () =>
+      campaignRules.filter(
+        (rule) =>
+          rule.connectionId === connectionId &&
+          rule.transport === selectedConnection?.transport &&
+          rule.agentId === agentId,
+      ),
+    [agentId, campaignRules, connectionId, selectedConnection?.transport],
+  );
+  const selectedCampaignRuleIsValid = matchingCampaignRules.some((rule) => rule.id === ruleId);
+
+  useEffect(() => {
+    if (ruleId && !selectedCampaignRuleIsValid) setRuleId("");
+  }, [ruleId, selectedCampaignRuleIsValid]);
 
   // Carrega templates aprovados quando a linha escolhida é API Meta.
   useEffect(() => {
@@ -468,6 +505,7 @@ export function DisparosMassaHub() {
     setWindowStart("09:00");
     setWindowEnd("18:00");
     setAgentId("");
+    setRuleId("");
     setOwnerAction("manter");
     setOwnerEmployeeId("");
     setContinueWithAgent(true);
@@ -500,6 +538,7 @@ export function DisparosMassaHub() {
       setCampaignName(campaign.name);
       setConnectionId(campaign.connection_id ?? "");
       setAgentId(campaign.agent_id ?? "");
+      setRuleId(campaign.rule_id ?? "");
       setBody(campaign.message_template ?? DEFAULT_MESSAGE);
       setThroughput(
         campaign.throughput === "suave" || campaign.throughput === "acelerado" ? campaign.throughput : "normal",
@@ -586,6 +625,8 @@ export function DisparosMassaHub() {
     Boolean(connectionId) &&
     Boolean(campaignName.trim()) &&
     Boolean(agentId) &&
+    Boolean(ruleId) &&
+    selectedCampaignRuleIsValid &&
     hasUsablePublico(publicoBlocks) &&
     (isMetaTransport ? Boolean(metaTemplateName) : Boolean(body.trim()));
 
@@ -600,6 +641,7 @@ export function DisparosMassaHub() {
           name: campaignName,
           connectionId,
           agentId,
+          ruleId,
           audienceBlocks: buildAudienceBlocksPayload(publicoBlocks),
           messageTemplate: isMetaTransport ? "" : body,
           metaTemplateName: isMetaTransport ? metaTemplateName : undefined,
@@ -648,6 +690,8 @@ export function DisparosMassaHub() {
   }, [
     notify,
     agentId,
+    ruleId,
+    selectedCampaignRuleIsValid,
     body,
     campaignName,
     connectionId,
@@ -892,6 +936,42 @@ export function DisparosMassaHub() {
                 Nenhum agente ativo ainda — crie um em Meus Agentes antes de agendar um disparo.
               </p>
             ) : null}
+
+            <div className="mt-5 mb-2 flex items-center gap-2.5 text-sm font-semibold text-content">
+              <ShieldCheck className="size-4 text-primary" aria-hidden />
+              Regra de autorização
+            </div>
+            <select
+              value={ruleId}
+              onChange={(event) => setRuleId(event.target.value)}
+              disabled={!connectionId || !agentId}
+              className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <option value="">
+                {!connectionId || !agentId
+                  ? "Escolha primeiro a linha e o agente"
+                  : "Selecione uma regra de campanha"}
+              </option>
+              {matchingCampaignRules.map((rule) => (
+                <option key={rule.id} value={rule.id}>
+                  {rule.name}
+                </option>
+              ))}
+            </select>
+            {connectionId && agentId && matchingCampaignRules.length === 0 ? (
+              <p className="mt-2 rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
+                Nenhuma regra ativa autoriza este agente nesta linha. Crie ou ajuste uma regra com origem
+                “Campanhas WhatsApp” em{" "}
+                <Link href="/dashboard/integracoes-leads" className="font-semibold underline underline-offset-2">
+                  Integrações de Leads
+                </Link>
+                .
+              </p>
+            ) : (
+              <p className="mt-2 text-[11px] leading-relaxed text-content-secondary">
+                O servidor valida regra, agente, transporte e conexão novamente antes de salvar e enviar.
+              </p>
+            )}
           </div>
 
           <div

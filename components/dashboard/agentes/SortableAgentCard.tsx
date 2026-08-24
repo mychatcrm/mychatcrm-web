@@ -12,11 +12,13 @@ export function SortableAgentCard({
   onToggleStatus,
   onDuplicate,
   onManage,
+  busy = false,
 }: {
   agent: Agent;
   onToggleStatus: (agentId: string) => void;
   onDuplicate: (agentId: string) => void;
   onManage: () => void;
+  busy?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: agent.id,
@@ -63,6 +65,7 @@ export function SortableAgentCard({
           onDuplicate={onDuplicate}
           dragHandle={dragHandle}
           onManage={onManage}
+          busy={busy}
         />
       </div>
     </div>

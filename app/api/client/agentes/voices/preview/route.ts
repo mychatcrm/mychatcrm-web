@@ -3,7 +3,7 @@
  * Gera uma amostra no idioma escolhido para preview de voz ElevenLabs.
  */
 import { NextResponse } from "next/server";
-import { getClientSessionFromCookies } from "@/lib/client-auth-server";
+import { requireAgentManagementSession } from "@/lib/server/agent-management-access";
 import {
   elevenLabsPreviewErrorMessage,
   isElevenLabsQuotaOrAuthError,
@@ -28,8 +28,8 @@ function normalizePreviewLang(value: unknown): PreviewLang {
 }
 
 export async function POST(request: Request) {
-  const session = await getClientSessionFromCookies();
-  if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  const guard = await requireAgentManagementSession();
+  if (!guard.ok) return guard.response;
 
   let body: { voice_id?: unknown; lang?: unknown };
   try {

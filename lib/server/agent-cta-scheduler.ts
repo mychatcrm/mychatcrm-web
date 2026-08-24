@@ -1,7 +1,12 @@
 import "server-only";
 
 import type { PostgrestSingleResponse } from "@supabase/supabase-js";
-import { detectSupportedLanguageCode, type SupportedLanguageCode } from "@/lib/ai/language-detect";
+import {
+  detectConversationLanguageTag,
+  detectSupportedLanguageCode,
+  supportedLanguageCodeFromTag,
+  type SupportedLanguageCode,
+} from "@/lib/ai/language-detect";
 import {
   formatScheduleFieldsFromDate,
   localWallClockToUtc,
@@ -724,6 +729,7 @@ function finalizeResolveAgendaTurnResult(
   result: ResolveAgendaTurnResult,
   ctaHandoffAtivo?: boolean,
   languageCode?: SupportedLanguageCode | null,
+  languageTag?: string | null,
 ): ResolveAgendaTurnResult {
   // Localiza no último ponto antes de sair: qualquer resposta fixa do sistema
   // produzida acima (em pt-BR) vira o texto do idioma da conversa.
@@ -745,6 +751,12 @@ function finalizeResolveAgendaTurnResult(
       .replace(/às\s+(\d{1,2}):(\d{2})\b/gi, (_match, hour: string, minute: string) =>
         `às ${Number(hour)}h${minute}`,
       );
+    // Para uma tag BCP-47 sem cópia interna, `structuredAgendaSuccessText`
+    // já produziu uma confirmação puramente factual e sem linguagem. Não a
+    // substitua pelas constantes pt-BR usadas pelo caminho legado.
+    if (languageTag && !supportedLanguageCodeFromTag(languageTag)) {
+      return { ...result, text: sanitized };
+    }
     if (result.action === "cancelled") {
       return localized({ ...result, text: AGENDA_SUCCESS_REPLY_CANCELLED });
     }
@@ -2214,19 +2226,72 @@ async function savePendingAgendaAction(params: {
   }
 }
 
-function structuredAgendaSuccessText(
+export function structuredAgendaSuccessText(
   action: "scheduled" | "rescheduled" | "cancelled",
   directive: AgendaDirective,
+  languageTag?: string | null,
 ): string {
-  if (action === "cancelled") return AGENDA_SUCCESS_REPLY_CANCELLED;
-  if (directive.type !== "schedule") {
-    return action === "rescheduled" ? AGENDA_SUCCESS_REPLY_RESCHEDULED : AGENDA_SUCCESS_REPLY_SCHEDULED;
+  const language = supportedLanguageCodeFromTag(languageTag);
+  if (action === "cancelled") {
+    if (!language) return languageTag ? "✅ 🚫 📅" : AGENDA_SUCCESS_REPLY_CANCELLED;
+    return {
+      pt: AGENDA_SUCCESS_REPLY_CANCELLED,
+      en: "Done, I've cancelled your appointment.",
+      es: "Listo, cancelé tu cita.",
+      fr: "C'est fait, j'ai annulé votre rendez-vous.",
+      de: "Erledigt, ich habe Ihren Termin storniert.",
+      it: "Fatto, ho cancellato il tuo appuntamento.",
+    }[language];
   }
-  const location = directive.location?.trim() ? `, em ${directive.location.trim()}` : "";
-  const when = `${formatAgendaDateForCustomer(directive.date)}, às ${formatAgendaTimeForCustomer(directive.time)}`;
-  return action === "rescheduled"
-    ? `Pronto, remarquei para ${when}${location}.`
-    : `Pronto, ficou agendado para ${when}${location}.`;
+  if (directive.type !== "schedule") {
+    if (!language) {
+      if (languageTag) return action === "rescheduled" ? "✅ 🔄 📅" : "✅ 📅";
+      return action === "rescheduled" ? AGENDA_SUCCESS_REPLY_RESCHEDULED : AGENDA_SUCCESS_REPLY_SCHEDULED;
+    }
+    return action === "rescheduled"
+      ? localizeAgendaReply(AGENDA_SUCCESS_REPLY_RESCHEDULED, language)
+      : localizeAgendaReply(AGENDA_SUCCESS_REPLY_SCHEDULED, language);
+  }
+  const localizedDate = formatAgendaDateForCustomer(directive.date);
+  const neutralDateMatch = localizedDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  const date = !language && neutralDateMatch
+    ? `${neutralDateMatch[3]}-${neutralDateMatch[2]}-${neutralDateMatch[1]}`
+    : localizedDate;
+  const normalizedTime = normalizeAgentAgendaTime(directive.time) ?? directive.time;
+  const time = language === "pt" ? formatAgendaTimeForCustomer(directive.time) : normalizedTime;
+  const rawLocation = directive.location?.trim() || "";
+  if (!language) {
+    const actionIcon = action === "rescheduled" ? "🔄 " : "";
+    const location = rawLocation ? ` · 📍 ${rawLocation}` : "";
+    return `✅ ${actionIcon}📅 ${date} · 🕒 ${time}${location}`;
+  }
+  const location = rawLocation
+    ? {
+        pt: `, em ${rawLocation}`,
+        en: `, at ${rawLocation}`,
+        es: `, en ${rawLocation}`,
+        fr: `, à ${rawLocation}`,
+        de: `, in ${rawLocation}`,
+        it: `, presso ${rawLocation}`,
+      }[language]
+    : "";
+  const scheduled = {
+    pt: `Pronto, ficou agendado para ${date}, às ${time}${location}.`,
+    en: `All set, the appointment is confirmed for ${date} at ${time}${location}.`,
+    es: `Listo, la cita está confirmada para el ${date} a las ${time}${location}.`,
+    fr: `C'est fait, le rendez-vous est confirmé pour le ${date} à ${time}${location}.`,
+    de: `Fertig, der Termin ist für den ${date} um ${time}${location} bestätigt.`,
+    it: `Fatto, l'appuntamento è confermato per il ${date} alle ${time}${location}.`,
+  }[language];
+  const rescheduled = {
+    pt: `Pronto, remarquei para ${date}, às ${time}${location}.`,
+    en: `All set, the appointment was rescheduled to ${date} at ${time}${location}.`,
+    es: `Listo, la cita fue reprogramada para el ${date} a las ${time}${location}.`,
+    fr: `C'est fait, le rendez-vous a été reporté au ${date} à ${time}${location}.`,
+    de: `Fertig, der Termin wurde auf den ${date} um ${time}${location} verschoben.`,
+    it: `Fatto, l'appuntamento è stato riprogrammato per il ${date} alle ${time}${location}.`,
+  }[language];
+  return action === "rescheduled" ? rescheduled : scheduled;
 }
 
 function cancelEventBelongsToConversation(
@@ -2305,6 +2370,7 @@ async function resolveStructuredAgendaPlan(params: {
   priorAssistantText?: string | null;
   /** O modelo tentou consultar compromissos sem pedido explícito do lead. */
   recoveredFromMisclassifiedList?: boolean;
+  languageTag?: string | null;
 }): Promise<ResolveAgendaTurnResult | null> {
   const pending = await loadPendingAgendaAction({
     sb: params.sb,
@@ -2840,7 +2906,7 @@ async function resolveStructuredAgendaPlan(params: {
         .eq("state", "pending");
     }
     return {
-      text: structuredAgendaSuccessText(result.action, directive),
+      text: structuredAgendaSuccessText(result.action, directive, params.languageTag),
       action: result.action,
       eventId: result.eventId,
     };
@@ -2925,12 +2991,28 @@ export async function resolveAgendaTurn(params: {
    * compromissos já fazia — sem isso, tudo saía em pt-BR.
    */
   languageCode?: SupportedLanguageCode | null;
+  /** Tag BCP-47 efetiva. Idiomas sem cópia interna recebem saída factual sem linguagem. */
+  languageTag?: string | null;
 }): Promise<ResolveAgendaTurnResult> {
   const cleanText = stripAgendaDirectives(params.modelText);
   const replyLanguage =
-    params.languageCode ?? detectSupportedLanguageCode(params.clientText);
+    params.languageCode ??
+    detectSupportedLanguageCode(
+      [params.clientText, params.priorAssistantText, cleanText].filter(Boolean).join("\n"),
+    );
+  const replyLanguageTag =
+    params.languageTag ??
+    detectConversationLanguageTag(
+      [params.clientText, params.priorAssistantText, cleanText].filter(Boolean).join("\n"),
+    ) ??
+    replyLanguage;
   const finalize = (result: ResolveAgendaTurnResult) =>
-    finalizeResolveAgendaTurnResult(result, params.ctaHandoffAtivo, replyLanguage);
+    finalizeResolveAgendaTurnResult(
+      result,
+      params.ctaHandoffAtivo,
+      replyLanguage,
+      replyLanguageTag,
+    );
   const clientRequestedMutation =
     isInitialAgendaMutationRequest(params.clientText) ||
     RESCHEDULE_RE.test(params.clientText) ||
@@ -3043,6 +3125,7 @@ export async function resolveAgendaTurn(params: {
       recentClientMessages: params.recentClientMessages,
       priorAssistantText: params.priorAssistantText,
       recoveredFromMisclassifiedList,
+      languageTag: replyLanguageTag,
     });
     if (structured) return finalize(structured);
   }

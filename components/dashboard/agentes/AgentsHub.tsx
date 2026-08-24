@@ -66,11 +66,16 @@ function persistAgentOrder(agents: Agent[], tenantId: string) {
 // API helpers
 // ---------------------------------------------------------------------------
 
+async function readAgentApiError(res: Response, fallback: string): Promise<string> {
+  const body = (await res.json().catch(() => ({}))) as { error?: unknown };
+  return typeof body.error === "string" && body.error.trim() ? body.error : fallback;
+}
+
 async function apiLoadAgents(): Promise<Agent[]> {
   const res = await fetch("/api/client/agentes", { cache: "no-store" });
   if (!res.ok) {
     console.warn("[agentes] GET non-OK", res.status);
-    throw new Error(`GET /api/client/agentes ${res.status}`);
+    throw new Error(await readAgentApiError(res, "Não foi possível carregar os agentes."));
   }
 
   // O cast `as { agents: Agent[] }` que existia aqui era apenas hint de
@@ -85,7 +90,7 @@ async function apiLoadAgents(): Promise<Agent[]> {
     raw = await res.json();
   } catch (e) {
     console.warn("[agentes] response not JSON", e);
-    return [];
+    throw new Error("A resposta dos agentes não pôde ser lida.");
   }
 
   if (Array.isArray(raw)) return raw as Agent[];
@@ -95,7 +100,7 @@ async function apiLoadAgents(): Promise<Agent[]> {
     if (Array.isArray(obj.data)) return obj.data as Agent[];
   }
   console.warn("[agentes] unexpected response shape:", raw);
-  return [];
+  throw new Error("A resposta dos agentes veio em formato inesperado.");
 }
 
 async function apiCreateAgent(agent: Agent): Promise<Agent> {
@@ -104,8 +109,9 @@ async function apiCreateAgent(agent: Agent): Promise<Agent> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(agent),
   });
-  if (!res.ok) throw new Error(`POST /api/client/agentes ${res.status}`);
-  const data = (await res.json()) as { agent: Agent };
+  if (!res.ok) throw new Error(await readAgentApiError(res, "Não foi possível criar o agente."));
+  const data = (await res.json().catch(() => ({}))) as { agent?: Agent };
+  if (!data.agent) throw new Error("O agente foi salvo, mas a confirmação veio incompleta.");
   return data.agent;
 }
 
@@ -115,16 +121,17 @@ async function apiUpdateAgent(agent: Agent): Promise<Agent> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(agent),
   });
-  if (!res.ok) throw new Error(`PUT /api/client/agentes/${agent.id} ${res.status}`);
-  const data = (await res.json()) as { agent?: Agent };
-  return data.agent ?? agent;
+  if (!res.ok) throw new Error(await readAgentApiError(res, "Não foi possível atualizar o agente."));
+  const data = (await res.json().catch(() => ({}))) as { agent?: Agent };
+  if (!data.agent) throw new Error("O agente foi salvo, mas a confirmação veio incompleta.");
+  return data.agent;
 }
 
 async function apiDeleteAgent(agentId: string): Promise<void> {
   const res = await fetch(`/api/client/agentes/${encodeURIComponent(agentId)}`, {
     method: "DELETE",
   });
-  if (!res.ok) throw new Error(`DELETE /api/client/agentes/${agentId} ${res.status}`);
+  if (!res.ok) throw new Error(await readAgentApiError(res, "Não foi possível excluir o agente."));
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +213,12 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
   const [extraPurchased, setExtraPurchased] = useState(0);
   const [qty, setQty] = useState(1);
   const [buying, setBuying] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
+  const [actionError, setActionError] = useState("");
+  const [actionSuccess, setActionSuccess] = useState("");
+  const [mutatingAgentIds, setMutatingAgentIds] = useState<string[]>([]);
+  const mutationLocks = useRef(new Set<string>());
 
   const purchaseSuccess = searchParams?.get("success") === "extra_agents";
 
@@ -241,6 +254,7 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
   useEffect(() => {
     let cancelled = false;
     setLoadedFromDb(false);
+    setLoadError("");
 
     void (async () => {
       try {
@@ -255,7 +269,7 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
       } catch (e) {
         if (cancelled) return;
         console.warn("[agentes] falha ao carregar:", e);
-        setAgents([]);
+        setLoadError(e instanceof Error ? e.message : "Não foi possível carregar os agentes.");
       } finally {
         if (!cancelled) setLoadedFromDb(true);
       }
@@ -264,7 +278,7 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
     return () => {
       cancelled = true;
     };
-  }, [tenantId]);
+  }, [tenantId, reloadKey]);
 
   const handleAgentsDragEnd = useCallback(
     (event: DragEndEvent) => {
@@ -310,75 +324,85 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
     }
   }, [criarParam, openCreateOverlay]);
 
-  // Create: optimistic update + persist to DB
   const handleAgentCreated = useCallback(
     async (agent: Agent) => {
-      setAgents((current) => [agent, ...current]);
-      try {
-        const saved = await apiCreateAgent(agent);
-        setAgents((current) => current.map((a) => (a.id === agent.id ? saved : a)));
-      } catch (e) {
-        console.warn("[agentes] falha ao criar no DB:", e);
-      }
+      const saved = await apiCreateAgent(agent);
+      setAgents((current) => [saved, ...current]);
+      setActionError("");
+      setActionSuccess("Agente criado e confirmado no servidor.");
     },
     [],
   );
 
-  // Update: optimistic update + persist to DB
   const handleAgentUpdated = useCallback(async (updated: Agent) => {
-    setAgents((current) => current.map((item) => (item.id === updated.id ? updated : item)));
-    try {
-      const saved = await apiUpdateAgent(updated);
-      setAgents((current) => current.map((item) => (item.id === updated.id ? saved : item)));
-    } catch (e) {
-      console.warn("[agentes] falha ao atualizar no DB:", e);
-    }
+    const saved = await apiUpdateAgent(updated);
+    setAgents((current) => current.map((item) => (item.id === updated.id ? saved : item)));
+    setManageAgent((current) => current?.id === saved.id ? saved : current);
+    setActionError("");
+    setActionSuccess("Alterações confirmadas no servidor.");
   }, []);
 
-  // Delete: optimistic update + persist to DB
   const handleAgentDeleted = useCallback(
-    (agentId: string) => {
+    async (agentId: string) => {
+      await apiDeleteAgent(agentId);
       setAgents((current) => {
         const next = current.filter((item) => item.id !== agentId);
         persistAgentOrder(next, tenantId);
         return next;
       });
-      apiDeleteAgent(agentId).catch((e) => console.warn("[agentes] falha ao apagar no DB:", e));
+      setActionError("");
+      setActionSuccess("Agente arquivado com segurança.");
     },
     [tenantId],
   );
 
-  // Toggle status: optimistic + persist
   const handleToggleStatus = useCallback(async (agentId: string) => {
-    setAgents((current) => {
-      const next = current.map((item) =>
-        item.id === agentId
-          ? { ...item, status: item.status === "ativo" ? ("pausado" as const) : ("ativo" as const) }
-          : item,
-      );
-      const toggled = next.find((a) => a.id === agentId);
-      if (toggled) {
-        apiUpdateAgent(toggled).catch((e) => console.warn("[agentes] falha ao atualizar status:", e));
-      }
-      return next;
-    });
-  }, []);
+    const current = agents.find((item) => item.id === agentId);
+    if (!current || mutationLocks.current.has(agentId)) return;
+    const toggled: Agent = {
+      ...current,
+      status: current.status === "ativo" ? "pausado" : "ativo",
+    };
+    mutationLocks.current.add(agentId);
+    setMutatingAgentIds((ids) => ids.includes(agentId) ? ids : [...ids, agentId]);
+    setActionError("");
+    setActionSuccess("");
+    try {
+      const saved = await apiUpdateAgent(toggled);
+      setAgents((items) => items.map((item) => item.id === agentId ? saved : item));
+      setActionSuccess(saved.status === "ativo" ? "Agente ativado." : "Agente pausado.");
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Não foi possível alterar o status do agente.");
+    } finally {
+      mutationLocks.current.delete(agentId);
+      setMutatingAgentIds((ids) => ids.filter((id) => id !== agentId));
+    }
+  }, [agents]);
 
-  // Duplicate: optimistic + persist
   const handleDuplicate = useCallback(async (agentId: string) => {
-    setAgents((current) => {
-      const target = current.find((item) => item.id === agentId);
-      if (!target) return current;
-      const copy: Agent = {
-        ...target,
-        id: `${target.id}-copy-${Date.now()}`,
-        nome: `${target.nome} (Cópia)`,
-        status: "inativo",
-      };
-      apiCreateAgent(copy).catch((e) => console.warn("[agentes] falha ao duplicar no DB:", e));
-      return [...current, copy];
-    });
-  }, []);
+    const target = agents.find((item) => item.id === agentId);
+    if (!target || mutationLocks.current.has(agentId)) return;
+    const copy: Agent = {
+      ...target,
+      id: `${target.id}-copy-${Date.now()}`,
+      nome: `${target.nome} (Cópia)`,
+      status: "inativo",
+    };
+    mutationLocks.current.add(agentId);
+    setMutatingAgentIds((ids) => ids.includes(agentId) ? ids : [...ids, agentId]);
+    setActionError("");
+    setActionSuccess("");
+    try {
+      const saved = await apiCreateAgent(copy);
+      setAgents((current) => [...current, saved]);
+      setActionSuccess("Cópia criada e confirmada no servidor.");
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Não foi possível copiar o agente.");
+    } finally {
+      mutationLocks.current.delete(agentId);
+      setMutatingAgentIds((ids) => ids.filter((id) => id !== agentId));
+    }
+  }, [agents]);
 
   return (
     <div className="w-full min-w-0 max-w-full space-y-5 sm:space-y-6">
@@ -528,8 +552,28 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
         </div>
       </div>
 
+      {actionError ? (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+          <span>{actionError}</span>
+          <button type="button" className="shrink-0 font-semibold" onClick={() => setActionError("")} aria-label="Fechar aviso">✕</button>
+        </div>
+      ) : null}
+      {actionSuccess ? (
+        <div role="status" className="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+          <span>{actionSuccess}</span>
+          <button type="button" className="shrink-0 font-semibold" onClick={() => setActionSuccess("")} aria-label="Fechar confirmação">✕</button>
+        </div>
+      ) : null}
+
       {!loadedFromDb ? (
         <AgentsGridSkeleton />
+      ) : loadError ? (
+        <section role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-5 py-8 text-center text-sm text-rose-100">
+          <p>{loadError}</p>
+          <Button type="button" variant="secondary" className="mt-4" onClick={() => setReloadKey((value) => value + 1)}>
+            Tentar novamente
+          </Button>
+        </section>
       ) : agents.length === 0 ? (
         <AgentsEmptyState onCreate={openCreateOverlay} />
       ) : (
@@ -543,6 +587,7 @@ function AgentsListSectionInner({ session }: { session: ClientSession }) {
                   onManage={() => openManageAgent(agent)}
                   onToggleStatus={handleToggleStatus}
                   onDuplicate={handleDuplicate}
+                  busy={mutatingAgentIds.includes(agent.id)}
                 />
               ))}
             </div>

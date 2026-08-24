@@ -23,6 +23,7 @@ import { normalizeAgentCrmDestination } from "./crm-destination";
 import { normalizeAgentResponseMode, normalizeAgentVoiceId, validateAgentResponseSettings } from "./response-settings";
 import { DEFAULT_AGENT_SMART_WAIT, sanitizeAgentSmartWaitSettings } from "./smart-wait-settings";
 import { DEFAULT_FOLLOW_UP_INTELIGENTE } from "@/lib/server/follow-up-settings";
+import { resolveExplicitAgentTimezone } from "./agent-datetime";
 
 export type AgentWizardDraft = {
   nome: string;
@@ -198,11 +199,7 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     maxSeconds: agent.smartWaitMaxSeconds,
     dedupeRepeated: agent.smartWaitDedupeRepeated,
   });
-  const timezone =
-    (typeof agent.timezone === "string" && agent.timezone.trim()) ||
-    agent.followUpInteligente?.timezone ||
-    DEFAULT_FOLLOW_UP_INTELIGENTE.timezone ||
-    "America/Sao_Paulo";
+  const timezone = resolveExplicitAgentTimezone(agent) ?? "";
   const followUpInteligente = agent.followUpInteligente
     ? { ...DEFAULT_FOLLOW_UP_INTELIGENTE, ...agent.followUpInteligente, timezone }
     : { ...DEFAULT_FOLLOW_UP_INTELIGENTE, timezone };
@@ -231,9 +228,9 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
     funil: { ...legacyFunil },
     ctaHandoffAtivo: agent.ctaHandoffAtivo ?? false,
     agendaAutomationEnabled: agent.agendaAutomationEnabled ?? false,
-    useSystemToneInstructions: agent.useSystemToneInstructions ?? true,
-    useSystemWhatsappStyleGuide: agent.useSystemWhatsappStyleGuide ?? true,
-    useHumanPersona: agent.useHumanPersona ?? true,
+    useSystemToneInstructions: agent.useSystemToneInstructions === true,
+    useSystemWhatsappStyleGuide: false,
+    useHumanPersona: false,
     agendaLembretes: agent.agendaLembretes ?? { ...DEFAULT_AGENDA_LEMBRETES, regras: [...DEFAULT_AGENDA_LEMBRETES.regras] },
     agendaDisponibilidade: {
       ...DEFAULT_AGENDA_DISPONIBILIDADE,
@@ -241,7 +238,7 @@ export function draftFromAgent(agent: Agent): AgentWizardDraft {
       diasSemana: [...(agent.agendaDisponibilidade?.diasSemana ?? DEFAULT_AGENDA_DISPONIBILIDADE.diasSemana)],
     },
     ctaFinal: agent.ctaFinal ?? "Transferir para humano",
-    handoffKeywords: agent.handoffKeywords ?? ["humano", "especialista"],
+    handoffKeywords: agent.handoffKeywords ?? [],
     handoffMensagem: agent.handoffMensagem ?? "",
     handoffNumero: agent.handoffNumero ?? "",
     foraDaVez: "padrao",
@@ -304,6 +301,15 @@ export function validateCompactAgentDraft(
   }
   if (!draft.origens.some((origin) => origin?.ativo)) return "Ative pelo menos uma origem em «Ativação e origens».";
   if (!draft.fluxo.length) return "Mantenha ao menos uma etapa no fluxo.";
+  if (draft.ctaHandoffAtivo) {
+    const handoffDigits = draft.handoffNumero.replace(/\D/g, "");
+    if (handoffDigits.length < 8 || handoffDigits.length > 15) {
+      return "Em «Transferência humana», informe um número internacional válido para o atendente.";
+    }
+    if (!draft.handoffMensagem.trim()) {
+      return "Em «Transferência humana», escreva a mensagem que será enviada ao cliente.";
+    }
+  }
   const followUpInteligente = draft.followUpInteligente;
   if (followUpInteligente?.ativo) {
     if ((followUpInteligente.tentativasContato ?? 0) < 1) {
@@ -424,7 +430,7 @@ export const defaultWizardDraft: AgentWizardDraft = {
   promptRegrasAdicionais: "",
   respostasProibidas: "",
   idioma: "Português BR",
-  timezone: DEFAULT_FOLLOW_UP_INTELIGENTE.timezone ?? "America/Sao_Paulo",
+  timezone: "",
   arquivosTreinamento: [],
   externalApiConnectorIds: [],
   origens: [
@@ -457,16 +463,16 @@ export const defaultWizardDraft: AgentWizardDraft = {
     slaHoras: 2,
     maxFollowUps: 0,
   },
-  ctaHandoffAtivo: true,
+  ctaHandoffAtivo: false,
   agendaAutomationEnabled: false,
-  useSystemToneInstructions: true,
-  useSystemWhatsappStyleGuide: true,
-  useHumanPersona: true,
+  useSystemToneInstructions: false,
+  useSystemWhatsappStyleGuide: false,
+  useHumanPersona: false,
   agendaLembretes: { ...DEFAULT_AGENDA_LEMBRETES, regras: [...DEFAULT_AGENDA_LEMBRETES.regras] },
   agendaDisponibilidade: { ...DEFAULT_AGENDA_DISPONIBILIDADE, diasSemana: [...DEFAULT_AGENDA_DISPONIBILIDADE.diasSemana] },
   ctaFinal: "Transferir para humano",
-  handoffKeywords: ["humano", "atendente", "falar com pessoa"],
-  handoffMensagem: "Perfeito! Vou te conectar com nosso especialista agora. Um momento.",
+  handoffKeywords: [],
+  handoffMensagem: "",
   handoffNumero: "",
   foraDaVez: "padrao",
   foraDaVezMensagem: "",

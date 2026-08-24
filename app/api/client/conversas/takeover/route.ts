@@ -33,14 +33,24 @@ export async function POST(request: Request) {
   }
 
   const actorId = session.employeeId ?? session.email;
-  const result = await takeoverConversation({
-    sb,
-    tenantId: session.tenantId,
-    remoteJid,
-    actorId,
-    actorName: session.displayName,
-    agentId: await resolveConversationAgentId({ sb, tenantId: session.tenantId, remoteJid }),
-  });
-
-  return NextResponse.json({ ok: true, operation: result.operation });
+  try {
+    const result = await takeoverConversation({
+      sb,
+      tenantId: session.tenantId,
+      remoteJid,
+      actorId,
+      actorName: session.displayName,
+      agentId: await resolveConversationAgentId({ sb, tenantId: session.tenantId, remoteJid }),
+    });
+    return NextResponse.json({ ok: true, operation: result.operation });
+  } catch (error) {
+    console.error("[conversation-takeover] atomic_operation_failed", {
+      tenant_id: session.tenantId,
+      error: error instanceof Error ? error.message : "takeover_failed",
+    });
+    return NextResponse.json(
+      { ok: false, error: "Não foi possível assumir a conversa. Nada foi alterado." },
+      { status: 503 },
+    );
+  }
 }

@@ -5,7 +5,14 @@ import type {
   LeadRuleSource,
 } from "@/lib/lead-distribution-rules";
 
-export const VALID_LEAD_RULE_SOURCES = ["meta_form", "whatsapp_api", "whatsapp_qr", "whatsapp_organico", "other"] as const;
+export const VALID_LEAD_RULE_SOURCES = [
+  "meta_form",
+  "whatsapp_api",
+  "whatsapp_qr",
+  "whatsapp_organico",
+  "whatsapp_campaign",
+  "other",
+] as const;
 export const VALID_LEAD_DISTRIBUTION_TYPES = [
   "round_robin",
   "specific_agents",

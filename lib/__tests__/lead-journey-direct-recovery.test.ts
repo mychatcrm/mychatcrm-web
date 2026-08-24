@@ -291,9 +291,7 @@ describe("resolveDirectJourneyAgent — recuperação quando a configuração mu
     expect(result.ok && result.agentId).toBe("agente-A");
   });
 
-  // Decisão do operador: quem já atende continua atendendo, mesmo que a
-  // mensagem chegue por outra linha da mesma conta.
-  it("mensagem numa linha diferente mantém o agente que já atende", async () => {
+  it("mensagem numa linha diferente é persistível, mas não herda a jornada nem o agente", async () => {
     const updates: Updated[] = [];
     const journey = directJourney();
     const sb = makeSupabase(
@@ -312,8 +310,7 @@ describe("resolveDirectJourneyAgent — recuperação quando a configuração mu
       connectionId: "outra-linha-conn",
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.ok && result.agentId).toBe("agente-A");
+    expect(result).toMatchObject({ ok: false, reason: "journey_connection_mismatch" });
     expect(journey.status).toBe("active");
     expect(activateLeadJourneyRpcMock).not.toHaveBeenCalled();
   });

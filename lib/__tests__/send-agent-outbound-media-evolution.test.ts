@@ -31,6 +31,8 @@ const prepareAutomatedOutbound = vi.fn(async ({ operationKey }: { operationKey: 
   id: operationKey,
   claimToken: `claim:${operationKey}`,
 }));
+const markAgentOutboundSent = vi.fn(async () => undefined);
+const markAgentOutboundFailed = vi.fn(async () => undefined);
 
 vi.mock("@/lib/integrations/evolution-api", () => ({
   evolutionSendMedia,
@@ -49,8 +51,8 @@ vi.mock("@/lib/supabase/server", () => ({
 
 vi.mock("@/lib/server/agent-outbound-outbox", () => ({
   prepareAutomatedOutbound,
-  markAgentOutboundSent: vi.fn(async () => undefined),
-  markAgentOutboundFailed: vi.fn(async () => undefined),
+  markAgentOutboundSent,
+  markAgentOutboundFailed,
 }));
 
 vi.mock("@/lib/server/agent-media-files", async (importOriginal) => {
@@ -71,6 +73,9 @@ describe("sendAgentOutboundMediaViaEvolution", () => {
     createR2PresignedGetUrl.mockClear();
     lookupReadyAgentMediaForOutbound.mockClear();
     findReadyAgentMediaByFilenameFlexible.mockClear();
+    markAgentOutboundSent.mockClear();
+    markAgentOutboundFailed.mockClear();
+    evolutionSendMedia.mockResolvedValue({ ok: true, status: 200, error: null });
   });
 
   afterEach(() => {
@@ -101,5 +106,32 @@ describe("sendAgentOutboundMediaViaEvolution", () => {
     expect(lookupReadyAgentMediaForOutbound).toHaveBeenCalledTimes(3);
     expect(createR2PresignedGetUrl).toHaveBeenCalledTimes(3);
     expect(prepareAutomatedOutbound).toHaveBeenCalledTimes(3);
+    expect(markAgentOutboundSent).toHaveBeenCalledTimes(3);
+  });
+
+  it("propagates provider failures and marks the outbox failed", async () => {
+    evolutionSendMedia.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      error: "provider_unavailable",
+    });
+    const { sendAgentOutboundMediaViaEvolution } = await import(
+      "@/lib/server/send-agent-outbound-media-evolution"
+    );
+
+    await expect(sendAgentOutboundMediaViaEvolution({
+      tenantId: "tenant-1",
+      agentId: "agent-1",
+      instanceName: "inst",
+      number: "5511999990000",
+      originalFilenames: ["a.jpg"],
+      remoteJid: "5511999990000@s.whatsapp.net",
+      journeyId: "journey-1",
+      connectionId: "connection-1",
+      operationKeyPrefix: "test-failure",
+    })).rejects.toThrow("evolution_media_delivery_failed:provider_unavailable");
+
+    expect(markAgentOutboundFailed).toHaveBeenCalledOnce();
+    expect(markAgentOutboundSent).not.toHaveBeenCalled();
   });
 });

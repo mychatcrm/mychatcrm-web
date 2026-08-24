@@ -103,12 +103,12 @@ export function AgentFormCompact({
 }: {
   initialAgent?: Agent;
   mode: "create" | "edit";
-  onSubmit?: (draft: AgentWizardDraft) => void;
+  onSubmit?: (draft: AgentWizardDraft) => Promise<void>;
   /** Formulário dentro de overlay (sem link «Voltar»; Cancelar chama `onRequestClose`). */
   embedded?: boolean;
   onRequestClose?: () => void;
   /** Só em edição no overlay: após confirmação com frase, remove o agente. */
-  onDeleteAgent?: () => void;
+  onDeleteAgent?: () => Promise<void>;
 }) {
   const { funnels } = useCrmFunnels();
   const [draft, setDraft] = useState<AgentWizardDraft>(() => {
@@ -130,19 +130,30 @@ export function AgentFormCompact({
   const [simulationContext, setSimulationContext] = useState<Record<string, unknown> | null>(null);
   const [simulationLoading, setSimulationLoading] = useState(false);
   const [simulationError, setSimulationError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
-  const submit = () => {
+  const submit = async () => {
     const message = validateCompactAgentDraft(draft, funnels);
     if (message) {
       setError(message);
       return;
     }
     setError("");
-    if (onSubmit) {
-      onSubmit(draft);
+    setSuccess("");
+    if (!onSubmit) {
+      setError("Este formulário não está ligado ao salvamento. Volte para Meus Agentes e tente novamente.");
       return;
     }
-    setSuccess(mode === "create" ? "Agente criado com sucesso (mock)." : "Agente atualizado com sucesso (mock).");
+    setSubmitting(true);
+    try {
+      await onSubmit(draft);
+      setSuccess(mode === "create" ? "Agente criado com sucesso." : "Agente atualizado com sucesso.");
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Não foi possível salvar o agente.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const closeDeleteModal = () => {
@@ -400,8 +411,8 @@ export function AgentFormCompact({
               Cancelar
             </Link>
           )}
-          <Button className="w-full min-h-[44px] sm:w-auto" onClick={submit}>
-            {mode === "create" ? "Criar agente" : "Salvar alterações"}
+          <Button className="w-full min-h-[44px] sm:w-auto" onClick={() => void submit()} disabled={submitting || deleting}>
+            {submitting ? "Salvando…" : mode === "create" ? "Criar agente" : "Salvar alterações"}
           </Button>
         </div>
 
@@ -409,7 +420,7 @@ export function AgentFormCompact({
           <div className="mt-10 rounded-xl border border-rose-500/20 bg-rose-500/[0.06] px-4 py-5 sm:px-5">
             <p className="text-xs font-semibold uppercase tracking-wide text-rose-200/90">Excluir agente</p>
             <p className="mt-1.5 text-sm leading-relaxed text-content-muted">
-              Remove o agente da lista nesta demonstração. Não há como desfazer aqui.
+              Arquiva o agente sem apagar o histórico. A operação será bloqueada enquanto existirem regras, jornadas ou campanhas vinculadas.
             </p>
             <Button
               type="button"
@@ -436,13 +447,21 @@ export function AgentFormCompact({
             <Button
               variant="danger"
               type="button"
-              disabled={!canConfirmDelete}
+              disabled={!canConfirmDelete || deleting}
               onClick={() => {
-                onDeleteAgent?.();
-                closeDeleteModal();
+                if (!onDeleteAgent || deleting) return;
+                setDeleting(true);
+                setError("");
+                void onDeleteAgent()
+                  .then(() => closeDeleteModal())
+                  .catch((deleteError) => {
+                    closeDeleteModal();
+                    setError(deleteError instanceof Error ? deleteError.message : "Não foi possível excluir o agente.");
+                  })
+                  .finally(() => setDeleting(false));
               }}
             >
-              Confirmar exclusão
+              {deleting ? "Verificando vínculos…" : "Confirmar exclusão"}
             </Button>
           </>
         }

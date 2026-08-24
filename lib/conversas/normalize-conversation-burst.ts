@@ -37,15 +37,21 @@ export function buildReplyUnitPrompt(unit: InboundTextMessage[]): string {
     .join("\n");
 }
 
-/** Chave de dedupe: acentos, pontuação final e emojis removidos da comparação. */
-export function normalizeBurstDedupeKey(text: string, mode: "exact" | "relaxed" = "relaxed"): string {
-  let value = text.trim().toLowerCase();
-  if (mode === "relaxed") {
-    value = value.normalize("NFD").replace(/\p{M}/gu, "");
-    value = value.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "").trim();
-    value = value.replace(/[!?.,…:;]+$/g, "").trim();
-  }
-  return value.replace(/\s+/g, " ");
+/**
+ * Chave estrita de dedupe.
+ *
+ * Só diferenças que não carregam significado (caixa e espaços repetidos) são
+ * normalizadas. Acentos, pontuação e emojis permanecem distintos: "esta" e
+ * "está", por exemplo, não podem perder uma pergunta real do cliente.
+ *
+ * `mode` permanece no contrato para ler metadados legados sem quebrar o
+ * runtime, mas ambos os valores obedecem à mesma semântica segura.
+ */
+export function normalizeBurstDedupeKey(
+  text: string,
+  _mode: "exact" | "relaxed" = "exact",
+): string {
+  return text.trim().toLocaleLowerCase().normalize("NFC").replace(/\s+/g, " ");
 }
 
 export function normalizeConversationBurst(
@@ -53,7 +59,7 @@ export function normalizeConversationBurst(
   options?: { dedupeEnabled?: boolean; burstMode?: "exact" | "relaxed" },
 ): NormalizedBurst {
   const dedupeEnabled = options?.dedupeEnabled !== false;
-  const burstMode = options?.burstMode ?? "relaxed";
+  const burstMode = options?.burstMode ?? "exact";
   const originalCount = messages.length;
   const canonicalMessages: InboundTextMessage[] = [];
   const seen = new Map<string, number>();

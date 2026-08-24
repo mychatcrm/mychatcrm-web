@@ -1,4 +1,7 @@
-import type { AgentResponseJobRow } from "@/lib/server/agent-response-jobs";
+import {
+  isAgentRuleIdentityV5Enabled,
+  type AgentResponseJobRow,
+} from "@/lib/server/agent-response-jobs";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
@@ -66,7 +69,14 @@ export async function authorizeAutomatedOutbound(params: {
   const epoch = Number.isSafeInteger(Number(current.automation_epoch))
     ? Number(current.automation_epoch)
     : 0;
-  const { data, error } = await params.sb.rpc("authorize_agent_outbound_dispatch_v2", {
+  // v3 exige a regra exata provada no banco; v2 mantém a exceção histórica de
+  // campanha. Trocar só com a flag ligada é o que torna o rollout reversível
+  // sem migração de volta — e evita bloquear jornadas de campanha legadas que
+  // hoje despacham normalmente sem `rule_id`.
+  const authorizeFn = isAgentRuleIdentityV5Enabled(params.tenantId)
+    ? "authorize_agent_outbound_dispatch_v3"
+    : "authorize_agent_outbound_dispatch_v2";
+  const { data, error } = await params.sb.rpc(authorizeFn, {
     p_outbox_id: params.outboxId,
     p_claim_token: params.claimToken,
     p_expected_epoch: epoch,
@@ -93,6 +103,15 @@ export async function prepareAgentOutbound(params: {
   content: string;
 }): Promise<PreparedAgentOutbound> {
   const kind = params.kind ?? "text";
+  // A exigência de regra segue a MESMA flag que governa a criação do job
+  // (`isAgentRuleIdentityV5Enabled`). Sem esse gate, o bloqueio era
+  // incondicional: com a flag desligada — o estado padrão do rollout — os jobs
+  // nascem sem `rule_id` e TODA resposta do agente seria bloqueada em
+  // produção com "rule_missing". O fail-closed só vale depois que o tenant
+  // entra na v5 e passa a de fato carimbar a regra no job.
+  if (isAgentRuleIdentityV5Enabled(params.job.tenant_id) && !params.job.rule_id?.trim()) {
+    return { action: "blocked", id: params.job.id, reason: "rule_missing" };
+  }
   if (!(await conversationSequenceIsCurrent(params.sb, params.job))) {
     return { action: "stale", id: params.job.id };
   }
@@ -119,6 +138,7 @@ export async function prepareAgentOutbound(params: {
       agent_id: params.job.agent_id,
       lead_id: params.job.lead_id,
       journey_id: params.job.journey_id,
+      rule_id: params.job.rule_id,
       operation_key: `agent-response:${params.job.id}:${params.generation}:${kind}`,
       automation_epoch: automationEpoch,
       authorization_status: "pending",
@@ -233,12 +253,24 @@ export async function prepareAutomatedOutbound(params: {
   remoteJid: string;
   agentId: string;
   journeyId: string | null;
+  /**
+   * Jornadas legadas ainda existem sem regra (48 de 133 em produção na
+   * auditoria, 15 delas ativas). Aceitar null aqui é o que permite o rollout
+   * gradual: quem ainda não migrou continua sendo atendido normalmente.
+   */
+  ruleId: string | null;
   connectionId: string;
   channel: "evolution" | "meta_cloud";
   kind: "text" | "audio" | "image" | "video" | "document" | "template";
   content: string;
   leadId?: string | null;
 }): Promise<PreparedAgentOutbound> {
+  // Mesmo gate do `prepareAgentOutbound`: sem a flag ligada para o tenant, uma
+  // jornada legada sem regra continua despachando — bloquear incondicionalmente
+  // silenciaria follow-ups, campanhas e mídia dessas conversas.
+  if (isAgentRuleIdentityV5Enabled(params.tenantId) && !params.ruleId?.trim()) {
+    return { action: "blocked", id: params.operationKey, reason: "rule_missing" };
+  }
   const { data: state, error: stateError } = await params.sb
     .from("conversation_states")
     .select("automation_epoch")
@@ -262,6 +294,7 @@ export async function prepareAutomatedOutbound(params: {
       agent_id: params.agentId,
       lead_id: params.leadId ?? null,
       journey_id: params.journeyId,
+      rule_id: params.ruleId,
       kind: params.kind,
       content: params.content,
       automation_epoch: Number(state.automation_epoch),

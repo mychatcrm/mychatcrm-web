@@ -86,6 +86,20 @@ describe("contrato: a engine do agente é universal (trava para o futuro)", () =
     }
   });
 
+  it("prompts universais não contêm persona ou exemplos comerciais internos", () => {
+    const promptSources = [
+      "lib/ai/agent-system-prompt.ts",
+      "lib/ai/generate-agent-response.ts",
+      "lib/agents/default-system-prompt-template.ts",
+      "lib/ai/prompts/agent-wizard-instructions-system.ts",
+    ];
+    const forbidden = /(Voc[eê] é Clara|Sou a Clara|Clara ·|\bcloser\b|\bcorretor\b|\bim[óo]vel\b|\bpre[çc]o\b|\bestoque\b|\bproposta comercial\b)/i;
+    for (const path of promptSources) {
+      const hit = source(path).match(forbidden);
+      expect(hit?.[0], `${path} contém persona/exemplo interno: ${hit?.[0]}`).toBeUndefined();
+    }
+  });
+
   it("o follow-up não presume que todo agente vende algo", () => {
     const content = source("lib/server/follow-up-engine.ts");
     // Frases reais que quebravam agentes fora do funil comercial, montadas em
@@ -94,20 +108,16 @@ describe("contrato: a engine do agente é universal (trava para o futuro)", () =
     expect(content).not.toContain(["Recupere", "a", "oportunidade"].join(" "));
   });
 
-  it("o prompt não manda confirmar com a equipe sem transferência humana ativa", () => {
+  it("o prompt não cria promessa de confirmação por terceiros", () => {
     const content = source("lib/ai/agent-system-prompt.ts");
-    const regra = content.indexOf("diga que vai confirmar com a equipe");
-    expect(regra).toBeGreaterThan(0);
-    // A regra precisa estar dentro de um ramo condicional de ctaHandoffAtivo.
-    const trecho = content.slice(Math.max(0, regra - 400), regra);
-    expect(trecho).toContain("ctaHandoffAtivo");
+    expect(content).not.toContain("diga que vai confirmar com a equipe");
+    expect(content).toContain("sem prometer contato ou ação de terceiros");
   });
 
-  it("a impersonação humana está atrás do toggle, não do campo de velocidade", () => {
+  it("a engine nunca injeta impersonação humana", () => {
     const content = source("lib/ai/agent-system-prompt.ts");
-    const frase = content.indexOf("Nunca demonstre que é uma IA");
-    expect(frase).toBeGreaterThan(0);
-    const trecho = content.slice(Math.max(0, frase - 300), frase);
-    expect(trecho).toContain("useHumanPersona");
+    expect(content).not.toContain("Nunca demonstre que é uma IA");
+    expect(content).not.toContain("Você é um ser humano");
+    expect(content).not.toContain("useHumanPersona");
   });
 });

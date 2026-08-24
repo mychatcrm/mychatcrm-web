@@ -3,14 +3,14 @@
  * Retorna a lista de vozes disponíveis no ElevenLabs para o tenant autenticado.
  */
 import { NextResponse } from "next/server";
-import { getClientSessionFromCookies } from "@/lib/client-auth-server";
+import { requireAgentManagementSession } from "@/lib/server/agent-management-access";
 import { listElevenLabsVoices } from "@/lib/integrations/elevenlabs";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const session = await getClientSessionFromCookies();
-  if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  const guard = await requireAgentManagementSession();
+  if (!guard.ok) return guard.response;
 
   try {
     const voices = await listElevenLabsVoices();

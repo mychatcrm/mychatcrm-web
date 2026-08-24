@@ -20,6 +20,7 @@ import {
   classifyRuleAgentIssues,
   loadTenantAgentActivation,
 } from "@/lib/server/lead-rule-agent-health";
+import { listTenantWhatsappConnections } from "@/lib/server/tenant-whatsapp-connections";
 
 export const dynamic = "force-dynamic";
 
@@ -125,6 +126,67 @@ function validateOrganicRulePayload(payload: Record<string, unknown>): NextRespo
   return null;
 }
 
+function validateCampaignRulePayload(payload: Record<string, unknown>): NextResponse | null {
+  if (payload.source !== "whatsapp_campaign") return null;
+  const agentIds = stringArray(payload.agent_ids);
+  if (payload.distribution_type !== "automation_agent" || agentIds.length !== 1) {
+    return NextResponse.json(
+      { error: "Campanhas de WhatsApp exigem exatamente um agente de IA." },
+      { status: 400 },
+    );
+  }
+  if (
+    typeof payload.connection_id !== "string" ||
+    !payload.connection_id.trim() ||
+    (payload.transport !== "evolution" && payload.transport !== "cloud_api")
+  ) {
+    return NextResponse.json(
+      { error: "Selecione a conexão exata que esta regra autoriza para os disparos." },
+      { status: 400 },
+    );
+  }
+  return null;
+}
+
+async function validateCampaignRuleIdentity(
+  sb: ReturnType<typeof createSupabaseServiceClient>,
+  tenantId: string,
+  payload: Record<string, unknown>,
+): Promise<NextResponse | null> {
+  if (payload.source !== "whatsapp_campaign") return null;
+  const connectionId = String(payload.connection_id);
+  const transport = String(payload.transport);
+  const [connections, agentResult] = await Promise.all([
+    listTenantWhatsappConnections(tenantId),
+    sb
+      .from("tenant_agents")
+      .select("agent_id, active, metadata")
+      .eq("tenant_id", tenantId)
+      .eq("agent_id", stringArray(payload.agent_ids)[0]!)
+      .eq("active", true)
+      .maybeSingle(),
+  ]);
+  const connection = connections.find(
+    (item) =>
+      item.connectionId === connectionId &&
+      item.transport === transport &&
+      item.connected,
+  );
+  if (!connection) {
+    return NextResponse.json(
+      { error: "A conexão selecionada não está ativa ou não pertence a esta conta." },
+      { status: 400 },
+    );
+  }
+  if (!agentResult.data || isBroadcastAgentRow(agentResult.data as Record<string, unknown>)) {
+    return NextResponse.json(
+      { error: "O agente selecionado não está ativo ou não é um agente de atendimento válido." },
+      { status: 400 },
+    );
+  }
+  return null;
+}
+
 export async function GET(): Promise<NextResponse> {
   const guard = await requireActiveClientSession();
   if (!guard.ok) return guard.response;
@@ -180,8 +242,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const organicValidationError = validateOrganicRulePayload(payload);
   if (organicValidationError) return organicValidationError;
+  const campaignValidationError = validateCampaignRulePayload(payload);
+  if (campaignValidationError) return campaignValidationError;
   const broadcastAgentError = await rejectBroadcastAgentsInRule(sb, session.tenantId, payload);
   if (broadcastAgentError) return broadcastAgentError;
+  const campaignIdentityError = await validateCampaignRuleIdentity(sb, session.tenantId, payload);
+  if (campaignIdentityError) return campaignIdentityError;
   // Antes do validador Meta de propósito: a trava de finalidade custa duas
   // queries locais, enquanto o validador faz várias idas ao Graph.
   const linePurposeError = await validateRuleLinePurpose(sb, session.tenantId, payload);

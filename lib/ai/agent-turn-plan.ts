@@ -33,13 +33,17 @@ export type AgentLeadOutcomeAction = "none" | "disqualified" | "lost_interest";
 
 export type AgentLeadOutcome = {
   action: AgentLeadOutcomeAction;
-  /** Justificativa curta do agente, registrada na timeline para o vendedor auditar. */
+  /** Justificativa curta do agente, registrada na timeline para auditoria do operador. */
   reason: string | null;
+  /** Citação literal do cliente usada pelo backend para comprovar o desfecho. */
+  evidence?: string | null;
 };
 
 export type AgentTurnPlan = {
   reply: string;
   agenda: AgentAgendaPlan;
+  handoff: { requested: boolean; reason: string | null };
+  media: { filenames: string[] };
   leadOutcome: AgentLeadOutcome;
   externalApiLookups: AgentExternalApiLookupRequest[];
 };
@@ -103,6 +107,28 @@ export const AGENT_TURN_RESPONSE_FORMAT = {
         },
         required: ["action", "date", "time", "location", "eventId"],
       },
+      handoff: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          requested: { type: "boolean" },
+          reason: { type: ["string", "null"] },
+        },
+        required: ["requested", "reason"],
+      },
+      media: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          filenames: {
+            type: "array",
+            maxItems: 5,
+            items: { type: "string" },
+            description: "Nomes exatos do catálogo autorizado; vazio quando nenhum arquivo deve ser enviado.",
+          },
+        },
+        required: ["filenames"],
+      },
       leadOutcome: {
         type: "object",
         additionalProperties: false,
@@ -118,8 +144,13 @@ export const AGENT_TURN_RESPONSE_FORMAT = {
             description:
               "Justificativa curta do desfecho, citando o critério atendido. Null quando action é 'none'.",
           },
+          evidence: {
+            type: ["string", "null"],
+            description:
+              "Trecho literal e exato dito pelo cliente que comprova o desfecho. Null quando action é 'none'. Nunca parafraseie.",
+          },
         },
-        required: ["action", "reason"],
+        required: ["action", "reason", "evidence"],
       },
       externalApiLookups: {
         type: "array", maxItems: 2,
@@ -130,7 +161,7 @@ export const AGENT_TURN_RESPONSE_FORMAT = {
         }, required: ["connectorId", "operationKey", "arguments"] },
       },
     },
-    required: ["reply", "agenda", "leadOutcome", "externalApiLookups"],
+    required: ["reply", "agenda", "handoff", "media", "leadOutcome", "externalApiLookups"],
   },
 } as const;
 
@@ -180,7 +211,7 @@ export function normalizeAgentAgendaTime(value: unknown): string | null {
  *
  * Campo ausente, tipo errado ou valor desconhecido viram `none` em vez de
  * invalidar o plano inteiro. Um desvio de schema aqui deixaria o lead sem
- * resposta nenhuma (`INVALID_STRUCTURED_REPLY`) — preço alto demais para um
+ * resposta nenhuma (`INVALID_STRUCTURED_REPLY`) — impacto excessivo para um
  * campo cujo silêncio significa exatamente "nada a fazer".
  */
 function parseLeadOutcome(value: unknown): AgentLeadOutcome {
@@ -196,7 +227,12 @@ function parseLeadOutcome(value: unknown): AgentLeadOutcome {
   const action = row.action as AgentLeadOutcomeAction;
   if (action === "none") return none;
   const reason = nullableString(row.reason);
-  return { action, reason: reason ? reason.slice(0, LEAD_OUTCOME_REASON_MAX) : null };
+  const evidence = nullableString(row.evidence);
+  return {
+    action,
+    reason: reason ? reason.slice(0, LEAD_OUTCOME_REASON_MAX) : null,
+    evidence: evidence ? evidence.slice(0, 500) : null,
+  };
 }
 
 export function parseAgentTurnPlan(value: unknown): AgentTurnPlan | null {
@@ -222,6 +258,22 @@ export function parseAgentTurnPlan(value: unknown): AgentTurnPlan | null {
     });
     externalApiLookups.push({ connectorId: item.connectorId, operationKey: item.operationKey, arguments: args });
   }
+  const rawHandoff =
+    row.handoff && typeof row.handoff === "object" && !Array.isArray(row.handoff)
+      ? (row.handoff as Record<string, unknown>)
+      : {};
+  const rawMedia =
+    row.media && typeof row.media === "object" && !Array.isArray(row.media)
+      ? (row.media as Record<string, unknown>)
+      : {};
+  const mediaFilenames = Array.isArray(rawMedia.filenames)
+    ? [...new Set(
+        rawMedia.filenames
+          .filter((filename): filename is string => typeof filename === "string")
+          .map((filename) => filename.trim())
+          .filter(Boolean),
+      )].slice(0, 5)
+    : [];
   return {
     reply: row.reply.trim(),
     agenda: {
@@ -231,6 +283,11 @@ export function parseAgentTurnPlan(value: unknown): AgentTurnPlan | null {
       location: nullableString(agenda.location),
       eventId: nullableString(agenda.eventId),
     },
+    handoff: {
+      requested: rawHandoff.requested === true,
+      reason: rawHandoff.requested === true ? nullableString(rawHandoff.reason) : null,
+    },
+    media: { filenames: mediaFilenames },
     leadOutcome: parseLeadOutcome(row.leadOutcome),
     externalApiLookups,
   };

@@ -5,6 +5,7 @@ import { parseAgentTurnPlan } from "@/lib/ai/agent-turn-plan";
 import { buildAgentSystemPrompt } from "@/lib/ai/agent-system-prompt";
 import {
   leadOutcomePauseReason,
+  hasExplicitLeadOutcomeEvidence,
   resolveLeadOutcomeConfig,
 } from "@/lib/server/agent-lead-outcome";
 import { resolveAgentCrmMoveTarget } from "@/lib/server/agent-crm-move";
@@ -130,6 +131,33 @@ describe("leadOutcomePauseReason", () => {
     expect(leadOutcomePauseReason({ action: "lost_interest", reason: null })).toBe("lost_interest");
     expect(leadOutcomePauseReason({ action: "none", reason: null })).toBeNull();
     expect(leadOutcomePauseReason(null)).toBeNull();
+  });
+});
+
+describe("evidência explícita do desfecho", () => {
+  it("aceita somente citação literal acompanhada de justificativa", () => {
+    expect(hasExplicitLeadOutcomeEvidence(
+      {
+        action: "lost_interest",
+        reason: "critério configurado atendido",
+        evidence: "Não tenho interesse neste momento",
+      },
+      ["Obrigado, mas não tenho interesse neste momento."],
+    )).toBe(true);
+    expect(hasExplicitLeadOutcomeEvidence(
+      {
+        action: "lost_interest",
+        reason: "critério configurado atendido",
+        evidence: "desistiu da oferta",
+      },
+      ["Vou pensar e respondo depois"],
+    )).toBe(false);
+  });
+
+  it("aceita fala curta apenas quando ela é a mensagem inteira", () => {
+    const outcome = { action: "lost_interest" as const, reason: "recusa", evidence: "No" };
+    expect(hasExplicitLeadOutcomeEvidence(outcome, ["No"])).toBe(true);
+    expect(hasExplicitLeadOutcomeEvidence(outcome, ["Not now"])).toBe(false);
   });
 });
 

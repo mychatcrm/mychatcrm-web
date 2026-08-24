@@ -104,8 +104,11 @@ describe("generateAgentResponse — trava de data/hora da agenda", () => {
 
     expect(generateAIResponseMock).toHaveBeenCalledTimes(2);
     const retryInput = generateAIResponseMock.mock.calls[1]![0] as AiGenerateInput;
-    expect(retryInput.messages[0]?.content).toContain("CORREÇÃO OBRIGATÓRIA");
-    expect(retryInput.messages[0]?.content).toContain("15/11/2023 14:00");
+    const correctionMessage = retryInput.messages.find(
+      (message) => message.role === "system" && message.content.includes("CORREÇÃO OBRIGATÓRIA"),
+    );
+    expect(correctionMessage?.content).toContain("CORREÇÃO OBRIGATÓRIA");
+    expect(correctionMessage?.content).toContain("15/11/2023 14:00");
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");

@@ -11,7 +11,18 @@ const generateAIResponseMock = vi.fn(async () => ({
 }));
 
 vi.mock("@/lib/agents/inference-store", () => ({
-  getInferenceProfileByTenantAgent: vi.fn(async () => null),
+  getInferenceProfileByTenantAgent: vi.fn(async () => ({
+    tenantId: "tenant-test",
+    agentId: "agent-test",
+    displayName: "Configured agent",
+    systemPrompt: "Follow the tenant configuration exactly.",
+    model: null,
+    metadata: {
+      instructionMode: "pro",
+      systemPrompt: "Follow the tenant configuration exactly.",
+      idioma: "Automático",
+    },
+  })),
 }));
 
 vi.mock("@/lib/ai/gateway", () => ({
@@ -37,7 +48,7 @@ describe("generateAgentResponse language instruction", () => {
     const input = generateAIResponseMock.mock.calls[0]![0] as AiGenerateInput;
     const systemPrompt = input.messages[0]?.content ?? "";
     expect(systemPrompt.split("\n")[0]).toBe(
-      "CRITICAL INSTRUCTION - LANGUAGE: The user's message is in English. You MUST respond EXCLUSIVELY in English. Do not use any other language. This is mandatory and overrides everything else.",
+      'LANGUAGE POLICY: The latest user message is in BCP-47 language "en". Respond exclusively in that language for this turn.',
     );
   });
 });

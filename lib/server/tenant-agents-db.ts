@@ -13,9 +13,10 @@ import { buildTemplateAgentsForTenant } from "@/lib/agents/template-agents";
 import { normalizeAgentCrmDestination } from "@/lib/agents/crm-destination";
 import { normalizeAgentVoiceId, sanitizeAgentResponseSettings } from "@/lib/agents/response-settings";
 import type { Agent } from "@/lib/types";
+import { isAgentArchivedMetadata } from "@/lib/server/agent-management-validation";
 
 export const BASE_AGENT_SELECT =
-  "agent_id, display_name, system_prompt, model, active, metadata, created_at, updated_at, voice_id, response_mode";
+  "agent_id, display_name, system_prompt, model, active, metadata, created_at, updated_at, voice_id, response_mode, config_version, review_status, review_reasons, archived_at";
 export const AGENT_SELECT_WITH_CRM = `${BASE_AGENT_SELECT}, crm_auto_move_enabled, crm_target_funnel_id, crm_target_column_id, crm_target_status`;
 
 const MISSING_COLUMN_CODES = new Set(["42703", "PGRST204"]);
@@ -54,6 +55,11 @@ export function rowToAgent(row: Record<string, unknown>, tenantId: string): Agen
       nome: String(row.display_name ?? meta.nome),
       status: (row.active as boolean) ? "ativo" : "pausado",
       atualizadoEm: String(row.updated_at ?? meta.atualizadoEm),
+      configVersion: Number(row.config_version ?? meta.configVersion ?? 1),
+      reviewStatus: row.review_status === "action_required" ? "action_required" : "ready",
+      reviewReasons: Array.isArray(row.review_reasons)
+        ? row.review_reasons.filter((reason): reason is string => typeof reason === "string")
+        : [],
       voiceId:
         responseSettings.responseMode === "audio"
           ? responseSettings.voiceId ?? normalizeAgentVoiceId(meta.voiceId)
@@ -71,10 +77,26 @@ export function rowToAgent(row: Record<string, unknown>, tenantId: string): Agen
     id: String(row.agent_id),
     clientId: tenantId,
     nome: String(row.display_name ?? "Agente"),
+    nomeProduto: "",
+    instructionMode: "pro",
+    simplePrompt: "",
+    promptIdentidade: "",
+    promptObjetivo: "",
     systemPrompt: String(row.system_prompt ?? base.systemPrompt),
+    promptRegrasAdicionais: "",
+    respostasProibidas: "",
+    arquivosTreinamento: [],
+    origens: [],
+    fluxo: [],
+    followUps: [],
     status: (row.active as boolean) ? "ativo" : "pausado",
     criadoEm: String(row.created_at ?? base.criadoEm),
     atualizadoEm: String(row.updated_at ?? base.atualizadoEm),
+    configVersion: Number(row.config_version ?? 1),
+    reviewStatus: row.review_status === "action_required" ? "action_required" : "ready",
+    reviewReasons: Array.isArray(row.review_reasons)
+      ? row.review_reasons.filter((reason): reason is string => typeof reason === "string")
+      : [],
     voiceId: responseSettings.voiceId,
     responseMode: responseSettings.responseMode,
     ...crmDestination,
@@ -113,5 +135,9 @@ export async function loadTenantAgentById(tenantId: string, agentId: string): Pr
     return null;
   }
   if (!data) return null;
+  if (
+    (data as Record<string, unknown>).archived_at ||
+    isAgentArchivedMetadata((data as Record<string, unknown>).metadata)
+  ) return null;
   return rowToAgent(data as Record<string, unknown>, tenant);
 }

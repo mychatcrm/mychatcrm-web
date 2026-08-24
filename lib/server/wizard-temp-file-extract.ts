@@ -3,7 +3,8 @@ import "server-only";
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
 import { describeImageFromBuffer } from "@/lib/ai/media-processor";
-import { extractTextFromDocument, filenameExt } from "@/lib/server/agent-knowledge-files";
+import { filenameExt } from "@/lib/server/agent-knowledge-files";
+import { extractKnowledgeText } from "@/lib/server/agent-knowledge-processing";
 
 export const WIZARD_TEMP_MAX_FILES = 10;
 export const WIZARD_TEMP_MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -180,14 +181,11 @@ export async function extractWizardTempFile(
       };
     }
 
-    const docResult = await extractTextFromDocument(buffer, mimeType, ext);
-    if (docResult.error) {
-      return { filename, text: null, warning: null, error: docResult.error };
-    }
-    if (docResult.text) {
+    const documentText = await extractKnowledgeText({ buffer, mimeType, filename });
+    if (documentText) {
       return {
         filename,
-        text: normalizeExtractedText(docResult.text, remainingCharBudget),
+        text: normalizeExtractedText(documentText, remainingCharBudget),
         warning: null,
         error: null,
       };

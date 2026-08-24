@@ -89,12 +89,12 @@ export function AgentCreateOverlay({
   open: boolean;
   onClose: () => void;
   session: ClientSession;
-  onCreated: (agent: Agent) => void;
+  onCreated: (agent: Agent) => Promise<void>;
   /** Incrementa ao abrir para repor o estado do formulário. */
   formKey: number;
 }) {
-  const handleSubmit = (draft: AgentWizardDraft) => {
-    onCreated(agentFromWizardDraft(draft, session.tenantId));
+  const handleSubmit = async (draft: AgentWizardDraft) => {
+    await onCreated(agentFromWizardDraft(draft, session.tenantId));
     onClose();
   };
 
@@ -126,14 +126,14 @@ export function AgentManageOverlay({
   agent: Agent | null;
   onClose: () => void;
   formKey: number;
-  onUpdated: (agent: Agent) => void;
-  onDeleted: (agentId: string) => void;
+  onUpdated: (agent: Agent) => Promise<void>;
+  onDeleted: (agentId: string) => Promise<void>;
 }) {
   const open = agent != null;
 
-  const handleSubmit = (draft: AgentWizardDraft) => {
+  const handleSubmit = async (draft: AgentWizardDraft) => {
     if (!agent) return;
-    onUpdated(agentFromWizardDraftUpdate(agent, draft));
+    await onUpdated(agentFromWizardDraftUpdate(agent, draft));
     onClose();
   };
 
@@ -156,8 +156,8 @@ export function AgentManageOverlay({
           embedded
           onRequestClose={onClose}
           onSubmit={handleSubmit}
-          onDeleteAgent={() => {
-            onDeleted(agent.id);
+          onDeleteAgent={async () => {
+            await onDeleted(agent.id);
             onClose();
           }}
         />

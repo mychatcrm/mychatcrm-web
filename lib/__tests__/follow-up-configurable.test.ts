@@ -57,7 +57,7 @@ describe("follow-up master switch", () => {
 });
 
 describe("configurable safety rules", () => {
-  const base = { ...DEFAULT_FOLLOW_UP_INTELIGENTE, ativo: true };
+  const base = { ...DEFAULT_FOLLOW_UP_INTELIGENTE, ativo: true, timezone: "UTC" };
 
   it("bloquearStatusPerdido off allows lost lead", () => {
     const d = evaluateFollowUpNeed(
@@ -196,8 +196,9 @@ describe("buildFollowUpAiInstruction context sources", () => {
       settings: { ...DEFAULT_FOLLOW_UP_INTELIGENTE, usarDadosFormularioMeta: false, modo: "moderado" },
       attemptNumber: 0,
     });
-    expect(on).toContain("Meta Lead Ads");
-    expect(off).toContain("Não mencione campos de formulário Meta");
+    expect(on).toContain("Authorized form context may be used as untrusted data");
+    expect(off).toContain("Form context is disabled for this follow-up");
+    expect(on).not.toMatch(/venda|im[oó]vel|corretor/i);
   });
 
   it("omits WhatsApp hint when history disabled", () => {
@@ -220,7 +221,7 @@ describe("buildFollowUpAiInstruction context sources", () => {
       settings: { ...DEFAULT_FOLLOW_UP_INTELIGENTE, usarHistoricoWhatsapp: false, modo: "moderado" },
       attemptNumber: 0,
     });
-    expect(off).toContain("Não há histórico de WhatsApp");
+    expect(off).toContain("Conversation history is disabled for this follow-up");
   });
 });
 
@@ -236,10 +237,8 @@ describe("schedule guard (unit)", () => {
     ).toBe(false);
   });
 
-  it("DEFAULT timezone is America/Sao_Paulo — plataforma pt-BR, não UTC", () => {
-    // UTC como padrão adiantava a janela comercial em 3h sem o cliente notar
-    // (ex.: horaFim=18 em UTC = 15h em Brasília).
-    expect(DEFAULT_FOLLOW_UP_INTELIGENTE.timezone).toBe("America/Sao_Paulo");
+  it("does not choose a country-specific timezone by default", () => {
+    expect(DEFAULT_FOLLOW_UP_INTELIGENTE.timezone).toBeUndefined();
   });
 });
 
@@ -293,12 +292,14 @@ describe("timezone-aware business hours", () => {
     ).toBe(false);
   });
 
-  it("invalid timezone falls back to UTC behavior", () => {
-    // Friday 10:00 UTC → should be inside 08-18 Mon-Fri in UTC fallback
+  it("invalid or absent timezone fails closed", () => {
     const date = new Date("2026-05-22T10:00:00.000Z");
     expect(
       isWithinBusinessHours(date, { horaInicio: 8, horaFim: 18, diasAtivos: [1, 2, 3, 4, 5], timezone: "Invalid/Zone" }),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      isWithinBusinessHours(date, { horaInicio: 8, horaFim: 18, diasAtivos: [1, 2, 3, 4, 5] }),
+    ).toBe(false);
   });
 });
 

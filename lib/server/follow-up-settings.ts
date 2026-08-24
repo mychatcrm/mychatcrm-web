@@ -1,4 +1,4 @@
-import { parseTimezone } from "@/lib/agents/agent-datetime";
+import { normalizeIanaTimezone } from "@/lib/agents/agent-datetime";
 import type { AgentFollowUpInteligente } from "@/lib/types";
 
 export const DEFAULT_FOLLOW_UP_INTELIGENTE: AgentFollowUpInteligente = {
@@ -25,12 +25,9 @@ export const DEFAULT_FOLLOW_UP_INTELIGENTE: AgentFollowUpInteligente = {
   usarDadosFormularioMeta: true,
   usarHistoricoCrm: true,
   usarHistoricoWhatsapp: true,
-  // Plataforma pt-BR, público majoritariamente brasileiro: "UTC (padrão)" era
-  // o primeiro item do seletor e ninguém pensava em trocar — o agente nascia
-  // com a janela de horário comercial do follow-up 3h adiantada em relação a
-  // Brasília (ex.: horaFim=18 em UTC vira 15h em Brasília — o follow-up parava
-  // de disparar 3h antes do fim do expediente real, sem o cliente perceber).
-  timezone: "America/Sao_Paulo",
+  // Deliberately absent: a business-hours window requires an explicit IANA
+  // timezone chosen by the operator. The runtime never guesses a country.
+  timezone: undefined,
   retomadaHumanoTempoValor: null,   // null = sem restrição (retrocompatível)
   retomadaHumanoTempoUnidade: "horas" as const,
   // Movimentação do card no CRM ao longo do ciclo de follow-up. Tudo desligado
@@ -82,7 +79,7 @@ export function followUpInteligenteFromMetadata(
 ): AgentFollowUpInteligente {
   const raw = metadata?.followUpInteligente;
   if (!raw || typeof raw !== "object") {
-    const timezone = parseTimezone(metadata?.timezone);
+    const timezone = normalizeIanaTimezone(metadata?.timezone) ?? undefined;
     return { ...DEFAULT_FOLLOW_UP_INTELIGENTE, timezone };
   }
   const src = raw as Record<string, unknown>;
@@ -183,9 +180,10 @@ export function followUpInteligenteFromMetadata(
     usarDadosFormularioMeta: bool(src, "usarDadosFormularioMeta", defaults.usarDadosFormularioMeta),
     usarHistoricoCrm: bool(src, "usarHistoricoCrm", defaults.usarHistoricoCrm),
     usarHistoricoWhatsapp: bool(src, "usarHistoricoWhatsapp", defaults.usarHistoricoWhatsapp),
-    timezone: parseTimezone(
-      typeof metadata?.timezone === "string" ? metadata.timezone : src.timezone,
-    ),
+    timezone:
+      typeof metadata?.timezone === "string" && metadata.timezone.trim()
+        ? normalizeIanaTimezone(metadata.timezone) ?? undefined
+        : normalizeIanaTimezone(src.timezone) ?? undefined,
     // null = sem restrição de tempo para abandono humano (retrocompatível com configs antigas).
     retomadaHumanoTempoValor:
       typeof src.retomadaHumanoTempoValor === "number" && Number.isFinite(src.retomadaHumanoTempoValor)

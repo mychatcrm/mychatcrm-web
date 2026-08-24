@@ -7,6 +7,7 @@ import {
 describe("followUpInteligenteFromMetadata", () => {
   it("returns safe defaults when metadata is empty", () => {
     expect(followUpInteligenteFromMetadata(null)).toEqual(DEFAULT_FOLLOW_UP_INTELIGENTE);
+    expect(followUpInteligenteFromMetadata(null).timezone).toBeUndefined();
   });
 
   it("parses all configurable fields", () => {
@@ -89,5 +90,15 @@ describe("followUpInteligenteFromMetadata", () => {
       followUpInteligente: { ativo: true, timezone: "America/New_York" },
     });
     expect(result.timezone).toBe("America/New_York");
+  });
+
+  it("preserves a missing/invalid timezone so timed follow-up can fail closed", () => {
+    expect(followUpInteligenteFromMetadata({
+      followUpInteligente: { ativo: true, usarHorarioComercial: true },
+    }).timezone).toBeUndefined();
+    expect(followUpInteligenteFromMetadata({
+      timezone: "invalid",
+      followUpInteligente: { ativo: true, timezone: "Europe/Lisbon" },
+    }).timezone).toBeUndefined();
   });
 });

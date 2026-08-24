@@ -27,11 +27,23 @@ const STUCK_PROCESSING_MS = 5 * 60 * 1000;
 const MAX_JOB_ATTEMPTS = 3;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+export function isAgentRuleIdentityV5Enabled(tenantId: string): boolean {
+  if (process.env.AGENT_RULE_IDENTITY_V5_ENABLED === "true") return true;
+  const canaryTenants = new Set(
+    (process.env.AGENT_RULE_IDENTITY_V5_TENANTS ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
+  return canaryTenants.has(tenantId);
+}
+
 export type AgentResponseJobRow = {
   id: string;
   tenant_id: string;
   lead_id: string | null;
   journey_id: string | null;
+  rule_id: string | null;
   remote_jid: string;
   agent_id: string;
   instance_name: string;
@@ -71,6 +83,7 @@ function rowFromDb(data: Record<string, unknown>): AgentResponseJobRow {
     tenant_id: String(data.tenant_id),
     lead_id: typeof data.lead_id === "string" ? data.lead_id : null,
     journey_id: typeof data.journey_id === "string" ? data.journey_id : null,
+    rule_id: typeof data.rule_id === "string" ? data.rule_id : null,
     remote_jid: String(data.remote_jid),
     agent_id: String(data.agent_id),
     instance_name: String(data.instance_name),
@@ -141,7 +154,10 @@ export async function shouldScheduleAgentResponse(params: {
   remoteJid: string;
   agentId: string;
   journeyId?: string | null;
-}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  connectionId?: string | null;
+  channel?: "evolution" | "meta_cloud";
+}): Promise<{ ok: true; ruleId: string | null } | { ok: false; reason: string }> {
+  let ruleId: string | null = null;
   if (isJourneyIsolationEnabled()) {
     if (!params.journeyId) return { ok: false, reason: "missing_active_journey" };
     const journey = await authorizeActiveJourney({
@@ -149,12 +165,18 @@ export async function shouldScheduleAgentResponse(params: {
       tenantId: params.tenantId,
       remoteJid: params.remoteJid,
       preferredAgentId: params.agentId,
+      connectionId: params.connectionId,
+      channel: params.channel,
     });
     if (!journey.ok || journey.journey?.id !== params.journeyId) {
       return {
         ok: false,
         reason: journey.ok ? "journey_id_mismatch" : journey.reason,
       };
+    }
+    ruleId = journey.journey.ruleId;
+    if (isAgentRuleIdentityV5Enabled(params.tenantId) && !ruleId) {
+      return { ok: false, reason: "rule_missing" };
     }
   }
   const allowed = await isAgentAutomationAllowed({
@@ -164,7 +186,7 @@ export async function shouldScheduleAgentResponse(params: {
     agentId: params.agentId,
   });
   if (!allowed.ok) return { ok: false, reason: allowed.reason };
-  return { ok: true };
+  return { ok: true, ruleId };
 }
 
 export async function reclaimStuckProcessingJobs(sb?: SupabaseServiceClient): Promise<number> {
@@ -258,6 +280,8 @@ export async function scheduleAgentResponseJob(params: {
     remoteJid: params.remoteJid,
     agentId: params.agentId,
     journeyId: params.journeyId,
+    connectionId,
+    channel: params.channel,
   });
   if (!eligible.ok) {
     logJobEvent("schedule_skipped", {
@@ -306,7 +330,16 @@ export async function scheduleAgentResponseJob(params: {
   // SELECT + UPDATE no TypeScript perdia message_ids quando dois webhooks
   // chegavam juntos (lost update), exatamente o caso de 2–3 mensagens seguidas.
   const channel = params.channel;
-  const { data, error } = await sb.rpc("upsert_agent_response_job_burst_v4", {
+  const useRuleIdentityV5 = isAgentRuleIdentityV5Enabled(params.tenantId);
+  if (useRuleIdentityV5 && !eligible.ruleId) {
+    logJobEvent("schedule_skipped", {
+      tenant_id: params.tenantId,
+      remote_jid: maskRemoteJidForLog(params.remoteJid),
+      reason: "rule_missing",
+    });
+    return null;
+  }
+  const rpcParams = {
     p_tenant_id: params.tenantId,
     p_remote_jid: params.remoteJid,
     p_agent_id: params.agentId,
@@ -321,7 +354,14 @@ export async function scheduleAgentResponseJob(params: {
     p_max_seconds: settings.maxSeconds,
     p_lead_id: params.leadId ?? null,
     p_journey_id: params.journeyId ?? null,
-  });
+    ...(useRuleIdentityV5 ? { p_rule_id: eligible.ruleId } : {}),
+  };
+  const { data, error } = await sb.rpc(
+    useRuleIdentityV5
+      ? "upsert_agent_response_job_burst_v5"
+      : "upsert_agent_response_job_burst_v4",
+    rpcParams,
+  );
 
   if (error || !data || typeof data !== "object" || Array.isArray(data)) {
     logJobEvent("failed_reason", {
@@ -516,6 +556,8 @@ export async function tryProcessAgentResponseJob(
       remoteJid: job.remote_jid,
       agentId: job.agent_id,
       journeyId: job.journey_id,
+      connectionId: job.connection_id,
+      channel: job.channel,
     });
     if (!eligible.ok) {
       const cancelled = await updateClaimedJobGeneration(
@@ -534,6 +576,29 @@ export async function tryProcessAgentResponseJob(
       );
       if (!cancelled) await requeueSupersededJobGeneration(client, job.id, claimedGeneration);
       logJobEvent("job_cancelled", { job_id: job.id, reason: eligible.reason });
+      return "skipped";
+    }
+    if (
+      isAgentRuleIdentityV5Enabled(job.tenant_id) &&
+      (!job.rule_id || job.rule_id !== eligible.ruleId)
+    ) {
+      const blocked = await updateClaimedJobGeneration(
+        client,
+        job.id,
+        claimedGeneration,
+        claimToken,
+        {
+          status: "cancelled",
+          failed_reason: "job_rule_mismatch",
+          completed_at: new Date().toISOString(),
+          locked_at: null,
+          claim_token: null,
+          claim_expires_at: null,
+          updated_at: new Date().toISOString(),
+        },
+      );
+      if (!blocked) await requeueSupersededJobGeneration(client, job.id, claimedGeneration);
+      logJobEvent("job_cancelled", { job_id: job.id, reason: "job_rule_mismatch" });
       return "skipped";
     }
 
