@@ -222,8 +222,8 @@ begin
 
   if v_journey.source = 'whatsapp_direct' then
     if v_rule.source <> 'whatsapp_organico'
-       or case when jsonb_typeof(v_rule.agent_ids) = 'array'
-            then jsonb_array_length(v_rule.agent_ids) <> 1 else true end
+       or (case when jsonb_typeof(v_rule.agent_ids) = 'array'
+            then jsonb_array_length(v_rule.agent_ids) <> 1 else true end)
        or v_rule.distribution_type not in (
          'automation_agent', 'specific_agents', 'round_robin', 'all_agents'
        ) then
@@ -246,8 +246,8 @@ begin
     end if;
   elsif v_journey.source = 'whatsapp_campaign' then
     if v_rule.source <> 'whatsapp_campaign'
-       or case when jsonb_typeof(v_rule.agent_ids) = 'array'
-            then jsonb_array_length(v_rule.agent_ids) <> 1 else true end
+       or (case when jsonb_typeof(v_rule.agent_ids) = 'array'
+            then jsonb_array_length(v_rule.agent_ids) <> 1 else true end)
        or v_rule.distribution_type <> 'automation_agent'
        or v_journey.campaign_id is null then
       raise exception 'agent_response_job_source_scope_mismatch';
@@ -1087,8 +1087,8 @@ begin
     if v_journey.source = 'whatsapp_direct' then
       if v_rule.source <> 'whatsapp_organico'
          or v_rule.transport not in ('evolution', 'cloud_api')
-         or case when jsonb_typeof(v_rule.agent_ids) = 'array'
-              then jsonb_array_length(v_rule.agent_ids) <> 1 else true end
+         or (case when jsonb_typeof(v_rule.agent_ids) = 'array'
+              then jsonb_array_length(v_rule.agent_ids) <> 1 else true end)
          or v_rule.distribution_type not in (
            'automation_agent', 'specific_agents', 'round_robin', 'all_agents'
          ) then
@@ -1113,8 +1113,8 @@ begin
     elsif v_journey.source = 'whatsapp_campaign' then
       if v_rule.source <> 'whatsapp_campaign'
          or v_rule.transport not in ('evolution', 'cloud_api')
-         or case when jsonb_typeof(v_rule.agent_ids) = 'array'
-              then jsonb_array_length(v_rule.agent_ids) <> 1 else true end
+         or (case when jsonb_typeof(v_rule.agent_ids) = 'array'
+              then jsonb_array_length(v_rule.agent_ids) <> 1 else true end)
          or v_rule.distribution_type <> 'automation_agent'
          or v_journey.campaign_id is null then
         raise exception 'automation_authorization_invalid';
@@ -1316,11 +1316,11 @@ begin
       v_reason := 'rule_transport_mismatch';
     elsif v_journey.source = 'whatsapp_direct' and v_rule.source <> 'whatsapp_organico' then
       v_reason := 'direct_rule_source_mismatch';
-    elsif v_journey.source = 'whatsapp_direct' and case
+    elsif v_journey.source = 'whatsapp_direct' and (case
       when jsonb_typeof(v_rule.agent_ids) = 'array'
         then jsonb_array_length(v_rule.agent_ids) <> 1
       else true
-    end then
+    end) then
       v_reason := 'direct_rule_ambiguous';
     elsif v_journey.source = 'whatsapp_direct'
        and v_rule.distribution_type not in ('automation_agent','specific_agents','round_robin','all_agents') then
@@ -1343,11 +1343,11 @@ begin
       v_reason := 'meta_rule_distribution_invalid';
     elsif v_journey.source = 'whatsapp_campaign' and v_rule.source <> 'whatsapp_campaign' then
       v_reason := 'campaign_rule_source_mismatch';
-    elsif v_journey.source = 'whatsapp_campaign' and case
+    elsif v_journey.source = 'whatsapp_campaign' and (case
       when jsonb_typeof(v_rule.agent_ids) = 'array'
         then jsonb_array_length(v_rule.agent_ids) <> 1
       else true
-    end then
+    end) then
       v_reason := 'campaign_rule_ambiguous';
     elsif v_journey.source = 'whatsapp_campaign'
        and v_rule.distribution_type <> 'automation_agent' then
