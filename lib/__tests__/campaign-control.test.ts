@@ -33,6 +33,7 @@ function makeSb(options: {
   currentStatus: string | null;
   onCampaignUpdate?: (patch: Row) => void;
   onRecipientsUpdate?: (patch: Row) => void;
+  ruleValid?: boolean;
 }) {
   return {
     from: (table: string) => {
@@ -47,10 +48,39 @@ function makeSb(options: {
         else options.onRecipientsUpdate?.(patch);
         return builder;
       };
-      builder.maybeSingle = async () =>
-        options.currentStatus === null
+      builder.maybeSingle = async () => {
+        if (table === "tenant_agents") {
+          return { data: { active: true, metadata: { status: "ativo" } }, error: null };
+        }
+        if (table === "lead_distribution_rules") {
+          return options.ruleValid === false
+            ? { data: null, error: null }
+            : {
+                data: {
+                  source: "whatsapp_campaign",
+                  active: true,
+                  transport: "evolution",
+                  connection_id: "evo-1",
+                  agent_ids: ["agent-1"],
+                },
+                error: null,
+              };
+        }
+        return options.currentStatus === null
           ? { data: null, error: null }
-          : { data: { id: "camp-1", status: options.currentStatus }, error: null };
+          : {
+              data: {
+                id: "camp-1",
+                tenant_id: "tenant-1",
+                status: options.currentStatus,
+                rule_id: "rule-1",
+                agent_id: "agent-1",
+                connection_id: "evo-1",
+                transport: "evolution",
+              },
+              error: null,
+            };
+      };
       builder.single = async () => ({ data: { id: "camp-1", ...(lastPatch ?? {}) }, error: null });
       builder.then = (resolve: (v: unknown) => unknown) => Promise.resolve({ data: null, error: null }).then(resolve);
       return builder;
@@ -95,6 +125,19 @@ describe("controlWhatsAppCampaign — start", () => {
   it("recusa iniciar o que já terminou — pra rodar de novo é 'começar do zero'", async () => {
     const sb = makeSb({ currentStatus: "completed" });
     await expect(controlWhatsAppCampaign({ sb, ...base, action: "start" })).rejects.toThrow("campaign_not_startable");
+  });
+
+  it("não inicia quando a regra foi removida ou desativada", async () => {
+    let patch: Row | undefined;
+    const sb = makeSb({
+      currentStatus: "draft",
+      ruleValid: false,
+      onCampaignUpdate: (value) => (patch = value),
+    });
+    await expect(controlWhatsAppCampaign({ sb, ...base, action: "start" })).rejects.toThrow(
+      "campaign_rule_not_authorized",
+    );
+    expect(patch?.status).toBe("review_required");
   });
 });
 

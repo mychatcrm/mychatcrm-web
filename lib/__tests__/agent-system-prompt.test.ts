@@ -55,17 +55,17 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain(
       "Ao confirmar um agendamento, sempre repita a data, horário e local na sua resposta de confirmação.",
     );
-    expect(prompt).toContain("[CONTEXTO DO SISTEMA: Data e hora atual:");
+    expect(prompt).toContain("[SYSTEM CONTEXT: Current date and time:");
     expect(prompt).toMatch(
-      /\[CONTEXTO DO SISTEMA: Data e hora atual: .+, \d{2} de .+ de \d{4}, \d{2}:\d{2} \(.+\)\. Use SEMPRE esta data\/hora como referência para qualquer cálculo de data/,
+      /\[SYSTEM CONTEXT: Current date and time: \d{4}-\d{2}-\d{2} \d{2}:\d{2} \(.+\)\. Use this timestamp only as the temporal reference for date calculations\.\]/,
     );
-    expect(prompt.indexOf("[CONTEXTO DO SISTEMA")).toBeGreaterThan(prompt.indexOf("IDENTIDADE DO AGENTE"));
+    expect(prompt.indexOf("[SYSTEM CONTEXT")).toBeGreaterThan(prompt.indexOf("IDENTIDADE DO AGENTE"));
     expect(prompt).toContain("Max Vendas");
-    expect(prompt).toContain("Tom de voz: Consultivo");
+    expect(prompt).toContain("Tom configurado: Consultivo");
     expect(prompt).toContain("Não fale de concorrentes.");
-    expect(prompt).toContain("Dados do lead:");
-    expect(prompt).toContain("Material: FAQ");
-    expect(prompt).toContain("vídeo");
+    expect(prompt).not.toContain("Dados do lead:");
+    expect(prompt).not.toContain("Material: FAQ");
+    expect(prompt).toContain("mídia sem transcrição");
   });
 
   it("uses simplePrompt as the main instruction block in simple mode", () => {
@@ -105,7 +105,7 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("ATENDIMENTO JÁ INICIADO");
     expect(prompt).toContain("Nunca cumprimente novamente");
     expect(prompt).toContain("não um novo atendimento");
-    expect(prompt).toContain("Nunca mostre AAAA-MM-DD");
+    expect(prompt).not.toContain("Nunca demonstre que é uma IA");
   });
 
   it("includes an imperative outbound media block when ready files exist", () => {
@@ -126,37 +126,36 @@ describe("buildAgentSystemPrompt", () => {
       },
     });
 
-    expect(prompt).toContain("CAPACIDADE DO SISTEMA — ENVIO DE ARQUIVOS VIA WHATSAPP");
-    expect(prompt).toContain("Arquivos disponíveis para envio nesta conversa:");
-    expect(prompt).toContain("fachada.jpg");
-    expect(prompt).toContain("[[ENVIAR_MEDIA:nome_arquivo]]");
-    expect(prompt).toContain("UMA única mensagem curta e genérica");
-    expect(prompt).toContain("CORRETO:");
-    expect(prompt).toContain("[[ENVIAR_MEDIA:arquivo1.jpg]]");
-    expect(prompt).toContain("[[ENVIAR_MEDIA:arquivo2.jpg]]");
-    expect(prompt).toContain("[[ENVIAR_MEDIA:arquivo3.pdf]]");
-    expect(prompt).toContain("ERRADO:");
-    expect(prompt).toContain("Nunca reenvie arquivos já enviados nesta conversa");
-    expect(prompt).toContain("handoff e encaminhamento para humano se aplicam APENAS para atendimento");
+    expect(prompt).toContain("CAPACIDADE TÉCNICA — ENVIO DE ARQUIVOS");
+    expect(prompt).toContain("catálogo de arquivos aparecerá em uma mensagem separada");
+    expect(prompt).not.toContain("fachada.jpg");
+    expect(prompt).toContain("media.filenames");
+    expect(prompt).not.toContain("[[ENVIAR_MEDIA:");
+    expect(prompt).toContain("Nunca crie, altere ou adivinhe nomes de arquivo");
   });
 
-  it("uses a simple mandatory handoff marker instruction", () => {
+  it("uses the structured handoff contract", () => {
     const prompt = buildAgentSystemPrompt({
       languageInstruction: "Responda em português.",
       agent: {
         nome: "Max Vendas",
         objetivo: "vender",
         ctaHandoffAtivo: true,
+        handoffMensagem: "Vou encaminhar conforme solicitado.",
+        handoffNumero: "5511999999999",
+        handoffKeywords: ["transfer-code-42"],
         systemPrompt: "Ajude o cliente.",
       },
     });
 
-    expect(prompt).toContain("Quando o cliente quiser falar com uma pessoa real");
-    expect(prompt).toContain("inclua [[HANDOFF]] no final da resposta. Nada mais.");
-    expect(prompt).not.toContain("Mesmo que você precise enviar arquivos na mesma resposta");
+    expect(prompt).toContain("Somente quando um critério configurado for atendido");
+    expect(prompt).toContain("transfer-code-42");
+    expect(prompt).toContain("handoff.requested=true");
+    expect(prompt).not.toContain("[[HANDOFF]]");
+    expect(prompt).not.toMatch(/atendente|especialista|vendedor|gerente/i);
   });
 
-  it("forbids handoff marker when human transfer is disabled", () => {
+  it("keeps structured handoff disabled when human transfer is disabled", () => {
     const prompt = buildAgentSystemPrompt({
       languageInstruction: "Responda em português.",
       agent: {
@@ -166,8 +165,11 @@ describe("buildAgentSystemPrompt", () => {
       },
     });
 
-    expect(prompt).toContain("Nunca inclua [[HANDOFF]]");
-    expect(prompt).toContain("não há atendimento humano disponível no momento");
+    expect(prompt).toContain("handoff.requested deve ser false");
+    expect(prompt).not.toContain("[[HANDOFF]]");
+    // Handoff desligado nunca pode virar recusa de atendimento: o agente
+    // continua conduzindo a conversa normalmente.
+    expect(prompt).toContain("o atendimento válido continua normalmente");
   });
 
   it("instructs the model to return a structured agenda plan", () => {
@@ -228,7 +230,7 @@ describe("buildAgentSystemPrompt", () => {
 
     expect(prompt).toContain("EXCEÇÃO — CAPACIDADES OPERACIONAIS DO SISTEMA");
     expect(prompt).toContain("NUNCA é sair do escopo");
-    expect(prompt).toContain("não autoriza oferecer, recomendar ou afirmar nada fora das instruções configuradas");
+    expect(prompt).toContain("não autoriza afirmar nada fora das instruções configuradas");
     expect(prompt).toContain("fazem parte do escopo técnico autorizado");
     expect(prompt).toContain("CAPACIDADE OPERACIONAL DO SISTEMA: agendar, remarcar e cancelar compromissos");
     expect(prompt).toContain("ESCOPO SOBERANO DO AGENTE");
@@ -336,7 +338,7 @@ describe("buildAgentSystemPrompt", () => {
     }
   });
 
-  it("injects Meta Lead Ads form memory so the agent does not re-ask", () => {
+  it("never injects Meta form answers into the system prompt", () => {
     const prompt = buildAgentSystemPrompt({
       languageInstruction: "Responda em português.",
       agent: {
@@ -370,24 +372,27 @@ describe("buildAgentSystemPrompt", () => {
       },
     });
 
-    expect(prompt).toContain("DADOS JÁ INFORMADOS PELO LEAD NO FORMULÁRIO META");
-    expect(prompt).toContain("Renda bruta: R$ 8.000");
-    expect(prompt).toContain("NUNCA pergunte de novo");
+    expect(prompt).not.toContain("DADOS JÁ INFORMADOS PELO LEAD NO FORMULÁRIO META");
+    expect(prompt).not.toContain("Renda bruta: R$ 8.000");
+    expect(prompt).toContain("Formulários, materiais recuperados, histórico");
   });
 
-  it("keeps the system tone and WhatsApp style blocks when the toggles are undefined or true", () => {
-    for (const agentOverrides of [
-      {},
-      { useSystemToneInstructions: true, useSystemWhatsappStyleGuide: true },
-    ]) {
-      const prompt = buildAgentSystemPrompt({
-        languageInstruction: "Responda em português.",
-        agent: { nome: "Max Vendas", tom: "casual", systemPrompt: "Ajude o cliente.", ...agentOverrides },
-      });
+  it("uses only the exact configured tone and never injects a hidden channel persona", () => {
+    const prompt = buildAgentSystemPrompt({
+      languageInstruction: "Responda em português.",
+      agent: {
+        nome: "Agente",
+        tom: "casual",
+        systemPrompt: "Ajude o cliente.",
+        useSystemToneInstructions: true,
+        useSystemWhatsappStyleGuide: true,
+      },
+    });
 
-      expect(prompt).toContain("INSTRUÇÕES OBRIGATÓRIAS DE COMPORTAMENTO");
-      expect(prompt).toContain("ESTILO WHATSAPP (OBRIGATÓRIO)");
-    }
+    expect(prompt).toContain("TOM CONFIGURADO PELO CLIENTE");
+    expect(prompt).toContain("casual");
+    expect(prompt).not.toContain("ESTILO WHATSAPP (OBRIGATÓRIO)");
+    expect(prompt).not.toContain("Nunca demonstre que é uma IA");
   });
 
   it("drops the system tone instructions when useSystemToneInstructions is false", () => {
@@ -401,8 +406,8 @@ describe("buildAgentSystemPrompt", () => {
       },
     });
 
-    expect(prompt).not.toContain("INSTRUÇÕES OBRIGATÓRIAS DE COMPORTAMENTO");
-    expect(prompt).toContain("ESTILO WHATSAPP (OBRIGATÓRIO)");
+    expect(prompt).not.toContain("TOM CONFIGURADO PELO CLIENTE");
+    expect(prompt).not.toContain("ESTILO WHATSAPP (OBRIGATÓRIO)");
   });
 
   it("drops the WhatsApp style guide when useSystemWhatsappStyleGuide is false", () => {
@@ -416,7 +421,7 @@ describe("buildAgentSystemPrompt", () => {
       },
     });
 
-    expect(prompt).toContain("INSTRUÇÕES OBRIGATÓRIAS DE COMPORTAMENTO");
+    expect(prompt).not.toContain("TOM CONFIGURADO PELO CLIENTE");
     expect(prompt).not.toContain("ESTILO WHATSAPP (OBRIGATÓRIO)");
   });
 
@@ -461,46 +466,48 @@ describe("engine universal — sem contradição e sem persona forçada", () => 
     });
   }
 
-  describe("item 1: 'confirmar com a equipe' não contradiz o handoff desligado", () => {
-    it("com transferência humana ATIVA, mantém a promessa de confirmar com a equipe", () => {
+  describe("item 1: handoff inválido não cria promessa nem critério implícito", () => {
+    it("com toggle ativo mas configuração incompleta, mantém handoff desligado", () => {
       const prompt = build({ ctaHandoffAtivo: true });
-      expect(prompt).toContain("diga que vai confirmar com a equipe");
+      expect(prompt).toContain("TRANSFERÊNCIA DESATIVADA OU INCOMPLETA");
+      expect(prompt).not.toContain("confirmar com a equipe");
     });
 
     it("com transferência humana DESLIGADA, nunca promete retorno de outra pessoa", () => {
       const prompt = build({ ctaHandoffAtivo: false });
       // Antes, o prompt mandava "confirmar com a equipe" ao mesmo tempo que
       // proibia dizer que alguém retornaria — o modelo obedecia ora um, ora outro.
-      expect(prompt).not.toContain("diga que vai confirmar com a equipe");
-      expect(prompt).toContain("não tem essa informação");
-      expect(prompt).toContain("Nunca prometa que outra pessoa vai confirmar ou retornar");
+      expect(prompt).not.toContain("confirmar com a equipe");
+      expect(prompt).toContain("sem prometer contato ou ação de terceiros");
     });
   });
 
-  describe("item 4: toggle de persona humana", () => {
-    it("por padrão (campo ausente) mantém o comportamento histórico", () => {
+  describe("item 4: persona e ritmo não são inventados pelo runtime", () => {
+    it("por padrão não finge ser humano", () => {
       const prompt = build({ delayResposta: 2 });
-      expect(prompt).toContain("Nunca demonstre que é uma IA");
+      expect(prompt).not.toContain("Nunca demonstre que é uma IA");
+      expect(prompt).not.toContain("Você é um ser humano");
     });
 
-    it("ligado explicitamente mantém a persona humana", () => {
+    it("o campo legado não injeta impersonação", () => {
       const prompt = build({ delayResposta: 2, useHumanPersona: true });
-      expect(prompt).toContain("Nunca demonstre que é uma IA");
+      expect(prompt).not.toContain("Nunca demonstre que é uma IA");
+      expect(prompt).not.toContain("Você é um ser humano");
     });
 
-    it("desligado remove a impersonação MAS preserva o ritmo configurado", () => {
+    it("velocidade permanece metadado técnico, não instrução comportamental", () => {
       const prompt = build({ delayResposta: 2, useHumanPersona: false });
       expect(prompt).not.toContain("Nunca demonstre que é uma IA");
       expect(prompt).not.toContain("Você é um ser humano");
-      // O que o operador configurou (velocidade) continua valendo.
-      expect(prompt).toContain("COMPORTAMENTO:");
-      expect(prompt).toContain("digita na hora");
+      expect(prompt).toContain("Velocidade simulada: 2s");
+      expect(prompt).not.toContain("COMPORTAMENTO:");
     });
 
-    it("desligado também preserva o ritmo na faixa de resposta mais lenta", () => {
+    it("não transforma atraso maior em personalidade", () => {
       const prompt = build({ delayResposta: 10, useHumanPersona: false });
       expect(prompt).not.toContain("ser humano ocupado");
-      expect(prompt).toContain("várias conversas ao mesmo tempo");
+      expect(prompt).not.toContain("várias conversas ao mesmo tempo");
+      expect(prompt).toContain("Velocidade simulada: 10s");
     });
 
     it("sem velocidade configurada, o toggle não injeta nada", () => {

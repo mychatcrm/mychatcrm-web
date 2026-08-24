@@ -3,8 +3,19 @@ import {
   isAgentMissingInstructionsResult,
 } from "@/lib/ai/generate-agent-response";
 import { agendaPlanFromResult, leadOutcomeFromResult } from "@/lib/ai/agent-turn-plan";
-import { detectSupportedLanguageCode, resolveConfiguredLanguageCode } from "@/lib/ai/language-detect";
+import {
+  detectSupportedLanguageCode,
+  localizedAttachmentIntro,
+  resolveConfiguredConversationLanguage,
+  resolveConfiguredLanguageCode,
+  resolveTtsLanguageCode,
+} from "@/lib/ai/language-detect";
 import { localizedAgentFailureReply } from "@/lib/agents/agent-failure-reply";
+import {
+  canUseTts,
+  resolveAgentResponseSettingsFromStorage,
+  resolveTriggeringInboundKind,
+} from "@/lib/agents";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import {
@@ -12,11 +23,17 @@ import {
   normalizeConversationBurst,
 } from "@/lib/conversas/normalize-conversation-burst";
 import { shouldSuppressLateInboundFragment } from "@/lib/conversas/late-inbound-fragment";
-import { sendWhatsAppTextMessage } from "@/lib/integrations/whatsapp-cloud";
+import { isElevenlabsConfigured } from "@/lib/integrations/elevenlabs";
+import {
+  sendWhatsAppMediaMessage,
+  sendWhatsAppTextMessage,
+  uploadWhatsAppCloudMedia,
+} from "@/lib/integrations/whatsapp-cloud";
 import {
   AGENDA_AUTOMATION_DISABLED_REPLY,
   priorAgendaAssistantTextFromMessages,
   resolveAgendaTurn,
+  shouldDeferHandoffForAgendaResult,
 } from "@/lib/server/agent-cta-scheduler";
 import {
   markAgentOutboundFailed,
@@ -28,6 +45,13 @@ import {
   type AgentResponseJobRow,
 } from "@/lib/server/agent-response-jobs";
 import { getRecentConversationMessages } from "@/lib/server/conversation-memory";
+import {
+  completeAgentHandoff,
+  detectAgentHandoff,
+  resolveAgentHandoffSettings,
+} from "@/lib/server/agent-handoff-runtime";
+import { resolveOutboundMediaForAgentResponse } from "@/lib/server/agent-media-files";
+import { deliverAgentReplyWithOptionalTts } from "@/lib/server/agent-tts-outbound";
 import {
   commitTenantLeadQuotaReservation,
   releaseTenantLeadQuotaReservation,
@@ -43,12 +67,14 @@ import { applyAgentLeadOutcome } from "@/lib/server/agent-lead-outcome";
 import { scheduleLeadRedistribution } from "@/lib/server/lead-redistribution";
 import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
 import { lookupWhatsAppCloudConnectionByPhoneNumberId } from "@/lib/server/whatsapp-cloud-connections";
+import { sendAgentOutboundMediaViaMeta } from "@/lib/server/send-agent-outbound-media-meta";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import type {
   AgentAgendaDisponibilidade,
   AgentAgendaLembretes,
   AgentFollowUpInteligente,
 } from "@/lib/types";
+import { processMetaAgentResponseJob as processMetaAgentResponseJobV2 } from "@/lib/server/meta-agent-adapter-v2";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -88,18 +114,59 @@ function recentClientTexts(
     .slice(-8);
 }
 
+function providerMessageId(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const value = (payload as { messageId?: unknown }).messageId;
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
 /** Processador Meta que usa o mesmo burst e as mesmas garantias do Evolution. */
 export async function processMetaAgentResponseJob(
   sb: SupabaseServiceClient,
   job: AgentResponseJobRow,
   generation: number,
 ): Promise<JobResult> {
+  // Assinatura estável para rollback e mocks; todas as decisões são do V2.
+  if (process.env.AGENT_TURN_V2 !== "off") {
+    return processMetaAgentResponseJobV2(sb, job, generation);
+  }
   if (!job.connection_id) return { ok: false, error: "meta_connection_missing" };
   if (
     await isGenerationStale(sb, job.id, generation) ||
     !(await isAgentConversationSequenceCurrent(sb, job))
   ) {
     return { ok: false, error: "generation_stale" };
+  }
+
+  const connection = await lookupWhatsAppCloudConnectionByPhoneNumberId(
+    job.connection_id,
+  );
+  if (!connection || connection.tenant_id !== job.tenant_id || !connection.active) {
+    return { ok: false, error: "meta_connection_not_authorized" };
+  }
+
+  const journeyAuth = job.journey_id
+    ? await authorizeActiveJourney({
+        sb,
+        tenantId: job.tenant_id,
+        remoteJid: job.remote_jid,
+        preferredAgentId: job.agent_id,
+        connectionId: job.connection_id,
+        channel: "meta_cloud",
+      })
+    : null;
+  if (
+    isJourneyIsolationEnabled() &&
+    (!job.journey_id || !journeyAuth?.ok || journeyAuth.journey?.id !== job.journey_id)
+  ) {
+    return {
+      ok: false,
+      error: !job.journey_id
+        ? "missing_active_journey"
+        : journeyAuth?.ok
+          ? "journey_id_mismatch"
+          : journeyAuth?.reason ?? "journey_not_authorized",
+    };
   }
 
   const { data: inboundData, error: inboundError } = await sb
@@ -133,7 +200,7 @@ export async function processMetaAgentResponseJob(
 
   const { data: agentRow } = await sb
     .from("tenant_agents")
-    .select("metadata")
+    .select("metadata,voice_id,response_mode")
     .eq("tenant_id", job.tenant_id)
     .eq("agent_id", job.agent_id)
     .maybeSingle();
@@ -150,7 +217,7 @@ export async function processMetaAgentResponseJob(
     })),
     {
       dedupeEnabled: smartWait.dedupeRepeated,
-      burstMode: metadata.smartWaitBurstMode === "exact" ? "exact" : "relaxed",
+      burstMode: "exact",
     },
   );
   const unit = burst.canonicalMessages;
@@ -181,6 +248,15 @@ export async function processMetaAgentResponseJob(
   let replyText = result.ok
     ? result.text
     : localizedAgentFailureReply(detectSupportedLanguageCode(unitPrompt));
+  const handoffSettings = resolveAgentHandoffSettings(metadata);
+  const handoffDecision = await detectAgentHandoff({
+    settings: handoffSettings,
+    customerText: unitPrompt,
+    modelText: replyText,
+  });
+  let handoffTriggered = handoffDecision.triggered;
+  let handoffReason = handoffDecision.reason;
+  replyText = handoffDecision.cleanModelText;
 
   const timezone = resolveAgentTimezone({
     timezone: typeof metadata.timezone === "string" ? metadata.timezone : undefined,
@@ -199,10 +275,6 @@ export async function processMetaAgentResponseJob(
   ) {
     return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
   }
-  // Resolvida aqui (e não só na hora do envio) porque a linha do lembrete de
-  // agenda tem que sair da conexão que hospedou a conversa.
-  const connection = await lookupWhatsAppCloudConnectionByPhoneNumberId(job.connection_id);
-
   const agendaTurn = await resolveAgendaTurn({
     sb,
     tenantId: job.tenant_id,
@@ -210,13 +282,20 @@ export async function processMetaAgentResponseJob(
     leadId: job.lead_id,
     agentId: job.agent_id,
     timezone,
-    modelText: replyText.replace(/\[\[HANDOFF\]\]/gi, "").trim(),
+    modelText: replyText,
     agendaPlan: agendaPlanFromResult(result),
     clientText,
     languageCode: resolveConfiguredLanguageCode(
       typeof metadata.idioma === "string" ? metadata.idioma : null,
       clientText,
     ),
+    languageTag: (() => {
+      const resolved = resolveConfiguredConversationLanguage(
+        typeof metadata.idioma === "string" ? metadata.idioma : null,
+        clientText,
+      );
+      return resolved.ok ? resolved.tag : null;
+    })(),
     priorAssistantText: priorAgendaAssistantTextFromMessages(history, timezone),
     recentClientMessages: recentClientTexts(history),
     agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,
@@ -239,6 +318,10 @@ export async function processMetaAgentResponseJob(
   if (agendaTurn.action === "stale") {
     return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
   }
+  if (shouldDeferHandoffForAgendaResult(agendaTurn)) {
+    handoffTriggered = false;
+    handoffReason = null;
+  }
   replyText = agendaTurn.action === "blocked"
     ? AGENDA_AUTOMATION_DISABLED_REPLY
     : agendaTurn.text;
@@ -246,15 +329,62 @@ export async function processMetaAgentResponseJob(
     return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
   }
 
+  const languageCode = resolveConfiguredLanguageCode(
+    typeof metadata.idioma === "string" ? metadata.idioma : null,
+    clientText,
+  );
+  const outboundMedia = await resolveOutboundMediaForAgentResponse({
+    sb,
+    tenantId: job.tenant_id,
+    agentId: job.agent_id,
+    responseText: replyText,
+    userRequestText: unitPrompt,
+  });
+  let textToSend = outboundMedia.cleanedText.trim();
+  if (handoffTriggered && handoffSettings.message) {
+    textToSend = handoffSettings.message;
+  }
+  if (agendaTurn.action === "blocked") {
+    textToSend = AGENDA_AUTOMATION_DISABLED_REPLY;
+  } else if (agendaTurn.action === "failed") {
+    textToSend = agendaTurn.text;
+  }
+  if (!textToSend && outboundMedia.filenames.length) {
+    const resolvedLanguage = resolveConfiguredConversationLanguage(
+      typeof metadata.idioma === "string" ? metadata.idioma : null,
+      clientText,
+    );
+    textToSend = localizedAttachmentIntro(
+      resolvedLanguage.ok ? resolvedLanguage.tag : null,
+    );
+  }
+
+  const { responseMode, voiceId } = resolveAgentResponseSettingsFromStorage({
+    response_mode: agentRow?.response_mode,
+    voice_id: agentRow?.voice_id,
+    metadata: agentRow?.metadata,
+  });
+  const triggeringMessageId = job.message_ids[job.message_ids.length - 1] ?? null;
+  const triggeringInboundKind = resolveTriggeringInboundKind(
+    inboundRows,
+    triggeringMessageId,
+  );
+  const useTts = canUseTts({
+    agentResponseMode: responseMode,
+    inboundKind: triggeringInboundKind,
+    voiceId,
+    elevenLabsAvailable: isElevenlabsConfigured(),
+    handoffTriggered,
+  });
+
   const outbound = await prepareAgentOutbound({
     sb,
     job,
     generation,
-    content: replyText.slice(0, 4000),
+    kind: useTts ? "audio" : "text",
+    content: textToSend.slice(0, 4000),
   });
-  if (outbound.action === "already_sent") {
-    return { ok: true, dedupedCount: burst.dedupedCount };
-  }
+  const primaryAlreadySent = outbound.action === "already_sent";
   if (outbound.action === "stale") {
     return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
   }
@@ -268,107 +398,196 @@ export async function processMetaAgentResponseJob(
     return { ok: false, error: "outbound_dispatch_in_progress", dedupedCount: burst.dedupedCount };
   }
 
-  const token = connection?.access_token?.trim() || process.env.WHATSAPP_ACCESS_TOKEN?.trim();
+  const token = connection.access_token.trim();
   if (!token) {
-    await markAgentOutboundFailed({
-      sb,
-      id: outbound.id,
-      claimToken: outbound.claimToken,
-      error: "meta_access_token_missing",
-    });
+    if (outbound.action === "send") {
+      await markAgentOutboundFailed({
+        sb,
+        id: outbound.id,
+        claimToken: outbound.claimToken,
+        error: "meta_access_token_missing",
+      });
+    }
     return { ok: false, error: "meta_access_token_missing", dedupedCount: burst.dedupedCount };
   }
 
   const phone = job.remote_jid.replace(/\D/g, "");
   let quotaReservationId: string | null = null;
-  const journeyAuth = job.journey_id
-    ? await authorizeActiveJourney({
-        sb,
-        tenantId: job.tenant_id,
-        remoteJid: job.remote_jid,
-        preferredAgentId: job.agent_id,
-        connectionId: job.connection_id,
-      })
-    : null;
-  if (isJourneyIsolationEnabled() && (!journeyAuth?.ok || journeyAuth.journey?.id !== job.journey_id)) {
-    await markAgentOutboundFailed({
-      sb,
-      id: outbound.id,
-      claimToken: outbound.claimToken,
-      error: "journey_superseded_before_send",
-    });
-    return { ok: false, error: "journey_superseded_before_send", dedupedCount: burst.dedupedCount };
-  }
-  if (journeyAuth?.ok && journeyAuth.journey?.source === "whatsapp_direct") {
-    const tenantPlan = await getTenantPlanSnapshot(job.tenant_id);
-    const admission = await reserveTenantLeadQuota({
-      tenantId: job.tenant_id,
-      plan: tenantPlan.plan,
-      operationalLimits: tenantPlan.operationalLimits,
-      contactKey: job.remote_jid,
-      source: "whatsapp_direct",
-      idempotencyKey: `direct-cloud:${job.connection_id}:${phone}`,
-      isExistingContact: Boolean(job.lead_id),
-      metadata: {
-        connection_id: job.connection_id,
-        journey_id: job.journey_id,
-        agent_id: job.agent_id,
-      },
-    });
-    if (!admission.admitted) {
+  let sentAt = new Date().toISOString();
+
+  if (!primaryAlreadySent && outbound.action === "send") {
+    const currentJourney = job.journey_id
+      ? await authorizeActiveJourney({
+          sb,
+          tenantId: job.tenant_id,
+          remoteJid: job.remote_jid,
+          preferredAgentId: job.agent_id,
+          connectionId: job.connection_id,
+          channel: "meta_cloud",
+        })
+      : null;
+    if (
+      isJourneyIsolationEnabled() &&
+      (!currentJourney?.ok || currentJourney.journey?.id !== job.journey_id)
+    ) {
       await markAgentOutboundFailed({
         sb,
         id: outbound.id,
         claimToken: outbound.claimToken,
-        error: admission.reason,
+        error: "journey_superseded_before_send",
       });
-      return { ok: false, error: admission.reason, dedupedCount: burst.dedupedCount };
+      return { ok: false, error: "journey_superseded_before_send", dedupedCount: burst.dedupedCount };
     }
-    quotaReservationId = admission.eventId;
-  }
 
-  if (!(await isAgentConversationSequenceCurrent(sb, job))) {
-    return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
-  }
-  const sent = await sendWhatsAppTextMessage({
-    toWaId: job.remote_jid,
-    text: replyText.slice(0, 4000),
-    phoneNumberId: job.connection_id,
-    accessToken: token,
-  });
-  if (!sent.ok) {
-    await markAgentOutboundFailed({
+    if (currentJourney?.ok && currentJourney.journey?.source === "whatsapp_direct") {
+      const tenantPlan = await getTenantPlanSnapshot(job.tenant_id);
+      const admission = await reserveTenantLeadQuota({
+        tenantId: job.tenant_id,
+        plan: tenantPlan.plan,
+        operationalLimits: tenantPlan.operationalLimits,
+        contactKey: job.remote_jid,
+        source: "whatsapp_direct",
+        idempotencyKey: `direct-cloud:${job.connection_id}:${phone}`,
+        isExistingContact: Boolean(job.lead_id),
+        metadata: {
+          connection_id: job.connection_id,
+          journey_id: job.journey_id,
+          agent_id: job.agent_id,
+        },
+      });
+      if (!admission.admitted) {
+        await markAgentOutboundFailed({
+          sb,
+          id: outbound.id,
+          claimToken: outbound.claimToken,
+          error: admission.reason,
+        });
+        return { ok: false, error: admission.reason, dedupedCount: burst.dedupedCount };
+      }
+      quotaReservationId = admission.eventId;
+    }
+
+    if (!(await isAgentConversationSequenceCurrent(sb, job))) {
+      await markAgentOutboundFailed({
+        sb,
+        id: outbound.id,
+        claimToken: outbound.claimToken,
+        error: "generation_stale",
+      });
+      await releaseTenantLeadQuotaReservation(quotaReservationId, "generation_stale");
+      return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
+    }
+
+    const delivery = await deliverAgentReplyWithOptionalTts({
+      instanceName: job.connection_id,
+      number: phone,
+      text: textToSend,
+      voiceId: voiceId ?? "",
+      languageCode: resolveTtsLanguageCode(textToSend),
+      tenantId: job.tenant_id,
+      useTts,
+      logScope: "meta-agent-reply",
+      logContext: { job_id: job.id, tenant_id: job.tenant_id, agent_id: job.agent_id },
+      sendText: async () => {
+        const sent = await sendWhatsAppTextMessage({
+          toWaId: phone,
+          text: textToSend.slice(0, 4000),
+          phoneNumberId: job.connection_id!,
+          accessToken: token,
+        });
+        return { ...sent, data: { messageId: sent.messageId ?? null } };
+      },
+      sendAudio: async (audio) => {
+        const upload = await uploadWhatsAppCloudMedia({
+          phoneNumberId: job.connection_id!,
+          accessToken: token,
+          buffer: audio,
+          mimeType: "audio/mpeg",
+          filename: "agent-reply.mp3",
+        });
+        if (!upload.ok || !upload.mediaId) return upload;
+        const sent = await sendWhatsAppMediaMessage({
+          toWaId: phone,
+          kind: "audio",
+          phoneNumberId: job.connection_id!,
+          accessToken: token,
+          mediaId: upload.mediaId,
+        });
+        return { ...sent, data: { messageId: sent.messageId ?? null } };
+      },
+    });
+    if (!delivery.sent) {
+      await markAgentOutboundFailed({
+        sb,
+        id: outbound.id,
+        claimToken: outbound.claimToken,
+        error: "meta_send_failed",
+      });
+      await releaseTenantLeadQuotaReservation(quotaReservationId, "meta_delivery_failed");
+      return { ok: false, error: "meta_send_failed", dedupedCount: burst.dedupedCount };
+    }
+
+    const sentMessageId = providerMessageId(delivery.providerPayload);
+    await markAgentOutboundSent({
       sb,
       id: outbound.id,
       claimToken: outbound.claimToken,
-      error: sent.error || `meta_send_${sent.status}`,
+      providerMessageId: sentMessageId,
+      job,
     });
-    await releaseTenantLeadQuotaReservation(quotaReservationId, "meta_delivery_failed");
-    return { ok: false, error: "meta_send_failed", dedupedCount: burst.dedupedCount };
+    sentAt = new Date().toISOString();
+    await sb.from("whatsapp_messages").insert({
+      tenant_id: job.tenant_id,
+      remote_jid: job.remote_jid,
+      direction: "outbound",
+      kind: delivery.channel === "audio" ? "audio" : "text",
+      content: textToSend.slice(0, 4000),
+      message_id: sentMessageId,
+      provider_message_id: sentMessageId,
+      media_url: delivery.mediaUrl,
+      agent_id: job.agent_id,
+      lead_id: job.lead_id,
+      journey_id: job.journey_id,
+      channel: "meta_cloud",
+      connection_id: job.connection_id,
+    });
+    await commitTenantLeadQuotaReservation({
+      eventId: quotaReservationId,
+      leadId: job.lead_id,
+      journeyId: job.journey_id,
+    });
   }
 
-  await markAgentOutboundSent({
-    sb,
-    id: outbound.id,
-    claimToken: outbound.claimToken,
-    providerMessageId: sent.messageId ?? null,
-    job,
-  });
-  const sentAt = new Date().toISOString();
-  await sb.from("whatsapp_messages").insert({
-    tenant_id: job.tenant_id,
-    remote_jid: job.remote_jid,
-    direction: "outbound",
-    kind: "text",
-    content: replyText.slice(0, 4000),
-    message_id: sent.messageId ?? null,
-    provider_message_id: sent.messageId ?? null,
-    agent_id: job.agent_id,
-    lead_id: job.lead_id,
-    journey_id: job.journey_id,
-    channel: "meta_cloud",
-    connection_id: job.connection_id,
-  });
+  if (outboundMedia.filenames.length) {
+    if (!job.journey_id || !job.rule_id) {
+      return { ok: false, error: "agent_media_authorization_context_missing", dedupedCount: burst.dedupedCount };
+    }
+    await sendAgentOutboundMediaViaMeta({
+      sb,
+      tenantId: job.tenant_id,
+      agentId: job.agent_id,
+      phoneNumberId: job.connection_id,
+      accessToken: token,
+      toWaId: phone,
+      originalFilenames: outboundMedia.filenames,
+      remoteJid: job.remote_jid,
+      journeyId: job.journey_id,
+      ruleId: job.rule_id,
+      operationKeyPrefix: `agent-response:${job.id}:${generation}`,
+      leadId: job.lead_id,
+    });
+  }
+
+  if (handoffTriggered) {
+    await completeAgentHandoff({
+      sb,
+      job,
+      reason: handoffReason ?? "handoff",
+      lastCustomerMessage: unitPrompt,
+      notificationNumber: handoffSettings.notificationNumber,
+    });
+  }
+
   if (job.lead_id) {
     await sb
       .from("leads")
@@ -394,6 +613,7 @@ export async function processMetaAgentResponseJob(
     agentId: job.agent_id,
     leadId: job.lead_id,
     outcome: leadOutcomeFromResult(result),
+    customerEvidenceTexts: unit.map((message) => message.content),
     metadata,
   });
   if (job.journey_id) {
@@ -413,10 +633,5 @@ export async function processMetaAgentResponseJob(
       trigger: "customer_silence",
     });
   }
-  await commitTenantLeadQuotaReservation({
-    eventId: quotaReservationId,
-    leadId: job.lead_id,
-    journeyId: job.journey_id,
-  });
   return { ok: true, dedupedCount: burst.dedupedCount };
 }

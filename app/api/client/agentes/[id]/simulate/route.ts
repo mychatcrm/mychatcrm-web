@@ -1,19 +1,33 @@
 import { NextResponse } from "next/server";
-import { generateAgentResponse } from "@/lib/ai/generate-agent-response";
-import { detectSupportedLanguageCode, supportedLanguageName } from "@/lib/ai/language-detect";
-import { getClientSessionFromCookies } from "@/lib/client-auth-server";
+import { resolveConfiguredConversationLanguage } from "@/lib/ai/language-detect";
+import { requireAgentManagementSession } from "@/lib/server/agent-management-access";
 import { loadAgentRuntimeContext } from "@/lib/server/conversation-memory";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import type { Agent } from "@/lib/types";
+import { assertManageableTenantAgent } from "@/lib/server/agent-management-record";
+import { simulateAgentTurnV2 } from "@/lib/server/process-agent-turn-v2";
 
 export const dynamic = "force-dynamic";
 
 function rowAgent(row: Record<string, unknown>, agentId: string): Partial<Agent> & { nome?: string; systemPrompt?: string } {
   const metadata = row.metadata && typeof row.metadata === "object" ? (row.metadata as Partial<Agent>) : {};
+  const hasCurrentPromptFields = [
+    "instructionMode",
+    "simplePrompt",
+    "promptIdentidade",
+    "promptObjetivo",
+    "systemPrompt",
+    "promptRegrasAdicionais",
+    "respostasProibidas",
+  ].some((key) => Object.prototype.hasOwnProperty.call(metadata, key));
   return {
     ...metadata,
     nome: typeof row.display_name === "string" ? row.display_name : metadata.nome ?? agentId,
-    systemPrompt: typeof row.system_prompt === "string" ? row.system_prompt : metadata.systemPrompt ?? "",
+    systemPrompt: hasCurrentPromptFields
+      ? metadata.systemPrompt ?? ""
+      : typeof row.system_prompt === "string"
+        ? row.system_prompt
+        : "",
   };
 }
 
@@ -21,8 +35,9 @@ export async function POST(
   request: Request,
   { params }: { params: { id: string } },
 ) {
-  const session = await getClientSessionFromCookies();
-  if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  const guard = await requireAgentManagementSession();
+  if (!guard.ok) return guard.response;
+  const { session } = guard.value;
 
   const agentId = params.id?.trim();
   if (!agentId) return NextResponse.json({ error: "id em falta" }, { status: 400 });
@@ -38,9 +53,17 @@ export async function POST(
   if (!message) return NextResponse.json({ error: "Mensagem de teste obrigatória." }, { status: 400 });
 
   const sb = createSupabaseServiceClient();
+  try {
+    await assertManageableTenantAgent(sb, session.tenantId, agentId);
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Agente não encontrado." },
+      { status: 404 },
+    );
+  }
   const { data, error } = await sb
     .from("tenant_agents")
-    .select("agent_id, display_name, system_prompt, model, metadata")
+    .select("agent_id, display_name, system_prompt, model, metadata, review_reasons")
     .eq("tenant_id", session.tenantId)
     .eq("agent_id", agentId)
     .maybeSingle();
@@ -52,31 +75,48 @@ export async function POST(
   if (!data) return NextResponse.json({ error: "Agente não encontrado." }, { status: 404 });
 
   const agent = { ...rowAgent(data as Record<string, unknown>, agentId), ...(body.draft ?? {}) };
-  const languageName = supportedLanguageName(detectSupportedLanguageCode(message));
+  const language = resolveConfiguredConversationLanguage(agent.idioma, message);
   const runtimeContext = await loadAgentRuntimeContext({
     tenantId: session.tenantId,
     agentId,
     remoteJid: body.remoteJid ?? null,
+    query: message,
   });
 
-  const result = await generateAgentResponse({
+  const result = await simulateAgentTurnV2({
+    sb,
     tenantId: session.tenantId,
     agentId,
-    conversationId: body.remoteJid ?? null,
-    feature: "agent_completion",
-    messages: [{ role: "user", content: message }],
+    remoteJid: body.remoteJid ?? null,
+    message,
     model: typeof data.model === "string" ? data.model : undefined,
-    simulation: true,
-    agentOverride: agent,
+    agent,
+    reviewReasons: Array.isArray(data.review_reasons)
+      ? data.review_reasons.filter((reason): reason is string => typeof reason === "string")
+      : [],
   });
 
   if (!result.ok) {
-    return NextResponse.json({ error: result.detail ?? result.code }, { status: 502 });
+    return NextResponse.json({ error: result.error }, { status: 502 });
   }
 
   return NextResponse.json({
-    reply: result.text,
+    reply: result.decision.reply,
     simulation: true,
+    decision: {
+      authorization: result.decision.authorization,
+      language: result.decision.languageTag ?? result.decision.languageCode,
+      materials: runtimeContext.knowledgeSnippets.length,
+      externalApiLookups: result.decision.externalApiLookups,
+      handoff: result.decision.handoff,
+      agenda: {
+        plan: result.decision.agenda,
+        blocked: result.decision.agendaBlocked,
+        mutated: false,
+      },
+      media: result.decision.media,
+      outboundSent: false,
+    },
     contextUsed: {
       identity: Boolean(agent.promptIdentidade || agent.nome),
       objective: Boolean(agent.promptObjetivo || agent.objetivo),
@@ -86,7 +126,7 @@ export async function POST(
       history: runtimeContext.recentMessages.length,
       summary: Boolean(runtimeContext.summary),
       lead: Boolean(runtimeContext.lead),
-      language: languageName,
+      language: language.ok ? language.tag ?? "und" : `invalid:${language.value}`,
       remoteJid: body.remoteJid ?? null,
     },
   });

@@ -88,6 +88,30 @@ export function leadOutcomePauseReason(
   return null;
 }
 
+function normalizeEvidence(value: string): string {
+  return value.normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase();
+}
+
+/**
+ * Desfecho terminal exige uma fala literal do cliente. Uma fala curta só vale
+ * quando corresponde à mensagem inteira; trechos internos precisam ter pelo
+ * menos 12 caracteres para evitar coincidências vagas como "no"/"não".
+ */
+export function hasExplicitLeadOutcomeEvidence(
+  outcome: AgentLeadOutcome | null | undefined,
+  customerMessages: string[] | null | undefined,
+): boolean {
+  const evidence = textOrNull(outcome?.evidence);
+  const reason = textOrNull(outcome?.reason);
+  if (!evidence || !reason || !customerMessages?.length) return false;
+  const needle = normalizeEvidence(evidence);
+  if (!needle) return false;
+  return customerMessages.some((message) => {
+    const haystack = normalizeEvidence(message);
+    return haystack === needle || (needle.length >= 12 && haystack.includes(needle));
+  });
+}
+
 async function loadAgentMetadata(
   sb: SupabaseServiceClient,
   tenantId: string,
@@ -118,6 +142,8 @@ export async function applyAgentLeadOutcome(params: {
   agentId?: string | null;
   leadId?: string | null;
   outcome: AgentLeadOutcome | null | undefined;
+  /** Mensagens inbound do turno corrente; nunca texto produzido pelo modelo. */
+  customerEvidenceTexts?: string[] | null;
   /** Metadata já carregado pelo chamador; evita uma leitura extra no caminho quente. */
   metadata?: Record<string, unknown> | null;
 }): Promise<"applied" | "skipped" | "failed"> {
@@ -135,6 +161,14 @@ export async function applyAgentLeadOutcome(params: {
     // Acontece com prompt customizado do cliente; ignorar é o certo.
     if (!config) {
       console.info("[agent-lead-outcome] not_configured", {
+        tenant_id: params.tenantId,
+        agent_id: agentId,
+        outcome: reason,
+      });
+      return "skipped";
+    }
+    if (!hasExplicitLeadOutcomeEvidence(params.outcome, params.customerEvidenceTexts)) {
+      console.warn("[agent-lead-outcome] explicit_evidence_missing", {
         tenant_id: params.tenantId,
         agent_id: agentId,
         outcome: reason,

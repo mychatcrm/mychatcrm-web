@@ -52,3 +52,6 @@ data/team-employees/tenant-[^m][^y]*.json
 # deixando o `git status` sujo e um ponteiro de submódulo quebrado no clone.
 # `.claude/launch.json` continua versionado de propósito — é config do projeto.
 .claude/worktrees/
+
+# Artefato local do Supabase CLI
+supabase/.temp/

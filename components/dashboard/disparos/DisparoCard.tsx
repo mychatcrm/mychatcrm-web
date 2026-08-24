@@ -24,6 +24,7 @@ export type DisparoCardStatus =
   | "scheduled"
   | "processing"
   | "paused"
+  | "review_required"
   | "completed"
   | "cancelled"
   | "failed";
@@ -63,6 +64,12 @@ const STATUS_META: Record<
   paused: {
     label: "Pausado",
     dot: "bg-amber-400",
+    text: "text-amber-600 dark:text-amber-300",
+    chip: "bg-amber-500/10",
+  },
+  review_required: {
+    label: "Ação necessária",
+    dot: "bg-amber-500",
     text: "text-amber-600 dark:text-amber-300",
     chip: "bg-amber-500/10",
   },

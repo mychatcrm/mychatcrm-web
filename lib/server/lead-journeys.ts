@@ -314,19 +314,45 @@ async function campaignAuthorizesAgent(params: {
   sb: SupabaseServiceClient;
   tenantId: string;
   campaignId: string;
+  ruleId: string;
   agentId: string;
+  connectionId: string;
+  channel: "evolution" | "meta_cloud";
 }): Promise<boolean> {
-  const { data } = await params.sb
-    .from("whatsapp_campaigns")
-    .select("agent_id, status")
-    .eq("tenant_id", params.tenantId)
-    .eq("id", params.campaignId)
-    .maybeSingle();
-  if (!data) return false;
-  const row = data as Record<string, unknown>;
+  const [{ data: campaign, error: campaignError }, { data: rule, error: ruleError }] =
+    await Promise.all([
+      params.sb
+        .from("whatsapp_campaigns")
+        .select("agent_id, status, rule_id, connection_id, transport")
+        .eq("tenant_id", params.tenantId)
+        .eq("id", params.campaignId)
+        .maybeSingle(),
+      params.sb
+        .from("lead_distribution_rules")
+        .select("tenant_id, source, active, agent_ids, connection_id, transport")
+        .eq("tenant_id", params.tenantId)
+        .eq("id", params.ruleId)
+        .maybeSingle(),
+    ]);
+  if (campaignError || ruleError || !campaign || !rule) return false;
+
+  const campaignRow = campaign as Record<string, unknown>;
+  const ruleRow = rule as Record<string, unknown>;
+  const transport = params.channel === "meta_cloud" ? "cloud_api" : "evolution";
+  const campaignStatus = text(campaignRow.status);
   return (
-    text(row.agent_id) === params.agentId &&
-    !["cancelled", "failed"].includes(String(row.status))
+    text(campaignRow.agent_id) === params.agentId &&
+    text(campaignRow.rule_id) === params.ruleId &&
+    text(campaignRow.connection_id) === params.connectionId &&
+    text(campaignRow.transport) === transport &&
+    campaignStatus !== null &&
+    ["scheduled", "processing", "paused", "completed"].includes(campaignStatus) &&
+    text(ruleRow.tenant_id) === params.tenantId &&
+    text(ruleRow.source) === "whatsapp_campaign" &&
+    ruleRow.active === true &&
+    text(ruleRow.connection_id) === params.connectionId &&
+    text(ruleRow.transport) === transport &&
+    stringArray(ruleRow.agent_ids).includes(params.agentId)
   );
 }
 
@@ -337,6 +363,8 @@ export async function authorizeActiveJourney(params: {
   preferredAgentId?: string | null;
   /** Identity of the inbound transport; prevents cross-number journey reuse. */
   connectionId?: string | null;
+  /** Runtime provider identity. Automated campaign sends must always provide it. */
+  channel?: "evolution" | "meta_cloud" | null;
 }): Promise<JourneyAuthorizationResult> {
   const journey = await getActiveLeadJourney(params);
   if (!journey) {
@@ -394,14 +422,20 @@ export async function authorizeActiveJourney(params: {
   }
 
   if (journey.source === "whatsapp_campaign") {
-    if (!journey.campaignId) {
-      return { ok: false, reason: "journey_missing_campaign", journey };
+    if (!journey.campaignId || !journey.ruleId) {
+      return { ok: false, reason: "journey_missing_campaign_rule", journey };
+    }
+    if (!params.channel) {
+      return { ok: false, reason: "journey_campaign_channel_missing", journey };
     }
     const authorized = await campaignAuthorizesAgent({
       sb: params.sb,
       tenantId: params.tenantId,
       campaignId: journey.campaignId,
+      ruleId: journey.ruleId,
       agentId,
+      connectionId: journey.connectionId,
+      channel: params.channel,
     });
     return authorized
       ? { ok: true, journey, agentId }
@@ -538,19 +572,13 @@ export async function resolveDirectJourneyAgent(params: {
   });
   if (existing.ok) return existing;
 
-  // Contato com atendimento em andamento que escreve numa outra linha do mesmo
-  // tenant continua com quem já o atende: a jornada mantém agente e base de
-  // autorização, e só o transporte da resposta muda (sai pela linha que
-  // recebeu). O isolamento entre contas não é afetado — a consulta de jornada
-  // já é escopada por tenant_id.
+  // A mensagem já foi persistida pelo webhook antes desta resolução. Se ela
+  // chegou por outra conexão, a jornada original permanece intacta, mas essa
+  // entrada não pode herdar agente nem trocar silenciosamente de transporte.
+  // Uma nova regra/jornada explícita é necessária para autorizar automação na
+  // conexão que recebeu a mensagem.
   if (!existing.ok && existing.reason === "journey_connection_mismatch") {
-    const continuation = await authorizeActiveJourney({
-      sb: params.sb,
-      tenantId: params.tenantId,
-      remoteJid: params.remoteJid,
-    });
-    if (continuation.ok) return continuation;
-    existing = continuation;
+    return existing;
   }
 
   if (existing.journey && !isRecoverableDirectJourney(existing)) return existing;

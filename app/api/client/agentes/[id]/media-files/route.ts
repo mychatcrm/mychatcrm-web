@@ -1,28 +1,14 @@
 import { NextResponse } from "next/server";
-import { getClientSessionFromCookies } from "@/lib/client-auth-server";
+import { requireAgentManagementSession } from "@/lib/server/agent-management-access";
 import {
   createAgentMediaUpload,
   listAgentMediaFiles,
   type AgentMediaFile,
 } from "@/lib/server/agent-media-files";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { assertManageableTenantAgent } from "@/lib/server/agent-management-record";
 
 export const dynamic = "force-dynamic";
-
-async function assertAgentBelongsToTenant(
-  sb: ReturnType<typeof createSupabaseServiceClient>,
-  tenantId: string,
-  agentId: string,
-) {
-  const { data, error } = await sb
-    .from("tenant_agents")
-    .select("agent_id")
-    .eq("tenant_id", tenantId)
-    .eq("agent_id", agentId)
-    .maybeSingle();
-  if (error) throw new Error("Erro ao validar agente.");
-  if (!data) throw new Error("Agente não encontrado para este tenant.");
-}
 
 function toApiFile(file: AgentMediaFile) {
   return {
@@ -38,14 +24,15 @@ function toApiFile(file: AgentMediaFile) {
 }
 
 export async function GET(_request: Request, { params }: { params: { id: string } }) {
-  const session = await getClientSessionFromCookies();
-  if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  const guard = await requireAgentManagementSession();
+  if (!guard.ok) return guard.response;
+  const { session } = guard.value;
   const agentId = params.id?.trim();
   if (!agentId) return NextResponse.json({ error: "id em falta" }, { status: 400 });
 
   const sb = createSupabaseServiceClient();
   try {
-    await assertAgentBelongsToTenant(sb, session.tenantId, agentId);
+    await assertManageableTenantAgent(sb, session.tenantId, agentId);
     const files = await listAgentMediaFiles({ sb, tenantId: session.tenantId, agentId });
     return NextResponse.json({ files: files.map(toApiFile) }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
@@ -55,8 +42,9 @@ export async function GET(_request: Request, { params }: { params: { id: string 
 }
 
 export async function POST(request: Request, { params }: { params: { id: string } }) {
-  const session = await getClientSessionFromCookies();
-  if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  const guard = await requireAgentManagementSession();
+  if (!guard.ok) return guard.response;
+  const { session } = guard.value;
   const agentId = params.id?.trim();
   if (!agentId) return NextResponse.json({ error: "id em falta" }, { status: 400 });
 
@@ -69,7 +57,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
 
   const sb = createSupabaseServiceClient();
   try {
-    await assertAgentBelongsToTenant(sb, session.tenantId, agentId);
+    await assertManageableTenantAgent(sb, session.tenantId, agentId);
     const result = await createAgentMediaUpload({
       sb,
       tenantId: session.tenantId,

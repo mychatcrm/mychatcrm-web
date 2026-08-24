@@ -58,14 +58,24 @@ export async function POST(request: Request) {
   }
 
   const actorId = session.employeeId ?? session.email;
-  const result = await returnConversationToAutomation({
-    sb,
-    tenantId: session.tenantId,
-    remoteJid,
-    actorId,
-    actorName: session.displayName,
-    agentId,
-  });
-
-  return NextResponse.json({ ok: true, operation: result.operation });
+  try {
+    const result = await returnConversationToAutomation({
+      sb,
+      tenantId: session.tenantId,
+      remoteJid,
+      actorId,
+      actorName: session.displayName,
+      agentId,
+    });
+    return NextResponse.json({ ok: true, operation: result.operation });
+  } catch (error) {
+    console.error("[conversation-return-automation] atomic_operation_failed", {
+      tenant_id: session.tenantId,
+      error: error instanceof Error ? error.message : "return_automation_failed",
+    });
+    return NextResponse.json(
+      { ok: false, error: "A jornada mudou ou perdeu autorização. A automação não foi reativada." },
+      { status: 409 },
+    );
+  }
 }

@@ -123,11 +123,17 @@ export async function listAgentExternalApiConnectorIds(tenantId: string, agentId
   return ((data ?? []) as Row[]).map((row) => stringValue(row.connector_id)).filter(Boolean);
 }
 
-export async function syncAgentExternalApiConnectors(tenantId: string, agentId: string, connectorIds: string[]): Promise<void> {
-  const unique = [...new Set(connectorIds.filter(Boolean))];
+export async function validateAgentExternalApiConnectorIds(tenantId: string, connectorIds: string[]): Promise<string[]> {
+  const unique = [...new Set(connectorIds.map((id) => id.trim()).filter(Boolean))];
+  if (!unique.length) return [];
   const available = await listExternalApiConnectors(tenantId);
   const allowed = new Set(available.connectors.filter((item) => item.enabled && item.effective).map((item) => item.id));
   if (unique.some((id) => !allowed.has(id))) throw new Error("external_api_connector_not_available");
+  return unique;
+}
+
+export async function syncAgentExternalApiConnectors(tenantId: string, agentId: string, connectorIds: string[]): Promise<void> {
+  const unique = await validateAgentExternalApiConnectorIds(tenantId, connectorIds);
   const sb = createSupabaseServiceClient();
   const { error: deleteError } = await sb.from("agent_external_api_connectors").delete().eq("tenant_id", tenantId).eq("agent_id", agentId);
   if (deleteError) throw new Error(`[external-api] agent_links_delete:${deleteError.message}`);

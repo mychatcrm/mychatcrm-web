@@ -1,9 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   extractMediaFilenames,
-  inferOutboundMediaFilenamesForRequest,
-  isLikelyOutboundMediaRequest,
-  looksLikeOutboundMediaRefusal,
   resolveOutboundMediaForAgentResponse,
   stripMediaTags,
   stripOutboundMediaDirectives,
@@ -77,35 +74,7 @@ describe("extractMediaFilenames / stripMediaTags", () => {
 });
 
 describe("agent outbound media helpers", () => {
-  it("detects media requests and media refusal text", () => {
-    expect(isLikelyOutboundMediaRequest("Pode me enviar as fotos?")).toBe(true);
-    expect(isLikelyOutboundMediaRequest("Qual é o horário de atendimento?")).toBe(false);
-    expect(looksLikeOutboundMediaRefusal("Não posso enviar fotos por aqui.")).toBe(true);
-  });
-
-  it("infers a ready image filename when the user asks for photos", async () => {
-    const filenames = await inferOutboundMediaFilenamesForRequest({
-      sb: fakeSupabaseWithMedia([
-        {
-          original_filename: "fachada-residencial.jpg",
-          description: "Foto da fachada",
-          mime_type: "image/jpeg",
-        },
-        {
-          original_filename: "tabela.pdf",
-          description: "Tabela de valores",
-          mime_type: "application/pdf",
-        },
-      ]),
-      tenantId: "tenant-1",
-      agentId: "agent-1",
-      requestText: "Me manda fotos da fachada",
-    });
-
-    expect(filenames).toEqual(["fachada-residencial.jpg"]);
-  });
-
-  it("replaces model refusal with a sendable media response", async () => {
+  it("never infers a file or overwrites the configured reply", async () => {
     const resolved = await resolveOutboundMediaForAgentResponse({
       sb: fakeSupabaseWithMedia([
         {
@@ -118,11 +87,24 @@ describe("agent outbound media helpers", () => {
       agentId: "agent-1",
       responseText: "Não posso enviar fotos por aqui.",
       userRequestText: "Tem foto do decorado?",
+      structuredFilenames: [],
     });
 
-    expect(resolved.inferred).toBe(true);
-    expect(resolved.cleanedText).toBe("Claro, vou te enviar agora.");
-    expect(resolved.filenames).toEqual(["decorado.png"]);
+    expect(resolved.inferred).toBe(false);
+    expect(resolved.cleanedText).toBe("Não posso enviar fotos por aqui.");
+    expect(resolved.filenames).toEqual([]);
+  });
+
+  it("uses only exact filenames selected by the structured contract", async () => {
+    const resolved = await resolveOutboundMediaForAgentResponse({
+      tenantId: "tenant-1",
+      agentId: "agent-1",
+      responseText: "Here is the requested material.",
+      userRequestText: "Send it",
+      structuredFilenames: ["global-catalog.json", "global-catalog.json"],
+    });
+    expect(resolved.cleanedText).toBe("Here is the requested material.");
+    expect(resolved.filenames).toEqual(["global-catalog.json"]);
   });
 
   it("deduplicates repeated media directives when resolving a response", async () => {

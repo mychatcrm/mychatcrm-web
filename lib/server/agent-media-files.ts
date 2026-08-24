@@ -85,92 +85,6 @@ export type OutboundMediaDirectiveParse = {
   filenames: string[];
 };
 
-type AgentOutboundMediaCandidate = {
-  originalFilename: string;
-  mimeType: string;
-  description: string | null;
-};
-
-const OUTBOUND_MEDIA_REQUEST_WORDS = [
-  "anexo",
-  "anexos",
-  "arquivo",
-  "arquivos",
-  "brochure",
-  "catalogo",
-  "catálogo",
-  "documento",
-  "documentos",
-  "folder",
-  "foto",
-  "fotos",
-  "imagem",
-  "imagens",
-  "material",
-  "materiais",
-  "midia",
-  "mídia",
-  "pdf",
-  "planta",
-  "plantas",
-  "tabela",
-  "video",
-  "vídeo",
-];
-
-const OUTBOUND_MEDIA_REFUSAL_WORDS = [
-  "nao posso enviar",
-  "nao consigo enviar",
-  "não posso enviar",
-  "não consigo enviar",
-  "nao tenho como enviar",
-  "não tenho como enviar",
-  "nao consigo anexar",
-  "não consigo anexar",
-  "no puedo enviar",
-  "i can't send",
-  "i cannot send",
-];
-
-function normalizeSearchText(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .trim();
-}
-
-function tokenizeSearchText(value: string): string[] {
-  const stopwords = new Set([
-    "para",
-    "com",
-    "uma",
-    "uns",
-    "das",
-    "dos",
-    "que",
-    "por",
-    "the",
-    "and",
-    "you",
-    "can",
-    "please",
-  ]);
-  return normalizeSearchText(value)
-    .split(/[^a-z0-9]+/g)
-    .filter((token) => token.length >= 3 && !stopwords.has(token));
-}
-
-export function isLikelyOutboundMediaRequest(text: string): boolean {
-  const normalized = normalizeSearchText(text);
-  return OUTBOUND_MEDIA_REQUEST_WORDS.some((word) => normalized.includes(normalizeSearchText(word)));
-}
-
-export function looksLikeOutboundMediaRefusal(text: string): boolean {
-  const normalized = normalizeSearchText(text);
-  return OUTBOUND_MEDIA_REFUSAL_WORDS.some((word) => normalized.includes(normalizeSearchText(word)));
-}
-
 const MEDIA_TAG_REGEX = /\[\[ENVIAR_MEDIA:(.*?)\]\]/gi;
 
 /** Extrai todos os nomes de arquivo das diretivas [[ENVIAR_MEDIA:...]] na ordem de aparição. */
@@ -249,133 +163,36 @@ export async function getAgentOutboundMediaPromptLines(params: {
   });
 }
 
-async function listReadyAgentOutboundMediaCandidates(params: {
-  sb: SupabaseServiceClient;
-  tenantId: string;
-  agentId: string;
-}): Promise<AgentOutboundMediaCandidate[]> {
-  const { data, error } = await params.sb
-    .from("agent_media_files")
-    .select("original_filename,description,mime_type")
-    .eq("tenant_id", params.tenantId)
-    .eq("agent_id", params.agentId)
-    .eq("status", "ready")
-    .order("created_at", { ascending: false })
-    .limit(AGENT_MEDIA_MAX_FILES);
-
-  if (error) {
-    console.warn("[agent-media-files] infer outbound media", error.code, error.message);
-    return [];
-  }
-
-  return ((data ?? []) as Array<Record<string, unknown>>)
-    .map((row) => ({
-      originalFilename: String(row.original_filename ?? "").trim(),
-      mimeType: normalizeAgentMediaMimeType(String(row.mime_type ?? "")),
-      description: textOrNull(row.description),
-    }))
-    .filter((row) => row.originalFilename.length > 0);
-}
-
-function scoreOutboundMediaCandidate(candidate: AgentOutboundMediaCandidate, requestText: string): number {
-  const request = normalizeSearchText(requestText);
-  const haystack = normalizeSearchText(`${candidate.originalFilename} ${candidate.description ?? ""}`);
-  const mime = candidate.mimeType.toLowerCase();
-  let score = 0;
-
-  const wantsImage = /\b(foto|fotos|imagem|imagens|fachada|planta|plantas)\b/.test(request);
-  const wantsVideo = /\b(video|videos)\b/.test(request);
-  const wantsDocument = /\b(pdf|arquivo|arquivos|documento|documentos|catalogo|folder|brochure|tabela|material|materiais)\b/.test(request);
-
-  if (wantsImage && mime.startsWith("image/")) score += 50;
-  if (wantsVideo && mime.startsWith("video/")) score += 50;
-  if (wantsDocument && !mime.startsWith("image/") && !mime.startsWith("video/") && !mime.startsWith("audio/")) {
-    score += 35;
-  }
-  if (!wantsImage && !wantsVideo && !wantsDocument) score += 5;
-
-  const requestTokens = new Set(tokenizeSearchText(requestText));
-  for (const token of requestTokens) {
-    if (haystack.includes(token)) score += 10;
-  }
-
-  return score;
-}
-
-export async function inferOutboundMediaFilenamesForRequest(params: {
-  sb?: SupabaseServiceClient;
-  tenantId: string;
-  agentId: string;
-  requestText: string;
-  limit?: number;
-}): Promise<string[]> {
-  const requestText = params.requestText.trim();
-  if (!requestText || !isLikelyOutboundMediaRequest(requestText)) return [];
-
-  const sb = params.sb ?? createSupabaseServiceClient();
-  const candidates = await listReadyAgentOutboundMediaCandidates({
-    sb,
-    tenantId: params.tenantId,
-    agentId: params.agentId,
-  });
-  if (!candidates.length) return [];
-
-  return candidates
-    .map((candidate, index) => ({
-      candidate,
-      index,
-      score: scoreOutboundMediaCandidate(candidate, requestText),
-    }))
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score || a.index - b.index)
-    .slice(0, Math.max(1, Math.min(params.limit ?? 1, 5)))
-    .map((item) => item.candidate.originalFilename);
-}
-
 export async function resolveOutboundMediaForAgentResponse(params: {
   sb?: SupabaseServiceClient;
   tenantId: string;
   agentId: string;
   responseText: string;
   userRequestText: string;
+  /** Presente no V2 (inclusive vazio): única fonte de seleção de arquivos. */
+  structuredFilenames?: string[];
 }): Promise<OutboundMediaDirectiveParse & { inferred: boolean }> {
-  const filenames = dedupeMediaFilenames(extractMediaFilenames(params.responseText));
+  const filenames = params.structuredFilenames
+    ? dedupeMediaFilenames(params.structuredFilenames.map((name) => name.trim()).filter(Boolean)).slice(0, 5)
+    : dedupeMediaFilenames(extractMediaFilenames(params.responseText));
   let cleanedText =
-    filenames.length > 1
-      ? introTextBeforeFirstMediaTag(params.responseText)
-      : stripMediaTags(params.responseText);
+    params.structuredFilenames !== undefined
+      ? stripMediaTags(params.responseText)
+      : filenames.length > 1
+        ? introTextBeforeFirstMediaTag(params.responseText)
+        : stripMediaTags(params.responseText);
   if (filenames.length) {
-    console.log("[MEDIA_DEBUG] directives_parsed:", { count: filenames.length, filenames });
+    console.info("[outbound-media]", { action: "structured_selection", count: filenames.length });
     return { cleanedText, filenames, inferred: false };
   }
-
-  const inferred = await inferOutboundMediaFilenamesForRequest({
-    sb: params.sb,
-    tenantId: params.tenantId,
-    agentId: params.agentId,
-    requestText: params.userRequestText,
-  });
-  if (!inferred.length) return { cleanedText, filenames: [], inferred: false };
-
-  cleanedText = looksLikeOutboundMediaRefusal(cleanedText)
-    ? "Claro, vou te enviar agora."
-    : cleanedText.trim() || "Segue o envio solicitado.";
-
-  console.info("[outbound-media]", {
-    action: "inferred_directive",
-    tenant_id: params.tenantId,
-    agent_id: params.agentId,
-    count: inferred.length,
-  });
-
-  return { cleanedText, filenames: inferred, inferred: true };
+  return { cleanedText, filenames: [], inferred: false };
 }
 
 function escapeIlikePattern(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
 }
 
-/** Lookup por original_filename (ilike exacto, depois contains) para envio Evolution. */
+/** Lookup estritamente exato: nome parcial nunca pode selecionar o arquivo errado. */
 export async function lookupReadyAgentMediaForOutbound(params: {
   sb: SupabaseServiceClient;
   tenantId: string;
@@ -406,16 +223,8 @@ export async function lookupReadyAgentMediaForOutbound(params: {
     return toRow(exactMatch as Record<string, unknown>);
   }
 
-  const partialPattern = `%${escapeIlikePattern(trimmed)}%`;
-  const { data: partialMatch, error: partialError } = await base
-    .ilike("original_filename", partialPattern)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const found = !partialError && Boolean(partialMatch);
-  console.log("[MEDIA_DEBUG] lookup:", { filename: trimmed, found, mode: found ? "partial" : "none" });
-  return found ? toRow(partialMatch as Record<string, unknown>) : null;
+  console.log("[MEDIA_DEBUG] lookup:", { filename: trimmed, found: false, mode: "none" });
+  return null;
 }
 
 export async function findReadyAgentMediaByOriginalFilename(params: {

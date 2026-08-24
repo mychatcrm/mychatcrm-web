@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
 import { generateWizardAgentInstructions } from "@/lib/server/agent-wizard-instruction-generation";
 import type { AgentWizardDraft } from "@/lib/agents/wizard-model";
-import { getClientSessionFromCookies } from "@/lib/client-auth-server";
+import { requireAgentManagementSession } from "@/lib/server/agent-management-access";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
-  const session = await getClientSessionFromCookies();
-  if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  const guard = await requireAgentManagementSession();
+  if (!guard.ok) return guard.response;
+  const { session } = guard.value;
 
   let formData: FormData;
   try {

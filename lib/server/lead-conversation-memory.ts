@@ -7,6 +7,7 @@ import {
   type ConversationSummary,
   type LeadRuntimeContext,
   conversationMessagesToAi,
+  buildKnowledgeRetrievalQuery,
   findLeadForConversation,
   getAgentKnowledgeSnippets,
   getConversationState,
@@ -275,6 +276,8 @@ export async function buildLeadConversationMemory(params: {
   journeyId?: string | null;
   messageLimit?: number;
   excludeMessageIds?: string[];
+  /** Texto do turno atual usado somente para recuperar trechos relevantes. */
+  retrievalQuery?: string | null;
   sourceOptions?: LeadMemorySourceOptions;
 }): Promise<LeadConversationMemory> {
   if (!params.remoteJid && !params.leadId) {
@@ -297,7 +300,12 @@ export async function buildLeadConversationMemory(params: {
     }
 
     const [knowledgeSnippets, outboundMediaLines] = await Promise.all([
-      getAgentKnowledgeSnippets({ sb, tenantId: params.tenantId, agentId: params.agentId }),
+      getAgentKnowledgeSnippets({
+        sb,
+        tenantId: params.tenantId,
+        agentId: params.agentId,
+        query: params.retrievalQuery,
+      }),
       getAgentOutboundMediaPromptLines({ sb, tenantId: params.tenantId, agentId: params.agentId }),
     ]);
 
@@ -324,14 +332,13 @@ export async function buildLeadConversationMemory(params: {
   }
 
   const sb = createSupabaseServiceClient();
-  const [state, leadByJid, knowledgeSnippets, outboundMediaLines] = await Promise.all([
+  const [state, leadByJid, outboundMediaLines] = await Promise.all([
     params.remoteJid
       ? getConversationState({ sb, tenantId: params.tenantId, remoteJid: params.remoteJid })
       : Promise.resolve(null),
     params.remoteJid
       ? findLeadForConversation({ sb, tenantId: params.tenantId, remoteJid: params.remoteJid })
       : Promise.resolve(null),
-    getAgentKnowledgeSnippets({ sb, tenantId: params.tenantId, agentId: params.agentId }),
     getAgentOutboundMediaPromptLines({ sb, tenantId: params.tenantId, agentId: params.agentId }),
   ]);
 
@@ -390,6 +397,14 @@ export async function buildLeadConversationMemory(params: {
         journeyId,
       })
     : [];
+
+  const retrievalQuery = buildKnowledgeRetrievalQuery(params.retrievalQuery, recentMessages);
+  const knowledgeSnippets = await getAgentKnowledgeSnippets({
+    sb,
+    tenantId: params.tenantId,
+    agentId: params.agentId,
+    query: retrievalQuery,
+  });
 
   const summary = await getLatestSummaryForLead({
     tenantId: params.tenantId,

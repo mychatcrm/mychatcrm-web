@@ -83,7 +83,7 @@ export async function executeAgentExternalApiLookup(params: {
     if (connectorRow.auth_type !== "none" && !credential) throw new Error("external_api_credentials_unavailable");
     const operation: ExternalApiOperationInput = {
       operationKey: String(operationRow.operation_key), name: String(operationRow.name), description: String(operationRow.description ?? ""),
-      method: operationRow.method === "POST" ? "POST" : "GET", pathTemplate: String(operationRow.path_template),
+      method: operationRow.method === "GET" ? "GET" : "POST", pathTemplate: String(operationRow.path_template),
       parameters: Array.isArray(operationRow.parameters) ? operationRow.parameters as ExternalApiOperationInput["parameters"] : [],
       responseMapping: operationRow.response_mapping as ExternalApiOperationInput["responseMapping"],
       cacheTtlSeconds: [30, 60, 120, 300].includes(cacheTtl) ? cacheTtl as 30 | 60 | 120 | 300 : 0, enabled: true,
@@ -91,7 +91,8 @@ export async function executeAgentExternalApiLookup(params: {
     const request = buildExternalApiRequest({ baseUrl: String(connectorRow.base_url), operation, args,
       authType: connectorRow.auth_type as "none" | "bearer" | "api_key" | "basic",
       authHeaderName: typeof connectorRow.auth_header_name === "string" ? connectorRow.auth_header_name : null, credential });
-    const response = await executeExternalApiHttpRequest({ ...request, method: operation.method });
+    if (operation.method !== "GET") throw new Error("external_api_read_only_method_required");
+    const response = await executeExternalApiHttpRequest({ ...request, method: "GET" });
     if (response.status < 200 || response.status >= 300) throw new Error(`external_api_http_${response.status}`);
     const normalized = normalizeExternalApiResponse(response.payload, operation.responseMapping);
     if (cacheTtl > 0) await sb.from("external_api_cache").upsert({ tenant_id: params.tenantId, connector_id: connector.id,

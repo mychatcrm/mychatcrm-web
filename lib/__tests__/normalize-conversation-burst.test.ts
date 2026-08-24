@@ -6,16 +6,17 @@ import {
 } from "@/lib/conversas/normalize-conversation-burst";
 
 describe("normalizeBurstDedupeKey", () => {
-  it("treats case, accents, punctuation and emoji variants as equal in relaxed mode", () => {
-    expect(normalizeBurstDedupeKey("Oi")).toBe(normalizeBurstDedupeKey("oi!"));
+  it("deduplicates only case/whitespace while preserving accents, punctuation and emoji", () => {
+    expect(normalizeBurstDedupeKey(" Oi ")).toBe(normalizeBurstDedupeKey("oi"));
     expect(normalizeBurstDedupeKey("BOM DIA")).toBe(normalizeBurstDedupeKey("bom   dia"));
-    expect(normalizeBurstDedupeKey("café")).toBe(normalizeBurstDedupeKey("cafe"));
-    expect(normalizeBurstDedupeKey("oi 👋")).toBe(normalizeBurstDedupeKey("oi"));
+    expect(normalizeBurstDedupeKey("Oi")).not.toBe(normalizeBurstDedupeKey("oi!"));
+    expect(normalizeBurstDedupeKey("café")).not.toBe(normalizeBurstDedupeKey("cafe"));
+    expect(normalizeBurstDedupeKey("oi 👋")).not.toBe(normalizeBurstDedupeKey("oi"));
   });
 });
 
 describe("normalizeConversationBurst", () => {
-  it("deduplicates ten oi variants into one message", () => {
+  it("keeps meaningful oi variants and removes only strict duplicates", () => {
     const messages = [
       "oi",
       "Oi",
@@ -30,9 +31,13 @@ describe("normalizeConversationBurst", () => {
     ].map((content, i) => ({ id: `m-${i}`, content }));
 
     const burst = normalizeConversationBurst(messages);
-    expect(burst.canonicalMessages).toHaveLength(1);
-    expect(burst.dedupedCount).toBe(9);
-    expect(burst.groupedMessagesCount).toBe(1);
+    expect(burst.canonicalMessages.map((message) => message.content)).toEqual([
+      "oi",
+      "oi!",
+      "oi 👋",
+    ]);
+    expect(burst.dedupedCount).toBe(7);
+    expect(burst.groupedMessagesCount).toBe(3);
   });
 
   it("groups all burst messages into a single reply unit without classifying a niche", () => {

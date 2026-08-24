@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { Coins, Copy, Link2, Settings, Users } from "lucide-react";
+import { AlertTriangle, Coins, Copy, Link2, Settings, Users } from "lucide-react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import type { Agent } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -19,14 +19,22 @@ function demoCreditsLabel(agent: Agent): string {
   return formatDemoCreditsCompactPtBr(v);
 }
 
+const REVIEW_REASON_LABELS: Record<string, string> = {
+  agent_context_overflow: "As instruções obrigatórias ultrapassam o limite do modelo.",
+  agenda_timezone_required: "Defina um fuso horário IANA válido para usar a agenda.",
+  handoff_configuration_invalid: "Complete os dados obrigatórios do encaminhamento humano.",
+};
+
 function AgentStatusSwitch({
   checked,
   onToggle,
   id,
+  disabled = false,
 }: {
   checked: boolean;
   onToggle: () => void;
   id: string;
+  disabled?: boolean;
 }) {
   return (
     <button
@@ -35,9 +43,11 @@ function AgentStatusSwitch({
       aria-checked={checked}
       id={id}
       onClick={onToggle}
+      disabled={disabled}
       className={cn(
         "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
         checked ? "border-emerald-500/35 bg-emerald-500/20" : "border-line/80 bg-surface-elevated/45",
+        disabled && "cursor-wait opacity-60",
       )}
       aria-label={checked ? "Agente ativo — clique para pausar" : "Agente pausado — clique para ativar"}
     >
@@ -57,6 +67,7 @@ export function AgentCard({
   onDuplicate,
   dragHandle,
   onManage,
+  busy = false,
 }: {
   agent: Agent;
   onToggleStatus: (agentId: string) => void;
@@ -65,11 +76,17 @@ export function AgentCard({
   dragHandle?: ReactNode;
   /** Abre o balão «Gerenciar» (lista de agentes). Se omitido, «Gerenciar» navega para a página de edição. */
   onManage?: () => void;
+  /** Bloqueia ações enquanto a alteração está sendo confirmada no servidor. */
+  busy?: boolean;
 }) {
   const { isLight } = usePanelAppearance();
   const creditsDisplay = demoCreditsLabel(agent);
   const leadsAtendendo = agent.metricas.conversasAtivasAgora;
   const isActive = agent.status === "ativo";
+  const needsReview = agent.reviewStatus === "action_required";
+  const reviewReasons = (agent.reviewReasons ?? []).map(
+    (reason) => REVIEW_REASON_LABELS[reason] ?? "Revise uma configuração pendente deste agente.",
+  );
 
   return (
     <article className="panel-surface-card group flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-surface-card p-3.5 transition-colors hover:bg-surface-card/95">
@@ -96,9 +113,22 @@ export function AgentCard({
             id={`agent-status-${agent.id}`}
             checked={isActive}
             onToggle={() => onToggleStatus(agent.id)}
+            disabled={busy}
           />
         </div>
       </div>
+
+      {needsReview ? (
+        <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-200" role="status">
+          <p className="flex items-center gap-2 text-xs font-semibold">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            Ação necessária
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-content-secondary">
+            {reviewReasons[0] ?? "Revise a configuração deste agente."}
+          </p>
+        </div>
+      ) : null}
 
       <div className="mt-0 pt-3 grid min-w-0 gap-2 min-[390px]:grid-cols-2">
         <div className="min-w-0 rounded-xl bg-surface-elevated/35 p-2.5">
@@ -134,6 +164,7 @@ export function AgentCard({
             <Button
               type="button"
               onClick={onManage}
+              disabled={busy}
               className="inline-flex min-h-9 w-full items-center justify-center gap-2 rounded-xl bg-primary px-3 text-xs font-semibold text-white transition hover:bg-primary-hover sm:text-[13px]"
             >
               <Settings className="h-3.5 w-3.5 shrink-0 opacity-95" strokeWidth={1.75} aria-hidden />
@@ -153,6 +184,7 @@ export function AgentCard({
             type="button"
             className="!min-h-9 w-full rounded-xl px-3 text-xs sm:text-[13px]"
             onClick={() => onDuplicate(agent.id)}
+            disabled={busy}
           >
             <Copy className="mr-1.5 h-3.5 w-3.5 shrink-0 opacity-80" strokeWidth={1.75} aria-hidden />
             Copiar

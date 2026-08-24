@@ -267,12 +267,29 @@ function makeSb(options: {
   leadRows: Row[];
   insertedCampaign: Row;
   captureCampaignInsert?: (payload: unknown) => void;
+  campaignRule?: Row | null;
   /** Quantas campanhas ativas o teto já vê — mesmo builder serve a contagem e o insert. */
   activeCampaignCount?: number;
 }) {
   return {
     from: (table: string) => {
       if (table === "tenant_agents") return makeBuilder(() => ({ data: options.agentRow, error: null }));
+      if (table === "lead_distribution_rules") {
+        return makeBuilder(() => ({
+          data:
+            options.campaignRule === null
+              ? null
+              : options.campaignRule ?? {
+                  id: "rule-1",
+                  source: "whatsapp_campaign",
+                  active: true,
+                  transport: "evolution",
+                  connection_id: "evo-1",
+                  agent_ids: options.agentRow?.agent_id ? [options.agentRow.agent_id] : [],
+                },
+          error: null,
+        }));
+      }
       if (table === "leads") return makeBuilder(() => ({ data: options.leadRows, error: null }));
       if (table === "whatsapp_campaigns") {
         return makeBuilder(
@@ -294,6 +311,15 @@ const OPTED_IN_LEAD: Row = {
   profile_metadata: {},
   whatsapp_opt_in_at: "2026-07-01T00:00:00.000Z",
   whatsapp_opt_in_source: "crm_manual_confirmation",
+};
+
+const CLOUD_CAMPAIGN_RULE: Row = {
+  id: "rule-1",
+  source: "whatsapp_campaign",
+  active: true,
+  transport: "cloud_api",
+  connection_id: "pn-1",
+  agent_ids: ["agent-1"],
 };
 
 describe("createWhatsAppCampaign — transporte cloud_api (API Meta)", () => {
@@ -325,7 +351,8 @@ describe("createWhatsAppCampaign — transporte cloud_api (API Meta)", () => {
     ]);
     let captured: Row | undefined;
     const sb = makeSb({
-      agentRow: { agent_id: "disparos-default", active: true, metadata: { isBroadcastAgent: true } },
+      agentRow: { agent_id: "agent-1", active: true, metadata: {} },
+      campaignRule: CLOUD_CAMPAIGN_RULE,
       leadRows: [OPTED_IN_LEAD],
       insertedCampaign: { id: "camp-1" },
       captureCampaignInsert: (payload) => {
@@ -341,6 +368,7 @@ describe("createWhatsAppCampaign — transporte cloud_api (API Meta)", () => {
         name: "Campanha Meta",
         connectionId: "pn-1",
         agentId: "agent-1",
+        ruleId: "rule-1",
         audienceBlocks: [{ kind: "crm" }],
         messageTemplate: "",
         metaTemplateName: "promo_v1",
@@ -352,13 +380,15 @@ describe("createWhatsAppCampaign — transporte cloud_api (API Meta)", () => {
     expect(campaign).toEqual({ id: "camp-1" });
     expect(captured?.transport).toBe("cloud_api");
     expect(captured?.connection_id).toBe("pn-1");
+    expect(captured?.rule_id).toBe("rule-1");
     expect(captured?.meta_template_name).toBe("promo_v1");
     expect(captured?.meta_template_lang).toBe("pt_BR");
   });
 
   it("rejeita quando nenhum template foi escolhido", async () => {
     const sb = makeSb({
-      agentRow: { agent_id: "disparos-default", active: true, metadata: { isBroadcastAgent: true } },
+      agentRow: { agent_id: "agent-1", active: true, metadata: {} },
+      campaignRule: CLOUD_CAMPAIGN_RULE,
       leadRows: [OPTED_IN_LEAD],
       insertedCampaign: { id: "camp-1" },
     });
@@ -371,6 +401,7 @@ describe("createWhatsAppCampaign — transporte cloud_api (API Meta)", () => {
           name: "Campanha Meta",
           connectionId: "pn-1",
           agentId: "agent-1",
+          ruleId: "rule-1",
           audienceBlocks: [{ kind: "crm" }],
           messageTemplate: "",
           metaTemplateName: null,
@@ -385,7 +416,8 @@ describe("createWhatsAppCampaign — transporte cloud_api (API Meta)", () => {
       { name: "promo_v1", status: "PENDING", category: "MARKETING", language: "pt_BR", bodyText: "Oi {{1}}", bodyParamCount: 1 },
     ]);
     const sb = makeSb({
-      agentRow: { agent_id: "disparos-default", active: true, metadata: { isBroadcastAgent: true } },
+      agentRow: { agent_id: "agent-1", active: true, metadata: {} },
+      campaignRule: CLOUD_CAMPAIGN_RULE,
       leadRows: [OPTED_IN_LEAD],
       insertedCampaign: { id: "camp-1" },
     });
@@ -398,6 +430,7 @@ describe("createWhatsAppCampaign — transporte cloud_api (API Meta)", () => {
           name: "Campanha Meta",
           connectionId: "pn-1",
           agentId: "agent-1",
+          ruleId: "rule-1",
           audienceBlocks: [{ kind: "crm" }],
           messageTemplate: "",
           metaTemplateName: "promo_v1",
@@ -554,12 +587,67 @@ describe("createWhatsAppCampaign — agente obrigatório", () => {
           name: "Campanha",
           connectionId: "evo-1",
           agentId: "",
+          ruleId: "rule-1",
           audienceBlocks: [{ kind: "crm" }],
           messageTemplate: "Olá {{nome}}",
           throughput: "normal",
         },
       }),
     ).rejects.toThrow("campaign_required_fields");
+  });
+
+  it("rejeita campanha nova sem regra explícita", async () => {
+    const sb = makeSb({
+      agentRow: { agent_id: "agent-1", active: true, metadata: {} },
+      leadRows: [OPTED_IN_LEAD],
+      insertedCampaign: { id: "camp-1" },
+    });
+
+    await expect(
+      createWhatsAppCampaign({
+        sb,
+        tenantId: "tenant-1",
+        input: {
+          name: "Campanha",
+          connectionId: "evo-1",
+          agentId: "agent-1",
+          ruleId: "",
+          audienceBlocks: [{ kind: "crm" }],
+          messageTemplate: "Olá {{nome}}",
+        },
+      }),
+    ).rejects.toThrow("campaign_rule_required");
+  });
+
+  it("rejeita regra de outro agente, transporte ou conexão", async () => {
+    const sb = makeSb({
+      agentRow: { agent_id: "agent-1", active: true, metadata: {} },
+      campaignRule: {
+        id: "rule-1",
+        source: "whatsapp_campaign",
+        active: true,
+        transport: "evolution",
+        connection_id: "evo-1",
+        agent_ids: ["outro-agente"],
+      },
+      leadRows: [OPTED_IN_LEAD],
+      insertedCampaign: { id: "camp-1" },
+    });
+
+    await expect(
+      createWhatsAppCampaign({
+        sb,
+        tenantId: "tenant-1",
+        input: {
+          name: "Campanha",
+          connectionId: "evo-1",
+          agentId: "agent-1",
+          ruleId: "rule-1",
+          audienceBlocks: [{ kind: "crm" }],
+          messageTemplate: "Olá {{nome}}",
+        },
+      }),
+    ).rejects.toThrow("campaign_rule_not_authorized");
   });
 
   it("rejeita quando o agente selecionado não está ativo", async () => {
@@ -573,6 +661,7 @@ describe("createWhatsAppCampaign — agente obrigatório", () => {
           name: "Campanha",
           connectionId: "evo-1",
           agentId: "agent-inativo",
+          ruleId: "rule-1",
           audienceBlocks: [{ kind: "crm" }],
           messageTemplate: "Olá {{nome}}",
           throughput: "normal",
@@ -595,6 +684,7 @@ describe("createWhatsAppCampaign — agente obrigatório", () => {
         name: "Campanha",
         connectionId: "evo-1",
         agentId: "ag-normal-1",
+        ruleId: "rule-1",
         audienceBlocks: [{ kind: "crm" }],
         messageTemplate: "Olá {{nome}}",
         throughput: "normal",
@@ -618,6 +708,7 @@ describe("createWhatsAppCampaign — vendedor atribuído", () => {
     name: "Campanha",
     connectionId: "evo-1",
     agentId: "disparos-default",
+    ruleId: "rule-1",
     audienceBlocks: [{ kind: "crm" as const }],
     messageTemplate: "Olá {{nome}}",
     throughput: "normal" as const,
@@ -708,6 +799,7 @@ describe("createWhatsAppCampaign — limite de campanhas ativas", () => {
     name: "Campanha",
     connectionId: "evo-1",
     agentId: "ag-1",
+    ruleId: "rule-1",
     audienceBlocks: [{ kind: "crm" as const }],
     messageTemplate: "Olá {{nome}}",
     throughput: "normal" as const,
@@ -761,7 +853,7 @@ describe("createWhatsAppCampaign — público obrigatório", () => {
 
   it("rejeita quando nenhum público foi adicionado", async () => {
     const sb = makeSb({
-      agentRow: { agent_id: "disparos-default", active: true, metadata: { isBroadcastAgent: true } },
+      agentRow: { agent_id: "agent-1", active: true, metadata: {} },
       leadRows: [OPTED_IN_LEAD],
       insertedCampaign: { id: "camp-1" },
     });
@@ -774,6 +866,7 @@ describe("createWhatsAppCampaign — público obrigatório", () => {
           name: "Campanha",
           connectionId: "evo-1",
           agentId: "agent-1",
+          ruleId: "rule-1",
           audienceBlocks: [],
           messageTemplate: "Olá {{nome}}",
           throughput: "normal",
@@ -789,7 +882,20 @@ describe("createWhatsAppCampaign — público obrigatório", () => {
       from: (table: string) => {
         if (table === "tenant_agents") {
           return makeBuilder(() => ({
-            data: { agent_id: "disparos-default", active: true, metadata: { isBroadcastAgent: true } },
+            data: { agent_id: "agent-1", active: true, metadata: {} },
+            error: null,
+          }));
+        }
+        if (table === "lead_distribution_rules") {
+          return makeBuilder(() => ({
+            data: {
+              id: "rule-1",
+              source: "whatsapp_campaign",
+              active: true,
+              transport: "evolution",
+              connection_id: "evo-1",
+              agent_ids: ["agent-1"],
+            },
             error: null,
           }));
         }
@@ -817,6 +923,7 @@ describe("createWhatsAppCampaign — público obrigatório", () => {
         name: "Campanha combinada",
         connectionId: "evo-1",
         agentId: "agent-1",
+        ruleId: "rule-1",
         audienceBlocks: [
           { kind: "crm", scope: { funnelIds: [], columns: [] }, period: { mode: "all" } },
           { kind: "leads", leadIds: ["lead-1"] },

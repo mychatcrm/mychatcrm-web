@@ -73,16 +73,59 @@ describe("omnichannel production hardening", () => {
     expect(manualAssignment).not.toContain("getEvolutionInstanceByTenantId");
   });
 
-  it("sends conventional follow-ups through the journey connection", () => {
+  it("sends follow-ups through the exact journey connection on both providers", () => {
     const followUps = source("lib/server/follow-up-jobs.ts");
 
     expect(followUps).toContain("getEvolutionInstanceByIdForTenant");
-    expect(followUps).toContain("connectionId: authorizedJourney?.connectionId");
+    expect(followUps).toContain("lookupWhatsAppCloudConnectionByPhoneNumberId");
+    expect(followUps).toContain("sendWhatsAppTextMessage");
+    expect(followUps).toContain("connectionId: job.connection_id");
+    expect(followUps).toContain("channel: job.channel");
+    expect(followUps).toContain("channel: exactTransport.channel");
     expect(followUps).not.toContain("returnConversationToAutomation({");
     expect(followUps).toContain("prepareAutomatedOutbound({");
     expect(followUps).toContain("missing_authorized_connection");
     expect(followUps).toContain("authorized_connection_not_open");
-    expect(followUps).toContain(": await getEvolutionInstanceByTenantId(job.tenant_id)");
+    expect(followUps).not.toContain("getEvolutionInstanceByTenantId(job.tenant_id)");
+    expect(followUps).toContain("reclaimStuckFollowUpJobs(client)");
+    expect(followUps).not.toContain("localizedAgentFailureReply");
+    expect(followUps).toContain("finish_follow_up_job_v2");
+    expect(followUps).not.toContain(
+      "Oi! Passando para saber se ainda posso te ajudar com algo. Fico à disposição.",
+    );
+  });
+
+  it("keeps Meta reply parity for handoff, TTS, media and follow-up", () => {
+    const metaReply = source("lib/server/meta-agent-reply.ts");
+    const metaWebhook = source("lib/server/whatsapp-cloud-webhook-handler.ts");
+
+    expect(metaReply).toContain("detectAgentHandoff");
+    expect(metaReply).toContain("deliverAgentReplyWithOptionalTts");
+    expect(metaReply).toContain("sendAgentOutboundMediaViaMeta");
+    expect(metaReply).toContain("completeAgentHandoff");
+    expect(metaWebhook).toContain("scheduleFollowUpAfterInbound");
+    expect(metaWebhook).toContain('channel: "meta_cloud"');
+    expect(metaWebhook).toContain("connectionId: inbound.phoneNumberId");
+  });
+
+  it("revalidates the exact journey connection before either provider calls the model", () => {
+    for (const [path, channel] of [
+      ["lib/server/evolution-agent-reply.ts", "evolution"],
+      ["lib/server/meta-agent-reply.ts", "meta_cloud"],
+    ] as const) {
+      const content = source(path);
+      const processor = content.indexOf("export async function process");
+      const authorization = content.indexOf("await authorizeActiveJourney({", processor);
+      const generation = content.indexOf(
+        channel === "evolution" ? "await generateReplyForUnit({" : "await generateAgentResponse({",
+        authorization,
+      );
+
+      expect(authorization, path).toBeGreaterThan(0);
+      expect(generation, path).toBeGreaterThan(authorization);
+      expect(content, path).toContain("connectionId: job.connection_id");
+      expect(content, path).toContain(`channel: "${channel}"`);
+    }
   });
 
   it("preserves the logical WhatsApp connection when a client disconnects", () => {

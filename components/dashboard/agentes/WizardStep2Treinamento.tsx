@@ -13,7 +13,9 @@ import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 import { AGENT_FIELD_HELP } from "./agent-field-help-content";
 import { FieldLabel, FieldTitle } from "./agent-field-help";
 
-const MAX_MATERIAL_BYTES = 1024 * 1024 * 1024;
+const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+const MAX_MATERIAL_TOTAL_BYTES = 200 * 1024 * 1024;
 const MAX_MATERIAL_FILES = 5;
 const R2_PUT_TIMEOUT_MS = 30_000;
 
@@ -22,6 +24,36 @@ const ACCEPT_EXTENSIONS =
 
 const TEMP_MIN = 0.01;
 const TEMP_MAX = 1;
+
+function isKnowledgeImage(file: File): boolean {
+  return file.type.startsWith("image/") || /\.(png|jpe?g|tiff?|bmp)$/i.test(file.name);
+}
+
+function inferKnowledgeMimeType(file: File): string {
+  if (file.type.trim()) return file.type.split(";")[0]!.trim().toLowerCase();
+  const ext = file.name.toLowerCase().split(".").pop() ?? "";
+  return (
+    {
+      pdf: "application/pdf",
+      docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      xml: "application/xml",
+      md: "text/markdown",
+      markdown: "text/markdown",
+      html: "text/html",
+      htm: "text/html",
+      csv: "text/csv",
+      txt: "text/plain",
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      tif: "image/tiff",
+      tiff: "image/tiff",
+      bmp: "image/bmp",
+    } as Record<string, string>
+  )[ext] ?? "application/octet-stream";
+}
 
 function inferTrainingFileFormat(fileName: string): TrainingFileFormat {
   const lower = fileName.toLowerCase();
@@ -92,6 +124,21 @@ function MaterialExtractionBadge({ status }: { status: KnowledgeExtractStatus })
   );
 }
 
+function knowledgeErrorLabel(code: string | undefined): string | null {
+  if (!code) return null;
+  if (code.includes("no_extractable_text") || code.includes("no_chunks")) return "Nenhum texto legível foi encontrado.";
+  if (code.includes("signature_invalid") || code.includes("encoding_invalid")) {
+    return "O conteúdo do arquivo não corresponde ao formato informado.";
+  }
+  if (code.includes("page_limit")) return "O PDF ultrapassa o limite de páginas permitido.";
+  if (code.includes("slide_limit")) return "A apresentação ultrapassa o limite de slides permitido.";
+  if (code.includes("sheet_limit") || code.includes("cell_limit")) return "A planilha ultrapassa o limite de dados permitido.";
+  if (code.includes("office_") && code.includes("limit")) return "O arquivo compactado ultrapassa o limite seguro de processamento.";
+  if (code.includes("dead_letter")) return "O processamento falhou após todas as tentativas. Reprocesse o arquivo.";
+  if (code.includes("claim_expired")) return "O processamento foi interrompido e será retomado automaticamente.";
+  return "Não foi possível processar este material. Reprocesse ou envie outro arquivo.";
+}
+
 export function WizardStep2Treinamento({
   draft,
   onChange,
@@ -141,7 +188,7 @@ export function WizardStep2Treinamento({
       activeCount,
       totalBytes,
       fileBarPct: Math.min(100, (activeCount / MAX_MATERIAL_FILES) * 100),
-      byteBarPct: Math.min(100, (totalBytes / MAX_MATERIAL_BYTES) * 100),
+      byteBarPct: Math.min(100, (totalBytes / MAX_MATERIAL_TOTAL_BYTES) * 100),
       totalKbRounded: Math.round(Math.max(0, totalBytes) / 1024),
     };
   }, [draft.arquivosTreinamento]);
@@ -164,6 +211,7 @@ export function WizardStep2Treinamento({
           sizeBytes: number;
           status: string;
           extractedTextStatus: KnowledgeExtractStatus;
+          errorMessage?: string | null;
         }>;
         error?: string;
       };
@@ -178,6 +226,7 @@ export function WizardStep2Treinamento({
           tipo: inferTrainingFileFormat(file.originalFilename),
           status: mapUploadStatus(file.status),
           extractedTextStatus: file.extractedTextStatus,
+          extractionError: file.errorMessage ?? undefined,
           tamanhoKb: Math.max(1, Math.round(file.sizeBytes / 1024)),
           sizeBytes: file.sizeBytes,
         })),
@@ -193,7 +242,18 @@ export function WizardStep2Treinamento({
     void syncServerFiles();
   }, [syncServerFiles]);
 
-  const uploadToSignedUrl = useCallback((file: File, uploadUrl: string): Promise<void> => {
+  const hasProcessingMaterials = draft.arquivosTreinamento.some(
+    (file) => file.extractedTextStatus === "pending" || file.extractedTextStatus === "processing",
+  );
+  useEffect(() => {
+    if (!agentId || !hasProcessingMaterials) return;
+    const timer = window.setInterval(() => {
+      void syncServerFiles();
+    }, 3_000);
+    return () => window.clearInterval(timer);
+  }, [agentId, hasProcessingMaterials, syncServerFiles]);
+
+  const uploadToSignedUrl = useCallback((file: File, uploadUrl: string, mimeType: string): Promise<void> => {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       let settled = false;
@@ -219,7 +279,7 @@ export function WizardStep2Treinamento({
 
       xhr.open("PUT", uploadUrl);
       xhr.timeout = R2_PUT_TIMEOUT_MS;
-      xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+      xhr.setRequestHeader("Content-Type", mimeType);
 
       xhr.upload.onprogress = (event) => {
         if (!event.lengthComputable) return;
@@ -315,14 +375,22 @@ export function WizardStep2Treinamento({
         setMaterialError("Cada agente pode ter no máximo 5 materiais de apoio.");
         return;
       }
-      const oversize = files.filter((f) => f.size > MAX_MATERIAL_BYTES);
-      const ok = files.filter((f) => f.size <= MAX_MATERIAL_BYTES);
+      const oversize = files.filter((file) => file.size > (isKnowledgeImage(file) ? MAX_IMAGE_BYTES : MAX_DOCUMENT_BYTES));
+      const ok = files.filter((file) => file.size <= (isKnowledgeImage(file) ? MAX_IMAGE_BYTES : MAX_DOCUMENT_BYTES));
       if (oversize.length) {
-        setMaterialError("Cada arquivo deve ter no máximo 1GB.");
+        setMaterialError("Documentos podem ter até 50 MB e imagens até 20 MB.");
       } else {
         setMaterialError("");
       }
       if (!ok.length) return;
+      const currentTotal = draft.arquivosTreinamento.reduce(
+        (sum, file) => sum + Math.max(0, file.sizeBytes ?? file.tamanhoKb * 1024),
+        0,
+      );
+      if (currentTotal + ok.reduce((sum, file) => sum + file.size, 0) > MAX_MATERIAL_TOTAL_BYTES) {
+        setMaterialError("Os materiais deste agente não podem ultrapassar 200 MB no total.");
+        return;
+      }
 
       for (const file of ok) {
         let knowledgeFileId: string | null = null;
@@ -330,13 +398,14 @@ export function WizardStep2Treinamento({
 
         try {
           setUploadProgress((current) => ({ ...current, [file.name]: 1 }));
+          const mimeType = inferKnowledgeMimeType(file);
 
           const startResponse = await fetch(`/api/client/agentes/${encodeURIComponent(agentId)}/knowledge-files`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               filename: file.name,
-              mimeType: file.type || "application/octet-stream",
+              mimeType,
               sizeBytes: file.size,
             }),
           });
@@ -357,7 +426,7 @@ export function WizardStep2Treinamento({
 
           knowledgeFileId = startData.file.id;
 
-          await uploadToSignedUrl(file, startData.uploadUrl);
+          await uploadToSignedUrl(file, startData.uploadUrl, mimeType);
           r2UploadSucceeded = true;
           setUploadProgress((current) => ({ ...current, [file.name]: 100 }));
 
@@ -375,6 +444,12 @@ export function WizardStep2Treinamento({
               ? `${message} O arquivo foi enviado, mas a extração não foi concluída — tente «Reprocessar» na lista.`
               : message,
           );
+          if (knowledgeFileId && !r2UploadSucceeded) {
+            await fetch(
+              `/api/client/agentes/${encodeURIComponent(agentId)}/knowledge-files/${encodeURIComponent(knowledgeFileId)}`,
+              { method: "DELETE" },
+            ).catch(() => undefined);
+          }
         } finally {
           setUploadProgress((current) => {
             const next = { ...current };
@@ -386,7 +461,7 @@ export function WizardStep2Treinamento({
 
       await syncServerFiles();
     },
-    [agentId, completeKnowledgeUpload, draft.arquivosTreinamento.length, syncServerFiles, uploadToSignedUrl],
+    [agentId, completeKnowledgeUpload, draft.arquivosTreinamento, syncServerFiles, uploadToSignedUrl],
   );
 
   const reprocessMaterial = useCallback(
@@ -511,7 +586,7 @@ export function WizardStep2Treinamento({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-content-secondary">Armazenamento</span>
               <span className="tabular-nums text-content-faint">
-                {materialMetrics.totalKbRounded.toLocaleString("pt-BR")} KB / 1 GB
+                {materialMetrics.totalKbRounded.toLocaleString("pt-BR")} KB / 200 MB
               </span>
             </div>
             <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-line">
@@ -563,7 +638,7 @@ export function WizardStep2Treinamento({
           <Upload className="h-10 w-10 text-primary" strokeWidth={1.75} aria-hidden />
           <p className="mt-3 text-sm font-semibold text-content">Clique para selecionar ou arraste seus arquivos aqui</p>
           <p className="mt-2 max-w-lg text-xs leading-relaxed text-content-muted">
-            Formatos aceitos: PDF, DOCX, XLSX, PPTX, XML, Markdown, HTML, CSV, PNG, JPEG, TIFF e BMP. Até 5 arquivos por agente e até 1GB por arquivo, com upload direto para R2.
+            Formatos aceitos: TXT, PDF, DOCX, XLSX, PPTX, XML, Markdown, HTML, CSV, PNG, JPEG, TIFF e BMP. Até 5 arquivos e 200 MB por agente; documentos até 50 MB e imagens até 20 MB.
           </p>
         </button>
 
@@ -640,6 +715,11 @@ export function WizardStep2Treinamento({
                 </div>
                 {file.extractedTextStatus ? (
                   <MaterialExtractionBadge status={file.extractedTextStatus} />
+                ) : null}
+                {file.extractedTextStatus === "failed" && knowledgeErrorLabel(file.extractionError) ? (
+                  <span className="text-[11px] leading-relaxed text-rose-300">
+                    {knowledgeErrorLabel(file.extractionError)}
+                  </span>
                 ) : null}
               </li>
             ))}

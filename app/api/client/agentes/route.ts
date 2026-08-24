@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
   agentCrmDestinationDbFields,
@@ -21,8 +20,17 @@ import {
   isBroadcastAgentMetadata,
 } from "@/lib/server/broadcast-agent-identity";
 import type { Agent } from "@/lib/types";
-import { resolveOrganizationRole } from "@/lib/organization-role";
-import { syncAgentExternalApiConnectors } from "@/lib/server/external-api-connectors";
+import {
+  validateAgentExternalApiConnectorIds,
+} from "@/lib/server/external-api-connectors";
+import { requireAgentManagementSession } from "@/lib/server/agent-management-access";
+import {
+  describeAgentContextFailure,
+  isAgentArchivedMetadata,
+  resolveAgentContextSaveDecision,
+  validateAgentManagementPayload,
+} from "@/lib/server/agent-management-validation";
+import { saveTenantAgentAtomic } from "@/lib/server/agent-management-persistence";
 
 export const dynamic = "force-dynamic";
 
@@ -35,8 +43,9 @@ export const dynamic = "force-dynamic";
 // ---------------------------------------------------------------------------
 
 export async function GET() {
-  const session = await getClientSessionFromCookies();
-  if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  const guard = await requireAgentManagementSession();
+  if (!guard.ok) return guard.response;
+  const { session, canManageExternalApis } = guard.value;
 
   const sb = createSupabaseServiceClient();
   const initial = await sb
@@ -62,11 +71,12 @@ export async function GET() {
     return NextResponse.json({ error: "Erro ao carregar agentes." }, { status: 503 });
   }
 
-  const agents: Agent[] = (data ?? []).map((row) =>
-    rowToAgent(row as Record<string, unknown>, session.tenantId),
-  );
-  const owner = resolveOrganizationRole(session) === "owner";
-  if (owner && agents.length) {
+  const visibleRows = (data ?? []).filter((row) => {
+    const record = row as Record<string, unknown>;
+    return !record.archived_at && !isAgentArchivedMetadata(record.metadata);
+  });
+  const agents: Agent[] = visibleRows.map((row) => rowToAgent(row as Record<string, unknown>, session.tenantId));
+  if (canManageExternalApis && agents.length) {
     const { data: links } = await sb.from("agent_external_api_connectors").select("agent_id,connector_id").eq("tenant_id", session.tenantId);
     const byAgent = new Map<string, string[]>();
     for (const link of links ?? []) byAgent.set(String(link.agent_id), [...(byAgent.get(String(link.agent_id)) ?? []), String(link.connector_id)]);
@@ -81,19 +91,19 @@ export async function GET() {
 // ---------------------------------------------------------------------------
 
 export async function POST(request: Request) {
-  const session = await getClientSessionFromCookies();
-  if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  const guard = await requireAgentManagementSession();
+  if (!guard.ok) return guard.response;
+  const { session, canManageExternalApis } = guard.value;
 
-  let agent: Agent;
+  let payload: unknown;
   try {
-    agent = (await request.json()) as Agent;
+    payload = await request.json();
   } catch {
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
   }
-
-  if (!agent.id || !agent.nome?.trim()) {
-    return NextResponse.json({ error: "Campos obrigatórios em falta (id, nome)." }, { status: 400 });
-  }
+  const validation = validateAgentManagementPayload(payload, { requireId: true });
+  if (!validation.ok) return NextResponse.json({ error: validation.error }, { status: 400 });
+  const agent = validation.agent;
   const responseSettingsError = validateAgentResponseSettings(agent);
   if (responseSettingsError) {
     return NextResponse.json({ error: responseSettingsError }, { status: 400 });
@@ -102,8 +112,31 @@ export async function POST(request: Request) {
   if (crmDestinationError) {
     return NextResponse.json({ error: crmDestinationError }, { status: 400 });
   }
+  const contextDecision = resolveAgentContextSaveDecision({ agent });
+  if (contextDecision.blocked && !contextDecision.validation.ok) {
+    return NextResponse.json(
+      describeAgentContextFailure(contextDecision.validation),
+      { status: 422 },
+    );
+  }
 
   const sb = createSupabaseServiceClient();
+  const existing = await sb
+    .from("tenant_agents")
+    .select("agent_id")
+    .eq("tenant_id", session.tenantId)
+    .eq("agent_id", agent.id)
+    .maybeSingle();
+  if (existing.error) {
+    console.error("[api/client/agentes] POST lookup", existing.error.code, existing.error.message);
+    return NextResponse.json({ error: "Erro ao validar o novo agente." }, { status: 503 });
+  }
+  if (existing.data) {
+    return NextResponse.json(
+      { error: "Já existe um agente com este ID.", code: "AGENT_ID_CONFLICT" },
+      { status: 409 },
+    );
+  }
   // Cota de agente de Disparos é separada da de atendimento — quem decide é o
   // próprio payload que está sendo salvo, não o estado antigo no banco.
   const isBroadcastAgent = agent.id === DISPAROS_DEFAULT_AGENT_ID || isBroadcastAgentMetadata(agent);
@@ -119,69 +152,60 @@ export async function POST(request: Request) {
   }
 
   const systemPrompt = assembleStoredSystemPrompt(agent);
-  const now = new Date().toISOString();
   const responseSettings = sanitizeAgentResponseSettings(agent);
   const normalizedCrmDestination = normalizeAgentCrmDestination(agent);
   const crmDestination = agentCrmDestinationDbFields(agent);
-  const canManageExternalApis = resolveOrganizationRole(session) === "owner";
-  const requestedConnectorIds = canManageExternalApis && Array.isArray(agent.externalApiConnectorIds) ? agent.externalApiConnectorIds : [];
+  let requestedConnectorIds = canManageExternalApis && Array.isArray(agent.externalApiConnectorIds) ? agent.externalApiConnectorIds : [];
+  if (canManageExternalApis) {
+    try {
+      requestedConnectorIds = await validateAgentExternalApiConnectorIds(session.tenantId, requestedConnectorIds);
+    } catch (connectorError) {
+      const unavailable = connectorError instanceof Error && connectorError.message === "external_api_connector_not_available";
+      return NextResponse.json(
+        { error: unavailable ? "Uma das APIs externas selecionadas não está disponível." : "Não foi possível validar as APIs externas agora." },
+        { status: unavailable ? 400 : 503 },
+      );
+    }
+  }
   const metadataAgent = { ...agent }; delete metadataAgent.externalApiConnectorIds;
 
-  const initial = await sb
-    .from("tenant_agents")
-    .upsert(
-      {
-        tenant_id: session.tenantId,
-        agent_id: agent.id,
-        display_name: agent.nome.trim(),
-        system_prompt: systemPrompt || agent.systemPrompt || "",
-        model: null,
-        active: agent.status === "ativo",
-        metadata: { ...metadataAgent, ...responseSettings, ...normalizedCrmDestination },
-        updated_at: now,
-        voice_id: responseSettings.voiceId,
-        response_mode: responseSettings.responseMode,
-        ...crmDestination,
-      },
-      { onConflict: "tenant_id,agent_id" },
-    )
-    .select(AGENT_SELECT_WITH_CRM)
-    .single();
-  let data: unknown = initial.data;
-  let error = initial.error;
-
-  if (isMissingColumnError(error)) {
-    const { data: fallbackData, error: fallbackError } = await sb
-      .from("tenant_agents")
-      .upsert(
-        {
-          tenant_id: session.tenantId,
-          agent_id: agent.id,
-          display_name: agent.nome.trim(),
-          system_prompt: systemPrompt || agent.systemPrompt || "",
-          model: null,
-          active: agent.status === "ativo",
-          metadata: { ...metadataAgent, ...responseSettings, ...normalizedCrmDestination },
-          updated_at: now,
-          voice_id: responseSettings.voiceId,
-          response_mode: responseSettings.responseMode,
-        },
-        { onConflict: "tenant_id,agent_id" },
-      )
-      .select(BASE_AGENT_SELECT)
-      .single();
-    data = fallbackData as unknown;
-    error = fallbackError;
-  }
-
-  if (error) {
-    console.error("[api/client/agentes] POST", error.code, error.message);
+  let saved: Awaited<ReturnType<typeof saveTenantAgentAtomic>>;
+  try {
+    saved = await saveTenantAgentAtomic(sb, {
+      tenantId: session.tenantId,
+      agentId: agent.id,
+      createOnly: true,
+      expectedVersion: null,
+      displayName: agent.nome.trim(),
+      systemPrompt: systemPrompt || agent.systemPrompt || "",
+      active: agent.status === "ativo",
+      metadata: { ...metadataAgent, ...responseSettings, ...normalizedCrmDestination },
+      voiceId: responseSettings.voiceId,
+      responseMode: responseSettings.responseMode,
+      crmAutoMoveEnabled: crmDestination.crm_auto_move_enabled === true,
+      crmTargetFunnelId: typeof crmDestination.crm_target_funnel_id === "string" ? crmDestination.crm_target_funnel_id : null,
+      crmTargetColumnId: typeof crmDestination.crm_target_column_id === "string" ? crmDestination.crm_target_column_id : null,
+      crmTargetStatus: typeof crmDestination.crm_target_status === "string" ? crmDestination.crm_target_status : null,
+      reviewStatus: contextDecision.reviewStatus,
+      reviewReasons: contextDecision.reviewReasons,
+      replaceConnectors: canManageExternalApis,
+      connectorIds: requestedConnectorIds,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "agent_save_failed";
+    if (message.includes("agent_already_exists")) {
+      return NextResponse.json({ error: "Já existe um agente com este ID.", code: "AGENT_ID_CONFLICT" }, { status: 409 });
+    }
+    console.error("[api/client/agentes] POST atomic", { error: message });
     return NextResponse.json({ error: "Erro ao criar agente." }, { status: 503 });
   }
-
-  if (canManageExternalApis) await syncAgentExternalApiConnectors(session.tenantId, agent.id, requestedConnectorIds);
-
-  const created = rowToAgent(data as Record<string, unknown>, session.tenantId);
+  if (!saved.ok || !saved.row) {
+    return NextResponse.json(
+      { error: "A configuração do agente foi bloqueada.", code: saved.ok ? "AGENT_SAVE_BLOCKED" : saved.code },
+      { status: 409 },
+    );
+  }
+  const created = rowToAgent(saved.row, session.tenantId);
   if (canManageExternalApis) created.externalApiConnectorIds = requestedConnectorIds;
   return NextResponse.json({ agent: created }, { status: 201 });
 }

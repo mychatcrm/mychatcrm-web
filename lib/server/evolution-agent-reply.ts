@@ -10,7 +10,9 @@ import {
 } from "@/lib/ai/agent-turn-plan";
 import {
   detectSupportedLanguageCode,
+  resolveConfiguredConversationLanguage,
   resolveConfiguredLanguageCode,
+  resolveTtsLanguageCode,
   type SupportedLanguageCode,
 } from "@/lib/ai/language-detect";
 import { localizedAgentFailureReply } from "@/lib/agents/agent-failure-reply";
@@ -82,14 +84,13 @@ import {
   type AgentResponseJobRow,
 } from "@/lib/server/agent-response-jobs";
 import {
-  buildDeterministicHandoffSummary,
   getRecentConversationMessages,
-  saveConversationSummary,
-  shouldTriggerHandoff,
   shouldTriggerHandoffAI,
 } from "@/lib/server/conversation-memory";
-import { markWaitingForHuman } from "@/lib/server/conversation-operation";
-import { scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
+import {
+  completeAgentHandoff,
+  resolveAgentHandoffSettings,
+} from "@/lib/server/agent-handoff-runtime";
 import { isStaleBurstGenerationRow, sleep } from "@/lib/server/agent-response-schedule";
 import { sendAgentOutboundMediaViaEvolution } from "@/lib/server/send-agent-outbound-media-evolution";
 import {
@@ -117,6 +118,7 @@ import {
   isJourneyIsolationEnabled,
   touchLeadJourney,
 } from "@/lib/server/lead-journeys";
+import { processEvolutionAgentResponseJob as processEvolutionAgentResponseJobV2 } from "@/lib/server/evolution-agent-adapter-v2";
 import { scheduleLeadRedistribution } from "@/lib/server/lead-redistribution";
 import { getEvolutionInstanceByName } from "@/lib/server/tenant-evolution-instance-db";
 
@@ -301,6 +303,17 @@ export async function processAgentResponseJob(
   claimedGeneration?: number,
   options?: { skipGenerationCheck?: boolean },
 ): Promise<{ ok: true; dedupedCount: number } | { ok: false; error: string; dedupedCount?: number }> {
+  // Compatibilidade de import para callers/testes antigos. O runtime real é o
+  // motor V2 compartilhado; o corpo legado abaixo permanece apenas para um
+  // rollback de código sem alterar a assinatura pública.
+  if (process.env.AGENT_TURN_V2 !== "off") {
+    return processEvolutionAgentResponseJobV2(
+      sb,
+      job,
+      claimedGeneration ?? job.burst_generation,
+      options,
+    );
+  }
   const generation = claimedGeneration ?? job.burst_generation;
   const skipGenerationCheck = options?.skipGenerationCheck === true;
   if (!skipGenerationCheck && !(await isAgentConversationSequenceCurrent(sb, job))) {
@@ -314,6 +327,8 @@ export async function processAgentResponseJob(
           tenantId: job.tenant_id,
           remoteJid: job.remote_jid,
           preferredAgentId: job.agent_id,
+          connectionId: job.connection_id,
+          channel: "evolution",
         })
       : null;
     if (!job.journey_id || !journeyAuth?.ok || journeyAuth.journey?.id !== job.journey_id) {
@@ -611,8 +626,7 @@ export async function processAgentResponseJob(
       ? (agentRow.metadata as Record<string, unknown>)
       : {};
   const smartWait = smartWaitFromMetadata(metadata);
-  const burstMode =
-    metadata.smartWaitBurstMode === "exact" ? "exact" as const : "relaxed" as const;
+  const burstMode = "exact" as const;
 
   const burst = normalizeConversationBurst(
     inboundRows.map((row) => ({
@@ -657,18 +671,14 @@ export async function processAgentResponseJob(
     count: burst.canonicalMessages.length > 0 ? 1 : 0,
   });
 
-  const handoffKeywords = Array.isArray(metadata.handoffKeywords)
-    ? metadata.handoffKeywords.filter((item): item is string => typeof item === "string")
-    : [];
-  const handoffEnabled = metadata.ctaHandoffAtivo === true;
+  const handoffSettings = resolveAgentHandoffSettings(metadata);
+  const handoffKeywords = handoffSettings.keywords;
+  const handoffEnabled = handoffSettings.enabled;
   const schedulingTimezone = resolveAgentTimezone({
     timezone: typeof metadata.timezone === "string" ? metadata.timezone : undefined,
     followUpInteligente: metadata.followUpInteligente as AgentFollowUpInteligente | undefined,
   });
-  const handoffMessage =
-    handoffEnabled && typeof metadata.handoffMensagem === "string" && metadata.handoffMensagem.trim()
-      ? metadata.handoffMensagem.trim()
-      : null;
+  const handoffMessage = handoffSettings.message;
 
   const number = remoteJidToEvoNumber(job.remote_jid);
   if (!number) return { ok: false, error: "invalid_remote_jid", dedupedCount: burst.dedupedCount };
@@ -876,6 +886,13 @@ export async function processAgentResponseJob(
         typeof metadata.idioma === "string" ? metadata.idioma : null,
         consolidatedInboundTextFromUnit(unit),
       ),
+      languageTag: (() => {
+        const resolved = resolveConfiguredConversationLanguage(
+          typeof metadata.idioma === "string" ? metadata.idioma : null,
+          consolidatedInboundTextFromUnit(unit),
+        );
+        return resolved.ok ? resolved.tag : null;
+      })(),
       priorAssistantText,
       recentClientMessages,
       agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,
@@ -951,30 +968,26 @@ export async function processAgentResponseJob(
       inferred: outboundMediaParse.inferred,
     });
 
-    const sendOutboundMediaSafe = async (): Promise<void> => {
+    const sendOutboundMedia = async (): Promise<void> => {
       if (!outboundFilenames.length) return;
-      try {
-        await sendAgentOutboundMediaViaEvolution({
-          tenantId: job.tenant_id,
-          agentId: job.agent_id,
-          instanceName: job.instance_name,
-          number,
-          originalFilenames: outboundFilenames,
-          remoteJid: job.remote_jid,
-          journeyId: job.journey_id!,
-          connectionId: job.connection_id!,
-          operationKeyPrefix: `agent-response:${job.id}:${generation}`,
-          leadId: job.lead_id,
-        });
-      } catch (err) {
-        console.warn(
-          "[agent-response-jobs] outbound agent media",
-          err instanceof Error ? err.message : err,
-        );
+      if (!job.journey_id || !job.rule_id || !job.connection_id) {
+        throw new Error("agent_media_authorization_context_missing");
       }
+      await sendAgentOutboundMediaViaEvolution({
+        tenantId: job.tenant_id,
+        agentId: job.agent_id,
+        instanceName: job.instance_name,
+        number,
+        originalFilenames: outboundFilenames,
+        remoteJid: job.remote_jid,
+        journeyId: job.journey_id,
+        ruleId: job.rule_id,
+        connectionId: job.connection_id,
+        operationKeyPrefix: `agent-response:${job.id}:${generation}`,
+        leadId: job.lead_id,
+      });
     };
 
-    const languageCode = detectSupportedLanguageCode(unitPrompt);
     const useTts = canUseTts({
       agentResponseMode: responseMode,
       inboundKind: triggeringInboundKind,
@@ -1006,6 +1019,8 @@ export async function processAgentResponseJob(
         tenantId: job.tenant_id,
         remoteJid: job.remote_jid,
         preferredAgentId: job.agent_id,
+        connectionId: job.connection_id,
+        channel: "evolution",
       });
       if (!currentJourney.ok || currentJourney.journey?.id !== job.journey_id) {
         return {
@@ -1031,6 +1046,7 @@ export async function processAgentResponseJob(
     });
     outboundDispatch: {
       if (outbound.action === "already_sent") {
+        await sendOutboundMedia();
         repliesSent += 1;
         break outboundDispatch;
       }
@@ -1071,7 +1087,7 @@ export async function processAgentResponseJob(
       number,
       text: textToSend,
       voiceId: voiceId!,
-      languageCode,
+      languageCode: resolveTtsLanguageCode(textToSend),
       tenantId: job.tenant_id,
       useTts,
       logScope: "agent-response-jobs",
@@ -1103,6 +1119,8 @@ export async function processAgentResponseJob(
             tenantId: job.tenant_id,
             remoteJid: job.remote_jid,
             preferredAgentId: job.agent_id,
+            connectionId: job.connection_id,
+            channel: "evolution",
           })
         : null;
       await scheduleLeadRedistribution({
@@ -1149,13 +1167,15 @@ export async function processAgentResponseJob(
                 tenantId: job.tenant_id,
                 remoteJid: job.remote_jid,
                 preferredAgentId: job.agent_id,
+                connectionId: job.connection_id,
+                channel: "evolution",
               })
             ).journey?.ruleId
           : null,
       currentAgentId: job.agent_id,
       trigger: "customer_silence",
     });
-    await sendOutboundMediaSafe();
+    await sendOutboundMedia();
 
     repliesSent += 1;
     console.info("[agent-response-jobs]", {
@@ -1167,83 +1187,13 @@ export async function processAgentResponseJob(
     }
 
   if (handoffTriggered) {
-    const messages = await getRecentConversationMessages({
+    await completeAgentHandoff({
       sb,
-      tenantId: job.tenant_id,
-      remoteJid: job.remote_jid,
-      journeyId: job.journey_id,
-    });
-    const summary = buildDeterministicHandoffSummary({
-      lead: job.lead_id
-        ? {
-            id: job.lead_id,
-            name: null,
-            phone: job.remote_jid.split("@")[0]?.replace(/\D/g, "") ?? null,
-            source: "whatsapp",
-            status: null,
-            crmFunnelId: null,
-            notes: null,
-            agentId: job.agent_id,
-            aiSummary: null,
-            leadTemperature: null,
-            suggestedNextAction: null,
-            profileMetadata: {},
-          }
-        : null,
-      messages,
+      job,
       reason: handoffReason ?? "handoff",
+      notificationNumber: handoffSettings.notificationNumber,
+      lastCustomerMessage: handoffLastMessage ?? "",
     });
-    await saveConversationSummary({
-      sb,
-      tenantId: job.tenant_id,
-      remoteJid: job.remote_jid,
-      leadId: job.lead_id,
-      agentId: job.agent_id,
-      journeyId: job.journey_id,
-      summary,
-    });
-    await markWaitingForHuman({
-      sb,
-      tenantId: job.tenant_id,
-      remoteJid: job.remote_jid,
-      leadId: job.lead_id,
-      agentId: job.agent_id,
-      reason: handoffReason ?? "handoff",
-      handoffNumero: typeof metadata.handoffNumero === "string" ? metadata.handoffNumero : null,
-      lastMessage: handoffLastMessage ?? null,
-    });
-
-    // Se o agente tem "Retomar só se humano abandonou" configurado, agenda um job
-    // futuro para checar o timeout de retomada — evita que o follow-up fique preso
-    // indefinidamente após o handoff cancelar todos os jobs pendentes.
-    const fuMeta = metadata?.followUpInteligente;
-    if (fuMeta && typeof fuMeta === "object") {
-      const fu = fuMeta as Record<string, unknown>;
-      if (
-        fu.ativo === true &&
-        fu.retomadaApenasSeHumanoAbandonou === true &&
-        typeof fu.retomadaHumanoTempoValor === "number"
-      ) {
-        const rawValor = fu.retomadaHumanoTempoValor as number;
-        const rawUnidade = fu.retomadaHumanoTempoUnidade;
-        const unidade =
-          rawUnidade === "minutos" || rawUnidade === "dias" ? rawUnidade : "horas";
-        const ms =
-          unidade === "minutos"
-            ? rawValor * 60_000
-            : unidade === "dias"
-              ? rawValor * 86_400_000
-              : rawValor * 3_600_000;
-        await scheduleRetomadaJob({
-          sb,
-          tenantId: job.tenant_id,
-          agentId: job.agent_id,
-          remoteJid: job.remote_jid,
-          leadId: job.lead_id,
-          scheduledAt: new Date(Date.now() + ms),
-        });
-      }
-    }
   }
 
   await promoteLeadToContatoOnAgentEngagement({
@@ -1271,6 +1221,7 @@ export async function processAgentResponseJob(
     agentId: job.agent_id,
     leadId: job.lead_id,
     outcome: turnLeadOutcome,
+    customerEvidenceTexts: unit.map((message) => message.content),
   });
   if (job.journey_id) {
     await touchLeadJourney({

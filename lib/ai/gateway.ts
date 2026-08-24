@@ -8,12 +8,13 @@ import {
 import type { AiGenerateInput, AiGenerateResult, AiGenerateSuccess, AiMessage, AiRole } from "@/lib/ai/types";
 import { resolveOpenAiApiKey } from "@/lib/ai/openai-api-key";
 import { integrationLog } from "@/lib/integrations/logger";
+import {
+  budgetAiMessagesForModel,
+  resolveAiRequestModel,
+} from "@/lib/ai/context-budget";
 
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
-const DEFAULT_MODEL = "gpt-4o-mini";
 const DEFAULT_TIMEOUT_MS = 25_000;
-const MAX_MESSAGES = 32;
-const MAX_MESSAGE_CONTENT = 8_000;
 /** Tentativas totais (1 original + 2 repetições) para falhas transitórias. */
 const MAX_ATTEMPTS = 3;
 const BASE_RETRY_DELAY_MS = 700;
@@ -27,18 +28,12 @@ function normalizeTemperature(value: unknown): number {
 
 function sanitizeMessages(messages: AiMessage[]): AiMessage[] {
   const validRoles = new Set<AiRole>(["system", "user", "assistant"]);
-  const normalized: AiMessage[] = [];
-  for (const m of messages) {
-    if (!validRoles.has(m.role)) continue;
-    const content = (m.content ?? "").slice(0, MAX_MESSAGE_CONTENT).trim();
-    if (!content) continue;
-    normalized.push({ role: m.role, content });
-  }
-  const firstSystem = normalized.find((x) => x.role === "system") ?? null;
-  const nonSystem = normalized.filter((x) => x.role !== "system");
-  const maxRest = firstSystem ? MAX_MESSAGES - 1 : MAX_MESSAGES;
-  const rest = nonSystem.slice(-maxRest);
-  return firstSystem ? [firstSystem, ...rest] : rest;
+  return messages.filter(
+    (message) =>
+      validRoles.has(message.role) &&
+      typeof message.content === "string" &&
+      message.content.trim().length > 0,
+  );
 }
 
 function extractProviderMessage(data: unknown): string {
@@ -179,10 +174,72 @@ async function persistTracking(params: {
 }
 
 export async function generateAIResponse(input: AiGenerateInput): Promise<AiGenerateResult> {
-  const apiKey = await resolveOpenAiApiKey();
-  const model = input.model?.trim() || process.env.OPENAI_CHAT_MODEL?.trim() || DEFAULT_MODEL;
+  const model = resolveAiRequestModel(input.model);
   const started = Date.now();
-  const safeMessages = sanitizeMessages(input.messages);
+  const normalizedMessages = sanitizeMessages(input.messages);
+
+  if (!input.tenantId || !input.agentId || normalizedMessages.length === 0) {
+    return { ok: false, code: "INVALID_INPUT", provider: "openai", model };
+  }
+
+  const budget = budgetAiMessagesForModel({
+    model,
+    messages: normalizedMessages,
+    responseFormat: input.responseFormat,
+  });
+  if (!budget.ok) {
+    if (budget.code === "unsupported_model_context_window") {
+      return {
+        ok: false,
+        code: "INVALID_INPUT",
+        detail: `agent_model_context_window_unknown:${budget.model}`,
+        provider: "openai",
+        model,
+      };
+    }
+    const detail = `agent_context_overflow:required_tokens=${budget.overflow.requiredTokens};max_input_tokens=${budget.overflow.maxInputTokens};overflow_tokens=${budget.overflow.overflowTokens}`;
+    await persistTracking({
+      input,
+      status: "blocked",
+      model,
+      text: "",
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      estimatedCostUsd: 0,
+      latencyMs: Date.now() - started,
+      errorCode: "AGENT_CONTEXT_OVERFLOW",
+      errorMessage: detail,
+    });
+    integrationLog("ai-gateway", "error", "agent context overflow", {
+      model,
+      required_tokens: budget.overflow.requiredTokens,
+      max_input_tokens: budget.overflow.maxInputTokens,
+      overflow_tokens: budget.overflow.overflowTokens,
+    });
+    return {
+      ok: false,
+      code: "AGENT_CONTEXT_OVERFLOW",
+      detail,
+      contextOverflow: budget.overflow,
+      provider: "openai",
+      model,
+      latencyMs: Date.now() - started,
+    };
+  }
+  const safeMessages = budget.messages;
+  if (budget.dropped.history || budget.dropped.retrieval || budget.dropped.auxiliary) {
+    integrationLog("ai-gateway", "info", "optional context reduced to model budget", {
+      model,
+      input_tokens: budget.inputTokens,
+      max_input_tokens: budget.maxInputTokens,
+      dropped_history: budget.dropped.history,
+      dropped_retrieval: budget.dropped.retrieval,
+      dropped_auxiliary: budget.dropped.auxiliary,
+    });
+  }
+
+  const apiKey = await resolveOpenAiApiKey();
 
   if (!apiKey) {
     await persistTracking({
@@ -199,10 +256,6 @@ export async function generateAIResponse(input: AiGenerateInput): Promise<AiGene
       errorMessage: "OpenAI API key ausente",
     });
     return { ok: false, code: "UNCONFIGURED", provider: "openai", model };
-  }
-
-  if (!input.tenantId || !input.agentId || safeMessages.length === 0) {
-    return { ok: false, code: "INVALID_INPUT", provider: "openai", model };
   }
 
   const limit = await checkTenantLimits(input.tenantId);
@@ -235,6 +288,7 @@ export async function generateAIResponse(input: AiGenerateInput): Promise<AiGene
   const requestBody = JSON.stringify({
     model,
     temperature: normalizeTemperature(input.temperature),
+    max_tokens: budget.outputReserveTokens,
     messages: safeMessages.map((m) => ({ role: m.role, content: m.content })),
     ...(input.responseFormat
       ? {

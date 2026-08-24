@@ -7,7 +7,9 @@ import {
   parseWhatsAppCloudInbound,
   parseWhatsAppCloudPayload,
   parseWhatsAppCloudStatuses,
+  sendWhatsAppMediaMessage,
   sendWhatsAppTemplateMessage,
+  uploadWhatsAppCloudMedia,
 } from "@/lib/integrations/whatsapp-cloud";
 
 describe("parseWhatsAppCloudPayload", () => {
@@ -218,6 +220,67 @@ describe("sendWhatsAppTemplateMessage", () => {
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(String(init.body));
     expect(body.template).toEqual({ name: "hello_world", language: { code: "en_US" } });
+  });
+});
+
+describe("WhatsApp Cloud media", () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sends a document through the exact connection without putting the token in the URL", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(
+      JSON.stringify({ messages: [{ id: "wamid.media" }] }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+
+    const result = await sendWhatsAppMediaMessage({
+      toWaId: "+1 (212) 555-0100",
+      kind: "document",
+      phoneNumberId: "PN-EXACT",
+      accessToken: "secret-token",
+      link: "https://cdn.example/document.pdf",
+      filename: "document.pdf",
+    });
+
+    expect(result).toEqual({ ok: true, status: 200, messageId: "wamid.media" });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/PN-EXACT/messages");
+    expect(url).not.toContain("secret-token");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer secret-token");
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      to: "12125550100",
+      type: "document",
+      document: { link: "https://cdn.example/document.pdf", filename: "document.pdf" },
+    });
+  });
+
+  it("uploads generated audio and returns the provider media id", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(
+      JSON.stringify({ id: "media-id-1" }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+
+    const result = await uploadWhatsAppCloudMedia({
+      phoneNumberId: "PN-EXACT",
+      accessToken: "secret-token",
+      buffer: Buffer.from("mp3"),
+      mimeType: "audio/mpeg",
+      filename: "reply.mp3",
+    });
+
+    expect(result).toEqual({ ok: true, status: 200, mediaId: "media-id-1" });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/PN-EXACT/media");
+    expect(url).not.toContain("secret-token");
+    expect(init.body).toBeInstanceOf(FormData);
   });
 });
 

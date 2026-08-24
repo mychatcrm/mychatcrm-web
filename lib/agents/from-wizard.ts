@@ -2,6 +2,7 @@ import type { Agent, AgentFollowUpInteligente, AgentLeadOutcomeConfig } from "@/
 import { listAgentsForTenant } from "./registry";
 import { sanitizeAgentResponseSettings } from "./response-settings";
 import { sanitizeAgentSmartWaitSettings } from "./smart-wait-settings";
+import { normalizeIanaTimezone } from "./agent-datetime";
 import type { AgentWizardDraft } from "./wizard-model";
 
 /**
@@ -109,10 +110,13 @@ function followUpCrmMoveFields(followUp: AgentFollowUpInteligente): Partial<Agen
 }
 
 function followUpAndTimezoneFromDraft(draft: AgentWizardDraft) {
-  const timezone =
-    (typeof draft.timezone === "string" && draft.timezone.trim()) ||
-    draft.followUpInteligente?.timezone ||
-    "UTC";
+  const rootTimezone =
+    typeof draft.timezone === "string" && draft.timezone.trim()
+      ? draft.timezone.trim()
+      : null;
+  const timezone = rootTimezone
+    ? normalizeIanaTimezone(rootTimezone) ?? undefined
+    : normalizeIanaTimezone(draft.followUpInteligente?.timezone) ?? undefined;
   return {
     timezone,
     followUpInteligente: {
@@ -167,9 +171,9 @@ export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDr
     crmTargetStatus: draft.crmAutoMoveEnabled ? draft.crmTargetColumnId : null,
     ctaHandoffAtivo: draft.ctaHandoffAtivo ?? false,
     agendaAutomationEnabled: draft.agendaAutomationEnabled ?? false,
-    useSystemToneInstructions: draft.useSystemToneInstructions ?? true,
-    useSystemWhatsappStyleGuide: draft.useSystemWhatsappStyleGuide ?? true,
-    useHumanPersona: draft.useHumanPersona ?? true,
+    useSystemToneInstructions: draft.useSystemToneInstructions === true,
+    useSystemWhatsappStyleGuide: false,
+    useHumanPersona: false,
     agendaLembretes: draft.agendaLembretes,
     agendaDisponibilidade: draft.agendaDisponibilidade,
     ...agendaCrmMoveFields(draft),
@@ -177,7 +181,7 @@ export function agentFromWizardDraftUpdate(existing: Agent, draft: AgentWizardDr
     leadOutcomeDisqualified: leadOutcomeFields(draft.leadOutcomeDisqualified),
     leadOutcomeLostInterest: leadOutcomeFields(draft.leadOutcomeLostInterest),
     ctaFinal: draft.ctaFinal ?? "Transferir para humano",
-    handoffKeywords: draft.handoffKeywords ?? ["humano", "especialista"],
+    handoffKeywords: draft.handoffKeywords ?? [],
     handoffMensagem: draft.handoffMensagem ?? "",
     handoffNumero: draft.handoffNumero ?? "",
   };
@@ -246,9 +250,9 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
     crmTargetStatus: draft.crmAutoMoveEnabled ? draft.crmTargetColumnId : null,
     ctaHandoffAtivo: draft.ctaHandoffAtivo ?? false,
     agendaAutomationEnabled: draft.agendaAutomationEnabled ?? false,
-    useSystemToneInstructions: draft.useSystemToneInstructions ?? true,
-    useSystemWhatsappStyleGuide: draft.useSystemWhatsappStyleGuide ?? true,
-    useHumanPersona: draft.useHumanPersona ?? true,
+    useSystemToneInstructions: draft.useSystemToneInstructions === true,
+    useSystemWhatsappStyleGuide: false,
+    useHumanPersona: false,
     agendaLembretes: draft.agendaLembretes,
     agendaDisponibilidade: draft.agendaDisponibilidade,
     ...agendaCrmMoveFields(draft),
@@ -256,7 +260,7 @@ export function agentFromWizardDraft(draft: AgentWizardDraft, tenantId: string):
     leadOutcomeDisqualified: leadOutcomeFields(draft.leadOutcomeDisqualified),
     leadOutcomeLostInterest: leadOutcomeFields(draft.leadOutcomeLostInterest),
     ctaFinal: draft.ctaFinal ?? "Transferir para humano",
-    handoffKeywords: draft.handoffKeywords ?? ["humano", "especialista"],
+    handoffKeywords: draft.handoffKeywords ?? [],
     handoffMensagem: draft.handoffMensagem ?? "",
     handoffNumero: draft.handoffNumero ?? "",
   };

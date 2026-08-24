@@ -7,6 +7,7 @@ import {
 } from "@/lib/server/meta-leadgen-inbox";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { verifyMetaSchedulerRequest } from "@/lib/server/meta-scheduler-auth";
+import { processAgentKnowledgeJobs } from "@/lib/server/agent-knowledge-processing";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -55,12 +56,13 @@ async function drainMetaLeadgenInbox(): Promise<MetaLeadgenInboxProcessResult> {
 }
 
 async function runMetaMaintenance(params: { runId: string; leaseToken: string }): Promise<void> {
-  const [inboxResult, healthResult] = await Promise.allSettled([
+  const [inboxResult, healthResult, knowledgeResult] = await Promise.allSettled([
     drainMetaLeadgenInbox(),
     reconcileMetaLeadConnections({
       sb: createSupabaseServiceClient(),
       limit: 50,
     }),
+    processAgentKnowledgeJobs({ limit: 2 }),
   ]);
 
   if (inboxResult.status === "fulfilled") {
@@ -92,11 +94,22 @@ async function runMetaMaintenance(params: { runId: string; leaseToken: string })
     });
   }
 
+  if (knowledgeResult.status === "fulfilled") {
+    console.info("[agent-knowledge] maintenance_completed", knowledgeResult.value);
+  } else {
+    console.error("[agent-knowledge] maintenance_failed", {
+      error:
+        knowledgeResult.reason instanceof Error
+          ? knowledgeResult.reason.message
+          : "knowledge_maintenance_failed",
+    });
+  }
+
   const inbox = inboxResult.status === "fulfilled" ? inboxResult.value : emptyInboxResult();
   const health = healthResult.status === "fulfilled" ? healthResult.value : null;
-  const status = inboxResult.status === "fulfilled" && healthResult.status === "fulfilled"
+  const status = inboxResult.status === "fulfilled" && healthResult.status === "fulfilled" && knowledgeResult.status === "fulfilled"
     ? "completed"
-    : inboxResult.status === "rejected" && healthResult.status === "rejected"
+    : inboxResult.status === "rejected" && healthResult.status === "rejected" && knowledgeResult.status === "rejected"
       ? "failed"
       : "partial";
   const sb = createSupabaseServiceClient();

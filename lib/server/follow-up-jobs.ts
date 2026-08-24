@@ -3,18 +3,20 @@ import {
   isAgentMissingInstructionsResult,
 } from "@/lib/ai/generate-agent-response";
 import { evolutionSendText, remoteJidToEvoNumber } from "@/lib/integrations/evolution-api";
+import { extractEvolutionSendReceipt } from "@/lib/integrations/evolution-message-receipt";
+import { sendWhatsAppTextMessage } from "@/lib/integrations/whatsapp-cloud";
 import type { AgentFollowUpInteligente } from "@/lib/types";
 import { phoneFromRemoteJid } from "@/lib/server/auto-lead-upsert";
 import { isAgentAutomationAllowed } from "@/lib/server/conversation-operation";
-import {
-  conversationMessagesToAi,
-  getRecentConversationMessages,
-} from "@/lib/server/conversation-memory";
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
 import {
   getEvolutionInstanceByIdForTenant,
-  getEvolutionInstanceByTenantId,
+  type TenantEvolutionInstanceRow,
 } from "@/lib/server/tenant-evolution-instance-db";
+import {
+  lookupWhatsAppCloudConnectionByPhoneNumberId,
+  type WhatsAppCloudConnection,
+} from "@/lib/server/whatsapp-cloud-connections";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { applyAgentCrmMove } from "@/lib/server/agent-crm-move";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
@@ -24,11 +26,12 @@ import {
   isWithinBusinessHours,
   type FollowUpDecision,
 } from "@/lib/server/follow-up-engine";
+import { isValidIanaTimezone } from "@/lib/agents/agent-datetime";
 import { buildFollowUpEvalContext } from "@/lib/server/follow-up-evaluate";
 import { findNextActiveAgendaEvent } from "@/lib/server/agent-cta-scheduler";
 import {
   authorizeActiveJourney,
-  isJourneyIsolationEnabled,
+  getLeadJourneyById,
   type LeadJourney,
 } from "@/lib/server/lead-journeys";
 import {
@@ -36,8 +39,46 @@ import {
   markAgentOutboundSent,
   prepareAutomatedOutbound,
 } from "@/lib/server/agent-outbound-outbox";
+import { parseAgentTurnPlan } from "@/lib/ai/agent-turn-plan";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
+
+export function safeFollowUpReplyFromResult(result: Awaited<ReturnType<typeof generateAgentResponse>>):
+  | { ok: true; reply: string }
+  | { ok: false; reason: string } {
+  if (!result.ok) return { ok: false, reason: `agent_generation_failed:${result.code}` };
+  const plan = parseAgentTurnPlan(result.structuredData);
+  if (!plan) return { ok: false, reason: "follow_up_structured_reply_missing" };
+  if (plan.agenda.action !== "none") {
+    return { ok: false, reason: "follow_up_agenda_action_forbidden" };
+  }
+  if (plan.leadOutcome.action !== "none") {
+    return { ok: false, reason: "follow_up_lead_outcome_forbidden" };
+  }
+  if (/\[\[(?:HANDOFF|ENVIAR_MEDIA)(?::[^\]]*)?\]\]/i.test(plan.reply)) {
+    return { ok: false, reason: "follow_up_internal_marker_forbidden" };
+  }
+  const reply = plan.reply.trim();
+  return reply ? { ok: true, reply } : { ok: false, reason: "follow_up_empty_reply" };
+}
+
+/** Maior que o limite de 120s da função que processa follow-ups. */
+export const FOLLOW_UP_CLAIM_TTL_MS = 5 * 60 * 1000;
+
+export type FollowUpOutboundTransport =
+  | {
+      ok: true;
+      channel: "evolution";
+      connectionId: string;
+      instance: TenantEvolutionInstanceRow;
+    }
+  | {
+      ok: true;
+      channel: "meta_cloud";
+      connectionId: string;
+      connection: WhatsAppCloudConnection;
+    }
+  | { ok: false; reason: string };
 
 export type FollowUpJobRow = {
   id: string;
@@ -46,6 +87,12 @@ export type FollowUpJobRow = {
   remote_jid: string;
   lead_id: string | null;
   journey_id: string | null;
+  channel: "evolution" | "meta_cloud" | null;
+  connection_id: string | null;
+  rule_id: string | null;
+  automation_epoch: number | null;
+  claim_token: string | null;
+  claim_expires_at: string | null;
   scheduled_at: string;
   attempts: number;
   max_attempts: number;
@@ -62,6 +109,169 @@ function logFollowUp(event: string, payload: Record<string, unknown>): void {
   console.info("[follow-up-jobs]", { event, ...payload });
 }
 
+async function markFollowUpTimezoneReview(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  agentId: string;
+}): Promise<void> {
+  const { error } = await params.sb.rpc("mark_agent_runtime_review_reason_v1", {
+    p_tenant_id: params.tenantId,
+    p_agent_id: params.agentId,
+    p_reason: "follow_up_timezone_required",
+  });
+  if (error) {
+    logFollowUp("review_reason_failed", {
+      tenant_id: params.tenantId,
+      agent_id: params.agentId,
+      reason: "follow_up_timezone_required",
+      error: error.message,
+    });
+  }
+}
+
+export async function resolveFollowUpOutboundTransport(params: {
+  tenantId: string;
+  connectionId: string;
+  channel: "evolution" | "meta_cloud";
+}): Promise<FollowUpOutboundTransport> {
+  const connectionId = params.connectionId.trim();
+  if (!connectionId) {
+    return { ok: false, reason: "missing_authorized_connection" };
+  }
+
+  if (params.channel === "meta_cloud") {
+    const cloud = await lookupWhatsAppCloudConnectionByPhoneNumberId(connectionId);
+    if (!cloud || cloud.tenant_id !== params.tenantId || !cloud.active) {
+      return { ok: false, reason: "authorized_connection_not_found" };
+    }
+    return {
+      ok: true,
+      channel: "meta_cloud",
+      connectionId,
+      connection: cloud,
+    };
+  }
+
+  const evolution = await getEvolutionInstanceByIdForTenant(
+    params.tenantId,
+    connectionId,
+  );
+  if (evolution) {
+    return evolution.instance_name && evolution.connection_state === "open"
+      ? {
+          ok: true,
+          channel: "evolution",
+          connectionId,
+          instance: evolution,
+        }
+      : { ok: false, reason: "authorized_connection_not_open" };
+  }
+  return { ok: false, reason: "authorized_connection_not_found" };
+}
+
+/** Recovers only database leases that have actually expired. */
+export async function reclaimStuckFollowUpJobs(
+  sb: SupabaseServiceClient,
+  now = new Date(),
+): Promise<number> {
+  const { data, error } = await sb.rpc("recover_expired_follow_up_jobs_v2", {
+    p_now: now.toISOString(),
+  });
+  if (error) {
+    logFollowUp("claim_recovery_failed", { error: error.message });
+    return 0;
+  }
+  const recovered = Number(data ?? 0);
+  if (recovered > 0) logFollowUp("claim_recovered", { count: recovered });
+  return recovered;
+}
+
+async function claimFollowUpJob(
+  sb: SupabaseServiceClient,
+  jobId: string,
+): Promise<FollowUpJobRow | null> {
+  const claimSeconds = Math.floor(FOLLOW_UP_CLAIM_TTL_MS / 1000);
+  const { data, error } = await sb.rpc("claim_follow_up_job_v2", {
+    p_job_id: jobId,
+    p_claim_seconds: claimSeconds,
+  });
+  if (error) {
+    logFollowUp("claim_failed", { job_id: jobId, error: error.message });
+    return null;
+  }
+  const raw = Array.isArray(data) ? data[0] : data;
+  return raw && typeof raw === "object"
+    ? rowFromDb(raw as Record<string, unknown>)
+    : null;
+}
+
+async function heartbeatFollowUpJob(
+  sb: SupabaseServiceClient,
+  job: FollowUpJobRow,
+): Promise<boolean> {
+  if (!job.claim_token) return false;
+  const { data, error } = await sb.rpc("heartbeat_follow_up_job_v2", {
+    p_job_id: job.id,
+    p_claim_token: job.claim_token,
+    p_extend_seconds: Math.floor(FOLLOW_UP_CLAIM_TTL_MS / 1000),
+  });
+  if (error || data !== true) {
+    logFollowUp("claim_lost", {
+      job_id: job.id,
+      error: error?.message ?? "claim_expired",
+    });
+    return false;
+  }
+  return true;
+}
+
+type FollowUpFinishStatus = "pending" | "sent" | "exhausted" | "cancelled";
+
+async function finishClaimedFollowUpJob(params: {
+  sb: SupabaseServiceClient;
+  job: FollowUpJobRow;
+  status: FollowUpFinishStatus;
+  attempts?: number;
+  scheduledAt?: Date | null;
+  followUpType?: string | null;
+  priority?: number | null;
+  lastError?: string | null;
+  nextScheduledAt?: Date | null;
+}): Promise<{ ok: true; nextJobId: string | null } | { ok: false; reason: string }> {
+  if (!params.job.claim_token) return { ok: false, reason: "claim_missing" };
+  const { data, error } = await params.sb.rpc("finish_follow_up_job_v2", {
+    p_job_id: params.job.id,
+    p_claim_token: params.job.claim_token,
+    p_status: params.status,
+    p_attempts: params.attempts ?? null,
+    p_scheduled_at: params.scheduledAt?.toISOString() ?? null,
+    p_follow_up_type: params.followUpType ?? null,
+    p_priority: params.priority ?? null,
+    p_last_error: params.lastError ?? null,
+    p_next_scheduled_at: params.nextScheduledAt?.toISOString() ?? null,
+  });
+  if (error) {
+    logFollowUp("finish_failed", {
+      job_id: params.job.id,
+      error: error.message,
+    });
+    return { ok: false, reason: error.message };
+  }
+  const result = data && typeof data === "object"
+    ? (data as Record<string, unknown>)
+    : null;
+  if (result?.ok !== true) {
+    return {
+      ok: false,
+      reason: typeof result?.reason === "string" ? result.reason : "claim_lost",
+    };
+  }
+  return {
+    ok: true,
+    nextJobId: typeof result.nextJobId === "string" ? result.nextJobId : null,
+  };
+}
+
 function retomadaHumanoMs(value: number, unit: AgentFollowUpInteligente["retomadaHumanoTempoUnidade"]): number {
   if (unit === "minutos") return value * 60_000;
   if (unit === "dias") return value * 86_400_000;
@@ -76,6 +286,20 @@ function rowFromDb(data: Record<string, unknown>): FollowUpJobRow {
     remote_jid: String(data.remote_jid),
     lead_id: typeof data.lead_id === "string" ? data.lead_id : null,
     journey_id: typeof data.journey_id === "string" ? data.journey_id : null,
+    channel:
+      data.channel === "evolution" || data.channel === "meta_cloud"
+        ? data.channel
+        : null,
+    connection_id:
+      typeof data.connection_id === "string" ? data.connection_id : null,
+    rule_id: typeof data.rule_id === "string" ? data.rule_id : null,
+    automation_epoch:
+      Number.isFinite(Number(data.automation_epoch))
+        ? Number(data.automation_epoch)
+        : null,
+    claim_token: typeof data.claim_token === "string" ? data.claim_token : null,
+    claim_expires_at:
+      typeof data.claim_expires_at === "string" ? data.claim_expires_at : null,
     scheduled_at: String(data.scheduled_at),
     attempts: Number(data.attempts ?? 0),
     max_attempts: Number(data.max_attempts ?? 3),
@@ -146,6 +370,9 @@ async function saveOutboundFollowUp(params: {
   content: string;
   leadId?: string | null;
   journeyId?: string | null;
+  channel: "evolution" | "meta_cloud";
+  connectionId: string;
+  providerMessageId?: string | null;
 }): Promise<void> {
   await params.sb.from("whatsapp_messages").insert({
     tenant_id: params.tenantId,
@@ -156,6 +383,10 @@ async function saveOutboundFollowUp(params: {
     agent_id: params.agentId,
     lead_id: params.leadId ?? null,
     journey_id: params.journeyId ?? null,
+    channel: params.channel,
+    connection_id: params.connectionId,
+    message_id: params.providerMessageId ?? null,
+    provider_message_id: params.providerMessageId ?? null,
   });
 }
 
@@ -281,10 +512,11 @@ export async function loadConversationStateForJob(
   handoffSuggested: boolean;
   conversationMode: string | null;
   archivedAt: Date | null;
+  automationEpoch: number;
 } | null> {
   const { data } = await sb
     .from("conversation_states")
-    .select("human_paused,paused_reason,handoff_suggested,conversation_mode,archived_at")
+    .select("human_paused,paused_reason,handoff_suggested,conversation_mode,archived_at,automation_epoch")
     .eq("tenant_id", tenantId)
     .eq("remote_jid", remoteJid)
     .maybeSingle();
@@ -298,6 +530,7 @@ export async function loadConversationStateForJob(
       typeof row.conversation_mode === "string" ? row.conversation_mode : null,
     archivedAt:
       typeof row.archived_at === "string" ? new Date(row.archived_at) : null,
+    automationEpoch: Number(row.automation_epoch ?? 0),
   };
 }
 
@@ -310,24 +543,17 @@ export async function cancelPendingFollowUpJobs(params: {
   reason?: string;
   journeyId?: string | null;
 }): Promise<number> {
-  const now = new Date().toISOString();
-  let query = params.sb
-    .from("follow_up_jobs")
-    .update({
-      status: "cancelled",
-      last_error: params.reason ?? "cancelled",
-      updated_at: now,
-    })
-    .eq("tenant_id", params.tenantId)
-    .eq("remote_jid", params.remoteJid)
-    .eq("status", "pending");
-  if (params.journeyId) query = query.eq("journey_id", params.journeyId);
-  const { data, error } = await query.select("id");
+  const { data, error } = await params.sb.rpc("cancel_active_follow_up_jobs_v2", {
+    p_tenant_id: params.tenantId,
+    p_remote_jid: params.remoteJid,
+    p_reason: params.reason ?? "cancelled",
+    p_journey_id: params.journeyId ?? null,
+  });
   if (error) {
     logFollowUp("cancel_failed", { tenant_id: params.tenantId, error: error.message });
     return 0;
   }
-  const count = Array.isArray(data) ? data.length : 0;
+  const count = Number(data ?? 0);
   if (count > 0) logFollowUp("cancelled_pending", { tenant_id: params.tenantId, count });
   return count;
 }
@@ -358,45 +584,79 @@ export async function scheduleFollowUpAfterInbound(params: {
   remoteJid: string;
   leadId?: string | null;
   journeyId?: string | null;
+  channel?: "evolution" | "meta_cloud";
+  connectionId?: string | null;
   settings: AgentFollowUpInteligente;
 }): Promise<string | null> {
   if (!params.settings.ativo) return null;
 
   const sb = params.sb ?? createSupabaseServiceClient();
+  if (
+    params.settings.usarHorarioComercial &&
+    !isValidIanaTimezone(params.settings.timezone)
+  ) {
+    await markFollowUpTimezoneReview({
+      sb,
+      tenantId: params.tenantId,
+      agentId: params.agentId,
+    });
+    logFollowUp("schedule_blocked", {
+      tenant_id: params.tenantId,
+      agent_id: params.agentId,
+      reason: "follow_up_timezone_required",
+    });
+    return null;
+  }
   const now = new Date();
   const scheduledAt = new Date(
     now.getTime() + params.settings.intervaloVerificacaoMinutos * 60_000,
   );
 
-  await cancelPendingFollowUpJobs({
+  if (!params.journeyId || !params.channel || !params.connectionId) {
+    logFollowUp("schedule_blocked", {
+      tenant_id: params.tenantId,
+      reason: "missing_exact_omnichannel_identity",
+    });
+    return null;
+  }
+  const journeyAuth = await authorizeActiveJourney({
     sb,
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,
-    reason: "inbound_reset",
-    journeyId: params.journeyId,
+    preferredAgentId: params.agentId,
+    connectionId: params.connectionId,
+    channel: params.channel,
   });
-
-  if (isJourneyIsolationEnabled()) {
-    if (!params.journeyId) {
-      logFollowUp("schedule_blocked", {
-        tenant_id: params.tenantId,
-        reason: "missing_active_journey",
-      });
-      return null;
-    }
-    const journeyAuth = await authorizeActiveJourney({
-      sb,
-      tenantId: params.tenantId,
-      remoteJid: params.remoteJid,
-      preferredAgentId: params.agentId,
+  const exactJourney = journeyAuth.ok ? journeyAuth.journey : null;
+  if (
+    !journeyAuth.ok ||
+    !exactJourney ||
+    exactJourney.id !== params.journeyId ||
+    !exactJourney.ruleId ||
+    exactJourney.connectionId !== params.connectionId
+  ) {
+    logFollowUp("schedule_blocked", {
+      tenant_id: params.tenantId,
+      reason: journeyAuth.ok ? "journey_identity_mismatch" : journeyAuth.reason,
     });
-    if (!journeyAuth.ok || journeyAuth.journey?.id !== params.journeyId) {
-      logFollowUp("schedule_blocked", {
-        tenant_id: params.tenantId,
-        reason: journeyAuth.ok ? "journey_id_mismatch" : journeyAuth.reason,
-      });
-      return null;
-    }
+    return null;
+  }
+
+  const conversationState = await loadConversationStateForJob(
+    sb,
+    params.tenantId,
+    params.remoteJid,
+  );
+  if (
+    !conversationState ||
+    conversationState.humanPaused ||
+    conversationState.conversationMode !== "automation"
+  ) {
+    logFollowUp("schedule_blocked", {
+      tenant_id: params.tenantId,
+      reason: "automation_state_invalid",
+    });
+    return null;
   }
 
   const guard = await canAgentAutoContactLead({
@@ -421,6 +681,14 @@ export async function scheduleFollowUpAfterInbound(params: {
     return null;
   }
 
+  await cancelPendingFollowUpJobs({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+    reason: "inbound_reset",
+    journeyId: params.journeyId,
+  });
+
   const { data, error } = await sb
     .from("follow_up_jobs")
     .insert({
@@ -428,7 +696,11 @@ export async function scheduleFollowUpAfterInbound(params: {
       agent_id: params.agentId,
       remote_jid: params.remoteJid,
       lead_id: params.leadId ?? null,
-      journey_id: params.journeyId ?? null,
+      journey_id: exactJourney.id,
+      channel: params.channel,
+      connection_id: params.connectionId,
+      rule_id: exactJourney.ruleId,
+      automation_epoch: conversationState.automationEpoch,
       scheduled_at: scheduledAt.toISOString(),
       max_attempts: params.settings.tentativasContato,
       attempts: 0,
@@ -475,26 +747,13 @@ export async function scheduleFollowUpAfterInbound(params: {
 export async function processFollowUpJob(
   jobId: string,
   sb?: SupabaseServiceClient,
+  claimedJob?: FollowUpJobRow,
 ): Promise<"sent" | "cancelled" | "exhausted" | "skipped" | "failed"> {
   const client = sb ?? createSupabaseServiceClient();
-  const nowIso = new Date().toISOString();
-
-  const { data: claimed, error: claimError } = await client
-    .from("follow_up_jobs")
-    .update({ status: "processing", updated_at: nowIso })
-    .eq("id", jobId)
-    .eq("status", "pending")
-    .lte("scheduled_at", nowIso)
-    .select("*")
-    .maybeSingle();
-
-  if (claimError) {
-    logFollowUp("claim_failed", { job_id: jobId, error: claimError.message });
-    return "failed";
-  }
-  if (!claimed) return "skipped";
-
-  const job = rowFromDb(claimed as Record<string, unknown>);
+  const job = claimedJob ?? await claimFollowUpJob(client, jobId);
+  if (!job) return "skipped";
+  if (job.id !== jobId || job.status !== "processing") return "skipped";
+  if (!job.claim_token || !(await heartbeatFollowUpJob(client, job))) return "skipped";
   const isHumanAbandonedJob = job.follow_up_type === "human_abandoned";
   logFollowUp("processing", {
     job_id: job.id,
@@ -511,38 +770,101 @@ export async function processFollowUpJob(
     jobId: job.id,
   };
   let authorizedJourney: LeadJourney | null = null;
+  let authorizedTransport: Extract<FollowUpOutboundTransport, { ok: true }> | null = null;
 
-  if (isJourneyIsolationEnabled()) {
-    const journeyAuth = job.journey_id
-      ? await authorizeActiveJourney({
+  {
+    if (
+      !job.journey_id ||
+      !job.rule_id ||
+      !job.connection_id ||
+      !job.channel ||
+      job.automation_epoch == null
+    ) {
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: "missing_exact_omnichannel_identity",
+      });
+      return finished.ok ? "cancelled" : "skipped";
+    }
+    const storedJourney = job.journey_id
+      ? await getLeadJourneyById({
           sb: client,
           tenantId: job.tenant_id,
-          remoteJid: job.remote_jid,
-          preferredAgentId: job.agent_id,
+          journeyId: job.journey_id,
         })
       : null;
-    if (!job.journey_id || !journeyAuth?.ok || journeyAuth.journey?.id !== job.journey_id) {
-      const reason =
-        !job.journey_id
-          ? "missing_active_journey"
-          : journeyAuth?.ok
-            ? "journey_id_mismatch"
-            : journeyAuth?.reason ?? "journey_not_authorized";
-      await client
-        .from("follow_up_jobs")
-        .update({
-          status: "cancelled",
-          last_error: reason,
-          updated_at: nowIso,
+    const exactTransport = storedJourney?.connectionId === job.connection_id
+      ? await resolveFollowUpOutboundTransport({
+          tenantId: job.tenant_id,
+          connectionId: job.connection_id,
+          channel: job.channel,
         })
-        .eq("id", job.id);
+      : ({ ok: false, reason: "missing_authorized_connection" } as const);
+    if (!exactTransport.ok || exactTransport.channel !== job.channel) {
+      const reason = exactTransport.ok ? "channel_identity_mismatch" : exactTransport.reason;
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: reason,
+      });
       logFollowUp("cancelled_journey_authorization", {
         job_id: job.id,
         reason,
       });
-      return "cancelled";
+      return finished.ok ? "cancelled" : "skipped";
+    }
+    const journeyAuth = await authorizeActiveJourney({
+      sb: client,
+      tenantId: job.tenant_id,
+      remoteJid: job.remote_jid,
+      preferredAgentId: job.agent_id,
+      connectionId: exactTransport.connectionId,
+      channel: exactTransport.channel,
+    });
+    if (
+      !journeyAuth.ok ||
+      journeyAuth.journey?.id !== job.journey_id ||
+      journeyAuth.journey?.ruleId !== job.rule_id ||
+      journeyAuth.journey?.connectionId !== job.connection_id
+    ) {
+      const reason = journeyAuth.ok ? "journey_identity_mismatch" : journeyAuth.reason;
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: reason,
+      });
+      logFollowUp("cancelled_journey_authorization", {
+        job_id: job.id,
+        reason,
+      });
+      return finished.ok ? "cancelled" : "skipped";
     }
     authorizedJourney = journeyAuth.journey;
+    authorizedTransport = exactTransport;
+
+    const currentState = await loadConversationStateForJob(
+      client,
+      job.tenant_id,
+      job.remote_jid,
+    );
+    if (
+      !currentState ||
+      currentState.humanPaused ||
+      currentState.conversationMode !== "automation" ||
+      currentState.automationEpoch !== job.automation_epoch
+    ) {
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: "automation_epoch_stale",
+      });
+      return finished.ok ? "cancelled" : "skipped";
+    }
   }
 
   // Hoisted so the catch block can record events with the real activation state.
@@ -553,10 +875,19 @@ export async function processFollowUpJob(
     // ── check settings ───────────────────────────────────────────────────────
     const { data: agentRow } = await client
       .from("tenant_agents")
-      .select("metadata")
+      .select("metadata,active,archived_at")
       .eq("tenant_id", job.tenant_id)
       .eq("agent_id", job.agent_id)
       .maybeSingle();
+    if (!agentRow || agentRow.active !== true || agentRow.archived_at) {
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: "agent_inactive",
+      });
+      return finished.ok ? "cancelled" : "skipped";
+    }
     const metadata =
       agentRow?.metadata && typeof agentRow.metadata === "object"
         ? (agentRow.metadata as Record<string, unknown>)
@@ -564,29 +895,49 @@ export async function processFollowUpJob(
     const settings = followUpInteligenteFromMetadata(metadata);
     followUpIsActive = settings.ativo;
 
-    // Quando o cron roda fora da janela comercial (ex: 4 AM UTC) e pega um job
-    // que foi agendado para dentro da janela (ex: scheduled_at = 8 AM UTC do dia
-    // anterior), o job deve ser processado normalmente — ele já foi "pré-qualificado"
-    // para o horário correto. Sem esse bypass, o job entra em loop infinito:
-    // o cron sempre rebloqueia e reagenda, nunca executando de fato.
+    if (!settings.ativo) {
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: "follow_up_disabled",
+      });
+      if (!finished.ok) return "skipped";
+      logFollowUp("skipped_disabled", { job_id: job.id, tenant_id: job.tenant_id });
+      return "cancelled";
+    }
+
+    if (settings.usarHorarioComercial && !isValidIanaTimezone(settings.timezone)) {
+      await markFollowUpTimezoneReview({
+        sb: client,
+        tenantId: job.tenant_id,
+        agentId: job.agent_id,
+      });
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: "follow_up_timezone_required",
+      });
+      if (!finished.ok) return "skipped";
+      await recordEvent(client, "follow_up_skipped", {
+        ...commonEventParams,
+        followUpActive: true,
+        leadId: job.lead_id,
+        payload: { reason: "follow_up_timezone_required" },
+      });
+      return "cancelled";
+    }
+
+    // A previously scheduled job may run after the window closes. If its own
+    // stored schedule was inside the configured window, process it once rather
+    // than postponing it forever. This is evaluated only with an explicit IANA
+    // timezone validated above.
     const jobScheduledAt = new Date(job.scheduled_at);
     const settingsForEval: typeof settings =
       settings.usarHorarioComercial && isWithinBusinessHours(jobScheduledAt, settings)
         ? { ...settings, usarHorarioComercial: false }
         : settings;
-
-    if (!settings.ativo) {
-      await client
-        .from("follow_up_jobs")
-        .update({
-          status: "cancelled",
-          last_error: "follow_up_disabled",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", job.id);
-      logFollowUp("skipped_disabled", { job_id: job.id, tenant_id: job.tenant_id });
-      return "cancelled";
-    }
 
     const now = new Date();
     const lead = await loadLeadForFollowUp(client, job.tenant_id, job.remote_jid, job.lead_id);
@@ -603,14 +954,13 @@ export async function processFollowUpJob(
       triggerSource: "follow_up_job",
     });
     if (!guard.ok) {
-      await client
-        .from("follow_up_jobs")
-        .update({
-          status: "cancelled",
-          last_error: guard.reason,
-          updated_at: now.toISOString(),
-        })
-        .eq("id", job.id);
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: guard.reason,
+      });
+      if (!finished.ok) return "skipped";
       if (lead?.id) {
         await client
           .from("leads")
@@ -716,15 +1066,14 @@ export async function processFollowUpJob(
         const retryAt = new Date(
           now.getTime() + Math.max(1, settingsForEval.intervaloVerificacaoMinutos) * 60_000,
         );
-        await client
-          .from("follow_up_jobs")
-          .update({
-            status: "pending",
-            scheduled_at: retryAt.toISOString(),
-            last_error: "waiting_human_outbound",
-            updated_at: now.toISOString(),
-          })
-          .eq("id", job.id);
+        const finished = await finishClaimedFollowUpJob({
+          sb: client,
+          job,
+          status: "pending",
+          scheduledAt: retryAt,
+          lastError: "waiting_human_outbound",
+        });
+        if (!finished.ok) return "skipped";
         logFollowUp("waiting_human_outbound", {
           job_id: job.id,
           tenant_id: job.tenant_id,
@@ -769,15 +1118,14 @@ export async function processFollowUpJob(
         });
         // Reschedule for next business window
         if (decision.nextRetryAt) {
-          await client
-            .from("follow_up_jobs")
-            .update({
-              status: "pending",
-              scheduled_at: decision.nextRetryAt.toISOString(),
-              last_error: "rescheduled_business_hours",
-              updated_at: now.toISOString(),
-            })
-            .eq("id", job.id);
+          const finished = await finishClaimedFollowUpJob({
+            sb: client,
+            job,
+            status: "pending",
+            scheduledAt: decision.nextRetryAt,
+            lastError: "rescheduled_business_hours",
+          });
+          if (!finished.ok) return "skipped";
           return "skipped";
         }
       }
@@ -804,15 +1152,14 @@ export async function processFollowUpJob(
         const rawUnidade = settingsForEval.retomadaHumanoTempoUnidade ?? "horas";
         const ms = retomadaHumanoMs(rawValor, rawUnidade);
         const retomadaAt = new Date(evalCtx.lastHumanOutboundAt.getTime() + ms);
-        await client
-          .from("follow_up_jobs")
-          .update({
-            status: "pending",
-            scheduled_at: retomadaAt.toISOString(),
-            last_error: "rescheduled_retomada_humano",
-            updated_at: now.toISOString(),
-          })
-          .eq("id", job.id);
+        const finished = await finishClaimedFollowUpJob({
+          sb: client,
+          job,
+          status: "pending",
+          scheduledAt: retomadaAt,
+          lastError: "rescheduled_retomada_humano",
+        });
+        if (!finished.ok) return "skipped";
         await recordEvent(client, "follow_up_rescheduled_retomada", {
           ...commonEventParams,
           followUpActive: settings.ativo,
@@ -827,14 +1174,13 @@ export async function processFollowUpJob(
         return "skipped";
       }
 
-      await client
-        .from("follow_up_jobs")
-        .update({
-          status: "cancelled",
-          last_error: skipReason,
-          updated_at: now.toISOString(),
-        })
-        .eq("id", job.id);
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: skipReason,
+      });
+      if (!finished.ok) return "skipped";
 
       logFollowUp("skipped", { job_id: job.id, skip_reason: skipReason });
 
@@ -873,14 +1219,13 @@ export async function processFollowUpJob(
         agentId: job.agent_id,
       });
       if (!automationAllowed.ok) {
-      await client
-        .from("follow_up_jobs")
-        .update({
-          status: "cancelled",
-          last_error: automationAllowed.reason,
-          updated_at: now.toISOString(),
-        })
-        .eq("id", job.id);
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: automationAllowed.reason,
+      });
+      if (!finished.ok) return "skipped";
       await recordEvent(client, "follow_up_blocked_by_human", {
         ...commonEventParams,
         followUpActive: settings.ativo,
@@ -907,15 +1252,14 @@ export async function processFollowUpJob(
         const retryAt = new Date(
           now.getTime() + Math.max(1, settings.intervaloVerificacaoMinutos) * 60_000,
         );
-        await client
-          .from("follow_up_jobs")
-          .update({
-            status: "pending",
-            scheduled_at: retryAt.toISOString(),
-            last_error: "active_agenda_event",
-            updated_at: now.toISOString(),
-          })
-          .eq("id", job.id);
+        const finished = await finishClaimedFollowUpJob({
+          sb: client,
+          job,
+          status: "pending",
+          scheduledAt: retryAt,
+          lastError: "active_agenda_event",
+        });
+        if (!finished.ok) return "skipped";
         logFollowUp("rescheduled_active_agenda_event", {
           job_id: job.id,
           tenant_id: job.tenant_id,
@@ -927,24 +1271,14 @@ export async function processFollowUpJob(
     }
 
     // ── build AI prompt ───────────────────────────────────────────────────────
-    const history = settings.usarHistoricoWhatsapp
-      ? await getRecentConversationMessages({
-          sb: client,
-          tenantId: job.tenant_id,
-          remoteJid: job.remote_jid,
-          limit: 20,
-          journeyId: job.journey_id,
-        })
-      : [];
-
     const followUpInstruction = buildFollowUpAiInstruction({
       decision,
       leadName: lead?.name ?? null,
       settings,
       attemptNumber: job.attempts,
-      useHumanPersona: metadata.useHumanPersona !== false,
     });
 
+    if (!(await heartbeatFollowUpJob(client, job))) return "skipped";
     const aiResult = await generateAgentResponse({
       tenantId: job.tenant_id,
       agentId: job.agent_id,
@@ -957,21 +1291,21 @@ export async function processFollowUpJob(
         includeCrm: settings.usarHistoricoCrm,
         includeMetaForm: settings.usarDadosFormularioMeta,
       },
-      messages: [
-        ...(settings.usarHistoricoWhatsapp ? conversationMessagesToAi(history) : []),
-        { role: "user", content: followUpInstruction },
-      ],
+      // O gerador carrega o histórico canônico uma vez conforme contextSources.
+      // Somente a instrução deste turno é obrigatória; reenviar o histórico
+      // aqui duplicaria o contexto e poderia causar overflow artificial.
+      messages: [{ role: "user", content: followUpInstruction }],
     });
+    if (!(await heartbeatFollowUpJob(client, job))) return "skipped";
 
     if (isAgentMissingInstructionsResult(aiResult)) {
-      await client
-        .from("follow_up_jobs")
-        .update({
-          status: "cancelled",
-          last_error: "agent_missing_instructions",
-          updated_at: now.toISOString(),
-        })
-        .eq("id", job.id);
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: "agent_missing_instructions",
+      });
+      if (!finished.ok) return "skipped";
       await recordEvent(client, "follow_up_failed", {
         ...commonEventParams,
         followUpActive: settings.ativo,
@@ -985,25 +1319,74 @@ export async function processFollowUpJob(
       });
       return "cancelled";
     }
+    if (!aiResult.ok) {
+      const failedAttempts = job.attempts + 1;
+      const isExhausted = failedAttempts >= job.max_attempts;
+      const generationError = `agent_generation_failed:${aiResult.code}`;
+      const retryAt = new Date(
+        now.getTime() + Math.max(1, settings.intervaloVerificacaoMinutos) * 60_000,
+      );
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: isExhausted ? "exhausted" : "pending",
+        attempts: failedAttempts,
+        scheduledAt: isExhausted ? null : retryAt,
+        lastError: generationError,
+      });
+      if (!finished.ok) return "skipped";
+      await recordEvent(client, "follow_up_failed", {
+        ...commonEventParams,
+        followUpActive: settings.ativo,
+        leadId: lead?.id,
+        payload: {
+          reason: generationError,
+          attempts: failedAttempts,
+          exhausted: isExhausted,
+        },
+      });
+      return "failed";
+    }
+    const safeReply = safeFollowUpReplyFromResult(aiResult);
+    if (!safeReply.ok) {
+      const failedAttempts = job.attempts + 1;
+      const isExhausted = failedAttempts >= job.max_attempts;
+      const retryAt = new Date(
+        now.getTime() + Math.max(1, settings.intervaloVerificacaoMinutos) * 60_000,
+      );
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: isExhausted ? "exhausted" : "pending",
+        attempts: failedAttempts,
+        scheduledAt: isExhausted ? null : retryAt,
+        lastError: safeReply.reason,
+      });
+      if (!finished.ok) return "skipped";
+      await recordEvent(client, "follow_up_failed", {
+        ...commonEventParams,
+        followUpActive: settings.ativo,
+        leadId: lead?.id,
+        payload: {
+          reason: safeReply.reason,
+          attempts: failedAttempts,
+          exhausted: isExhausted,
+        },
+      });
+      return "failed";
+    }
+    const replyText = safeReply.reply;
 
-    const replyText = aiResult.ok
-      ? aiResult.text
-      : "Oi! Passando para saber se ainda posso te ajudar com algo. Fico à disposição.";
-
-    // ── send via Evolution ────────────────────────────────────────────────────
-    const requiresAuthorizedConnection = isJourneyIsolationEnabled();
-    const authorizedConnectionId = requiresAuthorizedConnection
-      ? authorizedJourney?.connectionId ?? null
-      : null;
-    if (requiresAuthorizedConnection && !authorizedConnectionId) {
-      await client
-        .from("follow_up_jobs")
-        .update({
-          status: "cancelled",
-          last_error: "missing_authorized_connection",
-          updated_at: now.toISOString(),
-        })
-        .eq("id", job.id);
+    // ── resolve exact outbound transport ─────────────────────────────────────
+    const authorizedConnectionId = authorizedJourney?.connectionId ?? null;
+    if (!authorizedConnectionId) {
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: "missing_authorized_connection",
+      });
+      if (!finished.ok) return "skipped";
       await recordEvent(client, "follow_up_failed", {
         ...commonEventParams,
         followUpActive: settings.ativo,
@@ -1013,61 +1396,68 @@ export async function processFollowUpJob(
       return "failed";
     }
 
-    const instance = authorizedConnectionId
-      ? await getEvolutionInstanceByIdForTenant(
-          job.tenant_id,
-          authorizedConnectionId,
-        )
-      : await getEvolutionInstanceByTenantId(job.tenant_id);
-    if (!instance?.instance_name) {
-      await client
-        .from("follow_up_jobs")
-        .update({
-          status: "cancelled",
-          last_error: "missing_evolution_instance",
-          updated_at: now.toISOString(),
-        })
-        .eq("id", job.id);
+    // O claim v2 já exigiu e validou a identidade omnichannel exata antes da
+    // geração. Não faça uma segunda resolução de provedor aqui: além de
+    // redundante, ela reabria um union impossível e poderia observar outro
+    // estado entre autorização e despacho.
+    const transport = authorizedTransport;
+    if (!transport) {
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: "missing_authorized_transport",
+      });
+      if (!finished.ok) return "skipped";
       await recordEvent(client, "follow_up_failed", {
         ...commonEventParams,
         followUpActive: settings.ativo,
         leadId: lead?.id,
-        payload: { reason: "missing_evolution_instance" },
-      });
-      return "failed";
-    }
-    if (requiresAuthorizedConnection && instance.connection_state !== "open") {
-      await client
-        .from("follow_up_jobs")
-        .update({
-          status: "cancelled",
-          last_error: "authorized_connection_not_open",
-          updated_at: now.toISOString(),
-        })
-        .eq("id", job.id);
-      await recordEvent(client, "follow_up_failed", {
-        ...commonEventParams,
-        followUpActive: settings.ativo,
-        leadId: lead?.id,
-        payload: { reason: "authorized_connection_not_open" },
+        payload: { reason: "missing_authorized_transport" },
       });
       return "failed";
     }
 
-    const number = remoteJidToEvoNumber(job.remote_jid);
-    if (!number) {
-      await client
-        .from("follow_up_jobs")
-        .update({
-          status: "cancelled",
-          last_error: "invalid_remote_jid",
-          updated_at: now.toISOString(),
-        })
-        .eq("id", job.id);
+    const number = job.remote_jid.replace(/\D/g, "");
+    if (!number || (transport.channel === "evolution" && !remoteJidToEvoNumber(job.remote_jid))) {
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: "invalid_remote_jid",
+      });
+      if (!finished.ok) return "skipped";
       return "failed";
     }
 
-    if (!authorizedJourney?.id || !authorizedConnectionId) {
+    if (!authorizedJourney?.id) {
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: "missing_authorized_journey",
+      });
+      return finished.ok ? "cancelled" : "skipped";
+    }
+    if (!(await heartbeatFollowUpJob(client, job))) return "skipped";
+    const stateBeforeOutbound = await loadConversationStateForJob(
+      client,
+      job.tenant_id,
+      job.remote_jid,
+    );
+    if (
+      !stateBeforeOutbound ||
+      stateBeforeOutbound.humanPaused ||
+      stateBeforeOutbound.conversationMode !== "automation" ||
+      stateBeforeOutbound.automationEpoch !== job.automation_epoch
+    ) {
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: "automation_epoch_stale_before_outbound",
+      });
+      if (!finished.ok) return "skipped";
       return "cancelled";
     }
     const outbound = await prepareAutomatedOutbound({
@@ -1076,72 +1466,183 @@ export async function processFollowUpJob(
       tenantId: job.tenant_id,
       remoteJid: job.remote_jid,
       agentId: job.agent_id,
-      journeyId: authorizedJourney.id,
-      connectionId: authorizedConnectionId,
-      channel: "evolution",
+      journeyId: authorizedJourney?.id ?? job.journey_id,
+      ruleId: job.rule_id!,
+      connectionId: transport.connectionId,
+      channel: transport.channel,
       kind: "text",
       content: replyText.slice(0, 4000),
       leadId: lead?.id ?? null,
     });
-    if (outbound.action !== "send") {
-      await client.from("follow_up_jobs").update({
+    const alreadySent = outbound.action === "already_sent";
+    if (!alreadySent && outbound.action !== "send") {
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
         status: "cancelled",
-        last_error: `outbound_${outbound.action}`,
-        updated_at: now.toISOString(),
-      }).eq("id", job.id);
+        lastError:
+          outbound.action === "blocked"
+            ? `authorization_blocked:${outbound.reason}`
+            : `outbound_${outbound.action}`,
+      });
+      if (!finished.ok) return "skipped";
       return "cancelled";
     }
-    const send = await evolutionSendText({
-      instanceName: instance.instance_name,
-      number,
-      text: replyText.slice(0, 4000),
-    });
+    if (!alreadySent && outbound.action === "send") {
+      if (!(await heartbeatFollowUpJob(client, job))) {
+        await markAgentOutboundFailed({
+          sb: client,
+          id: outbound.id,
+          claimToken: outbound.claimToken,
+          error: "follow_up_claim_lost_before_provider",
+        });
+        return "skipped";
+      }
+      const stateAtProviderBoundary = await loadConversationStateForJob(
+        client,
+        job.tenant_id,
+        job.remote_jid,
+      );
+      if (
+        !stateAtProviderBoundary ||
+        stateAtProviderBoundary.humanPaused ||
+        stateAtProviderBoundary.conversationMode !== "automation" ||
+        stateAtProviderBoundary.automationEpoch !== job.automation_epoch
+      ) {
+        await markAgentOutboundFailed({
+          sb: client,
+          id: outbound.id,
+          claimToken: outbound.claimToken,
+          error: "automation_epoch_stale_at_provider_boundary",
+        });
+        const finished = await finishClaimedFollowUpJob({
+          sb: client,
+          job,
+          status: "cancelled",
+          lastError: "automation_epoch_stale_at_provider_boundary",
+        });
+        return finished.ok ? "cancelled" : "skipped";
+      }
+      const boundaryMessages = await loadMessageTimestamps(
+        client,
+        job.tenant_id,
+        job.remote_jid,
+      );
+      if (
+        boundaryMessages.lastCustomerMessageAt &&
+        boundaryMessages.lastCustomerMessageAt > new Date(job.created_at)
+      ) {
+        await markAgentOutboundFailed({
+          sb: client,
+          id: outbound.id,
+          claimToken: outbound.claimToken,
+          error: "customer_replied_before_provider",
+        });
+        const finished = await finishClaimedFollowUpJob({
+          sb: client,
+          job,
+          status: "cancelled",
+          lastError: "customer_replied_before_provider",
+        });
+        return finished.ok ? "cancelled" : "skipped";
+      }
+      const send = transport.channel === "meta_cloud"
+        ? await sendWhatsAppTextMessage({
+            toWaId: number,
+            text: replyText.slice(0, 4000),
+            phoneNumberId: transport.connection.phone_number_id,
+            accessToken: transport.connection.access_token,
+          })
+        : await evolutionSendText({
+            instanceName: transport.instance.instance_name,
+            number: remoteJidToEvoNumber(job.remote_jid)!,
+            text: replyText.slice(0, 4000),
+          });
 
-    if (!send.ok) {
-      await markAgentOutboundFailed({
+      if (!send.ok) {
+        const sendError = send.error || `${transport.channel}_follow_up_send_failed`;
+        await markAgentOutboundFailed({
+          sb: client,
+          id: outbound.id,
+          claimToken: outbound.claimToken,
+          error: sendError,
+        });
+        const failedAttempts = job.attempts + 1;
+        const isExhausted = failedAttempts >= job.max_attempts;
+        const retryAt = new Date(
+          now.getTime() + Math.max(1, settings.intervaloVerificacaoMinutos) * 60_000,
+        );
+        const finished = await finishClaimedFollowUpJob({
+          sb: client,
+          job,
+          status: isExhausted ? "exhausted" : "pending",
+          attempts: failedAttempts,
+          scheduledAt: isExhausted ? null : retryAt,
+          lastError: sendError,
+        });
+        if (!finished.ok) return "skipped";
+        await recordEvent(client, "follow_up_failed", {
+          ...commonEventParams,
+          followUpActive: settings.ativo,
+          leadId: lead?.id,
+          payload: { error: sendError, attempts: failedAttempts, exhausted: isExhausted },
+        });
+        logFollowUp("send_failed", {
+          job_id: job.id,
+          channel: transport.channel,
+          error: sendError,
+          attempts: failedAttempts,
+          exhausted: isExhausted,
+        });
+        return "failed";
+      }
+      const providerId = transport.channel === "meta_cloud"
+        ? ("messageId" in send ? send.messageId ?? null : null)
+        : extractEvolutionSendReceipt("data" in send ? send.data : null).messageId;
+      await markAgentOutboundSent({
         sb: client,
         id: outbound.id,
         claimToken: outbound.claimToken,
-        error: send.error,
+        providerMessageId: providerId,
       });
-      const failedAttempts = job.attempts + 1;
-      const isExhausted = failedAttempts >= job.max_attempts;
-      await client
-        .from("follow_up_jobs")
-        .update({
-          status: isExhausted ? "exhausted" : "pending",
-          attempts: failedAttempts,
-          last_error: send.error,
-          updated_at: now.toISOString(),
-        })
-        .eq("id", job.id);
-      await recordEvent(client, "follow_up_failed", {
-        ...commonEventParams,
-        followUpActive: settings.ativo,
-        leadId: lead?.id,
-        payload: { error: send.error, attempts: failedAttempts, exhausted: isExhausted },
-      });
-      logFollowUp("send_failed", { job_id: job.id, error: send.error, attempts: failedAttempts, exhausted: isExhausted });
-      return "failed";
-    }
-    await markAgentOutboundSent({
-      sb: client,
-      id: outbound.id,
-      claimToken: outbound.claimToken,
-    });
 
-    // ── persist outbound + update lead ────────────────────────────────────────
-    await saveOutboundFollowUp({
-      sb: client,
-      tenantId: job.tenant_id,
-      remoteJid: job.remote_jid,
-      agentId: job.agent_id,
-      content: replyText,
-      leadId: lead?.id ?? null,
-      journeyId: job.journey_id,
-    });
+      // If the database lease was lost while the provider call was in flight,
+      // the durable outbox remains the source of truth. A new worker will see
+      // `already_sent` and finish the job without dispatching again.
+      if (!(await heartbeatFollowUpJob(client, job))) return "skipped";
+
+      await saveOutboundFollowUp({
+        sb: client,
+        tenantId: job.tenant_id,
+        remoteJid: job.remote_jid,
+        agentId: job.agent_id,
+        content: replyText,
+        leadId: lead?.id ?? null,
+        journeyId: job.journey_id,
+        channel: transport.channel,
+        connectionId: transport.connectionId,
+        providerMessageId: providerId,
+      });
+    }
 
     const nextAttempts = job.attempts + 1;
+    const exhausted = nextAttempts >= job.max_attempts;
+    const nextScheduled = exhausted
+      ? null
+      : new Date(
+          now.getTime() + settings.intervaloVerificacaoMinutos * 60_000,
+        );
+    const completion = await finishClaimedFollowUpJob({
+      sb: client,
+      job,
+      status: exhausted ? "exhausted" : "sent",
+      attempts: nextAttempts,
+      followUpType: decision.followUpType,
+      priority: decision.priority,
+      lastError: null,
+      nextScheduledAt: nextScheduled,
+    });
+    if (!completion.ok) return "skipped";
 
     if (lead?.id) {
       const cooldownUntil = new Date(
@@ -1188,18 +1689,7 @@ export async function processFollowUpJob(
     });
 
     // ── reschedule or exhaust ─────────────────────────────────────────────────
-    if (nextAttempts >= job.max_attempts) {
-      await client
-        .from("follow_up_jobs")
-        .update({
-          status: "exhausted",
-          attempts: nextAttempts,
-          follow_up_type: decision.followUpType,
-          priority: decision.priority,
-          last_error: null,
-          updated_at: now.toISOString(),
-        })
-        .eq("id", job.id);
+    if (exhausted) {
       if (lead?.id) {
         await client
           .from("leads")
@@ -1235,42 +1725,13 @@ export async function processFollowUpJob(
       return "exhausted";
     }
 
-    const nextScheduled = new Date(
-      now.getTime() + settings.intervaloVerificacaoMinutos * 60_000,
-    );
+    if (!nextScheduled) {
+      // The branch above is the only valid null case. Keep this assertion
+      // fail-closed if a future refactor changes the scheduling contract.
+      throw new Error("follow_up_next_schedule_missing");
+    }
 
-    await client
-      .from("follow_up_jobs")
-      .update({
-        status: "sent",
-        attempts: nextAttempts,
-        follow_up_type: decision.followUpType,
-        priority: decision.priority,
-        last_error: null,
-        updated_at: now.toISOString(),
-      })
-      .eq("id", job.id);
-
-    const { error: rescheduleError } = await client.from("follow_up_jobs").insert({
-      tenant_id: job.tenant_id,
-      agent_id: job.agent_id,
-      remote_jid: job.remote_jid,
-      lead_id: lead?.id ?? null,
-      journey_id: job.journey_id,
-      scheduled_at: nextScheduled.toISOString(),
-      attempts: nextAttempts,
-      max_attempts: job.max_attempts,
-      status: "pending",
-      follow_up_type: "silence",
-      priority: decision.priority,
-    });
-
-    if (rescheduleError) {
-      logFollowUp("reschedule_failed", {
-        job_id: job.id,
-        error: rescheduleError.message,
-      });
-    } else if (lead?.id) {
+    if (lead?.id) {
       await client
         .from("leads")
         .update({
@@ -1285,7 +1746,7 @@ export async function processFollowUpJob(
       attempts: nextAttempts,
       follow_up_type: decision.followUpType,
       urgency: decision.urgency,
-      history_messages: history.length,
+      history_enabled: settings.usarHistoricoWhatsapp,
       next_scheduled_at: nextScheduled.toISOString(),
     });
     return "sent";
@@ -1293,15 +1754,16 @@ export async function processFollowUpJob(
     const message = error instanceof Error ? error.message : "process_failed";
     const failedAttempts = job.attempts + 1;
     const isExhausted = failedAttempts >= job.max_attempts;
-    await client
-      .from("follow_up_jobs")
-      .update({
-        status: isExhausted ? "exhausted" : "pending",
-        attempts: failedAttempts,
-        last_error: message,
-        updated_at: nowIso,
-      })
-      .eq("id", jobId);
+    const retryAt = new Date(Date.now() + 5 * 60_000);
+    const finished = await finishClaimedFollowUpJob({
+      sb: client,
+      job,
+      status: isExhausted ? "exhausted" : "pending",
+      attempts: failedAttempts,
+      scheduledAt: isExhausted ? null : retryAt,
+      lastError: message,
+    });
+    if (!finished.ok) return "skipped";
     await recordEvent(client, "follow_up_failed", {
       ...commonEventParams,
       followUpActive: followUpIsActive,
@@ -1320,15 +1782,27 @@ export async function processDueFollowUpJobs(sb?: SupabaseServiceClient): Promis
   failed: number;
 }> {
   const client = sb ?? createSupabaseServiceClient();
-  const nowIso = new Date().toISOString();
-  const { data } = await client
-    .from("follow_up_jobs")
-    .select("id")
-    .eq("status", "pending")
-    .lte("scheduled_at", nowIso)
-    .order("priority", { ascending: true })
-    .order("scheduled_at", { ascending: true })
-    .limit(30);
+  const { error: reconcileError } = await client.rpc(
+    "reconcile_agent_runtime_state_v1",
+    { p_limit: 500 },
+  );
+  if (reconcileError) {
+    logFollowUp("runtime_reconciliation_failed", {
+      error: reconcileError.message,
+    });
+  }
+  await reclaimStuckFollowUpJobs(client);
+  const { data, error } = await client.rpc("claim_follow_up_jobs_v2", {
+    p_limit: 30,
+    p_claim_seconds: Math.floor(FOLLOW_UP_CLAIM_TTL_MS / 1000),
+  });
+  if (error) {
+    logFollowUp("batch_claim_failed", { error: error.message });
+    return { processed: 0, sent: 0, cancelled: 0, exhausted: 0, failed: 0 };
+  }
+  const claimedJobs = (Array.isArray(data) ? data : [])
+    .filter((row): row is Record<string, unknown> => Boolean(row && typeof row === "object"))
+    .map(rowFromDb);
 
   let processed = 0;
   let sent = 0;
@@ -1336,10 +1810,11 @@ export async function processDueFollowUpJobs(sb?: SupabaseServiceClient): Promis
   let exhausted = 0;
   let failed = 0;
 
-  for (const row of data ?? []) {
+  for (const job of claimedJobs) {
     const outcome = await processFollowUpJob(
-      String((row as { id: string }).id),
+      job.id,
       client,
+      job,
     );
     if (outcome === "skipped") continue;
     processed += 1;

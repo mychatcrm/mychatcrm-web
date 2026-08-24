@@ -7,6 +7,10 @@ import type {
   ExternalApiParameterDefinition,
 } from "@/lib/external-api/types";
 import { createStandardExternalApiOperations } from "@/lib/external-api/standard-contract";
+import {
+  isBlockedExternalApiIp,
+  normalizedIpLiteral,
+} from "@/lib/server/external-api-network-policy";
 
 const OPERATION_KEY = /^[a-z][a-z0-9_]{0,63}$/;
 const PARAMETER_NAME = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
@@ -47,7 +51,9 @@ export function normalizeExternalApiBaseUrl(raw: string): { baseUrl: string; bas
     throw new Error("external_api_invalid_base_url");
   }
   const hostname = url.hostname.toLowerCase();
+  const literalIp = normalizedIpLiteral(hostname);
   if (
+    (literalIp && isBlockedExternalApiIp(literalIp)) ||
     hostname === "localhost" ||
     hostname === "metadata.google.internal" ||
     BLOCKED_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix))
@@ -82,7 +88,7 @@ function validateOperation(operation: ExternalApiOperationInput): ExternalApiOpe
   if (!OPERATION_KEY.test(operationKey)) throw new Error("external_api_invalid_operation_key");
   const name = operation.name?.trim();
   if (!name || name.length > 100) throw new Error("external_api_invalid_operation_name");
-  if (operation.method !== "GET" && operation.method !== "POST") {
+  if (operation.method !== "GET") {
     throw new Error("external_api_read_only_method_required");
   }
   const pathTemplate = operation.pathTemplate?.trim();
@@ -98,7 +104,7 @@ function validateOperation(operation: ExternalApiOperationInput): ExternalApiOpe
   if (parameters.length > 20 || new Set(parameters.map((item) => item.name)).size !== parameters.length) {
     throw new Error("external_api_invalid_parameters");
   }
-  if (operation.method === "GET" && parameters.some((item) => item.in === "body")) {
+  if (parameters.some((item) => item.in === "body")) {
     throw new Error("external_api_get_body_not_allowed");
   }
   const placeholders = [...pathTemplate.matchAll(/\{([A-Za-z][A-Za-z0-9_]{0,63})\}/g)].map((match) => match[1]);

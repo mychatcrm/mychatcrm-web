@@ -10,7 +10,10 @@ import {
 } from "@/lib/ai/generate-agent-response";
 import {
   detectSupportedLanguageCode,
+  localizedAttachmentIntro,
+  resolveConfiguredConversationLanguage,
   resolveConfiguredLanguageCode,
+  resolveTtsLanguageCode,
   type SupportedLanguageCode,
 } from "@/lib/ai/language-detect";
 import { agendaPlanFromResult, leadOutcomeFromResult } from "@/lib/ai/agent-turn-plan";
@@ -74,6 +77,7 @@ import {
 } from "@/lib/agents/smart-wait-settings";
 import { isSmartWaitGloballyDisabled, runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
 import { extractRecentClientMessages } from "@/lib/server/evolution-agent-reply";
+import { resolveAgentHandoffSettings } from "@/lib/server/agent-handoff-runtime";
 import { scheduleFollowUpAfterInbound, scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
 import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
 import {
@@ -1068,6 +1072,8 @@ export async function POST(request: Request) {
                 remoteJid: msg.remoteJid,
                 leadId,
                 journeyId: journey?.id ?? null,
+                channel: "evolution",
+                connectionId: row.id,
                 settings: followUpInteligenteFromMetadata(agentMetadata),
               });
             }
@@ -1272,14 +1278,10 @@ export async function POST(request: Request) {
 
           if (!runImmediateReply) return;
 
-          const handoffKeywords = Array.isArray(metadata.handoffKeywords)
-            ? metadata.handoffKeywords.filter((item): item is string => typeof item === "string")
-            : [];
-          const handoffEnabled = metadata.ctaHandoffAtivo === true;
-          const handoffMessage =
-            handoffEnabled && typeof metadata.handoffMensagem === "string" && metadata.handoffMensagem.trim()
-              ? metadata.handoffMensagem.trim()
-              : null;
+          const handoffSettings = resolveAgentHandoffSettings(metadata);
+          const handoffKeywords = handoffSettings.keywords;
+          const handoffEnabled = handoffSettings.enabled;
+          const handoffMessage = handoffSettings.message;
           // AI-based detection: universal, nicho-agnóstica, com fallback automático para keywords
           const handoffCheck = handoffEnabled
             ? await shouldTriggerHandoffAI(inboundLanguageSource(msg), handoffKeywords)
@@ -1414,6 +1416,13 @@ export async function POST(request: Request) {
               typeof metadata.idioma === "string" ? metadata.idioma : null,
               clientText,
             ),
+            languageTag: (() => {
+              const resolved = resolveConfiguredConversationLanguage(
+                typeof metadata.idioma === "string" ? metadata.idioma : null,
+                clientText,
+              );
+              return resolved.ok ? resolved.tag : null;
+            })(),
             priorAssistantText,
             recentClientMessages: extractRecentClientMessages(recentConversation),
             agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,
@@ -1492,8 +1501,7 @@ export async function POST(request: Request) {
               leadId,
               agentId,
               reason: finalHandoffReason,
-              handoffNumero:
-                typeof metadata.handoffNumero === "string" ? metadata.handoffNumero : null,
+              handoffNumero: handoffSettings.notificationNumber,
               lastMessage: inboundLanguageSource(msg),
             });
 
@@ -1548,7 +1556,13 @@ export async function POST(request: Request) {
             replyText = agendaTurn.text;
           }
           if (!replyText && outboundFilenames.length) {
-            replyText = "Segue o envio solicitado.";
+            const resolvedLanguage = resolveConfiguredConversationLanguage(
+              typeof metadata.idioma === "string" ? metadata.idioma : null,
+              inboundLanguageSource(msg),
+            );
+            replyText = localizedAttachmentIntro(
+              resolvedLanguage.ok ? resolvedLanguage.tag : null,
+            );
           }
           console.info("[webhooks/evolution]", {
             event: "outbound_media_resolved",
@@ -1569,6 +1583,7 @@ export async function POST(request: Request) {
                 originalFilenames: outboundFilenames,
                 remoteJid: msg.remoteJid,
                 journeyId: journey!.id,
+                ruleId: journey!.ruleId!,
                 connectionId: journey!.connectionId!,
                 operationKeyPrefix: `evolution-immediate:${row.tenant_id}:${msg.messageId ?? msg.remoteJid}:${journey!.id}`,
                 leadId,
@@ -1606,7 +1621,7 @@ export async function POST(request: Request) {
             use_tts: useTts,
           });
 
-          const languageCode = detectSupportedLanguageCode(inboundLanguageSource(msg, replyText));
+          const languageCode = resolveTtsLanguageCode(replyText);
           if (isJourneyIsolationEnabled()) {
             const currentJourney = await authorizeActiveJourney({
               sb: sbState,
@@ -1614,6 +1629,7 @@ export async function POST(request: Request) {
               remoteJid: msg.remoteJid,
               preferredAgentId: agentId,
               connectionId: row.id,
+              channel: "evolution",
             });
             if (!currentJourney.ok || currentJourney.journey?.id !== journey?.id) {
               console.info("[webhooks/evolution] response cancelled before send", {
@@ -1635,6 +1651,7 @@ export async function POST(request: Request) {
             remoteJid: msg.remoteJid,
             agentId,
             journeyId: journey.id,
+            ruleId: journey.ruleId!,
             connectionId: journey.connectionId,
             channel: "evolution",
             kind: useTts ? "audio" : "text",
@@ -1734,6 +1751,7 @@ export async function POST(request: Request) {
               agentId,
               leadId,
               outcome: leadOutcomeFromResult(result),
+              customerEvidenceTexts: [clientText],
               metadata,
             });
           } else {

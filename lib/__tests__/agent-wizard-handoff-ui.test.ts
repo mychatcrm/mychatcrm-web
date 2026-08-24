@@ -4,8 +4,11 @@ import { describe, expect, it } from "vitest";
 import { createPromptFromBusiness, defaultWizardDraft } from "@/lib/agents/wizard-model";
 
 describe("agent wizard handoff simplification", () => {
-  it("enables handoff internally for new agents", () => {
-    expect(defaultWizardDraft.ctaHandoffAtivo).toBe(true);
+  it("keeps handoff disabled until the operator configures it", () => {
+    expect(defaultWizardDraft.ctaHandoffAtivo).toBe(false);
+    expect(defaultWizardDraft.handoffNumero).toBe("");
+    expect(defaultWizardDraft.handoffMensagem).toBe("");
+    expect(defaultWizardDraft.handoffKeywords).toEqual([]);
   });
 
   it("keeps agenda mutations disabled by default for new agents", () => {
@@ -18,7 +21,7 @@ describe("agent wizard handoff simplification", () => {
     expect(prompt).not.toContain("Conduzir para CTA final");
   });
 
-  it("renders the handoff toggle and attendant phone without legacy fields", () => {
+  it("renders the complete handoff configuration without the legacy CTA field", () => {
     const source = readFileSync(
       join(process.cwd(), "components/dashboard/agentes/WizardStep4Fluxo.tsx"),
       "utf8",
@@ -26,8 +29,8 @@ describe("agent wizard handoff simplification", () => {
     expect(source).toContain("Número do atendente responsável");
     expect(source).toContain("Ativar transferência para humano");
     expect(source).toContain("disabled={!draft.ctaHandoffAtivo}");
-    expect(source).not.toContain("Palavras que ativam a transferência");
-    expect(source).not.toContain("Mensagem enviada ao cliente na transferência");
+    expect(source).toContain("Mensagem enviada ao cliente");
+    expect(source).toContain("Palavras ou frases que pedem atendimento humano");
     expect(source).not.toContain("Objetivo Final do Agente (CTA)");
   });
 

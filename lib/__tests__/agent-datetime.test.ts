@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { formatSystemDateTimeContextBlock, parseTimezone, resolveAgentTimezone } from "@/lib/agents/agent-datetime";
+import {
+  formatSystemDateTimeContextBlock,
+  isValidIanaTimezone,
+  parseTimezone,
+  resolveAgentTimezone,
+  resolveExplicitAgentTimezone,
+} from "@/lib/agents/agent-datetime";
 
 describe("formatSystemDateTimeContextBlock", () => {
   it("uses the exact system context bracket format", () => {
@@ -7,9 +13,10 @@ describe("formatSystemDateTimeContextBlock", () => {
       "America/Sao_Paulo",
       new Date("2026-05-28T15:30:00.000Z"),
     );
-    expect(block).toMatch(
-      /^\[CONTEXTO DO SISTEMA: Data e hora atual: .+, \d{2} de .+ de \d{4}, \d{2}:\d{2} \(America\/Sao_Paulo\)\. Use SEMPRE esta data\/hora como referência para qualquer cálculo de data/,
+    expect(block).toBe(
+      "[SYSTEM CONTEXT: Current date and time: 2026-05-28 12:30 (America/Sao_Paulo). Use this timestamp only as the temporal reference for date calculations.]",
     );
+    expect(block).not.toMatch(/CONTEXTO|Data e hora|amanhã|agendamento/i);
   });
 });
 
@@ -23,17 +30,16 @@ describe("parseTimezone", () => {
     expect(parseTimezone("Europe/Lisbon")).toBe("Europe/Lisbon");
   });
 
-  it("sem valor salvo, cai em América/São Paulo — não em UTC", () => {
-    // Plataforma pt-BR: um agente sem fuso configurado não pode ter a janela
-    // comercial do follow-up adiantada em 3h por causa de um default genérico.
-    expect(parseTimezone(undefined)).toBe("America/Sao_Paulo");
-    expect(parseTimezone(null)).toBe("America/Sao_Paulo");
-    expect(parseTimezone("")).toBe("America/Sao_Paulo");
+  it("uses only the country-neutral computational fallback outside timed actions", () => {
+    expect(parseTimezone(undefined)).toBe("UTC");
+    expect(parseTimezone(null)).toBe("UTC");
+    expect(parseTimezone("")).toBe("UTC");
   });
 
-  it("valor ilegível (não é fuso IANA) também cai em América/São Paulo", () => {
-    expect(parseTimezone("não é um fuso")).toBe("America/Sao_Paulo");
-    expect(parseTimezone(42)).toBe("America/Sao_Paulo");
+  it("does not infer a country from an invalid value", () => {
+    expect(parseTimezone("not a timezone")).toBe("UTC");
+    expect(parseTimezone(42)).toBe("UTC");
+    expect(isValidIanaTimezone("not a timezone")).toBe(false);
   });
 });
 
@@ -48,7 +54,9 @@ describe("resolveAgentTimezone", () => {
     ).toBe("Europe/Lisbon");
   });
 
-  it("agente totalmente sem fuso configurado resolve pra América/São Paulo", () => {
-    expect(resolveAgentTimezone({})).toBe("America/Sao_Paulo");
+  it("does not treat the neutral fallback as an explicit operator choice", () => {
+    expect(resolveAgentTimezone({})).toBe("UTC");
+    expect(resolveExplicitAgentTimezone({})).toBeNull();
+    expect(resolveExplicitAgentTimezone({ timezone: "invalid" })).toBeNull();
   });
 });

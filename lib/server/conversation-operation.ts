@@ -193,9 +193,22 @@ async function patchConversationOperation(params: {
   transferredFrom?: string | null;
   transferredTo?: string | null;
   transferReason?: string | null;
-}): Promise<ConversationState | null> {
+  event?: {
+    type: string;
+    title: string;
+    detail?: string | null;
+    actorType?: string | null;
+    actorId?: string | null;
+    actorName?: string | null;
+  };
+}): Promise<ConversationState> {
   const sb = params.sb ?? createSupabaseServiceClient();
-  const { data, error } = await sb.rpc("set_conversation_operation_v2", {
+  const current = await getConversationState({
+    sb,
+    tenantId: params.tenantId,
+    remoteJid: params.remoteJid,
+  });
+  const { data, error } = await sb.rpc("set_conversation_operation_v3", {
     p_tenant_id: params.tenantId,
     p_remote_jid: params.remoteJid,
     p_lead_id: params.leadId ?? null,
@@ -211,14 +224,28 @@ async function patchConversationOperation(params: {
     p_transferred_from: params.transferredFrom ?? null,
     p_transferred_to: params.transferredTo ?? null,
     p_transfer_reason: params.transferReason ?? null,
+    p_expected_epoch: current?.automationEpoch ?? null,
+    p_event_type: params.event?.type ?? null,
+    p_event_title: params.event?.title ?? null,
+    p_event_detail: params.event?.detail ?? null,
+    p_actor_type: params.event?.actorType ?? null,
+    p_actor_id: params.event?.actorId ?? null,
+    p_actor_name: params.event?.actorName ?? null,
   });
   if (error) {
-    console.warn("[conversation-operation] patch state", error.code, error.message);
-    return null;
+    console.error("[conversation-operation] atomic_state_failed", {
+      tenant_id: params.tenantId,
+      code: error.code,
+      message: error.message,
+    });
+    throw new Error(`conversation_operation_failed:${error.message}`);
   }
-  const row = data && typeof data === "object" ? (data as Record<string, unknown>) : null;
-  return row
-    ? {
+  const result = data && typeof data === "object" ? (data as Record<string, unknown>) : null;
+  const row = result?.state && typeof result.state === "object"
+    ? (result.state as Record<string, unknown>)
+    : null;
+  if (!row) throw new Error("conversation_operation_failed:missing_state");
+  return {
         id: String(row.id),
         tenantId: String(row.tenant_id),
         remoteJid: String(row.remote_jid),
@@ -237,8 +264,7 @@ async function patchConversationOperation(params: {
         conversationMode: textOrNull(row.conversation_mode),
         activeJourneyId: textOrNull(row.active_journey_id),
         automationEpoch: Number(row.automation_epoch ?? 0),
-      }
-    : null;
+      };
 }
 
 export async function takeoverConversation(params: {
@@ -289,22 +315,13 @@ export async function takeoverConversation(params: {
     transferredFrom: fromLabel,
     transferredTo: params.actorName,
     transferReason: "takeover",
-  });
-
-  await logConversationEvent({
-    sb,
-    tenantId: params.tenantId,
-    remoteJid: params.remoteJid,
-    leadId: params.leadId ?? previous?.leadId ?? null,
-    stateId: state?.id ?? null,
-    eventType: "takeover",
-    title: `Lead transferido da ${fromLabel} para ${params.actorName}`,
-    actorType: "human",
-    actorId: params.actorId,
-    actorName: params.actorName,
-    transferredFrom: fromLabel,
-    transferredTo: params.actorName,
-    transferReason: "takeover",
+    event: {
+      type: "takeover",
+      title: `Lead transferido da ${fromLabel} para ${params.actorName}`,
+      actorType: "human",
+      actorId: params.actorId,
+      actorName: params.actorName,
+    },
   });
 
   await cancelPendingAgentResponseJobs({
@@ -365,23 +382,14 @@ export async function returnConversationToAutomation(params: {
     transferredFrom: fromName,
     transferredTo: "automação",
     transferReason: "return_automation",
-  });
-
-  await logConversationEvent({
-    sb,
-    tenantId: params.tenantId,
-    remoteJid: params.remoteJid,
-    leadId: params.leadId ?? previous?.leadId ?? null,
-    stateId: state?.id ?? null,
-    eventType: "return_automation",
-    title: "Lead retornou para automação",
-    detail: fromName ? `Transferido de ${fromName}` : null,
-    actorType: "human",
-    actorId: params.actorId,
-    actorName: params.actorName,
-    transferredFrom: fromName,
-    transferredTo: "automação",
-    transferReason: "return_automation",
+    event: {
+      type: "return_automation",
+      title: "Lead retornou para automação",
+      detail: fromName ? `Transferido de ${fromName}` : null,
+      actorType: "human",
+      actorId: params.actorId,
+      actorName: params.actorName,
+    },
   });
 
   return {
@@ -411,19 +419,13 @@ export async function transferConversationToWaiting(params: {
     handoffSuggested: false,
     assignedHumanId: params.targetEmployeeId ?? null,
     assignedHumanName: params.targetEmployeeName ?? null,
-  });
-  await logConversationEvent({
-    sb,
-    tenantId: params.tenantId,
-    remoteJid: params.remoteJid,
-    leadId: null,
-    stateId: state?.id ?? null,
-    eventType: "human_transfer",
-    title: `Conversa transferida para fila de espera por ${params.actorName}`,
-    detail: null,
-    actorType: "human",
-    actorId: params.actorId,
-    actorName: params.actorName,
+    event: {
+      type: "human_transfer",
+      title: `Conversa transferida para fila de espera por ${params.actorName}`,
+      actorType: "human",
+      actorId: params.actorId,
+      actorName: params.actorName,
+    },
   });
   return {
     state,
@@ -442,7 +444,7 @@ export async function markWaitingForHuman(params: {
   lastMessage?: string | null;
 }): Promise<void> {
   const sb = params.sb ?? createSupabaseServiceClient();
-  const state = await patchConversationOperation({
+  await patchConversationOperation({
     sb,
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,
@@ -454,19 +456,12 @@ export async function markWaitingForHuman(params: {
     pausedBy: "auto_handoff",
     handoffSuggested: true,
     handoffReason: params.reason ?? "handoff",
-  });
-
-  await logConversationEvent({
-    sb,
-    tenantId: params.tenantId,
-    remoteJid: params.remoteJid,
-    leadId: params.leadId ?? null,
-    stateId: state?.id ?? null,
-    eventType: "handoff_requested",
-    title: "Cliente solicitou atendimento humano",
-    detail: params.reason ?? null,
-    actorType: "system",
-    transferReason: params.reason ?? "handoff",
+    event: {
+      type: "handoff_requested",
+      title: "Cliente solicitou atendimento humano",
+      detail: params.reason ?? null,
+      actorType: "system",
+    },
   });
 
   await cancelPendingAgentResponseJobs({
@@ -563,7 +558,7 @@ export async function pauseConversationForLeadOutcome(params: {
       ? "Agente marcou o lead como desqualificado"
       : "Agente marcou que o lead perdeu o interesse";
 
-  const state = await patchConversationOperation({
+  await patchConversationOperation({
     sb,
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,
@@ -575,20 +570,13 @@ export async function pauseConversationForLeadOutcome(params: {
     pausedBy: LEAD_OUTCOME_PAUSED_BY,
     handoffSuggested: false,
     handoffReason: null,
-  });
-
-  await logConversationEvent({
-    sb,
-    tenantId: params.tenantId,
-    remoteJid: params.remoteJid,
-    leadId: params.leadId ?? null,
-    stateId: state?.id ?? null,
-    eventType: "lead_outcome",
-    title,
-    detail: params.detail ?? null,
-    actorType: "agent",
-    actorId: params.agentId ?? null,
-    transferReason: params.outcome,
+    event: {
+      type: "lead_outcome",
+      title,
+      detail: params.detail ?? null,
+      actorType: "agent",
+      actorId: params.agentId ?? null,
+    },
   });
 
   await cancelPendingAgentResponseJobs({
@@ -668,7 +656,7 @@ export async function pauseConversationAfterCampaignSend(params: {
 }): Promise<void> {
   const sb = params.sb ?? createSupabaseServiceClient();
 
-  const state = await patchConversationOperation({
+  await patchConversationOperation({
     sb,
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,
@@ -680,20 +668,12 @@ export async function pauseConversationAfterCampaignSend(params: {
     pausedBy: CAMPAIGN_ONE_SHOT_PAUSED_BY,
     handoffSuggested: false,
     handoffReason: null,
-  });
-
-  await logConversationEvent({
-    sb,
-    tenantId: params.tenantId,
-    remoteJid: params.remoteJid,
-    leadId: params.leadId ?? null,
-    stateId: state?.id ?? null,
-    eventType: "campaign_one_shot",
-    title: "Disparo configurado como mensagem única — atendimento automático não continua",
-    detail: null,
-    actorType: "agent",
-    actorId: params.agentId ?? null,
-    transferReason: "campaign_one_shot",
+    event: {
+      type: "campaign_one_shot",
+      title: "Disparo configurado como mensagem única — atendimento automático não continua",
+      actorType: "agent",
+      actorId: params.agentId ?? null,
+    },
   });
 }
 
@@ -732,21 +712,15 @@ export async function resumeConversationAfterLeadOutcome(params: {
     pausedBy: null,
     handoffSuggested: false,
     handoffReason: null,
+    event: {
+      type: "return_automation",
+      title: "Lead descartado voltou a falar e o agente retomou",
+      detail: state.pausedReason,
+      actorType: "agent",
+      actorId: params.agentId ?? null,
+    },
   });
   if (!resumed) return false;
-
-  await logConversationEvent({
-    sb,
-    tenantId: params.tenantId,
-    remoteJid: params.remoteJid,
-    leadId: params.leadId ?? null,
-    stateId: resumed.id,
-    eventType: "return_automation",
-    title: "Lead descartado voltou a falar e o agente retomou",
-    detail: state.pausedReason,
-    actorType: "agent",
-    actorId: params.agentId ?? null,
-  });
   return true;
 }
 
@@ -775,18 +749,13 @@ export async function syncAutomationMode(params: {
     handoffReason: null,
     assignedHumanId: params.enabled ? null : params.actorId ?? null,
     assignedHumanName: params.enabled ? null : params.actorName ?? null,
-  });
-
-  await logConversationEvent({
-    sb: params.sb,
-    tenantId: params.tenantId,
-    remoteJid: params.remoteJid,
-    leadId: params.leadId ?? null,
-    eventType: params.enabled ? "automation_resumed" : "automation_paused",
-    title: params.enabled ? "Automação reativada" : "Automação pausada",
-    actorType: "human",
-    actorId: params.actorId ?? null,
-    actorName: params.actorName ?? null,
+    event: {
+      type: params.enabled ? "automation_resumed" : "automation_paused",
+      title: params.enabled ? "Automação reativada" : "Automação pausada",
+      actorType: "human",
+      actorId: params.actorId ?? null,
+      actorName: params.actorName ?? null,
+    },
   });
 
   if (!params.enabled) {

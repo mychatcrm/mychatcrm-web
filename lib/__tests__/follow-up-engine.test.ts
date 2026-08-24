@@ -8,7 +8,11 @@ import {
   type FollowUpEvalContext,
 } from "@/lib/server/follow-up-engine";
 
-const BASE_SETTINGS = { ...DEFAULT_FOLLOW_UP_INTELIGENTE, ativo: true };
+const BASE_SETTINGS = {
+  ...DEFAULT_FOLLOW_UP_INTELIGENTE,
+  ativo: true,
+  timezone: "UTC",
+};
 
 function makeCtx(overrides: Partial<FollowUpEvalContext> = {}): FollowUpEvalContext {
   const now = new Date("2026-05-22T12:00:00.000Z"); // Friday UTC noon
@@ -216,6 +220,18 @@ describe("evaluateFollowUpNeed", () => {
     expect(d.skipReason).toBeNull();
   });
 
+  it("forces scheduled outreach to remain mutation-free", () => {
+    const instruction = buildFollowUpAiInstruction({
+      decision: evaluateFollowUpNeed(makeCtx()),
+      leadName: null,
+      settings: BASE_SETTINGS,
+      attemptNumber: 0,
+    });
+    expect(instruction).toContain("Set agenda.action and leadOutcome.action to none");
+    expect(instruction).toContain("Do not request handoff");
+    expect(instruction).toContain("[[ENVIAR_MEDIA:...]]");
+  });
+
   it("sets lead_cooling type on attempt >= 1", () => {
     const d = evaluateFollowUpNeed(
       makeCtx({
@@ -321,9 +337,10 @@ describe("buildFollowUpAiInstruction", () => {
       settings: DEFAULT_FOLLOW_UP_INTELIGENTE,
       attemptNumber: 0,
     });
-    expect(instr).toContain("Renato");
-    expect(instr).toContain("natural");
-    expect(instr).toContain("primeira tentativa");
+    expect(instr).not.toContain("Renato");
+    expect(instr).toContain("balanced follow-up level");
+    expect(instr).toContain("follow-up attempt 1");
+    expect(instr).toContain("five configured prompts remain authoritative");
   });
 
   it("varies attempt note on second try", () => {
@@ -345,8 +362,8 @@ describe("buildFollowUpAiInstruction", () => {
       settings: { modo: "agressivo", slaHorasResposta: 24 },
       attemptNumber: 1,
     });
-    expect(instr).toContain("Segunda tentativa");
-    expect(instr).toContain("prazo de resposta");
+    expect(instr).toContain("follow-up attempt 2");
+    expect(instr).toContain("response-time threshold");
   });
 });
 
@@ -357,7 +374,6 @@ describe("follow-up universal — sem vocabulário de nicho", () => {
   function build(
     followUpType: (typeof FOLLOW_UP_TYPES)[number],
     modo: (typeof MODES)[number],
-    useHumanPersona?: boolean,
   ) {
     return buildFollowUpAiInstruction({
       decision: {
@@ -376,7 +392,6 @@ describe("follow-up universal — sem vocabulário de nicho", () => {
       leadName: "Alex",
       settings: { ...DEFAULT_FOLLOW_UP_INTELIGENTE, modo },
       attemptNumber: 0,
-      ...(useHumanPersona === undefined ? {} : { useHumanPersona }),
     });
   }
 
@@ -399,21 +414,16 @@ describe("follow-up universal — sem vocabulário de nicho", () => {
   it("mantém a mecânica de retomada em todos os tipos", () => {
     for (const followUpType of FOLLOW_UP_TYPES) {
       const instr = build(followUpType, "moderado");
-      expect(instr).toContain("Alex");
-      expect(instr).toContain("Nível de urgência: medium");
-      expect(instr).toContain("primeira tentativa");
+      expect(instr).not.toContain("Alex");
+      expect(instr).toContain("Internal urgency signal: medium");
+      expect(instr).toContain("follow-up attempt 1");
     }
   });
 
-  it("por padrão esconde que a retomada é automática (comportamento histórico)", () => {
-    expect(build("silence", "moderado")).toContain("Não revele que é um sistema automático");
-  });
-
-  it("com useHumanPersona desligado, não manda esconder a automação", () => {
-    const instr = build("silence", "moderado", false);
-    expect(instr).not.toContain("Não revele que é um sistema automático");
-    // O resto da instrução continua intacto.
-    expect(instr).toContain("Nível de urgência: medium");
-    expect(instr).toContain("Seja breve");
+  it("não força nem oculta uma identidade humana/IA", () => {
+    const instr = build("silence", "moderado");
+    expect(instr).not.toMatch(/finja|fingir|sistema autom[aá]tico|sou humano/i);
+    expect(instr).toContain("configured prompts require it");
+    expect(instr).toContain("Internal urgency signal: medium");
   });
 });

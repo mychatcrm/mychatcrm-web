@@ -10,10 +10,11 @@
 import { NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import {
+  fetchWhatsAppCloudMedia,
   parseWhatsAppCloudInbound,
-  parseWhatsAppCloudPayload,
   parseWhatsAppCloudStatuses,
 } from "@/lib/integrations/whatsapp-cloud";
+import { uploadMediaToR2 } from "@/lib/integrations/r2-storage";
 import { applyMetaSystemNotificationStatus } from "@/lib/server/system-agent";
 import { handleSystemMetaInbound } from "@/lib/server/system-meta-inbound";
 import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
@@ -32,6 +33,8 @@ import { revealConversationOnInbound } from "@/lib/server/conversation-visibilit
 import { runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { buildWhatsappRemoteJid } from "@/lib/server/meta-lead-processing";
+import { scheduleFollowUpAfterInbound } from "@/lib/server/follow-up-jobs";
+import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
 
 export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<NextResponse> {
   // Delivery status updates from Meta (outgoing messages: sent/delivered/read/failed).
@@ -68,7 +71,9 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
     if (handled) return NextResponse.json({ ok: true });
   }
 
-  const inbound = parseWhatsAppCloudPayload(json);
+  // O mesmo parser cobre texto, áudio, imagem, vídeo e documento. O parser
+  // legado de texto fazia mídia de clientes comuns desaparecer antes do job.
+  const inbound = systemInbound ?? parseWhatsAppCloudInbound(json);
   if (!inbound) {
     return NextResponse.json({ ok: true });
   }
@@ -119,8 +124,18 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
       tenant_id: tenantId,
       remote_jid: remoteJid,
       direction: "inbound",
-      kind: "text",
-      content: inbound.text,
+      kind: inbound.kind,
+      content:
+        inbound.text.trim() ||
+        (inbound.kind === "audio"
+          ? "[Áudio]"
+          : inbound.kind === "image"
+            ? "[Imagem]"
+            : inbound.kind === "video"
+              ? "[Video]"
+              : inbound.kind === "document"
+                ? "[Document]"
+                : ""),
       message_id: inbound.messageId || null,
       agent_id: null,
       lead_id: null,
@@ -144,6 +159,51 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
       error: inboundInsertError.message,
     });
     return NextResponse.json({ ok: true, blocked: "inbound_persist_failed" });
+  }
+
+  // Persiste os bytes antes de iniciar automação. O motor V2 só recebe a
+  // chave privada do R2 e faz transcrição/análise no adaptador de entrada.
+  if (inbound.kind !== "text" && inbound.mediaId) {
+    if (!cloudConnection?.access_token) {
+      console.warn("[webhooks/whatsapp] inbound_media_token_missing", {
+        tenant_id: tenantId,
+        connection_id: inbound.phoneNumberId,
+        message_id: inbound.messageId || null,
+      });
+      return NextResponse.json({ ok: true, blocked: "inbound_media_token_missing" });
+    }
+    const media = await fetchWhatsAppCloudMedia(inbound.mediaId, cloudConnection.access_token);
+    if (!media) {
+      await sb
+        .from("whatsapp_messages")
+        .update({ analysis_status: "failed" })
+        .eq("tenant_id", tenantId)
+        .eq("id", inboundSaved.id);
+      return NextResponse.json({ ok: true, blocked: "inbound_media_download_failed" });
+    }
+    const extension = (media.mimeType.split("/")[1] || "bin").split(";")[0]!.replace(/[^a-z0-9.+-]/gi, "") || "bin";
+    const safeMessageId = (inbound.messageId || String(inboundSaved.id)).replace(/[^a-zA-Z0-9._-]/g, "_");
+    const storageKey = await uploadMediaToR2(
+      media.buffer,
+      `whatsapp/${tenantId}/meta-inbound/${safeMessageId}.${extension}`,
+      media.mimeType,
+    );
+    if (!storageKey) {
+      return NextResponse.json({ ok: true, blocked: "inbound_media_storage_failed" });
+    }
+    const { error: mediaUpdateError } = await sb
+      .from("whatsapp_messages")
+      .update({
+        storage_key: storageKey,
+        mime_type: media.mimeType,
+        analysis_status: inbound.kind === "image" ? "pending" : null,
+        transcription_status: inbound.kind === "audio" ? "pending" : null,
+      })
+      .eq("tenant_id", tenantId)
+      .eq("id", inboundSaved.id);
+    if (mediaUpdateError) {
+      return NextResponse.json({ ok: true, blocked: "inbound_media_persist_failed" });
+    }
   }
 
   const [journeyAuth, existingLead] = await Promise.all([
@@ -269,6 +329,24 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
   const metadata = agentConfig?.metadata && typeof agentConfig.metadata === "object"
     ? (agentConfig.metadata as Record<string, unknown>)
     : {};
+  await scheduleFollowUpAfterInbound({
+    sb,
+    tenantId,
+    agentId,
+    remoteJid,
+    leadId,
+    journeyId: journey?.id ?? null,
+    channel: "meta_cloud",
+    connectionId: inbound.phoneNumberId,
+    settings: followUpInteligenteFromMetadata(metadata),
+  }).catch((error) => {
+    console.warn("[webhooks/whatsapp] follow_up_schedule_failed", {
+      tenant_id: tenantId,
+      agent_id: agentId,
+      connection_id: inbound.phoneNumberId,
+      error: error instanceof Error ? error.message : "schedule_failed",
+    });
+  });
   const flow = await runInboundSmartWaitFlow({
     sb,
     tenantId,

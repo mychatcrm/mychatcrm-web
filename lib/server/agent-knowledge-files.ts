@@ -1,21 +1,25 @@
 import "server-only";
 
 import crypto from "crypto";
-import { extractText } from "unpdf";
 import {
   assertR2Configured,
   createR2PresignedUploadUrl,
   deleteR2Object,
-  getMediaBufferFromR2,
   getR2BucketName,
   headR2Object,
 } from "@/lib/integrations/r2-storage";
+import {
+  KNOWLEDGE_DOCUMENT_MAX_BYTES,
+  KNOWLEDGE_IMAGE_MAX_BYTES,
+  KNOWLEDGE_TOTAL_MAX_BYTES,
+  assertKnowledgeFileSize,
+} from "@/lib/server/agent-knowledge-processing";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const AGENT_KNOWLEDGE_MAX_FILES = 5;
-export const AGENT_KNOWLEDGE_MAX_BYTES = 1024 * 1024 * 1024;
-export const AGENT_KNOWLEDGE_MAX_EXTRACTED_CHARS = 80_000;
-const PLAIN_TEXT_MAX_BYTES = 5 * 1024 * 1024;
+export const AGENT_KNOWLEDGE_MAX_BYTES = KNOWLEDGE_DOCUMENT_MAX_BYTES;
+export const AGENT_KNOWLEDGE_IMAGE_MAX_BYTES = KNOWLEDGE_IMAGE_MAX_BYTES;
+export const AGENT_KNOWLEDGE_TOTAL_MAX_BYTES = KNOWLEDGE_TOTAL_MAX_BYTES;
 
 export const AGENT_KNOWLEDGE_ALLOWED_EXTENSIONS = new Set([
   "pdf",
@@ -54,8 +58,25 @@ export const AGENT_KNOWLEDGE_ALLOWED_MIME = new Set([
   "image/bmp",
 ]);
 
-const PLAIN_TEXT_EXTENSIONS = new Set(["xml", "md", "markdown", "html", "htm", "csv", "txt"]);
-const DOCUMENT_EXTENSIONS = new Set(["pdf", "docx"]);
+const MIME_BY_EXTENSION: Record<string, ReadonlySet<string>> = {
+  pdf: new Set(["application/pdf"]),
+  docx: new Set(["application/vnd.openxmlformats-officedocument.wordprocessingml.document"]),
+  xlsx: new Set(["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]),
+  pptx: new Set(["application/vnd.openxmlformats-officedocument.presentationml.presentation"]),
+  xml: new Set(["application/xml", "text/xml"]),
+  md: new Set(["text/markdown", "text/plain"]),
+  markdown: new Set(["text/markdown", "text/plain"]),
+  html: new Set(["text/html"]),
+  htm: new Set(["text/html"]),
+  csv: new Set(["text/csv", "text/plain"]),
+  txt: new Set(["text/plain"]),
+  png: new Set(["image/png"]),
+  jpg: new Set(["image/jpeg"]),
+  jpeg: new Set(["image/jpeg"]),
+  tif: new Set(["image/tiff"]),
+  tiff: new Set(["image/tiff"]),
+  bmp: new Set(["image/bmp"]),
+};
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -72,14 +93,10 @@ export type AgentKnowledgeFile = {
   status: "uploaded" | "processing" | "ready" | "failed";
   extractedTextStatus: "pending" | "processing" | "ready" | "failed" | "unsupported";
   errorMessage: string | null;
+  chunkCount: number;
+  processedAt: string | null;
   createdAt: string;
   updatedAt: string;
-};
-
-type KnowledgeExtractionResult = {
-  extractedText: string | null;
-  extractedTextStatus: AgentKnowledgeFile["extractedTextStatus"];
-  errorMessage: string | null;
 };
 
 function cleanAgentId(agentId: string): string {
@@ -97,11 +114,8 @@ function safeFilename(filename: string): string {
   return clean.slice(0, 160) || "arquivo";
 }
 
-function normalizeExtractedText(text: string): string {
-  return text.replace(/\u0000/g, "").trim().slice(0, AGENT_KNOWLEDGE_MAX_EXTRACTED_CHARS);
-}
-
 function toRow(row: Record<string, unknown>): AgentKnowledgeFile {
+  const rawError = typeof row.error_message === "string" ? row.error_message : null;
   return {
     id: String(row.id),
     tenantId: String(row.tenant_id),
@@ -114,7 +128,9 @@ function toRow(row: Record<string, unknown>): AgentKnowledgeFile {
     storageKey: String(row.storage_key ?? ""),
     status: String(row.status ?? "uploaded") as AgentKnowledgeFile["status"],
     extractedTextStatus: String(row.extracted_text_status ?? "pending") as AgentKnowledgeFile["extractedTextStatus"],
-    errorMessage: typeof row.error_message === "string" ? row.error_message : null,
+    errorMessage: rawError && /^[a-z0-9_]{1,96}$/.test(rawError) ? rawError : rawError ? "processing_failed" : null,
+    chunkCount: Number(row.chunk_count ?? 0),
+    processedAt: typeof row.processed_at === "string" ? row.processed_at : null,
     createdAt: String(row.created_at ?? ""),
     updatedAt: String(row.updated_at ?? ""),
   };
@@ -129,179 +145,47 @@ export function validateKnowledgeFileInput(params: {
   if (typeof params.mimeType !== "string" || !params.mimeType.trim()) throw new Error("Tipo de arquivo inválido.");
   const sizeBytes = Number(params.sizeBytes);
   if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) throw new Error("Tamanho de arquivo inválido.");
-  if (sizeBytes > AGENT_KNOWLEDGE_MAX_BYTES) throw new Error("Arquivo acima do limite de 1GB.");
   const ext = filenameExt(params.filename);
   const mimeType = params.mimeType.split(";")[0]!.trim().toLowerCase();
   if (!AGENT_KNOWLEDGE_ALLOWED_EXTENSIONS.has(ext)) throw new Error("Extensão de arquivo não permitida.");
   if (!AGENT_KNOWLEDGE_ALLOWED_MIME.has(mimeType)) throw new Error("Tipo de arquivo não permitido.");
+  if (!MIME_BY_EXTENSION[ext]?.has(mimeType)) {
+    throw new Error("A extensão e o tipo do arquivo não correspondem.");
+  }
+  try {
+    assertKnowledgeFileSize({ filename: params.filename, mimeType, sizeBytes });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "knowledge_document_too_large";
+    throw new Error(
+      code === "knowledge_image_too_large"
+        ? "Imagem acima do limite de 20 MB."
+        : "Documento acima do limite de 50 MB.",
+    );
+  }
   return { filename: params.filename.trim(), mimeType, sizeBytes, ext };
 }
 
-function isPlainTextCandidate(mimeType: string, ext: string): boolean {
-  return mimeType.startsWith("text/") || PLAIN_TEXT_EXTENSIONS.has(ext);
-}
-
-function isDocumentCandidate(mimeType: string, ext: string): boolean {
-  return (
-    DOCUMENT_EXTENSIONS.has(ext) ||
-    mimeType === "application/pdf" ||
-    mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-  );
-}
-
-/** Indica formatos para os quais há pipeline de extração (texto plano, PDF ou DOCX). */
-export function extractSmallTextCandidate(mimeType: string, storageKey: string): boolean {
-  const ext = filenameExt(storageKey);
-  return isPlainTextCandidate(mimeType, ext) || isDocumentCandidate(mimeType, ext);
-}
-
-/** Resultado da extração PDF/DOCX; `error` preenche quando a extração falhou de forma excecional. */
-export type ExtractTextFromDocumentResult = { text: string | null; error: string | null };
-
-/** Extrai texto de PDF/DOCX; outros binários retornam { text: null, error: null }. */
-export async function extractTextFromDocument(
-  buffer: Buffer,
-  mimeType: string,
-  ext: string,
-): Promise<ExtractTextFromDocumentResult> {
-  const normalizedMime = mimeType.split(";")[0]!.trim().toLowerCase();
-  const normalizedExt = ext.toLowerCase();
-
-  try {
-    if (normalizedMime === "application/pdf" || normalizedExt === "pdf") {
-      const uint8 = new Uint8Array(buffer);
-      const { text } = await extractText(uint8, { mergePages: true });
-      const normalized = normalizeExtractedText(text ?? "");
-      return { text: normalized || null, error: null };
-    }
-
-    if (
-      normalizedMime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-      normalizedExt === "docx"
-    ) {
-      const mammoth = await import("mammoth");
-      const result = await mammoth.extractRawText({ buffer });
-      const normalized = normalizeExtractedText(result.value ?? "");
-      return { text: normalized || null, error: null };
-    }
-  } catch (err) {
-    console.error("[agent-knowledge-files] extractTextFromDocument error", {
-      mimeType: normalizedMime,
-      ext: normalizedExt,
-      sizeBytes: buffer.byteLength,
-      message: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
-    });
-    return {
-      text: null,
-      error: err instanceof Error ? err.message + " | " + err.stack?.slice(0, 500) : String(err),
-    };
-  }
-
-  return { text: null, error: null };
-}
-
-async function extractPlainTextFromBuffer(buffer: Buffer): Promise<string | null> {
-  const normalized = normalizeExtractedText(buffer.toString("utf8"));
-  return normalized || null;
-}
-
-async function extractKnowledgeFromStorage(
-  storageKey: string,
-  mimeType: string,
-  sizeBytes: number,
-): Promise<KnowledgeExtractionResult> {
-  const ext = filenameExt(storageKey);
-  const buffer = await getMediaBufferFromR2(storageKey).catch(() => null);
-  if (!buffer) {
-    return {
-      extractedText: null,
-      extractedTextStatus: "failed",
-      errorMessage: "Não foi possível ler o arquivo no storage.",
-    };
-  }
-
-  if (isDocumentCandidate(mimeType, ext)) {
-    const { text: extractedText, error: documentError } = await extractTextFromDocument(buffer, mimeType, ext);
-    if (documentError) {
-      return {
-        extractedText: null,
-        extractedTextStatus: "failed",
-        errorMessage: documentError,
-      };
-    }
-    if (extractedText) {
-      return { extractedText, extractedTextStatus: "ready", errorMessage: null };
-    }
-    return {
-      extractedText: null,
-      extractedTextStatus: "failed",
-      errorMessage: "Falha ao extrair texto do documento.",
-    };
-  }
-
-  if (isPlainTextCandidate(mimeType, ext)) {
-    if (sizeBytes > PLAIN_TEXT_MAX_BYTES) {
-      return { extractedText: null, extractedTextStatus: "pending", errorMessage: null };
-    }
-    const extractedText = await extractPlainTextFromBuffer(buffer);
-    if (extractedText) {
-      return { extractedText, extractedTextStatus: "ready", errorMessage: null };
-    }
-    return {
-      extractedText: null,
-      extractedTextStatus: "failed",
-      errorMessage: "Arquivo de texto vazio ou ilegível.",
-    };
-  }
-
-  return { extractedText: null, extractedTextStatus: "unsupported", errorMessage: null };
-}
-
-async function applyKnowledgeExtractionToRow(params: {
+async function enqueueAgentKnowledgeProcessing(params: {
   sb: SupabaseServiceClient;
   tenantId: string;
   agentId: string;
   fileId: string;
-  storageKey: string;
-  mimeType: string;
-  sizeBytes: number;
 }): Promise<AgentKnowledgeFile> {
-  // Inclui erro de PDF/DOCX (mensagem real) em extraction.error_message → coluna Supabase `error_message`.
-  const extraction = await extractKnowledgeFromStorage(params.storageKey, params.mimeType, params.sizeBytes);
-
+  const { error: enqueueError } = await params.sb.rpc("enqueue_agent_knowledge_job_v1", {
+    p_tenant_id: params.tenantId,
+    p_agent_id: params.agentId,
+    p_file_id: params.fileId,
+  });
+  if (enqueueError) throw new Error(`Não foi possível enfileirar o processamento: ${enqueueError.message}`);
   const { data, error } = await params.sb
     .from("agent_knowledge_files")
-    .update({
-      status: "ready",
-      extracted_text_status: extraction.extractedTextStatus,
-      extracted_text: extraction.extractedText,
-      error_message: extraction.errorMessage,
-      size_bytes: params.sizeBytes,
-      updated_at: new Date().toISOString(),
-    })
+    .select("*")
     .eq("tenant_id", params.tenantId)
     .eq("agent_id", params.agentId)
     .eq("id", params.fileId)
-    .select("*")
     .single();
-
-  if (error) throw new Error("Erro ao atualizar material.");
+  if (error || !data) throw new Error("Material não encontrado após o enfileiramento.");
   return toRow(data as Record<string, unknown>);
-}
-
-export async function countAgentKnowledgeFiles(params: {
-  sb: SupabaseServiceClient;
-  tenantId: string;
-  agentId: string;
-}): Promise<number> {
-  const { count, error } = await params.sb
-    .from("agent_knowledge_files")
-    .select("id", { count: "exact", head: true })
-    .eq("tenant_id", params.tenantId)
-    .eq("agent_id", params.agentId);
-  if (error) throw new Error("Erro ao contar materiais do agente.");
-  return count ?? 0;
 }
 
 export async function createAgentKnowledgeUpload(params: {
@@ -314,10 +198,7 @@ export async function createAgentKnowledgeUpload(params: {
 }): Promise<{ file: AgentKnowledgeFile; uploadUrl: string; expiresInSeconds: number }> {
   assertR2Configured();
   const valid = validateKnowledgeFileInput(params);
-  const currentCount = await countAgentKnowledgeFiles(params);
-  if (currentCount >= AGENT_KNOWLEDGE_MAX_FILES) throw new Error("Limite de 5 materiais por agente atingido.");
-
-  const now = new Date().toISOString();
+  const fileId = crypto.randomUUID();
   const storedFilename = `${crypto.randomUUID()}_${safeFilename(valid.filename)}`;
   const storageKey = `agents/${params.tenantId}/${cleanAgentId(params.agentId)}/${storedFilename}`;
   const expiresInSeconds = 900;
@@ -328,27 +209,28 @@ export async function createAgentKnowledgeUpload(params: {
     expiresInSeconds,
   });
 
-  const { data, error } = await params.sb
-    .from("agent_knowledge_files")
-    .insert({
-      tenant_id: params.tenantId,
-      agent_id: params.agentId,
-      original_filename: valid.filename,
-      stored_filename: storedFilename,
-      mime_type: valid.mimeType,
-      size_bytes: valid.sizeBytes,
-      storage_bucket: getR2BucketName(),
-      storage_key: storageKey,
-      status: "uploaded",
-      extracted_text_status: "pending",
-      created_at: now,
-      updated_at: now,
-    })
-    .select("*")
-    .single();
-
-  if (error) throw new Error("Erro ao criar metadados do material.");
-  return { file: toRow(data as Record<string, unknown>), uploadUrl, expiresInSeconds };
+  const { data, error } = await params.sb.rpc("reserve_agent_knowledge_file_v1", {
+    p_file_id: fileId,
+    p_tenant_id: params.tenantId,
+    p_agent_id: params.agentId,
+    p_original_filename: valid.filename,
+    p_stored_filename: storedFilename,
+    p_mime_type: valid.mimeType,
+    p_size_bytes: valid.sizeBytes,
+    p_storage_bucket: getR2BucketName(),
+    p_storage_key: storageKey,
+  });
+  if (error) {
+    const code = error.message ?? "";
+    if (code.includes("knowledge_file_limit")) throw new Error("Limite de 5 materiais por agente atingido.");
+    if (code.includes("knowledge_total_size_limit")) {
+      throw new Error("Os materiais deste agente ultrapassariam o limite total de 200 MB.");
+    }
+    throw new Error("Erro ao reservar os metadados do material.");
+  }
+  const reserved = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+  if (!reserved) throw new Error("Erro ao reservar os metadados do material.");
+  return { file: toRow(reserved), uploadUrl, expiresInSeconds };
 }
 
 export async function completeAgentKnowledgeUpload(params: {
@@ -373,18 +255,17 @@ export async function completeAgentKnowledgeUpload(params: {
     throw new Error("Arquivo ainda não encontrado no R2.");
   }
 
-  const mimeType = String(row.mime_type ?? head.contentType ?? "application/octet-stream");
-  const sizeBytes = head.sizeBytes || Number(row.size_bytes ?? 0);
-
-  return applyKnowledgeExtractionToRow({
-    sb: params.sb,
-    tenantId: params.tenantId,
-    agentId: params.agentId,
-    fileId: params.fileId,
-    storageKey,
-    mimeType,
-    sizeBytes,
-  });
+  const mimeType = String(row.mime_type ?? "application/octet-stream");
+  const uploadedMimeType = head.contentType?.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (uploadedMimeType && uploadedMimeType !== mimeType) {
+    throw new Error("O tipo enviado não corresponde ao tipo reservado. Inicie o upload novamente.");
+  }
+  const sizeBytes = Number(head.sizeBytes);
+  validateKnowledgeFileInput({ filename: String(row.original_filename ?? storageKey), mimeType, sizeBytes });
+  if (sizeBytes !== Number(row.size_bytes ?? 0)) {
+    throw new Error("O tamanho enviado não corresponde ao tamanho reservado. Inicie o upload novamente.");
+  }
+  return enqueueAgentKnowledgeProcessing(params);
 }
 
 export async function reprocessAgentKnowledgeFile(params: {
@@ -409,30 +290,17 @@ export async function reprocessAgentKnowledgeFile(params: {
     throw new Error("Arquivo não encontrado no R2.");
   }
 
-  const mimeType = String(row.mime_type ?? head.contentType ?? "application/octet-stream");
-  const sizeBytes = head.sizeBytes || Number(row.size_bytes ?? 0);
-
-  await params.sb
-    .from("agent_knowledge_files")
-    .update({
-      status: "processing",
-      extracted_text_status: "processing",
-      error_message: null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("tenant_id", params.tenantId)
-    .eq("agent_id", params.agentId)
-    .eq("id", params.fileId);
-
-  return applyKnowledgeExtractionToRow({
-    sb: params.sb,
-    tenantId: params.tenantId,
-    agentId: params.agentId,
-    fileId: params.fileId,
-    storageKey,
-    mimeType,
-    sizeBytes,
-  });
+  const mimeType = String(row.mime_type ?? "application/octet-stream");
+  const uploadedMimeType = head.contentType?.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (uploadedMimeType && uploadedMimeType !== mimeType) {
+    throw new Error("O tipo armazenado não corresponde ao material cadastrado.");
+  }
+  const sizeBytes = Number(head.sizeBytes);
+  validateKnowledgeFileInput({ filename: String(row.original_filename ?? storageKey), mimeType, sizeBytes });
+  if (sizeBytes !== Number(row.size_bytes ?? 0)) {
+    throw new Error("O tamanho armazenado não corresponde ao material cadastrado.");
+  }
+  return enqueueAgentKnowledgeProcessing(params);
 }
 
 export async function listAgentKnowledgeFiles(params: {
@@ -456,22 +324,15 @@ export async function removeAgentKnowledgeFile(params: {
   agentId: string;
   fileId: string;
 }): Promise<void> {
-  const { data, error } = await params.sb
-    .from("agent_knowledge_files")
-    .select("storage_key")
-    .eq("tenant_id", params.tenantId)
-    .eq("agent_id", params.agentId)
-    .eq("id", params.fileId)
-    .single();
-  if (error || !data) throw new Error("Material não encontrado.");
-  const storageKey = String((data as { storage_key?: unknown }).storage_key ?? "");
-
-  const { error: deleteError } = await params.sb
-    .from("agent_knowledge_files")
-    .delete()
-    .eq("tenant_id", params.tenantId)
-    .eq("agent_id", params.agentId)
-    .eq("id", params.fileId);
-  if (deleteError) throw new Error("Erro ao remover material.");
+  const { data, error } = await params.sb.rpc("delete_agent_knowledge_file_v1", {
+    p_tenant_id: params.tenantId,
+    p_agent_id: params.agentId,
+    p_file_id: params.fileId,
+  });
+  if (error) {
+    if ((error.message ?? "").includes("knowledge_file_not_found")) throw new Error("Material não encontrado.");
+    throw new Error("Erro ao remover material.");
+  }
+  const storageKey = typeof data === "string" ? data : "";
   if (storageKey) await deleteR2Object(storageKey).catch(() => undefined);
 }
