@@ -95,10 +95,9 @@ function rowToJourney(row: Record<string, unknown>): LeadJourney {
 }
 
 export function isJourneyIsolationEnabled(): boolean {
-  const configured = process.env.OMNICHANNEL_JOURNEYS_ENABLED;
-  if (configured === "true") return true;
-  if (configured === "false") return false;
-  return process.env.VERCEL_ENV === "production";
+  // Jornada exata é uma barreira de segurança, não uma feature opcional.
+  // Nenhuma variável de ambiente pode reativar o caminho legado sem isolamento.
+  return true;
 }
 
 export async function getRuleJourneyPolicy(params: {

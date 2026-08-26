@@ -201,37 +201,65 @@ async function patchConversationOperation(params: {
     actorId?: string | null;
     actorName?: string | null;
   };
+  /** Takeover humano vence uma alteração concorrente de epoch. */
+  retryOnEpochStale?: boolean;
 }): Promise<ConversationState> {
   const sb = params.sb ?? createSupabaseServiceClient();
-  const current = await getConversationState({
-    sb,
-    tenantId: params.tenantId,
-    remoteJid: params.remoteJid,
-  });
-  const { data, error } = await sb.rpc("set_conversation_operation_v3", {
-    p_tenant_id: params.tenantId,
-    p_remote_jid: params.remoteJid,
-    p_lead_id: params.leadId ?? null,
-    p_agent_id: params.agentId ?? null,
-    p_mode: params.mode,
-    p_human_paused: params.humanPaused,
-    p_paused_reason: params.pausedReason ?? null,
-    p_paused_by: params.pausedBy ?? null,
-    p_handoff_suggested: params.handoffSuggested ?? false,
-    p_handoff_reason: params.handoffReason ?? null,
-    p_assigned_human_id: params.assignedHumanId ?? null,
-    p_assigned_human_name: params.assignedHumanName ?? null,
-    p_transferred_from: params.transferredFrom ?? null,
-    p_transferred_to: params.transferredTo ?? null,
-    p_transfer_reason: params.transferReason ?? null,
-    p_expected_epoch: current?.automationEpoch ?? null,
-    p_event_type: params.event?.type ?? null,
-    p_event_title: params.event?.title ?? null,
-    p_event_detail: params.event?.detail ?? null,
-    p_actor_type: params.event?.actorType ?? null,
-    p_actor_id: params.event?.actorId ?? null,
-    p_actor_name: params.event?.actorName ?? null,
-  });
+  const maxAttempts = params.retryOnEpochStale ? 3 : 1;
+  let data: unknown = null;
+  let error: { code?: string; message: string } | null = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const current = await getConversationState({
+      sb,
+      tenantId: params.tenantId,
+      remoteJid: params.remoteJid,
+    });
+    // Outro takeover já venceu a corrida. Para a proteção automática isso é
+    // sucesso idempotente: não incrementa o epoch nem duplica evento.
+    if (
+      attempt > 0 &&
+      params.mode === "human" &&
+      params.humanPaused &&
+      current?.humanPaused &&
+      current.conversationMode === "human"
+    ) {
+      return current;
+    }
+    const response = await sb.rpc("set_conversation_operation_v3", {
+      p_tenant_id: params.tenantId,
+      p_remote_jid: params.remoteJid,
+      p_lead_id: params.leadId ?? null,
+      p_agent_id: params.agentId ?? null,
+      p_mode: params.mode,
+      p_human_paused: params.humanPaused,
+      p_paused_reason: params.pausedReason ?? null,
+      p_paused_by: params.pausedBy ?? null,
+      p_handoff_suggested: params.handoffSuggested ?? false,
+      p_handoff_reason: params.handoffReason ?? null,
+      p_assigned_human_id: params.assignedHumanId ?? null,
+      p_assigned_human_name: params.assignedHumanName ?? null,
+      p_transferred_from: params.transferredFrom ?? null,
+      p_transferred_to: params.transferredTo ?? null,
+      p_transfer_reason: params.transferReason ?? null,
+      p_expected_epoch: current?.automationEpoch ?? null,
+      p_event_type: params.event?.type ?? null,
+      p_event_title: params.event?.title ?? null,
+      p_event_detail: params.event?.detail ?? null,
+      p_actor_type: params.event?.actorType ?? null,
+      p_actor_id: params.event?.actorId ?? null,
+      p_actor_name: params.event?.actorName ?? null,
+    });
+    data = response.data;
+    error = response.error;
+    if (
+      error?.message.includes("automation_epoch_stale") &&
+      params.retryOnEpochStale &&
+      attempt + 1 < maxAttempts
+    ) {
+      continue;
+    }
+    break;
+  }
   if (error) {
     console.error("[conversation-operation] atomic_state_failed", {
       tenant_id: params.tenantId,
@@ -315,6 +343,7 @@ export async function takeoverConversation(params: {
     transferredFrom: fromLabel,
     transferredTo: params.actorName,
     transferReason: "takeover",
+    retryOnEpochStale: true,
     event: {
       type: "takeover",
       title: `Lead transferido da ${fromLabel} para ${params.actorName}`,

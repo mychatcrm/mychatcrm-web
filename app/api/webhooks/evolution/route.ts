@@ -876,11 +876,11 @@ export async function POST(request: Request) {
     if (row.tenant_id !== SYSTEM_TENANT_ID) {
       const fromMeMessages = extractFromMeMessagesFromEvolutionPayload(payload);
       if (fromMeMessages.length > 0) {
-        await Promise.all(
-          fromMeMessages.map((msg) =>
-            captureDirectPhoneOutbound({ tenantId: row.tenant_id, connectionId: row.id, msg }),
-          ),
-        );
+        // Preserva a ordem do aparelho e evita dois takeovers concorrentes do
+        // mesmo payload disputarem o mesmo automation_epoch.
+        for (const msg of fromMeMessages) {
+          await captureDirectPhoneOutbound({ tenantId: row.tenant_id, connectionId: row.id, msg });
+        }
       }
     }
 

@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { filterConversationsByInboxTab } from "@/lib/conversas/inbox-filters";
 import { buildConversationTimeline } from "@/lib/conversas/conversation-timeline";
 import {
   canHumanSendMessage,
   deriveConversationMode,
+  takeoverConversation,
 } from "@/lib/server/conversation-operation";
 
 describe("conversation operation", () => {
@@ -24,6 +25,59 @@ describe("conversation operation", () => {
     expect(canHumanSendMessage("automation")).toBe(false);
     expect(canHumanSendMessage("human")).toBe(true);
     expect(canHumanSendMessage("waiting_human")).toBe(true);
+  });
+
+  it("retries a takeover that loses an automation_epoch race", async () => {
+    const rpc = vi.fn()
+      .mockResolvedValueOnce({ data: null, error: { code: "P0001", message: "automation_epoch_stale" } })
+      .mockResolvedValueOnce({
+        data: {
+          state: {
+            id: "state-1", tenant_id: "tenant-1", remote_jid: "5511999999999@s.whatsapp.net",
+            lead_id: null, agent_id: "agent-1", channel: "whatsapp", status: "active",
+            human_paused: true, paused_reason: "human_takeover", paused_by: "human_manual",
+            handoff_suggested: false, conversation_mode: "human", automation_epoch: 3,
+          },
+        },
+        error: null,
+      });
+    let reads = 0;
+    const sb = {
+      rpc,
+      from: (table: string) => {
+        const chain: Record<string, unknown> = {};
+        chain.select = () => chain;
+        chain.eq = () => chain;
+        chain.in = () => chain;
+        chain.update = () => chain;
+        chain.maybeSingle = async () => {
+          reads += 1;
+          return {
+            data: table === "conversation_states"
+              ? {
+                  id: "state-1", tenant_id: "tenant-1", remote_jid: "5511999999999@s.whatsapp.net",
+                  lead_id: null, agent_id: "agent-1", channel: "whatsapp", status: "active",
+                  human_paused: false, conversation_mode: "automation", automation_epoch: reads > 3 ? 2 : 1,
+                }
+              : null,
+            error: null,
+          };
+        };
+        chain.then = (resolve: (value: unknown) => unknown) =>
+          Promise.resolve({ data: [], error: null }).then(resolve);
+        return chain;
+      },
+    } as never;
+
+    const result = await takeoverConversation({
+      sb, tenantId: "tenant-1", remoteJid: "5511999999999@s.whatsapp.net",
+      actorId: "owner-1", actorName: "Owner", agentId: "agent-1",
+    });
+
+    expect(result.state?.conversationMode).toBe("human");
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(rpc.mock.calls[0]?.[1]).toMatchObject({ p_expected_epoch: 1 });
+    expect(rpc.mock.calls[1]?.[1]).toMatchObject({ p_expected_epoch: 2 });
   });
 });
 

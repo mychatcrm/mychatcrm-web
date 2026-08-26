@@ -27,17 +27,6 @@ const STUCK_PROCESSING_MS = 5 * 60 * 1000;
 const MAX_JOB_ATTEMPTS = 3;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-export function isAgentRuleIdentityV5Enabled(tenantId: string): boolean {
-  if (process.env.AGENT_RULE_IDENTITY_V5_ENABLED === "true") return true;
-  const canaryTenants = new Set(
-    (process.env.AGENT_RULE_IDENTITY_V5_TENANTS ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean),
-  );
-  return canaryTenants.has(tenantId);
-}
-
 export type AgentResponseJobRow = {
   id: string;
   tenant_id: string;
@@ -175,7 +164,7 @@ export async function shouldScheduleAgentResponse(params: {
       };
     }
     ruleId = journey.journey.ruleId;
-    if (isAgentRuleIdentityV5Enabled(params.tenantId) && !ruleId) {
+    if (!ruleId) {
       return { ok: false, reason: "rule_missing" };
     }
   }
@@ -330,8 +319,7 @@ export async function scheduleAgentResponseJob(params: {
   // SELECT + UPDATE no TypeScript perdia message_ids quando dois webhooks
   // chegavam juntos (lost update), exatamente o caso de 2–3 mensagens seguidas.
   const channel = params.channel;
-  const useRuleIdentityV5 = isAgentRuleIdentityV5Enabled(params.tenantId);
-  if (useRuleIdentityV5 && !eligible.ruleId) {
+  if (!eligible.ruleId) {
     logJobEvent("schedule_skipped", {
       tenant_id: params.tenantId,
       remote_jid: maskRemoteJidForLog(params.remoteJid),
@@ -354,14 +342,9 @@ export async function scheduleAgentResponseJob(params: {
     p_max_seconds: settings.maxSeconds,
     p_lead_id: params.leadId ?? null,
     p_journey_id: params.journeyId ?? null,
-    ...(useRuleIdentityV5 ? { p_rule_id: eligible.ruleId } : {}),
+    p_rule_id: eligible.ruleId,
   };
-  const { data, error } = await sb.rpc(
-    useRuleIdentityV5
-      ? "upsert_agent_response_job_burst_v5"
-      : "upsert_agent_response_job_burst_v4",
-    rpcParams,
-  );
+  const { data, error } = await sb.rpc("upsert_agent_response_job_burst_v5", rpcParams);
 
   if (error || !data || typeof data !== "object" || Array.isArray(data)) {
     logJobEvent("failed_reason", {
@@ -578,10 +561,7 @@ export async function tryProcessAgentResponseJob(
       logJobEvent("job_cancelled", { job_id: job.id, reason: eligible.reason });
       return "skipped";
     }
-    if (
-      isAgentRuleIdentityV5Enabled(job.tenant_id) &&
-      (!job.rule_id || job.rule_id !== eligible.ruleId)
-    ) {
+    if (!job.rule_id || job.rule_id !== eligible.ruleId) {
       const blocked = await updateClaimedJobGeneration(
         client,
         job.id,

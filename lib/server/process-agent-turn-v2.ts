@@ -46,6 +46,7 @@ import { applyAgentLeadOutcome } from "@/lib/server/agent-lead-outcome";
 import { resolveOutboundMediaForAgentResponse } from "@/lib/server/agent-media-files";
 import {
   finalizeAgentOutboundDelivery,
+  markAgentOutboundAmbiguous,
   markAgentOutboundFailed,
   prepareAgentOutbound,
 } from "@/lib/server/agent-outbound-outbox";
@@ -595,7 +596,19 @@ export async function processAgentTurnV2(params: {
       const reason = error instanceof Error ? error.message : "outbound_send_failed";
       if (providerSent) {
         // O provedor já aceitou o envio: nunca reverta quota nem converta o
-        // outbox em retry, pois isso poderia duplicar a mensagem.
+        // outbox em retry, pois isso poderia duplicar a mensagem. Feche a
+        // intenção como ambígua até o receipt/echo reconciliar o envio.
+        await markAgentOutboundAmbiguous({
+          sb,
+          id: outbound.id,
+          claimToken: outbound.claimToken,
+          reason: `provider_accepted_finalize_failed:${reason}`,
+        }).catch((ambiguousError) => {
+          console.warn("[agent-turn-v2] provider_accepted_outbox_settle_failed", {
+            outbox_id: outbound.id,
+            error: ambiguousError instanceof Error ? ambiguousError.message : "unknown",
+          });
+        });
         await transport.commitProviderSend?.(admissionContext).catch(() => undefined);
       } else {
         await markAgentOutboundFailed({

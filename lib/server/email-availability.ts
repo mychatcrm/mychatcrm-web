@@ -3,17 +3,13 @@
  *
  * Ordem de tentativa (robustez):
  * 1) RPC `tenant_member_email_exists` via service client (SECURITY DEFINER, bypass RLS)
- * 2) Se service client indisponível (env ausente): RPC via anon client (GRANT EXECUTE TO anon)
- * 3) REST count exact + head (via service client, se disponível)
- * 4) REST select id limit 1 (via service client, se disponível)
+ * 2) REST count exact + head (via service client, se disponível)
+ * 3) REST select id limit 1 (via service client, se disponível)
  *
  * Política na rota Stripe: fail-CLOSED (ok:false → não abre Checkout).
  * A rota só de UX pode ser fail-open (ver app/api/checkout/email-availability).
  */
-import {
-  createSupabaseServiceClient,
-  createSupabaseAnonClient,
-} from "@/lib/supabase/server";
+import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -85,26 +81,15 @@ export async function checkEmailAvailability(
       return { ok: true, available: !rows?.length };
     }
 
-    console.warn("[email-availability] Todos os métodos service falharam, tentando anon RPC:", rowErr.message);
+    console.warn("[email-availability] Todos os métodos service falharam:", rowErr.message);
   }
 
-  // ---- 2) Fallback: anon client + RPC (GRANT EXECUTE TO anon aplicado no banco) ----
-  try {
-    const anonSb = createSupabaseAnonClient();
-    const { data: existsAnon, error: anonErr } = await anonSb.rpc("tenant_member_email_exists", {
-      p_email: email,
-    });
-
-    if (!anonErr && typeof existsAnon === "boolean") {
-      return { ok: true, available: !existsAnon };
-    }
-
-    const errMsg = anonErr?.message ?? "anon rpc retornou tipo inesperado";
-    console.error("[email-availability] Anon client RPC também falhou:", errMsg);
-    return { ok: false, reason: "supabase_error", message: errMsg, envMissing };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("[email-availability] Falha total no check de e-mail:", message);
-    return { ok: false, reason: "supabase_error", message, envMissing };
-  }
+  // Nunca consulta existência de contas com a chave pública. Sem service_role a
+  // verificação falha fechada; expor esta RPC permitiria enumeração de usuários.
+  return {
+    ok: false,
+    reason: "supabase_error",
+    message: envMissing ? "service_role_unavailable" : "email_availability_check_failed",
+    envMissing,
+  };
 }

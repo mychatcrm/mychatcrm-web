@@ -49,6 +49,7 @@ vi.mock("@/lib/server/evolution-agent-reply", () => ({
 import { tryProcessAgentResponseJob } from "@/lib/server/agent-response-jobs";
 
 const JOURNEY_ID = "976f449b-4a06-43cd-81f8-96d21923334b";
+const RULE_ID = "876f449b-4a06-43cd-81f8-96d21923334b";
 const JOB_ID = "40b473b3-9ff2-4e4a-9ad8-4db33a231197";
 
 function jobRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -59,6 +60,7 @@ function jobRow(overrides: Record<string, unknown> = {}): Record<string, unknown
     tenant_id: "tenant-1",
     lead_id: "lead-1",
     journey_id: JOURNEY_ID,
+    rule_id: RULE_ID,
     remote_jid: "5562982194839@s.whatsapp.net",
     agent_id: "agent-1",
     instance_name: "mc-instance",
@@ -151,7 +153,7 @@ describe("tryProcessAgentResponseJob — revalidação de jornada", () => {
     authorizeActiveJourneyMock.mockResolvedValue({
       ok: true,
       agentId: "agent-1",
-      journey: { id: JOURNEY_ID },
+      journey: { id: JOURNEY_ID, ruleId: RULE_ID },
     });
     processAgentResponseJobMock.mockResolvedValue({ ok: true, dedupedCount: 0 });
 
@@ -202,7 +204,7 @@ describe("tryProcessAgentResponseJob — revalidação de jornada", () => {
     authorizeActiveJourneyMock.mockResolvedValue({
       ok: true,
       agentId: "agent-1",
-      journey: { id: "outra-jornada" },
+      journey: { id: "outra-jornada", ruleId: RULE_ID },
     });
 
     const updates: Update[] = [];
@@ -227,7 +229,7 @@ describe("tryProcessAgentResponseJob — revalidação de jornada", () => {
     authorizeActiveJourneyMock.mockResolvedValue({
       ok: true,
       agentId: "agent-1",
-      journey: { id: JOURNEY_ID },
+      journey: { id: JOURNEY_ID, ruleId: RULE_ID },
     });
     processAgentResponseJobMock.mockResolvedValue({ ok: true, dedupedCount: 0 });
 
@@ -254,7 +256,7 @@ describe("tryProcessAgentResponseJob — revalidação de jornada", () => {
     authorizeActiveJourneyMock.mockResolvedValue({
       ok: true,
       agentId: "agent-1",
-      journey: { id: JOURNEY_ID },
+      journey: { id: JOURNEY_ID, ruleId: RULE_ID },
     });
     processAgentResponseJobMock.mockResolvedValue({
       ok: false,
