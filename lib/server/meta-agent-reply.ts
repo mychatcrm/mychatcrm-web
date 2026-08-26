@@ -36,8 +36,8 @@ import {
   shouldDeferHandoffForAgendaResult,
 } from "@/lib/server/agent-cta-scheduler";
 import {
+  finalizeAgentOutboundDelivery,
   markAgentOutboundFailed,
-  markAgentOutboundSent,
   prepareAgentOutbound,
 } from "@/lib/server/agent-outbound-outbox";
 import {
@@ -528,29 +528,17 @@ export async function processMetaAgentResponseJob(
     }
 
     const sentMessageId = providerMessageId(delivery.providerPayload);
-    await markAgentOutboundSent({
+    await finalizeAgentOutboundDelivery({
       sb,
       id: outbound.id,
       claimToken: outbound.claimToken,
       providerMessageId: sentMessageId,
-      job,
-    });
-    sentAt = new Date().toISOString();
-    await sb.from("whatsapp_messages").insert({
-      tenant_id: job.tenant_id,
-      remote_jid: job.remote_jid,
-      direction: "outbound",
       kind: delivery.channel === "audio" ? "audio" : "text",
       content: textToSend.slice(0, 4000),
-      message_id: sentMessageId,
-      provider_message_id: sentMessageId,
-      media_url: delivery.mediaUrl,
-      agent_id: job.agent_id,
-      lead_id: job.lead_id,
-      journey_id: job.journey_id,
-      channel: "meta_cloud",
-      connection_id: job.connection_id,
+      mediaUrl: delivery.mediaUrl ?? null,
+      deliveryStatus: "sent",
     });
+    sentAt = new Date().toISOString();
     await commitTenantLeadQuotaReservation({
       eventId: quotaReservationId,
       leadId: job.lead_id,

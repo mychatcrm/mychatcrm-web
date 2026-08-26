@@ -31,7 +31,11 @@ const prepareAutomatedOutbound = vi.fn(async ({ operationKey }: { operationKey: 
   id: operationKey,
   claimToken: `claim:${operationKey}`,
 }));
-const markAgentOutboundSent = vi.fn(async () => undefined);
+const finalizeAgentOutboundDelivery = vi.fn(async () => ({
+  outboxId: "outbound-1",
+  messageId: "message-1",
+  providerMessageId: null,
+}));
 const markAgentOutboundFailed = vi.fn(async () => undefined);
 
 vi.mock("@/lib/integrations/evolution-api", () => ({
@@ -51,7 +55,7 @@ vi.mock("@/lib/supabase/server", () => ({
 
 vi.mock("@/lib/server/agent-outbound-outbox", () => ({
   prepareAutomatedOutbound,
-  markAgentOutboundSent,
+  finalizeAgentOutboundDelivery,
   markAgentOutboundFailed,
 }));
 
@@ -73,7 +77,7 @@ describe("sendAgentOutboundMediaViaEvolution", () => {
     createR2PresignedGetUrl.mockClear();
     lookupReadyAgentMediaForOutbound.mockClear();
     findReadyAgentMediaByFilenameFlexible.mockClear();
-    markAgentOutboundSent.mockClear();
+    finalizeAgentOutboundDelivery.mockClear();
     markAgentOutboundFailed.mockClear();
     evolutionSendMedia.mockResolvedValue({ ok: true, status: 200, error: null });
   });
@@ -106,7 +110,7 @@ describe("sendAgentOutboundMediaViaEvolution", () => {
     expect(lookupReadyAgentMediaForOutbound).toHaveBeenCalledTimes(3);
     expect(createR2PresignedGetUrl).toHaveBeenCalledTimes(3);
     expect(prepareAutomatedOutbound).toHaveBeenCalledTimes(3);
-    expect(markAgentOutboundSent).toHaveBeenCalledTimes(3);
+    expect(finalizeAgentOutboundDelivery).toHaveBeenCalledTimes(3);
   });
 
   it("propagates provider failures and marks the outbox failed", async () => {
@@ -132,6 +136,6 @@ describe("sendAgentOutboundMediaViaEvolution", () => {
     })).rejects.toThrow("evolution_media_delivery_failed:provider_unavailable");
 
     expect(markAgentOutboundFailed).toHaveBeenCalledOnce();
-    expect(markAgentOutboundSent).not.toHaveBeenCalled();
+    expect(finalizeAgentOutboundDelivery).not.toHaveBeenCalled();
   });
 });

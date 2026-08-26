@@ -23,28 +23,61 @@ import {
 
 describe("Brazilian WhatsApp digit normalization", () => {
   it("adds the 9th digit for mobile numbers in the 12-digit format", () => {
-    expect(ensureBrazilianMobileWhatsappDigits("556293580574")).toBe("5562993580574");
-    expect(ensureBrazilianMobileWhatsappDigits("5562993580574")).toBe("5562993580574");
+    expect(ensureBrazilianMobileWhatsappDigits("556290000000")).toBe("5562990000000");
+    expect(ensureBrazilianMobileWhatsappDigits("5562990000000")).toBe("5562990000000");
   });
 
   it("exposes alternate variants for Evolution number checks", () => {
-    expect(brazilianMobileAlternateVariant("5562993580574")).toBe("556293580574");
-    expect(brazilianMobileAlternateVariant("556293580574")).toBe("5562993580574");
+    expect(brazilianMobileAlternateVariant("5562990000000")).toBe("556290000000");
+    expect(brazilianMobileAlternateVariant("556290000000")).toBe("5562990000000");
   });
 
   it("builds send candidates with @lid JIDs only as full addresses", () => {
     const candidates = buildEvolutionSendCandidates({
-      platformNumber: "5562993580574",
-      jid: "5562993580574@s.whatsapp.net",
+      platformNumber: "5562990000000",
+      jid: "5562990000000@s.whatsapp.net",
       jidAlt: "123456789@lid",
     });
-    expect(candidates).not.toContain("5562993580574@s.whatsapp.net");
+    expect(candidates).not.toContain("5562990000000@s.whatsapp.net");
     expect(candidates).toContain("123456789@lid");
-    expect(candidates).toContain("5562993580574");
-    expect(formatEvolutionSendAddress("123456789@lid", "5562993580574")).toBe("123456789@lid");
-    expect(formatEvolutionSendAddress("5562993580574", "5562993580574")).toBe("5562993580574");
-    expect(formatEvolutionSendAddress("556293580574@s.whatsapp.net", "5562993580574")).toBe("5562993580574");
-    expect(formatEvolutionSendAddress("556293580574", "556293580574")).toBe("5562993580574");
+    expect(candidates).toContain("5562990000000");
+    expect(formatEvolutionSendAddress("123456789@lid", "5562990000000")).toBe("123456789@lid");
+    expect(formatEvolutionSendAddress("5562990000000", "5562990000000")).toBe("5562990000000");
+    expect(formatEvolutionSendAddress("556290000000@s.whatsapp.net", "5562990000000")).toBe("5562990000000");
+    expect(formatEvolutionSendAddress("556290000000", "556290000000")).toBe("5562990000000");
+  });
+});
+
+describe("Evolution recipient resolution", () => {
+  it("uses the validated canonical E.164 address when a successful check returns an empty envelope", async () => {
+    process.env.EVOLUTION_API_BASE_URL = "https://evolution.test";
+    process.env.EVOLUTION_API_KEY = "test-key";
+    const sentNumbers: string[] = [];
+    global.fetch = vi.fn(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/chat/whatsappNumbers/")) {
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }
+      if (url.includes("/message/sendText/")) {
+        const body = JSON.parse(String(init?.body)) as { number: string };
+        sentNumbers.push(body.number);
+        return new Response(JSON.stringify({
+          key: { id: "message-new-contact", remoteJid: `${body.number}@s.whatsapp.net` },
+          status: "SERVER_ACK",
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }) as typeof fetch;
+
+    const result = await evolutionSendText({
+      instanceName: "mc-test",
+      number: "14155552671",
+      text: "Hello",
+      resolveRecipient: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sentNumbers).toEqual(["14155552671"]);
   });
 });
 
@@ -52,13 +85,13 @@ describe("trusted WhatsApp contact identity", () => {
   it("uses remoteJidAlt when the primary identifier is an opaque @lid", () => {
     const result = resolveCanonicalInboundContact({
       remoteJid: "123456789012345@lid",
-      remoteJidAlt: "556293580574@s.whatsapp.net",
+      remoteJidAlt: "556290000000@s.whatsapp.net",
     });
     expect(result).toMatchObject({
-      canonicalPhone: "5562993580574",
-      canonicalRemoteJid: "5562993580574@s.whatsapp.net",
+      canonicalPhone: "5562990000000",
+      canonicalRemoteJid: "5562990000000@s.whatsapp.net",
       providerRemoteJid: "123456789012345@lid",
-      providerRemoteJidAlt: "556293580574@s.whatsapp.net",
+      providerRemoteJidAlt: "556290000000@s.whatsapp.net",
       hasTrustedPhone: true,
     });
   });
@@ -85,7 +118,7 @@ describe("trusted WhatsApp contact identity", () => {
           id: "message-lid",
           fromMe: false,
           remoteJid: "123456789012345@lid",
-          remoteJidAlt: "556293580574@s.whatsapp.net",
+          remoteJidAlt: "556290000000@s.whatsapp.net",
         },
         messageTimestamp: 1_784_250_000,
         message: { conversation: "Oi" },
@@ -93,10 +126,10 @@ describe("trusted WhatsApp contact identity", () => {
     });
     expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({
-      remoteJid: "5562993580574@s.whatsapp.net",
-      contactPhone: "5562993580574",
+      remoteJid: "5562990000000@s.whatsapp.net",
+      contactPhone: "5562990000000",
       providerRemoteJid: "123456789012345@lid",
-      providerRemoteJidAlt: "556293580574@s.whatsapp.net",
+      providerRemoteJidAlt: "556290000000@s.whatsapp.net",
     });
   });
 });
@@ -122,8 +155,8 @@ describe("Evolution Brazilian recipient routing", () => {
         return new Response(JSON.stringify([
           {
             exists: true,
-            number: "556293580574",
-            jid: "556293580574@s.whatsapp.net",
+            number: "556290000000",
+            jid: "556290000000@s.whatsapp.net",
           },
         ]), { status: 200 });
       }
@@ -140,7 +173,7 @@ describe("Evolution Brazilian recipient routing", () => {
           {
             keyId: "message-1",
             status: "ERROR",
-            remoteJid: "5562993580574@s.whatsapp.net",
+            remoteJid: "5562990000000@s.whatsapp.net",
             fromMe: true,
           },
         ]), { status: 200 });
@@ -150,13 +183,13 @@ describe("Evolution Brazilian recipient routing", () => {
 
     const result = await evolutionSendText({
       instanceName: "mc-test",
-      number: "5562993580574",
+      number: "5562990000000",
       text: "Teste",
       resolveRecipient: true,
     });
 
     expect(result.ok).toBe(true);
-    expect(sentNumbers).toEqual(["5562993580574", "556293580574"]);
+    expect(sentNumbers).toEqual(["5562990000000", "556290000000"]);
   });
 
   it("does not try another alias while delivery is still pending", async () => {
@@ -167,8 +200,8 @@ describe("Evolution Brazilian recipient routing", () => {
         return new Response(JSON.stringify([
           {
             exists: true,
-            number: "556293580574",
-            jid: "556293580574@s.whatsapp.net",
+            number: "556290000000",
+            jid: "556290000000@s.whatsapp.net",
           },
         ]), { status: 200 });
       }
@@ -188,13 +221,13 @@ describe("Evolution Brazilian recipient routing", () => {
 
     const result = await evolutionSendText({
       instanceName: "mc-test",
-      number: "5562993580574",
+      number: "5562990000000",
       text: "Teste",
       resolveRecipient: true,
     });
 
     expect(result.ok).toBe(true);
-    expect(sentNumbers).toEqual(["5562993580574"]);
+    expect(sentNumbers).toEqual(["5562990000000"]);
   });
 });
 
@@ -209,7 +242,7 @@ describe("Evolution delivery helpers", () => {
     const updates = extractMessageDeliveryUpdates({
       data: [
         {
-          key: { id: "ABC123", fromMe: true, remoteJid: "5562993580574@s.whatsapp.net" },
+          key: { id: "ABC123", fromMe: true, remoteJid: "5562990000000@s.whatsapp.net" },
           update: { status: 0 },
         },
       ],

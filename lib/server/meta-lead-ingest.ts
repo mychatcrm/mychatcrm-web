@@ -61,9 +61,9 @@ import {
 } from "@/lib/server/meta-lead-whatsapp-outreach";
 import {
   cancelAutomatedOutboundByOperationKey,
+  finalizeAgentOutboundDelivery,
   markAgentOutboundAmbiguous,
   markAgentOutboundFailed,
-  markAgentOutboundSent,
   prepareAutomatedOutbound,
   reconcileAgentOutboundProviderReceipt,
 } from "@/lib/server/agent-outbound-outbox";
@@ -1546,6 +1546,21 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
     throw new MetaLeadgenProcessingError("outbound_dispatch_in_progress", true);
   }
 
+  const { error: outboxLinkError } = await sb
+    .from("whatsapp_messages")
+    .update({ agent_outbox_id: preparedOutbound.id })
+    .eq("tenant_id", tenant_id)
+    .eq("id", savedMessage.id);
+  if (outboxLinkError) {
+    await markAgentOutboundFailed({
+      sb,
+      id: preparedOutbound.id,
+      claimToken: preparedOutbound.claimToken,
+      error: `outbound_message_link_failed:${outboxLinkError.message}`,
+    });
+    throw new MetaLeadgenProcessingError("initial_whatsapp_message_link_failed", true);
+  }
+
   let outboundFinalized = false;
   let providerDispatchStarted = false;
   try {
@@ -1659,6 +1674,9 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
 
     let acceptedStatus: "pending" | "sent" = "sent";
     let providerMessageId: string | null = send.providerMessageId;
+    let providerRemoteJid: string | null = null;
+    let providerStatus: string | null = null;
+    let deliveryStatus: "pending" | "sent" | "delivered" | "read" | "failed" = "sent";
     if (send.channel === "evolution" && send.evolutionPayload) {
       const receipt = await persistEvolutionSendReceipt({
         sb,
@@ -1669,6 +1687,9 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       });
       acceptedStatus = receipt.deliveryStatus === "pending" ? "pending" : "sent";
       providerMessageId = receipt.messageId ?? providerMessageId;
+      providerRemoteJid = receipt.remoteJid;
+      providerStatus = receipt.providerStatus;
+      deliveryStatus = receipt.deliveryStatus;
     } else {
       await sb
         .from("whatsapp_messages")
@@ -1679,11 +1700,16 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
         .eq("tenant_id", tenant_id)
         .eq("id", savedMessage.id);
     }
-    await markAgentOutboundSent({
+    await finalizeAgentOutboundDelivery({
       sb,
       id: preparedOutbound.id,
       claimToken: preparedOutbound.claimToken,
       providerMessageId,
+      kind: "text",
+      content: replyText,
+      providerRemoteJid,
+      providerStatus,
+      deliveryStatus,
     });
     outboundFinalized = true;
 

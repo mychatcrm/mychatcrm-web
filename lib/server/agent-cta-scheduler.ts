@@ -57,16 +57,36 @@ type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 const SCHEDULE_CTA_VALUE = "Agendar no Google Agenda";
 const SCHEDULING_DEDUPE_WINDOW_MS = 30 * 24 * 60 * 60_000;
 const CONFIRMATION_RE =
-  /\b(sim|t[aá]\s*bom|t[aá]|pode|claro|com\s*certeza|[oó]timo|certo|isso|exato|confirm|confirmo|confirmada|confirmado|fechou|fechado|combinado|perfeito|ok|pode\s*ser|fica(?:\s+(?:sim|bom))?)\b/i;
+  /\b(sim|s[ií]|yes|oui|ja|si|vale|d['’]accord|t[aá]\s*bom|t[aá]|pode|claro|com\s*certeza|[oó]timo|certo|isso|exato|confirm(?:ed|ar|o|ada|ado)?|confirmo|confirmada|confirmado|fechou|fechado|combinado|perfeito|ok(?:ay)?|sure|correct|agreed|pode\s*ser|fica(?:\s+(?:sim|bom))?)\b/i;
+const AGENDA_CONFIRMATION_EXACT = new Set([
+  "sim", "sí", "si", "yes", "ok", "okay", "sure", "confirm", "confirmed",
+  "oui", "d'accord", "d’accord", "ja", "bestätigt", "sì", "va bene",
+  "نعم", "أجل", "موافق", "はい", "ええ", "是", "好的", "好", "确认",
+  "हाँ", "हां", "ठीक है", "да", "подтверждаю", "согласен", "согласна",
+]);
+
+function normalizeAgendaIntentPhrase(value: string): string {
+  return value
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[.!?,;:،。！？]+/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hasAgendaConfirmation(value: string): boolean {
+  const normalized = normalizeAgendaIntentPhrase(value);
+  return AGENDA_CONFIRMATION_EXACT.has(normalized) || CONFIRMATION_RE.test(normalized);
+}
 /** Novo pedido de mutação na mesma mensagem — não conta como confirmação isolada. */
 const AGENDA_MUTATION_IN_MESSAGE_RE =
   /\b(?:quero|preciso|gostaria|desejo|vou)(?:\s+de)?\s+(?:cancelar|remarcar|reagendar|agendar|marcar|desmarcar)\b|\b(?:remarcar|reagendar|agendar|marcar)\s+(?:para|em|no|na)\b|\b\d{1,2}\s*[/-]\s*\d{1,2}\b|\bdaqui\s+(?:a\s+)?\d+\s+dias?\b|\bsemana\s+que\s+vem\b|\bproxim[ao]\s+\w{3,}/i;
 const CANCEL_INTENT_RE =
-  /\b(cancelar|cancelamento|desmarcar|desmarcação|desmarcacao)\b/i;
+  /\b(cancelar|cancelamento|desmarcar|desmarcação|desmarcacao|cancel|cancellation|cancelar|cancelación|annuler|annulation|stornieren|absagen|annullare|cancellare|отменить|отмена)\b|キャンセル|取消|取消预约|إلغاء|ألغ|रद्द/iu;
 const AGENDA_REJECTION_RE =
   /^\s*(?:n[aã]o|nao|melhor\s+n[aã]o|deixa|deixe|desist[io]|quero\s+manter|pode\s+manter|mant[eé]m)(?:\b|[.!?])/i;
 const RESCHEDULE_RE =
-  /\b(remarcar|reagendar|trocar\s+(o\s+)?hor[aá]rio|mudar\s+(a\s+)?data|outro\s+hor[aá]rio|alterar\s+agendamento)\b/i;
+  /\b(remarcar|reagendar|trocar\s+(o\s+)?hor[aá]rio|mudar\s+(a\s+)?data|outro\s+hor[aá]rio|alterar\s+agendamento|reschedule|change\s+(?:the\s+)?(?:date|time)|reprogramar|cambiar\s+(?:la\s+)?(?:fecha|hora)|reporter|déplacer|verschieben|umbuchen|riprogrammare|spostare|перенести)\b|日程変更|変更预约|改期|إعادة\s*جدولة|تغيير\s*الموعد|पुनर्निर्धारित/iu;
 const SCHEDULING_RE =
   /\b(agend(?:amento|ar|ad[oa]s?)?|cancelamento|cancelar|remarcar|reagendar|reuni[aã]o|visita|hor[aá]rio|amanh[ãa]|hoje|segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo|\d{1,2}[:h]\d{2}|\d{1,2}\/\d{1,2})\b/i;
 const AGENDA_READ_INTENT_RE =
@@ -349,9 +369,21 @@ function modelAsksNaturallyForOutsideWindow(cleanText: string): boolean {
  * nicho: a data/hora vem da própria diretiva; o tipo de compromisso fica com o
  * prompt do tenant nas mensagens normais.
  */
-function formatAgendaDateForCustomer(date: string): string {
+type AgendaUiLanguage = SupportedLanguageCode | "ar" | "ja" | "zh" | "hi" | "ru";
+
+function resolveAgendaUiLanguage(languageTag?: string | null): AgendaUiLanguage | null {
+  const base = languageTag?.trim().toLowerCase().split(/[-_]/)[0] ?? "pt";
+  return ["pt", "en", "es", "fr", "de", "it", "ar", "ja", "zh", "hi", "ru"].includes(base)
+    ? (base as AgendaUiLanguage)
+    : null;
+}
+
+function formatAgendaDateForCustomer(date: string, languageTag?: string | null): string {
   const normalized = normalizeAgentAgendaDate(date);
-  return normalized ?? date;
+  if (!normalized) return date;
+  if (resolveAgendaUiLanguage(languageTag)) return normalized;
+  const [day, month, year] = normalized.split("/");
+  return `${year}-${month}-${day}`;
 }
 
 function formatAgendaTimeForCustomer(time: string): string {
@@ -362,37 +394,135 @@ function formatAgendaTimeForCustomer(time: string): string {
   return match[2] === "00" ? `${hour}h` : `${hour}h${match[2]}`;
 }
 
-function buildAgendaConfirmationQuestion(directive: AgendaDirective | null): string {
+function buildAgendaConfirmationQuestion(
+  directive: AgendaDirective | null,
+  languageTag?: string | null,
+): string {
+  const language = resolveAgendaUiLanguage(languageTag);
   if (directive?.type === "schedule") {
-    return `Posso confirmar para ${formatAgendaDateForCustomer(directive.date)}, às ${formatAgendaTimeForCustomer(directive.time)}?`;
+    const date = formatAgendaDateForCustomer(directive.date, languageTag);
+    const time = normalizeAgentAgendaTime(directive.time) ?? directive.time;
+    if (!language) return `❓ ✅ 📅 ${date} · 🕒 ${time}`;
+    return {
+      pt: `Posso confirmar para ${date}, às ${formatAgendaTimeForCustomer(directive.time)}?`,
+      en: `May I confirm it for ${date} at ${time}?`,
+      es: `¿Puedo confirmarlo para el ${date} a las ${time}?`,
+      fr: `Puis-je le confirmer pour le ${date} à ${time} ?`,
+      de: `Darf ich den Termin für den ${date} um ${time} Uhr bestätigen?`,
+      it: `Posso confermarlo per il ${date} alle ${time}?`,
+      ar: `هل يمكنني تأكيد الموعد بتاريخ ${date} الساعة ${time}؟`,
+      ja: `${date} ${time}で確定してもよろしいですか？`,
+      zh: `可以确认在 ${date} ${time} 吗？`,
+      hi: `क्या मैं ${date} को ${time} बजे की पुष्टि कर दूँ?`,
+      ru: `Подтвердить запись на ${date} в ${time}?`,
+    }[language];
   }
   if (directive?.type === "cancel") {
-    return "Posso cancelar esse horário para você?";
+    if (!language) return "❓ 🚫 📅";
+    return {
+      pt: "Posso cancelar esse horário para você?",
+      en: "May I cancel this appointment for you?",
+      es: "¿Puedo cancelar esta cita?",
+      fr: "Puis-je annuler ce rendez-vous ?",
+      de: "Darf ich diesen Termin stornieren?",
+      it: "Posso cancellare questo appuntamento?",
+      ar: "هل يمكنني إلغاء هذا الموعد؟",
+      ja: "この予定をキャンセルしてもよろしいですか？",
+      zh: "可以取消这个预约吗？",
+      hi: "क्या मैं यह अपॉइंटमेंट रद्द कर दूँ?",
+      ru: "Отменить эту запись?",
+    }[language];
   }
-  return "Posso confirmar essa alteração na agenda?";
+  if (!language) return "❓ ✅ 🔄 📅";
+  return {
+    pt: "Posso confirmar essa alteração na agenda?",
+    en: "May I confirm this schedule change?",
+    es: "¿Puedo confirmar este cambio en la agenda?",
+    fr: "Puis-je confirmer cette modification du rendez-vous ?",
+    de: "Darf ich diese Terminänderung bestätigen?",
+    it: "Posso confermare questa modifica all'appuntamento?",
+    ar: "هل يمكنني تأكيد هذا التغيير في الموعد؟",
+    ja: "この予定変更を確定してもよろしいですか？",
+    zh: "可以确认这次预约变更吗？",
+    hi: "क्या मैं इस अपॉइंटमेंट बदलाव की पुष्टि कर दूँ?",
+    ru: "Подтвердить это изменение записи?",
+  }[language];
+}
+
+function formatEventDateTimeForLanguage(
+  iso: string,
+  timezone: string,
+  languageTag?: string | null,
+): string {
+  const language = resolveAgendaUiLanguage(languageTag);
+  if (!language) {
+    const fields = formatScheduleFieldsFromDate(new Date(iso), timezone);
+    return `${formatAgendaDateForCustomer(fields.date, languageTag)} · ${fields.time}`;
+  }
+  try {
+    return new Intl.DateTimeFormat(languageTag || "pt-BR", {
+      timeZone: timezone,
+      dateStyle: "full",
+      timeStyle: "short",
+      hour12: false,
+    }).format(new Date(iso));
+  } catch {
+    return formatEventDateTimePtBr(iso, timezone);
+  }
 }
 
 function buildAgendaCancelConfirmationQuestion(
   event: Pick<AgendaEventRow, "start_at" | "location">,
   timezone: string,
+  languageTag?: string | null,
 ): string {
-  const when = formatEventDateTimePtBr(event.start_at, timezone);
-  const place = event.location?.trim() ? `, em ${event.location.trim()}` : "";
-  return `Você quer cancelar seu agendamento de ${when}${place}?`;
+  const when = formatEventDateTimeForLanguage(event.start_at, timezone, languageTag);
+  const location = event.location?.trim() || "";
+  const language = resolveAgendaUiLanguage(languageTag);
+  if (!language) return `❓ 🚫 📅 ${when}${location ? ` · 📍 ${location}` : ""}`;
+  const suffix = location ? ` · 📍 ${location}` : "";
+  return {
+    pt: `Você quer cancelar seu agendamento de ${when}${suffix}?`,
+    en: `Do you want to cancel your appointment on ${when}${suffix}?`,
+    es: `¿Quieres cancelar tu cita del ${when}${suffix}?`,
+    fr: `Voulez-vous annuler votre rendez-vous du ${when}${suffix} ?`,
+    de: `Möchten Sie Ihren Termin am ${when}${suffix} stornieren?`,
+    it: `Vuoi cancellare l'appuntamento del ${when}${suffix}?`,
+    ar: `هل تريد إلغاء موعد ${when}${suffix}؟`,
+    ja: `${when}${suffix}の予定をキャンセルしますか？`,
+    zh: `要取消 ${when}${suffix} 的预约吗？`,
+    hi: `क्या आप ${when}${suffix} का अपॉइंटमेंट रद्द करना चाहते हैं?`,
+    ru: `Отменить запись на ${when}${suffix}?`,
+  }[language];
 }
 
 function buildAgendaCancelDisambiguationQuestion(
   events: Array<Pick<AgendaEventRow, "start_at" | "location">>,
   timezone: string,
+  languageTag?: string | null,
 ): string {
   const options = events
     .slice(0, 3)
     .map((event, index) => {
       const place = event.location?.trim() ? `, em ${event.location.trim()}` : "";
-      return `${index + 1}) ${formatEventDateTimePtBr(event.start_at, timezone)}${place}`;
+      return `${index + 1}) ${formatEventDateTimeForLanguage(event.start_at, timezone, languageTag)}${place}`;
     })
     .join("; ");
-  return `Encontrei mais de um agendamento ativo: ${options}. Qual deles você quer cancelar?`;
+  const language = resolveAgendaUiLanguage(languageTag);
+  if (!language) return `❓ 🚫 📅 ${options}`;
+  return {
+    pt: `Encontrei mais de um agendamento ativo: ${options}. Qual deles você quer cancelar?`,
+    en: `I found more than one active appointment: ${options}. Which one do you want to cancel?`,
+    es: `Encontré más de una cita activa: ${options}. ¿Cuál quieres cancelar?`,
+    fr: `J'ai trouvé plusieurs rendez-vous actifs : ${options}. Lequel voulez-vous annuler ?`,
+    de: `Ich habe mehrere aktive Termine gefunden: ${options}. Welchen möchten Sie stornieren?`,
+    it: `Ho trovato più appuntamenti attivi: ${options}. Quale vuoi cancellare?`,
+    ar: `وجدت أكثر من موعد نشط: ${options}. أي موعد تريد إلغاءه؟`,
+    ja: `有効な予定が複数あります: ${options}。どれをキャンセルしますか？`,
+    zh: `找到多个有效预约：${options}。要取消哪一个？`,
+    hi: `एक से अधिक सक्रिय अपॉइंटमेंट मिले: ${options}। आप किसे रद्द करना चाहते हैं?`,
+    ru: `Найдено несколько активных записей: ${options}. Какую отменить?`,
+  }[language];
 }
 
 function assistantAskedCancelDisambiguation(text?: string | null): boolean {
@@ -549,7 +679,7 @@ export function assistantTextForSchedulingConfirmation(
 export function detectSchedulingConfirmation(userText: string, assistantText?: string): boolean {
   const text = userText.trim().toLowerCase();
   if (!text) return false;
-  if (!CONFIRMATION_RE.test(text)) return false;
+  if (!hasAgendaConfirmation(text)) return false;
   return textHasSchedulingContext(text) || (!!assistantText && textHasSchedulingContext(assistantText));
 }
 
@@ -558,7 +688,7 @@ export function detectRescheduleIntent(userText: string, assistantText?: string)
   if (!text) return false;
   if (RESCHEDULE_RE.test(text)) return true;
   return (
-    CONFIRMATION_RE.test(text) &&
+    hasAgendaConfirmation(text) &&
     !!assistantText &&
     /\b(remarcar|reagendar|outro\s+hor[aá]rio)\b/i.test(assistantText)
   );
@@ -585,7 +715,7 @@ export function isInitialAgendaMutationRequest(userText: string): boolean {
   ) {
     return false;
   }
-  if (/^\s*(sim|ok|confirmo)\b/i.test(text) && CONFIRMATION_RE.test(text)) {
+  if (AGENDA_CONFIRMATION_EXACT.has(normalizeAgendaIntentPhrase(text))) {
     return false;
   }
   return (
@@ -628,7 +758,8 @@ const CONFIRMATION_ONLY_WORDS = new Set([
 export function isStandaloneAgendaConfirmation(userText: string): boolean {
   const text = userText.trim();
   if (!text || isInitialAgendaMutationRequest(text)) return false;
-  if (!CONFIRMATION_RE.test(text)) return false;
+  if (AGENDA_CONFIRMATION_EXACT.has(normalizeAgendaIntentPhrase(text))) return true;
+  if (!hasAgendaConfirmation(text)) return false;
   if (AGENDA_MUTATION_IN_MESSAGE_RE.test(text)) return false;
   const tokens = text
     .toLowerCase()
@@ -2649,7 +2780,11 @@ async function resolveStructuredAgendaPlan(params: {
     if (!cancelEvent) {
       if (!standaloneConfirmation && cancelCandidate.options.length > 1) {
         return {
-          text: buildAgendaCancelDisambiguationQuestion(cancelCandidate.options, params.timezone),
+          text: buildAgendaCancelDisambiguationQuestion(
+            cancelCandidate.options,
+            params.timezone,
+            params.languageTag,
+          ),
           action: "needs_confirmation",
           deferHandoff: true,
         };
@@ -2697,7 +2832,11 @@ async function resolveStructuredAgendaPlan(params: {
         timezone: params.timezone,
       });
       return {
-        text: buildAgendaCancelConfirmationQuestion(cancelEvent, params.timezone),
+        text: buildAgendaCancelConfirmationQuestion(
+          cancelEvent,
+          params.timezone,
+          params.languageTag,
+        ),
         action: "needs_confirmation",
         deferHandoff: true,
       };
@@ -2856,10 +2995,10 @@ async function resolveStructuredAgendaPlan(params: {
     return {
       text: scheduleComplete
         ? action === "cancel" && cancelEvent
-          ? buildAgendaCancelConfirmationQuestion(cancelEvent, params.timezone)
+          ? buildAgendaCancelConfirmationQuestion(cancelEvent, params.timezone, params.languageTag)
           : keepNaturalProposal
             ? modelCleanForConfirm
-            : buildAgendaConfirmationQuestion(directive)
+            : buildAgendaConfirmationQuestion(directive, params.languageTag)
         : naturalMissingSlotText,
       action: scheduleComplete ? "needs_confirmation" : "none",
       deferHandoff: true,
@@ -2947,7 +3086,7 @@ export function listPlanLooksLikeScheduleAnswer(params: {
   const text = params.clientText.trim();
   if (!text) return false;
   return (
-    CONFIRMATION_RE.test(text.toLowerCase()) ||
+    hasAgendaConfirmation(text) ||
     textHasExplicitDateAnchor(text, params.timezone) ||
     textHasExplicitTime(text)
   );
@@ -3247,7 +3386,7 @@ export async function resolveAgendaTurn(params: {
       // ser uma PERGUNTA. Se o modelo já afirmou sucesso ("está agendado"),
       // substituímos pela pergunta de confirmação com os dados reais da diretiva.
       const safeText = AGENDA_SUCCESS_CLAIM_RE.test(cleanText)
-        ? buildAgendaConfirmationQuestion(directive)
+        ? buildAgendaConfirmationQuestion(directive, replyLanguageTag)
         : cleanText;
       if (safeText !== cleanText) {
         console.warn("[agent-agenda-turn]", {
@@ -3314,7 +3453,7 @@ export async function resolveAgendaTurn(params: {
           return finalize({
             text: modelAlreadyAskedConcreteConfirmation
               ? cleanText
-              : buildAgendaConfirmationQuestion(contextualDirective),
+              : buildAgendaConfirmationQuestion(contextualDirective, replyLanguageTag),
             action: "needs_confirmation",
             deferHandoff: true,
           });
@@ -3322,7 +3461,7 @@ export async function resolveAgendaTurn(params: {
       }
     }
     const safeText = AGENDA_SUCCESS_CLAIM_RE.test(cleanText)
-      ? buildAgendaConfirmationQuestion(null)
+      ? buildAgendaConfirmationQuestion(null, replyLanguageTag)
       : cleanText;
     if (safeText !== cleanText) {
       console.warn("[agent-agenda-turn]", {

@@ -1028,7 +1028,7 @@ export type EvolutionWhatsappNumberCheck = {
   number: string;
 };
 
-/** Extrai os dígitos de um JID WhatsApp (556293580574@s.whatsapp.net → 556293580574). */
+/** Extrai os dígitos de um JID WhatsApp (556290000000@s.whatsapp.net → 556290000000). */
 export function jidToDigits(jid: string | null | undefined): string {
   if (!jid) return "";
   return jid.split("@")[0]?.replace(/\D/g, "") ?? "";
@@ -1090,7 +1090,7 @@ export function ensureBrazilianMobileWhatsappDigits(digits: string): string {
   return clean;
 }
 
-/** Variante com/sem 9º dígito para checagem na Evolution (ex.: 5562993580574 ↔ 556293580574). */
+/** Variante com/sem 9º dígito para checagem na Evolution (ex.: 5562990000000 ↔ 556290000000). */
 export function brazilianMobileAlternateVariant(digits: string): string | null {
   const clean = digits.replace(/\D/g, "");
   if (!clean.startsWith("55")) return null;
@@ -1124,11 +1124,15 @@ export async function evolutionCheckWhatsappNumbers(params: {
   });
   if (!res.ok) return res;
 
+  const firstEnvelope = (res.data as { data?: unknown } | null)?.data;
+  const secondEnvelope = (firstEnvelope as { data?: unknown } | null)?.data;
   const rawArray = Array.isArray(res.data)
     ? res.data
-    : Array.isArray((res.data as { data?: unknown } | null)?.data)
-      ? (res.data as { data: unknown[] }).data
-      : [];
+    : Array.isArray(firstEnvelope)
+      ? firstEnvelope
+      : Array.isArray(secondEnvelope)
+        ? secondEnvelope
+        : [];
 
   const parsed: EvolutionWhatsappNumberCheck[] = rawArray
     .map((item): EvolutionWhatsappNumberCheck | null => {
@@ -1195,6 +1199,19 @@ export async function resolveEvolutionSendNumber(params: {
       error: check.error,
       platformNumber: wanted,
       candidateNumbers: alternate ? [wanted, alternate] : [wanted],
+    };
+  }
+
+  // Algumas versões/forks da Evolution respondem 200 com envelope vazio
+  // durante a primeira consulta de um contato ainda não sincronizado. Isso não
+  // prova inexistência no WhatsApp. Trate como verificação indisponível e deixe
+  // o próprio sendText validar o E.164 canônico, sem inventar alias ou telefone.
+  if (check.data.length === 0) {
+    return {
+      status: "check_failed",
+      error: "recipient_check_empty",
+      platformNumber: wanted,
+      candidateNumbers: [wanted],
     };
   }
 

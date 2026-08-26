@@ -35,8 +35,8 @@ import {
   type LeadJourney,
 } from "@/lib/server/lead-journeys";
 import {
+  finalizeAgentOutboundDelivery,
   markAgentOutboundFailed,
-  markAgentOutboundSent,
   prepareAutomatedOutbound,
 } from "@/lib/server/agent-outbound-outbox";
 import { parseAgentTurnPlan } from "@/lib/ai/agent-turn-plan";
@@ -358,36 +358,6 @@ async function recordEvent(
   } catch {
     // observability must never crash the main flow
   }
-}
-
-// ─── outbound helper ─────────────────────────────────────────────────────────
-
-async function saveOutboundFollowUp(params: {
-  sb: SupabaseServiceClient;
-  tenantId: string;
-  remoteJid: string;
-  agentId: string;
-  content: string;
-  leadId?: string | null;
-  journeyId?: string | null;
-  channel: "evolution" | "meta_cloud";
-  connectionId: string;
-  providerMessageId?: string | null;
-}): Promise<void> {
-  await params.sb.from("whatsapp_messages").insert({
-    tenant_id: params.tenantId,
-    remote_jid: params.remoteJid,
-    direction: "outbound",
-    kind: "text",
-    content: params.content.slice(0, 4000),
-    agent_id: params.agentId,
-    lead_id: params.leadId ?? null,
-    journey_id: params.journeyId ?? null,
-    channel: params.channel,
-    connection_id: params.connectionId,
-    message_id: params.providerMessageId ?? null,
-    provider_message_id: params.providerMessageId ?? null,
-  });
 }
 
 // ─── lead loader ─────────────────────────────────────────────────────────────
@@ -1596,14 +1566,22 @@ export async function processFollowUpJob(
         });
         return "failed";
       }
+      const evolutionReceipt = transport.channel === "evolution"
+        ? extractEvolutionSendReceipt("data" in send ? send.data : null)
+        : null;
       const providerId = transport.channel === "meta_cloud"
         ? ("messageId" in send ? send.messageId ?? null : null)
-        : extractEvolutionSendReceipt("data" in send ? send.data : null).messageId;
-      await markAgentOutboundSent({
+        : evolutionReceipt?.messageId ?? null;
+      await finalizeAgentOutboundDelivery({
         sb: client,
         id: outbound.id,
         claimToken: outbound.claimToken,
         providerMessageId: providerId,
+        kind: "text",
+        content: replyText,
+        providerRemoteJid: evolutionReceipt?.remoteJid ?? null,
+        providerStatus: evolutionReceipt?.providerStatus ?? null,
+        deliveryStatus: evolutionReceipt?.deliveryStatus ?? "sent",
       });
 
       // If the database lease was lost while the provider call was in flight,
@@ -1611,18 +1589,6 @@ export async function processFollowUpJob(
       // `already_sent` and finish the job without dispatching again.
       if (!(await heartbeatFollowUpJob(client, job))) return "skipped";
 
-      await saveOutboundFollowUp({
-        sb: client,
-        tenantId: job.tenant_id,
-        remoteJid: job.remote_jid,
-        agentId: job.agent_id,
-        content: replyText,
-        leadId: lead?.id ?? null,
-        journeyId: job.journey_id,
-        channel: transport.channel,
-        connectionId: transport.connectionId,
-        providerMessageId: providerId,
-      });
     }
 
     const nextAttempts = job.attempts + 1;

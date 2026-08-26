@@ -421,6 +421,113 @@ export async function markAgentOutboundSent(params: {
   }
 }
 
+export type FinalizedAgentOutboundDelivery = {
+  outboxId: string;
+  messageId: string;
+  providerMessageId: string | null;
+};
+
+/**
+ * Finaliza o receipt do provedor, a bolha auditada e a sequência da conversa
+ * dentro da mesma transação do Postgres. Este é o único caminho seguro depois
+ * que um provedor aceita um outbound automático: um echo concorrente é adotado
+ * pela RPC, em vez de abrir uma segunda bolha ou uma janela para takeover.
+ */
+export async function finalizeAgentOutboundDelivery(params: {
+  sb: SupabaseServiceClient;
+  id: string;
+  claimToken: string;
+  providerMessageId?: string | null;
+  kind: "text" | "audio" | "image" | "video" | "document";
+  content: string;
+  providerRemoteJid?: string | null;
+  providerStatus?: string | null;
+  deliveryStatus?: string | null;
+  mediaUrl?: string | null;
+}): Promise<FinalizedAgentOutboundDelivery> {
+  const { data, error } = await params.sb.rpc("finalize_agent_outbound_delivery_v1", {
+    p_outbox_id: params.id,
+    p_claim_token: params.claimToken,
+    p_provider_message_id: params.providerMessageId ?? null,
+    p_kind: params.kind,
+    p_content: params.content.slice(0, 4000),
+    p_provider_remote_jid: params.providerRemoteJid ?? null,
+    p_provider_status: params.providerStatus ?? null,
+    p_delivery_status: params.deliveryStatus ?? "sent",
+    p_media_url: params.mediaUrl ?? null,
+  });
+  if (error || !data || typeof data !== "object") {
+    throw new Error(error?.message ?? "outbound_finalize_rpc_failed");
+  }
+  const result = data as {
+    ok?: unknown;
+    reason?: unknown;
+    outboxId?: unknown;
+    messageId?: unknown;
+    providerMessageId?: unknown;
+  };
+  if (result.ok !== true) {
+    throw new Error(
+      typeof result.reason === "string" ? result.reason : "outbound_finalize_failed",
+    );
+  }
+  if (typeof result.outboxId !== "string" || typeof result.messageId !== "string") {
+    throw new Error("outbound_finalize_invalid_result");
+  }
+  return {
+    outboxId: result.outboxId,
+    messageId: result.messageId,
+    providerMessageId:
+      typeof result.providerMessageId === "string" ? result.providerMessageId : null,
+  };
+}
+
+/**
+ * Usado exclusivamente pelo webhook Evolution antes de classificar fromMe como
+ * atendimento humano. Só reconcilia com um dispatch autorizado, exato e ainda
+ * reclamado; ausência ou ambiguidade falham fechadas como "não reconciliado".
+ */
+export async function reconcileAgentOutboundEcho(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  connectionId: string;
+  remoteJid: string;
+  providerMessageId: string;
+  kind: "text" | "audio" | "image" | "video" | "document";
+  content: string;
+  providerRemoteJid?: string | null;
+}): Promise<boolean> {
+  const { data, error } = await params.sb.rpc("reconcile_agent_outbound_echo_v1", {
+    p_tenant_id: params.tenantId,
+    p_connection_id: params.connectionId,
+    p_remote_jid: params.remoteJid,
+    p_provider_message_id: params.providerMessageId,
+    p_kind: params.kind,
+    p_content: params.content.slice(0, 4000),
+    p_provider_remote_jid: params.providerRemoteJid ?? null,
+    p_provider_status: "SERVER_ACK",
+    p_delivery_status: "sent",
+  });
+  if (error || !data || typeof data !== "object") {
+    console.warn("[agent-outbound-outbox] evolution_echo_reconcile_failed", {
+      tenant_id: params.tenantId,
+      connection_id: params.connectionId,
+      error: error?.message ?? "invalid_result",
+    });
+    return false;
+  }
+  const result = data as { ok?: unknown; matched?: unknown; reason?: unknown };
+  if (result.ok !== true) {
+    console.warn("[agent-outbound-outbox] evolution_echo_reconcile_denied", {
+      tenant_id: params.tenantId,
+      connection_id: params.connectionId,
+      reason: typeof result.reason === "string" ? result.reason : "unknown",
+    });
+    return false;
+  }
+  return result.matched === true;
+}
+
 export async function markAgentOutboundFailed(params: {
   sb: SupabaseServiceClient;
   id: string;
