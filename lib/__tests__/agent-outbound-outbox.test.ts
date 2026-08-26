@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  finalizeAgentOutboundDelivery,
   markAgentOutboundFailed,
   markAgentOutboundSent,
   prepareAutomatedOutbound,
   prepareAgentOutbound,
+  reconcileAgentOutboundEcho,
 } from "@/lib/server/agent-outbound-outbox";
 import type { AgentResponseJobRow } from "@/lib/server/agent-response-jobs";
 
@@ -289,6 +291,73 @@ describe("agent outbound outbox", () => {
       error: "network_error",
     });
     expect(failed.row).toMatchObject({ status: "failed", last_error: "network_error", claim_token: null });
+  });
+
+  it("atomically finalizes provider receipt, audited bubble and conversation sequence", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: {
+        ok: true,
+        reason: "sent",
+        outboxId: "outbound-1",
+        messageId: "message-row-1",
+        providerMessageId: "provider-1",
+      },
+      error: null,
+    });
+    await expect(finalizeAgentOutboundDelivery({
+      sb: { rpc } as never,
+      id: "outbound-1",
+      claimToken: "claim-1",
+      providerMessageId: "provider-1",
+      kind: "text",
+      content: "One logical reply",
+      providerRemoteJid: "5511999999999@s.whatsapp.net",
+      providerStatus: "SERVER_ACK",
+      deliveryStatus: "sent",
+    })).resolves.toEqual({
+      outboxId: "outbound-1",
+      messageId: "message-row-1",
+      providerMessageId: "provider-1",
+    });
+    expect(rpc).toHaveBeenCalledWith("finalize_agent_outbound_delivery_v1", {
+      p_outbox_id: "outbound-1",
+      p_claim_token: "claim-1",
+      p_provider_message_id: "provider-1",
+      p_kind: "text",
+      p_content: "One logical reply",
+      p_provider_remote_jid: "5511999999999@s.whatsapp.net",
+      p_provider_status: "SERVER_ACK",
+      p_delivery_status: "sent",
+      p_media_url: null,
+    });
+  });
+
+  it("reconciles an early Evolution echo before it can trigger human takeover", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: { ok: true, matched: true, reason: "automatic_echo_reconciled" },
+      error: null,
+    });
+    await expect(reconcileAgentOutboundEcho({
+      sb: { rpc } as never,
+      tenantId: "tenant-1",
+      connectionId: "connection-1",
+      remoteJid: job.remote_jid,
+      providerMessageId: "provider-echo-1",
+      kind: "text",
+      content: "One logical reply",
+      providerRemoteJid: job.remote_jid,
+    })).resolves.toBe(true);
+    expect(rpc).toHaveBeenCalledWith("reconcile_agent_outbound_echo_v1", {
+      p_tenant_id: "tenant-1",
+      p_connection_id: "connection-1",
+      p_remote_jid: job.remote_jid,
+      p_provider_message_id: "provider-echo-1",
+      p_kind: "text",
+      p_content: "One logical reply",
+      p_provider_remote_jid: job.remote_jid,
+      p_provider_status: "SERVER_ACK",
+      p_delivery_status: "sent",
+    });
   });
 
   it("atomically cancels an automated outbox row when authorization denies dispatch", async () => {

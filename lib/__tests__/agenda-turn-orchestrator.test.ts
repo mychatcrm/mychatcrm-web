@@ -238,6 +238,13 @@ describe("agenda confirmation helpers", () => {
     expect(isStandaloneAgendaConfirmation("fica bom")).toBe(true);
   });
 
+  it.each(["yes", "sí", "oui", "ja", "نعم", "はい", "好的", "हाँ", "да"])(
+    "aceita confirmação curta universal: %s",
+    (reply) => {
+      expect(isStandaloneAgendaConfirmation(reply)).toBe(true);
+    },
+  );
+
   it("isStandaloneAgendaConfirmation rejeita pedido embutido", () => {
     expect(isStandaloneAgendaConfirmation("sim, quero remarcar para sexta")).toBe(false);
   });
@@ -1043,7 +1050,7 @@ describe("resolveAgendaTurn", () => {
       modelText: "Ótimo! Qual dia e horário ficam melhores para a conversa com o gestor?",
       clientText: "Pode ser",
       priorAssistantText:
-        "Oi, Renato! Tudo bem? Acabei de receber seu cadastro e gostaria de agendar uma conversa rápida com um dos nossos gestores. Que tal?",
+        "Oi, Example Lead! Tudo bem? Acabei de receber seu cadastro e gostaria de agendar uma conversa rápida com um dos nossos gestores. Que tal?",
       agendaAutomationEnabled: true,
       agendaPlan: { action: "create", date: null, time: null, location: null, eventId: null },
       jobId: "33333333-3333-4333-8333-333333333333",

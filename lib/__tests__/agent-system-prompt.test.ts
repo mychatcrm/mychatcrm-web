@@ -27,8 +27,8 @@ describe("buildAgentSystemPrompt", () => {
         state: null,
         lead: {
           id: "lead-1",
-          name: "Maria",
-          phone: "5511999990000",
+          name: "Example Lead",
+          phone: "15555550123",
           source: "whatsapp",
           status: "contato",
           crmFunnelId: "funil-default",
@@ -142,7 +142,7 @@ describe("buildAgentSystemPrompt", () => {
         objetivo: "vender",
         ctaHandoffAtivo: true,
         handoffMensagem: "Vou encaminhar conforme solicitado.",
-        handoffNumero: "5511999999999",
+        handoffNumero: "15555550124",
         handoffKeywords: ["transfer-code-42"],
         systemPrompt: "Ajude o cliente.",
       },
@@ -237,12 +237,12 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("REGRA UNIVERSAL DE CONTEXTO");
   });
 
-  describe("real calendar injection", () => {
+  describe("unbounded scheduling window", () => {
     afterEach(() => {
       vi.useRealTimers();
     });
 
-    it("injects the concrete calendar and the valid dates for the availability window", () => {
+    it("injects only the configured weekday/time rules without a hidden date horizon", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date("2026-07-14T12:00:00-03:00"));
       const prompt = buildAgentSystemPrompt({
@@ -261,19 +261,14 @@ describe("buildAgentSystemPrompt", () => {
         },
       });
 
-      expect(prompt).toContain("CALENDÁRIO REAL");
-      expect(prompt).toContain("terça-feira 14/07/2026 (hoje)");
-      expect(prompt).toContain("quarta-feira 15/07/2026 (amanhã)");
-      expect(prompt).toContain("DATAS VÁLIDAS MAIS PRÓXIMAS");
-      expect(prompt).toContain("sexta-feira 17/07/2026");
-      expect(prompt).toContain("segunda-feira 20/07/2026");
+      expect(prompt).toContain("dias ISO da semana 1, 2, 3, 4, 5");
       expect(prompt).toContain("das 09:00 às 15:05");
-      const validLine = prompt.split("\n").find((l) => l.includes("DATAS VÁLIDAS")) ?? "";
-      expect(validLine).not.toContain("sábado");
-      expect(validLine).not.toContain("domingo");
+      expect(prompt).toContain("Não imponha horizonte máximo");
+      expect(prompt).not.toContain("CALENDÁRIO REAL");
+      expect(prompt).not.toContain("DATAS VÁLIDAS MAIS PRÓXIMAS");
     });
 
-    it("injects the calendar without the valid-dates list when the window is off", () => {
+    it("does not inject a fabricated finite calendar when the window is off", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date("2026-07-14T12:00:00-03:00"));
       const prompt = buildAgentSystemPrompt({
@@ -286,15 +281,11 @@ describe("buildAgentSystemPrompt", () => {
         },
       });
 
-      expect(prompt).toContain("CALENDÁRIO REAL");
+      expect(prompt).not.toContain("CALENDÁRIO REAL");
       expect(prompt).not.toContain("DATAS VÁLIDAS MAIS PRÓXIMAS");
     });
 
-    it("proíbe combinar o dia da semana de uma data com o número de outra", () => {
-      // Regressão de produção: hoje era quarta-feira 12/08/2026, e o agente
-      // propôs "quarta-feira, dia 15" — mas 15/08/2026 é sábado. O contexto
-      // injetado sempre casa dia da semana e data corretamente (mesmo cálculo);
-      // o que faltava era proibir o modelo de recombiná-los na prosa.
+    it("keeps weekday/date accuracy without restricting the agent to six generated dates", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date("2026-08-12T12:00:00-03:00"));
       const prompt = buildAgentSystemPrompt({
@@ -313,15 +304,10 @@ describe("buildAgentSystemPrompt", () => {
         },
       });
 
-      expect(prompt).toContain("quarta-feira 12/08/2026 (hoje)");
-      // 15/08/2026 é sábado — não pode aparecer em DATAS VÁLIDAS (só seg-sex).
-      const validLine = prompt.split("\n").find((l) => l.includes("DATAS VÁLIDAS")) ?? "";
-      expect(validLine).not.toContain("15/08/2026");
-      expect(prompt).toContain(
-        "nunca calcule o dia da semana de cabeça nem combine um dia da semana de uma data com o número de outra",
-      );
-      expect(prompt).toContain("nem combine o dia da semana de uma entrada com a data de outra");
-      expect(prompt).toContain("nunca escreva um dia da semana separado da data");
+      expect(prompt).toContain("calcule ambos no fuso configurado");
+      expect(prompt).toContain("cite somente a data completa");
+      expect(prompt).not.toContain("Nunca ofereça dias fora desta lista");
+      expect(prompt).not.toContain("slice(0, 6)");
     });
   });
 
@@ -350,8 +336,8 @@ describe("buildAgentSystemPrompt", () => {
         state: null,
         lead: {
           id: "lead-1",
-          name: "Renato",
-          phone: "5562993580574",
+          name: "Example Lead",
+          phone: "15555550125",
           source: "lead_ads",
           status: "contato",
           crmFunnelId: null,
@@ -362,7 +348,7 @@ describe("buildAgentSystemPrompt", () => {
           suggestedNextAction: null,
           profileMetadata: {
             source: "lead_ads",
-            form_fields: [{ key: "renda", label: "Renda bruta", value: "R$ 8.000" }],
+            form_fields: [{ key: "example_field", label: "Example field", value: "TEST_VALUE" }],
           },
         },
         summary: null,
@@ -373,7 +359,7 @@ describe("buildAgentSystemPrompt", () => {
     });
 
     expect(prompt).not.toContain("DADOS JÁ INFORMADOS PELO LEAD NO FORMULÁRIO META");
-    expect(prompt).not.toContain("Renda bruta: R$ 8.000");
+    expect(prompt).not.toContain("Example field: TEST_VALUE");
     expect(prompt).toContain("Formulários, materiais recuperados, histórico");
   });
 

@@ -10,8 +10,8 @@ import {
   type AgentMediaFile,
 } from "@/lib/server/agent-media-files";
 import {
+  finalizeAgentOutboundDelivery,
   markAgentOutboundFailed,
-  markAgentOutboundSent,
   prepareAutomatedOutbound,
 } from "@/lib/server/agent-outbound-outbox";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
@@ -22,6 +22,9 @@ export type AgentOutboundMediaKind = "audio" | "image" | "video" | "document";
 export type AgentOutboundMediaDelivery = {
   ok: boolean;
   providerMessageId?: string | null;
+  providerRemoteJid?: string | null;
+  providerStatus?: string | null;
+  deliveryStatus?: string | null;
   error?: string | null;
 };
 
@@ -178,11 +181,16 @@ export async function sendAgentOutboundMedia(
       throw new Error(`${params.transport.channel}_media_delivery_failed:${reason}`);
     }
 
-    await markAgentOutboundSent({
+    await finalizeAgentOutboundDelivery({
       sb,
       id: outbound.id,
       claimToken: outbound.claimToken,
       providerMessageId: delivery.providerMessageId ?? null,
+      kind,
+      content: file.originalFilename,
+      providerRemoteJid: delivery.providerRemoteJid ?? null,
+      providerStatus: delivery.providerStatus ?? null,
+      deliveryStatus: delivery.deliveryStatus ?? "sent",
     });
     sent += 1;
 

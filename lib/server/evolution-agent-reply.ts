@@ -94,8 +94,8 @@ import {
 import { isStaleBurstGenerationRow, sleep } from "@/lib/server/agent-response-schedule";
 import { sendAgentOutboundMediaViaEvolution } from "@/lib/server/send-agent-outbound-media-evolution";
 import {
+  finalizeAgentOutboundDelivery,
   markAgentOutboundFailed,
-  markAgentOutboundSent,
   prepareAgentOutbound,
 } from "@/lib/server/agent-outbound-outbox";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
@@ -148,40 +148,6 @@ type GeneratedReplyForUnit =
       leadOutcome: AgentLeadOutcome | null;
     }
   | { ok: false; error: "agent_missing_instructions" };
-
-async function saveOutboundMessage(opts: {
-  tenantId: string;
-  instanceName: string;
-  remoteJid: string;
-  kind: "text" | "audio";
-  content: string;
-  agentId: string;
-  leadId?: string | null;
-  journeyId?: string | null;
-  mediaUrl?: string | null;
-  providerPayload?: unknown;
-}): Promise<void> {
-  const sb = createSupabaseServiceClient();
-  const receipt = extractEvolutionSendReceipt(opts.providerPayload);
-  const instance = await getEvolutionInstanceByName(opts.instanceName);
-  await sb.from("whatsapp_messages").insert({
-    tenant_id: opts.tenantId,
-    remote_jid: opts.remoteJid,
-    direction: "outbound",
-    kind: opts.kind,
-    content: opts.content,
-    agent_id: opts.agentId,
-    lead_id: opts.leadId ?? null,
-    journey_id: opts.journeyId ?? null,
-    media_url: opts.mediaUrl ?? null,
-    channel: "evolution",
-    connection_id: instance?.id ?? null,
-    provider_message_id: receipt.messageId,
-    provider_remote_jid: receipt.remoteJid,
-    provider_status: receipt.providerStatus,
-    delivery_status: receipt.deliveryStatus,
-  });
-}
 
 async function isGenerationStale(
   sb: SupabaseServiceClient,
@@ -726,23 +692,16 @@ export async function processAgentResponseJob(
     });
     if (apologyResult.ok) {
       const receipt = extractEvolutionSendReceipt(apologyResult.data);
-      await markAgentOutboundSent({
+      await finalizeAgentOutboundDelivery({
         sb,
         id: outbound.id,
         claimToken: outbound.claimToken,
         providerMessageId: receipt.messageId,
-        job,
-      });
-      await saveOutboundMessage({
-        tenantId: job.tenant_id,
-        instanceName: job.instance_name,
-        remoteJid: job.remote_jid,
         kind: "text",
         content: apology,
-        agentId: job.agent_id,
-        leadId: job.lead_id,
-        journeyId: job.journey_id,
-        providerPayload: apologyResult.data,
+        providerRemoteJid: receipt.remoteJid,
+        providerStatus: receipt.providerStatus,
+        deliveryStatus: receipt.deliveryStatus,
       });
     } else {
       await markAgentOutboundFailed({
@@ -1135,25 +1094,17 @@ export async function processAgentResponseJob(
     }
 
     const providerReceipt = extractEvolutionSendReceipt(delivery.providerPayload);
-    await markAgentOutboundSent({
+    await finalizeAgentOutboundDelivery({
       sb,
       id: outbound.id,
       claimToken: outbound.claimToken,
       providerMessageId: providerReceipt.messageId,
-      job,
-    });
-
-    await saveOutboundMessage({
-      tenantId: job.tenant_id,
-      instanceName: job.instance_name,
-      remoteJid: job.remote_jid,
       kind: delivery.channel === "audio" ? "audio" : "text",
       content: textToSend.slice(0, 4000),
-      agentId: job.agent_id,
-      leadId: job.lead_id,
-      journeyId: job.journey_id,
-      mediaUrl: delivery.mediaUrl,
-      providerPayload: delivery.providerPayload,
+      mediaUrl: delivery.mediaUrl ?? null,
+      providerRemoteJid: providerReceipt.remoteJid,
+      providerStatus: providerReceipt.providerStatus,
+      deliveryStatus: providerReceipt.deliveryStatus,
     });
     await scheduleLeadRedistribution({
       sb,

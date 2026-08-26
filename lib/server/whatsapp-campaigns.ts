@@ -22,8 +22,8 @@ import { lookupWhatsAppCloudConnectionByPhoneNumberId } from "@/lib/server/whats
 import { persistEvolutionSendReceipt } from "@/lib/server/evolution-customer-delivery";
 import { isWithinBusinessHours } from "@/lib/server/follow-up-engine";
 import {
+  finalizeAgentOutboundDelivery,
   markAgentOutboundFailed,
-  markAgentOutboundSent,
   prepareAutomatedOutbound,
 } from "@/lib/server/agent-outbound-outbox";
 import { readTeamMembersFromDb } from "@/lib/server/team-employees-db";
@@ -866,6 +866,7 @@ async function processRecipient(params: {
       connection_id: String(params.campaign.connection_id),
       client_temp_id: `campaign:${recipientId}:${attempts}`,
       delivery_status: "pending",
+      agent_outbox_id: outbound.id,
     })
     .select("id")
     .single();
@@ -946,26 +947,34 @@ async function processRecipient(params: {
     return terminal ? "failed" : "retry";
   }
 
-  await markAgentOutboundSent({
-    sb: params.sb,
-    id: outbound.id,
-    claimToken: outbound.claimToken,
-  });
-
   const now = new Date().toISOString();
   let messageUpdateError: { message: string } | null = null;
+  let providerMessageId: string | null = null;
+  let providerRemoteJid: string | null = null;
+  let providerStatus: string | null = null;
+  let deliveryStatus: "pending" | "sent" | "delivered" | "read" | "failed" = "sent";
   if (params.sender.transport === "evolution") {
-    await persistEvolutionSendReceipt({
+    const receipt = await persistEvolutionSendReceipt({
       sb: params.sb,
       tenantId,
       messageRowId: message.id,
       connectionId: String(params.campaign.connection_id),
       payload: "data" in delivery ? delivery.data : null,
     });
+    providerMessageId = receipt.messageId;
+    providerRemoteJid = receipt.remoteJid;
+    providerStatus = receipt.providerStatus;
+    deliveryStatus = receipt.deliveryStatus;
   } else {
+    providerMessageId = "messageId" in delivery ? delivery.messageId ?? null : null;
     const update = await params.sb
       .from("whatsapp_messages")
-      .update({ delivery_status: "sent", sent_at: now, failed_reason: null })
+      .update({
+        delivery_status: "sent",
+        sent_at: now,
+        failed_reason: null,
+        provider_message_id: providerMessageId,
+      })
       .eq("tenant_id", tenantId)
       .eq("id", message.id);
     messageUpdateError = update.error;
@@ -979,6 +988,17 @@ async function processRecipient(params: {
       error: messageUpdateError.message,
     });
   }
+  await finalizeAgentOutboundDelivery({
+    sb: params.sb,
+    id: outbound.id,
+    claimToken: outbound.claimToken,
+    providerMessageId,
+    kind: "text",
+    content,
+    providerRemoteJid,
+    providerStatus,
+    deliveryStatus,
+  });
   await Promise.all([
     params.sb
       .from("whatsapp_campaign_recipients")

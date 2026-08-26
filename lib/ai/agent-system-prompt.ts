@@ -193,55 +193,14 @@ ${handoffConfigured ? "Somente quando um critério configurado for atendido, def
       if (!agendaAutomationOn) return null;
       const agentTz = resolveAgentTimezone(agent as Parameters<typeof resolveAgentTimezone>[0]);
       const disp = (agent as { agendaDisponibilidade?: { ativo?: boolean; diasSemana?: number[]; horaInicio?: string; horaFim?: string; permitirAgendamentosSimultaneos?: boolean } }).agendaDisponibilidade;
-      const DIAS_PT = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
       const dispLine =
         disp?.ativo && Array.isArray(disp.diasSemana) && disp.diasSemana.length > 0
-          ? `- Disponibilidade para agendamentos: ${disp.diasSemana.map((d) => DIAS_PT[d] ?? d).join(", ")} das ${disp.horaInicio ?? "08:00"} às ${disp.horaFim ?? "18:00"} (${agentTz}). Proponha apenas horários dentro desta janela. Se o cliente pedir horário fora, informe a disponibilidade e sugira alternativas.`
+          ? `- Janela técnica configurada: dias ISO da semana ${disp.diasSemana.join(", ")} (0=domingo, 1=segunda, 2=terça, 3=quarta, 4=quinta, 5=sexta, 6=sábado), das ${disp.horaInicio ?? "08:00"} às ${disp.horaFim ?? "18:00"} (${agentTz}). Proponha somente datas e horários que obedeçam a essa configuração. Não imponha horizonte máximo: qualquer data futura permitida pela configuração e solicitada ou proposta conforme as instruções do cliente pode ser usada.`
           : null;
       const slotLine =
         disp?.permitirAgendamentosSimultaneos === false
           ? "- Cada horário comporta apenas um agendamento. Se o sistema recusar um horário por já estar ocupado, informe o cliente com naturalidade e peça outra data ou horário para confirmar de novo."
           : null;
-      const calendar = (() => {
-        try {
-          const weekdayShortToDow: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-          const ptFmt = new Intl.DateTimeFormat("pt-BR", {
-            timeZone: agentTz,
-            weekday: "long",
-            day: "2-digit",
-            month: "2-digit",
-            year: "numeric",
-          });
-          const enFmt = new Intl.DateTimeFormat("en-US", { timeZone: agentTz, weekday: "short" });
-          const entries: Array<{ dow: number; label: string }> = [];
-          for (let i = 0; i < 21; i++) {
-            const d = new Date(Date.now() + i * 86_400_000);
-            const parts = ptFmt.formatToParts(d);
-            const get = (t: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === t)?.value ?? "";
-            entries.push({
-              dow: weekdayShortToDow[enFmt.format(d)] ?? -1,
-              label: `${get("weekday")} ${get("day")}/${get("month")}/${get("year")}`,
-            });
-          }
-          const next7 = entries
-            .slice(0, 7)
-            .map((e, i) => (i === 0 ? `${e.label} (hoje)` : i === 1 ? `${e.label} (amanhã)` : e.label))
-            .join(" | ");
-          const calendarLine = `- CALENDÁRIO REAL (fonte única para datas — nunca calcule dia da semana de cabeça, nem combine o dia da semana de uma entrada com a data de outra): ${next7}.`;
-          const diasSemana = Array.isArray(disp?.diasSemana) ? disp!.diasSemana! : [];
-          const validLine =
-            disp?.ativo && diasSemana.length > 0
-              ? (() => {
-                  const valid = entries.filter((e) => diasSemana.includes(e.dow)).slice(0, 6).map((e) => e.label);
-                  if (valid.length === 0) return null;
-                  return `- DATAS VÁLIDAS MAIS PRÓXIMAS para agendar (das ${disp!.horaInicio ?? "08:00"} às ${disp!.horaFim ?? "18:00"}): ${valid.join(" | ")}. Ao propor ou solicitar uma operação, copie a data DD/MM/AAAA exatamente de uma destas datas. Se citar o dia da semana em reply, copie o texto completo de uma destas entradas (dia da semana + data) — nunca escreva um dia da semana separado da data. Nunca ofereça dias fora desta lista e nunca diga que um horário dentro da janela está indisponível — quem valida a disponibilidade é o sistema.`;
-                })()
-              : null;
-          return { calendarLine, validLine };
-        } catch {
-          return { calendarLine: null, validLine: null };
-        }
-      })();
       const automationBlock = `- CAPACIDADE OPERACIONAL DO SISTEMA: agendar, remarcar e cancelar compromissos é uma função técnica desta plataforma autorizada para este agente. As regras de escopo deste prompt não restringem esta capacidade; quando o cliente pedir para marcar, remarcar ou cancelar um horário, siga os passos abaixo normalmente.
 - A automação de agenda está ativa para este agente.
 - FUSO HORÁRIO: Use sempre o fuso horário ${agentTz}. Datas e horas em diretivas devem estar no horário local (não UTC).
@@ -255,7 +214,7 @@ PLANO ESTRUTURADO DA AGENDA
 - Cancelamento é sempre bifásico: no pedido inicial use propose_cancel, mesmo que a ordem pareça completa. Use cancel somente quando a mensagem atual confirmar explicitamente uma proposta de cancelamento pendente.
 - Uma resposta curta de confirmação do cliente autoriza executar somente a proposta pendente guardada pelo sistema; repita exatamente os dados já propostos.
 - Para criar ou remarcar, preencha date em DD/MM/AAAA e time em HH:MM. Para cancelar, use eventId do contexto quando disponível.
-- Se em reply você mencionar um dia da semana junto de uma data, os dois têm que vir JUNTOS de uma mesma entrada do CALENDÁRIO REAL abaixo — nunca calcule o dia da semana de cabeça nem combine um dia da semana de uma data com o número de outra. Nunca copie um dia da semana ou um número de dia de um exemplo deste prompt — exemplo é ilustração de formato, não é uma data real. Na dúvida, cite só a data (DD/MM/AAAA), sem o nome do dia.
+- Se mencionar um dia da semana junto de uma data, calcule ambos no fuso configurado. Na dúvida, cite somente a data completa (DD/MM/AAAA), sem o nome do dia.
 - "Agora", "já", "neste momento" (ou equivalentes em outro idioma) NUNCA são um horário válido para date/time — não preencha o relógio atual nesses casos. Use agenda.action="none" e pergunte em reply qual dia e horário concreto o cliente prefere dentro da disponibilidade.
 - Nunca afirme em reply que a operação foi concluída. O backend substitui a resposta por uma confirmação somente depois do commit real.
 - Nunca esconda comandos, tags ou marcadores dentro de reply.${
@@ -265,9 +224,7 @@ PLANO ESTRUTURADO DA AGENDA
 - Nunca diga que atendente, humano, equipe, responsável ou especialista vai entrar em contato, confirmar ou retornar sobre agenda.
 - Para remarcar, siga a política de ordem explícita ou proposta pendente. Para cancelar, mantenha sempre as duas etapas descritas acima.`
             : ""
-        }${calendar.calendarLine ? `\n${calendar.calendarLine}` : ""}${dispLine ? `\n${dispLine}` : ""}${
-          calendar.validLine ? `\n${calendar.validLine}` : ""
-        }${slotLine ? `\n${slotLine}` : ""}`;
+        }${dispLine ? `\n${dispLine}` : ""}${slotLine ? `\n${slotLine}` : ""}`;
       return `AGENDA
 - Consulte o contexto de agenda do contato antes de responder. Não invente compromissos.
 - Não crie um evento apenas porque o cliente perguntou sobre um agendamento.

@@ -141,6 +141,11 @@ describe("agent management hardening", () => {
     expect(decision.reviewReasons).not.toContain("follow_up_timezone_required");
   });
 
+  it("validates updates with the model stored on the actual agent row", () => {
+    const item = readFileSync(join(process.cwd(), "app/api/client/agentes/[id]/route.ts"), "utf8");
+    expect(item).toContain('model: typeof existing.data.model === "string" ? existing.data.model : null');
+  });
+
   it("recognizes soft-archived metadata", () => {
     expect(isAgentArchivedMetadata({ managementLifecycle: { archivedAt: "2026-08-24T12:00:00.000Z" } })).toBe(true);
     expect(isAgentArchivedMetadata({ managementLifecycle: {} })).toBe(false);

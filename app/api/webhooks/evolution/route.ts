@@ -121,9 +121,10 @@ import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
 import { processCustomerMessageDeliveryUpdate } from "@/lib/server/evolution-customer-delivery";
 import { extractEvolutionSendReceipt } from "@/lib/integrations/evolution-message-receipt";
 import {
+  finalizeAgentOutboundDelivery,
   markAgentOutboundFailed,
-  markAgentOutboundSent,
   prepareAutomatedOutbound,
+  reconcileAgentOutboundEcho,
 } from "@/lib/server/agent-outbound-outbox";
 
 
@@ -502,6 +503,18 @@ async function captureDirectPhoneOutbound(params: {
 
   try {
     const sb = createSupabaseServiceClient();
+
+    const automaticEcho = await reconcileAgentOutboundEcho({
+      sb,
+      tenantId,
+      connectionId,
+      remoteJid: msg.remoteJid,
+      providerMessageId: msg.messageId,
+      kind: kindFromMsg(msg),
+      content: contentFromMsg(msg),
+      providerRemoteJid: msg.providerRemoteJid,
+    });
+    if (automaticEcho) return;
 
     const { data: existing } = await sb
       .from("whatsapp_messages")
@@ -1687,24 +1700,14 @@ export async function POST(request: Request) {
 
           if (delivery.sent) {
             const receipt = extractEvolutionSendReceipt(delivery.providerPayload);
-            await markAgentOutboundSent({
+            await finalizeAgentOutboundDelivery({
               sb: sbState,
               id: immediateOutbound.id,
               claimToken: immediateOutbound.claimToken,
               providerMessageId: receipt.messageId,
-            });
-            await saveMessage({
-              tenantId: row.tenant_id,
-              remoteJid: msg.remoteJid,
-              direction: "outbound",
               kind: delivery.channel === "audio" ? "audio" : "text",
               content: replyText.slice(0, 4000),
-              agentId,
-              leadId,
-              journeyId: journey?.id ?? null,
-              mediaUrl: delivery.mediaUrl,
-              connectionId: row.id,
-              providerMessageId: receipt.messageId,
+              mediaUrl: delivery.mediaUrl ?? null,
               providerRemoteJid: receipt.remoteJid,
               providerStatus: receipt.providerStatus,
               deliveryStatus: receipt.deliveryStatus,

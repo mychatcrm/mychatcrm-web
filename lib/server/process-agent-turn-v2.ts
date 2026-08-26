@@ -45,8 +45,8 @@ import {
 import { applyAgentLeadOutcome } from "@/lib/server/agent-lead-outcome";
 import { resolveOutboundMediaForAgentResponse } from "@/lib/server/agent-media-files";
 import {
+  finalizeAgentOutboundDelivery,
   markAgentOutboundFailed,
-  markAgentOutboundSent,
   prepareAgentOutbound,
 } from "@/lib/server/agent-outbound-outbox";
 import {
@@ -577,33 +577,19 @@ export async function processAgentTurnV2(params: {
       if (!delivery.sent) throw new Error(delivery.error || "outbound_send_failed");
       providerSent = true;
 
-      await markAgentOutboundSent({
+      await finalizeAgentOutboundDelivery({
         sb,
         id: outbound.id,
         claimToken: outbound.claimToken,
         providerMessageId: delivery.providerMessageId ?? null,
-        job,
-      });
-      sentAt = new Date().toISOString();
-      const { error: persistError } = await sb.from("whatsapp_messages").insert({
-        tenant_id: job.tenant_id,
-        remote_jid: job.remote_jid,
-        direction: "outbound",
         kind: delivery.kind,
         content: textToSend.slice(0, 4000),
-        message_id: delivery.providerMessageId ?? null,
-        provider_message_id: delivery.providerMessageId ?? null,
-        provider_remote_jid: delivery.providerRemoteJid ?? null,
-        provider_status: delivery.providerStatus ?? null,
-        delivery_status: delivery.deliveryStatus ?? "sent",
-        media_url: delivery.mediaUrl ?? null,
-        agent_id: job.agent_id,
-        lead_id: job.lead_id,
-        journey_id: job.journey_id,
-        channel: transport.channel,
-        connection_id: job.connection_id,
+        providerRemoteJid: delivery.providerRemoteJid ?? null,
+        providerStatus: delivery.providerStatus ?? null,
+        deliveryStatus: delivery.deliveryStatus ?? "sent",
+        mediaUrl: delivery.mediaUrl ?? null,
       });
-      if (persistError) throw new Error(`outbound_persist_failed:${persistError.message}`);
+      sentAt = new Date().toISOString();
       await transport.commitProviderSend?.(admissionContext);
     } catch (error) {
       const reason = error instanceof Error ? error.message : "outbound_send_failed";

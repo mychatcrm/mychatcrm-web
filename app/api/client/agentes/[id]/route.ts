@@ -104,6 +104,7 @@ export async function PUT(
 
   const contextDecision = resolveAgentContextSaveDecision({
     agent,
+    model: typeof existing.data.model === "string" ? existing.data.model : null,
     existingReviewReasons: existing.data.review_reasons,
   });
   if (contextDecision.blocked && !contextDecision.validation.ok) {
