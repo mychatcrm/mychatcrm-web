@@ -4,8 +4,7 @@ import { AGENDA_PAST_DATETIME_REPLY } from "@/lib/server/agent-cta-scheduler";
 
 /**
  * Regressão do incidente real (My Broker Office, 16-17/08/2026): o modelo
- * propôs "15/11/2023" num propose_create — data que não corresponde a
- * nenhuma entrada do CALENDÁRIO REAL injetado. Até este fix, isso só era
+ * propôs "15/11/2023" num propose_create — data passada e inválida. Até este fix, isso só era
  * barrado no commit final (insertStructuredAgendaEvent); o cliente já tinha
  * visto a data errada no texto. Aqui cobre a trava nova: validar ANTES de
  * responder, com uma tentativa de correção e um fallback seguro se persistir.
@@ -105,10 +104,15 @@ describe("generateAgentResponse — trava de data/hora da agenda", () => {
     expect(generateAIResponseMock).toHaveBeenCalledTimes(2);
     const retryInput = generateAIResponseMock.mock.calls[1]![0] as AiGenerateInput;
     const correctionMessage = retryInput.messages.find(
-      (message) => message.role === "system" && message.content.includes("CORREÇÃO OBRIGATÓRIA"),
+      (message) =>
+        message.role === "system" &&
+        message.content.includes("TECHNICAL DATE/TIME CORRECTION"),
     );
-    expect(correctionMessage?.content).toContain("CORREÇÃO OBRIGATÓRIA");
+    expect(correctionMessage?.content).toContain("TECHNICAL DATE/TIME CORRECTION");
     expect(correctionMessage?.content).toContain("15/11/2023 14:00");
+    expect(correctionMessage?.content).toContain("Allowed ISO weekdays: 1, 2, 3, 4, 5");
+    expect(correctionMessage?.content).toContain("timezone: America/Sao_Paulo");
+    expect(correctionMessage?.content).not.toContain("CALENDÁRIO REAL");
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");

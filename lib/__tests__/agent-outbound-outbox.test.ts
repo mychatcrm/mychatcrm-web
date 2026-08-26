@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   finalizeAgentOutboundDelivery,
   markAgentOutboundFailed,
@@ -14,6 +14,7 @@ const job: AgentResponseJobRow = {
   tenant_id: "tenant-1",
   lead_id: null,
   journey_id: null,
+  rule_id: "rule-1",
   remote_jid: "5511999999999@s.whatsapp.net",
   agent_id: "agent-1",
   instance_name: "instance-1",
@@ -85,7 +86,7 @@ function makeSb(
       return chain;
     },
     rpc: async (name: string) =>
-      name === "authorize_agent_outbound_dispatch_v2"
+      name === "authorize_agent_outbound_dispatch_v3"
         ? { data: authorization, error: null }
         : { data: true, error: null },
   } as never;
@@ -133,32 +134,9 @@ describe("agent outbound outbox", () => {
     });
   });
 
-  describe("identidade de regra (v5) — a exigência segue a flag de rollout", () => {
-    const FLAG = "AGENT_RULE_IDENTITY_V5_ENABLED";
-    const original = process.env[FLAG];
-    afterEach(() => {
-      if (original === undefined) delete process.env[FLAG];
-      else process.env[FLAG] = original;
-    });
-
-    it("com a flag DESLIGADA, job legado sem rule_id continua despachando", async () => {
-      // Regressão real: o bloqueio por `rule_missing` nasceu incondicional.
-      // Como os jobs só passam a carregar `rule_id` DEPOIS da flag ligar, o
-      // estado padrão do rollout bloquearia toda resposta do agente em
-      // produção. O fail-closed só vale depois que o tenant entra na v5.
-      delete process.env[FLAG];
-      const state = makeSb();
-      const result = await prepareAgentOutbound({
-        sb: state.sb,
-        job: { ...job, rule_id: null },
-        generation: 1,
-        content: "Resposta consolidada",
-      });
-      expect(result.action).toBe("send");
-    });
-
-    it("com a flag LIGADA, job sem rule_id é bloqueado (fail-closed)", async () => {
-      process.env[FLAG] = "true";
+  describe("identidade de regra obrigatória", () => {
+    it("bloqueia job sem rule_id independentemente de flag", async () => {
+      process.env.AGENT_RULE_IDENTITY_V5_ENABLED = "false";
       const state = makeSb();
       const result = await prepareAgentOutbound({
         sb: state.sb,
@@ -169,10 +147,7 @@ describe("agent outbound outbox", () => {
       expect(result).toEqual({ action: "blocked", id: job.id, reason: "rule_missing" });
     });
 
-    it("com a flag DESLIGADA, disparo automático de jornada legada sem regra continua saindo", async () => {
-      // 15 jornadas ativas em produção não têm `rule_id` (9 delas de campanha).
-      // Bloquear incondicionalmente silenciaria follow-ups, campanhas e mídia.
-      delete process.env[FLAG];
+    it("bloqueia disparo automático sem regra exata", async () => {
       const state = makeSb();
       const result = await prepareAutomatedOutbound({
         sb: state.sb,
@@ -187,7 +162,11 @@ describe("agent outbound outbox", () => {
         kind: "text",
         content: "Follow-up legado",
       });
-      expect(result.action).not.toBe("blocked");
+      expect(result).toEqual({
+        action: "blocked",
+        id: "follow-up:legado:1",
+        reason: "rule_missing",
+      });
     });
   });
 
@@ -374,6 +353,7 @@ describe("agent outbound outbox", () => {
         remoteJid: "5511999999999@s.whatsapp.net",
         agentId: "agent-1",
         journeyId: "423e4567-e89b-42d3-a456-426614174000",
+        ruleId: "rule-1",
         connectionId: "connection-1",
         channel: "evolution",
         kind: "text",

@@ -16,6 +16,7 @@ import {
   clientRequestedAgendaList,
   isStandaloneAgendaConfirmation,
   listPlanLooksLikeScheduleAnswer,
+  localizeAgendaReply,
   priorAgendaAssistantTextFromMessages,
   resolveAgendaTurn,
   sanitizeAgendaReplyForNoHandoff,
@@ -432,6 +433,19 @@ describe("resolveAgendaTurn", () => {
     expect(isInitialAgendaMutationRequest("Poderíamos agendar agora?")).toBe(true);
     expect(isInitialAgendaMutationRequest("Could we schedule now?")).toBe(true);
     expect(isInitialAgendaMutationRequest("¿Podríamos agendar ahora?")).toBe(true);
+    expect(clientRequestedAgendaList("عرض مواعيدي")).toBe(true);
+    expect(clientRequestedAgendaList("私の予約を表示")).toBe(true);
+    expect(clientRequestedAgendaList("查看我的预约")).toBe(true);
+    expect(clientRequestedAgendaList("मेरे अपॉइंटमेंट दिखाएँ")).toBe(true);
+    expect(clientRequestedAgendaList("показать мои записи")).toBe(true);
+  });
+
+  it("localiza respostas determinísticas de agenda nos scripts suportados", () => {
+    expect(localizeAgendaReply(AGENDA_PAST_DATETIME_REPLY, "en", "ar")).toContain("مضى");
+    expect(localizeAgendaReply(AGENDA_PAST_DATETIME_REPLY, "en", "ja")).toContain("過ぎ");
+    expect(localizeAgendaReply(AGENDA_PAST_DATETIME_REPLY, "en", "zh")).toContain("过去");
+    expect(localizeAgendaReply(AGENDA_PAST_DATETIME_REPLY, "en", "hi")).toContain("बीत");
+    expect(localizeAgendaReply(AGENDA_PAST_DATETIME_REPLY, "en", "ru")).toContain("прошло");
   });
 
   describe("listPlanLooksLikeScheduleAnswer — modelo classifica 'list' errado numa resposta de agendamento", () => {

@@ -570,10 +570,9 @@ export async function generateAgentResponse(params: {
   // -------------------------------------------------------------------------
   // Validação da data/hora proposta na agenda — ANTES de responder ao cliente.
   // -------------------------------------------------------------------------
-  // O CALENDÁRIO REAL/DATAS VÁLIDAS injetado no prompt já é calculado a partir
-  // do relógio real (ver agent-system-prompt.ts), mas isso é instrução, não
-  // garantia: o modelo pode ignorá-la e propor uma data que não existe em
-  // nenhuma entrada real. Até aqui, essa validação só rodava no commit final
+  // A disponibilidade configurada e o relógio real são restrições técnicas,
+  // não conteúdo comercial do prompt. O modelo ainda pode propor uma data
+  // passada ou fora da janela. Até aqui, essa validação só rodava no commit final
   // (insertStructuredAgendaEvent), depois que o cliente já tinha visto a data
   // errada no texto. Repete a mesma regra aqui, mais cedo.
   if (baseAgent.agendaAutomationEnabled === true) {
@@ -591,7 +590,11 @@ export async function generateAgentResponse(params: {
         agendaDisponibilidade,
       });
       if (!check.ok) {
-        const correctionNote = `\n\nCORREÇÃO OBRIGATÓRIA: a data/horário que você propôs (${currentPlan.agenda.date ?? "—"} ${currentPlan.agenda.time ?? "—"}) não corresponde a nenhuma entrada real do calendário — está no passado, é inválida ou fica fora da disponibilidade configurada. Proponha de novo usando exatamente uma data e horário reais de uma entrada do CALENDÁRIO REAL / DATAS VÁLIDAS acima.`;
+        const allowedWindow =
+          agendaDisponibilidade?.ativo === true
+            ? `Allowed ISO weekdays: ${agendaDisponibilidade.diasSemana.join(", ")}; local time window: ${agendaDisponibilidade.horaInicio}-${agendaDisponibilidade.horaFim}; timezone: ${timezone}.`
+            : `Timezone: ${timezone}.`;
+        const correctionNote = `\n\nTECHNICAL DATE/TIME CORRECTION: the proposed value (${currentPlan.agenda.date ?? "—"} ${currentPlan.agenda.time ?? "—"}) is invalid, in the past, or outside the configured availability. Produce a real future date and time that satisfies the constraints below. Do not assume a finite list of dates and do not change the customer's instructions. ${allowedWindow}`;
         const retryResult = await generateAIResponse({
           tenantId: params.tenantId.trim(),
           agentId: params.agentId.trim(),

@@ -90,7 +90,7 @@ const RESCHEDULE_RE =
 const SCHEDULING_RE =
   /\b(agend(?:amento|ar|ad[oa]s?)?|cancelamento|cancelar|remarcar|reagendar|reuni[aã]o|visita|hor[aá]rio|amanh[ãa]|hoje|segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo|\d{1,2}[:h]\d{2}|\d{1,2}\/\d{1,2})\b/i;
 const AGENDA_READ_INTENT_RE =
-  /\b(?:meus?|minhas?|meu|minha)\s+(?:pr[oó]ximos?\s+)?(?:agendamentos?|compromissos?|hor[aá]rios?|reuni[oõ]es?|visitas?|citas?|appointments?|meetings?)\b|\b(?:agendamentos?|compromissos?|hor[aá]rios?|reuni[oõ]es?|visitas?|citas?|appointments?|meetings?)\b[^.!?\n]{0,24}\b(?:meus?|minhas?|meu|minha)\b|\b(?:consultar|consult|ver|veja|olhar|olha|mostrar|mostre|listar|liste|check|show|list|revisar)\b[^.!?\n]{0,50}\b(?:agenda|agendamentos?|compromissos?|citas?|appointments?|meetings?)\b|\b(?:quando|what\s+time|when|cu[aá]ndo)\b[^.!?\n]{0,50}\b(?:agendamento|appointment|cita|reuni[aã]o|meeting|hor[aá]rio)\b/i;
+  /\b(?:meus?|minhas?|meu|minha)\s+(?:pr[oó]ximos?\s+)?(?:agendamentos?|compromissos?|hor[aá]rios?|reuni[oõ]es?|visitas?|citas?|appointments?|meetings?)\b|\b(?:agendamentos?|compromissos?|hor[aá]rios?|reuni[oõ]es?|visitas?|citas?|appointments?|meetings?)\b[^.!?\n]{0,24}\b(?:meus?|minhas?|meu|minha)\b|\b(?:consultar|consult|ver|veja|olhar|olha|mostrar|mostre|listar|liste|check|show|list|revisar|voir|afficher|lister|anzeigen|auflisten|mostrare|elencare|показать|посмотреть)\b[^.!?\n]{0,50}\b(?:agenda|agendamentos?|compromissos?|citas?|appointments?|meetings?|rendez-vous|termine?|appuntamenti?|запис[ьи]|встречи?)\b|\b(?:quando|what\s+time|when|cu[aá]ndo)\b[^.!?\n]{0,50}\b(?:agendamento|appointment|cita|reuni[aã]o|meeting|hor[aá]rio)\b|(?:مواعيدي|موعدي|عرض\s+المواعيد)|(?:予約を?(?:確認|表示)|私の予約)|(?:查看|显示|我的)(?:预约|日程)|(?:मेरे\s+(?:अपॉइंटमेंट|समय)|अपॉइंटमेंट\s+दिखाएँ)|(?:мои\s+(?:записи|встречи))/iu;
 const AGENDA_DIRECTIVE_RE = /\[\[\s*(AGENDAR|CANCELAR_AGENDA)\s*(?::\s*([^\]]*))?\]\]/gi;
 const CONTEXT_FREE_SHORT_REPLY_RE =
   /^\s*(?:oi+|ol[aá]|oie|oide|hello|hi|hola|ok(?:ay)?|sim|s[ií]|yes|pode(?:\s+ser)?|claro|certo|isso|perfeito|obrigad[oa]?|thanks?|gracias|at[eé]\s+mais|tchau|bye)[\s.!?]*$/i;
@@ -132,6 +132,9 @@ export const AGENDA_PAST_DATETIME_REPLY =
   "Esse horário já passou. Me diga outro dia e horário que eu verifico para você.";
 export const AGENDA_INVALID_TIME_REPLY =
   "Esse horário não existe. Me diga uma hora válida entre 00:00 e 23:59 para eu verificar para você.";
+
+type AgendaUiLanguage = SupportedLanguageCode | "ar" | "ja" | "zh" | "hi" | "ru";
+type ExtendedAgendaLanguage = Exclude<AgendaUiLanguage, SupportedLanguageCode>;
 
 /**
  * Traduções das respostas fixas de agenda.
@@ -270,6 +273,76 @@ const AGENDA_REPLY_TRANSLATIONS: ReadonlyMap<string, Record<SupportedLanguageCod
     ],
   ]);
 
+const AGENDA_EXTENDED_REPLY_TRANSLATIONS: ReadonlyMap<
+  string,
+  Record<ExtendedAgendaLanguage, string>
+> = new Map([
+  [AGENDA_FAILURE_REPLY, {
+    ar: "تعذر تأكيد هذا التغيير في الموعد الآن. سيتحقق الفريق ويرد عليك قريبًا.",
+    ja: "現在、この予定変更を確定できませんでした。担当者が確認してまもなくご連絡します。",
+    zh: "目前无法确认这次预约变更。团队会核实并尽快回复您。",
+    hi: "अभी अपॉइंटमेंट में यह बदलाव पक्का नहीं हो सका। टीम जाँचकर जल्द जवाब देगी।",
+    ru: "Сейчас не удалось подтвердить изменение записи. Команда проверит и скоро ответит.",
+  }],
+  [AGENDA_FAILURE_REPLY_NO_HANDOFF, {
+    ar: "تعذر تأكيد هذا التغيير الآن. حاول بعد قليل أو اختر تاريخًا ووقتًا آخرين.",
+    ja: "現在、この予定変更を確定できませんでした。少し後でもう一度試すか、別の日時を指定してください。",
+    zh: "目前无法确认这次预约变更。请稍后重试，或提供其他日期和时间。",
+    hi: "अभी यह बदलाव पक्का नहीं हो सका। थोड़ी देर बाद फिर कोशिश करें या दूसरी तारीख और समय बताएँ।",
+    ru: "Сейчас не удалось подтвердить изменение. Попробуйте позже или укажите другую дату и время.",
+  }],
+  [AGENDA_SUCCESS_REPLY_SCHEDULED, {
+    ar: "تم تأكيد الموعد.", ja: "予定を確定しました。", zh: "预约已确认。",
+    hi: "आपका अपॉइंटमेंट पक्का हो गया है।", ru: "Запись подтверждена.",
+  }],
+  [AGENDA_SUCCESS_REPLY_RESCHEDULED, {
+    ar: "تم تغيير موعدك.", ja: "予定を変更しました。", zh: "预约已改期。",
+    hi: "आपका अपॉइंटमेंट फिर से तय कर दिया गया है।", ru: "Запись перенесена.",
+  }],
+  [AGENDA_SUCCESS_REPLY_CANCELLED, {
+    ar: "تم إلغاء الموعد.", ja: "予定をキャンセルしました。", zh: "预约已取消。",
+    hi: "आपका अपॉइंटमेंट रद्द कर दिया गया है।", ru: "Запись отменена.",
+  }],
+  [AGENDA_AUTOMATION_DISABLED_REPLY, {
+    ar: "يمكنني عرض مواعيدك الحالية، لكن لا يمكنني إنشاء المواعيد أو تغييرها أو إلغاءها هنا الآن.",
+    ja: "既存の予定は確認できますが、現在ここでは予定の作成・変更・キャンセルはできません。",
+    zh: "我可以查询现有预约，但目前无法在这里创建、改期或取消预约。",
+    hi: "मैं मौजूदा अपॉइंटमेंट देख सकता हूँ, लेकिन अभी यहाँ नया अपॉइंटमेंट बनाना, बदलना या रद्द करना संभव नहीं है।",
+    ru: "Я могу показать существующие записи, но сейчас не могу здесь создать, перенести или отменить запись.",
+  }],
+  [AGENDA_SLOT_TAKEN_REPLY, {
+    ar: "لم يعد هذا الوقت متاحًا. اختر تاريخًا أو وقتًا آخر وسأتحقق منه.",
+    ja: "その時間は利用できなくなりました。別の日時を指定してください。空きを確認します。",
+    zh: "该时段刚刚变为不可用。请提供其他日期或时间，我会核实。",
+    hi: "यह समय अब उपलब्ध नहीं है। दूसरी तारीख या समय बताएँ, मैं उपलब्धता जाँचूँगा।",
+    ru: "Это время уже недоступно. Укажите другую дату или время, и я проверю доступность.",
+  }],
+  [AGENDA_UNVERIFIED_CLAIM_REPLY, {
+    ar: "لم يتم تسجيل التغيير بعد. أكد التاريخ والوقت بدقة لأقوم بتسجيله.",
+    ja: "変更はまだ登録されていません。正確な日時を確認してください。すぐに登録します。",
+    zh: "该变更尚未登记。请确认准确的日期和时间，我会立即登记。",
+    hi: "यह बदलाव अभी दर्ज नहीं हुआ है। सही तारीख और समय की पुष्टि करें, मैं इसे अभी दर्ज करूँगा।",
+    ru: "Изменение ещё не записано. Подтвердите точные дату и время, и я сразу его сохраню.",
+  }],
+  [AGENDA_DATETIME_NEEDED_REPLY, {
+    ar: "لم أتمكن من تحديد التاريخ والوقت بدقة. اذكر اليوم والوقت المفضلين لديك.",
+    ja: "正確な日時を特定できませんでした。希望する日付と時間を教えてください。",
+    zh: "无法确定准确的日期和时间。请告诉我您希望的日期和时间。",
+    hi: "सही तारीख और समय समझ नहीं आया। अपनी पसंद की तारीख और समय बताएँ।",
+    ru: "Не удалось определить точные дату и время. Укажите удобные день и время.",
+  }],
+  [AGENDA_PAST_DATETIME_REPLY, {
+    ar: "هذا الوقت قد مضى. اختر يومًا ووقتًا آخرين.", ja: "その時刻はすでに過ぎています。別の日時を指定してください。",
+    zh: "该时间已经过去。请提供其他日期和时间。", hi: "यह समय बीत चुका है। दूसरी तारीख और समय बताएँ।",
+    ru: "Это время уже прошло. Укажите другую дату и время.",
+  }],
+  [AGENDA_INVALID_TIME_REPLY, {
+    ar: "هذا الوقت غير صالح. أدخل وقتًا بين 00:00 و23:59.", ja: "その時刻は無効です。00:00〜23:59の有効な時刻を指定してください。",
+    zh: "该时间无效。请输入 00:00 到 23:59 之间的有效时间。", hi: "यह समय मान्य नहीं है। 00:00 से 23:59 के बीच सही समय बताएँ।",
+    ru: "Такого времени не существует. Укажите время от 00:00 до 23:59.",
+  }],
+]);
+
 /**
  * Devolve a versão da resposta fixa no idioma pedido. Texto que não é uma
  * resposta fixa do sistema (prosa do modelo, que já vem no idioma certo) passa
@@ -278,9 +351,20 @@ const AGENDA_REPLY_TRANSLATIONS: ReadonlyMap<string, Record<SupportedLanguageCod
 export function localizeAgendaReply(
   text: string,
   languageCode?: SupportedLanguageCode | null,
+  languageTag?: string | null,
 ): string {
-  if (!languageCode || languageCode === "pt") return text;
-  return AGENDA_REPLY_TRANSLATIONS.get(text)?.[languageCode] ?? text;
+  const uiLanguage = (languageTag ? resolveAgendaUiLanguage(languageTag) : null) ?? languageCode ?? null;
+  if (!uiLanguage || uiLanguage === "pt") return text;
+  if (["ar", "ja", "zh", "hi", "ru"].includes(uiLanguage)) {
+    return AGENDA_EXTENDED_REPLY_TRANSLATIONS.get(text)?.[uiLanguage as ExtendedAgendaLanguage] ??
+      (text.startsWith("Esse horário fica fora da nossa janela de agendamento.")
+        ? AGENDA_EXTENDED_REPLY_TRANSLATIONS.get(AGENDA_SLOT_TAKEN_REPLY)?.[uiLanguage as ExtendedAgendaLanguage] ?? text
+        : text);
+  }
+  return AGENDA_REPLY_TRANSLATIONS.get(text)?.[uiLanguage as SupportedLanguageCode] ??
+    (text.startsWith("Esse horário fica fora da nossa janela de agendamento.")
+      ? AGENDA_REPLY_TRANSLATIONS.get(AGENDA_SLOT_TAKEN_REPLY)?.[uiLanguage as SupportedLanguageCode] ?? text
+      : text);
 }
 
 function agendaFailureReplyForError(
@@ -369,8 +453,6 @@ function modelAsksNaturallyForOutsideWindow(cleanText: string): boolean {
  * nicho: a data/hora vem da própria diretiva; o tipo de compromisso fica com o
  * prompt do tenant nas mensagens normais.
  */
-type AgendaUiLanguage = SupportedLanguageCode | "ar" | "ja" | "zh" | "hi" | "ru";
-
 function resolveAgendaUiLanguage(languageTag?: string | null): AgendaUiLanguage | null {
   const base = languageTag?.trim().toLowerCase().split(/[-_]/)[0] ?? "pt";
   return ["pt", "en", "es", "fr", "de", "it", "ar", "ja", "zh", "hi", "ru"].includes(base)
@@ -536,10 +618,10 @@ function assistantAskedCancelDisambiguation(text?: string | null): boolean {
 const HUMAN_DELEGATION_IN_REPLY_RE =
   /\b(atendente\s+humano|humano\s+vai|entrar\s+em\s+contato|nossa\s+equipe|equipe\s+vai|respons[aá]vel\s+vai|transferir|transfer[eê]ncia)\b/i;
 const CONFIRM_ASK_RE =
-  /\b(posso confirmar|pode confirmar|confirma|confirmar|confirmando|tudo bem|tudo certo|serve|fica bom|pode ser|posso agendar|vou agendar)\b/i;
+  /\b(posso confirmar|pode confirmar|confirma|confirmar|confirmando|tudo bem|tudo certo|serve|fica bom|pode ser|posso agendar|vou agendar|may i confirm|shall i confirm|can i schedule|puedo confirmar|puedo agendar|puis-je confirmer|darf ich bestätigen|posso confermare|подтвердить)\b|هل يمكنني التأكيد|確定しても|可以确认|क्या मैं.+पुष्टि/iu;
 const DATE_OR_TIME_IN_TEXT_RE = /\d{1,2}\/\d{1,2}|\d{1,2}[:h]\d{2}|\bàs\s+\d{1,2}/i;
 const AGENDA_TOPIC_RE =
-  /\b(agendamento|agendar|agendad[ao]s?|remarc|reagend|hor[aá]rio|compromisso|marcar|cancel)/i;
+  /\b(agendamento|agendar|agendad[ao]s?|remarc|reagend|hor[aá]rio|compromisso|marcar|cancel|appointment|schedule|reschedule|meeting|cita|rendez-vous|termin|appuntamento|запис[ьи]?|встреч[аи])\b|موعد|حجز|予約|日程|预约|अपॉइंटमेंट/iu;
 
 /**
  * Verifica se uma data/hora está dentro da janela de disponibilidade configurada.
@@ -586,9 +668,9 @@ export type AgendaPlanDateTimeCheck =
  * agente — mesma regra que `insertStructuredAgendaEvent` já aplica na hora de
  * confirmar, só que ANTES da resposta chegar ao cliente.
  *
- * Sem isso, uma data alucinada pelo modelo (fora do CALENDÁRIO REAL injetado)
- * só era barrada no commit final; até lá o cliente já tinha visto a data
- * errada no texto. Ver `checkAgendaPlanDateTime` em generate-agent-response.ts.
+ * Sem isso, uma data inventada pelo modelo só era barrada no commit final;
+ * até lá o cliente já tinha visto a data errada no texto. Ver a validação
+ * antecipada em generate-agent-response.ts.
  */
 export function checkAgendaPlanDateTime(params: {
   date: string | null;
@@ -865,7 +947,7 @@ function finalizeResolveAgendaTurnResult(
   // Localiza no último ponto antes de sair: qualquer resposta fixa do sistema
   // produzida acima (em pt-BR) vira o texto do idioma da conversa.
   const localized = (r: ResolveAgendaTurnResult): ResolveAgendaTurnResult => {
-    const text = localizeAgendaReply(r.text, languageCode);
+    const text = localizeAgendaReply(r.text, languageCode, languageTag);
     return text === r.text ? r : { ...r, text };
   };
   if (ctaHandoffAtivo !== false) return localized(result);
@@ -2110,7 +2192,13 @@ export function clientRequestedAgendaList(text: string): boolean {
   return AGENDA_READ_INTENT_RE.test(trimmed);
 }
 
-function agendaListLocale(text: string): string {
+function agendaListLocale(text: string, languageTag?: string | null): string {
+  const detectedTag = languageTag ?? detectConversationLanguageTag(text);
+  try {
+    if (detectedTag) return Intl.getCanonicalLocales(detectedTag.replaceAll("_", "-"))[0] ?? "en-US";
+  } catch {
+    // Invalid tags are ignored and resolved by the supported-copy fallback.
+  }
   const language = detectSupportedLanguageCode(text);
   return ({ pt: "pt-BR", en: "en-US", es: "es-ES", fr: "fr-FR", de: "de-DE", it: "it-IT" })[language];
 }
@@ -2119,8 +2207,11 @@ function formatContactAgendaListReply(params: {
   events: ContactAgendaListRow[];
   timezone: string;
   clientText: string;
+  languageTag?: string | null;
 }): string {
-  const language = detectSupportedLanguageCode(params.clientText);
+  const language = resolveAgendaUiLanguage(
+    params.languageTag ?? detectConversationLanguageTag(params.clientText),
+  ) ?? detectSupportedLanguageCode(params.clientText);
   if (params.events.length === 0) {
     return {
       pt: "Não encontrei nenhum agendamento ativo para este número.",
@@ -2129,10 +2220,15 @@ function formatContactAgendaListReply(params: {
       fr: "Je n’ai trouvé aucun rendez-vous actif pour ce numéro.",
       de: "Ich habe für diese Nummer keine aktiven Termine gefunden.",
       it: "Non ho trovato appuntamenti attivi per questo numero.",
+      ar: "لم أجد أي مواعيد نشطة مرتبطة بهذا الرقم.",
+      ja: "この番号に有効な予定は見つかりませんでした。",
+      zh: "未找到与此号码关联的有效预约。",
+      hi: "इस नंबर के लिए कोई सक्रिय अपॉइंटमेंट नहीं मिला।",
+      ru: "Для этого номера активных записей не найдено.",
     }[language];
   }
 
-  const locale = agendaListLocale(params.clientText);
+  const locale = agendaListLocale(params.clientText, params.languageTag);
   const formatter = new Intl.DateTimeFormat(locale, {
     timeZone: parseTimezone(params.timezone),
     weekday: "long",
@@ -2155,6 +2251,11 @@ function formatContactAgendaListReply(params: {
     fr: params.events.length === 1 ? "J’ai trouvé ce rendez-vous pour votre numéro :" : "J’ai trouvé ces rendez-vous pour votre numéro :",
     de: params.events.length === 1 ? "Ich habe diesen Termin für Ihre Nummer gefunden:" : "Ich habe diese Termine für Ihre Nummer gefunden:",
     it: params.events.length === 1 ? "Ho trovato questo appuntamento per il tuo numero:" : "Ho trovato questi appuntamenti per il tuo numero:",
+    ar: params.events.length === 1 ? "وجدت هذا الموعد المرتبط برقمك:" : "وجدت هذه المواعيد المرتبطة برقمك:",
+    ja: "この番号の予定が見つかりました：",
+    zh: params.events.length === 1 ? "找到了与此号码关联的预约：" : "找到了与此号码关联的这些预约：",
+    hi: params.events.length === 1 ? "इस नंबर के लिए यह अपॉइंटमेंट मिला:" : "इस नंबर के लिए ये अपॉइंटमेंट मिले:",
+    ru: params.events.length === 1 ? "Для этого номера найдена запись:" : "Для этого номера найдены записи:",
   }[language];
   return `${prefix}\n${items.map((item) => `• ${item}`).join("\n")}`;
 }
@@ -2165,6 +2266,7 @@ async function resolveContactAgendaList(params: {
   remoteJid: string;
   timezone: string;
   clientText: string;
+  languageTag?: string | null;
 }): Promise<ResolveAgendaTurnResult> {
   const attendeePhone = extractPhone(params.remoteJid);
   if (!attendeePhone) {
@@ -3205,6 +3307,7 @@ export async function resolveAgendaTurn(params: {
       remoteJid: params.remoteJid,
       timezone: params.timezone,
       clientText: params.clientText,
+      languageTag: replyLanguageTag,
     }));
   }
 

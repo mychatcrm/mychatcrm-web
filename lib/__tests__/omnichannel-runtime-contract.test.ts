@@ -56,8 +56,8 @@ describe("omnichannel runtime contracts", () => {
     );
 
     expect(jobs).toContain('"upsert_agent_response_job_burst_v5"');
-    expect(jobs).toContain('"upsert_agent_response_job_burst_v4"');
-    expect(jobs).toContain("isAgentRuleIdentityV5Enabled");
+    expect(jobs).not.toContain("isAgentRuleIdentityV5Enabled");
+    expect(jobs).toContain('reason: "rule_missing"');
     expect(jobs).toContain('return "rescheduled"');
     expect(jobs).toContain('logJobEvent("dispatch_rescheduled"');
     expect(migration).toContain("CREATE OR REPLACE FUNCTION public.upsert_agent_response_job_burst_v4");
