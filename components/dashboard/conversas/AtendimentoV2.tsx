@@ -102,7 +102,7 @@ function rowToWaMessage(row: WhatsappMessageRealtimeRow | SyncChatMessage): WaMe
 type InboxTab = "all" | "ia" | "unread";
 
 type AttendantFilter = "all" | "automation" | "human" | "waiting_human";
-type PeriodFilter = "all" | "today" | "7d" | "30d" | "custom";
+type PeriodFilter = "all" | "today" | "yesterday" | "yesterday_today" | "7d" | "30d" | "custom";
 type TransportFilter = "all" | "evolution" | "cloud_api";
 
 type ConnectionOption = {
@@ -195,6 +195,8 @@ const TRANSPORT_OPTIONS: { key: TransportFilter; label: string }[] = [
 const PERIOD_OPTIONS: { key: PeriodFilter; label: string }[] = [
   { key: "all", label: "Todo o período" },
   { key: "today", label: "Hoje" },
+  { key: "yesterday", label: "Ontem" },
+  { key: "yesterday_today", label: "Ontem e hoje" },
   { key: "7d", label: "Últimos 7 dias" },
   { key: "30d", label: "Últimos 30 dias" },
   { key: "custom", label: "Escolher datas" },
@@ -219,11 +221,22 @@ function statusChipClass(active: boolean): string {
 
 function periodStart(period: PeriodFilter, customFrom: string): Date | null {
   const now = new Date();
-  if (period === "today") return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (period === "today") return startOfToday;
+  if (period === "yesterday" || period === "yesterday_today") {
+    return new Date(startOfToday.getTime() - 86_400_000);
+  }
   if (period === "7d") return new Date(now.getTime() - 7 * 86_400_000);
   if (period === "30d") return new Date(now.getTime() - 30 * 86_400_000);
   if (period === "custom" && customFrom) return new Date(`${customFrom}T00:00:00`);
   return null;
+}
+
+/** Único período com teto antes de agora: "ontem" não pode incluir hoje. */
+function periodEnd(period: PeriodFilter): Date | null {
+  if (period !== "yesterday") return null;
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }
 
 /** Fecha popover/menu ao clicar fora do elemento referenciado. */
@@ -1069,6 +1082,8 @@ export function AtendimentoV2({ session }: { session: ClientSession }) {
         const convDate = new Date(c.lastAt);
         const start = periodStart(periodFilter, customFrom);
         if (start && convDate < start) matchPeriod = false;
+        const end = periodEnd(periodFilter);
+        if (end && convDate >= end) matchPeriod = false;
         if (periodFilter === "custom" && customTo) {
           const end = new Date(`${customTo}T23:59:59`);
           if (convDate > end) matchPeriod = false;
