@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { checkAgendaPlanDateTime } from "@/lib/server/agent-cta-scheduler";
+import {
+  checkAgentAgendaOutboundPlan,
+  checkAgendaPlanDateTime,
+} from "@/lib/server/agent-cta-scheduler";
 import type { AgentAgendaDisponibilidade } from "@/lib/types";
 
 const DISP: AgentAgendaDisponibilidade = {
@@ -96,5 +99,110 @@ describe("checkAgendaPlanDateTime", () => {
       now: NOW,
     });
     expect(resultDispOff).toEqual({ ok: true });
+  });
+});
+
+describe("checkAgentAgendaOutboundPlan", () => {
+  it("rejeita o incidente real: action none carregando domingo fora da janela", () => {
+    expect(checkAgentAgendaOutboundPlan({
+      plan: {
+        action: "none",
+        date: "30/08/2026",
+        time: "14:00",
+        location: null,
+        eventId: null,
+      },
+      reply: "Temos um horário na quarta-feira, dia 30/08, às 14h. Fica bom?",
+      timezone: "America/Sao_Paulo",
+      agendaDisponibilidade: DISP,
+      now: new Date("2026-08-27T17:05:00.000Z"),
+    })).toEqual({ ok: false, errorReason: "agenda_action_payload_mismatch" });
+  });
+
+  it("rejeita proposta visível mesmo quando action none esconde data e hora", () => {
+    expect(checkAgentAgendaOutboundPlan({
+      plan: { action: "none", date: null, time: null, location: null, eventId: null },
+      reply: "Posso confirmar para 28/08/2026, às 14h?",
+      timezone: "America/Sao_Paulo",
+      agendaDisponibilidade: DISP,
+      now: new Date("2026-08-27T17:05:00.000Z"),
+    })).toEqual({ ok: false, errorReason: "agenda_reply_action_mismatch" });
+  });
+
+  it("rejeita dia da semana incorreto em português, inglês e espanhol", () => {
+    for (const reply of [
+      "Posso confirmar para quarta-feira, 28/08/2026, às 14h?",
+      "May I confirm Wednesday, 28/08/2026 at 14:00?",
+      "¿Puedo confirmar el miércoles 28/08/2026 a las 14:00?",
+    ]) {
+      expect(checkAgentAgendaOutboundPlan({
+        plan: {
+          action: "propose_create",
+          date: "28/08/2026",
+          time: "14:00",
+          location: null,
+          eventId: null,
+        },
+        reply,
+        timezone: "America/Sao_Paulo",
+        agendaDisponibilidade: DISP,
+        now: new Date("2026-08-27T17:05:00.000Z"),
+      })).toEqual({ ok: false, errorReason: "agenda_reply_weekday_mismatch" });
+    }
+  });
+
+  it("aceita sexta-feira correta no fuso e na janela configurada", () => {
+    expect(checkAgentAgendaOutboundPlan({
+      plan: {
+        action: "propose_create",
+        date: "28/08/2026",
+        time: "14:00",
+        location: null,
+        eventId: null,
+      },
+      reply: "Posso confirmar para sexta-feira, 28/08/2026, às 14h?",
+      timezone: "America/Sao_Paulo",
+      agendaDisponibilidade: DISP,
+      now: new Date("2026-08-27T17:05:00.000Z"),
+    })).toEqual({ ok: true });
+  });
+
+  it("aceita a mesma data no formato ISO visível sem confundir mês/dia", () => {
+    expect(checkAgentAgendaOutboundPlan({
+      plan: {
+        action: "propose_create",
+        date: "28/08/2026",
+        time: "14:00",
+        location: null,
+        eventId: null,
+      },
+      reply: "May I confirm Friday, 2026-08-28 at 14:00?",
+      timezone: "America/Sao_Paulo",
+      agendaDisponibilidade: DISP,
+      now: new Date("2026-08-27T17:05:00.000Z"),
+    })).toEqual({ ok: true });
+  });
+
+  it("usa o fuso IANA real ao decidir se o mesmo horário local já passou", () => {
+    const plan = {
+      action: "propose_create" as const,
+      date: "28/08/2026",
+      time: "10:00",
+      location: null,
+      eventId: null,
+    };
+    const now = new Date("2026-08-27T23:30:00.000Z");
+    expect(checkAgentAgendaOutboundPlan({
+      plan,
+      reply: "May I confirm 2026-08-28 at 10:00?",
+      timezone: "Pacific/Auckland",
+      now,
+    })).toEqual({ ok: false, errorReason: "invalid_or_past_agenda_datetime" });
+    expect(checkAgentAgendaOutboundPlan({
+      plan,
+      reply: "May I confirm 2026-08-28 at 10:00?",
+      timezone: "America/New_York",
+      now,
+    })).toEqual({ ok: true });
   });
 });

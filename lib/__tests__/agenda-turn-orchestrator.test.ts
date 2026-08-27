@@ -2545,6 +2545,75 @@ describe("resolveAgendaTurn", () => {
       expect(insertAgendaEventMock).not.toHaveBeenCalled();
       expect(cancelAgendaEventMock).not.toHaveBeenCalled();
     });
+
+    it("defesa final reclassifica action none e bloqueia a proposta de domingo do incidente real", async () => {
+      vi.setSystemTime(new Date("2026-08-27T17:05:00.000Z"));
+      const result = await resolveAgendaTurn({
+        sb: makeStructuredSb().sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Temos um horário na quarta-feira, dia 30/08, às 14h. Fica bom?",
+        agendaPlan: {
+          action: "none",
+          date: "30/08/2026",
+          time: "14:00",
+          location: null,
+          eventId: null,
+        },
+        clientText: "Pode",
+        agendaAutomationEnabled: true,
+        agendaDisponibilidade: {
+          ativo: true,
+          diasSemana: [1, 2, 3, 4, 5],
+          horaInicio: "09:00",
+          horaFim: "18:00",
+        },
+      });
+
+      expect(result.action).toBe("failed");
+      expect(result.text).toBe(buildOutsideAvailabilityReply({
+        ativo: true,
+        diasSemana: [1, 2, 3, 4, 5],
+        horaInicio: "09:00",
+        horaFim: "18:00",
+      }));
+      expect(result.text).not.toContain("30/08");
+      expect(insertAgendaEventMock).not.toHaveBeenCalled();
+    });
+
+    it("dia da semana divergente é substituído por confirmação canônica do backend", async () => {
+      vi.setSystemTime(new Date("2026-08-27T17:05:00.000Z"));
+      const result = await resolveAgendaTurn({
+        sb: makeStructuredSb().sb,
+        tenantId: "tenant-1",
+        remoteJid: "5511999999999@s.whatsapp.net",
+        agentId: "agent-1",
+        timezone: "America/Sao_Paulo",
+        modelText: "Posso confirmar para quarta-feira, 28/08/2026, às 14h?",
+        agendaPlan: {
+          action: "propose_create",
+          date: "28/08/2026",
+          time: "14:00",
+          location: null,
+          eventId: null,
+        },
+        clientText: "Pode",
+        agendaAutomationEnabled: true,
+        agendaDisponibilidade: {
+          ativo: true,
+          diasSemana: [1, 2, 3, 4, 5],
+          horaInicio: "09:00",
+          horaFim: "18:00",
+        },
+      });
+
+      expect(result.action).toBe("needs_confirmation");
+      expect(result.text).toBe("Posso confirmar para 28/08/2026, às 14h?");
+      expect(result.text).not.toContain("quarta-feira");
+      expect(insertAgendaEventMock).not.toHaveBeenCalled();
+    });
   });
 
   describe("multi-nicho: mesma mecânica técnica, nomenclatura do tenant preservada", () => {

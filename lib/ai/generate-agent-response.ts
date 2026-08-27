@@ -26,16 +26,12 @@ import {
   AGENT_TURN_RESPONSE_FORMAT,
   normalizeAgentTurnResult,
   parseAgentTurnPlan,
-  type AgentAgendaPlanAction,
 } from "@/lib/ai/agent-turn-plan";
 import { preserveActiveConversationContinuity } from "@/lib/conversas/conversation-continuity-guard";
 import { executeAgentExternalApiLookup, listAgentExternalApiTools } from "@/lib/server/external-api-executor";
 import {
   AGENDA_DATETIME_NEEDED_REPLY,
-  AGENDA_PAST_DATETIME_REPLY,
-  buildOutsideAvailabilityReply,
-  checkAgendaPlanDateTime,
-  executableAction,
+  checkAgentAgendaOutboundPlan,
 } from "@/lib/server/agent-cta-scheduler";
 
 type AiGenerateFailureResult = Extract<AiGenerateResult, { ok: false }>;
@@ -568,24 +564,19 @@ export async function generateAgentResponse(params: {
   }
 
   // -------------------------------------------------------------------------
-  // Validação da data/hora proposta na agenda — ANTES de responder ao cliente.
+  // Validação integral da proposta de agenda — ANTES de responder ao cliente.
   // -------------------------------------------------------------------------
-  // A disponibilidade configurada e o relógio real são restrições técnicas,
-  // não conteúdo comercial do prompt. O modelo ainda pode propor uma data
-  // passada ou fora da janela. Até aqui, essa validação só rodava no commit final
-  // (insertStructuredAgendaEvent), depois que o cliente já tinha visto a data
-  // errada no texto. Repete a mesma regra aqui, mais cedo.
+  // O modelo não ganha autoridade ao escolher action="none": plano oculto,
+  // texto visível, calendário real, fuso e disponibilidade precisam concordar.
+  // Essa é a barreira comum a Evolution, Meta, simulação e demais chamadores.
   if (baseAgent.agendaAutomationEnabled === true) {
     let currentPlan = parseAgentTurnPlan(normalized.structuredData);
-    const needsDateTimeCheck = (action: AgentAgendaPlanAction | undefined) =>
-      action !== undefined && (executableAction(action) === "create" || executableAction(action) === "reschedule");
-
-    if (currentPlan && needsDateTimeCheck(currentPlan.agenda.action)) {
+    if (currentPlan) {
       const timezone = resolveAgentTimezone(baseAgent);
       const agendaDisponibilidade = baseAgent.agendaDisponibilidade ?? null;
-      const check = checkAgendaPlanDateTime({
-        date: currentPlan.agenda.date,
-        time: currentPlan.agenda.time,
+      const check = checkAgentAgendaOutboundPlan({
+        plan: currentPlan.agenda,
+        reply: currentPlan.reply,
         timezone,
         agendaDisponibilidade,
       });
@@ -594,7 +585,7 @@ export async function generateAgentResponse(params: {
           agendaDisponibilidade?.ativo === true
             ? `Allowed ISO weekdays: ${agendaDisponibilidade.diasSemana.join(", ")}; local time window: ${agendaDisponibilidade.horaInicio}-${agendaDisponibilidade.horaFim}; timezone: ${timezone}.`
             : `Timezone: ${timezone}.`;
-        const correctionNote = `\n\nTECHNICAL DATE/TIME CORRECTION: the proposed value (${currentPlan.agenda.date ?? "—"} ${currentPlan.agenda.time ?? "—"}) is invalid, in the past, or outside the configured availability. Produce a real future date and time that satisfies the constraints below. Do not assume a finite list of dates and do not change the customer's instructions. ${allowedWindow}`;
+        const correctionNote = `\n\nTECHNICAL AGENDA CORRECTION (${check.errorReason}). Structured value: action=${currentPlan.agenda.action}, date=${currentPlan.agenda.date ?? "null"}, time=${currentPlan.agenda.time ?? "null"}. The structured agenda action, its date/time, and every concrete date, time, or weekday written in reply must describe the same valid future slot. A reply that proposes a concrete slot MUST use propose_create or propose_reschedule, never none/list. none/list MUST contain null date, time, location, and eventId. Do not claim a weekday unless it is the real weekday of the selected date. Preserve the customer's instructions, language, tone, and business behavior. ${allowedWindow}`;
         const retryResult = await generateAIResponse({
           tenantId: params.tenantId.trim(),
           agentId: params.agentId.trim(),
@@ -616,29 +607,23 @@ export async function generateAgentResponse(params: {
         });
         const retryNormalized = normalizeAgentTurnResult(retryResult);
         const retryPlan = retryNormalized.ok ? parseAgentTurnPlan(retryNormalized.structuredData) : null;
-        const retryCheck =
-          retryPlan && needsDateTimeCheck(retryPlan.agenda.action)
-            ? checkAgendaPlanDateTime({
-                date: retryPlan.agenda.date,
-                time: retryPlan.agenda.time,
-                timezone,
-                agendaDisponibilidade,
-              })
-            : { ok: true as const };
+        const retryCheck = retryPlan
+          ? checkAgentAgendaOutboundPlan({
+              plan: retryPlan.agenda,
+              reply: retryPlan.reply,
+              timezone,
+              agendaDisponibilidade,
+            })
+          : { ok: false as const, errorReason: "agenda_reply_action_mismatch" as const };
 
         if (retryNormalized.ok && retryPlan && retryCheck.ok) {
           normalized = retryNormalized;
           currentPlan = retryPlan;
         } else {
-          // Segunda tentativa também falhou — nunca deixa uma data inventada
-          // chegar ao cliente. Cai numa resposta genérica já traduzida e
-          // desliga a operação de agenda deste turno.
-          const fallbackReply =
-            check.errorReason === "outside_agenda_availability"
-              ? buildOutsideAvailabilityReply(agendaDisponibilidade)
-              : check.errorReason === "agenda_datetime_needed"
-                ? AGENDA_DATETIME_NEEDED_REPLY
-                : AGENDA_PAST_DATETIME_REPLY;
+          // Segunda tentativa também falhou. O lead não deve ser culpado com
+          // "horário passado/fora da janela" por uma data que o próprio modelo
+          // inventou: falha fechada, sem data, mutação ou claim de sucesso.
+          const fallbackReply = AGENDA_DATETIME_NEEDED_REPLY;
           const safeStructuredData =
             normalized.structuredData &&
             typeof normalized.structuredData === "object" &&

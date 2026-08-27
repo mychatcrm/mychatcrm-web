@@ -395,7 +395,7 @@ export function isSoftAgendaInvite(text: string | null | undefined, timezone: st
  * descartar a resposta do modelo no short-ack — perguntas naturais de dia/hora
  * ("Qual horário…?") precisam passar.
  */
-function orphanConcreteScheduleConfirmation(
+export function orphanConcreteScheduleConfirmation(
   assistantText: string,
   timezone = "UTC",
 ): boolean {
@@ -435,9 +435,13 @@ function modelAsksNaturallyForMissingSlot(
 }
 
 /** Modelo já oferece outro horário dentro da janela, sem claim de sucesso. */
-function modelAsksNaturallyForOutsideWindow(cleanText: string): boolean {
+function modelAsksNaturallyForOutsideWindow(cleanText: string, timezone = "UTC"): boolean {
   const trimmed = cleanText.trim();
   if (!trimmed || AGENDA_SUCCESS_CLAIM_RE.test(trimmed)) return false;
+  // Uma pergunta que já contém um slot concreto fora da janela não é um
+  // pedido por alternativa: é justamente a proposta inválida que precisamos
+  // impedir de chegar ao contato.
+  if (orphanConcreteScheduleConfirmation(trimmed, timezone)) return false;
   const asks =
     trimmed.includes("?") ||
     /\b(me\s+(?:diga|passa|fala|informa)|outro|outra|qual|quais)\b/i.test(trimmed);
@@ -697,6 +701,143 @@ export function checkAgendaPlanDateTime(params: {
     !isWithinAgendaAvailability(startAt, params.agendaDisponibilidade, params.timezone)
   ) {
     return { ok: false, errorReason: "outside_agenda_availability" };
+  }
+  return { ok: true };
+}
+
+export type AgentAgendaOutboundPlanCheck =
+  | { ok: true }
+  | {
+      ok: false;
+      errorReason:
+        | "agenda_action_payload_mismatch"
+        | "agenda_reply_action_mismatch"
+        | "agenda_reply_date_mismatch"
+        | "agenda_reply_time_mismatch"
+        | "agenda_reply_weekday_mismatch"
+        | Exclude<AgendaPlanDateTimeCheck, { ok: true }>["errorReason"];
+    };
+
+const WEEKDAY_LOCALES = [
+  "pt-BR", "en-US", "es-ES", "fr-FR", "de-DE", "it-IT",
+  "ar", "ja", "zh-CN", "hi", "ru-RU",
+] as const;
+
+function normalizeCalendarText(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const WEEKDAY_ALIASES: ReadonlyArray<{ alias: string; weekday: number }> = (() => {
+  const aliases = new Map<string, number>();
+  const sunday = Date.UTC(2023, 0, 1, 12);
+  for (const locale of WEEKDAY_LOCALES) {
+    const formatter = new Intl.DateTimeFormat(locale, { weekday: "long", timeZone: "UTC" });
+    for (let weekday = 0; weekday < 7; weekday++) {
+      const alias = normalizeCalendarText(formatter.format(new Date(sunday + weekday * 86_400_000)));
+      if (alias.length >= 2) aliases.set(alias, weekday);
+    }
+  }
+  return [...aliases].map(([alias, weekday]) => ({ alias, weekday }));
+})();
+
+function weekdayForAgendaDate(date: string): number | null {
+  const normalized = normalizeAgentAgendaDate(date);
+  if (!normalized) return null;
+  const [day, month, year] = normalized.split("/").map(Number);
+  const candidate = new Date(Date.UTC(year!, month! - 1, day!, 12));
+  return Number.isNaN(candidate.getTime()) ? null : candidate.getUTCDay();
+}
+
+function replyNumericDates(reply: string, planYear: string): string[] {
+  const dates: string[] = [];
+  for (const match of reply.matchAll(/(?<![\d/-])(\d{1,2})[/-](\d{1,2})(?:[/-](\d{4}))?\b/g)) {
+    const day = match[1]!.padStart(2, "0");
+    const month = match[2]!.padStart(2, "0");
+    dates.push(`${day}/${month}/${match[3] ?? planYear}`);
+  }
+  for (const match of reply.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) {
+    dates.push(`${match[3]}/${match[2]}/${match[1]}`);
+  }
+  return dates;
+}
+
+function replyNumericTimes(reply: string): string[] {
+  const times: string[] = [];
+  for (const match of reply.matchAll(/\b(\d{1,2})(?::|h)(\d{2})\b/gi)) {
+    const normalized = normalizeAgentAgendaTime(`${match[1]}:${match[2]}`);
+    if (normalized) times.push(normalized);
+  }
+  for (const match of reply.matchAll(/\b(\d{1,2})\s*h\b/gi)) {
+    const normalized = normalizeAgentAgendaTime(`${match[1]}:00`);
+    if (normalized) times.push(normalized);
+  }
+  return times;
+}
+
+/**
+ * Última barreira antes de qualquer resposta de agenda sair do backend.
+ * O plano estruturado e o texto visível vêm do modelo e não são confiáveis:
+ * ambos precisam concordar entre si, com o relógio real, fuso e janela do
+ * agente. Não contém regra de nicho nem escolhe datas pelo cliente.
+ */
+export function checkAgentAgendaOutboundPlan(params: {
+  plan: AgentAgendaPlan;
+  reply: string;
+  timezone: string;
+  agendaDisponibilidade?: AgentAgendaDisponibilidade | null;
+  now?: Date;
+}): AgentAgendaOutboundPlanCheck {
+  const { plan } = params;
+  const action = executableAction(plan.action);
+  const visibleProposal = orphanConcreteScheduleConfirmation(params.reply, params.timezone);
+
+  if (
+    (plan.action === "none" || plan.action === "list") &&
+    (plan.date || plan.time || plan.location || plan.eventId)
+  ) {
+    return { ok: false, errorReason: "agenda_action_payload_mismatch" };
+  }
+  if ((plan.action === "none" || plan.action === "list") && visibleProposal) {
+    return { ok: false, errorReason: "agenda_reply_action_mismatch" };
+  }
+  if (action !== "create" && action !== "reschedule") return { ok: true };
+
+  const dateTimeCheck = checkAgendaPlanDateTime({
+    date: plan.date,
+    time: plan.time,
+    timezone: params.timezone,
+    agendaDisponibilidade: params.agendaDisponibilidade,
+    now: params.now,
+  });
+  if (!dateTimeCheck.ok) return dateTimeCheck;
+
+  const normalizedDate = normalizeAgentAgendaDate(plan.date)!;
+  const normalizedTime = normalizeAgentAgendaTime(plan.time)!;
+  const [, , planYear] = normalizedDate.split("/");
+  const visibleDates = replyNumericDates(params.reply, planYear!);
+  if (visibleDates.length > 0 && visibleDates.some((date) => normalizeAgentAgendaDate(date) !== normalizedDate)) {
+    return { ok: false, errorReason: "agenda_reply_date_mismatch" };
+  }
+  const visibleTimes = replyNumericTimes(params.reply);
+  if (visibleTimes.length > 0 && visibleTimes.some((time) => time !== normalizedTime)) {
+    return { ok: false, errorReason: "agenda_reply_time_mismatch" };
+  }
+
+  const normalizedReply = normalizeCalendarText(params.reply);
+  const mentionedWeekdays = new Set(
+    WEEKDAY_ALIASES
+      .filter(({ alias }) => normalizedReply.includes(alias))
+      .map(({ weekday }) => weekday),
+  );
+  const actualWeekday = weekdayForAgendaDate(normalizedDate);
+  if (mentionedWeekdays.size > 0 && actualWeekday != null && !mentionedWeekdays.has(actualWeekday)) {
+    return { ok: false, errorReason: "agenda_reply_weekday_mismatch" };
   }
   return { ok: true };
 }
@@ -3021,7 +3162,7 @@ async function resolveStructuredAgendaPlan(params: {
       const modelClean = stripAgendaDirectives(params.modelText).trim();
       if (outsideAvailability) {
         return {
-          text: modelAsksNaturallyForOutsideWindow(modelClean)
+          text: modelAsksNaturallyForOutsideWindow(modelClean, params.timezone)
             ? modelClean
             : buildOutsideAvailabilityReply(params.agendaDisponibilidade),
           action: "failed",
@@ -3076,12 +3217,24 @@ async function resolveStructuredAgendaPlan(params: {
         ? { type: "schedule", date: effectivePlan.date, time: effectivePlan.time, location: effectivePlan.location }
         : null;
     const modelCleanForConfirm = stripAgendaDirectives(params.modelText).trim();
+    const outboundPlanCheck = directive && action !== "cancel"
+      ? checkAgentAgendaOutboundPlan({
+          plan: {
+            ...effectivePlan,
+            action: action === "reschedule" ? "propose_reschedule" : "propose_create",
+          },
+          reply: modelCleanForConfirm,
+          timezone: params.timezone,
+          agendaDisponibilidade: params.agendaDisponibilidade,
+        })
+      : { ok: true as const };
     const keepNaturalProposal =
       scheduleComplete &&
       action !== "cancel" &&
       Boolean(modelCleanForConfirm) &&
       !AGENDA_SUCCESS_CLAIM_RE.test(modelCleanForConfirm) &&
-      orphanConcreteScheduleConfirmation(modelCleanForConfirm, params.timezone);
+      orphanConcreteScheduleConfirmation(modelCleanForConfirm, params.timezone) &&
+      outboundPlanCheck.ok;
     // Sem data/hora resolvida e validada, o texto do modelo não pode ser
     // devolvido cru: ele pode ter inventado um horário concreto (ex.: plano
     // alucinado com data no passado) sem que nada tenha sido gravado como
@@ -3305,7 +3458,8 @@ export async function resolveAgendaTurn(params: {
       (agendaPlan?.action ?? "none") !== "none" ||
       clientRequestedMutation ||
       clientRequestedList ||
-      modelClaimedMutation
+      modelClaimedMutation ||
+      orphanConcreteScheduleConfirmation(cleanText, params.timezone)
     ) {
       console.info("[agent-agenda-turn]", {
         tenant_id: params.tenantId,
@@ -3334,6 +3488,36 @@ export async function resolveAgendaTurn(params: {
 
   if (blockedMisclassifiedList) {
     return finalize({ text: cleanText, action: "none" });
+  }
+
+  // Defesa em profundidade para qualquer chamador que não tenha passado pelo
+  // guard central de generateAgentResponse. Uma proposta concreta nunca pode
+  // escapar como action="none": reclassifica apenas o slot que está visível
+  // ao contato, sem confiar em campos ocultos isolados do modelo.
+  if (
+    agendaPlan?.action === "none" &&
+    !clientRequestedList &&
+    orphanConcreteScheduleConfirmation(cleanText, params.timezone)
+  ) {
+    const visibleSlot = resolveScheduleDateTimeFromText({
+      clientText: "",
+      assistantText: cleanText,
+      timezone: params.timezone,
+      agendaDisponibilidade: params.agendaDisponibilidade,
+    });
+    if (visibleSlot) {
+      agendaPlan = {
+        ...agendaPlan,
+        action: "propose_create",
+        date: visibleSlot.date,
+        time: visibleSlot.time,
+      };
+      console.warn("[agent-agenda-turn]", {
+        tenant_id: params.tenantId,
+        agent_id: params.agentId,
+        action: "none_plan_reclassified_from_visible_proposal",
+      });
+    }
   }
 
   if (agendaPlan && params.agentId) {
