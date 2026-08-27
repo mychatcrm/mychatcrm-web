@@ -19,7 +19,9 @@ vi.mock("@/lib/server/whatsapp-cloud-connections", () => ({
 }));
 
 import {
+  FOLLOW_UP_BATCH_LIMIT,
   FOLLOW_UP_CLAIM_TTL_MS,
+  FOLLOW_UP_PROCESS_CONCURRENCY,
   processDueFollowUpJobs,
   reclaimStuckFollowUpJobs,
   resolveFollowUpOutboundTransport,
@@ -132,9 +134,23 @@ describe("follow-up durable claim contract", () => {
       failed: 0,
     });
     expect(rpc).toHaveBeenCalledWith("claim_follow_up_jobs_v2", {
-      p_limit: 30,
+      p_limit: FOLLOW_UP_BATCH_LIMIT,
       p_claim_seconds: FOLLOW_UP_CLAIM_TTL_MS / 1000,
     });
+    expect(FOLLOW_UP_PROCESS_CONCURRENCY).toBeGreaterThan(0);
+    expect(FOLLOW_UP_PROCESS_CONCURRENCY).toBeLessThanOrEqual(FOLLOW_UP_BATCH_LIMIT);
+  });
+
+  it("reschedules temporary cooldowns and renews the exact journey after delivery", () => {
+    const source = readFileSync(
+      join(process.cwd(), "lib/server/follow-up-jobs.ts"),
+      "utf8",
+    );
+    expect(source).toContain('lastError: "rescheduled_cooldown"');
+    expect(source).toContain("scheduledAt: decision.nextRetryAt");
+    expect(source).toContain("touchLeadJourney({");
+    expect(source).toContain('throw new Error("journey_activity_renewal_failed_after_send")');
+    expect(source).toContain("provider_delivery_committed: true");
   });
 
   it("finishes every claimed job through the token-guarded RPC", () => {

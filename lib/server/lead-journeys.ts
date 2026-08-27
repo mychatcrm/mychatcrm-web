@@ -666,32 +666,24 @@ export async function touchLeadJourney(params: {
   journeyId: string;
   leadId?: string | null;
   occurredAt?: string;
-}): Promise<void> {
-  const journey = await getLeadJourneyById({
-    sb: params.sb,
-    tenantId: params.tenantId,
-    journeyId: params.journeyId,
-  });
-  if (!journey || journey.status !== "active") return;
-  const policy = await getRuleJourneyPolicy({
-    sb: params.sb,
-    tenantId: params.tenantId,
-    ruleId: journey.ruleId,
-  });
+}): Promise<boolean> {
   const occurredAt = params.occurredAt ?? new Date().toISOString();
-  const patch: Record<string, unknown> = {
-    last_activity_at: occurredAt,
-    expires_at: new Date(
-      Date.parse(occurredAt) + policy.inactivityMinutes * 60_000,
-    ).toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-  if (params.leadId !== undefined) patch.lead_id = params.leadId;
-  await params.sb
-    .from("lead_journeys")
-    .update(patch)
-    .eq("tenant_id", params.tenantId)
-    .eq("id", params.journeyId);
+  const { data, error } = await params.sb.rpc("touch_active_lead_journey_v2", {
+    p_tenant_id: params.tenantId,
+    p_journey_id: params.journeyId,
+    p_lead_id: params.leadId ?? null,
+    p_occurred_at: occurredAt,
+  });
+  if (error || data !== true) {
+    console.warn("[lead-journeys]", {
+      event: "touch_failed",
+      tenant_id: params.tenantId,
+      journey_id: params.journeyId,
+      error: error?.message ?? "journey_not_active",
+    });
+    return false;
+  }
+  return true;
 }
 
 export async function attachJourneyToExistingMessages(params: {

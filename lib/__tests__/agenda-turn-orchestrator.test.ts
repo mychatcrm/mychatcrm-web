@@ -379,7 +379,7 @@ describe("resolveAgendaTurn", () => {
     expect(cancelAgendaEventMock).not.toHaveBeenCalled();
   });
 
-  it("toggle desligado consulta a agenda pelo telefone da conversa sem mutação", async () => {
+  it("toggle desligado bloqueia também a consulta de agenda", async () => {
     const sb = makeSb(EXISTING_EVENT) as ReturnType<typeof makeSb> & { rpc: ReturnType<typeof vi.fn> };
     const result = await resolveAgendaTurn({
       sb,
@@ -392,15 +392,9 @@ describe("resolveAgendaTurn", () => {
       agendaAutomationEnabled: false,
     });
 
-    expect(result.action).toBe("listed");
-    expect(result.text).toContain("Encontrei este agendamento para o seu número");
-    expect(result.text).toContain("10 de junho de 2026");
-    expect(sb.rpc).toHaveBeenCalledWith("list_contact_agenda", {
-      p_tenant_id: "tenant-1",
-      p_attendee_phone: "5511999999999",
-      p_include_history: false,
-      p_limit: 5,
-    });
+    expect(result.action).toBe("blocked");
+    expect(result.text).toBe(AGENDA_AUTOMATION_DISABLED_REPLY);
+    expect(sb.rpc).not.toHaveBeenCalled();
     expect(insertAgendaEventMock).not.toHaveBeenCalled();
     expect(cancelAgendaEventMock).not.toHaveBeenCalled();
   });
@@ -2523,7 +2517,7 @@ describe("resolveAgendaTurn", () => {
       expect(result.text).not.toMatch(/agendado com sucesso|est[aá]\s+agendad|agendei/i);
     });
 
-    it("automação OFF continua permitindo leitura sem claim", async () => {
+    it("automação OFF bloqueia leitura sem consultar a agenda", async () => {
       const result = await resolveAgendaTurn({
         sb: makeSb(EXISTING_EVENT),
         tenantId: "tenant-1",
@@ -2533,8 +2527,8 @@ describe("resolveAgendaTurn", () => {
         clientText: "que dia é meu horário?",
         agendaAutomationEnabled: false,
       });
-      expect(result.action).toBe("listed");
-      expect(result.text).toContain("Encontrei este agendamento para o seu número");
+      expect(result.action).toBe("blocked");
+      expect(result.text).toBe(AGENDA_AUTOMATION_DISABLED_REPLY);
     });
 
     it("automação OFF bloqueia pedido de remarcação sem nenhuma mutação", async () => {
