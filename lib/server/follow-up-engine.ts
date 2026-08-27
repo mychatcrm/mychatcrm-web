@@ -249,14 +249,32 @@ export function evaluateFollowUpNeed(ctx: FollowUpEvalContext): FollowUpDecision
 
   if (settings.cooldownAtivo) {
     const cooldownMs = settings.cooldownMinutos * 60_000;
+    const derivedCooldownUntil = lead?.lastFollowUpAt
+      ? new Date(lead.lastFollowUpAt.getTime() + cooldownMs)
+      : null;
+    const explicitCooldownUntil = lead?.followUpCooldownUntil ?? null;
+    const cooldownUntil = [derivedCooldownUntil, explicitCooldownUntil]
+      .filter((value): value is Date => Boolean(value && Number.isFinite(value.getTime())))
+      .sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
     if (lead?.lastFollowUpAt) {
       const timeSinceLast = now.getTime() - lead.lastFollowUpAt.getTime();
       if (timeSinceLast < cooldownMs) {
-        return { ...base, cooldownActive: true, spamRisk: true, skipReason: "cooldown_active" };
+        return {
+          ...base,
+          cooldownActive: true,
+          spamRisk: true,
+          nextRetryAt: cooldownUntil,
+          skipReason: "cooldown_active",
+        };
       }
     }
     if (lead?.followUpCooldownUntil && lead.followUpCooldownUntil > now) {
-      return { ...base, cooldownActive: true, skipReason: "cooldown_until" };
+      return {
+        ...base,
+        cooldownActive: true,
+        nextRetryAt: cooldownUntil,
+        skipReason: "cooldown_until",
+      };
     }
   }
 

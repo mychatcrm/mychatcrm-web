@@ -3296,21 +3296,6 @@ export async function resolveAgendaTurn(params: {
     blockedMisclassifiedList = recoveredAction === "none";
   }
 
-  // A consulta de compromissos é a única ação de agenda que não pode ser
-  // inferida apenas pelo modelo: exige pedido explícito do próprio lead. Isso
-  // impede que um `list` mal classificado substitua uma conversa de criação
-  // pela resposta fixa "nenhum agendamento ativo".
-  if (clientRequestedList) {
-    return finalize(await resolveContactAgendaList({
-      sb: params.sb ?? createSupabaseServiceClient(),
-      tenantId: params.tenantId,
-      remoteJid: params.remoteJid,
-      timezone: params.timezone,
-      clientText: params.clientText,
-      languageTag: replyLanguageTag,
-    }));
-  }
-
   if (!params.agendaAutomationEnabled) {
     const parsed = parseAgendaDirectives(params.modelText);
     const modelClaimedMutation = AGENDA_SUCCESS_CLAIM_RE.test(cleanText);
@@ -3319,6 +3304,7 @@ export async function resolveAgendaTurn(params: {
       parsed.invalid ||
       (agendaPlan?.action ?? "none") !== "none" ||
       clientRequestedMutation ||
+      clientRequestedList ||
       modelClaimedMutation
     ) {
       console.info("[agent-agenda-turn]", {
@@ -3330,6 +3316,20 @@ export async function resolveAgendaTurn(params: {
       return finalize({ text: AGENDA_AUTOMATION_DISABLED_REPLY, action: "blocked", deferHandoff: true });
     }
     return finalize({ text: cleanText, action: "none" });
+  }
+
+  // A consulta de compromissos exige tanto um pedido explícito do contato
+  // quanto a agenda ativa. Assim, desativar agenda no agente desliga criar,
+  // remarcar, cancelar e consultar sem tocar em compromissos já confirmados.
+  if (clientRequestedList) {
+    return finalize(await resolveContactAgendaList({
+      sb: params.sb ?? createSupabaseServiceClient(),
+      tenantId: params.tenantId,
+      remoteJid: params.remoteJid,
+      timezone: params.timezone,
+      clientText: params.clientText,
+      languageTag: replyLanguageTag,
+    }));
   }
 
   if (blockedMisclassifiedList) {

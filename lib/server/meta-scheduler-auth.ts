@@ -2,12 +2,13 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 const META_SCHEDULER_PATH = "/api/internal/meta-maintenance";
+export const FOLLOW_UP_SCHEDULER_PATH = "/api/internal/process-follow-ups";
 const MAX_CLOCK_SKEW_SECONDS = 120;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SIGNATURE_PATTERN = /^sha256=([0-9a-f]{64})$/i;
 
-export type MetaSchedulerAuthResult =
+export type SignedSchedulerAuthResult =
   | { ok: true; nonce: string; issuedAt: string }
   | {
       ok: false;
@@ -35,7 +36,20 @@ function safeHexEquals(candidate: string, expected: string): boolean {
 export function verifyMetaSchedulerRequest(
   request: Request,
   nowMs = Date.now(),
-): MetaSchedulerAuthResult {
+): SignedSchedulerAuthResult {
+  return verifySignedSchedulerRequest(request, META_SCHEDULER_PATH, nowMs);
+}
+
+/**
+ * Verifies a Supabase/Vault HMAC scheduler call for one exact internal path.
+ * The path is part of the signature so a valid request for one worker can
+ * never be replayed against another worker.
+ */
+export function verifySignedSchedulerRequest(
+  request: Request,
+  expectedPath: string,
+  nowMs = Date.now(),
+): SignedSchedulerAuthResult {
   const secret = process.env.META_LEADGEN_SCHEDULER_SECRET?.trim();
   if (!secret || Buffer.byteLength(secret, "utf8") < 32) {
     return {
@@ -55,7 +69,11 @@ export function verifyMetaSchedulerRequest(
       code: "scheduler_signature_invalid",
     };
   }
-  if (request.method !== "POST" || pathname !== META_SCHEDULER_PATH) {
+  if (
+    request.method !== "POST" ||
+    !expectedPath.startsWith("/api/internal/") ||
+    pathname !== expectedPath
+  ) {
     return {
       ok: false,
       status: 401,
@@ -95,7 +113,7 @@ export function verifyMetaSchedulerRequest(
 
   const canonical = [
     "POST",
-    META_SCHEDULER_PATH,
+    expectedPath,
     timestamp,
     nonce,
   ].join("\n");

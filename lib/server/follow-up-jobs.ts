@@ -32,6 +32,7 @@ import { findNextActiveAgendaEvent } from "@/lib/server/agent-cta-scheduler";
 import {
   authorizeActiveJourney,
   getLeadJourneyById,
+  touchLeadJourney,
   type LeadJourney,
 } from "@/lib/server/lead-journeys";
 import {
@@ -64,6 +65,8 @@ export function safeFollowUpReplyFromResult(result: Awaited<ReturnType<typeof ge
 
 /** Maior que o limite de 120s da função que processa follow-ups. */
 export const FOLLOW_UP_CLAIM_TTL_MS = 5 * 60 * 1000;
+export const FOLLOW_UP_BATCH_LIMIT = 15;
+export const FOLLOW_UP_PROCESS_CONCURRENCY = 3;
 
 export type FollowUpOutboundTransport =
   | {
@@ -107,6 +110,47 @@ export type FollowUpJobRow = {
 
 function logFollowUp(event: string, payload: Record<string, unknown>): void {
   console.info("[follow-up-jobs]", { event, ...payload });
+}
+
+type FollowUpRuntimeConfiguration =
+  | {
+      ok: true;
+      settings: AgentFollowUpInteligente;
+      fingerprint: string;
+    }
+  | {
+      ok: false;
+      reason: "agent_not_found" | "agent_inactive" | "agent_configuration_unavailable";
+    };
+
+async function loadFollowUpRuntimeConfiguration(params: {
+  sb: SupabaseServiceClient;
+  tenantId: string;
+  agentId: string;
+}): Promise<FollowUpRuntimeConfiguration> {
+  const { data, error } = await params.sb
+    .from("tenant_agents")
+    .select("metadata,active,archived_at")
+    .eq("tenant_id", params.tenantId)
+    .eq("agent_id", params.agentId)
+    .maybeSingle();
+  if (error) return { ok: false, reason: "agent_configuration_unavailable" };
+  if (!data) return { ok: false, reason: "agent_not_found" };
+  if (data.active !== true || data.archived_at) {
+    return { ok: false, reason: "agent_inactive" };
+  }
+  const metadata =
+    data.metadata && typeof data.metadata === "object"
+      ? (data.metadata as Record<string, unknown>)
+      : {};
+  const settings = followUpInteligenteFromMetadata(metadata);
+  return {
+    ok: true,
+    settings,
+    // The normalizer returns a stable object shape. This fingerprint makes a
+    // configuration change during generation invalidate that pending output.
+    fingerprint: JSON.stringify(settings),
+  };
 }
 
 async function markFollowUpTimezoneReview(params: {
@@ -840,29 +884,28 @@ export async function processFollowUpJob(
   // Hoisted so the catch block can record events with the real activation state.
   // Starts false (safe default) and is set to settings.ativo once the agent row loads.
   let followUpIsActive = false;
+  let outboundDeliveryCommitted = false;
 
   try {
     // ── check settings ───────────────────────────────────────────────────────
-    const { data: agentRow } = await client
-      .from("tenant_agents")
-      .select("metadata,active,archived_at")
-      .eq("tenant_id", job.tenant_id)
-      .eq("agent_id", job.agent_id)
-      .maybeSingle();
-    if (!agentRow || agentRow.active !== true || agentRow.archived_at) {
+    const initialConfiguration = await loadFollowUpRuntimeConfiguration({
+      sb: client,
+      tenantId: job.tenant_id,
+      agentId: job.agent_id,
+    });
+    if (!initialConfiguration.ok) {
+      if (initialConfiguration.reason === "agent_configuration_unavailable") {
+        throw new Error(initialConfiguration.reason);
+      }
       const finished = await finishClaimedFollowUpJob({
         sb: client,
         job,
         status: "cancelled",
-        lastError: "agent_inactive",
+        lastError: initialConfiguration.reason,
       });
       return finished.ok ? "cancelled" : "skipped";
     }
-    const metadata =
-      agentRow?.metadata && typeof agentRow.metadata === "object"
-        ? (agentRow.metadata as Record<string, unknown>)
-        : {};
-    const settings = followUpInteligenteFromMetadata(metadata);
+    const { settings } = initialConfiguration;
     followUpIsActive = settings.ativo;
 
     if (!settings.ativo) {
@@ -1048,6 +1091,47 @@ export async function processFollowUpJob(
           job_id: job.id,
           tenant_id: job.tenant_id,
           retry_at: retryAt.toISOString(),
+        });
+        return "skipped";
+      }
+
+      // Cooldown is a temporary operator-configured gate, not a terminal
+      // rejection. Keep the same attempt pending until the exact end of the
+      // effective cooldown instead of cancelling the entire follow-up chain.
+      if (decision.cooldownActive && decision.nextRetryAt) {
+        const finished = await finishClaimedFollowUpJob({
+          sb: client,
+          job,
+          status: "pending",
+          scheduledAt: decision.nextRetryAt,
+          lastError: "rescheduled_cooldown",
+        });
+        if (!finished.ok) return "skipped";
+        if (lead?.id) {
+          await client
+            .from("leads")
+            .update({
+              follow_up_status: "scheduled",
+              follow_up_blocked_reason: null,
+              follow_up_scheduled_at: decision.nextRetryAt.toISOString(),
+              updated_at: now.toISOString(),
+            })
+            .eq("tenant_id", job.tenant_id)
+            .eq("id", lead.id);
+        }
+        await recordEvent(client, "cooldown_active", {
+          ...commonEventParams,
+          followUpActive: settings.ativo,
+          leadId: lead?.id,
+          payload: {
+            reason: skipReason,
+            nextRetryAt: decision.nextRetryAt.toISOString(),
+          },
+        });
+        logFollowUp("rescheduled_cooldown", {
+          job_id: job.id,
+          tenant_id: job.tenant_id,
+          retry_at: decision.nextRetryAt.toISOString(),
         });
         return "skipped";
       }
@@ -1410,6 +1494,57 @@ export async function processFollowUpJob(
       return finished.ok ? "cancelled" : "skipped";
     }
     if (!(await heartbeatFollowUpJob(client, job))) return "skipped";
+
+    // The operator may disable or edit follow-up while the model is running.
+    // Re-read the normalized configuration at the last safe point before the
+    // outbox/provider boundary so stale generated content can never be sent.
+    const liveConfiguration = await loadFollowUpRuntimeConfiguration({
+      sb: client,
+      tenantId: job.tenant_id,
+      agentId: job.agent_id,
+    });
+    if (!liveConfiguration.ok) {
+      if (liveConfiguration.reason === "agent_configuration_unavailable") {
+        throw new Error(liveConfiguration.reason);
+      }
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: liveConfiguration.reason,
+      });
+      return finished.ok ? "cancelled" : "skipped";
+    }
+    if (!liveConfiguration.settings.ativo) {
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: "follow_up_disabled_before_outbound",
+      });
+      return finished.ok ? "cancelled" : "skipped";
+    }
+    if (liveConfiguration.fingerprint !== initialConfiguration.fingerprint) {
+      const retryAt = new Date(
+        Date.now() +
+          Math.max(1, liveConfiguration.settings.intervaloVerificacaoMinutos) * 60_000,
+      );
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "pending",
+        scheduledAt: retryAt,
+        lastError: "follow_up_configuration_changed",
+      });
+      if (!finished.ok) return "skipped";
+      logFollowUp("configuration_changed_before_outbound", {
+        job_id: job.id,
+        tenant_id: job.tenant_id,
+        retry_at: retryAt.toISOString(),
+      });
+      return "skipped";
+    }
+
     const stateBeforeOutbound = await loadConversationStateForJob(
       client,
       job.tenant_id,
@@ -1445,6 +1580,7 @@ export async function processFollowUpJob(
       leadId: lead?.id ?? null,
     });
     const alreadySent = outbound.action === "already_sent";
+    outboundDeliveryCommitted = alreadySent;
     if (!alreadySent && outbound.action !== "send") {
       const finished = await finishClaimedFollowUpJob({
         sb: client,
@@ -1583,12 +1719,24 @@ export async function processFollowUpJob(
         providerStatus: evolutionReceipt?.providerStatus ?? null,
         deliveryStatus: evolutionReceipt?.deliveryStatus ?? "sent",
       });
+      outboundDeliveryCommitted = true;
 
       // If the database lease was lost while the provider call was in flight,
       // the durable outbox remains the source of truth. A new worker will see
       // `already_sent` and finish the job without dispatching again.
       if (!(await heartbeatFollowUpJob(client, job))) return "skipped";
 
+    }
+
+    const journeyRenewed = await touchLeadJourney({
+      sb: client,
+      tenantId: job.tenant_id,
+      journeyId: authorizedJourney.id,
+      leadId: lead?.id ?? job.lead_id,
+      occurredAt: now.toISOString(),
+    });
+    if (!journeyRenewed) {
+      throw new Error("journey_activity_renewal_failed_after_send");
     }
 
     const nextAttempts = job.attempts + 1;
@@ -1718,6 +1866,36 @@ export async function processFollowUpJob(
     return "sent";
   } catch (error) {
     const message = error instanceof Error ? error.message : "process_failed";
+    if (outboundDeliveryCommitted) {
+      // Keep the same attempt number and operation key. The next worker sees
+      // the durable outbox as already_sent, repairs the post-send state and
+      // can never dispatch a duplicate provider message.
+      const retryAt = new Date(Date.now() + 5 * 60_000);
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "pending",
+        attempts: job.attempts,
+        scheduledAt: retryAt,
+        lastError: message,
+      });
+      if (!finished.ok) return "skipped";
+      await recordEvent(client, "follow_up_failed", {
+        ...commonEventParams,
+        followUpActive: followUpIsActive,
+        payload: {
+          error: message,
+          attempts: job.attempts,
+          provider_delivery_committed: true,
+        },
+      });
+      logFollowUp("post_delivery_repair_scheduled", {
+        job_id: jobId,
+        error: message,
+        retry_at: retryAt.toISOString(),
+      });
+      return "failed";
+    }
     const failedAttempts = job.attempts + 1;
     const isExhausted = failedAttempts >= job.max_attempts;
     const retryAt = new Date(Date.now() + 5 * 60_000);
@@ -1759,7 +1937,7 @@ export async function processDueFollowUpJobs(sb?: SupabaseServiceClient): Promis
   }
   await reclaimStuckFollowUpJobs(client);
   const { data, error } = await client.rpc("claim_follow_up_jobs_v2", {
-    p_limit: 30,
+    p_limit: FOLLOW_UP_BATCH_LIMIT,
     p_claim_seconds: Math.floor(FOLLOW_UP_CLAIM_TTL_MS / 1000),
   });
   if (error) {
@@ -1770,25 +1948,30 @@ export async function processDueFollowUpJobs(sb?: SupabaseServiceClient): Promis
     .filter((row): row is Record<string, unknown> => Boolean(row && typeof row === "object"))
     .map(rowFromDb);
 
-  let processed = 0;
-  let sent = 0;
-  let cancelled = 0;
-  let exhausted = 0;
-  let failed = 0;
+  const outcomes: Array<Awaited<ReturnType<typeof processFollowUpJob>>> = [];
+  let cursor = 0;
+  const workerCount = Math.min(FOLLOW_UP_PROCESS_CONCURRENCY, claimedJobs.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (cursor < claimedJobs.length) {
+        const job = claimedJobs[cursor];
+        cursor += 1;
+        if (!job) continue;
+        outcomes.push(await processFollowUpJob(job.id, client, job));
+      }
+    }),
+  );
 
-  for (const job of claimedJobs) {
-    const outcome = await processFollowUpJob(
-      job.id,
-      client,
-      job,
-    );
-    if (outcome === "skipped") continue;
-    processed += 1;
-    if (outcome === "sent") sent += 1;
-    if (outcome === "cancelled") cancelled += 1;
-    if (outcome === "exhausted") exhausted += 1;
-    if (outcome === "failed") failed += 1;
-  }
-
-  return { processed, sent, cancelled, exhausted, failed };
+  return outcomes.reduce(
+    (totals, outcome) => {
+      if (outcome === "skipped") return totals;
+      totals.processed += 1;
+      if (outcome === "sent") totals.sent += 1;
+      if (outcome === "cancelled") totals.cancelled += 1;
+      if (outcome === "exhausted") totals.exhausted += 1;
+      if (outcome === "failed") totals.failed += 1;
+      return totals;
+    },
+    { processed: 0, sent: 0, cancelled: 0, exhausted: 0, failed: 0 },
+  );
 }

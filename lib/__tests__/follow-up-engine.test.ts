@@ -157,6 +157,28 @@ describe("evaluateFollowUpNeed", () => {
     expect(d.shouldSend).toBe(false);
     expect(d.cooldownActive).toBe(true);
     expect(d.spamRisk).toBe(true);
+    expect(d.nextRetryAt?.toISOString()).toBe("2026-05-23T11:50:00.000Z");
+  });
+
+  it("uses the later explicit cooldown boundary when both cooldown sources exist", () => {
+    const now = new Date("2026-05-22T12:00:00.000Z");
+    const d = evaluateFollowUpNeed(
+      makeCtx({
+        now,
+        settings: { ...BASE_SETTINGS, cooldownAtivo: true, cooldownMinutos: 60 },
+        lead: {
+          id: "l",
+          name: null,
+          status: null,
+          lastMessageAt: null,
+          lastFollowUpAt: new Date("2026-05-22T11:30:00.000Z"),
+          followUpCount: 1,
+          followUpCooldownUntil: new Date("2026-05-22T14:00:00.000Z"),
+        },
+      }),
+    );
+    expect(d.cooldownActive).toBe(true);
+    expect(d.nextRetryAt?.toISOString()).toBe("2026-05-22T14:00:00.000Z");
   });
 
   it("blocks outside business hours when usarHorarioComercial is on", () => {
