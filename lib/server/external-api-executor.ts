@@ -3,7 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { AgentExternalApiLookupRequest, AgentExternalApiLookupResult, ExternalApiOperationInput } from "@/lib/external-api/types";
 import { decryptExternalApiCredential } from "@/lib/server/external-api-crypto";
-import { buildExternalApiRequest, executeExternalApiHttpRequest } from "@/lib/server/external-api-http";
+import { ExternalApiRequestError, buildExternalApiRequest, executeExternalApiHttpRequest } from "@/lib/server/external-api-http";
 import { normalizeExternalApiResponse } from "@/lib/server/external-api-normalize";
 import { listExternalApiConnectors } from "@/lib/server/external-api-connectors";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
@@ -27,12 +27,25 @@ export async function listAgentExternalApiTools(tenantId: string, agentId: strin
 }
 
 function externalApiErrorCode(error: unknown): string {
+  if (error instanceof ExternalApiRequestError) {
+    const code = error.code.split(":")[0]!;
+    if (code === "external_api_private_ip_blocked") return "private_network_blocked";
+    if (code === "external_api_timeout") return "timeout";
+    if (code === "external_api_http_error") return `http_${error.httpStatus ?? "error"}`;
+    if (code === "external_api_missing_argument") return "missing_argument";
+    return code.startsWith("external_api_") ? code.slice(13) : code;
+  }
   const value = error instanceof Error ? error.message : "external_api_failed";
   if (value.startsWith("external_api_missing_argument")) return "missing_argument";
   if (value.includes("timeout")) return "timeout";
   if (value.includes("private")) return "private_network_blocked";
   if (value.includes("rate_limit")) return "rate_limited";
   return value.startsWith("external_api_") ? value.slice(13) : "request_failed";
+}
+
+/** Status HTTP real da falha, quando existe — pra log e pra UI explicarem o que aconteceu, não só um código genérico. */
+function externalApiErrorHttpStatus(error: unknown): number | null {
+  return error instanceof ExternalApiRequestError ? error.httpStatus : null;
 }
 
 export async function executeAgentExternalApiLookup(params: {
@@ -91,9 +104,11 @@ export async function executeAgentExternalApiLookup(params: {
     const request = buildExternalApiRequest({ baseUrl: String(connectorRow.base_url), operation, args,
       authType: connectorRow.auth_type as "none" | "bearer" | "api_key" | "basic",
       authHeaderName: typeof connectorRow.auth_header_name === "string" ? connectorRow.auth_header_name : null, credential });
-    if (operation.method !== "GET") throw new Error("external_api_read_only_method_required");
+    if (operation.method !== "GET") throw new ExternalApiRequestError("external_api_read_only_method_required");
+    // executeExternalApiHttpRequest já segue redirects e só devolve aqui uma
+    // resposta 2xx com JSON válido — qualquer outra coisa já veio como
+    // ExternalApiRequestError, com o status HTTP real preservado.
     const response = await executeExternalApiHttpRequest({ ...request, method: "GET" });
-    if (response.status < 200 || response.status >= 300) throw new Error(`external_api_http_${response.status}`);
     const normalized = normalizeExternalApiResponse(response.payload, operation.responseMapping);
     if (cacheTtl > 0) await sb.from("external_api_cache").upsert({ tenant_id: params.tenantId, connector_id: connector.id,
       operation_id: String(operationRow.id), cache_key: argsHash, normalized_result: normalized,
@@ -107,9 +122,17 @@ export async function executeAgentExternalApiLookup(params: {
     return { connectorId: connector.id, connectorName, operationKey: params.request.operationKey, operationName, ok: true, data: normalized };
   } catch (error) {
     const errorCode = externalApiErrorCode(error);
-    await sb.from("external_api_call_logs").insert({ tenant_id: params.tenantId, connector_id: params.request.connectorId,
-      operation_id: operationRow?.id ?? null, agent_id: params.agentId, status: "error", latency_ms: Date.now() - startedAt,
-      error_code: errorCode, args_hash: hashArgs(params.request.arguments) });
-    return { connectorId: params.request.connectorId, connectorName, operationKey: params.request.operationKey, operationName, ok: false, errorCode };
+    const httpStatus = externalApiErrorHttpStatus(error);
+    await Promise.all([
+      sb.from("external_api_call_logs").insert({ tenant_id: params.tenantId, connector_id: params.request.connectorId,
+        operation_id: operationRow?.id ?? null, agent_id: params.agentId, status: "error", http_status: httpStatus,
+        latency_ms: Date.now() - startedAt, error_code: errorCode, args_hash: hashArgs(params.request.arguments) }),
+      // Antes só o sucesso atualizava isto — a falha ficava invisível fora de
+      // um alert() passageiro no botão "Testar". Agora o card na tela mostra
+      // o último erro real, mesmo que ninguém tenha clicado "Testar" de novo.
+      sb.from("external_api_connectors").update({ health_status: "error", last_health_at: new Date().toISOString(), last_error_code: errorCode })
+        .eq("id", params.request.connectorId).eq("tenant_id", params.tenantId),
+    ]);
+    return { connectorId: params.request.connectorId, connectorName, operationKey: params.request.operationKey, operationName, ok: false, errorCode, httpStatus };
   }
 }

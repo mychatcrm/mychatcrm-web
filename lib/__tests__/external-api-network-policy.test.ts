@@ -104,35 +104,65 @@ describe("revalidação do endereço resolvido (DNS rebinding)", () => {
 /**
  * Redirect é a terceira via de SSRF: a URL validada aponta para um host
  * público que responde 302 para `http://169.254.169.254/...`. Seguir esse
- * salto anularia a checagem de IP, porque o destino final nunca passou pela
- * política.
+ * salto SEM revalidar o destino anularia a checagem de IP.
  *
- * A defesa aqui é estrutural — o cliente usa `node:https.request`, que NÃO
- * segue redirect por conta própria — e por isso precisa de um teste de
- * contrato: trocar por um cliente que siga redirect (fetch/axios) reabriria o
- * buraco sem quebrar nenhum outro teste.
+ * Contrato atual (desde o fix de 08/2026, motivado por conectores reais que
+ * 308-redirecionam barra final e caíam num "json_required" sem explicação):
+ * o cliente SEGUE redirect — até MAX_REDIRECTS saltos — mas cada salto passa
+ * pelo MESMO `performHttpRequest` que a primeira chamada, então a política de
+ * IP e o HTTPS-only rodam de novo a cada hop, nunca só na URL original. A
+ * defesa continua estrutural (não sobe servidor de verdade), só que agora
+ * prova o oposto do teste antigo: que existe UM único ponto de conexão real
+ * (`httpsRequest(` aparece uma vez só) e que o laço de redirect passa por ele
+ * — não por um `fetch`/`axios` com follow automático, nem por uma chamada
+ * direta que pule a checagem.
  */
-describe("redirects nunca são seguidos automaticamente", () => {
+describe("redirects só são seguidos revalidando IP a cada salto", () => {
   const source = readFileSync(join(process.cwd(), "lib/server/external-api-http.ts"), "utf8");
 
-  it("usa node:https.request, que não segue redirect sozinho", () => {
+  it("usa node:https.request, nunca fetch/axios com follow automático", () => {
     expect(source).toContain('from "node:https"');
     expect(source).toMatch(/httpsRequest\(/);
-  });
-
-  it("não usa cliente que segue redirect por padrão nem liga follow explicitamente", () => {
     expect(source).not.toMatch(/\bfetch\(/);
     expect(source).not.toMatch(/\baxios\b/);
     expect(source).not.toMatch(/follow(Redirects?)?\s*[:=]\s*true/i);
-    expect(source).not.toMatch(/maxRedirects\s*[:=]\s*[1-9]/);
   });
 
-  it("resposta que não for JSON é recusada — um 302 com corpo HTML não vira dado", () => {
+  it("existe um único ponto de conexão real — todo salto passa pela mesma checagem de IP", () => {
+    // Se isto passar a bater mais de uma vez, algum caminho novo pode estar
+    // abrindo conexão sem passar por performHttpRequest (e sua checagem de IP).
+    expect(source.match(/httpsRequest\(/g)?.length).toBe(1);
+  });
+
+  it("o número de saltos de redirect é limitado", () => {
+    expect(source).toMatch(/MAX_REDIRECTS\s*=\s*[1-5]\b/);
+  });
+
+  it("só segue os status de redirect padrão, não qualquer 3xx", () => {
+    expect(source).toContain("REDIRECT_STATUSES");
+    expect(source).toMatch(/new Set\(\[301,\s*302,\s*303,\s*307,\s*308\]\)/);
+  });
+
+  it("resposta final que não for JSON é recusada — HTML de erro não vira dado", () => {
     expect(source).toContain("external_api_json_required");
   });
 
   it("aplica a política de IP no lookup de cada conexão, não só na URL", () => {
     expect(source).toContain("lookup: safeLookup");
     expect(source).toContain("isBlockedExternalApiIp");
+    // A checagem de IP literal e o lookup seguro vivem dentro de
+    // performHttpRequest — a mesma função chamada em cada salto do redirect.
+    const fnStart = source.indexOf("function performHttpRequest");
+    const fnEnd = source.indexOf("\n}\n", fnStart);
+    const fnBody = source.slice(fnStart, fnEnd);
+    expect(fnBody).toContain("lookup: safeLookup");
+    expect(fnBody).toContain("isBlockedExternalApiIp");
+  });
+
+  it("cada salto exige HTTPS — não dá pra rebaixar pra http:// no meio do redirect", () => {
+    const fnStart = source.indexOf("function performHttpRequest");
+    const fnEnd = source.indexOf("\n}\n", fnStart);
+    const fnBody = source.slice(fnStart, fnEnd);
+    expect(fnBody).toMatch(/protocol\s*!==\s*"https:"/);
   });
 });

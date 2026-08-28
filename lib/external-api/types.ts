@@ -108,4 +108,6 @@ export type AgentExternalApiLookupResult = {
   ok: boolean;
   data?: ExternalApiNormalizedResult;
   errorCode?: string;
+  /** Status HTTP real da falha, quando existe (ex.: 404, 500) — só pra diagnóstico humano no painel; o agente usa `errorCode`. */
+  httpStatus?: number | null;
 };

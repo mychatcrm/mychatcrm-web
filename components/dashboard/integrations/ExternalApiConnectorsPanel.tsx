@@ -18,6 +18,46 @@ const usesStandardContract = (operations: ExternalApiOperationInput[]) => {
 };
 const emptyConnector = (): ExternalApiConnectorDraft => ({ name: "", description: "", baseUrl: "https://", authType: "none", enabled: true, operations: createStandardExternalApiOperations() });
 
+/** Explicação em português pro código de erro técnico — sem isto, a única pista era um alert() com "json_required". */
+const ERROR_EXPLANATIONS: Record<string, string> = {
+  json_required: "a URL respondeu, mas o conteúdo não é um JSON válido.",
+  invalid_json: "a resposta dizia ser JSON, mas veio quebrada.",
+  too_many_redirects: "a URL redirecionou demais (mais de 3 vezes) antes de chegar numa resposta final.",
+  invalid_redirect: "a URL redirecionou para um endereço inválido.",
+  https_required: "o endereço de destino não é HTTPS.",
+  private_network_blocked: "o endereço aponta para uma rede privada/interna — bloqueado por segurança.",
+  timeout: "a API não respondeu a tempo (mais de 8 segundos).",
+  response_too_large: "a resposta da API é grande demais (acima de 512 KB).",
+  network_error: "não foi possível conectar a esse endereço (DNS ou rede).",
+  read_only_method_required: "a operação está configurada com um método diferente de GET.",
+  host_mismatch: "o caminho da operação aponta pra um endereço diferente da URL-base.",
+  missing_argument: "faltou preencher um parâmetro obrigatório da operação.",
+  missing_path_argument: "faltou preencher um parâmetro usado no caminho da operação.",
+  not_available: "esta API está desativada ou suspensa por cobrança.",
+  agent_not_linked: "esta API não está vinculada a nenhum agente.",
+  operation_not_found: "a operação não existe ou está desativada.",
+  rate_limit: "o limite de chamadas por minuto desta API foi atingido — tente de novo em instantes.",
+  credentials_unavailable: "a chave/credencial desta API não está configurada.",
+};
+
+function explainExternalApiError(errorCode?: string | null, httpStatus?: number | null): string {
+  if (!errorCode) return "erro não identificado.";
+  if (errorCode.startsWith("http_")) {
+    const status = httpStatus ?? errorCode.slice(5);
+    return `a URL respondeu com o erro HTTP ${status} — confira se o caminho e a URL-base estão certos.`;
+  }
+  return ERROR_EXPLANATIONS[errorCode] ?? `erro "${errorCode}".`;
+}
+
+function fmtHealthAt(iso: string | null): string {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
 type SnapshotBackedConnector = ExternalApiConnectorSummary & { operationCount: number; detailsLoaded: boolean };
 
 function fromSnapshot(item: ExternalApiConnectorCard): SnapshotBackedConnector {
@@ -114,8 +154,15 @@ export function ExternalApiConnectorsPanel({
     {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
     <div className="mt-4 grid gap-3">{items.map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line p-4">
         <div><div className="flex items-center gap-2"><strong className="text-content">{item.name}</strong><span className="rounded-full bg-surface-elevated px-2 py-0.5 text-xs text-content-muted">{item.billingStatus === "included" ? "Incluída" : item.effective ? "Extra ativa" : "Suspensa por cobrança"}</span></div>
-          <p className="mt-1 text-xs text-content-muted">{item.baseUrl} · {item.operationCount} operação(ões) · {item.agentCount} agente(s)</p></div>
-        {canManage ? <div className="flex gap-2"><Button variant="outline" onClick={async () => { const response = await fetch(`/api/client/external-api-connectors/${item.id}/test`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }); const data = await response.json(); alert(response.ok ? `Teste concluído: ${data.data?.records?.length ?? 0} resultado(s).` : `Falha no teste: ${data.errorCode ?? data.error ?? "não identificada"}`); }}>Testar</Button><Button variant="outline" onClick={() => void openEditor(item)}>Editar</Button><Button variant="ghost" onClick={async () => { if (!confirm("Remover esta API?")) return; await fetch(`/api/client/external-api-connectors/${item.id}`, { method: "DELETE" }); await load(); }}><Trash2 className="size-4"/></Button></div> : null}
+          <p className="mt-1 text-xs text-content-muted">{item.baseUrl} · {item.operationCount} operação(ões) · {item.agentCount} agente(s)</p>
+          {item.healthStatus === "error" ? (
+            <p className="mt-1 text-xs text-danger">Última chamada falhou{item.lastHealthAt ? ` (${fmtHealthAt(item.lastHealthAt)})` : ""}: {explainExternalApiError(item.lastErrorCode)}</p>
+          ) : item.healthStatus === "healthy" ? (
+            <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">Funcionando{item.lastHealthAt ? ` — último teste ${fmtHealthAt(item.lastHealthAt)}` : ""}</p>
+          ) : (
+            <p className="mt-1 text-xs text-content-muted">Ainda não testada — clique em &quot;Testar&quot;.</p>
+          )}</div>
+        {canManage ? <div className="flex gap-2"><Button variant="outline" onClick={async () => { const response = await fetch(`/api/client/external-api-connectors/${item.id}/test`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }); const data = await response.json(); alert(response.ok ? `Teste concluído: ${data.data?.records?.length ?? 0} resultado(s).` : `Falha no teste: ${explainExternalApiError(data.errorCode, data.httpStatus)}`); await load(); }}>Testar</Button><Button variant="outline" onClick={() => void openEditor(item)}>Editar</Button><Button variant="ghost" onClick={async () => { if (!confirm("Remover esta API?")) return; await fetch(`/api/client/external-api-connectors/${item.id}`, { method: "DELETE" }); await load(); }}><Trash2 className="size-4"/></Button></div> : null}
       </div>)}</div>
     {!canManage ? <p className="mt-4 flex items-center gap-2 text-sm text-content-muted"><ShieldCheck className="size-4"/>Somente o titular da conta pode cadastrar credenciais e contratar capacidade.</p> : null}
 
