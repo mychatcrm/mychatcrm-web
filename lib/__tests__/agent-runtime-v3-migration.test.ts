@@ -14,6 +14,10 @@ const agentUpdateRoute = readFileSync(
   join(process.cwd(), "app/api/client/agentes/[id]/route.ts"),
   "utf8",
 );
+const runtimeIndexesMigration = readFileSync(
+  join(process.cwd(), "supabase/migrations/20260829110000_agent_runtime_v3_fk_indexes.sql"),
+  "utf8",
+);
 
 describe("agent universal runtime v3 migration", () => {
   it("creates additive service-only reminders with exact authorization identity", () => {
@@ -77,5 +81,20 @@ describe("agent universal runtime v3 migration", () => {
     expect(reminderRuntime).toContain("skipReminderIndexes: sentIndexes");
     expect(reminderRuntime).toContain("agenda_reminder_config_version");
     expect(agentUpdateRoute).toContain("reconcileAgendaRemindersAfterConfigChange");
+  });
+
+  it("covers runtime foreign keys used by cancellation and reconciliation", () => {
+    for (const indexName of [
+      "agenda_reminder_jobs_v2_agenda_event_fk_idx",
+      "agenda_reminder_jobs_v2_journey_fk_idx",
+      "agenda_reminder_jobs_v2_lead_fk_idx",
+      "agenda_reminder_jobs_v2_outbox_fk_idx",
+      "agenda_reminder_jobs_v2_rule_fk_idx",
+      "follow_up_jobs_journey_fk_idx",
+      "follow_up_jobs_rule_fk_idx",
+      "follow_up_jobs_source_response_fk_idx",
+    ]) {
+      expect(runtimeIndexesMigration).toContain(indexName);
+    }
   });
 });
