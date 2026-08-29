@@ -17,8 +17,12 @@ describe("structured visual analysis", () => {
 
     expect(parsed).toMatchObject({ dates: ["23/07/2026"], confidence: 0.96 });
     const text = formatVisualImageAnalysis(parsed!);
-    expect(text).toContain("Elementos marcados: O número 23 está circulado em vermelho");
-    expect(text).toContain("Datas observadas: 23/07/2026");
+    expect(JSON.parse(text)).toMatchObject({
+      type: "visual_image_analysis",
+      markedElements: ["O número 23 está circulado em vermelho"],
+      dates: ["23/07/2026"],
+      requiresCustomerConfirmation: false,
+    });
     expect(text.toLowerCase()).not.toMatch(/imobili|cl[ií]nica|barbearia|corretor/);
   });
 
@@ -31,7 +35,10 @@ describe("structured visual analysis", () => {
       times: [],
       confidence: 0.42,
     });
-    expect(formatVisualImageAnalysis(parsed!)).toContain("peça confirmação ao cliente");
+    expect(JSON.parse(formatVisualImageAnalysis(parsed!))).toMatchObject({
+      requiresCustomerConfirmation: true,
+      confidence: 0.42,
+    });
   });
 
   it("accepts a fenced provider response and clamps confidence", () => {

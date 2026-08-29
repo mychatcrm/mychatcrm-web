@@ -34,15 +34,14 @@ describe("follow-up scheduler and journey renewal migration", () => {
     );
   });
 
-  it("keeps the per-minute path isolated from the existing aggregate fallback", () => {
+  it("keeps the follow-up worker permanently isolated from other queues", () => {
     const route = readFileSync(
       join(process.cwd(), "app/api/internal/process-follow-ups/route.ts"),
       "utf8",
     );
-    expect(route).toContain("followUpsOnly: true");
-    expect(route).toContain("if (options?.followUpsOnly)");
-    expect(route.indexOf("if (options?.followUpsOnly)")).toBeLessThan(
-      route.indexOf("let metaLeadPoll"),
-    );
+    expect(route).toContain("processDueFollowUpJobs");
+    expect(route).not.toContain("processRecentMetaLeadAds");
+    expect(route).not.toContain("processDueWhatsAppCampaigns");
+    expect(route).not.toContain("processDueAgendaReminderJobs");
   });
 });

@@ -36,6 +36,7 @@ describe("bucketMetaLeadEventStep", () => {
       blocked_historical_lead: "erro",
       automation_blocked_by_journey: "erro",
       automation_blocked_agent_missing_instructions: "erro",
+      automation_blocked_ai_generation_failed: "erro",
       manual_assigned_to_agent: "ok",
       manual_assignment_failed: "erro",
       manual_assigned_to_human: "ok",

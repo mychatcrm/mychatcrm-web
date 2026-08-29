@@ -23,7 +23,6 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
   buildFollowUpAiInstruction,
   evaluateFollowUpNeed,
-  isWithinBusinessHours,
   type FollowUpDecision,
 } from "@/lib/server/follow-up-engine";
 import { isValidIanaTimezone } from "@/lib/agents/agent-datetime";
@@ -65,8 +64,8 @@ export function safeFollowUpReplyFromResult(result: Awaited<ReturnType<typeof ge
 
 /** Maior que o limite de 120s da função que processa follow-ups. */
 export const FOLLOW_UP_CLAIM_TTL_MS = 5 * 60 * 1000;
-export const FOLLOW_UP_BATCH_LIMIT = 15;
-export const FOLLOW_UP_PROCESS_CONCURRENCY = 3;
+export const FOLLOW_UP_BATCH_LIMIT = 5;
+export const FOLLOW_UP_PROCESS_CONCURRENCY = 1;
 
 export type FollowUpOutboundTransport =
   | {
@@ -106,6 +105,7 @@ export type FollowUpJobRow = {
   last_error: string | null;
   created_at: string;
   updated_at: string;
+  response_confirmed_at?: string | null;
 };
 
 function logFollowUp(event: string, payload: Record<string, unknown>): void {
@@ -354,6 +354,8 @@ function rowFromDb(data: Record<string, unknown>): FollowUpJobRow {
     last_error: typeof data.last_error === "string" ? data.last_error : null,
     created_at: String(data.created_at),
     updated_at: String(data.updated_at),
+    response_confirmed_at:
+      typeof data.response_confirmed_at === "string" ? data.response_confirmed_at : null,
   };
 }
 
@@ -591,7 +593,7 @@ export async function scheduleRetomadaJob(params: {
   });
 }
 
-export async function scheduleFollowUpAfterInbound(params: {
+export async function scheduleFollowUpAfterAgentResponse(params: {
   sb?: SupabaseServiceClient;
   tenantId: string;
   agentId: string;
@@ -601,6 +603,10 @@ export async function scheduleFollowUpAfterInbound(params: {
   channel?: "evolution" | "meta_cloud";
   connectionId?: string | null;
   settings: AgentFollowUpInteligente;
+  /** Timestamp returned only after the provider/outbox delivery is committed. */
+  responseConfirmedAt: Date;
+  sourceResponseJobId?: string | null;
+  sourceGeneration?: number | null;
 }): Promise<string | null> {
   if (!params.settings.ativo) return null;
 
@@ -621,7 +627,7 @@ export async function scheduleFollowUpAfterInbound(params: {
     });
     return null;
   }
-  const now = new Date();
+  const now = params.responseConfirmedAt;
   const scheduledAt = new Date(
     now.getTime() + params.settings.intervaloVerificacaoMinutos * 60_000,
   );
@@ -695,17 +701,25 @@ export async function scheduleFollowUpAfterInbound(params: {
     return null;
   }
 
+  if (params.sourceResponseJobId && params.sourceGeneration != null) {
+    const existing = await sb.from("follow_up_jobs").select("id")
+      .eq("tenant_id", params.tenantId)
+      .eq("source_response_job_id", params.sourceResponseJobId)
+      .eq("source_generation", params.sourceGeneration)
+      .maybeSingle();
+    if (existing.error) throw new Error(`follow_up_idempotency_lookup_failed:${existing.error.message}`);
+    if (existing.data?.id) return String(existing.data.id);
+  }
+
   await cancelPendingFollowUpJobs({
     sb,
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,
-    reason: "inbound_reset",
+    reason: "response_cycle_replaced",
     journeyId: params.journeyId,
   });
 
-  const { data, error } = await sb
-    .from("follow_up_jobs")
-    .insert({
+  const payload = {
       tenant_id: params.tenantId,
       agent_id: params.agentId,
       remote_jid: params.remoteJid,
@@ -715,15 +729,24 @@ export async function scheduleFollowUpAfterInbound(params: {
       connection_id: params.connectionId,
       rule_id: exactJourney.ruleId,
       automation_epoch: conversationState.automationEpoch,
+      response_confirmed_at: now.toISOString(),
+      source_response_job_id: params.sourceResponseJobId ?? null,
+      source_generation: params.sourceGeneration ?? null,
       scheduled_at: scheduledAt.toISOString(),
       max_attempts: params.settings.tentativasContato,
       attempts: 0,
       status: "pending",
       follow_up_type: "silence",
       priority: 4,
-    })
-    .select("id")
-    .single();
+      updated_at: now.toISOString(),
+    };
+  let data: { id: string } | null = null;
+  let error: { message: string } | null = null;
+  if (!data && !error) {
+    const inserted = await sb.from("follow_up_jobs").insert(payload).select("id").single();
+    data = inserted.data as { id: string } | null;
+    error = inserted.error;
+  }
 
   if (error || !data) {
     logFollowUp("schedule_failed", {
@@ -756,6 +779,12 @@ export async function scheduleFollowUpAfterInbound(params: {
   });
 
   return jobId;
+}
+
+/** @deprecated Follow-up must never be scheduled from an inbound event. */
+export async function scheduleFollowUpAfterInbound(): Promise<null> {
+  logFollowUp("legacy_inbound_schedule_blocked", { reason: "response_confirmation_required" });
+  return null;
 }
 
 export async function processFollowUpJob(
@@ -920,6 +949,40 @@ export async function processFollowUpJob(
       return "cancelled";
     }
 
+    if (!job.response_confirmed_at) {
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "cancelled",
+        lastError: "response_confirmation_required",
+      });
+      return finished.ok ? "cancelled" : "skipped";
+    }
+
+    // A follow-up may not race a pending main reply for the same exact journey.
+    const { data: activeResponseJob, error: activeResponseError } = await client
+      .from("agent_response_jobs")
+      .select("id,scheduled_for")
+      .eq("tenant_id", job.tenant_id)
+      .eq("remote_jid", job.remote_jid)
+      .eq("journey_id", job.journey_id)
+      .in("status", ["pending", "processing"])
+      .limit(1)
+      .maybeSingle();
+    if (activeResponseError) throw new Error("agent_response_gate_unavailable");
+    if (activeResponseJob) {
+      const candidate = new Date(activeResponseJob.scheduled_for ?? Date.now());
+      const retryAt = new Date(Math.max(Date.now() + 30_000, candidate.getTime() + 30_000));
+      const finished = await finishClaimedFollowUpJob({
+        sb: client,
+        job,
+        status: "pending",
+        scheduledAt: retryAt,
+        lastError: "primary_response_pending",
+      });
+      return finished.ok ? "skipped" : "skipped";
+    }
+
     if (settings.usarHorarioComercial && !isValidIanaTimezone(settings.timezone)) {
       await markFollowUpTimezoneReview({
         sb: client,
@@ -942,15 +1005,9 @@ export async function processFollowUpJob(
       return "cancelled";
     }
 
-    // A previously scheduled job may run after the window closes. If its own
-    // stored schedule was inside the configured window, process it once rather
-    // than postponing it forever. This is evaluated only with an explicit IANA
-    // timezone validated above.
-    const jobScheduledAt = new Date(job.scheduled_at);
-    const settingsForEval: typeof settings =
-      settings.usarHorarioComercial && isWithinBusinessHours(jobScheduledAt, settings)
-        ? { ...settings, usarHorarioComercial: false }
-        : settings;
+    // The live execution time is authoritative. A job that became due inside
+    // the window but ran later must wait for the next configured window.
+    const settingsForEval: typeof settings = settings;
 
     const now = new Date();
     const lead = await loadLeadForFollowUp(client, job.tenant_id, job.remote_jid, job.lead_id);
@@ -1918,7 +1975,10 @@ export async function processFollowUpJob(
   }
 }
 
-export async function processDueFollowUpJobs(sb?: SupabaseServiceClient): Promise<{
+export async function processDueFollowUpJobs(sb?: SupabaseServiceClient, options?: {
+  batchSize?: number;
+  deadlineMs?: number;
+}): Promise<{
   processed: number;
   sent: number;
   cancelled: number;
@@ -1926,6 +1986,7 @@ export async function processDueFollowUpJobs(sb?: SupabaseServiceClient): Promis
   failed: number;
 }> {
   const client = sb ?? createSupabaseServiceClient();
+  const deadlineAt = Date.now() + Math.max(5_000, options?.deadlineMs ?? 70_000);
   const { error: reconcileError } = await client.rpc(
     "reconcile_agent_runtime_state_v1",
     { p_limit: 500 },
@@ -1937,7 +1998,7 @@ export async function processDueFollowUpJobs(sb?: SupabaseServiceClient): Promis
   }
   await reclaimStuckFollowUpJobs(client);
   const { data, error } = await client.rpc("claim_follow_up_jobs_v2", {
-    p_limit: FOLLOW_UP_BATCH_LIMIT,
+    p_limit: Math.max(1, Math.min(options?.batchSize ?? FOLLOW_UP_BATCH_LIMIT, 10)),
     p_claim_seconds: Math.floor(FOLLOW_UP_CLAIM_TTL_MS / 1000),
   });
   if (error) {
@@ -1954,6 +2015,7 @@ export async function processDueFollowUpJobs(sb?: SupabaseServiceClient): Promis
   await Promise.all(
     Array.from({ length: workerCount }, async () => {
       while (cursor < claimedJobs.length) {
+        if (Date.now() >= deadlineAt) return;
         const job = claimedJobs[cursor];
         cursor += 1;
         if (!job) continue;

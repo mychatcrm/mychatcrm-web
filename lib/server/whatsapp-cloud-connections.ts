@@ -74,3 +74,20 @@ export async function lookupWhatsAppCloudConnectionByPhoneNumberId(
     .maybeSingle();
   return (data as WhatsAppCloudConnection | null) ?? null;
 }
+
+/** Exact tenant-scoped lookup for durable jobs that persist the connection row id. */
+export async function getWhatsAppCloudConnectionByIdForTenant(
+  tenantId: string,
+  connectionId: string,
+): Promise<WhatsAppCloudConnection | null> {
+  const sb = createSupabaseServiceClient();
+  const { data, error } = await sb
+    .from("whatsapp_cloud_connections")
+    .select("*")
+    .eq("tenant_id", tenantId)
+    .eq("id", connectionId)
+    .eq("active", true)
+    .maybeSingle();
+  if (error) throw new Error(`[whatsapp-cloud-connections] exact lookup: ${error.message}`);
+  return (data as WhatsAppCloudConnection | null) ?? null;
+}

@@ -553,7 +553,7 @@ function formatEventDateTimeForLanguage(
       hour12: false,
     }).format(new Date(iso));
   } catch {
-    return formatEventDateTimePtBr(iso, timezone);
+    return formatEventDateTimeNeutral(iso, timezone);
   }
 }
 
@@ -1190,11 +1190,11 @@ export function extractLocationFromText(text: string): string | null {
   return null;
 }
 
-function formatEventDateTimePtBr(iso: string, timezone: string): string {
+function formatEventDateTimeNeutral(iso: string, timezone: string): string {
   try {
-    return new Intl.DateTimeFormat("pt-BR", {
+    return new Intl.DateTimeFormat("sv-SE", {
       timeZone: timezone,
-      weekday: "long",
+      weekday: "short",
       day: "2-digit",
       month: "long",
       year: "numeric",
@@ -1211,10 +1211,16 @@ export function formatExistingAppointmentSchedulingBlock(
   event: AgendaEventSummary,
   timezone: string,
 ): string {
-  const when = formatEventDateTimePtBr(event.start_at, timezone);
-  const place = event.location?.trim() ? ` Local: ${event.location.trim()}.` : "";
-  const name = event.attendee_name?.trim() ? ` Nome no agendamento: ${event.attendee_name.trim()}.` : "";
-  return `[CONTEXTO DE AGENDAMENTO: Este lead já possui um agendamento ativo em ${when}.${place}${name} Informe o lead de forma natural que já existe esse compromisso e pergunte se deseja remarcar. Não confirme um novo agendamento até o lead confirmar explicitamente a remarcação com data e horário.]`;
+  return JSON.stringify({
+    type: "existing_appointment",
+    status: event.status,
+    startAt: event.start_at,
+    localDateTime: formatEventDateTimeNeutral(event.start_at, timezone),
+    timezone,
+    location: event.location?.trim() || null,
+    attendeeName: event.attendee_name?.trim() || null,
+    requiresExplicitRescheduleConfirmation: true,
+  });
 }
 
 export async function findActiveAgendaEventForScheduling(params: {
@@ -1265,18 +1271,17 @@ function formatAgendaDescription(params: {
   userMessage: string;
   assistantMessage: string;
 }): string {
-  const when = formatEventDateTimePtBr(params.startAt.toISOString(), params.timezone);
-  return [
-    "Agendamento via WhatsApp (agente)",
-    "",
-    `Nome: ${params.displayName}`,
-    `Telefone: ${params.phone ?? "-"}`,
-    `Data/hora: ${when} (${params.timezone})`,
-    `Local: ${params.location ?? "não informado"}`,
-    "",
-    `Motivo/contexto: ${params.userMessage.trim() || "-"}`,
-    `Confirmação do agente: ${params.assistantMessage.trim() || "-"}`,
-  ].join("\n");
+  return JSON.stringify({
+    type: "agent_calendar_event",
+    displayName: params.displayName,
+    phone: params.phone,
+    startAt: params.startAt.toISOString(),
+    localDateTime: formatEventDateTimeNeutral(params.startAt.toISOString(), params.timezone),
+    timezone: params.timezone,
+    location: params.location,
+    customerContext: params.userMessage.trim() || null,
+    agentConfirmation: params.assistantMessage.trim() || null,
+  });
 }
 
 export async function createAgendaEventForSchedulingCta(params: {
@@ -1544,8 +1549,12 @@ async function cancelStructuredAgendaEvent(params: {
   }
   await cancelAgendaEvent(params.tenantId, params.event.id);
   await broadcastAgendaChange(params.tenantId, "delete");
-  // Cancelar lembretes pendentes ligados a este evento (fire-and-forget)
-  cancelAgendaRemindersForEvent({ agendaEventId: params.event.id }).catch(() => undefined);
+  // Cancelar lembretes pendentes ligados a este evento antes de recriar a agenda futura.
+  await cancelAgendaRemindersForEvent({
+    tenantId: params.tenantId,
+    agendaEventId: params.event.id,
+    reason: "agenda_event_cancelled",
+  }).catch(() => undefined);
 }
 
 async function insertStructuredAgendaEvent(params: {
@@ -1619,6 +1628,7 @@ async function insertStructuredAgendaEvent(params: {
       startAt: startAt.toISOString(),
       endAt: endAt.toISOString(),
       attendeeEmail: null,
+      timezone: params.timezone,
     });
     googleEventId = googleEvent.id;
   }
@@ -1642,28 +1652,8 @@ async function insertStructuredAgendaEvent(params: {
       agent_id: params.agentId ?? null,
     });
     await broadcastAgendaChange(params.tenantId, "insert");
-    // Agendar lembretes se configurados
-    if (params.agendaLembretes?.ativo && params.agendaLembretes.regras.length > 0) {
-      scheduleAgendaRemindersForEvent({
-        sb: params.sb,
-        tenantId: params.tenantId,
-        agentId: params.agentId ?? null,
-        slotIndex: params.slotIndex ?? 0,
-        remoteJid: params.remoteJid,
-        agendaEventId: inserted.id,
-        eventStartAt: startAt,
-        attendeeName: attendeeName ?? null,
-        location: params.directive.location ?? null,
-        eventTitle: title,
-        agendaLembretes: params.agendaLembretes,
-        timezone: params.timezone,
-      }).catch((err) =>
-        console.warn("[agent-cta-scheduler] reminder_schedule_failed", {
-          event_id: inserted.id,
-          error: err instanceof Error ? err.message : String(err),
-        }),
-      );
-    }
+    // The legacy mutation path has no exact journey/rule/connection identity.
+    // It intentionally creates no reminder; automatic jobs are V2-only.
     return inserted;
   } catch (error) {
     if (googleEventId) await cancelGoogleCalendarEvent(params.tenantId, googleEventId).catch(() => undefined);
@@ -1730,6 +1720,7 @@ export async function syncAtomicAgendaMutation(params: {
   tenantId: string;
   operationKey: string;
   result: AtomicAgendaMutationResult;
+  timezone?: string | null;
 }): Promise<AtomicAgendaMutationResult> {
   let currentEvent =
     (await getAgendaEventById(params.tenantId, params.result.event.id)) ?? params.result.event;
@@ -1755,6 +1746,7 @@ export async function syncAtomicAgendaMutation(params: {
             startAt: currentEvent.start_at,
             endAt: currentEvent.end_at,
             attendeeEmail: currentEvent.attendee_email,
+            timezone: params.timezone,
           });
           await updateAgendaEvent(params.tenantId, currentEvent.id, {
             google_event_id: googleEvent.id,
@@ -1979,6 +1971,11 @@ async function executeAgendaDirectiveAtomically(params: {
   claimedGeneration?: number | null;
   conversationSequence?: number | null;
   journeyId?: string | null;
+  ruleId?: string | null;
+  channel?: "evolution" | "meta_cloud" | null;
+  connectionId?: string | null;
+  automationEpoch?: number | null;
+  languageTag?: string | null;
 }): Promise<{ action: "scheduled" | "rescheduled" | "cancelled"; eventId: string }> {
   const attendeePhone = extractPhone(params.remoteJid);
   if (!attendeePhone) throw new Error("invalid_remote_jid");
@@ -2059,6 +2056,7 @@ async function executeAgendaDirectiveAtomically(params: {
     tenantId: params.tenantId,
     operationKey: params.operationKey,
     result: atomicResult,
+    timezone: params.timezone,
   });
 
   if (atomicResult.changed && !atomicResult.deduplicated) {
@@ -2067,23 +2065,26 @@ async function executeAgendaDirectiveAtomically(params: {
       syncedResult.action === "cancelled" ? "delete" : "insert",
     );
     if (syncedResult.action === "cancelled") {
-      cancelAgendaRemindersForEvent({
+      await cancelAgendaRemindersForEvent({
         sb: params.sb,
+        tenantId: params.tenantId,
         agendaEventId: syncedResult.event.id,
+        reason: "agenda_event_cancelled",
       }).catch(() => undefined);
     } else {
       if (syncedResult.previous_event?.id) {
-        cancelAgendaRemindersForEvent({
+        await cancelAgendaRemindersForEvent({
           sb: params.sb,
+          tenantId: params.tenantId,
           agendaEventId: syncedResult.previous_event.id,
+          reason: "agenda_event_rescheduled",
         }).catch(() => undefined);
       }
       if (params.agendaLembretes?.ativo && params.agendaLembretes.regras.length > 0) {
-        scheduleAgendaRemindersForEvent({
+        await scheduleAgendaRemindersForEvent({
           sb: params.sb,
           tenantId: params.tenantId,
           agentId: params.agentId ?? null,
-          slotIndex: params.slotIndex ?? 0,
           remoteJid: params.remoteJid,
           agendaEventId: syncedResult.event.id,
           eventStartAt: new Date(syncedResult.event.start_at),
@@ -2092,6 +2093,13 @@ async function executeAgendaDirectiveAtomically(params: {
           eventTitle: syncedResult.event.title,
           agendaLembretes: params.agendaLembretes,
           timezone: params.timezone,
+          languageTag: params.languageTag,
+          leadId: params.leadId ?? syncedResult.event.lead_id,
+          journeyId: params.journeyId,
+          ruleId: params.ruleId,
+          channel: params.channel,
+          connectionId: params.connectionId,
+          automationEpoch: params.automationEpoch,
         }).catch((reminderError) =>
           console.warn("[agent-cta-scheduler] reminder_schedule_failed", {
             event_id: syncedResult.event.id,
@@ -2145,6 +2153,11 @@ export async function executeAgendaDirective(params: {
   claimedGeneration?: number | null;
   conversationSequence?: number | null;
   journeyId?: string | null;
+  ruleId?: string | null;
+  channel?: "evolution" | "meta_cloud" | null;
+  connectionId?: string | null;
+  automationEpoch?: number | null;
+  languageTag?: string | null;
 }): Promise<{ action: "scheduled" | "rescheduled" | "cancelled"; eventId: string }> {
   const sb = params.sb ?? createSupabaseServiceClient();
   if (params.operationKey?.trim()) {
@@ -2739,6 +2752,10 @@ async function resolveStructuredAgendaPlan(params: {
   claimedGeneration?: number | null;
   conversationSequence?: number | null;
   journeyId?: string | null;
+  ruleId?: string | null;
+  channel?: "evolution" | "meta_cloud" | null;
+  connectionId?: string | null;
+  automationEpoch?: number | null;
   recentClientMessages?: string[] | null;
   /** Último outbound do agente nesta jornada (soft-invite Meta, etc.). */
   priorAssistantText?: string | null;
@@ -3291,6 +3308,11 @@ async function resolveStructuredAgendaPlan(params: {
       claimedGeneration: params.claimedGeneration,
       conversationSequence: params.conversationSequence,
       journeyId: params.journeyId,
+      ruleId: params.ruleId,
+      channel: params.channel,
+      connectionId: params.connectionId,
+      automationEpoch: params.automationEpoch,
+      languageTag: params.languageTag,
     });
     if (pending) {
       await params.sb
@@ -3374,6 +3396,10 @@ export async function resolveAgendaTurn(params: {
   claimedGeneration?: number | null;
   conversationSequence?: number | null;
   journeyId?: string | null;
+  ruleId?: string | null;
+  channel?: "evolution" | "meta_cloud" | null;
+  connectionId?: string | null;
+  automationEpoch?: number | null;
   /** Mensagens inbound recentes do lead (ordem temporal), para resolver
    *  complementos que chegaram em jobs anteriores (ex.: data num turno, hora no
    *  seguinte). Já filtradas por tenant+journey e janela segura pelo chamador. */
@@ -3548,6 +3574,10 @@ export async function resolveAgendaTurn(params: {
       claimedGeneration: params.claimedGeneration,
       conversationSequence: params.conversationSequence,
       journeyId: params.journeyId,
+      ruleId: params.ruleId,
+      channel: params.channel,
+      connectionId: params.connectionId,
+      automationEpoch: params.automationEpoch,
       recentClientMessages: params.recentClientMessages,
       priorAssistantText: params.priorAssistantText,
       recoveredFromMisclassifiedList,
@@ -3832,6 +3862,11 @@ export async function resolveAgendaTurn(params: {
       claimedGeneration: params.claimedGeneration ?? null,
       conversationSequence: params.conversationSequence ?? null,
       journeyId: params.journeyId ?? null,
+      ruleId: params.ruleId ?? null,
+      channel: params.channel ?? null,
+      connectionId: params.connectionId ?? null,
+      automationEpoch: params.automationEpoch ?? null,
+      languageTag: replyLanguageTag,
     });
     console.info("[agent-agenda-turn]", {
       tenant_id: params.tenantId,

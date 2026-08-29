@@ -34,6 +34,7 @@ export const META_LEAD_EVENT_STEPS = [
   "blocked_historical_lead",
   "automation_blocked_by_journey",
   "automation_blocked_agent_missing_instructions",
+  "automation_blocked_ai_generation_failed",
   "manual_assigned_to_agent",
   "manual_assignment_failed",
   "manual_assigned_to_human",

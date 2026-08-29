@@ -31,6 +31,8 @@ import {
   archiveTenantAgentAtomic,
   saveTenantAgentAtomic,
 } from "@/lib/server/agent-management-persistence";
+import { reconcileAgendaRemindersAfterConfigChange } from "@/lib/server/agenda-reminder-jobs";
+import { recordAgentRuntimeAlert } from "@/lib/server/agent-runtime-alerts";
 
 export const dynamic = "force-dynamic";
 
@@ -201,6 +203,44 @@ export async function PUT(
     );
   }
   if (!saved.row) return NextResponse.json({ error: "Erro ao carregar o agente salvo." }, { status: 503 });
+  const existingMetadata =
+    existing.data.metadata && typeof existing.data.metadata === "object"
+      ? (existing.data.metadata as Record<string, unknown>)
+      : {};
+  const reminderConfigurationChanged =
+    JSON.stringify(existingMetadata.agendaLembretes ?? null) !==
+    JSON.stringify(metadataAgent.agendaLembretes ?? null);
+  if (reminderConfigurationChanged) {
+    try {
+      await reconcileAgendaRemindersAfterConfigChange({
+        sb,
+        tenantId: session.tenantId,
+        agentId,
+        agendaLembretes:
+          metadataAgent.agendaLembretes && typeof metadataAgent.agendaLembretes === "object"
+            ? agent.agendaLembretes ?? null
+            : null,
+        timezone: typeof metadataAgent.timezone === "string" ? metadataAgent.timezone : null,
+        languageTag:
+          typeof metadataAgent.idioma === "string" && metadataAgent.idioma !== "auto"
+            ? metadataAgent.idioma
+            : null,
+      });
+    } catch (reminderError) {
+      const reason = reminderError instanceof Error ? reminderError.message : "reconcile_failed";
+      await recordAgentRuntimeAlert({
+        sb,
+        tenantId: session.tenantId,
+        agentId,
+        code: "agenda_reminder_reconcile_failed",
+        severity: "warning",
+        resourceType: "agent",
+        resourceId: agentId,
+        details: { reason },
+      });
+      console.error("[api/client/agentes] reminder reconcile", { agent_id: agentId, reason });
+    }
+  }
   const updated = rowToAgent(saved.row, session.tenantId);
   if (canManageExternalApis) updated.externalApiConnectorIds = requestedConnectorIds;
   else delete updated.externalApiConnectorIds;

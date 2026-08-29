@@ -345,16 +345,11 @@ export function parseVisualImageAnalysis(value: unknown): VisualImageAnalysis | 
 }
 
 export function formatVisualImageAnalysis(analysis: VisualImageAnalysis): string {
-  const parts = [`Resumo visual: ${analysis.summary}`];
-  if (analysis.visibleText.length) parts.push(`Textos visíveis: ${analysis.visibleText.join(" | ")}`);
-  if (analysis.markedElements.length) parts.push(`Elementos marcados: ${analysis.markedElements.join(" | ")}`);
-  if (analysis.dates.length) parts.push(`Datas observadas: ${analysis.dates.join(" | ")}`);
-  if (analysis.times.length) parts.push(`Horários observados: ${analysis.times.join(" | ")}`);
-  parts.push(`Confiança da leitura: ${analysis.confidence.toFixed(2)}`);
-  if (analysis.confidence < 0.75) {
-    parts.push("Leitura visual incerta: peça confirmação ao cliente e não presuma dados ausentes.");
-  }
-  return parts.join("\n");
+  return JSON.stringify({
+    type: "visual_image_analysis",
+    ...analysis,
+    requiresCustomerConfirmation: analysis.confidence < 0.75,
+  });
 }
 
 /** Analisa imagem a partir de buffer sem assumir nicho ou tipo de documento. */
@@ -379,10 +374,10 @@ export async function analyzeImageFromBuffer(
           {
             type: "text",
             text: [
-              "Analise esta imagem em português sem assumir setor, profissão ou finalidade.",
-              "Diferencie o que está realmente visível do que seria inferência.",
-              "Leia textos, números, datas e horários e identifique elementos circulados, riscados, destacados, selecionados ou apontados.",
-              "Responda somente JSON com: summary (string), visibleText (string[]), markedElements (string[]), dates (string[]), times (string[]) e confidence (0 a 1).",
+              "Analyze this image factually without assuming any industry, profession, country, language, or purpose.",
+              "Keep visible text verbatim and distinguish observed facts from inference.",
+              "Identify numbers, dates, times, and any circled, crossed, highlighted, selected, or pointed elements.",
+              "Return JSON only with summary (string), visibleText (string[]), markedElements (string[]), dates (string[]), times (string[]), and confidence (0 to 1).",
             ].join(" "),
           },
           { type: "image_url", image_url: { url: dataUrl, detail: "high" } },

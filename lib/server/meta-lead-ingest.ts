@@ -17,7 +17,6 @@ import {
   unauthorizedUserMessage,
 } from "@/lib/server/meta-form-authorization";
 import {
-  buildFallbackInitialMessage,
   buildLeadProfileMetadata,
   buildMetaInitialAgentPrompt,
   fetchFormQuestionLabels,
@@ -48,6 +47,9 @@ import {
   touchLeadJourney,
 } from "@/lib/server/lead-journeys";
 import { scheduleLeadRedistribution } from "@/lib/server/lead-redistribution";
+import { scheduleFollowUpAfterAgentResponse } from "@/lib/server/follow-up-jobs";
+import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
+import { recordAgentRuntimeAlert } from "@/lib/server/agent-runtime-alerts";
 import {
   commitTenantLeadQuotaReservation,
   releaseTenantLeadQuotaReservation,
@@ -1360,15 +1362,15 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       profileMetadata: leadMetadata,
     });
 
-    const aiResult = await generateAgentResponse({
-      tenantId: tenant_id,
-      agentId,
-      conversationId: remoteJid,
-      journeyId,
-      customerId: remoteJid,
-      feature: "agent_chat",
-      messages: [{ role: "user", content: aiPrompt }],
-    });
+    let aiResult: Awaited<ReturnType<typeof generateAgentResponse>>;
+    for (let attempt = 0; ; attempt += 1) {
+      aiResult = await generateAgentResponse({
+        tenantId: tenant_id, agentId, conversationId: remoteJid, journeyId,
+        customerId: remoteJid, feature: "agent_chat",
+        messages: [{ role: "user", content: aiPrompt }],
+      });
+      if (aiResult.ok || isAgentMissingInstructionsResult(aiResult) || attempt >= 2) break;
+    }
 
     await eventRecorder.step("ai_response_generated", {
       ok: aiResult.ok,
@@ -1404,9 +1406,34 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       return;
     }
 
-    replyText =
-      sanitizeInitialReply(aiResult.ok ? aiResult.text : "") ||
-      buildFallbackInitialMessage(fullName);
+    replyText = sanitizeInitialReply(aiResult.ok ? aiResult.text : "");
+    if (!aiResult.ok || !replyText) {
+      await eventRecorder.step("automation_blocked_ai_generation_failed", {
+        agent_id: agentId,
+        journey_id: journeyId,
+        reason: aiResult.ok ? "empty_agent_response" : aiResult.code,
+      });
+      await eventRecorder.patch({
+        whatsapp_status: "blocked",
+        error_message: aiResult.ok ? "empty_agent_response" : `agent_generation_failed:${aiResult.code}`,
+        current_step: "automation_blocked_ai_generation_failed",
+      });
+      console.error("[meta-webhook] initial_agent_generation_blocked", {
+        tenant_id, lead_id: leadId, agent_id: agentId,
+        reason: aiResult.ok ? "empty_agent_response" : aiResult.code,
+      });
+      await recordAgentRuntimeAlert({
+        sb,
+        tenantId: tenant_id,
+        agentId,
+        code: "meta_initial_agent_generation_failed",
+        severity: "critical",
+        resourceType: "lead",
+        resourceId: leadId,
+        details: { reason: aiResult.ok ? "empty_agent_response" : aiResult.code },
+      });
+      return;
+    }
   }
 
   const messageChannel = resolvedConnection.transport === "cloud_api" ? "meta_cloud" : "evolution";
@@ -1755,6 +1782,28 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
           })
         : Promise.resolve(),
     ]);
+    const { data: followUpAgent } = await sb.from("tenant_agents").select("metadata")
+      .eq("tenant_id", tenant_id).eq("agent_id", agentId).maybeSingle();
+    const followUpMetadata = followUpAgent?.metadata && typeof followUpAgent.metadata === "object"
+      ? (followUpAgent.metadata as Record<string, unknown>)
+      : {};
+    await scheduleFollowUpAfterAgentResponse({
+      sb,
+      tenantId: tenant_id,
+      agentId,
+      remoteJid,
+      leadId,
+      journeyId,
+      channel: messageChannel,
+      connectionId: messageConnectionId,
+      settings: followUpInteligenteFromMetadata(followUpMetadata),
+      responseConfirmedAt: new Date(sentAt),
+    }).catch((error) => {
+      console.error("[meta-webhook] follow_up_schedule_failed_after_send", {
+        tenant_id, lead_id: leadId, agent_id: agentId,
+        error: error instanceof Error ? error.message : "schedule_failed",
+      });
+    });
     await scheduleLeadRedistribution({
       sb,
       tenantId: tenant_id,

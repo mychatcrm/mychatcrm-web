@@ -29,6 +29,7 @@ export const META_LEAD_EVENT_ERROR_STEPS = new Set<string>([
   "blocked_historical_lead",
   "automation_blocked_by_journey",
   "automation_blocked_agent_missing_instructions",
+  "automation_blocked_ai_generation_failed",
   "skipped_selected_connection_unavailable",
   "manual_assignment_failed",
 ]);

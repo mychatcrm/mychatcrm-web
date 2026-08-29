@@ -95,15 +95,21 @@ describe("omnichannel production hardening", () => {
     );
   });
 
-  it("keeps Meta reply parity for handoff, TTS, media and follow-up", () => {
+  it("keeps Meta reply parity and starts follow-up only after confirmed delivery", () => {
     const metaReply = source("lib/server/meta-agent-reply.ts");
     const metaWebhook = source("lib/server/whatsapp-cloud-webhook-handler.ts");
+    const sharedTurn = source("lib/server/process-agent-turn-v2.ts");
 
     expect(metaReply).toContain("detectAgentHandoff");
     expect(metaReply).toContain("deliverAgentReplyWithOptionalTts");
     expect(metaReply).toContain("sendAgentOutboundMediaViaMeta");
     expect(metaReply).toContain("completeAgentHandoff");
-    expect(metaWebhook).toContain("scheduleFollowUpAfterInbound");
+    expect(metaWebhook).not.toContain("scheduleFollowUpAfterInbound");
+    expect(metaWebhook).toContain("cancelPendingFollowUpJobs");
+    expect(sharedTurn).toContain("scheduleFollowUpAfterAgentResponse");
+    expect(sharedTurn.indexOf("await finalizeAuthorizedOutbound")).toBeLessThan(
+      sharedTurn.indexOf("await scheduleFollowUpAfterAgentResponse"),
+    );
     expect(metaWebhook).toContain('channel: "meta_cloud"');
     expect(metaWebhook).toContain("connectionId: inbound.phoneNumberId");
   });

@@ -33,8 +33,7 @@ import { revealConversationOnInbound } from "@/lib/server/conversation-visibilit
 import { runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
 import { smartWaitFromMetadata } from "@/lib/agents/smart-wait-settings";
 import { buildWhatsappRemoteJid } from "@/lib/server/meta-lead-processing";
-import { scheduleFollowUpAfterInbound } from "@/lib/server/follow-up-jobs";
-import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
+import { cancelPendingFollowUpJobs } from "@/lib/server/follow-up-jobs";
 
 export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<NextResponse> {
   // Delivery status updates from Meta (outgoing messages: sent/delivered/read/failed).
@@ -320,25 +319,18 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
     return NextResponse.json({ ok: true });
   }
 
-  const { data: agentConfig } = await sb
-    .from("tenant_agents")
-    .select("metadata")
-    .eq("tenant_id", tenantId)
-    .eq("agent_id", agentId)
-    .maybeSingle();
+  const { data: agentConfig } = await sb.from("tenant_agents").select("metadata")
+    .eq("tenant_id", tenantId).eq("agent_id", agentId).maybeSingle();
   const metadata = agentConfig?.metadata && typeof agentConfig.metadata === "object"
     ? (agentConfig.metadata as Record<string, unknown>)
     : {};
-  await scheduleFollowUpAfterInbound({
+
+  await cancelPendingFollowUpJobs({
     sb,
     tenantId,
-    agentId,
     remoteJid,
-    leadId,
     journeyId: journey?.id ?? null,
-    channel: "meta_cloud",
-    connectionId: inbound.phoneNumberId,
-    settings: followUpInteligenteFromMetadata(metadata),
+    reason: "customer_replied",
   }).catch((error) => {
     console.warn("[webhooks/whatsapp] follow_up_schedule_failed", {
       tenant_id: tenantId,

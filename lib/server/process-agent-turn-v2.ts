@@ -62,6 +62,8 @@ import {
   type JourneyAuthorizationResult,
 } from "@/lib/server/lead-journeys";
 import { scheduleLeadRedistribution } from "@/lib/server/lead-redistribution";
+import { scheduleFollowUpAfterAgentResponse } from "@/lib/server/follow-up-jobs";
+import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
 import type { createSupabaseServiceClient } from "@/lib/supabase/server";
 import type {
   Agent,
@@ -103,6 +105,8 @@ export type AgentTurnDecisionV2 = {
   leadOutcome: AgentLeadOutcome | null;
   externalApiLookups: AgentExternalApiLookupRequest[];
   authorization: { allowed: boolean; reason: string };
+  timezone: string;
+  followUp: { enabled: boolean; wouldCreate: boolean; intervalMinutes: number | null };
 };
 
 export type AgentTurnTransportV2 = {
@@ -364,6 +368,7 @@ export async function processAgentTurnV2(params: {
       handoffTriggered && handoffSettings.message
         ? handoffSettings.message
         : media.cleanedText.trim() || modelText;
+    const followUpSettings = followUpInteligenteFromMetadata(params.metadata);
     return {
       ok: true,
       dedupedCount: burst.dedupedCount,
@@ -380,6 +385,12 @@ export async function processAgentTurnV2(params: {
         externalApiLookups:
           generated.externalApiLookupTrace ?? structuredPlan.externalApiLookups,
         authorization: { allowed: true, reason: "dry_run_no_business_mutations" },
+        timezone,
+        followUp: {
+          enabled: followUpSettings.ativo,
+          wouldCreate: followUpSettings.ativo && !handoffTriggered,
+          intervalMinutes: followUpSettings.ativo ? followUpSettings.intervaloVerificacaoMinutos : null,
+        },
       },
     };
   }
@@ -392,6 +403,21 @@ export async function processAgentTurnV2(params: {
   });
   if (await generationIsStale({ sb, job, generation, skipGenerationCheck })) {
     return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
+  }
+
+  const { data: stateForAgenda, error: stateForAgendaError } = await sb
+    .from("conversation_states")
+    .select("automation_epoch,human_paused,conversation_mode,active_journey_id")
+    .eq("tenant_id", job.tenant_id)
+    .eq("remote_jid", job.remote_jid)
+    .eq("channel", "whatsapp")
+    .maybeSingle();
+  if (
+    stateForAgendaError || !stateForAgenda || stateForAgenda.human_paused ||
+    stateForAgenda.conversation_mode !== "automation" ||
+    stateForAgenda.active_journey_id !== job.journey_id
+  ) {
+    return { ok: false, error: "automation_state_invalid_before_agenda", dedupedCount: burst.dedupedCount };
   }
 
   // 6. Exatamente uma chamada ao motor de agenda, sem alterar sua lógica.
@@ -439,6 +465,10 @@ export async function processAgentTurnV2(params: {
     claimedGeneration: skipGenerationCheck ? null : generation,
     conversationSequence: skipGenerationCheck ? null : job.conversation_sequence,
     journeyId: skipGenerationCheck ? null : job.journey_id,
+    ruleId: skipGenerationCheck ? null : job.rule_id,
+    channel: skipGenerationCheck ? null : job.channel,
+    connectionId: skipGenerationCheck ? null : job.connection_id,
+    automationEpoch: skipGenerationCheck ? null : Number(stateForAgenda.automation_epoch),
   });
   if (agendaTurn.action === "stale") {
     return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
@@ -516,6 +546,14 @@ export async function processAgentTurnV2(params: {
       parseAgentTurnPlan(generated.structuredData)?.externalApiLookups ??
       [],
     authorization: { allowed: true, reason: "outbox_authorized" },
+    timezone,
+    followUp: {
+      enabled: followUpInteligenteFromMetadata(params.metadata).ativo,
+      wouldCreate: followUpInteligenteFromMetadata(params.metadata).ativo && !handoffTriggered,
+      intervalMinutes: followUpInteligenteFromMetadata(params.metadata).ativo
+        ? followUpInteligenteFromMetadata(params.metadata).intervaloVerificacaoMinutos
+        : null,
+    },
   };
 
   // 7. Revalida geração/takeover/jornada imediatamente antes do outbox.
@@ -685,6 +723,29 @@ export async function processAgentTurnV2(params: {
       ruleId: journeyAuthorization?.ok ? journeyAuthorization.journey?.ruleId : null,
       currentAgentId: job.agent_id,
       trigger: "customer_silence",
+    });
+  }
+  if (!handoffTriggered && job.journey_id && job.connection_id) {
+    await scheduleFollowUpAfterAgentResponse({
+      sb,
+      tenantId: job.tenant_id,
+      agentId: job.agent_id,
+      remoteJid: job.remote_jid,
+      leadId: job.lead_id,
+      journeyId: job.journey_id,
+      channel: job.channel,
+      connectionId: job.connection_id,
+      settings: followUpInteligenteFromMetadata(params.metadata),
+      responseConfirmedAt: new Date(sentAt),
+      sourceResponseJobId: job.id,
+      sourceGeneration: generation,
+    }).catch((error) => {
+      console.error("[agent-turn-v2] follow_up_schedule_failed", {
+        tenant_id: job.tenant_id,
+        agent_id: job.agent_id,
+        job_id: job.id,
+        error: error instanceof Error ? error.message : "follow_up_schedule_failed",
+      });
     });
   }
   await transport.afterTurnCommitted?.({ decision, sentAt, primaryAlreadySent });

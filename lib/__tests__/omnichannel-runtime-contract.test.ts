@@ -105,7 +105,9 @@ describe("omnichannel runtime contracts", () => {
     expect(webhook).toContain("waitUntil(deferredTask)");
     expect(webhook).not.toContain("token=EVOLUTION_WEBHOOK_SECRET&deferred");
     expect(webhook).toContain("const automationTask = Promise.all(");
-    expect(webhook).toContain("waitUntil(\n      automationTask.then(() => undefined)");
+    expect(webhook).toContain("const settledAutomationTask = automationTask.then(() => undefined)");
+    expect(webhook).toContain("if (trustedInboxWorker) await settledAutomationTask");
+    expect(webhook).toContain("else waitUntil(settledAutomationTask)");
     expect(webhook).toContain("deferProcessor:");
     expect(webhook).toContain("waitUntil(task.then(() => undefined))");
     expect(webhook).toContain("evolutionBurstSafeSmartWait(");
@@ -149,9 +151,9 @@ describe("omnichannel runtime contracts", () => {
   });
 
   it("uses the canonical journey feature flag in the shared processor", () => {
-    const content = source("app/api/internal/process-follow-ups/route.ts");
+    const content = source("lib/server/process-agent-turn-v2.ts");
 
-    expect(content).toContain("if (isJourneyIsolationEnabled())");
+    expect(content).toContain("isJourneyIsolationEnabled()");
     expect(content).not.toContain('OMNICHANNEL_JOURNEYS_ENABLED === "true"');
   });
 
@@ -174,6 +176,12 @@ describe("omnichannel runtime contracts", () => {
     expect(phase2Start).toBeGreaterThan(0);
     expect(guard).toBeGreaterThan(phase2Start);
     expect(generateCall).toBeGreaterThan(guard);
+  });
+
+  it("propagates Evolution phase-2 failures to the durable inbox worker", () => {
+    const content = source("app/api/webhooks/evolution/route.ts");
+    expect(content).toContain("if (trustedInboxWorker) throw e;");
+    expect(content).toContain("x-mychatcrm-evolution-inbox-worker");
   });
 
   it("only fires the WhatsApp 'connected' alert with a fresh, confirmed live session", () => {

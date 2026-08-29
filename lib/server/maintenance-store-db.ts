@@ -1,7 +1,7 @@
 /**
  * Acesso ao estado de manutenção via Supabase (substitui maintenance-store-fs.ts).
  */
-import { createSupabaseAnonClient, createSupabaseServiceClient } from "@/lib/supabase/server";
+import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 const ROW_ID = "global";
 
@@ -32,9 +32,9 @@ function dbToState(row: DbMaintenanceRow): MaintenanceStateDb {
   };
 }
 
-/** Leitura pública via anon key (policy permite SELECT para todos). */
+/** Public HTTP response backed by a server-only read; admin columns never leave the route. */
 export async function readMaintenanceStatePublic(): Promise<MaintenanceStateDb> {
-  const sb = createSupabaseAnonClient();
+  const sb = createSupabaseServiceClient();
   const { data, error } = await sb
     .from("maintenance_mode")
     .select("*")

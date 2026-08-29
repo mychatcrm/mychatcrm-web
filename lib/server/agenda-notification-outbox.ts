@@ -674,7 +674,7 @@ async function resolveAgentTimezoneById(
   tenantId: string,
   agentId: string | null,
 ): Promise<string> {
-  const fallback = "America/Sao_Paulo";
+  const fallback = "UTC";
   if (!agentId) return fallback;
   try {
     const { data } = await sb

@@ -543,9 +543,11 @@ export async function generateAgentResponse(params: {
 
   const initialPlan = parseAgentTurnPlan(normalized.structuredData);
   const externalApiLookupTrace = initialPlan?.externalApiLookups ?? [];
+  let confirmedExternalToolResults: Array<{ label: string; value: unknown }> = [];
   if (initialPlan?.externalApiLookups.length) {
     const lookupResults = await Promise.all(initialPlan.externalApiLookups.slice(0, 2).map((request) =>
       executeAgentExternalApiLookup({ tenantId: params.tenantId, agentId: params.agentId, request })));
+    confirmedExternalToolResults = [{ label: "confirmed_external_get_results", value: lookupResults }];
     const finalResult = await generateAIResponse({
       tenantId: params.tenantId.trim(), agentId: params.agentId.trim(), customerId: params.customerId ?? params.conversationId ?? null,
       feature: params.feature, model, temperature,
@@ -553,7 +555,7 @@ export async function generateAgentResponse(params: {
         extraRequiredSystemBlocks: [
           "The authorized external GET lookup has already run. Do not request another lookup in this response; externalApiLookups must be []. Use only successful confirmed facts. On failure, state that the fact could not be confirmed and do not invent it.",
         ],
-        confirmedToolResults: [{ label: "confirmed_external_get_results", value: lookupResults }],
+        confirmedToolResults: confirmedExternalToolResults,
       }),
       metadata: { conversationId: params.conversationId ?? null, accountId: params.accountId ?? null,
         userId: params.userId ?? null, simulation: params.simulation === true, contextVersion: 2 },
@@ -595,6 +597,7 @@ export async function generateAgentResponse(params: {
           temperature,
           messages: compileTurnMessages({
             extraRequiredSystemBlocks: [correctionNote],
+            confirmedToolResults: confirmedExternalToolResults,
           }),
           metadata: {
             conversationId: params.conversationId ?? null,

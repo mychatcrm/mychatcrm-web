@@ -21,7 +21,6 @@ import { canAgentAutoContactLead } from "@/lib/server/agent-auto-contact-guard";
 import { resolveAuthorizedMetaLeadAgent } from "@/lib/server/meta-form-authorization";
 import { MetaLeadEventRecorder, type MetaLeadEventRow } from "@/lib/server/meta-lead-events-db";
 import {
-  buildFallbackInitialMessage,
   buildMetaInitialAgentPrompt,
   sanitizeInitialReply,
 } from "@/lib/server/meta-lead-graph";
@@ -354,15 +353,15 @@ export async function assignMetaLeadEventToAgent(params: {
     profileMetadata: (event.profile_metadata as Record<string, unknown>) ?? {},
   });
 
-  const aiResult = await generateAgentResponse({
-    tenantId,
-    agentId,
-    conversationId: remoteJid,
-    journeyId,
-    customerId: remoteJid,
-    feature: "agent_chat",
-    messages: [{ role: "user", content: aiPrompt }],
-  });
+  let aiResult: Awaited<ReturnType<typeof generateAgentResponse>>;
+  for (let attempt = 0; ; attempt += 1) {
+    aiResult = await generateAgentResponse({
+      tenantId, agentId, conversationId: remoteJid, journeyId,
+      customerId: remoteJid, feature: "agent_chat",
+      messages: [{ role: "user", content: aiPrompt }],
+    });
+    if (aiResult.ok || isAgentMissingInstructionsResult(aiResult) || attempt >= 2) break;
+  }
   if (isAgentMissingInstructionsResult(aiResult)) {
     await recordManualFailureOnAgent(sb, eventId, agentId, "agent_missing_instructions");
     return {
@@ -371,7 +370,20 @@ export async function assignMetaLeadEventToAgent(params: {
       status: 422,
     };
   }
-  const replyText = sanitizeInitialReply(aiResult.ok ? aiResult.text : "") || buildFallbackInitialMessage(fullName);
+  const replyText = sanitizeInitialReply(aiResult.ok ? aiResult.text : "");
+  if (!aiResult.ok || !replyText) {
+    await recordManualFailureOnAgent(
+      sb,
+      eventId,
+      agentId,
+      aiResult.ok ? "empty_agent_response" : `agent_generation_failed:${aiResult.code}`,
+    );
+    return {
+      ok: false,
+      error: "O agente não conseguiu gerar uma resposta segura. O lead foi preservado e nenhuma mensagem foi enviada.",
+      status: 503,
+    };
+  }
 
   const messageChannel = liveConnection.transport === "cloud_api" ? "meta_cloud" : "evolution";
   const messageConnectionId =

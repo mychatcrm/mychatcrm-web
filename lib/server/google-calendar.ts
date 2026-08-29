@@ -158,6 +158,8 @@ export type GoogleCalendarEventInput = {
   startAt: string;
   endAt: string;
   attendeeEmail?: string | null;
+  /** Explicit IANA timezone. UTC is the only neutral fallback for non-agent callers. */
+  timezone?: string | null;
 };
 
 export type GoogleCalendarEvent = {
@@ -171,6 +173,17 @@ export type GoogleCalendarEvent = {
   status: "confirmed" | "cancelled" | "pending";
   htmlLink?: string;
 };
+
+function normalizeGoogleTimezone(value: string | null | undefined): string {
+  const candidate = value?.trim();
+  if (!candidate) return "UTC";
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: candidate }).format(new Date());
+    return candidate;
+  } catch {
+    return "UTC";
+  }
+}
 
 type CalendarListItem = {
   id: string;
@@ -187,14 +200,14 @@ function mapGoogleEvent(item: Record<string, unknown>, calendarName = "Google Ca
   const startObj = item.start as { dateTime?: string; date?: string } | undefined;
   const endObj = item.end as { dateTime?: string; date?: string } | undefined;
 
-  // Bug C fix: all-day events (start.date sem dateTime) usam meia-noite de Brasília (UTC-3 = T03:00Z).
-  // Google retorna end.date como dia seguinte exclusivo, então end.dateT02:59:59Z = fim do dia em Brasília.
+  // All-day values are civil dates. Keep Google's exclusive end date without
+  // applying a country-specific offset; UTC is only a lossless DB carrier.
   const isAllDay = !startObj?.dateTime && !!startObj?.date;
   let startAt: string | null;
   let endAt: string | null;
   if (isAllDay && startObj?.date && endObj?.date) {
-    startAt = `${startObj.date}T03:00:00.000Z`;
-    endAt = `${endObj.date}T02:59:59.000Z`;
+    startAt = `${startObj.date}T00:00:00.000Z`;
+    endAt = `${endObj.date}T00:00:00.000Z`;
   } else {
     startAt = startObj?.dateTime ? new Date(startObj.dateTime).toISOString() : null;
     endAt = endObj?.dateTime ? new Date(endObj.dateTime).toISOString() : null;
@@ -297,12 +310,13 @@ export async function createGoogleCalendarEvent(
 ): Promise<GoogleCalendarEvent> {
   const accessToken = await getValidGoogleAccessToken(tenantId);
   if (!accessToken) throw new Error("Google Agenda não conectada.");
+  const timezone = normalizeGoogleTimezone(input.timezone);
   const body: Record<string, unknown> = {
     summary: input.title,
     description: input.description ?? undefined,
     location: input.location ?? undefined,
-    start: { dateTime: input.startAt, timeZone: "America/Sao_Paulo" },
-    end: { dateTime: input.endAt, timeZone: "America/Sao_Paulo" },
+    start: { dateTime: input.startAt, timeZone: timezone },
+    end: { dateTime: input.endAt, timeZone: timezone },
   };
   if (input.attendeeEmail) {
     body.attendees = [{ email: input.attendeeEmail }];
@@ -332,12 +346,13 @@ export async function updateGoogleCalendarEvent(
 ): Promise<GoogleCalendarEvent> {
   const accessToken = await getValidGoogleAccessToken(tenantId);
   if (!accessToken) throw new Error("Google Agenda não conectada.");
+  const timezone = normalizeGoogleTimezone(input.timezone);
   const body: Record<string, unknown> = {
     summary: input.title,
     description: input.description ?? undefined,
     location: input.location ?? undefined,
-    start: { dateTime: input.startAt, timeZone: "America/Sao_Paulo" },
-    end: { dateTime: input.endAt, timeZone: "America/Sao_Paulo" },
+    start: { dateTime: input.startAt, timeZone: timezone },
+    end: { dateTime: input.endAt, timeZone: timezone },
   };
   if (input.attendeeEmail) {
     body.attendees = [{ email: input.attendeeEmail }];

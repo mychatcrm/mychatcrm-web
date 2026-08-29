@@ -3,6 +3,8 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 const META_SCHEDULER_PATH = "/api/internal/meta-maintenance";
 export const FOLLOW_UP_SCHEDULER_PATH = "/api/internal/process-follow-ups";
+export const AGENDA_REMINDER_SCHEDULER_PATH = "/api/internal/process-agenda-reminders";
+export const EVOLUTION_INBOX_SCHEDULER_PATH = "/api/internal/process-evolution-inbox";
 const MAX_CLOCK_SKEW_SECONDS = 120;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

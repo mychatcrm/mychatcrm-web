@@ -54,6 +54,7 @@ import { sendAgentOutboundMediaViaEvolution } from "@/lib/server/send-agent-outb
 import { getEvolutionInstanceByName, updateEvolutionInstanceStateByName } from "@/lib/server/tenant-evolution-instance-db";
 import { assertEvolutionWaJidUnique } from "@/lib/server/whatsapp-number-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { enqueueEvolutionWebhook } from "@/lib/server/evolution-webhook-inbox";
 import { uploadMediaToR2 } from "@/lib/integrations/r2-storage";
 import {
   buildDeterministicHandoffSummary,
@@ -78,8 +79,7 @@ import {
 import { isSmartWaitGloballyDisabled, runInboundSmartWaitFlow } from "@/lib/server/evolution-webhook-agent-flow";
 import { extractRecentClientMessages } from "@/lib/server/evolution-agent-reply";
 import { resolveAgentHandoffSettings } from "@/lib/server/agent-handoff-runtime";
-import { scheduleFollowUpAfterInbound, scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
-import { followUpInteligenteFromMetadata } from "@/lib/server/follow-up-settings";
+import { cancelPendingFollowUpJobs, scheduleRetomadaJob } from "@/lib/server/follow-up-jobs";
 import {
   notifyTenantIntegrationConnected,
   notifyTenantIntegrationDisconnected,
@@ -132,6 +132,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 180;
 
 const DEFERRED_EVOLUTION_HEADER = "x-mychatcrm-evolution-deferred";
+const EVOLUTION_INBOX_WORKER_HEADER = "x-mychatcrm-evolution-inbox-worker";
 
 function verifyWebhookToken(request: Request): boolean {
   const expected = process.env.EVOLUTION_WEBHOOK_SECRET?.trim();
@@ -573,6 +574,8 @@ export async function POST(request: Request) {
     verifyInternalApiRequest(request, {
       allowedSecrets: ["INTERNAL_API_TOKEN", "AGENT_RESPONSE_JOBS_SECRET", "CRON_SECRET"],
     });
+  const trustedInboxWorker =
+    trustedDeferredRequest && request.headers.get(EVOLUTION_INBOX_WORKER_HEADER) === "1";
 
   if (!trustedDeferredRequest && !verifyWebhookToken(request)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -585,31 +588,39 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  // A Evolution envia eventos da mesma instância em série e espera o ACK
-  // anterior antes de liberar o próximo. O endpoint público faz somente
-  // autenticação + parsing e devolve 200; o mesmo payload segue para uma
-  // invocação interna autenticada, sem carregar o token do webhook na URL.
+  // Persist before ACK. Slow parsing, media, AI and the 65-second burst run in
+  // a claimed worker and never hold the provider webhook open.
   if (!trustedDeferredRequest) {
-    const deferredUrl = new URL("/api/webhooks/evolution", new URL(request.url).origin);
-    const deferredTask = fetch(deferredUrl, {
+    let persisted: Awaited<ReturnType<typeof enqueueEvolutionWebhook>>;
+    try {
+      persisted = await enqueueEvolutionWebhook({ payload: parsed });
+    } catch (error) {
+      console.error("[webhooks/evolution] inbox_persist_failed", {
+        error: error instanceof Error ? error.message : "persist_failed",
+      });
+      // A failed durable write must be retried by Evolution, never silently lost.
+      return NextResponse.json({ error: "temporarily_unavailable" }, { status: 503 });
+    }
+    if (persisted.duplicate) return NextResponse.json({ ok: true, duplicate: true });
+    const processorUrl = new URL("/api/internal/process-evolution-inbox", new URL(request.url).origin);
+    const deferredTask = fetch(processorUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        [DEFERRED_EVOLUTION_HEADER]: "1",
         ...internalApiAuthHeaders(),
       },
-      body: JSON.stringify(parsed),
+      body: "{}",
     })
       .then(async (response) => {
         if (!response.ok) {
-          console.error("[webhooks/evolution] deferred ingress rejected", {
+          console.error("[webhooks/evolution] inbox processor rejected", {
             status: response.status,
           });
         }
       })
       .catch((error) => {
         console.error(
-          "[webhooks/evolution] deferred ingress failed",
+          "[webhooks/evolution] inbox processor trigger failed",
           error instanceof Error ? error.message : error,
         );
       });
@@ -1067,29 +1078,13 @@ export async function POST(request: Request) {
           });
 
           try {
-            if (agentId) {
-              const { data: agentMetaRow } = await sbState
-                .from("tenant_agents")
-                .select("metadata")
-                .eq("tenant_id", row.tenant_id)
-                .eq("agent_id", agentId)
-                .maybeSingle();
-              const agentMetadata =
-                agentMetaRow?.metadata && typeof agentMetaRow.metadata === "object"
-                  ? (agentMetaRow.metadata as Record<string, unknown>)
-                  : {};
-              await scheduleFollowUpAfterInbound({
-                sb: sbState,
-                tenantId: row.tenant_id,
-                agentId,
-                remoteJid: msg.remoteJid,
-                leadId,
-                journeyId: journey?.id ?? null,
-                channel: "evolution",
-                connectionId: row.id,
-                settings: followUpInteligenteFromMetadata(agentMetadata),
-              });
-            }
+            await cancelPendingFollowUpJobs({
+              sb: sbState,
+              tenantId: row.tenant_id,
+              remoteJid: msg.remoteJid,
+              journeyId: journey?.id ?? null,
+              reason: "customer_replied",
+            });
           } catch (followUpErr) {
             console.warn(
               "[webhooks/evolution] follow-up schedule",
@@ -1769,17 +1764,23 @@ export async function POST(request: Request) {
           }
         } catch (e) {
           console.warn("[webhooks/evolution] Phase 2 flow error", e instanceof Error ? e.message : e);
+          // The durable inbox owns retries. Swallowing this error in the
+          // worker path would mark the inbox row as completed even though the
+          // automation phase failed. The public ACK path remains fail-open;
+          // only the authenticated worker receives a retryable 5xx.
+          if (trustedInboxWorker) throw e;
         }
       }),
     );
-    waitUntil(
-      automationTask.then(() => undefined).catch((error) => {
+    const settledAutomationTask = automationTask.then(() => undefined).catch((error) => {
         console.warn(
           "[webhooks/evolution] deferred Phase 2 failed",
           error instanceof Error ? error.message : error,
         );
-      }),
-    );
+        throw error;
+      });
+    if (trustedInboxWorker) await settledAutomationTask;
+    else waitUntil(settledAutomationTask);
   }
 
   return NextResponse.json({ ok: true });

@@ -287,8 +287,13 @@ describe("agent-cta-scheduler", () => {
       },
       "America/Sao_Paulo",
     );
-    expect(block).toContain("CONTEXTO DE AGENDAMENTO");
-    expect(block).toContain("remarcar");
+    expect(JSON.parse(block)).toMatchObject({
+      type: "existing_appointment",
+      status: "pending",
+      startAt: "2026-05-30T17:00:00.000Z",
+      timezone: "America/Sao_Paulo",
+      requiresExplicitRescheduleConfirmation: true,
+    });
   });
 
   it("creates agenda event when no active duplicate exists", async () => {
