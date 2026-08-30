@@ -18,6 +18,10 @@ const runtimeIndexesMigration = readFileSync(
   join(process.cwd(), "supabase/migrations/20260829110000_agent_runtime_v3_fk_indexes.sql"),
   "utf8",
 );
+const runtimeMonitorMigration = readFileSync(
+  join(process.cwd(), "supabase/migrations/20260830100000_agent_runtime_monitor_due_at.sql"),
+  "utf8",
+);
 
 describe("agent universal runtime v3 migration", () => {
   it("creates additive service-only reminders with exact authorization identity", () => {
@@ -96,5 +100,12 @@ describe("agent universal runtime v3 migration", () => {
     ]) {
       expect(runtimeIndexesMigration).toContain(indexName);
     }
+  });
+
+  it("monitors only overdue follow-ups and resolves recovered alerts", () => {
+    expect(runtimeMonitorMigration).toContain("scheduled_at<now()-interval '5 minutes'");
+    expect(runtimeMonitorMigration).toContain("set_agent_runtime_queue_alert_v3");
+    expect(runtimeMonitorMigration).toContain("set status='resolved'");
+    expect(runtimeMonitorMigration).toContain("select private.monitor_agent_runtime_v3()");
   });
 });
