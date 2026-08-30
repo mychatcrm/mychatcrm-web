@@ -159,6 +159,48 @@ export function ExternalApiConnectorsPanel({
     } catch (e) { setError(e instanceof Error ? e.message : "Checkout indisponível."); setBusy(false); }
   };
 
+  // Testar/Sincronizar/Excluir sem try/catch nem indicador de carregamento
+  // faziam o botão parecer travado (sem feedback nenhum por ~2s, ou em
+  // silêncio total se a resposta não fosse JSON) — invisível nos logs de
+  // servidor porque o erro fica só no navegador. `busyItem` cobre as 3 ações.
+  const [busyItem, setBusyItem] = useState<{ id: string; action: "test" | "sync" | "delete" } | null>(null);
+  const runTest = async (item: SnapshotBackedConnector) => {
+    setBusyItem({ id: item.id, action: "test" });
+    try {
+      const response = await fetch(`/api/client/external-api-connectors/${item.id}/test`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      const data = await response.json().catch(() => ({}));
+      alert(response.ok ? `Teste concluído: ${data.data?.records?.length ?? 0} resultado(s).` : `Falha no teste: ${explainExternalApiError(data.errorCode, data.httpStatus)}`);
+    } catch {
+      alert("Falha ao testar: não foi possível completar a chamada (rede ou tempo esgotado). Tente de novo.");
+    } finally {
+      setBusyItem(null); await load();
+    }
+  };
+  const runSync = async (item: SnapshotBackedConnector) => {
+    setBusyItem({ id: item.id, action: "sync" });
+    try {
+      const response = await fetch(`/api/client/external-api-connectors/${item.id}/sync`, { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      alert(response.ok ? `Sincronizado: ${data.itemCount ?? 0} item(ns).` : `Falha ao sincronizar: ${explainExternalApiError(data.error)}`);
+    } catch {
+      alert("Falha ao sincronizar: não foi possível completar a chamada (rede ou tempo esgotado). Tente de novo.");
+    } finally {
+      setBusyItem(null); await load();
+    }
+  };
+  const runDelete = async (item: SnapshotBackedConnector) => {
+    if (!confirm("Remover esta API?")) return;
+    setBusyItem({ id: item.id, action: "delete" });
+    try {
+      const response = await fetch(`/api/client/external-api-connectors/${item.id}`, { method: "DELETE" });
+      if (!response.ok) { const data = await response.json().catch(() => ({})); alert(data.error ?? "Não foi possível remover a API."); }
+    } catch {
+      alert("Falha ao remover: não foi possível completar a chamada (rede ou tempo esgotado). Tente de novo.");
+    } finally {
+      setBusyItem(null); await load();
+    }
+  };
+
   return <section className="rounded-2xl border border-line bg-surface-card p-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><div className="flex items-center gap-2"><DatabaseZap className="size-5 text-primary"/><h2 className="font-semibold text-content">APIs externas dos agentes</h2></div>
@@ -186,7 +228,7 @@ export function ExternalApiConnectorsPanel({
               <p className="mt-1 text-xs text-content-muted">Sincronização ligada — ainda não rodou.</p>
             )
           ) : null}</div>
-        {canManage ? <div className="flex gap-2">{item.syncEnabled ? <Button variant="outline" onClick={async () => { const response = await fetch(`/api/client/external-api-connectors/${item.id}/sync`, { method: "POST" }); const data = await response.json(); alert(response.ok ? `Sincronizado: ${data.itemCount ?? 0} item(ns).` : `Falha ao sincronizar: ${explainExternalApiError(data.error)}`); await load(); }}>Sincronizar agora</Button> : null}<Button variant="outline" onClick={async () => { const response = await fetch(`/api/client/external-api-connectors/${item.id}/test`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }); const data = await response.json(); alert(response.ok ? `Teste concluído: ${data.data?.records?.length ?? 0} resultado(s).` : `Falha no teste: ${explainExternalApiError(data.errorCode, data.httpStatus)}`); await load(); }}>Testar</Button><Button variant="outline" onClick={() => void openEditor(item)}>Editar</Button><Button variant="ghost" onClick={async () => { if (!confirm("Remover esta API?")) return; await fetch(`/api/client/external-api-connectors/${item.id}`, { method: "DELETE" }); await load(); }}><Trash2 className="size-4"/></Button></div> : null}
+        {canManage ? <div className="flex gap-2">{item.syncEnabled ? <Button variant="outline" disabled={busyItem !== null && busyItem.id !== item.id} isLoading={busyItem?.id === item.id && busyItem.action === "sync"} onClick={() => void runSync(item)}>Sincronizar agora</Button> : null}<Button variant="outline" disabled={busyItem !== null && busyItem.id !== item.id} isLoading={busyItem?.id === item.id && busyItem.action === "test"} onClick={() => void runTest(item)}>Testar</Button><Button variant="outline" disabled={busyItem !== null} onClick={() => void openEditor(item)}>Editar</Button><Button variant="ghost" disabled={busyItem !== null && busyItem.id !== item.id} isLoading={busyItem?.id === item.id && busyItem.action === "delete"} onClick={() => void runDelete(item)}><Trash2 className="size-4"/></Button></div> : null}
       </div>)}</div>
     {!canManage ? <p className="mt-4 flex items-center gap-2 text-sm text-content-muted"><ShieldCheck className="size-4"/>Somente o titular da conta pode cadastrar credenciais e contratar capacidade.</p> : null}
 
