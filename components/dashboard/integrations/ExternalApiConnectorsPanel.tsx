@@ -5,7 +5,7 @@ import { DatabaseZap, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { PanelButton as Button } from "@/components/panel/ui/PanelButton";
 import { Modal } from "@/components/ui/Modal";
 import { createStandardExternalApiOperations } from "@/lib/external-api/standard-contract";
-import type { ExternalApiConnectorInput, ExternalApiConnectorSummary, ExternalApiOperationInput } from "@/lib/external-api/types";
+import { EXTERNAL_API_SYNC_FREQUENCIES_MINUTES, type ExternalApiConnectorInput, type ExternalApiConnectorSummary, type ExternalApiOperationInput, type ExternalApiPagination } from "@/lib/external-api/types";
 import type { ExternalApiConnectorCard, IntegrationsDashboardSnapshotV1 } from "@/lib/integrations/dashboard-snapshot";
 
 type ExternalApiConnectorDraft = ExternalApiConnectorInput & { operations: ExternalApiOperationInput[] };
@@ -16,7 +16,18 @@ const usesStandardContract = (operations: ExternalApiOperationInput[]) => {
   const expected = createStandardExternalApiOperations().map(signature);
   return operations.length === expected.length && operations.every((operation, index) => signature(operation) === expected[index]);
 };
-const emptyConnector = (): ExternalApiConnectorDraft => ({ name: "", description: "", baseUrl: "https://", authType: "none", enabled: true, operations: createStandardExternalApiOperations() });
+const emptyConnector = (): ExternalApiConnectorDraft => ({ name: "", description: "", baseUrl: "https://", authType: "none", enabled: true, operations: createStandardExternalApiOperations(), syncEnabled: false });
+
+const SYNC_FREQUENCY_LABELS: Record<number, string> = { 30: "30 min", 60: "1 hora", 180: "3 horas", 360: "6 horas", 720: "12 horas", 1440: "1 dia" };
+const emptyPagination = (): ExternalApiPagination => ({ mode: "none", maxPages: 10 });
+function fmtSyncAt(iso: string | null): string {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
 
 /** Explicação em português pro código de erro técnico — sem isto, a única pista era um alert() com "json_required". */
 const ERROR_EXPLANATIONS: Record<string, string> = {
@@ -116,9 +127,13 @@ export function ExternalApiConnectorsPanel({
       }
     }
     setError(""); setEditing(item ?? "new");
-    setAdvanced(editable ? !usesStandardContract(editable.operations) : false);
+    setAdvanced(editable ? !usesStandardContract(editable.operations) || editable.syncEnabled : false);
     setDraft(editable ? { name: editable.name, description: editable.description, baseUrl: editable.baseUrl, authType: editable.authType,
-      authHeaderName: editable.authHeaderName ?? undefined, authUsername: editable.authUsername ?? undefined, enabled: editable.enabled,
+      authHeaderName: editable.authHeaderName ?? undefined, authUsername: editable.authUsername ?? undefined,
+      oauthTokenUrl: editable.oauthTokenUrl ?? undefined, oauthClientId: editable.oauthClientId ?? undefined,
+      environment: editable.environment, enabled: editable.enabled,
+      syncEnabled: editable.syncEnabled, syncOperationKey: editable.syncOperationKey ?? undefined,
+      syncFrequencyMinutes: editable.syncFrequencyMinutes ?? undefined,
       operations: editable.operations } : emptyConnector());
     if (editable) setEditing(editable);
   };
@@ -161,8 +176,17 @@ export function ExternalApiConnectorsPanel({
             <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">Funcionando{item.lastHealthAt ? ` — último teste ${fmtHealthAt(item.lastHealthAt)}` : ""}</p>
           ) : (
             <p className="mt-1 text-xs text-content-muted">Ainda não testada — clique em &quot;Testar&quot;.</p>
-          )}</div>
-        {canManage ? <div className="flex gap-2"><Button variant="outline" onClick={async () => { const response = await fetch(`/api/client/external-api-connectors/${item.id}/test`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }); const data = await response.json(); alert(response.ok ? `Teste concluído: ${data.data?.records?.length ?? 0} resultado(s).` : `Falha no teste: ${explainExternalApiError(data.errorCode, data.httpStatus)}`); await load(); }}>Testar</Button><Button variant="outline" onClick={() => void openEditor(item)}>Editar</Button><Button variant="ghost" onClick={async () => { if (!confirm("Remover esta API?")) return; await fetch(`/api/client/external-api-connectors/${item.id}`, { method: "DELETE" }); await load(); }}><Trash2 className="size-4"/></Button></div> : null}
+          )}
+          {item.syncEnabled ? (
+            item.lastSyncStatus === "error" ? (
+              <p className="mt-1 text-xs text-danger">Sincronização falhou{item.lastSyncAt ? ` (${fmtSyncAt(item.lastSyncAt)})` : ""}: {explainExternalApiError(item.lastSyncError)}</p>
+            ) : item.lastSyncStatus === "success" ? (
+              <p className="mt-1 text-xs text-content-muted">Catálogo sincronizado — {item.lastSyncItemCount ?? 0} item(ns){item.lastSyncAt ? ` em ${fmtSyncAt(item.lastSyncAt)}` : ""}</p>
+            ) : (
+              <p className="mt-1 text-xs text-content-muted">Sincronização ligada — ainda não rodou.</p>
+            )
+          ) : null}</div>
+        {canManage ? <div className="flex gap-2">{item.syncEnabled ? <Button variant="outline" onClick={async () => { const response = await fetch(`/api/client/external-api-connectors/${item.id}/sync`, { method: "POST" }); const data = await response.json(); alert(response.ok ? `Sincronizado: ${data.itemCount ?? 0} item(ns).` : `Falha ao sincronizar: ${explainExternalApiError(data.error)}`); await load(); }}>Sincronizar agora</Button> : null}<Button variant="outline" onClick={async () => { const response = await fetch(`/api/client/external-api-connectors/${item.id}/test`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }); const data = await response.json(); alert(response.ok ? `Teste concluído: ${data.data?.records?.length ?? 0} resultado(s).` : `Falha no teste: ${explainExternalApiError(data.errorCode, data.httpStatus)}`); await load(); }}>Testar</Button><Button variant="outline" onClick={() => void openEditor(item)}>Editar</Button><Button variant="ghost" onClick={async () => { if (!confirm("Remover esta API?")) return; await fetch(`/api/client/external-api-connectors/${item.id}`, { method: "DELETE" }); await load(); }}><Trash2 className="size-4"/></Button></div> : null}
       </div>)}</div>
     {!canManage ? <p className="mt-4 flex items-center gap-2 text-sm text-content-muted"><ShieldCheck className="size-4"/>Somente o titular da conta pode cadastrar credenciais e contratar capacidade.</p> : null}
 
@@ -170,14 +194,25 @@ export function ExternalApiConnectorsPanel({
       <div className="space-y-4 text-sm">
         <label className="block">Nome<input className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })}/></label>
         <label className="block">URL-base HTTPS<input className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.baseUrl} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}/></label>
-        <label className="block">Autenticação<select className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.authType} onChange={(e) => setDraft({ ...draft, authType: e.target.value as ExternalApiConnectorInput["authType"] })}><option value="none">Sem chave</option><option value="bearer">Bearer</option><option value="api_key">API Key em header</option><option value="basic">Basic</option></select></label>
+        <label className="block">Autenticação<select className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.authType} onChange={(e) => setDraft({ ...draft, authType: e.target.value as ExternalApiConnectorInput["authType"] })}><option value="none">Sem chave</option><option value="bearer">Bearer</option><option value="api_key">API Key em header</option><option value="basic">Basic</option><option value="oauth2_client_credentials">OAuth 2.0 (client credentials)</option></select></label>
         {draft.authType === "api_key" ? <label className="block">Nome do header<input className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.authHeaderName ?? "X-Api-Key"} onChange={(e) => setDraft({ ...draft, authHeaderName: e.target.value })}/></label> : null}
         {draft.authType === "basic" ? <label className="block">Usuário<input className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.authUsername ?? ""} onChange={(e) => setDraft({ ...draft, authUsername: e.target.value })}/></label> : null}
-        {draft.authType !== "none" ? <label className="block">Segredo {editing !== "new" ? "(deixe vazio para manter)" : ""}<input type="password" autoComplete="new-password" className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.secret ?? ""} onChange={(e) => setDraft({ ...draft, secret: e.target.value })}/></label> : null}
+        {draft.authType === "oauth2_client_credentials" ? <><label className="block">URL do token (Token URL)<input className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" placeholder="https://api.exemplo.com/oauth/token" value={draft.oauthTokenUrl ?? ""} onChange={(e) => setDraft({ ...draft, oauthTokenUrl: e.target.value })}/></label>
+        <label className="block">Client ID<input className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.oauthClientId ?? ""} onChange={(e) => setDraft({ ...draft, oauthClientId: e.target.value })}/></label></> : null}
+        {draft.authType !== "none" ? <label className="block">{draft.authType === "oauth2_client_credentials" ? "Client Secret" : "Segredo"} {editing !== "new" ? "(deixe vazio para manter)" : ""}<input type="password" autoComplete="new-password" className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.secret ?? ""} onChange={(e) => setDraft({ ...draft, secret: e.target.value })}/></label> : null}
         <div className="rounded-lg border border-line bg-surface-elevated p-3">
           <button type="button" className="flex w-full items-center justify-between text-left" aria-expanded={advanced} onClick={() => setAdvanced((current) => !current)}><span><strong>Modo avançado</strong><span className="mt-0.5 block text-xs text-content-muted">Opcional: use apenas quando a API não seguir o contrato padrão.</span></span><span aria-hidden>{advanced ? "−" : "+"}</span></button>
         </div>
         {advanced ? <><label className="block">Descrição para o agente<textarea className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })}/></label>
+        <div className="rounded-lg border border-line bg-surface-elevated p-3 space-y-3">
+          <div className="flex items-center justify-between"><div><strong>Sincronizar catálogo</strong><p className="mt-0.5 text-xs text-content-muted">Importa o catálogo inteiro periodicamente pro banco interno — o agente passa a consultar isso, sem chamar o fornecedor a cada pergunta.</p></div>
+            <button type="button" role="switch" aria-checked={draft.syncEnabled === true} onClick={() => setDraft({ ...draft, syncEnabled: !draft.syncEnabled })} className={`h-6 w-11 shrink-0 rounded-full transition-colors ${draft.syncEnabled ? "bg-primary" : "bg-surface-card"} border border-line relative`}><span className={`absolute top-0.5 size-5 rounded-full bg-white transition-transform ${draft.syncEnabled ? "translate-x-5" : "translate-x-0.5"}`}/></button>
+          </div>
+          {draft.syncEnabled ? <div className="grid gap-2 sm:grid-cols-2">
+            <label className="block text-xs">Operação-fonte (listagem)<select className="mt-1 w-full rounded-lg border border-line bg-surface-card p-2" value={draft.syncOperationKey ?? ""} onChange={(e) => setDraft({ ...draft, syncOperationKey: e.target.value })}><option value="">Escolher…</option>{draft.operations.map((operation) => <option key={operation.operationKey} value={operation.operationKey}>{operation.name || operation.operationKey}</option>)}</select></label>
+            <label className="block text-xs">Frequência<select className="mt-1 w-full rounded-lg border border-line bg-surface-card p-2" value={draft.syncFrequencyMinutes ?? ""} onChange={(e) => setDraft({ ...draft, syncFrequencyMinutes: Number(e.target.value) as ExternalApiConnectorInput["syncFrequencyMinutes"] })}><option value="">Escolher…</option>{EXTERNAL_API_SYNC_FREQUENCIES_MINUTES.map((minutes) => <option key={minutes} value={minutes}>{SYNC_FREQUENCY_LABELS[minutes]}</option>)}</select></label>
+          </div> : null}
+        </div>
         <div className="space-y-3"><div className="flex justify-between"><strong>Operações de consulta</strong><Button variant="ghost" onClick={() => draft.operations.length < 10 && setDraft({ ...draft, operations: [...draft.operations, emptyOperation()] })}>+ Operação</Button></div>
           {draft.operations.map((operation, index) => <div key={index} className="grid gap-2 rounded-lg border border-line p-3 sm:grid-cols-2">
             <input aria-label="Chave" className="rounded border border-line bg-surface-elevated p-2" value={operation.operationKey} onChange={(e) => setDraft({ ...draft, operations: draft.operations.map((o,i) => i === index ? { ...o, operationKey: e.target.value } : o) })}/>
@@ -197,6 +232,12 @@ export function ExternalApiConnectorsPanel({
               {(["itemsPath","id","title","availability","price","currency","link","media"] as const).map((field) => <input key={field} className="rounded border border-line bg-surface-elevated p-2" placeholder={field} value={operation.responseMapping[field] ?? ""} onChange={(e) => setDraft({ ...draft, operations: draft.operations.map((o,i) => i === index ? { ...o, responseMapping: { ...o.responseMapping, [field]: e.target.value || undefined } } : o) })}/>)}
             </div></div>
             <label className="text-xs">Cache<select className="ml-2 rounded border border-line bg-surface-elevated p-2" value={operation.cacheTtlSeconds} onChange={(e) => setDraft({ ...draft, operations: draft.operations.map((o,i) => i === index ? { ...o, cacheTtlSeconds: Number(e.target.value) as 0 | 30 | 60 | 120 | 300 } : o) })}><option value="0">Desligado</option><option value="30">30s</option><option value="60">60s</option><option value="120">120s</option><option value="300">300s</option></select></label>
+            {draft.syncOperationKey === operation.operationKey ? <div className="space-y-2 sm:col-span-2 rounded border border-line bg-surface-elevated p-2"><p className="text-xs font-semibold">Paginação (usada só na sincronização)</p><div className="grid gap-2 sm:grid-cols-4">
+              <select aria-label="Modo de paginação" className="rounded border border-line bg-surface-card p-2 text-xs" value={(operation.pagination ?? emptyPagination()).mode} onChange={(e) => setDraft({ ...draft, operations: draft.operations.map((o,i) => i === index ? { ...o, pagination: { ...(o.pagination ?? emptyPagination()), mode: e.target.value as ExternalApiPagination["mode"] } } : o) })}><option value="none">Sem paginação</option><option value="page_param">Parâmetro de página</option><option value="cursor_param">Cursor</option></select>
+              {(operation.pagination?.mode === "page_param" || operation.pagination?.mode === "cursor_param") ? <input aria-label="Nome do parâmetro" placeholder={operation.pagination.mode === "page_param" ? "nome do parâmetro (ex.: page)" : "nome do parâmetro do cursor"} className="rounded border border-line bg-surface-card p-2 text-xs" value={operation.pagination.pageParam ?? ""} onChange={(e) => setDraft({ ...draft, operations: draft.operations.map((o,i) => i === index ? { ...o, pagination: { ...(o.pagination ?? emptyPagination()), pageParam: e.target.value } } : o) })}/> : null}
+              {operation.pagination?.mode === "page_param" ? <input aria-label="Nome do parâmetro de tamanho de página" placeholder="parâmetro de tamanho (opcional)" className="rounded border border-line bg-surface-card p-2 text-xs" value={operation.pagination.pageSizeParam ?? ""} onChange={(e) => setDraft({ ...draft, operations: draft.operations.map((o,i) => i === index ? { ...o, pagination: { ...(o.pagination ?? emptyPagination()), pageSizeParam: e.target.value } } : o) })}/> : null}
+              {operation.pagination?.mode === "cursor_param" ? <input aria-label="Caminho do cursor na resposta" placeholder="caminho do cursor na resposta (ex.: paging.next)" className="rounded border border-line bg-surface-card p-2 text-xs" value={operation.pagination.cursorPath ?? ""} onChange={(e) => setDraft({ ...draft, operations: draft.operations.map((o,i) => i === index ? { ...o, pagination: { ...(o.pagination ?? emptyPagination()), cursorPath: e.target.value } } : o) })}/> : null}
+            </div></div> : null}
             {draft.operations.length > 1 ? <button type="button" className="text-right text-xs text-danger" onClick={() => setDraft({ ...draft, operations: draft.operations.filter((_,i) => i !== index) })}>Remover operação</button> : null}
           </div>)}</div></> : <p className="text-xs text-content-muted">O MyChatCRM usará automaticamente lista, busca e detalhe e normalizará a resposta JSON.</p>}
       </div>

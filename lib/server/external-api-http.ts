@@ -70,6 +70,7 @@ export function buildExternalApiRequest(params: {
   args: ExternalApiRequestArgs;
   authType: ExternalApiAuthType;
   authHeaderName?: string | null;
+  /** Pra oauth2_client_credentials, `token` já é o access token resolvido (getValidOAuthAccessToken) — nunca client_id/client_secret aqui. */
   credential?: Record<string, string> | null;
 }): { url: URL; headers: Record<string, string>; body: null } {
   let path = params.operation.pathTemplate;
@@ -92,7 +93,9 @@ export function buildExternalApiRequest(params: {
   if (url.origin !== base.origin || url.hostname !== base.hostname) throw new ExternalApiRequestError("external_api_host_mismatch");
   query.forEach((value, key) => url.searchParams.set(key, value));
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (params.authType === "bearer") headers.Authorization = `Bearer ${params.credential?.token ?? ""}`;
+  if (params.authType === "bearer" || params.authType === "oauth2_client_credentials") {
+    headers.Authorization = `Bearer ${params.credential?.token ?? ""}`;
+  }
   if (params.authType === "api_key") headers[params.authHeaderName || "X-Api-Key"] = params.credential?.token ?? "";
   if (params.authType === "basic") {
     headers.Authorization = `Basic ${Buffer.from(`${params.credential?.username ?? ""}:${params.credential?.password ?? ""}`, "utf8").toString("base64")}`;

@@ -6,6 +6,8 @@ import { decryptExternalApiCredential } from "@/lib/server/external-api-crypto";
 import { ExternalApiRequestError, buildExternalApiRequest, executeExternalApiHttpRequest } from "@/lib/server/external-api-http";
 import { normalizeExternalApiResponse } from "@/lib/server/external-api-normalize";
 import { listExternalApiConnectors } from "@/lib/server/external-api-connectors";
+import { queryExternalApiCatalog } from "@/lib/server/external-api-catalog";
+import { getValidOAuthAccessToken } from "@/lib/server/external-api-oauth";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 type Row = Record<string, unknown>;
@@ -77,6 +79,25 @@ export async function executeAgentExternalApiLookup(params: {
     operationRow = operationResult.data as Row | null;
     if (!operationRow) throw new Error("external_api_operation_not_found");
     operationName = String(operationRow.name);
+
+    // Conector com catálogo sincronizado: lê a tabela interna (barata, sem
+    // limite de chamada externo pra respeitar) em vez de chamar o fornecedor
+    // ao vivo. Sem sync, segue exatamente o caminho de sempre abaixo.
+    if (connectorRow.sync_enabled === true) {
+      const parameters = Array.isArray(operationRow.parameters) ? operationRow.parameters as ExternalApiOperationInput["parameters"] : [];
+      const normalized = await queryExternalApiCatalog({
+        tenantId: params.tenantId, connectorId: connector.id, operationKey: params.request.operationKey,
+        parameters, arguments: params.request.arguments,
+      });
+      await sb.from("external_api_call_logs").insert({
+        tenant_id: params.tenantId, connector_id: connector.id, operation_id: String(operationRow.id),
+        agent_id: params.agentId, status: "success", latency_ms: Date.now() - startedAt,
+        result_count: normalized.records.length,
+        args_hash: hashArgs(Object.fromEntries(params.request.arguments.slice(0, 20).map((item) => [item.name, item.value]))),
+      });
+      return { connectorId: connector.id, connectorName, operationKey: params.request.operationKey, operationName, ok: true, data: normalized };
+    }
+
     const { data: allowed, error: rateError } = await sb.rpc("consume_external_api_rate_limit", {
       p_tenant_id: params.tenantId, p_connector_id: connector.id, p_limit: 60, p_window_seconds: 60,
     });
@@ -91,9 +112,20 @@ export async function executeAgentExternalApiLookup(params: {
         .eq("cache_key", argsHash).gt("expires_at", new Date().toISOString()).maybeSingle();
       if (cached?.normalized_result) return { connectorId: connector.id, connectorName, operationKey: params.request.operationKey, operationName, ok: true, data: cached.normalized_result };
     }
-    const credential = connectorRow.credential_ciphertext
-      ? decryptExternalApiCredential(String(connectorRow.credential_ciphertext)) : null;
-    if (connectorRow.auth_type !== "none" && !credential) throw new Error("external_api_credentials_unavailable");
+    let credential: Record<string, string> | null = null;
+    if (connectorRow.auth_type === "oauth2_client_credentials") {
+      const authConfig = connectorRow.auth_config && typeof connectorRow.auth_config === "object" ? connectorRow.auth_config as Row : {};
+      const clientSecret = connectorRow.credential_ciphertext ? decryptExternalApiCredential(String(connectorRow.credential_ciphertext)) : null;
+      if (!clientSecret?.token || !authConfig.tokenUrl || !authConfig.clientId) throw new Error("external_api_credentials_unavailable");
+      const accessToken = await getValidOAuthAccessToken({
+        connectorId: connector.id, tenantId: params.tenantId,
+        tokenUrl: String(authConfig.tokenUrl), clientId: String(authConfig.clientId), clientSecret: clientSecret.token,
+      });
+      credential = { token: accessToken };
+    } else if (connectorRow.auth_type !== "none") {
+      credential = connectorRow.credential_ciphertext ? decryptExternalApiCredential(String(connectorRow.credential_ciphertext)) : null;
+      if (!credential) throw new Error("external_api_credentials_unavailable");
+    }
     const operation: ExternalApiOperationInput = {
       operationKey: String(operationRow.operation_key), name: String(operationRow.name), description: String(operationRow.description ?? ""),
       method: operationRow.method === "GET" ? "GET" : "POST", pathTemplate: String(operationRow.path_template),
@@ -102,7 +134,7 @@ export async function executeAgentExternalApiLookup(params: {
       cacheTtlSeconds: [30, 60, 120, 300].includes(cacheTtl) ? cacheTtl as 30 | 60 | 120 | 300 : 0, enabled: true,
     };
     const request = buildExternalApiRequest({ baseUrl: String(connectorRow.base_url), operation, args,
-      authType: connectorRow.auth_type as "none" | "bearer" | "api_key" | "basic",
+      authType: connectorRow.auth_type as "none" | "bearer" | "api_key" | "basic" | "oauth2_client_credentials",
       authHeaderName: typeof connectorRow.auth_header_name === "string" ? connectorRow.auth_header_name : null, credential });
     if (operation.method !== "GET") throw new ExternalApiRequestError("external_api_read_only_method_required");
     // executeExternalApiHttpRequest já segue redirects e só devolve aqui uma

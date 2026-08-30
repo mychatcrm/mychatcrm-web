@@ -26,7 +26,7 @@ export async function POST(request: Request) {
   const input = await request.json().catch(() => null) as ExternalApiConnectorInput | null;
   if (!input) return NextResponse.json({ error: "Configuração inválida." }, { status: 400 });
   try {
-    const id = await saveExternalApiConnector({ tenantId: guard.session.tenantId, input });
+    const id = await saveExternalApiConnector({ tenantId: guard.session.tenantId, actorId: guard.session.email, input });
     return NextResponse.json({ ok: true, id }, { status: 201 });
   } catch (error) {
     console.error("[external-api-connectors] POST", error);

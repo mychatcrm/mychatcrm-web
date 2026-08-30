@@ -1,5 +1,5 @@
 import type { MetaStatusResponse } from "@/app/api/client/meta/status/route";
-import type { ExternalApiAuthType } from "@/lib/external-api/types";
+import type { ExternalApiAuthType, ExternalApiSyncFrequencyMinutes } from "@/lib/external-api/types";
 import type { TenantWhatsappConnection } from "@/lib/server/tenant-whatsapp-connections";
 import type { SlotPurpose } from "@/lib/server/whatsapp-slot-provider";
 
@@ -28,6 +28,9 @@ export type ExternalApiConnectorCard = {
   authType: ExternalApiAuthType;
   authHeaderName: string | null;
   authUsername: string | null;
+  oauthTokenUrl: string | null;
+  oauthClientId: string | null;
+  environment: "sandbox" | "production";
   credentialConfigured: boolean;
   enabled: boolean;
   isPrimary: boolean;
@@ -38,6 +41,13 @@ export type ExternalApiConnectorCard = {
   lastErrorCode: string | null;
   agentCount: number;
   operationCount: number;
+  syncEnabled: boolean;
+  syncOperationKey: string | null;
+  syncFrequencyMinutes: ExternalApiSyncFrequencyMinutes | null;
+  lastSyncAt: string | null;
+  lastSyncStatus: "success" | "error" | null;
+  lastSyncError: string | null;
+  lastSyncItemCount: number | null;
   createdAt: string;
   updatedAt: string;
 };

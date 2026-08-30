@@ -203,12 +203,13 @@ export async function loadIntegrationsDashboardSnapshot(
   const totalExternal = 1 + purchased;
   const externalConnectors: ExternalApiConnectorCard[] = asRows(rawExternal.connectors).map((row, index) => {
     const effective = index < totalExternal;
-    const authType = ["bearer", "api_key", "basic"].includes(asString(row.auth_type))
+    const authType = ["bearer", "api_key", "basic", "oauth2_client_credentials"].includes(asString(row.auth_type))
       ? asString(row.auth_type) as ExternalApiAuthType
       : "none";
     const healthStatus = ["healthy", "degraded", "error"].includes(asString(row.health_status))
       ? asString(row.health_status) as ExternalApiConnectorCard["healthStatus"]
       : "untested";
+    const syncFrequency = asNumber(row.sync_frequency_minutes);
     return {
       id: asString(row.id),
       name: asString(row.name),
@@ -217,6 +218,9 @@ export async function loadIntegrationsDashboardSnapshot(
       authType,
       authHeaderName: asNullableString(row.auth_header_name),
       authUsername: asNullableString(row.auth_username),
+      oauthTokenUrl: asNullableString(row.oauth_token_url),
+      oauthClientId: asNullableString(row.oauth_client_id),
+      environment: row.environment === "sandbox" ? "sandbox" : "production",
       credentialConfigured: row.credential_configured === true,
       enabled: row.enabled === true,
       isPrimary: row.is_primary === true,
@@ -227,6 +231,15 @@ export async function loadIntegrationsDashboardSnapshot(
       lastErrorCode: asNullableString(row.last_error_code),
       agentCount: Math.max(0, asNumber(row.agent_count)),
       operationCount: Math.max(0, asNumber(row.operation_count)),
+      syncEnabled: row.sync_enabled === true,
+      syncOperationKey: asNullableString(row.sync_operation_key),
+      syncFrequencyMinutes: [30, 60, 180, 360, 720, 1440].includes(syncFrequency)
+        ? syncFrequency as ExternalApiConnectorCard["syncFrequencyMinutes"] : null,
+      lastSyncAt: asNullableString(row.last_sync_at),
+      lastSyncStatus: row.last_sync_status === "success" || row.last_sync_status === "error" ? row.last_sync_status : null,
+      lastSyncError: asNullableString(row.last_sync_error),
+      lastSyncItemCount: Number.isFinite(asNumber(row.last_sync_item_count)) && row.last_sync_item_count != null
+        ? asNumber(row.last_sync_item_count) : null,
       createdAt: asString(row.created_at),
       updatedAt: asString(row.updated_at),
     };

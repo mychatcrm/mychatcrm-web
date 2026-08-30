@@ -20,7 +20,7 @@ export async function PATCH(request: Request, context: Context) {
   const input = await request.json().catch(() => null) as ExternalApiConnectorInput | null;
   if (!input) return NextResponse.json({ error: "Configuração inválida." }, { status: 400 });
   try {
-    await saveExternalApiConnector({ tenantId: guard.session.tenantId, connectorId: id, input });
+    await saveExternalApiConnector({ tenantId: guard.session.tenantId, connectorId: id, actorId: guard.session.email, input });
     return NextResponse.json({ ok: true });
   } catch (error) {
     return NextResponse.json({ error: "Não foi possível atualizar a API.", code: error instanceof Error ? error.message : "unknown" }, { status: 400 });
@@ -31,6 +31,6 @@ export async function DELETE(_request: Request, context: Context) {
   const guard = await ownerGuard();
   if (!guard.ok) return guard.response;
   const { id } = await context.params;
-  await deleteExternalApiConnector(guard.session.tenantId, id);
+  await deleteExternalApiConnector(guard.session.tenantId, id, guard.session.email);
   return NextResponse.json({ ok: true });
 }
