@@ -16,10 +16,32 @@ const usesStandardContract = (operations: ExternalApiOperationInput[]) => {
   const expected = createStandardExternalApiOperations().map(signature);
   return operations.length === expected.length && operations.every((operation, index) => signature(operation) === expected[index]);
 };
-const emptyConnector = (): ExternalApiConnectorDraft => ({ name: "", description: "", baseUrl: "https://", authType: "none", enabled: true, operations: createStandardExternalApiOperations(), syncEnabled: false });
+// Padrão agora É sincronizar — é o pedido central: "link + uma ou duas
+// chaves e o catálogo já entra". syncOperationKey "listar" sempre existe no
+// contrato padrão (é o próprio link colado), então nunca precisa perguntar.
+const emptyConnector = (): ExternalApiConnectorDraft => ({ name: "", description: "", baseUrl: "https://", authType: "none", enabled: true, operations: createStandardExternalApiOperations(), syncEnabled: true, syncOperationKey: "listar", syncFrequencyMinutes: 360 });
 
 const SYNC_FREQUENCY_LABELS: Record<number, string> = { 30: "30 min", 60: "1 hora", 180: "3 horas", 360: "6 horas", 720: "12 horas", 1440: "1 dia" };
+const SIMPLE_FREQUENCY_OPTIONS: Array<[number, string]> = [[60, "Rápida · 1h"], [360, "Normal · 6h"], [1440, "1x por dia"]];
+const SIMPLE_FREQUENCIES = new Set(SIMPLE_FREQUENCY_OPTIONS.map(([minutes]) => minutes));
 const emptyPagination = (): ExternalApiPagination => ({ mode: "none", maxPages: 10 });
+const chipClass = (active: boolean) => `rounded-lg border px-3 py-2 text-center text-xs font-semibold transition-colors ${active ? "border-primary bg-primary/10 text-primary" : "border-line bg-surface-elevated text-content-secondary hover:text-content"}`;
+
+/**
+ * Uma API cadastrada pelo modo avançado com algo que o formulário simples
+ * não representa (header customizado, OAuth2, operação/frequência fora das
+ * opções simples) tem que abrir já em avançado — senão salvar de novo
+ * reescreveria a configuração fina sem o dono perceber.
+ */
+function isSimpleRepresentable(connector: { operations: ExternalApiOperationInput[]; authType: ExternalApiConnectorInput["authType"]; syncEnabled?: boolean; syncOperationKey?: string | null; syncFrequencyMinutes?: number | null }): boolean {
+  if (!usesStandardContract(connector.operations)) return false;
+  if (!["none", "bearer", "basic"].includes(connector.authType)) return false;
+  if (connector.syncEnabled) {
+    if (connector.syncOperationKey !== "listar") return false;
+    if (!connector.syncFrequencyMinutes || !SIMPLE_FREQUENCIES.has(connector.syncFrequencyMinutes)) return false;
+  }
+  return true;
+}
 function fmtSyncAt(iso: string | null): string {
   if (!iso) return "";
   try {
@@ -96,6 +118,11 @@ export function ExternalApiConnectorsPanel({
   const [advanced, setAdvanced] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Testar/Sincronizar/Excluir sem try/catch nem indicador de carregamento
+  // faziam o botão parecer travado (sem feedback nenhum por ~2s, ou em
+  // silêncio total se a resposta não fosse JSON) — invisível nos logs de
+  // servidor porque o erro fica só no navegador. `busyItem` cobre as ações.
+  const [busyItem, setBusyItem] = useState<{ id: string; action: "test" | "sync" | "delete" } | null>(null);
 
   const load = useCallback(async (): Promise<SnapshotBackedConnector[]> => {
     const response = await fetch("/api/client/external-api-connectors", { cache: "no-store" });
@@ -127,7 +154,7 @@ export function ExternalApiConnectorsPanel({
       }
     }
     setError(""); setEditing(item ?? "new");
-    setAdvanced(editable ? !usesStandardContract(editable.operations) || editable.syncEnabled : false);
+    setAdvanced(editable ? !isSimpleRepresentable(editable) : false);
     setDraft(editable ? { name: editable.name, description: editable.description, baseUrl: editable.baseUrl, authType: editable.authType,
       authHeaderName: editable.authHeaderName ?? undefined, authUsername: editable.authUsername ?? undefined,
       oauthTokenUrl: editable.oauthTokenUrl ?? undefined, oauthClientId: editable.oauthClientId ?? undefined,
@@ -141,14 +168,38 @@ export function ExternalApiConnectorsPanel({
     setBusy(true); setError("");
     try {
       const id = editing && editing !== "new" ? editing.id : null;
-      const payload = advanced ? draft : { ...draft, description: "", operations: createStandardExternalApiOperations() };
+      const payload = advanced ? draft : { ...draft, description: "", operations: createStandardExternalApiOperations(), syncOperationKey: draft.syncEnabled ? "listar" : null };
       const response = await fetch(id ? `/api/client/external-api-connectors/${id}` : "/api/client/external-api-connectors", {
         method: id ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error ?? "Não foi possível salvar a API.");
-      setEditing(null); await load();
+      setEditing(null);
+      // Só ao CRIAR (não editar): testa e, se sync estiver ligado,
+      // sincroniza na hora — é o "consegue ver se ela está funcionando" sem
+      // precisar clicar em mais nada depois de salvar.
+      if (!id && data.id) void testAndSyncAfterCreate(data.id, payload.syncEnabled === true);
+      await load();
     } catch (e) { setError(e instanceof Error ? e.message : "Erro ao salvar."); } finally { setBusy(false); }
+  };
+  const testAndSyncAfterCreate = async (id: string, syncEnabled: boolean) => {
+    setBusyItem({ id, action: "test" });
+    try {
+      const testResponse = await fetch(`/api/client/external-api-connectors/${id}/test`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      const testData = await testResponse.json().catch(() => ({}));
+      let message = testResponse.ok ? `Teste concluído: ${testData.data?.records?.length ?? 0} resultado(s).` : `Falha no teste: ${explainExternalApiError(testData.errorCode, testData.httpStatus)}`;
+      if (syncEnabled) {
+        setBusyItem({ id, action: "sync" });
+        const syncResponse = await fetch(`/api/client/external-api-connectors/${id}/sync`, { method: "POST" });
+        const syncData = await syncResponse.json().catch(() => ({}));
+        message += syncResponse.ok ? `\nCatálogo sincronizado: ${syncData.itemCount ?? 0} item(ns).` : `\nFalha ao sincronizar: ${explainExternalApiError(syncData.error)}`;
+      }
+      alert(message);
+    } catch {
+      alert('API criada, mas não deu pra testar automaticamente agora (rede ou tempo esgotado). Use o botão "Testar" na lista.');
+    } finally {
+      setBusyItem(null); await load();
+    }
   };
   const buy = async () => {
     setBusy(true);
@@ -159,11 +210,6 @@ export function ExternalApiConnectorsPanel({
     } catch (e) { setError(e instanceof Error ? e.message : "Checkout indisponível."); setBusy(false); }
   };
 
-  // Testar/Sincronizar/Excluir sem try/catch nem indicador de carregamento
-  // faziam o botão parecer travado (sem feedback nenhum por ~2s, ou em
-  // silêncio total se a resposta não fosse JSON) — invisível nos logs de
-  // servidor porque o erro fica só no navegador. `busyItem` cobre as 3 ações.
-  const [busyItem, setBusyItem] = useState<{ id: string; action: "test" | "sync" | "delete" } | null>(null);
   const runTest = async (item: SnapshotBackedConnector) => {
     setBusyItem({ id: item.id, action: "test" });
     try {
@@ -235,26 +281,43 @@ export function ExternalApiConnectorsPanel({
     <Modal open={editing !== null} onClose={() => setEditing(null)} title={editing === "new" ? "Adicionar API externa" : "Editar API externa"} footer={<div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => setEditing(null)}>Cancelar</Button><Button onClick={() => void save()} isLoading={busy}>Salvar</Button></div>}>
       <div className="space-y-4 text-sm">
         <label className="block">Nome<input className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })}/></label>
-        <label className="block">URL-base HTTPS<input className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.baseUrl} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}/></label>
+        <label className="block">Link da API (URL, HTTPS)<input className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" placeholder="https://minhaloja.com/api/produtos" value={draft.baseUrl} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}/></label>
+        {advanced ? <>
         <label className="block">Autenticação<select className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.authType} onChange={(e) => setDraft({ ...draft, authType: e.target.value as ExternalApiConnectorInput["authType"] })}><option value="none">Sem chave</option><option value="bearer">Bearer</option><option value="api_key">API Key em header</option><option value="basic">Basic</option><option value="oauth2_client_credentials">OAuth 2.0 (client credentials)</option></select></label>
         {draft.authType === "api_key" ? <label className="block">Nome do header<input className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.authHeaderName ?? "X-Api-Key"} onChange={(e) => setDraft({ ...draft, authHeaderName: e.target.value })}/></label> : null}
         {draft.authType === "basic" ? <label className="block">Usuário<input className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.authUsername ?? ""} onChange={(e) => setDraft({ ...draft, authUsername: e.target.value })}/></label> : null}
         {draft.authType === "oauth2_client_credentials" ? <><label className="block">URL do token (Token URL)<input className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" placeholder="https://api.exemplo.com/oauth/token" value={draft.oauthTokenUrl ?? ""} onChange={(e) => setDraft({ ...draft, oauthTokenUrl: e.target.value })}/></label>
         <label className="block">Client ID<input className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.oauthClientId ?? ""} onChange={(e) => setDraft({ ...draft, oauthClientId: e.target.value })}/></label></> : null}
         {draft.authType !== "none" ? <label className="block">{draft.authType === "oauth2_client_credentials" ? "Client Secret" : "Segredo"} {editing !== "new" ? "(deixe vazio para manter)" : ""}<input type="password" autoComplete="new-password" className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.secret ?? ""} onChange={(e) => setDraft({ ...draft, secret: e.target.value })}/></label> : null}
+        </> : <>
+        <div className="block"><span className="text-content-secondary">Autenticação</span>
+          <div className="mt-1 grid grid-cols-3 gap-2">
+            <button type="button" className={chipClass(draft.authType === "none")} onClick={() => setDraft({ ...draft, authType: "none" })}>Sem chave</button>
+            <button type="button" className={chipClass(draft.authType === "bearer" || draft.authType === "api_key")} onClick={() => setDraft({ ...draft, authType: "bearer" })}>Uma chave</button>
+            <button type="button" className={chipClass(draft.authType === "basic")} onClick={() => setDraft({ ...draft, authType: "basic" })}>Duas chaves</button>
+          </div>
+        </div>
+        {draft.authType === "bearer" || draft.authType === "api_key" ? <label className="block">Chave de acesso {editing !== "new" ? "(deixe vazio para manter)" : ""}<input type="password" autoComplete="new-password" className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.secret ?? ""} onChange={(e) => setDraft({ ...draft, secret: e.target.value })}/></label> : null}
+        {draft.authType === "basic" ? <>
+          <label className="block">Chave 1 (pública / client ID)<input className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.authUsername ?? ""} onChange={(e) => setDraft({ ...draft, authUsername: e.target.value })}/></label>
+          <label className="block">Chave 2 (secreta) {editing !== "new" ? "(deixe vazio para manter)" : ""}<input type="password" autoComplete="new-password" className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.secret ?? ""} onChange={(e) => setDraft({ ...draft, secret: e.target.value })}/></label>
+        </> : null}
+        </>}
         <div className="rounded-lg border border-line bg-surface-elevated p-3">
           <button type="button" className="flex w-full items-center justify-between text-left" aria-expanded={advanced} onClick={() => setAdvanced((current) => !current)}><span><strong>Modo avançado</strong><span className="mt-0.5 block text-xs text-content-muted">Opcional: use apenas quando a API não seguir o contrato padrão.</span></span><span aria-hidden>{advanced ? "−" : "+"}</span></button>
         </div>
-        {advanced ? <><label className="block">Descrição para o agente<textarea className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })}/></label>
         <div className="rounded-lg border border-line bg-surface-elevated p-3 space-y-3">
           <div className="flex items-center justify-between"><div><strong>Sincronizar catálogo</strong><p className="mt-0.5 text-xs text-content-muted">Importa o catálogo inteiro periodicamente pro banco interno — o agente passa a consultar isso, sem chamar o fornecedor a cada pergunta.</p></div>
             <button type="button" role="switch" aria-checked={draft.syncEnabled === true} onClick={() => setDraft({ ...draft, syncEnabled: !draft.syncEnabled })} className={`h-6 w-11 shrink-0 rounded-full transition-colors ${draft.syncEnabled ? "bg-primary" : "bg-surface-card"} border border-line relative`}><span className={`absolute top-0.5 size-5 rounded-full bg-white transition-transform ${draft.syncEnabled ? "translate-x-5" : "translate-x-0.5"}`}/></button>
           </div>
-          {draft.syncEnabled ? <div className="grid gap-2 sm:grid-cols-2">
+          {draft.syncEnabled ? (advanced ? <div className="grid gap-2 sm:grid-cols-2">
             <label className="block text-xs">Operação-fonte (listagem)<select className="mt-1 w-full rounded-lg border border-line bg-surface-card p-2" value={draft.syncOperationKey ?? ""} onChange={(e) => setDraft({ ...draft, syncOperationKey: e.target.value })}><option value="">Escolher…</option>{draft.operations.map((operation) => <option key={operation.operationKey} value={operation.operationKey}>{operation.name || operation.operationKey}</option>)}</select></label>
             <label className="block text-xs">Frequência<select className="mt-1 w-full rounded-lg border border-line bg-surface-card p-2" value={draft.syncFrequencyMinutes ?? ""} onChange={(e) => setDraft({ ...draft, syncFrequencyMinutes: Number(e.target.value) as ExternalApiConnectorInput["syncFrequencyMinutes"] })}><option value="">Escolher…</option>{EXTERNAL_API_SYNC_FREQUENCIES_MINUTES.map((minutes) => <option key={minutes} value={minutes}>{SYNC_FREQUENCY_LABELS[minutes]}</option>)}</select></label>
-          </div> : null}
+          </div> : <div className="grid grid-cols-3 gap-2">
+            {SIMPLE_FREQUENCY_OPTIONS.map(([minutes, label]) => <button key={minutes} type="button" className={chipClass(draft.syncFrequencyMinutes === minutes)} onClick={() => setDraft({ ...draft, syncFrequencyMinutes: minutes as ExternalApiConnectorInput["syncFrequencyMinutes"] })}>{label}</button>)}
+          </div>) : null}
         </div>
+        {advanced ? <><label className="block">Descrição para o agente<textarea className="mt-1 w-full rounded-lg border border-line bg-surface-elevated p-2" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })}/></label>
         <div className="space-y-3"><div className="flex justify-between"><strong>Operações de consulta</strong><Button variant="ghost" onClick={() => draft.operations.length < 10 && setDraft({ ...draft, operations: [...draft.operations, emptyOperation()] })}>+ Operação</Button></div>
           {draft.operations.map((operation, index) => <div key={index} className="grid gap-2 rounded-lg border border-line p-3 sm:grid-cols-2">
             <input aria-label="Chave" className="rounded border border-line bg-surface-elevated p-2" value={operation.operationKey} onChange={(e) => setDraft({ ...draft, operations: draft.operations.map((o,i) => i === index ? { ...o, operationKey: e.target.value } : o) })}/>
