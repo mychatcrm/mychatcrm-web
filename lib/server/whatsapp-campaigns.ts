@@ -28,6 +28,8 @@ import {
 } from "@/lib/server/agent-outbound-outbox";
 import { readTeamMembersFromDb } from "@/lib/server/team-employees-db";
 import { pauseConversationAfterCampaignSend } from "@/lib/server/conversation-operation";
+import { normalizeIanaTimezone } from "@/lib/agents/agent-datetime";
+import { localWallClockToUtc } from "@/lib/server/agenda-datetime-parse";
 
 type ServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -108,6 +110,8 @@ type CampaignInput = {
   metaTemplateLang?: string | null;
   throughput?: CampaignThroughput;
   scheduledAt?: string | null;
+  /** Fuso civil próprio da campanha. Ausente copia o fuso IANA válido do agente uma única vez. */
+  timezone?: string | null;
   /** Janela de envio; ver `parseCampaignSendWindow`. Ausente = envia a qualquer hora. */
   sendWindow?: unknown;
   /** Destino do lead ao entrar no disparo; ver `parseCampaignLeadDestination`. Ausente = não mexe em funil/coluna/dono. */
@@ -352,16 +356,13 @@ export function buildWhatsAppCampaignTemplateParams(lead: Record<string, unknown
   ];
 }
 
-/** Fuso fixo pra decidir "mesmo dia de cadastro" — mesmo padrão de `parseCampaignSendWindow`. */
-const CAMPAIGN_AUDIENCE_TIMEZONE = "America/Sao_Paulo";
-
-/** `true` quando `createdAt` caiu no mesmo dia-calendário (fuso fixo) que `dateStr` ("AAAA-MM-DD"). */
-function leadCreatedOnDate(createdAt: unknown, dateStr: string): boolean {
+/** `true` quando `createdAt` caiu no mesmo dia civil da campanha que `dateStr` ("AAAA-MM-DD"). */
+function leadCreatedOnDate(createdAt: unknown, dateStr: string, timezone: string): boolean {
   if (typeof createdAt !== "string") return false;
   const date = new Date(createdAt);
   if (Number.isNaN(date.getTime())) return false;
   const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: CAMPAIGN_AUDIENCE_TIMEZONE,
+    timeZone: timezone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -402,10 +403,14 @@ function leadInCrmScope(lead: Record<string, unknown>, scope: CampaignCrmScope):
   return false;
 }
 
-function leadInCrmPeriod(lead: Record<string, unknown>, period: CampaignCrmPeriod): boolean {
+function leadInCrmPeriod(
+  lead: Record<string, unknown>,
+  period: CampaignCrmPeriod,
+  timezone: string,
+): boolean {
   if (period.mode === "all") return true;
   if (period.mode === "cadastro_dias") return leadOlderThanDays(lead.created_at, period.days);
-  if (period.mode === "cadastro_data") return leadCreatedOnDate(lead.created_at, period.date);
+  if (period.mode === "cadastro_data") return leadCreatedOnDate(lead.created_at, period.date, timezone);
   return leadSilentForDays(lead.last_message_at, period.days);
 }
 
@@ -413,8 +418,10 @@ function leadInCrmPeriod(lead: Record<string, unknown>, period: CampaignCrmPerio
 export function leadMatchesCrmAudienceBlock(
   lead: Record<string, unknown>,
   block: { scope: CampaignCrmScope; period: CampaignCrmPeriod },
+  timezone: string,
 ): boolean {
-  return leadInCrmScope(lead, block.scope) && leadInCrmPeriod(lead, block.period);
+  if (!normalizeIanaTimezone(timezone)) return false;
+  return leadInCrmScope(lead, block.scope) && leadInCrmPeriod(lead, block.period, timezone);
 }
 
 export const CAMPAIGN_AUDIENCE_LEAD_COLUMNS =
@@ -431,7 +438,9 @@ export async function resolveWhatsAppCampaignAudience(
   sb: ServiceClient,
   tenantId: string,
   blocks: CampaignAudienceBlockInput[],
+  timezone: string,
 ): Promise<Array<Record<string, unknown>>> {
+  if (!normalizeIanaTimezone(timezone)) throw new Error("campaign_timezone_invalid");
   const resolved = new Map<string, Record<string, unknown>>();
 
   const crmBlocks = blocks.filter(
@@ -450,7 +459,7 @@ export async function resolveWhatsAppCampaignAudience(
       .limit(5000);
     if (error) throw new Error(`campaign_audience_query:${error.message}`);
     for (const lead of (candidateRows ?? []) as Array<Record<string, unknown>>) {
-      const matchesAnyBlock = crmBlocks.some((block) => leadMatchesCrmAudienceBlock(lead, block));
+      const matchesAnyBlock = crmBlocks.some((block) => leadMatchesCrmAudienceBlock(lead, block, timezone));
       if (matchesAnyBlock) resolved.set(String(lead.id), lead);
     }
   }
@@ -565,6 +574,77 @@ export function parseCampaignAudienceBlocks(raw: unknown): CampaignAudienceBlock
   return blocks;
 }
 
+function campaignLocalParts(date: Date, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const number = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((part) => part.type === type)?.value ?? "NaN");
+  const hour = number("hour");
+  return {
+    year: number("year"),
+    month: number("month"),
+    day: number("day"),
+    hour: hour === 24 ? 0 : hour,
+    minute: number("minute"),
+  };
+}
+
+/**
+ * Converte o valor de `datetime-local` para UTC usando exclusivamente o fuso
+ * da campanha. Valores que já trazem offset continuam representando um
+ * instante absoluto. Horário inexistente numa transição DST falha fechado.
+ */
+export function parseCampaignScheduledAt(
+  raw: string | null | undefined,
+  timezone: string,
+  now = new Date(),
+): string {
+  const validTimezone = normalizeIanaTimezone(timezone);
+  if (!validTimezone) throw new Error("campaign_timezone_invalid");
+  const value = raw?.trim();
+  if (!value) return now.toISOString();
+
+  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(value)) {
+    const absolute = new Date(value);
+    if (Number.isNaN(absolute.getTime())) throw new Error("campaign_scheduled_at_invalid");
+    return absolute.toISOString();
+  }
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::\d{2})?$/.exec(value);
+  if (!match) throw new Error("campaign_scheduled_at_invalid");
+  const wall = {
+    year: Number(match[1]),
+    month: Number(match[2]),
+    day: Number(match[3]),
+    hour: Number(match[4]),
+    minute: Number(match[5]),
+  };
+  const calendarCheck = new Date(Date.UTC(wall.year, wall.month - 1, wall.day));
+  if (
+    wall.month < 1 || wall.month > 12 || wall.day < 1 ||
+    calendarCheck.getUTCFullYear() !== wall.year ||
+    calendarCheck.getUTCMonth() + 1 !== wall.month ||
+    calendarCheck.getUTCDate() !== wall.day ||
+    wall.hour < 0 || wall.hour > 23 || wall.minute < 0 || wall.minute > 59
+  ) {
+    throw new Error("campaign_scheduled_at_invalid");
+  }
+
+  const instant = localWallClockToUtc(wall, validTimezone);
+  const roundTrip = campaignLocalParts(instant, validTimezone);
+  if (Object.entries(wall).some(([key, value]) => roundTrip[key as keyof typeof wall] !== value)) {
+    throw new Error("campaign_scheduled_at_invalid");
+  }
+  return instant.toISOString();
+}
+
 export async function createWhatsAppCampaign(params: {
   sb: ServiceClient;
   tenantId: string;
@@ -596,6 +676,13 @@ export async function createWhatsAppCampaign(params: {
   const agentStatus = text(object(agent?.metadata).status)?.toLowerCase();
   if (!agent || agentStatus === "inativo" || agentStatus === "pausado") {
     throw new Error("campaign_agent_not_available");
+  }
+  const requestedTimezone = text(input.timezone);
+  const campaignTimezone = requestedTimezone
+    ? normalizeIanaTimezone(requestedTimezone)
+    : normalizeIanaTimezone(text(object(agent.metadata).timezone));
+  if (!campaignTimezone) {
+    throw new Error(requestedTimezone ? "campaign_timezone_invalid" : "campaign_timezone_required");
   }
 
   const { data: rule, error: ruleError } = await params.sb
@@ -640,14 +727,16 @@ export async function createWhatsAppCampaign(params: {
 
   const audienceBlocks = parseCampaignAudienceBlocks(input.audienceBlocks);
   if (audienceBlocks.length === 0) throw new Error("campaign_audience_required");
-  const leads = await resolveWhatsAppCampaignAudience(params.sb, params.tenantId, audienceBlocks);
+  const leads = await resolveWhatsAppCampaignAudience(
+    params.sb,
+    params.tenantId,
+    audienceBlocks,
+    campaignTimezone,
+  );
   if (leads.length === 0) throw new Error("campaign_has_no_opted_in_recipients");
 
   const now = new Date().toISOString();
-  const scheduledAt =
-    input.scheduledAt && !Number.isNaN(new Date(input.scheduledAt).getTime())
-      ? new Date(input.scheduledAt).toISOString()
-      : now;
+  const scheduledAt = parseCampaignScheduledAt(input.scheduledAt, campaignTimezone, new Date(now));
   const throughput: CampaignThroughput =
     input.throughput && input.throughput in CAMPAIGN_THROUGHPUT_PER_MINUTE ? input.throughput : "normal";
   // Normalizada na gravação: guardar o que o cliente mandou cru deixaria dia
@@ -690,12 +779,13 @@ export async function createWhatsAppCampaign(params: {
       meta_template_name: metaTemplateName,
       meta_template_lang: metaTemplateLang,
       throughput,
+      timezone: campaignTimezone,
       // Salvar NÃO dispara: a campanha nasce parada e o cliente dá play no
       // card quando quiser. Antes, criar já começava a mandar — tirava dele a
       // chance de revisar antes de a base inteira receber.
       status: "draft",
       scheduled_at: scheduledAt,
-      send_window: parseCampaignSendWindow(input.sendWindow) ?? {},
+      send_window: parseCampaignSendWindow(input.sendWindow, campaignTimezone) ?? {},
       lead_destination: leadDestination,
       continue_with_agent: input.continueWithAgent !== false,
       total_recipients: leads.length,
@@ -1082,9 +1172,11 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
  * dia nenhum marcado) também vira `null`: uma janela que nunca abre travaria a
  * campanha para sempre em silêncio, pior que não ter janela.
  */
-export function parseCampaignSendWindow(raw: unknown): CampaignSendWindow | null {
+export function parseCampaignSendWindow(raw: unknown, campaignTimezone: string): CampaignSendWindow | null {
   const config = object(raw);
   if (config.ativo !== true) return null;
+  const timezone = normalizeIanaTimezone(campaignTimezone);
+  if (!timezone) throw new Error("campaign_timezone_invalid");
 
   const diasAtivos = Array.isArray(config.diasAtivos)
     ? [...new Set(config.diasAtivos.map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))]
@@ -1098,7 +1190,7 @@ export function parseCampaignSendWindow(raw: unknown): CampaignSendWindow | null
     minutoInicio: clampInt(config.minutoInicio, 0, 59, 0),
     horaFim: clampInt(config.horaFim, 0, 23, 18),
     minutoFim: clampInt(config.minutoFim, 0, 59, 0),
-    timezone: text(config.timezone) ?? "America/Sao_Paulo",
+    timezone,
   };
 }
 
@@ -1180,6 +1272,21 @@ export async function processDueWhatsAppCampaigns(
   const outcomes: Record<string, number> = {};
   let processed = 0;
   for (const campaign of (campaigns ?? []) as Array<Record<string, unknown>>) {
+    const campaignTimezone = normalizeIanaTimezone(text(campaign.timezone));
+    if (!campaignTimezone) {
+      await sb
+        .from("whatsapp_campaigns")
+        .update({
+          status: "review_required",
+          review_reason: "campaign_timezone_required",
+          updated_at: now,
+        })
+        .eq("tenant_id", campaign.tenant_id)
+        .eq("id", campaign.id)
+        .in("status", ["scheduled", "processing"]);
+      outcomes.timezone_review_required = (outcomes.timezone_review_required ?? 0) + 1;
+      continue;
+    }
     if (!(await campaignRuleAuthorizesConfiguration(sb, campaign))) {
       await sb
         .from("whatsapp_campaigns")
@@ -1198,7 +1305,7 @@ export async function processDueWhatsAppCampaigns(
     // Antes de resolver a conexão de propósito: no transporte Cloud isso custa
     // idas ao Graph, e não faz sentido pagar por elas para descobrir logo em
     // seguida que a campanha está fora da janela de envio.
-    const sendWindow = parseCampaignSendWindow(campaign.send_window);
+    const sendWindow = parseCampaignSendWindow(campaign.send_window, campaignTimezone);
     if (sendWindow && !isWithinBusinessHours(new Date(), sendWindow)) {
       outcomes.outside_send_window = (outcomes.outside_send_window ?? 0) + 1;
       continue;
@@ -1318,7 +1425,7 @@ export async function controlWhatsAppCampaign(params: {
 }): Promise<Record<string, unknown>> {
   const { data: current, error: loadError } = await params.sb
     .from("whatsapp_campaigns")
-    .select("id, tenant_id, status, rule_id, agent_id, connection_id, transport")
+    .select("id, tenant_id, status, rule_id, agent_id, connection_id, transport, timezone")
     .eq("tenant_id", params.tenantId)
     .eq("id", params.campaignId)
     .maybeSingle();
@@ -1335,6 +1442,14 @@ export async function controlWhatsAppCampaign(params: {
 
   if (params.action === "start") {
     if (!["draft", "paused"].includes(status)) throw new Error("campaign_not_startable");
+    if (!normalizeIanaTimezone(text((current as Record<string, unknown>).timezone))) {
+      await updateCampaignRow(params, {
+        status: "review_required",
+        review_reason: "campaign_timezone_required",
+        updated_at: now,
+      });
+      throw new Error("campaign_timezone_required");
+    }
     if (!(await campaignRuleAuthorizesConfiguration(params.sb, current as Record<string, unknown>))) {
       await updateCampaignRow(params, {
         status: "review_required",

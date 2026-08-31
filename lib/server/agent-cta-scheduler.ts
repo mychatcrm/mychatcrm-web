@@ -132,6 +132,9 @@ export const AGENDA_PAST_DATETIME_REPLY =
   "Esse horário já passou. Me diga outro dia e horário que eu verifico para você.";
 export const AGENDA_INVALID_TIME_REPLY =
   "Esse horário não existe. Me diga uma hora válida entre 00:00 e 23:59 para eu verificar para você.";
+export const AGENDA_REJECTION_ACK_REPLY = "Tudo bem, mantive seu agendamento como está.";
+export const AGENDA_CANCEL_NOT_FOUND_REPLY =
+  "Não encontrei um agendamento ativo para cancelar.";
 
 type AgendaUiLanguage = SupportedLanguageCode | "ar" | "ja" | "zh" | "hi" | "ru";
 type ExtendedAgendaLanguage = Exclude<AgendaUiLanguage, SupportedLanguageCode>;
@@ -271,6 +274,28 @@ const AGENDA_REPLY_TRANSLATIONS: ReadonlyMap<string, Record<SupportedLanguageCod
         it: "Quell'ora non esiste. Dimmi un orario valido tra le 00:00 e le 23:59 così verifico.",
       },
     ],
+    [
+      AGENDA_REJECTION_ACK_REPLY,
+      {
+        pt: AGENDA_REJECTION_ACK_REPLY,
+        en: "All right, I kept your appointment unchanged.",
+        es: "De acuerdo, mantuve tu cita sin cambios.",
+        fr: "D’accord, votre rendez-vous reste inchangé.",
+        de: "In Ordnung, Ihr Termin bleibt unverändert.",
+        it: "Va bene, ho mantenuto invariato il tuo appuntamento.",
+      },
+    ],
+    [
+      AGENDA_CANCEL_NOT_FOUND_REPLY,
+      {
+        pt: AGENDA_CANCEL_NOT_FOUND_REPLY,
+        en: "I couldn't find an active appointment to cancel.",
+        es: "No encontré una cita activa para cancelar.",
+        fr: "Je n’ai trouvé aucun rendez-vous actif à annuler.",
+        de: "Ich habe keinen aktiven Termin zum Stornieren gefunden.",
+        it: "Non ho trovato un appuntamento attivo da cancellare.",
+      },
+    ],
   ]);
 
 const AGENDA_EXTENDED_REPLY_TRANSLATIONS: ReadonlyMap<
@@ -340,6 +365,16 @@ const AGENDA_EXTENDED_REPLY_TRANSLATIONS: ReadonlyMap<
     ar: "هذا الوقت غير صالح. أدخل وقتًا بين 00:00 و23:59.", ja: "その時刻は無効です。00:00〜23:59の有効な時刻を指定してください。",
     zh: "该时间无效。请输入 00:00 到 23:59 之间的有效时间。", hi: "यह समय मान्य नहीं है। 00:00 से 23:59 के बीच सही समय बताएँ।",
     ru: "Такого времени не существует. Укажите время от 00:00 до 23:59.",
+  }],
+  [AGENDA_REJECTION_ACK_REPLY, {
+    ar: "حسنًا، أبقيت موعدك كما هو.", ja: "予定は変更せず、そのままにしました。",
+    zh: "好的，您的预约保持不变。", hi: "ठीक है, आपका अपॉइंटमेंट बिना बदलाव के रखा गया है।",
+    ru: "Хорошо, запись оставлена без изменений.",
+  }],
+  [AGENDA_CANCEL_NOT_FOUND_REPLY, {
+    ar: "لم أجد موعدًا نشطًا لإلغائه.", ja: "キャンセルできる有効な予定が見つかりませんでした。",
+    zh: "未找到可取消的有效预约。", hi: "रद्द करने के लिए कोई सक्रिय अपॉइंटमेंट नहीं मिला।",
+    ru: "Активная запись для отмены не найдена.",
   }],
 ]);
 
@@ -608,6 +643,42 @@ function buildAgendaCancelDisambiguationQuestion(
     zh: `找到多个有效预约：${options}。要取消哪一个？`,
     hi: `एक से अधिक सक्रिय अपॉइंटमेंट मिले: ${options}। आप किसे रद्द करना चाहते हैं?`,
     ru: `Найдено несколько активных записей: ${options}. Какую отменить?`,
+  }[language];
+}
+
+function buildAgendaMissingSlotQuestion(languageTag?: string | null): string {
+  const language = resolveAgendaUiLanguage(languageTag);
+  if (!language) return "❓ 📅 🕒";
+  return {
+    pt: "Perfeito! Qual dia e horário ficam melhores para você?",
+    en: "Perfect! What day and time work best for you?",
+    es: "¡Perfecto! ¿Qué día y hora te vienen mejor?",
+    fr: "Parfait ! Quel jour et quelle heure vous conviennent le mieux ?",
+    de: "Perfekt! Welcher Tag und welche Uhrzeit passen Ihnen am besten?",
+    it: "Perfetto! Quale giorno e orario ti vanno meglio?",
+    ar: "رائع! ما اليوم والوقت الأنسب لك؟",
+    ja: "ご都合のよい日付と時間を教えてください。",
+    zh: "好的！哪一天和时间最适合您？",
+    hi: "बहुत अच्छा! आपके लिए कौन-सा दिन और समय सबसे अच्छा रहेगा?",
+    ru: "Отлично! Какой день и время вам удобны?",
+  }[language];
+}
+
+function buildAgendaGenericContinuation(languageTag?: string | null): string {
+  const language = resolveAgendaUiLanguage(languageTag);
+  if (!language) return "❓";
+  return {
+    pt: "Certo. Como posso ajudar?",
+    en: "All right. How can I help?",
+    es: "De acuerdo. ¿Cómo puedo ayudarte?",
+    fr: "D’accord. Comment puis-je vous aider ?",
+    de: "Alles klar. Wie kann ich helfen?",
+    it: "Va bene. Come posso aiutarti?",
+    ar: "حسنًا. كيف يمكنني مساعدتك؟",
+    ja: "承知しました。どのようにお手伝いできますか？",
+    zh: "好的。有什么可以帮您？",
+    hi: "ठीक है। मैं आपकी कैसे मदद कर सकता हूँ?",
+    ru: "Хорошо. Чем я могу помочь?",
   }[language];
 }
 
@@ -2467,8 +2538,62 @@ export type ResolveAgendaTurnResult = {
      *  não deve enviar nada — o job re-agendado processa o contexto atual. */
     | "stale";
   eventId?: string;
+  /** Diretiva efetivamente validada pelo resolvedor. Nunca é extraída da prosa
+   *  depois desta etapa e permite comparar produção/simulação sem depender do
+   *  texto localizado. */
+  directive?: AgendaDirective | null;
+  /** Descritor técnico neutro. A mensagem ao lead é apenas uma apresentação
+   *  localizada deste fato; autorização e mutação nunca dependem dela. */
+  technical?: AgendaTechnicalReplyDescriptor | null;
+  /** Decisão canônica V3 anexada na borda única de saída do resolvedor. */
+  decision?: AgendaDecisionV3;
   /** Quando true, handoff deve ser adiado (agenda falhou ou pendente). */
   deferHandoff?: boolean;
+};
+
+export type AgendaTechnicalReplyCode =
+  | "automation_disabled"
+  | "datetime_required"
+  | "invalid_datetime"
+  | "past_datetime"
+  | "outside_availability"
+  | "slot_taken"
+  | "confirmation_required"
+  | "schedule_confirmed"
+  | "reschedule_confirmed"
+  | "cancellation_confirmed"
+  | "appointment_not_found"
+  | "agenda_listed"
+  | "agenda_lookup_failed"
+  | "mutation_failed"
+  | "generation_stale";
+
+export type AgendaTechnicalReplyDescriptor = {
+  code: AgendaTechnicalReplyCode;
+  facts: {
+    date: string | null;
+    time: string | null;
+    timezone: string;
+    eventId: string | null;
+  };
+};
+
+export type AgendaDecisionV3 = {
+  version: 3;
+  action: ResolveAgendaTurnResult["action"];
+  date: string | null;
+  time: string | null;
+  timezone: string;
+  availability: "allowed" | "outside_window" | "slot_taken" | "unknown" | "not_applicable";
+  confirmation: "not_applicable" | "required" | "confirmed" | "missing";
+  reason: AgendaTechnicalReplyCode | "model_response";
+  intendedMutation:
+    | "none"
+    | "save_proposal"
+    | "create"
+    | "reschedule"
+    | "cancel";
+  executionMode: "commit" | "simulate";
 };
 
 export function shouldDeferHandoffForAgendaResult(result: ResolveAgendaTurnResult): boolean {
@@ -2506,7 +2631,7 @@ function resolveScheduleDirective(
   return { ...directive, date: resolved.date, time: resolved.time };
 }
 
-type PendingAgendaActionRow = {
+export type PendingAgendaActionRow = {
   id: string;
   journey_id: string | null;
   action: "create" | "reschedule" | "cancel";
@@ -2611,6 +2736,254 @@ async function savePendingAgendaAction(params: {
   } else if (error) {
     throw new Error(error.message);
   }
+}
+
+export type AgendaExecutionRecord =
+  | { kind: "save_proposal"; action: PendingAgendaActionRow["action"]; plan: AgentAgendaPlan }
+  | { kind: "transition_proposal"; id: string; state: "rejected" | "expired" | "executed" | "superseded" }
+  | { kind: "execute"; action: "create" | "reschedule" | "cancel"; directive: AgendaDirective };
+
+type ExecuteAgendaDirectiveParams = Parameters<typeof executeAgendaDirective>[0];
+type LoadPendingAgendaActionParams = Parameters<typeof loadPendingAgendaAction>[0];
+type SavePendingAgendaActionParams = Parameters<typeof savePendingAgendaAction>[0];
+
+/**
+ * Única porta capaz de persistir uma decisão de agenda.
+ *
+ * O resolvedor é compartilhado integralmente. Produção usa o adaptador
+ * transacional existente; simulação usa um adaptador em memória que executa as
+ * mesmas validações determinísticas e registra o que faria, sem chamar RPC de
+ * mutação, Google Calendar, lembretes, CRM ou realtime.
+ */
+export type AgendaExecutionPort = {
+  readonly mode: "commit" | "simulate";
+  readonly records: readonly AgendaExecutionRecord[];
+  loadPendingAction(params: LoadPendingAgendaActionParams): Promise<PendingAgendaActionRow | null>;
+  savePendingAction(params: SavePendingAgendaActionParams): Promise<void>;
+  transitionPendingAction(params: {
+    sb: SupabaseServiceClient;
+    id: string;
+    state: "rejected" | "expired" | "executed" | "superseded";
+  }): Promise<void>;
+  executeDirective(params: {
+    request: ExecuteAgendaDirectiveParams;
+    intendedAction: "create" | "reschedule" | "cancel";
+  }): Promise<{ action: "scheduled" | "rescheduled" | "cancelled"; eventId: string }>;
+};
+
+const PRODUCTION_AGENDA_EXECUTION_PORT: AgendaExecutionPort = {
+  mode: "commit",
+  records: [],
+  loadPendingAction: loadPendingAgendaAction,
+  savePendingAction: savePendingAgendaAction,
+  async transitionPendingAction(params) {
+    await params.sb
+      .from("agent_agenda_pending_actions")
+      .update({ state: params.state, updated_at: new Date().toISOString() })
+      .eq("id", params.id)
+      .eq("state", "pending");
+  },
+  executeDirective: ({ request }) => executeAgendaDirective(request),
+};
+
+export function createProductionAgendaExecutionPort(): AgendaExecutionPort {
+  return PRODUCTION_AGENDA_EXECUTION_PORT;
+}
+
+async function validateSimulatedAgendaDirective(
+  request: ExecuteAgendaDirectiveParams,
+): Promise<void> {
+  if (request.directive.type === "cancel") return;
+  const startAt = directiveStartAt(request.directive, request.timezone);
+  if (Number.isNaN(startAt.getTime()) || startAt.getTime() <= Date.now()) {
+    throw new Error("invalid_or_past_agenda_datetime");
+  }
+  if (
+    request.agendaDisponibilidade?.ativo &&
+    !isWithinAgendaAvailability(startAt, request.agendaDisponibilidade, request.timezone)
+  ) {
+    throw new Error("outside_agenda_availability");
+  }
+  if (request.agendaDisponibilidade?.permitirAgendamentosSimultaneos === false) {
+    const endAt = new Date(startAt.getTime() + 60 * 60_000);
+    const sb = request.sb ?? createSupabaseServiceClient();
+    const { data, error } = await sb
+      .from("agenda_events")
+      .select("id")
+      .eq("tenant_id", request.tenantId)
+      .neq("status", "cancelled")
+      .lt("start_at", endAt.toISOString())
+      .gt("end_at", startAt.toISOString())
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) throw new Error("agenda_slot_taken");
+  }
+}
+
+export function createSimulationAgendaExecutionPort(options?: {
+  pendingAction?: PendingAgendaActionRow | null;
+}): AgendaExecutionPort {
+  let pending = options?.pendingAction ?? null;
+  const records: AgendaExecutionRecord[] = [];
+  return {
+    mode: "simulate",
+    records,
+    async loadPendingAction(params) {
+      if (!pending) return null;
+      if (params.journeyId && pending.journey_id && pending.journey_id !== params.journeyId) {
+        records.push({ kind: "transition_proposal", id: pending.id, state: "superseded" });
+        pending = null;
+        return null;
+      }
+      if (Date.parse(pending.expires_at) <= Date.now()) {
+        records.push({ kind: "transition_proposal", id: pending.id, state: "expired" });
+        pending = null;
+        return null;
+      }
+      return pending;
+    },
+    async savePendingAction(params) {
+      records.push({ kind: "save_proposal", action: params.action, plan: params.plan });
+      pending = {
+        id: pending?.id ?? "simulation-pending-action",
+        journey_id: params.journeyId ?? null,
+        action: params.action,
+        event_id:
+          params.plan.eventId && UUID_RE.test(params.plan.eventId) ? params.plan.eventId : null,
+        proposed_date: params.plan.date,
+        proposed_time: params.plan.time,
+        proposed_location: params.plan.location,
+        timezone: params.timezone,
+        expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+        conversation_sequence: params.conversationSequence ?? null,
+      };
+    },
+    async transitionPendingAction(params) {
+      records.push({ kind: "transition_proposal", id: params.id, state: params.state });
+      if (pending?.id === params.id) pending = null;
+    },
+    async executeDirective({ request, intendedAction }) {
+      await validateSimulatedAgendaDirective(request);
+      records.push({ kind: "execute", action: intendedAction, directive: request.directive });
+      return {
+        action:
+          intendedAction === "cancel"
+            ? "cancelled"
+            : intendedAction === "reschedule"
+              ? "rescheduled"
+              : "scheduled",
+        eventId: "simulation-agenda-event",
+      };
+    },
+  };
+}
+
+function inferredAgendaTechnicalCode(
+  result: ResolveAgendaTurnResult,
+): AgendaTechnicalReplyCode | "model_response" {
+  if (result.technical?.code) return result.technical.code;
+  if (result.action === "needs_confirmation") return "confirmation_required";
+  if (result.action === "scheduled") return "schedule_confirmed";
+  if (result.action === "rescheduled") return "reschedule_confirmed";
+  if (result.action === "cancelled") return "cancellation_confirmed";
+  if (result.action === "listed") return "agenda_listed";
+  if (result.action === "blocked") return "automation_disabled";
+  if (result.action === "stale") return "generation_stale";
+  if (result.action === "failed") return "mutation_failed";
+  return "model_response";
+}
+
+function intendedAgendaMutation(params: {
+  result: ResolveAgendaTurnResult;
+  agendaPlan?: AgentAgendaPlan | null;
+}): AgendaDecisionV3["intendedMutation"] {
+  if (params.result.action === "scheduled") return "create";
+  if (params.result.action === "rescheduled") return "reschedule";
+  if (params.result.action === "cancelled") return "cancel";
+  if (params.result.action === "needs_confirmation") return "save_proposal";
+  const action = params.agendaPlan?.action;
+  if (action === "create") return "create";
+  if (action === "reschedule") return "reschedule";
+  if (action === "cancel") return "cancel";
+  return "none";
+}
+
+export function buildAgendaDecisionV3(params: {
+  result: ResolveAgendaTurnResult;
+  agendaPlan?: AgentAgendaPlan | null;
+  timezone: string;
+  executionMode: AgendaExecutionPort["mode"];
+}): AgendaDecisionV3 {
+  const directive = params.result.directive;
+  const date =
+    directive?.type === "schedule"
+      ? normalizeAgentAgendaDate(directive.date)
+      : normalizeAgentAgendaDate(params.agendaPlan?.date);
+  const time =
+    directive?.type === "schedule"
+      ? normalizeAgentAgendaTime(directive.time)
+      : normalizeAgentAgendaTime(params.agendaPlan?.time);
+  const reason = inferredAgendaTechnicalCode(params.result);
+  const availability: AgendaDecisionV3["availability"] =
+    reason === "outside_availability"
+      ? "outside_window"
+      : reason === "slot_taken"
+        ? "slot_taken"
+        : params.result.action === "scheduled" ||
+            params.result.action === "rescheduled" ||
+            params.result.action === "needs_confirmation"
+          ? "allowed"
+          : params.result.action === "none" ||
+              params.result.action === "listed" ||
+              params.result.action === "cancelled"
+            ? "not_applicable"
+            : "unknown";
+  const confirmation: AgendaDecisionV3["confirmation"] =
+    params.result.action === "needs_confirmation"
+      ? "required"
+      : params.result.action === "scheduled" ||
+          params.result.action === "rescheduled" ||
+          params.result.action === "cancelled"
+        ? "confirmed"
+        : reason === "datetime_required" || reason === "invalid_datetime"
+          ? "missing"
+          : "not_applicable";
+  return {
+    version: 3,
+    action: params.result.action,
+    date,
+    time,
+    timezone: params.timezone,
+    availability,
+    confirmation,
+    reason,
+    intendedMutation: intendedAgendaMutation(params),
+    executionMode: params.executionMode,
+  };
+}
+
+function technicalDescriptor(params: {
+  code: AgendaTechnicalReplyCode;
+  timezone: string;
+  directive?: AgendaDirective | null;
+  eventId?: string | null;
+}): AgendaTechnicalReplyDescriptor {
+  return {
+    code: params.code,
+    facts: {
+      date:
+        params.directive?.type === "schedule"
+          ? normalizeAgentAgendaDate(params.directive.date)
+          : null,
+      time:
+        params.directive?.type === "schedule"
+          ? normalizeAgentAgendaTime(params.directive.time)
+          : null,
+      timezone: params.timezone,
+      eventId: params.eventId ?? null,
+    },
+  };
 }
 
 export function structuredAgendaSuccessText(
@@ -2762,8 +3135,9 @@ async function resolveStructuredAgendaPlan(params: {
   /** O modelo tentou consultar compromissos sem pedido explícito do lead. */
   recoveredFromMisclassifiedList?: boolean;
   languageTag?: string | null;
+  executionPort: AgendaExecutionPort;
 }): Promise<ResolveAgendaTurnResult | null> {
-  const pending = await loadPendingAgendaAction({
+  const pending = await params.executionPort.loadPendingAction({
     sb: params.sb,
     tenantId: params.tenantId,
     remoteJid: params.remoteJid,
@@ -2802,42 +3176,26 @@ async function resolveStructuredAgendaPlan(params: {
         return { text: modelClean, action: "none", deferHandoff: true };
       }
       if (softInvite && !AGENDA_SUCCESS_CLAIM_RE.test(modelClean)) {
-        const language = detectSupportedLanguageCode(params.clientText);
         return {
-          text: modelClean || {
-            pt: "Perfeito! Qual dia e horário ficam melhores para você?",
-            en: "Perfect! What day and time work best for you?",
-            es: "¡Perfecto! ¿Qué día y hora te vienen mejor?",
-            fr: "Parfait ! Quel jour et quelle heure vous conviennent le mieux ?",
-            de: "Perfekt! Welcher Tag und welche Uhrzeit passen Ihnen am besten?",
-            it: "Perfetto! Quale giorno e orario ti vanno meglio?",
-          }[language],
+          text: modelClean || buildAgendaMissingSlotQuestion(params.languageTag),
           action: "none",
           deferHandoff: true,
         };
       }
-      const language = detectSupportedLanguageCode(params.clientText);
       return {
-        text: {
-          pt: "Certo. Como posso ajudar?",
-          en: "All right. How can I help?",
-          es: "De acuerdo. ¿Cómo puedo ayudarte?",
-          fr: "D’accord. Comment puis-je vous aider ?",
-          de: "Alles klar. Wie kann ich helfen?",
-          it: "Va bene. Come posso aiutarti?",
-        }[language],
+        text: buildAgendaGenericContinuation(params.languageTag),
         action: "none",
       };
     }
   }
   if (pending?.action === "cancel" && AGENDA_REJECTION_RE.test(params.clientText)) {
-    await params.sb
-      .from("agent_agenda_pending_actions")
-      .update({ state: "rejected", updated_at: new Date().toISOString() })
-      .eq("id", pending.id)
-      .eq("state", "pending");
+    await params.executionPort.transitionPendingAction({
+      sb: params.sb,
+      id: pending.id,
+      state: "rejected",
+    });
     return {
-      text: "Tudo bem, mantive seu agendamento como está.",
+      text: AGENDA_REJECTION_ACK_REPLY,
       action: "none",
       deferHandoff: true,
     };
@@ -3050,14 +3408,14 @@ async function resolveStructuredAgendaPlan(params: {
         };
       }
       if (pending) {
-        await params.sb
-          .from("agent_agenda_pending_actions")
-          .update({ state: "expired", updated_at: new Date().toISOString() })
-          .eq("id", pending.id)
-          .eq("state", "pending");
+        await params.executionPort.transitionPendingAction({
+          sb: params.sb,
+          id: pending.id,
+          state: "expired",
+        });
       }
       return {
-        text: "Não encontrei um agendamento ativo para cancelar.",
+        text: AGENDA_CANCEL_NOT_FOUND_REPLY,
         action: "failed",
         deferHandoff: true,
       };
@@ -3078,7 +3436,7 @@ async function resolveStructuredAgendaPlan(params: {
       pending &&
       (pending.proposed_date !== currentFields.date || pending.proposed_time !== currentFields.time)
     ) {
-      await savePendingAgendaAction({
+      await params.executionPort.savePendingAction({
         sb: params.sb,
         tenantId: params.tenantId,
         remoteJid: params.remoteJid,
@@ -3170,11 +3528,11 @@ async function resolveStructuredAgendaPlan(params: {
       !isWithinAgendaAvailability(startAt, params.agendaDisponibilidade, params.timezone);
     if (invalidOrPast || outsideAvailability) {
       if (pending) {
-        await params.sb
-          .from("agent_agenda_pending_actions")
-          .update({ state: "expired", updated_at: new Date().toISOString() })
-          .eq("id", pending.id)
-          .eq("state", "pending");
+        await params.executionPort.transitionPendingAction({
+          sb: params.sb,
+          id: pending.id,
+          state: "expired",
+        });
       }
       const modelClean = stripAgendaDirectives(params.modelText).trim();
       if (outsideAvailability) {
@@ -3214,7 +3572,7 @@ async function resolveStructuredAgendaPlan(params: {
 
   if (proposal || !scheduleComplete || (!directAuthorized && !pendingAuthorized)) {
     if (scheduleComplete) {
-      await savePendingAgendaAction({
+      await params.executionPort.savePendingAction({
         sb: params.sb,
         tenantId: params.tenantId,
         remoteJid: params.remoteJid,
@@ -3291,40 +3649,55 @@ async function resolveStructuredAgendaPlan(params: {
         location: effectivePlan.location,
       };
   try {
-    const result = await executeAgendaDirective({
-      sb: params.sb,
-      tenantId: params.tenantId,
-      remoteJid: params.remoteJid,
-      leadId: params.leadId,
-      agentId: params.agentId,
-      contactName: params.contactName,
-      timezone: params.timezone,
-      directive,
-      agendaLembretes: params.agendaLembretes,
-      agendaDisponibilidade: params.agendaDisponibilidade,
-      slotIndex: params.slotIndex,
-      operationKey: params.operationKey,
-      jobId: params.jobId,
-      claimedGeneration: params.claimedGeneration,
-      conversationSequence: params.conversationSequence,
-      journeyId: params.journeyId,
-      ruleId: params.ruleId,
-      channel: params.channel,
-      connectionId: params.connectionId,
-      automationEpoch: params.automationEpoch,
-      languageTag: params.languageTag,
+    const result = await params.executionPort.executeDirective({
+      intendedAction: action,
+      request: {
+        sb: params.sb,
+        tenantId: params.tenantId,
+        remoteJid: params.remoteJid,
+        leadId: params.leadId,
+        agentId: params.agentId,
+        contactName: params.contactName,
+        timezone: params.timezone,
+        directive,
+        agendaLembretes: params.agendaLembretes,
+        agendaDisponibilidade: params.agendaDisponibilidade,
+        slotIndex: params.slotIndex,
+        operationKey: params.operationKey,
+        jobId: params.jobId,
+        claimedGeneration: params.claimedGeneration,
+        conversationSequence: params.conversationSequence,
+        journeyId: params.journeyId,
+        ruleId: params.ruleId,
+        channel: params.channel,
+        connectionId: params.connectionId,
+        automationEpoch: params.automationEpoch,
+        languageTag: params.languageTag,
+      },
     });
     if (pending) {
-      await params.sb
-        .from("agent_agenda_pending_actions")
-        .update({ state: "executed", updated_at: new Date().toISOString() })
-        .eq("id", pending.id)
-        .eq("state", "pending");
+      await params.executionPort.transitionPendingAction({
+        sb: params.sb,
+        id: pending.id,
+        state: "executed",
+      });
     }
     return {
       text: structuredAgendaSuccessText(result.action, directive, params.languageTag),
       action: result.action,
       eventId: result.eventId,
+      directive,
+      technical: technicalDescriptor({
+        code:
+          result.action === "scheduled"
+            ? "schedule_confirmed"
+            : result.action === "rescheduled"
+              ? "reschedule_confirmed"
+              : "cancellation_confirmed",
+        timezone: params.timezone,
+        directive,
+        eventId: result.eventId,
+      }),
     };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -3334,6 +3707,19 @@ async function resolveStructuredAgendaPlan(params: {
     return {
       text: agendaFailureReplyForError(error, params.agendaDisponibilidade) ?? AGENDA_FAILURE_REPLY,
       action: "failed",
+      directive,
+      technical: technicalDescriptor({
+        code:
+          reason === "outside_agenda_availability"
+            ? "outside_availability"
+            : reason === "agenda_slot_taken"
+              ? "slot_taken"
+              : reason === "invalid_or_past_agenda_datetime"
+                ? "past_datetime"
+                : "mutation_failed",
+        timezone: params.timezone,
+        directive,
+      }),
       deferHandoff: true,
     };
   }
@@ -3413,8 +3799,12 @@ export async function resolveAgendaTurn(params: {
   languageCode?: SupportedLanguageCode | null;
   /** Tag BCP-47 efetiva. Idiomas sem cópia interna recebem saída factual sem linguagem. */
   languageTag?: string | null;
+  /** Porta explícita de efeitos. Ausente = adaptador transacional de produção. */
+  executionPort?: AgendaExecutionPort;
 }): Promise<ResolveAgendaTurnResult> {
   const cleanText = stripAgendaDirectives(params.modelText);
+  const executionPort = params.executionPort ?? createProductionAgendaExecutionPort();
+  let agendaPlan = params.agendaPlan;
   const replyLanguage =
     params.languageCode ??
     detectSupportedLanguageCode(
@@ -3426,13 +3816,35 @@ export async function resolveAgendaTurn(params: {
       [params.clientText, params.priorAssistantText, cleanText].filter(Boolean).join("\n"),
     ) ??
     replyLanguage;
-  const finalize = (result: ResolveAgendaTurnResult) =>
-    finalizeResolveAgendaTurnResult(
+  const finalize = (result: ResolveAgendaTurnResult): ResolveAgendaTurnResult => {
+    const localized = finalizeResolveAgendaTurnResult(
       result,
       params.ctaHandoffAtivo,
       replyLanguage,
       replyLanguageTag,
     );
+    const inferredCode = inferredAgendaTechnicalCode(localized);
+    const technical =
+      localized.technical ??
+      (inferredCode === "model_response"
+        ? null
+        : technicalDescriptor({
+            code: inferredCode,
+            timezone: params.timezone,
+            directive: localized.directive,
+            eventId: localized.eventId,
+          }));
+    const withTechnical = { ...localized, technical };
+    return {
+      ...withTechnical,
+      decision: buildAgendaDecisionV3({
+        result: withTechnical,
+        agendaPlan,
+        timezone: params.timezone,
+        executionMode: executionPort.mode,
+      }),
+    };
+  };
   const clientRequestedMutation =
     isInitialAgendaMutationRequest(params.clientText) ||
     RESCHEDULE_RE.test(params.clientText) ||
@@ -3442,7 +3854,6 @@ export async function resolveAgendaTurn(params: {
   // Corrige o plano ANTES de decidir o ramo — assim toda a lógica de baixo
   // (âncora de data/hora, disponibilidade, proposta em duas fases) já recebe
   // um plano de agendamento normal, em vez de precisar de um caminho especial.
-  let agendaPlan = params.agendaPlan;
   let recoveredFromMisclassifiedList = false;
   let blockedMisclassifiedList = false;
   if (
@@ -3582,6 +3993,7 @@ export async function resolveAgendaTurn(params: {
       priorAssistantText: params.priorAssistantText,
       recoveredFromMisclassifiedList,
       languageTag: replyLanguageTag,
+      executionPort,
     });
     if (structured) return finalize(structured);
   }
@@ -3845,28 +4257,37 @@ export async function resolveAgendaTurn(params: {
 
   try {
     const sb = params.sb ?? createSupabaseServiceClient();
-    const result = await executeAgendaDirective({
-      sb,
-      tenantId: params.tenantId,
-      remoteJid: params.remoteJid,
-      leadId: params.leadId,
-      agentId: params.agentId,
-      contactName: params.contactName,
-      timezone: params.timezone,
-      directive: finalDirective,
-      agendaLembretes: params.agendaLembretes,
-      agendaDisponibilidade: params.agendaDisponibilidade,
-      slotIndex: params.slotIndex,
-      operationKey: params.operationKey,
-      jobId: params.jobId ?? null,
-      claimedGeneration: params.claimedGeneration ?? null,
-      conversationSequence: params.conversationSequence ?? null,
-      journeyId: params.journeyId ?? null,
-      ruleId: params.ruleId ?? null,
-      channel: params.channel ?? null,
-      connectionId: params.connectionId ?? null,
-      automationEpoch: params.automationEpoch ?? null,
-      languageTag: replyLanguageTag,
+    const intendedAction: "create" | "reschedule" | "cancel" =
+      finalDirective.type === "cancel"
+        ? "cancel"
+        : RESCHEDULE_RE.test(params.clientText)
+          ? "reschedule"
+          : "create";
+    const result = await executionPort.executeDirective({
+      intendedAction,
+      request: {
+        sb,
+        tenantId: params.tenantId,
+        remoteJid: params.remoteJid,
+        leadId: params.leadId,
+        agentId: params.agentId,
+        contactName: params.contactName,
+        timezone: params.timezone,
+        directive: finalDirective,
+        agendaLembretes: params.agendaLembretes,
+        agendaDisponibilidade: params.agendaDisponibilidade,
+        slotIndex: params.slotIndex,
+        operationKey: params.operationKey,
+        jobId: params.jobId ?? null,
+        claimedGeneration: params.claimedGeneration ?? null,
+        conversationSequence: params.conversationSequence ?? null,
+        journeyId: params.journeyId ?? null,
+        ruleId: params.ruleId ?? null,
+        channel: params.channel ?? null,
+        connectionId: params.connectionId ?? null,
+        automationEpoch: params.automationEpoch ?? null,
+        languageTag: replyLanguageTag,
+      },
     });
     console.info("[agent-agenda-turn]", {
       tenant_id: params.tenantId,
@@ -3875,7 +4296,12 @@ export async function resolveAgendaTurn(params: {
       event_id: result.eventId,
       fallback: !directive,
     });
-    return finalize({ text: cleanText, action: result.action, eventId: result.eventId });
+    return finalize({
+      text: cleanText,
+      action: result.action,
+      eventId: result.eventId,
+      directive: finalDirective,
+    });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     // Recusa atômica de staleness: a geração foi superada por mensagem mais nova.
@@ -3888,7 +4314,16 @@ export async function resolveAgendaTurn(params: {
         action: "stale",
         reason,
       });
-      return { text: cleanText, action: "stale" };
+      return finalize({
+        text: cleanText,
+        action: "stale",
+        directive: finalDirective,
+        technical: technicalDescriptor({
+          code: "generation_stale",
+          timezone: params.timezone,
+          directive: finalDirective,
+        }),
+      });
     }
     console.warn("[agent-agenda-turn]", {
       tenant_id: params.tenantId,
@@ -3900,6 +4335,23 @@ export async function resolveAgendaTurn(params: {
       directive_time: finalDirective.type === "schedule" ? finalDirective.time : null,
     });
     const specific = agendaFailureReplyForError(error, params.agendaDisponibilidade);
-    return finalize({ text: specific ?? AGENDA_FAILURE_REPLY, action: "failed", deferHandoff: true });
+    return finalize({
+      text: specific ?? AGENDA_FAILURE_REPLY,
+      action: "failed",
+      directive: finalDirective,
+      technical: technicalDescriptor({
+        code:
+          reason === "outside_agenda_availability"
+            ? "outside_availability"
+            : reason === "agenda_slot_taken"
+              ? "slot_taken"
+              : reason === "invalid_or_past_agenda_datetime"
+                ? "past_datetime"
+                : "mutation_failed",
+        timezone: params.timezone,
+        directive: finalDirective,
+      }),
+      deferHandoff: true,
+    });
   }
 }

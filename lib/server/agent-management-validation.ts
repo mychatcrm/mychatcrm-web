@@ -17,6 +17,8 @@ const MANAGED_CONTEXT_REVIEW_REASONS = new Set([
   "agent_invalid_language",
   "agenda_timezone_required",
   "follow_up_timezone_required",
+  "agenda_reminder_message_required",
+  "agenda_outside_window_message_required",
   "handoff_configuration_invalid",
 ]);
 
@@ -176,6 +178,24 @@ export function resolveAgentContextSaveDecision(params: {
     !explicitTimezone
   ) {
     reviewReasons.push("follow_up_timezone_required");
+  }
+  if (
+    params.agent.agendaLembretes?.ativo === true &&
+    (
+      !Array.isArray(params.agent.agendaLembretes.regras) ||
+      params.agent.agendaLembretes.regras.length === 0 ||
+      params.agent.agendaLembretes.regras.some(
+        (rule) => typeof rule.mensagem !== "string" || !rule.mensagem.trim(),
+      )
+    )
+  ) {
+    reviewReasons.push("agenda_reminder_message_required");
+  }
+  if (
+    params.agent.agendaDisponibilidade?.ativo === true &&
+    !params.agent.agendaDisponibilidade.mensagemForaJanela?.trim()
+  ) {
+    reviewReasons.push("agenda_outside_window_message_required");
   }
 
   return {

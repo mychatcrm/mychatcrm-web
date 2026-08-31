@@ -22,6 +22,7 @@ import {
   type ProcessAgentTurnV2Result,
 } from "@/lib/server/process-agent-turn-v2";
 import { scheduleLeadRedistribution } from "@/lib/server/lead-redistribution";
+import { recordAgentRuntimeMetric } from "@/lib/server/agent-runtime-metrics";
 import { sendAgentOutboundMediaViaEvolution } from "@/lib/server/send-agent-outbound-media-evolution";
 import { getEvolutionInstanceByName } from "@/lib/server/tenant-evolution-instance-db";
 import type { createSupabaseServiceClient } from "@/lib/supabase/server";
@@ -199,6 +200,7 @@ export async function processEvolutionAgentResponseJob(
   const number = remoteJidToEvoNumber(job.remote_jid);
   if (!number) return { ok: false, error: "invalid_remote_jid" };
 
+  const turnStartedAt = Date.now();
   const result = await processAgentTurnV2({
     sb,
     job,
@@ -295,6 +297,13 @@ export async function processEvolutionAgentResponseJob(
         });
       },
     },
+  });
+  await recordAgentRuntimeMetric({
+    metric: "provider_call",
+    subsystem: "evolution",
+    outcome: result.ok ? "success" : result.error.includes("stale") ? "duplicate" : "failed",
+    durationMs: Date.now() - turnStartedAt,
+    sb,
   });
   return mergeSuppressedCount(result, lateIds.size);
 }

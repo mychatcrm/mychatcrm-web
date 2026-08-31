@@ -77,6 +77,7 @@ function makeSb(options: {
                 agent_id: "agent-1",
                 connection_id: "evo-1",
                 transport: "evolution",
+                timezone: "UTC",
               },
               error: null,
             };

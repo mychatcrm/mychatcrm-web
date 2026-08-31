@@ -31,13 +31,17 @@ function instanceNameFromPayload(payload: unknown): string {
   return "unknown";
 }
 
+/** Deterministic, content-addressed idempotency key used by the durable inbox. */
+export function evolutionWebhookEventKey(payload: unknown): string {
+  return createHash("sha256").update(stableJson(payload), "utf8").digest("hex");
+}
+
 export async function enqueueEvolutionWebhook(params: {
   sb?: SupabaseServiceClient;
   payload: unknown;
 }): Promise<{ id: string | null; duplicate: boolean }> {
   const sb = params.sb ?? createSupabaseServiceClient();
-  const canonical = stableJson(params.payload);
-  const eventKey = createHash("sha256").update(canonical, "utf8").digest("hex");
+  const eventKey = evolutionWebhookEventKey(params.payload);
   const { data, error } = await sb.from("evolution_webhook_inbox").insert({
     event_key: eventKey,
     instance_name: instanceNameFromPayload(params.payload),

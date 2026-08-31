@@ -122,7 +122,7 @@ export const DEFAULT_AGENDA_LEMBRETES: AgentAgendaLembretes = {
     {
       offsetValor: 1,
       offsetUnidade: "dias",
-      mensagem: "Olá {nome}, lembrete do seu agendamento amanhã às {hora}. Local: {local}.",
+      mensagem: "",
     },
   ],
 };

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatCurrentDateTimeLine,
   formatSystemDateTimeContextBlock,
   isValidIanaTimezone,
+  normalizeIanaTimezone,
   parseTimezone,
   resolveAgentTimezone,
   resolveExplicitAgentTimezone,
@@ -21,6 +23,13 @@ describe("formatSystemDateTimeContextBlock", () => {
 });
 
 describe("parseTimezone", () => {
+  it("normalizes whitespace but never coerces non-string values", () => {
+    expect(normalizeIanaTimezone("  Europe/Lisbon  ")).toBe("Europe/Lisbon");
+    expect(normalizeIanaTimezone("   ")).toBeNull();
+    expect(normalizeIanaTimezone({ toString: () => "UTC" })).toBeNull();
+    expect(isValidIanaTimezone("UTC")).toBe(true);
+  });
+
   it("respeita UTC quando escolhido explicitamente — a troca continua livre", () => {
     expect(parseTimezone("UTC")).toBe("UTC");
   });
@@ -54,9 +63,29 @@ describe("resolveAgentTimezone", () => {
     ).toBe("Europe/Lisbon");
   });
 
+  it("ignora raiz vazia e normaliza a escolha explícita", () => {
+    expect(resolveExplicitAgentTimezone({
+      timezone: "   ",
+      followUpInteligente: { timezone: "  Asia/Tokyo  " } as never,
+    })).toBe("Asia/Tokyo");
+    expect(resolveExplicitAgentTimezone({
+      timezone: "  Europe/Paris  ",
+      followUpInteligente: { timezone: "Asia/Tokyo" } as never,
+    })).toBe("Europe/Paris");
+  });
+
   it("does not treat the neutral fallback as an explicit operator choice", () => {
     expect(resolveAgentTimezone({})).toBe("UTC");
     expect(resolveExplicitAgentTimezone({})).toBeNull();
     expect(resolveExplicitAgentTimezone({ timezone: "invalid" })).toBeNull();
+  });
+});
+
+describe("formatCurrentDateTimeLine", () => {
+  it("renders exact civil fields and explicit timezone", () => {
+    expect(formatCurrentDateTimeLine(
+      "Asia/Tokyo",
+      new Date("2026-08-30T15:04:00.000Z"),
+    )).toBe("Current date and time: 2026-08-31 00:04 (Asia/Tokyo)");
   });
 });

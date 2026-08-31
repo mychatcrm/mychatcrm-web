@@ -180,9 +180,20 @@ export function buildAudienceBlocksPayload(blocks: PublicoBlock[]) {
  */
 const MAX_IMPORT_FILE_BYTES = 2 * 1024 * 1024;
 
-/** Hoje em "AAAA-MM-DD", pro valor inicial do recorte por data exata. */
-function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10);
+/** Hoje civil em "AAAA-MM-DD" no fuso explícito da campanha. */
+function todayIsoDate(timezone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date());
+    const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+    return `${get("year")}-${get("month")}-${get("day")}`;
+  } catch {
+    return "";
+  }
 }
 
 type UpdateFn = (id: string, patch: Record<string, unknown>) => void;
@@ -273,6 +284,7 @@ function CrmBlockCard({
   isLight,
   onAfterOptIn,
   funnels,
+  timezone,
 }: {
   block: PublicoCrmBlock;
   onUpdate: UpdateFn;
@@ -280,6 +292,7 @@ function CrmBlockCard({
   isLight: boolean;
   onAfterOptIn?: () => void;
   funnels: CrmFunnel[];
+  timezone: string;
 }) {
   const [optInBusy, setOptInBusy] = useState(false);
   const id = block.id;
@@ -296,6 +309,10 @@ function CrmBlockCard({
   const periodKey = JSON.stringify(period);
 
   const refreshPreview = useCallback(() => {
+    if (!timezone) {
+      onUpdate(id, { preview: null, previewLoading: false });
+      return;
+    }
     if (customSemSelecao) {
       onUpdate(id, { preview: { totalMatched: 0, optedIn: 0, notOptedIn: 0 }, previewLoading: false });
       return;
@@ -304,12 +321,12 @@ function CrmBlockCard({
     fetch("/api/client/whatsapp-campaigns/audience-preview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scope: JSON.parse(scopeKey), period: JSON.parse(periodKey) }),
+      body: JSON.stringify({ scope: JSON.parse(scopeKey), period: JSON.parse(periodKey), timezone }),
     })
       .then((r) => r.json())
       .then((data: PublicoAudiencePreview) => onUpdate(id, { preview: data, previewLoading: false }))
       .catch(() => onUpdate(id, { preview: null, previewLoading: false }));
-  }, [id, onUpdate, scopeKey, periodKey, customSemSelecao]);
+  }, [id, onUpdate, scopeKey, periodKey, customSemSelecao, timezone]);
 
   useEffect(() => {
     const timer = window.setTimeout(refreshPreview, 350);
@@ -322,7 +339,7 @@ function CrmBlockCard({
       const res = await fetch("/api/client/whatsapp-campaigns/audience-opt-in", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scope: JSON.parse(scopeKey), period: JSON.parse(periodKey) }),
+        body: JSON.stringify({ scope: JSON.parse(scopeKey), period: JSON.parse(periodKey), timezone }),
       });
       if (res.ok) {
         refreshPreview();
@@ -331,7 +348,7 @@ function CrmBlockCard({
     } finally {
       setOptInBusy(false);
     }
-  }, [scopeKey, periodKey, refreshPreview, onAfterOptIn]);
+  }, [scopeKey, periodKey, refreshPreview, onAfterOptIn, timezone]);
 
   const toggleFunnel = (funnelId: string) => onUpdate(id, { scope: toggleFunnelInScope(scope, funnelId) });
   const toggleColumn = (funnelId: string, columnId: string) =>
@@ -479,7 +496,7 @@ function CrmBlockCard({
                 type="button"
                 onClick={() =>
                   period.mode !== "cadastro_data" &&
-                  onUpdate(id, { period: { mode: "cadastro_data", date: todayIsoDate() } })
+                  onUpdate(id, { period: { mode: "cadastro_data", date: todayIsoDate(timezone) } })
                 }
                 className={cn(
                   "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
@@ -785,9 +802,10 @@ type Props = {
   isLight: boolean;
   onAfterOptIn?: () => void;
   funnels: CrmFunnel[];
+  timezone: string;
 };
 
-export function DisparosPublicoBuilder({ blocks, onChange, isLight, onAfterOptIn, funnels }: Props) {
+export function DisparosPublicoBuilder({ blocks, onChange, isLight, onAfterOptIn, funnels, timezone }: Props) {
   const updateBlock = useCallback<UpdateFn>(
     (id, patch) => {
       onChange((prev) => prev.map((block) => (block.id === id ? ({ ...block, ...patch } as PublicoBlock) : block)));
@@ -817,6 +835,7 @@ export function DisparosPublicoBuilder({ blocks, onChange, isLight, onAfterOptIn
             onRemove={removeBlock}
             onAfterOptIn={onAfterOptIn}
             funnels={funnels}
+            timezone={timezone}
           />
         ) : (
           <ContatosBlockCard key={block.id} block={block} isLight={isLight} onUpdate={updateBlock} onRemove={removeBlock} />

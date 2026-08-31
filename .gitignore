@@ -6,6 +6,8 @@
 
 # testing
 /coverage
+/reports/mutation/
+/.stryker-tmp/
 
 # next.js
 /.next/

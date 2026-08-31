@@ -16,27 +16,7 @@ const DIAS_SEMANA = [
   { value: 6, label: "Sáb" },
 ];
 
-const DIAS_PT = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
-
-const DEFAULT_LEMBRETE_MENSAGEM =
-  "Olá {nome}, lembrete do seu agendamento em {data} às {hora}. Local: {local}.";
-
 const MENSAGEM_FORA_JANELA_MAX = 400;
-
-function formatDiasPt(dias: number[]): string {
-  const nomes = [...dias].sort((a, b) => a - b).map((d) => DIAS_PT[d] ?? String(d));
-  if (nomes.length === 0) return "";
-  if (nomes.length === 1) return nomes[0];
-  return `${nomes.slice(0, -1).join(", ")} e ${nomes[nomes.length - 1]}`;
-}
-
-function buildMensagemForaJanelaPadrao(disp: AgentWizardDraft["agendaDisponibilidade"]): string {
-  const dias = formatDiasPt(disp.diasSemana);
-  if (!dias) {
-    return "Esse horário fica fora da nossa janela de agendamento. Me diga outra data ou horário que eu confirmo para você.";
-  }
-  return `Esse horário fica fora da nossa janela de agendamento. Atendemos ${dias}, das ${disp.horaInicio} às ${disp.horaFim}. Me diga outra data ou horário dentro desse período que eu confirmo para você.`;
-}
 
 export function WizardStepAgendaAutomation({
   draft,
@@ -61,7 +41,7 @@ export function WizardStepAgendaAutomation({
         ...lembretes,
         regras: [
           ...lembretes.regras,
-          { offsetValor: 1, offsetUnidade: "dias", mensagem: DEFAULT_LEMBRETE_MENSAGEM },
+          { offsetValor: 1, offsetUnidade: "dias", mensagem: "" },
         ],
       },
     });
@@ -178,15 +158,16 @@ export function WizardStepAgendaAutomation({
                     Mensagem para horário fora da janela
                   </label>
                   <p className="text-[11px] leading-relaxed text-content-muted">
-                    Enviada quando o cliente pede um horário fora dos dias/horários acima. Deixe em
-                    branco para usar a mensagem padrão (mostrada abaixo como exemplo).
+                    Enviada quando o cliente pede um horário fora dos dias/horários acima. Escreva o
+                    texto no idioma e no tom definidos para este agente; o sistema não cria uma
+                    mensagem genérica.
                   </p>
                   <textarea
                     id="agenda-mensagem-fora-janela"
                     rows={3}
                     maxLength={MENSAGEM_FORA_JANELA_MAX}
                     value={disp.mensagemForaJanela ?? ""}
-                    placeholder={buildMensagemForaJanelaPadrao(disp)}
+                    placeholder="Mensagem configurada pelo operador"
                     onChange={(e) =>
                       onChange({
                         ...draft,
@@ -295,7 +276,7 @@ export function WizardStepAgendaAutomation({
                       <textarea
                         rows={2}
                         value={regra.mensagem ?? ""}
-                        placeholder={DEFAULT_LEMBRETE_MENSAGEM}
+                        placeholder="Escreva a mensagem exatamente como o agente deve enviá-la."
                         onChange={(e) => updateLembrete(idx, { mensagem: e.target.value })}
                         className="w-full resize-none rounded-md border border-line bg-surface-elevated px-2 py-1.5 text-sm text-content placeholder:text-content-muted focus:border-primary focus:outline-none"
                       />

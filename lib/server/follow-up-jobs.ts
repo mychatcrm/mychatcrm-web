@@ -40,6 +40,8 @@ import {
   prepareAutomatedOutbound,
 } from "@/lib/server/agent-outbound-outbox";
 import { parseAgentTurnPlan } from "@/lib/ai/agent-turn-plan";
+import { getAgentRuntimeSubsystemControl } from "@/lib/server/agent-runtime-controls";
+import { recordAgentRuntimeMetric } from "@/lib/server/agent-runtime-metrics";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -611,6 +613,19 @@ export async function scheduleFollowUpAfterAgentResponse(params: {
   if (!params.settings.ativo) return null;
 
   const sb = params.sb ?? createSupabaseServiceClient();
+  const runtimeControl = await getAgentRuntimeSubsystemControl({
+    sb,
+    tenantId: params.tenantId,
+    subsystem: "follow_up",
+  });
+  if (!runtimeControl.enabled) {
+    logFollowUp("schedule_blocked", {
+      tenant_id: params.tenantId,
+      agent_id: params.agentId,
+      reason: "follow_up_runtime_disabled",
+    });
+    return null;
+  }
   if (
     params.settings.usarHorarioComercial &&
     !isValidIanaTimezone(params.settings.timezone)
@@ -797,6 +812,20 @@ export async function processFollowUpJob(
   if (!job) return "skipped";
   if (job.id !== jobId || job.status !== "processing") return "skipped";
   if (!job.claim_token || !(await heartbeatFollowUpJob(client, job))) return "skipped";
+  const runtimeControl = await getAgentRuntimeSubsystemControl({
+    sb: client,
+    tenantId: job.tenant_id,
+    subsystem: "follow_up",
+  });
+  if (!runtimeControl.enabled) {
+    const finished = await finishClaimedFollowUpJob({
+      sb: client,
+      job,
+      status: "cancelled",
+      lastError: "follow_up_runtime_disabled",
+    });
+    return finished.ok ? "cancelled" : "skipped";
+  }
   const isHumanAbandonedJob = job.follow_up_type === "human_abandoned";
   logFollowUp("processing", {
     job_id: job.id,
@@ -1986,6 +2015,7 @@ export async function processDueFollowUpJobs(sb?: SupabaseServiceClient, options
   failed: number;
 }> {
   const client = sb ?? createSupabaseServiceClient();
+  const batchStartedAt = Date.now();
   const deadlineAt = Date.now() + Math.max(5_000, options?.deadlineMs ?? 70_000);
   const { error: reconcileError } = await client.rpc(
     "reconcile_agent_runtime_state_v1",
@@ -2024,7 +2054,7 @@ export async function processDueFollowUpJobs(sb?: SupabaseServiceClient, options
     }),
   );
 
-  return outcomes.reduce(
+  const totals = outcomes.reduce(
     (totals, outcome) => {
       if (outcome === "skipped") return totals;
       totals.processed += 1;
@@ -2036,4 +2066,21 @@ export async function processDueFollowUpJobs(sb?: SupabaseServiceClient, options
     },
     { processed: 0, sent: 0, cancelled: 0, exhausted: 0, failed: 0 },
   );
+  if (totals.processed > 0) {
+    await recordAgentRuntimeMetric({
+      metric: "follow_up",
+      subsystem: "follow_up",
+      outcome: totals.failed > 0 || totals.exhausted > 0
+        ? "failed"
+        : totals.sent > 0
+          ? "sent"
+          : totals.cancelled > 0
+            ? "cancelled"
+            : "success",
+      durationMs: Date.now() - batchStartedAt,
+      count: totals.processed,
+      sb: client,
+    });
+  }
+  return totals;
 }

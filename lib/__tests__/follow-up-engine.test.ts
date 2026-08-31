@@ -46,6 +46,20 @@ function makeCtx(overrides: Partial<FollowUpEvalContext> = {}): FollowUpEvalCont
 }
 
 describe("evaluateFollowUpNeed", () => {
+  const blockedBase = (skipReason: string, humanBlocked = false) => ({
+    shouldSend: false,
+    reason: "no_trigger",
+    skipReason,
+    followUpType: "silence",
+    priority: 4,
+    urgency: "medium",
+    nextRetryAt: null,
+    cooldownActive: false,
+    humanBlocked,
+    spamRisk: false,
+    businessHoursBlocked: false,
+  });
+
   it("approves a stale lead during business hours", () => {
     const d = evaluateFollowUpNeed(makeCtx());
     expect(d.shouldSend).toBe(true);
@@ -56,25 +70,23 @@ describe("evaluateFollowUpNeed", () => {
     const d = evaluateFollowUpNeed(
       makeCtx({ settings: { ...BASE_SETTINGS, ativo: false } }),
     );
-    expect(d.shouldSend).toBe(false);
-    expect(d.skipReason).toBe("follow_up_disabled");
+    expect(d).toEqual(blockedBase("follow_up_disabled"));
   });
 
   it("blocks when max attempts reached", () => {
     const d = evaluateFollowUpNeed(
       makeCtx({ job: { id: "j", attempts: 3, maxAttempts: 3, createdAt: new Date() } }),
     );
-    expect(d.shouldSend).toBe(false);
-    expect(d.skipReason).toBe("max_attempts_reached");
+    expect(d).toEqual(blockedBase("max_attempts_reached"));
   });
 
-  it("blocks when lead status is lost", () => {
+  it.each(["perdido", "inativo", "cancelado", "arquivado"])("blocks terminal lead status %s", (status) => {
     const d = evaluateFollowUpNeed(
       makeCtx({
         lead: {
           id: "l",
           name: null,
-          status: "perdido",
+          status,
           lastMessageAt: null,
           lastFollowUpAt: null,
           followUpCount: 0,
@@ -82,9 +94,7 @@ describe("evaluateFollowUpNeed", () => {
         },
       }),
     );
-    expect(d.shouldSend).toBe(false);
-    expect(d.skipReason).toContain("lead_status");
-    expect(d.humanBlocked).toBe(false);
+    expect(d).toEqual(blockedBase(`lead_status_${status}`));
   });
 
   it("blocks when human_paused=true", () => {
@@ -99,25 +109,22 @@ describe("evaluateFollowUpNeed", () => {
         },
       }),
     );
-    expect(d.shouldSend).toBe(false);
-    expect(d.humanBlocked).toBe(true);
-    expect(d.skipReason).toBe("human_paused");
+    expect(d).toEqual(blockedBase("human_paused", true));
   });
 
-  it("blocks when conversation_mode is human", () => {
+  it.each(["human", "waiting_human"])("blocks when conversation_mode is %s", (conversationMode) => {
     const d = evaluateFollowUpNeed(
       makeCtx({
         conversationState: {
           humanPaused: false,
           pausedReason: null,
           handoffSuggested: false,
-          conversationMode: "human",
+          conversationMode,
           archivedAt: null,
         },
       }),
     );
-    expect(d.shouldSend).toBe(false);
-    expect(d.humanBlocked).toBe(true);
+    expect(d).toEqual(blockedBase("conversation_mode_human", true));
   });
 
   it("cancels when customer replied after job was created", () => {

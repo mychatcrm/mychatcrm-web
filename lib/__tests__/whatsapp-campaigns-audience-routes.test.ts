@@ -61,7 +61,10 @@ function makeLeadsBuilder(rows: Row[], onUpdate?: (payload: unknown, ids: string
 }
 
 function jsonRequest(url: string, body: unknown) {
-  return new Request(url, { method: "POST", body: JSON.stringify(body) });
+  const payload = body && typeof body === "object" && !Array.isArray(body)
+    ? { timezone: "UTC", ...(body as Record<string, unknown>) }
+    : body;
+  return new Request(url, { method: "POST", body: JSON.stringify(payload) });
 }
 
 const PREVIEW_URL = "https://example.test/api/client/whatsapp-campaigns/audience-preview";

@@ -141,6 +141,40 @@ describe("agent management hardening", () => {
     expect(decision.reviewReasons).not.toContain("follow_up_timezone_required");
   });
 
+  it("marks missing operator-authored agenda messages without inventing Portuguese copy", () => {
+    const agent = {
+      ...validAgent,
+      agendaLembretes: {
+        ativo: true,
+        regras: [{ offsetValor: 1, offsetUnidade: "dias", mensagem: "" }],
+      },
+      agendaDisponibilidade: {
+        ativo: true,
+        diasSemana: [1, 2, 3, 4, 5],
+        horaInicio: "08:00",
+        horaFim: "18:00",
+        mensagemForaJanela: "",
+        permitirAgendamentosSimultaneos: true,
+      },
+    } as unknown as Agent;
+    const decision = resolveAgentContextSaveDecision({ agent });
+    expect(decision.reviewReasons).toEqual(expect.arrayContaining([
+      "agenda_reminder_message_required",
+      "agenda_outside_window_message_required",
+    ]));
+
+    const wizardModel = readFileSync(
+      join(process.cwd(), "lib/agents/wizard-model.ts"),
+      "utf8",
+    );
+    const agendaStep = readFileSync(
+      join(process.cwd(), "components/dashboard/agentes/WizardStepAgendaAutomation.tsx"),
+      "utf8",
+    );
+    expect(wizardModel).not.toContain("Olá {nome}, lembrete");
+    expect(agendaStep).not.toContain("Esse horário fica fora da nossa janela");
+  });
+
   it("validates updates with the model stored on the actual agent row", () => {
     const item = readFileSync(join(process.cwd(), "app/api/client/agentes/[id]/route.ts"), "utf8");
     expect(item).toContain('model: typeof existing.data.model === "string" ? existing.data.model : null');

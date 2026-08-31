@@ -38,6 +38,7 @@ import {
   type PublicoCrmScope,
 } from "@/components/dashboard/disparos/DisparosPublicoBuilder";
 import { DisparosCampanhasList, type DisparosHistoryRow } from "@/components/dashboard/disparos/DisparosCampanhasList";
+import { COMMON_TIMEZONES } from "@/lib/agents/common-timezones";
 
 const DEFAULT_MESSAGE =
   "Ola {{nome}}, preparamos uma condicao especial para {{empresa}}. Responda SIM para receber o link seguro.";
@@ -94,6 +95,16 @@ function previewMetaTemplate(bodyText: string | null) {
     .replaceAll("{{3}}", "(11) 98765-4321");
 }
 
+function isIanaTimezone(value: string): boolean {
+  if (!value.trim()) return false;
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: value.trim() }).format(0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 type CampaignConnection = {
   connectionId: string;
   transport: "evolution" | "cloud_api";
@@ -105,6 +116,7 @@ type CampaignConnection = {
 type CampaignAgent = {
   agent_id: string;
   display_name: string | null;
+  timezone: string | null;
 };
 
 type CampaignRule = {
@@ -147,6 +159,7 @@ type CampaignRow = {
   total_sent: number;
   total_failed: number;
   scheduled_at: string | null;
+  timezone?: string | null;
   created_at: string;
   // Campos usados só ao reabrir a campanha pra editar.
   connection_id?: string | null;
@@ -193,6 +206,7 @@ export function DisparosMassaHub() {
   const [campaignName, setCampaignName] = useState("");
   const [publicoBlocks, setPublicoBlocks] = useState<PublicoBlock[]>(() => [createCrmBlock()]);
   const [schedule, setSchedule] = useState("");
+  const [campaignTimezone, setCampaignTimezone] = useState("");
   const [body, setBody] = useState(DEFAULT_MESSAGE);
   const [throughput, setThroughput] = useState<(typeof THROUGHPUT)[number]["id"]>("normal");
   // Janela de envio: desligada por padrão mantém o comportamento de sempre
@@ -377,6 +391,14 @@ export function DisparosMassaHub() {
     () => connections.find((c) => c.connectionId === connectionId) ?? null,
     [connections, connectionId],
   );
+  const selectedAgent = useMemo(
+    () => agents.find((agent) => agent.agent_id === agentId) ?? null,
+    [agentId, agents],
+  );
+  const campaignTimezoneValid = useMemo(
+    () => isIanaTimezone(campaignTimezone),
+    [campaignTimezone],
+  );
   const isMetaTransport = selectedConnection?.transport === "cloud_api";
   const matchingCampaignRules = useMemo(
     () =>
@@ -417,7 +439,7 @@ export function DisparosMassaHub() {
   }, [isMetaTransport, connectionId]);
 
   const scheduleSummary = schedule
-    ? new Date(schedule).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })
+    ? `${schedule.slice(8, 10)}/${schedule.slice(5, 7)}/${schedule.slice(0, 4)} ${schedule.slice(11, 16)}${campaignTimezone ? ` (${campaignTimezone})` : ""}`
     : "Enviar agora";
   const throughputLabel = THROUGHPUT.find((t) => t.id === throughput)?.label ?? "Normal";
 
@@ -498,6 +520,7 @@ export function DisparosMassaHub() {
     setCampaignName("");
     setPublicoBlocks([createCrmBlock()]);
     setSchedule("");
+    setCampaignTimezone("");
     setBody(DEFAULT_MESSAGE);
     setThroughput("normal");
     setWindowActive(false);
@@ -538,6 +561,7 @@ export function DisparosMassaHub() {
       setCampaignName(campaign.name);
       setConnectionId(campaign.connection_id ?? "");
       setAgentId(campaign.agent_id ?? "");
+      setCampaignTimezone(campaign.timezone ?? "");
       setRuleId(campaign.rule_id ?? "");
       setBody(campaign.message_template ?? DEFAULT_MESSAGE);
       setThroughput(
@@ -625,6 +649,7 @@ export function DisparosMassaHub() {
     Boolean(connectionId) &&
     Boolean(campaignName.trim()) &&
     Boolean(agentId) &&
+    campaignTimezoneValid &&
     Boolean(ruleId) &&
     selectedCampaignRuleIsValid &&
     hasUsablePublico(publicoBlocks) &&
@@ -641,6 +666,7 @@ export function DisparosMassaHub() {
           name: campaignName,
           connectionId,
           agentId,
+          timezone: campaignTimezone,
           ruleId,
           audienceBlocks: buildAudienceBlocksPayload(publicoBlocks),
           messageTemplate: isMetaTransport ? "" : body,
@@ -690,6 +716,7 @@ export function DisparosMassaHub() {
   }, [
     notify,
     agentId,
+    campaignTimezone,
     ruleId,
     selectedCampaignRuleIsValid,
     body,
@@ -921,7 +948,11 @@ export function DisparosMassaHub() {
             </div>
             <select
               value={agentId}
-              onChange={(event) => setAgentId(event.target.value)}
+              onChange={(event) => {
+                const nextAgentId = event.target.value;
+                setAgentId(nextAgentId);
+                setCampaignTimezone(agents.find((agent) => agent.agent_id === nextAgentId)?.timezone ?? "");
+              }}
               className="h-11 w-full rounded-xl border border-line bg-surface-card px-3 text-sm text-content outline-none focus:border-primary/60"
             >
               <option value="">Selecione um agente</option>
@@ -934,6 +965,34 @@ export function DisparosMassaHub() {
             {agents.length === 0 ? (
               <p className="mt-2 text-[11px] text-content-secondary">
                 Nenhum agente ativo ainda — crie um em Meus Agentes antes de agendar um disparo.
+              </p>
+            ) : null}
+
+            <label className="mt-3 mb-1.5 block text-xs font-medium text-content-secondary" htmlFor="campaign-timezone">
+              Fuso horário da campanha
+            </label>
+            <Input
+              id="campaign-timezone"
+              list="campaign-timezones"
+              value={campaignTimezone}
+              onChange={(event) => setCampaignTimezone(event.target.value)}
+              placeholder="Ex.: Europe/Lisbon"
+              className="rounded-xl"
+              aria-describedby="campaign-timezone-help"
+            />
+            <datalist id="campaign-timezones">
+              {COMMON_TIMEZONES.map((timezone) => (
+                <option key={timezone.value} value={timezone.value}>{timezone.label}</option>
+              ))}
+            </datalist>
+            <p id="campaign-timezone-help" className="mt-1.5 text-[11px] leading-relaxed text-content-secondary">
+              {selectedAgent?.timezone && campaignTimezone === selectedAgent.timezone
+                ? "Copiado do agente. Você pode escolher outro fuso IANA somente para esta campanha."
+                : "Obrigatório. Datas civis, programação e horários permitidos usam este fuso, sem presumir país."}
+            </p>
+            {campaignTimezone && !campaignTimezoneValid ? (
+              <p className="mt-1.5 text-[11px] text-rose-500" role="alert">
+                Informe um identificador IANA válido, como UTC, Europe/Lisbon ou Asia/Tokyo.
               </p>
             ) : null}
 
@@ -1119,6 +1178,7 @@ export function DisparosMassaHub() {
               isLight={isLight}
               onAfterOptIn={loadCampaignData}
               funnels={funnels}
+              timezone={campaignTimezone}
             />
           </div>
 

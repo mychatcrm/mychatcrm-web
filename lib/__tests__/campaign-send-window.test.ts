@@ -35,22 +35,22 @@ describe("parseCampaignSendWindow", () => {
   it("sem janela configurada devolve null — envia a qualquer hora, como sempre", () => {
     // Campanha antiga não pode parar de enviar por causa desta feature.
     for (const vazio of [null, undefined, {}, { ativo: false }]) {
-      expect(parseCampaignSendWindow(vazio)).toBeNull();
+      expect(parseCampaignSendWindow(vazio, "UTC")).toBeNull();
     }
   });
 
   it("janela ligada sem nenhum dia marcado devolve null", () => {
     // Uma janela que nunca abre travaria a campanha para sempre, em silêncio.
     // Pior que não ter janela: o cliente não entenderia por que nada sai.
-    expect(parseCampaignSendWindow({ ...JANELA_COMERCIAL, diasAtivos: [] })).toBeNull();
+    expect(parseCampaignSendWindow({ ...JANELA_COMERCIAL, diasAtivos: [] }, "America/Sao_Paulo")).toBeNull();
   });
 
   it("resolve a janela completa", () => {
-    expect(parseCampaignSendWindow(JANELA_COMERCIAL)).toEqual(JANELA_COMERCIAL);
+    expect(parseCampaignSendWindow(JANELA_COMERCIAL, "America/Sao_Paulo")).toEqual(JANELA_COMERCIAL);
   });
 
   it("descarta dia inválido e remove repetido", () => {
-    const parsed = parseCampaignSendWindow({ ...JANELA_COMERCIAL, diasAtivos: [1, 1, 9, -2, 6] });
+    const parsed = parseCampaignSendWindow({ ...JANELA_COMERCIAL, diasAtivos: [1, 1, 9, -2, 6] }, "America/Sao_Paulo");
     expect(parsed?.diasAtivos).toEqual([1, 6]);
   });
 
@@ -60,7 +60,7 @@ describe("parseCampaignSendWindow", () => {
       horaInicio: 99,
       horaFim: -3,
       minutoInicio: 250,
-    });
+    }, "America/Sao_Paulo");
     expect(parsed?.horaInicio).toBe(23);
     expect(parsed?.horaFim).toBe(0);
     expect(parsed?.minutoInicio).toBe(59);
@@ -68,7 +68,7 @@ describe("parseCampaignSendWindow", () => {
 
   it("valor não-objeto nunca quebra — vem de jsonb do banco", () => {
     for (const bad of ["texto", 42, [], true]) {
-      expect(parseCampaignSendWindow(bad)).toBeNull();
+      expect(parseCampaignSendWindow(bad, "UTC")).toBeNull();
     }
   });
 });
@@ -100,7 +100,7 @@ describe("contrato: janela e cron", () => {
   it("a janela é avaliada ANTES de resolver a conexão", () => {
     // No transporte Cloud, resolver a conexão custa idas ao Graph. Pagar por
     // elas para descobrir em seguida que está fora da janela é desperdício.
-    const janela = campaigns.indexOf("parseCampaignSendWindow(campaign.send_window)");
+    const janela = campaigns.indexOf("parseCampaignSendWindow(campaign.send_window, campaignTimezone)");
     const conexao = campaigns.indexOf("lookupWhatsAppCloudConnectionByPhoneNumberId(String(campaign.connection_id))");
     expect(janela).toBeGreaterThan(-1);
     expect(conexao).toBeGreaterThan(janela);

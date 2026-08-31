@@ -14,6 +14,7 @@ import {
   clientConfirmedAgendaMutation,
   isInitialAgendaMutationRequest,
   clientRequestedAgendaList,
+  createSimulationAgendaExecutionPort,
   isStandaloneAgendaConfirmation,
   listPlanLooksLikeScheduleAnswer,
   localizeAgendaReply,
@@ -341,6 +342,115 @@ describe("resolveAgendaTurn", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("simulação percorre o mesmo resolvedor e registra a mutação sem persistir", async () => {
+    const { sb, rpc } = makeStructuredSb();
+    const executionPort = createSimulationAgendaExecutionPort({
+      pendingAction: {
+        id: "pending-simulation",
+        journey_id: null,
+        action: "create",
+        event_id: null,
+        proposed_date: "10/06/2026",
+        proposed_time: "14:00",
+        proposed_location: null,
+        timezone: "America/Sao_Paulo",
+        expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+        conversation_sequence: null,
+      },
+    });
+
+    const result = await resolveAgendaTurn({
+      sb,
+      tenantId: "tenant-1",
+      remoteJid: "simulation:agent-1",
+      agentId: "agent-1",
+      timezone: "America/Sao_Paulo",
+      modelText: "Posso confirmar para 10/06/2026 às 14:00?",
+      agendaPlan: {
+        action: "create",
+        date: "10/06/2026",
+        time: "14:00",
+        location: null,
+        eventId: null,
+      },
+      clientText: "sim",
+      agendaAutomationEnabled: true,
+      executionPort,
+    });
+
+    expect(result.action).toBe("scheduled");
+    expect(result.decision).toMatchObject({
+      version: 3,
+      action: "scheduled",
+      date: "10/06/2026",
+      time: "14:00",
+      timezone: "America/Sao_Paulo",
+      confirmation: "confirmed",
+      intendedMutation: "create",
+      executionMode: "simulate",
+    });
+    expect(executionPort.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "execute", action: "create" }),
+        expect.objectContaining({
+          kind: "transition_proposal",
+          id: "pending-simulation",
+          state: "executed",
+        }),
+      ]),
+    );
+    expect(rpc).not.toHaveBeenCalledWith(
+      expect.stringMatching(/^apply_agent_agenda_mutation/),
+      expect.anything(),
+    );
+    expect(insertAgendaEventMock).not.toHaveBeenCalled();
+    expect(createGoogleCalendarEventMock).not.toHaveBeenCalled();
+    expect(scheduleAgendaRemindersForEventMock).not.toHaveBeenCalled();
+  });
+
+  it("AgendaDecisionV3 mantém o mesmo fato técnico em commit e simulate", async () => {
+    const pending = {
+      id: "pending-parity",
+      journey_id: null,
+      action: "create" as const,
+      event_id: null,
+      proposed_date: "10/06/2026",
+      proposed_time: "14:00",
+      proposed_location: null,
+      timezone: "America/Sao_Paulo",
+      expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+      conversation_sequence: null,
+      state: "pending",
+    };
+    const common = {
+      tenantId: "tenant-1",
+      remoteJid: "5511999999999@s.whatsapp.net",
+      agentId: "agent-1",
+      timezone: "America/Sao_Paulo",
+      modelText: "Posso confirmar para 10/06/2026 às 14:00?",
+      agendaPlan: {
+        action: "create" as const,
+        date: "10/06/2026",
+        time: "14:00",
+        location: null,
+        eventId: null,
+      },
+      clientText: "sim",
+      agendaAutomationEnabled: true,
+    };
+    const committed = await resolveAgendaTurn({
+      ...common,
+      sb: makeStructuredSb({ pending, rpcAction: "scheduled" }).sb,
+    });
+    const simulated = await resolveAgendaTurn({
+      ...common,
+      sb: makeStructuredSb().sb,
+      executionPort: createSimulationAgendaExecutionPort({ pendingAction: pending }),
+    });
+
+    expect({ ...simulated.decision, executionMode: "commit" }).toEqual(committed.decision);
   });
 
   it("toggle desligado substitui promessa verbal por resposta segura", async () => {
