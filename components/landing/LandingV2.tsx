@@ -396,7 +396,7 @@ function PricingV2() {
           <p className="text-[17px] font-bold text-mc-text">Enterprise</p>
           <p className="mt-0.5 text-[14px] text-mc-muted">Volumes altos, SLA dedicado e contrato personalizado.</p>
         </div>
-        <a href="mailto:comercial@mychatcrm.com.br" className="shrink-0 rounded-mc-base border border-mc-border bg-mc-surface-2 px-5 py-2.5 text-[14px] font-semibold text-mc-text hover:bg-mc-border transition active:scale-[0.98]">
+        <a href="mailto:comercial@mychatcrm.com.br" data-lead-gate="contact" className="shrink-0 rounded-mc-base border border-mc-border bg-mc-surface-2 px-5 py-2.5 text-[14px] font-semibold text-mc-text hover:bg-mc-border transition active:scale-[0.98]">
           Falar com comercial
         </a>
       </div>
