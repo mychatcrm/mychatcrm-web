@@ -17,7 +17,7 @@ function getEnv(name: string): string {
 }
 
 /** Client com privilégio total (bypass RLS) — usar apenas em código servidor. */
-export function createSupabaseServiceClient() {
+export function createSupabaseServiceClient(options: { noStore?: boolean } = {}) {
   const url = getEnv("NEXT_PUBLIC_SUPABASE_URL");
   assertSupabaseProjectUrl(url);
   assertSupabaseKeysNotSwapped();
@@ -25,6 +25,11 @@ export function createSupabaseServiceClient() {
   assertSupabaseBackendSecretKeyForServiceClient(serviceKey);
   return createClient(url, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
+    global: options.noStore
+      ? {
+          fetch: (input, init) => fetch(input, { ...init, cache: "no-store" }),
+        }
+      : undefined,
   });
 }
 
