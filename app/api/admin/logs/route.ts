@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
+import { getAdminSessionFromCookies, isOperationalAuditOwner } from "@/lib/admin-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { listAuditLog } from "@/lib/server/commercial-store-db";
 
@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   const session = await getAdminSessionFromCookies();
   if (!session) return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
-  if (!hasAdminAccess(session, "logs")) {
+  if (!isOperationalAuditOwner(session)) {
     return NextResponse.json({ error: "Sem permissão." }, { status: 403 });
   }
 

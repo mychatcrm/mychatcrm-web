@@ -48,6 +48,24 @@ describe("tenant agent runtime kill switches", () => {
     });
   });
 
+  it("ignores enabled-looking data whenever the RPC reports an error", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: [{ mode: "enabled", enabled: true, updated_at: "2026-08-30T12:00:00.000Z" }],
+      error: {},
+    });
+
+    await expect(getAgentRuntimeSubsystemControl({
+      sb: { rpc } as never,
+      tenantId: "tenant-1",
+      subsystem: "follow_up",
+    })).resolves.toEqual({
+      subsystem: "follow_up",
+      mode: "disabled",
+      enabled: false,
+      updatedAt: null,
+    });
+  });
+
   it.each([
     ["enabled", true, true],
     ["enabled", false, false],
@@ -104,4 +122,18 @@ describe("tenant agent runtime kill switches", () => {
       updatedAt: null,
     });
   });
+
+  it.each([null, false, 0, {}, []])(
+    "never treats a non-boolean enabled value as permission: %j",
+    async (enabled) => {
+      await expect(getAgentRuntimeSubsystemControl({
+        sb: { rpc: vi.fn().mockResolvedValue({
+          data: [{ mode: "enabled", enabled, updated_at: null }],
+          error: null,
+        }) } as never,
+        tenantId: "tenant-1",
+        subsystem: "agenda",
+      })).resolves.toMatchObject({ enabled: false });
+    },
+  );
 });

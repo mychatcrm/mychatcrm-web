@@ -48,6 +48,11 @@ const PlatformIntelligenceDashboard = dynamic(
   },
 );
 
+const OperationalAuditPage = dynamic(
+  () => import("@/components/admin/OperationalAuditPage").then((module) => ({ default: module.OperationalAuditPage })),
+  { ssr: false, loading: () => <div className="h-72 animate-pulse rounded-xl border border-line bg-surface-card" /> },
+);
+
 function Panel({
   title,
   description,
@@ -804,72 +809,6 @@ function PlansPage() {
   );
 }
 
-type LogEntry = { id: string; type: string; level: string; message: string; actor: string; createdAt: string };
-
-function LogsPage() {
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [filterType, setFilterType] = useState("all");
-
-  useEffect(() => {
-    let cancelled = false;
-    const run = async () => {
-      setLoading(true);
-      setLoadError(null);
-      try {
-        const params = new URLSearchParams({ type: filterType, pageSize: "100" });
-        const res = await fetch(`/api/admin/logs?${params}`);
-        if (cancelled) return;
-        if (!res.ok) { setLoadError("Falha ao carregar logs."); return; }
-        const data = await res.json();
-        setLogs(data.logs ?? []);
-      } catch {
-        if (!cancelled) setLoadError("Erro de conexão.");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    void run();
-    return () => { cancelled = true; };
-  }, [filterType]);
-
-  const levelColor: Record<string, string> = {
-    error: "text-rose-400",
-    warn: "text-amber-400",
-    info: "text-content-secondary",
-  };
-
-  const columns: Column<LogEntry>[] = [
-    { key: "createdAt", header: "Data", render: (r) => new Date(r.createdAt).toLocaleString("pt-BR") },
-    { key: "level", header: "Nível", render: (r) => <span className={levelColor[r.level] ?? ""}>{r.level.toUpperCase()}</span> },
-    { key: "type", header: "Tipo", render: (r) => r.type },
-    { key: "actor", header: "Actor", render: (r) => r.actor || "—" },
-    { key: "message", header: "Mensagem", render: (r) => r.message },
-  ];
-
-  return (
-    <Panel
-      title="Logs do sistema"
-      description="Ações comerciais, erros de IA e eventos de auditoria."
-      actions={
-        <Select value={filterType} onChange={(e) => setFilterType(e.target.value)}>
-          <option value="all">Todos os tipos</option>
-          <option value="comercial">Comercial</option>
-          <option value="ia">IA</option>
-        </Select>
-      }
-    >
-      {loadError ? <p className="mb-3 text-sm text-rose-400">{loadError}</p> : null}
-      {loading
-        ? <div className="h-40 animate-pulse rounded-xl bg-surface-elevated/50" />
-        : logs.length === 0
-          ? <p className="text-sm text-content-faint">Nenhum log encontrado no filtro selecionado.</p>
-          : <DataTable columns={columns} data={logs} rowKey={(r) => r.id} />}
-    </Panel>
-  );
-}
-
 function ComingSoonPage({ title, description, nextStep }: { title: string; description: string; nextStep?: string }) {
   return (
     <Panel title={title} description={description}>
@@ -1200,7 +1139,7 @@ export function AdminWorkspace({
           />
         );
       case "logs":
-        return <LogsPage />;
+        return <OperationalAuditPage />;
       case "seguranca":
         return <SecurityPage />;
       default:

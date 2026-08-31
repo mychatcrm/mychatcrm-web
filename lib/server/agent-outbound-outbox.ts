@@ -60,7 +60,7 @@ export async function authorizeAutomatedOutbound(params: {
     .eq("channel", "whatsapp")
     .maybeSingle();
   if (stateError) {
-    return { ok: false, reason: stateError?.message ?? "conversation_state_missing" };
+    return { ok: false, reason: stateError.message ?? "conversation_state_missing" };
   }
   const current = (state ?? {}) as Partial<ConversationAuthorizationRow>;
   const epoch = Number.isSafeInteger(Number(current.automation_epoch))

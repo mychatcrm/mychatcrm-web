@@ -110,16 +110,19 @@ async function previousWorkflowRuns() {
 
 function notificationCopy(kind, reasons) {
   const reasonText = reasons.join(", ");
+  const testPrefix = clean(process.env.AGENT_RUNTIME_WATCHDOG_MODE)?.startsWith("test_")
+    ? "[TESTE SEGURO — NÃO É INCIDENTE REAL] "
+    : "";
   if (kind === "recovery") {
     return {
-      subject: "MyChatCRM — runtime dos agentes normalizado",
-      text: "O monitor externo confirmou a recuperação do runtime dos agentes.",
+      subject: `${testPrefix}MyChatCRM — runtime dos agentes normalizado`,
+      text: `${testPrefix}O monitor externo confirmou a recuperação do runtime dos agentes.`,
     };
   }
   const prefix = kind === "repeat" ? "Falha ainda ativa" : "Falha crítica detectada";
   return {
-    subject: `MyChatCRM — ${prefix} no runtime dos agentes`,
-    text: `${prefix}. Códigos técnicos: ${reasonText}. Verifique filas, crons e provedores imediatamente.`,
+    subject: `${testPrefix}MyChatCRM — ${prefix} no runtime dos agentes`,
+    text: `${testPrefix}${prefix}. Códigos técnicos: ${reasonText}. Verifique filas, crons e provedores imediatamente.`,
   };
 }
 
@@ -196,17 +199,65 @@ async function notify(kind, reasons) {
   return email.ok && whatsapp.ok;
 }
 
+async function reportExecution(payload) {
+  const healthUrl = clean(process.env.AGENT_RUNTIME_HEALTH_URL) ?? DEFAULT_HEALTH_URL;
+  const url = clean(process.env.AGENT_RUNTIME_AUDIT_URL)
+    ?? new URL("/api/internal/agent-runtime-watchdog/report", healthUrl).toString();
+  const secret = clean(process.env.AGENT_RUNTIME_WATCHDOG_SECRET);
+  if (!secret) return { ok: false, code: "report_secret_missing" };
+  try {
+    const response = await fetchWithTimeout(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        "Content-Type": "application/json",
+        "User-Agent": "mychatcrm-agent-runtime-watchdog/1",
+      },
+      body: JSON.stringify(payload),
+    }, 10_000);
+    return response.ok ? { ok: true, code: "reported" } : { ok: false, code: `report_http_${response.status}` };
+  } catch {
+    return { ok: false, code: "report_request_failed" };
+  }
+}
+
 export async function main() {
   const startedAt = Date.now();
-  const [health, runs] = await Promise.all([readHealth(), previousWorkflowRuns()]);
-  const notification = decideWatchdogNotification({
-    healthy: health.healthy,
-    now: Date.now(),
-    previousRuns: runs,
-  });
+  const mode = clean(process.env.AGENT_RUNTIME_WATCHDOG_MODE) ?? "live";
+  const isTest = mode.startsWith("test_");
+  if (!isTest) {
+    const startReport = await reportExecution({
+      mode, phase: "started", healthy: true, reasonCodes: ["watchdog_started"],
+      durationMs: 0, runId: clean(process.env.GITHUB_RUN_ID),
+      repository: clean(process.env.GITHUB_REPOSITORY),
+      deploymentSha: clean(process.env.WATCHDOG_DEPLOYMENT_SHA),
+    });
+    if (!startReport.ok) {
+      console.error(JSON.stringify({
+        scope: "agent-runtime-watchdog", event: "start_report_failed", code: startReport.code,
+      }));
+    }
+  }
+  const [liveHealth, runs] = await Promise.all([readHealth(), previousWorkflowRuns()]);
+  const health = isTest
+    ? { healthy: mode === "test_recovery", reasons: [`watchdog_${mode}`], httpStatus: liveHealth.httpStatus }
+    : liveHealth;
+  const notification = mode === "test_failure" ? "failure"
+    : mode === "test_repeat" ? "repeat"
+      : mode === "test_recovery" ? "recovery"
+        : decideWatchdogNotification({ healthy: health.healthy, now: Date.now(), previousRuns: runs });
 
   let notificationDelivered = true;
   if (notification) notificationDelivered = await notify(notification, health.reasons);
+
+  const report = await reportExecution({
+    mode, phase: "completed", healthy: health.healthy, httpStatus: health.httpStatus,
+    reasonCodes: health.reasons, notification, notificationDelivered,
+    durationMs: Date.now() - startedAt,
+    runId: clean(process.env.GITHUB_RUN_ID),
+    repository: clean(process.env.GITHUB_REPOSITORY),
+    deploymentSha: clean(process.env.WATCHDOG_DEPLOYMENT_SHA),
+  });
 
   console.log(JSON.stringify({
     scope: "agent-runtime-watchdog",
@@ -216,11 +267,14 @@ export async function main() {
     reasonCodes: health.reasons,
     notification,
     notificationDelivered,
+    report: report.code,
+    mode,
     duration_ms: Date.now() - startedAt,
   }));
 
-  if (!health.healthy) process.exitCode = 1;
-  if (health.healthy && notification && !notificationDelivered) process.exitCode = 1;
+  if (!isTest && !health.healthy) process.exitCode = 1;
+  if (!isTest && health.healthy && notification && !notificationDelivered) process.exitCode = 1;
+  if (!report.ok || (isTest && !notificationDelivered)) process.exitCode = 1;
 }
 
 const entrypoint = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;

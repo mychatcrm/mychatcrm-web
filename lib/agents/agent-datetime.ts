@@ -9,7 +9,7 @@ import type { Agent, AgentFollowUpInteligente } from "@/lib/types";
 const NEUTRAL_TIMEZONE = "UTC";
 
 export function normalizeIanaTimezone(raw: unknown): string | null {
-  if (typeof raw !== "string" || !raw.trim()) return null;
+  if (typeof raw !== "string") return null;
   const timezone = raw.trim();
   try {
     new Intl.DateTimeFormat("en", { timeZone: timezone }).format(0);

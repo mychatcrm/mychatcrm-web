@@ -194,9 +194,11 @@ export function evaluateFollowUpNeed(ctx: FollowUpEvalContext): FollowUpDecision
   }
 
   if (settings.bloquearStatusPerdido) {
-    const leadStatus = lead?.status?.toLowerCase() ?? "";
-    if (leadStatus && LOST_STATUSES.has(leadStatus)) {
-      return { ...base, skipReason: `lead_status_${leadStatus}` };
+    if (typeof lead?.status === "string") {
+      const leadStatus = lead.status.toLowerCase();
+      if (LOST_STATUSES.has(leadStatus)) {
+        return { ...base, skipReason: `lead_status_${leadStatus}` };
+      }
     }
   }
 

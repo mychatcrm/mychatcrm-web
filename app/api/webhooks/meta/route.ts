@@ -10,6 +10,7 @@ import {
   type MetaLeadgenInboxEvent,
 } from "@/lib/server/meta-leadgen-inbox";
 import { handleWhatsAppCloudWebhookPayload } from "@/lib/server/whatsapp-cloud-webhook-handler";
+import { appendOperationalAuditEvent } from "@/lib/server/operational-audit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -148,8 +149,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  waitUntil(
-    processMetaLeadgenInbox({
+  const processorTask = processMetaLeadgenInbox({
       jobIds,
       limit: Math.min(jobIds.length, 5),
     })
@@ -167,8 +167,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
               ? error.message
               : "meta_leadgen_inbox_process_failed",
         });
-      }),
-  );
+      });
+  const auditTask = appendOperationalAuditEvent({
+    actorType: "webhook", actorId: "meta",
+    module: "webhook.meta", action: "leadgen.persisted", status: "completed",
+    resourceType: "meta_leadgen_inbox", channel: "meta_cloud", integration: "meta",
+    resultCode: "leadgen_queued", relatedIds: { meta_inbox_id: jobIds[0] },
+    metadata: { queuedCount: jobIds.length },
+  });
+  waitUntil(Promise.all([processorTask, auditTask]).then(() => undefined));
 
   return NextResponse.json(
     { ok: true, queued: jobIds.length },

@@ -3,6 +3,7 @@ import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { loadLeadInScope, resolveAccessScope, scopeMatchesNothing } from "@/lib/server/access-scope";
 import { listCrmFunnelsFromDb } from "@/lib/server/crm-funnels-db";
+import { appendOperationalAuditEvent } from "@/lib/server/operational-audit";
 
 export const dynamic = "force-dynamic";
 
@@ -107,6 +108,14 @@ export async function POST(request: Request) {
     funnel_id: funilId,
     column_id: status,
     duration_ms: Date.now() - startedAt,
+  });
+  void appendOperationalAuditEvent({
+    actorType: "customer", actorId: session.employeeId ?? `tenant-owner:${session.tenantId}`,
+    tenantId: session.tenantId, module: "crm.kanban", action: "card.moved",
+    status: "completed", resourceType: "lead", resourceId: leadId,
+    durationMs: Date.now() - startedAt, resultCode: "card_move_committed",
+    relatedIds: { lead_id: leadId, funnel_id: funilId, column_id: status },
+    metadata: { previousLeadId, nextLeadId, cardPosition: crmPosition },
   });
 
   return NextResponse.json({

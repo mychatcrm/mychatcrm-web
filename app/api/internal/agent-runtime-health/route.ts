@@ -43,13 +43,16 @@ export async function GET(request: Request) {
 
   try {
     const sb = createSupabaseServiceClient();
-    const { data, error } = await sb.rpc("get_agent_runtime_health_v1");
-    if (error || !data) {
+    const [{ data, error }, { data: auditData, error: auditError }] = await Promise.all([
+      sb.rpc("get_agent_runtime_health_v1"),
+      sb.rpc("get_operational_audit_health_v1"),
+    ]);
+    if (error || !data || auditError || !auditData) {
       logHealth({
         level: "error",
         event: "probe_failed",
         requestId,
-        errorCode: error?.code ?? "empty_result",
+        errorCode: error?.code ?? auditError?.code ?? "empty_result",
         duration_ms: Date.now() - startedAt,
       });
       return NextResponse.json(
@@ -59,19 +62,34 @@ export async function GET(request: Request) {
     }
 
     const health = sanitizeAgentRuntimeHealth(data);
-    const healthy = health.status === "healthy";
+    const auditHealth = auditData as Record<string, unknown>;
+    const auditHealthy = auditHealth.status === "healthy";
+    const healthy = health.status === "healthy" && auditHealthy;
+    const reasons = auditHealthy ? health.reasons : [...health.reasons, "operational_audit_unhealthy"];
     logHealth({
       level: healthy ? "info" : "error",
       event: "probe_completed",
       requestId,
       status: health.status,
-      reasonCodes: health.reasons,
+      reasonCodes: reasons,
       duration_ms: Date.now() - startedAt,
     });
     return NextResponse.json(
       {
         ok: healthy,
         ...health,
+        status: healthy ? "healthy" : "unhealthy",
+        reasons,
+        operationalAudit: {
+          status: auditHealth.status,
+          watchdogLastObservedAt: auditHealth.watchdogLastObservedAt ?? null,
+          watchdogAgeSeconds: auditHealth.watchdogAgeSeconds ?? null,
+          staleOperations: auditHealth.staleOperations ?? 0,
+          staleExports: auditHealth.staleExports ?? 0,
+          failedExportsLast24Hours: auditHealth.failedExportsLast24Hours ?? 0,
+          staleArchives: auditHealth.staleArchives ?? 0,
+          failedArchivesLast24Hours: auditHealth.failedArchivesLast24Hours ?? 0,
+        },
         deploymentSha: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || null,
       },
       {

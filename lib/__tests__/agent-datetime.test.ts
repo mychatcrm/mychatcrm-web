@@ -30,6 +30,11 @@ describe("parseTimezone", () => {
     expect(isValidIanaTimezone("UTC")).toBe(true);
   });
 
+  it("rejects a timezone that only becomes non-empty if trimming is removed", () => {
+    expect(normalizeIanaTimezone(" \t\n ")).toBeNull();
+    expect(isValidIanaTimezone(" \t\n ")).toBe(false);
+  });
+
   it("respeita UTC quando escolhido explicitamente — a troca continua livre", () => {
     expect(parseTimezone("UTC")).toBe("UTC");
   });
