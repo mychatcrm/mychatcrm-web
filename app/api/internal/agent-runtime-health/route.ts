@@ -42,7 +42,9 @@ export async function GET(request: Request) {
   }
 
   try {
-    const sb = createSupabaseServiceClient();
+    // Health checks must observe the database now. Reusing a cached RPC result
+    // could hide a stopped cron or an expired claim until the next deploy.
+    const sb = createSupabaseServiceClient({ noStore: true });
     const [{ data, error }, { data: auditData, error: auditError }] = await Promise.all([
       sb.rpc("get_agent_runtime_health_v1"),
       sb.rpc("get_operational_audit_health_v1"),
