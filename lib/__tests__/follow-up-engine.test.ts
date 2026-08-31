@@ -97,6 +97,26 @@ describe("evaluateFollowUpNeed", () => {
     expect(d).toEqual(blockedBase(`lead_status_${status}`));
   });
 
+  it("handles an absent lead without throwing or manufacturing a terminal status", () => {
+    const d = evaluateFollowUpNeed(makeCtx({ lead: null }));
+    expect(d.shouldSend).toBe(true);
+    expect(d.skipReason).toBeNull();
+  });
+
+  it("handles an absent conversation state without bypassing the other guards", () => {
+    const d = evaluateFollowUpNeed(makeCtx({
+      conversationState: null,
+      settings: { ...BASE_SETTINGS, ativo: false },
+    }));
+    expect(d).toEqual(blockedBase("follow_up_disabled"));
+  });
+
+  it("does not infer a human state from an absent conversation row", () => {
+    const d = evaluateFollowUpNeed(makeCtx({ conversationState: null }));
+    expect(d.shouldSend).toBe(true);
+    expect(d.humanBlocked).toBe(false);
+  });
+
   it("blocks when human_paused=true", () => {
     const d = evaluateFollowUpNeed(
       makeCtx({

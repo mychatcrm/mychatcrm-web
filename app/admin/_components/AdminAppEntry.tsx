@@ -1,6 +1,6 @@
 import { AdminWorkspace } from "@/components/admin/AdminWorkspace";
 import type { AdminRouteKey } from "@/lib/admin-data";
-import { getAdminSessionFromCookies } from "@/lib/admin-auth";
+import { getAdminSessionFromCookies, isOperationalAuditOwner } from "@/lib/admin-auth";
 import { loadAdminDataset } from "@/services/admin";
 import { redirect } from "next/navigation";
 
@@ -15,6 +15,9 @@ export async function AdminAppEntry({ routeKey }: { routeKey: AdminRouteKey }) {
   if (!session) {
     // Evita renderização parcial (sem shell/sidebar) quando middleware e validação DB divergem.
     redirect("/admin/login");
+  }
+  if (routeKey === "logs" && !isOperationalAuditOwner(session)) {
+    redirect("/admin");
   }
 
   const dataset = await loadAdminDataset(session);

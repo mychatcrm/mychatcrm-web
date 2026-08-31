@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { typography } from "@/lib/typography";
 import { PanelNavIcon } from "@/components/nav/panel-nav-icons";
 import type { AdminSession } from "@/lib/admin-auth";
+import { isOperationalAuditOwnerIdentity } from "@/lib/admin-operational-audit-access";
 import { hasAdminAccessByRole } from "@/lib/admin-permissions";
 import { adminNavGroups } from "./navigation";
 import { PanelThemeToggle, usePanelAppearance } from "@/components/panel/PanelAppearance";
@@ -56,7 +57,8 @@ export function AdminSidebar({
             <p className={cn(typography.ui.overline, "panel-nav-section-label mb-1.5 px-2 text-content-faint")}>{group.title}</p>
             <div className="space-y-0.5">
               {group.items
-                .filter((it) => hasAdminAccessByRole(session.role, it.routeKey))
+                .filter((it) => hasAdminAccessByRole(session.role, it.routeKey)
+                  && (!it.ownerOnly || isOperationalAuditOwnerIdentity(session)))
                 .map((it) => {
                 const active = pathname === it.href;
                 return (

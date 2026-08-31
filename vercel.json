@@ -35,6 +35,10 @@
     {
       "path": "/api/internal/external-api-catalog-sync",
       "schedule": "45 5 * * *"
+    },
+    {
+      "path": "/api/internal/operational-audit/retention",
+      "schedule": "15 3 * * *"
     }
   ]
 }

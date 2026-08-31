@@ -56,7 +56,7 @@ export async function getAgentRuntimeSubsystemControl(params: {
   }
   const row = firstRecord(data);
   const mode =
-    row?.mode === "enabled" || row?.mode === "shadow" || row?.mode === "disabled"
+    row?.mode === "enabled" || row?.mode === "shadow"
       ? row.mode
       : "disabled";
   return {

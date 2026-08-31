@@ -4,6 +4,17 @@ on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "Modo seguro do watchdog"
+        required: true
+        type: choice
+        default: live
+        options:
+          - live
+          - test_failure
+          - test_repeat
+          - test_recovery
 
 permissions:
   actions: read
@@ -19,6 +30,8 @@ jobs:
     timeout-minutes: 3
     env:
       AGENT_RUNTIME_HEALTH_URL: ${{ vars.AGENT_RUNTIME_HEALTH_URL }}
+      AGENT_RUNTIME_AUDIT_URL: ${{ vars.AGENT_RUNTIME_AUDIT_URL }}
+      AGENT_RUNTIME_WATCHDOG_MODE: ${{ inputs.mode || 'live' }}
       AGENT_RUNTIME_WATCHDOG_SECRET: ${{ secrets.AGENT_RUNTIME_WATCHDOG_SECRET }}
       AGENT_RUNTIME_RESEND_API_KEY: ${{ secrets.AGENT_RUNTIME_RESEND_API_KEY }}
       AGENT_RUNTIME_RESEND_FROM_EMAIL: ${{ secrets.AGENT_RUNTIME_RESEND_FROM_EMAIL }}
@@ -28,6 +41,7 @@ jobs:
       AGENT_RUNTIME_EVOLUTION_INSTANCE: ${{ secrets.AGENT_RUNTIME_EVOLUTION_INSTANCE }}
       AGENT_RUNTIME_ALERT_WHATSAPP: ${{ secrets.AGENT_RUNTIME_ALERT_WHATSAPP }}
       GITHUB_TOKEN: ${{ github.token }}
+      WATCHDOG_DEPLOYMENT_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
 

@@ -182,12 +182,12 @@ export function normalizeAgentAgendaDate(value: unknown): string | null {
     const day = Number(br[1]);
     const month = Number(br[2]);
     const year = Number(br[3]);
-    const candidate = new Date(Date.UTC(year, month - 1, day));
-    if (
-      candidate.getUTCFullYear() !== year ||
-      candidate.getUTCMonth() !== month - 1 ||
-      candidate.getUTCDate() !== day
-    ) return null;
+    const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const daysPerMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    const maximumDay = daysPerMonth[month - 1];
+    if (year === 0 || maximumDay === undefined || day === 0 || day > maximumDay) {
+      return null;
+    }
     return `${br[1]}/${br[2]}/${br[3]}`;
   }
   const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -202,7 +202,7 @@ export function normalizeAgentAgendaTime(value: unknown): string | null {
   if (!match) return null;
   const hour = Number(match[1]);
   const minute = Number(match[2]);
-  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  if (hour > 23 || minute > 59) return null;
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 

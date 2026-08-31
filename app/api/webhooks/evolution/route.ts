@@ -101,6 +101,7 @@ import {
   shouldDeferHandoffForAgendaResult,
 } from "@/lib/server/agent-cta-scheduler";
 import type { AgentFollowUpInteligente } from "@/lib/types";
+import { appendOperationalAuditEvent } from "@/lib/server/operational-audit";
 import {
   authorizeActiveJourney,
   isJourneyIsolationEnabled,
@@ -602,8 +603,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "temporarily_unavailable" }, { status: 503 });
     }
     if (persisted.duplicate) return NextResponse.json({ ok: true, duplicate: true });
+    const auditTask = appendOperationalAuditEvent({
+      actorType: "webhook", actorId: "evolution",
+      module: "webhook.evolution", action: "event.persisted", status: "completed",
+      resourceType: "evolution_webhook_inbox", resourceId: persisted.id,
+      channel: "evolution", integration: "evolution",
+      resultCode: "webhook_persisted",
+      relatedIds: persisted.id ? { evolution_inbox_id: persisted.id } : {},
+    });
     const processorUrl = new URL("/api/internal/process-evolution-inbox", new URL(request.url).origin);
-    const deferredTask = fetch(processorUrl, {
+    const processorTask = fetch(processorUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -624,6 +633,7 @@ export async function POST(request: Request) {
           error instanceof Error ? error.message : error,
         );
       });
+    const deferredTask = Promise.all([processorTask, auditTask]).then(() => undefined);
     waitUntil(deferredTask);
     return NextResponse.json({ ok: true });
   }

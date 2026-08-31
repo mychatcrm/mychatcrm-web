@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { cookieSecureFlag } from "@/lib/cookie-security";
 import { getAdminSessionByIdFromDb } from "@/lib/server/admin-auth-db";
 import { hasAdminAccessByRole, type AdminRole } from "@/lib/admin-permissions";
+import { isOperationalAuditOwnerIdentity } from "@/lib/admin-operational-audit-access";
 
 export type { AdminRole } from "@/lib/admin-permissions";
 
@@ -52,6 +53,11 @@ export function getAdminSessionByToken(value: string | undefined): AdminSession 
 
 export function hasAdminAccess(session: AdminSession, routeKey: string) {
   return hasAdminAccessByRole(session.role, routeKey);
+}
+
+/** Global audit contains cross-tenant operational metadata and is owner-only. */
+export function isOperationalAuditOwner(session: AdminSession): boolean {
+  return isOperationalAuditOwnerIdentity(session);
 }
 
 export function parseAdminWhitelist() {

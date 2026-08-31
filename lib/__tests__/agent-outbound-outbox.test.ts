@@ -149,6 +149,14 @@ describe("agent outbound outbox", () => {
       expect(rpc).not.toHaveBeenCalled();
     });
 
+    it("uses the stable fail-closed code when the database error has no message", async () => {
+      const { sb, rpc } = authorizationSb({ stateError: {} });
+      await expect(authorizeAutomatedOutbound({
+        sb, outboxId: "outbox-1", claimToken: "claim-1", tenantId: "tenant-1", remoteJid: "remote-1",
+      })).resolves.toEqual({ ok: false, reason: "conversation_state_missing" });
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
     it.each([
       [{ ok: false, reason: "human_active" }, null, "human_active"],
       [{ ok: false }, null, "authorization_blocked"],

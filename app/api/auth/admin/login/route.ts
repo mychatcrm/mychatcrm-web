@@ -3,11 +3,17 @@ import { adminSessionCookieOptions } from "@/lib/admin-auth";
 import { getClientIpFromRequest } from "@/lib/get-client-ip";
 import { checkInMemoryRateLimit } from "@/lib/rate-limit-in-memory";
 import { authenticateAdminFromDb } from "@/lib/server/admin-auth-db";
+import { appendOperationalAuditEvent } from "@/lib/server/operational-audit";
 
 export async function POST(request: Request) {
   const ip = getClientIpFromRequest(request) || "unknown";
   const rl = checkInMemoryRateLimit(`admin-login:${ip}`, 25, 15 * 60 * 1000);
   if (!rl.ok) {
+    void appendOperationalAuditEvent({
+      actorType: "administrator", module: "auth.admin", action: "login.rate_limited",
+      status: "blocked", severity: "warning", critical: true,
+      resourceType: "admin_session", resultCode: "rate_limited",
+    });
     return NextResponse.json(
       { error: "Demasiadas tentativas. Aguarde e tente novamente." },
       { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
@@ -40,7 +46,23 @@ export async function POST(request: Request) {
   }
 
   if (!session) {
+    void appendOperationalAuditEvent({
+      actorType: "administrator", module: "auth.admin", action: "login.failed",
+      status: "blocked", severity: "warning", critical: true,
+      resourceType: "admin_session", resultCode: "invalid_credentials",
+    });
     return NextResponse.json({ error: "E-mail ou senha incorretos." }, { status: 401 });
+  }
+
+  try {
+    await appendOperationalAuditEvent({
+      actorType: "administrator", actorId: session.adminId,
+      module: "auth.admin", action: "login.completed", status: "completed",
+      critical: true, resourceType: "admin_session", resourceId: session.adminId,
+      resultCode: "authenticated", relatedIds: { admin_id: session.adminId },
+    }, { strict: true });
+  } catch {
+    return NextResponse.json({ error: "Login bloqueado porque a auditoria de segurança está indisponível." }, { status: 503 });
   }
 
   const response = NextResponse.json({ ok: true, redirectedTo: "/admin" });

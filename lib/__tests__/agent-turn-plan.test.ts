@@ -113,6 +113,26 @@ describe("untrusted agenda civil values", () => {
   });
 
   it.each([
+    "1/01/2026", "01/1/2026", "001/01/2026", "01/001/2026",
+    "01-01-2026", "2026/01/01", "2026-1-01", "2026-01-1",
+    " 20/07/2026 trailing", "prefix 20/07/2026", "2026-07-17 14:00", "x2026-07-17",
+    "31/06/2026", "31/09/2026", "31/11/2026", "30/02/2028",
+    "29/02/1900", "29/02/2100",
+    "0000-01-01", "01/01/0000",
+  ])("rejects malformed boundaries and impossible calendar values %j", (input) => {
+    expect(normalizeAgentAgendaDate(input)).toBeNull();
+  });
+
+  it.each([
+    ["28/02/1900", "28/02/1900"],
+    ["29/02/2000", "29/02/2000"],
+    ["31/01/9999", "31/01/9999"],
+    ["0001-01-01", "01/01/0001"],
+  ])("preserves exact valid calendar boundaries %s", (input, expected) => {
+    expect(normalizeAgentAgendaDate(input)).toBe(expected);
+  });
+
+  it.each([
     ["0:00", "00:00"],
     ["00:00", "00:00"],
     ["9:05", "09:05"],
