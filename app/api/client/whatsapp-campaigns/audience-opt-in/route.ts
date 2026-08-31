@@ -15,6 +15,7 @@ import {
   parseCrmPeriod,
   parseCrmScope,
 } from "@/lib/server/whatsapp-campaigns";
+import { normalizeIanaTimezone } from "@/lib/agents/agent-datetime";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,18 @@ export async function POST(request: Request) {
   const guard = await requireActiveClientSession();
   if (!guard.ok) return guard.response;
 
-  const body = (await request.json().catch(() => ({}))) as { scope?: unknown; period?: unknown };
+  const body = (await request.json().catch(() => ({}))) as {
+    scope?: unknown;
+    period?: unknown;
+    timezone?: unknown;
+  };
+  const timezone = normalizeIanaTimezone(body.timezone);
+  if (!timezone) {
+    return NextResponse.json(
+      { error: "Defina um fuso horário IANA válido antes de alterar este público.", code: "campaign_timezone_required" },
+      { status: 422 },
+    );
+  }
   const block = { scope: parseCrmScope(body.scope), period: parseCrmPeriod(body.period) };
 
   const sb = createSupabaseServiceClient();
@@ -35,7 +47,7 @@ export async function POST(request: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 503 });
 
   const notOptedIn = (data ?? [])
-    .filter((lead) => leadMatchesCrmAudienceBlock(lead as Record<string, unknown>, block))
+    .filter((lead) => leadMatchesCrmAudienceBlock(lead as Record<string, unknown>, block, timezone))
     .filter((lead) => lead.whatsapp_opt_in !== true || lead.whatsapp_opt_out_at)
     .map((lead) => lead.id);
 

@@ -8,6 +8,7 @@ import {
 } from "@/lib/integrations/whatsapp-cloud";
 import type { AgentResponseJobRow } from "@/lib/server/agent-response-jobs";
 import { enrichAgentInboundMediaV2 } from "@/lib/server/agent-inbound-media-v2";
+import { recordAgentRuntimeMetric } from "@/lib/server/agent-runtime-metrics";
 import { deliverAgentReplyWithOptionalTts } from "@/lib/server/agent-tts-outbound";
 import {
   commitTenantLeadQuotaReservation,
@@ -131,6 +132,7 @@ export async function processMetaAgentResponseJob(
   if (!phone) return { ok: false, error: "invalid_remote_jid" };
 
   let quotaReservationId: string | null = null;
+  const turnStartedAt = Date.now();
   const result = await processAgentTurnV2({
     sb,
     job,
@@ -259,6 +261,13 @@ export async function processMetaAgentResponseJob(
         });
       },
     },
+  });
+  await recordAgentRuntimeMetric({
+    metric: "provider_call",
+    subsystem: "meta_cloud",
+    outcome: result.ok ? "success" : result.error.includes("stale") ? "duplicate" : "failed",
+    durationMs: Date.now() - turnStartedAt,
+    sb,
   });
   return withSuppressedLateCount(result, suppressedLateIds.size);
 }

@@ -33,9 +33,11 @@ import {
 import { isElevenlabsConfigured } from "@/lib/integrations/elevenlabs";
 import { applyCrmMoveOnLeadReply } from "@/lib/server/agent-crm-move";
 import {
+  createSimulationAgendaExecutionPort,
   priorAgendaAssistantTextFromMessages,
   resolveAgendaTurn,
   shouldDeferHandoffForAgendaResult,
+  type AgendaDecisionV3,
 } from "@/lib/server/agent-cta-scheduler";
 import {
   completeAgentHandoff,
@@ -44,6 +46,7 @@ import {
 } from "@/lib/server/agent-handoff-runtime";
 import { applyAgentLeadOutcome } from "@/lib/server/agent-lead-outcome";
 import { resolveOutboundMediaForAgentResponse } from "@/lib/server/agent-media-files";
+import { getAgentRuntimeSubsystemControl } from "@/lib/server/agent-runtime-controls";
 import {
   finalizeAgentOutboundDelivery,
   markAgentOutboundAmbiguous,
@@ -99,6 +102,8 @@ export type AgentTurnDecisionV2 = {
   languageTag: string | null;
   languageCode: SupportedLanguageCode;
   agenda: AgentAgendaPlan | null;
+  /** Decisão pós-resolvedor; idêntica entre produção e simulação para o mesmo fixture. */
+  agendaDecision: AgendaDecisionV3;
   agendaBlocked: boolean;
   handoff: { triggered: boolean; reason: string | null };
   media: { filenames: string[] };
@@ -139,7 +144,13 @@ export type ProcessAgentTurnV2Result =
       decision: AgentTurnDecisionV2;
       primaryAlreadySent: boolean;
     }
-  | { ok: false; error: string; dedupedCount?: number };
+  | {
+      ok: false;
+      error: string;
+      dedupedCount?: number;
+      /** Present when the turn reached a safe, auditable blocked decision. */
+      decision?: AgentTurnDecisionV2;
+    };
 
 function consolidatedInboundText(messages: Array<{ content: string }>): string {
   return messages.map((message) => message.content.trim()).filter(Boolean).join("\n");
@@ -347,53 +358,9 @@ export async function processAgentTurnV2(params: {
       | undefined,
       });
 
-  if (dryRun) {
-    const conversationLanguage = resolveConfiguredConversationLanguage(
-      typeof params.metadata.idioma === "string" ? params.metadata.idioma : null,
-      clientText,
-    );
-    const languageCode = resolveConfiguredLanguageCode(
-      typeof params.metadata.idioma === "string" ? params.metadata.idioma : null,
-      clientText,
-    );
-    const media = await resolveOutboundMediaForAgentResponse({
-      sb,
-      tenantId: job.tenant_id,
-      agentId: job.agent_id,
-      responseText: modelText,
-      userRequestText: unitPrompt,
-      structuredFilenames: structuredPlan.media.filenames,
-    });
-    const reply =
-      handoffTriggered && handoffSettings.message
-        ? handoffSettings.message
-        : media.cleanedText.trim() || modelText;
-    const followUpSettings = followUpInteligenteFromMetadata(params.metadata);
-    return {
-      ok: true,
-      dedupedCount: burst.dedupedCount,
-      primaryAlreadySent: false,
-      decision: {
-        reply,
-        languageTag: conversationLanguage.ok ? conversationLanguage.tag : null,
-        languageCode,
-        agenda: structuredPlan.agenda,
-        agendaBlocked: agendaTimezoneInvalid,
-        handoff: { triggered: handoffTriggered, reason: handoffReason },
-        media: { filenames: media.filenames },
-        leadOutcome: structuredPlan.leadOutcome,
-        externalApiLookups:
-          generated.externalApiLookupTrace ?? structuredPlan.externalApiLookups,
-        authorization: { allowed: true, reason: "dry_run_no_business_mutations" },
-        timezone,
-        followUp: {
-          enabled: followUpSettings.ativo,
-          wouldCreate: followUpSettings.ativo && !handoffTriggered,
-          intervalMinutes: followUpSettings.ativo ? followUpSettings.intervaloVerificacaoMinutos : null,
-        },
-      },
-    };
-  }
+  // Simulação e produção leem o mesmo histórico autorizado. O adaptador
+  // `dry-run` bloqueia somente mutações; remover o histórico da simulação fazia
+  // as duas modalidades tomarem decisões diferentes para o mesmo fixture.
   const history = await getRecentConversationMessages({
     sb,
     tenantId: job.tenant_id,
@@ -401,26 +368,38 @@ export async function processAgentTurnV2(params: {
     journeyId: job.journey_id,
     limit: 12,
   });
-  if (await generationIsStale({ sb, job, generation, skipGenerationCheck })) {
+  if (!dryRun && await generationIsStale({ sb, job, generation, skipGenerationCheck })) {
     return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
   }
 
-  const { data: stateForAgenda, error: stateForAgendaError } = await sb
-    .from("conversation_states")
-    .select("automation_epoch,human_paused,conversation_mode,active_journey_id")
-    .eq("tenant_id", job.tenant_id)
-    .eq("remote_jid", job.remote_jid)
-    .eq("channel", "whatsapp")
-    .maybeSingle();
-  if (
-    stateForAgendaError || !stateForAgenda || stateForAgenda.human_paused ||
-    stateForAgenda.conversation_mode !== "automation" ||
-    stateForAgenda.active_journey_id !== job.journey_id
-  ) {
-    return { ok: false, error: "automation_state_invalid_before_agenda", dedupedCount: burst.dedupedCount };
+  let automationEpoch: number | null = null;
+  if (!dryRun) {
+    const { data: stateForAgenda, error: stateForAgendaError } = await sb
+      .from("conversation_states")
+      .select("automation_epoch,human_paused,conversation_mode,active_journey_id")
+      .eq("tenant_id", job.tenant_id)
+      .eq("remote_jid", job.remote_jid)
+      .eq("channel", "whatsapp")
+      .maybeSingle();
+    if (
+      stateForAgendaError || !stateForAgenda || stateForAgenda.human_paused ||
+      stateForAgenda.conversation_mode !== "automation" ||
+      stateForAgenda.active_journey_id !== job.journey_id
+    ) {
+      return { ok: false, error: "automation_state_invalid_before_agenda", dedupedCount: burst.dedupedCount };
+    }
+    automationEpoch = Number(stateForAgenda.automation_epoch);
   }
 
   // 6. Exatamente uma chamada ao motor de agenda, sem alterar sua lógica.
+  // O controle emergencial é consultado no mesmo tenant imediatamente antes
+  // da decisão. Falha da RPC é fail-closed e não permite que uma mutação seja
+  // executada por um caminho parcialmente indisponível.
+  const agendaRuntime = await getAgentRuntimeSubsystemControl({
+    tenantId: job.tenant_id,
+    subsystem: "agenda",
+    sb,
+  });
   const agendaPlan = agendaPlanFromResult(generated);
   const agendaTurn = await resolveAgendaTurn({
     sb,
@@ -448,7 +427,9 @@ export async function processAgentTurnV2(params: {
     // Legado sem fuso explícito continua atendendo normalmente, mas a agenda
     // fica fail-closed até o operador corrigir somente esse recurso.
     agendaAutomationEnabled:
-      params.metadata.agendaAutomationEnabled === true && !agendaTimezoneInvalid,
+      params.metadata.agendaAutomationEnabled === true &&
+      !agendaTimezoneInvalid &&
+      agendaRuntime.enabled,
     ctaHandoffAtivo: params.metadata.ctaHandoffAtivo === true,
     agendaLembretes:
       params.metadata.agendaLembretes && typeof params.metadata.agendaLembretes === "object"
@@ -468,10 +449,36 @@ export async function processAgentTurnV2(params: {
     ruleId: skipGenerationCheck ? null : job.rule_id,
     channel: skipGenerationCheck ? null : job.channel,
     connectionId: skipGenerationCheck ? null : job.connection_id,
-    automationEpoch: skipGenerationCheck ? null : Number(stateForAgenda.automation_epoch),
+    automationEpoch: skipGenerationCheck ? null : automationEpoch,
+    executionPort: dryRun ? createSimulationAgendaExecutionPort() : undefined,
   });
   if (agendaTurn.action === "stale") {
     return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
+  }
+  if (!agendaTurn.decision) {
+    return { ok: false, error: "agenda_decision_missing", dedupedCount: burst.dedupedCount };
+  }
+  if (!agendaRuntime.enabled && agendaTurn.action === "blocked") {
+    return {
+      ok: false,
+      error: "agenda_kill_switch_active",
+      dedupedCount: burst.dedupedCount,
+      decision: {
+        reply: "",
+        languageTag: null,
+        languageCode: "en",
+        agenda: agendaPlan,
+        agendaDecision: agendaTurn.decision,
+        agendaBlocked: true,
+        handoff: { triggered: false, reason: null },
+        media: { filenames: [] },
+        leadOutcome: leadOutcomeFromResult(generated),
+        externalApiLookups: [],
+        authorization: { allowed: false, reason: "agenda_kill_switch_active" },
+        timezone,
+        followUp: { enabled: false, wouldCreate: false, intervalMinutes: null },
+      },
+    };
   }
   if (shouldDeferHandoffForAgendaResult(agendaTurn)) {
     handoffTriggered = false;
@@ -537,6 +544,7 @@ export async function processAgentTurnV2(params: {
     languageTag: conversationLanguage.ok ? conversationLanguage.tag : null,
     languageCode,
     agenda: agendaPlan,
+    agendaDecision: agendaTurn.decision,
     agendaBlocked: agendaTimezoneInvalid || agendaTurn.action === "blocked",
     handoff: { triggered: handoffTriggered, reason: handoffReason },
     media: { filenames: media.filenames },
@@ -545,7 +553,10 @@ export async function processAgentTurnV2(params: {
       generated.externalApiLookupTrace ??
       parseAgentTurnPlan(generated.structuredData)?.externalApiLookups ??
       [],
-    authorization: { allowed: true, reason: "outbox_authorized" },
+    authorization: {
+      allowed: true,
+      reason: dryRun ? "dry_run_no_business_mutations" : "outbox_authorized",
+    },
     timezone,
     followUp: {
       enabled: followUpInteligenteFromMetadata(params.metadata).ativo,
@@ -555,6 +566,15 @@ export async function processAgentTurnV2(params: {
         : null,
     },
   };
+
+  if (dryRun) {
+    return {
+      ok: true,
+      dedupedCount: burst.dedupedCount,
+      decision,
+      primaryAlreadySent: false,
+    };
+  }
 
   // 7. Revalida geração/takeover/jornada imediatamente antes do outbox.
   if (await generationIsStale({ sb, job, generation, skipGenerationCheck })) {

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   AGENT_TURN_RESPONSE_FORMAT,
+  normalizeAgentAgendaDate,
+  normalizeAgentAgendaTime,
   normalizeAgentTurnResult,
   parseAgentTurnPlan,
 } from "@/lib/ai/agent-turn-plan";
@@ -88,5 +90,42 @@ describe("structured agent turn plan", () => {
       latencyMs: 10,
     });
     expect(normalized).toMatchObject({ ok: false, code: "INVALID_STRUCTURED_REPLY" });
+  });
+});
+
+describe("untrusted agenda civil values", () => {
+  it.each([
+    ["01/01/2026", "01/01/2026"],
+    ["29/02/2028", "29/02/2028"],
+    ["2026-12-31", "31/12/2026"],
+    [" 2026-07-17 ", "17/07/2026"],
+  ])("accepts an exact valid date %s", (input, expected) => {
+    expect(normalizeAgentAgendaDate(input)).toBe(expected);
+  });
+
+  it.each([
+    "00/01/2026", "32/01/2026", "01/00/2026", "01/13/2026",
+    "29/02/2027", "31/04/2026", "2026-02-30",
+    "x20/07/2026", "20/07/2026x", "2026-07-17T14:00:00Z",
+    "", null, 20260717,
+  ])("rejects malformed or impossible date %j", (input) => {
+    expect(normalizeAgentAgendaDate(input)).toBeNull();
+  });
+
+  it.each([
+    ["0:00", "00:00"],
+    ["00:00", "00:00"],
+    ["9:05", "09:05"],
+    ["23:59", "23:59"],
+    [" 14:30 ", "14:30"],
+  ])("accepts and normalizes exact time %s", (input, expected) => {
+    expect(normalizeAgentAgendaTime(input)).toBe(expected);
+  });
+
+  it.each([
+    "-1:00", "24:00", "12:60", "12:-1", "1:2", "001:00",
+    "x14:00", "14:00x", "14h", "", null, 1400,
+  ])("rejects malformed or impossible time %j", (input) => {
+    expect(normalizeAgentAgendaTime(input)).toBeNull();
   });
 });

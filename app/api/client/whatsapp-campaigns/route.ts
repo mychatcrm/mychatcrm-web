@@ -7,6 +7,7 @@ import {
   processDueWhatsAppCampaigns,
 } from "@/lib/server/whatsapp-campaigns";
 import { listTenantWhatsappConnections } from "@/lib/server/tenant-whatsapp-connections";
+import { normalizeIanaTimezone } from "@/lib/agents/agent-datetime";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -91,12 +92,24 @@ export async function GET() {
         activeAgentIds.has(rule.agentId) &&
         connectedKeys.has(`${rule.transport}:${rule.connectionId}`),
     );
+  const campaignAgents = (agents.data ?? []).map((agent) => {
+    const metadata =
+      agent.metadata && typeof agent.metadata === "object" && !Array.isArray(agent.metadata)
+        ? (agent.metadata as Record<string, unknown>)
+        : {};
+    return {
+      agent_id: String(agent.agent_id),
+      display_name: agent.display_name,
+      active: agent.active,
+      timezone: normalizeIanaTimezone(metadata.timezone),
+    };
+  });
 
   return NextResponse.json(
     {
       campaigns: campaigns.data ?? [],
       connections,
-      agents: agents.data ?? [],
+      agents: campaignAgents,
       campaignRules: rules,
       eligibleRecipients: eligible.count ?? 0,
       activeCampaignLimit: CAMPAIGN_ACTIVE_LIMIT,
@@ -139,6 +152,7 @@ export async function POST(request: Request) {
         metaTemplateLang: typeof body.metaTemplateLang === "string" ? body.metaTemplateLang : null,
         throughput,
         scheduledAt: typeof body.scheduledAt === "string" ? body.scheduledAt : null,
+        timezone: typeof body.timezone === "string" ? body.timezone : null,
         // Cru de propósito: quem valida e normaliza é parseCampaignSendWindow,
         // um lugar só, usado tanto na gravação quanto na leitura do processador.
         sendWindow: body.sendWindow,
@@ -170,6 +184,11 @@ export async function POST(request: Request) {
       campaign_message_too_long: "A mensagem ultrapassa 4.000 caracteres.",
       campaign_connection_not_available: "Selecione um WhatsApp conectado.",
       campaign_agent_not_available: "O agente selecionado não está ativo.",
+      campaign_timezone_required:
+        "Defina um fuso horário IANA para a campanha. Se o agente não possui fuso, configure-o ou escolha o fuso aqui.",
+      campaign_timezone_invalid: "O fuso horário da campanha não é um identificador IANA válido.",
+      campaign_scheduled_at_invalid:
+        "A data ou o horário programado não existe no fuso da campanha. Revise a data, o horário e o fuso.",
       campaign_rule_required:
         "Selecione a regra de campanha criada em Integrações de Leads.",
       campaign_rule_not_authorized:

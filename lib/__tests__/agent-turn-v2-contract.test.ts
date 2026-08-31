@@ -61,9 +61,11 @@ describe("processAgentTurnV2 omnichannel contract", () => {
     expect(simulation).toContain("simulateAgentTurnV2({");
     expect(simulation).not.toContain("generateAgentResponse({");
     expect(dryRunBranch).toBeGreaterThan(0);
-    expect(dryRunBranch).toBeLessThan(agenda);
+    expect(dryRunBranch).toBeGreaterThan(agenda);
     expect(dryRunBranch).toBeLessThan(outbox);
-    expect(engine).toContain('reason: "dry_run_no_business_mutations"');
+    expect(engine).toContain("createSimulationAgendaExecutionPort()");
+    expect(engine).toContain("agendaDecision: agendaTurn.decision");
+    expect(engine).toContain('"dry_run_no_business_mutations"');
     expect(engine).toContain("generated.externalApiLookupTrace");
     expect(simulation).toContain("result.decision.languageTag");
     expect(simulation).toContain("mutated: false");

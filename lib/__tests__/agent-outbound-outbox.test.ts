@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  authorizeAutomatedOutbound,
   finalizeAgentOutboundDelivery,
   markAgentOutboundFailed,
   markAgentOutboundSent,
@@ -94,6 +95,84 @@ function makeSb(
 }
 
 describe("agent outbound outbox", () => {
+  describe("transactional dispatch authorization", () => {
+    function authorizationSb(options: {
+      state?: unknown;
+      stateError?: unknown;
+      decision?: unknown;
+      rpcError?: unknown;
+    }) {
+      const maybeSingle = vi.fn().mockResolvedValue({
+        data: options.state ?? { automation_epoch: 7, conversation_mode: "automation", human_paused: false },
+        error: options.stateError ?? null,
+      });
+      const chain: Record<string, unknown> = {};
+      const select = vi.fn(() => chain);
+      const eq = vi.fn(() => chain);
+      chain.select = select;
+      chain.eq = eq;
+      chain.maybeSingle = maybeSingle;
+      const rpc = vi.fn().mockResolvedValue({
+        data: Object.prototype.hasOwnProperty.call(options, "decision")
+          ? options.decision
+          : { ok: true, reason: "allowed" },
+        error: options.rpcError ?? null,
+      });
+      const from = vi.fn(() => chain);
+      return { sb: { from, rpc } as never, rpc, from, select, eq };
+    }
+
+    it("passes the exact current epoch to the atomic RPC", async () => {
+      const { sb, rpc, from, select, eq } = authorizationSb({});
+      await expect(authorizeAutomatedOutbound({
+        sb, outboxId: "outbox-1", claimToken: "claim-1", tenantId: "tenant-1", remoteJid: "remote-1",
+      })).resolves.toEqual({ ok: true, automationEpoch: 7 });
+      expect(rpc).toHaveBeenCalledWith("authorize_agent_outbound_dispatch_v3", {
+        p_outbox_id: "outbox-1",
+        p_claim_token: "claim-1",
+        p_expected_epoch: 7,
+      });
+      expect(from).toHaveBeenCalledWith("conversation_states");
+      expect(select).toHaveBeenCalledWith("automation_epoch,conversation_mode,human_paused");
+      expect(eq.mock.calls).toEqual([
+        ["tenant_id", "tenant-1"],
+        ["remote_jid", "remote-1"],
+        ["channel", "whatsapp"],
+      ]);
+    });
+
+    it("fails closed before the RPC when conversation state cannot be read", async () => {
+      const { sb, rpc } = authorizationSb({ stateError: { message: "state_unavailable" } });
+      await expect(authorizeAutomatedOutbound({
+        sb, outboxId: "outbox-1", claimToken: "claim-1", tenantId: "tenant-1", remoteJid: "remote-1",
+      })).resolves.toEqual({ ok: false, reason: "state_unavailable" });
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [{ ok: false, reason: "human_active" }, null, "human_active"],
+      [{ ok: false }, null, "authorization_blocked"],
+      [null, null, "authorization_rpc_failed"],
+      ["invalid", null, "authorization_rpc_failed"],
+      [{ ok: true }, { message: "rpc_offline" }, "rpc_offline"],
+    ] as const)("blocks malformed or denied decisions", async (decision, rpcError, reason) => {
+      const { sb } = authorizationSb({ decision, rpcError });
+      await expect(authorizeAutomatedOutbound({
+        sb, outboxId: "outbox-1", claimToken: "claim-1", tenantId: "tenant-1", remoteJid: "remote-1",
+      })).resolves.toEqual({ ok: false, reason });
+    });
+
+    it("normalizes a missing or invalid epoch to zero for fail-closed database validation", async () => {
+      const { sb, rpc } = authorizationSb({ state: { automation_epoch: "invalid" } });
+      await authorizeAutomatedOutbound({
+        sb, outboxId: "outbox-1", claimToken: "claim-1", tenantId: "tenant-1", remoteJid: "remote-1",
+      });
+      expect(rpc).toHaveBeenCalledWith("authorize_agent_outbound_dispatch_v3", expect.objectContaining({
+        p_expected_epoch: 0,
+      }));
+    });
+  });
+
   it("drops a reply when a newer conversation sequence already exists", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: false, error: null });
     const sb = {

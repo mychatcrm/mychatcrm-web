@@ -10,6 +10,8 @@ import { lookupWhatsAppCloudConnectionByPhoneNumberId } from "@/lib/server/whats
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import type { AgentAgendaLembretes } from "@/lib/types";
 import { recordAgentRuntimeAlert } from "@/lib/server/agent-runtime-alerts";
+import { getAgentRuntimeSubsystemControl } from "@/lib/server/agent-runtime-controls";
+import { recordAgentRuntimeMetric } from "@/lib/server/agent-runtime-metrics";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 type AgendaReminderJobV2 = {
@@ -57,6 +59,12 @@ export async function scheduleAgendaRemindersForEvent(params: {
     throw new Error("agenda_reminder_exact_identity_required");
   }
   const sb = params.sb ?? createSupabaseServiceClient();
+  const runtimeControl = await getAgentRuntimeSubsystemControl({
+    sb,
+    tenantId: params.tenantId,
+    subsystem: "agenda_reminder",
+  });
+  if (!runtimeControl.enabled) return;
   const { data: agentRow, error: agentError } = await sb.from("tenant_agents")
     .select("agenda_reminder_config_version,active,archived_at").eq("tenant_id", params.tenantId)
     .eq("agent_id", params.agentId).maybeSingle();
@@ -217,6 +225,20 @@ function isRetryableProviderFailure(reason: string): boolean {
 }
 
 async function processReminderJob(sb: SupabaseServiceClient, job: AgendaReminderJobV2): Promise<"sent" | "cancelled" | "failed"> {
+  const runtimeControl = await getAgentRuntimeSubsystemControl({
+    sb,
+    tenantId: job.tenant_id,
+    subsystem: "agenda_reminder",
+  });
+  if (!runtimeControl.enabled) {
+    await finishJob({
+      sb,
+      job,
+      status: "cancelled",
+      error: "agenda_reminder_runtime_disabled",
+    });
+    return "cancelled";
+  }
   const [agentResult, eventResult, stateResult] = await Promise.all([
     sb.from("tenant_agents").select("active,archived_at,agenda_reminder_config_version,metadata").eq("tenant_id", job.tenant_id).eq("agent_id", job.agent_id).maybeSingle(),
     sb.from("agenda_events").select("status,start_at,agent_id").eq("tenant_id", job.tenant_id).eq("id", job.agenda_event_id).maybeSingle(),
@@ -296,6 +318,7 @@ async function processReminderJob(sb: SupabaseServiceClient, job: AgendaReminder
 
 export async function processDueAgendaReminderJobs(params: { sb?: SupabaseServiceClient; batchSize?: number; deadlineMs?: number }): Promise<{ processed: number; sent: number; cancelled: number; failed: number }> {
   const sb = params.sb ?? createSupabaseServiceClient();
+  const startedAt = Date.now();
   const deadlineAt = Date.now() + Math.max(5_000, params.deadlineMs ?? 45_000);
   const { data, error } = await sb.rpc("claim_agenda_reminder_jobs_v2", { p_limit: Math.max(1, Math.min(params.batchSize ?? 8, 20)), p_claim_seconds: 120 });
   if (error) throw new Error(`agenda_reminder_claim_failed:${error.message}`);
@@ -311,6 +334,16 @@ export async function processDueAgendaReminderJobs(params: { sb?: SupabaseServic
         nextAttemptAt: attempts < job.max_attempts ? new Date(Date.now() + Math.min(15 * 60_000, 30_000 * 2 ** attempts)) : null,
         error: error_ instanceof Error ? error_.message : "agenda_reminder_failed" }).catch(() => undefined);
     }
+  }
+  if (totals.processed > 0) {
+    await recordAgentRuntimeMetric({
+      metric: "agenda_reminder",
+      subsystem: "agenda_reminder",
+      outcome: totals.failed > 0 ? "failed" : totals.sent > 0 ? "sent" : totals.cancelled > 0 ? "cancelled" : "success",
+      durationMs: Date.now() - startedAt,
+      count: totals.processed,
+      sb,
+    });
   }
   console.info("[agenda-reminder-v2] batch_complete", totals);
   return totals;

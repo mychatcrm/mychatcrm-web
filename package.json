@@ -14,6 +14,7 @@
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:mutation:critical": "stryker run stryker.conf.mjs",
     "postbuild": "node scripts/fix-next-server-chunks.mjs && next-sitemap",
     "clean:analyze": "tsx scripts/cleanup-engine/cleanup.ts analyze",
     "clean:execute": "tsx scripts/cleanup-engine/cleanup.ts execute",
@@ -60,6 +61,8 @@
     "ws": "8.21.0"
   },
   "devDependencies": {
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/vitest-runner": "^9.6.1",
     "@types/node": "^20.17.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

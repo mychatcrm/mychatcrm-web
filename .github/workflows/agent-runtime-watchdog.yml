@@ -1,0 +1,35 @@
+name: Agent Runtime Watchdog
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: agent-runtime-watchdog
+  cancel-in-progress: false
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      AGENT_RUNTIME_HEALTH_URL: ${{ vars.AGENT_RUNTIME_HEALTH_URL }}
+      AGENT_RUNTIME_WATCHDOG_SECRET: ${{ secrets.AGENT_RUNTIME_WATCHDOG_SECRET }}
+      AGENT_RUNTIME_RESEND_API_KEY: ${{ secrets.AGENT_RUNTIME_RESEND_API_KEY }}
+      AGENT_RUNTIME_RESEND_FROM_EMAIL: ${{ secrets.AGENT_RUNTIME_RESEND_FROM_EMAIL }}
+      AGENT_RUNTIME_ALERT_EMAIL: ${{ secrets.AGENT_RUNTIME_ALERT_EMAIL }}
+      AGENT_RUNTIME_EVOLUTION_API_BASE_URL: ${{ secrets.AGENT_RUNTIME_EVOLUTION_API_BASE_URL }}
+      AGENT_RUNTIME_EVOLUTION_API_KEY: ${{ secrets.AGENT_RUNTIME_EVOLUTION_API_KEY }}
+      AGENT_RUNTIME_EVOLUTION_INSTANCE: ${{ secrets.AGENT_RUNTIME_EVOLUTION_INSTANCE }}
+      AGENT_RUNTIME_ALERT_WHATSAPP: ${{ secrets.AGENT_RUNTIME_ALERT_WHATSAPP }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check runtime and deliver transition alerts
+        run: node scripts/agent-runtime-watchdog.mjs

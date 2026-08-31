@@ -50,16 +50,27 @@ vi.mock("@/lib/server/team-employees-db", () => ({
 import {
   buildCampaignLeadPatch,
   createWhatsAppCampaign,
-  leadMatchesCrmAudienceBlock,
+  leadMatchesCrmAudienceBlock as leadMatchesCrmAudienceBlockInTimezone,
   parseCampaignAudienceBlocks,
   parseCampaignLeadDestination,
+  parseCampaignScheduledAt,
   parseCrmPeriod,
   parseCrmScope,
   renderWhatsAppCampaignTemplate,
-  resolveWhatsAppCampaignAudience,
+  resolveWhatsAppCampaignAudience as resolveWhatsAppCampaignAudienceInTimezone,
 } from "@/lib/server/whatsapp-campaigns";
 
+const CAMPAIGN_TIMEZONE = "America/Sao_Paulo";
 const TODA_A_BASE = { scope: { funnelIds: [], columns: [] }, period: { mode: "all" as const } };
+const leadMatchesCrmAudienceBlock = (
+  lead: Record<string, unknown>,
+  block: Parameters<typeof leadMatchesCrmAudienceBlockInTimezone>[1],
+) => leadMatchesCrmAudienceBlockInTimezone(lead, block, CAMPAIGN_TIMEZONE);
+const resolveWhatsAppCampaignAudience = (
+  sb: Parameters<typeof resolveWhatsAppCampaignAudienceInTimezone>[0],
+  tenantId: string,
+  blocks: Parameters<typeof resolveWhatsAppCampaignAudienceInTimezone>[2],
+) => resolveWhatsAppCampaignAudienceInTimezone(sb, tenantId, blocks, CAMPAIGN_TIMEZONE);
 
 describe("WhatsApp campaign helpers", () => {
   const lead = {
@@ -243,6 +254,37 @@ describe("parseCrmScope / parseCrmPeriod", () => {
   });
 });
 
+describe("campaign timezone", () => {
+  it("converte datetime-local pelo fuso próprio da campanha", () => {
+    expect(parseCampaignScheduledAt("2026-08-19T09:30", "America/Sao_Paulo"))
+      .toBe("2026-08-19T12:30:00.000Z");
+    expect(parseCampaignScheduledAt("2026-08-19T09:30", "Asia/Tokyo"))
+      .toBe("2026-08-19T00:30:00.000Z");
+  });
+
+  it("preserva um instante que já traz offset explícito", () => {
+    expect(parseCampaignScheduledAt("2026-08-19T09:30:00-04:00", "Europe/Lisbon"))
+      .toBe("2026-08-19T13:30:00.000Z");
+  });
+
+  it("falha fechado para fuso inválido e horário inexistente no DST", () => {
+    expect(() => parseCampaignScheduledAt("2026-08-19T09:30", "Brazil/Nowhere"))
+      .toThrow("campaign_timezone_invalid");
+    expect(() => parseCampaignScheduledAt("2026-03-08T02:30", "America/New_York"))
+      .toThrow("campaign_scheduled_at_invalid");
+  });
+
+  it("o mesmo instante pertence a dias civis diferentes conforme a campanha", () => {
+    const block = {
+      scope: { funnelIds: [], columns: [] },
+      period: { mode: "cadastro_data" as const, date: "2026-08-19" },
+    };
+    const lead = { created_at: "2026-08-20T02:30:00.000Z" };
+    expect(leadMatchesCrmAudienceBlockInTimezone(lead, block, "America/Sao_Paulo")).toBe(true);
+    expect(leadMatchesCrmAudienceBlockInTimezone(lead, block, "Asia/Tokyo")).toBe(false);
+  });
+});
+
 type Row = Record<string, unknown>;
 
 function makeBuilder(resultProvider: () => { data: unknown; error: unknown }, captureInsert?: (payload: unknown) => void) {
@@ -271,9 +313,18 @@ function makeSb(options: {
   /** Quantas campanhas ativas o teto já vê — mesmo builder serve a contagem e o insert. */
   activeCampaignCount?: number;
 }) {
+  const configuredAgent = options.agentRow
+    ? {
+        ...options.agentRow,
+        metadata: {
+          timezone: CAMPAIGN_TIMEZONE,
+          ...((options.agentRow.metadata as Record<string, unknown> | undefined) ?? {}),
+        },
+      }
+    : null;
   return {
     from: (table: string) => {
-      if (table === "tenant_agents") return makeBuilder(() => ({ data: options.agentRow, error: null }));
+      if (table === "tenant_agents") return makeBuilder(() => ({ data: configuredAgent, error: null }));
       if (table === "lead_distribution_rules") {
         return makeBuilder(() => ({
           data:
@@ -285,7 +336,7 @@ function makeSb(options: {
                   active: true,
                   transport: "evolution",
                   connection_id: "evo-1",
-                  agent_ids: options.agentRow?.agent_id ? [options.agentRow.agent_id] : [],
+                  agent_ids: configuredAgent?.agent_id ? [configuredAgent.agent_id] : [],
                 },
           error: null,
         }));
@@ -882,7 +933,7 @@ describe("createWhatsAppCampaign — público obrigatório", () => {
       from: (table: string) => {
         if (table === "tenant_agents") {
           return makeBuilder(() => ({
-            data: { agent_id: "agent-1", active: true, metadata: {} },
+            data: { agent_id: "agent-1", active: true, metadata: { timezone: CAMPAIGN_TIMEZONE } },
             error: null,
           }));
         }
