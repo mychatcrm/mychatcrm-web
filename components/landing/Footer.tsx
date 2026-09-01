@@ -4,6 +4,8 @@ import { BRAND_LOGO } from "@/lib/brand";
 import { Link } from "@/i18n/navigation";
 import { LEGAL_PRIVACY_PATHNAME, LEGAL_TERMS_PATHNAME } from "@/lib/legal-routes";
 import { getTranslations } from "next-intl/server";
+import { SOCIAL_LINKS } from "@/lib/social-links";
+import { whatsappHandoffHref } from "@/lib/whatsapp-handoff";
 
 type IntlLinkHref = ComponentProps<typeof Link>["href"];
 
@@ -18,10 +20,12 @@ export async function Footer() {
   ];
 
   const social = [
-    { href: "https://www.instagram.com/", label: t("social.instagram") },
-    { href: "https://www.youtube.com/", label: t("social.youtube") },
-    { href: "https://www.linkedin.com/", label: t("social.linkedin") },
-    { href: "https://wa.me/", label: t("social.whatsapp") },
+    { href: SOCIAL_LINKS.instagram, label: t("social.instagram") },
+    { href: SOCIAL_LINKS.tiktok, label: t("social.tiktok") },
+    { href: SOCIAL_LINKS.youtube, label: t("social.youtube") },
+    { href: SOCIAL_LINKS.x, label: t("social.x") },
+    { href: SOCIAL_LINKS.linkedin, label: t("social.linkedin") },
+    { href: whatsappHandoffHref(), label: t("social.whatsapp") },
   ];
 
   return (

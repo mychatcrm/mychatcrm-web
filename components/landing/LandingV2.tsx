@@ -1,16 +1,95 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { Check, ChevronDown, ChevronUp, MessageCircle, Zap, Users, BarChart2, RefreshCw, Shield } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { motion, AnimatePresence, useReducedMotion, useInView } from "framer-motion";
+import {
+  Check,
+  ChevronDown,
+  ChevronUp,
+  MessageCircle,
+  Zap,
+  Users,
+  BarChart2,
+  RefreshCw,
+  Shield,
+  Menu,
+  X as CloseIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { planEffectiveMonthlyBRL } from "@/lib/plans";
+import { SOCIAL_LINKS } from "@/lib/social-links";
+import { whatsappHandoffHref } from "@/lib/whatsapp-handoff";
+
+// ---------------------------------------------------------------------------
+// Animação — helpers compartilhados (sutis, respeitam prefers-reduced-motion)
+// ---------------------------------------------------------------------------
+
+/** Entrada em cascata: opacidade + leve subida, delay escalonado por índice. */
+const staggerVariants = {
+  hidden: { opacity: 0, y: 16 },
+  show: (i: number) => ({
+    opacity: 1,
+    y: 0,
+    transition: { delay: 0.08 * i, duration: 0.48, ease: [0.22, 1, 0.36, 1] },
+  }),
+};
+
+/**
+ * Rola até a seção da âncora manualmente. O `next/link` do Next 14 nem
+ * sempre dispara o scroll nativo pra links `#hash` (visto na prática: o
+ * href muda, a URL atualiza, mas a página não rola) — trata na mão pra
+ * garantir que funciona de verdade, em vez de confiar no automático.
+ */
+function handleHashNav(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
+  if (!href.startsWith("#")) return;
+  const el = document.querySelector(href);
+  if (!el) return;
+  event.preventDefault();
+  const reduced = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  el.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+  history.pushState(null, "", href);
+}
+
+/** Contador que anima 0→target quando entra na tela; pula direto pro valor final com reduced-motion. */
+function useCountUp(target: number, { inView, reducedMotion }: { inView: boolean; reducedMotion: boolean }) {
+  const [value, setValue] = useState(reducedMotion ? target : 0);
+  useEffect(() => {
+    if (reducedMotion) {
+      setValue(target);
+      return;
+    }
+    if (!inView) return;
+    let raf = 0;
+    const duration = 900;
+    const start = performance.now();
+    const step = (now: number) => {
+      const progress = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setValue(target * eased);
+      if (progress < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [inView, reducedMotion, target]);
+  return value;
+}
 
 // ---------------------------------------------------------------------------
 // Nav
 // ---------------------------------------------------------------------------
 
+const NAV_LINKS = [
+  ["Recursos", "#recursos"],
+  ["Como funciona", "#como-funciona"],
+  ["Planos", "#planos"],
+  ["Blog", "/blog"],
+] as const;
+
 function NavV2() {
+  const [open, setOpen] = useState(false);
+  const reducedMotion = useReducedMotion();
+
   return (
     <nav
       className="sticky top-0 z-50 border-b border-mc-border"
@@ -27,27 +106,91 @@ function NavV2() {
 
         {/* Links */}
         <div className="hidden items-center gap-9 md:flex">
-          {["Recursos", "Como funciona", "Planos", "Blog"].map((l) => (
-            <span key={l} className="cursor-pointer text-[14.5px] font-medium text-mc-text opacity-70 transition hover:opacity-100">
-              {l}
-            </span>
+          {NAV_LINKS.map(([label, href]) => (
+            <Link
+              key={label}
+              href={href}
+              onClick={(e) => handleHashNav(e, href)}
+              className="landing-link-grow text-[14.5px] font-medium text-mc-text opacity-70 transition hover:opacity-100"
+            >
+              {label}
+            </Link>
           ))}
         </div>
 
-        {/* CTAs */}
-        <div className="flex items-center gap-5">
+        {/* CTAs (desktop) */}
+        <div className="hidden items-center gap-5 md:flex">
           <Link href="/login" className="text-[14.5px] font-semibold text-mc-text hover:opacity-70 transition">
             Entrar
           </Link>
           <Link
             href="/login"
-            className="rounded-mc-base px-4 py-2.5 text-[14px] font-semibold text-white active:scale-[0.98] transition-opacity hover:opacity-90"
+            className="landing-cta-shimmer rounded-mc-base px-4 py-2.5 text-[14px] font-semibold text-white active:scale-[0.98] transition-opacity hover:opacity-90"
             style={{ background: "#F24400" }}
           >
             Começar grátis
           </Link>
         </div>
+
+        {/* Toggle (mobile) */}
+        <button
+          type="button"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-mc-base border border-mc-border bg-mc-surface text-mc-text md:hidden"
+          aria-expanded={open}
+          aria-controls="nav-v2-mobile-menu"
+          aria-label={open ? "Fechar menu" : "Abrir menu"}
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? <CloseIcon size={20} strokeWidth={1.9} /> : <Menu size={20} strokeWidth={1.9} />}
+        </button>
       </div>
+
+      {/* Menu mobile */}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            id="nav-v2-mobile-menu"
+            initial={reducedMotion ? false : { height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={reducedMotion ? undefined : { height: 0, opacity: 0 }}
+            transition={{ duration: reducedMotion ? 0 : 0.25, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden border-t border-mc-border md:hidden"
+          >
+            <div className="flex flex-col gap-1 px-8 py-4">
+              {NAV_LINKS.map(([label, href]) => (
+                <Link
+                  key={label}
+                  href={href}
+                  onClick={(e) => {
+                    handleHashNav(e, href);
+                    setOpen(false);
+                  }}
+                  className="flex min-h-[44px] items-center text-[15px] font-medium text-mc-text"
+                >
+                  {label}
+                </Link>
+              ))}
+              <div className="mt-2 flex flex-col gap-3 border-t border-mc-border pt-4">
+                <Link
+                  href="/login"
+                  onClick={() => setOpen(false)}
+                  className="flex min-h-[44px] items-center justify-center rounded-mc-base border border-mc-border text-[14.5px] font-semibold text-mc-text"
+                >
+                  Entrar
+                </Link>
+                <Link
+                  href="/login"
+                  onClick={() => setOpen(false)}
+                  className="flex min-h-[44px] items-center justify-center rounded-mc-base text-[14.5px] font-semibold text-white"
+                  style={{ background: "#F24400" }}
+                >
+                  Começar grátis
+                </Link>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </nav>
   );
 }
@@ -57,55 +200,90 @@ function NavV2() {
 // ---------------------------------------------------------------------------
 
 function HeroV2() {
+  const reducedMotion = useReducedMotion();
+  const initial = reducedMotion ? "show" : "hidden";
+
   return (
-    <section className="mx-auto grid max-w-[1200px] grid-cols-1 gap-14 px-8 py-20 md:grid-cols-2 md:items-center">
+    <section className="relative mx-auto grid max-w-[1200px] grid-cols-1 gap-14 overflow-hidden px-8 py-20 md:grid-cols-2 md:items-center">
+      {/* Mancha de fundo sutil — puramente CSS, já respeita reduced-motion globalmente */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -top-32 right-[-10%] h-[420px] w-[420px] animate-hero-mesh-shift rounded-full opacity-40 blur-3xl"
+        style={{ background: "radial-gradient(circle, rgba(242,68,0,0.35), transparent 70%)" }}
+      />
+
       {/* Left */}
-      <div>
+      <div className="relative">
         {/* Badge */}
-        <div className="mb-5 inline-flex items-center gap-2 rounded-full px-3.5 py-1.5" style={{ background: "#fff4ee", border: "1px solid #f7ddcf" }}>
+        <motion.div
+          custom={0}
+          initial={initial}
+          animate="show"
+          variants={staggerVariants}
+          className="mb-5 inline-flex items-center gap-2 rounded-full px-3.5 py-1.5"
+          style={{ background: "#fff4ee", border: "1px solid #f7ddcf" }}
+        >
           <span className="h-1.5 w-1.5 rounded-full" style={{ background: "#F24400" }} />
           <span className="text-[12.5px] font-semibold" style={{ color: "#B22A00" }}>Líder em Inteligência Comercial</span>
-        </div>
+        </motion.div>
 
-        <h1 className="mb-6 text-[52px] font-extrabold leading-[1.04] tracking-[-0.038em] text-mc-text">
+        <motion.h1
+          custom={1}
+          initial={initial}
+          animate="show"
+          variants={staggerVariants}
+          className="mb-6 text-[52px] font-extrabold leading-[1.04] tracking-[-0.038em] text-mc-text"
+        >
           Atenda, venda e organize com{" "}
           <span style={{ color: "#F24400" }}>IA</span> no WhatsApp.
-        </h1>
+        </motion.h1>
 
-        <p className="mb-8 text-[18px] leading-[1.6] text-mc-muted">
+        <motion.p
+          custom={2}
+          initial={initial}
+          animate="show"
+          variants={staggerVariants}
+          className="mb-8 text-[18px] leading-[1.6] text-mc-muted"
+        >
           Automatize o atendimento, capture leads e feche mais negócios — tudo integrado ao CRM.
-        </p>
+        </motion.p>
 
         {/* CTAs */}
-        <div className="mb-8 flex flex-wrap gap-3">
+        <motion.div custom={3} initial={initial} animate="show" variants={staggerVariants} className="mb-8 flex flex-wrap gap-3">
           <Link
             href="/login"
-            className="inline-flex items-center gap-2 rounded-mc-base px-6 py-3.5 text-[15px] font-bold text-white active:scale-[0.98]"
+            className="landing-cta-shimmer inline-flex items-center gap-2 rounded-mc-base px-6 py-3.5 text-[15px] font-bold text-white active:scale-[0.98]"
             style={{ background: "#F24400" }}
           >
             Começar grátis
           </Link>
           <Link
             href="#como-funciona"
+            onClick={(e) => handleHashNav(e, "#como-funciona")}
             className="inline-flex items-center gap-2 rounded-mc-base border border-mc-border bg-mc-surface px-6 py-3.5 text-[15px] font-bold text-mc-text transition hover:bg-mc-surface-2 active:scale-[0.98]"
           >
             Ver como funciona
           </Link>
-        </div>
+        </motion.div>
 
         {/* Bullet features */}
-        <div className="flex flex-wrap gap-x-6 gap-y-2">
+        <motion.div custom={4} initial={initial} animate="show" variants={staggerVariants} className="flex flex-wrap gap-x-6 gap-y-2">
           {["100% em nuvem", "ChatGPT no WhatsApp", "API Oficial (Meta)", "CRM Kanban + Agenda"].map((f) => (
             <span key={f} className="flex items-center gap-1.5 text-[13.5px] font-medium text-mc-muted">
               <Check size={14} strokeWidth={2} style={{ color: "#00A650" }} />
               {f}
             </span>
           ))}
-        </div>
+        </motion.div>
       </div>
 
       {/* Right — chat mockup */}
-      <div className="relative">
+      <motion.div
+        initial={reducedMotion ? false : { opacity: 0, scale: 0.98 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.55, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
+        className="relative"
+      >
         <div className="overflow-hidden rounded-[18px] border border-mc-border bg-mc-surface">
           {/* Chat header */}
           <div className="flex items-center gap-3 px-4 py-3.5" style={{ background: "#0E1D29" }}>
@@ -138,7 +316,12 @@ function HeroV2() {
         </div>
 
         {/* Floating stats */}
-        <div className="absolute -bottom-4 -left-4 flex items-center gap-2.5 rounded-[12px] bg-mc-surface px-3.5 py-2.5 shadow-none border border-mc-border">
+        <motion.div
+          initial={reducedMotion ? false : { opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.6, ease: [0.22, 1, 0.36, 1] }}
+          className="absolute -bottom-4 -left-4 flex items-center gap-2.5 rounded-[12px] bg-mc-surface px-3.5 py-2.5 shadow-none border border-mc-border"
+        >
           <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: "#ecfdf3" }}>
             <span style={{ color: "#067a3c", fontSize: "16px" }}>📈</span>
           </div>
@@ -146,8 +329,8 @@ function HeroV2() {
             <p className="text-[12px] font-semibold text-mc-text">+42% conversão</p>
             <p className="text-[11px] text-mc-muted">média entre clientes</p>
           </div>
-        </div>
-      </div>
+        </motion.div>
+      </motion.div>
     </section>
   );
 }
@@ -156,20 +339,66 @@ function HeroV2() {
 // Trust bar
 // ---------------------------------------------------------------------------
 
+type TrustStat =
+  | { kind: "count"; target: number; prefix?: string; suffix?: string; thousands?: boolean; label: string }
+  | { kind: "static"; value: string; label: string };
+
+const TRUST_STATS: TrustStat[] = [
+  { kind: "count", target: 1200, prefix: "+", thousands: true, label: "clientes ativos" },
+  { kind: "count", target: 98, suffix: "%", label: "satisfação" },
+  { kind: "static", value: "24/7", label: "IA operando" },
+  { kind: "count", target: 3, prefix: "+", suffix: "M", label: "mensagens/mês" },
+];
+
+function TrustStatValue({
+  target,
+  prefix = "",
+  suffix = "",
+  thousands,
+  inView,
+  reducedMotion,
+}: {
+  target: number;
+  prefix?: string;
+  suffix?: string;
+  thousands?: boolean;
+  inView: boolean;
+  reducedMotion: boolean;
+}) {
+  const value = useCountUp(target, { inView, reducedMotion });
+  const rounded = Math.round(value);
+  const display = thousands ? rounded.toLocaleString("pt-BR") : rounded;
+  return (
+    <p className="text-[26px] font-extrabold tracking-tight text-mc-text">
+      {prefix}
+      {display}
+      {suffix}
+    </p>
+  );
+}
+
 function TrustBarV2() {
-  const stats = [
-    { n: "+1.200", label: "clientes ativos" },
-    { n: "98%", label: "satisfação" },
-    { n: "24/7", label: "IA operando" },
-    { n: "+3M", label: "mensagens/mês" },
-  ];
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, { once: true, amount: 0.4 });
+  const reducedMotion = useReducedMotion();
 
   return (
-    <div className="border-y border-mc-border bg-mc-surface">
+    <div ref={ref} className="border-y border-mc-border bg-mc-surface">
       <div className="mx-auto grid max-w-[1200px] grid-cols-2 px-8 py-6 md:grid-cols-4">
-        {stats.map((s, i) => (
-          <div key={i} className={cn("flex flex-col items-center py-4 text-center", i < stats.length - 1 && "border-r border-mc-border")}>
-            <p className="text-[26px] font-extrabold tracking-tight text-mc-text">{s.n}</p>
+        {TRUST_STATS.map((s, i) => (
+          <div key={i} className={cn("flex flex-col items-center py-4 text-center", i < TRUST_STATS.length - 1 && "border-r border-mc-border")}>
+            {s.kind === "static" ? (
+              <p className="text-[26px] font-extrabold tracking-tight text-mc-text">{s.value}</p>
+            ) : (
+              <TrustStatValue
+                target={s.target}
+                prefix={s.prefix}
+                suffix={s.suffix}
+                thousands={s.thousands}
+                inView={inView}
+                reducedMotion={!!reducedMotion}
+              />
+            )}
             <p className="mt-1 text-[12.5px] font-medium text-mc-muted">{s.label}</p>
           </div>
         ))}
@@ -192,8 +421,10 @@ const FEATURES = [
 ] as const;
 
 function FeaturesV2() {
+  const reducedMotion = useReducedMotion();
+
   return (
-    <section className="mx-auto max-w-[1200px] px-8 py-24">
+    <section id="recursos" className="mx-auto max-w-[1200px] scroll-mt-[88px] px-8 py-24">
       <div className="mx-auto mb-14 max-w-[660px] text-center">
         <p className="mb-3.5 text-[12.5px] font-bold uppercase tracking-[0.12em]" style={{ color: "#F24400" }}>
           Recursos
@@ -207,14 +438,22 @@ function FeaturesV2() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {FEATURES.map(({ icon: Icon, title, desc }) => (
-          <div key={title} className="rounded-mc-base border border-mc-border bg-mc-surface p-7">
+        {FEATURES.map(({ icon: Icon, title, desc }, i) => (
+          <motion.div
+            key={title}
+            initial={reducedMotion ? false : { opacity: 0, y: 16 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, amount: 0.15 }}
+            transition={{ delay: i * 0.06, duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+            whileHover={reducedMotion ? undefined : { y: -4 }}
+            className="rounded-mc-base border border-mc-border bg-mc-surface p-7 transition-colors hover:border-[rgba(242,68,0,0.35)] hover:bg-mc-surface-2"
+          >
             <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-[12px]" style={{ background: "#fff4ee" }}>
               <Icon size={20} strokeWidth={1.9} style={{ color: "#F24400" }} />
             </div>
             <p className="mb-2 text-[17px] font-bold tracking-tight text-mc-text">{title}</p>
             <p className="text-[14px] leading-[1.55] text-mc-muted">{desc}</p>
-          </div>
+          </motion.div>
         ))}
       </div>
     </section>
@@ -232,8 +471,10 @@ const STEPS = [
 ] as const;
 
 function HowItWorksV2() {
+  const reducedMotion = useReducedMotion();
+
   return (
-    <section id="como-funciona" style={{ background: "#0E1D29" }}>
+    <section id="como-funciona" className="scroll-mt-[88px]" style={{ background: "#0E1D29" }}>
       <div className="mx-auto max-w-[1200px] px-8 py-24">
         <div className="mx-auto mb-14 max-w-[640px] text-center">
           <p className="mb-3.5 text-[12.5px] font-bold uppercase tracking-[0.12em]" style={{ color: "#ff9b73" }}>
@@ -245,12 +486,20 @@ function HowItWorksV2() {
         </div>
 
         <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
-          {STEPS.map(({ n, title, desc }) => (
-            <div key={n} className="rounded-[16px] p-7" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.10)" }}>
+          {STEPS.map(({ n, title, desc }, i) => (
+            <motion.div
+              key={n}
+              initial={reducedMotion ? false : { opacity: 0, y: 16 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, amount: 0.15 }}
+              transition={{ delay: i * 0.08, duration: 0.48, ease: [0.22, 1, 0.36, 1] }}
+              className="rounded-[16px] p-7"
+              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.10)" }}
+            >
               <p className="mb-4 text-[13px] font-bold" style={{ color: "#F24400" }}>{n}</p>
               <p className="mb-2.5 text-[19px] font-bold leading-tight tracking-tight text-white">{title}</p>
               <p className="text-[14.5px] leading-[1.6]" style={{ color: "#94a3b8" }}>{desc}</p>
-            </div>
+            </motion.div>
           ))}
         </div>
       </div>
@@ -296,9 +545,10 @@ const PLANS = [
 
 function PricingV2() {
   const [cycle, setCycle] = useState<BillingCycle>("monthly");
+  const reducedMotion = useReducedMotion();
 
   return (
-    <section id="planos" className="mx-auto max-w-[1200px] px-8 py-24">
+    <section id="planos" className="mx-auto max-w-[1200px] scroll-mt-[88px] px-8 py-24">
       <div className="mx-auto mb-14 max-w-[640px] text-center">
         <p className="mb-3.5 text-[12.5px] font-bold uppercase tracking-[0.12em]" style={{ color: "#F24400" }}>
           Planos
@@ -334,16 +584,21 @@ function PricingV2() {
       </div>
 
       <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
-        {PLANS.map((plan) => {
+        {PLANS.map((plan, i) => {
           const price = Math.round(planEffectiveMonthlyBRL(plan.priceMonthly, cycle));
           return (
-            <div
+            <motion.div
               key={plan.slug}
+              initial={reducedMotion ? false : { opacity: 0, y: 16 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, amount: 0.15 }}
+              transition={{ delay: i * 0.08, duration: 0.48, ease: [0.22, 1, 0.36, 1] }}
+              whileHover={reducedMotion ? undefined : { y: -4 }}
               className={cn(
-                "flex flex-col rounded-mc-base border p-7",
+                "flex flex-col rounded-mc-base border p-7 transition-colors",
                 plan.highlight
                   ? "border-[#F24400] bg-mc-surface"
-                  : "border-mc-border bg-mc-surface",
+                  : "border-mc-border bg-mc-surface hover:border-[rgba(242,68,0,0.35)]",
               )}
             >
               {plan.highlight && (
@@ -354,10 +609,19 @@ function PricingV2() {
               <p className="mb-1 text-[20px] font-extrabold tracking-tight text-mc-text">{plan.name}</p>
               <p className="mb-5 text-[13.5px] text-mc-muted">{plan.tagline}</p>
 
-              <div className="mb-6">
-                <span className="text-[38px] font-extrabold leading-none tracking-tight text-mc-text">
-                  R${price}
-                </span>
+              <div className="mb-6 min-h-[46px] overflow-hidden">
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.span
+                    key={cycle}
+                    initial={reducedMotion ? false : { opacity: 0, y: -6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={reducedMotion ? undefined : { opacity: 0, y: 6 }}
+                    transition={{ duration: reducedMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+                    className="text-[38px] font-extrabold leading-none tracking-tight text-mc-text"
+                  >
+                    R${price}
+                  </motion.span>
+                </AnimatePresence>
                 <span className="ml-1 text-[14px] text-mc-muted">/mês</span>
                 {cycle === "annual" && (
                   <p className="mt-1 text-[12px] text-mc-muted">cobrado anualmente</p>
@@ -385,7 +649,7 @@ function PricingV2() {
               >
                 {plan.cta}
               </Link>
-            </div>
+            </motion.div>
           );
         })}
       </div>
@@ -418,6 +682,7 @@ const FAQ_ITEMS = [
 
 function FAQV2() {
   const [open, setOpen] = useState<number | null>(null);
+  const reducedMotion = useReducedMotion();
 
   return (
     <section className="mx-auto max-w-[760px] px-8 py-24">
@@ -430,8 +695,11 @@ function FAQV2() {
           <div key={i} className="rounded-mc-base border border-mc-border bg-mc-surface">
             <button
               type="button"
+              id={`faq-trigger-${i}`}
               className="flex w-full items-center justify-between px-6 py-4 text-left"
               onClick={() => setOpen(open === i ? null : i)}
+              aria-expanded={open === i}
+              aria-controls={`faq-panel-${i}`}
             >
               <span className="pr-4 text-[16px] font-semibold text-mc-text">{q}</span>
               {open === i ? (
@@ -440,11 +708,25 @@ function FAQV2() {
                 <ChevronDown size={18} strokeWidth={1.9} className="shrink-0 text-mc-muted" />
               )}
             </button>
-            {open === i && (
-              <p className="border-t border-mc-border px-6 pb-5 pt-4 text-[15px] leading-[1.65] text-mc-muted">
-                {a}
-              </p>
-            )}
+            <AnimatePresence initial={false}>
+              {open === i && (
+                <motion.div
+                  key="content"
+                  id={`faq-panel-${i}`}
+                  role="region"
+                  aria-labelledby={`faq-trigger-${i}`}
+                  initial={reducedMotion ? false : { height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={reducedMotion ? undefined : { height: 0, opacity: 0 }}
+                  transition={{ duration: reducedMotion ? 0 : 0.25, ease: [0.22, 1, 0.36, 1] }}
+                  className="overflow-hidden"
+                >
+                  <p className="border-t border-mc-border px-6 pb-5 pt-4 text-[15px] leading-[1.65] text-mc-muted">
+                    {a}
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         ))}
       </div>
@@ -457,9 +739,18 @@ function FAQV2() {
 // ---------------------------------------------------------------------------
 
 function CtaBannerV2() {
+  const reducedMotion = useReducedMotion();
+
   return (
     <section className="mx-auto max-w-[1200px] px-8 pb-24">
-      <div className="overflow-hidden rounded-mc-base p-12 text-center" style={{ background: "#0E1D29" }}>
+      <motion.div
+        initial={reducedMotion ? false : { opacity: 0, y: 20 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, amount: 0.2 }}
+        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        className="overflow-hidden rounded-mc-base p-12 text-center"
+        style={{ background: "#0E1D29" }}
+      >
         <h2 className="mb-5 text-[42px] font-extrabold leading-[1.08] tracking-[-0.03em] text-white">
           Comece hoje, veja resultados em 7 dias
         </h2>
@@ -468,7 +759,7 @@ function CtaBannerV2() {
         </p>
         <Link
           href="/login"
-          className="inline-flex items-center gap-2 rounded-mc-base px-8 py-4 text-[16px] font-bold text-white active:scale-[0.98]"
+          className="landing-cta-shimmer inline-flex items-center gap-2 rounded-mc-base px-8 py-4 text-[16px] font-bold text-white active:scale-[0.98]"
           style={{ background: "#F24400" }}
         >
           Criar conta gratuita
@@ -476,7 +767,7 @@ function CtaBannerV2() {
         <p className="mt-5 text-[13px]" style={{ color: "#64748b" }}>
           7 dias grátis · Sem cartão de crédito · Cancele quando quiser
         </p>
-      </div>
+      </motion.div>
     </section>
   );
 }
@@ -484,6 +775,76 @@ function CtaBannerV2() {
 // ---------------------------------------------------------------------------
 // Footer
 // ---------------------------------------------------------------------------
+
+type SocialPlatform = "instagram" | "tiktok" | "youtube" | "x" | "linkedin" | "whatsapp";
+
+const SOCIAL_ITEMS: { platform: SocialPlatform; href: string; label: string }[] = [
+  { platform: "instagram", href: SOCIAL_LINKS.instagram, label: "Instagram" },
+  { platform: "tiktok", href: SOCIAL_LINKS.tiktok, label: "TikTok" },
+  { platform: "youtube", href: SOCIAL_LINKS.youtube, label: "YouTube" },
+  { platform: "x", href: SOCIAL_LINKS.x, label: "X" },
+  { platform: "linkedin", href: SOCIAL_LINKS.linkedin, label: "LinkedIn" },
+  { platform: "whatsapp", href: whatsappHandoffHref(), label: "WhatsApp" },
+];
+
+function SocialGlyph({ platform }: { platform: SocialPlatform }) {
+  const common = {
+    width: 18,
+    height: 18,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.8,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+  switch (platform) {
+    case "instagram":
+      return (
+        <svg {...common}>
+          <rect x="3" y="3" width="18" height="18" rx="5" />
+          <circle cx="12" cy="12" r="4.2" />
+          <circle cx="17.4" cy="6.6" r="0.9" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    case "tiktok":
+      return (
+        <svg {...common}>
+          <path d="M14.5 3v10.8a3.5 3.5 0 1 1-3.5-3.5c.33 0 .66.04 1 .13" />
+          <path d="M14.5 3.2a5 5 0 0 0 5 5" />
+        </svg>
+      );
+    case "youtube":
+      return (
+        <svg {...common}>
+          <rect x="2.5" y="6" width="19" height="12" rx="4" />
+          <path d="M10.3 9.6l5 2.4-5 2.4z" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    case "x":
+      return (
+        <svg {...common}>
+          <path d="M4.5 4.5l15 15M19.5 4.5l-15 15" />
+        </svg>
+      );
+    case "linkedin":
+      return (
+        <svg {...common}>
+          <rect x="3" y="3" width="18" height="18" rx="4" />
+          <circle cx="8" cy="8.2" r="0.9" fill="currentColor" stroke="none" />
+          <path d="M8 11v6" />
+          <path d="M12 17v-4a2 2 0 0 1 4 0v4" />
+        </svg>
+      );
+    case "whatsapp":
+      return (
+        <svg {...common}>
+          <path d="M21 11.5a8.4 8.4 0 0 1-12.2 7.5L4 20l1.1-4.6A8.4 8.4 0 1 1 21 11.5z" />
+        </svg>
+      );
+  }
+}
 
 function FooterV2() {
   return (
@@ -503,13 +864,33 @@ function FooterV2() {
             ["Termos", "/termos-de-uso"],
             ["Privacidade", "/politica-de-privacidade"],
           ].map(([label, href]) => (
-            <Link key={label} href={href} className="text-[13.5px] font-medium text-mc-muted transition hover:text-mc-text">
+            <Link
+              key={label}
+              href={href}
+              onClick={(e) => handleHashNav(e, href)}
+              className="landing-link-grow text-[13.5px] font-medium text-mc-muted transition hover:text-mc-text"
+            >
               {label}
             </Link>
           ))}
         </div>
 
-        <p className="text-[13px] text-mc-muted">© 2025 MyChatCRM · Todos os direitos reservados</p>
+        <div className="flex items-center gap-3">
+          {SOCIAL_ITEMS.map((s) => (
+            <a
+              key={s.platform}
+              href={s.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={s.label}
+              className="flex h-8 w-8 items-center justify-center rounded-full text-mc-muted transition hover:scale-110 hover:text-[#F24400]"
+            >
+              <SocialGlyph platform={s.platform} />
+            </a>
+          ))}
+        </div>
+
+        <p className="text-[13px] text-mc-muted">© {new Date().getFullYear()} MyChatCRM · Todos os direitos reservados</p>
       </div>
     </footer>
   );
@@ -520,6 +901,18 @@ function FooterV2() {
 // ---------------------------------------------------------------------------
 
 export function LandingV2() {
+  // Cobre chegar na home já com uma âncora na URL (ex.: clicou em
+  // "Recursos" a partir do /blog, que navega pra "/#recursos") — nesse
+  // caso não há clique pra interceptar, só o carregamento da página.
+  useEffect(() => {
+    if (!window.location.hash) return;
+    const el = document.querySelector(window.location.hash);
+    if (!el) return;
+    // Espera o primeiro paint assentar antes de rolar.
+    const id = requestAnimationFrame(() => el.scrollIntoView({ behavior: "auto", block: "start" }));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
   return (
     <div className="min-h-dvh bg-mc-bg">
       <NavV2 />
