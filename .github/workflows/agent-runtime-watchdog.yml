@@ -2,7 +2,9 @@ name: Agent Runtime Watchdog
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    # GitHub documents that jobs at the start of the hour can be delayed or
+    # dropped under load. Keep the five-minute cadence, offset from minute 0.
+    - cron: "2-57/5 * * * *"
   workflow_dispatch:
     inputs:
       mode:
