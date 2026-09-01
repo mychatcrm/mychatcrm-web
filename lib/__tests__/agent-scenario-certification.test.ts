@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { setImmediate as yieldToWorker } from "node:timers/promises";
 
 import {
   normalizeAgentAgendaDate,
@@ -73,7 +74,7 @@ function followUpContext(index: number, timezone: string): FollowUpEvalContext {
 }
 
 describe("deterministic multi-tenant agent certification", () => {
-  it("covers the configured scenario volume with production boundaries", () => {
+  it("covers the configured scenario volume with production boundaries", async () => {
     const count = scenarioCount();
     const random = seededRandom(SEED);
     const zones = supportedTimezones();
@@ -81,6 +82,11 @@ describe("deterministic multi-tenant agent certification", () => {
     const failures: Array<{ index: number; invariant: string }> = [];
 
     for (let index = 0; index < count; index += 1) {
+      // The million-scenario run is intentionally CPU-heavy. Yield often enough
+      // for Vitest's worker RPC heartbeat so a successful long test is not
+      // reported as a false timeout after 60 seconds.
+      if (index > 0 && index % 10_000 === 0) await yieldToWorker();
+
       const tenantId = `cert-tenant-${index}`;
       const channel = index % 2 === 0 ? "evolution" : "meta_cloud";
       const timezone = zones[Math.floor(random() * zones.length)] ?? "UTC";
