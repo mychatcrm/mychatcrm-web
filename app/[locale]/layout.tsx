@@ -5,8 +5,6 @@ import localFont from "next/font/local";
 import { Manrope } from "next/font/google";
 import { routing } from "@/i18n/routing";
 import { LocaleHtmlLang } from "@/components/LocaleHtmlLang";
-import { PreLaunchGate } from "@/components/marketing/PreLaunchGate";
-import { isPreLaunchPopupEnabled } from "@/lib/server/pre-launch-config-db";
 
 type Props = {
   children: React.ReactNode;
@@ -39,13 +37,11 @@ export default async function LocaleLayout({ children, params }: Props) {
   }
 
   const messages = await getMessages();
-  const preLaunchPopupEnabled = await isPreLaunchPopupEnabled();
 
   return (
     <NextIntlClientProvider messages={messages} locale={locale}>
       <LocaleHtmlLang />
       <div className={`${brandDisplay.variable} ${brandBody.variable} brand-marketing`}>{children}</div>
-      <PreLaunchGate enabled={preLaunchPopupEnabled} />
     </NextIntlClientProvider>
   );
 }

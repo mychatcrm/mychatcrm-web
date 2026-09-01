@@ -5,7 +5,6 @@ export type AdminRouteKey =
   | "analytics"
   | "clientes"
   | "leads"
-  | "leads-lancamento"
   | "inadimplentes"
   | "cancelamentos"
   | "planos"

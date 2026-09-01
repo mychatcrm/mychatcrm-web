@@ -39,7 +39,6 @@ export function SalesSiteHeader() {
             rel="noopener noreferrer"
             className={linkButtonClass("gradient", "md")}
             aria-label="Fale com especialista no WhatsApp"
-            data-lead-gate="contact"
           >
             Fale com especialista
           </a>

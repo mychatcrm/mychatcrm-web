@@ -143,7 +143,6 @@ function PlanCard({
           href={checkoutHref}
           className={cardClass}
           aria-label={`Assinar plano ${plan.name} — ir ao checkout`}
-          data-lead-gate="buy"
         >
           {inner}
         </Link>

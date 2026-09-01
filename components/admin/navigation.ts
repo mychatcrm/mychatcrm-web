@@ -23,7 +23,6 @@ export const adminNavGroups: AdminNavGroup[] = [
     items: [
       { href: "/admin/clientes", label: "Todos os Clientes", routeKey: "clientes" },
       { href: "/admin/leads", label: "Novos Leads", routeKey: "leads" },
-      { href: "/admin/leads-lancamento", label: "Leads (pré-lançamento)", routeKey: "leads-lancamento" },
       { href: "/admin/inadimplentes", label: "Inadimplentes", routeKey: "inadimplentes" },
       { href: "/admin/cancelamentos", label: "Cancelamentos", routeKey: "cancelamentos" },
     ],

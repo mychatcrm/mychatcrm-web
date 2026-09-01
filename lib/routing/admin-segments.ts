@@ -5,7 +5,6 @@ const ADMIN_FIRST_SEGMENT: Record<string, AdminRouteKey> = {
   analytics: "analytics",
   clientes: "clientes",
   leads: "leads",
-  "leads-lancamento": "leads-lancamento",
   inadimplentes: "inadimplentes",
   cancelamentos: "cancelamentos",
   planos: "planos",
