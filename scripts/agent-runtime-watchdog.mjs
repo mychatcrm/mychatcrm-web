@@ -126,7 +126,37 @@ function notificationCopy(kind, reasons) {
   };
 }
 
-async function sendEmail(copy) {
+async function sendEmailViaRelay(copy, kind, reasons) {
+  const healthUrl = clean(process.env.AGENT_RUNTIME_HEALTH_URL) ?? DEFAULT_HEALTH_URL;
+  const relayUrl = clean(process.env.AGENT_RUNTIME_EMAIL_RELAY_URL)
+    ?? new URL("/api/internal/agent-runtime-watchdog/notify", healthUrl).toString();
+  const secret = clean(process.env.AGENT_RUNTIME_WATCHDOG_SECRET);
+  if (!secret) return { ok: false, code: "email_relay_not_configured" };
+
+  try {
+    const response = await fetchWithTimeout(relayUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        "Content-Type": "application/json",
+        "User-Agent": "mychatcrm-agent-runtime-watchdog/1",
+      },
+      body: JSON.stringify({
+        kind,
+        mode: clean(process.env.AGENT_RUNTIME_WATCHDOG_MODE) ?? "live",
+        reasons: boundedCodes(reasons),
+      }),
+    }, 10_000);
+    const body = await response.json().catch(() => ({}));
+    return response.ok && body?.ok === true
+      ? { ok: true, code: "email_sent" }
+      : { ok: false, code: `email_relay_http_${response.status}` };
+  } catch {
+    return { ok: false, code: "email_relay_request_failed" };
+  }
+}
+
+async function sendEmailDirect(copy) {
   const apiKey = clean(process.env.AGENT_RUNTIME_RESEND_API_KEY);
   const from = clean(process.env.AGENT_RUNTIME_RESEND_FROM_EMAIL);
   const to = clean(process.env.AGENT_RUNTIME_ALERT_EMAIL);
@@ -153,6 +183,18 @@ async function sendEmail(copy) {
   } catch {
     return { ok: false, code: "email_request_failed" };
   }
+}
+
+async function sendEmail(copy, kind, reasons) {
+  const relay = await sendEmailViaRelay(copy, kind, reasons);
+  if (relay.ok) return relay;
+
+  const direct = await sendEmailDirect(copy);
+  if (direct.ok) return direct;
+  return {
+    ok: false,
+    code: `${relay.code}:${direct.code}`.slice(0, 120),
+  };
 }
 
 async function sendWhatsapp(copy) {
@@ -188,7 +230,7 @@ async function sendWhatsapp(copy) {
 
 async function notify(kind, reasons) {
   const copy = notificationCopy(kind, reasons);
-  const [email, whatsapp] = await Promise.all([sendEmail(copy), sendWhatsapp(copy)]);
+  const [email, whatsapp] = await Promise.all([sendEmail(copy, kind, reasons), sendWhatsapp(copy)]);
   console.log(JSON.stringify({
     scope: "agent-runtime-watchdog",
     event: "notification_attempted",
