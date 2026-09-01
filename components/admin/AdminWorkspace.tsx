@@ -491,6 +491,7 @@ function PreLaunchLeadsPage() {
   const [timeTo, setTimeTo] = useState("");
   const [popupEnabled, setPopupEnabled] = useState(true);
   const [configLoaded, setConfigLoaded] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const fetchQuery = useMemo(() => {
     const params = new URLSearchParams();
@@ -562,6 +563,22 @@ function PreLaunchLeadsPage() {
     });
   }, [leads, dddFilter, timeFrom, timeTo]);
 
+  const removeLead = async (lead: PreLaunchLead) => {
+    if (!confirm(`Apagar o lead de ${lead.fullName}? Essa ação não pode ser desfeita.`)) return;
+    setDeletingId(lead.id);
+    try {
+      const res = await fetch(`/api/admin/pre-launch-leads/${encodeURIComponent(lead.id)}`, { method: "DELETE" });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error ?? "Falha ao apagar.");
+      setLeads((prev) => prev.filter((l) => l.id !== lead.id));
+      setTotal((prev) => Math.max(0, prev - 1));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Erro ao apagar o lead.");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const columns: Column<PreLaunchLead>[] = [
     { key: "fullName", header: "Nome", render: (row) => row.fullName },
     { key: "whatsapp", header: "WhatsApp", render: (row) => row.whatsapp },
@@ -570,6 +587,22 @@ function PreLaunchLeadsPage() {
     { key: "source", header: "Origem", render: (row) => (row.source === "buy" ? "Comprar plano" : row.source === "contact" ? "Contato" : "—") },
     { key: "businessDescription", header: "O que faz", render: (row) => row.businessDescription },
     { key: "createdAt", header: "Data/hora", render: (row) => new Date(row.createdAt).toLocaleString("pt-BR") },
+    {
+      key: "actions",
+      header: "",
+      className: "w-[110px]",
+      render: (row) => (
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={deletingId === row.id}
+          onClick={() => void removeLead(row)}
+        >
+          {deletingId === row.id ? "Apagando…" : "Apagar"}
+        </Button>
+      ),
+    },
   ];
 
   return (
