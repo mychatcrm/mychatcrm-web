@@ -17,7 +17,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence, useReducedMotion, useInView } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
   ArrowRight,
   Calendar,
@@ -615,6 +615,42 @@ function useHashNav() {
   }, []);
 }
 
+/**
+ * Entrada em cena ao chegar à secção.
+ *
+ * Não usa `useInView`/IntersectionObserver de propósito: quando o visitante
+ * salta muitos ecrãs de uma vez (roda rápida, tecla End, âncora do menu), o
+ * observador não chega a registar a interseção e a secção fica invisível para
+ * sempre — visto em produção. A verificação por `getBoundingClientRect` trata
+ * os dois casos: o elemento que está a entrar e o que já foi ultrapassado.
+ */
+function useEnteredView(ref: React.RefObject<HTMLElement>) {
+  const [entered, setEntered] = useState(false);
+
+  useEffect(() => {
+    if (entered) return;
+    const check = () => {
+      const el = ref.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const passou = rect.bottom < 0;
+      const entrou = rect.top < window.innerHeight - 60;
+      if (passou || entrou) setEntered(true);
+    };
+    check();
+    const raf = requestAnimationFrame(check);
+    window.addEventListener("scroll", check, { passive: true });
+    window.addEventListener("resize", check);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", check);
+      window.removeEventListener("resize", check);
+    };
+  }, [entered, ref]);
+
+  return entered;
+}
+
 function Reveal({
   children,
   delay = 0,
@@ -625,16 +661,17 @@ function Reveal({
   className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const inView = useInView(ref, { once: true, margin: "-60px 0px -60px 0px" });
+  const entered = useEnteredView(ref);
   const reduced = useReducedMotion();
+  const show = entered || reduced;
 
   return (
     <motion.div
       ref={ref}
       className={className}
-      initial={reduced ? false : { opacity: 0, y: 22 }}
-      animate={inView || reduced ? { opacity: 1, y: 0 } : undefined}
-      transition={{ duration: 0.55, delay, ease: [0.22, 1, 0.36, 1] }}
+      initial={{ opacity: 0, y: 22 }}
+      animate={show ? { opacity: 1, y: 0 } : { opacity: 0, y: 22 }}
+      transition={{ duration: reduced ? 0 : 0.55, delay: show && !reduced ? delay : 0, ease: [0.22, 1, 0.36, 1] }}
     >
       {children}
     </motion.div>
