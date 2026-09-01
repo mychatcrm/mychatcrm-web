@@ -8,6 +8,7 @@ import { defaultMetadata } from "@/lib/seo";
 import { RootChatWidget } from "@/components/chat/RootChatWidget";
 import { ChromeThemeReset } from "@/components/ChromeThemeReset";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
+import { isPreLaunchPopupEnabled } from "@/lib/server/pre-launch-config-db";
 
 const ANTI_FLASH_SCRIPT = `(function(){try{var t=localStorage.getItem('mcTheme')||'light';var c=document.documentElement.classList;c.remove('dim','dark');if(t==='dim')c.add('dim');else if(t==='dark')c.add('dark');}catch(e){}})();`;
 
@@ -36,7 +37,11 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // ChatWidget tem seu próprio atalho de WhatsApp (ChatWidget.tsx) — enquanto
+  // o popup de pré-lançamento estiver ligado, ele seria uma porta lateral que
+  // ignora a captura. Mais simples que mexer no componente: não montar.
+  const preLaunchPopupEnabled = await isPreLaunchPopupEnabled();
   return (
     <html lang="pt-BR" className={inter.variable}>
       <head>
@@ -51,9 +56,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider>
           <ChromeThemeReset />
           {children}
-          <Suspense fallback={null}>
-            <RootChatWidget />
-          </Suspense>
+          {preLaunchPopupEnabled ? null : (
+            <Suspense fallback={null}>
+              <RootChatWidget />
+            </Suspense>
+          )}
           <SpeedInsights />
         </ThemeProvider>
       </body>

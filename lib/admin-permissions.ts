@@ -13,6 +13,7 @@ const ROLE_PERMISSION_MAP: Record<AdminRole, string[]> = {
     "analytics",
     "clientes",
     "leads",
+    "leads-lancamento",
     "inadimplentes",
     "cancelamentos",
     "planos",
@@ -36,8 +37,8 @@ const ROLE_PERMISSION_MAP: Record<AdminRole, string[]> = {
     "system-agent",
   ],
   financeiro: ["dashboard", "financeiro", "faturas", "pagamentos", "churn", "clientes", "inadimplentes", "parcerias", "ia"],
-  suporte: ["dashboard", "clientes", "leads", "suporte", "comunicados"],
-  marketing: ["dashboard", "analytics", "cupons", "parcerias", "comunicados", "notificacoes", "leads", "ia"],
+  suporte: ["dashboard", "clientes", "leads", "leads-lancamento", "suporte", "comunicados"],
+  marketing: ["dashboard", "analytics", "cupons", "parcerias", "comunicados", "notificacoes", "leads", "leads-lancamento", "ia"],
   desenvolvedor: ["dashboard", "configuracoes", "apis", "logs", "seguranca", "ia", "system-agent"],
 };
 

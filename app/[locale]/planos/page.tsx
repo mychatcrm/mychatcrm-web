@@ -131,6 +131,7 @@ export default async function PlanosPage({ params }: Props) {
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex min-h-[48px] items-center justify-center rounded-xl bg-primary px-6 text-base font-semibold text-white transition-colors hover:bg-primary-hover"
+                data-lead-gate="contact"
               >
                 Conversar no WhatsApp
               </a>
