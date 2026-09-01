@@ -291,18 +291,27 @@ body:has(.mcx){ background:#05080B; }
   background:rgba(255,255,255,.022);
 }
 .mcx .mcx-trace{
-  display:grid; grid-template-columns:26px 1fr auto; gap:12px; align-items:center;
-  padding:9px 16px; border-bottom:1px solid rgba(255,255,255,.05);
+  display:grid; grid-template-columns:22px 1fr auto; gap:11px; align-items:center;
+  padding:7px 16px; border-bottom:1px solid rgba(255,255,255,.05);
   font-family:var(--f-mono); font-size:11.5px;
+}
+.mcx .mcx-trace-body{
+  display:flex; align-items:baseline; gap:9px; min-width:0;
 }
 .mcx .mcx-trace:last-child{ border-bottom:0; }
 .mcx .mcx-trace-idx{ color:var(--faint); }
-.mcx .mcx-trace-name{ color:var(--muted); letter-spacing:.06em; text-transform:uppercase; font-size:10.5px; }
-.mcx .mcx-trace-note{ color:var(--faint); font-size:11px; }
+.mcx .mcx-trace-name{
+  color:var(--muted); letter-spacing:.08em; text-transform:uppercase; font-size:10px;
+  flex:0 0 auto; min-width:92px;
+}
+.mcx .mcx-trace-note{
+  color:var(--faint); font-size:10.5px; min-width:0;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
 .mcx .mcx-trace.on .mcx-trace-name{ color:var(--text); }
 .mcx .mcx-trace.on .mcx-trace-idx{ color:var(--brand); }
 .mcx .mcx-bubble{
-  border-radius:14px; padding:11px 14px; font-size:.895rem; line-height:1.5;
+  border-radius:14px; padding:10px 13px; font-size:.885rem; line-height:1.48;
   max-width:88%;
 }
 .mcx .mcx-bubble-in{
@@ -324,27 +333,41 @@ body:has(.mcx){ background:#05080B; }
 
 /* separadores de cenário — o visitante pode saltar para qualquer demonstração */
 .mcx .mcx-console-tabs{
-  display:flex; gap:6px; padding:10px 12px; overflow-x:auto;
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(100px,1fr));
+  gap:6px; padding:11px 13px;
   border-bottom:1px solid var(--line); background:rgba(255,255,255,.015);
-  scrollbar-width:none;
 }
-.mcx .mcx-console-tabs::-webkit-scrollbar{ display:none; }
 .mcx .mcx-tab{
-  flex:0 0 auto; cursor:pointer; white-space:nowrap;
+  cursor:pointer; white-space:nowrap; text-align:center;
+  overflow:hidden; text-overflow:ellipsis;
   border:1px solid var(--line); background:transparent; color:var(--faint);
-  border-radius:999px; padding:5px 12px;
-  font-family:var(--f-mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+  border-radius:999px; padding:5px 11px;
+  font-family:var(--f-mono); font-size:9.5px; letter-spacing:.1em; text-transform:uppercase;
   transition:color .16s ease,border-color .16s ease,background .16s ease;
 }
 .mcx .mcx-tab:hover{ color:var(--muted); border-color:var(--line-strong); }
 .mcx .mcx-tab.on{
   color:var(--brand-hi); border-color:rgba(242,68,0,.45); background:var(--brand-dim);
 }
+/* no telemóvel 8 separadores em 2 colunas dariam 4 linhas — força 3 colunas */
+@media (max-width:520px){
+  .mcx .mcx-console-tabs{ grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; padding:10px; }
+  .mcx .mcx-tab{ padding:5px 6px; font-size:9px; letter-spacing:.06em; }
+}
 .mcx .mcx-console-claim{
   display:flex; align-items:center; gap:8px;
   padding:11px 16px; border-bottom:1px solid var(--line);
   font-size:.85rem; color:var(--text);
 }
+/* Os 8 cenários ocupam a mesma célula: a grelha dimensiona-se pelo mais alto e
+   a consola nunca muda de altura ao trocar de cenário nem ao escrever. */
+.mcx .mcx-stack{ display:grid; }
+.mcx .mcx-stack-item{
+  grid-area:1 / 1; min-width:0;
+  visibility:hidden; pointer-events:none;
+  display:flex; flex-direction:column;
+}
+.mcx .mcx-stack-item[data-on="true"]{ visibility:visible; pointer-events:auto; }
 .mcx .mcx-console-thread{
   padding:16px; display:flex; flex-direction:column; gap:8px; min-height:88px;
 }
@@ -357,6 +380,10 @@ body:has(.mcx){ background:#05080B; }
 .mcx .mcx-console-trace{ border-top:1px solid var(--line); }
 .mcx .mcx-console-reply{
   padding:14px 16px 18px; border-top:1px solid var(--line); min-height:118px;
+  margin-top:auto;
+}
+.mcx .mcx-console-footer{
+  text-align:right; font-size:10px; letter-spacing:.13em;
 }
 .mcx .mcx-bubble-media{
   display:inline-flex; align-items:center; gap:7px;
@@ -367,6 +394,7 @@ body:has(.mcx){ background:#05080B; }
 }
 .mcx .mcx-hold i{
   display:block; height:100%; width:0;
+  animation-play-state:running;
   background:linear-gradient(90deg,var(--brand),var(--brand-hi));
   animation-name:mcx-hold; animation-timing-function:linear; animation-fill-mode:forwards;
 }
@@ -445,6 +473,35 @@ body:has(.mcx){ background:#05080B; }
 }
 
 /* ---- mini-visuais -------------------------------------------------------- */
+.mcx .mcx-chips{ display:flex; flex-wrap:wrap; gap:6px; margin-top:auto; }
+.mcx .mcx-chip-sm{
+  border:1px solid var(--line); border-radius:999px; padding:5px 11px;
+  font-family:var(--f-mono); font-size:9.5px; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--faint);
+  background:rgba(255,255,255,.025); white-space:nowrap;
+}
+.mcx .mcx-hier{ display:flex; flex-direction:column; gap:6px; margin-top:auto; }
+.mcx .mcx-hier-row{
+  display:flex; align-items:center; gap:10px;
+  border:1px solid var(--line); border-left:2px solid rgba(242,68,0,.5);
+  border-radius:8px; padding:7px 11px; background:rgba(255,255,255,.02);
+}
+.mcx .mcx-hier-role{
+  font-family:var(--f-mono); font-size:9.5px; letter-spacing:.11em;
+  text-transform:uppercase; color:var(--brand-hi); min-width:66px;
+}
+.mcx .mcx-hier-scope{ font-size:.78rem; color:var(--faint); }
+/* o tile de largura total ganha duas colunas: texto à esquerda, ligações à direita */
+@media (min-width:1080px){
+  .mcx .mcx-b-full .mcx-tile{
+    display:grid; grid-template-columns:1fr 1fr; gap:30px; align-items:center;
+  }
+  .mcx .mcx-b-full .mcx-tile-ico{ grid-column:1; }
+  .mcx .mcx-b-full .mcx-h3{ grid-column:1; grid-row:2; }
+  .mcx .mcx-b-full .mcx-body{ grid-column:1; grid-row:3; }
+  .mcx .mcx-b-full .mcx-chips{ grid-column:2; grid-row:1 / span 3; margin-top:0; align-content:center; }
+}
+
 .mcx .mcx-kan{ display:grid; grid-template-columns:repeat(3,1fr); gap:7px; margin-top:auto; }
 .mcx .mcx-kan-col{
   border:1px solid var(--line); border-radius:9px; padding:8px;
@@ -908,7 +965,6 @@ const SCENARIOS: ConsoleScenario[] = [
     inbound: [{ text: "Oi! Vi o anúncio de vocês. Ainda dá pra marcar uma visita na terça?" }],
     steps: [
       { name: "Contexto", note: "histórico + memória do lead" },
-      { name: "Idioma", note: "pt-BR detectado" },
       { name: "Conhecimento", note: "3 trechos da base do agente" },
       { name: "Agenda", note: "terça, 14h — horário livre" },
       { name: "CRM", note: "lead movido para Em conversa" },
@@ -930,8 +986,7 @@ const SCENARIOS: ConsoleScenario[] = [
     steps: [
       { name: "Rajada", note: "3 mensagens agrupadas em um turno" },
       { name: "Áudio", note: "transcrito antes de decidir" },
-      { name: "Contexto", note: "histórico + memória do lead" },
-      { name: "Conhecimento", note: "tabela de preços na base do agente" },
+      { name: "Conhecimento", note: "tabela de preços na base" },
       { name: "Voz", note: "resposta gerada em áudio" },
       { name: "Entrega", note: "áudio enviado no WhatsApp" },
     ],
@@ -1041,7 +1096,7 @@ const SCENARIOS: ConsoleScenario[] = [
 ];
 
 /** Pausa entre o fim de uma demonstração e o início da próxima. */
-const CONSOLE_HOLD_MS = 34_000;
+const CONSOLE_HOLD_MS = 7_000;
 const TYPE_MS = 22;
 const STEP_MS = 320;
 
@@ -1049,6 +1104,140 @@ function InboundIcon({ kind }: { kind: ConsoleInbound["kind"] }) {
   if (kind === "audio") return <Mic size={13} style={{ color: "var(--live)" }} />;
   if (kind === "image") return <ImageIcon size={13} style={{ color: "var(--live)" }} />;
   return null;
+}
+
+/**
+ * Corpo de um cenário.
+ *
+ * Todos os oito são renderizados sempre, empilhados na mesma célula de grelha:
+ * só o ativo fica visível, mas os outros continuam a ocupar espaço. É isso que
+ * mantém a consola exatamente com a mesma altura em qualquer cenário — sem
+ * isto a caixa variava 190px e a página saltava a cada troca. Como bónus, a
+ * altura também não muda enquanto as mensagens são escritas.
+ */
+function ScenarioBody({
+  scenario,
+  active,
+  reduced,
+  msgIndex,
+  chars,
+  steps,
+  replyOut,
+}: {
+  scenario: ConsoleScenario;
+  active: boolean;
+  reduced: boolean;
+  msgIndex: number;
+  chars: number;
+  steps: number;
+  replyOut: boolean;
+}) {
+  const inboundDone = msgIndex >= scenario.inbound.length;
+
+  return (
+    <div className="mcx-stack-item" data-on={active ? "true" : "false"} aria-hidden={!active}>
+      <div className="mcx-console-claim">
+        <Sparkles size={12} style={{ color: "var(--brand-hi)", flexShrink: 0 }} />
+        <span>{scenario.claim}</span>
+      </div>
+
+      <div className="mcx-console-thread">
+        {scenario.systemLine ? (
+          <div className="mcx-console-system">
+            <i />
+            <span>{scenario.systemLine}</span>
+            <i />
+          </div>
+        ) : null}
+
+        {scenario.inbound.map((message, i) => {
+          if (i > msgIndex) return null;
+          const typing = active && i === msgIndex && !inboundDone;
+          const text = typing ? message.text.slice(0, chars) : message.text;
+          const media = message.kind && message.kind !== "text";
+          return (
+            <div key={`${scenario.id}-${i}`} className="mcx-bubble mcx-bubble-in">
+              {media ? (
+                <span className="mcx-bubble-media">
+                  <InboundIcon kind={message.kind} />
+                  <span>{text}</span>
+                </span>
+              ) : (
+                <span>{text}</span>
+              )}
+              {typing ? <i className="mcx-caret" /> : null}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mcx-console-trace">
+        {scenario.steps.map((step, i) => {
+          const on = i < steps;
+          return (
+            <div key={`${scenario.id}-${step.name}`} className={on ? "mcx-trace on" : "mcx-trace"}>
+              <span className="mcx-trace-idx">{String(i + 1).padStart(2, "0")}</span>
+              <span className="mcx-trace-body">
+                <span className="mcx-trace-name">{step.name}</span>
+                <span className="mcx-trace-note">{on ? step.note : "—"}</span>
+              </span>
+              <motion.span
+                initial={false}
+                animate={{ opacity: on ? 1 : 0.18, scale: on ? 1 : 0.8 }}
+                transition={{ duration: 0.24 }}
+                style={{ color: on ? "var(--live)" : "var(--faint)", display: "flex" }}
+              >
+                <Check size={13} strokeWidth={3} />
+              </motion.span>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mcx-console-reply">
+        {replyOut ? (
+          <motion.div
+            initial={active && !reduced ? { opacity: 0, y: 10 } : false}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
+            style={{ display: "flex", flexDirection: "column", gap: 8 }}
+          >
+            <div className="mcx-bubble mcx-bubble-out">
+              {scenario.replyKind === "audio" ? (
+                <span className="mcx-bubble-media" style={{ marginBottom: 6 }}>
+                  <Mic size={13} />
+                  <span>resposta em áudio</span>
+                </span>
+              ) : null}
+              {scenario.reply}
+            </div>
+            {scenario.attachment ? (
+              <div className="mcx-attach">
+                <Paperclip size={13} />
+                <span>{scenario.attachment}</span>
+              </div>
+            ) : null}
+            <div className="mcx-console-footer mcx-mono">{scenario.footer}</div>
+            {active && !reduced ? (
+              <div className="mcx-hold" aria-hidden="true">
+                <i key={scenario.id} style={{ animationDuration: `${CONSOLE_HOLD_MS}ms` }} />
+              </div>
+            ) : (
+              <div className="mcx-hold" aria-hidden="true" />
+            )}
+          </motion.div>
+        ) : (
+          <div
+            className="mcx-mono"
+            style={{ display: "flex", alignItems: "center", gap: 9, paddingTop: 6 }}
+          >
+            <Cpu size={13} style={{ color: "var(--brand)" }} />
+            a decidir o próximo passo…
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function HeroConsole() {
@@ -1108,7 +1297,7 @@ function HeroConsole() {
     return () => clearTimeout(t);
   }, [reduced, replyOut, inboundDone, steps, scenario]);
 
-  // 4. Segura 30s antes de passar ao cenário seguinte.
+  // 4. Segura a leitura antes de passar ao cenário seguinte.
   useEffect(() => {
     if (reduced || !replyOut) return;
     const t = setTimeout(() => goTo(index + 1), CONSOLE_HOLD_MS);
@@ -1143,118 +1332,36 @@ function HeroConsole() {
         ))}
       </div>
 
-      <div className="mcx-console-claim">
-        <Sparkles size={12} style={{ color: "var(--brand-hi)", flexShrink: 0 }} />
-        <span>{scenario.claim}</span>
-      </div>
-
-      <div className="mcx-console-thread">
-        {scenario.systemLine ? (
-          <div className="mcx-console-system">
-            <i />
-            <span>{scenario.systemLine}</span>
-            <i />
-          </div>
-        ) : null}
-
-        {scenario.inbound.map((message, i) => {
-          if (i > msgIndex) return null;
-          const typing = i === msgIndex && !inboundDone;
-          const text = typing ? message.text.slice(0, chars) : message.text;
-          const media = message.kind && message.kind !== "text";
-          return (
-            <div key={`${scenario.id}-${i}`} className="mcx-bubble mcx-bubble-in">
-              {media ? (
-                <span className="mcx-bubble-media">
-                  <InboundIcon kind={message.kind} />
-                  <span>{text}</span>
-                </span>
-              ) : (
-                <span>{text}</span>
-              )}
-              {typing ? <i className="mcx-caret" /> : null}
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="mcx-console-trace">
-        {scenario.steps.map((step, i) => {
-          const on = i < steps;
-          return (
-            <div key={`${scenario.id}-${step.name}`} className={on ? "mcx-trace on" : "mcx-trace"}>
-              <span className="mcx-trace-idx">{String(i + 1).padStart(2, "0")}</span>
-              <span>
-                <span className="mcx-trace-name">{step.name}</span>
-                <span className="mcx-trace-note" style={{ display: "block", marginTop: 2 }}>
-                  {on ? step.note : "—"}
-                </span>
-              </span>
-              <motion.span
-                initial={false}
-                animate={{ opacity: on ? 1 : 0.18, scale: on ? 1 : 0.8 }}
-                transition={{ duration: 0.24 }}
-                style={{ color: on ? "var(--live)" : "var(--faint)", display: "flex" }}
-              >
-                <Check size={13} strokeWidth={3} />
-              </motion.span>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="mcx-console-reply">
-        <AnimatePresence mode="wait">
-          {replyOut ? (
-            <motion.div
-              key={`${scenario.id}-reply`}
-              initial={reduced ? false : { opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
-              style={{ display: "flex", flexDirection: "column", gap: 8 }}
-            >
-              <div className="mcx-bubble mcx-bubble-out">
-                {scenario.replyKind === "audio" ? (
-                  <span className="mcx-bubble-media" style={{ marginBottom: 6 }}>
-                    <Mic size={13} />
-                    <span>resposta em áudio</span>
-                  </span>
-                ) : null}
-                {scenario.reply}
-              </div>
-              {scenario.attachment ? (
-                <div className="mcx-attach">
-                  <Paperclip size={13} />
-                  <span>{scenario.attachment}</span>
-                </div>
-              ) : null}
-              <div
-                className="mcx-mono"
-                style={{ textAlign: "right", fontSize: 10, letterSpacing: ".13em" }}
-              >
-                {scenario.footer}
-              </div>
-              {reduced ? null : (
-                <div className="mcx-hold" aria-hidden="true">
-                  <i key={scenario.id} style={{ animationDuration: `${CONSOLE_HOLD_MS}ms` }} />
-                </div>
-              )}
-            </motion.div>
-          ) : (
-            <motion.div
-              key={`${scenario.id}-thinking`}
-              initial={false}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="mcx-mono"
-              style={{ display: "flex", alignItems: "center", gap: 9, paddingTop: 6 }}
-            >
-              <Cpu size={13} style={{ color: "var(--brand)" }} />
-              a decidir o próximo passo…
-            </motion.div>
-          )}
-        </AnimatePresence>
+      <div className="mcx-stack">
+        {/*
+          Camada-fantasma: os oito cenários no estado final, sempre invisíveis.
+          É ela que fixa a altura da caixa. Sem isto, quando o cenário mais alto
+          era o ativo ele encolhia enquanto escrevia e arrastava a consola com
+          ele (medido: 539px → 485px a meio da demonstração do Áudio).
+        */}
+        {SCENARIOS.map((item) => (
+          <ScenarioBody
+            key={`molde-${item.id}`}
+            scenario={item}
+            active={false}
+            reduced={reduced === true}
+            msgIndex={item.inbound.length}
+            chars={0}
+            steps={item.steps.length}
+            replyOut
+          />
+        ))}
+        {/* Camada visível: só o cenário atual, animado por cima do molde. */}
+        <ScenarioBody
+          key={`vivo-${scenario.id}`}
+          scenario={scenario}
+          active
+          reduced={reduced === true}
+          msgIndex={msgIndex}
+          chars={chars}
+          steps={steps}
+          replyOut={replyOut}
+        />
       </div>
     </div>
   );
@@ -1570,6 +1677,57 @@ function SlotsMini() {
   );
 }
 
+/** Formatos que o agente entende na entrada e o que devolve. */
+function FormatChips() {
+  return (
+    <div className="mcx-chips">
+      {["áudio → transcrito", "imagem → analisada", "resposta em voz"].map((label) => (
+        <span key={label} className="mcx-chip-sm">
+          {label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Hierarquia comercial: cada nível vê exatamente o que pode ver. */
+function HierarchyMini() {
+  return (
+    <div className="mcx-hier">
+      {[
+        { role: "Diretor", scope: "as equipas dele" },
+        { role: "Gerente", scope: "a equipa dele" },
+        { role: "Vendedor", scope: "só os leads dele" },
+      ].map((level, i) => (
+        <div className="mcx-hier-row" key={level.role} style={{ marginLeft: i * 14 }}>
+          <span className="mcx-hier-role">{level.role}</span>
+          <span className="mcx-hier-scope">{level.scope}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Por onde o agente se liga ao resto da operação. */
+function IntegrationChips() {
+  return (
+    <div className="mcx-chips">
+      {[
+        "Formulários do Meta",
+        "WhatsApp API Oficial",
+        "Google Agenda",
+        "REST / JSON",
+        "OAuth2",
+        "Disparos em massa",
+      ].map((label) => (
+        <span key={label} className="mcx-chip-sm">
+          {label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 const FEATURES = [
   {
     size: "lg" as const,
@@ -1597,21 +1755,21 @@ const FEATURES = [
     icon: Mic,
     title: "Áudio, imagem e documento",
     body: "O cliente manda áudio, o agente entende. E responde em voz, se você quiser.",
-    visual: null,
+    visual: <FormatChips />,
   },
   {
     size: "md" as const,
     icon: Users,
     title: "Equipa com hierarquia",
     body: "Diretor, gerente e vendedor. Cada um vê exatamente o que pode ver — a barreira é aplicada no servidor, não no ecrã.",
-    visual: null,
+    visual: <HierarchyMini />,
   },
   {
     size: "full" as const,
     icon: Plug,
     title: "Conecta ao resto do seu negócio",
     body: "Formulários do Meta, disparos em massa com janela de horário, Google Agenda e conectores REST/JSON com OAuth2 para consultar o seu próprio sistema.",
-    visual: null,
+    visual: <IntegrationChips />,
   },
 ] as const;
 
