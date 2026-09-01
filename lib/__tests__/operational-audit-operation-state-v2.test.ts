@@ -7,6 +7,11 @@ const migration = readFileSync(resolve(
   "supabase/migrations/20260901004800_operational_audit_operation_state_v2.sql",
 ), "utf8");
 
+const reconciliationMigration = readFileSync(resolve(
+  process.cwd(),
+  "supabase/migrations/20260901010500_operational_audit_legacy_watchdog_reconcile.sql",
+), "utf8");
+
 describe("operational audit operation state v2", () => {
   it("uses stable resource operations without mutating the immutable ledger", () => {
     expect(migration).toContain("private.operational_audit_resource_operation_id_v1");
@@ -24,5 +29,15 @@ describe("operational audit operation state v2", () => {
   it("checks stale watchdog and audit operations independently of export rows", () => {
     expect(migration).toContain("and module in ('admin.audit','runtime.watchdog')");
     expect(migration).toContain("as stale_exports");
+  });
+
+  it("terminalizes interrupted legacy watchdog runs by appending an idempotent event", () => {
+    expect(reconciliationMigration).toContain("insert into public.operational_audit_events");
+    expect(reconciliationMigration).toContain("'check.interrupted'");
+    expect(reconciliationMigration).toContain("'legacy_watchdog_run_interrupted'");
+    expect(reconciliationMigration).toContain("'legacy-watchdog-interrupted:' || operation.operation_id::text");
+    expect(reconciliationMigration).toContain("and not exists");
+    expect(reconciliationMigration).not.toContain("delete from public.operational_audit_events");
+    expect(reconciliationMigration).not.toContain("update public.operational_audit_events");
   });
 });
