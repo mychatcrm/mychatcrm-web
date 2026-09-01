@@ -27,9 +27,11 @@ import {
   Cpu,
   Fingerprint,
   Gauge,
+  Image as ImageIcon,
   Menu,
   MessageSquare,
   Mic,
+  Paperclip,
   Plug,
   RefreshCw,
   ShieldCheck,
@@ -316,6 +318,66 @@ body:has(.mcx){ background:#05080B; }
   display:inline-block; width:2px; height:1em; background:var(--brand);
   vertical-align:-2px; margin-left:2px;
 }
+/* em ecrãs muito estreitos os dois rótulos da barra partem-se em duas linhas cada */
+.mcx .mcx-console-bar span{ white-space:nowrap; }
+@media (max-width:420px){ .mcx .mcx-console-bar .mcx-console-provider{ display:none; } }
+
+/* separadores de cenário — o visitante pode saltar para qualquer demonstração */
+.mcx .mcx-console-tabs{
+  display:flex; gap:6px; padding:10px 12px; overflow-x:auto;
+  border-bottom:1px solid var(--line); background:rgba(255,255,255,.015);
+  scrollbar-width:none;
+}
+.mcx .mcx-console-tabs::-webkit-scrollbar{ display:none; }
+.mcx .mcx-tab{
+  flex:0 0 auto; cursor:pointer; white-space:nowrap;
+  border:1px solid var(--line); background:transparent; color:var(--faint);
+  border-radius:999px; padding:5px 12px;
+  font-family:var(--f-mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+  transition:color .16s ease,border-color .16s ease,background .16s ease;
+}
+.mcx .mcx-tab:hover{ color:var(--muted); border-color:var(--line-strong); }
+.mcx .mcx-tab.on{
+  color:var(--brand-hi); border-color:rgba(242,68,0,.45); background:var(--brand-dim);
+}
+.mcx .mcx-console-claim{
+  display:flex; align-items:center; gap:8px;
+  padding:11px 16px; border-bottom:1px solid var(--line);
+  font-size:.85rem; color:var(--text);
+}
+.mcx .mcx-console-thread{
+  padding:16px; display:flex; flex-direction:column; gap:8px; min-height:88px;
+}
+.mcx .mcx-console-system{
+  display:flex; align-items:center; gap:12px; padding:2px 0 6px;
+  font-family:var(--f-mono); font-size:10px; letter-spacing:.13em;
+  text-transform:uppercase; color:var(--faint);
+}
+.mcx .mcx-console-system i{ flex:1; height:1px; background:var(--line); }
+.mcx .mcx-console-trace{ border-top:1px solid var(--line); }
+.mcx .mcx-console-reply{
+  padding:14px 16px 18px; border-top:1px solid var(--line); min-height:118px;
+}
+.mcx .mcx-bubble-media{
+  display:inline-flex; align-items:center; gap:7px;
+  font-family:var(--f-mono); font-size:11px; letter-spacing:.06em; color:var(--muted);
+}
+.mcx .mcx-hold{
+  height:2px; border-radius:99px; background:var(--line); overflow:hidden; margin-top:4px;
+}
+.mcx .mcx-hold i{
+  display:block; height:100%; width:0;
+  background:linear-gradient(90deg,var(--brand),var(--brand-hi));
+  animation-name:mcx-hold; animation-timing-function:linear; animation-fill-mode:forwards;
+}
+@keyframes mcx-hold{ to{ width:100%; } }
+.mcx .mcx-attach{
+  display:inline-flex; align-items:center; gap:8px; align-self:flex-end;
+  border:1px solid rgba(242,68,0,.34); background:var(--brand-dim);
+  color:var(--brand-hi); border-radius:9px; padding:7px 11px;
+  font-family:var(--f-mono); font-size:10.5px;
+}
+
 @media (prefers-reduced-motion:no-preference){
   .mcx .mcx-caret{ animation:mcx-blink 1.05s steps(2) infinite; }
 }
@@ -323,6 +385,8 @@ body:has(.mcx){ background:#05080B; }
 
 /* ---- hero (grelha + deriva da aurora) ------------------------------------ */
 @keyframes mcx-float{ to{ transform:translate(6%,7%) scale(1.1); } }
+.mcx .mcx-hero > *{ min-width:0; }
+.mcx .mcx-console{ min-width:0; max-width:100%; }
 @media (min-width:1080px){
   .mcx .mcx-hero{ grid-template-columns:1.14fr .86fr; }
 }
@@ -806,67 +870,250 @@ function Nav() {
 // ---------------------------------------------------------------------------
 
 /**
- * Os passos são os do motor real (`processAgentTurnV2`): contexto da conversa,
- * idioma, base de conhecimento do agente, agenda, movimento no CRM e entrega.
- * Nada aqui é métrica inventada — é a sequência que o produto executa.
+ * Consola do hero — o agente a decidir, ao vivo.
+ *
+ * Os passos de cada cenário são os do motor real (`processAgentTurnV2` +
+ * o contrato estruturado em `lib/ai/agent-turn-plan.ts`). O agente não só
+ * agenda: ele agrupa rajadas, transcreve áudio, lê imagem, consulta a API do
+ * próprio cliente, envia arquivos do catálogo autorizado, transfere para um
+ * humano, encerra o lead com citação literal e volta sozinho no follow-up.
+ * Cada cenário aqui é uma dessas decisões — nenhuma métrica é inventada.
  */
-const TRACE_STEPS = [
-  { name: "Contexto", note: "histórico + memória do lead" },
-  { name: "Idioma", note: "pt-BR detectado" },
-  { name: "Conhecimento", note: "3 trechos da base do agente" },
-  { name: "Agenda", note: "terça, 14h — livre" },
-  { name: "CRM", note: "lead movido para Em conversa" },
-  { name: "Entrega", note: "resposta enviada no WhatsApp" },
-] as const;
 
-const INBOUND = "Oi! Vi o anúncio de vocês. Ainda dá pra marcar uma visita na terça?";
-const OUTBOUND =
-  "Dá sim, Marina! Terça às 14h está livre — reservo pra você? Já te mando o endereço e um lembrete 1h antes.";
+type ConsoleStep = { name: string; note: string };
+
+type ConsoleInbound = { text: string; kind?: "text" | "audio" | "image" };
+
+type ConsoleScenario = {
+  id: string;
+  /** Rótulo do separador — o visitante pode saltar para qualquer cenário. */
+  label: string;
+  /** O que este cenário prova, em texto de uma linha. */
+  claim: string;
+  /** Linha de sistema em vez de mensagem do cliente (usada no follow-up). */
+  systemLine?: string;
+  inbound: ConsoleInbound[];
+  steps: ConsoleStep[];
+  reply: string;
+  replyKind?: "text" | "audio";
+  attachment?: string;
+  footer: string;
+};
+
+const SCENARIOS: ConsoleScenario[] = [
+  {
+    id: "agenda",
+    label: "Agenda",
+    claim: "Marca o compromisso sozinho",
+    inbound: [{ text: "Oi! Vi o anúncio de vocês. Ainda dá pra marcar uma visita na terça?" }],
+    steps: [
+      { name: "Contexto", note: "histórico + memória do lead" },
+      { name: "Idioma", note: "pt-BR detectado" },
+      { name: "Conhecimento", note: "3 trechos da base do agente" },
+      { name: "Agenda", note: "terça, 14h — horário livre" },
+      { name: "CRM", note: "lead movido para Em conversa" },
+      { name: "Entrega", note: "resposta enviada no WhatsApp" },
+    ],
+    reply:
+      "Dá sim, Marina! Terça às 14h está livre — reservo pra você? Já te mando o endereço e um lembrete 1h antes.",
+    footer: "Compromisso criado · lembrete agendado",
+  },
+  {
+    id: "audio",
+    label: "Áudio",
+    claim: "Ouve o áudio e responde em voz",
+    inbound: [
+      { text: "áudio de voz · 0:14", kind: "audio" },
+      { text: "e se der já me manda o valor" },
+      { text: "obrigado!" },
+    ],
+    steps: [
+      { name: "Rajada", note: "3 mensagens agrupadas em um turno" },
+      { name: "Áudio", note: "transcrito antes de decidir" },
+      { name: "Contexto", note: "histórico + memória do lead" },
+      { name: "Conhecimento", note: "tabela de preços na base do agente" },
+      { name: "Voz", note: "resposta gerada em áudio" },
+      { name: "Entrega", note: "áudio enviado no WhatsApp" },
+    ],
+    reply:
+      "Ouvi seu áudio, Rafael! Consigo sim fazer nessa condição. O valor fica em R$ 2.400 à vista ou em 3x sem juros — qual prefere?",
+    replyKind: "audio",
+    footer: "3 mensagens do cliente, 1 resposta só",
+  },
+  {
+    id: "sistema",
+    label: "Seu sistema",
+    claim: "Consulta o seu sistema em tempo real",
+    inbound: [{ text: "Vocês ainda têm apartamento de 2 quartos no Setor Bueno?" }],
+    steps: [
+      { name: "Contexto", note: "histórico + memória do lead" },
+      { name: "Conector", note: "API do cliente, operação autorizada" },
+      { name: "Consulta", note: "somente leitura, campos declarados" },
+      { name: "Resultado", note: "3 unidades disponíveis" },
+      { name: "Entrega", note: "resposta enviada no WhatsApp" },
+    ],
+    reply:
+      "Temos sim! Achei 3 unidades de 2 quartos no Setor Bueno, a partir de R$ 320.000. Quer que eu mande a ficha de cada uma?",
+    footer: "Consulta ao sistema do cliente · nunca escreve nada",
+  },
+  {
+    id: "arquivo",
+    label: "Arquivos",
+    claim: "Envia o material certo, na hora certa",
+    inbound: [{ text: "Consegue me mandar a tabela de preços?" }],
+    steps: [
+      { name: "Contexto", note: "histórico + memória do lead" },
+      { name: "Catálogo", note: "arquivo autorizado localizado" },
+      { name: "Verificação", note: "só envia o que o dono liberou" },
+      { name: "Entrega", note: "texto + arquivo no WhatsApp" },
+    ],
+    reply: "Claro! Segue a tabela atualizada. Qualquer dúvida sobre as condições, me chama por aqui.",
+    attachment: "tabela-precos-2026.pdf",
+    footer: "Arquivo do catálogo do agente",
+  },
+  {
+    id: "imagem",
+    label: "Imagem",
+    claim: "Lê o que o cliente manda na foto",
+    inbound: [
+      { text: "comprovante.jpg", kind: "image" },
+      { text: "consegue confirmar se está certo?" },
+    ],
+    steps: [
+      { name: "Rajada", note: "2 mensagens agrupadas em um turno" },
+      { name: "Imagem", note: "analisada antes de decidir" },
+      { name: "Contexto", note: "histórico + memória do lead" },
+      { name: "Conhecimento", note: "regras de pagamento na base" },
+      { name: "Entrega", note: "resposta enviada no WhatsApp" },
+    ],
+    reply:
+      "Recebi, Camila! O comprovante está no valor e no nome corretos. Já registrei aqui e te aviso assim que a equipe confirmar.",
+    footer: "Imagem lida pelo agente",
+  },
+  {
+    id: "humano",
+    label: "Humano",
+    claim: "Chama a pessoa certa na hora certa",
+    inbound: [{ text: "Isso está bem acima do meu orçamento. Dá pra falar com um gerente?" }],
+    steps: [
+      { name: "Contexto", note: "histórico + memória do lead" },
+      { name: "Gatilho", note: "palavra-chave configurada: gerente" },
+      { name: "Transferência", note: "conversa entregue ao responsável" },
+      { name: "Aviso", note: "vendedor notificado no WhatsApp" },
+      { name: "Automação", note: "pausada — ninguém fala por cima" },
+    ],
+    reply:
+      "Claro! Já chamei o gerente responsável — ele continua com você por aqui mesmo, em instantes.",
+    footer: "Automação pausada · humano no controle",
+  },
+  {
+    id: "descarte",
+    label: "Descarte",
+    claim: "Sabe a hora de parar",
+    inbound: [{ text: "Obrigado, mas eu só estava pesquisando. Não tenho interesse agora." }],
+    steps: [
+      { name: "Contexto", note: "histórico + memória do lead" },
+      { name: "Critérios", note: "regras do negócio configuradas" },
+      { name: "Desfecho", note: "sem interesse — com citação literal" },
+      { name: "CRM", note: "card movido para Perdido" },
+      { name: "Atendimento", note: "encerrado, sem follow-up" },
+    ],
+    reply: "Sem problema! Se mudar de ideia é só me chamar por aqui. Boa semana.",
+    footer: "Único desfecho terminal — só com critérios definidos",
+  },
+  {
+    id: "followup",
+    label: "Follow-up",
+    claim: "Volta sozinho quando o lead some",
+    systemLine: "sem resposta do cliente desde ontem",
+    inbound: [],
+    steps: [
+      { name: "Silêncio", note: "intervalo configurado no agente" },
+      { name: "Memória", note: "retoma o assunto de onde parou" },
+      { name: "Tentativa", note: "1 de 3 configuradas" },
+      { name: "CRM", note: "card movido para Em follow-up" },
+      { name: "Entrega", note: "mensagem enviada no WhatsApp" },
+    ],
+    reply:
+      "Oi Marina! Passando só pra saber se a terça às 14h ainda funciona pra você. Se preferir outro dia, me diz que eu remarco.",
+    footer: "Follow-up automático · sem ninguém apertar nada",
+  },
+];
+
+/** Pausa entre o fim de uma demonstração e o início da próxima. */
+const CONSOLE_HOLD_MS = 34_000;
+const TYPE_MS = 22;
+const STEP_MS = 320;
+
+function InboundIcon({ kind }: { kind: ConsoleInbound["kind"] }) {
+  if (kind === "audio") return <Mic size={13} style={{ color: "var(--live)" }} />;
+  if (kind === "image") return <ImageIcon size={13} style={{ color: "var(--live)" }} />;
+  return null;
+}
 
 function HeroConsole() {
   const reduced = useReducedMotion();
-  // 0 = a receber, 1..6 = passos do trace, 7 = resposta, 8 = pausa antes de repetir.
-  // O estado inicial tem de ser igual no servidor e no primeiro render do cliente:
-  // `useReducedMotion()` só resolve depois de montar, por isso o atalho de
-  // acessibilidade é aplicado num efeito, nunca no `useState`.
-  const [phase, setPhase] = useState(0);
-  const [typed, setTyped] = useState(0);
+  const [index, setIndex] = useState(0);
+  const [msgIndex, setMsgIndex] = useState(0);
+  const [chars, setChars] = useState(0);
+  const [steps, setSteps] = useState(0);
+  const [replyOut, setReplyOut] = useState(false);
 
+  const scenario = SCENARIOS[index]!;
+  const inboundDone = msgIndex >= scenario.inbound.length;
+
+  const goTo = useCallback((next: number) => {
+    setIndex(((next % SCENARIOS.length) + SCENARIOS.length) % SCENARIOS.length);
+    setMsgIndex(0);
+    setChars(0);
+    setSteps(0);
+    setReplyOut(false);
+  }, []);
+
+  // Sem movimento: mostra o estado final do cenário e não avança sozinho.
   useEffect(() => {
     if (!reduced) return;
-    setPhase(7);
-    setTyped(INBOUND.length);
-  }, [reduced]);
+    setMsgIndex(scenario.inbound.length);
+    setChars(scenario.inbound[scenario.inbound.length - 1]?.text.length ?? 0);
+    setSteps(scenario.steps.length);
+    setReplyOut(true);
+  }, [reduced, scenario]);
 
+  // 1. Escreve as mensagens do cliente, uma a uma.
   useEffect(() => {
-    if (reduced) return;
-    if (phase !== 0) return;
-    if (typed >= INBOUND.length) {
-      const t = setTimeout(() => setPhase(1), 420);
+    if (reduced || inboundDone) return;
+    const full = scenario.inbound[msgIndex]!.text;
+    if (chars >= full.length) {
+      const t = setTimeout(() => {
+        setMsgIndex((v) => v + 1);
+        setChars(0);
+      }, 320);
       return () => clearTimeout(t);
     }
-    const t = setTimeout(() => setTyped((v) => v + 1), 26);
+    const t = setTimeout(() => setChars((v) => v + 1), TYPE_MS);
     return () => clearTimeout(t);
-  }, [phase, typed, reduced]);
+  }, [reduced, inboundDone, scenario, msgIndex, chars]);
 
+  // 2. Acende os passos do raciocínio.
   useEffect(() => {
-    if (reduced) return;
-    if (phase === 0) return;
-    const delay = phase === 7 ? 3600 : phase === 8 ? 260 : 330;
-    const t = setTimeout(() => {
-      setPhase((p) => {
-        if (p >= 8) {
-          setTyped(0);
-          return 0;
-        }
-        return p + 1;
-      });
-    }, delay);
+    if (reduced || !inboundDone || steps >= scenario.steps.length) return;
+    const t = setTimeout(() => setSteps((v) => v + 1), steps === 0 ? 420 : STEP_MS);
     return () => clearTimeout(t);
-  }, [phase, reduced]);
+  }, [reduced, inboundDone, steps, scenario]);
 
-  const activeSteps = Math.max(0, Math.min(TRACE_STEPS.length, phase));
-  const showReply = phase >= 7;
+  // 3. Mostra a resposta.
+  useEffect(() => {
+    if (reduced || replyOut || !inboundDone || steps < scenario.steps.length) return;
+    const t = setTimeout(() => setReplyOut(true), 420);
+    return () => clearTimeout(t);
+  }, [reduced, replyOut, inboundDone, steps, scenario]);
+
+  // 4. Segura 30s antes de passar ao cenário seguinte.
+  useEffect(() => {
+    if (reduced || !replyOut) return;
+    const t = setTimeout(() => goTo(index + 1), CONSOLE_HOLD_MS);
+    return () => clearTimeout(t);
+  }, [reduced, replyOut, index, goTo]);
 
   return (
     <div className="mcx-console">
@@ -876,23 +1123,66 @@ function HeroConsole() {
           Agente ao vivo
         </span>
         <span style={{ flex: 1 }} />
-        <span className="mcx-mono" style={{ fontSize: 10 }}>
+        <span className="mcx-mono mcx-console-provider" style={{ fontSize: 10 }}>
           WhatsApp · API Oficial
         </span>
       </div>
 
-      <div style={{ padding: "18px 16px 14px", display: "flex", flexDirection: "column", gap: 12 }}>
-        <div className="mcx-bubble mcx-bubble-in">
-          {INBOUND.slice(0, typed)}
-          {!reduced && phase === 0 ? <i className="mcx-caret" /> : null}
-        </div>
+      <div className="mcx-console-tabs" role="tablist" aria-label="Demonstrações do agente">
+        {SCENARIOS.map((item, i) => (
+          <button
+            key={item.id}
+            type="button"
+            role="tab"
+            aria-selected={i === index}
+            className={i === index ? "mcx-tab on" : "mcx-tab"}
+            onClick={() => goTo(i)}
+          >
+            {item.label}
+          </button>
+        ))}
       </div>
 
-      <div style={{ borderTop: "1px solid var(--line)" }}>
-        {TRACE_STEPS.map((step, i) => {
-          const on = i < activeSteps;
+      <div className="mcx-console-claim">
+        <Sparkles size={12} style={{ color: "var(--brand-hi)", flexShrink: 0 }} />
+        <span>{scenario.claim}</span>
+      </div>
+
+      <div className="mcx-console-thread">
+        {scenario.systemLine ? (
+          <div className="mcx-console-system">
+            <i />
+            <span>{scenario.systemLine}</span>
+            <i />
+          </div>
+        ) : null}
+
+        {scenario.inbound.map((message, i) => {
+          if (i > msgIndex) return null;
+          const typing = i === msgIndex && !inboundDone;
+          const text = typing ? message.text.slice(0, chars) : message.text;
+          const media = message.kind && message.kind !== "text";
           return (
-            <div key={step.name} className={on ? "mcx-trace on" : "mcx-trace"}>
+            <div key={`${scenario.id}-${i}`} className="mcx-bubble mcx-bubble-in">
+              {media ? (
+                <span className="mcx-bubble-media">
+                  <InboundIcon kind={message.kind} />
+                  <span>{text}</span>
+                </span>
+              ) : (
+                <span>{text}</span>
+              )}
+              {typing ? <i className="mcx-caret" /> : null}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mcx-console-trace">
+        {scenario.steps.map((step, i) => {
+          const on = i < steps;
+          return (
+            <div key={`${scenario.id}-${step.name}`} className={on ? "mcx-trace on" : "mcx-trace"}>
               <span className="mcx-trace-idx">{String(i + 1).padStart(2, "0")}</span>
               <span>
                 <span className="mcx-trace-name">{step.name}</span>
@@ -913,28 +1203,47 @@ function HeroConsole() {
         })}
       </div>
 
-      <div style={{ padding: "14px 16px 18px", borderTop: "1px solid var(--line)", minHeight: 96 }}>
+      <div className="mcx-console-reply">
         <AnimatePresence mode="wait">
-          {showReply ? (
+          {replyOut ? (
             <motion.div
-              key="reply"
+              key={`${scenario.id}-reply`}
               initial={reduced ? false : { opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
               style={{ display: "flex", flexDirection: "column", gap: 8 }}
             >
-              <div className="mcx-bubble mcx-bubble-out">{OUTBOUND}</div>
+              <div className="mcx-bubble mcx-bubble-out">
+                {scenario.replyKind === "audio" ? (
+                  <span className="mcx-bubble-media" style={{ marginBottom: 6 }}>
+                    <Mic size={13} />
+                    <span>resposta em áudio</span>
+                  </span>
+                ) : null}
+                {scenario.reply}
+              </div>
+              {scenario.attachment ? (
+                <div className="mcx-attach">
+                  <Paperclip size={13} />
+                  <span>{scenario.attachment}</span>
+                </div>
+              ) : null}
               <div
                 className="mcx-mono"
                 style={{ textAlign: "right", fontSize: 10, letterSpacing: ".13em" }}
               >
-                Compromisso criado · lembrete agendado
+                {scenario.footer}
               </div>
+              {reduced ? null : (
+                <div className="mcx-hold" aria-hidden="true">
+                  <i key={scenario.id} style={{ animationDuration: `${CONSOLE_HOLD_MS}ms` }} />
+                </div>
+              )}
             </motion.div>
           ) : (
             <motion.div
-              key="thinking"
+              key={`${scenario.id}-thinking`}
               initial={false}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
