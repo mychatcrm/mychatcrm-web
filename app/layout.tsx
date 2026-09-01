@@ -44,14 +44,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const preLaunchPopupEnabled = await isPreLaunchPopupEnabled();
   return (
     <html lang="pt-BR" className={inter.variable}>
-      <head>
-        {/* Anti-flash: aplica classe de tema antes do primeiro paint. Precisa
-            estar dentro de <head> — como filho direto de <html> é HTML
-            inválido, o navegador reposiciona a tag ao parsear e isso quebra
-            a hidratação do React (mismatch entre o que o servidor mandou e
-            o DOM real). */}
-        <script dangerouslySetInnerHTML={{ __html: ANTI_FLASH_SCRIPT }} />
-      </head>
+      {/* Anti-flash: aplica classe de tema antes do primeiro paint */}
+      <script dangerouslySetInnerHTML={{ __html: ANTI_FLASH_SCRIPT }} />
       <body className="min-h-[100dvh] min-w-0 bg-surface-base font-sans text-content antialiased">
         <ThemeProvider>
           <ChromeThemeReset />
