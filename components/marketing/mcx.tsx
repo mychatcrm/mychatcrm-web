@@ -802,13 +802,7 @@ body:has(.mcx){ background:#05080B; }
   .mcx .mcx-scene-sticky::after{ display:none; }
   .mcx .mcx-acts{ grid-column:1; grid-row:1; }
 }
-/* Palco compacto no telemóvel: a conversa é o que interessa ver primeiro. */
-@media (max-width:999px){
-  .mcx .mcx-stage-thread{ min-height:0; }
-  .mcx .mcx-stage-trace{ display:none; }
-  .mcx .mcx-agenda-slot{ height:20px; }
-  .mcx .mcx-crm-col{ min-height:58px; }
-}
+
 
 /* ---- palco ---------------------------------------------------------------- */
 .mcx .mcx-stage{
@@ -931,6 +925,29 @@ body:has(.mcx){ background:#05080B; }
   font-family:var(--f-mono); font-size:9.5px; letter-spacing:.05em; color:var(--muted);
   border:1px solid var(--line); border-radius:7px; padding:5px 9px;
   background:rgba(255,255,255,.02);
+}
+
+/* ---- palco no telemóvel ---------------------------------------------------
+   Preso no topo, ele não pode comer o ecrã inteiro: medido a 805px de 812, não
+   sobrava nada para o texto que a pessoa está a ler. Aqui fica em cerca de
+   metade — agenda e card lado a lado, sem a fila de raciocínio nem a legenda. */
+@media (max-width:999px){
+  .mcx .mcx-stage-grid{ grid-template-columns:1fr 1fr; }
+  .mcx .mcx-stage-panel:first-child{ grid-column:1 / -1; }
+  .mcx .mcx-stage-panel:nth-child(2){ border-right:1px solid var(--line); }
+  .mcx .mcx-stage-trace{ display:none; }
+  .mcx .mcx-agenda-legend{ display:none; }
+  .mcx .mcx-stage-thread{ min-height:0; }
+  .mcx .mcx-stage-bar{ padding:9px 12px; }
+  .mcx .mcx-stage-head{ padding:7px 11px; font-size:8.5px; }
+  .mcx .mcx-stage-body{ padding:10px; gap:7px; }
+  .mcx .mcx-bubble{ font-size:.79rem; padding:8px 10px; line-height:1.4; }
+  .mcx .mcx-agenda-slot{ height:15px; }
+  .mcx .mcx-agenda-grid{ gap:3px; }
+  .mcx .mcx-crm-board{ gap:3px; }
+  .mcx .mcx-crm-col{ min-height:50px; padding:5px 3px; }
+  .mcx .mcx-crm-colname{ font-size:7px; margin-bottom:4px; }
+  .mcx .mcx-effects li{ font-size:7.5px; padding:3px 7px; }
 }
 
 /* ---- lista de espera ------------------------------------------------------ */
