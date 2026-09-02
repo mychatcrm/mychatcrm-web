@@ -1,17 +1,16 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useId, useState } from "react";
 import { useLocale } from "next-intl";
-import { Eye, EyeOff, Star } from "lucide-react";
+import { Check, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { DsButton } from "@/components/ds/Button";
 import { DsInput } from "@/components/ds/Input";
-import { BRAND_LOGO } from "@/lib/brand";
 import { safeAppInternalPath } from "@/lib/safe-redirect";
 import { defaultLocale } from "@/i18n/routing";
 import { cn } from "@/lib/utils";
+import { LogoMark, McxPage } from "@/components/marketing/mcx";
 
 /* ─── Google icon ─── */
 function GoogleIcon() {
@@ -25,86 +24,87 @@ function GoogleIcon() {
   );
 }
 
-/* ─── Chat mockup (left brand panel) ─── */
-function ChatMockup() {
-  return (
-    <div className="mx-auto w-full max-w-[280px] overflow-hidden rounded-mc-base border border-white/10 bg-white/5 p-4">
-      <div className="mb-3 flex items-center gap-2 border-b border-white/10 pb-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#F24400]/20 text-xs font-bold text-[#F24400]">
-          IA
-        </div>
-        <div>
-          <p className="text-[11px] font-semibold text-white">Assistente MyChatCRM</p>
-          <p className="text-[10px] text-white/50">• online agora</p>
-        </div>
-      </div>
-      <div className="space-y-2">
-        {/* AI bubble */}
-        <div className="max-w-[85%] rounded-mc-base rounded-tl-sm bg-white/10 px-3 py-2">
-          <p className="text-[11px] leading-relaxed text-white/90">
-            Olá! Posso ajudar com informações sobre nossos planos 😊
-          </p>
-        </div>
-        {/* User bubble (WhatsApp green — intencional) */}
-        <div className="ml-auto max-w-[80%] rounded-mc-base rounded-tr-sm bg-[#25D366] px-3 py-2">
-          <p className="text-[11px] leading-relaxed text-white">Quero o plano Equipa</p>
-        </div>
-        {/* AI bubble */}
-        <div className="max-w-[85%] rounded-mc-base rounded-tl-sm bg-white/10 px-3 py-2">
-          <p className="text-[11px] leading-relaxed text-white/90">
-            Ótimo! Vou te enviar o link de acesso agora ✅
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
+/* ─── Painel de marca (desktop) ─── */
 
-/* ─── Left brand panel ─── */
-function BrandPanel() {
+/**
+ * Só afirmações verificáveis. A versão anterior anunciava "+1.200 clientes",
+ * "4,9 de avaliação" e "99,9% de uptime" — números que o produto não tem como
+ * sustentar hoje. Prometer o que não se cumpre no ecrã de entrada é o pior
+ * lugar para começar uma relação.
+ */
+const AUTH_POINTS = [
+  "Atende no WhatsApp pela API Oficial da Meta",
+  "CRM Kanban, agenda e follow-up no mesmo painel",
+  "O agente decide a cada mensagem — não segue roteiro fixo",
+  "Duas linhas de WhatsApp incluídas em qualquer plano",
+] as const;
+
+function BrandAside() {
   return (
     <aside
-      className="hidden lg:flex lg:w-[420px] xl:w-[480px] flex-col justify-between px-10 py-12 xl:px-14"
-      style={{ backgroundColor: "var(--color-coal)" }}
-      aria-hidden
+      className="mcx-auth-aside"
+      style={{
+        display: "none",
+        position: "relative",
+        padding: "clamp(38px,4vw,56px)",
+        borderRight: "1px solid var(--line)",
+        background: "linear-gradient(160deg,rgba(14,29,41,.7),rgba(5,8,11,.2))",
+      }}
     >
-      {/* Logo */}
-      <Link href="/" className="inline-flex items-center gap-2.5" tabIndex={-1}>
-        <Image src={BRAND_LOGO.default} alt="" width={36} height={36} className="shrink-0" />
-        <span className="font-sans text-lg font-bold tracking-tight text-white">
-          <span className="text-[#F24400]">My</span>ChatCRM
-        </span>
-      </Link>
+      <div className="mcx-grid" />
+      <div
+        className="mcx-aurora"
+        style={{
+          width: 420,
+          height: 420,
+          top: -180,
+          left: -120,
+          background: "rgba(242,68,0,.2)",
+        }}
+      />
+      <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", gap: 30 }}>
+        <Link
+          href="/"
+          style={{ display: "inline-flex", alignItems: "center", gap: 10, textDecoration: "none" }}
+        >
+          <LogoMark size={34} />
+          <span className="mcx-wordmark" style={{ fontSize: "1.24rem" }}>
+            MyChatCRM
+          </span>
+        </Link>
 
-      {/* Headline + chat mockup */}
-      <div className="space-y-8">
         <div>
-          <h2 className="text-2xl font-bold leading-snug tracking-tight text-white xl:text-3xl">
-            Sua operação comercial atende sozinha,{" "}
-            <span className="text-[#F24400]">24h por dia</span>
+          <span className="mcx-chip" style={{ marginBottom: 20 }}>
+            <span className="mcx-dot" />O comercial que não dorme
+          </span>
+          <h2 className="mcx-h2" style={{ fontSize: "clamp(1.7rem,2.4vw,2.3rem)" }}>
+            Sua operação atende sozinha, inclusive de madrugada.
           </h2>
-          <p className="mt-3 text-sm leading-relaxed text-white/60">
-            IA + CRM Kanban + WhatsApp — tudo integrado para vender mais sem contratar mais.
-          </p>
         </div>
-        <ChatMockup />
-      </div>
 
-      {/* Stats */}
-      <div className="flex flex-wrap gap-6 border-t border-white/10 pt-8">
-        {[
-          { value: "+1.200", label: "clientes" },
-          { value: "4,9", label: "avaliação", icon: <Star size={11} fill="currentColor" className="text-amber-400" /> },
-          { value: "99,9%", label: "uptime" },
-        ].map((s) => (
-          <div key={s.label}>
-            <p className="flex items-center gap-1 text-lg font-bold text-white">
-              {s.value}
-              {s.icon}
-            </p>
-            <p className="text-[11px] text-white/50">{s.label}</p>
-          </div>
-        ))}
+        <ul className="mcx-auth-points">
+          {AUTH_POINTS.map((point) => (
+            <li key={point}>
+              <Check size={14} strokeWidth={3} />
+              <span>{point}</span>
+            </li>
+          ))}
+        </ul>
+
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 9,
+            borderTop: "1px solid var(--line)",
+            paddingTop: 22,
+          }}
+        >
+          <ShieldCheck size={14} style={{ color: "var(--live)" }} />
+          <span className="mcx-mono" style={{ textTransform: "none", letterSpacing: ".04em" }}>
+            7 dias para pedir reembolso nos planos com checkout online
+          </span>
+        </div>
       </div>
     </aside>
   );
@@ -223,17 +223,22 @@ export default function LoginForm() {
   const isLogin = mode === "login";
 
   return (
-    <div className="flex min-h-dvh bg-mc-bg font-sans text-mc-text">
-      <BrandPanel />
+    <McxPage className="mcx-auth-split">
+      <BrandAside />
 
-      {/* Right panel — form */}
-      <main className="flex flex-1 flex-col items-center justify-center px-4 py-12 sm:px-8">
-        {/* Mobile logo */}
-        <Link href="/" className="mb-10 flex items-center gap-2.5 lg:hidden">
-          <Image src={BRAND_LOGO.default} alt="MyChatCRM" width={32} height={32} />
-          <span className="font-sans text-base font-bold tracking-tight text-mc-text">
-            <span className="text-[#F24400]">My</span>ChatCRM
-          </span>
+      {/* Painel da direita — formulário */}
+      <main
+        className="flex flex-1 flex-col items-center justify-center px-4 py-12 sm:px-8"
+        style={{ position: "relative", zIndex: 1 }}
+      >
+        {/* Logo no telemóvel */}
+        <Link
+          href="/"
+          className="mb-10 lg:hidden"
+          style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none" }}
+        >
+          <LogoMark size={30} />
+          <span className="mcx-wordmark">MyChatCRM</span>
         </Link>
 
         <div className="w-full max-w-[380px]">
@@ -397,6 +402,6 @@ export default function LoginForm() {
           </p>
         </div>
       </main>
-    </div>
+    </McxPage>
   );
 }

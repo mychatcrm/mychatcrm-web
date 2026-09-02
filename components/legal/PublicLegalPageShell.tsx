@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { McxFooter, McxNav, McxPage } from "@/components/marketing/mcx";
 
 export function PublicLegalPageShell({
   title,
@@ -19,36 +20,54 @@ export function PublicLegalPageShell({
   homeHref?: string;
 }) {
   return (
-    <div className="min-h-screen bg-surface-base text-content">
-      <header className="border-b border-line/80 bg-surface-deep/90">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-4 py-5 sm:px-6">
-          <Link href={homeHref} className="font-display text-lg font-semibold tracking-tight text-primary hover:text-primary-hover">
-            MyChatCRM
-          </Link>
-          <Link href={homeHref} className="text-sm text-content-muted transition hover:text-content">
-            {backHomeLabel}
-          </Link>
-        </div>
-      </header>
+    <McxPage>
+      <McxNav compact />
 
-      <main className="mx-auto max-w-3xl px-4 py-12 sm:px-6 sm:py-16">
-        <h1 className="font-display text-3xl font-bold text-content sm:text-4xl">{title}</h1>
-        <p className="mt-2 text-sm text-content-muted">
+      <main
+        className="mcx-shell"
+        style={{ maxWidth: 820, padding: "clamp(40px,6vw,72px) 24px clamp(56px,7vw,88px)" }}
+      >
+        <Link href={homeHref} className="mcx-navlink" style={{ fontSize: ".85rem" }}>
+          ← {backHomeLabel}
+        </Link>
+
+        <h1 className="mcx-h1" style={{ marginTop: 22, fontSize: "clamp(1.9rem,3.4vw,2.7rem)" }}>
+          {title}
+        </h1>
+        <p className="mcx-mono" style={{ marginTop: 12, textTransform: "none", letterSpacing: ".05em" }}>
           {updatedLabel} {updated}
         </p>
 
-        <div className="mt-10 space-y-8 text-sm leading-relaxed text-content-secondary">{children}</div>
+        <div className="mcx-legal">{children}</div>
 
-        {footer ? <div className="mt-10 border-t border-line pt-6 text-xs text-content-faint">{footer}</div> : null}
+        {footer ? (
+          <div
+            className="mcx-mono"
+            style={{
+              marginTop: 40,
+              paddingTop: 22,
+              borderTop: "1px solid var(--line)",
+              textTransform: "none",
+              letterSpacing: ".04em",
+              lineHeight: 1.7,
+            }}
+          >
+            {footer}
+          </div>
+        ) : null}
       </main>
-    </div>
+
+      <McxFooter />
+    </McxPage>
   );
 }
 
 export function LegalSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section>
-      <h2 className="mb-3 font-display text-lg font-semibold text-content">{title}</h2>
+      <h2 className="mcx-h3" style={{ fontSize: "1.05rem", marginBottom: 10 }}>
+        {title}
+      </h2>
       {children}
     </section>
   );

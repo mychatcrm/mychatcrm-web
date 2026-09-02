@@ -1,10 +1,18 @@
 "use client";
 
-import Image from "next/image";
-import { BRAND_LOGO } from "@/lib/brand";
+/**
+ * Casca dos ecrãs de acesso: login admin, recuperação de palavra-passe
+ * (cliente e admin) e definição de nova palavra-passe.
+ *
+ * Mesma identidade das páginas públicas — o tema chega por `McxPage`, onde os
+ * tokens de superfície e texto do Tailwind já apontam para a paleta escura.
+ * Os formulários que vivem dentro deste layout não foram tocados.
+ */
+
 import Link from "next/link";
-import { motion, useReducedMotion } from "framer-motion";
 import type { ReactNode } from "react";
+import { Check, ShieldCheck } from "lucide-react";
+import { LogoMark, McxPage } from "@/components/marketing/mcx";
 
 export type AuthSplitVariant = "client" | "admin";
 
@@ -19,117 +27,91 @@ type AuthSplitLayoutProps = {
   children: ReactNode;
 };
 
+/** Só afirmações verificáveis — ver a nota em `app/[locale]/login/LoginForm.tsx`. */
+const CLIENT_POINTS = [
+  "Atende no WhatsApp pela API Oficial da Meta",
+  "CRM Kanban, agenda e follow-up no mesmo painel",
+  "O agente decide a cada mensagem — não segue roteiro fixo",
+] as const;
+
+const ADMIN_POINTS = [
+  "Acesso restrito à equipa MyChatCRM",
+  "Cada sessão é registada na auditoria operacional",
+  "Permissões por papel: financeiro, suporte, marketing, desenvolvedor",
+] as const;
+
 function HeroPanel({ variant }: { variant: AuthSplitVariant }) {
-  const reducedMotion = useReducedMotion();
+  const admin = variant === "admin";
+  const points = admin ? ADMIN_POINTS : CLIENT_POINTS;
 
   return (
     <aside
       className="relative hidden min-h-dvh flex-1 overflow-hidden lg:flex"
-      aria-hidden
+      style={{
+        borderLeft: "1px solid var(--line)",
+        background: admin
+          ? "linear-gradient(200deg,rgba(14,29,41,.9),rgba(5,8,11,.4))"
+          : "linear-gradient(200deg,rgba(14,29,41,.7),rgba(5,8,11,.25))",
+      }}
     >
+      <div className="mcx-grid" />
       <div
-        className={
-          variant === "admin"
-            ? "absolute inset-0 bg-surface-deep"
-            : "absolute inset-0 bg-surface-base"
-        }
+        className="mcx-aurora"
+        style={{
+          width: 460,
+          height: 460,
+          top: -170,
+          right: -140,
+          background: admin ? "rgba(30,74,110,.4)" : "rgba(242,68,0,.2)",
+        }}
       />
-      <div className="pointer-events-none absolute inset-0 border-l border-line/80" />
-      <div className="relative z-10 flex w-full flex-col justify-center px-10 py-16 xl:px-16">
-        <p className="max-w-md font-display text-2xl font-semibold leading-snug text-content xl:text-3xl">
-          Atenda, venda e organize com{" "}
-          <span className="text-primary">IA no WhatsApp</span>.
-        </p>
-        <p className="mt-4 max-w-sm text-sm leading-relaxed text-content-muted">
-          CRM Kanban e Agenda integrados — treinamento com especialistas para o seu segmento.
-        </p>
 
-        <div className="relative mt-14 h-[min(52vh,420px)] w-full max-w-lg">
-          <motion.div
-            className="absolute left-0 top-0 w-[58%] rounded-2xl border border-line/80 bg-surface-card p-4"
-            initial={reducedMotion ? false : { opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: reducedMotion ? 0 : 0.5, delay: reducedMotion ? 0 : 0.1 }}
-          >
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-content-muted">
-              Pipeline
-            </p>
-            <div className="mt-3 flex gap-1.5">
-              {["Novo", "Contato", "Proposta"].map((c) => (
-                <span
-                  key={c}
-                  className="rounded-md bg-surface-elevated/80 px-2 py-1 text-[10px] text-content-secondary"
-                >
-                  {c}
-                </span>
-              ))}
-            </div>
-            <div className="mt-3 space-y-2">
-              {[1, 2].map((i) => (
-                <div
-                  key={i}
-                  className="h-2 rounded-full bg-primary/70"
-                  style={{ width: `${78 - i * 12}%` }}
-                />
-              ))}
-            </div>
-          </motion.div>
+      <div
+        className="relative z-10 flex w-full flex-col justify-center px-10 py-16 xl:px-16"
+        style={{ gap: 28 }}
+      >
+        <span className="mcx-chip">
+          <span className="mcx-dot" />
+          {admin ? "Área administrativa" : "O comercial que não dorme"}
+        </span>
 
-          <motion.div
-            className="absolute right-0 top-[12%] w-[48%] rounded-2xl border border-primary/25 bg-surface-deep p-4"
-            initial={reducedMotion ? false : { opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: reducedMotion ? 0 : 0.5, delay: reducedMotion ? 0 : 0.2 }}
-          >
-            <div className="flex items-end gap-1.5 pt-2">
-              {[40, 65, 45, 80, 55, 90, 48].map((h, i) => (
-                <div
-                  key={i}
-                  className="w-2.5 rounded-sm bg-primary"
-                  style={{ height: `${h}px` }}
-                />
-              ))}
-            </div>
-            <p className="mt-3 text-[10px] text-content-muted">Conversas · 30 dias</p>
-          </motion.div>
+        <h2 className="mcx-h2" style={{ fontSize: "clamp(1.7rem,2.3vw,2.3rem)", maxWidth: "16ch" }}>
+          {admin ? (
+            <>
+              Painel de controle da plataforma.
+            </>
+          ) : (
+            <>
+              Sua operação atende sozinha, inclusive de madrugada.
+            </>
+          )}
+        </h2>
 
-          <motion.div
-            className="absolute bottom-[6%] left-[8%] w-[54%] rounded-2xl border border-line/80 bg-surface-card p-4"
-            initial={reducedMotion ? false : { opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: reducedMotion ? 0 : 0.5, delay: reducedMotion ? 0 : 0.28 }}
-          >
-            <div className="flex items-start gap-2">
-              <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 text-xs font-bold text-primary">
-                IA
-              </span>
-              <div className="space-y-1.5">
-                <div className="h-2 w-[88%] rounded-full bg-surface-elevated" />
-                <div className="h-2 w-[72%] rounded-full bg-surface-elevated/80" />
-                <div className="h-2 w-[56%] rounded-full bg-primary/40" />
-              </div>
-            </div>
-          </motion.div>
+        <ul className="mcx-auth-points" style={{ maxWidth: 420 }}>
+          {points.map((point) => (
+            <li key={point}>
+              <Check size={14} strokeWidth={3} />
+              <span>{point}</span>
+            </li>
+          ))}
+        </ul>
 
-          <motion.div
-            className="absolute bottom-[18%] right-[4%] flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/30 bg-primary/10 text-primary"
-            animate={reducedMotion ? false : { y: [0, -6, 0] }}
-            transition={
-              reducedMotion
-                ? { duration: 0 }
-                : { duration: 4, repeat: Infinity, ease: "easeInOut" }
-            }
-            aria-hidden
-          >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" className="opacity-95">
-              <path
-                d="M12 3C7 3 3 6.5 3 11c0 2 .8 3.8 2.2 5.2L3 21l5-2.2C9.2 19.8 10.5 20 12 20c5 0 9-3.5 9-8s-4-9-9-9z"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </motion.div>
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 9,
+            borderTop: "1px solid var(--line)",
+            paddingTop: 22,
+            maxWidth: 420,
+          }}
+        >
+          <ShieldCheck size={14} style={{ color: "var(--live)" }} />
+          <span className="mcx-mono" style={{ textTransform: "none", letterSpacing: ".04em" }}>
+            {admin
+              ? "Sessões protegidas e auditadas"
+              : "7 dias para pedir reembolso nos planos com checkout online"}
+          </span>
         </div>
       </div>
     </aside>
@@ -147,15 +129,17 @@ export function AuthSplitLayout({
   const admin = variant === "admin";
 
   return (
-    <div className="min-h-dvh bg-surface-base pb-safe font-sans text-content">
+    <McxPage>
       <div className="flex min-h-dvh flex-col lg:flex-row">
-        <section className="relative flex flex-1 flex-col justify-center border-line/40 px-4 py-10 sm:px-8 lg:max-w-[min(100%,540px)] lg:flex-none lg:border-r lg:bg-surface-deep lg:px-12 xl:px-16">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-primary/35 lg:hidden" />
-
+        <section
+          className="relative flex flex-1 flex-col justify-center px-4 py-10 sm:px-8 lg:max-w-[min(100%,560px)] lg:flex-none lg:px-12 xl:px-16"
+          style={{ background: "var(--ground)" }}
+        >
           <div className="absolute right-4 top-4 sm:right-6 sm:top-6 lg:right-8 lg:top-8">
             <Link
               href={headerAction.href}
-              className="inline-flex min-h-[44px] items-center justify-center rounded-full border border-line px-4 text-xs font-semibold uppercase tracking-wide text-content-secondary transition hover:border-primary hover:text-primary"
+              className="mcx-btn mcx-btn-ghost"
+              style={{ padding: "9px 16px", fontSize: ".8rem" }}
             >
               {headerAction.label}
             </Link>
@@ -164,54 +148,74 @@ export function AuthSplitLayout({
           <div className="mx-auto mt-10 w-full max-w-md lg:mt-0">
             <Link
               href="/"
-              className="inline-flex max-w-full items-start gap-3 rounded-xl outline-none ring-offset-2 ring-offset-surface-deep transition hover:opacity-90 focus-visible:ring-2 focus-visible:ring-primary"
+              style={{ display: "inline-flex", alignItems: "center", gap: 10, textDecoration: "none" }}
               aria-label="MyChatCRM — página inicial"
             >
-              <Image src={BRAND_LOGO.default} alt="Logotipo MyChatCRM" width={40} height={40} priority className="shrink-0" />
-              <span className="min-w-0">
-                <span className="flex flex-wrap items-baseline gap-x-2 font-display text-lg font-bold tracking-tight">
-                  <span>
-                    <span className="text-primary">My</span>
-                    <span className="text-content">Chat</span>
-                    <span className="text-content">CRM</span>
-                  </span>
-                  {admin ? (
-                    <span className="rounded-md border border-line bg-surface-card/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-content-muted">
-                      Admin
-                    </span>
-                  ) : null}
+              <LogoMark size={32} />
+              <span className="mcx-wordmark">MyChatCRM</span>
+              {admin ? (
+                <span
+                  className="mcx-mono"
+                  style={{
+                    border: "1px solid var(--line-strong)",
+                    borderRadius: 6,
+                    padding: "3px 8px",
+                    fontSize: 9,
+                    color: "var(--brand-hi)",
+                  }}
+                >
+                  Admin
                 </span>
-              </span>
+              ) : null}
             </Link>
 
-            <p className="mt-10 text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">
+            <p
+              className="mcx-mono"
+              style={{ marginTop: 38, color: "var(--brand)", letterSpacing: ".2em" }}
+            >
               {eyebrow}
             </p>
-            <h1 className="mt-2 font-display text-2xl font-bold leading-tight tracking-tight sm:text-[1.65rem] md:text-3xl">
+            <h1 className="mcx-h1" style={{ marginTop: 10, fontSize: "clamp(1.7rem,3vw,2.2rem)" }}>
               {title}
             </h1>
-            <p className="mt-2 max-w-md text-sm leading-relaxed text-content-muted">{subtitle}</p>
+            <p className="mcx-body" style={{ marginTop: 12, maxWidth: "46ch" }}>
+              {subtitle}
+            </p>
 
             <div className="mt-8">{children}</div>
 
             <div
-              className="relative mt-10 overflow-hidden rounded-2xl border border-line/80 bg-surface-card p-5 lg:hidden"
+              className="mcx-card lg:hidden"
+              style={{ marginTop: 36, padding: 18 }}
               aria-hidden
             >
-              <p className="relative font-display text-sm font-semibold tracking-tight text-content">
-                CRM Kanban + <span className="text-primary">IA</span> no WhatsApp
+              <p className="mcx-h3" style={{ fontSize: ".95rem" }}>
+                CRM Kanban + IA no WhatsApp
               </p>
-              <p className="relative mt-1.5 text-xs leading-relaxed text-content-muted">
-                Painel completo após o login — mesmo fluxo no desktop e no celular.
+              <p className="mcx-body" style={{ marginTop: 6, fontSize: ".82rem" }}>
+                Painel completo depois de entrar — o mesmo fluxo no computador e no telemóvel.
               </p>
             </div>
 
-            <div className="mt-10 flex flex-wrap gap-x-5 gap-y-2 border-t border-line/60 pt-6 text-xs text-content-muted">
-              <Link href="/termos" className="transition hover:text-primary">
-                Termos de Uso
+            <div
+              style={{
+                marginTop: 36,
+                paddingTop: 22,
+                borderTop: "1px solid var(--line)",
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "8px 20px",
+              }}
+            >
+              <Link href="/termos-de-uso" className="mcx-navlink" style={{ fontSize: ".8rem" }}>
+                Termos de uso
               </Link>
-              <Link href="/privacidade" className="transition hover:text-primary">
-                Política de Privacidade
+              <Link
+                href="/politica-de-privacidade"
+                className="mcx-navlink"
+                style={{ fontSize: ".8rem" }}
+              >
+                Política de privacidade
               </Link>
             </div>
           </div>
@@ -219,6 +223,6 @@ export function AuthSplitLayout({
 
         <HeroPanel variant={variant} />
       </div>
-    </div>
+    </McxPage>
   );
 }
