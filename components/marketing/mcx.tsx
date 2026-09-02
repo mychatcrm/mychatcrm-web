@@ -755,73 +755,96 @@ body:has(.mcx){ background:#05080B; }
   position:relative; z-index:1;
 }
 
-/* ---- cena do agendamento (scroll-driven) --------------------------------- */
+/* ---- player do agendamento ------------------------------------------------
+   A cena toca sozinha num bloco fechado. A legenda vive dentro dele, ao lado
+   dos painéis, para o texto e o visual nunca saírem de sincronia. */
+.mcx .mcx-player{
+  background:linear-gradient(180deg,#0B121A,#070C11);
+  border:1px solid var(--line-strong); border-radius:20px; overflow:hidden;
+  box-shadow:0 40px 90px -50px rgba(0,0,0,.95) !important;
+}
+.mcx .mcx-player-bar{
+  display:flex; align-items:center; gap:10px; padding:12px 16px;
+  border-bottom:1px solid var(--line); background:rgba(255,255,255,.022);
+}
+.mcx .mcx-dot.is-paused{ background:var(--faint); animation:none; box-shadow:none; }
+.mcx .mcx-player-progress{ height:2px; background:var(--line); }
+.mcx .mcx-player-progress i{
+  display:block; height:100%;
+  background:linear-gradient(90deg,var(--brand),var(--brand-hi));
+  transition:width .25s linear;
+}
+.mcx .mcx-player-controls{
+  display:flex; flex-wrap:wrap; align-items:center; gap:12px;
+  padding:12px 14px; border-top:1px solid var(--line);
+  background:rgba(255,255,255,.015);
+}
+.mcx .mcx-player-buttons{ display:flex; align-items:center; gap:6px; flex:0 0 auto; }
+.mcx .mcx-ctrl{
+  display:inline-flex; align-items:center; justify-content:center; gap:7px;
+  min-height:34px; min-width:34px; padding:0 10px; cursor:pointer;
+  border:1px solid var(--line-strong); border-radius:9px;
+  background:rgba(255,255,255,.04); color:var(--muted);
+  font-family:var(--f-mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase;
+  transition:color .16s ease,border-color .16s ease,background .16s ease;
+}
+.mcx .mcx-ctrl:hover{ color:var(--text); border-color:rgba(255,255,255,.3); background:rgba(255,255,255,.08); }
+.mcx .mcx-ctrl-play{
+  color:var(--brand-hi); border-color:rgba(242,68,0,.45); background:var(--brand-dim); padding:0 14px;
+}
+.mcx .mcx-ctrl-play:hover{ color:#fff; background:rgba(242,68,0,.24); border-color:rgba(242,68,0,.6); }
 .mcx .mcx-actbar{
-  display:flex; flex-wrap:wrap; gap:6px; justify-content:center;
-  padding:10px 0 4px;
+  display:flex; flex-wrap:wrap; gap:5px; flex:1 1 auto; justify-content:flex-end;
 }
-.mcx .mcx-scene{ display:grid; gap:clamp(24px,4vw,56px); grid-template-columns:1fr; align-items:start; }
-@media (min-width:1000px){ .mcx .mcx-scene{ grid-template-columns:.92fr 1.08fr; } }
+@media (max-width:760px){ .mcx .mcx-actbar{ justify-content:flex-start; } }
 
-.mcx .mcx-acts{ list-style:none; margin:0; padding:0; }
-.mcx .mcx-act{
-  padding:clamp(30px,7vh,64px) 0;
+/* ---- legenda + painéis dentro do player ---------------------------------- */
+.mcx .mcx-stage-grid{ display:grid; grid-template-columns:1fr; }
+@media (min-width:1000px){ .mcx .mcx-stage-grid{ grid-template-columns:.85fr 1.15fr; } }
+.mcx .mcx-stage-caption{
+  padding:clamp(20px,2.6vw,32px); display:flex; flex-direction:column; gap:12px;
   border-bottom:1px solid var(--line);
-  opacity:.42; transition:opacity .35s ease;
 }
-.mcx .mcx-act:last-child{ border-bottom:0; }
-.mcx .mcx-act.is-on{ opacity:1; }
+@media (min-width:1000px){
+  .mcx .mcx-stage-caption{ border-bottom:0; border-right:1px solid var(--line); justify-content:center; }
+}
 .mcx .mcx-act-idx{
-  font-family:var(--f-mono); font-size:10.5px; letter-spacing:.18em;
-  text-transform:uppercase; color:var(--brand); display:block; margin-bottom:12px;
+  font-family:var(--f-mono); font-size:10px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--brand);
 }
-.mcx .mcx-act-title{ font-size:clamp(1.4rem,2.5vw,1.95rem); }
-.mcx .mcx-act-body{ margin-top:14px; max-width:52ch; }
-/* Espelho textual: existe para quem não executa JS. Discreto, nunca escondido. */
+.mcx .mcx-act-title{ font-size:clamp(1.25rem,2.1vw,1.75rem); }
+.mcx .mcx-act-body{ font-size:.92rem; max-width:46ch; }
+.mcx .mcx-stage-panels{ display:grid; grid-template-columns:1fr 1fr; min-width:0; }
+
+/* ---- os dez atos em texto (abaixo do player) ----------------------------- */
+.mcx .mcx-acts{
+  list-style:none; margin:30px 0 0; padding:0;
+  display:grid; gap:14px; grid-template-columns:1fr;
+}
+@media (min-width:760px){ .mcx .mcx-acts{ grid-template-columns:repeat(2,1fr); } }
+.mcx .mcx-act{
+  border:1px solid var(--line); border-radius:14px; padding:18px 20px;
+  background:rgba(255,255,255,.02); display:flex; flex-direction:column; gap:9px;
+}
+.mcx .mcx-act-jump{
+  display:flex; flex-direction:column; gap:7px; align-items:flex-start;
+  background:none; border:0; padding:0; cursor:pointer; text-align:left; width:100%;
+}
+.mcx .mcx-act-jump:hover .mcx-act-title{ color:var(--brand-hi); }
 .mcx .mcx-act-mirror{
-  margin-top:16px; padding:14px 16px; border-left:2px solid var(--line-strong);
-  display:flex; flex-direction:column; gap:8px;
-  font-size:.855rem; line-height:1.55; color:var(--faint); max-width:56ch;
+  padding:12px 14px; border-left:2px solid var(--line-strong);
+  display:flex; flex-direction:column; gap:7px;
+  font-size:.83rem; line-height:1.55; color:var(--faint);
 }
 .mcx .mcx-act-mirror b{ color:var(--muted); font-weight:600; }
 .mcx .mcx-act-mirror p{ margin:0; }
 
-/* No telemóvel o palco fica preso no TOPO e os atos passam por baixo dele —
-   sem isto a pessoa lia os dez atos e só encontrava a animação no fim. */
-.mcx .mcx-scene-sticky{
-  position:sticky; top:64px; z-index:3;
-  padding:8px 0 12px; background:var(--ground);
-}
-.mcx .mcx-scene-sticky::after{
-  content:""; position:absolute; left:0; right:0; bottom:0; height:14px;
-  background:linear-gradient(var(--ground),transparent); pointer-events:none;
-}
-@media (min-width:1000px){
-  /* Colocação explícita: a ordem do DOM deixa de mandar. */
-  .mcx .mcx-scene-sticky{ grid-column:2; grid-row:1; top:96px; padding:0; background:none; }
-  .mcx .mcx-scene-sticky::after{ display:none; }
-  .mcx .mcx-acts{ grid-column:1; grid-row:1; }
-}
-
-
 /* ---- palco ---------------------------------------------------------------- */
-.mcx .mcx-stage{
-  background:linear-gradient(180deg,#0B121A,#070C11);
-  border:1px solid var(--line-strong); border-radius:18px; overflow:hidden;
-  box-shadow:0 40px 90px -50px rgba(0,0,0,.95) !important;
-}
-.mcx .mcx-stage-bar{
-  display:flex; align-items:center; gap:10px; padding:12px 16px;
-  border-bottom:1px solid var(--line); background:rgba(255,255,255,.022);
-}
 .mcx .mcx-stage-code{ font-size:10px; color:var(--brand-hi); }
-.mcx .mcx-stage-grid{ display:grid; grid-template-columns:1fr; }
-@media (min-width:560px){ .mcx .mcx-stage-grid{ grid-template-columns:1fr 1fr; } }
 .mcx .mcx-stage-panel{ border-bottom:1px solid var(--line); min-width:0; }
-@media (min-width:560px){
-  .mcx .mcx-stage-panel:first-child{ grid-column:1 / -1; }
-  .mcx .mcx-stage-panel:nth-child(2){ border-right:1px solid var(--line); }
-}
+.mcx .mcx-stage-panel:first-child{ grid-column:1 / -1; }
+.mcx .mcx-stage-panel:nth-child(2){ border-right:1px solid var(--line); }
+.mcx .mcx-stage-panel:last-child{ border-bottom:0; }
 .mcx .mcx-stage-head{
   display:flex; align-items:center; gap:8px; padding:9px 14px;
   font-family:var(--f-mono); font-size:9.5px; letter-spacing:.14em;
@@ -917,8 +940,7 @@ body:has(.mcx){ background:#05080B; }
 .mcx .mcx-effects svg{ color:var(--live); }
 
 .mcx .mcx-stage-trace{
-  display:flex; flex-wrap:wrap; gap:7px; padding:12px 14px;
-  border-top:1px solid var(--line); background:rgba(255,255,255,.015);
+  display:flex; flex-wrap:wrap; gap:6px; margin-top:6px;
 }
 .mcx .mcx-stage-step{
   display:inline-flex; align-items:center; gap:7px;
@@ -932,11 +954,14 @@ body:has(.mcx){ background:#05080B; }
    sobrava nada para o texto que a pessoa está a ler. Aqui fica em cerca de
    metade — agenda e card lado a lado, sem a fila de raciocínio nem a legenda. */
 @media (max-width:999px){
-  .mcx .mcx-stage-grid{ grid-template-columns:1fr 1fr; }
-  .mcx .mcx-stage-panel:first-child{ grid-column:1 / -1; }
-  .mcx .mcx-stage-panel:nth-child(2){ border-right:1px solid var(--line); }
-  .mcx .mcx-stage-trace{ display:none; }
   .mcx .mcx-agenda-legend{ display:none; }
+  /* O player tem de caber num ecrã de telemóvel: medido a 862px de 812, a
+     pessoa via metade e tinha de rolar para acompanhar a própria animação. */
+  .mcx .mcx-stage-caption{ padding:16px 16px 14px; gap:8px; }
+  .mcx .mcx-act-title{ font-size:1.12rem; }
+  .mcx .mcx-act-body{ font-size:.85rem; line-height:1.5; }
+  .mcx .mcx-stage-trace{ display:none; }
+  .mcx .mcx-player-controls{ padding:10px 12px; gap:9px; }
   .mcx .mcx-stage-thread{ min-height:0; }
   .mcx .mcx-stage-bar{ padding:9px 12px; }
   .mcx .mcx-stage-head{ padding:7px 11px; font-size:8.5px; }
