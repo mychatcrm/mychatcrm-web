@@ -244,7 +244,9 @@ export function AgendamentoView() {
 
   /**
    * Com a demonstração pausada, quem manda é a posição da coluna — o ato ativo
-   * passa a ser o que está mais perto do centro dela, como era antes.
+   * passa a ser o que está mais perto do topo dela, o mesmo ponto de referência
+   * que o deslize automático usa. Se aqui fosse o centro, parar e voltar a
+   * tocar saltaria um ato.
    */
   const aoRolarColuna = useCallback(() => {
     if (playing) return;
