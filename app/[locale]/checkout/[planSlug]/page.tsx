@@ -5,18 +5,22 @@ import { JsonLd } from "@/components/JsonLd";
 import { McxCheckoutShell } from "./McxCheckoutShell";
 import { PreLaunchWaitlist } from "./PreLaunchWaitlist";
 import { isPreLaunchWaitlistEnabled } from "@/lib/server/pre-launch-config-db";
-import { getPlanBySlug, parsePlanBillingCycle, PLAN_CHECKOUT_SLUGS } from "@/lib/plans";
+import { getPlanBySlug, parsePlanBillingCycle } from "@/lib/plans";
 import { SITE_URL } from "@/lib/constants";
 import { buildBreadcrumbSchema } from "@/lib/seo";
-import { routing } from "@/i18n/routing";
 import { CheckoutView } from "./CheckoutView";
 
-export function generateStaticParams() {
-  const localeParams = routing.locales.flatMap((locale) =>
-    PLAN_CHECKOUT_SLUGS.map((planSlug) => ({ locale, planSlug })),
-  );
-  return localeParams;
-}
+/**
+ * Renderizada a cada pedido, de propósito.
+ *
+ * Como página estática, o modo lista de espera ficava gravado no HTML do
+ * build: virar o toggle no admin não trocava nada até um novo deploy —
+ * medido em produção. Sendo dinâmica, o `if` da lista de espera é avaliado
+ * no pedido e o `revalidateTag` do PATCH derruba o cache de leitura na hora.
+ * É uma página de pagamento com dados por visitante; não devia ser estática
+ * de qualquer maneira.
+ */
+export const dynamic = "force-dynamic";
 
 type PageProps = {
   params: Promise<{ locale: string; planSlug: string }>;
