@@ -281,6 +281,11 @@ export function AgendamentoView() {
 
         {/* ------------------------------------------------- cena */}
         <section className="mcx-shell mcx-scene">
+          {/* Palco preso: reage ao ato ativo. */}
+          <div className="mcx-scene-sticky">
+            <Stage act={act} />
+          </div>
+
           {/* Coluna do texto: cada ato é conteúdo real, sempre no HTML. */}
           <ol className="mcx-acts">
             {ACTS.map((a, i) => (
@@ -319,10 +324,6 @@ export function AgendamentoView() {
             ))}
           </ol>
 
-          {/* Palco preso: reage ao ato ativo. */}
-          <div className="mcx-scene-sticky">
-            <Stage act={act} />
-          </div>
         </section>
 
         {/* ------------------------------------------------- garantia */}

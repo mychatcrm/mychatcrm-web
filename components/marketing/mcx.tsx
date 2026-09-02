@@ -786,9 +786,28 @@ body:has(.mcx){ background:#05080B; }
 .mcx .mcx-act-mirror b{ color:var(--muted); font-weight:600; }
 .mcx .mcx-act-mirror p{ margin:0; }
 
-.mcx .mcx-scene-sticky{ position:static; }
+/* No telemóvel o palco fica preso no TOPO e os atos passam por baixo dele —
+   sem isto a pessoa lia os dez atos e só encontrava a animação no fim. */
+.mcx .mcx-scene-sticky{
+  position:sticky; top:64px; z-index:3;
+  padding:8px 0 12px; background:var(--ground);
+}
+.mcx .mcx-scene-sticky::after{
+  content:""; position:absolute; left:0; right:0; bottom:0; height:14px;
+  background:linear-gradient(var(--ground),transparent); pointer-events:none;
+}
 @media (min-width:1000px){
-  .mcx .mcx-scene-sticky{ position:sticky; top:96px; }
+  /* Colocação explícita: a ordem do DOM deixa de mandar. */
+  .mcx .mcx-scene-sticky{ grid-column:2; grid-row:1; top:96px; padding:0; background:none; }
+  .mcx .mcx-scene-sticky::after{ display:none; }
+  .mcx .mcx-acts{ grid-column:1; grid-row:1; }
+}
+/* Palco compacto no telemóvel: a conversa é o que interessa ver primeiro. */
+@media (max-width:999px){
+  .mcx .mcx-stage-thread{ min-height:0; }
+  .mcx .mcx-stage-trace{ display:none; }
+  .mcx .mcx-agenda-slot{ height:20px; }
+  .mcx .mcx-crm-col{ min-height:58px; }
 }
 
 /* ---- palco ---------------------------------------------------------------- */
