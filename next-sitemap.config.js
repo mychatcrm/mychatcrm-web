@@ -158,6 +158,14 @@ module.exports = {
     });
 
     entries.push({
+      loc: `${SITE_URL}/agendamento`,
+      changefreq: "monthly",
+      priority: 0.9,
+      lastmod: new Date().toISOString(),
+      alternateRefs: alternates("/agendamento"),
+    });
+
+    entries.push({
       loc: `${SITE_URL}/blog`,
       changefreq: "weekly",
       priority: 0.8,

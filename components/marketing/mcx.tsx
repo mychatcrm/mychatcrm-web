@@ -755,6 +755,165 @@ body:has(.mcx){ background:#05080B; }
   position:relative; z-index:1;
 }
 
+/* ---- cena do agendamento (scroll-driven) --------------------------------- */
+.mcx .mcx-actbar{
+  display:flex; flex-wrap:wrap; gap:6px; justify-content:center;
+  padding:10px 0 4px;
+}
+.mcx .mcx-scene{ display:grid; gap:clamp(24px,4vw,56px); grid-template-columns:1fr; align-items:start; }
+@media (min-width:1000px){ .mcx .mcx-scene{ grid-template-columns:.92fr 1.08fr; } }
+
+.mcx .mcx-acts{ list-style:none; margin:0; padding:0; }
+.mcx .mcx-act{
+  padding:clamp(30px,7vh,64px) 0;
+  border-bottom:1px solid var(--line);
+  opacity:.42; transition:opacity .35s ease;
+}
+.mcx .mcx-act:last-child{ border-bottom:0; }
+.mcx .mcx-act.is-on{ opacity:1; }
+.mcx .mcx-act-idx{
+  font-family:var(--f-mono); font-size:10.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--brand); display:block; margin-bottom:12px;
+}
+.mcx .mcx-act-title{ font-size:clamp(1.4rem,2.5vw,1.95rem); }
+.mcx .mcx-act-body{ margin-top:14px; max-width:52ch; }
+/* Espelho textual: existe para quem não executa JS. Discreto, nunca escondido. */
+.mcx .mcx-act-mirror{
+  margin-top:16px; padding:14px 16px; border-left:2px solid var(--line-strong);
+  display:flex; flex-direction:column; gap:8px;
+  font-size:.855rem; line-height:1.55; color:var(--faint); max-width:56ch;
+}
+.mcx .mcx-act-mirror b{ color:var(--muted); font-weight:600; }
+.mcx .mcx-act-mirror p{ margin:0; }
+
+.mcx .mcx-scene-sticky{ position:static; }
+@media (min-width:1000px){
+  .mcx .mcx-scene-sticky{ position:sticky; top:96px; }
+}
+
+/* ---- palco ---------------------------------------------------------------- */
+.mcx .mcx-stage{
+  background:linear-gradient(180deg,#0B121A,#070C11);
+  border:1px solid var(--line-strong); border-radius:18px; overflow:hidden;
+  box-shadow:0 40px 90px -50px rgba(0,0,0,.95) !important;
+}
+.mcx .mcx-stage-bar{
+  display:flex; align-items:center; gap:10px; padding:12px 16px;
+  border-bottom:1px solid var(--line); background:rgba(255,255,255,.022);
+}
+.mcx .mcx-stage-code{ font-size:10px; color:var(--brand-hi); }
+.mcx .mcx-stage-grid{ display:grid; grid-template-columns:1fr; }
+@media (min-width:560px){ .mcx .mcx-stage-grid{ grid-template-columns:1fr 1fr; } }
+.mcx .mcx-stage-panel{ border-bottom:1px solid var(--line); min-width:0; }
+@media (min-width:560px){
+  .mcx .mcx-stage-panel:first-child{ grid-column:1 / -1; }
+  .mcx .mcx-stage-panel:nth-child(2){ border-right:1px solid var(--line); }
+}
+.mcx .mcx-stage-head{
+  display:flex; align-items:center; gap:8px; padding:9px 14px;
+  font-family:var(--f-mono); font-size:9.5px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--faint);
+  background:rgba(255,255,255,.016); border-bottom:1px solid var(--line-soft);
+}
+.mcx .mcx-stage-head svg{ color:var(--brand); }
+.mcx .mcx-stage-body{ padding:14px; display:flex; flex-direction:column; gap:10px; }
+.mcx .mcx-stage-thread{ min-height:150px; }
+
+@media (prefers-reduced-motion:no-preference){
+  .mcx .mcx-stage-anim{ animation:mcx-enter .42s cubic-bezier(.22,1,.36,1) both; }
+  .mcx .mcx-stage-anim-2{ animation-delay:.14s; }
+}
+
+/* grelha da agenda */
+.mcx .mcx-agenda-grid{
+  display:grid; grid-template-columns:auto repeat(4,1fr); gap:5px; align-items:center;
+}
+.mcx .mcx-agenda-day, .mcx .mcx-agenda-hour{
+  font-family:var(--f-mono); font-size:9px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--faint); text-align:center;
+}
+.mcx .mcx-agenda-hour{ text-align:right; padding-right:6px; }
+.mcx .mcx-agenda-slot{
+  height:26px; border-radius:6px; border:1px solid var(--line);
+  background:rgba(255,255,255,.022);
+  transition:background .3s ease,border-color .3s ease,box-shadow .3s ease;
+}
+.mcx .mcx-agenda-slot[data-s="ocupado"]{ background:rgba(255,255,255,.09); border-color:var(--line-strong); }
+.mcx .mcx-agenda-slot[data-s="bloqueado"]{
+  background:var(--crit-soft, rgba(163,44,44,.18)); border-color:var(--crit-line);
+}
+.mcx .mcx-agenda-slot[data-s="proposto"]{
+  background:var(--brand-dim); border-color:rgba(242,68,0,.5);
+  border-style:dashed;
+}
+.mcx .mcx-agenda-slot[data-s="marcado"]{
+  background:linear-gradient(180deg,var(--brand-hi),var(--brand));
+  border-color:var(--brand);
+  box-shadow:0 0 18px -4px var(--brand-glow) !important;
+}
+.mcx .mcx-agenda-legend{
+  display:flex; flex-wrap:wrap; gap:12px; margin-top:2px;
+  font-family:var(--f-mono); font-size:9px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--faint);
+}
+.mcx .mcx-agenda-legend span{ display:inline-flex; align-items:center; gap:5px; }
+.mcx .mcx-agenda-legend i{
+  width:10px; height:10px; border-radius:3px; border:1px solid var(--line);
+  background:rgba(255,255,255,.022);
+}
+.mcx .mcx-agenda-legend i[data-s="ocupado"]{ background:rgba(255,255,255,.09); }
+.mcx .mcx-agenda-legend i[data-s="marcado"]{ background:var(--brand); border-color:var(--brand); }
+
+/* quadro do CRM */
+.mcx .mcx-crm-board{ display:grid; grid-template-columns:repeat(4,1fr); gap:5px; }
+.mcx .mcx-crm-col{
+  border:1px solid var(--line); border-radius:8px; padding:7px 5px;
+  background:rgba(255,255,255,.018); min-height:74px;
+  transition:border-color .3s ease,background .3s ease;
+}
+.mcx .mcx-crm-col[data-on="true"]{ border-color:rgba(242,68,0,.4); background:var(--brand-dim); }
+.mcx .mcx-crm-colname{
+  display:block; font-family:var(--f-mono); font-size:8px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--faint); margin-bottom:6px; text-align:center;
+}
+.mcx .mcx-crm-card{
+  border:1px solid rgba(242,68,0,.45); border-radius:6px; padding:6px 5px;
+  background:linear-gradient(160deg,rgba(242,68,0,.2),rgba(242,68,0,.08));
+  display:flex; flex-direction:column; gap:2px;
+}
+@media (prefers-reduced-motion:no-preference){
+  .mcx .mcx-crm-card.is-moving{ animation:mcx-card-in .5s cubic-bezier(.22,1,.36,1) both; }
+}
+@keyframes mcx-card-in{
+  from{ opacity:0; transform:translateX(-14px) scale(.94); }
+  to{ opacity:1; transform:none; }
+}
+.mcx .mcx-crm-name{ font-size:10.5px; font-weight:600; color:var(--text); }
+.mcx .mcx-crm-meta{ font-family:var(--f-mono); font-size:8px; color:var(--faint); }
+
+.mcx .mcx-effects{
+  list-style:none; margin:4px 0 0; padding:0; display:flex; flex-wrap:wrap; gap:6px;
+}
+.mcx .mcx-effects li{
+  display:inline-flex; align-items:center; gap:5px;
+  border:1px solid rgba(25,206,114,.3); background:var(--live-dim);
+  border-radius:999px; padding:4px 9px;
+  font-family:var(--f-mono); font-size:8.5px; letter-spacing:.07em;
+  text-transform:uppercase; color:#9BE9C4;
+}
+.mcx .mcx-effects svg{ color:var(--live); }
+
+.mcx .mcx-stage-trace{
+  display:flex; flex-wrap:wrap; gap:7px; padding:12px 14px;
+  border-top:1px solid var(--line); background:rgba(255,255,255,.015);
+}
+.mcx .mcx-stage-step{
+  display:inline-flex; align-items:center; gap:7px;
+  font-family:var(--f-mono); font-size:9.5px; letter-spacing:.05em; color:var(--muted);
+  border:1px solid var(--line); border-radius:7px; padding:5px 9px;
+  background:rgba(255,255,255,.02);
+}
+
 /* ---- lista de espera ------------------------------------------------------ */
 .mcx .mcx-error{ font-size:.8rem; color:#F3B9B4; }
 .mcx select.mcx-input{
@@ -1079,6 +1238,7 @@ export function LogoMark({ size = 30 }: { size?: number }) {
 const NAV_LINKS = [
   ["Como decide", "/#motor"],
   ["Recursos", "/#recursos"],
+  ["Agendamento", "/agendamento"],
   ["Calculadora", "/#calculadora"],
   ["Planos", "/planos"],
   ["Blog", "/blog"],
