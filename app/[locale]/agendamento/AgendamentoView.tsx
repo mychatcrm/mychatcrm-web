@@ -3,16 +3,21 @@
 /**
  * Página do agendamento automático.
  *
- * A cena toca sozinha, como um player: a legenda vive DENTRO do palco e muda
- * com ele. Ligar um temporizador mantendo o texto numa coluna a rolar faria os
- * dois brigarem — a pessoa ainda a ler o ato 5 e o palco já no 7.
+ * Mesma cena de sempre — coluna de texto à esquerda, palco à direita — mas o
+ * movimento é automático: a coluna desliza sozinha para o ato seguinte e o
+ * palco acompanha. Quem vende automação não devia pedir trabalho manual para
+ * ver a demonstração.
  *
- * Controlo total de quem vê: pausa, anterior/seguinte e salto por ato. Mexer à
- * mão pausa; o botão retoma. Fora do ecrã não corre, e quem tem "reduzir
- * movimento" ligado não recebe avanço automático nenhum.
+ * A coluna tem scroll PRÓPRIO. Automatizar o scroll da janela seria hostil —
+ * briga com a roda do rato e dá enjoo a quem é sensível a movimento; aqui a
+ * página fica quieta e só a coluna anda.
  *
- * Abaixo do player os dez atos ficam em texto corrido: é o que o Google e os
- * rastreadores de IA leem, e o que serve a quem prefere ler tudo de uma vez.
+ * Controlo de quem vê: botão de pausa, e mexer com a roda dentro da coluna
+ * pausa na hora e devolve o comando. Enquanto está pausado, a posição da
+ * coluna é que manda no ato — exatamente como era antes.
+ *
+ * Cada ato continua a ser texto real no HTML, indexável e legível por
+ * rastreadores que não executam JS.
  */
 
 import Link from "next/link";
@@ -35,7 +40,7 @@ import {
 import { McxFooter, McxNav, McxPage, Reveal, SectionLabel } from "@/components/marketing/mcx";
 import { ACTS, AGENDA_DAYS, AGENDA_HOURS, CRM_COLUMNS, type Act } from "./acts";
 
-/** Tempo de cada ato. Dá para ler título, explicação e conversa sem correr. */
+/** Tempo em cada ato. Dá para ler título, explicação e conversa sem correr. */
 const ACT_MS = 10_000;
 const TICK_MS = 250;
 
@@ -149,30 +154,29 @@ function CrmPanel({ act }: { act: Act }) {
   );
 }
 
-function Stage({ act, index }: { act: Act; index: number }) {
+function Stage({ act }: { act: Act }) {
   return (
-    <div className="mcx-stage-grid">
-      {/* A legenda vive dentro do palco: é o que muda junto com os painéis. */}
-      <div className="mcx-stage-caption">
-        <span className="mcx-act-idx">
-          Ato {String(index + 1).padStart(2, "0")} / {String(ACTS.length).padStart(2, "0")}
-        </span>
-        <h2 className="mcx-h2 mcx-act-title">{act.title}</h2>
-        <p className="mcx-body mcx-act-body">{act.body}</p>
-        <div className="mcx-stage-trace">
-          {act.trace.map((step, i) => (
-            <span key={step} className="mcx-stage-step">
-              <span className="mcx-trace-idx">{String(i + 1).padStart(2, "0")}</span>
-              {step}
-            </span>
-          ))}
-        </div>
+    <div className="mcx-stage">
+      <div className="mcx-stage-bar">
+        <span className="mcx-dot" />
+        <span className="mcx-mono">{act.label}</span>
+        <span style={{ flex: 1 }} />
+        <span className="mcx-mono mcx-stage-code">{act.reason}</span>
       </div>
 
-      <div className="mcx-stage-panels">
+      <div className="mcx-stage-grid">
         <ConversaPanel act={act} />
         <AgendaPanel act={act} />
         <CrmPanel act={act} />
+      </div>
+
+      <div className="mcx-stage-trace">
+        {act.trace.map((step, i) => (
+          <span key={step} className="mcx-stage-step">
+            <span className="mcx-trace-idx">{String(i + 1).padStart(2, "0")}</span>
+            {step}
+          </span>
+        ))}
       </div>
     </div>
   );
@@ -186,18 +190,22 @@ export function AgendamentoView() {
   const [visivel, setVisivel] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const reduced = useReducedMotion();
-  const playerRef = useRef<HTMLDivElement>(null);
 
-  /** Só corre quando alguém pode estar a ver. */
+  const sceneRef = useRef<HTMLDivElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const refs = useRef<(HTMLLIElement | null)[]>([]);
+  /** Enquanto a coluna desliza sozinha, o scroll dela não pode redefinir o ato. */
+  const deslizandoAte = useRef(0);
+
   const running = playing && visivel && !reduced;
 
-  // Fora do ecrã não avança: senão o visitante volta e a história já acabou.
+  // Fora do ecrã não corre: senão a pessoa volta e a história já acabou.
   useEffect(() => {
     const check = () => {
-      const el = playerRef.current;
+      const el = sceneRef.current;
       if (!el) return;
       const r = el.getBoundingClientRect();
-      setVisivel(r.bottom > 100 && r.top < window.innerHeight - 100);
+      setVisivel(r.bottom > 120 && r.top < window.innerHeight - 120);
     };
     check();
     window.addEventListener("scroll", check, { passive: true });
@@ -208,8 +216,7 @@ export function AgendamentoView() {
     };
   }, []);
 
-  // Relógio próprio em vez de animação CSS: ao pausar e retomar, a barra e o
-  // avanço continuam de onde pararam em vez de recomeçarem do zero.
+  // Relógio próprio: ao pausar e retomar, continua de onde parou.
   useEffect(() => {
     if (!running) return;
     const id = setInterval(() => setElapsed((e) => e + TICK_MS), TICK_MS);
@@ -222,7 +229,48 @@ export function AgendamentoView() {
     setActive((v) => (v + 1) % ACTS.length);
   }, [elapsed]);
 
-  /** Mexer à mão pausa — quem escolheu um ato quer ficar nele. */
+  // Leva a coluna até o ato ativo. É este deslize que substitui o rolar do rato.
+  useEffect(() => {
+    const box = trackRef.current;
+    const el = refs.current[active];
+    if (!box || !el) return;
+    // Alinhado ao TOPO, não ao centro: a coluna é mais alta que o ecrã em
+    // muitos casos, e centrar deixava o ato ativo abaixo da dobra. Assim o
+    // texto atual está sempre onde o olho vai, com o próximo a espreitar.
+    const alvo = el.offsetTop - 20;
+    deslizandoAte.current = Date.now() + 1000;
+    box.scrollTo({ top: Math.max(0, alvo), behavior: reduced ? "auto" : "smooth" });
+  }, [active, reduced]);
+
+  /**
+   * Com a demonstração pausada, quem manda é a posição da coluna — o ato ativo
+   * passa a ser o que está mais perto do centro dela, como era antes.
+   */
+  const aoRolarColuna = useCallback(() => {
+    if (playing) return;
+    if (Date.now() < deslizandoAte.current) return;
+    const box = trackRef.current;
+    if (!box) return;
+    const topo = box.scrollTop + 20;
+    let melhor = 0;
+    let menor = Number.POSITIVE_INFINITY;
+    refs.current.forEach((el, i) => {
+      if (!el) return;
+      const d = Math.abs(el.offsetTop - topo);
+      if (d < menor) {
+        menor = d;
+        melhor = i;
+      }
+    });
+    setActive(melhor);
+  }, [playing]);
+
+  /** Qualquer gesto dentro da coluna pausa e devolve o comando à pessoa. */
+  const assumirControlo = useCallback(() => {
+    setPlaying(false);
+    setElapsed(0);
+  }, []);
+
   const irPara = useCallback((i: number) => {
     setActive(((i % ACTS.length) + ACTS.length) % ACTS.length);
     setElapsed(0);
@@ -256,7 +304,7 @@ export function AgendamentoView() {
             style={{
               position: "relative",
               zIndex: 1,
-              padding: "clamp(44px,6vw,80px) 24px clamp(22px,3vw,34px)",
+              padding: "clamp(44px,6vw,80px) 24px clamp(20px,3vw,32px)",
               textAlign: "center",
             }}
           >
@@ -270,29 +318,40 @@ export function AgendamentoView() {
               <span className="mcx-accent">Você só aparece na hora.</span>
             </h1>
             <p className="mcx-lead" style={{ margin: "22px auto 0" }}>
-              Um atendimento inteiro, do primeiro “oi” ao cancelamento. A demonstração corre
-              sozinha — pause quando quiser ou avance no seu ritmo.
+              Um atendimento inteiro, do primeiro “oi” ao cancelamento. Corre sozinho — pause
+              quando quiser ou avance no seu ritmo.
             </p>
           </div>
         </header>
 
-        {/* ------------------------------------------------- player */}
-        <section className="mcx-shell" style={{ paddingBottom: "clamp(40px,6vw,72px)" }}>
-          <div className="mcx-player" ref={playerRef}>
-            <div className="mcx-player-bar">
-              <span className={running ? "mcx-dot" : "mcx-dot is-paused"} />
-              <span className="mcx-mono">{act.label}</span>
-              <span style={{ flex: 1 }} />
-              <span className="mcx-mono mcx-stage-code">{act.reason}</span>
-            </div>
+        {/* ------------------------------------------------- separadores */}
+        <div className="mcx-shell" style={{ paddingBottom: 8 }}>
+          <div className="mcx-actbar" role="tablist" aria-label="Atos do agendamento">
+            {ACTS.map((a, i) => (
+              <button
+                key={a.id}
+                type="button"
+                role="tab"
+                aria-selected={i === active}
+                className={i === active ? "mcx-tab on" : "mcx-tab"}
+                onClick={() => irPara(i)}
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
+        </div>
 
-            <div className="mcx-player-progress" aria-hidden="true">
-              <i style={{ width: `${pct}%` }} />
-            </div>
+        {/* ------------------------------------------------- cena */}
+        <section className="mcx-shell mcx-scene" ref={sceneRef}>
+          {/* Palco preso: reage ao ato ativo. */}
+          <div className="mcx-scene-sticky">
+            <Stage act={act} />
 
-            <Stage act={act} index={active} />
-
-            <div className="mcx-player-controls">
+            <div className="mcx-scene-controls">
+              <div className="mcx-player-progress" aria-hidden="true">
+                <i style={{ width: `${pct}%` }} />
+              </div>
               <div className="mcx-player-buttons">
                 <button
                   type="button"
@@ -307,7 +366,7 @@ export function AgendamentoView() {
                   className="mcx-ctrl mcx-ctrl-play"
                   onClick={() => {
                     setPlaying((v) => !v);
-                    if (!playing) setElapsed(0);
+                    setElapsed(0);
                   }}
                   aria-label={playing ? "Pausar demonstração" : "Retomar demonstração"}
                 >
@@ -322,47 +381,39 @@ export function AgendamentoView() {
                 >
                   <ChevronRight size={16} />
                 </button>
-              </div>
-
-              <div className="mcx-actbar" role="tablist" aria-label="Atos do agendamento">
-                {ACTS.map((a, i) => (
-                  <button
-                    key={a.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={i === active}
-                    className={i === active ? "mcx-tab on" : "mcx-tab"}
-                    onClick={() => irPara(i)}
-                  >
-                    {a.label}
-                  </button>
-                ))}
+                <span className="mcx-mono mcx-scene-count">
+                  {String(active + 1).padStart(2, "0")} / {String(ACTS.length).padStart(2, "0")}
+                </span>
               </div>
             </div>
           </div>
-        </section>
 
-        {/* ------------------------------------------------- os dez atos em texto */}
-        <section style={{ padding: "0 0 clamp(50px,7vw,92px)" }}>
-          <div className="mcx-shell">
-            <Reveal>
-              <SectionLabel>O ciclo inteiro</SectionLabel>
-              <h2 className="mcx-h2">Os dez momentos, de uma vez.</h2>
-              <p className="mcx-lead" style={{ marginTop: 16 }}>
-                Cada resposta abaixo é a que o agente realmente envia naquele momento.
-              </p>
-            </Reveal>
-
+          {/* Coluna do texto: desliza sozinha, e aceita a roda do rato a qualquer momento. */}
+          <div
+            className="mcx-acts-track"
+            ref={trackRef}
+            onScroll={aoRolarColuna}
+            onWheel={assumirControlo}
+            onTouchStart={assumirControlo}
+          >
             <ol className="mcx-acts">
               {ACTS.map((a, i) => (
-                <li key={a.id} id={`ato-${a.id}`} className="mcx-act">
-                  <button type="button" className="mcx-act-jump" onClick={() => irPara(i)}>
-                    <span className="mcx-act-idx">
-                      {String(i + 1).padStart(2, "0")} · {a.label}
-                    </span>
-                    <h3 className="mcx-h3 mcx-act-title">{a.title}</h3>
-                  </button>
+                <li
+                  key={a.id}
+                  id={`ato-${a.id}`}
+                  ref={(el) => {
+                    refs.current[i] = el;
+                  }}
+                  className={i === active ? "mcx-act is-on" : "mcx-act"}
+                >
+                  <span className="mcx-act-idx">
+                    {String(i + 1).padStart(2, "0")} / {String(ACTS.length).padStart(2, "0")}
+                  </span>
+                  <h2 className="mcx-h2 mcx-act-title">{a.title}</h2>
                   <p className="mcx-body mcx-act-body">{a.body}</p>
+
+                  {/* Espelho textual do palco: garante que quem não executa JS
+                      (rastreadores de IA) lê a conversa e o efeito de cada ato. */}
                   <div className="mcx-act-mirror">
                     {a.inbound ? (
                       <p>
@@ -385,7 +436,7 @@ export function AgendamentoView() {
         </section>
 
         {/* ------------------------------------------------- garantia */}
-        <section style={{ padding: "0 0 clamp(50px,7vw,92px)" }}>
+        <section style={{ padding: "clamp(50px,7vw,92px) 0" }}>
           <div className="mcx-shell">
             <Reveal>
               <SectionLabel>A trava</SectionLabel>
@@ -419,7 +470,10 @@ export function AgendamentoView() {
                     Se a resposta afirma que agendou mas o registro não aconteceu, o motor troca a
                     mensagem antes de sair:
                   </p>
-                  <p className="mcx-bubble mcx-bubble-out" style={{ marginTop: 14, maxWidth: "100%" }}>
+                  <p
+                    className="mcx-bubble mcx-bubble-out"
+                    style={{ marginTop: 14, maxWidth: "100%" }}
+                  >
                     Só um instante — ainda não registrei essa alteração na agenda. Me confirme a data
                     e o horário exatos (por exemplo: 20/07 às 14:00) que eu registro agora mesmo.
                   </p>
