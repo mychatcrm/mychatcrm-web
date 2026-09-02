@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { NextIntlClientProvider } from "next-intl";
 import { getMessages } from "next-intl/server";
 import { notFound } from "next/navigation";
@@ -29,6 +30,19 @@ const brandBody = Manrope({
 
 export function generateStaticParams() {
   return routing.locales.map((locale) => ({ locale }));
+}
+
+/**
+ * `/en` e `/es` servem exatamente a mesma página em português — são três URLs
+ * para o mesmo conteúdo. Indexar as três divide a autoridade entre elas e o
+ * Search Console acusa hreflang inválido ("declarado como inglês, escrito em
+ * português"). Enquanto não houver tradução real, só o pt-BR entra no índice;
+ * as outras continuam acessíveis e passam autoridade pelos links (`follow`).
+ */
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
+  const { locale } = await params;
+  if (locale === routing.defaultLocale) return {};
+  return { robots: { index: false, follow: true } };
 }
 
 export default async function LocaleLayout({ children, params }: Props) {

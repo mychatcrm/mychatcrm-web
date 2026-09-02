@@ -24,8 +24,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       canonical: "/planos",
       languages: {
         "pt-BR": `${SITE_URL}/planos`,
-        en: `${SITE_URL}/en/plans`,
-        es: `${SITE_URL}/es/planes`,
         "x-default": `${SITE_URL}/planos`,
       },
     },

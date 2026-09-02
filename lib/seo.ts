@@ -69,12 +69,40 @@ export function buildOrganizationSchema() {
     logo: `${SITE_URL}${BRAND_LOGO.default}`,
     description:
       "Plataforma SaaS brasileira de chatbot com IA para WhatsApp com CRM Kanban e Agenda integrados.",
-    sameAs: [
-      "https://www.instagram.com/",
-      "https://www.youtube.com/",
-      "https://www.linkedin.com/",
-      "https://wa.me/",
+    /**
+     * `sameAs` foi removido de propósito: apontava para as raízes
+     * `instagram.com/`, `youtube.com/` e `wa.me/`, que não identificam perfil
+     * nenhum. Um `sameAs` que não resolve num perfil real é ruído para o
+     * Google — volta quando houver os endereços definitivos.
+     */
+    contactPoint: [
+      {
+        "@type": "ContactPoint",
+        contactType: "sales",
+        email: "comercial@mychatcrm.com.br",
+        availableLanguage: ["Portuguese"],
+        areaServed: "BR",
+      },
     ],
+  };
+}
+
+/**
+ * Identidade do site como entidade, separada da organização. Ajuda o Google a
+ * ligar todas as páginas a uma mesma marca e é um dos sinais que os motores
+ * generativos usam para atribuir autoria.
+ */
+export function buildWebSiteSchema() {
+  return {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "@id": `${SITE_URL}/#website`,
+    name: "MyChatCRM",
+    url: SITE_URL,
+    inLanguage: "pt-BR",
+    description:
+      "Chatbot com IA para WhatsApp, CRM Kanban, agenda e follow-up automático pela API Oficial da Meta.",
+    publisher: { "@type": "Organization", name: "MyChatCRM", url: SITE_URL },
   };
 }
 

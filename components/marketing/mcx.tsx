@@ -13,7 +13,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { Menu, X as CloseIcon, ShieldCheck } from "lucide-react";
 import { SOCIAL_LINKS } from "@/lib/social-links";
 import { whatsappHandoffHref } from "@/lib/whatsapp-handoff";
@@ -755,6 +755,25 @@ body:has(.mcx){ background:#05080B; }
   position:relative; z-index:1;
 }
 
+/* ---- guias por nicho (ligação interna da home) ---------------------------- */
+.mcx .mcx-niches{
+  list-style:none; margin:34px 0 0; padding:0;
+  display:grid; gap:8px; grid-template-columns:1fr;
+}
+@media (min-width:640px){ .mcx .mcx-niches{ grid-template-columns:repeat(2,1fr); } }
+@media (min-width:1024px){ .mcx .mcx-niches{ grid-template-columns:repeat(3,1fr); } }
+.mcx .mcx-niches a{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  border:1px solid var(--line); border-radius:11px; padding:12px 14px;
+  background:rgba(255,255,255,.022); color:var(--muted);
+  font-size:.875rem; line-height:1.4; text-decoration:none;
+  transition:color .16s ease,border-color .16s ease,background .16s ease;
+}
+.mcx .mcx-niches a:hover{
+  color:var(--text); border-color:rgba(242,68,0,.4); background:var(--brand-dim);
+}
+.mcx .mcx-niches svg{ flex-shrink:0; color:var(--brand); opacity:.7; }
+
 /* ---- páginas legais ------------------------------------------------------- */
 .mcx .mcx-legal{
   margin-top:36px; display:flex; flex-direction:column; gap:30px;
@@ -821,6 +840,28 @@ body:has(.mcx){ background:#05080B; }
   border:1px solid rgba(25,206,114,.4); background:var(--live-dim); color:var(--live);
 }
 
+/* ---- entrada em cena ------------------------------------------------------
+   O conteúdo nasce VISÍVEL. O estado escondido só existe depois de um script
+   inline armar o contentor, por isso nunca chega ao HTML do servidor: um
+   rastreador que não executa JS (a maioria dos bots de IA) lê o texto todo, e
+   o Google não recebe a manchete principal com opacity:0. */
+.mcx .mcx-reveal, .mcx .mcx-enter{ opacity:1; transform:none; }
+.mcx.mcx-armed .mcx-reveal{
+  opacity:0; transform:translateY(22px);
+  transition:opacity .55s cubic-bezier(.22,1,.36,1), transform .55s cubic-bezier(.22,1,.36,1);
+  transition-delay:var(--mcx-d,0ms);
+}
+.mcx.mcx-armed .mcx-reveal.is-in{ opacity:1; transform:none; }
+.mcx.mcx-armed .mcx-enter{
+  animation:mcx-enter .6s cubic-bezier(.22,1,.36,1) both;
+  animation-delay:var(--mcx-d,0ms);
+}
+@keyframes mcx-enter{ from{ opacity:0; transform:translateY(18px); } to{ opacity:1; transform:none; } }
+@media (prefers-reduced-motion:reduce){
+  .mcx.mcx-armed .mcx-reveal{ opacity:1; transform:none; transition:none; }
+  .mcx.mcx-armed .mcx-enter{ animation:none; }
+}
+
 @media (prefers-reduced-motion:reduce){
   .mcx *{ animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; }
 }
@@ -833,9 +874,24 @@ export function McxPage({
   children: React.ReactNode;
   className?: string;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Rede de segurança para navegação client-side, onde o script inline abaixo
+  // já não corre. No primeiro carregamento é um no-op — a classe já está lá.
+  useEffect(() => {
+    ref.current?.classList.add("mcx-armed");
+  }, []);
+
   return (
-    <div className={className ? `mcx ${className}` : "mcx"}>
+    <div ref={ref} className={className ? `mcx ${className}` : "mcx"}>
       <style dangerouslySetInnerHTML={{ __html: MCX_SHEET }} />
+      {/* Corre durante o parse, antes do primeiro paint: sem isto haveria um
+          flash de conteúdo visível a desaparecer para depois animar. */}
+      <script
+        dangerouslySetInnerHTML={{
+          __html: "document.currentScript.parentElement.classList.add('mcx-armed')",
+        }}
+      />
       {children}
     </div>
   );
@@ -949,23 +1005,15 @@ export function Reveal({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const entered = useEnteredView(ref);
-  const reduced = useReducedMotion();
-  const show = entered || reduced;
 
   return (
-    <motion.div
+    <div
       ref={ref}
-      className={className}
-      initial={{ opacity: 0, y: 22 }}
-      animate={show ? { opacity: 1, y: 0 } : { opacity: 0, y: 22 }}
-      transition={{
-        duration: reduced ? 0 : 0.55,
-        delay: show && !reduced ? delay : 0,
-        ease: [0.22, 1, 0.36, 1],
-      }}
+      className={[className, "mcx-reveal", entered ? "is-in" : ""].filter(Boolean).join(" ")}
+      style={delay ? ({ "--mcx-d": `${Math.round(delay * 1000)}ms` } as React.CSSProperties) : undefined}
     >
       {children}
-    </motion.div>
+    </div>
   );
 }
 

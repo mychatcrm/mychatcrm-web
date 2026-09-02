@@ -23,8 +23,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       canonical: "/login",
       languages: {
         "pt-BR": `${SITE_URL}/login`,
-        en: `${SITE_URL}/en/login`,
-        es: `${SITE_URL}/es/login`,
         "x-default": `${SITE_URL}/login`,
       },
     },

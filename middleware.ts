@@ -229,8 +229,16 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Match everything except Next.js internals and static files
-    "/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    /**
+     * Tudo menos os internos do Next e os ficheiros estáticos.
+     *
+     * `robots.txt` e `sitemap*.xml` TÊM de ficar de fora: sem isso o
+     * next-intl reescrevia-os para `/pt-BR/robots.txt`, que não existe, e o
+     * Google recebia 404 nos dois — ou seja, o site inteiro ficava sem mapa e
+     * sem regras de rastreio. Por isso a lista de extensões inclui
+     * txt/xml/json/ico e as fontes, e não só as imagens.
+     */
+    "/((?!_next/static|_next/image|.*\\.(?:svg|png|jpg|jpeg|gif|webp|avif|ico|txt|xml|json|webmanifest|woff|woff2|otf|ttf|map)$).*)",
     "/",
   ],
 };

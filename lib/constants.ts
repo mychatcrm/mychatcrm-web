@@ -4,7 +4,16 @@ import { WHATSAPP_EXTRA_NUMBER_MONTHLY_BRL } from "./plans";
 
 const DEFAULT_SITE_URL = "https://www.mychatcrm.com.br";
 
-/** Garante URL absoluta válida para `metadataBase` / Open Graph (evita crash se a env vier sem protocolo). */
+/**
+ * Garante URL absoluta válida para `metadataBase` / Open Graph (evita crash se
+ * a env vier sem protocolo) e força a variante canónica do domínio.
+ *
+ * A produção serve em `www` e o apex redireciona (307 de mychatcrm.com.br para
+ * www.mychatcrm.com.br). Com a env a apontar para o apex, todas as tags
+ * canonical e hreflang do site apontavam para um redirecionamento — o Google
+ * recebia o sinal errado em cada página. Normalizar aqui mantém o app, o
+ * sitemap e o robots a dizer exatamente a mesma coisa.
+ */
 function normalizeSiteUrl(raw: string): string {
   const trimmed = raw.trim() || DEFAULT_SITE_URL;
   const withScheme = /^https?:\/\//i.test(trimmed)
@@ -13,7 +22,9 @@ function normalizeSiteUrl(raw: string): string {
       ? `http://${trimmed}`
       : `https://${trimmed}`;
   try {
-    return new URL(withScheme).origin;
+    const url = new URL(withScheme);
+    if (url.hostname === "mychatcrm.com.br") url.hostname = "www.mychatcrm.com.br";
+    return url.origin;
   } catch {
     return new URL(DEFAULT_SITE_URL).origin;
   }

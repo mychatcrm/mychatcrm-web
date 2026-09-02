@@ -560,46 +560,30 @@ function Hero() {
         }}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 26, maxWidth: 660 }}>
-          <motion.div
-            initial={reduced ? false : { opacity: 0, y: 14 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-          >
+          <div className="mcx-enter">
             <span className="mcx-chip">
               <span className="mcx-dot" />
               O comercial que não dorme
             </span>
-          </motion.div>
+          </div>
 
-          <motion.h1
-            className="mcx-h1"
-            initial={reduced ? false : { opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.06, ease: [0.22, 1, 0.36, 1] }}
-          >
+          <h1 className="mcx-h1 mcx-enter" style={{ "--mcx-d": "60ms" } as React.CSSProperties}>
             Seu WhatsApp responde,
             <br />
             qualifica e agenda
             <br />
             <span className="mcx-accent">sozinho.</span>
-          </motion.h1>
+          </h1>
 
-          <motion.p
-            className="mcx-lead"
-            initial={reduced ? false : { opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.14, ease: [0.22, 1, 0.36, 1] }}
-          >
+          <p className="mcx-lead mcx-enter" style={{ "--mcx-d": "140ms" } as React.CSSProperties}>
             O MyChatCRM lê a conversa inteira, decide o que fazer a cada mensagem, marca o
             compromisso na agenda, move o lead no CRM Kanban e passa para um humano na hora certa —
             tudo pela API Oficial da Meta.
-          </motion.p>
+          </p>
 
-          <motion.div
-            initial={reduced ? false : { opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
-            style={{ display: "flex", flexWrap: "wrap", gap: 12 }}
+          <div
+            className="mcx-enter"
+            style={{ display: "flex", flexWrap: "wrap", gap: 12, "--mcx-d": "200ms" } as React.CSSProperties}
           >
             <Link href="/planos" className="mcx-btn mcx-btn-primary mcx-btn-lg">
               Ativar meu agente
@@ -612,20 +596,19 @@ function Hero() {
             >
               Ver como ele decide
             </Link>
-          </motion.div>
+          </div>
 
-          <motion.ul
-            initial={reduced ? false : { opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.6, delay: 0.3 }}
+          <ul
+            className="mcx-enter"
             style={{
+              "--mcx-d": "300ms",
               listStyle: "none",
               margin: 0,
               padding: 0,
               display: "grid",
               gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))",
               gap: "9px 22px",
-            }}
+            } as React.CSSProperties}
           >
             {TRUST.map((t) => (
               <li
@@ -642,16 +625,12 @@ function Hero() {
                 {t}
               </li>
             ))}
-          </motion.ul>
+          </ul>
         </div>
 
-        <motion.div
-          initial={reduced ? false : { opacity: 0, y: 28, scale: 0.985 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ duration: 0.75, delay: 0.18, ease: [0.22, 1, 0.36, 1] }}
-        >
+        <div className="mcx-enter" style={{ "--mcx-d": "180ms" } as React.CSSProperties}>
           <HeroConsole />
-        </motion.div>
+        </div>
       </div>
     </header>
   );
@@ -1411,6 +1390,61 @@ function Faq() {
 }
 
 // ---------------------------------------------------------------------------
+// Guias por nicho
+// ---------------------------------------------------------------------------
+
+export type LandingNiche = { slug: string; niche: string };
+
+/**
+ * Ligação interna da home para os 30 guias do blog.
+ *
+ * Antes disto os artigos só eram alcançáveis a partir de `/blog`, o que os
+ * deixava a dois cliques da página com mais autoridade do site. Aqui cada um
+ * recebe um link direto da home — e a secção cobre, com texto real, as buscas
+ * por "chatbot para <nicho>" e "CRM para <nicho>", que é como as pessoas
+ * procuram de facto.
+ */
+function NicheGuides({ niches }: { niches: LandingNiche[] }) {
+  if (!niches.length) return null;
+
+  return (
+    <section id="guias" style={{ padding: "clamp(58px,7vw,96px) 0", scrollMarginTop: 76 }}>
+      <div className="mcx-shell">
+        <Reveal>
+          <SectionLabel>Guias por segmento</SectionLabel>
+          <h2 className="mcx-h2">Como isto funciona no seu tipo de negócio.</h2>
+          <p className="mcx-lead" style={{ marginTop: 16 }}>
+            Um guia para cada segmento, com o que automatizar primeiro, que campos guardar no CRM e
+            onde o atendimento costuma perder o lead.
+          </p>
+        </Reveal>
+
+        <Reveal delay={0.08}>
+          <ul className="mcx-niches">
+            {niches.map((item) => (
+              <li key={item.slug}>
+                <Link href={`/blog/${item.slug}`}>
+                  <span>Chatbot e CRM para {item.niche}</span>
+                  <ArrowRight size={14} />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </Reveal>
+
+        <Reveal delay={0.14}>
+          <p className="mcx-mono" style={{ marginTop: 22, textTransform: "none", letterSpacing: ".04em" }}>
+            <Link href="/blog" style={{ color: "var(--brand-hi)" }}>
+              Ver todos os guias no blog →
+            </Link>
+          </p>
+        </Reveal>
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // CTA final
 // ---------------------------------------------------------------------------
 
@@ -1526,7 +1560,7 @@ function StickyBar() {
 // Página
 // ---------------------------------------------------------------------------
 
-export function LandingV2() {
+export function LandingV2({ niches = [] }: { niches?: LandingNiche[] }) {
   // Chegar na home já com âncora na URL (ex.: "/#recursos" vindo do /blog):
   // não há clique para interceptar, só o carregamento.
   useEffect(() => {
@@ -1548,6 +1582,7 @@ export function LandingV2() {
         <Calculator />
         <Pricing />
         <Faq />
+        <NicheGuides niches={niches} />
         <FinalCta />
       </main>
       <McxFooter />

@@ -7,10 +7,12 @@ import {
   buildOrganizationSchema,
   buildProductSchema,
   buildSoftwareApplicationSchema,
+  buildWebSiteSchema,
 } from "@/lib/seo";
 import { SITE_URL } from "@/lib/constants";
 import { routing } from "@/i18n/routing";
 import { LandingV2 } from "@/components/landing/LandingV2";
+import { getBlogPostSummaries } from "@/lib/blog/posts";
 
 type Props = { params: Promise<{ locale: string }> };
 
@@ -30,8 +32,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       canonical: "/",
       languages: {
         "pt-BR": `${SITE_URL}/`,
-        en: `${SITE_URL}/en`,
-        es: `${SITE_URL}/es`,
         "x-default": `${SITE_URL}/`,
       },
     },
@@ -48,7 +48,17 @@ export default async function HomePage({ params }: Props) {
   const { locale } = await params;
   const tSeo = await getTranslations({ locale, namespace: "seo.schemas" });
 
+  /**
+   * Só o par slug+nicho atravessa para o cliente. Importar `BLOG_POSTS` dentro
+   * do componente traria o corpo dos 30 artigos no bundle do browser.
+   */
+  const niches = getBlogPostSummaries().map((post) => ({
+    slug: post.slug,
+    niche: post.niche,
+  }));
+
   const structuredData = [
+    buildWebSiteSchema(),
     buildOrganizationSchema(),
     buildSoftwareApplicationSchema(),
     buildProductSchema(),
@@ -61,7 +71,7 @@ export default async function HomePage({ params }: Props) {
       {structuredData.map((data, i) => (
         <JsonLd key={i} data={data} />
       ))}
-      <LandingV2 />
+      <LandingV2 niches={niches} />
     </>
   );
 }
