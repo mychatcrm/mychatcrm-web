@@ -171,7 +171,6 @@ export function Navbar() {
               target="_blank"
               rel="noopener noreferrer"
               data-cursor-expand
-              data-lead-gate="contact"
               className={linkButtonClass("gradient", "md")}
               aria-label={t("expertAriaLabel")}
             >

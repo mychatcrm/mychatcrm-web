@@ -3,6 +3,18 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
+/**
+ * Modo lista de espera.
+ *
+ * Enquanto ligado, quem escolhe um plano cai na página de lista de espera em
+ * vez do checkout Stripe. A coluna no banco ainda se chama
+ * `pre_launch_popup_enabled` porque nasceu para o popup que existia antes —
+ * o significado mudou, o nome da coluna ficou para não migrar dados à toa.
+ *
+ * Para voltar ao checkout: toggle em /admin/leads-lancamento, ou
+ * PATCH /api/admin/platform-launch-config {"enabled": false}.
+ */
+
 /** Tag usada pelo PATCH de /api/admin/platform-launch-config pra invalidar na hora. */
 export const PRE_LAUNCH_POPUP_CACHE_TAG = "pre-launch-popup-config";
 
@@ -25,25 +37,25 @@ async function readPreLaunchPopupEnabled(): Promise<boolean> {
   }
 }
 
-// `app/[locale]/layout.tsx` é estático (generateStaticParams) — sem cache
-// com tempo de revalidação, essa leitura rodaria só uma vez no build, e
-// desligar o popup pelo admin não teria efeito sem um novo deploy. Cache de
-// 30s (mesmo tradeoff já documentado pro flag de manutenção) + tag pra
-// invalidar na hora quando o PATCH do admin acontece.
+// A página de checkout é estática (generateStaticParams) — sem cache com
+// tempo de revalidação, esta leitura rodaria só uma vez no build e desligar o
+// modo pelo admin não teria efeito sem um novo deploy. Cache de 30s (mesmo
+// tradeoff já documentado pro flag de manutenção) + tag para invalidar na
+// hora quando o PATCH do admin acontece.
 const cachedRead = unstable_cache(readPreLaunchPopupEnabled, ["pre-launch-popup-enabled"], {
   revalidate: 30,
   tags: [PRE_LAUNCH_POPUP_CACHE_TAG],
 });
 
 /**
- * Flag único do popup de pré-lançamento. Lido direto do Supabase (nunca por
- * API pública) nos dois layouts server-side que decidem o que montar —
- * `app/[locale]/layout.tsx` (o popup em si) e `app/layout.tsx` (suprime o
- * ChatWidget flutuante, que também tem atalho de WhatsApp próprio).
+ * Lido direto do Supabase (nunca por API pública) em
+ * `app/[locale]/checkout/[planSlug]/page.tsx`, que escolhe entre a lista de
+ * espera e o checkout.
  *
- * Falha aberta em caso de erro de leitura (mostra o popup) — mais seguro
- * do que arriscar deixar passar contato sem querer se o banco falhar.
+ * Falha fechada para o pagamento: se a leitura der erro, mostra a lista de
+ * espera. Cobrar por um produto ainda em testes é pior do que atrasar uma
+ * venda por um minuto.
  */
-export async function isPreLaunchPopupEnabled(): Promise<boolean> {
+export async function isPreLaunchWaitlistEnabled(): Promise<boolean> {
   return cachedRead();
 }

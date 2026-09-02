@@ -470,14 +470,40 @@ type PreLaunchLead = {
   businessDescription: string;
   ddd: string | null;
   source: "contact" | "buy" | null;
+  planSlug: string | null;
+  billingCycle: "monthly" | "annual" | null;
   createdAt: string;
 };
 
+const PRE_LAUNCH_PLANS = [
+  { value: "solo", label: "Solo" },
+  { value: "equipa", label: "Equipa" },
+  { value: "escala", label: "Escala" },
+  { value: "enterprise", label: "Enterprise" },
+] as const;
+
+function planLabel(slug: string | null): string {
+  return PRE_LAUNCH_PLANS.find((p) => p.value === slug)?.label ?? "—";
+}
+
+function cycleLabel(cycle: string | null): string {
+  if (cycle === "annual") return "Anual";
+  if (cycle === "monthly") return "Mensal";
+  return "—";
+}
+
+/** Formata o número guardado (só dígitos) de volta para leitura humana. */
+function prettyWhatsapp(digits: string): string {
+  const d = String(digits ?? "").replace(/\D/g, "");
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return digits;
+}
+
 /**
- * Leads capturados pelo popup "site em fase final de testes" — quem clicou
- * em contato/comprar no site público enquanto o popup está ligado.
- * Data/hora filtram no backend; DDD e horário-do-dia filtram no cliente
- * (volume de pré-lançamento não justifica essas duas condições na query).
+ * Leads da lista de espera que substitui o checkout enquanto o produto está
+ * em testes. Data, plano, ciclo e DDD filtram no backend; a hora do dia e a
+ * busca livre filtram no cliente.
  */
 function PreLaunchLeadsPage() {
   const [leads, setLeads] = useState<PreLaunchLead[]>([]);
@@ -487,9 +513,12 @@ function PreLaunchLeadsPage() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [dddFilter, setDddFilter] = useState("");
+  const [planFilter, setPlanFilter] = useState("");
+  const [cycleFilter, setCycleFilter] = useState("");
   const [timeFrom, setTimeFrom] = useState("");
   const [timeTo, setTimeTo] = useState("");
-  const [popupEnabled, setPopupEnabled] = useState(true);
+  const [search, setSearch] = useState("");
+  const [waitlistEnabled, setWaitlistEnabled] = useState(true);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -497,8 +526,11 @@ function PreLaunchLeadsPage() {
     const params = new URLSearchParams();
     if (fromDate) params.set("from", `${fromDate}T00:00:00.000Z`);
     if (toDate) params.set("to", `${toDate}T23:59:59.999Z`);
+    if (planFilter) params.set("plan", planFilter);
+    if (cycleFilter) params.set("cycle", cycleFilter);
+    if (dddFilter.trim()) params.set("ddd", dddFilter.trim());
     return params.toString();
-  }, [fromDate, toDate]);
+  }, [fromDate, toDate, planFilter, cycleFilter, dddFilter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -529,7 +561,7 @@ function PreLaunchLeadsPage() {
         const res = await fetch("/api/admin/platform-launch-config");
         if (cancelled || !res.ok) return;
         const data = await res.json();
-        setPopupEnabled(data.enabled !== false);
+        setWaitlistEnabled(data.enabled !== false);
       } finally {
         if (!cancelled) setConfigLoaded(true);
       }
@@ -538,7 +570,7 @@ function PreLaunchLeadsPage() {
   }, []);
 
   const toggleConfig = async (next: boolean) => {
-    setPopupEnabled(next);
+    setWaitlistEnabled(next);
     try {
       const res = await fetch("/api/admin/platform-launch-config", {
         method: "PATCH",
@@ -547,21 +579,65 @@ function PreLaunchLeadsPage() {
       });
       if (!res.ok) throw new Error("patch_failed");
     } catch {
-      setPopupEnabled(!next);
+      setWaitlistEnabled(!next);
     }
   };
 
   const filteredLeads = useMemo(() => {
+    const term = search.trim().toLowerCase();
     return leads.filter((lead) => {
-      if (dddFilter.trim() && lead.ddd !== dddFilter.trim()) return false;
       if (timeFrom || timeTo) {
         const hhmm = new Date(lead.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", hour12: false });
         if (timeFrom && hhmm < timeFrom) return false;
         if (timeTo && hhmm > timeTo) return false;
       }
+      if (term) {
+        const haystack = `${lead.fullName} ${lead.email} ${lead.whatsapp} ${lead.businessDescription}`.toLowerCase();
+        if (!haystack.includes(term)) return false;
+      }
       return true;
     });
-  }, [leads, dddFilter, timeFrom, timeTo]);
+  }, [leads, timeFrom, timeTo, search]);
+
+  /** Quantos leads por plano — responde "de qual plano está vindo mais gente". */
+  const byPlan = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const lead of filteredLeads) {
+      const key = lead.planSlug ?? "—";
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  }, [filteredLeads]);
+
+  const limparFiltros = () => {
+    setFromDate(""); setToDate(""); setDddFilter(""); setPlanFilter("");
+    setCycleFilter(""); setTimeFrom(""); setTimeTo(""); setSearch("");
+  };
+
+  const exportarCsv = () => {
+    const linhas = [
+      ["Nome", "WhatsApp", "DDD", "E-mail", "Plano", "Ciclo", "Tipo de negócio", "Data"],
+      ...filteredLeads.map((l) => [
+        l.fullName,
+        prettyWhatsapp(l.whatsapp),
+        l.ddd ?? "",
+        l.email,
+        planLabel(l.planSlug),
+        cycleLabel(l.billingCycle),
+        l.businessDescription,
+        new Date(l.createdAt).toLocaleString("pt-BR"),
+      ]),
+    ];
+    const csv = linhas
+      .map((linha) => linha.map((celula) => `"${String(celula).replace(/"/g, '""')}"`).join(";"))
+      .join("\n");
+    const url = URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `leads-lancamento-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const removeLead = async (lead: PreLaunchLead) => {
     if (!confirm(`Apagar o lead de ${lead.fullName}? Essa ação não pode ser desfeita.`)) return;
@@ -581,11 +657,20 @@ function PreLaunchLeadsPage() {
 
   const columns: Column<PreLaunchLead>[] = [
     { key: "fullName", header: "Nome", render: (row) => row.fullName },
-    { key: "whatsapp", header: "WhatsApp", render: (row) => row.whatsapp },
-    { key: "email", header: "E-mail", render: (row) => row.email },
+    { key: "whatsapp", header: "WhatsApp", render: (row) => prettyWhatsapp(row.whatsapp) },
     { key: "ddd", header: "DDD", render: (row) => row.ddd ?? "—" },
-    { key: "source", header: "Origem", render: (row) => (row.source === "buy" ? "Comprar plano" : row.source === "contact" ? "Contato" : "—") },
-    { key: "businessDescription", header: "O que faz", render: (row) => row.businessDescription },
+    { key: "email", header: "E-mail", render: (row) => row.email },
+    {
+      key: "planSlug",
+      header: "Plano",
+      render: (row) => (
+        <span className={row.planSlug ? "font-semibold text-primary" : "text-content-faint"}>
+          {planLabel(row.planSlug)}
+        </span>
+      ),
+    },
+    { key: "billingCycle", header: "Ciclo", render: (row) => cycleLabel(row.billingCycle) },
+    { key: "businessDescription", header: "Tipo de negócio", render: (row) => row.businessDescription },
     { key: "createdAt", header: "Data/hora", render: (row) => new Date(row.createdAt).toLocaleString("pt-BR") },
     {
       key: "actions",
@@ -608,33 +693,86 @@ function PreLaunchLeadsPage() {
   return (
     <div className="space-y-6">
       <Panel
-        title="Popup de pré-lançamento"
-        description="Enquanto ligado, qualquer clique em contato (WhatsApp/e-mail) ou comprar plano no site público vira este formulário — nada chega direto pra você."
+        title="Modo lista de espera"
+        description="Enquanto ligado, quem escolhe um plano cai numa página de lista de espera em vez do checkout. Desligar devolve o pagamento pelo Stripe imediatamente — nada da integração é alterado."
       >
         <Toggle
-          id="pre-launch-popup-toggle"
-          checked={popupEnabled}
+          id="pre-launch-waitlist-toggle"
+          checked={waitlistEnabled}
           onChange={(v) => void toggleConfig(v)}
           disabled={!configLoaded}
-          label={popupEnabled ? "Ligado — capturando contato em vez de deixar passar" : "Desligado — site funciona normalmente"}
+          label={
+            waitlistEnabled
+              ? "Ligado — o checkout mostra a lista de espera"
+              : "Desligado — checkout Stripe normal"
+          }
         />
       </Panel>
-      <Panel title="Leads capturados" description="Quem clicou em contato ou comprar plano antes do produto estar disponível.">
+
+      <Panel title="Filtros" description="Data, plano, ciclo, DDD e horário. Tudo combina entre si.">
         {loadError ? <p className="mb-3 text-sm text-rose-400">{loadError}</p> : null}
-        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-5">
+        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-4">
           <label className="block text-xs text-content-muted">De<Input type="date" className="mt-1" value={fromDate} onChange={(e) => setFromDate(e.target.value)} /></label>
           <label className="block text-xs text-content-muted">Até<Input type="date" className="mt-1" value={toDate} onChange={(e) => setToDate(e.target.value)} /></label>
-          <label className="block text-xs text-content-muted">DDD<Input placeholder="ex.: 62" className="mt-1" value={dddFilter} onChange={(e) => setDddFilter(e.target.value)} /></label>
+          <label className="block text-xs text-content-muted">
+            Plano
+            <select
+              className="mt-1 min-h-[42px] w-full rounded-xl border border-line/80 bg-surface-deep px-3 text-sm text-content"
+              value={planFilter}
+              onChange={(e) => setPlanFilter(e.target.value)}
+            >
+              <option value="">Todos</option>
+              {PRE_LAUNCH_PLANS.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-xs text-content-muted">
+            Ciclo
+            <select
+              className="mt-1 min-h-[42px] w-full rounded-xl border border-line/80 bg-surface-deep px-3 text-sm text-content"
+              value={cycleFilter}
+              onChange={(e) => setCycleFilter(e.target.value)}
+            >
+              <option value="">Todos</option>
+              <option value="monthly">Mensal</option>
+              <option value="annual">Anual</option>
+            </select>
+          </label>
+          <label className="block text-xs text-content-muted">DDD<Input placeholder="ex.: 62" inputMode="numeric" className="mt-1" value={dddFilter} onChange={(e) => setDddFilter(e.target.value.replace(/\D/g, "").slice(0, 2))} /></label>
           <label className="block text-xs text-content-muted">Horário de<Input type="time" className="mt-1" value={timeFrom} onChange={(e) => setTimeFrom(e.target.value)} /></label>
           <label className="block text-xs text-content-muted">Horário até<Input type="time" className="mt-1" value={timeTo} onChange={(e) => setTimeTo(e.target.value)} /></label>
+          <label className="block text-xs text-content-muted">Buscar<Input placeholder="nome, e-mail, negócio…" className="mt-1" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
         </div>
-        {!loadError && (
-          <p className="mt-2 text-xs text-content-faint">
-            {loading ? "Carregando..." : `${filteredLeads.length} de ${total} lead(s)`}
-          </p>
-        )}
+
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Button type="button" size="sm" variant="secondary" onClick={limparFiltros}>Limpar filtros</Button>
+          <Button type="button" size="sm" variant="secondary" onClick={exportarCsv} disabled={!filteredLeads.length}>
+            Exportar CSV
+          </Button>
+          {!loadError && (
+            <span className="text-xs text-content-faint">
+              {loading ? "Carregando..." : `${filteredLeads.length} de ${total} lead(s)`}
+            </span>
+          )}
+        </div>
+
+        {byPlan.length > 0 && !loading ? (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {byPlan.map(([slug, count]) => (
+              <span
+                key={slug}
+                className="rounded-lg border border-line bg-surface-deep px-3 py-1.5 text-xs text-content-secondary"
+              >
+                {slug === "—" ? "Sem plano" : planLabel(slug)}:{" "}
+                <strong className="text-primary">{count}</strong>
+              </span>
+            ))}
+          </div>
+        ) : null}
       </Panel>
-      <Panel title="Lista">
+
+      <Panel title="Lista de espera" description="Quem escolheu um plano e pediu para ser avisado no lançamento.">
         {loading
           ? <div className="h-40 animate-pulse rounded-xl bg-surface-elevated/50" />
           : <DataTable columns={columns} data={filteredLeads} rowKey={(row) => row.id} />}

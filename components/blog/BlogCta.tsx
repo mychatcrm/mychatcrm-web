@@ -14,7 +14,7 @@ export function BlogCta({ title, description }: { title: string; description: st
           <p className="mt-3 max-w-2xl text-sm leading-6 text-content-secondary sm:text-base">{description}</p>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row lg:flex-col">
-          <a href={whatsappHref} target="_blank" rel="noopener noreferrer" className={linkButtonClass("gradient", "lg")} data-lead-gate="contact">
+          <a href={whatsappHref} target="_blank" rel="noopener noreferrer" className={linkButtonClass("gradient", "lg")}>
             Fale com especialista
           </a>
           <LinkButton href="/planos" variant="outline" size="lg">

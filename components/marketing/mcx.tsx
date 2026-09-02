@@ -755,6 +755,24 @@ body:has(.mcx){ background:#05080B; }
   position:relative; z-index:1;
 }
 
+/* ---- lista de espera ------------------------------------------------------ */
+.mcx .mcx-error{ font-size:.8rem; color:#F3B9B4; }
+.mcx select.mcx-input{
+  appearance:none; cursor:pointer; padding-right:38px;
+  background-image:linear-gradient(45deg,transparent 50%,var(--faint) 50%),linear-gradient(135deg,var(--faint) 50%,transparent 50%);
+  background-position:calc(100% - 19px) 50%,calc(100% - 13px) 50%;
+  background-size:6px 6px,6px 6px; background-repeat:no-repeat;
+}
+.mcx select.mcx-input option{ background:var(--surface); color:var(--text); }
+.mcx .mcx-spin{ animation:mcx-spin .9s linear infinite; }
+@keyframes mcx-spin{ to{ transform:rotate(360deg); } }
+.mcx .mcx-waitgrid{ display:grid; gap:14px; grid-template-columns:1fr; }
+@media (min-width:760px){ .mcx .mcx-waitgrid{ grid-template-columns:repeat(2,1fr); } }
+.mcx .mcx-waitgrid > div{ height:100%; }
+@media (min-width:1000px){
+  .mcx #mcx-waitlist-grid{ grid-template-columns:1.05fr .95fr; }
+}
+
 /* ---- guias por nicho (ligação interna da home) ---------------------------- */
 .mcx .mcx-niches{
   list-style:none; margin:34px 0 0; padding:0;
@@ -883,7 +901,14 @@ export function McxPage({
   }, []);
 
   return (
-    <div ref={ref} className={className ? `mcx ${className}` : "mcx"}>
+    <div
+      ref={ref}
+      className={className ? `mcx ${className}` : "mcx"}
+      /* O script abaixo acrescenta `mcx-armed` antes da hidratação, então o
+         className do servidor e o do cliente divergem de propósito. Sem isto
+         o React reclama e pode repor a classe original, matando a animação. */
+      suppressHydrationWarning
+    >
       <style dangerouslySetInnerHTML={{ __html: MCX_SHEET }} />
       {/* Corre durante o parse, antes do primeiro paint: sem isto haveria um
           flash de conteúdo visível a desaparecer para depois animar. */}

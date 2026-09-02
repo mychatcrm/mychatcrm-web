@@ -486,7 +486,6 @@ export function PlanosView() {
                       target="_blank"
                       rel="noopener noreferrer"
                       className="mcx-btn mcx-btn-primary mcx-btn-lg"
-                      data-lead-gate="contact"
                     >
                       Conversar no WhatsApp
                       <ArrowRight size={17} />

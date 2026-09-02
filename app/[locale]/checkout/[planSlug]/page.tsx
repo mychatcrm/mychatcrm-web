@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { JsonLd } from "@/components/JsonLd";
 import { McxCheckoutShell } from "./McxCheckoutShell";
+import { PreLaunchWaitlist } from "./PreLaunchWaitlist";
+import { isPreLaunchWaitlistEnabled } from "@/lib/server/pre-launch-config-db";
 import { getPlanBySlug, parsePlanBillingCycle, PLAN_CHECKOUT_SLUGS } from "@/lib/plans";
 import { SITE_URL } from "@/lib/constants";
 import { buildBreadcrumbSchema } from "@/lib/seo";
@@ -64,6 +65,7 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
     billingCycle,
   };
 
+  const preLaunch = await isPreLaunchWaitlistEnabled();
   const tSeo = await getTranslations({ locale, namespace: "seo.schemas" });
 
   const structuredData = [
@@ -79,9 +81,23 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
       {structuredData.map((data, i) => (
         <JsonLd key={`checkout-ld-${i}`} data={data} />
       ))}
-      <McxCheckoutShell planName={plan.name} annual={billingCycle === "annual"}>
-        <CheckoutView plan={summary} initialCouponCode={initialCouponCode} />
-      </McxCheckoutShell>
+      {preLaunch ? (
+        /**
+         * Modo pré-lançamento: a pessoa vê a lista de espera em vez do
+         * pagamento. Reversível pelo toggle em /admin/leads-lancamento — o
+         * `CheckoutView` e as rotas Stripe continuam intactos logo abaixo.
+         */
+        <PreLaunchWaitlist
+          planSlug={plan.slug}
+          planName={plan.name}
+          priceMonthly={plan.priceMonthly}
+          billingCycle={billingCycle}
+        />
+      ) : (
+        <McxCheckoutShell planName={plan.name} annual={billingCycle === "annual"}>
+          <CheckoutView plan={summary} initialCouponCode={initialCouponCode} />
+        </McxCheckoutShell>
+      )}
     </>
   );
 }
