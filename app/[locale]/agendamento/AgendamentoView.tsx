@@ -174,41 +174,49 @@ function ConversaPanel({ act, fase, escrito }: { act: Act; fase: Fase; escrito: 
         defeito. Assim a altura é a mesma do primeiro ao último frame.
       */}
       <div className="mcx-stage-body mcx-stage-thread">
+        {/*
+          A altura do painel é fixada pelo FantasmaConversa, que empilha todos os
+          atos invisíveis por baixo. Por isso a camada de cima pode entrar e sair
+          à vontade: as bolhas caem no ecrã uma a uma e a bolha de "a escrever"
+          fica pequena, como no WhatsApp, sem nada saltar por baixo.
+        */}
         <FantasmaConversa />
         <div className="mcx-h-live">
-        {act.systemLine ? (
-          <div className="mcx-console-system" data-off={fase < 1 ? "true" : undefined}>
-            <i />
-            <span>{act.systemLine}</span>
-            <i />
-          </div>
-        ) : null}
+          {act.systemLine && fase >= 1 ? (
+            <div className="mcx-console-system mcx-drop">
+              <i />
+              <span>{act.systemLine}</span>
+              <i />
+            </div>
+          ) : null}
 
-        {act.inbound ? (
-          <div className="mcx-bubble mcx-bubble-in" data-off={fase < 1 ? "true" : undefined}>
-            {act.inbound}
-          </div>
-        ) : null}
+          {act.inbound && fase >= 1 ? (
+            <div className="mcx-bubble mcx-bubble-in mcx-drop">{act.inbound}</div>
+          ) : null}
 
-        <div className="mcx-bubble mcx-bubble-out mcx-bubble-type" data-off={fase < 2 ? "true" : undefined}>
-          <span className="mcx-type-ghost" aria-hidden="true">
-            {act.reply}
-          </span>
-          <span className="mcx-type-live">
-            {fase === 2 ? (
-              <span className="mcx-typing" aria-label="O agente está a escrever">
+          {fase === 2 ? (
+            <div className="mcx-bubble mcx-bubble-out mcx-drop" aria-label="O agente está a escrever">
+              <span className="mcx-typing">
                 <i />
                 <i />
                 <i />
               </span>
-            ) : (
-              <>
+            </div>
+          ) : null}
+
+          {fase >= 3 ? (
+            /* O texto completo, invisível, segura a largura e a altura da bolha:
+               sem ele a caixa crescia a cada letra e tremia enquanto escrevia. */
+            <div className="mcx-bubble mcx-bubble-out mcx-bubble-type">
+              <span className="mcx-type-ghost" aria-hidden="true">
+                {act.reply}
+              </span>
+              <span className="mcx-type-live">
                 {escrito}
                 {fase === 3 ? <i className="mcx-caret" /> : null}
-              </>
-            )}
-          </span>
-        </div>
+              </span>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

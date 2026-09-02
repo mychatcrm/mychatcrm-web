@@ -997,10 +997,18 @@ body:has(.mcx){ background:#05080B; }
 
 /* Elemento à espera da sua vez: continua a ocupar o lugar, só não se vê.
    É o que mantém a altura do palco fixa do primeiro ao último frame. */
-.mcx .mcx-stage-thread [data-off="true"]{ visibility:hidden; }
+/* cada peça da conversa cai no ecrã na sua vez */
+@media (prefers-reduced-motion:no-preference){
+  .mcx .mcx-drop{ animation:mcx-drop .34s cubic-bezier(.22,1,.36,1) both; }
+}
+@keyframes mcx-drop{
+  from{ opacity:0; transform:translateY(-6px) scale(.97); }
+  to{ opacity:1; transform:none; }
+}
 
 /* o agente a escrever */
 .mcx .mcx-typing{ display:inline-flex; align-items:center; gap:5px; height:1.48em; }
+.mcx .mcx-bubble-out:has(> .mcx-typing){ padding:9px 12px; }
 .mcx .mcx-typing i{
   width:5px; height:5px; border-radius:99px; background:var(--brand-hi); opacity:.45;
 }
