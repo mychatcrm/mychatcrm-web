@@ -943,13 +943,6 @@ body:has(.mcx){ background:#05080B; }
   background:linear-gradient(160deg,rgba(242,68,0,.2),rgba(242,68,0,.08));
   display:flex; flex-direction:column; gap:2px;
 }
-@media (prefers-reduced-motion:no-preference){
-  .mcx .mcx-crm-card.is-moving{ animation:mcx-card-in .5s cubic-bezier(.22,1,.36,1) both; }
-}
-@keyframes mcx-card-in{
-  from{ opacity:0; transform:translateX(-14px) scale(.94); }
-  to{ opacity:1; transform:none; }
-}
 .mcx .mcx-crm-name{ font-size:10.5px; font-weight:600; color:var(--text); }
 .mcx .mcx-crm-meta{ font-family:var(--f-mono); font-size:8px; color:var(--faint); }
 
@@ -976,6 +969,138 @@ body:has(.mcx){ background:#05080B; }
   background:rgba(255,255,255,.02);
 }
 
+
+/* camadas-fantasma: fixam a altura para os controlos não saltarem entre atos */
+.mcx .mcx-stage-thread{ display:grid; }
+.mcx .mcx-stage-trace{ display:grid; }
+.mcx .mcx-h-ghost, .mcx .mcx-h-live{ grid-area:1 / 1; min-width:0; }
+.mcx .mcx-h-ghost{ display:grid; visibility:hidden; pointer-events:none; }
+.mcx .mcx-h-ghost-item{
+  grid-area:1 / 1; display:flex; flex-direction:column; gap:10px; align-items:flex-start;
+}
+.mcx .mcx-h-ghost-row{ flex-direction:row; flex-wrap:wrap; gap:7px; }
+.mcx .mcx-h-live{ display:flex; flex-direction:column; gap:10px; }
+.mcx .mcx-stage-trace .mcx-h-live{ flex-direction:row; flex-wrap:wrap; gap:7px; align-content:flex-start; }
+.mcx .mcx-efeitos-wrap{ min-height:0; margin-top:4px; }
+/* os chips de efeito são uma fila que quebra, não uma pilha */
+.mcx .mcx-effects.mcx-h-ghost-item, .mcx .mcx-effects.mcx-h-live{
+  flex-direction:row; flex-wrap:wrap; gap:6px; align-content:flex-start;
+}
+.mcx .mcx-efeitos-wrap .mcx-effects{ margin:0; }
+
+/* ---- a cena a tocar -------------------------------------------------------
+   O palco deixou de trocar de estado num piscar e passou a executar um
+   cronograma: o lead fala, o agente pensa, escreve, e só então a agenda muda e
+   o card anda. Estas regras são o lado visual desse cronograma. */
+
+.mcx .mcx-stage{ position:relative; }
+
+/* Elemento à espera da sua vez: continua a ocupar o lugar, só não se vê.
+   É o que mantém a altura do palco fixa do primeiro ao último frame. */
+.mcx .mcx-stage-thread [data-off="true"]{ visibility:hidden; }
+
+/* o agente a escrever */
+.mcx .mcx-typing{ display:inline-flex; align-items:center; gap:5px; height:1.48em; }
+.mcx .mcx-typing i{
+  width:5px; height:5px; border-radius:99px; background:var(--brand-hi); opacity:.45;
+}
+@media (prefers-reduced-motion:no-preference){
+  .mcx .mcx-typing i{ animation:mcx-typing 1.05s ease-in-out infinite; }
+  .mcx .mcx-typing i:nth-child(2){ animation-delay:.16s; }
+  .mcx .mcx-typing i:nth-child(3){ animation-delay:.32s; }
+}
+@keyframes mcx-typing{
+  0%,60%,100%{ transform:translateY(0); opacity:.38; }
+  30%{ transform:translateY(-4px); opacity:1; }
+}
+
+/* a resposta a sair letra a letra, sem a bolha mudar de tamanho */
+.mcx .mcx-bubble-type{ position:relative; }
+.mcx .mcx-type-ghost{ display:block; visibility:hidden; }
+.mcx .mcx-type-live{ position:absolute; inset:0; padding:inherit; }
+@media (prefers-reduced-motion:no-preference){
+  .mcx .mcx-caret{ animation:mcx-caret .82s steps(1) infinite; }
+}
+@keyframes mcx-caret{ 0%,50%{ opacity:1; } 51%,100%{ opacity:0; } }
+
+/* estado da cena, ao vivo, na barra do palco */
+.mcx .mcx-stage-phase{
+  display:inline-flex; align-items:center; gap:5px; white-space:nowrap;
+  font-family:var(--f-mono); font-size:9px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--faint);
+  border:1px solid var(--line); border-radius:999px; padding:3px 8px;
+  transition:color .3s ease,border-color .3s ease;
+}
+.mcx .mcx-stage-phase::before{
+  content:""; width:5px; height:5px; border-radius:99px; background:currentColor;
+}
+.mcx .mcx-stage-phase[data-f="2"], .mcx .mcx-stage-phase[data-f="3"],
+.mcx .mcx-stage-phase[data-f="4"]{ color:var(--brand-hi); border-color:rgba(242,68,0,.4); }
+.mcx .mcx-stage-phase[data-f="5"]{ color:#9BE9C4; border-color:rgba(25,206,114,.35); }
+
+/* corte entre atos: um varrimento curto, como o corte de um vídeo */
+.mcx .mcx-stage-sweep{ position:absolute; inset:0; pointer-events:none; z-index:6; }
+@media (prefers-reduced-motion:no-preference){
+  .mcx .mcx-stage-sweep{
+    background:linear-gradient(100deg,transparent 40%,rgba(242,68,0,.13) 50%,transparent 60%);
+    animation:mcx-sweep .8s cubic-bezier(.4,0,.2,1) both;
+  }
+}
+@keyframes mcx-sweep{ from{ transform:translateX(-100%); } to{ transform:translateX(100%); } }
+
+/* o horário a ser reservado dá um sinal antes de assentar */
+.mcx .mcx-agenda-slot{ position:relative; }
+.mcx .mcx-agenda-slot[data-flash="true"]::after{
+  content:""; position:absolute; inset:-3px; border-radius:8px;
+  border:1px solid var(--brand); pointer-events:none; opacity:0;
+}
+@media (prefers-reduced-motion:no-preference){
+  .mcx .mcx-agenda-slot[data-flash="true"]::after{ animation:mcx-slot-flash .95s ease-out both; }
+}
+@keyframes mcx-slot-flash{
+  0%{ opacity:1; transform:scale(.88); }
+  100%{ opacity:0; transform:scale(1.55); }
+}
+
+/* o card viaja entre as colunas — o Framer move-o, isto marca a chegada */
+.mcx .mcx-crm-card{ position:relative; z-index:3; }
+.mcx .mcx-crm-card::after{
+  content:""; position:absolute; inset:-2px; border-radius:8px;
+  border:1px solid rgba(242,68,0,0); pointer-events:none;
+}
+@media (prefers-reduced-motion:no-preference){
+  .mcx .mcx-crm-card[data-travel="true"]::after{ animation:mcx-card-land .9s ease-out both; }
+}
+@keyframes mcx-card-land{
+  0%{ border-color:rgba(242,68,0,.85); transform:scale(1); opacity:1; }
+  100%{ border-color:rgba(242,68,0,0); transform:scale(1.4); opacity:0; }
+}
+
+/* o que aconteceu sozinho aparece um a um, depois do card assentar */
+.mcx .mcx-effects li{
+  opacity:0; transform:translateY(4px) scale(.96);
+  transition:opacity .4s ease,transform .4s ease;
+}
+.mcx .mcx-effects[data-on="true"] li{
+  opacity:1; transform:none; transition-delay:calc(var(--i) * 110ms + 160ms);
+}
+
+/* a fila de raciocínio acende passo a passo, em vez de estar sempre acesa */
+.mcx .mcx-stage-step{
+  opacity:.3; transform:translateY(3px);
+  transition:opacity .45s ease,transform .45s ease,border-color .45s ease,color .45s ease;
+}
+.mcx .mcx-stage-trace[data-on="true"] .mcx-stage-step{
+  opacity:1; transform:none; color:var(--text);
+  border-color:var(--line-strong); transition-delay:calc(var(--i) * 75ms);
+}
+
+/* Sem animação por escolha de quem vê: tudo já assente, nada a piscar. */
+@media (prefers-reduced-motion:reduce){
+  .mcx .mcx-effects li{ opacity:1; transform:none; }
+  .mcx .mcx-stage-step{ opacity:1; transform:none; }
+}
+
 /* ---- palco no telemóvel ---------------------------------------------------
    Preso no topo, ele não pode comer o ecrã inteiro: medido a 805px de 812, não
    sobrava nada para o texto que a pessoa está a ler. Aqui fica em cerca de
@@ -986,8 +1111,14 @@ body:has(.mcx){ background:#05080B; }
   .mcx .mcx-stage-panel:nth-child(2){ border-right:1px solid var(--line); }
   .mcx .mcx-stage-trace{ display:none; }
   .mcx .mcx-agenda-legend{ display:none; }
+  /* Os chips de efeito quebram em 5 linhas a 375px e a camada-fantasma reserva
+     o pior caso: 152px medidos, num palco que só pode ocupar meio ecrã. Saem,
+     pela mesma razão que a fila de raciocínio — o texto do ato já diz o mesmo. */
+  .mcx .mcx-efeitos-wrap{ display:none; }
   .mcx .mcx-stage-thread{ min-height:0; }
-  .mcx .mcx-stage-bar{ padding:9px 12px; }
+  .mcx .mcx-stage-bar{ padding:9px 12px; gap:7px; }
+  .mcx .mcx-stage-code{ display:none; }
+  .mcx .mcx-stage-phase{ font-size:8px; padding:2px 6px; letter-spacing:.08em; }
   .mcx .mcx-stage-head{ padding:7px 11px; font-size:8.5px; }
   .mcx .mcx-stage-body{ padding:10px; gap:7px; }
   .mcx .mcx-bubble{ font-size:.79rem; padding:8px 10px; line-height:1.4; }

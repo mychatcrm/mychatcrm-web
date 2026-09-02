@@ -59,6 +59,15 @@ const LIVRE: Record<string, AgendaSlotState> = {
 
 const g = (over: Record<string, AgendaSlotState>) => ({ ...LIVRE, ...over });
 
+/**
+ * Onde a cena começa, antes do primeiro ato.
+ *
+ * O palco anima a DIFERENÇA entre um ato e o anterior — é isso que faz o card
+ * viajar entre as colunas em vez de aparecer já do outro lado. O ato 0 não tem
+ * anterior, então recebe este: agenda limpa e o lead ainda na coluna "Novo".
+ */
+export const ESTADO_INICIAL = { slots: LIVRE, crmColumn: 0 } as const;
+
 export const ACTS: Act[] = [
   {
     id: "chega",

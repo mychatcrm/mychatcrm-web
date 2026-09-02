@@ -21,8 +21,8 @@
  */
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useReducedMotion } from "framer-motion";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   ArrowRight,
   Bell,
@@ -38,7 +38,15 @@ import {
   Sparkles,
 } from "lucide-react";
 import { McxFooter, McxNav, McxPage, Reveal, SectionLabel } from "@/components/marketing/mcx";
-import { ACTS, AGENDA_DAYS, AGENDA_HOURS, CRM_COLUMNS, type Act } from "./acts";
+import {
+  ACTS,
+  AGENDA_DAYS,
+  AGENDA_HOURS,
+  CRM_COLUMNS,
+  ESTADO_INICIAL,
+  type Act,
+  type AgendaSlotState,
+} from "./acts";
 
 /** Tempo em cada ato. Dá para ler título, explicação e conversa sem correr. */
 const ACT_MS = 10_000;
@@ -46,31 +54,208 @@ const TICK_MS = 250;
 
 /* ------------------------------------------------------------------ palco */
 
-function ConversaPanel({ act }: { act: Act }) {
+/**
+ * Cronograma de um ato, em milissegundos a contar do início dele.
+ *
+ * A cena tem de se ler como causa e efeito, não como um slide que troca: o lead
+ * fala, o agente pensa, escreve, e SÓ DEPOIS a agenda muda e o card anda. Se
+ * tudo aparecesse ao mesmo tempo, ninguém percebia quem fez o quê.
+ */
+const T_ENTRA = 320; // a mensagem do lead cai no ecrã
+const T_PENSA = 1180; // o agente aparece a escrever
+const T_ESCREVE = 2180; // a resposta começa a sair, letra a letra
+const CHAR_MS = 16; // velocidade da escrita
+const T_RESPIRO = 420; // pausa entre a resposta acabar e os efeitos
+const FINE_MS = 60; // relógio da cena (só corre enquanto ela executa)
+
+type Fase = 0 | 1 | 2 | 3 | 4 | 5;
+
+const ROTULO_FASE: Record<Fase, string> = {
+  0: "a receber",
+  1: "a receber",
+  2: "a decidir",
+  3: "a responder",
+  4: "a responder",
+  5: "concluído",
+};
+
+/** Quanto tempo dura a parte animada deste ato. */
+function duracaoCena(reply: string) {
+  return T_ESCREVE + reply.length * CHAR_MS + T_RESPIRO + 600;
+}
+
+function faseEm(t: number, reply: string): Fase {
+  const fimEscrita = T_ESCREVE + reply.length * CHAR_MS;
+  if (t < T_ENTRA) return 0;
+  if (t < T_PENSA) return 1;
+  if (t < T_ESCREVE) return 2;
+  if (t < fimEscrita) return 3;
+  if (t < fimEscrita + T_RESPIRO) return 4;
+  return 5;
+}
+
+/**
+ * Camadas-fantasma: a altura do palco não pode mudar de ato para ato.
+ *
+ * Medido antes disto: o palco variava 72px entre atos e a barra de controlos
+ * por baixo dele subia e descia a cada 10 segundos. Num bloco que se quer ver
+ * como um vídeo, isso lê-se como defeito.
+ *
+ * Cada fantasma empilha TODOS os atos na mesma célula de grelha, invisível: o
+ * mais alto fixa a altura e a camada real fica por cima. Como sai dos mesmos
+ * dados, continua certo se amanhã um texto crescer — ao contrário de um número
+ * de pixels escrito à mão. É a mesma técnica da consola da página inicial.
+ */
+const FantasmaConversa = memo(function FantasmaConversa() {
+  return (
+    <div className="mcx-h-ghost" aria-hidden="true">
+      {ACTS.map((a) => (
+        <div key={a.id} className="mcx-h-ghost-item">
+          {a.systemLine ? (
+            <div className="mcx-console-system">
+              <i />
+              <span>{a.systemLine}</span>
+              <i />
+            </div>
+          ) : null}
+          {a.inbound ? <div className="mcx-bubble mcx-bubble-in">{a.inbound}</div> : null}
+          <div className="mcx-bubble mcx-bubble-out">{a.reply}</div>
+        </div>
+      ))}
+    </div>
+  );
+});
+
+const FantasmaEfeitos = memo(function FantasmaEfeitos() {
+  return (
+    <div className="mcx-h-ghost" aria-hidden="true">
+      {ACTS.map((a) => (
+        <ul key={a.id} className="mcx-effects mcx-h-ghost-item" data-on="true">
+          {(a.effects ?? []).map((e) => (
+            <li key={e} style={{ ["--i" as string]: 0 }}>
+              <Check size={12} strokeWidth={3} />
+              {e}
+            </li>
+          ))}
+        </ul>
+      ))}
+    </div>
+  );
+});
+
+const FantasmaTrace = memo(function FantasmaTrace() {
+  return (
+    <div className="mcx-h-ghost" aria-hidden="true">
+      {ACTS.map((a) => (
+        <div key={a.id} className="mcx-h-ghost-item mcx-h-ghost-row">
+          {a.trace.map((step, i) => (
+            <span key={step} className="mcx-stage-step">
+              <span className="mcx-trace-idx">{String(i + 1).padStart(2, "0")}</span>
+              {step}
+            </span>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+});
+
+function ConversaPanel({ act, fase, escrito }: { act: Act; fase: Fase; escrito: string }) {
   return (
     <div className="mcx-stage-panel">
       <div className="mcx-stage-head">
         <MessageSquare size={13} />
         <span>Conversa no WhatsApp</span>
       </div>
+      {/*
+        As bolhas estão SEMPRE montadas e só ficam invisíveis até à sua vez. Se
+        entrassem e saíssem do DOM, a caixa crescia a meio da cena e empurrava a
+        agenda e o CRM para baixo — num palco preso no topo isso lê-se como
+        defeito. Assim a altura é a mesma do primeiro ao último frame.
+      */}
       <div className="mcx-stage-body mcx-stage-thread">
+        <FantasmaConversa />
+        <div className="mcx-h-live">
         {act.systemLine ? (
-          <div className="mcx-console-system">
+          <div className="mcx-console-system" data-off={fase < 1 ? "true" : undefined}>
             <i />
             <span>{act.systemLine}</span>
             <i />
           </div>
         ) : null}
+
         {act.inbound ? (
-          <div className="mcx-bubble mcx-bubble-in mcx-stage-anim">{act.inbound}</div>
+          <div className="mcx-bubble mcx-bubble-in" data-off={fase < 1 ? "true" : undefined}>
+            {act.inbound}
+          </div>
         ) : null}
-        <div className="mcx-bubble mcx-bubble-out mcx-stage-anim mcx-stage-anim-2">{act.reply}</div>
+
+        <div className="mcx-bubble mcx-bubble-out mcx-bubble-type" data-off={fase < 2 ? "true" : undefined}>
+          <span className="mcx-type-ghost" aria-hidden="true">
+            {act.reply}
+          </span>
+          <span className="mcx-type-live">
+            {fase === 2 ? (
+              <span className="mcx-typing" aria-label="O agente está a escrever">
+                <i />
+                <i />
+                <i />
+              </span>
+            ) : (
+              <>
+                {escrito}
+                {fase === 3 ? <i className="mcx-caret" /> : null}
+              </>
+            )}
+          </span>
+        </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function AgendaPanel({ act }: { act: Act }) {
+/** Uma linha da grelha (hora + os quatro dias). */
+function LinhaAgenda({
+  hour,
+  slots,
+  mudou,
+  aplicado,
+}: {
+  hour: string;
+  slots: Record<string, AgendaSlotState>;
+  mudou: Set<string>;
+  aplicado: boolean;
+}) {
+  return (
+    <>
+      <span className="mcx-agenda-hour">{hour}</span>
+      {AGENDA_DAYS.map((day) => {
+        const key = `${day}-${hour}`;
+        const state = slots[key] ?? "livre";
+        return (
+          <span
+            key={day}
+            className="mcx-agenda-slot"
+            data-s={state}
+            data-flash={aplicado && mudou.has(key) ? "true" : undefined}
+            aria-label={`${day} ${hour}: ${state}`}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+const AgendaPanel = memo(function AgendaPanel({
+  slots,
+  mudou,
+  aplicado,
+}: {
+  slots: Record<string, AgendaSlotState>;
+  mudou: Set<string>;
+  aplicado: boolean;
+}) {
   return (
     <div className="mcx-stage-panel">
       <div className="mcx-stage-head">
@@ -86,7 +271,7 @@ function AgendaPanel({ act }: { act: Act }) {
             </span>
           ))}
           {AGENDA_HOURS.map((h) => (
-            <Fragmentish key={h} hour={h} act={act} />
+            <LinhaAgenda key={h} hour={h} slots={slots} mudou={mudou} aplicado={aplicado} />
           ))}
         </div>
         <div className="mcx-agenda-legend">
@@ -103,22 +288,26 @@ function AgendaPanel({ act }: { act: Act }) {
       </div>
     </div>
   );
-}
+});
 
-/** Uma linha da grelha (hora + os quatro dias). */
-function Fragmentish({ hour, act }: { hour: string; act: Act }) {
-  return (
-    <>
-      <span className="mcx-agenda-hour">{hour}</span>
-      {AGENDA_DAYS.map((day) => {
-        const state = act.slots[`${day}-${hour}`] ?? "livre";
-        return <span key={day} className="mcx-agenda-slot" data-s={state} aria-label={`${day} ${hour}: ${state}`} />;
-      })}
-    </>
-  );
-}
-
-function CrmPanel({ act }: { act: Act }) {
+/**
+ * O card no CRM.
+ *
+ * O card é UM só elemento com layoutId: quando muda de coluna, o Framer mede
+ * onde ele estava e onde vai ficar e faz a viagem. É a peça que o Renato pediu
+ * — o card a ser movido à frente de quem vê, não a reaparecer do outro lado.
+ */
+const CrmPanel = memo(function CrmPanel({
+  coluna,
+  viajando,
+  efeitos,
+  aplicado,
+}: {
+  coluna: number;
+  viajando: boolean;
+  efeitos: string[];
+  aplicado: boolean;
+}) {
   return (
     <div className="mcx-stage-panel">
       <div className="mcx-stage-head">
@@ -128,55 +317,127 @@ function CrmPanel({ act }: { act: Act }) {
       <div className="mcx-stage-body">
         <div className="mcx-crm-board">
           {CRM_COLUMNS.map((col, i) => (
-            <div key={col} className="mcx-crm-col" data-on={i === act.crmColumn ? "true" : "false"}>
+            <div key={col} className="mcx-crm-col" data-on={i === coluna ? "true" : "false"}>
               <span className="mcx-crm-colname">{col}</span>
-              {i === act.crmColumn ? (
-                <div className={act.crmMoved ? "mcx-crm-card is-moving" : "mcx-crm-card"}>
+              {i === coluna ? (
+                <motion.div
+                  layoutId="mcx-lead-card"
+                  className="mcx-crm-card"
+                  data-travel={viajando ? "true" : undefined}
+                  transition={{ type: "spring", stiffness: 210, damping: 26, mass: 0.9 }}
+                >
                   <span className="mcx-crm-name">Marina</span>
                   <span className="mcx-crm-meta">atendimento</span>
-                </div>
+                </motion.div>
               ) : null}
             </div>
           ))}
         </div>
-        {act.effects?.length ? (
-          <ul className="mcx-effects">
-            {act.effects.map((e) => (
-              <li key={e}>
+        <div className="mcx-stage-thread mcx-efeitos-wrap">
+          <FantasmaEfeitos />
+          <ul className="mcx-effects mcx-h-live" data-on={aplicado ? "true" : "false"}>
+            {efeitos.map((e, i) => (
+              <li key={e} style={{ ["--i" as string]: i }}>
                 <Check size={12} strokeWidth={3} />
                 {e}
               </li>
             ))}
           </ul>
-        ) : null}
+        </div>
       </div>
     </div>
   );
-}
+});
 
-function Stage({ act }: { act: Act }) {
+/**
+ * O palco.
+ *
+ * Tem relógio próprio, mais fino que o da página, e só corre enquanto a cena
+ * executa — depois para sozinho e fica quieto até ao ato seguinte. Assim a
+ * escrita letra a letra é suave sem re-renderizar a página inteira 160 vezes.
+ */
+function Stage({
+  act,
+  antes,
+  correndo,
+  reduced,
+}: {
+  act: Act;
+  antes: { slots: Record<string, AgendaSlotState>; crmColumn: number };
+  correndo: boolean;
+  reduced: boolean;
+}) {
+  const [t, setT] = useState(0);
+  const fim = duracaoCena(act.reply);
+
+  // Refs para o reset não voltar a correr sempre que a pessoa pausa.
+  const fimRef = useRef(fim);
+  fimRef.current = fim;
+  const correndoRef = useRef(correndo);
+  correndoRef.current = correndo;
+
+  // Ato novo: recomeça a cena. Se estiver pausada (a pessoa saltou de ato à
+  // mão), mostra o resultado final — ninguém quer clicar e ver um palco parado.
+  useEffect(() => {
+    setT(correndoRef.current && !reduced ? 0 : fimRef.current);
+  }, [act.id, reduced]);
+
+  useEffect(() => {
+    if (reduced || !correndo) return;
+    const id = setInterval(() => {
+      setT((v) => (v >= fimRef.current ? v : Math.min(fimRef.current, v + FINE_MS)));
+    }, FINE_MS);
+    return () => clearInterval(id);
+  }, [correndo, reduced, act.id]);
+
+  const fase = reduced ? 5 : faseEm(t, act.reply);
+  const escritos = t <= T_ESCREVE ? 0 : Math.floor((t - T_ESCREVE) / CHAR_MS);
+  const escrito = fase >= 4 ? act.reply : act.reply.slice(0, escritos);
+  const aplicado = fase >= 5;
+
+  const slots = aplicado ? act.slots : antes.slots;
+  const coluna = aplicado ? act.crmColumn : antes.crmColumn;
+  const mudou = useMemo(
+    () => new Set(Object.keys(act.slots).filter((k) => act.slots[k] !== antes.slots[k])),
+    [act, antes],
+  );
+
   return (
     <div className="mcx-stage">
+      {/* Varrimento curto na troca de ato: marca o corte como num vídeo. */}
+      <span key={act.id} className="mcx-stage-sweep" aria-hidden="true" />
+
       <div className="mcx-stage-bar">
         <span className="mcx-dot" />
         <span className="mcx-mono">{act.label}</span>
         <span style={{ flex: 1 }} />
+        <span className="mcx-stage-phase" data-f={fase}>
+          {ROTULO_FASE[fase]}
+        </span>
         <span className="mcx-mono mcx-stage-code">{act.reason}</span>
       </div>
 
       <div className="mcx-stage-grid">
-        <ConversaPanel act={act} />
-        <AgendaPanel act={act} />
-        <CrmPanel act={act} />
+        <ConversaPanel act={act} fase={fase} escrito={escrito} />
+        <AgendaPanel slots={slots} mudou={mudou} aplicado={aplicado} />
+        <CrmPanel
+          coluna={coluna}
+          viajando={Boolean(act.crmMoved) && aplicado}
+          efeitos={act.effects ?? []}
+          aplicado={aplicado}
+        />
       </div>
 
-      <div className="mcx-stage-trace">
-        {act.trace.map((step, i) => (
-          <span key={step} className="mcx-stage-step">
-            <span className="mcx-trace-idx">{String(i + 1).padStart(2, "0")}</span>
-            {step}
-          </span>
-        ))}
+      <div className="mcx-stage-trace" data-on={aplicado ? "true" : "false"}>
+        <FantasmaTrace />
+        <div className="mcx-h-live mcx-h-ghost-row">
+          {act.trace.map((step, i) => (
+            <span key={step} className="mcx-stage-step" style={{ ["--i" as string]: i }}>
+              <span className="mcx-trace-idx">{String(i + 1).padStart(2, "0")}</span>
+              {step}
+            </span>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -280,6 +541,11 @@ export function AgendamentoView() {
   }, []);
 
   const act = ACTS[active] ?? ACTS[0]!;
+  /**
+   * O que estava no ecrã antes deste ato. O palco anima a diferença entre os
+   * dois — é daqui que sai o movimento do card e a mudança na agenda.
+   */
+  const antes = active === 0 ? ESTADO_INICIAL : (ACTS[active - 1] ?? ACTS[0]!);
   const pct = Math.min(100, (elapsed / ACT_MS) * 100);
 
   return (
@@ -348,7 +614,7 @@ export function AgendamentoView() {
         <section className="mcx-shell mcx-scene" ref={sceneRef}>
           {/* Palco preso: reage ao ato ativo. */}
           <div className="mcx-scene-sticky">
-            <Stage act={act} />
+            <Stage act={act} antes={antes} correndo={running} reduced={Boolean(reduced)} />
 
             <div className="mcx-scene-controls">
               <div className="mcx-player-progress" aria-hidden="true">
