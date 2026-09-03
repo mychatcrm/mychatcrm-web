@@ -122,6 +122,8 @@ body:has(.mcx){ background:#05080B; }
   max-width:60ch;
 }
 .mcx .mcx-body{ font-size:.95rem; line-height:1.62; color:var(--muted); margin:0; }
+/* Segunda linha da manchete: laranja, não itálico — igual à página inicial. */
+.mcx .mcx-h1 em, .mcx .mcx-h2 em{ font-style:normal; color:var(--brand-hi); }
 .mcx .mcx-mono{
   font-family:var(--f-mono);
   font-size:11px;
@@ -567,6 +569,12 @@ body:has(.mcx){ background:#05080B; }
 }
 .mcx .mcx-readout-cell{ background:var(--surface); padding:14px 16px; display:flex; flex-direction:column; gap:4px; }
 
+.mcx .mcx-readout-cell strong{ font-size:.92rem; color:var(--text); font-weight:600; }
+.mcx .mcx-calc-note{
+  margin:16px 0 0; font-size:.82rem; line-height:1.55; color:var(--faint); max-width:52ch;
+}
+.mcx .mcx-calc-cta{ margin-top:14px; align-self:flex-start; }
+
 /* ---- planos -------------------------------------------------------------- */
 .mcx .mcx-toggle{
   display:inline-flex; padding:4px; gap:4px; border-radius:999px;
@@ -755,408 +763,189 @@ body:has(.mcx){ background:#05080B; }
   position:relative; z-index:1;
 }
 
-/* ---- cena do agendamento (scroll-driven) --------------------------------- */
-.mcx .mcx-actbar{
-  display:flex; flex-wrap:wrap; gap:6px; justify-content:center;
-  padding:10px 0 4px;
-}
-.mcx .mcx-scene{ display:grid; gap:clamp(24px,4vw,56px); grid-template-columns:1fr; align-items:start; }
-@media (min-width:1000px){ .mcx .mcx-scene{ grid-template-columns:.92fr 1.08fr; } }
+/* ---- página do agendamento -----------------------------------------------
+   Sem palco, sem temporizadores: a prova está toda no ecrã ao mesmo tempo e a
+   pessoa lê a parte que lhe interessa. */
 
-/* A coluna tem scroll próprio: é ela que desliza sozinha, não a janela.
-   O deslize suave é pedido pelo JS quando faz sentido; deixá-lo no CSS
-   tornaria também o gesto do rato lento e estranho. */
-.mcx .mcx-acts-track{
-  /* Posicionada de propósito: sem isto o offsetTop dos atos é medido a
-     partir de outro ancestral e o deslize aponta para o ato errado — visto na
-     prática, a coluna ficava um ato à frente do palco. */
-  position:relative;
-  overflow-y:auto; overscroll-behavior-y:auto;
-  scrollbar-width:thin; scrollbar-color:var(--line-strong) transparent;
-  padding-right:6px;
-  -webkit-mask-image:linear-gradient(#000 74%,transparent);
-  mask-image:linear-gradient(#000 74%,transparent);
-}
-.mcx .mcx-acts-track::-webkit-scrollbar{ width:5px; }
-.mcx .mcx-acts-track::-webkit-scrollbar-thumb{ background:var(--line-strong); border-radius:99px; }
-@media (min-width:1000px){ .mcx .mcx-acts-track{ height:min(74vh,640px); } }
-@media (max-width:999px){ .mcx .mcx-acts-track{ height:min(46vh,360px); } }
+/* padding-top, NUNCA o atalho: .mcx-sec vive no mesmo elemento que .mcx-shell
+   e o atalho apagava o padding lateral dele — no telemóvel os cartões
+   encostavam aos 375px do ecrã, sem margem nenhuma. */
+.mcx .mcx-sec{ padding-top:clamp(56px,8vw,104px); }
+.mcx .mcx-lead-tight{ max-width:62ch; margin-top:14px; }
 
-.mcx .mcx-acts{ list-style:none; margin:0; padding:0; }
-.mcx .mcx-act{
-  padding:clamp(22px,4vh,44px) 0;
-  border-bottom:1px solid var(--line);
-  opacity:.35; transition:opacity .45s ease;
+/* hero */
+.mcx .mcx-ag-hero{
+  display:grid; gap:clamp(28px,4vw,52px); align-items:center;
+  padding-top:clamp(48px,7vw,84px);
 }
-.mcx .mcx-act:last-child{ border-bottom:0; }
-.mcx .mcx-act.is-on{ opacity:1; }
-.mcx .mcx-act-idx{
-  font-family:var(--f-mono); font-size:10.5px; letter-spacing:.18em;
-  text-transform:uppercase; color:var(--brand); display:block; margin-bottom:12px;
+@media (min-width:1000px){ .mcx .mcx-ag-hero{ grid-template-columns:1.05fr .95fr; } }
+.mcx .mcx-ag-hero-text{ min-width:0; }
+.mcx .mcx-ag-cta{ display:flex; flex-wrap:wrap; gap:12px; margin-top:26px; }
+.mcx .mcx-ag-trust{
+  list-style:none; margin:26px 0 0; padding:0;
+  display:flex; flex-wrap:wrap; gap:9px;
 }
-.mcx .mcx-act-title{ font-size:clamp(1.4rem,2.5vw,1.95rem); }
-.mcx .mcx-act-body{ margin-top:14px; max-width:52ch; }
-/* Espelho textual: existe para quem não executa JS. Discreto, nunca escondido. */
-.mcx .mcx-act-mirror{
-  margin-top:16px; padding:14px 16px; border-left:2px solid var(--line-strong);
-  display:flex; flex-direction:column; gap:8px;
-  font-size:.855rem; line-height:1.55; color:var(--faint); max-width:56ch;
+.mcx .mcx-ag-trust li{
+  display:inline-flex; align-items:center; gap:7px;
+  border:1px solid var(--line); border-radius:999px; padding:7px 13px;
+  background:rgba(255,255,255,.02); color:var(--muted); font-size:.8rem;
 }
-.mcx .mcx-act-mirror b{ color:var(--muted); font-weight:600; }
-.mcx .mcx-act-mirror p{ margin:0; }
+.mcx .mcx-ag-trust svg{ color:var(--live); flex:none; }
 
-/* No telemóvel o palco fica preso no TOPO e os atos passam por baixo dele —
-   sem isto a pessoa lia os dez atos e só encontrava a animação no fim. */
-/* ---- controlos da cena ---------------------------------------------------- */
-.mcx .mcx-scene-controls{
-  margin-top:10px; border:1px solid var(--line); border-radius:12px;
-  background:rgba(255,255,255,.02); overflow:hidden;
-}
-.mcx .mcx-player-progress{ height:2px; background:var(--line); }
-.mcx .mcx-player-progress i{
-  display:block; height:100%;
-  background:linear-gradient(90deg,var(--brand),var(--brand-hi));
-  transition:width .25s linear;
-}
-.mcx .mcx-player-buttons{
-  display:flex; align-items:center; gap:6px; padding:9px 11px;
-}
-.mcx .mcx-ctrl{
-  display:inline-flex; align-items:center; justify-content:center; gap:7px;
-  min-height:32px; min-width:32px; padding:0 9px; cursor:pointer;
-  border:1px solid var(--line-strong); border-radius:8px;
-  background:rgba(255,255,255,.04); color:var(--muted);
-  font-family:var(--f-mono); font-size:9.5px; letter-spacing:.1em; text-transform:uppercase;
-  transition:color .16s ease,border-color .16s ease,background .16s ease;
-}
-.mcx .mcx-ctrl:hover{ color:var(--text); border-color:rgba(255,255,255,.3); background:rgba(255,255,255,.08); }
-.mcx .mcx-ctrl-play{
-  color:var(--brand-hi); border-color:rgba(242,68,0,.45); background:var(--brand-dim); padding:0 13px;
-}
-.mcx .mcx-ctrl-play:hover{ color:#fff; background:rgba(242,68,0,.24); border-color:rgba(242,68,0,.6); }
-.mcx .mcx-scene-count{ margin-left:auto; font-size:9.5px; }
-.mcx .mcx-dot.is-paused{ background:var(--faint); animation:none; box-shadow:none; }
-
-.mcx .mcx-scene-sticky{
-  position:sticky; top:64px; z-index:3;
-  padding:8px 0 12px; background:var(--ground);
-}
-.mcx .mcx-scene-sticky::after{
-  content:""; position:absolute; left:0; right:0; bottom:0; height:14px;
-  background:linear-gradient(var(--ground),transparent); pointer-events:none;
-}
-@media (min-width:1000px){
-  /* Colocação explícita: a ordem do DOM deixa de mandar. */
-  .mcx .mcx-scene-sticky{ grid-column:2; grid-row:1; top:96px; padding:0; background:none; }
-  .mcx .mcx-scene-sticky::after{ display:none; }
-  .mcx .mcx-acts{ grid-column:1; grid-row:1; }
-}
-
-
-/* ---- palco ---------------------------------------------------------------- */
-.mcx .mcx-stage{
+/* a prova do hero */
+.mcx .mcx-ag-proof{
+  border:1px solid var(--line-strong); border-radius:18px; overflow:hidden; min-width:0;
   background:linear-gradient(180deg,#0B121A,#070C11);
-  border:1px solid var(--line-strong); border-radius:18px; overflow:hidden;
   box-shadow:0 40px 90px -50px rgba(0,0,0,.95) !important;
 }
-.mcx .mcx-stage-bar{
+.mcx .mcx-ag-proof-bar{
   display:flex; align-items:center; gap:10px; padding:12px 16px;
   border-bottom:1px solid var(--line); background:rgba(255,255,255,.022);
 }
-.mcx .mcx-stage-code{ font-size:10px; color:var(--brand-hi); }
-.mcx .mcx-stage-grid{ display:grid; grid-template-columns:1fr; }
-@media (min-width:560px){ .mcx .mcx-stage-grid{ grid-template-columns:1fr 1fr; } }
-.mcx .mcx-stage-panel{ border-bottom:1px solid var(--line); min-width:0; }
-@media (min-width:560px){
-  .mcx .mcx-stage-panel:first-child{ grid-column:1 / -1; }
-  .mcx .mcx-stage-panel:nth-child(2){ border-right:1px solid var(--line); }
+.mcx .mcx-ag-proof-body{ padding:16px; display:flex; flex-direction:column; gap:10px; }
+.mcx .mcx-ag-proof-out{
+  list-style:none; margin:0; padding:12px 16px; display:flex; flex-wrap:wrap; gap:8px;
+  border-top:1px solid var(--line); background:rgba(255,255,255,.015);
 }
-.mcx .mcx-stage-head{
-  display:flex; align-items:center; gap:8px; padding:9px 14px;
-  font-family:var(--f-mono); font-size:9.5px; letter-spacing:.14em;
-  text-transform:uppercase; color:var(--faint);
-  background:rgba(255,255,255,.016); border-bottom:1px solid var(--line-soft);
-}
-.mcx .mcx-stage-head svg{ color:var(--brand); }
-.mcx .mcx-stage-body{ padding:14px; display:flex; flex-direction:column; gap:10px; }
-.mcx .mcx-stage-thread{ min-height:150px; }
-
-@media (prefers-reduced-motion:no-preference){
-  .mcx .mcx-stage-anim{ animation:mcx-enter .42s cubic-bezier(.22,1,.36,1) both; }
-  .mcx .mcx-stage-anim-2{ animation-delay:.14s; }
-}
-
-/* grelha da agenda */
-.mcx .mcx-agenda-grid{
-  display:grid; grid-template-columns:auto repeat(4,1fr); gap:5px; align-items:center;
-}
-.mcx .mcx-agenda-day, .mcx .mcx-agenda-hour{
-  font-family:var(--f-mono); font-size:9px; letter-spacing:.1em;
-  text-transform:uppercase; color:var(--faint); text-align:center;
-}
-.mcx .mcx-agenda-hour{ text-align:right; padding-right:6px; }
-.mcx .mcx-agenda-slot{
-  height:26px; border-radius:6px; border:1px solid var(--line);
-  background:rgba(255,255,255,.022);
-  transition:background .3s ease,border-color .3s ease,box-shadow .3s ease;
-}
-.mcx .mcx-agenda-slot[data-s="ocupado"]{ background:rgba(255,255,255,.09); border-color:var(--line-strong); }
-.mcx .mcx-agenda-slot[data-s="bloqueado"]{
-  background:var(--crit-soft, rgba(163,44,44,.18)); border-color:var(--crit-line);
-}
-.mcx .mcx-agenda-slot[data-s="proposto"]{
-  background:var(--brand-dim); border-color:rgba(242,68,0,.5);
-  border-style:dashed;
-}
-.mcx .mcx-agenda-slot[data-s="marcado"]{
-  background:linear-gradient(180deg,var(--brand-hi),var(--brand));
-  border-color:var(--brand);
-  box-shadow:0 0 18px -4px var(--brand-glow) !important;
-}
-.mcx .mcx-agenda-legend{
-  display:flex; flex-wrap:wrap; gap:12px; margin-top:2px;
-  font-family:var(--f-mono); font-size:9px; letter-spacing:.1em;
-  text-transform:uppercase; color:var(--faint);
-}
-.mcx .mcx-agenda-legend span{ display:inline-flex; align-items:center; gap:5px; }
-.mcx .mcx-agenda-legend i{
-  width:10px; height:10px; border-radius:3px; border:1px solid var(--line);
-  background:rgba(255,255,255,.022);
-}
-.mcx .mcx-agenda-legend i[data-s="ocupado"]{ background:rgba(255,255,255,.09); }
-.mcx .mcx-agenda-legend i[data-s="marcado"]{ background:var(--brand); border-color:var(--brand); }
-
-/* quadro do CRM */
-.mcx .mcx-crm-board{ display:grid; grid-template-columns:repeat(4,1fr); gap:5px; }
-.mcx .mcx-crm-col{
-  border:1px solid var(--line); border-radius:8px; padding:7px 5px;
-  background:rgba(255,255,255,.018); min-height:74px;
-  transition:border-color .3s ease,background .3s ease;
-}
-.mcx .mcx-crm-col[data-on="true"]{ border-color:rgba(242,68,0,.4); background:var(--brand-dim); }
-.mcx .mcx-crm-colname{
-  display:block; font-family:var(--f-mono); font-size:8px; letter-spacing:.08em;
-  text-transform:uppercase; color:var(--faint); margin-bottom:6px; text-align:center;
-}
-.mcx .mcx-crm-card{
-  border:1px solid rgba(242,68,0,.45); border-radius:6px; padding:6px 5px;
-  background:linear-gradient(160deg,rgba(242,68,0,.2),rgba(242,68,0,.08));
-  display:flex; flex-direction:column; gap:2px;
-}
-.mcx .mcx-crm-name{ font-size:10.5px; font-weight:600; color:var(--text); }
-.mcx .mcx-crm-meta{ font-family:var(--f-mono); font-size:8px; color:var(--faint); }
-
-.mcx .mcx-effects{
-  list-style:none; margin:4px 0 0; padding:0; display:flex; flex-wrap:wrap; gap:6px;
-}
-.mcx .mcx-effects li{
-  display:inline-flex; align-items:center; gap:5px;
+.mcx .mcx-ag-proof-out li{
+  display:inline-flex; align-items:center; gap:6px;
   border:1px solid rgba(25,206,114,.3); background:var(--live-dim);
-  border-radius:999px; padding:4px 9px;
+  border-radius:999px; padding:5px 10px;
   font-family:var(--f-mono); font-size:8.5px; letter-spacing:.07em;
   text-transform:uppercase; color:#9BE9C4;
 }
-.mcx .mcx-effects svg{ color:var(--live); }
+.mcx .mcx-ag-proof-out svg{ color:var(--live); }
 
-.mcx .mcx-stage-trace{
-  display:flex; flex-wrap:wrap; gap:7px; padding:12px 14px;
-  border-top:1px solid var(--line); background:rgba(255,255,255,.015);
+/* o que dói hoje */
+.mcx .mcx-ag-dor{ padding-top:clamp(44px,6vw,72px); }
+.mcx .mcx-ag-dor-grid{ display:grid; gap:12px; }
+@media (min-width:860px){ .mcx .mcx-ag-dor-grid{ grid-template-columns:repeat(3,1fr); } }
+.mcx .mcx-ag-dor-item{
+  display:flex; gap:10px; margin:0; padding:16px 18px;
+  border:1px solid var(--line); border-left:2px solid var(--crit-line);
+  border-radius:12px; background:rgba(255,255,255,.018);
+  color:var(--muted); font-size:.9rem; line-height:1.5;
 }
-.mcx .mcx-stage-step{
-  display:inline-flex; align-items:center; gap:7px;
-  font-family:var(--f-mono); font-size:9.5px; letter-spacing:.05em; color:var(--muted);
-  border:1px solid var(--line); border-radius:7px; padding:5px 9px;
+.mcx .mcx-ag-dor-item svg{ color:#E06666; flex:none; margin-top:3px; }
+
+/* filtros das situações */
+.mcx .mcx-filtros{ display:flex; flex-wrap:wrap; gap:9px; margin:28px 0 22px; }
+.mcx .mcx-filtro{
+  display:flex; flex-direction:column; gap:2px; text-align:left; cursor:pointer;
+  border:1px solid var(--line); border-radius:12px; padding:10px 16px;
+  background:rgba(255,255,255,.02); color:var(--muted);
+  font-size:.86rem; font-weight:600;
+  transition:border-color .2s ease,background .2s ease,color .2s ease;
+}
+.mcx .mcx-filtro small{
+  font-family:var(--f-mono); font-size:8.5px; letter-spacing:.1em;
+  text-transform:uppercase; font-weight:400; color:var(--faint);
+}
+.mcx .mcx-filtro:hover{ border-color:var(--line-strong); color:var(--text); }
+.mcx .mcx-filtro[data-on="true"]{
+  border-color:rgba(242,68,0,.5); background:var(--brand-dim); color:var(--text);
+}
+.mcx .mcx-filtro[data-on="true"] small{ color:var(--brand-hi); }
+
+/* as situações */
+.mcx .mcx-sits{ display:grid; gap:14px; }
+@media (min-width:760px){ .mcx .mcx-sits{ grid-template-columns:repeat(2,1fr); } }
+@media (min-width:1240px){ .mcx .mcx-sits{ grid-template-columns:repeat(3,1fr); } }
+.mcx .mcx-sit{
+  display:flex; flex-direction:column; min-width:0;
+  border:1px solid var(--line); border-radius:16px; overflow:hidden;
+  background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.008));
+}
+.mcx .mcx-sit[data-t="protege"]{ border-color:rgba(242,68,0,.28); }
+.mcx .mcx-sit-top{
+  display:flex; align-items:center; gap:9px; padding:13px 15px;
+  border-bottom:1px solid var(--line-soft); background:rgba(255,255,255,.02);
+}
+.mcx .mcx-sit-mark{ display:inline-flex; flex:none; }
+.mcx .mcx-sit[data-t="protege"] .mcx-sit-mark{ color:var(--brand-hi); }
+.mcx .mcx-sit[data-t="resolve"] .mcx-sit-mark{ color:var(--live); }
+.mcx .mcx-sit-tag{
+  margin:0; font-size:.88rem; font-weight:650; color:var(--text);
+  line-height:1.32; min-width:0; flex:1;
+}
+.mcx .mcx-sit-code{
+  flex:none; font-size:8.5px; letter-spacing:.06em; color:var(--faint);
+}
+.mcx .mcx-sit-talk{ padding:15px; display:flex; flex-direction:column; gap:9px; flex:1; }
+.mcx .mcx-sit-trigger{
+  display:flex; align-items:center; gap:6px; margin:0;
+  font-family:var(--f-mono); font-size:8.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--faint);
+}
+.mcx .mcx-sit-who{
+  display:block; font-family:var(--f-mono); font-size:8px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--faint); margin-bottom:4px;
+}
+.mcx .mcx-sit-talk .mcx-bubble{ max-width:100%; margin:0; font-size:.85rem; }
+.mcx .mcx-sit-did{
+  list-style:none; margin:0; padding:12px 15px; display:flex; flex-wrap:wrap; gap:7px;
+  border-top:1px solid var(--line-soft); background:rgba(255,255,255,.014);
+}
+.mcx .mcx-sit-did li{
+  display:inline-flex; align-items:center; gap:5px;
+  font-family:var(--f-mono); font-size:8px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--muted);
+}
+.mcx .mcx-sit-did svg{ color:var(--live); flex:none; }
+
+/* o que ele nunca faz */
+.mcx .mcx-nunca{ display:grid; gap:12px; margin-top:30px; }
+@media (min-width:900px){ .mcx .mcx-nunca{ grid-template-columns:repeat(2,1fr); } }
+.mcx .mcx-nunca-item{
+  height:100%; padding:20px 22px; border:1px solid var(--line); border-radius:14px;
   background:rgba(255,255,255,.02);
 }
-
-
-/* camadas-fantasma: fixam a altura para os controlos não saltarem entre atos */
-.mcx .mcx-stage-thread{ display:grid; }
-.mcx .mcx-stage-trace{ display:grid; }
-.mcx .mcx-h-ghost, .mcx .mcx-h-live{ grid-area:1 / 1; min-width:0; }
-.mcx .mcx-h-ghost{ display:grid; visibility:hidden; pointer-events:none; }
-.mcx .mcx-h-ghost-item{
-  grid-area:1 / 1; display:flex; flex-direction:column; gap:10px; align-items:flex-start;
+.mcx .mcx-nunca-item h3{
+  display:flex; align-items:center; gap:9px; margin:0 0 8px;
+  font-size:1rem; font-weight:650; color:var(--text); line-height:1.3;
 }
-.mcx .mcx-h-ghost-row{ flex-direction:row; flex-wrap:wrap; gap:7px; }
-.mcx .mcx-h-live{ display:flex; flex-direction:column; gap:10px; }
-.mcx .mcx-stage-trace .mcx-h-live{ flex-direction:row; flex-wrap:wrap; gap:7px; align-content:flex-start; }
-.mcx .mcx-efeitos-wrap{ min-height:0; margin-top:4px; }
-/* os chips de efeito são uma fila que quebra, não uma pilha */
-.mcx .mcx-effects.mcx-h-ghost-item, .mcx .mcx-effects.mcx-h-live{
-  flex-direction:row; flex-wrap:wrap; gap:6px; align-content:flex-start;
-}
-.mcx .mcx-efeitos-wrap .mcx-effects{ margin:0; }
+.mcx .mcx-nunca-item h3 svg{ color:var(--brand); flex:none; }
+.mcx .mcx-nunca-item p{ margin:0; color:var(--muted); font-size:.9rem; line-height:1.6; }
 
-/* ---- a cena a tocar -------------------------------------------------------
-   O palco deixou de trocar de estado num piscar e passou a executar um
-   cronograma: o lead fala, o agente pensa, escreve, e só então a agenda muda e
-   o card anda. Estas regras são o lado visual desse cronograma. */
+/* passos */
+.mcx .mcx-passos{ display:grid; gap:12px; margin-top:30px; }
+@media (min-width:860px){ .mcx .mcx-passos{ grid-template-columns:repeat(3,1fr); } }
+.mcx .mcx-passo{
+  height:100%; padding:22px; border:1px solid var(--line); border-radius:14px;
+  background:rgba(255,255,255,.02);
+}
+.mcx .mcx-passo-n{
+  display:block; font-size:11px; letter-spacing:.14em; color:var(--brand); margin-bottom:12px;
+}
+.mcx .mcx-passo h3{ margin:0 0 7px; font-size:1.02rem; font-weight:650; color:var(--text); }
+.mcx .mcx-passo p{ margin:0; color:var(--muted); font-size:.9rem; line-height:1.6; }
 
-.mcx .mcx-stage{ position:relative; }
-
-/* Elemento à espera da sua vez: continua a ocupar o lugar, só não se vê.
-   É o que mantém a altura do palco fixa do primeiro ao último frame. */
-/* cada peça da conversa cai no ecrã na sua vez */
-@media (prefers-reduced-motion:no-preference){
-  .mcx .mcx-drop{ animation:mcx-drop .34s cubic-bezier(.22,1,.36,1) both; }
+/* faq */
+.mcx .mcx-faq{ margin-top:28px; border-top:1px solid var(--line); }
+.mcx .mcx-faq-item{ border-bottom:1px solid var(--line); }
+.mcx .mcx-faq-item summary{
+  cursor:pointer; padding:18px 2px; list-style:none;
+  font-size:1rem; font-weight:600; color:var(--text);
+  display:flex; align-items:center; justify-content:space-between; gap:16px;
 }
-@keyframes mcx-drop{
-  from{ opacity:0; transform:translateY(-6px) scale(.97); }
-  to{ opacity:1; transform:none; }
+.mcx .mcx-faq-item summary::-webkit-details-marker{ display:none; }
+.mcx .mcx-faq-item summary::after{
+  content:"+"; flex:none; color:var(--brand); font-size:1.2rem; line-height:1;
 }
-
-/* o agente a escrever */
-.mcx .mcx-typing{ display:inline-flex; align-items:center; gap:5px; height:1.48em; }
-.mcx .mcx-bubble-out:has(> .mcx-typing){ padding:9px 12px; }
-.mcx .mcx-typing i{
-  width:5px; height:5px; border-radius:99px; background:var(--brand-hi); opacity:.45;
-}
-@media (prefers-reduced-motion:no-preference){
-  .mcx .mcx-typing i{ animation:mcx-typing 1.05s ease-in-out infinite; }
-  .mcx .mcx-typing i:nth-child(2){ animation-delay:.16s; }
-  .mcx .mcx-typing i:nth-child(3){ animation-delay:.32s; }
-}
-@keyframes mcx-typing{
-  0%,60%,100%{ transform:translateY(0); opacity:.38; }
-  30%{ transform:translateY(-4px); opacity:1; }
+.mcx .mcx-faq-item[open] summary::after{ content:"–"; }
+.mcx .mcx-faq-item p{
+  margin:0; padding:0 2px 20px; color:var(--muted); font-size:.94rem;
+  line-height:1.68; max-width:74ch;
 }
 
-/* a resposta a sair letra a letra, sem a bolha mudar de tamanho */
-.mcx .mcx-bubble-type{ position:relative; }
-.mcx .mcx-type-ghost{ display:block; visibility:hidden; }
-.mcx .mcx-type-live{ position:absolute; inset:0; padding:inherit; }
-@media (prefers-reduced-motion:no-preference){
-  .mcx .mcx-caret{ animation:mcx-caret .82s steps(1) infinite; }
+/* cta final */
+.mcx .mcx-cta-final{
+  text-align:center; padding:clamp(40px,6vw,66px) 24px;
+  border:1px solid rgba(242,68,0,.28); border-radius:20px;
+  background:radial-gradient(120% 140% at 50% 0%,rgba(242,68,0,.14),transparent 62%);
 }
-@keyframes mcx-caret{ 0%,50%{ opacity:1; } 51%,100%{ opacity:0; } }
-
-/* estado da cena, ao vivo, na barra do palco */
-.mcx .mcx-stage-phase{
-  display:inline-flex; align-items:center; gap:5px; white-space:nowrap;
-  font-family:var(--f-mono); font-size:9px; letter-spacing:.12em;
-  text-transform:uppercase; color:var(--faint);
-  border:1px solid var(--line); border-radius:999px; padding:3px 8px;
-  transition:color .3s ease,border-color .3s ease;
-}
-.mcx .mcx-stage-phase::before{
-  content:""; width:5px; height:5px; border-radius:99px; background:currentColor;
-}
-.mcx .mcx-stage-phase[data-f="2"], .mcx .mcx-stage-phase[data-f="3"],
-.mcx .mcx-stage-phase[data-f="4"]{ color:var(--brand-hi); border-color:rgba(242,68,0,.4); }
-.mcx .mcx-stage-phase[data-f="5"]{ color:#9BE9C4; border-color:rgba(25,206,114,.35); }
-
-/* corte entre atos: um varrimento curto, como o corte de um vídeo */
-.mcx .mcx-stage-sweep{ position:absolute; inset:0; pointer-events:none; z-index:6; }
-@media (prefers-reduced-motion:no-preference){
-  .mcx .mcx-stage-sweep{
-    background:linear-gradient(100deg,transparent 40%,rgba(242,68,0,.13) 50%,transparent 60%);
-    animation:mcx-sweep .8s cubic-bezier(.4,0,.2,1) both;
-  }
-}
-@keyframes mcx-sweep{ from{ transform:translateX(-100%); } to{ transform:translateX(100%); } }
-
-/* o horário a ser reservado dá um sinal antes de assentar */
-.mcx .mcx-agenda-slot{ position:relative; }
-.mcx .mcx-agenda-slot[data-flash="true"]::after{
-  content:""; position:absolute; inset:-3px; border-radius:8px;
-  border:1px solid var(--brand); pointer-events:none; opacity:0;
-}
-@media (prefers-reduced-motion:no-preference){
-  .mcx .mcx-agenda-slot[data-flash="true"]::after{ animation:mcx-slot-flash .95s ease-out both; }
-}
-@keyframes mcx-slot-flash{
-  0%{ opacity:1; transform:scale(.88); }
-  100%{ opacity:0; transform:scale(1.55); }
-}
-
-/* o card viaja entre as colunas — o Framer move-o, isto marca a chegada */
-.mcx .mcx-crm-card{ position:relative; z-index:3; }
-.mcx .mcx-crm-card::after{
-  content:""; position:absolute; inset:-2px; border-radius:8px;
-  border:1px solid rgba(242,68,0,0); pointer-events:none;
-}
-@media (prefers-reduced-motion:no-preference){
-  .mcx .mcx-crm-card[data-travel="true"]::after{ animation:mcx-card-land .9s ease-out both; }
-}
-@keyframes mcx-card-land{
-  0%{ border-color:rgba(242,68,0,.85); transform:scale(1); opacity:1; }
-  100%{ border-color:rgba(242,68,0,0); transform:scale(1.4); opacity:0; }
-}
-
-/* o que aconteceu sozinho aparece um a um, depois do card assentar */
-.mcx .mcx-effects li{
-  opacity:0; transform:translateY(4px) scale(.96);
-  transition:opacity .4s ease,transform .4s ease;
-}
-.mcx .mcx-effects[data-on="true"] li{
-  opacity:1; transform:none; transition-delay:calc(var(--i) * 110ms + 160ms);
-}
-
-/* a fila de raciocínio acende passo a passo, em vez de estar sempre acesa */
-.mcx .mcx-stage-step{
-  opacity:.3; transform:translateY(3px);
-  transition:opacity .45s ease,transform .45s ease,border-color .45s ease,color .45s ease;
-}
-.mcx .mcx-stage-trace[data-on="true"] .mcx-stage-step{
-  opacity:1; transform:none; color:var(--text);
-  border-color:var(--line-strong); transition-delay:calc(var(--i) * 75ms);
-}
-
-/* Sem animação por escolha de quem vê: tudo já assente, nada a piscar. */
-@media (prefers-reduced-motion:reduce){
-  .mcx .mcx-effects li{ opacity:1; transform:none; }
-  .mcx .mcx-stage-step{ opacity:1; transform:none; }
-}
-
-/* ---- a legenda do vídeo ---------------------------------------------------
-   Faixa por cima da cena que se escreve sozinha e muda a cada batida. É o que
-   faz o bloco ler-se como um vídeo a passar e não como um painel de estados. */
-.mcx .mcx-narra{
-  display:grid; padding:14px 16px 13px;
-  border-bottom:1px solid var(--line);
-  background:linear-gradient(180deg,rgba(242,68,0,.05),transparent);
-}
-.mcx .mcx-narra-linha{
-  margin:0; font-size:.98rem; line-height:1.4; font-weight:500;
-  color:var(--text); letter-spacing:-.008em; min-width:0;
-}
-.mcx .mcx-narra-linha[data-f="5"]{ color:var(--brand-hi); }
-/* As camadas partilhadas são colunas flex; aqui são parágrafos. Sem isto o
-   cursor virava um item de flex e caía PARA BAIXO do texto, em vez de piscar
-   no fim dele — e a faixa ficava com o dobro da altura. */
-.mcx .mcx-narra .mcx-h-ghost-item, .mcx .mcx-narra .mcx-h-live{ display:block; }
-
-/* ---- palco no telemóvel ---------------------------------------------------
-   Preso no topo, ele não pode comer o ecrã inteiro: medido a 805px de 812, não
-   sobrava nada para o texto que a pessoa está a ler. Aqui fica em cerca de
-   metade — agenda e card lado a lado, sem a fila de raciocínio nem a legenda. */
-@media (max-width:999px){
-  .mcx .mcx-stage-grid{ grid-template-columns:1fr 1fr; }
-  .mcx .mcx-stage-panel:first-child{ grid-column:1 / -1; }
-  .mcx .mcx-stage-panel:nth-child(2){ border-right:1px solid var(--line); }
-  .mcx .mcx-stage-trace{ display:none; }
-  .mcx .mcx-agenda-legend{ display:none; }
-  /* Os chips de efeito quebram em 5 linhas a 375px e a camada-fantasma reserva
-     o pior caso: 152px medidos, num palco que só pode ocupar meio ecrã. Saem,
-     pela mesma razão que a fila de raciocínio — o texto do ato já diz o mesmo. */
-  .mcx .mcx-efeitos-wrap{ display:none; }
-  .mcx .mcx-stage-thread{ min-height:0; }
-  .mcx .mcx-stage-bar{ padding:9px 12px; gap:7px; }
-  .mcx .mcx-narra{ padding:10px 12px 9px; }
-  .mcx .mcx-narra-linha{ font-size:.82rem; line-height:1.34; }
-  .mcx .mcx-stage-code{ display:none; }
-  .mcx .mcx-stage-phase{ font-size:8px; padding:2px 6px; letter-spacing:.08em; }
-  .mcx .mcx-stage-head{ padding:7px 11px; font-size:8.5px; }
-  .mcx .mcx-stage-body{ padding:10px; gap:7px; }
-  .mcx .mcx-bubble{ font-size:.79rem; padding:8px 10px; line-height:1.4; }
-  .mcx .mcx-agenda-slot{ height:15px; }
-  .mcx .mcx-agenda-grid{ gap:3px; }
-  .mcx .mcx-crm-board{ gap:3px; }
-  .mcx .mcx-crm-col{ min-height:50px; padding:5px 3px; }
-  .mcx .mcx-crm-colname{ font-size:7px; margin-bottom:4px; }
-  .mcx .mcx-effects li{ font-size:7.5px; padding:3px 7px; }
-}
+.mcx .mcx-cta-final svg{ color:var(--brand); }
+.mcx .mcx-cta-final .mcx-lead{ margin:12px auto 26px; }
 
 /* ---- lista de espera ------------------------------------------------------ */
 .mcx .mcx-error{ font-size:.8rem; color:#F3B9B4; }

@@ -3,7 +3,7 @@ import { JsonLd } from "@/components/JsonLd";
 import { SITE_URL } from "@/lib/constants";
 import { buildBreadcrumbSchema } from "@/lib/seo";
 import { routing } from "@/i18n/routing";
-import { ACTS } from "./acts";
+import { PASSOS, PERGUNTAS, SITUACOES } from "./conteudo";
 import { AgendamentoView } from "./AgendamentoView";
 
 type Props = { params: Promise<{ locale: string }> };
@@ -15,7 +15,7 @@ export function generateStaticParams() {
 export const metadata: Metadata = {
   title: "Agendamento automático pelo WhatsApp | MyChatCRM",
   description:
-    "Veja passo a passo como o agente marca, remarca, cancela e lembra sozinho pelo WhatsApp — conferindo a sua agenda real e movendo o card no CRM a cada confirmação.",
+    "Um agente que marca, remarca, cancela e lembra sozinho no WhatsApp — conferindo a sua agenda real antes de confirmar. Veja as 10 situações e a resposta dele em cada uma.",
   keywords: [
     "agendamento automático whatsapp",
     "agendar pelo whatsapp",
@@ -36,33 +36,62 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Agendamento automático pelo WhatsApp | MyChatCRM",
     description:
-      "Do primeiro “oi” ao cancelamento: o ciclo inteiro de um agendamento feito pelo agente, sem ninguém de plantão.",
+      "As 10 situações que um cliente cria ao marcar horário — e o que o agente responde em cada uma, com a agenda conferida antes de confirmar.",
     url: `${SITE_URL}/agendamento`,
     images: [{ url: "/og-image.png", width: 1200, height: 630, alt: "MyChatCRM — agendamento automático" }],
   },
 };
 
-/**
- * Os dez atos viram um HowTo: é a forma que o Google entende para "como
- * funciona X", e alimenta os motores generativos com o ciclo inteiro em texto
- * estruturado, não só na animação.
- */
+/** Como ligar: três passos, que é o que o Google entende por "como fazer X". */
 function buildHowToSchema() {
   return {
     "@context": "https://schema.org",
     "@type": "HowTo",
-    name: "Como funciona o agendamento automático pelo WhatsApp",
+    name: "Como ligar o agendamento automático no WhatsApp",
     description:
-      "O ciclo completo de um agendamento feito por um agente de IA no WhatsApp: pedido, verificação de disponibilidade, confirmação, lembrete, remarcação e cancelamento.",
+      "Configurar um agente de IA para marcar, remarcar, cancelar e lembrar agendamentos pelo WhatsApp, conferindo a agenda real antes de confirmar.",
     inLanguage: "pt-BR",
-    totalTime: "PT3M",
-    step: ACTS.map((act, i) => ({
+    totalTime: "PT10M",
+    step: PASSOS.map((p, i) => ({
       "@type": "HowToStep",
       position: i + 1,
-      name: act.title,
-      text: act.body,
-      url: `${SITE_URL}/agendamento#ato-${act.id}`,
+      name: p.titulo,
+      text: p.texto,
+      url: `${SITE_URL}/agendamento`,
     })),
+  };
+}
+
+/**
+ * As perguntas como FAQPage, e as dez situações como perguntas também.
+ *
+ * É a forma mais directa de entregar a página inteira em texto estruturado — o
+ * Google usa para os resultados expandidos e os motores generativos leem daqui
+ * a resposta concreta do agente em cada caso, que é o que esta página tem de
+ * único.
+ */
+function buildFaqSchema() {
+  const dasSituacoes = SITUACOES.map((s) => ({
+    "@type": "Question",
+    name: `Agendamento pelo WhatsApp: ${s.tag.toLowerCase()}. O que o agente responde?`,
+    acceptedAnswer: {
+      "@type": "Answer",
+      text: `${s.resposta} (${s.fez.join("; ")}.)`,
+    },
+  }));
+
+  return {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    inLanguage: "pt-BR",
+    mainEntity: [
+      ...PERGUNTAS.map((p) => ({
+        "@type": "Question",
+        name: p.q,
+        acceptedAnswer: { "@type": "Answer", text: p.a },
+      })),
+      ...dasSituacoes,
+    ],
   };
 }
 
@@ -75,6 +104,7 @@ export default async function AgendamentoPage({ params }: Props) {
       { name: "Agendamento automático", path: "/agendamento" },
     ]),
     buildHowToSchema(),
+    buildFaqSchema(),
   ];
 
   return (
