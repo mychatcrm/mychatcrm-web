@@ -1109,6 +1109,24 @@ body:has(.mcx){ background:#05080B; }
   .mcx .mcx-stage-step{ opacity:1; transform:none; }
 }
 
+/* ---- a legenda do vídeo ---------------------------------------------------
+   Faixa por cima da cena que se escreve sozinha e muda a cada batida. É o que
+   faz o bloco ler-se como um vídeo a passar e não como um painel de estados. */
+.mcx .mcx-narra{
+  display:grid; padding:14px 16px 13px;
+  border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(242,68,0,.05),transparent);
+}
+.mcx .mcx-narra-linha{
+  margin:0; font-size:.98rem; line-height:1.4; font-weight:500;
+  color:var(--text); letter-spacing:-.008em; min-width:0;
+}
+.mcx .mcx-narra-linha[data-f="5"]{ color:var(--brand-hi); }
+/* As camadas partilhadas são colunas flex; aqui são parágrafos. Sem isto o
+   cursor virava um item de flex e caía PARA BAIXO do texto, em vez de piscar
+   no fim dele — e a faixa ficava com o dobro da altura. */
+.mcx .mcx-narra .mcx-h-ghost-item, .mcx .mcx-narra .mcx-h-live{ display:block; }
+
 /* ---- palco no telemóvel ---------------------------------------------------
    Preso no topo, ele não pode comer o ecrã inteiro: medido a 805px de 812, não
    sobrava nada para o texto que a pessoa está a ler. Aqui fica em cerca de
@@ -1125,6 +1143,8 @@ body:has(.mcx){ background:#05080B; }
   .mcx .mcx-efeitos-wrap{ display:none; }
   .mcx .mcx-stage-thread{ min-height:0; }
   .mcx .mcx-stage-bar{ padding:9px 12px; gap:7px; }
+  .mcx .mcx-narra{ padding:10px 12px 9px; }
+  .mcx .mcx-narra-linha{ font-size:.82rem; line-height:1.34; }
   .mcx .mcx-stage-code{ display:none; }
   .mcx .mcx-stage-phase{ font-size:8px; padding:2px 6px; letter-spacing:.08em; }
   .mcx .mcx-stage-head{ padding:7px 11px; font-size:8.5px; }

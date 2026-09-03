@@ -19,6 +19,14 @@ export type Act = {
   /** Código técnico do motor — mostrado como prova, não como enfeite. */
   reason: string;
   title: string;
+  /**
+   * A legenda que a faixa em cima do palco escreve quando o ato assenta.
+   *
+   * É o remate da cena, não o título outra vez: diz o que o agente ACABOU de
+   * fazer sozinho. Curta, porque é lida enquanto a animação ainda corre, e
+   * universal — "atendimento", nunca consulta/visita/aula.
+   */
+  narration: string;
   body: string;
   /** Linha de sistema quando não há mensagem do cliente (lembrete automático). */
   systemLine?: string;
@@ -71,6 +79,7 @@ export const ESTADO_INICIAL = { slots: LIVRE, crmColumn: 0 } as const;
 export const ACTS: Act[] = [
   {
     id: "chega",
+    narration: "Contato criado e a única pergunta que faltava, feita.",
     label: "Chega o lead",
     reason: "datetime_required",
     title: "O lead chega e pede para marcar.",
@@ -85,6 +94,7 @@ export const ACTS: Act[] = [
   },
   {
     id: "fora-da-janela",
+    narration: "Recusou sem perder o lead: ofereceu a janela real.",
     label: "Fora do horário",
     reason: "outside_availability",
     title: "Pede um horário em que você não atende.",
@@ -98,6 +108,7 @@ export const ACTS: Act[] = [
   },
   {
     id: "passado",
+    narration: "Comparou com a data de hoje, no fuso da sua operação.",
     label: "Data que passou",
     reason: "past_datetime",
     title: "Pede um dia que já passou.",
@@ -110,6 +121,7 @@ export const ACTS: Act[] = [
   },
   {
     id: "ocupado",
+    narration: "Conferiu a agenda antes de prometer qualquer coisa.",
     label: "Horário ocupado",
     reason: "slot_taken",
     title: "Pede um horário que já está tomado.",
@@ -123,6 +135,7 @@ export const ACTS: Act[] = [
   },
   {
     id: "proposta",
+    narration: "Propôs e ficou à espera. Nada gravado até o sim.",
     label: "Proposta",
     reason: "confirmation_required",
     title: "Encontra o horário e espera o sim.",
@@ -136,6 +149,7 @@ export const ACTS: Act[] = [
   },
   {
     id: "confirmado",
+    narration: "Um “pode ser” e a cadeia inteira aconteceu de uma vez.",
     label: "Confirmado",
     reason: "schedule_confirmed",
     title: "O cliente confirma e tudo acontece de uma vez.",
@@ -150,6 +164,7 @@ export const ACTS: Act[] = [
   },
   {
     id: "consulta",
+    narration: "Respondeu do próprio compromisso, sem procurar nada.",
     label: "Consulta",
     reason: "agenda_listed",
     title: "Depois pergunta que horas era mesmo.",
@@ -162,6 +177,7 @@ export const ACTS: Act[] = [
   },
   {
     id: "remarcado",
+    narration: "Mudou o horário e refez os lembretes junto.",
     label: "Remarcado",
     reason: "reschedule_confirmed",
     title: "Precisa mudar — e os lembretes mudam junto.",
@@ -175,6 +191,7 @@ export const ACTS: Act[] = [
   },
   {
     id: "lembrete",
+    narration: "Saiu sozinho, na hora que você definiu.",
     label: "Lembrete",
     reason: "reminder",
     title: "O lembrete sai sozinho, na hora certa.",
@@ -188,6 +205,7 @@ export const ACTS: Act[] = [
   },
   {
     id: "cancelado",
+    narration: "Liberou o horário e avisou. A agenda voltou a respirar.",
     label: "Cancelado",
     reason: "cancellation_confirmed",
     title: "Se cancelar, o horário volta a ficar livre.",

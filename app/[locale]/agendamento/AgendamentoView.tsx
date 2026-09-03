@@ -49,7 +49,15 @@ import {
 } from "./acts";
 
 /** Tempo em cada ato. Dá para ler título, explicação e conversa sem correr. */
-const ACT_MS = 10_000;
+/**
+ * Tempo de leitura depois de a cena assentar, igual em todos os atos.
+ *
+ * A duração de cada ato deixou de ser fixa: um ato com resposta de 33
+ * caracteres acabava a ação em 4s e ficava 6s parado, enquanto o de 182
+ * caracteres só assentava aos 7s e sobravam 3s para ler. Agora a duração
+ * acompanha a cena e o que é constante é isto — o respiro no fim.
+ */
+const LEITURA_MS = 3_400;
 const TICK_MS = 250;
 
 /* ------------------------------------------------------------------ palco */
@@ -79,10 +87,60 @@ const ROTULO_FASE: Record<Fase, string> = {
   5: "concluído",
 };
 
-/** Quanto tempo dura a parte animada deste ato. */
-function duracaoCena(reply: string) {
-  return T_ESCREVE + reply.length * CHAR_MS + T_RESPIRO + 600;
+/**
+ * Quanto tempo dura a parte animada deste ato.
+ *
+ * Tem de incluir a escrita da legenda de remate: sem isso o relógio parava 600ms
+ * depois de a cena assentar e a legenda ficava cortada a meio para sempre
+ * (medido: parava sempre aos 28 caracteres). O relógio só pode parar quando já
+ * não há nada a escrever.
+ */
+function duracaoCena(act: Act) {
+  return (
+    T_ESCREVE
+    + act.reply.length * CHAR_MS
+    + T_RESPIRO
+    + act.narration.length * CHAR_NARR
+    + 400
+  );
 }
+
+/**
+ * A legenda de cima, batida a batida.
+ *
+ * O Renato pediu uma apresentação que pareça um vídeo, com texto a ser
+ * escrito em cima. É isto: a faixa narra o que está a acontecer AGORA e
+ * reescreve-se a cada batida, como a legenda de um documentário. Não repete o
+ * título que está na coluna ao lado — conta a ação, e só no fim remata com o
+ * que o agente fez sozinho.
+ *
+ * Devolve também DESDE quando aquela linha está no ecrã, que é o que permite
+ * escrevê-la letra a letra sem guardar mais estado.
+ */
+const NARRA_ENTRA_LEAD = "O lead escreve no WhatsApp.";
+const NARRA_ENTRA_RELOGIO = "Ninguém escreveu. Deu a hora do lembrete.";
+const NARRA_DECIDE = "O agente abre a sua agenda e decide.";
+const NARRA_RESPONDE = "Escreve a resposta e devolve na hora.";
+const CHAR_NARR = 21;
+
+function narracaoEm(act: Act, fase: Fase, t: number): { texto: string; desde: number } {
+  if (fase <= 0) return { texto: "", desde: 0 };
+  if (fase === 1) {
+    return { texto: act.inbound ? NARRA_ENTRA_LEAD : NARRA_ENTRA_RELOGIO, desde: T_ENTRA };
+  }
+  if (fase === 2) return { texto: NARRA_DECIDE, desde: T_PENSA };
+  if (fase <= 4) return { texto: NARRA_RESPONDE, desde: T_ESCREVE };
+  return { texto: act.narration, desde: T_ESCREVE + act.reply.length * CHAR_MS + T_RESPIRO };
+}
+
+/** Todas as legendas possíveis — o fantasma precisa da mais alta. */
+const TODAS_NARRACOES = [
+  NARRA_ENTRA_LEAD,
+  NARRA_ENTRA_RELOGIO,
+  NARRA_DECIDE,
+  NARRA_RESPONDE,
+  ...ACTS.map((a) => a.narration),
+];
 
 function faseEm(t: number, reply: string): Fase {
   const fimEscrita = T_ESCREVE + reply.length * CHAR_MS;
@@ -121,6 +179,18 @@ const FantasmaConversa = memo(function FantasmaConversa() {
           {a.inbound ? <div className="mcx-bubble mcx-bubble-in">{a.inbound}</div> : null}
           <div className="mcx-bubble mcx-bubble-out">{a.reply}</div>
         </div>
+      ))}
+    </div>
+  );
+});
+
+const FantasmaNarracao = memo(function FantasmaNarracao() {
+  return (
+    <div className="mcx-h-ghost" aria-hidden="true">
+      {TODAS_NARRACOES.map((linha) => (
+        <p key={linha} className="mcx-h-ghost-item mcx-narra-linha">
+          {linha}
+        </p>
       ))}
     </div>
   );
@@ -376,7 +446,7 @@ function Stage({
   reduced: boolean;
 }) {
   const [t, setT] = useState(0);
-  const fim = duracaoCena(act.reply);
+  const fim = duracaoCena(act);
 
   // Refs para o reset não voltar a correr sempre que a pessoa pausa.
   const fimRef = useRef(fim);
@@ -403,6 +473,11 @@ function Stage({
   const escrito = fase >= 4 ? act.reply : act.reply.slice(0, escritos);
   const aplicado = fase >= 5;
 
+  const narra = narracaoEm(act, fase, t);
+  const narrado = reduced
+    ? narra.texto
+    : narra.texto.slice(0, Math.max(0, Math.floor((t - narra.desde) / CHAR_NARR)));
+
   const slots = aplicado ? act.slots : antes.slots;
   const coluna = aplicado ? act.crmColumn : antes.crmColumn;
   const mudou = useMemo(
@@ -423,6 +498,15 @@ function Stage({
           {ROTULO_FASE[fase]}
         </span>
         <span className="mcx-mono mcx-stage-code">{act.reason}</span>
+      </div>
+
+      {/* A legenda do vídeo: escreve-se sozinha e muda a cada batida. */}
+      <div className="mcx-narra">
+        <FantasmaNarracao />
+        <p className="mcx-narra-linha mcx-h-live" data-f={fase}>
+          {narrado}
+          {narrado.length < narra.texto.length ? <i className="mcx-caret" /> : null}
+        </p>
       </div>
 
       <div className="mcx-stage-grid">
@@ -493,7 +577,7 @@ export function AgendamentoView() {
   }, [running]);
 
   useEffect(() => {
-    if (elapsed < ACT_MS) return;
+    if (elapsed < duracaoAtoRef.current) return;
     setElapsed(0);
     setActive((v) => (v + 1) % ACTS.length);
   }, [elapsed]);
@@ -554,7 +638,10 @@ export function AgendamentoView() {
    * dois — é daqui que sai o movimento do card e a mudança na agenda.
    */
   const antes = active === 0 ? ESTADO_INICIAL : (ACTS[active - 1] ?? ACTS[0]!);
-  const pct = Math.min(100, (elapsed / ACT_MS) * 100);
+  const duracaoAto = duracaoCena(act) + LEITURA_MS;
+  const duracaoAtoRef = useRef(duracaoAto);
+  duracaoAtoRef.current = duracaoAto;
+  const pct = Math.min(100, (elapsed / duracaoAto) * 100);
 
   return (
     <McxPage>
