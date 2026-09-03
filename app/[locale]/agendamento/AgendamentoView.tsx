@@ -27,14 +27,13 @@ import {
   Bell,
   CalendarCheck,
   Check,
-  MessageSquare,
-  RefreshCw,
   ShieldCheck,
   Sparkles,
   X,
 } from "lucide-react";
 import { McxFooter, McxNav, McxPage, Reveal, SectionLabel, groupDigits } from "@/components/marketing/mcx";
 import { NUNCA, PASSOS, PERGUNTAS, SITUACOES, type Situacao, type TipoSituacao } from "./conteudo";
+import { DemoAoVivo } from "./DemoAoVivo";
 
 const CTA = "/planos";
 
@@ -226,36 +225,10 @@ export function AgendamentoView() {
           </ul>
         </div>
 
-        {/* A prova em cinco segundos: uma conversa que acaba marcada. Está toda
-            no HTML — nada aqui espera por temporizador nenhum. */}
-        <div className="mcx-ag-proof">
-          <div className="mcx-ag-proof-bar">
-            <span className="mcx-dot" />
-            <span className="mcx-mono">Conversa real do agente</span>
-          </div>
-          <div className="mcx-ag-proof-body">
-            <p className="mcx-bubble mcx-bubble-in">Oi, dá pra marcar quinta às 10h?</p>
-            <p className="mcx-bubble mcx-bubble-out">
-              Quinta, dia 4, às 10:00 está livre. Confirmo esse horário para você?
-            </p>
-            <p className="mcx-bubble mcx-bubble-in">Pode ser, confirma.</p>
-            <p className="mcx-bubble mcx-bubble-out">Pronto, seu agendamento foi confirmado.</p>
-          </div>
-          <ul className="mcx-ag-proof-out">
-            <li>
-              <CalendarCheck size={12} /> Na agenda
-            </li>
-            <li>
-              <RefreshCw size={12} /> Card em Agendado
-            </li>
-            <li>
-              <Bell size={12} /> Lembrete marcado
-            </li>
-            <li>
-              <MessageSquare size={12} /> Você avisado
-            </li>
-          </ul>
-        </div>
+        {/* A demonstração ao vivo. É o que prova, em movimento, que isto é um
+            produto de IA — mas nada na página fica atrás dela: a prova completa
+            de cada situação está em texto na grelha, logo abaixo. */}
+        <DemoAoVivo />
       </header>
 
       {/* ----------------------------------------------------- reconhecer --- */}

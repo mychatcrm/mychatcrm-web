@@ -763,6 +763,165 @@ body:has(.mcx){ background:#05080B; }
   position:relative; z-index:1;
 }
 
+/* ---- demonstração ao vivo (hero) -----------------------------------------
+   Uma conversa que cresce, com a agenda e o CRM a reagir. A fila tem ALTURA
+   FIXA e rola por dentro: é assim que as mensagens podem acumular sem a caixa
+   crescer e empurrar a página a cada mensagem nova. */
+
+.mcx .mcx-live{
+  border:1px solid var(--line-strong); border-radius:18px; overflow:hidden; min-width:0;
+  background:linear-gradient(180deg,#0B121A,#070C11);
+  box-shadow:0 40px 90px -50px rgba(0,0,0,.95) !important;
+}
+.mcx .mcx-live-bar{
+  display:flex; align-items:center; gap:10px; padding:11px 14px;
+  border-bottom:1px solid var(--line); background:rgba(255,255,255,.022);
+}
+.mcx .mcx-live-play{
+  display:inline-flex; align-items:center; gap:5px; cursor:pointer;
+  border:1px solid var(--line); border-radius:999px; padding:4px 10px;
+  background:rgba(255,255,255,.03); color:var(--muted);
+  font-family:var(--f-mono); font-size:8.5px; letter-spacing:.1em; text-transform:uppercase;
+  transition:border-color .2s ease,color .2s ease;
+}
+.mcx .mcx-live-play:hover{ border-color:rgba(242,68,0,.5); color:var(--brand-hi); }
+
+.mcx .mcx-live-prog{ display:block; height:2px; background:rgba(255,255,255,.06); }
+.mcx .mcx-live-prog i{
+  display:block; height:100%; background:linear-gradient(90deg,var(--brand),var(--brand-hi));
+}
+
+.mcx .mcx-live-sec{ border-bottom:1px solid var(--line); min-width:0; }
+.mcx .mcx-live-head{
+  display:flex; align-items:center; gap:7px; margin:0; padding:8px 13px;
+  font-family:var(--f-mono); font-size:8.5px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--faint);
+  background:rgba(255,255,255,.014); border-bottom:1px solid var(--line-soft);
+}
+.mcx .mcx-live-head svg{ color:var(--brand); flex:none; }
+
+/* a fila: altura fixa, rola por dentro */
+.mcx .mcx-live-thread{
+  height:214px; overflow-y:auto; overscroll-behavior:contain;
+  padding:13px; display:flex; flex-direction:column; gap:8px;
+  scrollbar-width:thin; scrollbar-color:var(--line-strong) transparent;
+}
+.mcx .mcx-live-thread::-webkit-scrollbar{ width:4px; }
+.mcx .mcx-live-thread::-webkit-scrollbar-thumb{ background:var(--line-strong); border-radius:99px; }
+.mcx .mcx-live-thread .mcx-bubble{
+  margin:0; font-size:.82rem; line-height:1.45; padding:9px 12px; max-width:90%;
+}
+@media (prefers-reduced-motion:no-preference){
+  .mcx .mcx-live-thread > *{ animation:mcx-live-in .3s cubic-bezier(.22,1,.36,1) both; }
+}
+@keyframes mcx-live-in{
+  from{ opacity:0; transform:translateY(6px) scale(.98); }
+  to{ opacity:1; transform:none; }
+}
+.mcx .mcx-live-sys{
+  display:flex; align-items:center; justify-content:center; gap:6px; margin:2px 0;
+  font-family:var(--f-mono); font-size:8px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--faint);
+}
+
+/* o agente a escrever */
+.mcx .mcx-live-dots{
+  display:inline-flex; align-items:center; gap:5px; align-self:flex-end;
+  width:auto; max-width:none; padding:10px 13px;
+}
+.mcx .mcx-live-dots i{ width:5px; height:5px; border-radius:99px; background:var(--brand-hi); opacity:.45; }
+@media (prefers-reduced-motion:no-preference){
+  .mcx .mcx-live-dots i{ animation:mcx-dots 1.05s ease-in-out infinite; }
+  .mcx .mcx-live-dots i:nth-child(2){ animation-delay:.16s; }
+  .mcx .mcx-live-dots i:nth-child(3){ animation-delay:.32s; }
+}
+@keyframes mcx-dots{
+  0%,60%,100%{ transform:translateY(0); opacity:.38; }
+  30%{ transform:translateY(-4px); opacity:1; }
+}
+
+/* agenda + crm lado a lado */
+.mcx .mcx-live-panels{ display:grid; grid-template-columns:1fr 1fr; }
+.mcx .mcx-live-panels .mcx-live-sec:first-child{ border-right:1px solid var(--line); }
+
+.mcx .mcx-live-grid{
+  display:grid; grid-template-columns:auto repeat(4,1fr); gap:4px;
+  align-items:center; padding:12px;
+}
+.mcx .mcx-live-day, .mcx .mcx-live-hour{
+  font-family:var(--f-mono); font-size:8px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--faint); text-align:center;
+}
+.mcx .mcx-live-hour{ text-align:right; padding-right:4px; }
+.mcx .mcx-live-slot{
+  position:relative; height:20px; border-radius:5px;
+  border:1px solid var(--line); background:rgba(255,255,255,.022);
+  transition:background .4s ease,border-color .4s ease;
+}
+.mcx .mcx-live-slot[data-s="ocupado"]{ background:rgba(255,255,255,.09); border-color:var(--line-strong); }
+.mcx .mcx-live-slot[data-s="proposto"]{
+  background:var(--brand-dim); border-color:rgba(242,68,0,.55); border-style:dashed;
+}
+.mcx .mcx-live-slot[data-s="marcado"]{
+  background:linear-gradient(180deg,var(--brand-hi),var(--brand)); border-color:var(--brand);
+}
+.mcx .mcx-live-slot[data-flash="true"]::after{
+  content:""; position:absolute; inset:-3px; border-radius:7px;
+  border:1px solid var(--brand); pointer-events:none; opacity:0;
+}
+@media (prefers-reduced-motion:no-preference){
+  .mcx .mcx-live-slot[data-flash="true"]::after{ animation:mcx-slot-pop .9s ease-out both; }
+}
+@keyframes mcx-slot-pop{
+  0%{ opacity:1; transform:scale(.85); }
+  100%{ opacity:0; transform:scale(1.6); }
+}
+
+.mcx .mcx-live-board{ display:grid; grid-template-columns:repeat(3,1fr); gap:4px; padding:12px; }
+.mcx .mcx-live-col{
+  border:1px solid var(--line); border-radius:7px; padding:6px 4px; min-height:62px;
+  background:rgba(255,255,255,.018);
+  transition:border-color .35s ease,background .35s ease;
+}
+.mcx .mcx-live-col[data-on="true"]{ border-color:rgba(242,68,0,.45); background:var(--brand-dim); }
+.mcx .mcx-live-colname{
+  display:block; font-family:var(--f-mono); font-size:7px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--faint); margin-bottom:5px; text-align:center;
+}
+.mcx .mcx-live-card{
+  position:relative; z-index:3;
+  border:1px solid rgba(242,68,0,.5); border-radius:5px; padding:5px 4px;
+  background:linear-gradient(160deg,rgba(242,68,0,.24),rgba(242,68,0,.09));
+  font-size:9.5px; font-weight:600; color:var(--text); text-align:center;
+}
+
+/* os chips do que ficou feito. Ficam sempre no DOM, invisíveis até acenderem:
+   é o que impede a consola de mudar de altura quando eles aparecem. */
+.mcx .mcx-live-fx{
+  list-style:none; margin:0; padding:11px 13px; display:flex; flex-wrap:wrap; gap:6px;
+  background:rgba(255,255,255,.015); min-height:38px;
+}
+.mcx .mcx-live-fx li{
+  display:inline-flex; align-items:center; gap:5px;
+  border:1px solid rgba(25,206,114,.3); background:var(--live-dim);
+  border-radius:999px; padding:4px 9px;
+  font-family:var(--f-mono); font-size:8px; letter-spacing:.06em;
+  text-transform:uppercase; color:#9BE9C4;
+  opacity:0; transform:translateY(4px);
+  transition:opacity .35s ease,transform .35s ease;
+}
+.mcx .mcx-live-fx[data-on="true"] li{
+  opacity:1; transform:none; transition-delay:calc(var(--i) * 90ms);
+}
+.mcx .mcx-live-fx svg{ color:var(--live); }
+
+@media (max-width:520px){
+  .mcx .mcx-live-thread{ height:180px; }
+  .mcx .mcx-live-panels{ grid-template-columns:1fr; }
+  .mcx .mcx-live-panels .mcx-live-sec:first-child{ border-right:0; }
+  .mcx .mcx-live-slot{ height:17px; }
+}
+
 /* ---- página do agendamento -----------------------------------------------
    Sem palco, sem temporizadores: a prova está toda no ecrã ao mesmo tempo e a
    pessoa lê a parte que lhe interessa. */
