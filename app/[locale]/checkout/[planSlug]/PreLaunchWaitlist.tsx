@@ -134,7 +134,9 @@ export function PreLaunchWaitlist({ planSlug, planName, priceMonthly, billingCyc
 
   return (
     <McxPage>
-      <McxNav compact />
+      {/* Nesta página o botão do topo não pode devolver a pessoa aos planos: ela
+          veio de lá. Aponta para o formulário, que é o único objetivo daqui. */}
+      <McxNav compact ctaHref="#mcx-waitlist-form" ctaLabel="Entrar na lista" />
 
       <main>
         {/* ---------------------------------------------------------------- */}
@@ -253,7 +255,7 @@ export function PreLaunchWaitlist({ planSlug, planName, priceMonthly, billingCyc
             </div>
 
             {/* --- coluna do formulário --- */}
-            <div style={{ position: "relative" }}>
+            <div style={{ position: "relative", scrollMarginTop: 90 }} id="mcx-waitlist-form">
               <div className="mcx-auth-card" style={{ maxWidth: 520, marginLeft: "auto" }}>
                 {done ? (
                   <div
@@ -532,13 +534,10 @@ export function PreLaunchWaitlist({ planSlug, planName, priceMonthly, billingCyc
                       marginTop: 30,
                     }}
                   >
-                    <a href="#mcx-waitlist-grid" className="mcx-btn mcx-btn-primary mcx-btn-lg">
+                    <a href="#mcx-waitlist-form" className="mcx-btn mcx-btn-primary mcx-btn-lg">
                       <Sparkles size={16} />
                       Entrar na lista de espera
                     </a>
-                    <Link href="/planos" className="mcx-btn mcx-btn-ghost mcx-btn-lg">
-                      Ver os planos
-                    </Link>
                   </div>
                 </div>
               </div>

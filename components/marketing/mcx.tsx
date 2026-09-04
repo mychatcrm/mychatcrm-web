@@ -1532,7 +1532,20 @@ const NAV_LINKS = [
   ["Blog", "/blog"],
 ] as const;
 
-export function McxNav({ compact = false }: { compact?: boolean }) {
+/**
+ * `ctaHref` / `ctaLabel` existem para a lista de espera: lá o botão do topo não
+ * pode mandar a pessoa para /planos, porque foi de lá que ela veio. Todas as
+ * outras páginas continuam a receber o padrão sem mudar nada.
+ */
+export function McxNav({
+  compact = false,
+  ctaHref = "/planos",
+  ctaLabel = "Começar agora",
+}: {
+  compact?: boolean;
+  ctaHref?: string;
+  ctaLabel?: string;
+}) {
   const [open, setOpen] = useState(false);
   const onHash = useHashNav();
 
@@ -1571,8 +1584,8 @@ export function McxNav({ compact = false }: { compact?: boolean }) {
           <Link href="/login" className="mcx-navlink" style={{ fontWeight: 600 }}>
             Entrar
           </Link>
-          <Link href="/planos" className="mcx-btn mcx-btn-primary" style={{ padding: "11px 20px" }}>
-            Começar agora
+          <Link href={ctaHref} className="mcx-btn mcx-btn-primary" style={{ padding: "11px 20px" }}>
+            {ctaLabel}
           </Link>
         </div>
 
