@@ -1142,6 +1142,25 @@ body:has(.mcx){ background:#05080B; }
 .mcx .mcx-wl-perks li b{
   display:block; color:var(--text); font-size:.97rem; font-weight:650; margin-bottom:2px;
 }
+/* O desconto é a razão mais forte para deixar o contato numa página sem
+   checkout — por isso é o único item da lista com a moldura da marca. */
+.mcx .mcx-wl-perks li.mcx-wl-perk-hero{
+  border-color:rgba(242,68,0,.42);
+  background:linear-gradient(140deg,rgba(242,68,0,.16),rgba(242,68,0,.03));
+}
+.mcx .mcx-wl-perks li.mcx-wl-perk-hero b{ color:var(--brand-hi); }
+
+/* Depois de enviar, a promessa fica repetida — é o que a pessoa leva daqui. */
+.mcx .mcx-wl-promo{
+  display:flex; align-items:flex-start; gap:11px; width:100%;
+  padding:13px 15px; border-radius:12px;
+  border:1px solid rgba(242,68,0,.4);
+  background:linear-gradient(140deg,rgba(242,68,0,.15),rgba(242,68,0,.03));
+  color:var(--muted); font-size:.86rem; line-height:1.5;
+}
+.mcx .mcx-wl-promo > svg{ color:var(--brand-hi); flex:none; margin-top:2px; }
+.mcx .mcx-wl-promo b{ display:block; color:var(--text); font-weight:650; margin-bottom:2px; }
+
 .mcx .mcx-wl-perk-ico{
   display:inline-flex; align-items:center; justify-content:center; flex:none;
   width:34px; height:34px; border-radius:10px;

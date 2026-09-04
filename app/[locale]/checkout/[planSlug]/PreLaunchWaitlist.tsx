@@ -19,6 +19,7 @@ import {
   Clock,
   Loader2,
   Lock,
+  Percent,
   Rocket,
   ShieldCheck,
   Sparkles,
@@ -165,11 +166,6 @@ export function PreLaunchWaitlist({ planSlug, planName, priceMonthly, billingCyc
           >
             {/* --- coluna do argumento --- */}
             <div style={{ display: "flex", flexDirection: "column", gap: 26, maxWidth: 640 }}>
-              <span className="mcx-chip">
-                <span className="mcx-dot" />
-                Fase final de testes
-              </span>
-
               <h1 className="mcx-h1" style={{ fontSize: "clamp(2.1rem,4.4vw,3.4rem)" }}>
                 Você chegou antes.
                 <br />
@@ -187,11 +183,20 @@ export function PreLaunchWaitlist({ planSlug, planName, priceMonthly, billingCyc
                 e um agente a trabalhar à frente dela responde melhor do que prosa.
               */}
               <p className="mcx-wl-punch">
-                O checkout abre em <strong>dezembro</strong>. Até lá, o seu lugar na fila
-                fica guardado — e quem está na lista entra no primeiro lote.
+                O checkout abre em <strong>dezembro</strong>. Quem entrar na lista agora
+                recebe, no dia, um <strong>desconto que não vai existir para mais ninguém</strong>.
               </p>
 
               <ul className="mcx-wl-perks">
+                <li className="mcx-wl-perk-hero">
+                  <span className="mcx-wl-perk-ico">
+                    <Percent size={15} />
+                  </span>
+                  <span>
+                    <b>Desconto exclusivo no lançamento</b>
+                    reservado a quem entrou na lista antes de abrirmos
+                  </span>
+                </li>
                 <li>
                   <span className="mcx-wl-perk-ico">
                     <Bell size={15} />
@@ -256,6 +261,14 @@ export function PreLaunchWaitlist({ planSlug, planName, priceMonthly, billingCyc
                       <strong style={{ color: "var(--text)" }}>{planName}</strong>. Assim que abrirmos
                       ao público, você é avisado no WhatsApp e no e-mail — antes do anúncio geral.
                     </p>
+                    <div className="mcx-wl-promo">
+                      <Percent size={16} />
+                      <span>
+                        <b>Seu desconto de lançamento está reservado.</b>
+                        Ele vale só para quem entrou na lista antes da abertura, e vai no mesmo
+                        aviso.
+                      </span>
+                    </div>
                     <div
                       className="mcx-alert mcx-alert-ok"
                       style={{ width: "100%" }}
@@ -495,10 +508,11 @@ export function PreLaunchWaitlist({ planSlug, planName, priceMonthly, billingCyc
                     {LAUNCH_TARGET}
                   </span>
                   <h2 className="mcx-h2" style={{ maxWidth: 700, margin: "0 auto" }}>
-                    Quem entra agora é avisado antes de todo mundo.
+                    Quem entra agora é avisado antes — e paga menos.
                   </h2>
                   <p className="mcx-lead" style={{ margin: "20px auto 0", textAlign: "center" }}>
-                    Sem compromisso e sem cartão. Só o seu lugar na fila do primeiro lote.
+                    Sem compromisso e sem cartão. O seu lugar no primeiro lote e o desconto de
+                    lançamento, guardados no seu nome.
                   </p>
                   <div
                     style={{
