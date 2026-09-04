@@ -166,10 +166,19 @@ export function PreLaunchWaitlist({ planSlug, planName, priceMonthly, billingCyc
           >
             {/* --- coluna do argumento --- */}
             <div style={{ display: "flex", flexDirection: "column", gap: 26, maxWidth: 640 }}>
-              <h1 className="mcx-h1" style={{ fontSize: "clamp(2.1rem,4.4vw,3.4rem)" }}>
-                Você chegou antes.
+              {/*
+                A manchete vende o resultado, não a lista de espera — a mesma fórmula
+                da /agendamento. "Você chegou antes / E isso vai valer a pena" falava
+                da fila e não prometia nada que se possa cobrar; esta toca na dor que
+                traz a pessoa até aqui, e a condição fica na linha de baixo.
+              */}
+              {/* Corpo menor que o da home: a manchete é mais longa e a 3,4rem
+                  partia em quatro linhas, com o corte feio em "por demorar a /
+                  responder". A 2,9rem cabe em duas, uma por linha da frase. */}
+              <h1 className="mcx-h1" style={{ fontSize: "clamp(1.95rem,3.6vw,2.9rem)" }}>
+                Nunca mais perca um cliente
                 <br />
-                <span className="mcx-accent">E isso vai valer a pena.</span>
+                <span className="mcx-accent">por demorar a responder.</span>
               </h1>
 
               {/*
@@ -183,8 +192,8 @@ export function PreLaunchWaitlist({ planSlug, planName, priceMonthly, billingCyc
                 e um agente a trabalhar à frente dela responde melhor do que prosa.
               */}
               <p className="mcx-wl-punch">
-                O checkout abre em <strong>dezembro</strong>. Quem entrar na lista agora
-                recebe, no dia, um <strong>desconto que não vai existir para mais ninguém</strong>.
+                Falta pouco: o checkout abre em <strong>dezembro</strong>. Entre na lista agora
+                e garanta um <strong>desconto que não vai existir para mais ninguém</strong>.
               </p>
 
               <ul className="mcx-wl-perks">
