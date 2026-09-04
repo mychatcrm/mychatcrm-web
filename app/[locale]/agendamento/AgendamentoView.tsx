@@ -33,7 +33,7 @@ import {
 } from "lucide-react";
 import { McxFooter, McxNav, McxPage, Reveal, SectionLabel, groupDigits } from "@/components/marketing/mcx";
 import { NUNCA, PASSOS, PERGUNTAS, SITUACOES, type Situacao, type TipoSituacao } from "./conteudo";
-import { DemoAoVivo } from "./DemoAoVivo";
+import { DemoAoVivo } from "@/components/marketing/DemoAoVivo";
 
 const CTA = "/planos";
 

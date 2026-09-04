@@ -14,8 +14,11 @@
  * e faz o percurso).
  *
  * Nada na página depende disto. Quem chega, pausa, ou tem "reduzir movimento"
- * ligado continua a ter a prova completa em texto na grelha das dez situações,
- * mais abaixo. A animação convence; o texto explica.
+ * ligado continua a ter todo o argumento em texto à volta. A animação convence;
+ * o texto explica.
+ *
+ * Vive em components/marketing porque é usada em mais do que uma página: na de
+ * agendamento e na lista de espera, onde é a prova de que o produto existe.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -32,7 +35,7 @@ import {
   MS_POR_CHAR,
   fimDoGuiao,
   type EstadoSlot,
-} from "./demo";
+} from "./demo-agente";
 
 const TICK_MS = 50;
 

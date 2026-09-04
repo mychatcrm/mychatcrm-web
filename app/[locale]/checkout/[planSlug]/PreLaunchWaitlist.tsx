@@ -13,6 +13,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
   ArrowRight,
+  Bell,
   Check,
   CheckCircle2,
   Clock,
@@ -25,6 +26,7 @@ import {
 import { checkWhatsapp, formatWhatsapp } from "@/lib/brazil-whatsapp";
 import { BLOG_NICHES } from "@/lib/blog/posts";
 import { McxFooter, McxNav, McxPage, Reveal, SectionLabel, priceBRL } from "@/components/marketing/mcx";
+import { DemoAoVivo } from "@/components/marketing/DemoAoVivo";
 
 const LAUNCH_TARGET = "Dezembro de 2026";
 
@@ -174,48 +176,66 @@ export function PreLaunchWaitlist({ planSlug, planName, priceMonthly, billingCyc
                 <span className="mcx-accent">E isso vai valer a pena.</span>
               </h1>
 
-              <p className="mcx-lead">
-                O MyChatCRM está na reta final de testes. Podíamos ter aberto o checkout há meses e
-                deixado você descobrir os defeitos sozinho — muita gente faz isso. Preferimos
-                segurar, terminar direito e entregar uma ferramenta que funciona no primeiro dia.
+              {/*
+                Aqui havia dois parágrafos cinzentos que falavam de NÓS — "preferimos
+                segurar, terminar direito". Ninguém lê isso numa página de captura, e
+                era o que o Renato apontou: apagado e fraco.
+
+                Agora são três linhas curtas sobre o que a PESSOA leva por entrar, e
+                logo a seguir a demonstração ao vivo. Numa página que pede o WhatsApp de
+                alguém sem ter checkout, a pergunta silenciosa é "isto existe mesmo?" —
+                e um agente a trabalhar à frente dela responde melhor do que prosa.
+              */}
+              <p className="mcx-wl-punch">
+                O checkout abre em <strong>dezembro</strong>. Até lá, o seu lugar na fila
+                fica guardado — e quem está na lista entra no primeiro lote.
               </p>
 
-              <div
-                className="mcx-card"
-                style={{
-                  padding: "18px 20px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 14,
-                  borderColor: "rgba(242,68,0,.32)",
-                  background: "linear-gradient(150deg,rgba(242,68,0,.12),rgba(255,255,255,.012))",
-                }}
-              >
-                <Rocket size={20} style={{ color: "var(--brand-hi)", flexShrink: 0 }} />
+              <ul className="mcx-wl-perks">
+                <li>
+                  <span className="mcx-wl-perk-ico">
+                    <Bell size={15} />
+                  </span>
+                  <span>
+                    <b>Avisado antes de todo mundo</b>
+                    no WhatsApp e no e-mail, antes do anúncio público
+                  </span>
+                </li>
+                <li>
+                  <span className="mcx-wl-perk-ico">
+                    <Rocket size={15} />
+                  </span>
+                  <span>
+                    <b>Primeiro lote de acesso</b>
+                    quando abrirmos, já com o plano {planName} guardado
+                  </span>
+                </li>
+                <li>
+                  <span className="mcx-wl-perk-ico">
+                    <Lock size={15} />
+                  </span>
+                  <span>
+                    <b>Sem cartão e sem compromisso</b>
+                    o seu contato não vai para mais nada
+                  </span>
+                </li>
+              </ul>
+
+              <div className="mcx-wl-date">
+                <Rocket size={20} />
                 <div>
-                  <div className="mcx-mono" style={{ marginBottom: 3 }}>
-                    Previsão de lançamento
-                  </div>
-                  <div
-                    style={{
-                      fontFamily: "var(--f-display)",
-                      fontWeight: 700,
-                      fontSize: "1.45rem",
-                      letterSpacing: "-.02em",
-                      color: "var(--text)",
-                    }}
-                  >
-                    {LAUNCH_TARGET}
-                  </div>
+                  <div className="mcx-mono">Previsão de lançamento</div>
+                  <strong>{LAUNCH_TARGET}</strong>
                 </div>
               </div>
 
-              <p className="mcx-body" style={{ fontSize: ".97rem", maxWidth: "60ch" }}>
-                Trabalhamos nisto todos os dias. Não é um chatbot com um CRM colado ao lado: é um
-                agente que decide, marca, move o lead e chama a pessoa certa — e um painel que
-                mostra, passo a passo, o que ele decidiu e por quê. Quando abrir, você vai entender
-                por que esperou.
-              </p>
+              <div className="mcx-wl-demo">
+                <p className="mcx-wl-demo-lead">
+                  <Sparkles size={14} />
+                  Enquanto você espera, ele já faz isto — ao vivo, agora:
+                </p>
+                <DemoAoVivo />
+              </div>
             </div>
 
             {/* --- coluna do formulário --- */}

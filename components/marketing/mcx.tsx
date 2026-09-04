@@ -811,6 +811,21 @@ body:has(.mcx){ background:#05080B; }
 .mcx .mcx-live-thread .mcx-bubble{
   margin:0; font-size:.82rem; line-height:1.45; padding:9px 12px; max-width:90%;
 }
+/* As mensagens assentam EM BAIXO e crescem para cima, como em qualquer
+   conversa: no início da história a caixa não fica com um vazio enorme por
+   baixo da primeira bolha (medidos 123px).
+
+   Tem de vir DEPOIS da regra acima e com a mesma especificidade — o atalho
+   margin:0 das bolhas ganhava a um simples > *:first-child. E é margin-top:auto
+   em vez de justify-content:flex-end porque este último torna o topo da lista
+   inalcançável quando o conteúdo passa a ser mais alto que a caixa. */
+.mcx .mcx-live-thread .mcx-bubble:first-child,
+.mcx .mcx-live-thread .mcx-live-sys:first-child{ margin-top:auto; }
+/* O lado de cada bolha por align-self, e não pelo margin-left:auto da regra
+   global: o atalho margin:0 acima anula margens, e sem isto as falas do agente
+   ficavam encostadas à esquerda, como se fossem do cliente. */
+.mcx .mcx-live-thread .mcx-bubble-in{ align-self:flex-start; }
+.mcx .mcx-live-thread .mcx-bubble-out{ align-self:flex-end; }
 @media (prefers-reduced-motion:no-preference){
   .mcx .mcx-live-thread > *{ animation:mcx-live-in .3s cubic-bezier(.22,1,.36,1) both; }
 }
@@ -1105,6 +1120,68 @@ body:has(.mcx){ background:#05080B; }
 }
 .mcx .mcx-cta-final svg{ color:var(--brand); }
 .mcx .mcx-cta-final .mcx-lead{ margin:12px auto 26px; }
+
+/* ---- lista de espera: coluna do argumento --------------------------------
+   Era prosa cinzenta em três blocos. Numa página que pede o WhatsApp de
+   alguém, o texto tem de ser lido de relance — e a pergunta silenciosa
+   ("isto existe mesmo?") pede prova, não parágrafo. */
+
+.mcx .mcx-wl-punch{
+  margin:0; font-size:1.08rem; line-height:1.6; color:var(--text);
+  max-width:54ch;
+}
+.mcx .mcx-wl-punch strong{ color:var(--brand-hi); font-weight:700; }
+
+.mcx .mcx-wl-perks{ list-style:none; margin:0; padding:0; display:grid; gap:11px; }
+.mcx .mcx-wl-perks li{
+  display:flex; align-items:flex-start; gap:13px;
+  padding:14px 16px; border:1px solid var(--line); border-radius:13px;
+  background:linear-gradient(140deg,rgba(255,255,255,.038),rgba(255,255,255,.012));
+  color:var(--muted); font-size:.9rem; line-height:1.5;
+}
+.mcx .mcx-wl-perks li b{
+  display:block; color:var(--text); font-size:.97rem; font-weight:650; margin-bottom:2px;
+}
+.mcx .mcx-wl-perk-ico{
+  display:inline-flex; align-items:center; justify-content:center; flex:none;
+  width:34px; height:34px; border-radius:10px;
+  border:1px solid rgba(242,68,0,.35); background:var(--brand-dim); color:var(--brand-hi);
+}
+
+/* a data: o elemento que tem de saltar à vista na coluna */
+.mcx .mcx-wl-date{
+  position:relative; overflow:hidden;
+  display:flex; align-items:center; gap:15px; padding:18px 20px;
+  border:1px solid rgba(242,68,0,.42); border-radius:15px;
+  background:linear-gradient(140deg,rgba(242,68,0,.19),rgba(242,68,0,.04));
+}
+.mcx .mcx-wl-date > svg{ color:var(--brand-hi); flex:none; }
+.mcx .mcx-wl-date .mcx-mono{ margin-bottom:3px; color:var(--brand-hi); }
+.mcx .mcx-wl-date strong{
+  display:block; font-family:var(--f-display); font-weight:700;
+  font-size:1.5rem; letter-spacing:-.02em; color:var(--text);
+}
+/* um brilho que atravessa a caixa de tempos a tempos, para o olho voltar lá */
+.mcx .mcx-wl-date::after{
+  content:""; position:absolute; inset:0; pointer-events:none;
+  background:linear-gradient(100deg,transparent 42%,rgba(255,255,255,.11) 50%,transparent 58%);
+  transform:translateX(-100%);
+}
+@media (prefers-reduced-motion:no-preference){
+  .mcx .mcx-wl-date::after{ animation:mcx-wl-shine 4.5s ease-in-out 1.2s infinite; }
+}
+@keyframes mcx-wl-shine{
+  0%{ transform:translateX(-100%); }
+  32%,100%{ transform:translateX(100%); }
+}
+
+.mcx .mcx-wl-demo{ display:grid; gap:11px; }
+.mcx .mcx-wl-demo-lead{
+  display:flex; align-items:center; gap:8px; margin:0;
+  font-family:var(--f-mono); font-size:9.5px; letter-spacing:.13em;
+  text-transform:uppercase; color:var(--faint);
+}
+.mcx .mcx-wl-demo-lead svg{ color:var(--brand); flex:none; }
 
 /* ---- lista de espera ------------------------------------------------------ */
 .mcx .mcx-error{ font-size:.8rem; color:#F3B9B4; }
