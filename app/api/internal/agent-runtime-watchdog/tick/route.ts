@@ -7,7 +7,12 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 10;
+// Auditing, two health RPCs and a transition email can occasionally exceed the
+// Hobby runtime's old 10-second budget. A hard timeout left a durable
+// `check.started` operation behind and made the audit health stay red. The
+// scheduler HTTP request has its own 25-second timeout; this larger function
+// budget lets the route record a terminal result instead of being killed.
+export const maxDuration = 30;
 
 type ProbeTransition = { notification?: WatchdogNotificationKind | null };
 

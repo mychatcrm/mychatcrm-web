@@ -16,7 +16,7 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServiceClient: () => ({ rpc }),
 }));
 
-import { POST } from "@/app/api/internal/agent-runtime-watchdog/tick/route";
+import { maxDuration, POST } from "@/app/api/internal/agent-runtime-watchdog/tick/route";
 import { AGENT_RUNTIME_WATCHDOG_TICK_PATH } from "@/lib/server/meta-scheduler-auth";
 
 const SECRET = "watchdog-fallback-scheduler-secret-32-bytes";
@@ -38,6 +38,10 @@ function request(valid = true): Request {
 }
 
 describe("durable agent runtime watchdog tick", () => {
+  it("has enough runtime budget to always record a terminal audit event", () => {
+    expect(maxDuration).toBeGreaterThanOrEqual(30);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv("META_LEADGEN_SCHEDULER_SECRET", SECRET);
@@ -86,4 +90,3 @@ describe("durable agent runtime watchdog tick", () => {
     });
   });
 });
-

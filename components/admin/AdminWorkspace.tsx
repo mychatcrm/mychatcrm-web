@@ -410,10 +410,10 @@ function ClientsPage() {
           />
           <Select value={filterPlan} onChange={(e) => setFilterPlan(e.target.value)}>
             <option value="all">Todos os planos</option>
-            <option value="profissional">Profissional</option>
-            <option value="master">Master</option>
+            <option value="solo">Solo</option>
+            <option value="equipa">Equipa</option>
+            <option value="escala">Escala</option>
             <option value="enterprise">Enterprise</option>
-            <option value="trial">Trial</option>
           </Select>
           <Select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
             <option value="all">Todos os status</option>

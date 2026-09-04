@@ -66,6 +66,9 @@ function avatarPalette(name: string) {
 }
 
 const PLAN_STYLES: Record<string, { bg: string; fg: string; border?: string }> = {
+  solo: { bg: "#f4f4f5", fg: "#52525b" },
+  equipa: { bg: "#dbeafe", fg: "#1d4ed8" },
+  escala: { bg: "#fae8ff", fg: "#86198f" },
   profissional: { bg: "#f4f4f5", fg: "#52525b" },
   master: { bg: "#dbeafe", fg: "#1d4ed8" },
   enterprise: { bg: "var(--rail)", fg: "#fff" },
@@ -79,12 +82,16 @@ const STATUS_META: Record<string, { label: string; bg: string; fg: string; borde
 };
 
 function planLabel(slug: string) {
+  if (slug === "solo") return "Solo";
+  if (slug === "equipa") return "Equipa";
+  if (slug === "escala") return "Escala";
   if (slug.includes("master")) return "Master";
   if (slug.includes("enterprise")) return "Enterprise";
   return "Profissional";
 }
 
 function planStyleKey(slug: string) {
+  if (slug === "solo" || slug === "equipa" || slug === "escala") return slug;
   if (slug.includes("master")) return "master";
   if (slug.includes("enterprise")) return "enterprise";
   return "profissional";

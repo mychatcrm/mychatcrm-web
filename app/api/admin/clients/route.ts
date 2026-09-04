@@ -12,56 +12,32 @@ export async function GET(request: Request) {
   }
 
   const url = new URL(request.url);
-  const search = url.searchParams.get("q")?.trim().toLowerCase() ?? "";
+  const search = url.searchParams.get("q")?.trim() ?? "";
   const filterStatus = url.searchParams.get("status") ?? "all";
   const filterPlan = url.searchParams.get("plan") ?? "all";
 
   const sb = createSupabaseServiceClient();
 
-  let query = sb
-    .from("tenants")
-    .select(
-      "id,name,email,plan_slug,status,created_at,stripe_customer_id",
-      { count: "exact" },
-    )
-    .order("created_at", { ascending: false })
-    .limit(500);
-
-  if (filterStatus !== "all") {
-    query = query.eq("status", filterStatus);
-  }
-  if (filterPlan !== "all") {
-    query = query.eq("plan_slug", filterPlan);
-  }
-
-  const { data, error, count } = await query;
+  const { data, error } = await sb.rpc("get_admin_clients_v1", {
+    p_search: search || null,
+    p_status: filterStatus === "all" ? null : filterStatus,
+    p_plan: filterPlan === "all" ? null : filterPlan,
+    p_limit: 500,
+  });
 
   if (error) {
     console.error("[admin/clients] GET:", error.message);
     return NextResponse.json({ error: "Falha ao carregar clientes." }, { status: 500 });
   }
 
-  let rows = (data ?? []).map((row) => ({
-    id: row.id as string,
-    name: (row.name ?? "") as string,
-    email: (row.email ?? "") as string,
-    planSlug: (row.plan_slug ?? "") as string,
-    status: (row.status ?? "active") as string,
-    createdAt: row.created_at as string,
-    stripeCustomerId: (row.stripe_customer_id ?? null) as string | null,
-  }));
-
-  if (search) {
-    rows = rows.filter(
-      (r) =>
-        r.name.toLowerCase().includes(search) ||
-        r.email.toLowerCase().includes(search) ||
-        r.planSlug.toLowerCase().includes(search),
-    );
-  }
+  const payload = data && typeof data === "object" && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : {};
+  const rows = Array.isArray(payload.clients) ? payload.clients : [];
+  const total = typeof payload.total === "number" ? payload.total : rows.length;
 
   return NextResponse.json(
-    { clients: rows, total: count ?? rows.length },
+    { clients: rows, total },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
