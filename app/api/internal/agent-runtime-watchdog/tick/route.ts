@@ -4,6 +4,7 @@ import { sendWatchdogEmailNotification, type WatchdogNotificationKind } from "@/
 import { AGENT_RUNTIME_WATCHDOG_TICK_PATH, verifySignedSchedulerRequest } from "@/lib/server/meta-scheduler-auth";
 import { appendOperationalAuditEvent } from "@/lib/server/operational-audit";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { processAgentProtectionNotifications } from "@/lib/server/agent-protection-notifications";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -72,12 +73,20 @@ export async function POST(request: Request) {
         ...baseEvent.metadata,
         reasonCodes: health.reasons,
         notification,
-        emailNotification: notificationResult.code,
+        deliveryCode: notificationResult.code,
       },
     }, { strict: true });
 
+    const protectionNotifications = await processAgentProtectionNotifications()
+      .catch(() => ({ sent: 0, retry: 0, code: "protection_queue_processing_failed" }));
+    if (protectionNotifications.code.endsWith("failed")) {
+      await appendOperationalAuditEvent({ actorType: "cron", module: "agent.protection.delivery",
+        action: "queue.failed", status: "error", severity: "error",
+        resultCode: protectionNotifications.code,
+      });
+    }
     return NextResponse.json(
-      { ok: healthy, status: health.status, reasons: health.reasons, notification, notificationDelivered: notificationResult.ok },
+      { ok: healthy, status: health.status, reasons: health.reasons, notification, notificationDelivered: notificationResult.ok, protectionNotifications },
       { status: healthy ? 200 : 503, headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {

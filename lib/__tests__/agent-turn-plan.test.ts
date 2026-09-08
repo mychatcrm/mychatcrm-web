@@ -8,6 +8,14 @@ import {
 } from "@/lib/ai/agent-turn-plan";
 
 describe("structured agent turn plan", () => {
+  it("preserves the original language of a structured read request", () => {
+    const evidence="내 예약을 보여 주세요";
+    const plan=parseAgentTurnPlan({reply:"",agenda:{action:"list",date:null,time:null,location:null,eventId:null,readEvidence:evidence}});
+    // A nonempty reply is required by the existing turn parser.
+    expect(plan).toBeNull();
+    const valid=parseAgentTurnPlan({reply:"확인하겠습니다.",agenda:{action:"list",date:null,time:null,location:null,eventId:null,readEvidence:evidence}});
+    expect(valid?.agenda.readEvidence).toBe(evidence);
+  });
   it("declares every agenda action in a strict closed schema", () => {
     expect(AGENT_TURN_RESPONSE_FORMAT.schema.additionalProperties).toBe(false);
     expect(AGENT_TURN_RESPONSE_FORMAT.schema.properties.agenda.additionalProperties).toBe(false);

@@ -17,6 +17,8 @@ export type AgentAgendaPlan = {
   time: string | null;
   location: string | null;
   eventId: string | null;
+  /** Verbatim evidence of a request to read existing appointments, in any language. */
+  readEvidence?: string | null;
 };
 
 /**
@@ -104,8 +106,12 @@ export const AGENT_TURN_RESPONSE_FORMAT = {
           },
           location: { type: ["string", "null"] },
           eventId: { type: ["string", "null"] },
+          readEvidence: {
+            type: ["string", "null"],
+            description: "Exact verbatim quote from the current customer message explicitly requesting to READ THEIR EXISTING appointments, in the original language. Only for action=list. Availability for a NEW appointment, accepting an invitation, creating, rescheduling, or cancelling is NOT a read request. Otherwise null.",
+          },
         },
-        required: ["action", "date", "time", "location", "eventId"],
+        required: ["action", "date", "time", "location", "eventId", "readEvidence"],
       },
       handoff: {
         type: "object",
@@ -282,6 +288,8 @@ export function parseAgentTurnPlan(value: unknown): AgentTurnPlan | null {
       time: normalizeAgentAgendaTime(agenda.time),
       location: nullableString(agenda.location),
       eventId: nullableString(agenda.eventId),
+      ...(agenda.action === "list" && nullableString(agenda.readEvidence)
+        ? { readEvidence: nullableString(agenda.readEvidence) } : {}),
     },
     handoff: {
       requested: rawHandoff.requested === true,

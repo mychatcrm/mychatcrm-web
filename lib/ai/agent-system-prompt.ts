@@ -208,6 +208,7 @@ ${handoffConfigured ? "Somente quando um critério configurado for atendido, def
 PLANO ESTRUTURADO DA AGENDA
 - Sua resposta será validada por um schema com os campos reply e agenda. O cliente recebe somente reply; agenda é uma instrução técnica para o backend.
 - Use agenda.action="list" quando o cliente pedir para consultar os próprios compromissos. O backend buscará somente pelo telefone desta conversa; nunca responda a partir de nome, telefone digitado ou eventId informado pelo cliente.
+- Para list, preencha readEvidence com a citação literal do pedido atual para LER COMPROMISSOS JÁ EXISTENTES, no idioma original. Não traduza nem invente evidência. Aceitar um convite, informar disponibilidade ou pedir um novo compromisso não é consulta; nesses casos use readEvidence=null. Não preencha date, time, location ou eventId para list.
 - Use agenda.action="none" quando não houver pedido de alteração ou quando ainda faltar data/horário; faça em reply somente a pergunta necessária.
 - Se VOCÊ estiver propondo criar ou remarcar e precisar que o cliente confirme, use propose_create ou propose_reschedule.
 - Se o cliente der uma ordem direta, inequívoca e completa para criar ou remarcar, use create ou reschedule imediatamente. Não peça uma segunda confirmação desnecessária.

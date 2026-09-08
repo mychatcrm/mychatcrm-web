@@ -2417,6 +2417,19 @@ export function clientRequestedAgendaList(text: string): boolean {
   return AGENDA_READ_INTENT_RE.test(trimmed);
 }
 
+/** New structured plans carry source evidence; legacy plans retain their guard.
+ * This grants only a contact-scoped read, never an agenda mutation. */
+export function hasStructuredAgendaReadEvidence(plan: AgentAgendaPlan | null | undefined, clientText: string, context?: { priorAssistantText?: string | null; timezone: string }): boolean {
+  if (plan?.action !== "list" || typeof plan.readEvidence !== "string") return false;
+  const evidence = plan.readEvidence.trim();
+  if (evidence.length < 2 || evidence.length > 4000 || !clientText.includes(evidence)) return false;
+  if (plan.date || plan.time || plan.location || plan.eventId) return false;
+  if (context && listPlanLooksLikeScheduleAnswer({ clientText, ...context }) && !clientRequestedAgendaList(clientText)) return false;
+  return !isInitialAgendaMutationRequest(clientText)
+    && !RESCHEDULE_RE.test(clientText)
+    && !detectAgendaCancelIntent(clientText);
+}
+
 function agendaListLocale(text: string, languageTag?: string | null): string {
   const detectedTag = languageTag ?? detectConversationLanguageTag(text);
   try {
@@ -3849,7 +3862,8 @@ export async function resolveAgendaTurn(params: {
     isInitialAgendaMutationRequest(params.clientText) ||
     RESCHEDULE_RE.test(params.clientText) ||
     detectAgendaCancelIntent(params.clientText);
-  const clientRequestedList = clientRequestedAgendaList(params.clientText);
+  const clientRequestedList = clientRequestedAgendaList(params.clientText)
+    || hasStructuredAgendaReadEvidence(agendaPlan, params.clientText, { priorAssistantText: params.priorAssistantText, timezone: params.timezone });
 
   // Corrige o plano ANTES de decidir o ramo — assim toda a lógica de baixo
   // (âncora de data/hora, disponibilidade, proposta em duas fases) já recebe

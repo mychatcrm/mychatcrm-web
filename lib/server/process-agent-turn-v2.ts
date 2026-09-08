@@ -1,4 +1,5 @@
 import "server-only";
+import { recordAgentProtectionBlock } from "@/lib/server/agent-protection-audit";
 
 import {
   generateAgentResponse,
@@ -232,7 +233,7 @@ function journeyFailure(params: {
  * decisão que poderia divergir entre canais (burst, compilador V2, resposta
  * estruturada, agenda, handoff, epoch/outbox e efeitos pós-envio) vive aqui.
  */
-export async function processAgentTurnV2(params: {
+async function processAgentTurnCoreV2(params: {
   sb: SupabaseServiceClient;
   job: AgentResponseJobRow;
   generation: number;
@@ -776,6 +777,24 @@ export async function processAgentTurnV2(params: {
     decision,
     primaryAlreadySent,
   };
+}
+
+export async function processAgentTurnV2(params: Parameters<typeof processAgentTurnCoreV2>[0]): Promise<ProcessAgentTurnV2Result> {
+  const report = async (code: string) => {
+    if (params.dryRun) return;
+    // Notification failure must never change the authorization or business result.
+    await recordAgentProtectionBlock({
+      tenantId: params.job.tenant_id, agentId: params.job.agent_id,
+      jobId: params.job.id, generation: params.generation, channel: params.job.channel,
+      leadId: params.job.lead_id, code,
+    }).catch(() => undefined);
+  };
+  let result: ProcessAgentTurnV2Result;
+  try { result = await processAgentTurnCoreV2(params); }
+  catch (error) { await report("agent_turn_unhandled_error"); throw error; }
+  if (!result.ok) await report(result.error);
+  else if (result.decision.agendaBlocked) await report("agenda_operation_blocked");
+  return result;
 }
 
 /**

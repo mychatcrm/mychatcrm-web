@@ -1,3 +1,5 @@
+import { agentProtectionDescription } from "@/lib/agent-protection";
+
 export type ExplainableAuditEvent = {
   module: string;
   action: string;
@@ -28,6 +30,8 @@ export type OperationalAuditExplanation = {
 };
 
 const MODULES: Record<string, { label: string; description: string; subject: string }> = {
+  "agent.protection": { label: "Proteção do agente", description: "Uma validação impediu uma tentativa automática. Pode ser uma proteção esperada ou uma falha que precisa de investigação.", subject: "uma tentativa automática protegida" },
+  "agent.protection.delivery": { label: "Aviso de proteção ao proprietário", description: "Entrega do aviso de bloqueio ao proprietário do SaaS, com controle de novas tentativas.", subject: "um aviso ao proprietário" },
   "admin.audit": { label: "Auditoria administrativa", description: "Consultas, exportações e manutenção deste histórico operacional.", subject: "a auditoria operacional" },
   "auth.admin": { label: "Acesso administrativo", description: "Entradas, saídas e tentativas de acesso ao painel administrativo.", subject: "o acesso administrativo" },
   "runtime.watchdog": { label: "Monitoramento dos agentes", description: "Verificação automática da saúde das filas, crons e processos que mantêm os agentes funcionando.", subject: "o monitoramento dos agentes" },
@@ -207,11 +211,12 @@ export function explainOperationalAuditEvent(event: ExplainableAuditEvent): Oper
   const moduleDetails = moduleInfo(event.module);
   const action = actionMeaning(event, moduleDetails.subject);
   const status = STATUSES[event.status] ?? { label: humanizeIdentifier(event.status), description: "Estado informado pelo processo responsável." };
+  const protection = event.module === "agent.protection" ? agentProtectionDescription(event.result_code ?? "") : null;
   return {
-    title: action.title,
-    summary: action.summary,
+    title: protection ? "Proteção do agente acionada" : action.title,
+    summary: protection?.explanation ?? action.summary,
     impact: impactFor(event),
-    recommendedAction: recommendationFor(event),
+    recommendedAction: protection?.nextStep ?? recommendationFor(event),
     moduleLabel: moduleDetails.label,
     moduleDescription: moduleDetails.description,
     actionLabel: humanizeIdentifier(event.action),

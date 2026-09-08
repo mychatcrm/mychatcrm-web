@@ -530,6 +530,31 @@ describe("resolveAgendaTurn", () => {
     }));
   });
 
+  it.each([
+    ["ko-KR", "내 예약을 보여 주세요"],
+    ["ar", "أريد عرض مواعيدي الحالية"],
+    ["ja", "自分の予約一覧を見せてください"],
+    ["tr", "Mevcut randevularımı göster"],
+  ])("consulta comprovada por evidência em %s não depende de regex de idioma", async (languageTag, clientText) => {
+    const sb = makeSb(null) as ReturnType<typeof makeSb> & { rpc: ReturnType<typeof vi.fn> };
+    const result = await resolveAgendaTurn({ sb, tenantId: "tenant-1", remoteJid: "821012345678@s.whatsapp.net",
+      timezone: "Asia/Seoul", languageTag, modelText: "", clientText, agendaAutomationEnabled: true,
+      agendaPlan: { action: "list", date: null, time: null, location: null, eventId: null, readEvidence: clientText },
+    });
+    expect(result.action).toBe("listed");
+    expect(sb.rpc).toHaveBeenCalledWith("list_contact_agenda", expect.objectContaining({p_tenant_id:"tenant-1",p_attendee_phone:"821012345678"}));
+    expect(insertAgendaEventMock).not.toHaveBeenCalled();
+  });
+
+  it("evidência inventada não concede consulta nem substitui pedido de criação", async () => {
+    const sb = makeSb(null) as ReturnType<typeof makeSb> & { rpc: ReturnType<typeof vi.fn> };
+    await resolveAgendaTurn({ sb, tenantId:"tenant-1", remoteJid:"821012345678@s.whatsapp.net", timezone:"Asia/Seoul",
+      modelText:"", clientText:"안녕하세요", agendaAutomationEnabled:true,
+      agendaPlan:{ action:"list",date:null,time:null,location:null,eventId:null,readEvidence:"내 예약을 보여 주세요" },
+    });
+    expect(sb.rpc).not.toHaveBeenCalledWith("list_contact_agenda", expect.anything());
+  });
+
   it("não confunde consulta com pedido de mutação", () => {
     expect(clientRequestedAgendaList("tem algum agendamento meu aí?")).toBe(true);
     expect(clientRequestedAgendaList("quero cancelar meu agendamento")).toBe(false);

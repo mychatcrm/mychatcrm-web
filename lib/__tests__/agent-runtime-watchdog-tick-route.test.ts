@@ -6,6 +6,9 @@ const { appendOperationalAuditEvent, rpc, sendWatchdogEmailNotification } = vi.h
   rpc: vi.fn(),
   sendWatchdogEmailNotification: vi.fn(),
 }));
+vi.mock("@/lib/server/agent-protection-notifications", () => ({
+  processAgentProtectionNotifications: vi.fn(async () => ({ sent:0,retry:0,code:"protection_queue_idle" })),
+}));
 
 vi.mock("@/lib/server/operational-audit", () => ({ appendOperationalAuditEvent }));
 vi.mock("@/lib/server/agent-runtime-watchdog-notifications", async (importOriginal) => ({
