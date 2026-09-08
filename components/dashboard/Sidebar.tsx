@@ -37,10 +37,16 @@ export function Sidebar({
   collapsed,
   session,
   onNavigate,
+  hiddenRouteKeys,
 }: {
   collapsed: boolean;
   session: ClientSession;
   onNavigate?: () => void;
+  /**
+   * Rotas ligadas por flag de servidor. Sem isto o item aparece para todo mundo
+   * e leva a uma tela cujas chamadas devolvem 404 — pior que nao existir.
+   */
+  hiddenRouteKeys?: readonly string[];
 }) {
   const pathname = usePathname() ?? "";
   const orgRole = resolveOrganizationRole(session);
@@ -56,9 +62,10 @@ export function Sidebar({
       dashboardNavPinnedItems.filter(
         (it) =>
           organizationRoleCanAccessDashboardRoute(orgRole, it.routeKey) &&
-          (it.routeKey !== "equipes" || showsTeams),
+          (it.routeKey !== "equipes" || showsTeams) &&
+          !hiddenRouteKeys?.includes(it.routeKey),
       ),
-    [orgRole, showsTeams],
+    [hiddenRouteKeys, orgRole, showsTeams],
   );
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const { isLight, mode, setMode } = usePanelAppearance();

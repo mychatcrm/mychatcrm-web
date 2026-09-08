@@ -5,6 +5,7 @@ import { PANEL_THEME_BOOT_SCRIPT } from "@/lib/panel-theme-boot-script";
 import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { getPanelAppearanceFromCookies } from "@/lib/panel-theme-server";
+import { isMeetingsEnabledForTenant } from "@/lib/server/meetings-route-guard";
 
 export const metadata: Metadata = {
   title: "Painel do cliente | MyChatCRM",
@@ -34,6 +35,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
   if (!session) redirect("/login?from=/dashboard");
 
   const initialPanelTheme = getPanelAppearanceFromCookies();
+  // A flag e de servidor; a sidebar e cliente. Resolver aqui evita mostrar um
+  // item de menu que leva a uma tela em que toda chamada devolve 404.
+  const hiddenRouteKeys = isMeetingsEnabledForTenant(session.tenantId) ? [] : ["reunioes"];
 
   return (
     <>
@@ -43,7 +47,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
         strategy="beforeInteractive"
         dangerouslySetInnerHTML={{ __html: PANEL_THEME_BOOT_SCRIPT }}
       />
-      <DashboardShell session={session} initialPanelTheme={initialPanelTheme}>
+      <DashboardShell
+        session={session}
+        initialPanelTheme={initialPanelTheme}
+        hiddenRouteKeys={hiddenRouteKeys}
+      >
         {children}
       </DashboardShell>
     </>

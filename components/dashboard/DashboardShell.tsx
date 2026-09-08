@@ -23,9 +23,11 @@ const DashboardOverviewDateFilter = dynamic(
 function DashboardShellInner({
   children,
   session,
+  hiddenRouteKeys,
 }: {
   children: ReactNode;
   session: ClientSession;
+  hiddenRouteKeys?: readonly string[];
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [drawer, setDrawer] = useState(false);
@@ -94,11 +96,16 @@ function DashboardShellInner({
         } transition-[width]`}
         aria-label="Navegação lateral do cliente"
       >
-        {!drawer ? <Sidebar collapsed={collapsed} session={session} /> : null}
+        {!drawer ? <Sidebar collapsed={collapsed} session={session} hiddenRouteKeys={hiddenRouteKeys} /> : null}
       </aside>
 
       <Drawer open={drawer} onClose={() => setDrawer(false)} title="Menu do cliente">
-        <Sidebar collapsed={false} session={session} onNavigate={() => setDrawer(false)} />
+        <Sidebar
+          collapsed={false}
+          session={session}
+          hiddenRouteKeys={hiddenRouteKeys}
+          onNavigate={() => setDrawer(false)}
+        />
       </Drawer>
 
       <div className="panel-main-pane flex min-h-0 min-w-0 flex-1 flex-col">
@@ -222,9 +229,12 @@ export function DashboardShell({
   children,
   session,
   initialPanelTheme,
+  hiddenRouteKeys,
 }: {
   children: ReactNode;
   session: ClientSession;
+  /** Rotas atras de flag de servidor, resolvidas no layout. */
+  hiddenRouteKeys?: readonly string[];
   /** Cookie `mychatcrm-panel-appearance` (light/dark) — evita flash no primeiro carregamento. */
   initialPanelTheme?: PanelAppearanceMode;
 }) {
@@ -239,7 +249,7 @@ export function DashboardShell({
         operationalLimits={session.operationalLimits}
         isOwner={resolveOrganizationRole(session) === "owner"}
       >
-        <DashboardShellInner session={session}>
+        <DashboardShellInner session={session} hiddenRouteKeys={hiddenRouteKeys}>
           {children}
         </DashboardShellInner>
       </CrmFunnelsProvider>
