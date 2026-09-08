@@ -11,6 +11,14 @@ export const metadata: Metadata = {
   description: "Gerencie chatbot, CRM Kanban, agenda e integrações do MyChatCRM.",
   robots: { index: false, follow: false },
   alternates: { canonical: "/dashboard" },
+  /**
+   * O manifesto vive só no painel (`scope: /dashboard`): instalar o app é útil
+   * para quem grava reuniões pelo celular — ganha tela cheia e ícone próprio.
+   * Não há service worker: cache agressivo no painel serviria HTML velho, e o
+   * ganho não compensaria.
+   */
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, title: "MyChatCRM", statusBarStyle: "black-translucent" },
 };
 
 /**

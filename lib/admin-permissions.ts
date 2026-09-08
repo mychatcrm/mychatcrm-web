@@ -35,11 +35,21 @@ const ROLE_PERMISSION_MAP: Record<AdminRole, string[]> = {
     "logs",
     "seguranca",
     "system-agent",
+    "reunioes",
   ],
   financeiro: ["dashboard", "financeiro", "faturas", "pagamentos", "churn", "clientes", "inadimplentes", "parcerias", "ia"],
   suporte: ["dashboard", "clientes", "leads", "leads-lancamento", "suporte", "comunicados"],
   marketing: ["dashboard", "analytics", "cupons", "parcerias", "comunicados", "notificacoes", "leads", "leads-lancamento", "ia"],
-  desenvolvedor: ["dashboard", "configuracoes", "apis", "logs", "seguranca", "ia", "system-agent"],
+  desenvolvedor: [
+    "dashboard",
+    "configuracoes",
+    "apis",
+    "logs",
+    "seguranca",
+    "ia",
+    "system-agent",
+    "reunioes",
+  ],
 };
 
 export function hasAdminAccessByRole(role: AdminRole, routeKey: string) {

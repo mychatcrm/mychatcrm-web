@@ -69,6 +69,26 @@ export const dashboardNavPinnedItems: DashboardNavItem[] = [
     },
   },
   {
+    href: "/dashboard/reunioes",
+    label: "Reuniões IA",
+    headerTitle: "Reuniões gravadas e analisadas",
+    short: "RE",
+    routeKey: "reunioes",
+    help: {
+      title: "Reuniões IA",
+      summary:
+        "Grave ou envie o áudio de uma reunião e receba transcrição com identificação de quem falou, resumo, decisões e tarefas.",
+      items: [
+        "Grave pelo navegador ou envie um arquivo do celular ou do computador.",
+        "A transcrição fica sincronizada com o áudio: clique no texto para ouvir o trecho.",
+        "Reuniões podem ficar privadas, da equipe, da empresa ou vinculadas a um lead.",
+        "Grave apenas conversas em que você participa e avise os participantes.",
+      ],
+      example:
+        "Uma visita gravada com o celular na mesa vira resumo, lista de tarefas e histórico no lead.",
+    },
+  },
+  {
     href: "/dashboard/agentes",
     label: "Agentes",
     short: "AG",

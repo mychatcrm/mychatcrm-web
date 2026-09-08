@@ -4,10 +4,14 @@ export type OrganizationRole = "owner" | "director" | "manager" | "seller";
 // "conversas" só entrou aqui depois que a inbox passou a ser recortada no
 // servidor (lib/server/access-scope.ts): o vendedor vê apenas as conversas dos
 // leads atribuídos a ele, e pode pausar o agente para assumir o atendimento.
+// "reunioes" segue a mesma lógica de "conversas": o recorte é server-side
+// (lib/server/meeting-access-scope.ts) e o vendedor só alcança as próprias
+// reuniões e as dos leads atribuídos a ele.
 const SELLER_ROUTE_KEYS = new Set([
   "crm",
   "conversas",
   "ofertas-ativas",
+  "reunioes",
   "agenda",
   "lembretes",
   "suporte",
@@ -21,6 +25,7 @@ const MANAGER_OR_DIRECTOR_ROUTE_KEYS = new Set([
   "conversas",
   "integracoes-leads",
   "disparos",
+  "reunioes",
   "agenda",
   "lembretes",
   "integracoes",

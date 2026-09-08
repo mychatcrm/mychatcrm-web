@@ -26,3 +26,22 @@ Duas opções, nenhuma obrigatória:
    aceita chamada externa assinada (HMAC). Defina
    `META_LEADGEN_SCHEDULER_SECRET` na Vercel e no Supabase Vault e agende
    pelo pg_cron, que não tem limite de frequência.
+
+## Reuniões (MyChat Recorder AI)
+
+O módulo de reuniões usa **as duas camadas**:
+
+- **`vercel.json`** — `/api/internal/meetings/retention`, diário (03:45). Apaga
+  áudio vencido pelo prazo do plano e conclui exclusões pedidas pelo usuário.
+  Diário basta: retenção é medida em dias.
+- **`pg_cron`** — `mychatcrm-meetings-minute` chama
+  `/api/internal/meetings/watchdog` a cada minuto
+  (migration `20260908130000_meetings_watchdog_cron_v1.sql`). Esse **não pode**
+  ser diário: ele recupera leases vencidas, reenfileira reunião que ficou em
+  `queued` sem job e reconsulta o provedor quando o callback se perde. Um dia de
+  espera aí significaria o usuário olhando "Transcrevendo…" até o dia seguinte.
+
+O watchdog aceita duas autenticações: token interno (operação) e a assinatura
+HMAC do Supabase/Vault (`meta_leadgen_scheduler_secret`), igual ao worker de
+follow-up. O caminho entra na assinatura, então uma chamada válida para um
+worker não é reaproveitável contra o outro.

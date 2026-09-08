@@ -10,6 +10,7 @@ export type DashboardRouteKey =
   | "equipes"
   | "crm"
   | "ofertas-ativas"
+  | "reunioes"
   | "agenda"
   | "disparos"
   | "lembretes"

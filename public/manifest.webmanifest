@@ -1,0 +1,26 @@
+{
+  "name": "MyChatCRM",
+  "short_name": "MyChatCRM",
+  "description": "CRM, WhatsApp, agentes de IA e reuniões gravadas e analisadas.",
+  "start_url": "/dashboard",
+  "scope": "/dashboard",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0E1D29",
+  "theme_color": "#F24400",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

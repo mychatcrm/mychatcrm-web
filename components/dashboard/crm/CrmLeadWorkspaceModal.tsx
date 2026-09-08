@@ -20,6 +20,7 @@ import {
   Sparkles,
   StickyNote,
   ListTodo,
+  Mic,
   User,
   UserPlus,
   UserRound,
@@ -35,6 +36,7 @@ import {
 } from "@/lib/crm-lead-extras";
 import { computeLeadTemperature } from "@/lib/crm-lead-temperature";
 import { CrmChatbotHistoryPanel } from "./CrmChatbotHistoryPanel";
+import { CrmLeadMeetingsPanel } from "./CrmLeadMeetingsPanel";
 import { CrmRegistrarFollowUpModal } from "./CrmRegistrarFollowUpModal";
 import { LeadThermometerInline, LeadThermometerPanel } from "./LeadThermometer";
 import { formatBRL } from "@/lib/utils";
@@ -59,12 +61,13 @@ import {
 import styles from "./crm-premium.module.css";
 import { CrmWhatsAppOptInControl } from "./CrmWhatsAppOptInControl";
 
-type Tab = "informacoes" | "historico" | "chatbot" | "tarefas" | "ia";
+type Tab = "informacoes" | "historico" | "chatbot" | "reunioes" | "tarefas" | "ia";
 
 const tabs: { id: Tab; label: string; icon: typeof MessageCircle }[] = [
   { id: "informacoes", label: "Informações", icon: MessageCircle },
   { id: "historico", label: "Histórico de Interações", icon: CalendarClock },
   { id: "chatbot", label: "Histórico de Conversas", icon: Bot },
+  { id: "reunioes", label: "Reuniões", icon: Mic },
   { id: "tarefas", label: "Tarefas", icon: ListTodo },
   { id: "ia", label: "Insights IA", icon: Sparkles },
 ];
@@ -721,6 +724,8 @@ export function CrmLeadWorkspaceModal({
         ) : null}
 
         {tab === "chatbot" ? <CrmChatbotHistoryPanel leadId={lead.id} tenantId={tenantId} /> : null}
+
+        {tab === "reunioes" ? <CrmLeadMeetingsPanel leadId={lead.id} /> : null}
 
         {tab === "tarefas" ? (
           <div className="space-y-4">

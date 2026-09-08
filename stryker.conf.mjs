@@ -12,6 +12,11 @@ export default {
     "lib/server/follow-up-engine.ts:190-211",
     "lib/server/agent-runtime-controls.ts:35-68",
     "lib/server/agent-outbound-outbox.ts:48-81",
+    // Reuniões: a decisão de quem alcança qual gravação, e a âncora que separa
+    // item extraído de item inventado. Nos dois, um mutante sobrevivente é um
+    // bug que ninguém percebe até virar incidente.
+    "lib/server/meeting-access-scope.ts:44-100",
+    "lib/server/meeting-analysis.ts:88-101",
   ],
   reporters: ["clear-text", "progress", "json"],
   jsonReporter: {

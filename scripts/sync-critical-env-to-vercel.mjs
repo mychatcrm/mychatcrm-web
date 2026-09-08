@@ -27,7 +27,18 @@ const DEFAULT_KEYS = [
   "NEXT_PUBLIC_WHATSAPP_HANDOFF",
 ];
 
-function readVercelToken() {
+/**
+ * Token da Vercel.
+ *
+ * O token do CLI expira sem avisar, e quando isso acontece o script falhava com
+ * um 403 cru — sem indicar que o problema era o login, não a permissão. A
+ * variável de ambiente vem primeiro por ser a que o operador controla, e o
+ * arquivo do CLI fica como conveniência para quem já fez `vercel login`.
+ */
+function readVercelToken(localEnv = {}) {
+  const fromEnv = (process.env.VERCEL_TOKEN ?? localEnv.VERCEL_TOKEN ?? "").trim();
+  if (fromEnv.length > 10) return fromEnv;
+
   const candidates = [
     join(homedir(), "Library", "Application Support", "com.vercel.cli", "auth.json"),
     join(homedir(), ".config", "vercel", "auth.json"),
@@ -68,6 +79,12 @@ async function listProjectEnvs({ token, projectId, teamId }) {
   if (teamId) u.searchParams.set("teamId", teamId);
   const res = await fetch(u, { headers: { Authorization: `Bearer ${token}` } });
   const body = await res.json().catch(() => ({}));
+  if (res.status === 403 || res.status === 401) {
+    throw new Error(
+      "Vercel recusou o token (401/403). Ele expirou ou nao tem acesso a este projeto. " +
+        "Gere um novo em https://vercel.com/account/tokens e ponha em VERCEL_TOKEN no .env.local.",
+    );
+  }
   if (!res.ok) throw new Error(`List env failed ${res.status}: ${JSON.stringify(body).slice(0, 400)}`);
   return body.envs ?? [];
 }
@@ -107,13 +124,15 @@ async function main() {
     console.error("Falta .vercel/project.json — execute vercel link.");
     process.exit(1);
   }
-  const token = readVercelToken();
-  if (!token) {
-    console.error("Token Vercel não encontrado. Execute vercel login.");
-    process.exit(1);
-  }
   const { projectId, orgId: teamId } = JSON.parse(readFileSync(projectPath, "utf8"));
   const local = parseEnvFile(envLocalPath);
+  const token = readVercelToken(local);
+  if (!token) {
+    console.error(
+      "Token Vercel nao encontrado. Rode `vercel login` ou defina VERCEL_TOKEN no .env.local.",
+    );
+    process.exit(1);
+  }
   const target = ["production", "preview", "development"];
 
   for (const key of keys) {

@@ -13,11 +13,23 @@ const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "X-Frame-Options", value: "SAMEORIGIN" },
-  {
-    key: "Permissions-Policy",
-    value: "camera=(), microphone=(), geolocation=(), payment=()",
-  },
 ];
+
+/**
+ * Permissions-Policy do microfone.
+ *
+ * `microphone=()` significa "nenhuma origem, nem a propria": com esse valor o
+ * navegador rejeita `getUserMedia` mesmo depois de o usuario autorizar no
+ * prompt. O gravador de reunioes vive em `/dashboard`, entao so ali a politica
+ * e relaxada para `(self)`, que libera apenas a nossa origem — iframe de
+ * terceiro dentro do painel continua sem microfone.
+ *
+ * Site publico, checkout e `/admin` seguem com o microfone fechado.
+ */
+export function permissionsPolicyValue({ allowMicrophone }) {
+  const microphone = allowMicrophone ? "microphone=(self)" : "microphone=()";
+  return `camera=(), ${microphone}, geolocation=(), payment=()`;
+}
 
 const hstsValue = hstsPreload
   ? "max-age=63072000; includeSubDomains; preload"
@@ -58,7 +70,31 @@ const nextConfig = {
     if (process.env.CSP_UPGRADE_INSECURE_REQUESTS === "1") {
       base.push({ key: "Content-Security-Policy", value: "upgrade-insecure-requests" });
     }
-    return [{ source: "/:path*", headers: base }];
+    // Duas entradas MUTUAMENTE EXCLUSIVAS: o negative lookahead garante que
+    // exatamente uma casa por requisicao. Depender da ordem de sobreposicao de
+    // cabecalhos repetidos deixaria o valor do microfone ambiguo.
+    return [
+      {
+        source: "/((?!dashboard).*)",
+        headers: [
+          ...base,
+          {
+            key: "Permissions-Policy",
+            value: permissionsPolicyValue({ allowMicrophone: false }),
+          },
+        ],
+      },
+      {
+        source: "/dashboard/:path*",
+        headers: [
+          ...base,
+          {
+            key: "Permissions-Policy",
+            value: permissionsPolicyValue({ allowMicrophone: true }),
+          },
+        ],
+      },
+    ];
   },
 };
 

@@ -3,7 +3,18 @@
  * Cliente Cloudflare R2 (S3-compatible) para armazenamento de mídias do WhatsApp.
  * Usado como camada de archiving entre o download da mídia e o envio à IA.
  */
-import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListPartsCommand,
+  PutObjectCommand,
+  S3Client,
+  UploadPartCommand,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // ---------------------------------------------------------------------------
@@ -151,6 +162,160 @@ export async function headR2Object(key: string): Promise<{ sizeBytes: number; co
 export async function deleteR2Object(key: string): Promise<void> {
   if (!r2Client) throw new Error("[r2-storage] cliente não configurado");
   await r2Client.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+}
+
+// ---------------------------------------------------------------------------
+// Multipart upload
+//
+// Gravação longa não pode virar um PUT único: a aba pode morrer, o 4G pode
+// cair, e o usuário perderia a reunião inteira. Com multipart, cada parte já
+// confirmada fica no R2, e o objeto final é montado pelo próprio R2 — byte a
+// byte idêntico a uma gravação contínua.
+//
+// Isso importa mais do que parece para áudio: em WebM/Opus só o PRIMEIRO chunk
+// do MediaRecorder carrega o cabeçalho do container. Subir chunks como objetos
+// separados produziria arquivos que ninguém consegue decodificar. Partes de um
+// mesmo multipart são fatias de bytes do mesmo stream, então o resultado é
+// sempre válido.
+// ---------------------------------------------------------------------------
+
+/** Mínimo de 5 MB por parte imposto pelo protocolo S3 (a última parte é isenta). */
+export const R2_MIN_PART_BYTES = 5 * 1024 * 1024;
+/** Teto do protocolo S3. */
+export const R2_MAX_PARTS = 10_000;
+
+export async function createR2MultipartUpload(params: {
+  key: string;
+  contentType: string;
+}): Promise<string> {
+  assertR2Configured();
+  if (!r2Client) throw new Error(getR2ConfigurationError() ?? "Armazenamento R2 indisponível.");
+
+  const res = await r2Client.send(
+    new CreateMultipartUploadCommand({
+      Bucket: BUCKET,
+      Key: params.key,
+      ContentType: params.contentType,
+    }),
+  );
+  if (!res.UploadId) throw new Error("[r2-storage] multipart sem UploadId");
+  return res.UploadId;
+}
+
+/**
+ * URL para o browser enviar UMA parte direto ao R2.
+ *
+ * O byte do áudio nunca passa pelo servidor Next: sem isso, o limite de payload
+ * e a banda da função serverless viravam o gargalo de todo o produto.
+ */
+export async function createR2PresignedPartUrl(params: {
+  key: string;
+  uploadId: string;
+  partNumber: number;
+  expiresInSeconds?: number;
+}): Promise<string> {
+  assertR2Configured();
+  if (!r2Client) throw new Error(getR2ConfigurationError() ?? "Armazenamento R2 indisponível.");
+  if (!Number.isInteger(params.partNumber) || params.partNumber < 1 || params.partNumber > R2_MAX_PARTS) {
+    throw new Error("[r2-storage] partNumber fora do intervalo");
+  }
+
+  return getSignedUrl(
+    r2Client,
+    new UploadPartCommand({
+      Bucket: BUCKET,
+      Key: params.key,
+      UploadId: params.uploadId,
+      PartNumber: params.partNumber,
+    }),
+    { expiresIn: params.expiresInSeconds ?? 3600 },
+  );
+}
+
+export type R2CompletedPart = { partNumber: number; etag: string };
+
+export async function completeR2MultipartUpload(params: {
+  key: string;
+  uploadId: string;
+  parts: R2CompletedPart[];
+}): Promise<void> {
+  assertR2Configured();
+  if (!r2Client) throw new Error(getR2ConfigurationError() ?? "Armazenamento R2 indisponível.");
+  if (params.parts.length === 0) throw new Error("[r2-storage] multipart sem partes");
+
+  await r2Client.send(
+    new CompleteMultipartUploadCommand({
+      Bucket: BUCKET,
+      Key: params.key,
+      UploadId: params.uploadId,
+      MultipartUpload: {
+        // A ordem é o que define o arquivo final. Enviar fora de ordem produz
+        // áudio embaralhado em vez de erro, então ordenar aqui não é detalhe.
+        Parts: [...params.parts]
+          .sort((a, b) => a.partNumber - b.partNumber)
+          .map((part) => ({ PartNumber: part.partNumber, ETag: part.etag })),
+      },
+    }),
+  );
+}
+
+/** Partes já confirmadas no R2 — base para retomar um upload interrompido. */
+export async function listR2MultipartParts(params: {
+  key: string;
+  uploadId: string;
+}): Promise<R2CompletedPart[]> {
+  assertR2Configured();
+  if (!r2Client) throw new Error(getR2ConfigurationError() ?? "Armazenamento R2 indisponível.");
+
+  const parts: R2CompletedPart[] = [];
+  let marker: number | undefined;
+
+  // Paginado: uma reunião longa passa de 1000 partes.
+  for (;;) {
+    const res = await r2Client.send(
+      new ListPartsCommand({
+        Bucket: BUCKET,
+        Key: params.key,
+        UploadId: params.uploadId,
+        PartNumberMarker: marker === undefined ? undefined : String(marker),
+      }),
+    );
+    for (const part of res.Parts ?? []) {
+      if (typeof part.PartNumber === "number" && typeof part.ETag === "string") {
+        parts.push({ partNumber: part.PartNumber, etag: part.ETag });
+      }
+    }
+    if (!res.IsTruncated) break;
+    const next = Number(res.NextPartNumberMarker);
+    if (!Number.isFinite(next)) break;
+    marker = next;
+  }
+
+  return parts.sort((a, b) => a.partNumber - b.partNumber);
+}
+
+/**
+ * Cancela o multipart e libera as partes já enviadas.
+ *
+ * Multipart abandonado continua ocupando (e custando) espaço sem aparecer na
+ * listagem do bucket — por isso a varredura semanal, além desta chamada.
+ */
+export async function abortR2MultipartUpload(params: {
+  key: string;
+  uploadId: string;
+}): Promise<void> {
+  if (!r2Client) return;
+  try {
+    await r2Client.send(
+      new AbortMultipartUploadCommand({
+        Bucket: BUCKET,
+        Key: params.key,
+        UploadId: params.uploadId,
+      }),
+    );
+  } catch (e) {
+    console.warn("[r2-storage] abort multipart error", e);
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -8,7 +8,11 @@ export type AiFeature =
   | "agent_completion"
   | "agent_embedding"
   | "agent_wizard_instructions"
-  | "admin_tool";
+  | "admin_tool"
+  /** Reuniões: análise estruturada, Ask AI e indexação para busca. */
+  | "meeting_analysis"
+  | "meeting_chat"
+  | "meeting_embedding";
 
 export type AiRole = "user" | "assistant" | "system";
 

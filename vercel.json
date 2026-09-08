@@ -39,6 +39,10 @@
     {
       "path": "/api/internal/operational-audit/retention",
       "schedule": "15 3 * * *"
+    },
+    {
+      "path": "/api/internal/meetings/retention",
+      "schedule": "45 3 * * *"
     }
   ]
 }

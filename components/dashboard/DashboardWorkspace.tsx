@@ -149,6 +149,7 @@ import crmStyles from "./crm/crm-premium.module.css";
 import { useCrmFunnels } from "./CrmFunnelsContext";
 import { DisparosMassaHub } from "./disparos/DisparosMassaHub";
 import { AgendaHub } from "./agenda/AgendaHub";
+import { ReunioesHub } from "./reunioes/ReunioesHub";
 import { LembretesHub } from "./lembretes/LembretesHub";
 import { SuporteHub } from "./suporte/SuporteHub";
 import { BillingOffersPopover } from "./BillingOffersPopover";
@@ -5181,6 +5182,10 @@ export function DashboardWorkspace({
         return <CrmPage dataset={dataset} session={session} />;
       case "ofertas-ativas":
         return <ActiveOffersHub session={session} />;
+      case "reunioes":
+        // Sem `Panel`: o módulo tem cabeçalho próprio, player fixo e uma tela
+        // cheia de gravação — um wrapper com título duplicaria a moldura.
+        return <ReunioesHub />;
       case "agenda":
         return <AgendaHub />;
       case "disparos":
