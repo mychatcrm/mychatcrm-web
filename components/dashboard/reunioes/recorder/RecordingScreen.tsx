@@ -35,7 +35,24 @@ export function RecordingScreen({
   const [noteDraft, setNoteDraft] = useState("");
   const [noteOpen, setNoteOpen] = useState(false);
   const [finishing, setFinishing] = useState(false);
+  const [finishFailed, setFinishFailed] = useState(false);
   const elapsedRef = useRef(0);
+
+  // Um `fetch` barrado por CORS falha com o MESMO erro de quando a rede cai.
+  // Sem consultar o navegador, culpar a conexão é chute — e chute errado manda
+  // o usuário reiniciar o Wi-Fi enquanto o problema está na configuração do
+  // bucket.
+  const [offline, setOffline] = useState(false);
+  useEffect(() => {
+    const sync = () => setOffline(!navigator.onLine);
+    sync();
+    window.addEventListener("online", sync);
+    window.addEventListener("offline", sync);
+    return () => {
+      window.removeEventListener("online", sync);
+      window.removeEventListener("offline", sync);
+    };
+  }, []);
 
   const upload = useChunkedUpload({ meetingId, mimeType });
 
@@ -99,6 +116,7 @@ export function RecordingScreen({
 
   const finish = useCallback(async () => {
     setFinishing(true);
+    setFinishFailed(false);
     await recorder.stop();
     const durationMs = elapsedRef.current;
 
@@ -117,6 +135,9 @@ export function RecordingScreen({
 
     const ok = await upload.finish(durationMs);
     setFinishing(false);
+    // Voltar para a tela de gravação sem dizer nada deixaria o usuário achando
+    // que o clique não pegou — e clicando de novo até desistir.
+    setFinishFailed(!ok);
     if (ok) onFinished(meetingId);
   }, [markers, meetingId, onFinished, recorder, upload]);
 
@@ -194,7 +215,12 @@ export function RecordingScreen({
               </span>
               {upload.phase === "error" ? (
                 <span className="text-xs text-warning">
-                  Sem conexão para enviar agora — a gravação continua e sobe quando a rede voltar.
+                  {offline
+                    ? "Sem conexão para enviar agora — a gravação continua e sobe quando a rede voltar."
+                    : "O envio está falhando, mas a gravação continua salva neste aparelho."}
+                  {upload.error && !offline ? (
+                    <span className="ml-1 text-content-faint">({upload.error})</span>
+                  ) : null}
                 </span>
               ) : null}
             </div>
@@ -256,6 +282,18 @@ export function RecordingScreen({
               )}
               {finishing ? "Finalizando…" : "Finalizar"}
             </PanelButton>
+
+            {finishFailed ? (
+              <div className="w-full max-w-md rounded-panel-2xl border border-error/30 bg-error/[0.06] p-4 text-center">
+                <p className="text-sm text-content">
+                  Não foi possível enviar o áudio para o servidor.
+                </p>
+                <p className="mt-1 text-xs text-content-muted">
+                  A gravação continua guardada neste navegador. Não feche esta aba: assim que o
+                  envio voltar a funcionar, clique em Finalizar de novo.
+                </p>
+              </div>
+            ) : null}
           </>
         )}
       </div>
