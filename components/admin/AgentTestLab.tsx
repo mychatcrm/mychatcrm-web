@@ -15,6 +15,7 @@ type Snapshot = { sha: string; sender: { id: string; state: string; number: stri
   connections: { id: string; channel: "evolution" | "meta_cloud"; state: string; number: string | null; slot: number }[];
   rules: { id: string; name: string; active: boolean; connection_id: string; agent_ids: string[] }[];
   runs: Run[]; capabilities: { internal: boolean; modes: Partial<Record<LabMode, boolean>>; realReason: string } };
+type LabReceiver = { id: string; state: string; number: string | null; labTenantId: string | null; labAgentId: string | null } | null;
 type Detail = { run: Run; evidence: { check_code: string; verdict: string; description: string; resource_ids: string[] }[];
   steps: { ordinal: number; kind: string; status: string; dispatch_started_at: string | null; confirmed_at: string | null }[];
   costs: { category: string; reserved_brl: number; actual_brl: number | null }[] };
@@ -53,6 +54,7 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
   const [script, setScript] = useState(""), [expectSilence, setExpectSilence] = useState(false), [model, setModel] = useState("");
   const [confirmed, setConfirmed] = useState(false), [effects, setEffects] = useState<string[]>([]);
   const [checks, setChecks] = useState<LabCheck[] | null>(null), [qr, setQr] = useState<string | null>(null), [detail, setDetail] = useState<Detail | null>(null);
+  const [receiver, setReceiver] = useState<LabReceiver>(null), [receiverQr, setReceiverQr] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const showError = (err: unknown) => { const code = err instanceof Error ? err.message : "lab_failed"; setError(labCodeLabel(code)); if (code === "lab_locked") setUnlocked(false); };
   const reload = useCallback(async (signal?: AbortSignal) => {
@@ -69,6 +71,8 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
     if (!unlocked) return;
     const controller = new AbortController();
     reload(controller.signal).catch(err => { if (err.name !== "AbortError") showError(err); });
+    api<{ connection: LabReceiver }>("/receiver", { signal: controller.signal })
+      .then(result => setReceiver(result.connection)).catch(() => {});
     return () => controller.abort();
   }, [reload, unlocked]);
   useEffect(() => { if (detail) dialogRef.current?.showModal(); else dialogRef.current?.close(); }, [detail]);
@@ -151,6 +155,29 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
           <label className="space-y-1 text-sm"><span>Formulário Meta (quando aplicável)</span><input className={field} value={formId} onChange={e => { setFormId(e.target.value); clearApproval(); }} placeholder="ID do formulário autorizado" /></label>
         </div>
         <p className="mt-4 text-sm text-white/50">Destino escolhido: {selectedAgent?.display_name ?? "nenhum agente"} · {selectedConnection?.number ?? "nenhum número"}. O número testador deve ser diferente.</p>
+        {targetKind === "copy" && <div className="mt-4 rounded-xl border border-sky-500/30 bg-sky-500/5 p-4 text-sm">
+          <p className="font-medium">Número que a cópia atende</p>
+          <p className="mt-1 text-white/60">A cópia leva prompts e configuração, sem histórico, leads nem credenciais do cliente. Ela precisa da própria linha — diferente do número testador — e passa pelo recebimento real e pelas regras de verdade.</p>
+          <p className="mt-2 text-white/50">Estado: {receiver ? `${receiver.state}${receiver.number ? ` · ${receiver.number}` : ""}` : "não conectado"}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button className={button} disabled={busy || !tenantId || !agentId} onClick={() => act(async () => {
+              const data = await api<{ qr: string | null; connection: typeof receiver; copy: { unavailable: { dependency: string; reason: string }[] } }>(
+                "/receiver", { method: "POST", body: JSON.stringify({ action: "connect", tenantId, agentId }) });
+              setReceiverQr(data.qr); setReceiver(data.connection);
+              setNotice(data.copy.unavailable.length
+                ? `Cópia criada. Dependências indisponíveis: ${data.copy.unavailable.map(item => item.dependency).join(", ")}.`
+                : "Cópia criada com todas as dependências disponíveis.");
+              clearApproval();
+            })}>Conectar / QR da cópia</button>
+            <button className={button} disabled={busy} onClick={() => act(async () => {
+              const data = await api<{ connection: typeof receiver }>("/receiver", { method: "POST", body: JSON.stringify({ action: "refresh" }) });
+              setReceiver(data.connection); })}>Verificar</button>
+            {receiver && <button className={button} disabled={busy} onClick={() => { if (window.confirm("Desconectar o número da cópia isolada?"))
+              void act(async () => { await api("/receiver", { method: "DELETE" }); setReceiver(null); setReceiverQr(null); }); }}>Desconectar</button>}
+          </div>
+          {!tenantId || !agentId ? <p className="mt-2 text-xs text-amber-400">Escolha o cliente e o agente de origem antes de criar a cópia.</p> : null}
+          {receiverQr && <div className="mt-3 rounded-xl bg-white p-4"><Image unoptimized src={receiverQr} alt="QR privado para conectar o número da cópia isolada" width={240} height={240} className="mx-auto" /><button className="mt-2 text-sm text-black" onClick={() => setReceiverQr(null)}>Ocultar QR</button></div>}
+        </div>}
         {targetKind === "original" && <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm"><p>O original pode gerar efeitos reais. Confirme somente os efeitos permitidos:</p><div className="my-3 flex flex-wrap gap-4">{["lead", "crm", "agenda", "follow_up", "reminder", "notifications", "external_api"].map(effect => <label key={effect}><input type="checkbox" checked={effects.includes(effect)} onChange={e => { setEffects(prev => e.target.checked ? [...prev, effect] : prev.filter(v => v !== effect)); setConfirmed(false); }} /> {effect}</label>)}</div><label><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} /> Confirmo os efeitos nesta execução e o uso de contato exclusivo de teste.</label></div>}
       </section>}
       <section className={card}><h2 className="mb-4 text-lg font-semibold">{isLabInternalMode(mode) ? "2" : "3"}. Cenário e limites</h2><div className="grid gap-4 md:grid-cols-2">

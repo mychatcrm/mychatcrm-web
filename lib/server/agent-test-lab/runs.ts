@@ -22,18 +22,22 @@ export async function createLabRun(input: LabRunRequestV1) {
   const targets: Record<string, unknown> = {};
   // Simulation reaches no provider and no number, so it needs no destination.
   if (interactive && input.mode !== "simulation") {
-    if (!inspected.targetJid || !inspected.senderJid || !inspected.senderConnectionId) throw new Error("destination_unresolved");
+    if (!inspected.targetJid || !inspected.senderJid || !inspected.senderConnectionId || !inspected.effective.connectionId) throw new Error("destination_unresolved");
     // The destination becomes usable only through this confirmation, which also
     // refuses a tester and an answering number that are the same line.
+    // The effective target is what preflight resolved, which for an isolated copy is
+    // the copy's own tenant, connection and rule — never the customer's.
+    const target = inspected.effective;
     const confirmed = await sb.rpc("confirm_agent_test_lab_destination_v1", {
-      p_owner: LAB_OWNER_ID, p_tenant_id: input.tenantId, p_connection_id: input.connectionId,
+      p_owner: LAB_OWNER_ID, p_tenant_id: target.tenantId, p_connection_id: target.connectionId,
       p_channel: input.channel, p_target_jid: inspected.targetJid, p_sender_jid: inspected.senderJid,
     });
     if (confirmed.error) throw new Error("destination_confirmation_failed");
     Object.assign(targets, {
-      sender_connection_id: inspected.senderConnectionId, target_tenant_id: input.tenantId,
-      target_agent_id: input.agentId, target_connection_id: input.connectionId, target_rule_id: input.ruleId,
+      sender_connection_id: inspected.senderConnectionId, target_tenant_id: target.tenantId,
+      target_agent_id: target.agentId, target_connection_id: target.connectionId, target_rule_id: target.ruleId,
       target_channel: input.channel, target_jid: inspected.targetJid, target_form_id: input.formId,
+      isolated_agent_id: inspected.isolatedAgentId,
     });
   }
 
