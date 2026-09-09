@@ -7,20 +7,49 @@ import { inspectLabTarget } from "./preflight";
 import { dispatchLabWorkflow, findLabWorkflow } from "./github";
 
 export const LAB_RUN_PUBLIC_COLUMNS = "id,trace_id,mode,status,verdict,deployed_sha,config_hash,scenario_hash,target_tenant_id,target_agent_id,target_channel,max_messages,sent_messages,budget_brl,reserved_brl,spent_brl,deadline_at,workflow_run_id,result_code,created_at,updated_at,finished_at";
+/** Modes whose executor is implemented and integration-tested. Everything else stays
+ *  blocked in the backend: a visible button is not the same as a working feature. */
+export const LAB_ENABLED_INTERACTIVE_MODES = new Set(["manual"]);
+
 export async function createLabRun(input: LabRunRequestV1) {
   const inspected = await inspectLabTarget(input);
   if (inspected.checks.some(check => !check.ok)) return { ok: false as const, code: "preflight_failed", checks: inspected.checks };
-  // This gate is removed only when isolation, quota attribution and safe stop pass integration tests.
-  if (!isLabInternalMode(input.mode)) throw new Error("real_test_dependencies_pending");
+  const interactive = !isLabInternalMode(input.mode);
+  if (interactive && !LAB_ENABLED_INTERACTIVE_MODES.has(input.mode)) throw new Error("real_test_dependencies_pending");
   const id = randomUUID();
   const sb = createSupabaseServiceClient();
+
+  const targets: Record<string, unknown> = {};
+  if (interactive) {
+    if (!inspected.targetJid || !inspected.senderJid || !inspected.senderConnectionId) throw new Error("destination_unresolved");
+    // The destination becomes usable only through this confirmation, which also
+    // refuses a tester and an answering number that are the same line.
+    const confirmed = await sb.rpc("confirm_agent_test_lab_destination_v1", {
+      p_owner: LAB_OWNER_ID, p_tenant_id: input.tenantId, p_connection_id: input.connectionId,
+      p_channel: input.channel, p_target_jid: inspected.targetJid, p_sender_jid: inspected.senderJid,
+    });
+    if (confirmed.error) throw new Error("destination_confirmation_failed");
+    Object.assign(targets, {
+      sender_connection_id: inspected.senderConnectionId, target_tenant_id: input.tenantId,
+      target_agent_id: input.agentId, target_connection_id: input.connectionId, target_rule_id: input.ruleId,
+      target_channel: input.channel, target_jid: inspected.targetJid, target_form_id: input.formId,
+    });
+  }
+
   const saved = await sb.from("agent_test_lab_runs").insert({ id, owner_admin_id: LAB_OWNER_ID, mode: input.mode,
     deployed_sha: inspected.sha, config_hash: inspected.configHash, scenario_hash: inspected.scenarioHash,
     request: input, preflight: inspected.checks, max_messages: input.limits.maxMessages, budget_brl: input.limits.budgetBrl,
-    deadline_at: new Date(Date.now() + input.limits.maxMinutes * 60000).toISOString(),
+    deadline_at: new Date(Date.now() + input.limits.maxMinutes * 60000).toISOString(), ...targets,
   }).select(LAB_RUN_PUBLIC_COLUMNS).single();
   if (saved.error || !saved.data) throw new Error("run_save_failed");
   return { ok: true as const, run: saved.data };
+}
+
+/** Routes a run to the executor that owns its mode. */
+export async function tickLabRun(id: string, mode: string): Promise<void> {
+  if (isLabInternalMode(mode)) return tickInternalLabRun(id);
+  const { tickInteractiveLabRun } = await import("./executor");
+  return tickInteractiveLabRun(id);
 }
 export async function listLabRuns() {
   const result = await createSupabaseServiceClient().from("agent_test_lab_runs").select(LAB_RUN_PUBLIC_COLUMNS)
@@ -89,14 +118,22 @@ export async function tickInternalLabRun(id: string) {
     await update({ result_code: error instanceof Error && /^[a-z_]+$/.test(error.message) ? error.message : "runner_check_failed" });
   }
 }
-export async function tickDueInternalLabRuns() {
-  if (process.env.AGENT_TEST_LAB_ENABLED !== "true") return { processed: 0 };
+/**
+ * Recovers every run whose next step is due, of any mode. This is what makes the
+ * laboratory survive a closed browser: the queued row, not the page, owns the work.
+ */
+export async function tickDueLabRuns() {
+  if (process.env.AGENT_TEST_LAB_ENABLED !== "true") return { processed: 0, failed: 0 };
   const sb = createSupabaseServiceClient();
-  const due = await sb.from("agent_test_lab_runs").select("id").eq("owner_admin_id", LAB_OWNER_ID)
-    .in("mode", ["internal", "scenarios_10000", "scenarios_million", "mutation"])
-    .or(`status.in.(queued,running,stopping),and(status.in.(paused,waiting_input),deadline_at.lte.${new Date().toISOString()})`)
-    .lte("next_step_at", new Date().toISOString()).order("next_step_at").limit(2);
+  const nowIso = new Date().toISOString();
+  const due = await sb.from("agent_test_lab_runs").select("id,mode").eq("owner_admin_id", LAB_OWNER_ID)
+    .or(`status.in.(queued,running,waiting_reply,stopping),and(status.in.(paused,waiting_input),deadline_at.lte.${nowIso})`)
+    .lte("next_step_at", nowIso).order("next_step_at").limit(5);
   if (due.error) throw new Error("due_runs_read_failed");
-  for (const run of due.data ?? []) await tickInternalLabRun(run.id);
-  return { processed: due.data?.length ?? 0 };
+  let processed = 0, failed = 0;
+  for (const run of due.data ?? []) {
+    // One stuck run must not stop the others from being recovered.
+    try { await tickLabRun(String(run.id), String(run.mode)); processed += 1; } catch { failed += 1; }
+  }
+  return { processed, failed };
 }

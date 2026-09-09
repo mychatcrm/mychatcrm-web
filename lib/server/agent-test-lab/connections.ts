@@ -62,7 +62,10 @@ export async function connectLabSender() {
     if (reserved.error) throw new Error("sender_reservation_failed");
     // Preserve the reservation after timeout; a retry cannot create another instance.
     const created = await evolutionCreateInstance({ instanceName, webhookUrl: webhook.toString(), settings: {
-      syncFullHistory: false, groupsIgnore: true, readMessages: false, readStatus: false, alwaysOnline: false, rejectCall: true,
+      // alwaysOnline matters here: without it Evolution holds a burst for around a
+      // minute before delivering, which would make every agent turn look slow and
+      // push honest tests towards a timeout. This is the laboratory's own line.
+      syncFullHistory: false, groupsIgnore: true, readMessages: false, readStatus: false, alwaysOnline: true, rejectCall: true,
     } });
     if (!created.ok) throw new Error("sender_creation_unconfirmed");
     sender = await refreshSender();

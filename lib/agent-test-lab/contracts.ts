@@ -12,6 +12,16 @@ export const LAB_PROFILES = {
 export const LAB_MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 export const LAB_COOKIE = "mychatcrm_agent_lab_session";
 export const LAB_SESSION_SECONDS = 2 * 60 * 60;
+/** How long a tester waits for the agent before silence becomes a result.
+ *  Generous on purpose: Evolution can hold a burst for around a minute, and the
+ *  agent's own smart-wait adds to that. A slow turn is not a failed turn. */
+export const LAB_AGENT_TURN_MAX_WAIT_SECONDS = 240;
+/** Quiet period after the agent's last message that marks the turn as finished,
+ *  so a burst is read as one answer instead of several. */
+export const LAB_AGENT_TURN_QUIET_SECONDS = 25;
+export const LAB_TICK_INTERVAL_SECONDS = 15;
+/** Reserved before each tester message; settled with the real figure afterwards. */
+export const LAB_MESSAGE_RESERVE_BRL = 0.05;
 export const LAB_MODE_LABELS: Record<LabMode, string> = {
   internal: "Testes internos", scenarios_10000: "10 mil cenários", scenarios_million: "1 milhão de cenários",
   mutation: "Mutation testing", simulation: "Simulação com IA", manual: "Conversa manual real",

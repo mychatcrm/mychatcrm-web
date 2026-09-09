@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { requireLabOwner, labError } from "@/lib/server/agent-test-lab/auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { inspectLabSender } from "@/lib/server/agent-test-lab/connections";
-import { listLabRuns } from "@/lib/server/agent-test-lab/runs";
-import { labMaskedJid, labPhoneJid } from "@/lib/agent-test-lab/policy";
+import { listLabRuns, LAB_ENABLED_INTERACTIVE_MODES } from "@/lib/server/agent-test-lab/runs";
+import { labMaskedJid, labPhoneJid, isLabInternalMode } from "@/lib/agent-test-lab/policy";
+import { LAB_MODES } from "@/lib/agent-test-lab/contracts";
 export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
@@ -28,7 +29,14 @@ export async function GET(request: Request) {
     }
     return NextResponse.json({ version: 1, sha: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.AGENT_TEST_LAB_DEPLOY_SHA ?? "local",
       sender, runs, tenants: tenants.data, agents, connections, rules,
-      capabilities: { internal: Boolean(process.env.AGENT_TEST_LAB_GITHUB_TOKEN), real: false, simulation: false,
-        realReason: "real_test_dependencies_pending" } }, { headers: { "Cache-Control": "no-store" } });
+      capabilities: {
+        internal: Boolean(process.env.AGENT_TEST_LAB_GITHUB_TOKEN),
+        // Only the modes with a working executor are offered. The rest stay blocked
+        // in the backend too, so an enabled button always means a working feature.
+        modes: Object.fromEntries(LAB_MODES.map(mode => [mode, isLabInternalMode(mode)
+          ? Boolean(process.env.AGENT_TEST_LAB_GITHUB_TOKEN)
+          : LAB_ENABLED_INTERACTIVE_MODES.has(mode)])),
+        realReason: "real_test_dependencies_pending",
+      } }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) { return labError(error); }
 }

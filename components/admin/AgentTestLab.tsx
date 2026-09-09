@@ -5,6 +5,7 @@ import Image from "next/image";
 import { LAB_MODES, LAB_MODE_LABELS, LAB_PROFILES, type LabMode, type LabCheck } from "@/lib/agent-test-lab/contracts";
 import { isLabInternalMode } from "@/lib/agent-test-lab/policy";
 import { labCodeLabel, LAB_STATUS_LABELS, LAB_VERDICT_LABELS } from "@/lib/agent-test-lab/presentation";
+import { AgentTestLabConversation } from "./AgentTestLabConversation";
 
 type Run = { id: string; trace_id: string; mode: LabMode; status: string; verdict: string | null; deployed_sha: string; config_hash: string;
   result_code: string | null; sent_messages: number; max_messages: number; budget_brl: number; spent_brl: number; reserved_brl: number;
@@ -13,7 +14,7 @@ type Snapshot = { sha: string; sender: { id: string; state: string; number: stri
   tenants: { id: string; name: string; status: string }[]; agents: { agent_id: string; display_name: string; active: boolean }[];
   connections: { id: string; channel: "evolution" | "meta_cloud"; state: string; number: string | null; slot: number }[];
   rules: { id: string; name: string; active: boolean; connection_id: string; agent_ids: string[] }[];
-  runs: Run[]; capabilities: { internal: boolean; real: boolean; simulation: boolean; realReason: string } };
+  runs: Run[]; capabilities: { internal: boolean; modes: Partial<Record<LabMode, boolean>>; realReason: string } };
 type Detail = { run: Run; evidence: { check_code: string; verdict: string; description: string; resource_ids: string[] }[];
   steps: { ordinal: number; kind: string; status: string; dispatch_started_at: string | null; confirmed_at: string | null }[];
   costs: { category: string; reserved_brl: number; actual_brl: number | null }[] };
@@ -85,7 +86,7 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
         steps: script.split("\n").filter(line => line.trim()).map(text => ({ kind: "text", text, expected: { type: expectSilence ? "silence" : "reply" } })) } };
   }
   function clearApproval() { setChecks(null); setConfirmed(false); }
-  const runnable = isLabInternalMode(mode) ? snapshot?.capabilities.internal : mode === "simulation" ? snapshot?.capabilities.simulation : snapshot?.capabilities.real;
+  const runnable = Boolean(snapshot?.capabilities.modes?.[mode]);
   const profileLimits = profile === "custom" ? { maxMessages, maxMinutes, budgetBrl } : LAB_PROFILES[profile];
   async function control(run: Run, action: string) {
     await api(`/runs/${run.id}`, { method: "POST", body: JSON.stringify({ action }) }); await reload();
@@ -97,7 +98,11 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
       <div><p className="text-xs font-semibold uppercase tracking-[.2em] text-orange-400">Laboratório privado · Proprietário</p>
         <h1 className="mt-2 text-2xl font-semibold">Central de testes dos agentes</h1>
         <p className="mt-2 max-w-2xl text-sm text-white/55">Teste uma correção, acompanhe as evidências e diferencie falha real de bloqueio esperado. O painel não altera código nem prompts.</p></div>
-      {unlocked && <button className={button} disabled={busy} onClick={() => act(async () => { await api("/session", { method: "DELETE" }); setUnlocked(false); setSnapshot(null); setQr(null); })}>Bloquear central</button>}
+      {unlocked && <div className="flex flex-wrap gap-2">
+        <button className={button} disabled={busy} onClick={() => { if (window.confirm("Parar TODAS as execuções abertas? Mensagens já entregues e compromissos já confirmados não são desfeitos."))
+          void act(async () => { const data = await api<{ stopped: number }>("/runs/stop-all", { method: "POST" }); setNotice(`${data.stopped} execução(ões) interrompida(s).`); await reload(); }); }}>Parar todos os testes</button>
+        <button className={button} disabled={busy} onClick={() => act(async () => { await api("/session", { method: "DELETE" }); setUnlocked(false); setSnapshot(null); setQr(null); })}>Bloquear central</button>
+      </div>}
     </header>
     {error && <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm">{error}</div>}
     {notice && <div role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm">{notice}</div>}
@@ -117,13 +122,24 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
           {qr && <div className="mt-4 rounded-xl bg-white p-4"><Image unoptimized src={qr} alt="QR privado para conectar o WhatsApp testador" width={240} height={240} className="mx-auto" /><button className="mt-2 text-sm text-black" onClick={() => setQr(null)}>Ocultar QR</button></div>}
         </section>
         <section className={card}><h2 className="text-sm text-white/55">Versão em avaliação</h2><p className="mt-2 break-all font-mono text-sm">{snapshot.sha}</p><p className="mt-3 text-sm text-white/50">Um resultado vale apenas para o código, cenário e configuração identificados naquela execução.</p></section>
-        <section className={card}><h2 className="text-sm text-white/55">Execuções recentes</h2><p className="mt-2 text-3xl font-semibold">{snapshot.runs.length}</p><p className="mt-3 text-sm text-white/50">Resultados inconclusivos ou não executados nunca são contados como aprovados.</p></section>
+        <section className={card}><h2 className="text-sm text-white/55">Execuções e consumo</h2>
+          <p className="mt-2 text-3xl font-semibold">{snapshot.runs.length}</p>
+          <dl className="mt-3 space-y-1 text-sm text-white/60">
+            <div className="flex justify-between"><dt>Abertas agora</dt><dd>{snapshot.runs.filter(r => !["completed", "failed", "cancelled"].includes(r.status)).length}</dd></div>
+            <div className="flex justify-between"><dt>Falhas confirmadas</dt><dd>{snapshot.runs.filter(r => r.verdict === "failed").length}</dd></div>
+            <div className="flex justify-between"><dt>Bloqueios esperados</dt><dd>{snapshot.runs.filter(r => r.verdict === "expected_block").length}</dd></div>
+            <div className="flex justify-between"><dt>Inconclusivos</dt><dd>{snapshot.runs.filter(r => r.verdict === "inconclusive").length}</dd></div>
+            <div className="flex justify-between"><dt>Mensagens do testador</dt><dd>{snapshot.runs.reduce((total, r) => total + (r.sent_messages ?? 0), 0)}</dd></div>
+            <div className="flex justify-between"><dt>Consumo registrado</dt><dd>{money(snapshot.runs.reduce((total, r) => total + Number(r.spent_brl ?? 0), 0))}</dd></div>
+          </dl>
+          <p className="mt-3 text-xs text-white/45">Inconclusivo e não executado nunca contam como aprovado.</p></section>
       </div>
       <section className={card}><h2 className="mb-4 text-lg font-semibold">1. Escolha a forma de execução</h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{LAB_MODES.map(item => <button key={item} aria-pressed={mode === item} onClick={() => { setMode(item); clearApproval(); }}
           className={`rounded-xl border p-4 text-left ${mode === item ? "border-orange-500 bg-orange-500/10" : "border-white/10 hover:border-white/30"}`}>
           <span className="font-medium">{LAB_MODE_LABELS[item]}</span><span className="mt-2 block text-xs leading-relaxed text-white/55">{modeDescription[item]}</span>
-          {!isLabInternalMode(item) && !snapshot.capabilities.real && <span className="mt-2 block text-xs text-amber-400">Em implementação · execução bloqueada</span>}</button>)}</div>
+          {!snapshot.capabilities.modes?.[item] && <span className="mt-2 block text-xs text-amber-400">
+            {isLabInternalMode(item) ? "Runner do GitHub não configurado" : "Em implementação · execução bloqueada"}</span>}</button>)}</div>
       </section>
       {!isLabInternalMode(mode) && <section className={card}><h2 className="mb-4 text-lg font-semibold">2. Agente e destino exatos</h2>
         <div className="grid gap-4 md:grid-cols-2">
@@ -161,8 +177,20 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
         <p className="mt-4 text-sm">{detail.run.verdict ? LAB_VERDICT_LABELS[detail.run.verdict] : LAB_STATUS_LABELS[detail.run.status]}</p>
         {detail.run.result_code && <p className="mt-2 text-sm text-white/60">{labCodeLabel(detail.run.result_code)}</p>}
         <p className="mt-3 break-all font-mono text-xs text-white/45">runId: {detail.run.id}<br />traceId: {detail.run.trace_id}<br />SHA: {detail.run.deployed_sha}</p>
-        <div className="my-4 flex flex-wrap gap-2">{["refresh", "pause", "resume", "stop"].map((action, index) => <button key={action} disabled={busy || ["completed", "failed", "cancelled"].includes(detail.run.status)} className={button} onClick={() => act(() => control(detail.run, action))}>{["Atualizar resultado", "Pausar testador", "Continuar", "Parar teste"][index]}</button>)}</div>
+        <div className="my-4 flex flex-wrap gap-2">{([
+          ["refresh", "Atualizar resultado", true],
+          ["pause", "Pausar testador", true],
+          ["resume", "Continuar", true],
+          ["manual", "Assumir manualmente", !isLabInternalMode(detail.run.mode) && detail.run.mode !== "simulation"],
+          ["stop", "Parar teste", true],
+        ] as const).filter(([, , shown]) => shown).map(([action, label]) => <button key={action}
+          disabled={busy || ["completed", "failed", "cancelled"].includes(detail.run.status)} className={button}
+          onClick={() => act(() => control(detail.run, action))}>{label}</button>)}</div>
         <p className="text-xs text-amber-300">Pausa e parada não desfazem mensagens ou compromissos já confirmados. Suítes já disparadas no GitHub podem continuar no runner.</p>
+        {!isLabInternalMode(detail.run.mode) && detail.run.mode !== "simulation" && <div className="mt-5">
+          <AgentTestLabConversation runId={detail.run.id} status={detail.run.status}
+            onSent={() => void act(async () => { await reload(); setDetail(await api<Detail>(`/runs/${detail.run.id}`)); })} />
+        </div>}
         <h3 className="mb-2 mt-5 font-semibold">Verificações</h3>{detail.evidence.length ? detail.evidence.map(e => <div key={e.check_code} className="my-2 rounded-xl bg-white/5 p-3 text-sm"><strong>{LAB_VERDICT_LABELS[e.verdict]}</strong> — {e.description}</div>) : <p className="text-sm text-white/50">Ainda não há evidência suficiente para aprovar.</p>}
         {detail.steps.map(step => <p key={step.ordinal} className="my-2 text-sm text-white/55">Etapa {step.ordinal + 1} · {step.kind} · {step.status} · confirmação: {step.confirmed_at ? new Date(step.confirmed_at).toLocaleString() : "não confirmada"}</p>)}
         <div className="mt-5 flex flex-wrap gap-3"><a className={button} href={`/api/admin/agent-tests/runs/${detail.run.id}/export?format=json`}>Exportar JSON</a><a className={button} href={`/api/admin/agent-tests/runs/${detail.run.id}/export?format=csv`}>Exportar CSV</a>

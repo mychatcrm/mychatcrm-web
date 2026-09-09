@@ -15,15 +15,18 @@ export async function inspectLabTarget(input: LabRunRequestV1) {
   const check = (code: string, ok: boolean, detail: string) => checks.push({ code, ok, detail });
   const sha = process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.AGENT_TEST_LAB_DEPLOY_SHA ?? "";
   check("deployment_known", /^[a-f0-9]{40}$/.test(sha), "A versão publicada precisa ser identificada.");
+  let senderJid: string | null = null, senderConnectionId: string | null = null;
   if (isLabInternalMode(input.mode)) {
     check("github_configured", Boolean(process.env.AGENT_TEST_LAB_GITHUB_TOKEN), "Runner do GitHub configurado com acesso restrito.");
-    return { checks, sha, configHash: labFingerprint({ mode: input.mode }), scenarioHash: labFingerprint(input.scenario), targetJid: null, agent: null };
+    return { checks, sha, configHash: labFingerprint({ mode: input.mode }), scenarioHash: labFingerprint(input.scenario),
+      targetJid: null, senderJid, senderConnectionId, agent: null };
   }
   const { data: agent, error } = await sb.from("tenant_agents").select("tenant_id,agent_id,display_name,system_prompt,model,metadata,active,review_reasons,archived_at,config_version")
     .eq("tenant_id", input.tenantId).eq("agent_id", input.agentId).maybeSingle();
   if (error) throw new Error("target_read_failed");
   check("agent_active", Boolean(agent?.active && !agent.archived_at), "O agente precisa existir e estar ativo.");
-  if (!agent) return { checks, sha, configHash: "", scenarioHash: labFingerprint(input.scenario), targetJid: null, agent: null };
+  if (!agent) return { checks, sha, configHash: "", scenarioHash: labFingerprint(input.scenario),
+    targetJid: null, senderJid, senderConnectionId, agent: null };
   let targetJid: string | null = null;
   if (LAB_REAL_MODES.has(input.mode)) {
     const table = input.channel === "evolution" ? "tenant_evolution_instances" : "whatsapp_cloud_connections";
@@ -43,8 +46,11 @@ export async function inspectLabTarget(input: LabRunRequestV1) {
     check("effects_confirmed", input.targetKind === "copy" || input.originalConfirmed, "Efeitos reais precisam ser confirmados nesta execução.");
     const sender = await sb.from("agent_test_lab_connections").select("id,state,wa_jid").eq("owner_admin_id", LAB_OWNER_ID).eq("purpose", "sender").is("archived_at", null).maybeSingle();
     if (sender.error) throw new Error("sender_read_failed");
-    check("sender_connected", sender.data?.state === "open" && Boolean(sender.data?.wa_jid), "Escaneie o WhatsApp dedicado de teste.");
-    check("different_numbers", Boolean(targetJid && labPhoneJid(sender.data?.wa_jid) && targetJid !== labPhoneJid(sender.data?.wa_jid)), "Testador e agente precisam de números diferentes.");
+    senderJid = labPhoneJid(sender.data?.wa_jid);
+    senderConnectionId = sender.data?.id ? String(sender.data.id) : null;
+    check("sender_connected", sender.data?.state === "open" && Boolean(senderJid) && Boolean(senderConnectionId), "Escaneie o WhatsApp dedicado de teste.");
+    check("different_numbers", Boolean(targetJid && senderJid && targetJid !== senderJid), "Testador e agente precisam de números diferentes.");
   }
-  return { checks, sha, configHash: labFingerprint(agent), scenarioHash: labFingerprint(input.scenario), targetJid, agent };
+  return { checks, sha, configHash: labFingerprint(agent), scenarioHash: labFingerprint(input.scenario),
+    targetJid, senderJid, senderConnectionId, agent };
 }

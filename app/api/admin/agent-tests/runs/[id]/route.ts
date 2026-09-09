@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireLabOwner, labError, labAudit } from "@/lib/server/agent-test-lab/auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { LAB_OWNER_ID, assertLabUuid } from "@/lib/agent-test-lab/policy";
-import { LAB_RUN_PUBLIC_COLUMNS, tickInternalLabRun } from "@/lib/server/agent-test-lab/runs";
+import { LAB_RUN_PUBLIC_COLUMNS, tickLabRun } from "@/lib/server/agent-test-lab/runs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 type Context = { params: { id: string } };
@@ -25,7 +25,13 @@ export async function GET(request: Request, { params }: Context) {
 export async function POST(request: Request, { params }: Context) {
   try {
     const owner = await requireLabOwner(request), id = assertLabUuid(params.id), body = await request.json();
-    if (body.action === "refresh") { await tickInternalLabRun(id); return NextResponse.json({ ok: true }); }
+    if (body.action === "refresh") {
+      const row = await createSupabaseServiceClient().from("agent_test_lab_runs").select("mode")
+        .eq("id", id).eq("owner_admin_id", LAB_OWNER_ID).single();
+      if (row.error || !row.data) throw new Error("run_missing");
+      await tickLabRun(id, String(row.data.mode));
+      return NextResponse.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
+    }
     if (!["pause", "resume", "manual", "stop"].includes(body.action)) throw new Error("invalid_action");
     await labAudit(`run.${body.action}_requested`, id);
     const result = await createSupabaseServiceClient().rpc("control_agent_test_lab_run_v1", { p_run_id: id, p_owner: owner.adminId, p_action: body.action });

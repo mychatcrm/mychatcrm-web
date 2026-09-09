@@ -22,11 +22,16 @@ export async function labAudit(action: string, resourceId?: string, status: "com
     module: "agent.test_lab", action, status, resourceType: "agent_test_lab", resourceId: resourceId ?? null,
     severity: status === "error" ? "error" : "info" }, { strict: true });
 }
-export async function unlockLab(request: Request): Promise<NextResponse> {
+export async function unlockLab(request: Request, clientIp?: string | null): Promise<NextResponse> {
   assertLabOrigin(request);
-  // Durable global bucket also covers distributed/serverless workers and spoofed IPs.
-  const rate = await createSupabaseServiceClient().rpc("consume_agent_test_lab_rate_v1", { p_bucket: "owner_unlock", p_limit: 10, p_seconds: 900 });
-  if (rate.error || rate.data !== true) throw new Error("rate_limited");
+  const sbRate = createSupabaseServiceClient();
+  // Per-caller first, so someone else burning attempts cannot lock the owner out of
+  // the laboratory. The global bucket stays only as a blast-radius cap on the table.
+  const scoped = (clientIp ?? "").slice(0, 100) || "unknown";
+  const perCaller = await sbRate.rpc("consume_agent_test_lab_rate_v1", { p_bucket: `owner_unlock:${scoped}`, p_limit: 10, p_seconds: 900 });
+  if (perCaller.error || perCaller.data !== true) throw new Error("rate_limited");
+  const global = await sbRate.rpc("consume_agent_test_lab_rate_v1", { p_bucket: "owner_unlock", p_limit: 200, p_seconds: 900 });
+  if (global.error || global.data !== true) throw new Error("rate_limited");
   const body = await request.json();
   if (typeof body.email !== "string" || typeof body.password !== "string" || body.email.length > 320 || body.password.length > 1024) throw new Error("invalid_credentials");
   const owner = await authenticateAdminFromDb(body.email, body.password);
