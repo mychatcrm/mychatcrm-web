@@ -43,6 +43,10 @@ export async function inspectLabTarget(input: LabRunRequestV1) {
     const intentionalSilence = labOnlyExpectsSilence(input);
     check("rule_exact", intentionalSilence || labRuleMatches(input, rule),
       intentionalSilence ? "Sem regra: somente silêncio é esperado." : "O teste não pode forçar uma regra ou agente diferente.");
+    // The isolated copy is not provisioned yet. Falling back to the original would
+    // run a real customer agent under a label that promises the opposite, so the
+    // copy is refused outright until it exists.
+    check("isolated_copy_available", input.targetKind !== "copy", "A cópia isolada ainda não existe. Use o agente original com efeitos confirmados.");
     check("effects_confirmed", input.targetKind === "copy" || input.originalConfirmed, "Efeitos reais precisam ser confirmados nesta execução.");
     const sender = await sb.from("agent_test_lab_connections").select("id,state,wa_jid").eq("owner_admin_id", LAB_OWNER_ID).eq("purpose", "sender").is("archived_at", null).maybeSingle();
     if (sender.error) throw new Error("sender_read_failed");

@@ -9,7 +9,7 @@ import { dispatchLabWorkflow, findLabWorkflow } from "./github";
 export const LAB_RUN_PUBLIC_COLUMNS = "id,trace_id,mode,status,verdict,deployed_sha,config_hash,scenario_hash,target_tenant_id,target_agent_id,target_channel,max_messages,sent_messages,budget_brl,reserved_brl,spent_brl,deadline_at,workflow_run_id,result_code,created_at,updated_at,finished_at";
 /** Modes whose executor is implemented and integration-tested. Everything else stays
  *  blocked in the backend: a visible button is not the same as a working feature. */
-export const LAB_ENABLED_INTERACTIVE_MODES = new Set(["manual"]);
+export const LAB_ENABLED_INTERACTIVE_MODES = new Set(["manual", "simulation"]);
 
 export async function createLabRun(input: LabRunRequestV1) {
   const inspected = await inspectLabTarget(input);
@@ -20,7 +20,8 @@ export async function createLabRun(input: LabRunRequestV1) {
   const sb = createSupabaseServiceClient();
 
   const targets: Record<string, unknown> = {};
-  if (interactive) {
+  // Simulation reaches no provider and no number, so it needs no destination.
+  if (interactive && input.mode !== "simulation") {
     if (!inspected.targetJid || !inspected.senderJid || !inspected.senderConnectionId) throw new Error("destination_unresolved");
     // The destination becomes usable only through this confirmation, which also
     // refuses a tester and an answering number that are the same line.
@@ -48,6 +49,10 @@ export async function createLabRun(input: LabRunRequestV1) {
 /** Routes a run to the executor that owns its mode. */
 export async function tickLabRun(id: string, mode: string): Promise<void> {
   if (isLabInternalMode(mode)) return tickInternalLabRun(id);
+  if (mode === "simulation") {
+    const { tickSimulationLabRun } = await import("./simulation");
+    return tickSimulationLabRun(id);
+  }
   const { tickInteractiveLabRun } = await import("./executor");
   return tickInteractiveLabRun(id);
 }
