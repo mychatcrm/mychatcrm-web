@@ -1935,7 +1935,7 @@ describe("resolveAgendaTurn", () => {
       });
 
       expect(missingTime.action).toBe("failed");
-      expect(missingTime.text).toContain("data e o horário certinhos");
+      expect(missingTime.text).toContain("data completa e o horário");
       expect(insertAgendaEventMock).not.toHaveBeenCalled();
 
       // Quando o modelo pergunta pelo horário SEM inventar um, a resposta

@@ -1,4 +1,5 @@
 import { formatSystemDateTimeContextBlock, resolveAgentTimezone } from "@/lib/agents/agent-datetime";
+import { buildAgendaCalendarFacts } from "@/lib/agents/agenda-calendar-facts";
 import { agentUsesSimpleInstructions } from "@/lib/agents/instruction-mode";
 import type { Agent, AgentLeadOutcomeConfig } from "@/lib/types";
 import type { AgentRuntimeContext } from "@/lib/server/conversation-memory";
@@ -209,7 +210,8 @@ PLANO ESTRUTURADO DA AGENDA
 - Sua resposta será validada por um schema com os campos reply e agenda. O cliente recebe somente reply; agenda é uma instrução técnica para o backend.
 - Use agenda.action="list" quando o cliente pedir para consultar os próprios compromissos. O backend buscará somente pelo telefone desta conversa; nunca responda a partir de nome, telefone digitado ou eventId informado pelo cliente.
 - Para list, preencha readEvidence com a citação literal do pedido atual para LER COMPROMISSOS JÁ EXISTENTES, no idioma original. Não traduza nem invente evidência. Aceitar um convite, informar disponibilidade ou pedir um novo compromisso não é consulta; nesses casos use readEvidence=null. Não preencha date, time, location ou eventId para list.
-- Use agenda.action="none" quando não houver pedido de alteração ou quando ainda faltar data/horário; faça em reply somente a pergunta necessária.
+- Use agenda.action="none" quando não houver ação de agenda a propor ou executar. Se faltar uma escolha que somente o cliente pode fazer, pergunte. Se as instruções configuradas mandarem VOCÊ escolher e oferecer um horário, aplique essas instruções e a janela configurada e use propose_create ou propose_reschedule; a ausência de uma data digitada pelo cliente não impede uma proposta.
+- Não existe uma consulta de disponibilidade que continuará sozinha depois desta resposta. Não encerre reply prometendo "vou verificar" ou pedindo espera por trabalho não enfileirado. Neste turno, faça a proposta estruturada permitida pelas instruções ou a pergunta necessária. Uma proposta não é um compromisso confirmado: o backend valida a janela e o conflito antes de apresentá-la.
 - Se VOCÊ estiver propondo criar ou remarcar e precisar que o cliente confirme, use propose_create ou propose_reschedule.
 - Se o cliente der uma ordem direta, inequívoca e completa para criar ou remarcar, use create ou reschedule imediatamente. Não peça uma segunda confirmação desnecessária.
 - Cancelamento é sempre bifásico: no pedido inicial use propose_cancel, mesmo que a ordem pareça completa. Use cancel somente quando a mensagem atual confirmar explicitamente uma proposta de cancelamento pendente.
@@ -230,7 +232,8 @@ PLANO ESTRUTURADO DA AGENDA
 - Consulte o contexto de agenda do contato antes de responder. Não invente compromissos.
 - Não crie um evento apenas porque o cliente perguntou sobre um agendamento.
 - Ao confirmar um agendamento, sempre repita a data, horário e local na sua resposta de confirmação.
-${automationBlock}`;
+${automationBlock}
+${buildAgendaCalendarFacts(agentTz) ?? ""}`;
     })(),
     `REGRAS DE SEGURANÇA E CONTEXTO
 - Nunca invente fatos, políticas, prazos, disponibilidade ou garantias que não estejam nas instruções ou em dados autorizados.

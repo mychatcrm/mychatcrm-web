@@ -32,7 +32,9 @@ import { executeAgentExternalApiLookup, listAgentExternalApiTools } from "@/lib/
 import {
   AGENDA_DATETIME_NEEDED_REPLY,
   checkAgentAgendaOutboundPlan,
+  localizeAgendaReply,
 } from "@/lib/server/agent-cta-scheduler";
+import { appendOperationalAuditEvent } from "@/lib/server/operational-audit";
 
 type AiGenerateFailureResult = Extract<AiGenerateResult, { ok: false }>;
 
@@ -626,7 +628,19 @@ export async function generateAgentResponse(params: {
           // Segunda tentativa também falhou. O lead não deve ser culpado com
           // "horário passado/fora da janela" por uma data que o próprio modelo
           // inventou: falha fechada, sem data, mutação ou claim de sucesso.
-          const fallbackReply = AGENDA_DATETIME_NEEDED_REPLY;
+          const languageTag = languagePolicy.languageTag;
+          const localized = Boolean(languageTag && /^(pt|en|es|fr|de|it|ar|ja|zh|hi|ru)(-|$)/i.test(languageTag));
+          if (!params.simulation) {
+            await appendOperationalAuditEvent({
+              tenantId: params.tenantId, actorType: "agent", actorId: params.agentId,
+              module: "agent.protection", action: "guard.triggered", status: "blocked",
+              severity: "warning", resourceType: "agents", resourceId: params.agentId,
+              resultCode: "agenda_validation_failed",
+              metadata: { safeClarification: localized },
+            });
+          }
+          if (!localized) return { ok: false, code: "INVALID_STRUCTURED_REPLY", detail: "agenda_validation_failed" };
+          const fallbackReply = localizeAgendaReply(AGENDA_DATETIME_NEEDED_REPLY, null, languageTag);
           const safeStructuredData =
             normalized.structuredData &&
             typeof normalized.structuredData === "object" &&

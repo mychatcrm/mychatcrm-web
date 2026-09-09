@@ -69,6 +69,21 @@ vi.mock("@/lib/ai/gateway", () => ({
 }));
 
 describe("generateAgentResponse — trava de data/hora da agenda", () => {
+  it.each(["en-US", "es-ES", "ja-JP", "ar", "pl-PL"])("does not send a Portuguese clarification for configured language %s", async language => {
+    generateAIResponseMock.mockResolvedValue(structuredResult({ reply: "Invalid proposal", action: "propose_create", date: "01/01/2020", time: "14:00" }));
+    const { generateAgentResponse } = await import("@/lib/ai/generate-agent-response");
+    const result = await generateAgentResponse({ tenantId: "tenant-test", agentId: "synthetic-agent", feature: "agent_chat",
+      messages: [{ role: "user", content: "Please suggest a time" }], simulation: true,
+      agentOverride: { nome: "Test", instructionMode: "simple", simplePrompt: "Help with appointments.", idioma: language,
+        timezone: "UTC", agendaAutomationEnabled: true, agendaDisponibilidade: AGENDA_DISPONIBILIDADE } });
+    if (language === "pl-PL") {
+      expect(result).toMatchObject({ ok: false, detail: "agenda_validation_failed" });
+    } else {
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.text).not.toBe(AGENDA_DATETIME_NEEDED_REPLY);
+    }
+    generateAIResponseMock.mockReset();
+  });
   beforeEach(() => {
     generateAIResponseMock.mockClear();
     // Domingo 16/08/2026 21:41 BRT — mesmo instante do incidente real.

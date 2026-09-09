@@ -107,7 +107,7 @@ export const AGENDA_AUTOMATION_DISABLED_REPLY =
 export const AGENDA_SLOT_TAKEN_REPLY =
   "Esse horário acabou de ficar indisponível na nossa agenda. Pode me indicar outra data ou horário? Eu verifico a disponibilidade e confirmo na hora.";
 export const AGENDA_UNVERIFIED_CLAIM_REPLY =
-  "Só um instante — ainda não registrei essa alteração na agenda. Me confirme a data e o horário exatos (por exemplo: 20/07 às 14:00) que eu registro agora mesmo.";
+  "Ainda não registrei essa alteração na agenda. Qual é a data completa e o horário que você deseja?";
 
 /** Resposta do modelo afirmando que uma alteração de agenda foi concluída. */
 const AGENDA_SUCCESS_CLAIM_RE =
@@ -127,7 +127,7 @@ export function buildOutsideAvailabilityReply(disp?: AgentAgendaDisponibilidade 
 }
 
 export const AGENDA_DATETIME_NEEDED_REPLY =
-  "Não consegui identificar a data e o horário certinhos. Me diga o dia e a hora que você prefere (por exemplo: 20/07 às 14h) que eu verifico para você.";
+  "Qual é a data completa e o horário que você prefere para o agendamento?";
 export const AGENDA_PAST_DATETIME_REPLY =
   "Esse horário já passou. Me diga outro dia e horário que eu verifico para você.";
 export const AGENDA_INVALID_TIME_REPLY =
@@ -234,22 +234,22 @@ const AGENDA_REPLY_TRANSLATIONS: ReadonlyMap<string, Record<SupportedLanguageCod
       AGENDA_UNVERIFIED_CLAIM_REPLY,
       {
         pt: AGENDA_UNVERIFIED_CLAIM_REPLY,
-        en: "One moment — I haven't recorded that change to the schedule yet. Confirm the exact date and time (for example: 20/07 at 14:00) and I'll record it right now.",
-        es: "Un momento — todavía no registré ese cambio en la agenda. Confírmame la fecha y la hora exactas (por ejemplo: 20/07 a las 14:00) y lo registro ahora mismo.",
-        fr: "Un instant — je n'ai pas encore enregistré cette modification dans l'agenda. Confirmez-moi la date et l'heure exactes (par exemple : 20/07 à 14:00) et je l'enregistre tout de suite.",
-        de: "Einen Moment — ich habe diese Änderung noch nicht im Kalender erfasst. Bestätigen Sie mir das genaue Datum und die Uhrzeit (zum Beispiel: 20.07. um 14:00), dann trage ich es sofort ein.",
-        it: "Un attimo — non ho ancora registrato questa modifica in agenda. Confermami la data e l'ora esatte (per esempio: 20/07 alle 14:00) e la registro subito.",
+        en: "One moment — I haven't recorded that change to the schedule yet. Confirm the exact date and time and I'll record it right now.",
+        es: "Un momento — todavía no registré ese cambio en la agenda. Confírmame la fecha y la hora exactas y lo registro ahora mismo.",
+        fr: "Un instant — je n'ai pas encore enregistré cette modification dans l'agenda. Confirmez-moi la date et l'heure exactes et je l'enregistre tout de suite.",
+        de: "Einen Moment — ich habe diese Änderung noch nicht im Kalender erfasst. Bestätigen Sie mir das genaue Datum und die Uhrzeit, dann trage ich es sofort ein.",
+        it: "Un attimo — non ho ancora registrato questa modifica in agenda. Confermami la data e l'ora esatte e la registro subito.",
       },
     ],
     [
       AGENDA_DATETIME_NEEDED_REPLY,
       {
         pt: AGENDA_DATETIME_NEEDED_REPLY,
-        en: "I couldn't work out the exact date and time. Tell me the day and time you prefer (for example: 20/07 at 2pm) and I'll check for you.",
-        es: "No pude identificar la fecha y la hora exactas. Dime el día y la hora que prefieres (por ejemplo: 20/07 a las 14h) y lo verifico para ti.",
-        fr: "Je n'ai pas réussi à identifier la date et l'heure exactes. Indiquez-moi le jour et l'heure que vous préférez (par exemple : 20/07 à 14h) et je vérifie pour vous.",
-        de: "Ich konnte das genaue Datum und die Uhrzeit nicht erkennen. Nennen Sie mir den gewünschten Tag und die Uhrzeit (zum Beispiel: 20.07. um 14 Uhr), dann prüfe ich das für Sie.",
-        it: "Non sono riuscito a identificare la data e l'ora esatte. Dimmi il giorno e l'ora che preferisci (per esempio: 20/07 alle 14) e verifico per te.",
+        en: "I couldn't work out the exact date and time. Tell me the day and time you prefer and I'll check for you.",
+        es: "No pude identificar la fecha y la hora exactas. Dime el día y la hora que prefieres y lo verifico para ti.",
+        fr: "Je n'ai pas réussi à identifier la date et l'heure exactes. Indiquez-moi le jour et l'heure que vous préférez et je vérifie pour vous.",
+        de: "Ich konnte das genaue Datum und die Uhrzeit nicht erkennen. Nennen Sie mir den gewünschten Tag und die Uhrzeit, dann prüfe ich das für Sie.",
+        it: "Non sono riuscito a identificare la data e l'ora esatte. Dimmi il giorno e l'ora che preferisci e verifico per te.",
       },
     ],
     [

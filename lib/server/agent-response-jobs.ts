@@ -196,9 +196,16 @@ export async function reclaimStuckProcessingJobs(sb?: SupabaseServiceClient): Pr
     .select("id");
   if (error) {
     logJobEvent("failed_reason", { scope: "reclaim_stuck", reason: error.message });
-    return 0;
+    throw new Error("response_recovery_read_failed");
   }
   const count = Array.isArray(data) ? data.length : 0;
+  const exhausted = await client.from("agent_response_jobs")
+    .update({ status: "failed", failed_reason: "response_retry_exhausted", locked_at: null,
+      claim_token: null, claim_expires_at: null, updated_at: new Date().toISOString() })
+    .eq("status", "processing")
+    .or(`claim_expires_at.lt.${new Date().toISOString()},and(claim_expires_at.is.null,locked_at.lt.${cutoff})`)
+    .gte("attempt_count", MAX_JOB_ATTEMPTS);
+  if (exhausted.error) throw new Error("response_recovery_exhausted_update_failed");
   if (count > 0) logJobEvent("reclaimed_stuck", { count });
   return count;
 }
@@ -682,18 +689,19 @@ export async function processDueAgentResponseJobs(sb?: SupabaseServiceClient): P
   const client = sb ?? createSupabaseServiceClient();
   await reclaimStuckProcessingJobs(client);
   const now = new Date().toISOString();
-  const { data } = await client
+  const { data, error } = await client
     .from("agent_response_jobs")
     .select("id")
     .eq("status", "pending")
     .lte("scheduled_for", now)
     .order("scheduled_for", { ascending: true })
-    .limit(20);
+    .limit(2);
+  if (error) throw new Error("response_recovery_due_read_failed");
   let processed = 0;
-  for (const row of data ?? []) {
+  await Promise.all((data ?? []).map(async (row) => {
     const outcome = await tryProcessAgentResponseJob(String((row as { id: string }).id), client);
     if (outcome === "processed") processed += 1;
-  }
+  }));
   return processed;
 }
 
@@ -734,6 +742,7 @@ export function computeAgentResponseProcessorDeadline(params: {
   invocationStartedAt: Date;
   scheduledFor: string;
   maxWaitUntil: string;
+  invocationBudgetMs?: number;
 }): number {
   const scheduled = new Date(params.scheduledFor).getTime();
   const maxWait = new Date(params.maxWaitUntil).getTime();
@@ -743,13 +752,14 @@ export function computeAgentResponseProcessorDeadline(params: {
     // Return before the 180s Vercel function ceiling. Every appended inbound
     // triggers another dispatcher, so an older invocation can exit cleanly as
     // "rescheduled" instead of timing out or executing fallback.
-    params.invocationStartedAt.getTime() + 150_000,
+    params.invocationStartedAt.getTime() + (params.invocationBudgetMs ?? 180_000) - 30_000,
   );
 }
 
 export async function waitAndProcessAgentResponseJob(
   jobId: string,
   sb?: SupabaseServiceClient,
+  invocationBudgetMs = 180_000,
 ): Promise<WaitAndProcessOutcome> {
   const client = sb ?? createSupabaseServiceClient();
   const { data: initial } = await client.from("agent_response_jobs").select("*").eq("id", jobId).maybeSingle();
@@ -760,6 +770,7 @@ export async function waitAndProcessAgentResponseJob(
     invocationStartedAt,
     scheduledFor: job.scheduled_for,
     maxWaitUntil: job.max_wait_until,
+    invocationBudgetMs,
   });
 
   while (Date.now() < deadline) {
@@ -773,6 +784,7 @@ export async function waitAndProcessAgentResponseJob(
       invocationStartedAt,
       scheduledFor: current.scheduled_for,
       maxWaitUntil: current.max_wait_until,
+      invocationBudgetMs,
     });
     if (current.status === "completed" || current.status === "completed_with_fallback") return "completed";
     if (current.status === "cancelled") return "cancelled";
@@ -796,9 +808,7 @@ export async function waitAndProcessAgentResponseJob(
   const finalStatus = (finalData as { status?: string; scheduled_for?: string } | null)?.status;
   const finalScheduledFor = (finalData as { status?: string; scheduled_for?: string } | null)?.scheduled_for;
   if (
-    finalStatus === "pending" &&
-    finalScheduledFor &&
-    new Date(finalScheduledFor).getTime() > Date.now()
+    finalStatus === "pending" || finalStatus === "processing"
   ) {
     logJobEvent("dispatch_rescheduled", { job_id: jobId, scheduled_for: finalScheduledFor });
     return "rescheduled";

@@ -1814,12 +1814,14 @@ export async function processFollowUpJob(
 
     }
 
+    // Never count generation/provider latency as time waiting for the customer.
+    const confirmedAt = new Date();
     const journeyRenewed = await touchLeadJourney({
       sb: client,
       tenantId: job.tenant_id,
       journeyId: authorizedJourney.id,
       leadId: lead?.id ?? job.lead_id,
-      occurredAt: now.toISOString(),
+      occurredAt: confirmedAt.toISOString(),
     });
     if (!journeyRenewed) {
       throw new Error("journey_activity_renewal_failed_after_send");
@@ -1830,7 +1832,7 @@ export async function processFollowUpJob(
     const nextScheduled = exhausted
       ? null
       : new Date(
-          now.getTime() + settings.intervaloVerificacaoMinutos * 60_000,
+          confirmedAt.getTime() + settings.intervaloVerificacaoMinutos * 60_000,
         );
     const completion = await finishClaimedFollowUpJob({
       sb: client,
@@ -1846,18 +1848,18 @@ export async function processFollowUpJob(
 
     if (lead?.id) {
       const cooldownUntil = new Date(
-        now.getTime() + settings.cooldownMinutos * 60_000,
+        confirmedAt.getTime() + settings.cooldownMinutos * 60_000,
       );
       await client
         .from("leads")
         .update({
           follow_up_count: (lead.follow_up_count ?? 0) + 1,
-          last_follow_up_at: now.toISOString(),
+          last_follow_up_at: confirmedAt.toISOString(),
           follow_up_status: nextAttempts >= job.max_attempts ? "exhausted" : "active",
           follow_up_blocked_reason: null,
           follow_up_cooldown_until:
             settings.cooldownAtivo ? cooldownUntil.toISOString() : null,
-          updated_at: now.toISOString(),
+          updated_at: confirmedAt.toISOString(),
         })
         .eq("id", lead.id);
     }
