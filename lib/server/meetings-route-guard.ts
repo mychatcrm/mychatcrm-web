@@ -6,6 +6,7 @@ import { requireActiveClientSession } from "@/lib/server/client-session-guard";
 import { resolveAccessScope, type AccessScope } from "@/lib/server/access-scope";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { MeetingQuotaExceededError } from "@/lib/server/meeting-quota";
+import { MEETINGS_MODULE_UNAVAILABLE } from "@/lib/meetings/types";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -48,9 +49,14 @@ export async function requireMeetingRouteContext(): Promise<
   const { session } = guard;
   if (!isMeetingsEnabledForTenant(session.tenantId)) {
     // 404, nao 403: quando o modulo esta desligado ele nao existe para a conta.
+    // O `code` viaja junto para a tela distinguir "nao liberado aqui" de
+    // "reuniao inexistente" — sao a mesma resposta HTTP e explicacoes opostas.
     return {
       ok: false,
-      response: NextResponse.json({ error: "Recurso não encontrado." }, { status: 404 }),
+      response: NextResponse.json(
+        { error: "Recurso não encontrado.", code: MEETINGS_MODULE_UNAVAILABLE },
+        { status: 404 },
+      ),
     };
   }
 

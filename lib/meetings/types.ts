@@ -85,3 +85,12 @@ export type ScopableMeeting = {
 /** Colunas que a decisao de visibilidade precisa ler — usar em todo select de recorte. */
 export const SCOPABLE_MEETING_COLUMNS =
   "created_by_employee_id, team_id, lead_id, visibility";
+
+/**
+ * Codigo do 404 devolvido quando o modulo nao esta liberado para a conta.
+ *
+ * Fica aqui, e nao no guard, porque a tela do cliente precisa do mesmo valor: o
+ * status HTTP e identico ao de "reuniao inexistente", e so o codigo separa
+ * "ainda nao liberado para voce" de "isso nao existe".
+ */
+export const MEETINGS_MODULE_UNAVAILABLE = "meetings_module_unavailable";

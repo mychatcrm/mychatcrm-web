@@ -7,11 +7,13 @@ vi.mock("@/lib/server/client-session-guard", () => ({
   requireActiveClientSession: vi.fn(),
 }));
 
-const { isMeetingsEnabledForTenant, meetingRouteError } = await import(
+const { isMeetingsEnabledForTenant, meetingRouteError, requireMeetingRouteContext } = await import(
   "@/lib/server/meetings-route-guard"
 );
+const { requireActiveClientSession } = await import("@/lib/server/client-session-guard");
 import { MeetingQuotaExceededError } from "@/lib/server/meeting-quota";
 import { computeMeetingQuotaState } from "@/lib/meetings/plan-limits";
+import { MEETINGS_MODULE_UNAVAILABLE } from "@/lib/meetings/types";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -110,5 +112,29 @@ describe("respostas de erro", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const response = meetingRouteError("string solta");
     expect(response.status).toBe(500);
+  });
+});
+
+describe("404 de módulo desligado", () => {
+  it("carrega o código que separa 'não liberado' de 'não existe'", async () => {
+    // O status é o mesmo dos dois casos, de propósito — não revelar que a
+    // reunião existe. Só o código permite a tela explicar em vez de dar erro.
+    vi.stubEnv("MEETINGS_ENABLED", "0");
+    vi.stubEnv("MEETINGS_ENABLED_TENANTS", "tenant-piloto");
+    vi.mocked(requireActiveClientSession).mockResolvedValue({
+      ok: true,
+      session: { tenantId: "tenant-de-fora" },
+    } as never);
+
+    const guard = await requireMeetingRouteContext();
+    expect(guard.ok).toBe(false);
+    if (guard.ok) throw new Error("guard deveria recusar");
+
+    expect(guard.response.status).toBe(404);
+    const body = await guard.response.json();
+    expect(body.code).toBe(MEETINGS_MODULE_UNAVAILABLE);
+    // A mensagem não pode contar mais do que o código: quem não tem o módulo
+    // não precisa saber que existe uma lista de piloto.
+    expect(body.error).toBe("Recurso não encontrado.");
   });
 });

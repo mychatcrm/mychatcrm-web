@@ -10,6 +10,7 @@ import { NewMeetingModal, type NewMeetingResult } from "./NewMeetingModal";
 import { MeetingPage } from "./detail/MeetingPage";
 import { RecordingScreen } from "./recorder/RecordingScreen";
 import { uploadFileInParts } from "./upload/uploadFileInParts";
+import { MEETINGS_MODULE_UNAVAILABLE } from "@/lib/meetings/types";
 import { formatClock, formatQuotaHours, isProcessing } from "./meeting-format";
 
 type QuotaState = {
@@ -44,6 +45,7 @@ export function ReunioesHub() {
   const [error, setError] = useState<string | null>(null);
   const [contentHits, setContentHits] = useState<ContentHit[]>([]);
   const [searchingContent, setSearchingContent] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
 
   const loadLibrary = useCallback(async () => {
     try {
@@ -52,9 +54,18 @@ export function ReunioesHub() {
       const response = await fetch(`/api/client/reunioes?${params.toString()}`);
       const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
       if (!response.ok) {
+        // Módulo não liberado para esta conta: é uma explicação, não uma falha.
+        // Sem isso a tela abre inteira e cada ação devolve "Recurso não
+        // encontrado" — parece quebrado em vez de indisponível.
+        if (body.code === MEETINGS_MODULE_UNAVAILABLE) {
+          setUnavailable(true);
+          setError(null);
+          return;
+        }
         setError(typeof body.error === "string" ? body.error : "Não foi possível carregar.");
         return;
       }
+      setUnavailable(false);
       setMeetings((body.meetings as MeetingListItem[]) ?? []);
       setQuota((body.quota as QuotaState) ?? null);
       setError(null);
@@ -135,6 +146,23 @@ export function ReunioesHub() {
       setView({ kind: "library" });
     }
   }, []);
+
+  if (unavailable) {
+    return (
+      <div className="mx-auto w-full max-w-4xl px-4 py-4 sm:px-6">
+        <div className="rounded-panel-2xl border border-line/45 bg-surface-card/60 px-5 py-6 text-center">
+          <Mic className="mx-auto h-6 w-6 text-content-faint" aria-hidden />
+          <h1 className="mt-3 text-base font-semibold text-content">
+            Reuniões IA ainda não está liberado nesta conta
+          </h1>
+          <p className="mx-auto mt-1.5 max-w-md text-xs text-content-muted">
+            O módulo está em piloto. Enquanto não for liberado aqui, gravar e enviar áudio ficam
+            indisponíveis — nenhuma reunião sua foi perdida.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (view.kind === "recording") {
     return (
