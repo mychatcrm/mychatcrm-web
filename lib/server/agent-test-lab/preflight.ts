@@ -4,6 +4,7 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { LAB_REAL_MODES, type LabRunRequestV1, type LabCheck } from "@/lib/agent-test-lab/contracts";
 import { LAB_OWNER_ID, labOnlyExpectsSilence, labPhoneJid, labRuleMatches, isLabInternalMode } from "@/lib/agent-test-lab/policy";
 import { inspectLabIsolatedAgent } from "./isolation";
+import { hasApprovedLabCI } from "./github";
 
 function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable);
@@ -72,6 +73,11 @@ export async function inspectLabTarget(input: LabRunRequestV1) {
     check("rule_exact", intentionalSilence || labRuleMatches({ ...input, ...effective }, rule),
       intentionalSilence ? "Sem regra: somente silêncio é esperado." : "O teste não pode forçar uma regra ou agente diferente.");
     check("effects_confirmed", input.targetKind === "copy" || input.originalConfirmed, "Efeitos reais precisam ser confirmados nesta execução.");
+    // The plan requires the internal suites to have passed on this exact commit
+    // before a real conversation is allowed. Without the runner credential we
+    // cannot know, and "cannot know" is not "approved".
+    const ciApproved = await hasApprovedLabCI(sha).catch(() => false);
+    check("internal_tests_approved", ciApproved, "A suíte interna precisa estar aprovada nesta versão publicada antes de um teste real.");
     const sender = await sb.from("agent_test_lab_connections").select("id,state,wa_jid").eq("owner_admin_id", LAB_OWNER_ID).eq("purpose", "sender").is("archived_at", null).maybeSingle();
     if (sender.error) throw new Error("sender_read_failed");
     senderJid = labPhoneJid(sender.data?.wa_jid);

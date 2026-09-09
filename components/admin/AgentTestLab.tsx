@@ -192,7 +192,20 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
           <label className="text-sm"><input type="checkbox" checked={expectSilence} onChange={e => setExpectSilence(e.target.checked)} /> Esperar silêncio por ausência intencional de regra</label></>}
       </div><p className="mt-4 text-xs text-white/50">Limite: {profileLimits.maxMessages} mensagens · {profileLimits.maxMinutes} minutos · {money(profileLimits.budgetBrl)} estimados. Anexos contam como mensagens. Tarifas informadas depois pelo provedor podem alterar o custo final.</p>
         {!runnable && <p className="mt-4 text-sm text-amber-400">{isLabInternalMode(mode) ? "Configure o runner restrito do GitHub antes de iniciar." : labCodeLabel(snapshot.capabilities.realReason)}</p>}
-        <div className="mt-5 flex flex-wrap gap-3"><button className={button} disabled={busy} onClick={() => act(async () => { const data = await api<{ checks: LabCheck[] }>("/preflight", { method: "POST", body: JSON.stringify(requestBody()) }); setChecks(data.checks); })}>Verificar pré-requisitos</button>
+        <div className="mt-5 flex flex-wrap gap-3">
+          <button className={button} disabled={busy || !script.trim()} onClick={() => act(async () => {
+            await api("/scenarios", { method: "POST", body: JSON.stringify({ scenario: requestBody().scenario }) });
+            setNotice("Roteiro salvo. Pode ser repetido depois com nova identificação de execução.");
+          })}>Salvar roteiro</button>
+          <button className={button} disabled={busy} onClick={() => act(async () => {
+            const data = await api<{ scenarios: { name: string; version: number; definition: { goal: string; language: string; steps: { text?: string }[] } }[] }>("/scenarios");
+            const latest = data.scenarios[0];
+            if (!latest) { setNotice("Nenhum roteiro salvo ainda."); return; }
+            setName(latest.name); setGoal(latest.definition.goal); setLanguage(latest.definition.language);
+            setScript(latest.definition.steps.map(step => step.text ?? "").filter(Boolean).join("\n"));
+            setNotice(`Roteiro "${latest.name}" v${latest.version} carregado.`);
+          })}>Carregar último roteiro</button>
+          <button className={button} disabled={busy} onClick={() => act(async () => { const data = await api<{ checks: LabCheck[] }>("/preflight", { method: "POST", body: JSON.stringify(requestBody()) }); setChecks(data.checks); })}>Verificar pré-requisitos</button>
           <button className={primary} disabled={busy || !runnable} onClick={() => act(async () => { const data = await api<{ ok: boolean; run: Run }>("/runs", { method: "POST", body: JSON.stringify(requestBody()) }); if (data.ok) { setNotice("Execução registrada. O runner trabalha separado da página."); await reload(); } })}>{busy ? "Processando…" : `Iniciar: ${LAB_MODE_LABELS[mode]}`}</button></div>
         {checks && <ul className="mt-4 space-y-2 text-sm">{checks.map(check => <li key={check.code} className={check.ok ? "text-emerald-400" : "text-amber-400"}>{check.ok ? "✓" : "!"} {check.detail}</li>)}</ul>}
       </section>
@@ -211,8 +224,9 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
           ["resume", "Continuar", true],
           ["manual", "Assumir manualmente", !isLabInternalMode(detail.run.mode) && detail.run.mode !== "simulation"],
           ["stop", "Parar teste", true],
+          ["evaluate", "Avaliar conversa (IA)", ["completed", "failed", "cancelled"].includes(detail.run.status) && !isLabInternalMode(detail.run.mode)],
         ] as const).filter(([, , shown]) => shown).map(([action, label]) => <button key={action}
-          disabled={busy || ["completed", "failed", "cancelled"].includes(detail.run.status)} className={button}
+          disabled={busy || (action !== "evaluate" && ["completed", "failed", "cancelled"].includes(detail.run.status))} className={button}
           onClick={() => act(() => control(detail.run, action))}>{label}</button>)}</div>
         <p className="text-xs text-amber-300">Pausa e parada não desfazem mensagens ou compromissos já confirmados. Suítes já disparadas no GitHub podem continuar no runner.</p>
         {!isLabInternalMode(detail.run.mode) && <AgentTestLabCleanup runId={detail.run.id}

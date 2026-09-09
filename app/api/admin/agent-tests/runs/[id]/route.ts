@@ -32,6 +32,12 @@ export async function POST(request: Request, { params }: Context) {
       await tickLabRun(id, String(row.data.mode));
       return NextResponse.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
     }
+    if (body.action === "evaluate") {
+      const { evaluateLabRunSemantics } = await import("@/lib/server/agent-test-lab/evaluator");
+      const done = await evaluateLabRunSemantics(id);
+      return NextResponse.json({ ok: done, code: done ? "evaluated" : "evaluation_unavailable" },
+        { headers: { "Cache-Control": "no-store" } });
+    }
     if (!["pause", "resume", "manual", "stop"].includes(body.action)) throw new Error("invalid_action");
     await labAudit(`run.${body.action}_requested`, id);
     const result = await createSupabaseServiceClient().rpc("control_agent_test_lab_run_v1", { p_run_id: id, p_owner: owner.adminId, p_action: body.action });

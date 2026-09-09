@@ -2,69 +2,108 @@
 
 ## Estado em 2026-09-09
 
-**Implementação parcial. Não é uma entrega concluída nem uma certificação real.**
+**Implementação funcional. Ainda não comprovada por uma execução real ponta a ponta.**
 
-Base: `origin/main` em `6ea8ef9`. Worktree `codex/agent-test-lab-20260909`, separado do diretório de trabalho do proprietário. Nenhuma alteração paralela foi incorporada à força ou revertida.
+Base: `origin/main` em `6ea8ef9`, branch `codex/agent-test-lab-20260909`. A fundação
+(`eb65e3e`) foi feita pelo Codex; os marcos seguintes completam o plano.
 
-### Implementado neste marco
+### Implementado
+
+**Fundação (marco 1, Codex)**
 
 - Contratos versionados de execução, cenário, limites e evidência.
-- Página própria `/admin/testes-agentes` e navegação exclusiva do proprietário.
-- Reautenticação por senha e sessão opaca revogável de duas horas; não confia no cookie administrativo legado.
-- Rate limit durável para desbloqueio, validação de origem e APIs sem cache.
-- Migração aditiva para sessões, conexões, destinos, execuções, etapas, mídias, custos, evidências e recursos.
-- RLS defensiva e tabelas/RPCs sem acesso de `anon`/`authenticated`.
-- Claims, heartbeat, controle de pausa/parada e reservas de orçamento transacionais.
-- Auditoria de transições da execução na mesma transação, sem conteúdo de conversa ou prompt.
+- Página `/admin/testes-agentes` e navegação exclusiva do proprietário.
+- Reautenticação por senha e sessão opaca revogável de duas horas.
+- Migração aditiva com RLS defensiva; nenhuma tabela com acesso de `anon`/`authenticated`.
+- Claims, expiração, controle de pausa/parada e reservas de orçamento transacionais.
 - Dispatcher restrito a quatro perfis do GitHub Actions, sem comandos arbitrários.
-- Conexão Evolution com prefixo exclusivo, QR autenticado, sem reset do agente do sistema.
-- Webhook exclusivo que recusa histórico, contatos não autorizados e instâncias divergentes.
-- Pré-validação de agente, conexão, transporte e regra; campos conferidos no schema real.
-- Relatórios JSON/CSV sanitizados e histórico de execuções.
-- Validação inicial de tipos, tamanho e assinaturas de arquivos.
+- Conexão Evolution testadora com prefixo exclusivo e webhook próprio.
 
-### Ainda precisa ser implementado/validado (obrigatório para o plano completo)
+**Execução real**
 
-1. Provisionamento da cópia isolada, calendário e vínculos de ferramentas sem copiar credenciais.
-2. Catálogo e confirmação transacional dos destinos autorizados e dos efeitos por execução.
-3. Atribuição de custo/quota do agente testado ao SaaS, com contexto validado no servidor.
-4. Executor real manual, roteiro e IA testadora com escolha de modelo a cada execução.
-5. Upload privado completo, gravação de áudio, documentos, mídia recebida e confirmação de interpretação.
-6. Simulação integrada ao motor atual e atribuição correta dos seus custos.
-7. Confirmação determinística de agenda, CRM, follow-up, lembretes, ferramentas e entrega.
-8. Encerramento da jornada exclusivamente de teste, revisão e limpeza dos recursos criados.
-9. Retenção automática de conteúdo/arquivos por 30 dias e resultados por 90 dias.
-10. Criação/validação do cron de recuperação do laboratório. O endpoint já existe, mas não foi agendado.
-11. Credencial GitHub de escopo mínimo, workflow publicado e execução comprovada no runner.
-12. Migração na nuvem, preview, teste ponta a ponta e publicação aprovada.
+- Catálogo de destinos autorizados com confirmação explícita; destino revalidado na
+  admissão da etapa e outra vez imediatamente antes da chamada ao provedor.
+- Admissão transacional: limite de mensagens, orçamento e destino conferidos na mesma
+  transação que cria a etapa.
+- Espera do turno do agente com janela de 240s e fecho por silêncio de 25s, lendo uma
+  rajada como uma resposta. A latência conhecida da Evolution não é tratada como falha.
+- Laço durável com dispatch encadeado (~50s por invocação) mais cron de recuperação.
+  O navegador pode ser fechado a qualquer momento.
+- Envio sem confirmação de recibo nunca provoca reenvio: vira resultado inconclusivo.
 
-Os modos reais e a simulação permanecem bloqueados no backend enquanto esses pontos estiverem pendentes. Essa proteção **não equivale a implementá-los**. Não remover o bloqueio apenas para habilitar botões.
+**Cópia isolada**
 
-## Configuração futura
+- Cópia por lista de permissão. Credencial viva (`meta_access_token`), telefone de
+  terceiro (`handoffNumero`) e identificadores do cliente ficam para trás por padrão.
+- Tenant do laboratório fora de `public.tenants`, como `tenant-system-internal` já faz:
+  não aparece na lista de clientes nem nas métricas da plataforma.
+- Linha própria (`purpose = receiver`) registrada em `tenant_evolution_instances` com
+  regra `whatsapp_organico` própria, apontando para o webhook de produção — o teste
+  orgânico percorre o recebimento real.
+- Dependência que a cópia não honra (CRM, arquivos, Meta, handoff, calendário) entra
+  como verificação reprovada, nunca como aprovação.
 
-- `AGENT_TEST_LAB_ENABLED`: `false` por padrão; não ativar em produção durante a implementação.
-- `AGENT_TEST_LAB_PUBLIC_URL`: origem HTTPS do webhook dedicado.
-- `AGENT_TEST_LAB_GITHUB_TOKEN`: credencial exclusiva do repositório MyChatCRM, Actions leitura/escrita e Contents leitura. Nunca reaproveitar token amplo do CLI sem avaliação.
-- `AGENT_TEST_LAB_DEPLOY_SHA`: apenas para ambientes controlados sem `VERCEL_GIT_COMMIT_SHA`.
+**Modos**
 
-Nenhum segredo deve entrar neste documento, em fixtures, no Git ou em exportações.
+| Modo | Estado |
+|---|---|
+| Testes internos, 10 mil, 1 milhão, mutation | Implementados; exigem `AGENT_TEST_LAB_GITHUB_TOKEN` e o workflow na `main`. |
+| Simulação com IA | Implementado sobre `simulateAgentTurnV2`; roda sempre na cópia. |
+| Conversa manual real | Implementada, com texto e anexo. |
+| Roteiro real | Implementado, com roteiros salvos e versionados. |
+| IA como lead real | Implementada, com modelo escolhido por execução. |
+| Validar uma correção | Implementado como execução dirigida ligada ao SHA. |
 
-## Evidências deste marco
+**Verificação, custo e encerramento**
 
-- Suíte executada: 285 arquivos / 2.873 testes aprovados, incluindo 47 novos testes de contrato/política e os 10.000 cenários determinísticos existentes.
-- Testes adicionais de autenticação: 18 aprovados em execução separada.
-- TypeScript, cobertura de auditoria e build de produção aprovados.
-- Migração exercitada em PostgreSQL 14 descartável local, sem acessar dados de clientes.
-- Verificados: reserva/estorno idempotentes, orçamento, claim exclusiva, pausa, heartbeat obsoleto, expiração, permissões e auditoria transacional.
-- Concorrência real no PostgreSQL local: 16 workers reivindicando o mesmo job, 20 reservas de orçamento simultâneas, 16 tentativas com a mesma chave, 10 tentativas durante pausa e duas execuções compartilhando a mesma conexão — sem colisão nos testes executados.
-- Isso não comprova envio WhatsApp, Google Calendar, custo real, runner remoto ou canário.
+- Efeitos conferidos no banco: `agenda_events`, `follow_up_jobs`,
+  `agenda_reminder_jobs_v2`, `agent_outbound_outbox`, restritos ao tenant, ao número do
+  testador e à janela da execução. Entrega só conta com identificador do provedor.
+- Temporizador que a execução foi curta demais para alcançar fica "não executado".
+- Simulação nunca aprova efeito: prova decisão, não execução.
+- Avaliador semântico opcional, sempre rotulado como opinião, com veredicto máximo
+  "inconclusivo". Prompts contraditórios são apontados, não resolvidos.
+- Custo de IA do laboratório cai no tenant do laboratório, separado dos clientes.
+- Multimídia com lista de permissão de extensão, checagem de assinatura do arquivo,
+  bucket privado e URL assinada de 5 minutos.
+- Limpeza revisada: lista o que a execução criou, nada marcado por padrão, e cancela
+  compromisso pela mesma mutação do agente (agenda e lembretes seguem o fluxo normal).
+- Retenção: conversas e arquivos por 30 dias, resultados por 90; filhos removidos antes
+  do pai. Eventos de auditoria são preservados.
 
-## Verificações SQL locais
+### Pendente
 
-Em banco **descartável**, aplicar na ordem:
+1. **Execução real ponta a ponta.** Nada aqui foi exercitado contra WhatsApp de verdade.
+   Depende de dois números escaneados e do token do runner.
+2. **Variáveis de ambiente em produção**: `AGENT_TEST_LAB_ENABLED`,
+   `AGENT_TEST_LAB_PUBLIC_URL`, `AGENT_TEST_LAB_GITHUB_TOKEN`.
+3. **Workflow na `main`.** `dispatchLabWorkflow` resolve o arquivo pelo ref `main`; até o
+   merge, nem os testes internos disparam.
+4. **Migrações na nuvem**: `20260909111723` e `20260909180000`.
+5. **Google Calendar exclusivo do laboratório** para aprovar teste de agenda.
+6. Cenários de aceitação que exigem provedor real: entrega confirmada, mutação real de
+   agenda, takeover humano, worker interrompido, desconexão no meio da conversa.
 
-1. `scripts/agent-test-lab/sql-fixture.sql` (nunca no Supabase de produção).
-2. `supabase/migrations/20260909111723_agent_test_lab_foundation_v1.sql`.
-3. `scripts/agent-test-lab/sql-assertions.sql`.
+Esses seis pontos são a diferença entre "implementado" e "comprovado". O painel não
+deve ser tratado como certificado enquanto o item 1 não acontecer.
 
-O fixture possui apenas papéis/tabelas mínimos falsos; não substitui a validação de compatibilidade no Supabase de preview.
+## Configuração
+
+- `AGENT_TEST_LAB_ENABLED`: `false` por padrão. Ligar só depois das migrações.
+- `AGENT_TEST_LAB_PUBLIC_URL`: origem HTTPS do webhook do laboratório.
+- `AGENT_TEST_LAB_GITHUB_TOKEN`: credencial exclusiva, Actions leitura/escrita e
+  Contents leitura. Nunca reaproveitar token amplo.
+- `AGENT_TEST_LAB_DEPLOY_SHA`: apenas onde não existe `VERCEL_GIT_COMMIT_SHA`.
+- Reusa `EVOLUTION_WEBHOOK_SECRET` e `MYCHATCRM_PUBLIC_BASE_URL` já existentes.
+
+Nenhum segredo entra neste documento, em fixtures, no Git ou em exportações.
+
+## Verificações locais
+
+Em banco **descartável**, na ordem:
+
+1. `scripts/agent-test-lab/sql-fixture.sql` (nunca no Supabase).
+2. `supabase/migrations/20260909111723_agent_test_lab_foundation_v1.sql`
+3. `supabase/migrations/20260909180000_agent_test_lab_execution_v1.sql`
+4. `scripts/agent-test-lab/sql-assertions.sql`
+5. `scripts/agent-test-lab/sql-assertions-execution.sql`
