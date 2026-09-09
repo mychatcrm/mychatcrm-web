@@ -1,9 +1,16 @@
 import "server-only";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { LAB_OWNER_ID, assertLabUuid, isLabInternalMode } from "@/lib/agent-test-lab/policy";
-import { LAB_TICK_INTERVAL_SECONDS, type LabStepV1 } from "@/lib/agent-test-lab/contracts";
+import { LAB_TICK_INTERVAL_SECONDS, LAB_MESSAGE_RESERVE_BRL, type LabStepV1, type LabRunRequestV1 } from "@/lib/agent-test-lab/contracts";
 import { labAgentTurnState, labStepVerdict } from "@/lib/agent-test-lab/turn-policy";
+import { labEffectVerdict, labDeliveryVerdict } from "@/lib/agent-test-lab/effect-policy";
 import { dispatchLabText } from "./sender";
+import { recordLabEffects } from "./effects";
+
+/** Expectations that only the database can settle. */
+const EFFECT_EXPECTATIONS = new Set<LabStepV1["expected"]["type"]>([
+  "agenda_created", "agenda_cancelled", "follow_up", "reminder", "media_understood",
+]);
 
 type StepRow = {
   id: string; ordinal: number; kind: string; status: string; command: Record<string, unknown>;
@@ -101,8 +108,26 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
     return;
   }
 
+  const drivenRun = run.mode === "scripted" || run.mode === "autonomous" || run.mode === "correction";
   const lastSent = [...steps].reverse().find(step => step.confirmed_at && step.status === "sent");
   if (!lastSent?.confirmed_at) {
+    // A driven run opens the conversation itself; a manual one waits for the owner.
+    if (drivenRun && steps.length === 0) {
+      const opening = await nextDrivenMessage({ run, ordinal: -1, replies: [] });
+      if (opening) {
+        const queued = await sb.rpc("enqueue_agent_test_lab_step_v1", {
+          p_run_id: id, p_owner: LAB_OWNER_ID, p_kind: "text", p_command: { text: opening },
+          p_key: `lab-step:${id}:0`, p_reserve: LAB_MESSAGE_RESERVE_BRL,
+        });
+        if (!queued.error && queued.data?.ok === true) {
+          await finish(sb, id, claimToken, { status: "running", result_code: "opening_queued", next_step_at: new Date(now).toISOString() });
+          return;
+        }
+      }
+      await finish(sb, id, claimToken, { status: "failed", verdict: "not_executed",
+        result_code: "no_opening_message", finished_at: new Date().toISOString() });
+      return;
+    }
     await finish(sb, id, claimToken, { status: "waiting_input", result_code: "waiting_owner_message", next_step_at: new Date(now + LAB_TICK_INTERVAL_SECONDS * 1000).toISOString() });
     return;
   }
@@ -123,15 +148,100 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
   }
 
   const expectation = (run.request?.scenario?.steps?.[lastSent.ordinal]?.expected?.type ?? "reply") as LabStepV1["expected"]["type"];
-  const result = labStepVerdict(expectation, turn);
+  const turnResult = labStepVerdict(expectation, turn);
+
+  // An effect expectation is settled against the database, never against the reply.
+  // "Agendado para amanhã" is a sentence; an appointment is a row.
+  let result = turnResult;
+  if (EFFECT_EXPECTATIONS.has(expectation) && turnResult.verdict === "inconclusive") {
+    const observed = await recordLabEffects(id);
+    const settled = labEffectVerdict(expectation, observed, {
+      elapsedMs: now - Date.parse(String(run.created_at)),
+      requiredMs: Date.parse(String(run.deadline_at)) - Date.parse(String(run.created_at)),
+    });
+    result = { verdict: settled.verdict, code: settled.code };
+    await sb.from("agent_test_lab_evidence").upsert({
+      run_id: id, check_code: `effects_${lastSent.ordinal}`, verdict: settled.verdict,
+      description: settled.description, resource_ids: [],
+    }, { onConflict: "run_id,check_code" });
+    const delivery = labDeliveryVerdict(observed);
+    await sb.from("agent_test_lab_evidence").upsert({
+      run_id: id, check_code: `delivery_${lastSent.ordinal}`, verdict: delivery.verdict,
+      description: delivery.description, resource_ids: [],
+    }, { onConflict: "run_id,check_code" });
+  }
+
   await sb.from("agent_test_lab_evidence").upsert({
     run_id: id, check_code: `step_${lastSent.ordinal}`, verdict: result.verdict,
     description: `Etapa ${lastSent.ordinal + 1}: ${result.code}. Respostas do agente registradas: ${turn.messages}.`,
     resource_ids: [lastSent.id],
   }, { onConflict: "run_id,check_code" });
   await sb.from("agent_test_lab_steps").update({ status: "settled", result_code: result.code }).eq("id", lastSent.id);
-  await finish(sb, id, claimToken, {
-    status: "waiting_input", result_code: result.code,
-    next_step_at: new Date(now + LAB_TICK_INTERVAL_SECONDS * 1000).toISOString(),
+
+  // Manual runs hand control back to the owner. A driven run decides its own next
+  // message, and closes when the script is finished or the agent stopped talking.
+  if (!drivenRun) {
+    await finish(sb, id, claimToken, {
+      status: "waiting_input", result_code: result.code,
+      next_step_at: new Date(now + LAB_TICK_INTERVAL_SECONDS * 1000).toISOString(),
+    });
+    return;
+  }
+
+  const next = await nextDrivenMessage({ run, ordinal: lastSent.ordinal, replies: replies.data ?? [] });
+  if (!next) {
+    await finish(sb, id, claimToken, await summariseLabRun(sb, id, result.code));
+    return;
+  }
+  const queued = await sb.rpc("enqueue_agent_test_lab_step_v1", {
+    p_run_id: id, p_owner: LAB_OWNER_ID, p_kind: "text", p_command: { text: next },
+    p_key: `lab-step:${id}:${lastSent.ordinal + 1}`, p_reserve: LAB_MESSAGE_RESERVE_BRL,
   });
+  if (queued.error || queued.data?.ok !== true) {
+    // A limit reached mid-script is the end of the run, not an error in it.
+    await finish(sb, id, claimToken, await summariseLabRun(sb, id, String(queued.data?.code ?? "step_queue_rejected")));
+    return;
+  }
+  await finish(sb, id, claimToken, { status: "running", result_code: result.code, next_step_at: new Date(now).toISOString() });
+}
+
+/**
+ * The next message of a driven run. A script reads its own next line; an autonomous
+ * run asks the tester model. Either way the destination is fixed and already
+ * authorized — the message text is the only thing that varies.
+ */
+async function nextDrivenMessage(params: {
+  run: Record<string, unknown>; ordinal: number;
+  replies: { provider_occurred_at?: string | null; received_at?: string | null }[];
+}): Promise<string | null> {
+  const run = params.run as { mode: string; request: LabRunRequestV1; max_messages: number; sent_messages: number;
+    target_tenant_id: string | null; target_agent_id: string | null; id: string };
+  const scenario = run.request?.scenario;
+  if (run.mode === "scripted" || run.mode === "correction") {
+    const step = scenario?.steps?.[params.ordinal + 1];
+    return step?.kind === "text" && step.text?.trim() ? step.text : null;
+  }
+  const sb = createSupabaseServiceClient();
+  const transcript = await sb.from("agent_test_lab_messages").select("direction,content")
+    .eq("run_id", run.id).order("received_at").limit(200);
+  if (transcript.error) throw new Error("transcript_read_failed");
+  const { nextLabTesterMessage } = await import("./tester-ai");
+  return nextLabTesterMessage({
+    labTenantId: String(run.target_tenant_id ?? ""), labAgentId: String(run.target_agent_id ?? ""),
+    model: run.request?.testerModel, scenario,
+    transcript: (transcript.data ?? []) as { direction: "tester" | "agent"; content: string | null }[],
+    remaining: Math.max(0, Number(run.max_messages) - Number(run.sent_messages)),
+  });
+}
+
+/** The aggregate verdict: a run is only as good as its weakest settled step. */
+async function summariseLabRun(sb: ReturnType<typeof createSupabaseServiceClient>, runId: string, code: string) {
+  const evidence = await sb.from("agent_test_lab_evidence").select("verdict").eq("run_id", runId).limit(1000);
+  if (evidence.error) throw new Error("evidence_read_failed");
+  const verdicts = (evidence.data ?? []).map(row => String(row.verdict));
+  const verdict = verdicts.includes("failed") ? "failed"
+    : verdicts.includes("inconclusive") ? "inconclusive"
+    : verdicts.length && verdicts.every(value => value === "passed" || value === "expected_block") ? "passed"
+    : "not_executed";
+  return { status: verdict === "failed" ? "failed" : "completed", verdict, result_code: code, finished_at: new Date().toISOString() };
 }

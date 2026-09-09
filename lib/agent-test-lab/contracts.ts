@@ -22,6 +22,8 @@ export const LAB_AGENT_TURN_QUIET_SECONDS = 25;
 export const LAB_TICK_INTERVAL_SECONDS = 15;
 /** Reserved before each tester message; settled with the real figure afterwards. */
 export const LAB_MESSAGE_RESERVE_BRL = 0.05;
+/** A lead does not send essays. Anything longer is truncated before it is sent. */
+export const LAB_TESTER_MAX_MESSAGE_CHARS = 600;
 export const LAB_MODE_LABELS: Record<LabMode, string> = {
   internal: "Testes internos", scenarios_10000: "10 mil cenários", scenarios_million: "1 milhão de cenários",
   mutation: "Mutation testing", simulation: "Simulação com IA", manual: "Conversa manual real",
