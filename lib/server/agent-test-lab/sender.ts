@@ -1,9 +1,10 @@
 import "server-only";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { evolutionSendText, evolutionWaitForMessageStatus, jidToDigits } from "@/lib/integrations/evolution-api";
+import { evolutionSendText, evolutionSendMedia, evolutionSendAudio, evolutionWaitForMessageStatus, jidToDigits } from "@/lib/integrations/evolution-api";
 import { extractEvolutionSendReceipt } from "@/lib/integrations/evolution-message-receipt";
 import { LAB_INSTANCE_PREFIX, LAB_OWNER_ID, labPhoneJid } from "@/lib/agent-test-lab/policy";
 import { getLabSender } from "./connections";
+import { signLabAsset } from "./assets-store";
 
 export type LabDispatch =
   | { outcome: "confirmed"; providerMessageId: string; deliveryStatus: string | null }
@@ -71,5 +72,54 @@ export async function dispatchLabText(params: {
     instanceName: sender.instance_name, messageId: receipt.messageId, attempts: 3, intervalMs: 1200,
   }).catch(() => ({ status: null, update: null }));
 
+  return { outcome: "confirmed", providerMessageId: receipt.messageId, deliveryStatus: status.status ?? receipt.deliveryStatus ?? null };
+}
+
+/**
+ * Sends one controlled file from the tester. The provider fetches it through a
+ * short-lived signed URL, so the bucket itself is never public. Receiving the file
+ * is all this proves — whether the agent read it is settled elsewhere.
+ */
+export async function dispatchLabMedia(params: {
+  tenantId: string; connectionId: string; channel: string; targetJid: string;
+  assetId: string; caption?: string;
+}): Promise<LabDispatch> {
+  const sender = await getLabSender();
+  if (!sender || sender.state !== "open") return { outcome: "rejected", code: "sender_not_connected" };
+  const target = labPhoneJid(params.targetJid);
+  if (!target) return { outcome: "rejected", code: "target_jid_invalid" };
+  if (labPhoneJid(sender.wa_jid) === target) return { outcome: "rejected", code: "same_number_rejected" };
+  if (!(await assertLabDestinationAuthorized({ ...params, targetJid: target }))) {
+    return { outcome: "rejected", code: "destination_not_authorized" };
+  }
+
+  let signed: Awaited<ReturnType<typeof signLabAsset>>;
+  try { signed = await signLabAsset(params.assetId); }
+  catch { return { outcome: "rejected", code: "asset_unavailable" }; }
+
+  let result: Awaited<ReturnType<typeof evolutionSendMedia>>;
+  try {
+    result = signed.asset.kind === "audio"
+      ? await evolutionSendAudio({ instanceName: sender.instance_name, number: jidToDigits(target), audio: signed.url })
+      : await evolutionSendMedia({
+          instanceName: sender.instance_name, number: jidToDigits(target),
+          mediatype: signed.asset.kind as "image" | "video" | "document",
+          mimetype: signed.asset.mimeType, media: signed.url,
+          caption: params.caption?.slice(0, 1000) ?? "", fileName: signed.asset.filename,
+        });
+  } catch {
+    return { outcome: "inconclusive", code: "send_transport_unknown", providerMessageId: null };
+  }
+  if (!result.ok) {
+    const stated = result.status >= 400 && result.status < 500;
+    return stated
+      ? { outcome: "rejected", code: `send_refused_${result.status}` }
+      : { outcome: "inconclusive", code: "send_status_unknown", providerMessageId: null };
+  }
+  const receipt = extractEvolutionSendReceipt(result.data);
+  if (!receipt.messageId) return { outcome: "inconclusive", code: "receipt_missing", providerMessageId: null };
+  const status = await evolutionWaitForMessageStatus({
+    instanceName: sender.instance_name, messageId: receipt.messageId, attempts: 3, intervalMs: 1500,
+  }).catch(() => ({ status: null, update: null }));
   return { outcome: "confirmed", providerMessageId: receipt.messageId, deliveryStatus: status.status ?? receipt.deliveryStatus ?? null };
 }

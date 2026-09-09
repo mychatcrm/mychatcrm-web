@@ -36,7 +36,10 @@ export async function POST(request: Request, { params }: Context) {
     const id = assertLabUuid(params.id);
     const body = await request.json();
     const text = typeof body.text === "string" ? body.text.trim() : "";
-    if (!text || text.length > 4000) throw new Error("invalid_message");
+    const assetId = typeof body.assetId === "string" && body.assetId ? assertLabUuid(body.assetId) : null;
+    // An attachment may travel with or without a caption, but a plain message needs text.
+    if (!assetId && (!text || text.length > 4000)) throw new Error("invalid_message");
+    if (text.length > 4000) throw new Error("invalid_message");
     const key = typeof body.idempotencyKey === "string" && /^[A-Za-z0-9_:-]{8,120}$/.test(body.idempotencyKey)
       ? body.idempotencyKey : `lab-msg:${id}:${Date.now()}`;
 
@@ -45,8 +48,8 @@ export async function POST(request: Request, { params }: Context) {
     if (run.error || !run.data) throw new Error("run_missing");
 
     const queued = await sb.rpc("enqueue_agent_test_lab_step_v1", {
-      p_run_id: id, p_owner: owner.adminId, p_kind: "text",
-      p_command: { text }, p_key: key, p_reserve: LAB_MESSAGE_RESERVE_BRL,
+      p_run_id: id, p_owner: owner.adminId, p_kind: assetId ? "media" : "text",
+      p_command: assetId ? { text, assetId } : { text }, p_key: key, p_reserve: LAB_MESSAGE_RESERVE_BRL,
     });
     if (queued.error) throw new Error("message_queue_failed");
     if (queued.data?.ok !== true) {

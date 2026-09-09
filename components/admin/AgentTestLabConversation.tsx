@@ -25,6 +25,8 @@ export function AgentTestLabConversation({ runId, status, onSent }: {
 }) {
   const [messages, setMessages] = useState<LabMessage[]>([]);
   const [text, setText] = useState("");
+  const [attachment, setAttachment] = useState<{ id: string; filename: string } | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
@@ -50,18 +52,18 @@ export function AgentTestLabConversation({ runId, status, onSent }: {
   async function send(event: React.FormEvent) {
     event.preventDefault();
     const value = text.trim();
-    if (!value || busy) return;
+    if ((!value && !attachment) || busy) return;
     setBusy(true); setError("");
     try {
       const response = await fetch(`/api/admin/agent-tests/runs/${runId}/messages`, {
         method: "POST", credentials: "same-origin", cache: "no-store",
         headers: { "Content-Type": "application/json" },
         // A retry of the same click must not become a second message to a real number.
-        body: JSON.stringify({ text: value, idempotencyKey: `lab-msg:${runId}:${crypto.randomUUID()}` }),
+        body: JSON.stringify({ text: value, assetId: attachment?.id ?? null, idempotencyKey: `lab-msg:${runId}:${crypto.randomUUID()}` }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) { setError(String(body.code ?? "message_rejected")); return; }
-      setText("");
+      setText(""); setAttachment(null);
       await load();
       onSent();
     } catch { setError("network_failed"); }
@@ -89,11 +91,38 @@ export function AgentTestLabConversation({ runId, status, onSent }: {
       <div ref={endRef} />
     </div>
     {open
-      ? <form className="mt-3 flex flex-wrap gap-2" onSubmit={send}>
-          <input className={`${field} flex-1`} value={text} maxLength={4000} disabled={busy}
-            onChange={event => setText(event.target.value)}
-            placeholder="Escreva como se fosse o lead e envie pelo número testador" aria-label="Mensagem do testador" />
-          <button className={button} disabled={busy || !text.trim()}>{busy ? "Enviando…" : "Enviar"}</button>
+      ? <form className="mt-3 space-y-2" onSubmit={send}>
+          <div className="flex flex-wrap gap-2">
+            <input className={`${field} flex-1`} value={text} maxLength={4000} disabled={busy}
+              onChange={event => setText(event.target.value)}
+              placeholder={attachment ? "Legenda do anexo (opcional)" : "Escreva como se fosse o lead e envie pelo número testador"}
+              aria-label="Mensagem do testador" />
+            <button className={button} disabled={busy || uploading || (!text.trim() && !attachment)}>{busy ? "Enviando…" : "Enviar"}</button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-white/55">
+            <label className={`${button} cursor-pointer text-xs`}>
+              {uploading ? "Enviando arquivo…" : "Anexar arquivo"}
+              <input type="file" className="hidden" disabled={busy || uploading}
+                accept=".png,.jpg,.jpeg,.webp,.mp4,.ogg,.mp3,.wav,.m4a,.webm,.pdf,.txt,.csv,.docx,.xlsx,.pptx"
+                onChange={async event => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  if (!file) return;
+                  setUploading(true); setError("");
+                  try {
+                    const form = new FormData();
+                    form.append("file", file);
+                    const response = await fetch("/api/admin/agent-tests/assets", { method: "POST", credentials: "same-origin", body: form });
+                    const body = await response.json().catch(() => ({}));
+                    if (!response.ok) { setError(String(body.code ?? "upload_rejected")); return; }
+                    setAttachment({ id: body.asset.id, filename: body.asset.filename });
+                  } catch { setError("upload_failed"); }
+                  finally { setUploading(false); }
+                }} />
+            </label>
+            {attachment && <span>{attachment.filename} <button type="button" className="underline" onClick={() => setAttachment(null)}>remover</button></span>}
+            <span className="text-white/35">Um anexo conta como mensagem. Receber o arquivo não prova que o agente o interpretou.</span>
+          </div>
         </form>
       : <p className="mt-3 text-sm text-white/50">Execução encerrada. O histórico continua disponível como evidência.</p>}
     {error && <p role="alert" className="mt-2 text-sm text-amber-400">Recusado: {error}</p>}

@@ -4,7 +4,7 @@ import { LAB_OWNER_ID, assertLabUuid, isLabInternalMode } from "@/lib/agent-test
 import { LAB_TICK_INTERVAL_SECONDS, LAB_MESSAGE_RESERVE_BRL, type LabStepV1, type LabRunRequestV1 } from "@/lib/agent-test-lab/contracts";
 import { labAgentTurnState, labStepVerdict } from "@/lib/agent-test-lab/turn-policy";
 import { labEffectVerdict, labDeliveryVerdict } from "@/lib/agent-test-lab/effect-policy";
-import { dispatchLabText } from "./sender";
+import { dispatchLabText, dispatchLabMedia } from "./sender";
 import { recordLabEffects } from "./effects";
 
 /** Expectations that only the database can settle. */
@@ -79,10 +79,15 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
       return;
     }
     const text = typeof pending.command.text === "string" ? pending.command.text : "";
-    const dispatch = await dispatchLabText({
+    const assetId = typeof pending.command.assetId === "string" ? pending.command.assetId : null;
+    const destination = {
       tenantId: String(run.target_tenant_id), connectionId: String(run.target_connection_id),
-      channel: String(run.target_channel), targetJid: String(run.target_jid), text,
-    });
+      channel: String(run.target_channel), targetJid: String(run.target_jid),
+    };
+    // An attachment counts as a message and travels the same authorized path.
+    const dispatch = assetId
+      ? await dispatchLabMedia({ ...destination, assetId, caption: text })
+      : await dispatchLabText({ ...destination, text });
 
     if (dispatch.outcome === "rejected") {
       await sb.from("agent_test_lab_steps").update({ status: "rejected", result_code: dispatch.code, confirmed_at: new Date().toISOString() }).eq("id", pending.id);

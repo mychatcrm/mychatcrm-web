@@ -6,6 +6,7 @@ import { LAB_MODES, LAB_MODE_LABELS, LAB_PROFILES, type LabMode, type LabCheck }
 import { isLabInternalMode } from "@/lib/agent-test-lab/policy";
 import { labCodeLabel, LAB_STATUS_LABELS, LAB_VERDICT_LABELS } from "@/lib/agent-test-lab/presentation";
 import { AgentTestLabConversation } from "./AgentTestLabConversation";
+import { AgentTestLabCleanup } from "./AgentTestLabCleanup";
 
 type Run = { id: string; trace_id: string; mode: LabMode; status: string; verdict: string | null; deployed_sha: string; config_hash: string;
   result_code: string | null; sent_messages: number; max_messages: number; budget_brl: number; spent_brl: number; reserved_brl: number;
@@ -214,6 +215,8 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
           disabled={busy || ["completed", "failed", "cancelled"].includes(detail.run.status)} className={button}
           onClick={() => act(() => control(detail.run, action))}>{label}</button>)}</div>
         <p className="text-xs text-amber-300">Pausa e parada não desfazem mensagens ou compromissos já confirmados. Suítes já disparadas no GitHub podem continuar no runner.</p>
+        {!isLabInternalMode(detail.run.mode) && <AgentTestLabCleanup runId={detail.run.id}
+          finished={["completed", "failed", "cancelled"].includes(detail.run.status)} />}
         {!isLabInternalMode(detail.run.mode) && detail.run.mode !== "simulation" && <div className="mt-5">
           <AgentTestLabConversation runId={detail.run.id} status={detail.run.status}
             onSent={() => void act(async () => { await reload(); setDetail(await api<Detail>(`/runs/${detail.run.id}`)); })} />
