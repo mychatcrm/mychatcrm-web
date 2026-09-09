@@ -74,6 +74,10 @@ export function useChunkedUpload(params: {
   const uploadStartedRef = useRef(false);
   const lastElapsedRef = useRef(0);
   const flushingRef = useRef(false);
+  /** Por que a última parte não subiu. Guardado porque o erro de `finish`
+   *  chega depois e é só o sintoma: sem partes não dá para fechar. Trocar a
+   *  causa pelo sintoma manda o usuário investigar a coisa errada. */
+  const partFailureRef = useRef<string | null>(null);
 
   const base = `/api/client/reunioes/${encodeURIComponent(params.meetingId)}/uploads`;
 
@@ -133,6 +137,7 @@ export function useChunkedUpload(params: {
         const consumedUpToSeq = seqRef.current;
 
         const etag = await uploadPart(partNumber, body);
+        partFailureRef.current = null;
         partsRef.current.push({ partNumber, etag });
         nextPartRef.current = partNumber + 1;
 
@@ -161,7 +166,8 @@ export function useChunkedUpload(params: {
       } catch (err) {
         // A gravação continua: o áudio está no IndexedDB e sobe depois. Falha
         // de upload nunca pode parar a captura.
-        setError(err instanceof Error ? err.message : "upload_failed");
+        partFailureRef.current = err instanceof Error ? err.message : "upload_failed";
+        setError(partFailureRef.current);
         setPhase("error");
       } finally {
         flushingRef.current = false;
@@ -197,7 +203,9 @@ export function useChunkedUpload(params: {
         lastElapsedRef.current = durationMs;
         // A última parte é isenta do mínimo de 5 MB.
         await flushPart(true);
-        if (partsRef.current.length === 0) throw new Error("meeting_parts_invalid");
+        if (partsRef.current.length === 0) {
+          throw new Error(partFailureRef.current ?? "meeting_parts_invalid");
+        }
 
         await fetchJson(`${base}/complete`, {
           method: "POST",
