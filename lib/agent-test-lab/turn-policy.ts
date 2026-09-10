@@ -1,14 +1,22 @@
 import { LAB_AGENT_TURN_MAX_WAIT_SECONDS, LAB_AGENT_TURN_QUIET_SECONDS, type LabStepV1, type LabVerdict } from "./contracts";
 
-export type LabTurnState = { state: "waiting" | "complete" | "timed_out"; messages: number };
+export type LabTurnState = { state: "waiting" | "complete" | "timed_out" | "inconclusive"; messages: number };
 
 /** A tester turn is finished when the agent stopped adding messages, not at the first one. */
-export function labAgentTurnState(params: { confirmedAt: string; agentMessageTimes: string[]; now: number }): LabTurnState {
+export function labAgentTurnState(params: { confirmedAt: string; agentMessageTimes: string[]; now: number;
+  pendingWork?: boolean; deadlineAt?: string }): LabTurnState {
   const since = Date.parse(params.confirmedAt);
   if (!Number.isFinite(since)) return { state: "waiting", messages: 0 };
   const times = params.agentMessageTimes
     .map(value => Date.parse(value))
-    .filter(value => Number.isFinite(value) && value >= since);
+    .filter(value => Number.isFinite(value) && value >= since && value <= params.now);
+  // Do not send the next scripted question while the actual agent is still
+  // generating, waiting for its burst, or dispatching media. The run deadline is
+  // a limit on the test, not evidence that a pending turn succeeded or failed.
+  if (params.pendingWork) {
+    const deadline = Date.parse(params.deadlineAt ?? "");
+    return { state: Number.isFinite(deadline) && params.now >= deadline ? "inconclusive" : "waiting", messages: times.length };
+  }
   if (!times.length) {
     // Evolution can hold a burst for around a minute, and the agent adds its own
     // smart wait. Silence becomes a result at the deadline, never before it.
@@ -24,6 +32,7 @@ export function labStepVerdict(
   turn: LabTurnState,
 ): { verdict: LabVerdict; code: string } {
   if (turn.state === "waiting") return { verdict: "not_executed", code: "turn_still_open" };
+  if (turn.state === "inconclusive") return { verdict: "inconclusive", code: "agent_work_pending_at_deadline" };
   if (expected === "silence") {
     return turn.messages === 0
       ? { verdict: "expected_block", code: "silence_confirmed" }

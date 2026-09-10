@@ -39,7 +39,7 @@ foi preservado, mas sua declaração de implementação completa não foi confir
 | Reutilização de contato | Bloqueada até vínculo explícito com o contexto anterior. |
 | Google Calendar do laboratório | Ainda precisa ser configurado e exercitado. |
 
-Ainda faltam: espera baseada nos jobs reais; captura/transcrição/reprodução de mídia e uploads maiores;
+Ainda faltam: captura/transcrição/reprodução de mídia recebida;
 medição completa dos custos do agente testado; cron frequente de recuperação; validação
 de integração e canário com dois números dedicados. Os 65 segundos do burst não serão alterados.
 
@@ -91,3 +91,12 @@ Nenhum número real, segredo, prompt de cliente ou credencial entra em fixtures 
 - 2.993 testes em 296 arquivos passaram, incluindo 167 testes do laboratório; TypeScript e build passaram. A cobertura de auditoria da rota de envio foi corrigida com evento explícito e traceId.
 - A migração `20260910083501_agent_test_lab_execution_safety_v3.sql` é aditiva e validada em PostgreSQL local com fixtures de domínio reduzidos. Esses fixtures não substituem canário real.
 - Produção ainda não foi promovida nesta etapa; não chamar a entrega completa de certificada.
+
+## Continuação — uploads privados, gravação e observação de turnos
+
+- Upload de até 20 MB vai diretamente ao Storage privado, sem atravessar o limite de corpo da Vercel. O ticket não permite sobrescrita; assinatura/tamanho/checksum são verificados pelo backend antes de liberar uso. Upload pendente ou rejeitado não pode entrar numa etapa, em nenhuma versão da RPC.
+- Gravação manual pede microfone somente ao clicar, encerra em 60 segundos e permite ouvir/descartar antes de anexar. Desmontagem cancela captura e libera o microfone. Apenas `/admin/testes-agentes` ganhou permissão de microfone; demais páginas administrativas continuam fechadas.
+- A avaliação consulta jobs e outbox pendentes do contato/agente/canal/conexão exatos antes de concluir o turno. Trabalho pendente ao fim da janela não aprova silêncio nem efeito.
+- IA testadora agora exige modelo explícito e executa dentro do orçamento transacional por etapa. Falha de geração não é mais interpretada como conclusão normal. O modo continua bloqueado até medir também o agente testado e concluir o canário.
+- Migração V4 e suas regressões foram executadas somente em PostgreSQL descartável. Não houve upload de conteúdo de clientes nem mensagens reais.
+- Na leitura da nuvem desta etapa: zero conexões e zero execuções do laboratório; apenas as duas migrações de fundação aplicadas. O preview `048e12e` estava READY e CI aprovado.

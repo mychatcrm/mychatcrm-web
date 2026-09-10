@@ -8,6 +8,7 @@ import { dispatchLabText, dispatchLabMedia } from "./sender";
 import { recordLabEffects } from "./effects";
 import { labAggregateVerdict, labSafetyChecks } from "@/lib/agent-test-lab/safety-policy";
 import { labFingerprint } from "./preflight";
+import { labHasPendingAgentWork } from "./turn-observation";
 
 /** Expectations that only the database can settle. */
 const EFFECT_EXPECTATIONS = new Set<LabStepV1["expected"]["type"]>([
@@ -48,6 +49,7 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
   const loaded = await sb.from("agent_test_lab_runs").select("*").eq("id", id).eq("owner_admin_id", LAB_OWNER_ID).single();
   if (loaded.error || !loaded.data) throw new Error("run_read_failed");
   const run = loaded.data;
+  try {
   if (isLabInternalMode(run.mode)) throw new Error("interactive_worker_mode_rejected");
 
   const owner = await sb.from("admin_users").select("id").eq("id", LAB_OWNER_ID).eq("active", true).eq("role", "super_admin").maybeSingle();
@@ -144,7 +146,7 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
   if (!lastSent?.confirmed_at) {
     // A driven run opens the conversation itself; a manual one waits for the owner.
     if (drivenRun && steps.length === 0) {
-      const opening = await nextDrivenMessage({ run, ordinal: -1, replies: [] });
+      const opening = await nextDrivenMessage({ run, ordinal: -1, claim: claimToken });
       if (opening) {
         const queued = await sb.rpc("enqueue_agent_test_lab_step_v3", {
           p_run_id: id, p_owner: LAB_OWNER_ID, p_kind: opening.kind, p_command: stepCommand(opening),
@@ -168,17 +170,21 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
   if (replies.error) throw new Error("replies_read_failed");
   const waitStep = lastSent.kind === "wait";
   const observedSince = waitStep ? lastSent.dispatch_started_at! : lastSent.confirmed_at;
+  const pendingWork = await labHasPendingAgentWork({ tenantId: String(run.target_tenant_id), agentId: String(run.target_agent_id),
+    remoteJid: String(run.tester_jid), channel: String(run.target_channel), connectionId: String(run.target_connection_id),
+    createdAt: String(run.created_at) });
   let turn = labAgentTurnState({
     confirmedAt: observedSince,
     agentMessageTimes: (replies.data ?? []).map(row => String(row.provider_occurred_at ?? row.received_at)),
-    now,
+    now, pendingWork, deadlineAt: String(run.deadline_at),
   });
   if (waitStep) {
     const messages = (replies.data ?? []).filter(row => {
       const at = Date.parse(String(row.provider_occurred_at ?? row.received_at));
       return at >= Date.parse(observedSince) && at <= Date.parse(lastSent.confirmed_at!);
     }).length;
-    turn = { state: now < Date.parse(lastSent.confirmed_at) ? "waiting" : messages ? "complete" : "timed_out", messages };
+    turn = { state: now < Date.parse(lastSent.confirmed_at) ? "waiting"
+      : pendingWork ? "inconclusive" : messages ? "complete" : "timed_out", messages };
   }
 
   if (turn.state === "waiting") {
@@ -193,7 +199,7 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
   // An effect expectation is settled against the database, never against the reply.
   // "Agendado para amanhã" is a sentence; an appointment is a row.
   let result = turnResult;
-  if (EFFECT_EXPECTATIONS.has(expectation)) {
+  if (EFFECT_EXPECTATIONS.has(expectation) && turn.state !== "inconclusive") {
     const observed = await recordLabEffects(id);
     const settled = labEffectVerdict(expectation, observed, {
       elapsedMs: now - Date.parse(String(run.created_at)),
@@ -229,7 +235,7 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
     return;
   }
 
-  const next = await nextDrivenMessage({ run, ordinal: lastSent.ordinal, replies: replies.data ?? [] });
+  const next = await nextDrivenMessage({ run, ordinal: lastSent.ordinal, claim: claimToken });
   if (!next) {
     await finish(sb, id, claimToken, await summariseLabRun(sb, id, result.code));
     return;
@@ -244,6 +250,13 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
     return;
   }
   await finish(sb, id, claimToken, { status: "running", result_code: result.code, next_step_at: new Date(now).toISOString() });
+  } catch (error) {
+    // A failed AI call or uncertain persistence is never "scenario completed".
+    // Stop the isolated journey on the next durable tick, preserving receipts.
+    const code = error instanceof Error && /^[a-z_]{1,100}$/.test(error.message) ? error.message : "lab_interactive_step_failed";
+    await finish(sb, id, claimToken, { status: "stopping", verdict: "inconclusive", result_code: code,
+      next_step_at: new Date(Date.now() + 1000).toISOString() });
+  }
 }
 
 /**
@@ -253,7 +266,7 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
  */
 async function nextDrivenMessage(params: {
   run: Record<string, unknown>; ordinal: number;
-  replies: { provider_occurred_at?: string | null; received_at?: string | null }[];
+  claim: string;
 }): Promise<LabStepV1 | null> {
   const run = params.run as { mode: string; request: LabRunRequestV1; max_messages: number; sent_messages: number;
     target_tenant_id: string | null; target_agent_id: string | null; id: string };
@@ -270,6 +283,7 @@ async function nextDrivenMessage(params: {
   const text = await nextLabTesterMessage({
     labTenantId: String(run.target_tenant_id ?? ""), labAgentId: String(run.target_agent_id ?? ""),
     model: run.request?.testerModel, scenario,
+    runId: run.id, claim: params.claim, ordinal: params.ordinal + 1,
     transcript: (transcript.data ?? []) as { direction: "tester" | "agent"; content: string | null }[],
     remaining: Math.max(0, Number(run.max_messages) - Number(run.sent_messages)),
   });

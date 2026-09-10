@@ -33,8 +33,8 @@ describe("Permissions-Policy do microfone", () => {
     expect(value).toContain("microphone=(self)");
   });
 
-  it("mantem o microfone fechado fora de /dashboard", async () => {
-    const value = permissionsPolicyFor(await headerRules(), "/((?!dashboard).*)");
+  it("mantem o microfone fechado fora das telas com gravação", async () => {
+    const value = permissionsPolicyFor(await headerRules(), "/((?!dashboard(?:/|$)|admin/testes-agentes(?:/|$)).*)");
     expect(value).toContain("microphone=()");
     expect(value).not.toContain("microphone=(self)");
   });
@@ -51,12 +51,20 @@ describe("Permissions-Policy do microfone", () => {
   it("aplica exatamente uma regra por requisicao (as fontes sao exclusivas)", async () => {
     const rules = await headerRules();
     const sources = rules.map((rule) => rule.source);
-    expect(sources).toHaveLength(2);
+    expect(sources).toHaveLength(3);
     // `/((?!dashboard).*)` nunca casa com /dashboard, e `/dashboard/:path*`
     // nunca casa com outra coisa: nao ha requisicao coberta pelas duas, entao o
     // valor do microfone nunca depende da ordem de sobreposicao.
-    expect(sources).toContain("/((?!dashboard).*)");
+    expect(sources).toContain("/((?!dashboard(?:/|$)|admin/testes-agentes(?:/|$)).*)");
     expect(sources).toContain("/dashboard/:path*");
+    expect(sources).toContain("/admin/testes-agentes/:path*");
+    const closed = /^\/((?!dashboard(?:\/|$)|admin\/testes-agentes(?:\/|$)).*)$/;
+    for (const path of ["/", "/admin", "/admin/logs", "/checkout", "/dashboard-fake", "/admin/testes-agentes-fake"]) expect(closed.test(path)).toBe(true);
+    for (const path of ["/dashboard", "/dashboard/conversas", "/admin/testes-agentes", "/admin/testes-agentes/"]) expect(closed.test(path)).toBe(false);
+  });
+
+  it("libera somente a própria origem na central de testes", async () => {
+    expect(permissionsPolicyFor(await headerRules(), "/admin/testes-agentes/:path*")).toContain("microphone=(self)");
   });
 
   it("mantem os demais cabecalhos de seguranca nas duas rotas", async () => {

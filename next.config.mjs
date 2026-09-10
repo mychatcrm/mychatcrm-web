@@ -24,7 +24,8 @@ const securityHeaders = [
  * e relaxada para `(self)`, que libera apenas a nossa origem — iframe de
  * terceiro dentro do painel continua sem microfone.
  *
- * Site publico, checkout e `/admin` seguem com o microfone fechado.
+ * Site publico, checkout e `/admin` seguem fechados, exceto a central de testes
+ * `/admin/testes-agentes`, que tem gravação explícita pelo proprietário.
  */
 export function permissionsPolicyValue({ allowMicrophone }) {
   const microphone = allowMicrophone ? "microphone=(self)" : "microphone=()";
@@ -70,12 +71,12 @@ const nextConfig = {
     if (process.env.CSP_UPGRADE_INSECURE_REQUESTS === "1") {
       base.push({ key: "Content-Security-Policy", value: "upgrade-insecure-requests" });
     }
-    // Duas entradas MUTUAMENTE EXCLUSIVAS: o negative lookahead garante que
+    // Entradas MUTUAMENTE EXCLUSIVAS: o negative lookahead garante que
     // exatamente uma casa por requisicao. Depender da ordem de sobreposicao de
     // cabecalhos repetidos deixaria o valor do microfone ambiguo.
     return [
       {
-        source: "/((?!dashboard).*)",
+        source: "/((?!dashboard(?:/|$)|admin/testes-agentes(?:/|$)).*)",
         headers: [
           ...base,
           {
@@ -93,6 +94,10 @@ const nextConfig = {
             value: permissionsPolicyValue({ allowMicrophone: true }),
           },
         ],
+      },
+      {
+        source: "/admin/testes-agentes/:path*",
+        headers: [...base, { key: "Permissions-Policy", value: permissionsPolicyValue({ allowMicrophone: true }) }],
       },
     ];
   },

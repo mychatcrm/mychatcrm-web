@@ -7,6 +7,19 @@ const at = (seconds: number) => Date.parse(sent) + seconds * 1000;
 const iso = (seconds: number) => new Date(at(seconds)).toISOString();
 
 describe("laboratory turn boundary", () => {
+  it("waits for actual pending jobs beyond the usual quiet window", () => {
+    expect(labAgentTurnState({ confirmedAt: sent, agentMessageTimes: [iso(70)], now: at(500),
+      pendingWork: true, deadlineAt: iso(1200) })).toEqual({ state: "waiting", messages: 1 });
+    expect(labAgentTurnState({ confirmedAt: sent, agentMessageTimes: [], now: at(500),
+      pendingWork: true, deadlineAt: iso(1200) })).toEqual({ state: "waiting", messages: 0 });
+  });
+  it("does not approve intended silence when work is still pending at the deadline", () => {
+    const turn = labAgentTurnState({ confirmedAt: sent, agentMessageTimes: [], now: at(1200), pendingWork: true, deadlineAt: iso(1200) });
+    expect(labStepVerdict("silence", turn)).toEqual({ verdict: "inconclusive", code: "agent_work_pending_at_deadline" });
+  });
+  it("rejects future-dated provider evidence", () => {
+    expect(labAgentTurnState({ confirmedAt: sent, agentMessageTimes: [iso(1000)], now: at(300) })).toEqual({ state: "timed_out", messages: 0 });
+  });
   it("keeps waiting while the provider is merely slow", () => {
     // The known Evolution burst delay is around a minute. Treating it as failure
     // would report a working agent as broken.

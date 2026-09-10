@@ -17,7 +17,7 @@ export function buildLabTesterMessages(params: {
   remaining: number;
 }): AiMessage[] {
   const system = [
-    "Você faz o papel de um LEAD conversando por WhatsApp com um atendimento comercial.",
+    "Você faz o papel de uma pessoa conversando por WhatsApp com o agente descrito no cenário de teste.",
     `Cenário: ${params.scenario.goal}`,
     `Idioma: ${params.scenario.language}.`,
     "Escreva como uma pessoa real escreve no WhatsApp: curto, direto, sem formatação.",

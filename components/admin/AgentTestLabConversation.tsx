@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { uploadLabFile } from "@/lib/agent-test-lab/upload-client";
+import { AgentTestLabRecorder } from "./AgentTestLabRecorder";
 
 export type LabMessage = {
   direction: "tester" | "agent";
@@ -54,7 +56,7 @@ export function AgentTestLabConversation({ runId, status, manual, onSent }: {
   async function send(event: React.FormEvent) {
     event.preventDefault();
     const value = text.trim();
-    if ((!value && !attachment) || busy || !canSend) return;
+    if ((!value && !attachment) || busy || uploading || !canSend) return;
     setBusy(true); setError("");
     const payload = JSON.stringify({ text: value, assetId: attachment?.id ?? null });
     if (!pendingSend.current || pendingSend.current.payload !== payload) {
@@ -117,12 +119,7 @@ export function AgentTestLabConversation({ runId, status, manual, onSent }: {
                   if (!file) return;
                   setUploading(true); setError("");
                   try {
-                    const form = new FormData();
-                    form.append("file", file);
-                    const response = await fetch("/api/admin/agent-tests/assets", { method: "POST", credentials: "same-origin", body: form });
-                    const body = await response.json().catch(() => ({}));
-                    if (!response.ok) { setError(String(body.code ?? "upload_rejected")); return; }
-                    setAttachment({ id: body.asset.id, filename: body.asset.filename });
+                    setAttachment(await uploadLabFile(file));
                   } catch { setError("upload_failed"); }
                   finally { setUploading(false); }
                 }} />
@@ -130,6 +127,7 @@ export function AgentTestLabConversation({ runId, status, manual, onSent }: {
             {attachment && <span>{attachment.filename} <button type="button" className="underline" onClick={() => setAttachment(null)}>remover</button></span>}
             <span className="text-white/35">Um anexo conta como mensagem. Receber o arquivo não prova que o agente o interpretou.</span>
           </div>
+          <AgentTestLabRecorder disabled={busy || uploading || !canSend} onAttachment={setAttachment} />
         </form>
       : <p className="mt-3 text-sm text-white/50">{open ? "Para escrever, assuma o controle manual e retome a execução se estiver pausada." : "Execução encerrada. O histórico continua disponível como evidência."}</p>}
     {error && <p role="alert" className="mt-2 text-sm text-amber-400">Recusado: {error}</p>}
