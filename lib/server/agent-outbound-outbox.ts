@@ -52,6 +52,9 @@ export async function authorizeAutomatedOutbound(params: {
   tenantId: string;
   remoteJid: string;
 }): Promise<{ ok: true; automationEpoch: number } | { ok: false; reason: string }> {
+  if (params.tenantId.startsWith("tenant-lab-") && process.env.AGENT_TEST_LAB_ENABLED !== "true") {
+    return { ok: false, reason: "lab_disabled" };
+  }
   const { data: state, error: stateError } = await params.sb
     .from("conversation_states")
     .select("automation_epoch,conversation_mode,human_paused")

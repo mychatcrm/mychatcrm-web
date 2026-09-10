@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
-import { LAB_MODES, LAB_MODE_LABELS, LAB_PROFILES, type LabMode, type LabCheck } from "@/lib/agent-test-lab/contracts";
+import { LAB_MODES, LAB_MODE_LABELS, LAB_PROFILES, parseLabScenario, type LabMode, type LabCheck, type LabScenarioV1 } from "@/lib/agent-test-lab/contracts";
 import { isLabInternalMode } from "@/lib/agent-test-lab/policy";
 import { labCodeLabel, LAB_STATUS_LABELS, LAB_VERDICT_LABELS } from "@/lib/agent-test-lab/presentation";
 import { AgentTestLabConversation } from "./AgentTestLabConversation";
@@ -53,6 +53,7 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
   const [maxMessages, setMaxMessages] = useState(6), [maxMinutes, setMaxMinutes] = useState(20), [budgetBrl, setBudgetBrl] = useState(5);
   const [name, setName] = useState("Validação controlada"), [goal, setGoal] = useState(""), [language, setLanguage] = useState("pt-BR");
   const [script, setScript] = useState(""), [expectSilence, setExpectSilence] = useState(false), [model, setModel] = useState("");
+  const [structuredScript, setStructuredScript] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false), [effects, setEffects] = useState<string[]>([]);
   const [checks, setChecks] = useState<LabCheck[] | null>(null), [qr, setQr] = useState<string | null>(null), [detail, setDetail] = useState<Detail | null>(null);
   const [receiver, setReceiver] = useState<LabReceiver>(null), [receiverQr, setReceiverQr] = useState<string | null>(null);
@@ -87,8 +88,9 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
     return { mode, profile, limits: { maxMessages, maxMinutes, budgetBrl }, targetKind, tenantId: tenantId || "internal", agentId: agentId || "internal",
       ruleId: ruleId || null, formId: formId || null, connectionId: connectionId || null, channel: selectedConnection?.channel ?? "evolution",
       testerModel: model || null, allowedEffects: effects, originalConfirmed: confirmed, reuseTestContext: false,
-      scenario: { version: 1, name, goal: goal || "Executar a suíte selecionada na versão publicada.", language,
-        steps: script.split("\n").filter(line => line.trim()).map(text => ({ kind: "text", text, expected: { type: expectSilence ? "silence" : "reply" } })) } };
+      scenario: parseLabScenario({ version: 1, name, goal: goal || "Executar a suíte selecionada na versão publicada.", language,
+        steps: structuredScript !== null ? JSON.parse(structuredScript)
+          : script.split("\n").filter(line => line.trim()).map(text => ({ kind: "text", text, expected: { type: expectSilence ? "silence" : "reply" } })) }) };
   }
   function clearApproval() { setChecks(null); setConfirmed(false); }
   const runnable = Boolean(snapshot?.capabilities.modes?.[mode]);
@@ -188,21 +190,25 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
         <label className="space-y-1 text-sm md:col-span-2"><span>Problema ou objetivo</span><textarea className={field} rows={2} value={goal} onChange={e => setGoal(e.target.value)} placeholder="Qual comportamento deve ser verificado?" maxLength={5000} /></label>
         {!isLabInternalMode(mode) && <><label className="space-y-1 text-sm"><span>Idioma BCP-47</span><input className={field} value={language} onChange={e => setLanguage(e.target.value)} /></label>
           {["autonomous", "simulation"].includes(mode) && <label className="space-y-1 text-sm"><span>Modelo escolhido para esta execução</span><input className={field} value={model} onChange={e => setModel(e.target.value)} placeholder="Selecione o modelo após configurar o provedor" /></label>}
-          <label className="space-y-1 text-sm md:col-span-2"><span>Mensagens do roteiro (uma por linha)</span><textarea className={field} rows={4} value={script} onChange={e => setScript(e.target.value)} maxLength={20000} /></label>
-          <label className="text-sm"><input type="checkbox" checked={expectSilence} onChange={e => setExpectSilence(e.target.checked)} /> Esperar silêncio por ausência intencional de regra</label></>}
+          {structuredScript === null ? <><label className="space-y-1 text-sm md:col-span-2"><span>Mensagens do roteiro (uma por linha)</span><textarea className={field} rows={4} value={script} onChange={e => { setScript(e.target.value); clearApproval(); }} maxLength={20000} /></label>
+          <label className="text-sm"><input type="checkbox" checked={expectSilence} onChange={e => { setExpectSilence(e.target.checked); clearApproval(); }} /> Esperar silêncio por ausência intencional de regra</label>
+          <button type="button" className={button} onClick={() => setStructuredScript(JSON.stringify(requestBody().scenario.steps, null, 2))}>Editar etapas completas, mídias e esperas</button></>
+          : <label className="space-y-1 text-sm md:col-span-2"><span>Etapas completas (JSON)</span><textarea className={`${field} font-mono`} rows={12} value={structuredScript} onChange={e => { setStructuredScript(e.target.value); clearApproval(); }} maxLength={1000000} />
+            <span className="block text-xs text-white/50">Mantém tipo, arquivo, espera e verificações de cada etapa. Espere com kind: wait e waitSeconds; use o assetId de um arquivo controlado para mídia. O servidor valida tudo antes de iniciar.</span></label>}
+          </>}
       </div><p className="mt-4 text-xs text-white/50">Limite: {profileLimits.maxMessages} mensagens · {profileLimits.maxMinutes} minutos · {money(profileLimits.budgetBrl)} estimados. Anexos contam como mensagens. Tarifas informadas depois pelo provedor podem alterar o custo final.</p>
         {!runnable && <p className="mt-4 text-sm text-amber-400">{isLabInternalMode(mode) ? "Configure o runner restrito do GitHub antes de iniciar." : labCodeLabel(snapshot.capabilities.realReason)}</p>}
         <div className="mt-5 flex flex-wrap gap-3">
-          <button className={button} disabled={busy || !script.trim()} onClick={() => act(async () => {
+          <button className={button} disabled={busy || (!script.trim() && !structuredScript)} onClick={() => act(async () => {
             await api("/scenarios", { method: "POST", body: JSON.stringify({ scenario: requestBody().scenario }) });
             setNotice("Roteiro salvo. Pode ser repetido depois com nova identificação de execução.");
           })}>Salvar roteiro</button>
           <button className={button} disabled={busy} onClick={() => act(async () => {
-            const data = await api<{ scenarios: { name: string; version: number; definition: { goal: string; language: string; steps: { text?: string }[] } }[] }>("/scenarios");
+            const data = await api<{ scenarios: { name: string; version: number; definition: LabScenarioV1 }[] }>("/scenarios");
             const latest = data.scenarios[0];
             if (!latest) { setNotice("Nenhum roteiro salvo ainda."); return; }
             setName(latest.name); setGoal(latest.definition.goal); setLanguage(latest.definition.language);
-            setScript(latest.definition.steps.map(step => step.text ?? "").filter(Boolean).join("\n"));
+            setStructuredScript(JSON.stringify(latest.definition.steps, null, 2)); clearApproval();
             setNotice(`Roteiro "${latest.name}" v${latest.version} carregado.`);
           })}>Carregar último roteiro</button>
           <button className={button} disabled={busy} onClick={() => act(async () => { const data = await api<{ checks: LabCheck[] }>("/preflight", { method: "POST", body: JSON.stringify(requestBody()) }); setChecks(data.checks); })}>Verificar pré-requisitos</button>
@@ -232,7 +238,7 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
         {!isLabInternalMode(detail.run.mode) && <AgentTestLabCleanup runId={detail.run.id}
           finished={["completed", "failed", "cancelled"].includes(detail.run.status)} />}
         {!isLabInternalMode(detail.run.mode) && detail.run.mode !== "simulation" && <div className="mt-5">
-          <AgentTestLabConversation runId={detail.run.id} status={detail.run.status}
+          <AgentTestLabConversation key={detail.run.id} runId={detail.run.id} status={detail.run.status} manual={detail.run.mode === "manual"}
             onSent={() => void act(async () => { await reload(); setDetail(await api<Detail>(`/runs/${detail.run.id}`)); })} />
         </div>}
         <h3 className="mb-2 mt-5 font-semibold">Verificações</h3>{detail.evidence.length ? detail.evidence.map(e => <div key={e.check_code} className="my-2 rounded-xl bg-white/5 p-3 text-sm"><strong>{LAB_VERDICT_LABELS[e.verdict]}</strong> — {e.description}</div>) : <p className="text-sm text-white/50">Ainda não há evidência suficiente para aprovar.</p>}

@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { requireLabOwner, labError, labAudit } from "@/lib/server/agent-test-lab/auth";
+import { requireLabOwner, labError } from "@/lib/server/agent-test-lab/auth";
+import { appendOperationalAuditEvent } from "@/lib/server/operational-audit";
 import { LAB_OWNER_ID, assertLabUuid } from "@/lib/agent-test-lab/policy";
 import { LAB_MESSAGE_RESERVE_BRL } from "@/lib/agent-test-lab/contracts";
 import { startLabRunProcessing } from "@/lib/server/agent-test-lab/dispatch";
@@ -39,15 +40,16 @@ export async function POST(request: Request, { params }: Context) {
     const assetId = typeof body.assetId === "string" && body.assetId ? assertLabUuid(body.assetId) : null;
     // An attachment may travel with or without a caption, but a plain message needs text.
     if (!assetId && (!text || text.length > 4000)) throw new Error("invalid_message");
-    if (text.length > 4000) throw new Error("invalid_message");
-    const key = typeof body.idempotencyKey === "string" && /^[A-Za-z0-9_:-]{8,120}$/.test(body.idempotencyKey)
-      ? body.idempotencyKey : `lab-msg:${id}:${Date.now()}`;
+    if (text.length > (assetId ? 1000 : 4000)) throw new Error("invalid_message");
+    if (typeof body.idempotencyKey !== "string" || !/^[A-Za-z0-9_:-]{8,120}$/.test(body.idempotencyKey)) throw new Error("idempotency_key_required");
+    const key = body.idempotencyKey;
 
     const sb = createSupabaseServiceClient();
-    const run = await sb.from("agent_test_lab_runs").select("mode").eq("id", id).eq("owner_admin_id", LAB_OWNER_ID).single();
+    const run = await sb.from("agent_test_lab_runs").select("mode,trace_id").eq("id", id).eq("owner_admin_id", LAB_OWNER_ID).single();
     if (run.error || !run.data) throw new Error("run_missing");
 
-    const queued = await sb.rpc("enqueue_agent_test_lab_step_v1", {
+    if (run.data.mode !== "manual") throw new Error("manual_control_required");
+    const queued = await sb.rpc("enqueue_agent_test_lab_step_v3", {
       p_run_id: id, p_owner: owner.adminId, p_kind: assetId ? "media" : "text",
       p_command: assetId ? { text, assetId } : { text }, p_key: key, p_reserve: LAB_MESSAGE_RESERVE_BRL,
     });
@@ -56,7 +58,10 @@ export async function POST(request: Request, { params }: Context) {
       return NextResponse.json({ ok: false, code: queued.data?.code ?? "message_rejected" },
         { status: 409, headers: { "Cache-Control": "no-store" } });
     }
-    await labAudit("run.tester_message_queued", id);
+    await appendOperationalAuditEvent({ actorType: "administrator", actorId: owner.adminId,
+      traceId: run.data.trace_id, module: "agent.test_lab", action: "run.tester_message_queued", status: "pending",
+      resourceType: "agent_test_lab_step", resourceId: queued.data.stepId,
+      relatedIds: { runId: id }, metadata: { duplicate: queued.data.duplicate === true } }, { strict: true });
     waitUntil(startLabRunProcessing(id, String(run.data.mode)));
     return NextResponse.json({ ok: true, ...queued.data }, { status: 201, headers: { "Cache-Control": "no-store" } });
   } catch (error) { return labError(error); }

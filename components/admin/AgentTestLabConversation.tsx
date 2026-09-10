@@ -20,8 +20,8 @@ const button = "rounded-xl border border-white/15 px-4 py-2 text-sm hover:bg-whi
  * them. Nothing here is drawn optimistically, because an unconfirmed send is exactly
  * the case this panel exists to make visible.
  */
-export function AgentTestLabConversation({ runId, status, onSent }: {
-  runId: string; status: string; onSent: () => void;
+export function AgentTestLabConversation({ runId, status, manual, onSent }: {
+  runId: string; status: string; manual: boolean; onSent: () => void;
 }) {
   const [messages, setMessages] = useState<LabMessage[]>([]);
   const [text, setText] = useState("");
@@ -30,7 +30,9 @@ export function AgentTestLabConversation({ runId, status, onSent }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
+  const pendingSend = useRef<{ payload: string; key: string } | null>(null);
   const open = !["completed", "failed", "cancelled"].includes(status);
+  const canSend = manual && ["queued", "running", "waiting_reply", "waiting_input"].includes(status);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     const response = await fetch(`/api/admin/agent-tests/runs/${runId}/messages`, { cache: "no-store", credentials: "same-origin", signal });
@@ -52,17 +54,22 @@ export function AgentTestLabConversation({ runId, status, onSent }: {
   async function send(event: React.FormEvent) {
     event.preventDefault();
     const value = text.trim();
-    if ((!value && !attachment) || busy) return;
+    if ((!value && !attachment) || busy || !canSend) return;
     setBusy(true); setError("");
+    const payload = JSON.stringify({ text: value, assetId: attachment?.id ?? null });
+    if (!pendingSend.current || pendingSend.current.payload !== payload) {
+      pendingSend.current = { payload, key: `lab-msg:${runId}:${crypto.randomUUID()}` };
+    }
     try {
       const response = await fetch(`/api/admin/agent-tests/runs/${runId}/messages`, {
         method: "POST", credentials: "same-origin", cache: "no-store",
         headers: { "Content-Type": "application/json" },
         // A retry of the same click must not become a second message to a real number.
-        body: JSON.stringify({ text: value, assetId: attachment?.id ?? null, idempotencyKey: `lab-msg:${runId}:${crypto.randomUUID()}` }),
+        body: JSON.stringify({ ...JSON.parse(payload), idempotencyKey: pendingSend.current.key }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) { setError(String(body.code ?? "message_rejected")); return; }
+      pendingSend.current = null;
       setText(""); setAttachment(null);
       await load();
       onSent();
@@ -90,10 +97,10 @@ export function AgentTestLabConversation({ runId, status, onSent }: {
           </div>)}
       <div ref={endRef} />
     </div>
-    {open
+    {canSend
       ? <form className="mt-3 space-y-2" onSubmit={send}>
           <div className="flex flex-wrap gap-2">
-            <input className={`${field} flex-1`} value={text} maxLength={4000} disabled={busy}
+            <input className={`${field} flex-1`} value={text} maxLength={attachment ? 1000 : 4000} disabled={busy}
               onChange={event => setText(event.target.value)}
               placeholder={attachment ? "Legenda do anexo (opcional)" : "Escreva como se fosse o lead e envie pelo número testador"}
               aria-label="Mensagem do testador" />
@@ -124,7 +131,7 @@ export function AgentTestLabConversation({ runId, status, onSent }: {
             <span className="text-white/35">Um anexo conta como mensagem. Receber o arquivo não prova que o agente o interpretou.</span>
           </div>
         </form>
-      : <p className="mt-3 text-sm text-white/50">Execução encerrada. O histórico continua disponível como evidência.</p>}
+      : <p className="mt-3 text-sm text-white/50">{open ? "Para escrever, assuma o controle manual e retome a execução se estiver pausada." : "Execução encerrada. O histórico continua disponível como evidência."}</p>}
     {error && <p role="alert" className="mt-2 text-sm text-amber-400">Recusado: {error}</p>}
   </section>;
 }

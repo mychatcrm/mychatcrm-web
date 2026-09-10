@@ -22,10 +22,14 @@ describe("laboratory certification gates", () => {
   it("does not pretend a WhatsApp message is a Meta form event", () => {
     expect(labSafetyChecks(request({ formId: "123" })).some(check => !check.ok)).toBe(true);
   });
-  it("does not silently drop media or wait steps from scripts", () => {
+  it("accepts durable media and wait steps without charging waits as messages", () => {
     const input = request({ mode: "scripted" });
     input.scenario.steps.push({ kind: "wait", waitSeconds: 10, expected: { type: "reply" } });
-    expect(labSafetyChecks(input).some(check => !check.ok)).toBe(true);
+    input.scenario.steps.push({ kind: "image", assetId: "controlled-asset", expected: { type: "reply" } });
+    input.limits.maxMessages = 2;
+    expect(labSafetyChecks(input).every(check => check.ok)).toBe(true);
+    input.scenario.steps[1].waitSeconds = 1200;
+    expect(labSafetyChecks(input).find(check => check.code === "script_waits_fit_deadline")?.ok).toBe(false);
   });
   it("refuses scripts that cannot fit their approved limits", () => {
     const input = request({ mode: "scripted" });

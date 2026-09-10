@@ -21,10 +21,15 @@ export function labSafetyChecks(input: LabRunRequestV1): LabCheck[] {
   check("context_reuse_pending", !input.reuseTestContext,
     "Reutilização de contexto ainda exige vínculo auditável com a execução anterior.");
   if (["scripted", "correction"].includes(input.mode)) {
-    check("script_supported", input.scenario.steps.length > 0 && input.scenario.steps.every(step => step.kind === "text"),
-      "Por enquanto o executor de roteiros aceita somente etapas de texto; mídias e esperas não podem ser ignoradas.");
-    check("script_fits_message_limit", input.scenario.steps.length <= input.limits.maxMessages,
+    check("script_supported", input.scenario.steps.length > 0 && input.scenario.steps.every(step =>
+      step.kind === "wait" ? Number.isInteger(step.waitSeconds) && Number(step.waitSeconds) > 0
+        : step.kind === "text" ? Boolean(step.text?.trim()) && step.text!.length <= 4000
+        : Boolean(step.assetId) && (step.text?.length ?? 0) <= 1000),
+      "O roteiro precisa conter etapas válidas: texto até 4.000 caracteres, mídia com legenda até 1.000 ou espera explícita.");
+    check("script_fits_message_limit", input.scenario.steps.filter(step => step.kind !== "wait").length <= input.limits.maxMessages,
       "O limite de mensagens precisa comportar todas as etapas do roteiro.");
+    check("script_waits_fit_deadline", input.scenario.steps.reduce((seconds, step) => seconds + (step.kind === "wait" ? step.waitSeconds ?? 0 : 0), 0) < input.limits.maxMinutes * 60,
+      "As esperas precisam caber no prazo da execução; o tempo de resposta do agente também conta.");
   }
   return checks;
 }

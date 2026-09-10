@@ -30,7 +30,7 @@ foi preservado, mas sua declaração de implementação completa não foi confir
 |---|---|
 | Testes internos/GitHub | Implementados; requerem workflow na main e token restrito. |
 | Manual e roteiro de texto na cópia | Em validação; não houve teste ponta a ponta. |
-| Roteiro com mídia/espera | Bloqueado: o executor não pode ignorar etapas. |
+| Roteiro com mídia/espera | Executor durável implementado; ainda depende do canário de transporte. |
 | Simulação e IA testadora | Bloqueadas até reserva/contabilização por chamada e continuidade durável do contexto. |
 | Avaliador semântico pago | Bloqueado pelo mesmo requisito de custos. |
 | Agente original | Bloqueado até isenção de quota/cobrança, efeitos permitidos e isolamento comprovados. |
@@ -39,9 +39,7 @@ foi preservado, mas sua declaração de implementação completa não foi confir
 | Reutilização de contato | Bloqueada até vínculo explícito com o contexto anterior. |
 | Google Calendar do laboratório | Ainda precisa ser configurado e exercitado. |
 
-Ainda faltam: proteção de entrada da linha receptora contra contatos não autorizados e
-eventos atrasados após parada; revalidação de autorização imediatamente antes do envio;
-espera baseada nos jobs reais; captura/transcrição/reprodução de mídia e uploads maiores;
+Ainda faltam: espera baseada nos jobs reais; captura/transcrição/reprodução de mídia e uploads maiores;
 medição completa dos custos do agente testado; cron frequente de recuperação; validação
 de integração e canário com dois números dedicados. Os 65 segundos do burst não serão alterados.
 
@@ -79,3 +77,17 @@ remoção somente do cache `.next/cache` deste worktree, a execução final pass
 produção, cobertura de auditoria e regressões SQL locais também passaram.
 
 Nenhum número real, segredo, prompt de cliente ou credencial entra em fixtures ou Git.
+
+## Continuação em 2026-09-10 — execução V3
+
+- Destino é revalidado contra o número atualmente conectado, não apenas contra o catálogo.
+- Mídia exige instância testadora dedicada, assim como texto. Mensagens/legendas extensas são recusadas, não truncadas.
+- Despacho exige autorização transacional final por etapa/claim; pausa anterior impede a chamada e autorização não pode ser usada duas vezes.
+- Entrada na cópia exige execução ativa, testador exato, registro isolado e horário do provedor dentro da execução. Sincronizações antigas e contatos externos são rejeitados.
+- Triggers limitados ao prefixo reservado do laboratório bloqueiam jornada tardia e nova autorização de outbound depois da parada. Confirmações de envios autorizados anteriormente continuam graváveis.
+- Roteiros aceitam mídia e esperas persistidas, sem cobrar uma espera como mensagem. A repetição da mesma chave retorna a etapa existente; conteúdo diferente na mesma chave falha.
+- O editor preserva o JSON completo do roteiro salvo, incluindo arquivos, esperas e verificações. Envio manual conserva a chave em uma tentativa de rede repetida e exige modo manual.
+- Implementado escopo assíncrono de orçamento de IA, reserva/baixa por chamada e atribuição ao laboratório. **Ainda não habilita IA testadora/simulação: falta integrar e validar o ciclo completo e o consumo do agente testado.**
+- 2.993 testes em 296 arquivos passaram, incluindo 167 testes do laboratório; TypeScript e build passaram. A cobertura de auditoria da rota de envio foi corrigida com evento explícito e traceId.
+- A migração `20260910083501_agent_test_lab_execution_safety_v3.sql` é aditiva e validada em PostgreSQL local com fixtures de domínio reduzidos. Esses fixtures não substituem canário real.
+- Produção ainda não foi promovida nesta etapa; não chamar a entrega completa de certificada.

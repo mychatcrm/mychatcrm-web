@@ -18,13 +18,24 @@ export type LabDispatch =
 export async function assertLabDestinationAuthorized(params: {
   tenantId: string; connectionId: string; channel: string; targetJid: string;
 }): Promise<boolean> {
-  const result = await createSupabaseServiceClient()
+  const sb = createSupabaseServiceClient();
+  const result = await sb
     .from("agent_test_lab_destinations").select("id")
     .eq("owner_admin_id", LAB_OWNER_ID).eq("tenant_id", params.tenantId)
     .eq("connection_id", params.connectionId).eq("channel", params.channel)
     .eq("target_jid", params.targetJid).is("revoked_at", null).maybeSingle();
   if (result.error) throw new Error("destination_read_failed");
-  return Boolean(result.data);
+  if (!result.data) return false;
+  // A catalogue entry cannot authorize a different number after a reconnect.
+  if (!["evolution", "meta_cloud"].includes(params.channel)) return false;
+  const evolution = params.channel === "evolution";
+  const connection = await sb.from(evolution ? "tenant_evolution_instances" : "whatsapp_cloud_connections")
+    .select(evolution ? "wa_jid,connection_state" : "display_phone,active")
+    .eq("tenant_id", params.tenantId).eq("id", params.connectionId).maybeSingle();
+  if (connection.error) throw new Error("destination_connection_read_failed");
+  const row = connection.data as Record<string, unknown> | null;
+  return Boolean(row && labPhoneJid(evolution ? row.wa_jid : row.display_phone) === params.targetJid &&
+    (evolution ? row.connection_state === "open" : row.active === true));
 }
 
 /**
@@ -33,7 +44,9 @@ export async function assertLabDestinationAuthorized(params: {
  */
 export async function dispatchLabText(params: {
   tenantId: string; connectionId: string; channel: string; targetJid: string; text: string;
+  authorizeDispatch: () => Promise<boolean>;
 }): Promise<LabDispatch> {
+  if (!params.text.trim() || params.text.length > 4000) return { outcome: "rejected", code: "message_length_invalid" };
   const sender = await getLabSender();
   if (!sender || sender.state !== "open") return { outcome: "rejected", code: "sender_not_connected" };
   if (!sender.instance_name.startsWith(LAB_INSTANCE_PREFIX)) return { outcome: "rejected", code: "sender_identity_invalid" };
@@ -46,11 +59,12 @@ export async function dispatchLabText(params: {
   }
 
   let result: Awaited<ReturnType<typeof evolutionSendText>>;
+  if (!(await params.authorizeDispatch())) return { outcome: "rejected", code: "dispatch_revoked" };
   try {
     result = await evolutionSendText({
       instanceName: sender.instance_name,
       number: jidToDigits(target),
-      text: params.text.slice(0, 4000),
+      text: params.text,
       // The laboratory talks only to numbers already confirmed in the catalogue.
       resolveRecipient: false,
     });
@@ -82,10 +96,12 @@ export async function dispatchLabText(params: {
  */
 export async function dispatchLabMedia(params: {
   tenantId: string; connectionId: string; channel: string; targetJid: string;
-  assetId: string; caption?: string;
+  assetId: string; caption?: string; authorizeDispatch: () => Promise<boolean>;
 }): Promise<LabDispatch> {
+  if ((params.caption?.length ?? 0) > 1000) return { outcome: "rejected", code: "caption_length_invalid" };
   const sender = await getLabSender();
   if (!sender || sender.state !== "open") return { outcome: "rejected", code: "sender_not_connected" };
+  if (!sender.instance_name.startsWith(LAB_INSTANCE_PREFIX)) return { outcome: "rejected", code: "sender_identity_invalid" };
   const target = labPhoneJid(params.targetJid);
   if (!target) return { outcome: "rejected", code: "target_jid_invalid" };
   if (labPhoneJid(sender.wa_jid) === target) return { outcome: "rejected", code: "same_number_rejected" };
@@ -98,6 +114,7 @@ export async function dispatchLabMedia(params: {
   catch { return { outcome: "rejected", code: "asset_unavailable" }; }
 
   let result: Awaited<ReturnType<typeof evolutionSendMedia>>;
+  if (!(await params.authorizeDispatch())) return { outcome: "rejected", code: "dispatch_revoked" };
   try {
     result = signed.asset.kind === "audio"
       ? await evolutionSendAudio({ instanceName: sender.instance_name, number: jidToDigits(target), audio: signed.url })
@@ -105,7 +122,7 @@ export async function dispatchLabMedia(params: {
           instanceName: sender.instance_name, number: jidToDigits(target),
           mediatype: signed.asset.kind as "image" | "video" | "document",
           mimetype: signed.asset.mimeType, media: signed.url,
-          caption: params.caption?.slice(0, 1000) ?? "", fileName: signed.asset.filename,
+          caption: params.caption ?? "", fileName: signed.asset.filename,
         });
   } catch {
     return { outcome: "inconclusive", code: "send_transport_unknown", providerMessageId: null };

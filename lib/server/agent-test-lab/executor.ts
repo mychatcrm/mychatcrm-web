@@ -104,6 +104,11 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
     const destination = {
       tenantId: String(run.target_tenant_id), connectionId: String(run.target_connection_id),
       channel: String(run.target_channel), targetJid: String(run.target_jid),
+      authorizeDispatch: async () => {
+        const result = await sb.rpc("authorize_agent_test_lab_step_dispatch_v3", { p_run_id: id, p_step_id: pending.id, p_claim: claimToken });
+        if (result.error) throw new Error("dispatch_authorization_unavailable");
+        return result.data === true;
+      },
     };
     // An attachment counts as a message and travels the same authorized path.
     const dispatch = assetId
@@ -135,15 +140,15 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
   }
 
   const drivenRun = run.mode === "scripted" || run.mode === "autonomous" || run.mode === "correction";
-  const lastSent = [...steps].reverse().find(step => step.confirmed_at && ["sent", "settled"].includes(step.status));
+  const lastSent = [...steps].reverse().find(step => step.confirmed_at && ["sent", "settled", "waiting_timer"].includes(step.status));
   if (!lastSent?.confirmed_at) {
     // A driven run opens the conversation itself; a manual one waits for the owner.
     if (drivenRun && steps.length === 0) {
       const opening = await nextDrivenMessage({ run, ordinal: -1, replies: [] });
       if (opening) {
-        const queued = await sb.rpc("enqueue_agent_test_lab_step_v1", {
-          p_run_id: id, p_owner: LAB_OWNER_ID, p_kind: "text", p_command: { text: opening },
-          p_key: `lab-step:${id}:0`, p_reserve: LAB_MESSAGE_RESERVE_BRL,
+        const queued = await sb.rpc("enqueue_agent_test_lab_step_v3", {
+          p_run_id: id, p_owner: LAB_OWNER_ID, p_kind: opening.kind, p_command: stepCommand(opening),
+          p_key: `lab-step:${id}:0`, p_reserve: opening.kind === "wait" ? 0 : LAB_MESSAGE_RESERVE_BRL,
         });
         if (!queued.error && queued.data?.ok === true) {
           await finish(sb, id, claimToken, { status: "running", result_code: "opening_queued", next_step_at: new Date(now).toISOString() });
@@ -161,11 +166,20 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
   const replies = await sb.from("agent_test_lab_messages").select("received_at,provider_occurred_at")
     .eq("run_id", id).eq("direction", "agent").limit(1000);
   if (replies.error) throw new Error("replies_read_failed");
-  const turn = labAgentTurnState({
-    confirmedAt: lastSent.confirmed_at,
+  const waitStep = lastSent.kind === "wait";
+  const observedSince = waitStep ? lastSent.dispatch_started_at! : lastSent.confirmed_at;
+  let turn = labAgentTurnState({
+    confirmedAt: observedSince,
     agentMessageTimes: (replies.data ?? []).map(row => String(row.provider_occurred_at ?? row.received_at)),
     now,
   });
+  if (waitStep) {
+    const messages = (replies.data ?? []).filter(row => {
+      const at = Date.parse(String(row.provider_occurred_at ?? row.received_at));
+      return at >= Date.parse(observedSince) && at <= Date.parse(lastSent.confirmed_at!);
+    }).length;
+    turn = { state: now < Date.parse(lastSent.confirmed_at) ? "waiting" : messages ? "complete" : "timed_out", messages };
+  }
 
   if (turn.state === "waiting") {
     await sb.rpc("heartbeat_agent_test_lab_run_v1", { p_run_id: id, p_claim: claimToken });
@@ -183,7 +197,8 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
     const observed = await recordLabEffects(id);
     const settled = labEffectVerdict(expectation, observed, {
       elapsedMs: now - Date.parse(String(run.created_at)),
-      requiredMs: Date.parse(String(run.deadline_at)) - Date.parse(String(run.created_at)),
+      requiredMs: waitStep ? Date.parse(lastSent.confirmed_at) - Date.parse(String(run.created_at))
+        : Date.parse(String(run.deadline_at)) - Date.parse(String(run.created_at)),
     });
     result = { verdict: settled.verdict, code: settled.code };
     await sb.from("agent_test_lab_evidence").upsert({
@@ -219,9 +234,9 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
     await finish(sb, id, claimToken, await summariseLabRun(sb, id, result.code));
     return;
   }
-  const queued = await sb.rpc("enqueue_agent_test_lab_step_v1", {
-    p_run_id: id, p_owner: LAB_OWNER_ID, p_kind: "text", p_command: { text: next },
-    p_key: `lab-step:${id}:${lastSent.ordinal + 1}`, p_reserve: LAB_MESSAGE_RESERVE_BRL,
+  const queued = await sb.rpc("enqueue_agent_test_lab_step_v3", {
+    p_run_id: id, p_owner: LAB_OWNER_ID, p_kind: next.kind, p_command: stepCommand(next),
+    p_key: `lab-step:${id}:${lastSent.ordinal + 1}`, p_reserve: next.kind === "wait" ? 0 : LAB_MESSAGE_RESERVE_BRL,
   });
   if (queued.error || queued.data?.ok !== true) {
     // A limit reached mid-script is the end of the run, not an error in it.
@@ -239,25 +254,31 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
 async function nextDrivenMessage(params: {
   run: Record<string, unknown>; ordinal: number;
   replies: { provider_occurred_at?: string | null; received_at?: string | null }[];
-}): Promise<string | null> {
+}): Promise<LabStepV1 | null> {
   const run = params.run as { mode: string; request: LabRunRequestV1; max_messages: number; sent_messages: number;
     target_tenant_id: string | null; target_agent_id: string | null; id: string };
   const scenario = run.request?.scenario;
   if (run.mode === "scripted" || run.mode === "correction") {
     const step = scenario?.steps?.[params.ordinal + 1];
-    return step?.kind === "text" && step.text?.trim() ? step.text : null;
+    return step ?? null;
   }
   const sb = createSupabaseServiceClient();
   const transcript = await sb.from("agent_test_lab_messages").select("direction,content")
     .eq("run_id", run.id).order("received_at").limit(200);
   if (transcript.error) throw new Error("transcript_read_failed");
   const { nextLabTesterMessage } = await import("./tester-ai");
-  return nextLabTesterMessage({
+  const text = await nextLabTesterMessage({
     labTenantId: String(run.target_tenant_id ?? ""), labAgentId: String(run.target_agent_id ?? ""),
     model: run.request?.testerModel, scenario,
     transcript: (transcript.data ?? []) as { direction: "tester" | "agent"; content: string | null }[],
     remaining: Math.max(0, Number(run.max_messages) - Number(run.sent_messages)),
   });
+  return text ? { kind: "text", text, expected: { type: "reply" } } : null;
+}
+
+function stepCommand(step: LabStepV1): Record<string, unknown> {
+  if (step.kind === "wait") return { waitSeconds: step.waitSeconds };
+  return step.kind === "text" ? { text: step.text } : { text: step.text ?? "", assetId: step.assetId };
 }
 
 /** The aggregate verdict: a run is only as good as its weakest settled step. */
