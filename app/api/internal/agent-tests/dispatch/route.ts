@@ -17,14 +17,21 @@ export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
     const runId = assertLabUuid(typeof body.runId === "string" ? body.runId : "");
+    // Acknowledge before doing work: the caller has an 8s deadline, whereas a
+    // processing invocation may last 50s. Never report an accepted run as timeout.
+    waitUntil((async () => {
     const outcome = await waitAndProcessLabRun(runId);
     // A run that is still open continues in a fresh invocation rather than
     // holding this one open for the whole conversation.
-    if (outcome === "rescheduled") waitUntil(triggerLabRunProcessor(runId).then(() => undefined));
+    if (outcome === "rescheduled") await triggerLabRunProcessor(runId);
     await appendOperationalAuditEvent({ actorType: "worker", module: "agent.test_lab", action: "dispatch.invocation",
       status: "completed", durationMs: Date.now() - started, resourceType: "agent_test_lab_run", resourceId: runId,
       resultCode: outcome, relatedIds: { runId } });
-    return NextResponse.json({ ok: true, outcome }, { headers: { "Cache-Control": "no-store" } });
+    })().catch(async () => {
+      await appendOperationalAuditEvent({ actorType: "worker", module: "agent.test_lab", action: "dispatch.invocation",
+        status: "error", severity: "error", resultCode: "lab_dispatch_failed", resourceId: runId });
+    }));
+    return NextResponse.json({ ok: true, outcome: "accepted" }, { status: 202, headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const code = error instanceof Error && /^[a-z_]+$/.test(error.message) ? error.message : "lab_dispatch_failed";
     await appendOperationalAuditEvent({ actorType: "worker", module: "agent.test_lab", action: "dispatch.invocation",

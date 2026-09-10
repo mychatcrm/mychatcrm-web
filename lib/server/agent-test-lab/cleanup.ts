@@ -5,6 +5,8 @@ import { LAB_TENANT_PREFIX } from "./isolation";
 import { cancelAgendaRemindersForEvent } from "@/lib/server/agenda-reminder-jobs";
 import { labAudit } from "./auth";
 import { recordLabEffects } from "./effects";
+import { syncAtomicAgendaMutation, type AtomicAgendaMutationResult } from "@/lib/server/agent-cta-scheduler";
+import { requireCertifiedLabCapability } from "@/lib/agent-test-lab/safety-policy";
 
 export type LabCleanupItem = {
   id: string; resourceType: string; resourceId: string; tenantId: string;
@@ -21,7 +23,7 @@ export async function listLabRunResources(runId: string): Promise<LabCleanupItem
   const run = await sb.from("agent_test_lab_runs").select("id").eq("id", runId).eq("owner_admin_id", LAB_OWNER_ID).single();
   if (run.error || !run.data) throw new Error("run_missing");
   // Refresh first, so the list reflects effects that landed after the last tick.
-  await recordLabEffects(runId).catch(() => undefined);
+  await recordLabEffects(runId);
   const rows = await sb.from("agent_test_lab_resources")
     .select("id,resource_type,resource_id,tenant_id,cleanup_status").eq("run_id", runId).limit(1000);
   if (rows.error) throw new Error("resources_read_failed");
@@ -48,6 +50,9 @@ export async function cleanupLabRunResources(runId: string, resourceIds: string[
     .eq("id", runId).eq("owner_admin_id", LAB_OWNER_ID).single();
   if (run.error || !run.data) throw new Error("run_missing");
   if (!["completed", "failed", "cancelled"].includes(String(run.data.status))) throw new Error("run_still_open");
+  // Legacy resources were inferred only from contact/time and are not safe to
+  // delete. Explicit run-to-mutation ownership is required before enabling cleanup.
+  requireCertifiedLabCapability("cleanup_ownership");
 
   const rows = await sb.from("agent_test_lab_resources")
     .select("id,resource_type,resource_id,tenant_id,cleanup_status")
@@ -59,17 +64,24 @@ export async function cleanupLabRunResources(runId: string, resourceIds: string[
     if (row.cleanup_status === "cleaned") continue;
     try {
       if (row.resource_type === "agenda_event") {
+        const event = await sb.from("agenda_events").select("attendee_phone")
+          .eq("tenant_id", row.tenant_id).eq("id", row.resource_id).single();
+        if (event.error || !event.data?.attendee_phone) throw new Error("agenda_event_identity_missing");
+        const operationKey = `lab-cleanup:${runId}:${row.resource_id}`;
         const cancelled = await sb.rpc("apply_agent_agenda_mutation", {
-          p_tenant_id: row.tenant_id, p_operation_key: `lab-cleanup:${runId}:${row.resource_id}`,
-          p_action: "cancel", p_attendee_phone: null, p_event_id: row.resource_id,
+          p_tenant_id: row.tenant_id, p_operation_key: operationKey,
+          p_action: "cancel", p_attendee_phone: event.data.attendee_phone, p_event_id: row.resource_id,
           p_title: null, p_description: null, p_location: null, p_start_at: null, p_end_at: null,
           p_attendee_name: null, p_lead_id: null, p_agent_id: run.data.target_agent_id,
           p_allow_simultaneous: false,
         });
-        if (cancelled.error) throw new Error("agenda_cancel_failed");
+        if (cancelled.error || !cancelled.data?.event?.id || cancelled.data.action !== "cancelled") throw new Error("agenda_cancel_failed");
         await cancelAgendaRemindersForEvent({
           sb, tenantId: String(row.tenant_id), agendaEventId: String(row.resource_id), reason: "agent_test_lab_cleanup",
-        }).catch(() => undefined);
+        });
+        const synced = await syncAtomicAgendaMutation({ sb, tenantId: String(row.tenant_id), operationKey,
+          result: cancelled.data as AtomicAgendaMutationResult });
+        if (synced.operation_status !== "completed") throw new Error("agenda_sync_pending");
       } else if (row.resource_type === "lead") {
         // A lead inside the laboratory tenant is test data and is removed. A lead in
         // a customer's CRM is not: leads.status has no "archived" value, so writing

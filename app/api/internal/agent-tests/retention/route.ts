@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 import { verifyInternalApiRequest } from "@/lib/server/internal-api-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { appendOperationalAuditEvent } from "@/lib/server/operational-audit";
+import { purgeLabExpiredAssets } from "@/lib/server/agent-test-lab/assets-store";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+export const GET = POST;
 
 /**
  * Laboratory conversations and files are kept for 30 days, sanitized results for 90.
@@ -17,6 +19,7 @@ export async function POST(request: Request) {
   }
   const started = Date.now();
   try {
+    await purgeLabExpiredAssets();
     const result = await createSupabaseServiceClient().rpc("purge_agent_test_lab_content_v1");
     if (result.error) throw new Error("lab_retention_failed");
     await appendOperationalAuditEvent({ actorType: "cron", module: "agent.test_lab", action: "retention.purged",

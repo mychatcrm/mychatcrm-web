@@ -2,16 +2,20 @@ import type { LabStepV1, LabVerdict } from "./contracts";
 
 /** What the laboratory found in the database after a real conversation. */
 export type LabObservedEffects = {
+  scopeConfirmed: boolean;
   leadCreated: boolean;
   agendaCreated: number;
   agendaCancelled: number;
   followUpScheduled: number;
   reminderScheduled: number;
+  followUpDelivered: number;
+  reminderDelivered: number;
   outboundConfirmed: number;
   outboundUnconfirmed: number;
 };
 
 export const LAB_EMPTY_EFFECTS: LabObservedEffects = {
+  scopeConfirmed: false, followUpDelivered: 0, reminderDelivered: 0,
   leadCreated: false, agendaCreated: 0, agendaCancelled: 0, followUpScheduled: 0,
   reminderScheduled: 0, outboundConfirmed: 0, outboundUnconfirmed: 0,
 };
@@ -30,26 +34,23 @@ export function labEffectVerdict(
   window: { elapsedMs: number; requiredMs: number | null },
 ): { verdict: LabVerdict; code: string; description: string } {
   const tooShort = window.requiredMs !== null && window.elapsedMs < window.requiredMs;
+  if (!observed.scopeConfirmed) return { verdict: "inconclusive", code: "effect_scope_unconfirmed", description: "A jornada exata do teste ainda não foi comprovada." };
 
   switch (expected) {
     case "agenda_created":
-      return observed.agendaCreated > 0
-        ? { verdict: "passed", code: "agenda_confirmed", description: `Compromisso confirmado no banco (${observed.agendaCreated}).` }
-        : { verdict: "failed", code: "agenda_not_created", description: "Nenhum compromisso foi criado, independentemente do que a resposta dizia." };
+      return { verdict: "inconclusive", code: "agenda_facts_pending", description: "É preciso comprovar a operação, data, horário e fuso esperados; a existência de uma linha não basta." };
     case "agenda_cancelled":
-      return observed.agendaCancelled > 0
-        ? { verdict: "passed", code: "agenda_cancellation_confirmed", description: `Cancelamento confirmado no banco (${observed.agendaCancelled}).` }
-        : { verdict: "failed", code: "agenda_not_cancelled", description: "Nenhum cancelamento foi registrado." };
+      return { verdict: "inconclusive", code: "agenda_facts_pending", description: "É preciso comprovar qual compromisso foi cancelado e sua sincronização." };
     case "follow_up":
-      if (observed.followUpScheduled > 0) {
-        return { verdict: "passed", code: "follow_up_scheduled", description: `Follow-up agendado (${observed.followUpScheduled}).` };
+      if (observed.followUpDelivered > 0) {
+        return { verdict: "passed", code: "follow_up_delivered", description: `Follow-up com entrega comprovada (${observed.followUpDelivered}).` };
       }
       return tooShort
         ? { verdict: "not_executed", code: "follow_up_window_too_short", description: "A execução terminou antes do intervalo do follow-up. Não é falha: não deu tempo." }
         : { verdict: "failed", code: "follow_up_not_scheduled", description: "Nenhum follow-up foi agendado." };
     case "reminder":
-      if (observed.reminderScheduled > 0) {
-        return { verdict: "passed", code: "reminder_scheduled", description: `Lembrete agendado (${observed.reminderScheduled}).` };
+      if (observed.reminderDelivered > 0) {
+        return { verdict: "passed", code: "reminder_delivered", description: `Lembrete com entrega comprovada (${observed.reminderDelivered}).` };
       }
       return tooShort
         ? { verdict: "not_executed", code: "reminder_window_too_short", description: "O lembrete acontece depois do fim desta execução. Não é falha: não deu tempo." }
@@ -65,7 +66,8 @@ export function labEffectVerdict(
 
 /** Delivery is only proven by the provider, never by the outbox row existing. */
 export function labDeliveryVerdict(observed: LabObservedEffects): { verdict: LabVerdict; code: string; description: string } {
-  if (observed.outboundUnconfirmed > 0 && observed.outboundConfirmed === 0) {
+  if (!observed.scopeConfirmed) return { verdict: "inconclusive", code: "effect_scope_unconfirmed", description: "A jornada exata do teste ainda não foi comprovada." };
+  if (observed.outboundUnconfirmed > 0) {
     return { verdict: "inconclusive", code: "delivery_unconfirmed", description: `${observed.outboundUnconfirmed} envio(s) do agente sem confirmação do provedor.` };
   }
   if (observed.outboundConfirmed > 0) {

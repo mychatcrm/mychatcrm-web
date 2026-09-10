@@ -1,97 +1,62 @@
 import "server-only";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { jidToDigits } from "@/lib/integrations/evolution-api";
 import { LAB_OWNER_ID } from "@/lib/agent-test-lab/policy";
 import { LAB_EMPTY_EFFECTS, type LabObservedEffects } from "@/lib/agent-test-lab/effect-policy";
 
-type Counted = { count: number | null };
-const total = (result: Counted & { error: unknown }) => {
-  if (result.error) throw new Error("effect_read_failed");
-  return result.count ?? 0;
-};
-
-/**
- * Reads what the run actually caused, from the tables that hold the truth.
- *
- * Everything is scoped to the tested tenant, to the tester's own number and to the
- * window that starts when the run started. A row that already existed, or that
- * belongs to somebody else's conversation, can never be counted as this test's
- * doing — which is also what keeps the cleanup honest later.
- */
+/** Exact journey + immutable tester identity + closed observation window. */
 export async function observeLabEffects(runId: string): Promise<{ observed: LabObservedEffects; resources: { type: string; table: string; id: string }[] }> {
   const sb = createSupabaseServiceClient();
+  const bound = await sb.rpc("bind_agent_test_lab_journey_v2", { p_run_id: runId });
+  if (bound.error) throw new Error("effect_scope_unconfirmed");
   const run = await sb.from("agent_test_lab_runs")
-    .select("id,target_tenant_id,target_agent_id,sender_connection_id,created_at,finished_at")
+    .select("id,target_tenant_id,target_agent_id,target_rule_id,target_channel,target_connection_id,tester_jid,bound_journey_id,created_at,finished_at")
     .eq("id", runId).eq("owner_admin_id", LAB_OWNER_ID).single();
   if (run.error || !run.data) throw new Error("run_read_failed");
-  const tenantId = run.data.target_tenant_id ? String(run.data.target_tenant_id) : null;
-  if (!tenantId || !run.data.sender_connection_id) return { observed: { ...LAB_EMPTY_EFFECTS }, resources: [] };
-
-  const sender = await sb.from("agent_test_lab_connections").select("wa_jid").eq("id", run.data.sender_connection_id).maybeSingle();
-  if (sender.error) throw new Error("sender_read_failed");
-  const testerJid = sender.data?.wa_jid ? String(sender.data.wa_jid) : null;
-  if (!testerJid) return { observed: { ...LAB_EMPTY_EFFECTS }, resources: [] };
-  const testerDigits = jidToDigits(testerJid);
-  const since = String(run.data.created_at);
-  const resources: { type: string; table: string; id: string }[] = [];
-
-  // The lead the agent created for the tester's number, if any.
-  const lead = await sb.from("leads").select("id,created_at").eq("tenant_id", tenantId)
-    .eq("phone", testerDigits).gte("created_at", since).maybeSingle();
-  if (lead.error) throw new Error("effect_read_failed");
-  if (lead.data) resources.push({ type: "lead", table: "leads", id: String(lead.data.id) });
-
-  // Appointments are matched through that lead: a lead-less appointment in the
-  // window belongs to somebody else and must not be attributed here.
-  let agendaCreated = 0, agendaCancelled = 0;
-  if (lead.data) {
-    const created = await sb.from("agenda_events").select("id,status", { count: "exact" })
-      .eq("tenant_id", tenantId).eq("lead_id", lead.data.id).gte("created_at", since);
-    if (created.error) throw new Error("effect_read_failed");
-    for (const row of created.data ?? []) resources.push({ type: "agenda_event", table: "agenda_events", id: String(row.id) });
-    agendaCreated = (created.data ?? []).filter(row => String(row.status) !== "cancelled").length;
-    agendaCancelled = (created.data ?? []).filter(row => String(row.status) === "cancelled").length;
-  }
-
+  const r = run.data;
+  if (!r.bound_journey_id || !r.tester_jid) return { observed: { ...LAB_EMPTY_EFFECTS }, resources: [] };
+  const since = String(r.created_at), until = r.finished_at ? String(r.finished_at) : new Date().toISOString();
   const [followUps, reminders, outbound] = await Promise.all([
-    sb.from("follow_up_jobs").select("id", { count: "exact", head: true })
-      .eq("tenant_id", tenantId).eq("remote_jid", testerJid).gte("created_at", since),
-    sb.from("agenda_reminder_jobs_v2").select("id", { count: "exact", head: true })
-      .eq("tenant_id", tenantId).eq("remote_jid", testerJid).gte("created_at", since),
-    sb.from("agent_outbound_outbox").select("id,provider_message_id,status")
-      .eq("tenant_id", tenantId).eq("remote_jid", testerJid).gte("created_at", since).limit(500),
+    sb.from("follow_up_jobs").select("id,status")
+      .eq("tenant_id", r.target_tenant_id).eq("agent_id", r.target_agent_id).eq("journey_id", r.bound_journey_id)
+      .eq("remote_jid", r.tester_jid).eq("channel", r.target_channel).eq("connection_id", r.target_connection_id)
+      .eq("rule_id", r.target_rule_id).gte("created_at", since).lte("created_at", until).limit(501),
+    sb.from("agenda_reminder_jobs_v2").select("id,status,outbox_id,provider_message_id,sent_at")
+      .eq("tenant_id", r.target_tenant_id).eq("agent_id", r.target_agent_id).eq("journey_id", r.bound_journey_id)
+      .eq("remote_jid", r.tester_jid).eq("channel", r.target_channel).eq("connection_id", r.target_connection_id)
+      .eq("rule_id", r.target_rule_id).gte("created_at", since).lte("created_at", until).limit(501),
+    sb.from("agent_outbound_outbox").select("id,operation_key,provider_message_id,status,delivered_at,authorization_status")
+      .eq("tenant_id", r.target_tenant_id).eq("agent_id", r.target_agent_id).eq("journey_id", r.bound_journey_id)
+      .eq("remote_jid", r.tester_jid).eq("channel", r.target_channel).eq("connection_id", r.target_connection_id)
+      .eq("rule_id", r.target_rule_id).gte("created_at", since).lte("created_at", until).limit(501),
   ]);
-  if (outbound.error) throw new Error("effect_read_failed");
-
-  const observed: LabObservedEffects = {
-    leadCreated: Boolean(lead.data), agendaCreated, agendaCancelled,
-    followUpScheduled: total(followUps), reminderScheduled: total(reminders),
-    // A row in the outbox is an intent. Only a provider id makes it a delivery.
-    outboundConfirmed: (outbound.data ?? []).filter(row => Boolean(row.provider_message_id)).length,
-    outboundUnconfirmed: (outbound.data ?? []).filter(row => !row.provider_message_id).length,
-  };
-  return { observed, resources };
+  if (followUps.error || reminders.error || outbound.error) throw new Error("effect_read_failed");
+  if ([followUps.data, reminders.data, outbound.data].some(rows => (rows?.length ?? 0) > 500)) throw new Error("effect_window_limit");
+  const confirmed = (outbound.data ?? []).filter(row => row.provider_message_id && row.delivered_at && Date.parse(row.delivered_at) <= Date.parse(until) && row.authorization_status === "authorized");
+  const confirmedIds = new Set(confirmed.map(row => String(row.id)));
+  const followUpIds = new Set((followUps.data ?? []).map(row => String(row.id)));
+  // Phone/time alone cannot establish resource ownership for destructive cleanup.
+  return { resources: [], observed: {
+    ...LAB_EMPTY_EFFECTS, scopeConfirmed: true,
+    followUpScheduled: (followUps.data ?? []).filter(row => ["pending", "processing"].includes(row.status)).length,
+    reminderScheduled: (reminders.data ?? []).filter(row => ["pending", "processing"].includes(row.status)).length,
+    followUpDelivered: confirmed.filter(row => {
+      const match = /^follow-up:([a-f0-9-]{36}):\d+$/.exec(String(row.operation_key));
+      return match && followUpIds.has(match[1]);
+    }).length,
+    reminderDelivered: (reminders.data ?? []).filter(row => row.sent_at && row.provider_message_id && confirmedIds.has(String(row.outbox_id))).length,
+    outboundConfirmed: confirmed.length,
+    outboundUnconfirmed: (outbound.data ?? []).filter(row => !confirmedIds.has(String(row.id)) && !["cancelled", "blocked"].includes(row.status)).length,
+  } };
 }
 
-/** Persists what was observed, so the report and the cleanup share one source. */
 export async function recordLabEffects(runId: string): Promise<LabObservedEffects> {
   const sb = createSupabaseServiceClient();
-  const { observed, resources } = await observeLabEffects(runId);
-  const run = await sb.from("agent_test_lab_runs").select("target_tenant_id").eq("id", runId).single();
-  if (run.error) throw new Error("run_read_failed");
-
-  for (const resource of resources) {
-    await sb.from("agent_test_lab_resources").upsert({
-      run_id: runId, tenant_id: String(run.data.target_tenant_id ?? ""), resource_type: resource.type,
-      resource_id: resource.id, cleanup_status: "not_requested",
-    }, { onConflict: "tenant_id,resource_type,resource_id", ignoreDuplicates: true });
-  }
+  const { observed } = await observeLabEffects(runId);
   for (const [effect, value] of Object.entries(observed)) {
-    if (value === false || value === 0) continue;
-    await sb.from("agent_test_lab_effects").upsert({
-      run_id: runId, effect_type: effect, resource_table: "observed", resource_id: "run",
-      details: { value },
+    const saved = await sb.from("agent_test_lab_effects").upsert({
+      run_id: runId, effect_type: effect, resource_table: "observed", resource_id: "run", details: { value },
     }, { onConflict: "run_id,effect_type,resource_table,resource_id" });
+    if (saved.error) throw new Error("effect_save_failed");
   }
   return observed;
 }

@@ -4,6 +4,8 @@ import { tickDueLabRuns } from "@/lib/server/agent-test-lab/runs";
 import { appendOperationalAuditEvent } from "@/lib/server/operational-audit";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+// Vercel Cron uses GET; internal dispatchers may continue using POST.
+export const GET = POST;
 export async function POST(request: Request) {
   if (!verifyInternalApiRequest(request, { allowedSecrets: ["INTERNAL_API_TOKEN", "CRON_SECRET"] })) return NextResponse.json({ ok: false }, { status: 401 });
   const started = Date.now();

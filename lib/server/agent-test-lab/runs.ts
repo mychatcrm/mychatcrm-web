@@ -9,7 +9,7 @@ import { dispatchLabWorkflow, findLabWorkflow } from "./github";
 export const LAB_RUN_PUBLIC_COLUMNS = "id,trace_id,mode,status,verdict,deployed_sha,config_hash,scenario_hash,target_tenant_id,target_agent_id,target_channel,max_messages,sent_messages,budget_brl,reserved_brl,spent_brl,deadline_at,workflow_run_id,result_code,created_at,updated_at,finished_at";
 /** Modes whose executor is implemented and integration-tested. Everything else stays
  *  blocked in the backend: a visible button is not the same as a working feature. */
-export const LAB_ENABLED_INTERACTIVE_MODES = new Set(["manual", "simulation", "scripted", "autonomous", "correction"]);
+export const LAB_ENABLED_INTERACTIVE_MODES = new Set(["manual", "scripted", "correction"]);
 
 export async function createLabRun(input: LabRunRequestV1) {
   const inspected = await inspectLabTarget(input);
@@ -38,6 +38,7 @@ export async function createLabRun(input: LabRunRequestV1) {
       target_agent_id: target.agentId, target_connection_id: target.connectionId, target_rule_id: target.ruleId,
       target_channel: input.channel, target_jid: inspected.targetJid, target_form_id: input.formId,
       isolated_agent_id: inspected.isolatedAgentId,
+      tester_jid: inspected.senderJid,
     });
   }
 

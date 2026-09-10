@@ -100,12 +100,12 @@ describe("aceitação: mensagens agrupadas, duplicadas e fora de ordem", () => {
 });
 
 describe("aceitação: agenda, follow-up, lembretes e temporizadores", () => {
-  const observed = (over = {}) => ({ ...LAB_EMPTY_EFFECTS, ...over });
+  const observed = (over = {}) => ({ ...LAB_EMPTY_EFFECTS, scopeConfirmed: true, ...over });
   const full = { elapsedMs: 3_600_000, requiredMs: 3_600_000 };
 
-  it("aprova agenda só com linha no banco", () => {
-    expect(labEffectVerdict("agenda_created", observed({ agendaCreated: 1 }), full).verdict).toBe("passed");
-    expect(labEffectVerdict("agenda_created", observed(), full).verdict).toBe("failed");
+  it("não aprova agenda sem comprovar os fatos da operação", () => {
+    expect(labEffectVerdict("agenda_created", observed({ agendaCreated: 1 }), full).verdict).toBe("inconclusive");
+    expect(labEffectVerdict("agenda_created", observed(), full).verdict).toBe("inconclusive");
   });
 
   it("não acelera temporizador em silêncio: janela curta vira não executado", () => {

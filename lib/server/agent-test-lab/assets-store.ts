@@ -6,6 +6,23 @@ import { LAB_OWNER_ID, assertLabUuid } from "@/lib/agent-test-lab/policy";
 import { labAudit } from "./auth";
 
 export const LAB_ASSET_BUCKET = "agent-test-lab";
+/** Delete the private object first. Failed removal retains the durable row for retry. */
+export async function purgeLabExpiredAssets(): Promise<number> {
+  const sb = createSupabaseServiceClient();
+  const expired = await sb.from("agent_test_lab_assets").select("id,storage_path")
+    .lte("expires_at", new Date().toISOString()).order("expires_at").limit(100);
+  if (expired.error) throw new Error("asset_retention_read_failed");
+  let removed = 0;
+  for (const row of expired.data ?? []) {
+    if (!String(row.storage_path).startsWith(`${LAB_OWNER_ID}/`)) throw new Error("asset_retention_scope_invalid");
+    const object = await sb.storage.from(LAB_ASSET_BUCKET).remove([String(row.storage_path)]);
+    if (object.error) throw new Error("asset_retention_remove_failed");
+    const record = await sb.from("agent_test_lab_assets").delete().eq("id", row.id);
+    if (record.error) throw new Error("asset_retention_record_failed");
+    removed += 1;
+  }
+  return removed;
+}
 /** Long enough for the provider to fetch the file, short enough to be useless later. */
 const SIGNED_URL_SECONDS = 300;
 

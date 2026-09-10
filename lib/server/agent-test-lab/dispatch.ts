@@ -1,6 +1,5 @@
 import "server-only";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { internalApiAuthHeaders, getInternalApiToken } from "@/lib/server/internal-api-auth";
 import { LAB_OWNER_ID, assertLabUuid } from "@/lib/agent-test-lab/policy";
 import { tickLabRun } from "./runs";
 
@@ -22,6 +21,7 @@ export async function waitAndProcessLabRun(runId: string, invocationBudgetMs = 5
     if (current.error) throw new Error("run_read_failed");
     if (!current.data) return "not_found";
     if (TERMINAL.has(String(current.data.status))) return String(current.data.status);
+    if (["paused", "waiting_input"].includes(String(current.data.status)) && Date.parse(String(current.data.deadline_at)) > Date.now()) return "idle";
 
     const dueAt = Date.parse(String(current.data.next_step_at));
     if (Number.isFinite(dueAt) && dueAt > Date.now()) {
@@ -40,13 +40,15 @@ export async function waitAndProcessLabRun(runId: string, invocationBudgetMs = 5
  * test failure: the row stays due and the recovery cron picks it up.
  */
 export async function triggerLabRunProcessor(runId: string): Promise<boolean> {
-  if (!getInternalApiToken()) return false;
+  const token = process.env.INTERNAL_API_TOKEN?.trim() || process.env.CRON_SECRET?.trim();
+  if (!token) return false;
   const base = (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "")
     || process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "") || "";
   if (!base) return false;
   try {
     const response = await fetch(new URL("/api/internal/agent-tests/dispatch", base).toString(), {
-      method: "POST", headers: { "Content-Type": "application/json", ...internalApiAuthHeaders() },
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`,
+        ...(process.env.VERCEL_AUTOMATION_BYPASS_SECRET ? { "x-vercel-protection-bypass": process.env.VERCEL_AUTOMATION_BYPASS_SECRET } : {}) },
       body: JSON.stringify({ runId }), signal: AbortSignal.timeout(8000),
     });
     return response.ok;

@@ -10,7 +10,7 @@ import { buildEvolutionWebhookUrl } from "@/lib/integrations/evolution-webhook-u
 import { normalizeInstanceConnectToQrDataUrl } from "@/lib/integrations/evolution-connect-qr";
 import { LAB_OWNER_ID, labMaskedJid, labPhoneJid } from "@/lib/agent-test-lab/policy";
 import { labAudit, labHash } from "./auth";
-import { provisionLabIsolatedAgent } from "./isolation";
+import { provisionLabIsolatedAgent, labTenantIdFor } from "./isolation";
 
 export const LAB_RECEIVER_PREFIX = "mychatcrm-lab-receiver-";
 
@@ -91,9 +91,18 @@ export async function connectLabReceiver(sourceTenantId: string, sourceAgentId: 
   if (!webhookSecret) throw new Error("evolution_webhook_secret_missing");
   if (!publicBase || new URL(publicBase).protocol !== "https:") throw new Error("lab_webhook_url_missing");
 
-  const copy = await provisionLabIsolatedAgent(sourceTenantId, sourceAgentId);
   const sb = createSupabaseServiceClient();
   let row = await getLabReceiverRow();
+  const activeRuns = await sb.from("agent_test_lab_runs").select("id", { count: "exact", head: true })
+    .eq("owner_admin_id", LAB_OWNER_ID).not("status", "in", "(completed,failed,cancelled)");
+  if (activeRuns.error || activeRuns.count !== 0) throw new Error("receiver_has_active_runs");
+  if (row) {
+    const routing = await inspectLabReceiver();
+    if (routing?.labTenantId !== labTenantIdFor(sourceTenantId, sourceAgentId) || routing.labAgentId !== `lab-${sourceAgentId}`.slice(0, 100)) {
+      throw new Error("receiver_target_mismatch");
+    }
+  }
+  const copy = await provisionLabIsolatedAgent(sourceTenantId, sourceAgentId);
 
   if (!row) {
     const id = randomUUID();

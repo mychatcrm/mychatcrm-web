@@ -14,6 +14,13 @@ export const LAB_TENANT_PREFIX = "tenant-lab-";
 export const labTenantIdFor = (sourceTenantId: string, sourceAgentId: string) =>
   `${LAB_TENANT_PREFIX}${createHash("sha256").update(`${sourceTenantId}:${sourceAgentId}`).digest("hex").slice(0, 12)}`;
 
+const SOURCE_COLUMNS = "display_name,system_prompt,model,metadata,voice_id,response_mode,config_version,crm_auto_move_enabled,active,archived_at";
+function sourceFingerprint(source: Record<string, unknown>) {
+  const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
+    : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, v]) => [key, canonical(v)])) : value;
+  return createHash("sha256").update(JSON.stringify(canonical(source))).digest("hex");
+}
+
 export type LabIsolatedAgent = {
   id: string; labTenantId: string; labAgentId: string;
   sourceTenantId: string; sourceAgentId: string;
@@ -29,7 +36,7 @@ export type LabIsolatedAgent = {
 export async function provisionLabIsolatedAgent(sourceTenantId: string, sourceAgentId: string): Promise<LabIsolatedAgent> {
   const sb = createSupabaseServiceClient();
   const source = await sb.from("tenant_agents")
-    .select("display_name,system_prompt,model,metadata,voice_id,response_mode,config_version,crm_auto_move_enabled,active,archived_at")
+    .select(SOURCE_COLUMNS)
     .eq("tenant_id", sourceTenantId).eq("agent_id", sourceAgentId).maybeSingle();
   if (source.error) throw new Error("isolated_source_read_failed");
   if (!source.data || !source.data.active || source.data.archived_at) throw new Error("isolated_source_unavailable");
@@ -41,10 +48,11 @@ export async function provisionLabIsolatedAgent(sourceTenantId: string, sourceAg
     agendaAutomationEnabled: metadata.agendaAutomationEnabled === true,
   });
   const labTenantId = labTenantIdFor(sourceTenantId, sourceAgentId);
+  const running = await sb.from("agent_test_lab_runs").select("id", { count: "exact", head: true })
+    .eq("target_tenant_id", labTenantId).not("status", "in", "(completed,failed,cancelled)");
+  if (running.error || running.count !== 0) throw new Error("isolated_copy_has_active_runs");
   const labAgentId = `lab-${sourceAgentId}`.slice(0, 100);
-  const sourceConfigHash = createHash("sha256")
-    .update(JSON.stringify({ prompt: source.data.system_prompt, metadata: copy.metadata, version: source.data.config_version }))
-    .digest("hex");
+  const sourceConfigHash = sourceFingerprint(source.data);
 
   // The copy carries no history, no leads and no connection of its own: it is the
   // configuration only. CRM columns are deliberately left null.
@@ -83,14 +91,12 @@ export async function inspectLabIsolatedAgent(sourceTenantId: string, sourceAgen
   if (row.error) throw new Error("isolated_registry_read_failed");
   if (!row.data) return null;
 
-  const source = await sb.from("tenant_agents").select("system_prompt,metadata,config_version,crm_auto_move_enabled")
+  const source = await sb.from("tenant_agents").select(SOURCE_COLUMNS)
     .eq("tenant_id", sourceTenantId).eq("agent_id", sourceAgentId).maybeSingle();
   if (source.error) throw new Error("isolated_source_read_failed");
   const metadata = (source.data?.metadata ?? {}) as Record<string, unknown>;
   const copy = buildLabIsolatedCopy({ metadata, crmAutoMoveEnabled: source.data?.crm_auto_move_enabled });
-  const currentHash = createHash("sha256")
-    .update(JSON.stringify({ prompt: source.data?.system_prompt, metadata: copy.metadata, version: source.data?.config_version }))
-    .digest("hex");
+  const currentHash = sourceFingerprint(source.data ?? {});
 
   return {
     id: String(row.data.id), labTenantId: String(row.data.lab_tenant_id), labAgentId: String(row.data.lab_agent_id),
@@ -98,6 +104,6 @@ export async function inspectLabIsolatedAgent(sourceTenantId: string, sourceAgen
     unavailable: (row.data.unavailable_dependencies ?? []) as LabIsolatedCopy["unavailable"],
     // A configuration change invalidates the copy: a result belongs to the exact
     // configuration it was produced from, never to a later one.
-    stale: currentHash !== String(row.data.source_config_hash),
+    stale: !source.data?.active || Boolean(source.data.archived_at) || currentHash !== String(row.data.source_config_hash),
   };
 }

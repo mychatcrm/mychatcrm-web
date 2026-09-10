@@ -6,6 +6,8 @@ import { labAgentTurnState, labStepVerdict } from "@/lib/agent-test-lab/turn-pol
 import { labEffectVerdict, labDeliveryVerdict } from "@/lib/agent-test-lab/effect-policy";
 import { dispatchLabText, dispatchLabMedia } from "./sender";
 import { recordLabEffects } from "./effects";
+import { labAggregateVerdict, labSafetyChecks } from "@/lib/agent-test-lab/safety-policy";
+import { labFingerprint } from "./preflight";
 
 /** Expectations that only the database can settle. */
 const EFFECT_EXPECTATIONS = new Set<LabStepV1["expected"]["type"]>([
@@ -18,6 +20,12 @@ type StepRow = {
 };
 
 async function finish(sb: ReturnType<typeof createSupabaseServiceClient>, runId: string, claim: string, values: Record<string, unknown>) {
+  if (["completed", "failed", "cancelled"].includes(String(values.status))) {
+    // The RPC accepts only registered isolated copies outside customer tenants.
+    // It refuses original/legacy scopes instead of pausing a customer's contact.
+    const stopped = await sb.rpc("stop_agent_test_lab_automation_v2", { p_run_id: runId, p_claim: claim });
+    if (stopped.error || stopped.data !== true) throw new Error("lab_automation_stop_unconfirmed");
+  }
   const saved = await sb.from("agent_test_lab_runs")
     .update({ ...values, updated_at: new Date().toISOString(), claim_token: null, claim_expires_at: null })
     .eq("id", runId).eq("claim_token", claim);
@@ -60,6 +68,11 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
     });
     return;
   }
+  const unsupported = labSafetyChecks({ ...run.request, mode: run.mode } as LabRunRequestV1).find(check => !check.ok);
+  if (unsupported) {
+    await finish(sb, id, claimToken, { status: "stopping", verdict: "not_executed", result_code: unsupported.code, next_step_at: new Date().toISOString() });
+    return;
+  }
 
   // An unconfirmed dispatch is evidence to inspect, never a licence to send again.
   const unconfirmed = steps.find(step => step.dispatch_started_at && !step.confirmed_at);
@@ -73,6 +86,14 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
 
   const pending = steps.find(step => !step.dispatch_started_at);
   if (pending) {
+    const currentAgent = await sb.from("tenant_agents")
+      .select("tenant_id,agent_id,display_name,system_prompt,model,metadata,active,review_reasons,archived_at,config_version")
+      .eq("tenant_id", run.target_tenant_id).eq("agent_id", run.target_agent_id).single();
+    if (currentAgent.error) throw new Error("target_read_failed");
+    if (!currentAgent.data?.active || currentAgent.data.archived_at || labFingerprint(currentAgent.data) !== run.config_hash) {
+      await finish(sb, id, claimToken, { status: "stopping", verdict: "inconclusive", result_code: "target_configuration_changed", next_step_at: new Date().toISOString() });
+      return;
+    }
     const armed = await sb.rpc("arm_agent_test_lab_step_v1", { p_run_id: id, p_step_id: pending.id, p_claim: claimToken });
     if (armed.error || armed.data !== true) {
       await finish(sb, id, claimToken, { result_code: "step_arm_rejected", next_step_at: new Date(now + LAB_TICK_INTERVAL_SECONDS * 1000).toISOString() });
@@ -114,7 +135,7 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
   }
 
   const drivenRun = run.mode === "scripted" || run.mode === "autonomous" || run.mode === "correction";
-  const lastSent = [...steps].reverse().find(step => step.confirmed_at && step.status === "sent");
+  const lastSent = [...steps].reverse().find(step => step.confirmed_at && ["sent", "settled"].includes(step.status));
   if (!lastSent?.confirmed_at) {
     // A driven run opens the conversation itself; a manual one waits for the owner.
     if (drivenRun && steps.length === 0) {
@@ -158,7 +179,7 @@ export async function tickInteractiveLabRun(id: string): Promise<void> {
   // An effect expectation is settled against the database, never against the reply.
   // "Agendado para amanhã" is a sentence; an appointment is a row.
   let result = turnResult;
-  if (EFFECT_EXPECTATIONS.has(expectation) && turnResult.verdict === "inconclusive") {
+  if (EFFECT_EXPECTATIONS.has(expectation)) {
     const observed = await recordLabEffects(id);
     const settled = labEffectVerdict(expectation, observed, {
       elapsedMs: now - Date.parse(String(run.created_at)),
@@ -244,9 +265,10 @@ async function summariseLabRun(sb: ReturnType<typeof createSupabaseServiceClient
   const evidence = await sb.from("agent_test_lab_evidence").select("verdict").eq("run_id", runId).limit(1000);
   if (evidence.error) throw new Error("evidence_read_failed");
   const verdicts = (evidence.data ?? []).map(row => String(row.verdict));
-  const verdict = verdicts.includes("failed") ? "failed"
-    : verdicts.includes("inconclusive") ? "inconclusive"
-    : verdicts.length && verdicts.every(value => value === "passed" || value === "expected_block") ? "passed"
-    : "not_executed";
+  const run = await sb.from("agent_test_lab_runs").select("mode,request").eq("id", runId).single();
+  const steps = await sb.from("agent_test_lab_steps").select("id", { count: "exact", head: true }).eq("run_id", runId).eq("status", "settled");
+  if (run.error || steps.error) throw new Error("evidence_read_failed");
+  const planned = ["scripted", "correction"].includes(String(run.data.mode)) ? run.data.request?.scenario?.steps?.length ?? 0 : 0;
+  const verdict = labAggregateVerdict(verdicts, planned, steps.count ?? 0);
   return { status: verdict === "failed" ? "failed" : "completed", verdict, result_code: code, finished_at: new Date().toISOString() };
 }

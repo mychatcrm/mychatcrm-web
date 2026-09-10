@@ -2,19 +2,19 @@ import { describe, expect, it } from "vitest";
 import { labEffectVerdict, labDeliveryVerdict, LAB_EMPTY_EFFECTS } from "@/lib/agent-test-lab/effect-policy";
 import { buildLabTesterMessages, sanitiseLabTesterMessage } from "@/lib/agent-test-lab/tester-policy";
 
-const effects = (over: Partial<typeof LAB_EMPTY_EFFECTS> = {}) => ({ ...LAB_EMPTY_EFFECTS, ...over });
+const effects = (over: Partial<typeof LAB_EMPTY_EFFECTS> = {}) => ({ ...LAB_EMPTY_EFFECTS, scopeConfirmed: true, ...over });
 const now = { elapsedMs: 20 * 60_000, requiredMs: 20 * 60_000 };
 
 describe("effects are settled by the database", () => {
-  it("approves an appointment only when a row exists", () => {
-    expect(labEffectVerdict("agenda_created", effects({ agendaCreated: 1 }), now).verdict).toBe("passed");
+  it("does not certify date/time/timezone from a row count", () => {
+    expect(labEffectVerdict("agenda_created", effects({ agendaCreated: 1 }), now).verdict).toBe("inconclusive");
     // The agent may well have written "agendado!" — that is not an appointment.
-    expect(labEffectVerdict("agenda_created", effects(), now).verdict).toBe("failed");
+    expect(labEffectVerdict("agenda_created", effects(), now).verdict).toBe("inconclusive");
   });
 
   it("separates a cancellation from a booking", () => {
-    expect(labEffectVerdict("agenda_cancelled", effects({ agendaCancelled: 1 }), now).verdict).toBe("passed");
-    expect(labEffectVerdict("agenda_cancelled", effects({ agendaCreated: 3 }), now).verdict).toBe("failed");
+    expect(labEffectVerdict("agenda_cancelled", effects({ agendaCancelled: 1 }), now).verdict).toBe("inconclusive");
+    expect(labEffectVerdict("agenda_cancelled", effects({ agendaCreated: 3 }), now).verdict).toBe("inconclusive");
   });
 
   it("calls a timer the run was too short to reach 'not executed', not 'failed'", () => {
@@ -30,10 +30,20 @@ describe("effects are settled by the database", () => {
     expect(labEffectVerdict("media_understood", effects(), now).verdict).toBe("inconclusive");
   });
 
-  it("counts a delivery only when the provider gave an id", () => {
+  it("requires every outbound receipt, not merely one successful message", () => {
     expect(labDeliveryVerdict(effects({ outboundConfirmed: 2 })).verdict).toBe("passed");
     expect(labDeliveryVerdict(effects({ outboundUnconfirmed: 1 })).verdict).toBe("inconclusive");
     expect(labDeliveryVerdict(effects()).verdict).toBe("not_executed");
+    expect(labDeliveryVerdict(effects({ outboundConfirmed: 1, outboundUnconfirmed: 1 })).verdict).toBe("inconclusive");
+    expect(labDeliveryVerdict(effects({ scopeConfirmed: false, outboundConfirmed: 10 })).verdict).toBe("inconclusive");
+  });
+
+  it("a scheduled, cancelled or failed job does not prove a timer was delivered", () => {
+    for (const expected of ["follow_up", "reminder"] as const) {
+      expect(labEffectVerdict(expected, effects({ followUpScheduled: 10, reminderScheduled: 10 }), now).verdict).not.toBe("passed");
+      expect(labEffectVerdict(expected, effects({ followUpDelivered: 1, reminderDelivered: 1 }), now).verdict).toBe("passed");
+      expect(labEffectVerdict(expected, effects({ scopeConfirmed: false, followUpDelivered: 1, reminderDelivered: 1 }), now).verdict).toBe("inconclusive");
+    }
   });
 });
 

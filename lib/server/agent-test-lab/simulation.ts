@@ -6,6 +6,7 @@ import type { LabScenarioV1, LabVerdict, LabRunRequestV1 } from "@/lib/agent-tes
 import { LAB_OWNER_ID, assertLabUuid } from "@/lib/agent-test-lab/policy";
 import { provisionLabIsolatedAgent } from "./isolation";
 import { labSimulationVerdict, labSimulatedEffects } from "@/lib/agent-test-lab/simulation-policy";
+import { requireCertifiedLabCapability } from "@/lib/agent-test-lab/safety-policy";
 
 export type LabSimulatedTurn = {
   ordinal: number; message: string; reply: string;
@@ -32,6 +33,7 @@ function agentFromRow(row: Record<string, unknown>, agentId: string): Partial<Ag
 export async function runLabSimulation(params: {
   labTenantId: string; labAgentId: string; scenario: LabScenarioV1; model?: string | null;
 }): Promise<LabSimulatedTurn[]> {
+  requireCertifiedLabCapability("paid_lab_execution");
   const sb = createSupabaseServiceClient();
   const row = await sb.from("tenant_agents").select("agent_id,display_name,system_prompt,model,metadata,review_reasons")
     .eq("tenant_id", params.labTenantId).eq("agent_id", params.labAgentId).maybeSingle();

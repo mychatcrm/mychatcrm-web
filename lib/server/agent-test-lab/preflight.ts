@@ -5,6 +5,7 @@ import { LAB_REAL_MODES, type LabRunRequestV1, type LabCheck } from "@/lib/agent
 import { LAB_OWNER_ID, labOnlyExpectsSilence, labPhoneJid, labRuleMatches, isLabInternalMode } from "@/lib/agent-test-lab/policy";
 import { inspectLabIsolatedAgent } from "./isolation";
 import { hasApprovedLabCI } from "./github";
+import { labSafetyChecks } from "@/lib/agent-test-lab/safety-policy";
 
 function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable);
@@ -13,7 +14,7 @@ function stable(value: unknown): unknown {
 }
 export const labFingerprint = (value: unknown) => createHash("sha256").update(JSON.stringify(stable(value))).digest("hex");
 export async function inspectLabTarget(input: LabRunRequestV1) {
-  const sb = createSupabaseServiceClient(), checks: LabCheck[] = [];
+  const sb = createSupabaseServiceClient(), checks: LabCheck[] = labSafetyChecks(input);
   const check = (code: string, ok: boolean, detail: string) => checks.push({ code, ok, detail });
   const sha = process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.AGENT_TEST_LAB_DEPLOY_SHA ?? "";
   check("deployment_known", /^[a-f0-9]{40}$/.test(sha), "A versão publicada precisa ser identificada.");
@@ -84,6 +85,15 @@ export async function inspectLabTarget(input: LabRunRequestV1) {
     senderConnectionId = sender.data?.id ? String(sender.data.id) : null;
     check("sender_connected", sender.data?.state === "open" && Boolean(senderJid) && Boolean(senderConnectionId), "Escaneie o WhatsApp dedicado de teste.");
     check("different_numbers", Boolean(targetJid && senderJid && targetJid !== senderJid), "Testador e agente precisam de números diferentes.");
+    if (senderJid) {
+      const history = await sb.from("whatsapp_messages").select("id", { count: "exact", head: true })
+        .eq("tenant_id", effective.tenantId).eq("remote_jid", senderJid);
+      const journeys = await sb.from("lead_journeys").select("id", { count: "exact", head: true })
+        .eq("tenant_id", effective.tenantId).eq("remote_jid", senderJid);
+      if (history.error || journeys.error) throw new Error("test_context_read_failed");
+      check("test_contact_fresh", history.count === 0 && journeys.count === 0,
+        "Este contato já possui histórico. Use outro contato controlado até a reutilização isolada ser validada.");
+    }
   }
   return { checks, sha, configHash: labFingerprint(agent), scenarioHash: labFingerprint(input.scenario),
     targetJid, senderJid, senderConnectionId, agent, effective, isolatedAgentId: isolated?.id ?? null };

@@ -4,6 +4,7 @@ import { generateAIResponse } from "@/lib/ai/gateway";
 import { LAB_OWNER_ID, assertLabUuid } from "@/lib/agent-test-lab/policy";
 import { LAB_EVALUATOR_SCHEMA, labEvaluatorEvidence, parseLabEvaluatorOpinion } from "@/lib/agent-test-lab/evaluator-policy";
 import { labAudit } from "./auth";
+import { requireCertifiedLabCapability } from "@/lib/agent-test-lab/safety-policy";
 
 /**
  * Reads a finished conversation and offers an opinion, nothing more.
@@ -14,6 +15,8 @@ import { labAudit } from "./auth";
  * configuration to review, not resolved by a model that was never told the business.
  */
 export async function evaluateLabRunSemantics(runId: string): Promise<boolean> {
+  // No paid call before per-run reservation/settlement is certified.
+  requireCertifiedLabCapability("paid_lab_execution");
   assertLabUuid(runId);
   const sb = createSupabaseServiceClient();
   const run = await sb.from("agent_test_lab_runs")

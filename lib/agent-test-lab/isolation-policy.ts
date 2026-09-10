@@ -12,7 +12,7 @@ export const LAB_COPYABLE_AGENT_KEYS = [
   "promptRegrasAdicionais", "respostasProibidas", "nome", "name", "description",
   "objetivo", "nomeProduto", "tom", "genero", "idioma", "timezone", "temperatura", "tipo", "fluxo",
   // Conversation behaviour
-  "delayResposta", "responseMode", "voiceId", "useHumanPersona",
+  "delayResposta", "responseMode", "voiceId", "useHumanPersona", "horario",
   "useSystemToneInstructions", "useSystemWhatsappStyleGuide",
   "smartWaitEnabled", "smartWaitInitialSeconds", "smartWaitMaxSeconds",
   "smartWaitFollowupSeconds", "smartWaitDedupeRepeated",
