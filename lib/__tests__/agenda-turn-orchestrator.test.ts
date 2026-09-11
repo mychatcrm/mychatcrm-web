@@ -410,6 +410,25 @@ describe("resolveAgendaTurn", () => {
     expect(scheduleAgendaRemindersForEventMock).not.toHaveBeenCalled();
   });
 
+  it("restores a pending simulated proposal between independent worker turns without agenda writes", async () => {
+    const sb = makeStructuredSb().sb;
+    const port = createSimulationAgendaExecutionPort();
+    await port.savePendingAction({ sb, tenantId: "tenant-lab-test", remoteJid: "simulation:run", agentId: "agent-1",
+      action: "create", plan: { action: "propose_create", date: "10/06/2026", time: "14:00", location: null, eventId: null },
+      timezone: "America/Sao_Paulo" });
+    const snapshot = port.snapshotPendingAction()!;
+    snapshot.proposed_time = "15:00";
+    expect(port.snapshotPendingAction()?.proposed_time).toBe("14:00");
+    const restored = createSimulationAgendaExecutionPort({ pendingAction: JSON.parse(JSON.stringify(port.snapshotPendingAction())) });
+    const result = await resolveAgendaTurn({ sb, tenantId: "tenant-lab-test", remoteJid: "simulation:run", agentId: "agent-1",
+      timezone: "America/Sao_Paulo", modelText: "Confirmado", clientText: "sim", agendaAutomationEnabled: true,
+      agendaPlan: { action: "create", date: "10/06/2026", time: "14:00", location: null, eventId: null }, executionPort: restored });
+    expect(result.action).toBe("scheduled");
+    expect(restored.snapshotPendingAction()).toBeNull();
+    expect(insertAgendaEventMock).not.toHaveBeenCalled();
+    expect(createGoogleCalendarEventMock).not.toHaveBeenCalled();
+  });
+
   it("AgendaDecisionV3 mantém o mesmo fato técnico em commit e simulate", async () => {
     const pending = {
       id: "pending-parity",

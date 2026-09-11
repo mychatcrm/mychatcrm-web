@@ -5,6 +5,9 @@ import { tickLabRun } from "./runs";
 
 const TERMINAL = new Set(["completed", "failed", "cancelled"]);
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+// A turn can spend 45 seconds in the model/provider. Never start it at the end
+// of a 60-second invocation; durable work remains available to the next claim.
+const MIN_TURN_BUDGET_MS = 45_000;
 
 /**
  * Drives one run for the length of a single invocation. It never waits for the whole
@@ -29,6 +32,7 @@ export async function waitAndProcessLabRun(runId: string, invocationBudgetMs = 5
       if (waitMs > 0) await sleep(Math.min(2000, Math.max(250, waitMs)));
       if (Date.now() < dueAt) continue;
     }
+    if (deadline - Date.now() < MIN_TURN_BUDGET_MS) return "rescheduled";
     try { await tickLabRun(runId, String(current.data.mode)); }
     catch { await sleep(1000); }
   }

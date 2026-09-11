@@ -1,8 +1,8 @@
 # Central de Testes Reais — estado verificado
 
-## Revisão de segurança em 2026-09-09/10
+## Revisão de segurança em 2026-09-09/11
 
-**Entrega parcial em revisão. Não certificada para produção ou conversas reais.**
+**Entrega parcial: código protegido para publicação; conversa real ainda não certificada.**
 
 Base `6ea8ef9`, continuação do Claude até `80c171f`, PR #136. O trabalho do Claude
 foi preservado, mas sua declaração de implementação completa não foi confirmada.
@@ -31,7 +31,7 @@ foi preservado, mas sua declaração de implementação completa não foi confir
 | Testes internos/GitHub | Implementados; requerem workflow na main e token restrito. |
 | Manual e roteiro de texto na cópia | Em validação; não houve teste ponta a ponta. |
 | Roteiro com mídia/espera | Executor durável implementado; ainda depende do canário de transporte. |
-| Simulação e IA testadora | Bloqueadas até reserva/contabilização por chamada e continuidade durável do contexto. |
+| Simulação e IA testadora | Contexto e propostas pendentes duráveis implementados; bloqueadas até validação integral de custos e efeitos. |
 | Avaliador semântico pago | Bloqueado pelo mesmo requisito de custos. |
 | Agente original | Bloqueado até isenção de quota/cobrança, efeitos permitidos e isolamento comprovados. |
 | Meta formulário oficial | Pendente; envio WhatsApp não pode ser apresentado como prova de formulário. |
@@ -55,8 +55,16 @@ Os arquivos foram renomeados para os identificadores efetivamente aplicados:
 - `20260909205517_agent_test_lab_foundation_v1.sql`
 - `20260909205558_agent_test_lab_execution_v1.sql`
 
-A nova `20260910004156_agent_test_lab_safety_v2.sql` foi gerada pela CLI e testada em
-PostgreSQL local descartável. Não executar os fixtures abaixo no Supabase.
+As versões V2–V5 foram testadas em PostgreSQL local descartável e aplicadas no
+Supabase em 2026-09-11. Os nomes locais acompanham os identificadores atribuídos
+pelo serviço, sem modificar o conteúdo das migrações aplicadas:
+
+- `20260911082910_agent_test_lab_safety_v2.sql`
+- `20260911082924_agent_test_lab_execution_safety_v3.sql`
+- `20260911082927_agent_test_lab_direct_uploads_v4.sql`
+- `20260911082930_agent_test_lab_simulation_v5.sql`
+
+Não executar os fixtures abaixo no Supabase.
 
 ## Verificações reproduzíveis
 
@@ -89,7 +97,7 @@ Nenhum número real, segredo, prompt de cliente ou credencial entra em fixtures 
 - O editor preserva o JSON completo do roteiro salvo, incluindo arquivos, esperas e verificações. Envio manual conserva a chave em uma tentativa de rede repetida e exige modo manual.
 - Implementado escopo assíncrono de orçamento de IA, reserva/baixa por chamada e atribuição ao laboratório. **Ainda não habilita IA testadora/simulação: falta integrar e validar o ciclo completo e o consumo do agente testado.**
 - 2.993 testes em 296 arquivos passaram, incluindo 167 testes do laboratório; TypeScript e build passaram. A cobertura de auditoria da rota de envio foi corrigida com evento explícito e traceId.
-- A migração `20260910083501_agent_test_lab_execution_safety_v3.sql` é aditiva e validada em PostgreSQL local com fixtures de domínio reduzidos. Esses fixtures não substituem canário real.
+- A migração de execução V3 é aditiva e validada em PostgreSQL local com fixtures de domínio reduzidos. Esses fixtures não substituem canário real.
 - Produção ainda não foi promovida nesta etapa; não chamar a entrega completa de certificada.
 
 ## Continuação — uploads privados, gravação e observação de turnos
@@ -100,3 +108,16 @@ Nenhum número real, segredo, prompt de cliente ou credencial entra em fixtures 
 - IA testadora agora exige modelo explícito e executa dentro do orçamento transacional por etapa. Falha de geração não é mais interpretada como conclusão normal. O modo continua bloqueado até medir também o agente testado e concluir o canário.
 - Migração V4 e suas regressões foram executadas somente em PostgreSQL descartável. Não houve upload de conteúdo de clientes nem mensagens reais.
 - Na leitura da nuvem desta etapa: zero conexões e zero execuções do laboratório; apenas as duas migrações de fundação aplicadas. O preview `048e12e` estava READY e CI aprovado.
+
+## Continuação em 2026-09-11 — simulação durável V5
+
+- Cada claim de simulação executa no máximo um turno. Etapa iniciada antes de uma interrupção não é reenviada cegamente à IA.
+- Histórico privado do teste e proposta de agenda pendente passam entre etapas sem consultar conversa de cliente. Pausa e claim obsoleta impedem finalizar o turno como aprovado.
+- O motor rejeita um adaptador de agenda com mutações dentro do dry-run. Prompts e histórico preservam o conteúdo configurado, sem instruções comerciais novas.
+- A conclusão SQL grava etapa, evidências, mensagens e estado em uma transação; a retenção remove também o estado privado da simulação.
+- O dispatcher não inicia turno sem reserva de tempo. A recuperação processa um run por invocação para não somar cinco chamadas longas dentro de 60 segundos.
+- Migrações V2–V5 aplicadas: funções verificadas sem EXECUTE para anon/authenticated e disponíveis ao service_role. Nenhum lead, compromisso ou mensagem real foi criado.
+- Pendências verificadas na nuvem: zero conexões e execuções de laboratório; nenhum cron próprio do laboratório. Credencial restrita do runner e ativação por ambiente ainda exigem verificação.
+- Esta etapa não certifica paridade de todo o estado virtual da agenda, contabilização de todas as mídias/IA, agente original, formulário Meta ou limpeza. Os bloqueios explícitos desses recursos permanecem.
+- Verificação local: suíte completa de 3.066 testes aprovada, seguida dos quatro novos testes de reserva de tempo aprovados; TypeScript, build de produção, cobertura de auditoria e as quatro regressões SQL (V2–V5, com rollback) aprovados. O CI repetirá a suíte completa no commit publicado.
+- Advisors após a migração: nenhum alerta de segurança de nível WARN/ERROR específico do laboratório; RLS sem políticas é intencional para tabelas exclusivas do backend. Nenhuma chave estrangeira sem índice foi apontada no laboratório. Avisos preexistentes de outros módulos não foram alterados.

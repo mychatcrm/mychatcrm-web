@@ -29,11 +29,13 @@ export async function inspectLabTarget(input: LabRunRequestV1) {
   // "Isolated copy" must aim at the copy, not at the customer's agent. Resolving the
   // effective target here means every check below — connection, rule, numbers — is
   // made against the thing that will actually receive the message.
-  if (input.targetKind === "copy" && LAB_REAL_MODES.has(input.mode)) {
+  if (input.targetKind === "copy" && (LAB_REAL_MODES.has(input.mode) || input.mode === "simulation")) {
     isolated = await inspectLabIsolatedAgent(input.tenantId, input.agentId);
     check("isolated_copy_ready", Boolean(isolated), "Conecte o número que a cópia isolada atende antes de testá-la.");
     check("isolated_copy_current", !isolated?.stale, "A configuração de origem mudou. Reconecte a cópia para testar a versão atual.");
     if (isolated) {
+      Object.assign(effective, { tenantId: isolated.labTenantId, agentId: isolated.labAgentId, connectionId: null, ruleId: null });
+      if (LAB_REAL_MODES.has(input.mode)) {
       const routed = await sb.from("tenant_evolution_instances").select("id").eq("tenant_id", isolated.labTenantId).maybeSingle();
       if (routed.error) throw new Error("isolated_routing_read_failed");
       const rule = await sb.from("lead_distribution_rules").select("id")
@@ -47,6 +49,7 @@ export async function inspectLabTarget(input: LabRunRequestV1) {
       });
       for (const dependency of isolated.unavailable) {
         check(`dependency_${dependency.dependency}`, false, dependency.reason);
+      }
       }
     }
   }

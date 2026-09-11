@@ -20,6 +20,11 @@ export async function createLabRun(input: LabRunRequestV1) {
   const sb = createSupabaseServiceClient();
 
   const targets: Record<string, unknown> = {};
+  if (input.mode === "simulation") {
+    if (!inspected.isolatedAgentId || input.targetKind !== "copy") throw new Error("simulation_copy_invalid");
+    Object.assign(targets, { isolated_agent_id: inspected.isolatedAgentId, target_tenant_id: inspected.effective.tenantId,
+      target_agent_id: inspected.effective.agentId, target_channel: input.channel });
+  }
   // Simulation reaches no provider and no number, so it needs no destination.
   if (interactive && input.mode !== "simulation") {
     if (!inspected.targetJid || !inspected.senderJid || !inspected.senderConnectionId || !inspected.effective.connectionId) throw new Error("destination_unresolved");
@@ -138,7 +143,9 @@ export async function tickDueLabRuns() {
   const nowIso = new Date().toISOString();
   const due = await sb.from("agent_test_lab_runs").select("id,mode").eq("owner_admin_id", LAB_OWNER_ID)
     .or(`status.in.(queued,running,waiting_reply,stopping),and(status.in.(paused,waiting_input),deadline_at.lte.${nowIso})`)
-    .lte("next_step_at", nowIso).order("next_step_at").limit(5);
+    // Each turn may use most of the 60-second HTTP budget. Claim one due run;
+    // independent dispatch invocations and the next cron recover the remainder.
+    .lte("next_step_at", nowIso).order("next_step_at").limit(1);
   if (due.error) throw new Error("due_runs_read_failed");
   let processed = 0, failed = 0;
   for (const run of due.data ?? []) {

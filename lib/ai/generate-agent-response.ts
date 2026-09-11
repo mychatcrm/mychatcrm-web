@@ -280,6 +280,8 @@ export async function generateAgentResponse(params: {
   instanceName?: string | null;
   /** Simulação no painel — não envia WhatsApp nem altera conversation_states. */
   simulation?: boolean;
+  /** Server supplied dry-run history; it never becomes a system instruction. */
+  simulationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
   /** Sobrescreve metadados do agente (ex.: rascunho no simulador). */
   agentOverride?: Partial<Agent> & { nome?: string; systemPrompt?: string };
   /** Controla quais fontes entram no prompt (ex.: follow-up com toggles do agente). */
@@ -385,11 +387,12 @@ export async function generateAgentResponse(params: {
     };
   }
   const includeWhatsapp = params.contextSources?.whatsappHistory !== false;
+  const virtualHistory = params.simulation === true ? params.simulationHistory : undefined;
   const [memory, agendaContextBlock] = await Promise.all([
     buildLeadConversationMemory({
       tenantId: params.tenantId,
       agentId: params.agentId,
-      remoteJid: params.conversationId,
+      remoteJid: virtualHistory ? null : params.conversationId,
       journeyId: params.journeyId,
       excludeMessageIds: params.excludeMessageIds,
       retrievalQuery: [...conversationOnly, ...(mediaUserMessage ? [mediaUserMessage] : [])]
@@ -453,7 +456,7 @@ export async function generateAgentResponse(params: {
   // -------------------------------------------------------------------------
   const model = params.model?.trim() || profile?.model?.trim() || undefined;
   const temperature = typeof baseAgent.temperatura === "number" ? baseAgent.temperatura : undefined;
-  const rawHistoryMessages = includeWhatsapp ? memory.aiMessages : [];
+  const rawHistoryMessages = includeWhatsapp ? (virtualHistory ?? memory.aiMessages) : [];
   const partitionedMessages = partitionRequiredCurrentMessages(rawHistoryMessages, [
     ...conversationOnly,
     ...(mediaUserMessage ? [mediaUserMessage] : []),
