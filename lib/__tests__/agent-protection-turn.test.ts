@@ -13,6 +13,12 @@ describe("protection does not bypass the turn decision",()=>{
   it("does not create notifications during simulation",async()=>{
     await processAgentTurnV2({...params,dryRun:true});expect(record).not.toHaveBeenCalled();
   });
+  it("rejects a mutating port even when the core dry-run entry point is used directly",async()=>{
+    const result=await processAgentTurnV2({...params,dryRun:true,
+      simulationContext:{history:[],agendaPort:{mode:"commit"} as never}});
+    expect(result).toEqual({ok:false,error:"simulation_commit_port_rejected"});
+    expect(record).not.toHaveBeenCalled();
+  });
   it("does not convert a protection failure into permission when audit is unavailable",async()=>{
     record.mockRejectedValue(new Error("offline"));
     expect(await processAgentTurnV2(params)).toEqual({ok:false,error:"turn_transport_mismatch"});

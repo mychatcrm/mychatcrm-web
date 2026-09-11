@@ -894,7 +894,7 @@ export async function POST(request: Request) {
 
     // Instância do sistema (verificação/OTP) não tem operador humano digitando
     // no aparelho — nada a capturar ali.
-    if (row.tenant_id !== SYSTEM_TENANT_ID) {
+    if (row.tenant_id !== SYSTEM_TENANT_ID && !instanceName.startsWith("mychatcrm-lab-receiver-")) {
       const fromMeMessages = extractFromMeMessagesFromEvolutionPayload(payload);
       if (fromMeMessages.length > 0) {
         // Preserva a ordem do aparelho e evita dois takeovers concorrentes do
@@ -916,6 +916,12 @@ export async function POST(request: Request) {
     const savedContexts = await Promise.all(
       inbound.map(async (msg) => {
         try {
+          if (instanceName.startsWith("mychatcrm-lab-receiver-") || row.tenant_id.startsWith("tenant-lab-")) {
+            const { acceptsLabReceiverMessage } = await import("@/lib/server/agent-test-lab/intake");
+            const accepted = await acceptsLabReceiverMessage({ tenantId: row.tenant_id, connectionId: row.id,
+              instanceName, remoteJid: msg.remoteJid, providerTime: msg.occurredAt, messageId: msg.messageId });
+            if (!accepted) return null;
+          }
           const webhookReceivedAt = new Date().toISOString();
           const inboundLatency = measureEvolutionInboundLatency(msg.occurredAt, webhookReceivedAt);
           if (inboundLatency?.delayed) {

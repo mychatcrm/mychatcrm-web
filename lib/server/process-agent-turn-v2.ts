@@ -39,6 +39,7 @@ import {
   resolveAgendaTurn,
   shouldDeferHandoffForAgendaResult,
   type AgendaDecisionV3,
+  type AgendaExecutionPort,
 } from "@/lib/server/agent-cta-scheduler";
 import {
   completeAgentHandoff,
@@ -59,6 +60,7 @@ import {
   type AgentResponseJobRow,
 } from "@/lib/server/agent-response-jobs";
 import { getRecentConversationMessages } from "@/lib/server/conversation-memory";
+import type { ConversationMessageContext } from "@/lib/server/conversation-memory";
 import {
   authorizeActiveJourney,
   isJourneyIsolationEnabled,
@@ -247,8 +249,13 @@ async function processAgentTurnCoreV2(params: {
   dryRun?: boolean;
   agentOverride?: Partial<Agent>;
   model?: string;
+  /** Only consulted in dry-run; never overrides a real conversation. */
+  simulationContext?: { history: ConversationMessageContext[]; agendaPort: AgendaExecutionPort };
 }): Promise<ProcessAgentTurnV2Result> {
   const dryRun = params.dryRun === true;
+  if (dryRun && params.simulationContext && params.simulationContext.agendaPort.mode !== "simulate") {
+    return { ok: false, error: "simulation_commit_port_rejected" };
+  }
   const skipGenerationCheck = dryRun || params.skipGenerationCheck === true;
   const { sb, job, generation, transport } = params;
   if (job.channel !== transport.channel) {
@@ -316,6 +323,8 @@ async function processAgentTurnCoreV2(params: {
       dominantIntent: burst.signals.dominantIntent,
     },
     simulation: dryRun,
+    simulationHistory: dryRun ? params.simulationContext?.history.filter(message => message.role === "user" || message.role === "assistant")
+      .map(message => ({ role: message.role as "user" | "assistant", content: message.content })) : undefined,
     agentOverride: effectiveAgentOverride,
     model: params.model,
   });
@@ -362,7 +371,7 @@ async function processAgentTurnCoreV2(params: {
   // Simulação e produção leem o mesmo histórico autorizado. O adaptador
   // `dry-run` bloqueia somente mutações; remover o histórico da simulação fazia
   // as duas modalidades tomarem decisões diferentes para o mesmo fixture.
-  const history = await getRecentConversationMessages({
+  const history = dryRun && params.simulationContext ? params.simulationContext.history : await getRecentConversationMessages({
     sb,
     tenantId: job.tenant_id,
     remoteJid: job.remote_jid,
@@ -451,7 +460,7 @@ async function processAgentTurnCoreV2(params: {
     channel: skipGenerationCheck ? null : job.channel,
     connectionId: skipGenerationCheck ? null : job.connection_id,
     automationEpoch: skipGenerationCheck ? null : automationEpoch,
-    executionPort: dryRun ? createSimulationAgendaExecutionPort() : undefined,
+    executionPort: dryRun ? params.simulationContext?.agendaPort ?? createSimulationAgendaExecutionPort() : undefined,
   });
   if (agendaTurn.action === "stale") {
     return { ok: false, error: "generation_stale", dedupedCount: burst.dedupedCount };
@@ -811,7 +820,10 @@ export async function simulateAgentTurnV2(params: {
   remoteJid?: string | null;
   model?: string;
   reviewReasons?: string[];
+  channel?: "evolution" | "meta_cloud";
+  simulationContext?: { history: ConversationMessageContext[]; agendaPort: AgendaExecutionPort };
 }): Promise<ProcessAgentTurnV2Result> {
+  if (params.simulationContext?.agendaPort.mode === "commit") throw new Error("simulation_commit_port_rejected");
   const now = new Date().toISOString();
   const remoteJid = params.remoteJid?.trim() || `simulation:${params.agentId}`;
   const job: AgentResponseJobRow = {
@@ -823,7 +835,7 @@ export async function simulateAgentTurnV2(params: {
     remote_jid: remoteJid,
     agent_id: params.agentId,
     instance_name: "simulation",
-    channel: "evolution",
+    channel: params.channel ?? "evolution",
     connection_id: null,
     status: "processing",
     first_message_at: now,
@@ -863,7 +875,7 @@ export async function simulateAgentTurnV2(params: {
     storedResponseMode: params.agent.responseMode,
     storedVoiceId: params.agent.voiceId,
     transport: {
-      channel: "evolution",
+      channel: params.channel ?? "evolution",
       slotIndex: 0,
       deliverPrimary: async () => {
         throw new Error("dry_run_transport_must_not_send");
@@ -872,5 +884,6 @@ export async function simulateAgentTurnV2(params: {
     dryRun: true,
     agentOverride: params.agent,
     model: params.model,
+    simulationContext: params.simulationContext,
   });
 }

@@ -1,0 +1,74 @@
+name: Agent Test Lab
+run-name: Lab ${{ inputs.lab_run_id }} ${{ inputs.profile }} ${{ inputs.sha }}
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        type: choice
+        required: true
+        options: [internal, scenarios_10000, scenarios_million, mutation]
+      sha:
+        type: string
+        required: true
+      lab_run_id:
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: agent-test-lab-${{ inputs.lab_run_id }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder
+      SUPABASE_SERVICE_ROLE_KEY: placeholder
+      LAB_SHA: ${{ inputs.sha }}
+      LAB_RUN_ID: ${{ inputs.lab_run_id }}
+      LAB_PROFILE: ${{ inputs.profile }}
+    steps:
+      - name: Validate fixed inputs
+        shell: bash
+        run: |
+          [[ "$LAB_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 1
+          [[ "$LAB_RUN_ID" =~ ^[a-f0-9-]{36}$ ]] || exit 1
+          case "$LAB_PROFILE" in internal|scenarios_10000|scenarios_million|mutation) ;; *) exit 1;; esac
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a reviewed main commit
+        run: git merge-base --is-ancestor "$LAB_SHA" origin/main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - name: Internal regression suite, types and production build
+        if: inputs.profile == 'internal'
+        run: |
+          npm test
+          npx tsc --noEmit --incremental false
+          npm run test:audit-coverage
+          npm run build
+      - name: Ten thousand deterministic scenarios
+        if: inputs.profile == 'scenarios_10000'
+        run: npm run test:certification
+      - name: One million deterministic scenarios
+        if: inputs.profile == 'scenarios_million'
+        run: npm run test:certification:million
+      - name: Critical mutation testing
+        if: inputs.profile == 'mutation'
+        run: npm run test:mutation:critical
+      - name: Publish test artifacts without production data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-test-lab-${{ inputs.lab_run_id }}
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 30

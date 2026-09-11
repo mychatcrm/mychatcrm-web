@@ -2836,12 +2836,13 @@ async function validateSimulatedAgendaDirective(
 
 export function createSimulationAgendaExecutionPort(options?: {
   pendingAction?: PendingAgendaActionRow | null;
-}): AgendaExecutionPort {
+}): AgendaExecutionPort & { snapshotPendingAction(): PendingAgendaActionRow | null } {
   let pending = options?.pendingAction ?? null;
   const records: AgendaExecutionRecord[] = [];
   return {
     mode: "simulate",
     records,
+    snapshotPendingAction() { return pending ? { ...pending } : null; },
     async loadPendingAction(params) {
       if (!pending) return null;
       if (params.journeyId && pending.journey_id && pending.journey_id !== params.journeyId) {

@@ -1,4 +1,5 @@
 import { estimateCostUsd } from "@/lib/ai/costs";
+import { aiExecutionDeadline, invokeWithAiExecutionBudget } from "@/lib/ai/execution-budget";
 import {
   getTenantSpend,
   getUsageLimitForTenant,
@@ -174,6 +175,10 @@ async function persistTracking(params: {
 }
 
 export async function generateAIResponse(input: AiGenerateInput): Promise<AiGenerateResult> {
+  return invokeWithAiExecutionBudget(input, generateAIResponseCore);
+}
+
+async function generateAIResponseCore(input: AiGenerateInput): Promise<AiGenerateResult> {
   const model = resolveAiRequestModel(input.model);
   const started = Date.now();
   const normalizedMessages = sanitizeMessages(input.messages);
@@ -277,7 +282,10 @@ export async function generateAIResponse(input: AiGenerateInput): Promise<AiGene
   }
 
   const timeoutMs = Number(process.env.AI_REQUEST_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS);
-  const totalBudgetMs = Number.isFinite(timeoutMs) ? timeoutMs : DEFAULT_TIMEOUT_MS;
+  const scopeDeadline = aiExecutionDeadline();
+  const totalBudgetMs = Math.min(Number.isFinite(timeoutMs) ? timeoutMs : DEFAULT_TIMEOUT_MS,
+    scopeDeadline === undefined ? Infinity : Math.max(0, scopeDeadline - Date.now()));
+  if (totalBudgetMs <= 0) return { ok: false, code: "TIMEOUT", provider: "openai", model, detail: "execution_deadline_reached" };
   // Orçamento TOTAL, não por tentativa: com repetições, um teto por tentativa
   // deixaria a função rodar por múltiplos do timeout e estourar o limite do
   // serverless. Cada tentativa recebe só o tempo que ainda sobra.
