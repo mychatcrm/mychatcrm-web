@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { buildEvolutionWebhookUrl, getPublicBaseUrlFromRequest } from "@/lib/integrations/evolution-webhook-url";
 import { reconcileOpenEvolutionClientHealth } from "@/lib/server/evolution-client-health";
 import { verifyInternalApiRequest } from "@/lib/server/internal-api-auth";
+import { healthcheckFail, healthcheckSuccess } from "@/lib/server/healthchecks";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -67,12 +68,15 @@ async function reconcile(request: Request, body: ReconcileBody) {
       restartAuthorized: restartIfSettingsChanged,
       targetedRestartAuthorized: forceTargetedRestart,
     });
+    if (result.failed === 0) await healthcheckSuccess("evolution_reconcile");
+    else await healthcheckFail("evolution_reconcile");
     return NextResponse.json({ ok: result.failed === 0, ...result });
   } catch (error) {
     console.error("[evolution-client-health] reconcile_failed", {
       targeted: Boolean(connectionId),
       error: error instanceof Error ? error.message : String(error),
     });
+    await healthcheckFail("evolution_reconcile");
     return NextResponse.json({ error: "Falha na reconciliação" }, { status: 500 });
   }
 }

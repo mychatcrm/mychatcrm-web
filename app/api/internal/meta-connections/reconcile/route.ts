@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { verifyInternalApiRequest } from "@/lib/server/internal-api-auth";
 import { reconcileMetaLeadConnections } from "@/lib/server/meta-lead-connection-reconciler";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { healthcheckFail, healthcheckSuccess } from "@/lib/server/healthchecks";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -32,11 +33,13 @@ export async function POST(request: Request) {
       grantsChecked: result.grantsChecked,
       pagesDiscovered: result.pagesDiscovered,
     });
+    await healthcheckSuccess("meta_connections");
     return NextResponse.json(result);
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "meta_health_reconcile_failed";
     console.error("[meta-health-reconcile] failed", { error: message });
+    await healthcheckFail("meta_connections");
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

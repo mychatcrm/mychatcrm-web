@@ -15,6 +15,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 import { verifyInternalApiRequest } from "@/lib/server/internal-api-auth";
+import { healthcheckFail, healthcheckSuccess } from "@/lib/server/healthchecks";
 
 export async function GET(request: Request) {
   return POST(request);
@@ -49,9 +50,11 @@ export async function POST(request: Request) {
         const processed = await processDueAgentResponseJobs();
         await appendOperationalAuditEvent({ ...audit, action: "run.completed", status: "completed",
           durationMs: Date.now() - started, metadata: { processed } });
+        await healthcheckSuccess("agent_response");
       } catch {
         await appendOperationalAuditEvent({ ...audit, action: "run.failed", status: "error",
           severity: "error", resultCode: "response_recovery_failed", durationMs: Date.now() - started });
+        await healthcheckFail("agent_response");
       }
     })());
     return NextResponse.json({ ok: true, accepted: true }, { status: 202 });
@@ -74,6 +77,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, mode: "wait_and_process", jobId, outcome });
   }
 
-  const processed = await processDueAgentResponseJobs();
-  return NextResponse.json({ ok: true, mode: "due_jobs", processed });
+  try {
+    const processed = await processDueAgentResponseJobs();
+    await healthcheckSuccess("agent_response");
+    return NextResponse.json({ ok: true, mode: "due_jobs", processed });
+  } catch (error) {
+    await healthcheckFail("agent_response");
+    throw error;
+  }
 }

@@ -6,6 +6,7 @@ import {
   FOLLOW_UP_SCHEDULER_PATH,
   verifySignedSchedulerRequest,
 } from "@/lib/server/meta-scheduler-auth";
+import { healthcheckFail, healthcheckSuccess } from "@/lib/server/healthchecks";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -19,10 +20,12 @@ async function runFollowUpProcessing(): Promise<Record<string, unknown>> {
     const result = await processDueFollowUpJobs(undefined, { batchSize: 5, deadlineMs: 70_000 });
 
     console.info("[follow-up-jobs]", { event: "process_completed", ...result });
+    await healthcheckSuccess("follow_ups");
     return { ok: true, ...result };
   } catch (error) {
     const message = error instanceof Error ? error.message : "process_failed";
     console.error("[follow-up-jobs]", { event: "process_error", error: message });
+    await healthcheckFail("follow_ups");
     throw error;
   }
 }

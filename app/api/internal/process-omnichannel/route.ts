@@ -3,6 +3,7 @@ import { verifyInternalApiRequest } from "@/lib/server/internal-api-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { processDueLeadRedistributions } from "@/lib/server/lead-redistribution";
 import { processDueWhatsAppCampaigns } from "@/lib/server/whatsapp-campaigns";
+import { healthcheckFail, healthcheckSuccess } from "@/lib/server/healthchecks";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -21,10 +22,12 @@ export async function POST(request: Request) {
       processDueWhatsAppCampaigns(sb),
       processDueLeadRedistributions(sb),
     ]);
+    await healthcheckSuccess("omnichannel");
     return NextResponse.json({ ok: true, campaigns, redistributions });
   } catch (error) {
     const message = error instanceof Error ? error.message : "omnichannel_process_failed";
     console.error("[omnichannel-processor]", { event: "failed", error: message });
+    await healthcheckFail("omnichannel");
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
