@@ -1,5 +1,6 @@
 export const LAB_CODE_LABELS: Record<string, string> = {
-  lab_locked: "Confirme novamente seu e-mail e senha de proprietário para abrir a central.",
+  lab_locked: "A Central de Testes está bloqueada. Libere novamente usando sua sessão de proprietário.",
+  admin_session_required: "Sua sessão de administrador expirou. Entre novamente no painel para liberar a Central de Testes.",
   lab_disabled: "A central está desativada. Nenhum teste novo será iniciado.",
   invalid_credentials: "E-mail ou senha inválidos, ou conta sem permissão de proprietário.",
   rate_limited: "Muitas tentativas. Aguarde antes de tentar novamente.",

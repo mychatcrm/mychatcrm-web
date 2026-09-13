@@ -2,7 +2,7 @@ import "server-only";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { authenticateAdminFromDb } from "@/lib/server/admin-auth-db";
+import { getAdminSessionFromCookies } from "@/lib/admin-auth";
 import { isOperationalAuditOwnerIdentity, OPERATIONAL_AUDIT_OWNER_ADMIN_ID } from "@/lib/admin-operational-audit-access";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { appendOperationalAuditEvent } from "@/lib/server/operational-audit";
@@ -22,23 +22,16 @@ export async function labAudit(action: string, resourceId?: string, status: "com
     module: "agent.test_lab", action, status, resourceType: "agent_test_lab", resourceId: resourceId ?? null,
     severity: status === "error" ? "error" : "info" }, { strict: true });
 }
-export async function unlockLab(request: Request, clientIp?: string | null): Promise<NextResponse> {
+export async function unlockLab(request: Request): Promise<NextResponse> {
   assertLabOrigin(request);
-  const sbRate = createSupabaseServiceClient();
-  // Per-caller first, so someone else burning attempts cannot lock the owner out of
-  // the laboratory. The global bucket stays only as a blast-radius cap on the table.
-  const scoped = (clientIp ?? "").slice(0, 100) || "unknown";
-  const perCaller = await sbRate.rpc("consume_agent_test_lab_rate_v1", { p_bucket: `owner_unlock:${scoped}`, p_limit: 10, p_seconds: 900 });
-  if (perCaller.error || perCaller.data !== true) throw new Error("rate_limited");
-  const global = await sbRate.rpc("consume_agent_test_lab_rate_v1", { p_bucket: "owner_unlock", p_limit: 200, p_seconds: 900 });
-  if (global.error || global.data !== true) throw new Error("rate_limited");
-  const body = await request.json();
-  if (typeof body.email !== "string" || typeof body.password !== "string" || body.email.length > 320 || body.password.length > 1024) throw new Error("invalid_credentials");
-  const owner = await authenticateAdminFromDb(body.email, body.password);
-  if (!owner || !isOperationalAuditOwnerIdentity(owner)) throw new Error("invalid_credentials");
+  const owner = await getAdminSessionFromCookies();
+  if (!owner || !isOperationalAuditOwnerIdentity(owner)) throw new Error("admin_session_required");
   const sb = createSupabaseServiceClient();
-  const { data: admin, error } = await sb.from("admin_users").select("id,active,password_changed_at").eq("id", owner.adminId).eq("active", true).maybeSingle();
-  if (error || !admin) throw new Error("owner_unavailable");
+  const { data: admin, error } = await sb.from("admin_users").select("id,role,active,password_changed_at")
+    .eq("id", owner.adminId).eq("active", true).maybeSingle();
+  if (error || !admin || admin.role !== "super_admin" || admin.id !== OPERATIONAL_AUDIT_OWNER_ADMIN_ID) {
+    throw new Error("owner_unavailable");
+  }
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + LAB_SESSION_SECONDS * 1000).toISOString();
   await labAudit("session.unlocked");
@@ -67,6 +60,6 @@ export async function requireLabOwner(request?: Request): Promise<{ adminId: str
 export function labError(error: unknown): NextResponse {
   const code = error instanceof Error ? error.message : "lab_failed";
   const known = /^[a-z][a-z0-9_]{1,100}$/.test(code) ? code : "lab_failed";
-  const status = ["lab_locked", "invalid_credentials"].includes(known) ? 401 : known === "lab_origin_rejected" ? 403 : known === "lab_disabled" ? 503 : known === "rate_limited" ? 429 : 400;
+  const status = ["lab_locked", "admin_session_required"].includes(known) ? 401 : known === "lab_origin_rejected" ? 403 : known === "lab_disabled" ? 503 : known === "rate_limited" ? 429 : 400;
   return NextResponse.json({ ok: false, code: known }, { status, headers: { "Cache-Control": "no-store" } });
 }

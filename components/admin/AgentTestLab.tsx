@@ -114,13 +114,14 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
     {error && <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm">{error}</div>}
     {notice && <div role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm">{notice}</div>}
     {!enabled ? <section className={card}><h2 className="font-semibold">Central em preparação</h2><p className="mt-2 text-sm text-white/60">O laboratório está desativado. Os agentes dos clientes continuam usando o fluxo atual.</p></section>
-      : !unlocked ? <form className={`${card} max-w-lg space-y-4`} onSubmit={event => { event.preventDefault(); const form = event.currentTarget; const data = new FormData(form);
-        void act(async () => { try { await api("/session", { method: "POST", body: JSON.stringify({ email: data.get("email"), password: data.get("password") }) }); setUnlocked(true); } finally { form.reset(); } }); }}>
-        <h2 className="font-semibold">Confirme sua identidade</h2><p className="text-sm text-white/55">A central exige uma sessão temporária própria. Sua sessão comum de administrador não autoriza testes ou acesso ao QR.</p>
-        <label className="block space-y-1 text-sm"><span>E-mail do proprietário</span><input className={field} name="email" type="email" autoComplete="username" required /></label>
-        <label className="block space-y-1 text-sm"><span>Senha</span><input className={field} name="password" type="password" autoComplete="current-password" required /></label>
-        <button className={primary} disabled={busy}>{busy ? "Verificando…" : "Desbloquear por 2 horas"}</button>
-      </form> : !snapshot ? <p role="status" className="text-sm text-white/60">Carregando laboratório…</p> : <>
+      : !unlocked ? <section className={`${card} max-w-lg space-y-4`}>
+        <h2 className="font-semibold">Liberar Central de Testes</h2>
+        <p className="text-sm text-white/55">Você já está autenticado como proprietário. Libere esta área por duas horas com um clique, sem informar e-mail ou senha novamente.</p>
+        <button className={primary} disabled={busy} onClick={() => act(async () => {
+          await api("/session", { method: "POST", body: "{}" });
+          setUnlocked(true);
+        })}>{busy ? "Liberando…" : "Liberar Central por 2 horas"}</button>
+      </section> : !snapshot ? <p role="status" className="text-sm text-white/60">Carregando laboratório…</p> : <>
       <div className="grid gap-4 md:grid-cols-3">
         <section className={card}><h2 className="text-sm text-white/55">WhatsApp testador</h2><p className="mt-2 font-semibold">{snapshot.sender?.state === "open" ? "Conectado" : "Não conectado"}</p><p className="text-sm text-white/50">{snapshot.sender?.number ?? "Número exclusivo do laboratório"}</p>
           <div className="mt-4 flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => act(async () => { const data = await api<{ qr: string | null }>("/connection", { method: "POST", body: JSON.stringify({ action: "connect" }) }); setQr(data.qr); await reload(); })}>Conectar / QR</button>

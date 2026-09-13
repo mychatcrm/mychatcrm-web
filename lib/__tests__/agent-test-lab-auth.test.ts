@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({ cookie: "", session: null as Record<string, unknown> | null, owner: null as Record<string, unknown> | null,
-  error: null as unknown, auth: null as Record<string, unknown> | null, rate: true }));
+  error: null as unknown, adminSession: null as Record<string, unknown> | null }));
 vi.mock("next/headers", () => ({ cookies: () => ({ get: () => state.cookie ? { value: state.cookie } : undefined }) }));
-vi.mock("@/lib/server/admin-auth-db", () => ({ authenticateAdminFromDb: async () => state.auth }));
+vi.mock("@/lib/admin-auth", () => ({ getAdminSessionFromCookies: async () => state.adminSession }));
 vi.mock("@/lib/server/operational-audit", () => ({ appendOperationalAuditEvent: vi.fn(async () => ({})) }));
 vi.mock("@/lib/supabase/server", () => ({ createSupabaseServiceClient: () => ({
-  rpc: async () => ({ data: state.rate, error: state.error }),
+  rpc: async () => ({ data: true, error: state.error }),
   from: (table: string) => {
     const q = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: table === "agent_test_lab_sessions" ? state.session : state.owner, error: state.error }),
       insert: async () => ({ error: state.error }) }; return q;
@@ -14,7 +14,8 @@ vi.mock("@/lib/supabase/server", () => ({ createSupabaseServiceClient: () => ({
 import { assertLabOrigin, labHash, labSecretMatches, requireLabOwner, unlockLab } from "@/lib/server/agent-test-lab/auth";
 describe("laboratory owner reauthentication", () => {
   beforeEach(() => {
-    vi.stubEnv("AGENT_TEST_LAB_ENABLED", "true"); state.cookie = "A".repeat(43); state.error = null; state.rate = true; state.auth = null;
+    vi.stubEnv("AGENT_TEST_LAB_ENABLED", "true"); state.cookie = "A".repeat(43); state.error = null;
+    state.adminSession = { adminId: "admin-renato-lagares", role: "super_admin" };
     state.session = { admin_id: "admin-renato-lagares", expires_at: new Date(Date.now() + 60000).toISOString(), password_version: null, revoked_at: null };
     state.owner = { id: "admin-renato-lagares", role: "super_admin", active: true, password_changed_at: null };
   });
@@ -39,8 +40,23 @@ describe("laboratory owner reauthentication", () => {
     expect(labSecretMatches("other", labHash("value"))).toBe(false);
     expect(labSecretMatches("value", "not-a-hash")).toBe(false);
   });
-  it("enforces durable unlock rate limit before password verification", async () => {
-    state.rate = false;
-    await expect(unlockLab(new Request("https://www.mychatcrm.com.br/api/admin/agent-tests/session", { method: "POST", headers: { origin: "https://www.mychatcrm.com.br", "content-type": "application/json" }, body: JSON.stringify({ email: "owner@example.test", password: "fixture" }) }))).rejects.toThrow("rate_limited");
+  it("unlocks from the active owner session without asking for credentials again", async () => {
+    const response = await unlockLab(new Request("https://www.mychatcrm.com.br/api/admin/agent-tests/session", {
+      method: "POST", headers: { origin: "https://www.mychatcrm.com.br", "content-type": "application/json" }, body: "{}",
+    }));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ ok: true });
+  });
+  it("rejects unlock when the regular admin session is absent", async () => {
+    state.adminSession = null;
+    await expect(unlockLab(new Request("https://www.mychatcrm.com.br/api/admin/agent-tests/session", {
+      method: "POST", headers: { origin: "https://www.mychatcrm.com.br", "content-type": "application/json" }, body: "{}",
+    }))).rejects.toThrow("admin_session_required");
+  });
+  it("rejects unlock from another administrator", async () => {
+    state.adminSession = { adminId: "another", role: "super_admin" };
+    await expect(unlockLab(new Request("https://www.mychatcrm.com.br/api/admin/agent-tests/session", {
+      method: "POST", headers: { origin: "https://www.mychatcrm.com.br", "content-type": "application/json" }, body: "{}",
+    }))).rejects.toThrow("admin_session_required");
   });
 });
