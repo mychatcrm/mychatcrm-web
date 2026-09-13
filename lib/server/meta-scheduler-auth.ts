@@ -7,6 +7,7 @@ export const AGENDA_REMINDER_SCHEDULER_PATH = "/api/internal/process-agenda-remi
 export const EVOLUTION_INBOX_SCHEDULER_PATH = "/api/internal/process-evolution-inbox";
 export const AGENT_RUNTIME_WATCHDOG_TICK_PATH = "/api/internal/agent-runtime-watchdog/tick";
 export const MEETINGS_WATCHDOG_SCHEDULER_PATH = "/api/internal/meetings/watchdog";
+export const AGENT_TEST_LAB_SCHEDULER_PATH = "/api/internal/agent-tests/process";
 const MAX_CLOCK_SKEW_SECONDS = 120;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

@@ -121,3 +121,11 @@ Nenhum número real, segredo, prompt de cliente ou credencial entra em fixtures 
 - Esta etapa não certifica paridade de todo o estado virtual da agenda, contabilização de todas as mídias/IA, agente original, formulário Meta ou limpeza. Os bloqueios explícitos desses recursos permanecem.
 - Verificação local: suíte completa de 3.066 testes aprovada, seguida dos quatro novos testes de reserva de tempo aprovados; TypeScript, build de produção, cobertura de auditoria e as quatro regressões SQL (V2–V5, com rollback) aprovados. O CI repetirá a suíte completa no commit publicado.
 - Advisors após a migração: nenhum alerta de segurança de nível WARN/ERROR específico do laboratório; RLS sem políticas é intencional para tabelas exclusivas do backend. Nenhuma chave estrangeira sem índice foi apontada no laboratório. Avisos preexistentes de outros módulos não foram alterados.
+
+## Recuperação durável V6
+
+- O Supabase verifica a cada minuto apenas se existe execução vencida e sem claim ativo. Sem trabalho pendente, não faz requisição externa.
+- A chamada usa o mesmo segredo HMAC guardado no Vault, assinado para a rota exata do laboratório. Query strings ou assinatura destinada a outro worker são recusadas.
+- A Vercel confirma o recebimento antes de executar o lote limitado; cada invocação processa no máximo uma execução.
+- O navegador pode ser fechado sem perder etapas. Claims ativos não são despachados novamente e chamadas incertas continuam inconclusivas, sem reenvio cego.
+- `sql-fixture-recovery-v6.sql` existe somente para simular `pg_cron` no PostgreSQL local descartável e nunca deve ser aplicado na nuvem.
