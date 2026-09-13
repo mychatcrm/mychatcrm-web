@@ -36,6 +36,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@emoji-mart/data": "^1.2.1",
     "@emoji-mart/react": "^1.1.1",
+    "@sentry/nextjs": "^8.55.2",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.105.0",
     "@vercel/functions": "3.7.5",
